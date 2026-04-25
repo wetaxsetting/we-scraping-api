@@ -1,0 +1,29 @@
+# PROD profile. RESERVED — not used in the 8-day R&D sprint (no PROD deploy).
+# Hard rules for this file:
+#   - ddl-auto MUST be 'validate'. Never 'update', never 'create', never 'create-drop'.
+#   - SQL logging OFF. No show-sql, no format_sql.
+#   - No secrets in this file. All sensitive values come from env vars.
+#   - Schema changes ship via Flyway migrations only.
+
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    open-in-view: false
+  flyway:
+    enabled: true
+    baseline-on-migrate: false
+
+server:
+  error:
+    include-message: never
+    include-stacktrace: never
+    include-binding-errors: never
+
+logging:
+  level:
+    root: WARN
+    com.kosign.wecms: INFO
+    org.springframework.security: WARN
+    org.hibernate.SQL: WARN

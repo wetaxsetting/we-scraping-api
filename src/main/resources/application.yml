@@ -1,0 +1,39 @@
+spring:
+  application:
+    name: wecms-api-main
+  profiles:
+    active: local
+  jpa:
+    open-in-view: false
+    properties:
+      hibernate.dialect: org.hibernate.dialect.PostgreSQLDialect
+      hibernate.jdbc.time_zone: UTC
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+  messages:
+    basename: messages
+    encoding: UTF-8
+
+server:
+  port: 8080
+  error:
+    include-message: always
+    include-stacktrace: never
+
+wecms:
+  jwt:
+    # Required. Fail-fast validated by JwtTokenProvider:
+    #   >= 32 bytes  -> HS256
+    #   >= 64 bytes  -> HS512 (preferred)
+    # Generate with:  openssl rand -hex 64
+    secret: ${WECMS_JWT_SECRET}
+    expires-in-seconds: 3600
+    issuer: wecms-api-main
+  cors:
+    allowed-origins: http://localhost:3000
+  tenant:
+    # Single-tenant R&D deployment. Exact BIZ_KEY, no wildcards.
+    # VN_VNM0004 = main WeCMS company; _000001 = specific business unit.
+    biz-key: VN_VNM0004_000001
