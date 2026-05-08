@@ -1,5 +1,6 @@
 package com.kosign.wecms.config;
 
+import com.kosign.wecms.common.security.JwtAuthenticationEntryPoint;
 import com.kosign.wecms.common.security.JwtAuthenticationFilter;
 import com.kosign.wecms.common.security.WecmsPasswordEncoder;
 import lombok.RequiredArgsConstructor;
@@ -19,6 +20,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtFilter;
+    private final JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint;
 
     @Bean
     public PasswordEncoder passwordEncoder() {
@@ -37,6 +39,10 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/v1/auth/login", "/api/v1/auth/logout", "/actuator/health").permitAll()
                         .anyRequest().authenticated())
+                // Override default Http403ForbiddenEntryPoint so missing /
+                // expired JWTs surface as 401 (RFC 7235) — required by the
+                // frontend session-expired interceptor in lib/axios.ts.
+                .exceptionHandling(eh -> eh.authenticationEntryPoint(jwtAuthenticationEntryPoint))
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
                 .build();
     }

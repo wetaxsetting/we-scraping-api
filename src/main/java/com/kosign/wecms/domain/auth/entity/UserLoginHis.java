@@ -20,12 +20,16 @@ import java.time.OffsetDateTime;
 public class UserLoginHis {
 
     @Id
-    @Column(name = "USER_ID", length = 50, nullable = false)
+    @Column(name = "USER_ID", length = 100, nullable = false)
     private String userId;
 
     @Id
     @Column(name = "REG_DTM", nullable = false)
     private OffsetDateTime regDtm;
+
+    @Id
+    @Column(name = "REG_UID", length = 100, nullable = false)
+    private String regUid;
 
     @Column(name = "IP_ADDR", length = 100)
     private String ipAddr;

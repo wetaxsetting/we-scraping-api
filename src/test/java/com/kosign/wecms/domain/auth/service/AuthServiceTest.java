@@ -88,7 +88,7 @@ class AuthServiceTest {
 
         LoginResponse res = authService.login(new LoginRequest(ID, PW), IP, LANG);
 
-        assertThat(res.token()).isEqualTo("jwt-token");
+        assertThat(res.accessToken()).isEqualTo("jwt-token");
         assertThat(res.tokenType()).isEqualTo("Bearer");
         assertThat(res.expiresIn()).isEqualTo(3600L);
         assertThat(res.userId()).isEqualTo(ID);

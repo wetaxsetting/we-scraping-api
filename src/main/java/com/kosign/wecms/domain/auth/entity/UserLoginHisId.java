@@ -17,4 +17,5 @@ import java.time.OffsetDateTime;
 public class UserLoginHisId implements Serializable {
     private String userId;
     private OffsetDateTime regDtm;
+    private String regUid;
 }

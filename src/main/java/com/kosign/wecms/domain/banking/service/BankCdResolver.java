@@ -1,5 +1,6 @@
 package com.kosign.wecms.domain.banking.service;
 
+import com.kosign.wecms.common.enums.AcctTypeCd;
 import com.kosign.wecms.domain.banking.entity.BankInfm;
 import com.kosign.wecms.domain.banking.repository.BankInfmRepository;
 import jakarta.annotation.PostConstruct;
@@ -12,37 +13,38 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
- * Resolves BANK_CD → display name and ACCT_TYPE_CD → display label.
+ * Resolves BANK_CD → display name and ACCT_TYPE_CD → display label /
+ * i18n key.
  *
- * Bank-name lookup goes through {@link BankInfmRepository} per the
+ * <p>Bank-name lookup goes through {@link BankInfmRepository} per the
  * 2026-04-29 audit — no static map of bank codes is allowed.
  *
- * Account-type code map is small and stable enough to keep in code;
- * legacy JEX had no dedicated dictionary table. The legacy enum
- * {@code wabooks.enums.AcctTypeCd} is the source of truth — labels here
- * mirror its {@code getLabel()} (with Korean labels for {@code 04} /
- * {@code 06} translated to English; English labels for {@code 07} /
- * {@code 08} kept verbatim). The asymmetric prefix
- * ({@code Foreign Current} for {@code 04} vs. {@code Current Accounts}
- * for {@code 07}) is intentional and preserves the legacy distinction.
+ * <p>Account-type code resolution routes through {@link AcctTypeCd}
+ * ({@code common/enums/}) — the single source of truth for the legacy
+ * {@code ACCT_TYPE_CD} value set. The English labels in
+ * {@link #ACCT_TYPE_FALLBACK_LABELS} mirror the pre-refactor static
+ * map verbatim and are kept as a staging surface for the
+ * {@code acct_type_nm} wire field while frontend consumers migrate to
+ * the new {@code acct_type_key}-driven render. Localised
+ * Korean / Vietnamese strings live in the frontend locale files —
+ * Java side never holds non-English text.
  *
- * <p>Code coverage:
- * <ul>
- *   <li>{@code 01} (LOAN) — intentionally unmapped; loans never appear on
- *       Account Inquiry. The legacy {@code FnshHelper.fnsh_0001_001_r001}
- *       filter excludes them on both VND and FCY pages.</li>
- *   <li>{@code 02}–{@code 08} — mapped. Active tenant data
- *       ({@code VN_VNM0004_000001}, 2026-05-03 snapshot) exercises
- *       {@code 02, 03, 04, 05, 07}; {@code 06} / {@code 08} are
- *       forward-looking — defined by the legacy enum but not currently
- *       used by this tenant.</li>
- * </ul>
+ * <p>Code coverage notes are kept in sync with {@link AcctTypeCd}'s
+ * Javadoc — the enum is the canonical reference.
  */
 @Component
 @RequiredArgsConstructor
 class BankCdResolver {
 
-    private static final Map<String, String> ACCT_TYPES = Map.ofEntries(
+    /**
+     * Pre-refactor English labels — kept as a fallback surface until
+     * every consumer migrates to the {@code acct_type_key} field. Each
+     * value matches the legacy {@code BankCdResolver.ACCT_TYPES} entry
+     * byte-for-byte. New consumers should NOT add entries here; extend
+     * {@link AcctTypeCd} with a new enum constant + a new
+     * {@code bank.acct_type.<code>} locale entry instead.
+     */
+    private static final Map<String, String> ACCT_TYPE_FALLBACK_LABELS = Map.ofEntries(
             Map.entry("02", "Fixed"),             // DEPOSIT — Time Deposit
             Map.entry("03", "Current"),           // CURRENT_KHR — VND Current
             Map.entry("04", "Foreign Current"),   // CURRENT_USD — USD Current
@@ -88,8 +90,30 @@ class BankCdResolver {
                 .orElse(bankCd);
     }
 
+    /**
+     * Legacy English label for an {@code ACCT_TYPE_CD}. Continues to
+     * power the {@code acct_type_nm} wire field for one MR cycle so
+     * the frontend can stage its switch to {@code acct_type_key}.
+     * Falls back to the raw code when the enum / fallback map has no
+     * entry — never throws, never returns null.
+     */
     String resolveAcctTypeNm(String acctTypeCd) {
         if (acctTypeCd == null) return "";
-        return ACCT_TYPES.getOrDefault(acctTypeCd.trim(), acctTypeCd.trim());
+        String trimmed = acctTypeCd.trim();
+        return ACCT_TYPE_FALLBACK_LABELS.getOrDefault(trimmed, trimmed);
+    }
+
+    /**
+     * Frontend i18n key for an {@code ACCT_TYPE_CD} —
+     * {@code bank.acct_type.<code>}. Returns {@code null} for unknown
+     * codes (frontend falls back to {@code acct_type_nm}) and for the
+     * intentionally-unmapped {@code 01} (LOAN). Mirrors
+     * {@link AcctTypeCd#i18nKey()}; the resolver routes through the
+     * enum so a future code addition lands in one place.
+     */
+    String resolveAcctTypeKey(String acctTypeCd) {
+        return AcctTypeCd.fromCode(acctTypeCd)
+                .map(AcctTypeCd::i18nKey)
+                .orElse(null);
     }
 }
