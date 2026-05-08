@@ -28,6 +28,11 @@ dependencies {
     runtimeOnly     'io.jsonwebtoken:jjwt-impl:0.12.6'
     runtimeOnly     'io.jsonwebtoken:jjwt-jackson:0.12.6'
 
+    // Apache POI — XLSX generation for the shared Excel export feature
+    // (common/export/). SXSSF is the streaming variant used by
+    // ExcelWorkbookWriter so a 50k-row export stays bounded in heap.
+    implementation 'org.apache.poi:poi-ooxml:5.2.5'
+
     implementation 'org.flywaydb:flyway-core'
     runtimeOnly    'org.flywaydb:flyway-database-postgresql'
 

@@ -22,6 +22,13 @@ server:
     include-message: always
     include-stacktrace: never
 
+# Surface the per-request traceId (set by TraceIdFilter into MDC under key
+# `traceId`) in every log line. The `--` placeholder shows when the
+# logger fires outside a request scope (startup, scheduled jobs).
+logging:
+  pattern:
+    level: "%5p [traceId=%X{traceId:--}]"
+
 wecms:
   jwt:
     # Required. Fail-fast validated by JwtTokenProvider:

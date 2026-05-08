@@ -1,0 +1,35 @@
+-- ============================================================================
+-- V37__view_setting_sort_yn_to_varchar.sql
+--
+-- Hotfix for V35: convert SYS_SCR_OPTION_WECMS.SORT_YN from CHAR(1) to
+-- VARCHAR(1) so Hibernate's `validate` mode accepts it against the
+-- entity's `String sortYn` field.
+--
+-- Why: V34 added SORT_YN as CHAR(1) NOT NULL DEFAULT 'Y' for DEV parity.
+-- That column is mapped to a Java `String` for the first time in V35;
+-- Hibernate maps `String` to Types#VARCHAR by default, but the live
+-- column type is `bpchar` (Types#CHAR), and validate is strict:
+--
+--   Schema-validation: wrong column type encountered in column [sort_yn]
+--   in table [sys_scr_option_wecms]; found [bpchar (Types#CHAR)],
+--   but expecting [char(1) (Types#VARCHAR)]
+--
+-- Established codebase pattern: V3 / V9 / V18 / V19 all normalise CHAR
+-- columns to VARCHAR for the same Hibernate validate reason. V37 does
+-- the same here. Refactor-only deviation from DEV's char(1); functionally
+-- identical for the 'Y'/'N' domain.
+--
+-- Note: USER_SCR_OPTION_WECMS does NOT have a `sort_yn` column locally
+-- (DEV doesn't have it on user_scr either — V34 added it sys-only).
+-- This migration touches only the sys table.
+--
+-- Default value: preserved as 'Y'. PostgreSQL keeps existing column
+-- defaults across `ALTER COLUMN ... TYPE` so the explicit SET DEFAULT
+-- below is defensive (fires only if the type change reset it).
+--
+-- Idempotent: ALTER COLUMN TYPE is a no-op when already VARCHAR(1);
+-- SET DEFAULT 'Y' is a no-op when already set.
+-- ============================================================================
+
+ALTER TABLE SYS_SCR_OPTION_WECMS ALTER COLUMN SORT_YN TYPE VARCHAR(1) USING SORT_YN::varchar(1);
+ALTER TABLE SYS_SCR_OPTION_WECMS ALTER COLUMN SORT_YN SET DEFAULT 'Y';

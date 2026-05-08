@@ -1,20 +1,23 @@
 package com.kosign.wecms.common.response;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
+/**
+ * Status block of every {@link ApiResponse}. Wire shape:
+ * <pre>{@code { "error": false, "code": "WBI0000", "message": "..." }}</pre>
+ *
+ * Java field names already match the wire (lowercase) so no annotations
+ * are needed — the global SNAKE_CASE strategy is a no-op for these.
+ */
 @Getter
 @AllArgsConstructor
 public class CommonHead {
 
-    @JsonProperty("ERROR")
     private final boolean error;
 
-    @JsonProperty("CODE")
     private final String code;
 
-    @JsonProperty("MESSAGE")
     private final String message;
 
     public static CommonHead success() {
