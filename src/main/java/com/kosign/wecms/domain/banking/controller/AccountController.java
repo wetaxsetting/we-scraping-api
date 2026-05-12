@@ -4,13 +4,17 @@ import com.kosign.wecms.common.export.ExcelExportRequest;
 import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.response.ApiResponse;
 import com.kosign.wecms.domain.banking.dto.AccountListResponse;
+import com.kosign.wecms.domain.banking.dto.AccountLookupListResponse;
 import com.kosign.wecms.domain.banking.dto.TransactionListResponse;
 import com.kosign.wecms.domain.banking.service.AccountFilter;
 import com.kosign.wecms.domain.banking.service.AccountService;
 import com.kosign.wecms.domain.banking.service.TransactionService;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -22,6 +26,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/banking")
 @RequiredArgsConstructor
+@Validated
 public class AccountController {
 
     private final AccountService accountService;
@@ -90,6 +95,39 @@ public class AccountController {
             @Valid @RequestBody ExcelExportRequest request,
             HttpServletResponse response) {
         excelExportService.exportTo(response, request);
+    }
+
+    /**
+     * Withdrawal-account autocomplete for the firm-banking-settings
+     * Create dialog. Mirrors the legacy {@code comm_1004_001} read
+     * path: resolve the public NAPAS code (e.g. {@code 970424}) to
+     * the internal {@code BANK_CD} via {@code NAPAS_BANK_INFO}, then
+     * return every {@code ACCT_MSTR} row for the tenant under that
+     * bank.
+     *
+     * <p>Wire shape per row: {@code acct_no} (raw), {@code
+     * acct_no_masked} (server-masked via {@code LogMask.acct}),
+     * {@code ccy_cd}, {@code acct_nick_nm} (nullable),
+     * {@code acct_nm} (nullable). The frontend dropdown renders
+     * {@code <formatted-acct> (<ccy>)} per legacy parity; the
+     * masked variant lets the dropdown chip / list-item display
+     * the same string the audit log records without a second
+     * round-trip.
+     *
+     * <p>{@code outBankCd} is the only filter — the legacy
+     * {@code comm_1004_001} loads the full per-bank list and the
+     * frontend filters client-side as the user types. The refactor
+     * mirrors that contract — no server-side keyword param, no
+     * pagination, no debounce required.
+     */
+    @GetMapping("/accounts/by-bank")
+    public ApiResponse<AccountLookupListResponse> lookupAccountsByBank(
+            @RequestParam("out_bank_cd")
+            @Size(max = 15)
+            @Pattern(regexp = "^[0-9]{1,15}$",
+                    message = "out_bank_cd: invalid format")
+            String outBankCd) {
+        return ApiResponse.ok(accountService.lookupForFirmBanking(outBankCd));
     }
 
     /**

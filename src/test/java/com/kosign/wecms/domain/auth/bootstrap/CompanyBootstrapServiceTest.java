@@ -5,6 +5,7 @@ import com.kosign.wecms.domain.auth.entity.BusiInfm;
 import com.kosign.wecms.domain.auth.entity.EmplInfm;
 import com.kosign.wecms.domain.auth.repository.BusiInfmRepository;
 import com.kosign.wecms.domain.auth.repository.EmplInfmRepository;
+import com.kosign.wecms.domain.setting.environmentsettings.service.TenantEnvironmentSettingsBootstrapService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -15,6 +16,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -36,6 +38,7 @@ class CompanyBootstrapServiceTest {
     @Mock UserBootstrapService userBootstrapService;
     @Mock BusinessKeyGeneratorService businessKeyGenerator;
     @Mock EmployeeNumberGeneratorService employeeNumberGenerator;
+    @Mock TenantEnvironmentSettingsBootstrapService environmentSettingsBootstrap;
 
     CompanyBootstrapService service;
 
@@ -49,6 +52,7 @@ class CompanyBootstrapServiceTest {
                 userBootstrapService,
                 businessKeyGenerator,
                 employeeNumberGenerator,
+                environmentSettingsBootstrap,
                 new TenantProperties(BIZ),
                 fixedClock);
     }
@@ -89,6 +93,11 @@ class CompanyBootstrapServiceTest {
 
         verify(userBootstrapService).createFirstAdmin(eq(BIZ), eq(EMPL), any(FirstAdminCommand.class),
                 eq(CompanyBootstrapService.SYSTEM_BOOTSTRAP));
+
+        // Mirrors legacy `wb_init_busi_data` env-set leg — runs after
+        // BUSI_INFM is saved (FK requires the parent first).
+        verify(environmentSettingsBootstrap).seedDefaultsForTenant(
+                eq(BIZ), eq(CompanyBootstrapService.SYSTEM_BOOTSTRAP), any(OffsetDateTime.class));
     }
 
     @Test
@@ -102,6 +111,8 @@ class CompanyBootstrapServiceTest {
         verify(busiInfmRepository, never()).save(any());
         verify(emplInfmRepository, never()).save(any());
         verify(userBootstrapService, never()).createFirstAdmin(any(), any(), any(), any());
+        verify(environmentSettingsBootstrap, never())
+                .seedDefaultsForTenant(any(), any(), any());
     }
 
     @Test

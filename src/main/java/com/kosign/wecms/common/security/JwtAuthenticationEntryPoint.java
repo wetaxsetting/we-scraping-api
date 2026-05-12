@@ -2,6 +2,7 @@ package com.kosign.wecms.common.security;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kosign.wecms.common.exception.TraceId;
+import com.kosign.wecms.common.i18n.MessageResolver;
 import com.kosign.wecms.common.response.ApiResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -38,7 +39,20 @@ import java.io.IOException;
 @RequiredArgsConstructor
 public class JwtAuthenticationEntryPoint implements AuthenticationEntryPoint {
 
+    /**
+     * Dedicated session-expired code (legacy {@code SES001} parity per
+     * {@code WECMS DEV/.../jex.wabooks.custom_v2.js:107}). The frontend
+     * Axios interceptor watches the HTTP 401 status to surface the
+     * re-auth popup; the typed code disambiguates the response from
+     * {@code WBE1009} (bad credentials, returned by {@link com.kosign.wecms.domain.auth.service.AuthService}
+     * on a wrong-password attempt) so future logic can branch on
+     * "credentials wrong" vs "session no longer valid" without parsing
+     * messages.
+     */
+    private static final String CODE_SESSION_EXPIRED = "WBE1401";
+
     private final ObjectMapper objectMapper;
+    private final MessageResolver messages;
 
     @Override
     public void commence(
@@ -52,8 +66,8 @@ public class JwtAuthenticationEntryPoint implements AuthenticationEntryPoint {
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         response.setCharacterEncoding("UTF-8");
         ApiResponse<Void> body = ApiResponse.error(
-                "WBE1009",
-                "Session expired or invalid token.",
+                CODE_SESSION_EXPIRED,
+                messages.resolve(CODE_SESSION_EXPIRED),
                 request.getRequestURI(),
                 traceId);
         objectMapper.writeValue(response.getOutputStream(), body);

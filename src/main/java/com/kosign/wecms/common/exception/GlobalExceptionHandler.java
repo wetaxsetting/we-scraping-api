@@ -156,13 +156,15 @@ public class GlobalExceptionHandler {
 
     /** Spring Security pre-auth failures that aren't already routed through
      *  {@code JwtAuthenticationEntryPoint} (e.g. an authenticated request with
-     *  a permission-violation downstream). The frontend's Axios interceptor
-     *  watches HTTP 401 to surface the session-expired re-auth dialog. */
+     *  a permission-violation downstream). Emits {@code WBE1401} (session
+     *  expired) — same code as the entry point so the frontend's 401 →
+     *  re-auth popup has a single canonical signal. {@code WBE1009} stays
+     *  reserved for wrong-credentials at login. */
     @ExceptionHandler(AuthenticationException.class)
     public ResponseEntity<ApiResponse<Void>> handleAuthentication(AuthenticationException ex, HttpServletRequest req) {
         log.warn("Authentication failed: {}", ex.getMessage());
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                .body(buildError("WBE1009", messages.resolve("WBE1009"), req));
+                .body(buildError("WBE1401", messages.resolve("WBE1401"), req));
     }
 
     @ExceptionHandler(AccessDeniedException.class)

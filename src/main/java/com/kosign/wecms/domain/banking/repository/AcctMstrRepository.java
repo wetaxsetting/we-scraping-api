@@ -38,6 +38,16 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
     Optional<AcctMstr> findByBizKeyAndBankCdAndAcctNo(String bizKey, String bankCd, String acctNo);
 
     /**
+     * All accounts for the tenant under one internal {@code BANK_CD},
+     * ordered by account number. Mirrors the {@code IDODynamic} JEX
+     * runs in {@code comm_1004_001_act.jsp:62-66} —
+     * {@code biz_key = ? AND bank_cd = ?}, no {@code ACTV_YN}
+     * filter, no currency filter — used by the firm-banking-settings
+     * Withdrawal Account autocomplete.
+     */
+    List<AcctMstr> findByBizKeyAndBankCdOrderByAcctNoAsc(String bizKey, String bankCd);
+
+    /**
      * Server-side filter + pagination for Account Inquiry list /
      * export. Optional predicates use the {@code (:param IS NULL OR …)}
      * pattern so a single JPQL query handles every filter combination

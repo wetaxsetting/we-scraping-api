@@ -1,5 +1,6 @@
 package com.kosign.wecms.common.security;
 
+import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.config.JwtProperties;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jws;
@@ -43,14 +44,42 @@ public class JwtTokenProvider {
         this.key = Keys.hmacShaKeyFor(secretBytes);
     }
 
-    public String issue(String userId, String userNm, String bizKey, String langCd) {
+    /**
+     * Issue a JWT with the post-login tenant + authority + product-type binding.
+     *
+     * <p>{@code bizKey} is the BIZ_KEY the user actually resolved at
+     * login (auto-picked when they have a single active link, or
+     * explicitly chosen via the chooser step) — never a value the
+     * frontend can override on a subsequent request. {@code authGrCd}
+     * is {@code "ADMIN"} when the user has a BUSI_ADMN_INFM row for
+     * this company, {@code "USER"} otherwise. {@code prdtType} is the
+     * verbatim {@code BUSI_INFM.PRDT_TYPE} letter for the resolved
+     * company — any of the legacy 14 codes; may be {@code null} when
+     * the row carries no value. All three fields are read back on
+     * every authenticated request by {@link JwtAuthenticationFilter}
+     * and surfaced into {@link TenantContext}.
+     */
+    public String issue(String userId, String userNm, String bizKey, String langCd,
+                        String authGrCd, String prdtType) {
         Instant now = Instant.now();
         Instant exp = now.plusSeconds(props.expiresInSeconds());
 
         Map<String, Object> claims = new HashMap<>();
-        claims.put("userNm", userNm);
-        claims.put("bizKey", bizKey);
-        claims.put("langCd", langCd);
+        claims.put("userNm",   userNm);
+        claims.put("bizKey",   bizKey);
+        claims.put("langCd",   langCd);
+        // Stamp at issue time so the filter populates TenantContext and
+        // Spring Security authorities without re-querying BUSI_ADMN_INFM.
+        claims.put("authGrCd", TenantContext.AUTH_GR_ADMIN.equals(authGrCd)
+                ? TenantContext.AUTH_GR_ADMIN
+                : TenantContext.AUTH_GR_USER);
+        // Product type — verbatim DB letter, no enum coercion at the
+        // claim layer so legacy tenants on un-modelled letters
+        // (W/R/B/E/U/L/S/P/C/D/T) still round-trip cleanly. Null when
+        // the company row has no PRDT_TYPE.
+        if (prdtType != null && !prdtType.isBlank()) {
+            claims.put("prdtType", prdtType);
+        }
 
         return Jwts.builder()
                 .issuer(props.issuer())

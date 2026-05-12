@@ -41,6 +41,30 @@ wecms:
   cors:
     allowed-origins: http://localhost:3000
   tenant:
-    # Single-tenant R&D deployment. Exact BIZ_KEY, no wildcards.
-    # VN_VNM0004 = main WeCMS company; _000001 = specific business unit.
+    # Dormant config slot. Spring no longer auto-creates company/admin
+    # data at startup — the BootstrapRunner that previously consumed
+    # this property has been removed. Login resolves the active tenant
+    # per user from USER_BUSI_CONN_INFM (multi-company; see AuthService)
+    # and stamps the chosen BIZ_KEY into the signed JWT claim that
+    # JwtAuthenticationFilter reads into TenantContext.
+    #
+    # Operational practice: a DBA creates a new company + first admin
+    # by running the legacy manual setup SQL pattern against the target
+    # database (see Claude Code (AI)/sql/setup_uat_account_*.sql).
+    # Local R&D tenants are seeded via Flyway (V2 / V5 for 000001,
+    # V73 for 000014 = HAENGSUNG ELECTRONICS).
+    #
+    # The value is retained only so TenantProperties stays bindable
+    # and so CompanyBootstrapService.assertConsistent(...) has a
+    # comparison target if anyone ever calls bootstrap programmatically
+    # from a unit test or a future admin API.
     biz-key: VN_VNM0004_000001
+  erp-transaction-history:
+    # Local-disk root for downloadable ERP transaction history files.
+    # Resolved path pattern: <storage-root>/<biz_key>/erp-transaction-history/<save_file_nm>
+    # OQ-3 resolved 2026-05-11 — defaults to the developer's standard
+    # workspace; per-developer override via env var
+    # WECMS_ERP_TRANSACTION_HISTORY_STORAGE_ROOT (Windows / POSIX both
+    # honour Java Paths.get(...)). Profile-specific overrides live in
+    # application-{profile}.yml.
+    storage-root: ${WECMS_ERP_TRANSACTION_HISTORY_STORAGE_ROOT:./tmp/erp-trns-hstr}

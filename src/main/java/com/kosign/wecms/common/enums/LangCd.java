@@ -32,4 +32,22 @@ public enum LangCd {
             return EN;
         }
     }
+
+    /**
+     * Map this enum to a JVM {@link Locale} suitable for
+     * {@code MessageSource} lookups. Used by the shared
+     * {@code AuditLogService} when fanning out one audit event into N
+     * locale-specific rows. Constants from
+     * {@link Locale#ENGLISH}/{@code KOREAN} are reused; {@code VI} and
+     * {@code KM} have no JVM constants so a fresh
+     * {@code Locale.of(...)} is built.
+     */
+    public Locale toLocale() {
+        return switch (this) {
+            case EN -> Locale.ENGLISH;
+            case KO -> Locale.KOREAN;
+            case VI -> Locale.of("vi");
+            case KM -> Locale.of("km");
+        };
+    }
 }

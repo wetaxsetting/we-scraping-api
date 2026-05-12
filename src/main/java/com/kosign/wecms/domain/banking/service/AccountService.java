@@ -1,17 +1,24 @@
 package com.kosign.wecms.domain.banking.service;
 
 import com.kosign.wecms.common.enums.AcctTypeCd;
+import com.kosign.wecms.common.exception.BusinessException;
+import com.kosign.wecms.common.security.LogMask;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.common.web.SortDirection;
 import com.kosign.wecms.domain.banking.dto.AccountListResponse;
+import com.kosign.wecms.domain.banking.dto.AccountLookupListResponse;
+import com.kosign.wecms.domain.banking.dto.AccountLookupRow;
 import com.kosign.wecms.domain.banking.dto.AccountRow;
 import com.kosign.wecms.domain.banking.dto.BankOption;
 import com.kosign.wecms.domain.banking.dto.CurrencyTotal;
 import com.kosign.wecms.domain.banking.dto.OwnAccountListResponse;
 import com.kosign.wecms.domain.banking.entity.AcctMstr;
+import com.kosign.wecms.domain.banking.entity.NapasBankInfo;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
 import com.kosign.wecms.domain.banking.repository.CcyAggregate;
+import com.kosign.wecms.domain.banking.repository.NapasBankInfoRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -37,6 +44,7 @@ import java.util.Locale;
  * the refactor DB in V44 and exposed through {@code @Formula} on
  * {@link com.kosign.wecms.domain.banking.entity.AcctMstr}.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class AccountService {
@@ -56,6 +64,7 @@ public class AccountService {
 
     private final AcctMstrRepository acctRepo;
     private final BankCdResolver bankResolver;
+    private final NapasBankInfoRepository napasBankInfoRepo;
 
     /**
      * ACCT_TYPE_CD whitelists per CCY scope. Mirrors legacy
@@ -248,6 +257,110 @@ public class AccountService {
                 mapped.size(),
                 AmountFormatter.wire(balTotal),
                 AmountFormatter.wire(availTotal)
+        );
+    }
+
+    /**
+     * Withdrawal-account autocomplete for the firm-banking-settings
+     * Create dialog. Mirrors legacy
+     * {@code comm_1004_001_act.jsp:56-66} — resolve the public NAPAS
+     * code to the internal {@code BANK_CD} via {@code NAPAS_BANK_INFO},
+     * then return every {@code ACCT_MSTR} row for the tenant under
+     * that bank.
+     *
+     * <p>The flow exactly mirrors JEX:
+     * <ol>
+     *   <li>{@code napasBankInfoRepo.findById(napasBankCd)} →
+     *       legacy {@code NapasBankInfoDAO.findByPk}.</li>
+     *   <li>{@code acctRepo.findByBizKeyAndBankCdOrderByAcctNoAsc} →
+     *       legacy {@code AcctMstrDAO.getRows} with the
+     *       {@code biz_key = ? AND bank_cd = ?} {@code IDODynamic}.</li>
+     * </ol>
+     *
+     * <p><b>No keyword filter on the wire.</b> JEX filters client-side
+     * after a single load per bank (see legacy
+     * {@code comm_0220_002.ts#searchAccounts}); the refactor mirrors
+     * that — the autocomplete loads once per bank-change and the
+     * frontend filters in-memory. Keeping the contract list-only
+     * also means no debounce on the server side, no SQL {@code LIKE}
+     * pattern handling.
+     *
+     * <p><b>No {@code ACTV_YN} predicate</b> — JEX
+     * {@code comm_1004_001} doesn't filter on it either. Inactive
+     * rows in the binding context are visible by design (legacy
+     * tenants commonly bind firm-banking against accounts that are
+     * temporarily flagged inactive in {@code ACCT_MSTR}).
+     *
+     * <p>Tenant scoping: {@code BIZ_KEY} comes from
+     * {@link TenantContext#currentBizKey()}; the dictionary
+     * resolution is global (no tenant column on
+     * {@code NAPAS_BANK_INFO}). Cross-tenant lookups cannot succeed
+     * because the {@code BIZ_KEY} predicate is part of the JPQL
+     * {@code WHERE} chain.
+     *
+     * <p>Empty results (NAPAS code unknown, or no accounts under the
+     * resolved bank for this tenant) return an empty list — never
+     * an error. Mirrors JEX which puts {@code REC = null} (frontend
+     * shows an empty dropdown) when the lookup misses.
+     *
+     * @param napasBankCd The public NAPAS bank code from the wire
+     *                    (e.g. {@code "970424"}). Must not be null /
+     *                    blank — controller's {@code @Pattern} guard
+     *                    enforces format; {@code WBE_VALIDATION} on
+     *                    misuse.
+     */
+    @Transactional(readOnly = true)
+    public AccountLookupListResponse lookupForFirmBanking(String napasBankCd) {
+        if (napasBankCd == null || napasBankCd.isBlank()) {
+            throw new BusinessException("WBE_VALIDATION", "out_bank_cd: is required");
+        }
+        String safeNapasBankCd = napasBankCd.trim();
+        String bizKey          = requireBizKey();
+
+        NapasBankInfo napas = napasBankInfoRepo.findById(safeNapasBankCd).orElse(null);
+        if (napas == null || napas.getBankCd() == null || napas.getBankCd().isBlank()) {
+            // Unknown / unmapped NAPAS code — empty list, mirroring
+            // legacy `comm_1004_001` which puts REC = null. Logged at
+            // debug because the frontend's bounded-bank set should
+            // make this branch unreachable in normal use; if it
+            // fires, it's a config drift between the frontend
+            // dropdown and V68's seed.
+            log.debug("firm-banking-settings account lookup: NAPAS code {} not in NAPAS_BANK_INFO (or has null bank_cd) — returning empty list",
+                    safeNapasBankCd);
+            return new AccountLookupListResponse(List.of());
+        }
+
+        List<AcctMstr> rows = acctRepo
+                .findByBizKeyAndBankCdOrderByAcctNoAsc(bizKey, napas.getBankCd());
+        log.debug("firm-banking-settings account lookup returned {} rows for bizKey={} napasBankCd={} internalBankCd={}",
+                rows.size(), bizKey, safeNapasBankCd, napas.getBankCd());
+
+        return new AccountLookupListResponse(
+                rows.stream().map(AccountService::toLookupRow).toList());
+    }
+
+    private static String requireBizKey() {
+        String bizKey = TenantContext.currentBizKey();
+        if (bizKey == null || bizKey.isBlank()) {
+            // The JWT filter populates TenantContext on every authenticated
+            // request — an empty context here means an unauthenticated path
+            // leaked into the service layer (config bug).
+            throw new BusinessException("WBE9999");
+        }
+        return bizKey;
+    }
+
+    /** Project an {@link AcctMstr} row to the narrow autocomplete
+     *  shape. Server masks the account number once (via the shared
+     *  {@link LogMask#acct}) so every consumer renders the same
+     *  string — keeps log lines and the dropdown chip in sync. */
+    private static AccountLookupRow toLookupRow(AcctMstr a) {
+        return new AccountLookupRow(
+                a.getAcctNo(),
+                LogMask.acct(a.getAcctNo()),
+                a.getCcyCd(),
+                a.getAcctNickNm(),
+                a.getAcctNm()
         );
     }
 

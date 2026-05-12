@@ -1,5 +1,6 @@
 package com.kosign.wecms.domain.setting.firmbankinghistory.service;
 
+import com.kosign.wecms.common.enums.TranTp;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;

@@ -18,11 +18,25 @@ import java.time.OffsetDateTime;
  * Writes the user portion of the bootstrap chain:
  * USER_INFM → USER_BUSI_CONN_INFM → BUSI_ADMN_INFM.
  *
- * <p>Called only by {@link CompanyBootstrapService} so the whole chain runs
- * inside one outer {@code @Transactional} boundary — see seahorse plan §6.
- * Replaces the legacy {@code WB_INIT_USER_DATA} IDO; new password writes go
- * through {@link PasswordHashService} (BCrypt only) so legacy
- * {@code public.hash()} is never touched on a write path.
+ * <p><b>This service is NOT auto-invoked.</b> Like its caller
+ * {@link CompanyBootstrapService}, it has no auto-invocation point —
+ * the previous startup runner ({@code BootstrapRunner}) was removed and
+ * production / UAT / local startup never reaches this code. The
+ * operational way to create the first admin for a new tenant is the
+ * DBA-driven manual SQL setup pattern (see
+ * {@code Claude Code (AI)/sql/setup_uat_account_*.sql}); that script
+ * targets the legacy DEV/UAT/PROD schema where {@code encrypt(...)} +
+ * {@code hash(...)} DB functions exist and audit columns are
+ * {@code varchar(14)}.
+ *
+ * <p>Kept as a callable skeleton for unit tests
+ * ({@code UserBootstrapServiceTest}) and a future Phase 2 admin API.
+ * Do not invoke from production code until that API design lands.
+ *
+ * <p>Implementation mirrors the legacy {@code WB_INIT_USER_DATA} IDO.
+ * New password writes go through {@link PasswordHashService} (BCrypt
+ * only) so the refactor never depends on the legacy {@code public.hash()}
+ * DB function on a write path.
  */
 @Slf4j
 @Service

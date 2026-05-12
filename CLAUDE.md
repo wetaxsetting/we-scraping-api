@@ -57,9 +57,15 @@ All refactor backend documentation lives under [`docs/refactor-wecms/`](../docs/
 
 ## Project Overview
 
-- **What works today:** login (`POST /api/v1/auth/login`), me (`GET /api/v1/auth/me`), logout stub (`POST /api/v1/auth/logout`), JWT-protected catch-all for all other endpoints, Flyway-managed schema (V1–V10), legacy SHA-256 → BCrypt transparent password upgrade on first successful login.
+- **What works today:** login (`POST /api/v1/auth/login`) with two-step multi-company resolution (auto-pick for single-link users; company chooser response for users with ≥ 2 active links), me (`GET /api/v1/auth/me`), logout stub (`POST /api/v1/auth/logout`), JWT-protected catch-all for all other endpoints, Flyway-managed schema, legacy SHA-256 → BCrypt transparent password upgrade on first successful login.
 - **Implemented module:** `domain/auth/` only. Every other JEX module (`pymn`, `mbmr`, `comm`, `admn`, …) is unimplemented.
-- **Tenant scope:** single tenant pinned to `BIZ_KEY = VN_VNM0004_000001` via `wecms.tenant.biz-key`. No wildcards — the config property regex rejects `%`.
+- **Operational model: one user = one company account.** This is the **primary supported business flow** for current WeCMS operation. A `USER_ID` is expected to belong to exactly one active `BIZ_KEY` via `USER_BUSI_CONN_INFM`. Login resolves that single link, issues a JWT scoped to it, and the user lands on the dashboard directly with **no chooser screen**. Legacy WeCMS and current WeCMS operation do **not** treat one user spanning multiple companies as a normal production case.
+- **Multi-company linkage is exceptional / test-demo only.** The refactor's per-user `userBusiRepo.findAllByUserIdAndDelYn(...)` + chooser response (`LoginResponse.chooser(...)` + `CompanyOption[]` + `<CompanyChooser>` UI) are retained as a **safe generic fallback** so a user who happens to have two or more active links won't error out — but that fallback is **not** an endorsement of the multi-company pattern as a documented business requirement. Treat the chooser branch as an exception path; do not redesign domain logic around it. If/when a real future business rule introduces multi-company users, this clause should be replaced with explicit requirements.
+- **Tenant resolution mechanics:** tenant is resolved per user at login from `USER_BUSI_CONN_INFM`; JWT carries the selected `bizKey` + `authGrCd` + `prdtType` claims; `TenantContext` reads them per request. Local seed ships two R&D tenants today: `VN_VNM0004_000001` (V2 + V5 DEV snapshot — `CÔNG TY TNHH WEBCASH VIỆT NAM`, `PRDT_TYPE = 'F'`) and `VN_VNM0004_000014` (V73 seed — `HAENGSUNG ELECTRONICS`, `PRDT_TYPE = 'H'`). V73 originally added a guarded two-company link for `lamine@gmail.com` so the chooser UI could be exercised locally; **V76 removes that test link** so even on the seeded DB the operational model is one-user-one-company. `wecms.tenant.biz-key` is now a **dormant** config slot — retained only so `TenantProperties` stays bindable and so `CompanyBootstrapService.assertConsistent(...)` has a comparison target; the login path does not route through it.
+- **No Spring auto-bootstrap.** Production / UAT / local startup never creates company, employee, user, link, or admin rows. The previous `BootstrapRunner` auto-invocation has been removed. Operational practice is **DBA-driven manual SQL** following the legacy setup pattern (see `Claude Code (AI)/sql/setup_uat_account_*.sql`): generate `BIZ_KEY` via `wb_get_next_val('BUSI_INFM','biz_key',NTNL_CD,CHNL_ID)`, insert `BUSI_INFM`, generate `EMPL_NO` via `wb_get_next_val('EMPL_INFM','empl_no',BIZ_KEY)`, then insert `EMPL_INFM` → `USER_INFM` → `BUSI_ADMN_INFM` → `USER_BUSI_CONN_INFM`. **That legacy script targets the legacy JEX schema** (`encrypt(...)` + `hash(...)` DB functions present, audit columns as `varchar(14)`) and is meant for DEV / UAT / PROD. It is **not** a directly executable migration against the refactor's local DB, which uses native PostgreSQL `TIMESTAMPTZ` / `DATE` audit columns and does not install `encrypt()` / `hash()` (per the "DB Function / Legacy Function Policy" rule — refactor does not add new legacy PL/pgSQL helpers). Local R&D account creation goes through Flyway seeds, not the manual script. **Canonical operational reference:** [docs/refactor-wecms/database/manual-tenant-setup.md](../docs/refactor-wecms/database/manual-tenant-setup.md) — full step-by-step SQL flow, both legacy-UAT and refactor-LOCAL variants, verification queries, and known limitations.
+- **Bootstrap services (`CompanyBootstrapService`, `UserBootstrapService`, `BusinessKeyGeneratorService`, `EmployeeNumberGeneratorService`) are retained but inert.** They have no auto-invocation point; they exist as a callable skeleton for (a) unit tests and (b) a possible future Phase 2 admin API. Do not invoke from production code paths.
+- **Authority model:** `BUSI_ADMN_INFM` is the per-(BIZ_KEY, USER_ID) authority source — presence means ADMIN of that company, absence means USER. Legacy `USER_BUSI_CONN_INFM` carries no `AUTH_GR_CD` column (confirmed on DEV 2026-05-11), so the admin-master table is authoritative. The same user can be ADMIN at one company and USER at another. JWT carries `authGrCd`; `JwtAuthenticationFilter` populates Spring Security authorities (`ROLE_ADMIN` / `ROLE_USER`). `@PreAuthorize` gating of admin-only endpoints is a follow-up MR (the wiring is ready; no endpoint annotated yet).
+- **Product type:** `BUSI_INFM.PRDT_TYPE` (one-character legacy code) is stamped into the JWT at login finalize and surfaced via `TenantContext.currentPrdtType()`. The refactor recognises three letters explicitly today — `F` (WeCMS default, used by `VN_VNM0004_000001`), `M` (WeCMS Lumens), and `H` (WeCMS HAENGSUNG Electronics, used by `VN_VNM0004_000014`) — via `common/enums/PrdtType`. The remaining 11 legacy letters (`W` / `R` / `B` / `E` / `U` / `L` / `S` / `P` / `C` / `D` / `T`) are carried verbatim on the wire and in the JWT but intentionally not modelled — a constant lands in `PrdtType` only when a real consumer for that letter arrives. Per-product behavioural gates (HAENGSUNG payment-table-2 layout, account masking for bank `11704020`, hidden expense file column, daily-financial-HS report gating; WeCMS Default e-Invoice gate; Lumens readonly overrides) are **deferred** and port with each feature MR. Infrastructure only this phase.
 - **Deploy target:** developer laptop only. Runs against a local PostgreSQL instance owned by the developer.
 
 ## Tech Stack
@@ -152,6 +158,32 @@ All refactor backend documentation lives under [`docs/refactor-wecms/`](../docs/
 ### Exceptions (non-rules) — DB schema + JPA `@Column`
 
 The **database schema** stays UPPER_SNAKE forever — column names like `BIZ_KEY`, `CMPN_NM`, `BUSI_INFM` mirror the legacy JEX schema column-for-column so the data copies cleanly (see "Legacy Schema Parity Rule" below). JPA `@Column(name = "UPPER_SNAKE")` annotations on entities are correct and stay. The naming convention above governs **JSON wire shape only**, not SQL.
+
+### Refactor identifier naming — slugs, not WSVC ids
+
+Legacy JEX WSVC / menu ids (`comm_0220_001`, `fnsh_0001_001`, `pymn_0010_002`, …) are JSP-architecture artifacts. **In Spring code, use kebab-case slug identifiers — never legacy WSVC ids.** Cross-tree summary: workspace [CLAUDE.md](../CLAUDE.md) §"Cross-Tree Rules → Refactor work".
+
+| Surface | Slug-based (correct) | Legacy WSVC id (forbidden in this surface) |
+|---|---|---|
+| REST URI | `/api/v1/settings/firm-banking-settings/...` | ❌ never `/api/v1/comm_0220_001/...` |
+| Java package | `com.kosign.wecms.domain.setting.firmbankingsettings` | ❌ never `com.kosign.wecms.domain.comm.comm_0220` |
+| Class names | `FirmBankingSettingsController`, `FirmBankingSettingsService`, `FirmBankingSetting`, `FirmBankingSettingId` | ❌ never `Comm0220Service`, `TbFirmConfController` |
+| DTO records | `FirmBankingSettingRow`, `FirmBankingSettingCreateRequest` | ❌ never `Comm0220R001Response` |
+| i18n message keys | `audit.firm_banking_settings.*`, `settings.firm_banking_settings.*` | ❌ never `audit.comm_0220_001.*` |
+| Log / MDC tags | `firm-banking-settings` | ❌ never `comm_0220_001` |
+| `AUDIT_LOGS_INFM.WSVC_ID` | refactor route slug, e.g. `firm-banking-settings` (override 2026-05-09) | ❌ never `comm_0220_001` for new writes — V67 back-fills any local rows that still carry the legacy value |
+| View Setting `WEB_SVC_ID` | refactor route-based slug from the central registry, e.g. `banking-account-inquiry-vnd` (see [wecms-web-main/lib/viewSettingScreens.ts](../wecms-web-main/lib/viewSettingScreens.ts)) | ❌ never `fnsh_0001_001` (legacy registry retired in V32) |
+
+Legacy WSVC ids are preserved **only** in two buckets going forward:
+
+1. **JEX file:line citations** in Javadoc / migration prose / audit notes — e.g. `// Mirrors comm_0220_002_c001_act.jsp:84-88` is fine.
+2. **Migration traceability prose** in `docs/refactor-wecms/migration/<slug>-mapping.md` — narrative paragraphs explaining "this refactor service replaces JEX `comm_0220_001`."
+
+> **Audit-DB-constant bucket retired 2026-05-09.** Earlier revisions reserved a third bucket for `AUDIT_LOGS_INFM.WSVC_ID` to remain `'comm_0220_001'` so the legacy JEX detail-audit query at `comm_0220_003_r001_act.jsp:74-86` could find refactor-written rows. That decision was overridden — refactor-written audit rows now use the route slug. JEX queries the local refactor DB nowhere (refactor is local-only R&D), so the cross-system compatibility motivation evaporated. A future feature with genuinely irreducible cross-system needs would need a fresh PO decision before reviving this bucket. See [docs/refactor-wecms/features/settings/firm-banking-settings.md §13 OQ-6](../docs/refactor-wecms/features/settings/firm-banking-settings.md) and the V67 back-fill migration.
+
+If you find yourself reaching for a legacy WSVC id in any new Java field name, REST URI segment, package, class, i18n key, log tag, **or DB column** (including `AUDIT_LOGS_INFM.WSVC_ID`), **stop** — that's a bug. Use the slug.
+
+The matching frontend rules (Next.js routes, View Setting `screenId`s) live in [wecms-web-main/CLAUDE.md](../wecms-web-main/CLAUDE.md) §"Routing" + §13.
 
 
 
@@ -276,6 +308,7 @@ com.kosign.wecms
 | `domain/auth` | `POST /api/v1/auth/login`, `POST /api/v1/auth/logout`, `GET /api/v1/auth/me` | Working |
 | `domain/setting` | `GET / PUT / DELETE /api/v1/screen-options/{webSvcId}/{dymAreaId}` + `GET .../areas` (View Setting) | Working — **global / common** WeCMS feature, screen-agnostic. Endpoints accept any `WEB_SVC_ID` + `DYM_AREA_ID` and are reused by every list page across the product (Banking, Payment, Add-on, Settings, future modules). `WEB_SVC_ID` follows the semantic kebab-case convention (`banking-account-inquiry-vnd`, etc.) per [docs/jex/features/view-setting.md §1.1](../docs/jex/features/view-setting.md). First seeded screen: `banking-account-inquiry-vnd` / `default` (V32). New screens add their seed rows in their own feature migration — no controller / service / DTO changes required. |
 | `common/export` + `domain/banking/export` | `POST /api/v1/banking/accounts/export` (XLSX) | Working — **global / common** WeCMS feature. Shared `ExcelExportService` + `ExportableScreenRegistry` + `ExcelWorkbookWriter` (Apache POI SXSSF) consumed by per-resource controller endpoints. First wired screen: `banking-account-inquiry-vnd` (Account Inquiry VND) via `AccountInquiryExportProvider`, which reuses `AccountService.list` so export and list share one query path. Backend computes the count + totals subheader. Adding a new screen = one new `ExportRowProvider` class + one `@PostMapping` per the resource's existing controller. See the **Excel export — `common/export/`** rule below. |
+| `domain/setting/erptransactionhistory` | `GET /api/v1/settings/erp-transaction-history` (list + 4 tab counts), `GET .../{seqNo}/download` (binary), `GET .../{seqNo}/thumbnail` (stub → `WBE9001`) | Working — read-only audit ledger of files exchanged between WeCMS and the customer's ERP. Mirrors legacy `comm_0219_001_r001` + `comm_0219_001_r002`. Tenant-scoped via `TenantContext.currentBizKey()`; sort whitelist `ErpTrnsHistorySortField` (REG_DTM / ERP_TYPE / TRNS_TYPE_CD / REG_USER); LEFT JOIN `UserInfm` replaces legacy `WB_GET_USER_NM`. Download streams from `wecms.erp-transaction-history.storage-root` (default `C:/WECMS PROJECT/File Data`). View Setting **NOT adopted** (OQ-FE-2 — legacy JEX panel has no toolbar list-icon button). Per-feature i18n keys (`settings.erp_transaction_history.direction.*` + `.type.*`) emitted on the wire so frontend renders via `t(key)`. Upload write-path intentionally NOT ported (OQ-1) — each future Payment feature writes its own audit row. |
 | Everything else | — | **Not started.** `domain/payment`, `domain/member`, `domain/settings`, `domain/banking`, … |
 
 Deferred inside `auth` (intentionally out of Sprint 0 scope): 5-failure auto-lock counter, password-change-history reset, `NTNL_CD` / `CHNL_TYPE` / `BUSI_STTS` post-auth gates, post-login menu resolution, refresh tokens, JWT blacklist / server-side logout.
@@ -284,31 +317,63 @@ Deferred inside `auth` (intentionally out of Sprint 0 scope): 5-failure auto-loc
 
 ### Login flow (`AuthService.login`)
 
+Two-step multi-company flow. The `LoginRequest` carries an optional `biz_key`; when omitted, the backend may either auto-pick (single-link user) or return a chooser response (multi-link user).
+
 1. Load `USER_INFM` by `USER_ID`. Missing → `WBE1009` + FAIL row in `USER_LOGIN_HIS`.
 2. Flag gates, in order: `DEL_YN=Y` → `WBE1128`, `ACTV_YN=N` → `WBE1010`, `LOCK_YN=Y` → `WBE1011`.
 3. `passwordEncoder.matches(rawPassword, storedHash)`. Mismatch → `WBE1009`.
 4. If `passwordEncoder.upgradeEncoding(storedHash)` (stored value is not BCrypt), re-encode and save.
-5. Resolve `USER_BUSI_CONN_INFM` row for `(USER_ID, BIZ_KEY = wecms.tenant.biz-key, DEL_YN='N')`. No match → `WBE1009`.
-6. Update `LST_LGN_DATE` on the link.
-7. Write a SUCCESS `USER_LOGIN_HIS` row.
-8. Look up `BUSI_INFM.CMPN_NM`.
-9. Issue JWT and return `LoginResponse(access_token, token_type=Bearer, expires_in, user_id, user_nm, biz_key, lang_cd, cmpn_nm)`.
+5. Query **all** active links: `userBusiRepo.findAllByUserIdAndDelYn(userId, "N")`. Zero rows → `WBE1009` (user not provisioned at any company).
+6. **Resolve the tenant.** Three branches:
+   - **One link.** Auto-pick the row. If the request supplied a `biz_key` that doesn't match → `WBE1009`.
+   - **Multiple links, no `biz_key` in request.** Build the chooser response (`LoginResponse.chooser(...)`): one `CompanyOption(biz_key, cmpn_nm, auth_gr_cd)` per active link, sorted by company name; per-option authority resolved from `BUSI_ADMN_INFM`. Return immediately — **no JWT issued, no `LST_LGN_DATE` write, no SUCCESS audit row**.
+   - **Multiple links, `biz_key` in request.** Find the link whose `bizKey` matches. Unknown / non-matching → `WBE1009`.
+7. Update `LST_LGN_DATE` on the resolved link.
+8. Write a SUCCESS `USER_LOGIN_HIS` row.
+9. Look up `BUSI_INFM` for the resolved company — single query, used for both the `CMPN_NM` display name and the verbatim `PRDT_TYPE` letter.
+10. Resolve authority for the chosen company: `busiAdmnRepo.existsByBizKeyAndUserId(bizKey, userId)` → `"ADMIN"` if present, `"USER"` otherwise.
+11. Issue JWT (`access_token`, `token_type`, `expires_in`) carrying claims `{ sub: userId, userNm, bizKey, langCd, authGrCd, prdtType? }` (the `prdtType` claim is omitted when the company row carries no value — never silently defaulted to `"F"`) and return `LoginResponse.authenticated(...)` with the standard tenant fields + `auth_gr_cd` + `prdt_type`.
+
+The chooser response (multi-link user, no `biz_key` in request) stamps the per-company `prdt_type` into each `CompanyOption` so the frontend can display the product label next to each option. The top-level `prdt_type` is null on the chooser shape — product type only binds once a JWT is issued.
 
 ### Me flow (`AuthService.me`)
 
 1. Read `TenantContext.current()` — populated by `JwtAuthenticationFilter` from the validated JWT.
 2. Verify user still eligible (not deleted / inactive / locked in `USER_INFM`).
-3. Verify link to configured tenant still exists (`USER_BUSI_CONN_INFM` where `DEL_YN='N'`).
+3. Verify the link to the **token-bound** tenant still exists (`USER_BUSI_CONN_INFM` where `DEL_YN='N'`).
 4. Fetch `BUSI_INFM.CMPN_NM`.
-5. Return `MeResponse(USER_ID, USER_NM, BIZ_KEY, LANG_CD, CMPN_NM)`.
+5. Return `MeResponse(USER_ID, USER_NM, BIZ_KEY, LANG_CD, CMPN_NM, AUTH_GR_CD, PRDT_TYPE)` — `authGrCd` and `prdtType` echoed from the JWT claim (signed; not re-queried).
 
 ### JWT (`JwtTokenProvider`)
 - Secret: `wecms.jwt.secret` (env var `WECMS_JWT_SECRET`). Minimum 32 bytes → HS256; ≥ 64 bytes → HS512 (preferred). Fail-fast on missing/too-short secret.
-- Claims: `sub = USER_ID`, `userNm`, `bizKey`, `langCd`. Lifetime from `wecms.jwt.expires-in-seconds` (default 3600 s).
-- **Stateless**: no refresh token, no server-side blacklist.
+- Claims: `sub = USER_ID`, `userNm`, `bizKey`, `langCd`, `authGrCd` (`"ADMIN"` or `"USER"` — stamped at login finalize from `BUSI_ADMN_INFM`), `prdtType` (verbatim `BUSI_INFM.PRDT_TYPE` letter — omitted when the row carries no value). Lifetime from `wecms.jwt.expires-in-seconds` (default 3600 s).
+- **Stateless**: no refresh token, no server-side blacklist. Authority / product-type changes (rows modified in `BUSI_ADMN_INFM` or `BUSI_INFM.PRDT_TYPE`) take effect at the next login — the in-flight JWT's claims are signed and immutable.
 
 ### JWT filter (`JwtAuthenticationFilter`)
-- Runs before `UsernamePasswordAuthenticationFilter`. Reads `Authorization: Bearer <token>`, parses, sets `UsernamePasswordAuthenticationToken` with `principal = userId`, and populates `TenantContext` (userId, bizKey, langCd) for the duration of the request. Invalid token → clear context, let `JwtAuthenticationEntryPoint` return **401** with the standard `ApiResponse` envelope (`status.code = WBE1009`). The frontend's Axios response interceptor watches for 401 to surface the global session-expired re-auth dialog.
+- Runs before `UsernamePasswordAuthenticationFilter`. Reads `Authorization: Bearer <token>`, parses, and:
+  - Sets `UsernamePasswordAuthenticationToken` with `principal = userId` and `authorities = [ROLE_ADMIN | ROLE_USER]` derived from the `authGrCd` claim (advisory until `@PreAuthorize` lands).
+  - Populates `TenantContext` with `(userId, userNm, bizKey, langCd, authGrCd, prdtType)` for the duration of the request. `prdtType` is the verbatim DB letter and may be null when the issuing tenant row had no value.
+- Invalid token → clear context, let `JwtAuthenticationEntryPoint` return **401** with the standard `ApiResponse` envelope (`status.code = WBE1009`). The frontend's Axios response interceptor watches for 401 to surface the global session-expired re-auth dialog.
+- **Never trust frontend-sent `biz_key` or `prdt_type` outside the login endpoint.** Domain services read the active company and product type exclusively from `TenantContext.currentBizKey()` / `TenantContext.currentPrdtType()` (sourced from the signed JWT). A request body or query parameter cannot override the tenant or product type a JWT is bound to. Frontend-side `productType` in `StoredUser` is for UI display + gating only — never a security boundary.
+
+### Product-type rule
+
+`BUSI_INFM.PRDT_TYPE` is a one-character legacy code that flags the product variant a tenant runs (WeCMS Default, WeCMS Lumens, HAENGSUNG Electronics, plus the 11 deferred WABOOKS variants — see "Project Overview"). The refactor's `common/enums/PrdtType` enum lists only the values that have active consumers in the refactor today: `F`, `M`, `H`. Other letters round-trip verbatim through the wire / JWT / `TenantContext` but `PrdtType.fromCode(...)` returns `Optional.empty()` for them so gates degrade safely.
+
+**Rules for new code that branches on product type:**
+
+- **Read from `TenantContext.currentPrdtType()`** — never from a request body, query parameter, header, or the frontend's `StoredUser.productType`. The signed JWT is the only authoritative source.
+- **Use `PrdtType.fromCode(...)` to resolve the enum** — never compare to literal `"F"` / `"M"` / `"H"` strings. Typos and unknown letters fail closed instead of silently activating the wrong gate.
+- **Null is a real value.** A tenant row with `PRDT_TYPE = NULL` ships null through the entire pipeline (no default substitution). Gates that need a value must either fall back explicitly or refuse the request with a documented error code.
+- **Adding a constant requires a real consumer.** Don't pre-populate the enum with the 11 deferred WABOOKS letters speculatively; add them in the MR that ports their first behavioural gate.
+
+**Deferred per-product behaviours (port with each feature MR, not infrastructure-level):**
+
+| Product | Deferred behaviour | Lands with |
+|---|---|---|
+| `F` | e-Invoice feature gate | Add-on e-Invoice MR |
+| `M` | Readonly-field overrides | The first form whose readonly rules differ for Lumens |
+| `H` | Payment table-2 layout, account masking for bank `11704020`, hidden expense file column, daily-financial-HS report gating | Each ports with its module (Payment, Banking Transfer, Add-on Expense, Reports) |
 
 ### Security filter chain (`SecurityConfig`)
 - CSRF disabled, CORS enabled via `CorsConfig` bean, session `STATELESS`.
@@ -395,6 +460,9 @@ JWT 401 stays handled by [`JwtAuthenticationEntryPoint`](src/main/java/com/kosig
 | WBE2011 | Excel export exceeds the 50,000-row cap |
 | WBE2012 | Excel export failed (unexpected runtime error before bytes flushed) |
 | WBE2013 | Excel export request has no exportable columns after intersection with View Setting / allow-list |
+| WBE2014 | ERP Transaction History row not found in tenant (single envelope merges "not found" + "wrong tenant") |
+| WBE2015 | ERP Transaction History file is unavailable on the configured storage root (or `FILE_SIZE = 0` batch row) |
+| WBE9001 | Endpoint is not yet implemented (current consumer: ERP Transaction History thumbnail stub) |
 | WBE_VALIDATION | Bean-validation failure |
 | WBE9999 | Unexpected server error |
 
@@ -449,6 +517,11 @@ Add new codes to `messages.properties` first, then throw `new BusinessException(
   | V40 | Fix SIZE column — drop V39 duplicate, rename legacy `"SIZE"` → `size` (2026-05-02) — V39's `size` column had wrong `'auto'` values; the real Figma pixel values (`38px`, `240px`, `280px`, …) lived in the legacy `"SIZE"` column. V40: drops the V39 `size` column, renames `"SIZE"` to `size`, widens both tables from varchar(10) → varchar(20). Sys: NOT NULL re-asserted (0 nulls confirmed). User: stays NULLABLE (lazy-init'd by `initUserRowsFromSys`). Entity `length` annotation updated to 20 on both `SysScrOptionWecms` and `UserScrOptionWecms`. |
   | V41 | View Setting — turn off `SORT_YN` for `VAS_ACCOUNT` on `banking-account-inquiry-vnd` (2026-05-02) — flips `SYS_SCR_OPTION_WECMS.SORT_YN='N'` and clears `USER_SCR_OPTION_WECMS` for the screen so the lazy-init step re-copies the corrected sys default. Aligns the seed with the backend `AccountSortField` whitelist (no `VAS_ACCOUNT` constant — column has no backing entity field yet) per the new "Common table sort" rule that `SORT_YN='Y'` columns MUST have a whitelist entry. Idempotent. When `BUSI_VAS_ACCT_INFM` lands in a later sprint, the same migration that adds the enum constant flips this back to `'Y'`. |
   | V42 | View Setting — set `DISP_YN='N'` for `VAS_ACCOUNT` on `banking-account-inquiry-vnd` (2026-05-02) — hides `VAS_ACCOUNT` from the View Setting popup. `DISP_YN='N'` mirrors the legacy `IDO.USER_SCR_OPTION_WECMS_R002.xml` filter (`WHERE ... AND USR.DISP_YN = 'Y'`): the popup query returns only rows where `DISP_YN='Y'`. Frontend `ViewSettingPopover.tsx` enforces the same rule client-side (added in the same MR). `VAS_ACCOUNT` already has `USE_YN='N'` (hidden from table by default, V34); `DISP_YN='N'` prevents users from "un-hiding" a column that still renders `"—"`. Clears `USER_SCR_OPTION_WECMS` for the scope so lazy-init re-copies the corrected flag. When `BUSI_VAS_ACCT_INFM` is ported, flip both `DISP_YN` and `USE_YN` back to `'Y'` in the same migration. Idempotent. |
+  | V43–V70 | Settings module groundwork (audit logs, firm-banking sources/view/seed, environment settings, etc.). See individual migration files in `src/main/resources/db/migration/` — not transcribed into this table on a per-row basis. |
+  | V71 | ERP Transaction History schema (2026-05-11) — `CREATE TABLE IF NOT EXISTS ERP_TRNS_HSTR` column-for-column with JEX DEV (`biz_key VARCHAR(20)`, `seq_no NUMERIC(10,0)`, `org_file_nm` / `save_file_nm` VARCHAR(500), `file_size NUMERIC(10,0)`, `erp_type CHAR(1)`, `trns_type_cd CHAR(2)`, `reg_id VARCHAR(100)`, `reg_dtm VARCHAR(14)`, PK `(BIZ_KEY, SEQ_NO)`). Adds two helper performance indexes beyond DEV (`IX_*_BIZ_REG_DTM`, `IX_*_BIZ_ERP_TYPE`) — extra indexes allowed by the Legacy Schema Parity Rule. Idempotent. First consumer: `domain/setting/erptransactionhistory`. |
+  | V72 | ERP Transaction History demo seed (2026-05-11) — 30 rows for tenant `VN_VNM0004_000001` from real JEX DEV (top 10 per direction by `REG_DTM DESC, SEQ_NO DESC`). All seeded rows have `FILE_SIZE > 0`; physical files are NOT seeded under `wecms.erp-transaction-history.storage-root` — the download endpoint surfaces `WBE2015` for any row whose file is missing locally, mirroring production behaviour. Idempotent via `INSERT … ON CONFLICT DO NOTHING`. |
+  | V73 | Multi-tenant seed (2026-05-11) — adds second R&D tenant `VN_VNM0004_000014` (HAENGSUNG ELECTRONICS, `PRDT_TYPE = 'H'`) from real JEX DEV, plus 6 DEV-imported HAENGSUNG users, the `BUSI_ADMN_INFM` row for `wecmshaengsung@gmail.com`, and three `WHERE EXISTS`-guarded multi-company links (`rndadmin` / `testuser` light up on bootstrap-only DBs — no-op on DEV-imported DBs; `lamine@gmail.com` lights up on DEV-imported DBs so the chooser is exercisable there). All inserts idempotent via `ON CONFLICT DO NOTHING` + the `WHERE EXISTS` guard prevents FK violations against `USER_INFM` for any user that isn't present on the local DB. |
+  | V74 | Backfill `BUSI_INFM.PRDT_TYPE` for `VN_VNM0004_000001` (2026-05-11) — V2's INSERT omitted the column so the row was `NULL` locally; DEV stores `'F'`. Idempotent — WHERE clause excludes rows that already carry a non-NULL value. After V74 the two local R&D tenants align with the refactor's recognised set: 000001 → `'F'`, 000014 → `'H'`. |
 
 - Table/column naming: `UPPER_SNAKE`, FK constraints `FK_<child>_<parent>`. Mirror legacy JEX so data copies cleanly.
 
@@ -563,7 +636,7 @@ The refactor is moving away from legacy JEX-style PL/pgSQL helpers in favour of 
 
 | Function / sequence | Created by | Consumed by | Why kept | Retire when |
 |---|---|---|---|---|
-| `wb_get_next_val(table, field, p1..p6)` — **13 branches** (Sprint 0: 2 + Sprint 1: 11) | V11 (2-branch stub) → V25 (164-branch over-port, immediate error) → V26 (trimmed to 2) → **V27** (corrected: Sprint 0 + Sprint 1 migrated-table branches) | `common.legacy.LegacyFunctionRepository`, `domain.auth.bootstrap.{BusinessKeyGeneratorService, EmployeeNumberGeneratorService, CompanyBootstrapService, BootstrapRunner}` | Branches exactly cover the locally migrated table set that has a DEV branch. Sprint 0: company key + employee number. Sprint 1: 11 tables with DEV branches (see §"Key-generation rule" below for list). Sprint 2+ tables: branch added with the table's migration sprint. | When Phase 3 retires the bootstrap path. Sprint 1 branches retire when each feature gets a Java-side generator. |
+| `wb_get_next_val(table, field, p1..p6)` — **13 branches** (Sprint 0: 2 + Sprint 1: 11) | V11 (2-branch stub) → V25 (164-branch over-port, immediate error) → V26 (trimmed to 2) → **V27** (corrected: Sprint 0 + Sprint 1 migrated-table branches) | `common.legacy.LegacyFunctionRepository`, `domain.auth.bootstrap.{BusinessKeyGeneratorService, EmployeeNumberGeneratorService, CompanyBootstrapService}` (all retained but inert — no production caller after `BootstrapRunner` was removed); the legacy **DBA manual setup SQL** still calls the same function directly against DEV / UAT / PROD | Branches exactly cover the locally migrated table set that has a DEV branch. Sprint 0: company key + employee number. Sprint 1: 11 tables with DEV branches (see §"Key-generation rule" below for list). Sprint 2+ tables: branch added with the table's migration sprint. | When Phase 3 retires the bootstrap path. Sprint 1 branches retire when each feature gets a Java-side generator. |
 | `sq_biz_key` sequence | V11 | `wb_get_next_val('busi_infm','biz_key',…)` (via the BUSI_INFM branch) | Keeps legacy parity for the company-key generator. | Same retirement window as `wb_get_next_val`. |
 
 **Key-generation rule for migrated legacy tables**
@@ -649,6 +722,7 @@ public enum InoutDv {
 | [`InoutDv`](src/main/java/com/kosign/wecms/common/enums/InoutDv.java) | `wabooks/enums/InoutDv.java` (1, 2, 0) | `ACCT_TRNS_HSTR.INOUT_DV` | `TransactionService` (totals + filter + row mapping) | `tx.inout.*` (key registered, locale entries deferred) |
 | [`AcctTypeCd`](src/main/java/com/kosign/wecms/common/enums/AcctTypeCd.java) | `wabooks/enums/AcctTypeCd.java` (01–08) | `ACCT_MSTR.ACCT_TYPE_CD` | `BankCdResolver.resolveAcctTypeKey`, `AccountService` filter sets | `bank.acct_type.*` (EN + KO verified) |
 | [`FirmBankingSvcType`](src/main/java/com/kosign/wecms/common/enums/FirmBankingSvcType.java) | (no JEX twin — V60 view discriminator) | `V_FIRM_BANKING_HISTORY.SVC_TYPE` | `FirmBankingHistoryService.toRow` | `settings.firm_banking_history.service_type.*` (EN + KO + VI verified) |
+| [`PrdtType`](src/main/java/com/kosign/wecms/common/enums/PrdtType.java) | `wabooks/enums/PrdtType.java` (14 legacy letters; refactor models only `F`, `M`, `H`) | `BUSI_INFM.PRDT_TYPE`, JWT `prdtType` claim | `AuthService.login` (stamp), `AuthService.me` (echo) | `auth.prdt_type.*` (EN + KO + VI verified for F/M/H) |
 
 **Deferred enums** — port each when its module migrates, not before:
 
