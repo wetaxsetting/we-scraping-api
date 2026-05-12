@@ -34,17 +34,13 @@ if "%WECMS_JWT_SECRET%"=="" (
     exit /b 1
 )
 
-REM --- 3. Sanity-check PostgreSQL is reachable on localhost:5434 ---
-REM     (Optional — only works if netstat is on the PATH.)
-where netstat >nul 2>nul
-if %ERRORLEVEL%==0 (
-    netstat -an | findstr /c:":5434 " >nul
-    if errorlevel 1 (
-        echo.
-        echo [FAIL] Nothing is listening on localhost:5434.
-        echo        Start your local PostgreSQL before rerunning.
-        exit /b 1
-    )
+REM --- 3. Sanity-check WeCMS dev DB server is reachable ---
+powershell -NoProfile -Command "if (-not (Test-NetConnection -ComputerName '172.168.5.172' -Port 5432 -InformationLevel Quiet -WarningAction SilentlyContinue)) { exit 1 }"
+if errorlevel 1 (
+    echo.
+    echo [FAIL] WeCMS dev DB server 172.168.5.172:5432 is not reachable.
+    echo        Check VPN / network access before rerunning.
+    exit /b 1
 )
 
 REM --- 4. Run Spring Boot ---

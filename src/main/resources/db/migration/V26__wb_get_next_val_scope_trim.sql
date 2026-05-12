@@ -52,7 +52,7 @@ DROP SEQUENCE IF EXISTS sq_busa_actv_seq;
 -- 2. Replace the function with the 2-branch scope-minimal version.
 --    CREATE OR REPLACE is idempotent — safe to re-run.
 -- --------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.wb_get_next_val(
+CREATE OR REPLACE FUNCTION wb_get_next_val(
     tablename character varying,
     fieldname character varying,
     param1 character varying DEFAULT NULL::character varying,

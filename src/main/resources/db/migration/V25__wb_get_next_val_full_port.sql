@@ -50,7 +50,7 @@ CREATE SEQUENCE IF NOT EXISTS sq_busa_actv_seq;
 -- --------------------------------------------------------------------------
 -- 2. Full function — DEV-compatible, all 164 branches
 -- --------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.wb_get_next_val(tablename character varying, fieldname character varying, param1 character varying DEFAULT NULL::character varying, param2 character varying DEFAULT NULL::character varying, param3 character varying DEFAULT NULL::character varying, param4 character varying DEFAULT NULL::character varying, param5 character varying DEFAULT NULL::character varying, param6 character varying DEFAULT NULL::character varying)
+CREATE OR REPLACE FUNCTION wb_get_next_val(tablename character varying, fieldname character varying, param1 character varying DEFAULT NULL::character varying, param2 character varying DEFAULT NULL::character varying, param3 character varying DEFAULT NULL::character varying, param4 character varying DEFAULT NULL::character varying, param5 character varying DEFAULT NULL::character varying, param6 character varying DEFAULT NULL::character varying)
  RETURNS text
  LANGUAGE plpgsql
 AS $function$

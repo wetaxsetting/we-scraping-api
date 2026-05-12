@@ -28,10 +28,10 @@ if [ -z "${WECMS_JWT_SECRET:-}" ]; then
     exit 1
 fi
 
-# --- 3. Sanity-check PostgreSQL on localhost:5434 ---
-if ! (exec 3<>/dev/tcp/localhost/5434) 2>/dev/null; then
-    echo "[FAIL] Nothing is listening on localhost:5434." >&2
-    echo "       Start your local PostgreSQL before rerunning." >&2
+# --- 3. Sanity-check WeCMS dev DB server is reachable ---
+if ! (exec 3<>/dev/tcp/172.168.5.172/5432) 2>/dev/null; then
+    echo "[FAIL] WeCMS dev DB server 172.168.5.172:5432 is not reachable." >&2
+    echo "       Check VPN / network access before rerunning." >&2
     exit 1
 fi
 exec 3>&- 2>/dev/null || true

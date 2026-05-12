@@ -41,7 +41,7 @@
 -- branch added here.
 -- ============================================================================
 
-CREATE OR REPLACE FUNCTION public.wb_get_next_val(
+CREATE OR REPLACE FUNCTION wb_get_next_val(
     tablename character varying,
     fieldname character varying,
     param1 character varying DEFAULT NULL::character varying,
