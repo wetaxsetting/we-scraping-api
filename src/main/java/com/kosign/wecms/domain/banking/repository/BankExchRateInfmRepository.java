@@ -31,11 +31,25 @@ public interface BankExchRateInfmRepository extends JpaRepository<BankExchRateIn
             @Param("refDate") String refDate);
 
     /**
+     * All currencies for a specific batch SEQ_NO, ordered by CCY_CD.
+     * Used when the caller explicitly requests a particular sequence number
+     * (e.g. SEQ_NO='1' for the morning run, '2' for the afternoon run).
+     */
+    List<BankExchRateInfm> findByBizKeyAndBankCdAndRefDateAndSeqNoOrderByCcyCdAsc(
+            String bizKey, String bankCd, String refDate, String seqNo);
+
+    /**
      * Narrows to a single counter-currency — used when the frontend
      * requests one specific currency row.
      */
     List<BankExchRateInfm> findByBizKeyAndBankCdAndRefDateAndCcyCdOrderBySeqNoAsc(
             String bizKey, String bankCd, String refDate, String ccyCd);
+
+    /**
+     * Finds an exact match for updating the exchange rate data from the batch.
+     */
+    Optional<BankExchRateInfm> findByBizKeyAndBankCdAndRefDateAndCcyCdAndSeqNo(
+            String bizKey, String bankCd, String refDate, String ccyCd, String seqNo);
 
     /**
      * Returns the most recent REF_DATE that has data for the given tenant
@@ -51,4 +65,14 @@ public interface BankExchRateInfmRepository extends JpaRepository<BankExchRateIn
      */
     @Query("SELECT DISTINCT e.bankCd FROM BankExchRateInfm e WHERE e.bizKey = :bizKey ORDER BY e.bankCd ASC")
     List<String> findDistinctBankCdByBizKey(@Param("bizKey") String bizKey);
+
+    /**
+     * Returns the next EXCH_SEQ_NO for a tenant — MAX + 1 scoped to BIZ_KEY.
+     * Used by the exchange rate batch instead of wb_get_next_val so the seq
+     * is computed in Java without requiring a PL/pgSQL function branch.
+     */
+    @Query(nativeQuery = true,
+           value = "SELECT CAST(COALESCE(MAX(exch_seq_no::numeric), 0) + 1 AS varchar) " +
+                   "FROM bank_exch_rate_infm WHERE biz_key = :bizKey")
+    String findNextExchSeqNo(@Param("bizKey") String bizKey);
 }

@@ -47,35 +47,8 @@ public class ExchangeRateController {
      * GET /api/v1/banking/exchange-rates
      *   ?ref_date=20250702   (optional — defaults to today Vietnam time)
      *   &bank_cd=11704088    (optional — defaults to Shinhan Bank)
+     *   &seq_no=2            (optional — "1" morning, "2" afternoon; omit → latest)
      * </pre>
-     *
-     * <p>Response example:
-     * <pre>{@code
-     * {
-     *   "status": { "error": false, "code": "WBI0000", "message": "Success" },
-     *   "data": {
-     *     "ref_date": "20250702",
-     *     "bank_cd": "11704088",
-     *     "bank_nm": "Shinhan Bank",
-     *     "rates": [
-     *       {
-     *         "ccy_cd": "EUR",
-     *         "ref_ccy_cd": "KRW",
-     *         "basic_rate": 1450.00,
-     *         "basic_tran": 1460.00,
-     *         "buy_amt": 1430.00,
-     *         "sell_amt": 1480.00,
-     *         "tran_buy_amt": 1440.00,
-     *         "tran_sell_amt": 1470.00,
-     *         "stand_point": "...",
-     *         "last_update_date": "20250702",
-     *         "last_update_time": "090000",
-     *         "exch_rate_reg_dtm": "20250702090000"
-     *       }
-     *     ]
-     *   }
-     * }
-     * }</pre>
      */
     @GetMapping("/exchange-rates")
     public ApiResponse<ExchangeRateListResponse> list(
@@ -85,9 +58,13 @@ public class ExchangeRateController {
 
             @RequestParam(value = "bank_cd", required = false)
             @Size(max = 20, message = "bank_cd must not exceed 20 characters")
-            String bankCd
+            String bankCd,
+
+            @RequestParam(value = "seq_no", required = false)
+            @Pattern(regexp = "^[0-9]{1,2}$", message = "seq_no must be a 1-2 digit number")
+            String seqNo
     ) {
-        ExchangeRateListResponse response = exchangeRateService.list(refDate, bankCd);
+        ExchangeRateListResponse response = exchangeRateService.list(refDate, bankCd, seqNo);
         return ApiResponse.ok(response);
     }
 

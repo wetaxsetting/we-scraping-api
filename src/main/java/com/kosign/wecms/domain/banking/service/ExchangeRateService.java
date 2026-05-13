@@ -43,35 +43,52 @@ public class ExchangeRateService {
 
     private final BankExchRateInfmRepository exchRateRepo;
     private final BankCdResolver bankCdResolver;
+    private final ExchangeRateBatchService exchangeRateBatchService;
 
     /**
      * Returns one exchange rate row per currency for the authenticated tenant on
-     * the requested reference date.  When the batch has run twice on the same day
-     * (morning + afternoon), only the afternoon run (highest EXCH_SEQ_NO) is
-     * returned — matching the JEX IDO R002 COALESCE preference for SEQ_NO='2'.
+     * the requested reference date.
+     *
+     * <p>When {@code seqNo} is supplied (e.g. "1" or "2") only rows for that exact
+     * batch round are returned — matching the JEX r001 exact-SEQ_NO filter.</p>
+     *
+     * <p>When {@code seqNo} is omitted, the latest batch round (highest EXCH_SEQ_NO)
+     * per currency is returned — matching the JEX IDO R002 COALESCE preference for
+     * SEQ_NO='2' when both morning and afternoon runs exist.</p>
      *
      * @param refDate  YYYYMMDD; {@code null} or blank → today (UTC+7 / Vietnam)
      * @param bankCd   bank code; {@code null} or blank → {@link #DEFAULT_BANK_CD}
+     * @param seqNo    batch sequence number ("1", "2", …); {@code null} or blank → latest
      */
-    public ExchangeRateListResponse list(String refDate, String bankCd) {
+    public ExchangeRateListResponse list(String refDate, String bankCd, String seqNo) {
         String bizKey       = TenantContext.currentBizKey();
         String resolvedDate = resolveDate(refDate);
         String resolvedBank = (bankCd != null && !bankCd.isBlank()) ? bankCd : DEFAULT_BANK_CD;
+        boolean hasSeqNo    = seqNo != null && !seqNo.isBlank();
 
-        log.debug("exchange-rates list: bizKey={} bank={} date={}", bizKey, resolvedBank, resolvedDate);
+        log.debug("exchange-rates list: bizKey={} bank={} date={} seqNo={}", bizKey, resolvedBank, resolvedDate, seqNo);
 
-        List<BankExchRateInfm> rows = exchRateRepo
-                .findLatestPerCurrencyByBizKeyAndBankCdAndRefDate(bizKey, resolvedBank, resolvedDate);
+        List<BankExchRateInfm> rows = fetchRows(bizKey, resolvedBank, resolvedDate, hasSeqNo ? seqNo : null);
 
-        // When no explicit date was requested and today has no data (batch hasn't run yet),
-        // fall back to the most recent date that has rows — keeps the page useful in dev/UAT.
+        // When no explicit date was requested and today has no data, trigger the batch
+        // synchronously to fetch from Coocon API (on-demand loading for the first caller).
         if (rows.isEmpty() && refDate == null) {
-            String latestDate = exchRateRepo.findLatestRefDate(bizKey, resolvedBank).orElse(null);
-            if (latestDate != null && !latestDate.equals(resolvedDate)) {
-                log.debug("exchange-rates fallback to latest available date: {}", latestDate);
-                resolvedDate = latestDate;
-                rows = exchRateRepo
-                        .findLatestPerCurrencyByBizKeyAndBankCdAndRefDate(bizKey, resolvedBank, resolvedDate);
+            log.info("No exchange rates found for today. Triggering on-demand fetch from Coocon API.");
+            try {
+                exchangeRateBatchService.fetchAndSaveExchangeRates();
+                rows = fetchRows(bizKey, resolvedBank, resolvedDate, hasSeqNo ? seqNo : null);
+            } catch (Exception e) {
+                log.error("On-demand exchange rate fetch failed", e);
+            }
+
+            // If still empty (e.g. Coocon is down or no rates yet), fall back to the most recent date
+            if (rows.isEmpty()) {
+                String latestDate = exchRateRepo.findLatestRefDate(bizKey, resolvedBank).orElse(null);
+                if (latestDate != null && !latestDate.equals(resolvedDate)) {
+                    log.debug("exchange-rates fallback to latest available date: {}", latestDate);
+                    resolvedDate = latestDate;
+                    rows = fetchRows(bizKey, resolvedBank, resolvedDate, hasSeqNo ? seqNo : null);
+                }
             }
         }
 
@@ -118,6 +135,18 @@ public class ExchangeRateService {
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
+
+    /**
+     * Delegates to the correct repository query based on whether a {@code seqNo}
+     * filter was requested.  {@code null} = no filter (DISTINCT ON latest).
+     */
+    private List<BankExchRateInfm> fetchRows(String bizKey, String bankCd, String refDate, String seqNo) {
+        if (seqNo != null) {
+            return exchRateRepo.findByBizKeyAndBankCdAndRefDateAndSeqNoOrderByCcyCdAsc(
+                    bizKey, bankCd, refDate, seqNo);
+        }
+        return exchRateRepo.findLatestPerCurrencyByBizKeyAndBankCdAndRefDate(bizKey, bankCd, refDate);
+    }
 
     /**
      * Returns today in YYYYMMDD using Vietnam time (UTC+7) when the caller passes
