@@ -180,4 +180,62 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
             @Param("ccyEq")        String ccyEq,
             @Param("ccyNot")       String ccyNot,
             @Param("acctTypeCdIn") List<String> acctTypeCdIn);
+
+    /**
+     * Withdrawal-account lookup for the Payment Internal Transfer
+     * upload dialog (legacy `comm_1001_001`). Returns active
+     * current/savings accounts the current tenant has enrolled in
+     * firm-banking (EXISTS in {@code TB_FIRM_CONF} with {@code
+     * ORG_STAT='1'}).
+     *
+     * <p>Mirrors the legacy IDO {@code ACCT_MSTR_R011} via
+     * {@code comm_1001_001_act.jsp:23-65}. The five legacy filters
+     * are:
+     * <ol>
+     *   <li>tenant scope ({@code biz_key})</li>
+     *   <li>firm-banking-capable banks (legacy hardcoded
+     *       {@code bank_cd IN ('11704088', '11704020')}; the
+     *       refactor relaxes this — any bank with a matching
+     *       {@code TB_FIRM_CONF} row qualifies, since the firm-banking
+     *       enrolment table is itself the authoritative "capable"
+     *       indicator)</li>
+     *   <li>current/savings only ({@code acct_type_cd IN ('03'..'08')})</li>
+     *   <li>{@code ACTV_YN = 'Y'}</li>
+     *   <li>EXISTS in {@code TB_FIRM_CONF} with {@code ORG_STAT='1'}
+     *       joined via the {@code NAPAS_BANK_INFO} dictionary</li>
+     * </ol>
+     *
+     * <p><b>Deferred filter:</b> the legacy also requires EXISTS in
+     * {@code ACCT_AUTH_INFO} with {@code AUTH_TYPE IN ('V','W')} so
+     * only accounts the user has View/Withdraw authority on appear.
+     * That table is not yet migrated in the refactor (workspace
+     * `CLAUDE.md` PROD active list); the filter ports together with
+     * the {@code ACCT_AUTH_INFO} entity in a follow-up. R&D safe:
+     * with a single test tenant the per-user check is a no-op.
+     *
+     * <p>Optional {@code ccyCd} filter — legacy carries the parameter
+     * but the SQL has it commented out. Honored here when the caller
+     * supplies a non-null value so future per-upload-currency
+     * narrowing is one-prop change away.
+     */
+    @Query("""
+            SELECT a FROM AcctMstr a
+             WHERE a.bizKey = :bizKey
+               AND a.actvYn = 'Y'
+               AND a.acctTypeCd IN ('03','04','05','06','07','08')
+               AND (:ccyCd IS NULL OR a.ccyCd = :ccyCd)
+               AND EXISTS (
+                    SELECT 1
+                      FROM FirmBankingSetting tfc, NapasBankInfo nbi
+                     WHERE tfc.bizKey      = a.bizKey
+                       AND tfc.wdrlActNo   = a.acctNo
+                       AND tfc.outBankCd   = nbi.napasBankCd
+                       AND nbi.bankCd      = a.bankCd
+                       AND tfc.orgStat     = '1'
+                   )
+             ORDER BY a.bankCd, a.acctNo
+            """)
+    List<AcctMstr> findWithdrawalAccounts(
+            @Param("bizKey") String bizKey,
+            @Param("ccyCd")  String ccyCd);
 }

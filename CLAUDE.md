@@ -4,6 +4,8 @@ Living AI/developer guide for the Spring Boot backend of the WeCMS JEX → Sprin
 
 Workspace-level rules (cross-tree, write boundary, typography source of truth, BIZ_KEY rule) live in the root [CLAUDE.md](../CLAUDE.md). The Next.js frontend this app serves is in [wecms-web-main/](../wecms-web-main/). JEX functional spec is read-only in [WECMS DEV/CLAUDE.md](../WECMS%20DEV/CLAUDE.md).
 
+**Porting a feature?** The end-to-end procedural workflow (discovery → design docs → Flyway → backend → frontend → verify) is at [docs/refactor-wecms/MIGRATION_PLAYBOOK.md](../docs/refactor-wecms/MIGRATION_PLAYBOOK.md). Steps 4–5 of the playbook are the backend slice; the rules each step links to live in *this* file.
+
 ---
 
 ## Purpose
