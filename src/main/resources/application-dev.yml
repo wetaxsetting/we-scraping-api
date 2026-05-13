@@ -9,6 +9,17 @@ spring:
     properties:
       hibernate.format_sql: true
 
+wecms:
+  coocon:
+    # Coocon DEV gateway — same credentials as the JEX DEV system
+    # (VI/jex.wabooks_new.user.xml). Override via WECMS_COOCON_* env vars
+    # when the deployed DEV environment needs a different endpoint.
+    api-key: ${WECMS_COOCON_API_KEY:r2L7U6KnB4T51VokPlkg}
+    api-url: ${WECMS_COOCON_API_URL:https://dev2.coocon.co.kr:8443/overseas/finance/scrap/bigdata_info.jsp}
+    smart-api-key: ${WECMS_COOCON_SMART_API_KEY:fxAeocJbuweNTgv5FBns}
+    smart-api-url: ${WECMS_COOCON_SMART_API_URL:https://dev-sgw.webcashvietnam.com:8443/domestic/finance/scrap/smart_gateway.jsp}
+    unique-key: ${WECMS_COOCON_UNIQUE_KEY:0000099}
+
 logging:
   level:
     com.kosign.wecms: DEBUG
