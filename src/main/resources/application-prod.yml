@@ -21,6 +21,15 @@ server:
     include-stacktrace: never
     include-binding-errors: never
 
+# Coocon: ALL five variables MUST be set as environment variables in PROD.
+# There are no defaults here — the app will refuse to start with a missing value.
+# Required env vars:
+#   WECMS_COOCON_API_KEY
+#   WECMS_COOCON_API_URL
+#   WECMS_COOCON_SMART_API_KEY
+#   WECMS_COOCON_SMART_API_URL
+#   WECMS_COOCON_UNIQUE_KEY
+
 logging:
   level:
     root: WARN

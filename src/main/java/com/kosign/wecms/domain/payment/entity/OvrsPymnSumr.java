@@ -1,0 +1,89 @@
+package com.kosign.wecms.domain.payment.entity;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.IdClass;
+import jakarta.persistence.Table;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+
+import java.math.BigDecimal;
+
+/**
+ * Overseas Payment Summary — batch / Excel-upload payment records (type = 'E').
+ * Source: wabooks.entity.OvrsPymnSumr (JEX DEV).
+ * Table created by V85.
+ *
+ * <p>REG_DTM / MOD_DTM are VARCHAR(14) for legacy parity — this entity
+ * does NOT extend {@code BaseEntity} (which uses OffsetDateTime).
+ */
+@Getter
+@Setter
+@NoArgsConstructor
+@Entity
+@Table(name = "OVRS_PYMN_SUMR")
+@IdClass(OvrsPymnSumrId.class)
+public class OvrsPymnSumr {
+
+    @Id
+    @Column(name = "BIZ_KEY", length = 20, nullable = false)
+    private String bizKey;
+
+    @Id
+    @Column(name = "OVRS_PYMN_NO", length = 20, nullable = false)
+    private String ovrsPymnNo;
+
+    @Column(name = "OVRS_PYMN_TYPE_CD", length = 10)
+    private String ovrsPymnTypeCd;
+
+    /** Title / original filename of the Excel batch. */
+    @Column(name = "TITL", length = 200)
+    private String titl;
+
+    @Column(name = "CCY_CD", length = 10)
+    private String ccyCd;
+
+    @Column(name = "TOTAL_TRAN_AMT", precision = 20, scale = 2)
+    private BigDecimal totalTranAmt;
+
+    @Column(name = "TOT_TRNS_CNT")
+    private Integer totTrnsCnt;
+
+    @Column(name = "APPR_SEQ_NO", length = 20)
+    private String apprSeqNo;
+
+    @Column(name = "OUT_BANK_CD", length = 20)
+    private String outBankCd;
+
+    @Column(name = "WDRL_ACT_NO", length = 100)
+    private String wdrlActNo;
+
+    @Column(name = "TRNF_YN", length = 1, nullable = false)
+    private String trnfYn;
+
+    @Column(name = "OUT_BANK_NM", length = 100)
+    private String outBankNm;
+
+    @Column(name = "ORG_FILE_NM", length = 300)
+    private String orgFileNm;
+
+    @Column(name = "SAVE_FILE_NM", length = 300)
+    private String saveFileNm;
+
+    @Column(name = "FILE_URL", length = 500)
+    private String fileUrl;
+
+    @Column(name = "REG_DTM", length = 14, nullable = false)
+    private String regDtm;
+
+    @Column(name = "REG_ID", length = 100)
+    private String regId;
+
+    @Column(name = "MOD_DTM", length = 14)
+    private String modDtm;
+
+    @Column(name = "MOD_ID", length = 100)
+    private String modId;
+}

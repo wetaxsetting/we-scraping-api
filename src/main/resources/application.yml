@@ -68,3 +68,13 @@ wecms:
     # honour Java Paths.get(...)). Profile-specific overrides live in
     # application-{profile}.yml.
     storage-root: ${WECMS_ERP_TRANSACTION_HISTORY_STORAGE_ROOT:./tmp/erp-trns-hstr}
+  coocon:
+    # Coocon API credentials — mirrors <coocon> in JEX config
+    # (WECMS DEV/.../VI/jex.wabooks_new.user.xml).
+    # DEV values are set in application-local.yml and application-dev.yml.
+    # PROD: supply all five via environment variables.
+    api-key: ${WECMS_COOCON_API_KEY}
+    api-url: ${WECMS_COOCON_API_URL}
+    smart-api-key: ${WECMS_COOCON_SMART_API_KEY}
+    smart-api-url: ${WECMS_COOCON_SMART_API_URL}
+    unique-key: ${WECMS_COOCON_UNIQUE_KEY}
