@@ -54,6 +54,11 @@ server:
 logging:
   pattern:
     level: "%5p [traceId=%X{traceId:--}]"
+  level:
+    org.hibernate: info
+    org.hibernate.SQL: debug
+    org.springframework.jdbc.core: trace
+    org.hibernate.orm.jdbc.bind: trace
 
 wecms:
   jwt:

@@ -51,3 +51,17 @@ dependencies {
 tasks.named('test') {
     useJUnitPlatform()
 }
+
+// One-time helper: repair V86/V87 checksum mismatch on the shared dev DB.
+// Run with:  ./gradlew repairFlywayChecksums
+// Safe to run multiple times (WHERE clause matches only the old value or
+// the correct value is already stored — the UPDATE is a no-op in both cases).
+tasks.register('repairFlywayChecksums', JavaExec) {
+    group = 'flyway'
+    description = 'Repair V86/V87 checksum mismatch in flyway_schema_history on the shared dev DB'
+    dependsOn compileJava
+
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.kosign.wecms.tool.FlywayChecksumRepair'
+}
+
