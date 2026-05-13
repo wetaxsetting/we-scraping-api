@@ -68,3 +68,19 @@ wecms:
     # honour Java Paths.get(...)). Profile-specific overrides live in
     # application-{profile}.yml.
     storage-root: ${WECMS_ERP_TRANSACTION_HISTORY_STORAGE_ROOT:./tmp/erp-trns-hstr}
+  # Internal Transfer feature config — cut-off-time defaults +
+  # local-disk root for the Excel upload / download flow.
+  # See application-local.yml for the full Woori + Shinhan table.
+  internal-transfer:
+    # Local-disk root for the Excel files attached to each draft batch.
+    # Resolved path pattern:
+    #   <storage-root>/<biz_key>/internal-transfer/<save_file_nm>
+    # Defaults to a CI-friendly scratch path; the local-developer
+    # profile in application-local.yml points at the workspace-shared
+    # "C:/WECMS PROJECT/File Data" folder so uploads land next to the
+    # existing erp-transaction-history files. Per-developer override
+    # via env var WECMS_INTERNAL_TRANSFER_STORAGE_ROOT.
+    storage-root: ${WECMS_INTERNAL_TRANSFER_STORAGE_ROOT:./tmp/internal-transfer}
+    cutoff:
+      shinhan-bank-cd: ${WECMS_SHINHAN_BANK_CD:88886000}
+      woori-bank-cd:   ${WECMS_WOORI_BANK_CD:11704000}

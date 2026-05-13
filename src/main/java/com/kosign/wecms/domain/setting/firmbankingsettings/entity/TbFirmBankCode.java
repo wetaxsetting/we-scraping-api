@@ -45,4 +45,23 @@ public class TbFirmBankCode {
      *  {@code 'NAPAS'} per the legacy action JSP. */
     @Column(name = "ANT_DIV_CD", length = 5, nullable = false)
     private String antDivCd;
+
+    /** 3-character CITAD bank code (e.g. {@code 203} VCB). Populated
+     *  for CITAD rows so the Internal Transfer Excel parser can
+     *  resolve a 3-char user input to a bank name. */
+    @Column(name = "CITAD_BANK_CD", length = 3)
+    private String citadBankCd;
+
+    /** Vietnamese long-form bank name. Fallback display when
+     *  {@link #engAbrvatNm} is blank (matches the legacy parser's
+     *  preference for the abbreviated English name). */
+    @Column(name = "BANK_NM", length = 300)
+    private String bankNm;
+
+    /** English-abbreviated bank name (e.g. {@code "ShinhanBank"},
+     *  {@code "WooriBank"}, {@code "VCB"}). What the legacy
+     *  {@code pymn_0009_002} parser returns from {@code getBankName}
+     *  and stamps into {@code TAR_BANK_NM} on the parsed-line wire. */
+    @Column(name = "ENG_ABRVAT_NM", length = 300)
+    private String engAbrvatNm;
 }
