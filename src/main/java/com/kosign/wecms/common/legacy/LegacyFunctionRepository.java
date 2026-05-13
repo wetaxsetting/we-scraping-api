@@ -57,4 +57,151 @@ public class LegacyFunctionRepository {
         Object result = q.getSingleResult();
         return result != null ? result.toString() : null;
     }
+
+    /**
+     * Settings &gt; Contacts &mdash; allocate the next {@code TRCO_KEY}
+     * by delegating to the legacy {@code wb_get_next_val('trco_infm',
+     * 'trco_key', &hellip;)} branch (V85 / OQ-4 resolved 2026-05-12).
+     * Mirrors {@code SeqHelper.getNextVal(util, idoCon, TrcoInfm.class,
+     * "trco_key")} at
+     * {@code WECMS DEV/WECMS/src/wabooks/dao/TrcoInfmDAO.java:44}.
+     *
+     * <p>The DEV branch body is {@code SELECT nextval('sq_trco_key')}
+     * &mdash; a global sequence (NOT per-tenant). The
+     * {@code biz_key} arg is therefore ignored by the function; it's
+     * carried here for symmetry with the other funnel methods and as
+     * a hook for any future per-tenant overrides.
+     *
+     * <p>Retire plan: drop this method and the V85 branch once the
+     * legacy WeCMS / WABOOKS systems no longer call
+     * {@code wb_get_next_val} for {@code trco_infm} &mdash; see
+     * "Surviving legacy functions" in
+     * {@code wecms-api-main/CLAUDE.md}.
+     */
+    public String nextTrcoKey(String bizKey) {
+        return nextVal("trco_infm", "trco_key", bizKey, null, null, null, null, null);
+    }
+
+    /**
+     * Settings &gt; Approval Line &mdash; allocate the next per-tenant
+     * {@code APPR_LINE_NO} by delegating to the legacy
+     * {@code wb_get_next_val('appr_line_infm', 'appr_line_no', biz_key)}
+     * branch (V91 / OQ-7 resolved 2026-05-13). Mirrors
+     * {@code SeqHelper.getNextVal(util, idoCon, ApprLineInfm.class,
+     * "appr_line_no")} at the legacy DAO layer.
+     *
+     * <p>The DEV branch body is {@code SELECT
+     * COALESCE(MAX(appr_line_no::numeric), 0) + 1 FROM appr_line_infm
+     * WHERE biz_key = $3} &mdash; per-tenant MAX+1. Concurrency:
+     * service wraps the call + INSERT in one {@code @Transactional};
+     * PK conflict surfaces as
+     * {@code DataIntegrityViolationException}.
+     *
+     * <p>Returns a numeric text token (e.g. {@code "24"}); the caller
+     * parses to {@link Long} before populating the entity.
+     *
+     * <p>Retire plan: drop this method and the V91 branch once the
+     * legacy WeCMS / WABOOKS systems no longer call
+     * {@code wb_get_next_val} for {@code appr_line_infm} &mdash; see
+     * "Surviving legacy functions" in {@code wecms-api-main/CLAUDE.md}.
+     */
+    public String nextApprLineNo(String bizKey) {
+        return nextVal("appr_line_infm", "appr_line_no", bizKey, null, null, null, null, null);
+    }
+
+    /**
+     * Settings &gt; Chart of Accounts &mdash; allocate the next per-tenant
+     * {@code CHART_ACCT_SEQ_NO} by delegating to the legacy
+     * {@code wb_get_next_val('chart_acct_infm', 'chart_acct_seq_no', biz_key)}
+     * branch (V95). Mirrors legacy
+     * {@code SeqHelper.getNextVal(util, idoCon, ChartAcctInfm.class,
+     * "chart_acct_seq_no")} at the JEX DAO layer.
+     *
+     * <p>The DEV branch body is {@code SELECT
+     * COALESCE(MAX(chart_acct_seq_no::numeric), 0) + 1 FROM
+     * chart_acct_infm WHERE biz_key = $3} &mdash; per-tenant MAX+1,
+     * same pattern as {@code appr_line_no}. Concurrency: service wraps
+     * the call + INSERT in one {@code @Transactional}; PK conflict
+     * surfaces as {@code DataIntegrityViolationException} and the
+     * service retries once before surfacing
+     * {@code WBE_CHART_OF_ACCOUNTS_DUPLICATE_CODE}.
+     *
+     * <p>Returns a numeric text token (e.g. {@code "113"}); the caller
+     * stores it verbatim in {@code CHART_ACCT_SEQ_NO} (VARCHAR(14)).
+     *
+     * <p>Retire plan: drop this method and the V95 branch once the
+     * legacy WeCMS / WABOOKS systems no longer call
+     * {@code wb_get_next_val} for {@code chart_acct_infm} &mdash; see
+     * "Surviving legacy functions" in {@code wecms-api-main/CLAUDE.md}.
+     */
+    public String nextChartAcctSeqNo(String bizKey) {
+        return nextVal("chart_acct_infm", "chart_acct_seq_no", bizKey, null, null, null, null, null);
+    }
+
+    /**
+     * Settings &gt; Contacts &gt; Attachments &mdash; allocate the next
+     * per-contact {@code FILE_ID} by delegating to the legacy
+     * {@code wb_get_next_val('trco_info_file', 'file_id', trco_key)}
+     * branch (V99, scope-expanded 2026-05-13). Mirrors
+     * {@code SeqHelper.getNextVal(util, idoCon, TrcoInfoFile.class,
+     * "file_id", trcoKey)} at the legacy DAO layer
+     * ({@code TrcoInfoFileDAO.create:34}).
+     *
+     * <p>The DEV branch body is {@code SELECT
+     * COALESCE(MAX(file_id::numeric), 0) + 1 FROM trco_info_file
+     * WHERE trco_key = $3} &mdash; per-contact MAX+1 (NOT per-tenant;
+     * the {@code TRCO_INFO_FILE} table has no {@code BIZ_KEY} column,
+     * tenancy is inherited from the parent {@code TRCO_INFM} row).
+     * Concurrency: service wraps the call + INSERT in one
+     * {@code @Transactional}; PK conflict surfaces as
+     * {@code DataIntegrityViolationException} and the service retries
+     * once before surfacing the error envelope.
+     *
+     * <p>Returns a numeric text token (e.g. {@code "1"} for the first
+     * attachment, {@code "2"} for the second).
+     *
+     * <p>Retire plan: drop this method and the V99 branch once the
+     * legacy WeCMS / WABOOKS systems no longer call
+     * {@code wb_get_next_val} for {@code trco_info_file} &mdash; see
+     * "Surviving legacy functions" in {@code wecms-api-main/CLAUDE.md}.
+     */
+    public String nextTrcoInfoFileFileId(String trcoKey) {
+        return nextVal("trco_info_file", "file_id", trcoKey, null, null, null, null, null);
+    }
+
+    /**
+     * Settings &gt; Contacts &mdash; resolve the display bank name
+     * for a NAPAS or CITAD code in the given language by delegating
+     * to the legacy {@code wb_get_napas_bank_nm_or_citad_bank_nm(
+     * code, lang_cd)} function (V86 / OQ-7 resolved 2026-05-12).
+     * Mirrors the inline call in
+     * {@code IDO.TRCO_INFM_R016.xml:63}.
+     *
+     * <p>Pass either the {@code NAPAS_BANK_CD} or the
+     * {@code CITAD_BANK_CD} for {@code code} &mdash; the legacy
+     * function dispatches internally against {@code tb_firm_bank_code}.
+     * Pass the lowercase language code ({@code "en"}, {@code "vi"}).
+     * The DEV function returns {@code NULL} for {@code "ko"} /
+     * {@code "km"} (no branch).
+     *
+     * <p>Null-safe: returns {@code null} when {@code code} is null or
+     * blank, short-circuiting before the DB round-trip.
+     *
+     * <p>Retire plan: drop this method and the V86 function once
+     * the NAPAS + CITAD code space is fully reconciled inside
+     * {@code BANK_INFM}; replace the call site with
+     * {@code BankCdResolver} at that point.
+     */
+    public String resolveNapasOrCitadBankName(String code, String langCd) {
+        if (code == null || code.isBlank()) {
+            return null;
+        }
+        Query q = em.createNativeQuery(
+                "SELECT wb_get_napas_bank_nm_or_citad_bank_nm(" +
+                        "CAST(?1 AS varchar), CAST(?2 AS varchar))");
+        q.setParameter(1, code);
+        q.setParameter(2, langCd);
+        Object result = q.getSingleResult();
+        return result != null ? result.toString() : null;
+    }
 }

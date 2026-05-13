@@ -1,6 +1,8 @@
 package com.kosign.wecms.domain.setting.firmbankingsettings.repository;
 
 import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmBankCode;
+import java.util.Collection;
+import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 /**
@@ -32,4 +34,14 @@ public interface TbFirmBankCodeRepository extends JpaRepository<TbFirmBankCode, 
      * {@code comm_0220_002_c001_act.jsp:121}.
      */
     boolean existsByAntDivCdAndBankCd(String antDivCd, String bankCd);
+
+    /**
+     * Returns the NAPAS / CITAD bank rows the contacts Add/Edit
+     * dialog populates its bank-picker autocomplete from. Mirrors
+     * the IN-clause used by legacy {@code comm_0109_001_r002}; the
+     * dropdown lists both NAPAS and CITAD entries when called without
+     * a filter, ordered by {@code ENG_ABRVAT_NM} for a stable label
+     * sequence. The caller (contacts service) is read-only.
+     */
+    List<TbFirmBankCode> findByAntDivCdInOrderByEngAbrvatNmAscBankCdAsc(Collection<String> antDivCds);
 }

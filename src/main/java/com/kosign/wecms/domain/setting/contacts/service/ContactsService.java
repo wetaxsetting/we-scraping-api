@@ -1,0 +1,715 @@
+package com.kosign.wecms.domain.setting.contacts.service;
+
+import com.kosign.wecms.common.enums.LangCd;
+import com.kosign.wecms.common.exception.BusinessException;
+import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
+import com.kosign.wecms.common.tenant.TenantContext;
+import com.kosign.wecms.common.web.SortDirection;
+import com.kosign.wecms.domain.banking.repository.AcctTrnsRcvPayInfmRepository;
+import com.kosign.wecms.domain.setting.contacts.dto.AccountDeleteKey;
+import com.kosign.wecms.domain.setting.contacts.dto.AccountOp;
+import com.kosign.wecms.domain.setting.contacts.dto.AddressOp;
+import com.kosign.wecms.domain.setting.contacts.dto.ContactAccountRow;
+import com.kosign.wecms.domain.setting.contacts.dto.ContactAddressRow;
+import com.kosign.wecms.domain.setting.contacts.dto.ContactCreateRequest;
+import com.kosign.wecms.domain.setting.contacts.dto.ContactListResponse;
+import com.kosign.wecms.domain.setting.contacts.dto.ContactOverseasRow;
+import com.kosign.wecms.domain.setting.contacts.dto.ContactRow;
+import com.kosign.wecms.domain.setting.contacts.dto.ContactUpdateRequest;
+import com.kosign.wecms.domain.setting.contacts.dto.OverseasDeleteKey;
+import com.kosign.wecms.domain.setting.contacts.dto.OverseasOp;
+import com.kosign.wecms.domain.setting.contacts.entity.PgroBsacLnknInfm;
+import com.kosign.wecms.domain.setting.contacts.entity.TrcoAcctInfo;
+import com.kosign.wecms.domain.setting.contacts.entity.TrcoAddrInfm;
+import com.kosign.wecms.domain.setting.contacts.entity.TrcoInfm;
+import com.kosign.wecms.domain.setting.contacts.entity.TrcoOvrsInfm;
+import com.kosign.wecms.domain.setting.contacts.repository.PgroBsacLnknInfmRepository;
+import com.kosign.wecms.domain.setting.contacts.repository.TrcoAcctInfoRepository;
+import com.kosign.wecms.domain.setting.contacts.repository.TrcoAddrInfmRepository;
+import com.kosign.wecms.domain.setting.contacts.repository.TrcoInfmRepository;
+import com.kosign.wecms.domain.setting.contacts.dto.ContactBankListResponse;
+import com.kosign.wecms.domain.setting.contacts.dto.ContactBankRow;
+import com.kosign.wecms.domain.setting.contacts.dto.ContactLookupRecipientRequest;
+import com.kosign.wecms.domain.setting.contacts.dto.ContactLookupRecipientResponse;
+import com.kosign.wecms.domain.setting.contacts.repository.TrcoOvrsInfmRepository;
+import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmBankCode;
+import com.kosign.wecms.domain.setting.firmbankingsettings.repository.TbFirmBankCodeRepository;
+import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+
+/**
+ * Settings &gt; Contacts service. Mirrors the legacy
+ * {@code comm_0184_001_r001} (list) + {@code comm_0184_002_c001}
+ * (create) + {@code comm_0184_005_u001} (update) + {@code comm_0184_001_u001}
+ * (bulk soft-delete) flows over the refactor's
+ * {@link com.kosign.wecms.domain.setting.contacts.entity.TrcoInfm}
+ * entity and four child entities.
+ *
+ * <p><b>Resolved open questions</b> consumed by this class
+ * (full list in {@code docs/refactor-wecms/features/contacts.md}):
+ * <ul>
+ *   <li><b>OQ-1</b> No group filter &mdash; the {@code GRP_CD} branch
+ *       from {@code comm_0184_001_r001_act.jsp:43-71} is NOT ported.</li>
+ *   <li><b>OQ-2</b> {@code WBE1190} in-use guard applies to single
+ *       delete, bulk delete, AND the edit-time {@code trco_stts &rarr; 'C'}
+ *       transition. Refactor uses the legacy code verbatim.</li>
+ *   <li><b>OQ-3</b> {@code TRCO_INQ_YN} stays mapped on the entity and
+ *       defaults to {@code 'Y'} on create &mdash; service-internal,
+ *       NEVER on the wire.</li>
+ *   <li><b>OQ-4</b> {@code TRCO_KEY} allocation routes through
+ *       {@link LegacyFunctionRepository#nextTrcoKey(String)} (V85 +
+ *       {@code sq_trco_key} global sequence). One-shot retry on PK
+ *       collision.</li>
+ *   <li><b>OQ-5</b> No Trash UI &mdash; the list query hard-codes
+ *       {@code coalesce(trco_stts,'') &lt;&gt; 'C'}; recovery is
+ *       DBA-only.</li>
+ *   <li><b>OQ-6</b> Audit slug is {@code 'contacts'} &mdash; the
+ *       existing global audit aspect handles
+ *       {@code AUDIT_LOGS_INFM.WSVC_ID}.</li>
+ *   <li><b>OQ-7</b> Bank-name resolution via the legacy
+ *       {@link LegacyFunctionRepository#resolveNapasOrCitadBankName(String, String)}
+ *       funnel; {@code BankCdResolver} is NOT consulted.</li>
+ *   <li><b>OQ-8</b> {@code DISP_ORD} is the address current/previous
+ *       discriminator; never compare {@code TRCO_ADDR_KEY} to literal
+ *       {@code "1"} / {@code "2"}.</li>
+ * </ul>
+ */
+@Service
+@RequiredArgsConstructor
+public class ContactsService {
+
+    public static final int MAX_PAGE_SIZE = 100;
+    public static final int DEFAULT_PAGE_SIZE = 15;
+
+    /** Default ORDER BY when no user sort is supplied. Mirrors the
+     *  legacy listing's implicit ordering (latest-edited first). The
+     *  {@code trcoKey DESC} tiebreaker keeps a deterministic order
+     *  across paged requests for rows that share a {@code modDtm}. */
+    static final Sort DEFAULT_SORT =
+            Sort.by(Sort.Order.desc("modDtm"), Sort.Order.desc("trcoKey"));
+
+    /** {@code yyyyMMddHHmmss} formatter for the legacy
+     *  {@code VARCHAR(14)} audit columns. UTC. */
+    private static final DateTimeFormatter DTM14 = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
+
+    private final TrcoInfmRepository trcoInfmRepo;
+    private final TrcoAddrInfmRepository trcoAddrRepo;
+    private final TrcoAcctInfoRepository trcoAcctRepo;
+    private final TrcoOvrsInfmRepository trcoOvrsRepo;
+    private final TbFirmBankCodeRepository bankCodeRepo;
+    private final PgroBsacLnknInfmRepository pgroRepo;
+    private final AcctTrnsRcvPayInfmRepository acctTrnsRcvPayRepo;
+    private final LegacyFunctionRepository legacyFn;
+    private final ContactsValidator validator;
+
+    /* =================================================================
+     *  List + getOne
+     * ================================================================= */
+
+    @Transactional(readOnly = true)
+    public ContactListResponse list(
+            String search,
+            String trcoType,
+            int page,
+            int size,
+            String sortField,
+            String sortDirection) {
+
+        String bizKey = TenantContext.currentBizKey();
+        String keywordPattern = buildKeywordPattern(search);
+        String trcoTypeFilter = normaliseTrcoTypeFilter(trcoType);
+
+        int safeSize = size <= 0 ? DEFAULT_PAGE_SIZE : Math.min(size, MAX_PAGE_SIZE);
+        int safePage = Math.max(0, page);
+        Sort sort = buildSort(
+                ContactSortField.parse(sortField).orElse(null),
+                SortDirection.parse(sortDirection));
+        Pageable pageable = PageRequest.of(safePage, safeSize, sort);
+
+        Page<TrcoInfm> master = trcoInfmRepo.search(bizKey, trcoTypeFilter, keywordPattern, pageable);
+        List<TrcoInfm> rows = master.getContent();
+        List<String> keys = rows.stream().map(TrcoInfm::getTrcoKey).toList();
+
+        // Batch-fetch the three child collections in one query each.
+        Map<String, List<TrcoAddrInfm>> addrByKey  = groupByTrcoKey(
+                trcoAddrRepo.findByBizKeyAndTrcoKeyIn(bizKey, keys), TrcoAddrInfm::getTrcoKey);
+        Map<String, List<TrcoAcctInfo>> acctByKey  = groupByTrcoKey(
+                trcoAcctRepo.findByBizKeyAndTrcoKeyIn(bizKey, keys), TrcoAcctInfo::getTrcoKey);
+        Map<String, List<TrcoOvrsInfm>> ovrsByKey  = groupByTrcoKey(
+                trcoOvrsRepo.findByBizKeyAndTrcoKeyIn(bizKey, keys), TrcoOvrsInfm::getTrcoKey);
+
+        String langCd = currentLangForBankFn();
+        Map<String, String> bankNameCache = resolveBankNamesForAccounts(acctByKey.values(), langCd);
+
+        List<ContactRow> projected = new ArrayList<>(rows.size());
+        for (TrcoInfm m : rows) {
+            projected.add(projectRow(m,
+                    addrByKey.getOrDefault(m.getTrcoKey(), List.of()),
+                    acctByKey.getOrDefault(m.getTrcoKey(), List.of()),
+                    ovrsByKey.getOrDefault(m.getTrcoKey(), List.of()),
+                    bankNameCache));
+        }
+        return new ContactListResponse(
+                projected,
+                master.getTotalElements(),
+                master.getNumber(),
+                master.getSize(),
+                master.getTotalPages());
+    }
+
+    @Transactional(readOnly = true)
+    public ContactRow getOne(String trcoKey) {
+        String bizKey = TenantContext.currentBizKey();
+        TrcoInfm master = trcoInfmRepo.findByTrcoKeyAndBizKey(trcoKey, bizKey)
+                .filter(t -> t.getHandTrcoKey() != null
+                        && (t.getTrcoStts() == null || !t.getTrcoStts().equals("C")))
+                .orElseThrow(() -> new BusinessException("WBE_CONTACTS_NOT_FOUND"));
+
+        List<TrcoAddrInfm> addrs = trcoAddrRepo.findByBizKeyAndTrcoKey(bizKey, trcoKey);
+        List<TrcoAcctInfo> accts = trcoAcctRepo.findByBizKeyAndTrcoKey(bizKey, trcoKey);
+        List<TrcoOvrsInfm> ovrs  = trcoOvrsRepo.findByBizKeyAndTrcoKey(bizKey, trcoKey);
+
+        String langCd = currentLangForBankFn();
+        Map<String, String> bankNameCache = resolveBankNamesForAccounts(List.of(accts), langCd);
+        return projectRow(master, addrs, accts, ovrs, bankNameCache);
+    }
+
+    /* =================================================================
+     *  Create
+     * ================================================================= */
+
+    @Transactional
+    public ContactRow create(ContactCreateRequest req) {
+        String bizKey = TenantContext.currentBizKey();
+        validator.validateCreate(req, bizKey);
+
+        // One-shot retry on PK collision (OQ-4 §7.3 from the design doc).
+        try {
+            return persistNewContact(req, bizKey);
+        } catch (DataIntegrityViolationException ex) {
+            return persistNewContact(req, bizKey);
+        }
+    }
+
+    private ContactRow persistNewContact(ContactCreateRequest req, String bizKey) {
+        String trcoKey = legacyFn.nextTrcoKey(bizKey);
+        String userId = TenantContext.currentUserId();
+        String now = utcNowDtm14();
+
+        TrcoInfm master = new TrcoInfm();
+        master.setTrcoKey(trcoKey);
+        master.setBizKey(bizKey);
+        // Master tax-id snapshot: legacy stamps the contact's own tax id
+        // when present, else the tenant's. We pass the contact's tax id
+        // here (or an empty fallback) since the NOT NULL constraint on
+        // TAX_ID is otherwise hard to satisfy without an extra lookup.
+        master.setTaxId(req.trcoTaxId() != null && !req.trcoTaxId().isBlank()
+                ? req.trcoTaxId() : bizKey);
+        master.setTrcoCmnm(req.trcoCmnm());
+        master.setTrcoCmenm(req.trcoCmenm());
+        master.setTrcoTaxId(req.trcoTaxId());
+        master.setTrcoType(req.trcoType());
+        // OQ-3 — default-on-create. Service-internal; never on the wire.
+        master.setTrcoInqYn("Y");
+        // CHECK trsc_ccy_cd IN ('VND','USD'); default by legacy pattern.
+        master.setTrscCcyCd("L".equals(req.trcoType()) ? "VND" : "USD");
+        master.setHandTrcoKey(req.handTrcoKey());
+        master.setRegId(userId);
+        master.setRegDtm(now);
+        master.setModId(userId);
+        master.setModDtm(now);
+        trcoInfmRepo.save(master);
+
+        // Sub-rows — only upsert ops survive on create. Delete ops on
+        // create are nonsensical and silently ignored.
+        if (req.addresses() != null) {
+            for (AddressOp a : req.addresses()) {
+                if (!"upsert".equals(a.op())) continue;
+                trcoAddrRepo.save(toAddrEntity(a, bizKey, trcoKey, userId, now));
+            }
+        }
+        if ("L".equals(req.trcoType()) && req.accounts() != null) {
+            for (AccountOp a : req.accounts()) {
+                if (!"upsert".equals(a.op())) continue;
+                trcoAcctRepo.save(toAcctEntity(a, bizKey, trcoKey, userId, now));
+            }
+        }
+        if ("O".equals(req.trcoType()) && req.overseasBeneficiaries() != null) {
+            for (OverseasOp o : req.overseasBeneficiaries()) {
+                if (!"upsert".equals(o.op())) continue;
+                trcoOvrsRepo.save(toOvrsEntity(o, bizKey, trcoKey, userId, now));
+            }
+        }
+
+        // PGRO seed: 'B' (buy) + 'S' (sale) with USER_ID = 'ALL'.
+        // Mirrors comm_0184_002_c001_act.jsp:131-147.
+        for (String grpCd : List.of("B", "S")) {
+            PgroBsacLnknInfm link = new PgroBsacLnknInfm();
+            link.setBizKey(bizKey);
+            link.setUserId("ALL");
+            link.setGrpCd(grpCd);
+            link.setTrcoKey(trcoKey);
+            link.setTaxId(master.getTaxId());
+            link.setRegDtm(now);
+            pgroRepo.save(link);
+        }
+
+        return getOne(trcoKey);
+    }
+
+    /* =================================================================
+     *  Update (single transaction; upsert + delete sub-rows + opt trash)
+     * ================================================================= */
+
+    @Transactional
+    public ContactRow update(String trcoKey, ContactUpdateRequest req) {
+        String bizKey = TenantContext.currentBizKey();
+        TrcoInfm existing = trcoInfmRepo.findByTrcoKeyAndBizKey(trcoKey, bizKey)
+                .orElseThrow(() -> new BusinessException("WBE_CONTACTS_NOT_FOUND"));
+
+        validator.validateUpdate(req, existing, bizKey);
+
+        // OQ-2: in-use guard fires when this update transitions
+        // trco_stts from null/non-'C' to 'C' (the edit-time trash path).
+        boolean transitioningToTrash =
+                "C".equals(req.trcoStts())
+                        && (existing.getTrcoStts() == null || !existing.getTrcoStts().equals("C"));
+        if (transitioningToTrash
+                && acctTrnsRcvPayRepo.existsByBizKeyAndRcvPayTrcoKey(bizKey, trcoKey)) {
+            throw new BusinessException("WBE1190");
+        }
+
+        String userId = TenantContext.currentUserId();
+        String now = utcNowDtm14();
+
+        existing.setHandTrcoKey(req.handTrcoKey());
+        existing.setTrcoCmnm(req.trcoCmnm());
+        existing.setTrcoCmenm(req.trcoCmenm());
+        existing.setTrcoTaxId(req.trcoTaxId());
+        existing.setTrcoType(req.trcoType());
+        // Pass through the trash flag verbatim (null or 'C').
+        if (req.trcoStts() != null && !req.trcoStts().isEmpty()) {
+            existing.setTrcoStts(req.trcoStts());
+        }
+        existing.setModId(userId);
+        existing.setModDtm(now);
+        trcoInfmRepo.save(existing);
+
+        // Addresses — upsert + delete pass.
+        if (req.addresses() != null) {
+            for (AddressOp a : req.addresses()) {
+                if ("upsert".equals(a.op())) {
+                    trcoAddrRepo.save(toAddrEntity(a, bizKey, trcoKey, userId, now));
+                } else {
+                    trcoAddrRepo.deleteByBizKeyAndTrcoKeyAndTrcoAddrKey(
+                            bizKey, trcoKey, a.trcoAddrKey());
+                }
+            }
+        }
+
+        // Accounts — upsert + delete pass + folded REC4 deletes.
+        if (req.accounts() != null) {
+            for (AccountOp a : req.accounts()) {
+                if ("upsert".equals(a.op())) {
+                    trcoAcctRepo.save(toAcctEntity(a, bizKey, trcoKey, userId, now));
+                } else {
+                    trcoAcctRepo.deleteByBizKeyAndTrcoKeyAndTrcoAcctKey(
+                            bizKey, trcoKey, a.trcoAcctKey());
+                }
+            }
+        }
+        if (req.accountsToDelete() != null) {
+            for (AccountDeleteKey k : req.accountsToDelete()) {
+                trcoAcctRepo.deleteByBizKeyAndTrcoKeyAndTrcoAcctKey(
+                        bizKey, trcoKey, k.trcoAcctKey());
+            }
+        }
+
+        // Overseas beneficiaries — same pattern + folded REC6 deletes.
+        if (req.overseasBeneficiaries() != null) {
+            for (OverseasOp o : req.overseasBeneficiaries()) {
+                if ("upsert".equals(o.op())) {
+                    trcoOvrsRepo.save(toOvrsEntity(o, bizKey, trcoKey, userId, now));
+                } else {
+                    trcoOvrsRepo.deleteByBizKeyAndTrcoKeyAndTrcoOvrsKey(
+                            bizKey, trcoKey, o.trcoOvrsKey());
+                }
+            }
+        }
+        if (req.overseasToDelete() != null) {
+            for (OverseasDeleteKey k : req.overseasToDelete()) {
+                trcoOvrsRepo.deleteByBizKeyAndTrcoKeyAndTrcoOvrsKey(
+                        bizKey, trcoKey, k.trcoOvrsKey());
+            }
+        }
+
+        // After the trash transition, the standard list filter hides
+        // the row — return via getOne anyway so the response shape stays
+        // consistent. The caller's frontend handles the "row now hidden"
+        // case at refresh time.
+        if ("C".equals(req.trcoStts())) {
+            return projectRow(existing,
+                    trcoAddrRepo.findByBizKeyAndTrcoKey(bizKey, trcoKey),
+                    trcoAcctRepo.findByBizKeyAndTrcoKey(bizKey, trcoKey),
+                    trcoOvrsRepo.findByBizKeyAndTrcoKey(bizKey, trcoKey),
+                    Map.of());
+        }
+        return getOne(trcoKey);
+    }
+
+    /* =================================================================
+     *  Soft-delete (single + bulk; OQ-2)
+     * ================================================================= */
+
+    @Transactional
+    public void softDelete(String trcoKey) {
+        String bizKey = TenantContext.currentBizKey();
+        TrcoInfm existing = trcoInfmRepo.findByTrcoKeyAndBizKey(trcoKey, bizKey)
+                .orElseThrow(() -> new BusinessException("WBE_CONTACTS_NOT_FOUND"));
+        if (acctTrnsRcvPayRepo.existsByBizKeyAndRcvPayTrcoKey(bizKey, trcoKey)) {
+            throw new BusinessException("WBE1190");
+        }
+        existing.setTrcoStts("C");
+        existing.setModId(TenantContext.currentUserId());
+        existing.setModDtm(utcNowDtm14());
+    }
+
+    @Transactional
+    public void bulkSoftDelete(List<String> trcoKeys) {
+        String bizKey = TenantContext.currentBizKey();
+        String userId = TenantContext.currentUserId();
+        String now = utcNowDtm14();
+        for (String trcoKey : trcoKeys) {
+            TrcoInfm existing = trcoInfmRepo.findByTrcoKeyAndBizKey(trcoKey, bizKey)
+                    .orElseThrow(() -> new BusinessException("WBE_CONTACTS_NOT_FOUND"));
+            // OQ-2 per-key in-use guard. The first offending key throws
+            // and rolls back any earlier flips in the same call.
+            if (acctTrnsRcvPayRepo.existsByBizKeyAndRcvPayTrcoKey(bizKey, trcoKey)) {
+                throw new BusinessException("WBE1190");
+            }
+            existing.setTrcoStts("C");
+            existing.setModId(userId);
+            existing.setModDtm(now);
+        }
+    }
+
+    /* =================================================================
+     *  Internal helpers
+     * ================================================================= */
+
+    /** Lower-case + escape-meta-chars + wrap with {@code %&hellip;%}.
+     *  Returns {@code null} when blank so the JPQL {@code IS NULL OR}
+     *  guard skips the predicate. Mirrors the keyword pattern used
+     *  by neighbour services (ERP Transaction History, Firm Banking
+     *  History). */
+    private static String buildKeywordPattern(String raw) {
+        if (raw == null) return null;
+        String trimmed = raw.trim();
+        if (trimmed.isEmpty()) return null;
+        StringBuilder b = new StringBuilder(trimmed.length() + 2).append('%');
+        for (int i = 0; i < trimmed.length(); i++) {
+            char c = trimmed.charAt(i);
+            if (c == '%' || c == '_' || c == '!') b.append('!');
+            b.append(c);
+        }
+        b.append('%');
+        return b.toString().toLowerCase(Locale.ROOT);
+    }
+
+    /** Coerce the wire {@code trco_type} into a JPQL filter value.
+     *  Unknown / blank input collapses to {@code null} so the
+     *  {@code IS NULL OR} guard skips the predicate. */
+    private static String normaliseTrcoTypeFilter(String raw) {
+        if (raw == null) return null;
+        String trimmed = raw.trim();
+        if (trimmed.isEmpty()) return null;
+        return ("L".equals(trimmed) || "O".equals(trimmed)) ? trimmed : null;
+    }
+
+    private static Sort buildSort(ContactSortField field, SortDirection direction) {
+        if (field == null || direction == null) return DEFAULT_SORT;
+        Sort.Order primary = direction == SortDirection.ASC
+                ? Sort.Order.asc(field.entityProperty())
+                : Sort.Order.desc(field.entityProperty());
+        return Sort.by(primary).and(DEFAULT_SORT);
+    }
+
+    /** Resolve the locale code accepted by the legacy bank-name function
+     *  ({@code 'en'} / {@code 'vi'}; other codes return null from the
+     *  function). Reads from {@link TenantContext#currentLangCd()}
+     *  populated by the JWT filter. */
+    private static String currentLangForBankFn() {
+        LangCd lang = TenantContext.currentLangCd();
+        if (lang == null) return "en";
+        return switch (lang) {
+            case VI -> "vi";
+            case EN, KO, KM -> "en";  // function only branches on 'en' / 'vi'/'vn'.
+        };
+    }
+
+    /** Resolve each unique NAPAS-or-CITAD code on the page in one round
+     *  trip per unique code (NOT per row) — avoids N+1. The cache key
+     *  is the NAPAS code if present, otherwise the CITAD code. */
+    private Map<String, String> resolveBankNamesForAccounts(
+            Collection<List<TrcoAcctInfo>> grouped, String langCd) {
+        Set<String> codes = new HashSet<>();
+        for (List<TrcoAcctInfo> bucket : grouped) {
+            for (TrcoAcctInfo a : bucket) {
+                String code = pickNapasOrCitad(a);
+                if (code != null) codes.add(code);
+            }
+        }
+        Map<String, String> cache = new HashMap<>();
+        for (String code : codes) {
+            cache.put(code, legacyFn.resolveNapasOrCitadBankName(code, langCd));
+        }
+        return cache;
+    }
+
+    private static String pickNapasOrCitad(TrcoAcctInfo a) {
+        if (a.getNapasBankCd() != null && !a.getNapasBankCd().isBlank()) {
+            return a.getNapasBankCd();
+        }
+        if (a.getCitadBankCd() != null && !a.getCitadBankCd().isBlank()) {
+            return a.getCitadBankCd();
+        }
+        return null;
+    }
+
+    private static <T> Map<String, List<T>> groupByTrcoKey(
+            List<T> rows, java.util.function.Function<T, String> keyFn) {
+        Map<String, List<T>> out = new HashMap<>();
+        for (T row : rows) {
+            out.computeIfAbsent(keyFn.apply(row), k -> new ArrayList<>()).add(row);
+        }
+        return out;
+    }
+
+    /** Compose the wire row from the master + child collections. */
+    private ContactRow projectRow(
+            TrcoInfm master,
+            List<TrcoAddrInfm> addresses,
+            List<TrcoAcctInfo> accounts,
+            List<TrcoOvrsInfm> overseas,
+            Map<String, String> bankNameCache) {
+
+        List<ContactAddressRow> addrOut = addresses.stream()
+                .sorted(Comparator
+                        .comparing(TrcoAddrInfm::getDispOrd, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(TrcoAddrInfm::getTrcoAddrKey))
+                .map(a -> new ContactAddressRow(
+                        a.getTrcoAddrKey(),
+                        a.getTrcoBsunPostAdrs(),
+                        a.getDispOrd(),
+                        a.getIssuDt(),
+                        a.getDueDt()))
+                .toList();
+
+        List<ContactAccountRow> acctOut = accounts.stream()
+                .sorted(Comparator
+                        .comparing(TrcoAcctInfo::getDispOrd, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(TrcoAcctInfo::getTrcoAcctKey))
+                .map(a -> {
+                    String code = pickNapasOrCitad(a);
+                    String resolved = code == null ? null : bankNameCache.get(code);
+                    return new ContactAccountRow(
+                            a.getTrcoAcctKey(),
+                            a.getAcctNo(),
+                            a.getDispOrd(),
+                            // Prefer the freshly-resolved name; fall back
+                            // to the stored display copy when the function
+                            // returns null (sparse tb_firm_bank_code seed).
+                            resolved != null ? resolved : a.getBankNm(),
+                            a.getNapasBankCd(),
+                            a.getCitadBankCd(),
+                            a.getAcctCcyCd(),
+                            a.getFincMdaOwnerNm(),
+                            a.getOwacAddr());
+                })
+                .toList();
+
+        List<ContactOverseasRow> ovrsOut = overseas.stream()
+                .sorted(Comparator.comparing(TrcoOvrsInfm::getTrcoOvrsKey))
+                .map(o -> new ContactOverseasRow(
+                        o.getTrcoOvrsKey(),
+                        o.getBeneName(),
+                        o.getBeneAcctNo(),
+                        o.getBicCode(),
+                        o.getBeneBankName(),
+                        o.getBeneBankCode(),
+                        o.getBeneAddr()))
+                .toList();
+
+        return new ContactRow(
+                master.getTrcoKey(),
+                master.getHandTrcoKey(),
+                master.getTrcoCmnm(),
+                master.getTrcoCmenm(),
+                master.getTrcoTaxId(),
+                master.getTrcoType(),
+                master.getTrcoStts(),
+                master.getModDtm(),
+                addrOut,
+                acctOut,
+                ovrsOut);
+    }
+
+    /* =================================================================
+     *  Sub-row entity factories
+     * ================================================================= */
+
+    private static TrcoAddrInfm toAddrEntity(
+            AddressOp a, String bizKey, String trcoKey, String userId, String now) {
+        TrcoAddrInfm e = new TrcoAddrInfm();
+        e.setTrcoKey(trcoKey);
+        e.setBizKey(bizKey);
+        e.setTrcoAddrKey(a.trcoAddrKey());
+        e.setTrcoBsunPostAdrs(a.trcoBsunPostAdrs());
+        e.setDispOrd(a.dispOrd());
+        // Legacy parity: ISSU_DT defaults to today on insert; DUE_DT
+        // defaults to today too when the caller omits it.
+        String today = now.substring(0, 8);
+        e.setIssuDt(a.issuDt() != null && !a.issuDt().isBlank() ? a.issuDt() : today);
+        e.setDueDt(a.dueDt()   != null && !a.dueDt().isBlank()   ? a.dueDt()   : today);
+        e.setRegId(userId);
+        e.setRegDtm(now);
+        e.setModId(userId);
+        e.setModDtm(now);
+        return e;
+    }
+
+    private static TrcoAcctInfo toAcctEntity(
+            AccountOp a, String bizKey, String trcoKey, String userId, String now) {
+        TrcoAcctInfo e = new TrcoAcctInfo();
+        e.setBizKey(bizKey);
+        e.setTrcoKey(trcoKey);
+        e.setTrcoAcctKey(a.trcoAcctKey());
+        e.setAcctNo(a.acctNo());
+        // Legacy default — DISP_ORD = 1 when caller omits.
+        e.setDispOrd(a.dispOrd() != null ? a.dispOrd() : 1);
+        e.setBankNm(a.bankNm());
+        e.setNapasBankCd(a.napasBankCd());
+        e.setCitadBankCd(a.citadBankCd());
+        e.setAcctCcyCd(a.acctCcyCd());
+        e.setFincMdaOwnerNm(a.fincMdaOwnerNm());
+        e.setOwacAddr(a.owacAddr());
+        e.setRegId(userId);
+        e.setRegDtm(now);
+        e.setModId(userId);
+        e.setModDtm(now);
+        return e;
+    }
+
+    private static TrcoOvrsInfm toOvrsEntity(
+            OverseasOp o, String bizKey, String trcoKey, String userId, String now) {
+        TrcoOvrsInfm e = new TrcoOvrsInfm();
+        e.setTrcoKey(trcoKey);
+        e.setBizKey(bizKey);
+        e.setTrcoOvrsKey(o.trcoOvrsKey());
+        e.setBeneName(o.beneName());
+        e.setBeneAcctNo(o.beneAcctNo());
+        e.setBicCode(o.bicCode());
+        e.setBeneBankName(o.beneBankName());
+        e.setBeneBankCode(o.beneBankCode());
+        e.setBeneAddr(o.beneAddr());
+        e.setRegId(userId);
+        e.setRegDtm(now);
+        e.setModId(userId);
+        e.setModDtm(now);
+        return e;
+    }
+
+    private static String utcNowDtm14() {
+        return java.time.OffsetDateTime.now(ZoneOffset.UTC).format(DTM14);
+    }
+
+    /* =================================================================
+     *  Bank picker (NAPAS + CITAD) + Lookup Recipient — Add Contact UI.
+     *  Mirrors legacy comm_0109_001_r002 (bank list) and a deliberate
+     *  stub of comm_1003_001 (Lookup Recipient) — see "Surviving
+     *  legacy functions" in CLAUDE.md. The real Lookup endpoint calls
+     *  the firm-banking scraping module which is out of refactor scope;
+     *  the stub returns a deterministic mock so the popup UX flow
+     *  (verified vs manual recipient) still exercises end-to-end.
+     * ================================================================= */
+
+    /**
+     * Lists every NAPAS + CITAD row in {@code TB_FIRM_BANK_CODE} for
+     * the contacts Add/Edit dialog bank-picker autocomplete. Mirrors
+     * legacy {@code comm_0109_001_r002}. The dictionary is global —
+     * not tenant-scoped — so the read does not consult
+     * {@link TenantContext}.
+     */
+    @Transactional(readOnly = true)
+    public ContactBankListResponse listBanks() {
+        List<TbFirmBankCode> rows = bankCodeRepo
+                .findByAntDivCdInOrderByEngAbrvatNmAscBankCdAsc(List.of("NAPAS", "CITAD"));
+        List<ContactBankRow> out = new ArrayList<>(rows.size());
+        for (TbFirmBankCode r : rows) {
+            out.add(new ContactBankRow(
+                    r.getBankCd(),
+                    r.getAntDivCd(),
+                    r.getBankNm(),
+                    r.getBankEngNm(),
+                    r.getEngAbrvatNm(),
+                    normaliseBankStatus(r.getBankStas())));
+        }
+        return new ContactBankListResponse(out);
+    }
+
+    /**
+     * Map DB {@code BANK_STAS} (legacy stores {@code '1'}/{@code '0'},
+     * some rows {@code 'Y'}/{@code 'N'}, others null) to the
+     * {@code 'Y'}/{@code 'N'} vocabulary the legacy popup at
+     * {@code comm_0184_002.ts:84} checks against — drives the
+     * verified-vs-manual recipient toggle.
+     */
+    private static String normaliseBankStatus(String raw) {
+        if (raw == null) return null;
+        String trimmed = raw.trim();
+        if (trimmed.isEmpty()) return null;
+        if ("1".equals(trimmed) || "Y".equalsIgnoreCase(trimmed)) return "Y";
+        if ("0".equals(trimmed) || "N".equalsIgnoreCase(trimmed)) return "N";
+        return trimmed;
+    }
+
+    /**
+     * Lookup Recipient — <b>deterministic stub</b>. The legacy
+     * endpoint ({@code comm_1003_001}) calls the firm-banking
+     * scraping module via {@code FIRM_PROC.inquiryAccount}; that
+     * integration is intentionally out of refactor scope (workspace
+     * memory {@code project_refactoring_scope.md}). The stub returns
+     * a synthetic recipient name keyed off the last 4 digits of the
+     * account number so the popup's verified-recipient UX flow can
+     * still be exercised end-to-end during local R&amp;D.
+     *
+     * <p>When real bank integration lands, swap this method's body
+     * for the legacy {@code FIRM_PROC} call and keep the signature.
+     */
+    public ContactLookupRecipientResponse lookupRecipient(ContactLookupRecipientRequest req) {
+        String acctNo = req.acctNo() == null ? "" : req.acctNo().trim();
+        if (acctNo.length() < 4) {
+            return new ContactLookupRecipientResponse("MOCK ACCOUNT HOLDER");
+        }
+        String suffix = acctNo.substring(acctNo.length() - 4);
+        return new ContactLookupRecipientResponse("MOCK ACCOUNT HOLDER " + suffix);
+    }
+}

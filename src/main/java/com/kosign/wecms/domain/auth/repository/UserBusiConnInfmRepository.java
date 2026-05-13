@@ -3,7 +3,10 @@ package com.kosign.wecms.domain.auth.repository;
 import com.kosign.wecms.domain.auth.entity.UserBusiConnInfm;
 import com.kosign.wecms.domain.auth.entity.UserBusiConnInfmId;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -33,4 +36,79 @@ public interface UserBusiConnInfmRepository extends JpaRepository<UserBusiConnIn
      * the token.
      */
     List<UserBusiConnInfm> findAllByUserIdAndDelYn(String userId, String delYn);
+
+    /**
+     * Bulk lookup: every active link in the supplied {@code userIds} set
+     * that belongs to the given tenant. Used by features that take a
+     * list of approver / signer user ids from the caller (Approval Line,
+     * future approval features) and need to confirm in a single round-
+     * trip that every id has a current tenant link.
+     *
+     * <p>The caller compares the returned list size against the input
+     * set size; missing ids are the validation failure (refactor codes
+     * the failure via the consumer's domain-specific error code).
+     */
+    List<UserBusiConnInfm> findAllByUserIdInAndBizKeyAndDelYn(
+            Collection<String> userIds, String bizKey, String delYn);
+
+    /**
+     * Tenant-user picker projection — mirrors the legacy
+     * {@code comm_0192_001_r001} (Inquiry Approver) IDO at
+     * {@code IDO.USER_BUSI_CONN_INFM_R004.xml:24-62}. Joins
+     * {@code USER_INFM} on {@code USER_ID} so position +
+     * department + name come from {@code USER_INFM} while
+     * tenant scope + soft-delete + image flag come from
+     * {@code USER_BUSI_CONN_INFM}.
+     *
+     * <p>Filters:
+     * <ul>
+     *   <li>{@code biz_key = :bizKey} (tenant scope)</li>
+     *   <li>{@code del_yn = 'N'} (active links only)</li>
+     *   <li>{@code LOWER(USER_NM) LIKE LOWER(CONCAT('%', :q, '%'))}
+     *       when {@code :q} is non-empty &mdash; same semantic as
+     *       legacy {@code ui.user_nm ilike '%' || ? || '%'}.</li>
+     * </ul>
+     *
+     * <p>Order: {@code USER_NM ASC, USER_ID ASC} &mdash; the picker
+     * is name-sorted, tie-broken on id for deterministic ordering
+     * across rows that share a name.
+     *
+     * <p>Returns a {@link TenantUserProjection} interface
+     * projection &mdash; Hibernate emits the SELECT clause with
+     * exactly the seven columns the picker uses, avoiding the
+     * cost of materialising whole entity graphs for what is
+     * effectively a read-only view.
+     */
+    @Query(
+            "SELECT u.userId       AS userId, "
+                    + "u.userNm   AS userNm, "
+                    + "u.posiNm   AS posiNm, "
+                    + "u.deptNm   AS deptNm, "
+                    + "c.userImg  AS userImg "
+                    + "FROM UserBusiConnInfm c "
+                    + "JOIN UserInfm u ON u.userId = c.userId "
+                    + "WHERE c.bizKey = :bizKey "
+                    + "  AND c.delYn  = 'N' "
+                    + "  AND (:q IS NULL OR :q = '' "
+                    + "       OR LOWER(u.userNm) LIKE LOWER(CONCAT('%', :q, '%'))) "
+                    + "ORDER BY u.userNm ASC, u.userId ASC")
+    List<TenantUserProjection> findTenantUserPicker(
+            @Param("bizKey") String bizKey,
+            @Param("q")      String q);
+
+    /**
+     * Read-only projection consumed by the {@code GET /api/v1/users}
+     * controller. Hibernate proxies it from the JPQL alias names
+     * declared in {@link #findTenantUserPicker}. {@code userImg} is
+     * exposed so the service can decide whether to emit a
+     * {@code user_img_url} string &mdash; the value itself never
+     * reaches the wire.
+     */
+    interface TenantUserProjection {
+        String getUserId();
+        String getUserNm();
+        String getPosiNm();
+        String getDeptNm();
+        String getUserImg();
+    }
 }

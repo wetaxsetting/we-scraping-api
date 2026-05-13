@@ -12,9 +12,35 @@ spring:
     enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: true
+    # Local-R&D drift recovery — the developer DB is single-user and
+    # often runs against migration files that have been edited after
+    # first apply (e.g. a hotfix re-uses the same V-number while the
+    # local row is still in `flyway_schema_history`). Two flags keep
+    # the dev loop unblocked without compromising prod safety:
+    #
+    # `out-of-order: true` — lets a newly-added lower-version migration
+    #   run even when higher versions are already applied. Required for
+    #   normal R&D where V87 lands after V88-V89 already ran.
+    #
+    # `validate-on-migrate: false` — tolerates checksum drift on
+    #   already-applied migrations so the app boots even when the file
+    #   text changed. UAT/PROD profiles deliberately leave this at the
+    #   default `true` (strict) so production never starts with a
+    #   silently-modified migration history.
+    out-of-order: true
+    validate-on-migrate: false
   messages:
     basename: messages
     encoding: UTF-8
+  servlet:
+    multipart:
+      # Settings > Contacts attachments cap — 10 MB per file, 50 MB
+      # per request (matches ContactsFileService.MAX_FILE_SIZE_BYTES).
+      # Container-level guard so an oversized upload is rejected before
+      # the service-layer envelope fires; both layers are needed because
+      # the container 413 path produces a non-WBE response otherwise.
+      max-file-size: 10MB
+      max-request-size: 50MB
 
 server:
   port: 8080
@@ -68,3 +94,11 @@ wecms:
     # honour Java Paths.get(...)). Profile-specific overrides live in
     # application-{profile}.yml.
     storage-root: ${WECMS_ERP_TRANSACTION_HISTORY_STORAGE_ROOT:./tmp/erp-trns-hstr}
+  contacts:
+    # Local-disk root for Settings > Contacts attachments
+    # (TRCO_INFO_FILE — V98). Resolved path pattern:
+    #   <storage-root>/<biz_key>/contacts/<save_file_nm>
+    # Per-developer override via env var WECMS_CONTACTS_STORAGE_ROOT.
+    # Default mirrors the ERP Transaction History neighbour so all file
+    # storage stays under one tree on a developer laptop.
+    storage-root: ${WECMS_CONTACTS_STORAGE_ROOT:./tmp/contacts}

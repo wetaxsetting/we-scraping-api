@@ -14,6 +14,11 @@ spring:
   flyway:
     enabled: true
     baseline-on-migrate: false
+    # PROD must never tolerate checksum drift or out-of-order applies.
+    # These flags pin the strict defaults so the relaxed local-R&D
+    # values in `application.yml` cannot accidentally leak through.
+    out-of-order: false
+    validate-on-migrate: true
 
 server:
   error:

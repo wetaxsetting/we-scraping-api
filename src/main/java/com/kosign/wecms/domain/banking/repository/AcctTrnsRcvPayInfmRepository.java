@@ -23,4 +23,24 @@ public interface AcctTrnsRcvPayInfmRepository extends JpaRepository<AcctTrnsRcvP
     List<AcctTrnsRcvPayInfm> findByBizKeyAndAcctSeqNo(String bizKey, String acctSeqNo);
 
     List<AcctTrnsRcvPayInfm> findByBizKeyAndAcctSeqNoIn(String bizKey, List<String> acctSeqNos);
+
+    /**
+     * Settings &gt; Contacts in-use guard (OQ-2 resolved 2026-05-12 /
+     * legacy {@code WBE1190}). Returns {@code true} when at least one
+     * payment / receipt row in the tenant references the given contact
+     * &mdash; the contacts service blocks the trash transition
+     * ({@code TRCO_STTS = 'C'}) in that case.
+     *
+     * <p>V21 renamed the legacy {@code TRCO_KEY} column on this table
+     * to {@code RCV_PAY_TRCO_KEY}; the derived method therefore
+     * matches against {@code rcvPayTrcoKey} (NOT {@code trcoKey}).
+     * The {@code BIZ_KEY} predicate enforces tenant isolation so this
+     * cannot leak the existence of cross-tenant references.
+     *
+     * <p>Used by {@code ContactsService.softDelete(...)},
+     * {@code ContactsService.bulkSoftDelete(...)}, and
+     * {@code ContactsService.update(...)} when {@code trco_stts}
+     * transitions to {@code 'C'}.
+     */
+    boolean existsByBizKeyAndRcvPayTrcoKey(String bizKey, String rcvPayTrcoKey);
 }
