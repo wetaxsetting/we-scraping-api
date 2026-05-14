@@ -1,7 +1,6 @@
 package com.kosign.wecms.domain.banking.controller;
 
 import com.kosign.wecms.common.response.ApiResponse;
-import com.kosign.wecms.domain.banking.dto.CashFlowReport;
 import com.kosign.wecms.domain.banking.dto.DailyCashReport;
 import com.kosign.wecms.domain.banking.dto.DailyFinancialCmcReport;
 import com.kosign.wecms.domain.banking.dto.DailyFinancialHsReport;
@@ -29,8 +28,10 @@ public class ReportController {
     @GetMapping("/daily-financial")
     public ApiResponse<DailyFinancialCmcReport> dailyFinancial(
             @RequestParam(value = "asOf", required = false) String asOfDt,
-            @RequestParam(value = "currencyScope", required = false) String currencyScope) {
-        return ApiResponse.ok(reportService.dailyFinancial(asOfDt, currencyScope));
+            @RequestParam(value = "currencyScope", required = false) String currencyScope,
+            @RequestParam(value = "activeAccountsOnly", required = false, defaultValue = "true") boolean activeAccountsOnly,
+            @RequestParam(value = "includeInternalTransfers", required = false, defaultValue = "true") boolean includeInternalTransfers) {
+        return ApiResponse.ok(reportService.dailyFinancial(asOfDt, currencyScope, activeAccountsOnly, includeInternalTransfers));
     }
 
     /** STUB — see ReportService#dailyFinancialHs. */
@@ -41,11 +42,4 @@ public class ReportController {
         return ApiResponse.ok(reportService.dailyFinancialHs(asOfDt, bankCd));
     }
 
-    /** STUB — see ReportService#cashFlow. */
-    @GetMapping("/cash-flow")
-    public ApiResponse<CashFlowReport> cashFlow(
-            @RequestParam(value = "from", required = false) String fromYm,
-            @RequestParam(value = "to",   required = false) String toYm) {
-        return ApiResponse.ok(reportService.cashFlow(fromYm, toYm));
-    }
 }

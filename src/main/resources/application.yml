@@ -107,6 +107,14 @@ wecms:
     # Default mirrors the ERP Transaction History neighbour so all file
     # storage stays under one tree on a developer laptop.
     storage-root: ${WECMS_CONTACTS_STORAGE_ROOT:./tmp/contacts}
+  preferences:
+    # Local-disk root for Settings > Preferences company logos
+    # (BUSI_INFM.CMPN_LOGO). Resolved path pattern:
+    #   <storage-root>/<biz_key>/preferences/<save_file_nm>
+    # Per-developer override via env var WECMS_PREFERENCES_STORAGE_ROOT.
+    # The default points at the same shared tree as ERP Transaction
+    # History / Contacts so a developer laptop only needs one folder.
+    storage-root: ${WECMS_PREFERENCES_STORAGE_ROOT:./tmp/preferences}
   coocon:
     # Coocon API credentials — mirrors <coocon> in JEX config
     # (WECMS DEV/.../VI/jex.wabooks_new.user.xml).

@@ -1,7 +1,6 @@
 package com.kosign.wecms.domain.banking.service;
 
 import com.kosign.wecms.common.tenant.TenantContext;
-import com.kosign.wecms.domain.banking.dto.CashFlowReport;
 import com.kosign.wecms.domain.banking.dto.DailyCashReport;
 import com.kosign.wecms.domain.banking.dto.DailyFinancialCmcReport;
 import com.kosign.wecms.domain.banking.dto.DailyFinancialHsReport;
@@ -16,7 +15,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 /**
  * Banking Reports service.
@@ -74,10 +72,35 @@ public class ReportService {
 
     /* ----- Daily Financial (CMC) (real read against seed data) ----- */
 
+    /**
+     * Daily Financial CMC report. Reads account balances from
+     * {@code ACCT_MSTR}; per-account transactions ({@code REC2_1} in the
+     * legacy WSVC contract) and the per-currency flow rollup
+     * ({@code REC3}) are emitted as empty / zero-valued skeletons —
+     * Sprint 2 ports the real {@code ACCT_TRNS_HSTR} + summary-table reads.
+     *
+     * @param activeAccountsOnly       maps to legacy {@code ACTV_ACCT_ONLY_YN}
+     *                                 — when true, only {@code ACTV_YN='Y'}
+     *                                 rows are returned (the existing
+     *                                 repository finder already filters).
+     * @param includeInternalTransfers maps to legacy
+     *                                 {@code INCL_INTL_TRNS_YN}; reserved
+     *                                 for the Sprint 2 transactions read.
+     */
     @Transactional(readOnly = true)
-    public DailyFinancialCmcReport dailyFinancial(String asOfDt, String currencyScope) {
+    public DailyFinancialCmcReport dailyFinancial(
+            String asOfDt,
+            String currencyScope,
+            boolean activeAccountsOnly,
+            boolean includeInternalTransfers) {
         final String bizKey = TenantContext.currentBizKey();
-        List<AcctMstr> accts = acctRepo.findByBizKeyAndActvYnOrderByBankCdAscAcctNoAsc(bizKey, "Y");
+        List<AcctMstr> accts = activeAccountsOnly
+                ? acctRepo.findByBizKeyAndActvYnOrderByBankCdAscAcctNoAsc(bizKey, "Y")
+                : acctRepo.findByBizKeyAndActvYnOrderByBankCdAscAcctNoAsc(bizKey, "Y");
+        // NOTE: when activeAccountsOnly=false the legacy panel widens to
+        // include inactive accounts. The current Sprint 1 repository only
+        // exposes the active-filtered finder; the wider read lands when
+        // the repository grows a `findAllByBizKeyOrderBy…` variant.
 
         // Financial Status — per-currency totals across accounts.
         Map<String, BigDecimal> totalByCcy = new LinkedHashMap<>();
@@ -104,6 +127,7 @@ public class ReportService {
         }
 
         // Current Accounts ledger — one row per active CURRENT account.
+        // Per-account TRANSACTIONS list is an empty skeleton in Sprint 1.
         List<DailyFinancialCmcReport.CurrentAccountRow> ledger = new ArrayList<>();
         for (AcctMstr a : accts) {
             String type = a.getAcctTypeCd() == null ? "" : a.getAcctTypeCd().trim();
@@ -114,18 +138,46 @@ public class ReportService {
             ledger.add(new DailyFinancialCmcReport.CurrentAccountRow(
                     a.getBankCd() + "_" + a.getAcctNo(),
                     bankResolver.resolveBankNm(a.getBankCd()),
+                    a.getBankCd(),
                     a.getAcctNo(),
                     a.getAcctNickNm() != null ? a.getAcctNickNm() : a.getAcctNm(),
                     ccy,
+                    type,
+                    a.getActvYn(),
                     0, "0",
                     0, "0",
                     0, "0",
                     0, "0",
-                    AmountFormatter.wire(a.getBal())
+                    AmountFormatter.wire(a.getBal()),
+                    List.of()
             ));
         }
 
-        return new DailyFinancialCmcReport(asOfDt, currencyScope == null ? "ALL" : currencyScope, status, ledger);
+        // Currency flow rollup — REC3 in the legacy contract. Skeleton: one
+        // row per currency present in the ledger, zero-valued counters,
+        // closing balance == sum of account balances.
+        List<DailyFinancialCmcReport.CurrencyFlowRow> flow = new ArrayList<>();
+        for (Map.Entry<String, BigDecimal> e : totalByCcy.entrySet()) {
+            String ccy = e.getKey();
+            if (currencyScope != null && "VND".equalsIgnoreCase(currencyScope) && !"VND".equals(ccy)) continue;
+            if (currencyScope != null && "FCY".equalsIgnoreCase(currencyScope) && "VND".equals(ccy))   continue;
+            flow.add(new DailyFinancialCmcReport.CurrencyFlowRow(
+                    ccy,
+                    AmountFormatter.wire(e.getValue()),
+                    AmountFormatter.wire(e.getValue()),
+                    0, "0",
+                    0, "0"
+            ));
+        }
+
+        return new DailyFinancialCmcReport(
+                asOfDt,
+                currencyScope == null ? "ALL" : currencyScope,
+                activeAccountsOnly,
+                includeInternalTransfers,
+                status,
+                ledger,
+                flow);
     }
 
     /* -------------------- Daily Financial HS (STUB) -------------------- */
@@ -151,47 +203,4 @@ public class ReportService {
         return new DailyFinancialHsReport(asOfDt, bankCd, rows);
     }
 
-    /* ------------------------- Cash Flow (STUB) ------------------------- */
-
-    @Transactional(readOnly = true)
-    public CashFlowReport cashFlow(String fromYm, String toYm) {
-        // Sprint 1 STUB: deterministic monthly grid.
-        // TODO: Sprint 2 — replace with the real BCS batch port that
-        //       aggregates ACCT_TRNS_HSTR (PROD active) +
-        //       DAILY_FINCL_REPT_DAILY_SUMR_DETL (PROD active).
-        final String bizKey = TenantContext.currentBizKey();
-        if (bizKey == null) throw new IllegalStateException("missing tenant context");
-
-        List<String> months = List.of("2025-01", "2025-02", "2025-03", "2025-04", "2025-05");
-        List<String> opening = List.of("100000000", "120000000", "135000000", "140000000", "155000000");
-
-        CashFlowReport.DetailRow d1 = new CashFlowReport.DetailRow(uuid(), "REV-001", "Sales Revenue",
-                List.of("80000000", "85000000", "90000000", "95000000", "100000000"));
-        CashFlowReport.DetailRow d2 = new CashFlowReport.DetailRow(uuid(), "REV-002", "Service Revenue",
-                List.of("20000000", "22000000", "25000000", "27000000", "30000000"));
-        CashFlowReport.Subgroup revSub = new CashFlowReport.Subgroup(uuid(), "매출", "Revenue", List.of(d1, d2));
-        CashFlowReport.Group revenue = new CashFlowReport.Group(uuid(), "영업", "REVENUE",
-                List.of(revSub),
-                List.of("100000000", "107000000", "115000000", "122000000", "130000000"));
-
-        CashFlowReport.DetailRow e1 = new CashFlowReport.DetailRow(uuid(), "EXP-001", "Salaries",
-                List.of("40000000", "42000000", "44000000", "46000000", "48000000"));
-        CashFlowReport.DetailRow e2 = new CashFlowReport.DetailRow(uuid(), "EXP-002", "Office Rent",
-                List.of("12000000", "12000000", "12000000", "12000000", "12000000"));
-        CashFlowReport.Subgroup expSub = new CashFlowReport.Subgroup(uuid(), "비용", "Expenses", List.of(e1, e2));
-        CashFlowReport.Group expense = new CashFlowReport.Group(uuid(), "지출", "Expenses",
-                List.of(expSub),
-                List.of("52000000", "54000000", "56000000", "58000000", "60000000"));
-
-        return new CashFlowReport(
-                months,
-                opening,
-                List.of(revenue, expense),
-                List.of("48000000", "53000000", "59000000", "64000000", "70000000"),
-                List.of("0", "0", "0", "0", "0"),
-                List.of("148000000", "173000000", "194000000", "204000000", "225000000")
-        );
-    }
-
-    private static String uuid() { return UUID.randomUUID().toString(); }
 }

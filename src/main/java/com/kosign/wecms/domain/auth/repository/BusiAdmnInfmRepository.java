@@ -25,4 +25,11 @@ public interface BusiAdmnInfmRepository extends JpaRepository<BusiAdmnInfm, Busi
      * most one row.
      */
     List<BusiAdmnInfm> findAllByUserId(String userId);
+
+    /**
+     * Count of admin rows for a tenant — used by Settings &gt; Users
+     * to enforce the "at least one admin must remain" invariant when
+     * an admin row is removed (either by demote on PUT or by delete).
+     */
+    long countByBizKey(String bizKey);
 }

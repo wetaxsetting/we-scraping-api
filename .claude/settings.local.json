@@ -1,0 +1,9 @@
+{
+  "enabledMcpjsonServers": [
+    "figma",
+    "postgres_dev",
+    "postgres_local",
+    "playwright",
+    "svn"
+  ]
+}
