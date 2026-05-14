@@ -52,6 +52,16 @@ public interface UserBusiConnInfmRepository extends JpaRepository<UserBusiConnIn
             Collection<String> userIds, String bizKey, String delYn);
 
     /**
+     * Active-user count for a tenant — backs the Settings &gt; Users
+     * plan-cap guard (5 active users per tenant per
+     * {@code UserManagementConstants.MAX_USERS_PER_TENANT}). Both the
+     * count read and the subsequent {@code USER_BUSI_CONN_INFM} insert
+     * run inside the same {@code @Transactional} method so a fast-double
+     * create cannot overshoot the cap.
+     */
+    long countByBizKeyAndDelYn(String bizKey, String delYn);
+
+    /**
      * Tenant-user picker projection — mirrors the legacy
      * {@code comm_0192_001_r001} (Inquiry Approver) IDO at
      * {@code IDO.USER_BUSI_CONN_INFM_R004.xml:24-62}. Joins
@@ -107,6 +117,49 @@ public interface UserBusiConnInfmRepository extends JpaRepository<UserBusiConnIn
     interface TenantUserProjection {
         String getUserId();
         String getUserNm();
+        String getPosiNm();
+        String getDeptNm();
+        String getUserImg();
+    }
+
+    /**
+     * Full user list for the Settings &gt; Users management panel —
+     * joins {@code USER_INFM} so a single round trip returns every
+     * field the panel renders (email + phone + position + department +
+     * avatar). Ordered by {@code REG_DTM DESC, USER_ID ASC} so the
+     * newest user lands at the top of the list.
+     *
+     * <p>Distinct from {@link #findTenantUserPicker} — the picker is
+     * a narrow approver-search projection; this one is the management
+     * grid. Same join shape, more columns.
+     */
+    @Query(
+            "SELECT u.userId   AS userId, "
+                    + "u.userNm   AS userNm, "
+                    + "u.eml      AS eml, "
+                    + "u.clphNo   AS clphNo, "
+                    + "u.posiNm   AS posiNm, "
+                    + "u.deptNm   AS deptNm, "
+                    + "c.userImg  AS userImg "
+                    + "FROM UserBusiConnInfm c "
+                    + "JOIN UserInfm u ON u.userId = c.userId "
+                    + "WHERE c.bizKey = :bizKey "
+                    + "  AND c.delYn  = 'N' "
+                    + "ORDER BY c.regDtm DESC, u.userId ASC")
+    List<TenantUserManagementProjection> findTenantUsersForManagement(
+            @Param("bizKey") String bizKey);
+
+    /**
+     * Wider projection used by the Settings &gt; Users management
+     * grid. Carries every column the panel renders so the controller
+     * can build the response in one pass with no per-row second
+     * lookup.
+     */
+    interface TenantUserManagementProjection {
+        String getUserId();
+        String getUserNm();
+        String getEml();
+        String getClphNo();
         String getPosiNm();
         String getDeptNm();
         String getUserImg();

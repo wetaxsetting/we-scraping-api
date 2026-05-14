@@ -42,4 +42,20 @@ public interface AuditLogEntryRepository
             String refNo2,
             String wsvcId,
             String langCd);
+
+    /**
+     * Variant for features whose audit rows always carry
+     * {@code REF_NO2 = NULL} (single-column natural PK on the
+     * referenced row — e.g. Login Credentials, where the only
+     * locator on {@code BANK_CERT_INFO} / {@code GDT_CERT_INFO} is
+     * {@code SEQ_NO}). Derived-name JPA requires the explicit
+     * {@code RefNo2IsNull} clause; equality against a {@code null}
+     * argument would never match.
+     */
+    List<AuditLogEntry> findByBizKeyAndRefNoAndRefNo1AndWsvcIdAndLangCdAndRefNo2IsNullOrderByRegDtmDesc(
+            String bizKey,
+            String refNo,
+            String refNo1,
+            String wsvcId,
+            String langCd);
 }
