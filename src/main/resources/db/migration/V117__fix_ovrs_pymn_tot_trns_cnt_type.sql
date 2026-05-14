@@ -1,8 +1,6 @@
--- V88: Fix TOT_TRNS_CNT column type in overseas-payment tables
--- V85 created both columns as NUMERIC(10) but the JPA entities map them
+-- V117: Fix TOT_TRNS_CNT column type in overseas-payment tables
+-- V112 created both columns as NUMERIC(10) but the JPA entities map them
 -- as Integer, which Hibernate validates against INTEGER (not NUMERIC).
--- The shared dev DB had a V87 with different content (checksum mismatch);
--- FlywayRepairConfig purges that stale V87 entry so this migration can run.
 -- Alter to INTEGER to match the entity mapping and the semantic intent
 -- (a count of transactions is never fractional).
 --
