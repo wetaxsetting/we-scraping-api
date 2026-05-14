@@ -21,13 +21,13 @@ import java.util.List;
  * schema objects in the wrong state. Two detection mechanisms are used:
  *
  * <ul>
- *   <li><b>Missing-table anchors (V84–V86):</b> if the anchor table is absent,
- *       the history entries for that group are deleted so Flyway re-applies them.
+ *   <li><b>Missing-table anchors (V110):</b> if the anchor table is absent,
+ *       the history entry for that migration is deleted so Flyway re-applies it.
  *   <li><b>Wrong-column-type anchors:</b> if an anchor column still has the stale
  *       SQL type, <em>all</em> numeric-versioned history entries above a given
- *       baseline are deleted. This covers however many experimental V87/V88/…
- *       entries the shared DB accumulated — no need to enumerate them explicitly.
- *       The corrective migration (V88) uses {@code USING col::INTEGER} so it is
+ *       baseline are deleted. This covers however many experimental entries the
+ *       shared DB accumulated — no need to enumerate them explicitly.
+ *       The corrective migration (V117) uses {@code USING col::INTEGER} so it is
  *       a no-op when the column is already correct.
  * </ul>
  *
@@ -75,7 +75,7 @@ public class FlywayRepairConfig {
         record Anchor(String table, List<String> versions) {}
 
         List<Anchor> anchors = List.of(
-                new Anchor("bank_exch_rate_infm", List.of("84", "85", "86"))
+                new Anchor("bank_exch_rate_infm", List.of("110"))
         );
 
         for (Anchor anchor : anchors) {
@@ -93,18 +93,19 @@ public class FlywayRepairConfig {
      * If an anchor column still has the stale SQL type, delete ALL numeric-versioned
      * history entries above {@code purgeAboveVersion} so the corrective migration runs.
      *
-     * <p>The shared dev DB may have accumulated any number of experimental V87, V88, …
+     * <p>The shared dev DB may have accumulated any number of experimental V110+
      * entries with different checksums. Purging everything above the last known-good
-     * baseline (V86 for the overseas-payment tables) handles them all in one pass,
-     * regardless of how many there are.
+     * canonical baseline (V109) handles them all in one pass, regardless of how many
+     * there are.
      */
     private void repairWrongColumnTypes(Connection conn) throws Exception {
         record ColumnAnchor(String table, String column, String staleType, int purgeAboveVersion) {}
 
         List<ColumnAnchor> anchors = List.of(
-                // V85 created TOT_TRNS_CNT as NUMERIC(10); V88 corrects it to INTEGER.
-                // Purge every history entry above V86 when the column is still numeric.
-                new ColumnAnchor("ovrs_pymn_mstr", "tot_trns_cnt", "numeric", 86)
+                // V112 created TOT_TRNS_CNT as NUMERIC(10) in an earlier draft; V117
+                // corrects it to INTEGER. Purge every history entry above V109 (the last
+                // canonical migration before the branch) when the column is still numeric.
+                new ColumnAnchor("ovrs_pymn_mstr", "tot_trns_cnt", "numeric", 109)
         );
 
         for (ColumnAnchor anchor : anchors) {

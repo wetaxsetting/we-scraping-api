@@ -2,6 +2,8 @@ package com.kosign.wecms.domain.payment.controller;
 
 import com.kosign.wecms.common.response.ApiResponse;
 import com.kosign.wecms.domain.payment.dto.OverseasScheduledListResponse;
+import com.kosign.wecms.domain.payment.internaltransfer.dto.WithdrawalAccountRow;
+import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService;
 import com.kosign.wecms.domain.payment.service.OverseasPaymentService;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -26,7 +28,8 @@ import java.util.List;
 @Validated
 public class OverseasPaymentController {
 
-    private final OverseasPaymentService overseasPaymentService;
+    private final OverseasPaymentService    overseasPaymentService;
+    private final InternalTransferService   internalTransferService;
 
     /**
      * Overseas scheduled-payment list.
@@ -68,5 +71,22 @@ public class OverseasPaymentController {
 
         return ApiResponse.ok(
                 overseasPaymentService.list(fromDt, toDt, apprTypeCds, keyword, page, size));
+    }
+
+    /**
+     * Firm-banking-capable withdrawal accounts for the overseas payment
+     * Excel upload dialog Step 3 ("Withdrawal Bank/Account No." picker).
+     *
+     * <p>Mirrors legacy {@code comm_1001_001} — same query as internal
+     * transfer; the upstream service is shared because both features
+     * draw from the same {@code ACCT_MSTR} + {@code TB_FIRM_CONF} join.
+     *
+     * @param ccyCd optional currency filter (e.g. {@code "USD"}); omit
+     *              for all firm-banking accounts regardless of currency.
+     */
+    @GetMapping("/withdrawal-accounts")
+    public ApiResponse<List<WithdrawalAccountRow>> listWithdrawalAccounts(
+            @RequestParam(value = "ccy_cd", required = false) String ccyCd) {
+        return ApiResponse.ok(internalTransferService.listWithdrawalAccounts(ccyCd));
     }
 }

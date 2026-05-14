@@ -46,7 +46,7 @@ public class OverseasPaymentRepository {
      * 12  draft_user_id
      * 13  draft_user_nm
      * 14  doc_no
-     * 15  appr_stts
+     * 15  appr_sts
      * 16  appr_type_cd
      * 17  trnf_yn
      * 18  appr_dv
@@ -188,7 +188,7 @@ public class OverseasPaymentRepository {
                        erm.draft_user_id,
                        erm.draft_user_nm,
                        erm.doc_no,
-                       erm.appr_stts,
+                       erm.appr_sts,
                        erm.appr_type_cd,
                        ops.trnf_yn,
                        erm.appr_dv,
@@ -223,7 +223,7 @@ public class OverseasPaymentRepository {
                        erm.draft_user_id,
                        erm.draft_user_nm,
                        erm.doc_no,
-                       erm.appr_stts,
+                       erm.appr_sts,
                        erm.appr_type_cd,
                        opm.trnf_yn,
                        erm.appr_dv,
