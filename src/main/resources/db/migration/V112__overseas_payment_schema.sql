@@ -1,65 +1,17 @@
--- V85: Create overseas-payment tables
--- Source: wabooks.entity.OvrsPymnSumr, OvrsPymnMstr, ExptResolMstr, ExptResolApprvrInfm (JEX DEV)
+-- V112: Create overseas-payment tables (OVRS_PYMN_SUMR + OVRS_PYMN_MSTR)
+-- Source: wabooks.entity.OvrsPymnSumr, OvrsPymnMstr (JEX DEV)
 -- Read by: GET /api/v1/payment/overseas-payment/scheduled (pymn_0007_001_r001)
-
--- ─────────────────────────────────────────────────────────────────────────────
--- EXPT_RESOL_MSTR — Approval resolution master
--- Simplified for R&D: APPR_STTS stored directly instead of computed via
--- wb_get_appr_stts (the function evaluates approver rows dynamically in JEX).
--- ─────────────────────────────────────────────────────────────────────────────
-CREATE TABLE EXPT_RESOL_MSTR (
-    BIZ_KEY             VARCHAR(20)     NOT NULL,
-    APPR_SEQ_NO         VARCHAR(20)     NOT NULL,
-
-    TITL                VARCHAR(200),
-    APPR_TYPE_CD        VARCHAR(10),
-    APPR_DV             VARCHAR(1),
-    DOC_NO              VARCHAR(50),
-    PAY_DATE            VARCHAR(8),
-
-    -- Requestor (DRAFT = submitter in JEX terminology)
-    DRAFT_USER_ID       VARCHAR(100),
-    DRAFT_USER_NM       VARCHAR(100),
-
-    -- Computed approval status stored directly for R&D parity
-    -- JEX computes this via wb_get_appr_stts(biz_key, reg_id, sub_id, appr_seq_no, appr_type_cd)
-    APPR_STTS           VARCHAR(20),
-
-    REG_DTM             VARCHAR(14),
-    REG_ID              VARCHAR(100),
-    MOD_DTM             VARCHAR(14),
-    MOD_ID              VARCHAR(100),
-
-    CONSTRAINT PK_EXPT_RESOL_MSTR
-        PRIMARY KEY (BIZ_KEY, APPR_SEQ_NO)
-);
-
--- ─────────────────────────────────────────────────────────────────────────────
--- EXPT_RESOL_APPRVR_INFM — per-step approver rows for an approval chain
--- ─────────────────────────────────────────────────────────────────────────────
-CREATE TABLE EXPT_RESOL_APPRVR_INFM (
-    BIZ_KEY             VARCHAR(20)     NOT NULL,
-    APPR_SEQ_NO         VARCHAR(20)     NOT NULL,
-    APPRVR_LINE_NO      VARCHAR(5)      NOT NULL,
-
-    APPRVR_ID           VARCHAR(100),
-    APPRVR_NM           VARCHAR(100),
-    APPRVR_STTS         VARCHAR(20),
-    REG_IMG_URL         VARCHAR(500),
-    MOD_DTM             VARCHAR(14),
-
-    CONSTRAINT PK_EXPT_RESOL_APPRVR_INFM
-        PRIMARY KEY (BIZ_KEY, APPR_SEQ_NO, APPRVR_LINE_NO)
-);
-
-CREATE INDEX IDX_EXPT_RESOL_APPRVR_INFM_KEY_SEQ
-    ON EXPT_RESOL_APPRVR_INFM (BIZ_KEY, APPR_SEQ_NO);
+--
+-- Note: EXPT_RESOL_MSTR and EXPT_RESOL_APPRVR_INFM are created by V111
+-- (approval_box_schema) with full DEV column-for-column parity. Do NOT
+-- re-create them here. The APPR_STS column is the correct DEV name (not
+-- APPR_STTS which was a typo in an earlier draft of this migration).
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- OVRS_PYMN_SUMR — overseas payment summary (batch / Excel-upload type = 'E')
 -- Source: wabooks.entity.OvrsPymnSumr
 -- ─────────────────────────────────────────────────────────────────────────────
-CREATE TABLE OVRS_PYMN_SUMR (
+CREATE TABLE IF NOT EXISTS OVRS_PYMN_SUMR (
     BIZ_KEY             VARCHAR(20)     NOT NULL,
     OVRS_PYMN_NO        VARCHAR(20)     NOT NULL,
 
@@ -71,7 +23,7 @@ CREATE TABLE OVRS_PYMN_SUMR (
 
     CCY_CD              VARCHAR(10),
     TOTAL_TRAN_AMT      NUMERIC(20, 2),
-    TOT_TRNS_CNT        NUMERIC(10),
+    TOT_TRNS_CNT        INTEGER,
 
     -- Linked approval chain
     APPR_SEQ_NO         VARCHAR(20),
@@ -115,7 +67,7 @@ CREATE INDEX IDX_OVRS_PYMN_SUMR_APPR_SEQ
 -- OVRS_PYMN_MSTR — overseas payment master (individual / manual type = 'M')
 -- Source: wabooks.entity.OvrsPymnMstr
 -- ─────────────────────────────────────────────────────────────────────────────
-CREATE TABLE OVRS_PYMN_MSTR (
+CREATE TABLE IF NOT EXISTS OVRS_PYMN_MSTR (
     BIZ_KEY             VARCHAR(20)     NOT NULL,
     OVRS_PYMN_NO        VARCHAR(20)     NOT NULL,
 
@@ -128,7 +80,7 @@ CREATE TABLE OVRS_PYMN_MSTR (
     TRNF_CCY_CD         VARCHAR(10),
     TRNF_AMT            NUMERIC(20, 2),
     TOTAL_TRAN_AMT      NUMERIC(20, 2),
-    TOT_TRNS_CNT        NUMERIC(10),
+    TOT_TRNS_CNT        INTEGER,
 
     -- Fee payer: O = Ours, S = SHA, B = BEN
     FEE_PAYER_CD        VARCHAR(1),

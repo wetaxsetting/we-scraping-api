@@ -1,6 +1,5 @@
 package com.kosign.wecms.domain.banking.service;
 
-import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.banking.dto.ExchangeRateBankItem;
 import com.kosign.wecms.domain.banking.dto.ExchangeRateListResponse;
 import com.kosign.wecms.domain.banking.dto.ExchangeRateRow;
@@ -46,29 +45,27 @@ public class ExchangeRateService {
     private final ExchangeRateBatchService exchangeRateBatchService;
 
     /**
-     * Returns one exchange rate row per currency for the authenticated tenant on
-     * the requested reference date.
+     * Returns one exchange rate row per currency for the requested reference date,
+     * across ALL tenants. Exchange rates are global bank data — no biz_key filter.
      *
      * <p>When {@code seqNo} is supplied (e.g. "1" or "2") only rows for that exact
      * batch round are returned — matching the JEX r001 exact-SEQ_NO filter.</p>
      *
-     * <p>When {@code seqNo} is omitted, the latest batch round (highest EXCH_SEQ_NO)
-     * per currency is returned — matching the JEX IDO R002 COALESCE preference for
-     * SEQ_NO='2' when both morning and afternoon runs exist.</p>
+     * <p>When {@code seqNo} is omitted, the latest batch round (highest SEQ_NO)
+     * per currency pair is returned via DISTINCT ON.</p>
      *
      * @param refDate  YYYYMMDD; {@code null} or blank → today (UTC+7 / Vietnam)
      * @param bankCd   bank code; {@code null} or blank → {@link #DEFAULT_BANK_CD}
      * @param seqNo    batch sequence number ("1", "2", …); {@code null} or blank → latest
      */
     public ExchangeRateListResponse list(String refDate, String bankCd, String seqNo) {
-        String bizKey       = TenantContext.currentBizKey();
         String resolvedDate = resolveDate(refDate);
         String resolvedBank = (bankCd != null && !bankCd.isBlank()) ? bankCd : DEFAULT_BANK_CD;
         boolean hasSeqNo    = seqNo != null && !seqNo.isBlank();
 
-        log.debug("exchange-rates list: bizKey={} bank={} date={} seqNo={}", bizKey, resolvedBank, resolvedDate, seqNo);
+        log.debug("exchange-rates list: bank={} date={} seqNo={}", resolvedBank, resolvedDate, seqNo);
 
-        List<BankExchRateInfm> rows = fetchRows(bizKey, resolvedBank, resolvedDate, hasSeqNo ? seqNo : null);
+        List<BankExchRateInfm> rows = fetchRows(resolvedBank, resolvedDate, hasSeqNo ? seqNo : null);
 
         // When no explicit date was requested and today has no data, trigger the batch
         // synchronously to fetch from Coocon API (on-demand loading for the first caller).
@@ -76,18 +73,18 @@ public class ExchangeRateService {
             log.info("No exchange rates found for today. Triggering on-demand fetch from Coocon API.");
             try {
                 exchangeRateBatchService.fetchAndSaveExchangeRates();
-                rows = fetchRows(bizKey, resolvedBank, resolvedDate, hasSeqNo ? seqNo : null);
+                rows = fetchRows(resolvedBank, resolvedDate, hasSeqNo ? seqNo : null);
             } catch (Exception e) {
                 log.error("On-demand exchange rate fetch failed", e);
             }
 
             // If still empty (e.g. Coocon is down or no rates yet), fall back to the most recent date
             if (rows.isEmpty()) {
-                String latestDate = exchRateRepo.findLatestRefDate(bizKey, resolvedBank).orElse(null);
+                String latestDate = exchRateRepo.findLatestRefDateByBankCd(resolvedBank).orElse(null);
                 if (latestDate != null && !latestDate.equals(resolvedDate)) {
                     log.debug("exchange-rates fallback to latest available date: {}", latestDate);
                     resolvedDate = latestDate;
-                    rows = fetchRows(bizKey, resolvedBank, resolvedDate, hasSeqNo ? seqNo : null);
+                    rows = fetchRows(resolvedBank, resolvedDate, hasSeqNo ? seqNo : null);
                 }
             }
         }
@@ -98,7 +95,15 @@ public class ExchangeRateService {
                 .map(this::toRow)
                 .toList();
 
-        return new ExchangeRateListResponse(resolvedDate, resolvedBank, bankNm, rateRows);
+        List<com.kosign.wecms.domain.banking.dto.ExchangeRateRoundItem> rounds =
+                exchRateRepo.findDistinctRoundsByBankCdAndRefDate(resolvedBank, resolvedDate).stream()
+                        .map(row -> new com.kosign.wecms.domain.banking.dto.ExchangeRateRoundItem(
+                                (String) row[0],
+                                (String) row[1]
+                        ))
+                        .toList();
+
+        return new ExchangeRateListResponse(resolvedDate, resolvedBank, bankNm, rateRows, rounds);
     }
 
     /**
@@ -106,14 +111,25 @@ public class ExchangeRateService {
      * rate data for the authenticated tenant — used to populate the bank selector.
      */
     public List<ExchangeRateBankItem> listBanks() {
-        String bizKey = TenantContext.currentBizKey();
+        log.debug("exchange-rates banks");
 
-        log.debug("exchange-rates banks: bizKey={}", bizKey);
-
-        return exchRateRepo.findDistinctBankCdByBizKey(bizKey).stream()
+        return exchRateRepo.findDistinctBankCd().stream()
                 .map(code -> new ExchangeRateBankItem(code, bankCdResolver.resolveBankNm(code)))
                 .toList();
     }
+
+    /**
+     * Returns the distinct display-currency codes across ALL tenants — used to
+     * populate the full currency list on the frontend so every row appears even
+     * when no rates exist for the selected date/bank.
+     */
+    public List<String> listCurrencies() {
+        log.debug("exchange-rates currencies");
+
+        return exchRateRepo.findDistinctDisplayCurrency();
+    }
+
+
 
     // ── Mappers ──────────────────────────────────────────────────────────────
 
@@ -138,14 +154,13 @@ public class ExchangeRateService {
 
     /**
      * Delegates to the correct repository query based on whether a {@code seqNo}
-     * filter was requested.  {@code null} = no filter (DISTINCT ON latest).
+     * filter was requested.  {@code null} = no filter (DISTINCT ON latest round).
      */
-    private List<BankExchRateInfm> fetchRows(String bizKey, String bankCd, String refDate, String seqNo) {
+    private List<BankExchRateInfm> fetchRows(String bankCd, String refDate, String seqNo) {
         if (seqNo != null) {
-            return exchRateRepo.findByBizKeyAndBankCdAndRefDateAndSeqNoOrderByCcyCdAsc(
-                    bizKey, bankCd, refDate, seqNo);
+            return exchRateRepo.findLatestPerCurrencyByBankCdAndRefDateAndSeqNo(bankCd, refDate, seqNo);
         }
-        return exchRateRepo.findLatestPerCurrencyByBizKeyAndBankCdAndRefDate(bizKey, bankCd, refDate);
+        return exchRateRepo.findLatestPerCurrencyByBankCdAndRefDate(bankCd, refDate);
     }
 
     /**

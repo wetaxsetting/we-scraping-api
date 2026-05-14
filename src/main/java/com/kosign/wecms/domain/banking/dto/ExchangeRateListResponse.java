@@ -21,5 +21,8 @@ public record ExchangeRateListResponse(
         String bankNm,
 
         /** Exchange rates, one entry per counter-currency, ordered by CCY_CD. */
-        List<ExchangeRateRow> rates
+        List<ExchangeRateRow> rates,
+
+        /** Available batch rounds for the selected bank and date. */
+        List<ExchangeRateRoundItem> rounds
 ) {}

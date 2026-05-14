@@ -74,19 +74,36 @@ public class ExchangeRateController {
      * <pre>
      * GET /api/v1/banking/exchange-rates/banks
      * </pre>
-     *
-     * <p>Response example:
-     * <pre>{@code
-     * {
-     *   "status": { "error": false, "code": "WBI0000", "message": "Success" },
-     *   "data": [
-     *     { "bank_cd": "11704088", "bank_nm": "Shinhan Bank" }
-     *   ]
-     * }
-     * }</pre>
      */
     @GetMapping("/exchange-rates/banks")
     public ApiResponse<List<ExchangeRateBankItem>> listBanks() {
         return ApiResponse.ok(exchangeRateService.listBanks());
     }
+
+    /**
+     * List all distinct display-currency codes that have ever had exchange rate
+     * data for the authenticated tenant.
+     *
+     * <pre>
+     * GET /api/v1/banking/exchange-rates/currencies
+     * </pre>
+     *
+     * <p>The frontend uses this to build the full currency row list so every
+     * known currency always appears in the table, even when no rates exist for
+     * the currently selected date or bank.</p>
+     *
+     * <p>Response example:
+     * <pre>{@code
+     * {
+     *   "status": { "error": false, "code": "WBI0000", "message": "Success" },
+     *   "data": ["AUD", "CAD", "EUR", "GBP", "HKD", "JPY", "KRW", "SGD", "USD"]
+     * }
+     * }</pre>
+     */
+    @GetMapping("/exchange-rates/currencies")
+    public ApiResponse<List<String>> listCurrencies() {
+        return ApiResponse.ok(exchangeRateService.listCurrencies());
+    }
+
+
 }
