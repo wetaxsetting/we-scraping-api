@@ -72,7 +72,9 @@ public class InternalTransferResultService {
 
         Page<ScdulPymnSumr> rows = sumrRepository.search(
                 bizKey, ScdulPymnTypeCd.INTERNAL.code(),
-                fromDtm, toDtm, emptyToNull(srchWd), trnfYnFilter, pageable);
+                fromDtm, toDtm, emptyToNull(srchWd), trnfYnFilter,
+                null,                                       // apprType — Result lists filter by trnfStts only
+                pageable);
 
         List<TransferResultRow> dtoRows = rows.getContent().stream()
                 .map(InternalTransferResultService::toResultRow)
@@ -116,6 +118,7 @@ public class InternalTransferResultService {
                 master.getTrnfDtm(),
                 master.getOrgFileNm(),
                 master.getFileSize(),
+                master.getRegId(),
                 // suc/err/prc — Phase A defers the dispatch-tables join.
                 null, null, null,
                 lines);

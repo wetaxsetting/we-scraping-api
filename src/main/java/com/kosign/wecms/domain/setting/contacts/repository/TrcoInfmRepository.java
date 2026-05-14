@@ -45,6 +45,28 @@ public interface TrcoInfmRepository extends JpaRepository<TrcoInfm, String> {
     boolean existsByBizKeyAndHandTrcoKey(String bizKey, String handTrcoKey);
 
     /**
+     * Tenant-scoped lookup by {@code HAND_TRCO_KEY} (the user-facing
+     * contact code that appears on the Vendor / Expense / Payroll
+     * Excel templates). Excludes soft-deleted rows
+     * ({@code TRCO_STTS = 'C'}).
+     *
+     * <p>Mirrors legacy {@code PymnHelper.ckContactCode} (lines
+     * 1183-1227) — the query used by the payment-upload parser to
+     * resolve each line's recipient against the tenant's Contacts
+     * master. Used to populate {@code TRCO_KEY} / {@code TRCO_CMNM} /
+     * {@code TRCO_CMENM} on each parsed line.
+     */
+    @Query("""
+        SELECT t FROM TrcoInfm t
+        WHERE t.bizKey = :bizKey
+          AND t.handTrcoKey = :handTrcoKey
+          AND (t.trcoStts IS NULL OR t.trcoStts <> 'C')
+        """)
+    Optional<TrcoInfm> findActiveByBizKeyAndHandTrcoKey(
+            @Param("bizKey") String bizKey,
+            @Param("handTrcoKey") String handTrcoKey);
+
+    /**
      * Duplicate-{@code TRCO_TAX_ID} check &mdash; per-tenant unique
      * contract. Mirrors legacy {@code TrcoHelper.validateTrcoTaxDuplicate}.
      */

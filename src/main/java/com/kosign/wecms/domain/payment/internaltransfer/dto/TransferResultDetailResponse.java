@@ -18,6 +18,11 @@ public record TransferResultDetailResponse(
         String                   trnfDtm,
         String                   orgFileNm,
         BigDecimal               fileSize,
+        /** User id of the requester — wired so the detail page's
+         *  General Information panel can render the real submitter
+         *  rather than a hardcoded mock. Mirrors the Scheduled
+         *  detail's {@code reg_id}. */
+        String                   regId,
         BigDecimal               sucCnt,
         BigDecimal               errCnt,
         BigDecimal               prcCnt,

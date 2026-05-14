@@ -160,7 +160,7 @@ public class InternalTransferService {
      */
     @Transactional(readOnly = true)
     public ScheduledTransferListResponse list(
-            String fromDate, String toDate, String srchWd,
+            String fromDate, String toDate, String srchWd, String apprType,
             String sortField, String sortDirection,
             int page, int size) {
 
@@ -178,12 +178,14 @@ public class InternalTransferService {
         // `function lower(bytea) does not exist`. Mirrors the
         // `AcctMstrRepository#findFiltered` precedent.
         String srchWdPattern = buildLikePattern(srchWd);
+        String apprTypeArg   = (apprType == null || apprType.isBlank()) ? null : apprType.trim();
 
         Page<ScdulPymnSumr> rows = sumrRepository.search(
                 bizKey, ScdulPymnTypeCd.INTERNAL.code(),
                 fromDtm, toDtm,
                 srchWdPattern,
                 null,
+                apprTypeArg,
                 pageable);
 
         List<ScheduledTransferRow> dtoRows = rows.getContent().stream()
@@ -345,6 +347,28 @@ public class InternalTransferService {
             detl.setModId(userId);
             detl.setModDtm(now);
             detlRepository.save(detl);
+        }
+
+        // Preserve the uploaded Excel under ERP Transaction History so
+        // the user can later download it from Settings > ERP Transaction
+        // History (legacy parity with `PymnHelper.uploadPaymentExcel` +
+        // `ErpTrnsHisHelper.erpTrnsHisUploader`). TRNS_TYPE_CD = "16"
+        // (Internal Scheduled Transfer) lands the row in the "ERP" tab.
+        // The writer is REQUIRES_NEW + swallows its own errors, so an
+        // ERP audit-write failure cannot roll back the batch create.
+        if (master.getSaveFileNm() != null && !master.getSaveFileNm().isBlank()) {
+            try {
+                java.nio.file.Path source = fileResolver.resolve(bizKey, master.getSaveFileNm());
+                erpHistoryWriter.recordUploadedFile(
+                        ERP_TRNS_TYPE_INTERNAL_SCHEDULED_TRANSFER,
+                        source,
+                        master.getOrgFileNm());
+            } catch (RuntimeException ex) {
+                log.warn(
+                        "feature=internal-transfer ERP history skip "
+                      + "(path resolver rejected) bizKey={} scdulPymnNo={} saveFileNm={}",
+                        bizKey, scdulPymnNo, master.getSaveFileNm(), ex);
+            }
         }
 
         auditLogService.append(AuditLogContext.builder()
