@@ -9,6 +9,7 @@ import com.kosign.wecms.domain.banking.nxisas.dto.ScrapeSessionResponse.Status;
 import com.kosign.wecms.domain.banking.nxisas.dto.ScrapedAccount;
 import com.kosign.wecms.domain.banking.nxisas.dto.StartScrapeRequest;
 import com.kosign.wecms.domain.banking.nxisas.dto.SubmitChallengeRequest;
+import com.kosign.wecms.domain.banking.nxisas.dto.VerifyCredentialsRequest;
 import com.kosign.wecms.domain.banking.nxisas.NxisasGatewayClient.GatewayContinuation;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasAcctListJobInput;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasAcctListJobResult;
@@ -58,15 +59,56 @@ public class BankScrapingService {
         if (cred.bankCd() == null || cred.bankCd().isBlank()) {
             throw new BusinessException("WBE2051");
         }
+        return runLogin(
+                cred.bankCd(),
+                cred.username(),
+                cred.password(),
+                cred.corporateId(),
+                cred.loginType(),
+                cred.nxisasGbSeqNo(),
+                req.credentialSeqNo());
+    }
 
+    /**
+     * Inline-credentials verify path used by the Login Credentials
+     * "Login" button BEFORE the row is persisted. Mirrors the legacy
+     * {@code enter_login_popup} flow at
+     * {@code WECMS_STATIC/ts-src/js/jex/wabooks/comm/comm_0218_nxisas.ts:508}
+     * where Coocon LOGIN + ACCT_LIST runs first and the user only
+     * commits {@code BANK_CERT_INFO} after picking accounts from the
+     * scrape result.
+     *
+     * <p>No {@code credentialSeqNo} is bound to the session because no
+     * row exists yet — the persistence call lives on
+     * {@code POST /api/v1/login-credentials/bank} and runs after the
+     * user's account selection.
+     */
+    public ScrapeSessionResponse verify(VerifyCredentialsRequest req) {
+        return runLogin(
+                req.bankCd(),
+                req.loginId(),
+                req.password(),
+                req.extra(),
+                req.loginType(),
+                req.nxisasGbSeqNo(),
+                null);
+    }
+
+    /** Shared LOGIN → (challenge | ACCT_LIST) path. Both
+     *  {@link #start(StartScrapeRequest)} and {@link #verify(VerifyCredentialsRequest)}
+     *  funnel here once they have plaintext credentials in hand. */
+    private ScrapeSessionResponse runLogin(String bankCd, String username, String password,
+                                           String corporateId, String loginType,
+                                           java.math.BigDecimal nxisasGbSeqNo,
+                                           java.math.BigDecimal credentialSeqNo) {
         // Resolve the Coocon adapter Module + Class (CORPORATE/COMMON)
         // from the per-bank config. Legacy EXCH_0030_001:74-75 hardcodes
         // these for Woori VN (11704020 → BANK_Woori/CORPORATE) and
         // Shinhan VN (11704088 → BANK_Shinhan/COMMON); other banks are
         // an OSMC-config follow-up. Coocon's gateway rejects threads
         // with a missing/wrong Module or empty Class.
-        NxisasBankConfig.Entry cfg = bankConfig.find(cred.bankCd())
-                .orElseThrow(() -> new BusinessException("WBE2093", cred.bankCd()));
+        NxisasBankConfig.Entry cfg = bankConfig.find(bankCd)
+                .orElseThrow(() -> new BusinessException("WBE2093", bankCd));
 
         String bizKey = TenantContext.currentBizKey();
         String userId = TenantContext.currentUserId();
@@ -74,35 +116,33 @@ public class BankScrapingService {
         String bankModule = cfg.module();
 
         NxisasScrapeSession session = new NxisasScrapeSession(
-                trSeq, bizKey, userId, req.credentialSeqNo(), bankModule);
+                trSeq, bizKey, userId, credentialSeqNo, bankModule);
         session.setBankCategory(cfg.category());
 
         NxisasLoginJobInput loginInput = new NxisasLoginJobInput();
-        loginInput.setLoginId(cred.username());
-        loginInput.setLoginPwd(cred.password());
+        loginInput.setLoginId(username);
+        loginInput.setLoginPwd(password);
         loginInput.setCountryCode("VN");
         // FNSH_0100_001:210 hardcodes "ID" unconditionally — mirror that
         // default so the field is never omitted from the wire envelope.
         // A credential row may override with a bank-specific value.
         loginInput.setLoginType(
-                (cred.loginType() != null && !cred.loginType().isBlank())
-                        ? cred.loginType() : "ID");
+                (loginType != null && !loginType.isBlank()) ? loginType : "ID");
         // CERT_INFO_DETL_CON2 in legacy maps to loginPWD1 for banks that
-        // use a second password field (FNSH_0100_001:214-216). Our
-        // DecryptedCredential surfaces it as corporateId because that same
+        // use a second password field (FNSH_0100_001:214-216). The same
         // column also carries Agribank's corporate ID — send it on both
         // wire fields: Coocon ignores the one that isn't applicable.
-        if (cred.corporateId() != null && !cred.corporateId().isBlank()) {
-            loginInput.setCorporateId(cred.corporateId());
-            loginInput.setLoginPwd1(cred.corporateId());
+        if (corporateId != null && !corporateId.isBlank()) {
+            loginInput.setCorporateId(corporateId);
+            loginInput.setLoginPwd1(corporateId);
         }
         // Sub-type selector — Coocon's adapter routes Corporate
         // (seq 0), Personal (seq 1), VCB DigiBiz (seq 2), etc. via
         // the bankModule + nxisasGbSeqNo pair. Persist the
         // discriminator into the session so the resumed OTP /
         // ACCT_LIST steps don't lose it.
-        if (cred.nxisasGbSeqNo() != null) {
-            session.setNxisasGbSeqNo(cred.nxisasGbSeqNo().intValue());
+        if (nxisasGbSeqNo != null) {
+            session.setNxisasGbSeqNo(nxisasGbSeqNo.intValue());
         }
 
         NxisasApiOut<NxisasLoginJobResult> out = gateway.login(bankModule, session.getBankCategory(), trSeq, loginInput);

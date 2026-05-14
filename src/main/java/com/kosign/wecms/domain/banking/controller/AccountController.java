@@ -5,7 +5,10 @@ import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.response.ApiResponse;
 import com.kosign.wecms.domain.banking.dto.AccountListResponse;
 import com.kosign.wecms.domain.banking.dto.AccountLookupListResponse;
+import com.kosign.wecms.domain.banking.dto.TransactionConfirmRequest;
+import com.kosign.wecms.domain.banking.dto.TransactionDetailResponse;
 import com.kosign.wecms.domain.banking.dto.TransactionListResponse;
+import com.kosign.wecms.domain.banking.dto.TransactionSummaryResponse;
 import com.kosign.wecms.domain.banking.service.AccountFilter;
 import com.kosign.wecms.domain.banking.service.AccountService;
 import com.kosign.wecms.domain.banking.service.TransactionService;
@@ -15,9 +18,11 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
 import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -138,9 +143,77 @@ public class AccountController {
     @GetMapping("/accounts/{acctSeqNo}/transactions")
     public ApiResponse<TransactionListResponse> listTransactions(
             @PathVariable("acctSeqNo") String acctSeqNo,
-            @RequestParam(value = "from", required = false) String fromDt,
-            @RequestParam(value = "to",   required = false) String toDt,
-            @RequestParam(value = "type", required = false) String type) {
-        return ApiResponse.ok(transactionService.list(acctSeqNo, fromDt, toDt, type));
+            @RequestParam(value = "from",     required = false) String fromDt,
+            @RequestParam(value = "to",       required = false) String toDt,
+            @RequestParam(value = "type",     required = false) String type,
+            @RequestParam(value = "cnfm_yn",  required = false) String cnfmYn,
+            @RequestParam(value = "keyword",  required = false) String keyword) {
+        return ApiResponse.ok(transactionService.list(acctSeqNo, fromDt, toDt, type, cnfmYn, keyword));
+    }
+
+    /**
+     * Summary aggregates for the current Transaction History filter set —
+     * total count, confirmed / unconfirmed split, and deposit / withdrawal
+     * totals. Mirrors legacy {@code trns_0001_001} summary strip.
+     */
+    @GetMapping("/accounts/{acctSeqNo}/transactions/summary")
+    public ApiResponse<TransactionSummaryResponse> transactionsSummary(
+            @PathVariable("acctSeqNo") String acctSeqNo,
+            @RequestParam(value = "from",     required = false) String fromDt,
+            @RequestParam(value = "to",       required = false) String toDt,
+            @RequestParam(value = "type",     required = false) String type,
+            @RequestParam(value = "cnfm_yn",  required = false) String cnfmYn,
+            @RequestParam(value = "keyword",  required = false) String keyword) {
+        return ApiResponse.ok(transactionService.summary(acctSeqNo, fromDt, toDt, type, cnfmYn, keyword));
+    }
+
+    /**
+     * Single-transaction detail — VAS account, counterparty, confirmation
+     * metadata in addition to the base fields the list endpoint returns.
+     * {@code trnsSeqNo} is the {@code ACCT_SEQ_NO} surrogate from the list row.
+     */
+    @GetMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}")
+    public ApiResponse<TransactionDetailResponse> transactionDetail(
+            @PathVariable("acctSeqNo") String acctSeqNo,
+            @PathVariable("trnsSeqNo") String trnsSeqNo) {
+        return ApiResponse.ok(transactionService.detail(acctSeqNo, trnsSeqNo));
+    }
+
+    /**
+     * Confirm a transaction — writes {@code ACCT_TRNS_RCV_PAY_INFM} with
+     * {@code CNFM_YN='Y'} plus optional classification fields (counterparty,
+     * usage code, VAS account). Returns the refreshed detail payload so the
+     * frontend can re-render without a second round-trip. Mirrors legacy
+     * {@code trns_0001_001_u001}.
+     */
+    @PutMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/confirm")
+    public ApiResponse<TransactionDetailResponse> confirmTransaction(
+            @PathVariable("acctSeqNo") String acctSeqNo,
+            @PathVariable("trnsSeqNo") String trnsSeqNo,
+            @Valid @RequestBody(required = false) TransactionConfirmRequest request) {
+        return ApiResponse.ok(transactionService.confirm(acctSeqNo, trnsSeqNo, request));
+    }
+
+    /** Undo a transaction confirmation — flips {@code CNFM_YN} back to {@code 'N'}. */
+    @DeleteMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/confirm")
+    public ApiResponse<Void> undoConfirmTransaction(
+            @PathVariable("acctSeqNo") String acctSeqNo,
+            @PathVariable("trnsSeqNo") String trnsSeqNo) {
+        transactionService.undoConfirm(acctSeqNo, trnsSeqNo);
+        return ApiResponse.ok(null);
+    }
+
+    /**
+     * Excel export for Banking &gt; Transaction History. Routes through
+     * the shared {@code ExcelExportService} — the body's {@code screenId}
+     * must be {@code "banking-transaction-history"} (V128 seed) and
+     * {@code filters.acctSeqNo} is required so the export is scoped to
+     * one account. Mirrors {@code POST /accounts/export}.
+     */
+    @PostMapping("/accounts/transactions/export")
+    public void exportTransactions(
+            @Valid @RequestBody ExcelExportRequest request,
+            HttpServletResponse response) {
+        excelExportService.exportTo(response, request);
     }
 }

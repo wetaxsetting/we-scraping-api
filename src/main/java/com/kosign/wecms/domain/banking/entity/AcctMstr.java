@@ -143,4 +143,49 @@ public class AcctMstr {
 
     @Column(name = "MOD_DTM", length = 14)
     private String modDtm;
+
+    // ---------------------------------------------------------------
+    // Settings > Bank Account fields. Columns added to the local
+    // schema in V23 (`sprint1_legacy_schema_parity`); legacy column
+    // semantics in `WECMS DEV/WECMS/src/wabooks/entity/AcctMstr.java`.
+    // Banking > Account Inquiry doesn't read these — kept nullable +
+    // optional on the entity so the existing inquiry path is
+    // unaffected.
+    // ---------------------------------------------------------------
+
+    /** Free-form description / memo. Legacy `CONT` column; max 200
+     *  chars. The Settings table renders the value as the
+     *  "Description" cell; empty / null falls back to a dash placeholder
+     *  on the frontend. */
+    @Column(name = "CONT", length = 200)
+    private String cont;
+
+    /** Maturity date for saving / fixed-deposit accounts. Legacy
+     *  `EXPI_DT` is `VARCHAR(8)` (`yyyyMMdd`) per V23; the service
+     *  parses / formats at the wire boundary so the frontend stays
+     *  ISO-like (`yyyy-MM-dd`) and the DB stores legacy-compatible
+     *  values. Null for current accounts. */
+    @Column(name = "EXPI_DT", length = 8)
+    private String expiDt;
+
+    /** Foreign key into {@code BUSI_VAS_ACCT_INFM} — the VAS account
+     *  this bank account is mapped to. Stored as `NUMERIC(10,0)` on
+     *  disk (V23); maps to `Long` here, with `@JdbcTypeCode(NUMERIC)`
+     *  so Hibernate validate accepts the column type. Null when no
+     *  VAS mapping is set. */
+    @JdbcTypeCode(SqlTypes.NUMERIC)
+    @Column(name = "VAS_ACCT_SEQ_NO", precision = 10, scale = 0)
+    private Long vasAcctSeqNo;
+
+    /** Denormalised VAS account name copy. Legacy mirrors the
+     *  matching `BUSI_VAS_ACCT_INFM.VAS_ACCT_NM` value on every
+     *  edit; refactor preserves that contract so list / inquiry
+     *  paths can read the label without joining. */
+    @Column(name = "VAS_ACCT_NM", length = 50)
+    private String vasAcctNm;
+
+    /** Denormalised VAS account code copy. Legacy mirrors the
+     *  matching `BUSI_VAS_ACCT_INFM.VAS_ACCT_CD`. */
+    @Column(name = "VAS_ACCT_CD", length = 50)
+    private String vasAcctCd;
 }

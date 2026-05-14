@@ -305,6 +305,18 @@ public class LoginCredentialsService {
         String bizKey = TenantContext.currentBizKey();
         BankCertInfo entity = bankRepo.findByBizKeyAndSeqNo(bizKey, seqNo)
                 .orElseThrow(() -> new BusinessException("WBE2090"));
+        // Optional current-password guard. Legacy parity:
+        // `comm_0218_004_u001_act.jsp:55-57` puts
+        // `decrypt(cert_info_detl_con) = ?` in the IDODynamic WHERE
+        // clause so the UPDATE silently affects zero rows on mismatch.
+        // Refactor surfaces the same outcome explicitly with WBE2091
+        // (the same code the reveal endpoint uses for a bad re-auth).
+        if (req.oldPassword() != null) {
+            String storedPlain = crypto.decrypt(entity.getCertInfoDetlCon());
+            if (!req.oldPassword().equals(storedPlain)) {
+                throw new BusinessException("WBE2091");
+            }
+        }
         if (req.loginId() != null)        entity.setCertInfoCon(req.loginId());
         if (req.password() != null)       entity.setCertInfoDetlCon(crypto.encrypt(req.password()));
         if (req.extra() != null)          entity.setCertInfoDetlCon2(req.extra());

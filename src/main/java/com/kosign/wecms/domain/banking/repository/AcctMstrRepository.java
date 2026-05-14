@@ -38,6 +38,20 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
     Optional<AcctMstr> findByBizKeyAndBankCdAndAcctNo(String bizKey, String bankCd, String acctNo);
 
     /**
+     * All accounts for the tenant (active + inactive), ordered the way
+     * Settings &gt; Bank Account renders them: print order first, then
+     * bank then account no. Mirrors legacy {@code comm_0183_001_r001}
+     * which does not filter by {@code ACTV_YN} so users can re-enable
+     * disabled rows.
+     *
+     * <p>PostgreSQL's default ASC NULLS LAST means rows without a
+     * {@code PRN_SEQ} fall through to the bank/account secondary order
+     * — the same convention {@code AccountService.DEFAULT_SORT} uses
+     * for Banking &gt; Account Inquiry.
+     */
+    List<AcctMstr> findByBizKeyOrderByPrnSeqAscBankCdAscAcctNoAsc(String bizKey);
+
+    /**
      * All accounts for the tenant under one internal {@code BANK_CD},
      * ordered by account number. Mirrors the {@code IDODynamic} JEX
      * runs in {@code comm_1004_001_act.jsp:62-66} —
