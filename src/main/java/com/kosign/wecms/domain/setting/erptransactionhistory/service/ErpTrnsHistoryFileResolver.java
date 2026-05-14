@@ -70,6 +70,21 @@ public class ErpTrnsHistoryFileResolver {
         return resolved;
     }
 
+    /**
+     * Per-tenant directory the writer creates on first append. Exposed
+     * separately from {@link #resolve(String, String)} so a service can
+     * call {@code Files.createDirectories(...)} once and then write
+     * multiple files without re-computing the parent each time. Mirrors
+     * {@code InternalTransferFileResolver.tenantDirectory(...)}.
+     */
+    public Path tenantDirectory(String bizKey) {
+        if (bizKey == null || bizKey.isBlank()) {
+            throw new IllegalArgumentException("bizKey is required");
+        }
+        return storageRoot.resolve(bizKey).resolve(ErpTrnsHistoryStorageProperties.SLUG_FOLDER)
+                .toAbsolutePath().normalize();
+    }
+
     /** Test seam — exposes the absolute storage root the resolver
      *  was wired with. */
     public Path getStorageRoot() {

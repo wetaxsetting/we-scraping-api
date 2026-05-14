@@ -106,6 +106,26 @@ public class InternalTransferService {
     static final String AUDIT_CREATE_KEY   = "audit.internal_transfer.create.detail";
     static final String AUDIT_UPDATE_KEY   = "audit.internal_transfer.update.detail";
     static final String AUDIT_DELETE_KEY   = "audit.internal_transfer.delete.detail";
+    static final String AUDIT_REQUEST_APPROVAL_KEY =
+            "audit.internal_transfer.request_approval.detail";
+    static final String AUDIT_APPROVE_KEY =
+            "audit.internal_transfer.approve.detail";
+    static final String AUDIT_REJECT_KEY  =
+            "audit.internal_transfer.reject.detail";
+
+    /** Legacy {@code APPRVR_STTS} code stamped on the master when an
+     *  approver presses Approve — final outcome, batch is approved. */
+    static final String APPR_STTS_APPROVED = "C";
+
+    /** Legacy {@code APPRVR_STTS} code stamped on the master when an
+     *  approver presses Reject — final outcome, batch is rejected. */
+    static final String APPR_STTS_REJECTED = "X";
+
+    /** ERP Transaction History {@code TRNS_TYPE_CD} for Internal
+     *  Scheduled Transfer rows. Pairs with the
+     *  {@code settings.erp_transaction_history.type.16} locale entry
+     *  ("Internal Scheduled Transfer"). */
+    static final String ERP_TRNS_TYPE_INTERNAL_SCHEDULED_TRANSFER = "16";
 
     /** {@code yyyyMMddHHmmss} formatter shared with the audit writer. */
     private static final DateTimeFormatter DTM14 =
@@ -119,6 +139,7 @@ public class InternalTransferService {
     private final InternalTransferExcelParser  excelParser;
     private final InternalTransferFileResolver fileResolver;
     private final AuditLogService              auditLogService;
+    private final com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter erpHistoryWriter;
     private final Clock                        clock;
 
     /* ----------------------------------------------------------------
@@ -203,9 +224,18 @@ public class InternalTransferService {
                 master.getTotTrnsCnt(),
                 master.getErpFileNum(),
                 master.getRegId(),
+                master.getRegDtm(),
                 master.getApprSeqNo(),
-                null,  // appr_stts — joined from EXPT_RESOL_MSTR in a follow-up (Phase B)
-                null,  // appr_stts_key
+                // appr_stts — sourced from SCDUL_PYMN_SUMR.APPR_STTS (V120).
+                // The approval-action endpoint stamps "C"/"X" here; the
+                // dialog reads this to flip the approver chip + status
+                // badge to the post-action state on re-open.
+                master.getApprStts(),
+                null,  // appr_stts_key — Phase B (server-resolved i18n key)
+                // mod_dtm — yyyyMMddHHmmss; after approve/reject the
+                // dialog formats this as the approver chip's "has
+                // approved on …" / "has rejected on …" date.
+                master.getModDtm(),
                 master.getTrnfYn(),
                 master.getTrnfDtm(),
                 master.getCcyCd(),
@@ -391,8 +421,41 @@ public class InternalTransferService {
             throw new BusinessException("WBE2062");
         }
 
+        // Snapshot the file metadata BEFORE the row goes away so the
+        // ERP-history writer can copy the Excel and reference it. The
+        // writer is REQUIRES_NEW + swallows its own errors, so an ERP
+        // audit-write failure cannot roll back the delete itself.
+        String orgFileNm  = master.getOrgFileNm();
+        String saveFileNm = master.getSaveFileNm();
+
         detlRepository.deleteByBizKeyAndScdulPymnNo(bizKey, id);
         sumrRepository.deleteById(new ScdulPymnSumrId(bizKey, id));
+
+        // Preserve the uploaded Excel in ERP Transaction History so the
+        // user can still download it after the source batch is gone.
+        // TRNS_TYPE_CD = "16" → Internal Scheduled Transfer (per the
+        // `settings.erp_transaction_history.type.16` locale entry);
+        // writer stamps ERP_TYPE='D' so the row lands in the "Deleted"
+        // tab. No-op when the batch has no uploaded file.
+        if (saveFileNm != null && !saveFileNm.isBlank()) {
+            try {
+                java.nio.file.Path source = fileResolver.resolve(bizKey, saveFileNm);
+                erpHistoryWriter.recordDeletedFile(
+                        ERP_TRNS_TYPE_INTERNAL_SCHEDULED_TRANSFER,
+                        source,
+                        orgFileNm);
+            } catch (RuntimeException ex) {
+                // Defence in depth — fileResolver throws on a
+                // bizKey/saveFileNm mismatch (path traversal guard).
+                // The writer's own try/catch covers everything past
+                // that, so the only thing reaching here is a malformed
+                // saveFileNm that fails the path-composition step.
+                log.warn(
+                        "feature=internal-transfer ERP history skip "
+                      + "(path resolver rejected) bizKey={} scdulPymnNo={} saveFileNm={}",
+                        bizKey, id, saveFileNm, ex);
+            }
+        }
 
         auditLogService.append(AuditLogContext.builder()
                 .wsvcId(WSVC_ID)
@@ -403,6 +466,206 @@ public class InternalTransferService {
                 .build());
 
         log.info("feature=internal-transfer delete bizKey={} scdulPymnNo={}", bizKey, id);
+    }
+
+    /* ----------------------------------------------------------------
+     *  Request Approval (legacy comm_0194_001 → comm_0192_001_c005)
+     * ----------------------------------------------------------------
+     *
+     * <p>Phase A scope: stamps a synthesised {@code APPR_SEQ_NO} on the
+     * batch master and writes an audit row. The full per-leg approval
+     * snapshot (legacy {@code BLTB_POST_INFM} / {@code EXPT_RESOL_MSTR}
+     * / {@code EXPT_RESOL_APPRVR_INFM} fan-out) lands when those
+     * tables are ported in a follow-up. The stamped {@code APPR_SEQ_NO}
+     * is sufficient to:
+     *   <ul>
+     *     <li>flip the row out of the "draftable" state (so the Delete
+     *         button hides and a second Request Approval click returns
+     *         {@code WBE2062});</li>
+     *     <li>echo back to the frontend so the row can show the
+     *         "in_progress" / "approved" status badge once the live
+     *         approval-flow tables fan in.</li>
+     *   </ul>
+     *
+     * <p>Concurrency: the MAX+1 generator is race-prone (same precedent
+     * as Approval Line / Chart of Accounts). One retry on
+     * {@code DataIntegrityViolationException} catches the rare
+     * collision; a third writer in the same instant gets a 500.
+     */
+    @Transactional
+    public com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalResponse requestApproval(
+            String id,
+            com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalRequest req) {
+        String bizKey = requireTenant();
+        ScdulPymnSumr master = loadMaster(bizKey, id);
+
+        // Idempotency guard — re-using the same code as Delete because
+        // the legacy contract is the same: an APPR_SEQ_NO row is not
+        // re-submittable. The frontend disables the Request Approval
+        // button after the first successful submit; this guard catches
+        // the stale-tab case.
+        if (master.getApprSeqNo() != null && !master.getApprSeqNo().isBlank()) {
+            throw new BusinessException("WBE2062");
+        }
+
+        // Defence in depth — bean-validation on the record covers the
+        // shape; this re-asserts the wire fields we actually use.
+        if (req == null) {
+            throw new BusinessException("WBE_VALIDATION", "request body is required");
+        }
+        if (req.approvers() == null || req.approvers().isEmpty()) {
+            throw new BusinessException("WBE_VALIDATION", "approvers is required");
+        }
+
+        // Synthesise the APPR_SEQ_NO via per-tenant MAX+1 (Java-side,
+        // no wb_get_next_val). The wire field is a VARCHAR so we stamp
+        // the decimal string. One retry handles the rare race.
+        String apprSeqNo = allocateApprSeqNo(bizKey);
+        try {
+            stampApproval(master, apprSeqNo, req);
+        } catch (org.springframework.dao.DataIntegrityViolationException race) {
+            log.info("feature=internal-transfer apprSeqNo race retrying once bizKey={}", bizKey);
+            apprSeqNo = allocateApprSeqNo(bizKey);
+            stampApproval(master, apprSeqNo, req);
+        }
+
+        auditLogService.append(AuditLogContext.builder()
+                .wsvcId(WSVC_ID)
+                .refNo(REF_NO)
+                .refNo1(id)
+                .refNo2(apprSeqNo)
+                .activityKey(AUDIT_ACTIVITY_KEY)
+                .detailKey(AUDIT_REQUEST_APPROVAL_KEY)
+                .build());
+
+        log.info(
+                "feature=internal-transfer request-approval bizKey={} scdulPymnNo={} apprSeqNo={} apprLineNo={} approvers={}",
+                bizKey, id, apprSeqNo, req.apprLineNo(), req.approvers().size());
+
+        return new com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalResponse(apprSeqNo);
+    }
+
+    /** Per-tenant MAX(apprSeqNo::numeric) + 1, returned as a decimal
+     *  string (the column is VARCHAR for legacy parity). */
+    private String allocateApprSeqNo(String bizKey) {
+        Long max = sumrRepository.findMaxApprSeqNoByBizKey(bizKey);
+        long next = (max == null ? 0L : max) + 1L;
+        return Long.toString(next);
+    }
+
+    /** Stamp the approval fields on the master in one save. Separated
+     *  from the caller so the retry path doesn't duplicate the writes. */
+    private void stampApproval(
+            ScdulPymnSumr master,
+            String apprSeqNo,
+            com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalRequest req) {
+        master.setApprSeqNo(apprSeqNo);
+        // POST_TITLE / POST_CONT are display fields on the legacy
+        // BLTB_POST_INFM row. Until that table is ported, we stamp
+        // POST_TITLE onto TITL so the list grid's Approval Title
+        // column shows the user's input (frontend list mapper
+        // already falls back to TITL when there's no separate
+        // post title).
+        if (req.postTitle() != null && !req.postTitle().isBlank()) {
+            master.setTitl(req.postTitle().trim());
+        }
+        // PAY_DATE on the wire is yyyyMMdd. The current
+        // SCDUL_PYMN_SUMR entity doesn't map the pay-date column
+        // (V85 maps a subset of columns); the value rides through to
+        // the legacy BLTB_POST_INFM write when that path lands. For
+        // the refactor stub we accept + audit the value but don't
+        // stamp it on the master.
+        master.setModDtm(OffsetDateTime.now(clock).format(DTM14));
+        String userId = TenantContext.currentUserId();
+        if (userId != null) master.setModId(userId);
+        sumrRepository.saveAndFlush(master);
+    }
+
+    /* ----------------------------------------------------------------
+     *  Approval action — Approve / Reject (legacy comm_0195_001
+     *  footer buttons → bltb_0001_003_u001)
+     * ---------------------------------------------------------------- */
+
+    /**
+     * Approve or reject the active approval request on one batch —
+     * the action behind the Approve / Reject buttons in
+     * {@code <ApprovalDetailsDialog>} (Figma {@code comm_0195_001}
+     * frames 03 / 07 / 12 / 13 → footer lines 916-919).
+     *
+     * <p>Phase A scope: master-level stamp only. The endpoint:
+     * <ul>
+     *   <li>requires the batch to carry an {@code APPR_SEQ_NO}
+     *       (i.e. the user previously hit Request Approval) — else
+     *       {@code WBE2080}.</li>
+     *   <li>requires the batch to be still actionable — the current
+     *       {@code APPR_STTS} must be null / {@code "P"} / {@code "I"};
+     *       any final state ({@code "C"} / {@code "X"}) returns
+     *       {@code WBE2081}.</li>
+     *   <li>stamps {@code APPR_STTS = "C"} on Approve, {@code "X"}
+     *       on Reject.</li>
+     *   <li>writes one audit row keyed by the action (Approve /
+     *       Reject), carrying the batch id + the stamped state.</li>
+     * </ul>
+     *
+     * <p>The per-approver chain (legacy
+     * {@code EXPT_RESOL_APPRVR_INFM}) lands when that table is
+     * ported. Until then the master-level stamp is the single source
+     * of truth the frontend list mapper consumes via
+     * {@code apprStts === "C" || "A"} → approved, and {@code "X"} →
+     * rejected.
+     *
+     * @param id  batch {@code SCDUL_PYMN_NO} from the path
+     * @param req {@code action} = {@code "APPROVE"} or {@code "REJECT"}
+     *            (validated by bean-validation on the record), optional
+     *            {@code comment} accepted-and-audited but not persisted
+     *            on the master.
+     */
+    @Transactional
+    public void actOnApproval(
+            String id,
+            com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalActionRequest req) {
+        if (req == null) {
+            throw new BusinessException("WBE_VALIDATION", "request body is required");
+        }
+        String bizKey = requireTenant();
+        ScdulPymnSumr master = loadMaster(bizKey, id);
+
+        // Guard 1: the batch must be in approval (apprSeqNo set).
+        // Same vocabulary as the Delete guard's "cannot act on a draft"
+        // but the inverse condition — Delete rejects rows WITH a seq,
+        // approve/reject rejects rows WITHOUT one.
+        if (master.getApprSeqNo() == null || master.getApprSeqNo().isBlank()) {
+            throw new BusinessException("WBE2080");
+        }
+
+        // Guard 2: the batch must still be actionable. Once stamped
+        // approved / rejected (C / X), the action is final — re-acting
+        // would silently overwrite history.
+        String current = master.getApprStts();
+        if (APPR_STTS_APPROVED.equals(current) || APPR_STTS_REJECTED.equals(current)) {
+            throw new BusinessException("WBE2081");
+        }
+
+        String next        = req.isApprove() ? APPR_STTS_APPROVED : APPR_STTS_REJECTED;
+        String auditKey    = req.isApprove() ? AUDIT_APPROVE_KEY  : AUDIT_REJECT_KEY;
+        master.setApprStts(next);
+        master.setModDtm(OffsetDateTime.now(clock).format(DTM14));
+        String userId = TenantContext.currentUserId();
+        if (userId != null) master.setModId(userId);
+        sumrRepository.saveAndFlush(master);
+
+        auditLogService.append(AuditLogContext.builder()
+                .wsvcId(WSVC_ID)
+                .refNo(REF_NO)
+                .refNo1(id)
+                .refNo2(master.getApprSeqNo())
+                .activityKey(AUDIT_ACTIVITY_KEY)
+                .detailKey(auditKey)
+                .build());
+
+        log.info(
+                "feature=internal-transfer approval-action bizKey={} scdulPymnNo={} apprSeqNo={} action={} apprStts={}",
+                bizKey, id, master.getApprSeqNo(), req.action(), next);
     }
 
     /* ----------------------------------------------------------------
@@ -637,8 +900,13 @@ public class InternalTransferService {
                 s.getTotTrnsCnt(),
                 s.getRegDtm(),
                 s.getRegId(),
-                null,  // appr_stts — Phase B (EXPT_RESOL_MSTR join)
-                null,  // appr_stts_key
+                // appr_stts — sourced from SCDUL_PYMN_SUMR.APPR_STTS (V120).
+                // Phase A stamps "C" (approved) / "X" (rejected) directly
+                // on the master via the approval-action endpoint; the full
+                // per-approver chain that produces "P" / "I" intermediate
+                // states arrives with the EXPT_RESOL_APPRVR_INFM port.
+                s.getApprStts(),
+                null,  // appr_stts_key — Phase B (server-resolved i18n key)
                 null,  // trnf_stts — Phase B
                 s.getTrnfYn(),
                 s.getOutBankCd(),

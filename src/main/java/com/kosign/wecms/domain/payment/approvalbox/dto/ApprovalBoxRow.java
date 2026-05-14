@@ -1,6 +1,5 @@
 package com.kosign.wecms.domain.payment.approvalbox.dto;
 
-import java.math.BigDecimal;
 import java.util.List;
 
 /**
@@ -56,8 +55,11 @@ public record ApprovalBoxRow(
 
         /** Amount in the row's currency. Sourced from
          *  {@code EXPT_RESOL_MSTR.TOT_PAY_KHR_AMT} (which holds VND for
-         *  VN tenants per legacy convention). */
-        BigDecimal totPayAmt,
+         *  VN tenants per legacy convention). Serialised as a string —
+         *  mirrors the {@code AccountRow.bal} contract so the frontend
+         *  mapper's {@code raw.startsWith("-")} path stays safe and so
+         *  large VND values dodge JS number-precision loss. */
+        String totPayAmt,
 
         /** Scheduled payment date ({@code YYYYMMDD}). */
         String payDate,

@@ -557,7 +557,7 @@ public class ApprovalBoxService {
                 p.apprDv(),
                 ApprDv.resolveSlug(p.apprDv()),
                 "VND",
-                p.totPayKhrAmt() == null ? BigDecimal.ZERO : p.totPayKhrAmt(),
+                (p.totPayKhrAmt() == null ? BigDecimal.ZERO : p.totPayKhrAmt()).toPlainString(),
                 p.payDate(),
                 p.draftUserId(),
                 p.draftUserNm(),

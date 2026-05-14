@@ -1,11 +1,14 @@
 package com.kosign.wecms.domain.payment.approvalbox.controller;
 
+import com.kosign.wecms.common.export.ExcelExportRequest;
+import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.response.ApiResponse;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxActionResponse;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxBulkApproveRequest;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxBulkApproveResponse;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxListResponse;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxService;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -48,6 +51,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class ApprovalBoxController {
 
     private final ApprovalBoxService service;
+    private final ExcelExportService excelExportService;
 
     /**
      * List Approval Box rows for the current tenant.
@@ -106,5 +110,26 @@ public class ApprovalBoxController {
     public ApiResponse<ApprovalBoxBulkApproveResponse> bulkApprove(
             @Valid @RequestBody ApprovalBoxBulkApproveRequest request) {
         return ApiResponse.ok(service.bulkApprove(request.apprSeqNos()));
+    }
+
+    /**
+     * Excel export for Approval Box — shared common pipeline (see
+     * {@link ExcelExportService}). Thin controller: validate the body,
+     * hand it to the service, return nothing (the service streams XLSX
+     * bytes straight into {@code response}).
+     *
+     * <p>Visible / ordered columns, current filters (date range, tab,
+     * keyword), and current sort all flow through the request body; the
+     * service intersects the column list with the persisted View Setting
+     * visibility for the caller and re-runs
+     * {@link ApprovalBoxService#list} via
+     * {@link com.kosign.wecms.domain.payment.approvalbox.export.ApprovalBoxExportProvider}
+     * so export and list share one query path.
+     */
+    @PostMapping("/export")
+    public void export(
+            @Valid @RequestBody ExcelExportRequest request,
+            HttpServletResponse response) {
+        excelExportService.exportTo(response, request);
     }
 }
