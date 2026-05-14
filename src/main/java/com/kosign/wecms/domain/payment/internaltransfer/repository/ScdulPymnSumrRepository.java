@@ -76,4 +76,33 @@ public interface ScdulPymnSumrRepository extends JpaRepository<ScdulPymnSumr, Sc
             @Param("srchWdPattern")    String srchWdPattern,
             @Param("trnfYn")           String trnfYn,
             Pageable pageable);
+
+    /**
+     * Per-tenant MAX(apprSeqNo::numeric) for the synthesised
+     * approval-sequence-number generator used by
+     * {@code InternalTransferService.requestApproval}. Mirrors the
+     * Approval Line / Chart of Accounts MAX+1 pattern documented in
+     * the workspace CLAUDE.md ("Key-generation rule for migrated
+     * legacy tables") — no {@code wb_get_next_val} dependency.
+     *
+     * <p>The legacy {@code APPR_SEQ_NO} on
+     * {@code SCDUL_PYMN_SUMR} is a VARCHAR carrying the
+     * {@code EXPT_RESOL_MSTR} surrogate; until that table is ported,
+     * the refactor synthesises a value via MAX+1 over the same column
+     * (cast to numeric for the comparison; non-numeric legacy values
+     * fall outside the cast and produce NULL → COALESCE'd to 0). The
+     * result is monotonic within one tenant.
+     *
+     * <p>Returns {@code 0} for the empty-tenant case so the caller
+     * can unconditionally do {@code max + 1}. Concurrency: two
+     * parallel callers may read the same MAX; the second INSERT then
+     * conflicts on the next downstream write — service retries once.
+     */
+    @Query(value = """
+            SELECT COALESCE(MAX(CAST(s.appr_seq_no AS NUMERIC)), 0)
+              FROM scdul_pymn_sumr s
+             WHERE s.biz_key = :bizKey
+               AND s.appr_seq_no ~ '^[0-9]+$'
+            """, nativeQuery = true)
+    Long findMaxApprSeqNoByBizKey(@Param("bizKey") String bizKey);
 }

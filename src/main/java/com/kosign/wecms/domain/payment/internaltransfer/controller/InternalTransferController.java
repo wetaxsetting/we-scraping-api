@@ -214,8 +214,15 @@ public class InternalTransferController {
     @PostMapping(path = "/uploads/parse",
                  consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResponse<ParseExcelResponse> parseExcel(
-            @RequestPart("file_data") MultipartFile fileData,
-            @RequestPart("bank_cd")   String        bankCd) {
+            @RequestPart("file_data")  MultipartFile fileData,
+            // `bank_cd` is sent as a plain-text multipart field via
+            // `FormData.append("bank_cd", "...")`. Browser FormData
+            // doesn't stamp a per-part `Content-Type`, so
+            // `@RequestPart String` fails the message-converter
+            // lookup and surfaces as MissingServletRequestPartException.
+            // `@RequestParam` binds simple form fields in multipart
+            // requests without needing a part-level Content-Type.
+            @RequestParam("bank_cd")   String        bankCd) {
         return ApiResponse.ok(service.parseExcel(fileData, bankCd));
     }
 
@@ -291,6 +298,62 @@ public class InternalTransferController {
             @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
             String id) {
         service.delete(id);
+        return ApiResponse.ok(null);
+    }
+
+    /* ----------------------------------------------------------------
+     *  Request Approval (legacy comm_0194_001 → comm_0192_001_c005)
+     * ---------------------------------------------------------------- */
+
+    /**
+     * Submit one batch for approval. Mirrors the legacy
+     * {@code comm_0192_001_c005} entry point at the network boundary —
+     * the same shape the frontend's `<RequestApprovalDialog>` posts.
+     *
+     * <p>Phase A scope (see service Javadoc): the call stamps a
+     * synthesised {@code APPR_SEQ_NO} on the master + writes an
+     * audit row + echoes the new value back. The full per-leg
+     * approval-line snapshot (legacy BLTB_POST_INFM /
+     * EXPT_RESOL_MSTR fan-out) lands when those tables are ported.
+     */
+    @org.springframework.web.bind.annotation.PostMapping("/{id}/request-approval")
+    public ApiResponse<com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalResponse>
+    requestApproval(
+            @PathVariable("id")
+            @Size(max = 30)
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id,
+            @Valid @RequestBody
+            com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalRequest req) {
+        return ApiResponse.ok(service.requestApproval(id, req));
+    }
+
+    /* ----------------------------------------------------------------
+     *  Approval action — Approve / Reject (legacy comm_0195_001
+     *  footer buttons → bltb_0001_003_u001)
+     * ---------------------------------------------------------------- */
+
+    /**
+     * Approve or reject the active approval request on one batch.
+     * Posted by the {@code <ApprovalDetailsDialog>} footer's Approve /
+     * Reject buttons (Figma {@code comm_0195_001} frames 03 / 07 / 12
+     * / 13; legacy `bltb_0001_003_u001`).
+     *
+     * <p>Phase A scope (see service Javadoc): the call stamps
+     * {@code APPR_STTS = "C"} on Approve / {@code "X"} on Reject
+     * directly on the master + writes an audit row. The per-approver
+     * chain ({@code EXPT_RESOL_APPRVR_INFM}) lands when that table is
+     * ported.
+     */
+    @PostMapping("/{id}/approval-action")
+    public ApiResponse<Void> approvalAction(
+            @PathVariable("id")
+            @Size(max = 30)
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id,
+            @Valid @RequestBody
+            com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalActionRequest req) {
+        service.actOnApproval(id, req);
         return ApiResponse.ok(null);
     }
 }

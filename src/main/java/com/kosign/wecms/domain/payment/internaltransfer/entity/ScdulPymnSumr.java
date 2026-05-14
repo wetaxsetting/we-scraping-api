@@ -91,6 +91,28 @@ public class ScdulPymnSumr {
     @Column(name = "APPR_SEQ_NO", length = 15)
     private String apprSeqNo;
 
+    /** Per-batch approval outcome — stamped by the {@code POST
+     *  /{id}/approval-action} endpoint when an approver acts on the
+     *  batch. Legacy {@code APPRVR_STTS} vocabulary applied at the
+     *  master level:
+     *
+     *  <ul>
+     *    <li>{@code null} — initial state after Request Approval was
+     *        submitted but before any approver has acted.</li>
+     *    <li>{@code "P"} — pending (current approver awaiting action).</li>
+     *    <li>{@code "I"} — in progress (multi-approver chain mid-flight).</li>
+     *    <li>{@code "C"} — approved (final approver accepted).</li>
+     *    <li>{@code "X"} — rejected (any approver rejected).</li>
+     *  </ul>
+     *
+     *  Phase A: only {@code "C"} / {@code "X"} are written (single-step
+     *  approve / reject mirroring legacy {@code comm_0193_001}). The
+     *  per-approver chain that produces {@code "P"} / {@code "I"} arrives
+     *  with the EXPT_RESOL_APPRVR_INFM port.
+     */
+    @Column(name = "APPR_STTS", length = 1)
+    private String apprStts;
+
     /** {@code 'N'} (draft / pre-dispatch) or {@code 'Y'} (dispatched). */
     @Column(name = "TRNF_YN", length = 1, nullable = false)
     private String trnfYn;

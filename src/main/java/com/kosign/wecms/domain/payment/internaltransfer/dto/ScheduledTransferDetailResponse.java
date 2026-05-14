@@ -18,9 +18,17 @@ public record ScheduledTransferDetailResponse(
         BigDecimal                totTrnsCnt,
         String                    docNo,
         String                    regId,
+        String                    regDtm,
         String                    apprSeqNo,
         String                    apprStts,
         String                    apprSttsKey,
+        /** Last-modification timestamp ({@code yyyyMMddHHmmss}). After
+         *  the approval-action endpoint stamps {@code APPR_STTS}, this
+         *  reflects the action time — the dialog surfaces it as the
+         *  "has approved on …" / "has rejected on …" date on the
+         *  approver chip. Phase B may add a dedicated {@code APPR_DTM}
+         *  column when the per-approver chain lands. */
+        String                    modDtm,
         String                    trnfYn,
         String                    trnfDtm,
         String                    ccyCd,
