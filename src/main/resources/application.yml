@@ -82,13 +82,10 @@ wecms:
     expires-in-seconds: 3600
     issuer: wecms-api-main
   cors:
-    # Comma-separated list of origins the API accepts cross-origin requests
-    # from. Override via env var WECMS_CORS_ALLOWED_ORIGINS (or `.env`) to
-    # add per-environment origins without editing this file.
-    # Examples:
-    #   Local dev frontend  -> http://localhost:3000
-    #   SIT deployment      -> https://wecms.kosign.dev
-    allowed-origins: ${WECMS_CORS_ALLOWED_ORIGINS:http://localhost:3000,https://wecms.kosign.dev}
+    # Comma-separated list of allowed cross-origin frontends. Baseline
+    # is local dev only — each profile (application-local.yml etc.)
+    # adds its own environment origins on top.
+    allowed-origins: ${WECMS_CORS_ALLOWED_ORIGINS:http://localhost:3000}
   tenant:
     # Dormant config slot. Spring no longer auto-creates company/admin
     # data at startup — the BootstrapRunner that previously consumed
