@@ -52,7 +52,7 @@ public class ApprovalBoxController {
 
     private final ApprovalBoxService service;
     private final ExcelExportService excelExportService;
-    /*Deploy*/
+    /*Deploy v2*/
     /**
      * List Approval Box rows for the current tenant.
      *
