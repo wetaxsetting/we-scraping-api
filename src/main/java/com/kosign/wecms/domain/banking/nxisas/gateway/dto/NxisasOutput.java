@@ -14,5 +14,6 @@ public class NxisasOutput<RESULT> {
 
     @JsonProperty("DetailMessage") private String detailMessage;
     @JsonProperty("ErrorCode")     private String errorCode;
+    @JsonProperty("ErrorMessage")  private String errorMessage;
     @JsonProperty("Result")        private RESULT result;
 }

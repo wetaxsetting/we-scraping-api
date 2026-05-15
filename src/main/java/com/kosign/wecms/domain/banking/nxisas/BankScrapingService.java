@@ -122,7 +122,11 @@ public class BankScrapingService {
         NxisasLoginJobInput loginInput = new NxisasLoginJobInput();
         loginInput.setLoginId(username);
         loginInput.setLoginPwd(password);
-        loginInput.setCountryCode("VN");
+        // Coocon's Vietnam adapters expect ISO-3 "VNM", not ISO-2 "VN".
+        // Sending "VN" returns 80010209 ("Incorrect Country Code") at the
+        // bank-adapter level. Legacy comm_0218_nxisas.ts:512 hardcodes
+        // "VNM" for the same reason.
+        loginInput.setCountryCode("VNM");
         // FNSH_0100_001:210 hardcodes "ID" unconditionally — mirror that
         // default so the field is never omitted from the wire envelope.
         // A credential row may override with a bank-specific value.
@@ -153,6 +157,29 @@ public class BankScrapingService {
         // every subsequent call so the gateway routes them to the same
         // bank-adapter session.
         storeContinuation(session, GatewayContinuation.from(out));
+
+        // Bank-adapter status lives on Output.ErrorCode, NOT on the
+        // gateway envelope's Common.Result_cd. Common.Result_cd="00000000"
+        // means "gateway routed the call successfully" — the bank adapter
+        // can still reject the credentials / country code / etc. with
+        // its own non-zero ErrorCode (e.g. 80010011 wrong login, 80010209
+        // wrong country code). Surface those as ERROR before attempting
+        // any continuation call — the SAS_SessionID returned alongside a
+        // rejected LOGIN is invalid by Coocon's definition.
+        var bankOutput = gateway.firstOutput(out);
+        String bankErrCode = bankOutput == null ? null : bankOutput.getErrorCode();
+        if (bankErrCode != null && !bankErrCode.isBlank()
+                && !"00000000".equals(bankErrCode)) {
+            String bankErrMsg = bankOutput.getErrorMessage();
+            if (bankErrMsg == null || bankErrMsg.isBlank()) {
+                bankErrMsg = bankOutput.getDetailMessage();
+            }
+            log.info("NXISAS LOGIN rejected by bank adapter [bank={}, code={}, msg={}]",
+                    bankModule, bankErrCode, bankErrMsg);
+            return new ScrapeSessionResponse(
+                    session.getSessionId(), Status.ERROR, null, null,
+                    bankErrCode, bankErrMsg);
+        }
 
         ScrapeChallengeKind kind = challengeKindFrom(result);
         if (kind != null) {
@@ -187,8 +214,10 @@ public class BankScrapingService {
         NxisasOTPJobInput otpInput = new NxisasOTPJobInput();
         otpInput.setRes(req.value());
 
+        // Fresh Tr_seq per call — see runAcctList for the legacy-parity rationale.
+        String trSeq = gateway.newTrSeq();
         NxisasApiOut<NxisasOTPJobResult> otpOut = gateway.submitOtp(
-                session.getBankModule(), session.getBankCategory(), session.getTrSeq(),
+                session.getBankModule(), session.getBankCategory(), trSeq,
                 otpInput, sessionContinuation(session));
 
         // Update the continuation with whatever the OTP response returned —
@@ -199,8 +228,7 @@ public class BankScrapingService {
                 ? null : otpOut.getCommon().getResultCd();
         String resultMsg = otpOut == null || otpOut.getCommon() == null
                 ? null : otpOut.getCommon().getResultMsg();
-        if (resultCd != null && !resultCd.equalsIgnoreCase("0000")
-                && !resultCd.equalsIgnoreCase("OK")) {
+        if (isGatewayError(resultCd)) {
             // Gateway rejected the OTP (wrong code, expired, etc.).
             session.setStatus(NxisasScrapeSession.Status.FAILED);
             session.setErrorCode(resultCd);
@@ -214,8 +242,15 @@ public class BankScrapingService {
     }
 
     private ScrapeSessionResponse runAcctList(NxisasScrapeSession session) {
+        // Coocon requires a fresh Tr_seq for every call (legacy
+        // nxisas_fnsh_r001_act.jsp:137 unconditionally regenerates it
+        // even when continuation context is carried over). Reusing the
+        // LOGIN call's Tr_seq collides with the still-tearing-down
+        // LOGIN thread on the gateway side and Coocon answers with
+        // "APP00005 — invalid SAS_SessionID".
+        String trSeq = gateway.newTrSeq();
         NxisasApiOut<NxisasAcctListJobResult> out = gateway.acctList(
-                session.getBankModule(), session.getBankCategory(), session.getTrSeq(),
+                session.getBankModule(), session.getBankCategory(), trSeq,
                 new NxisasAcctListJobInput(), sessionContinuation(session));
         NxisasAcctListJobResult result = gateway.firstAcctListResult(out);
 
@@ -223,8 +258,7 @@ public class BankScrapingService {
                 ? null : out.getCommon().getResultCd();
         String resultMsg = out == null || out.getCommon() == null
                 ? null : out.getCommon().getResultMsg();
-        if (resultCd != null && !resultCd.equalsIgnoreCase("0000")
-                && !resultCd.equalsIgnoreCase("OK")) {
+        if (isGatewayError(resultCd)) {
             session.setStatus(NxisasScrapeSession.Status.FAILED);
             session.setErrorCode(resultCd);
             session.setErrorMessage(resultMsg);
@@ -261,6 +295,21 @@ public class BankScrapingService {
     }
 
     /** Copy the gateway continuation fields into the session for use on the next call. */
+    /** Coocon gateway-envelope success/failure check. The gateway returns
+     *  {@code "00000000"} (8 zeros) on success — NOT {@code "0000"} —
+     *  and the bank-adapter Output.ErrorCode shares the same convention.
+     *  Anything else (including the legacy short forms {@code "0000"} /
+     *  {@code "OK"}) is treated as success too, since some legacy adapter
+     *  flows use them; only an explicit non-success code triggers ERROR.
+     *  Null / blank → treat as success (no envelope info to act on). */
+    private static boolean isGatewayError(String resultCd) {
+        if (resultCd == null || resultCd.isBlank()) return false;
+        if ("00000000".equals(resultCd)) return false;
+        if ("0000".equalsIgnoreCase(resultCd)) return false;
+        if ("OK".equalsIgnoreCase(resultCd)) return false;
+        return true;
+    }
+
     private static void storeContinuation(NxisasScrapeSession session, GatewayContinuation cont) {
         session.setSasSessionID(cont.sasSessionID());
         session.setGwSysNo(cont.gwSysNo());
