@@ -7,6 +7,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -36,6 +38,22 @@ public interface TrcoInfmRepository extends JpaRepository<TrcoInfm, String> {
      * {@code WBE_CONTACTS_NOT_FOUND}.
      */
     Optional<TrcoInfm> findByTrcoKeyAndBizKey(String trcoKey, String bizKey);
+
+    /**
+     * Batch-fetch active contacts by a list of user-supplied beneficiary
+     * codes ({@code HAND_TRCO_KEY}). Used by the overseas batch-payment
+     * Excel preview to resolve all unique codes in one round-trip.
+     * Silently omits codes that don't exist or are soft-deleted.
+     */
+    @Query("""
+        SELECT t FROM TrcoInfm t
+        WHERE t.bizKey = :bizKey
+          AND t.handTrcoKey IN :handTrcoKeys
+          AND (t.trcoStts IS NULL OR t.trcoStts <> 'C')
+        """)
+    List<TrcoInfm> findByBeneficiaryCodes(
+            @Param("bizKey") String bizKey,
+            @Param("handTrcoKeys") Collection<String> handTrcoKeys);
 
     /**
      * Duplicate-{@code HAND_TRCO_KEY} check &mdash; per-tenant unique

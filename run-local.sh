@@ -6,7 +6,7 @@
 set -eu
 
 # --- 1. Pin JAVA_HOME to Java 21 if Temurin is present at the default path ---
-DEFAULT_JDK="/c/Program Files/Eclipse Adoptium/jdk-21.0.10.7-hotspot"
+DEFAULT_JDK="/c/Program Files/Eclipse Adoptium/jdk-21.0.11.10-hotspot"
 if [ -d "$DEFAULT_JDK" ]; then
     export JAVA_HOME="$DEFAULT_JDK"
 elif [ -z "${JAVA_HOME:-}" ]; then
@@ -15,23 +15,18 @@ elif [ -z "${JAVA_HOME:-}" ]; then
     exit 1
 fi
 
-# --- 2. Required env vars ---
+# --- 2. Optional env vars — application-local.yml has safe local defaults ---
 if [ -z "${WECMS_DB_PASSWORD:-}" ]; then
-    echo "[FAIL] WECMS_DB_PASSWORD is not set." >&2
-    echo "       export WECMS_DB_PASSWORD='your-postgres-password'" >&2
-    echo "       (Password is stored in the team's secure channel — do NOT commit it.)" >&2
-    exit 1
+    echo "[INFO] WECMS_DB_PASSWORD not set — using default from application-local.yml (password: 1234)"
 fi
 if [ -z "${WECMS_JWT_SECRET:-}" ]; then
-    echo "[FAIL] WECMS_JWT_SECRET is not set." >&2
-    echo "       export WECMS_JWT_SECRET='some-long-random-string-32-chars-min'" >&2
-    exit 1
+    echo "[INFO] WECMS_JWT_SECRET not set — using default from application-local.yml"
 fi
 
-# --- 3. Sanity-check WeCMS dev DB server is reachable ---
-if ! (exec 3<>/dev/tcp/172.168.5.172/5432) 2>/dev/null; then
-    echo "[FAIL] WeCMS dev DB server 172.168.5.172:5432 is not reachable." >&2
-    echo "       Check VPN / network access before rerunning." >&2
+# --- 3. Sanity-check local PostgreSQL is reachable ---
+if ! (exec 3<>/dev/tcp/localhost/5432) 2>/dev/null; then
+    echo "[FAIL] Local PostgreSQL at localhost:5432 is not reachable." >&2
+    echo "       Make sure PostgreSQL is running before rerunning." >&2
     exit 1
 fi
 exec 3>&- 2>/dev/null || true

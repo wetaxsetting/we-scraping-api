@@ -4,6 +4,8 @@ import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.payment.dto.OverseasApprover;
 import com.kosign.wecms.domain.payment.dto.OverseasCurrencyTotal;
+import com.kosign.wecms.domain.payment.dto.OverseasResultListResponse;
+import com.kosign.wecms.domain.payment.dto.OverseasResultRow;
 import com.kosign.wecms.domain.payment.dto.OverseasScheduledListResponse;
 import com.kosign.wecms.domain.payment.dto.OverseasScheduledRow;
 import com.kosign.wecms.domain.payment.repository.OverseasApproverRepository;
@@ -105,6 +107,65 @@ public class OverseasPaymentService {
         return new OverseasScheduledListResponse(totalCount, pageIndex, pageSize, rows, totals);
     }
 
+    // ─── single row ───────────────────────────────────────────────────────────
+
+    /**
+     * Fetch a single scheduled-payment row by {@code OVRS_PYMN_NO}.
+     *
+     * @throws BusinessException {@code WBE_NOT_FOUND} when the id is unknown or belongs to a different tenant
+     */
+    public OverseasScheduledRow getById(String ovrsPymnNo) {
+        String bizKey = TenantContext.currentBizKey();
+        Object[] r = paymentRepo.findScheduledById(bizKey, ovrsPymnNo)
+                .orElseThrow(() -> new BusinessException("WBE_NOT_FOUND",
+                        "overseas payment not found: " + ovrsPymnNo));
+        return mapRow(r, java.util.Map.of());
+    }
+
+    // ─── result list ──────────────────────────────────────────────────────────
+
+    public OverseasResultListResponse listResult(
+            String fromDt,
+            String toDt,
+            String keyword,
+            int page,
+            int size) {
+
+        if (fromDt == null || fromDt.isBlank()) throw new BusinessException("WBE_VALIDATION", "FROM_DT is required");
+        if (toDt   == null || toDt.isBlank())   throw new BusinessException("WBE_VALIDATION", "TO_DT is required");
+
+        String bizKey     = TenantContext.currentBizKey();
+        int    pageSize   = resolvePageSize(size);
+        int    pageIndex  = Math.max(0, page);
+        int    offset     = pageIndex * pageSize;
+        String likePat    = buildLikePattern(keyword);
+
+        long totalCount = paymentRepo.countResult(bizKey, fromDt, toDt, likePat);
+
+        java.util.List<Object[]> rawRows = totalCount == 0
+                ? java.util.List.of()
+                : paymentRepo.findResult(bizKey, fromDt, toDt, likePat, offset, pageSize);
+
+        java.util.List<OverseasResultRow> rows = rawRows.stream()
+                .map(this::mapResultRow)
+                .collect(java.util.stream.Collectors.toList());
+
+        java.util.List<Object[]> rawTotals = paymentRepo.sumResultByCurrency(bizKey, fromDt, toDt, likePat);
+        java.util.List<OverseasCurrencyTotal> totals = rawTotals.stream()
+                .map(this::mapTotal)
+                .collect(java.util.stream.Collectors.toList());
+
+        return new OverseasResultListResponse(totalCount, pageIndex, pageSize, rows, totals);
+    }
+
+    public OverseasResultRow getResultById(String ovrsPymnNo) {
+        String bizKey = TenantContext.currentBizKey();
+        Object[] r = paymentRepo.findResultById(bizKey, ovrsPymnNo)
+                .orElseThrow(() -> new BusinessException("WBE_NOT_FOUND",
+                        "overseas payment result not found: " + ovrsPymnNo));
+        return mapResultRow(r);
+    }
+
     // ─── mappers ──────────────────────────────────────────────────────────────
 
     private OverseasScheduledRow mapRow(Object[] r, Map<String, List<Object[]>> approversBySeq) {
@@ -166,6 +227,28 @@ public class OverseasPaymentService {
                 toBigDecimal(r[1]),  // totlAmt
                 toInt(r[2]),         // totCntCcyCd (row count)
                 toInt(r[3])          // totTrnsCnt
+        );
+    }
+
+    /** Maps a result-list query row (see {@link com.kosign.wecms.domain.payment.repository.OverseasPaymentRepository#buildResultSql}). */
+    private OverseasResultRow mapResultRow(Object[] r) {
+        return new OverseasResultRow(
+                (String)     r[0],   // ovrsPymnNo
+                (String)     r[1],   // ccyCd
+                (String)     r[2],   // fileNm (titl)
+                toBigDecimal(r[3]),  // totalTranAmt
+                toInt(r[4]),         // totTrnsCnt
+                (String)     r[5],   // regDtm
+                (String)     r[6],   // draftUserNm
+                (String)     r[7],   // regId
+                (String)     r[8],   // outBankNm
+                (String)     r[9],   // outBankCd
+                (String)     r[10],  // wdrlActNo
+                (String)     r[11],  // trnfYn
+                (String)     r[12],  // docNo
+                (String)     r[13],  // titl (approval title)
+                0,                   // successCount — not yet tracked at batch level
+                0                    // failedCount  — not yet tracked at batch level
         );
     }
 

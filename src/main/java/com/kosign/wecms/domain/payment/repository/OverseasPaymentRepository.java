@@ -251,6 +251,132 @@ public class OverseasPaymentRepository {
         return union + "\n ORDER BY reg_dtm DESC";
     }
 
+    // ─── single-row fetch ─────────────────────────────────────────────────────
+
+    /**
+     * Fetch a single scheduled-payment row by {@code OVRS_PYMN_NO}.
+     * Reuses the UNION ALL projection so the mapper in the service is shared.
+     *
+     * @return the raw Object[] row, or an empty Optional when not found
+     */
+    @SuppressWarnings("unchecked")
+    public java.util.Optional<Object[]> findScheduledById(String bizKey, String ovrsPymnNo) {
+        String innerSql = buildUnionSql(null, null, false);
+        String sql = "SELECT * FROM (" + innerSql + ") __r WHERE __r.ovrs_pymn_no = :id LIMIT 1";
+        Query q = em.createNativeQuery(sql);
+        q.setParameter("bizKey", bizKey);
+        q.setParameter("fromDt", "19000101");
+        q.setParameter("toDt",   "99991231");
+        q.setParameter("id",     ovrsPymnNo);
+        List<Object[]> rows = q.getResultList();
+        return rows.isEmpty() ? java.util.Optional.empty() : java.util.Optional.of(rows.get(0));
+    }
+
+    // ─── result list (payment-result) ─────────────────────────────────────────
+
+    /**
+     * Paged result list — {@code OVRS_PYMN_SUMR} joined with {@code EXPT_RESOL_MSTR}.
+     * Includes all rows regardless of {@code TRNF_YN}; the service maps status from that field.
+     *
+     * <p>Column positions (0-based):
+     * <pre>
+     *  0  ovrs_pymn_no
+     *  1  ccy_cd
+     *  2  titl (file name)
+     *  3  total_tran_amt
+     *  4  tot_trns_cnt
+     *  5  reg_dtm
+     *  6  draft_user_nm
+     *  7  reg_id
+     *  8  out_bank_nm
+     *  9  out_bank_cd
+     * 10  wdrl_act_no
+     * 11  trnf_yn
+     * 12  doc_no
+     * 13  appr_titl   (EXPT_RESOL_MSTR.TITL)
+     * </pre>
+     */
+    @SuppressWarnings("unchecked")
+    public List<Object[]> findResult(String bizKey, String fromDt, String toDt,
+                                     String keyword, int offset, int limit) {
+        String sql = buildResultSql(keyword) + " ORDER BY ops.reg_dtm DESC";
+        Query q = em.createNativeQuery(sql);
+        bindResultParams(q, bizKey, fromDt, toDt, keyword);
+        q.setFirstResult(offset);
+        q.setMaxResults(limit);
+        return q.getResultList();
+    }
+
+    public long countResult(String bizKey, String fromDt, String toDt, String keyword) {
+        String sql = "SELECT COUNT(*) FROM (" + buildResultSql(keyword) + ") __cnt";
+        Query q = em.createNativeQuery(sql);
+        bindResultParams(q, bizKey, fromDt, toDt, keyword);
+        return ((Number) q.getSingleResult()).longValue();
+    }
+
+    @SuppressWarnings("unchecked")
+    public List<Object[]> sumResultByCurrency(String bizKey, String fromDt, String toDt, String keyword) {
+        String inner = buildResultSql(keyword);
+        String sql = """
+                SELECT ccy_cd,
+                       COALESCE(SUM(total_tran_amt), 0),
+                       COUNT(*),
+                       COALESCE(SUM(tot_trns_cnt), 0)
+                  FROM (%s) __t
+                 GROUP BY ccy_cd
+                 ORDER BY ccy_cd
+                """.formatted(inner);
+        Query q = em.createNativeQuery(sql);
+        bindResultParams(q, bizKey, fromDt, toDt, keyword);
+        return q.getResultList();
+    }
+
+    @SuppressWarnings("unchecked")
+    public java.util.Optional<Object[]> findResultById(String bizKey, String ovrsPymnNo) {
+        String sql = buildResultSql(null) + " AND ops.ovrs_pymn_no = :id LIMIT 1";
+        Query q = em.createNativeQuery(sql);
+        q.setParameter("bizKey", bizKey);
+        q.setParameter("fromDt", "19000101");
+        q.setParameter("toDt",   "99991231");
+        q.setParameter("id",     ovrsPymnNo);
+        List<Object[]> rows = q.getResultList();
+        return rows.isEmpty() ? java.util.Optional.empty() : java.util.Optional.of(rows.get(0));
+    }
+
+    private String buildResultSql(String keyword) {
+        String kw = keyword != null ? " AND ops.titl ILIKE :keyword ESCAPE '!'" : "";
+        return """
+                SELECT ops.ovrs_pymn_no,
+                       ops.ccy_cd,
+                       ops.titl,
+                       ops.total_tran_amt,
+                       ops.tot_trns_cnt,
+                       ops.reg_dtm,
+                       erm.draft_user_nm,
+                       ops.reg_id,
+                       ops.out_bank_nm,
+                       ops.out_bank_cd,
+                       ops.wdrl_act_no,
+                       ops.trnf_yn,
+                       erm.doc_no,
+                       erm.titl        AS appr_titl
+                  FROM ovrs_pymn_sumr ops
+                  LEFT JOIN expt_resol_mstr erm
+                    ON ops.biz_key = erm.biz_key AND ops.appr_seq_no = erm.appr_seq_no
+                 WHERE ops.biz_key = :bizKey
+                   AND LEFT(ops.reg_dtm, 8) BETWEEN :fromDt AND :toDt
+                """ + kw;
+    }
+
+    private void bindResultParams(Query q, String bizKey, String fromDt, String toDt, String keyword) {
+        q.setParameter("bizKey", bizKey);
+        q.setParameter("fromDt", fromDt);
+        q.setParameter("toDt",   toDt);
+        if (keyword != null) q.setParameter("keyword", keyword);
+    }
+
+    // ─── common helpers ───────────────────────────────────────────────────────
+
     /** Binds the common named parameters used in both count and list queries. */
     private void bindParams(Query q,
                             String bizKey,

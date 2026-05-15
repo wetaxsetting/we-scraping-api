@@ -1,0 +1,37 @@
+package com.kosign.wecms.domain.payment.dto;
+
+import java.util.List;
+
+/**
+ * One parsed row from an overseas payment Excel upload.
+ *
+ * <p>Wire field names follow the global lowercase snake_case strategy
+ * (Jackson {@code SNAKE_CASE} ObjectMapper). Beneficiary detail fields
+ * (name, bank, BIC, account, address) are NOT included here — they are
+ * resolved on the frontend via the contacts batch-lookup endpoint
+ * ({@code GET /api/v1/settings/contacts/by-codes}) using
+ * {@code beneficiary_code} as the key.
+ *
+ * <p>{@code row_index} is 1-based (matches what the user sees in Excel;
+ * header is row 1, first data row is row 2).
+ */
+public record OverseasPaymentExcelPreviewRow(
+        /** 1-based Excel row number. */
+        int rowIndex,
+        /** Transfer currency code (e.g. {@code "USD"}). */
+        String currency,
+        /** Transfer amount as raw string from the cell. */
+        String amount,
+        /** Fee payer code (e.g. {@code "BEN"}, {@code "OUR"}, {@code "SHA"}). */
+        String feePayer,
+        /** Beneficiary code — used to resolve contact details client-side. */
+        String beneficiaryCode,
+        /** Memo / payment purpose. */
+        String memo,
+        /** Reporting account code (optional — may be blank). */
+        String reportingAccount,
+        /** {@code true} when {@link #errors} is empty. */
+        boolean valid,
+        /** Per-field validation errors; empty for valid rows. */
+        List<OverseasPaymentExcelFieldError> errors
+) { }

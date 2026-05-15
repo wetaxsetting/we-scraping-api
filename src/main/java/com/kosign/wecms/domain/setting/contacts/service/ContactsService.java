@@ -47,12 +47,12 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Comparator;
 import java.util.Set;
 
 /**
@@ -190,6 +190,45 @@ public class ContactsService {
         String langCd = currentLangForBankFn();
         Map<String, String> bankNameCache = resolveBankNamesForAccounts(List.of(accts), langCd);
         return projectRow(master, addrs, accts, ovrs, bankNameCache);
+    }
+
+    /**
+     * Batch-fetch contacts by a list of user-supplied beneficiary codes
+     * ({@code HAND_TRCO_KEY}). One DB round-trip per child collection;
+     * codes that don't match any active contact in the tenant are silently
+     * omitted from the result so callers can detect missing codes by
+     * comparing the returned set against their input list.
+     *
+     * <p>Used by the overseas batch-payment Excel preview to resolve all
+     * beneficiary rows without issuing N individual lookups.
+     */
+    @Transactional(readOnly = true)
+    public List<ContactRow> getByBeneficiaryCodes(Collection<String> codes) {
+        if (codes == null || codes.isEmpty()) return List.of();
+        String bizKey = TenantContext.currentBizKey();
+
+        List<TrcoInfm> masters = trcoInfmRepo.findByBeneficiaryCodes(bizKey, codes);
+        if (masters.isEmpty()) return List.of();
+
+        List<String> trcoKeys = masters.stream().map(TrcoInfm::getTrcoKey).toList();
+
+        Map<String, List<TrcoAddrInfm>> addrByKey = groupByTrcoKey(
+                trcoAddrRepo.findByBizKeyAndTrcoKeyIn(bizKey, trcoKeys), TrcoAddrInfm::getTrcoKey);
+        Map<String, List<TrcoAcctInfo>> acctByKey = groupByTrcoKey(
+                trcoAcctRepo.findByBizKeyAndTrcoKeyIn(bizKey, trcoKeys), TrcoAcctInfo::getTrcoKey);
+        Map<String, List<TrcoOvrsInfm>> ovrsByKey = groupByTrcoKey(
+                trcoOvrsRepo.findByBizKeyAndTrcoKeyIn(bizKey, trcoKeys), TrcoOvrsInfm::getTrcoKey);
+
+        String langCd = currentLangForBankFn();
+        Map<String, String> bankNameCache = resolveBankNamesForAccounts(acctByKey.values(), langCd);
+
+        return masters.stream()
+                .map(m -> projectRow(m,
+                        addrByKey.getOrDefault(m.getTrcoKey(), List.of()),
+                        acctByKey.getOrDefault(m.getTrcoKey(), List.of()),
+                        ovrsByKey.getOrDefault(m.getTrcoKey(), List.of()),
+                        bankNameCache))
+                .toList();
     }
 
     /* =================================================================

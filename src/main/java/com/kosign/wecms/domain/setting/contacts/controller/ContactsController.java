@@ -3,6 +3,7 @@ package com.kosign.wecms.domain.setting.contacts.controller;
 import com.kosign.wecms.common.response.ApiResponse;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactBankListResponse;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactBulkDeleteRequest;
+import com.kosign.wecms.domain.setting.contacts.dto.ContactsByCodesRequest;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactCreateRequest;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactFileListResponse;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactFileRow;
@@ -17,6 +18,7 @@ import com.kosign.wecms.domain.setting.contacts.service.ContactsService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import java.io.IOException;
+import java.util.List;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -150,6 +152,24 @@ public class ContactsController {
             @Valid @RequestBody ContactBulkDeleteRequest request) {
         service.bulkSoftDelete(request.trcoKeys());
         return ApiResponse.ok(null);
+    }
+
+    /**
+     * Batch-fetch contacts by a list of user-supplied beneficiary codes
+     * ({@code HAND_TRCO_KEY}). Designed for the overseas batch-payment
+     * Excel preview — the frontend collects all unique codes from the
+     * parsed sheet and resolves them in one round-trip rather than N
+     * individual lookups. Codes that don't match any active contact in
+     * the current tenant are silently omitted from the result.
+     *
+     * <p>Uses POST + JSON body instead of GET query-string to avoid
+     * URL-length limits when an Excel file contains many rows (up to
+     * {@code OverseasPaymentExcelService#MAX_ROWS} = 500 unique codes).
+     */
+    @PostMapping("/by-codes")
+    public ApiResponse<List<ContactRow>> getByBeneficiaryCodes(
+            @RequestBody @Valid ContactsByCodesRequest request) {
+        return ApiResponse.ok(service.getByBeneficiaryCodes(request.codes()));
     }
 
     /**

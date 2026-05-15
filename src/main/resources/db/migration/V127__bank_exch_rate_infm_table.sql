@@ -3,7 +3,7 @@
 -- Populated by batch EXCH_0001_001 (Coocon Shinhan foreign exchange rates)
 -- Read by: GET /api/v1/banking/exchange-rates (Exchange Rate Inquiry page)
 
-CREATE TABLE BANK_EXCH_RATE_INFM (
+CREATE TABLE IF NOT EXISTS BANK_EXCH_RATE_INFM (
     -- Primary key (matches BankExchRateInfmPk in JEX)
     BIZ_KEY             VARCHAR(50)     NOT NULL,
     BANK_CD             VARCHAR(20)     NOT NULL,
@@ -61,5 +61,5 @@ CREATE TABLE BANK_EXCH_RATE_INFM (
 
 -- Index to support the most common query pattern:
 -- look up all rates for a tenant on a given date
-CREATE INDEX IDX_BANK_EXCH_RATE_INFM_BIZ_DATE
+CREATE INDEX IF NOT EXISTS IDX_BANK_EXCH_RATE_INFM_BIZ_DATE
     ON BANK_EXCH_RATE_INFM (BIZ_KEY, REF_DATE, BANK_CD);

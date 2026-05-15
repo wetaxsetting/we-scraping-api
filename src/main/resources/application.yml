@@ -16,7 +16,7 @@ spring:
     # V94, OVRS_PYMN_* from V112) — keep enabled at all times.
     enabled: true
     locations: classpath:db/migration
-    baseline-on-migrate: true
+    baseline-on-migrate: false
     # Local-R&D drift recovery — the developer DB is single-user and
     # often runs against migration files that have been edited after
     # first apply (e.g. a hotfix re-uses the same V-number while the

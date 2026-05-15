@@ -1,18 +1,32 @@
 package com.kosign.wecms.domain.payment.controller;
 
 import com.kosign.wecms.common.response.ApiResponse;
+import com.kosign.wecms.domain.payment.dto.OverseasPaymentExcelPreview;
+import com.kosign.wecms.domain.payment.dto.OverseasPaymentExcelUploadRequest;
+import com.kosign.wecms.domain.payment.dto.OverseasPaymentExcelUploadResult;
+import com.kosign.wecms.domain.payment.dto.OverseasResultListResponse;
+import com.kosign.wecms.domain.payment.dto.OverseasResultRow;
 import com.kosign.wecms.domain.payment.dto.OverseasScheduledListResponse;
+import com.kosign.wecms.domain.payment.dto.OverseasScheduledRow;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.WithdrawalAccountRow;
 import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService;
+import com.kosign.wecms.domain.payment.service.OverseasPaymentExcelService;
 import com.kosign.wecms.domain.payment.service.OverseasPaymentService;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
@@ -28,8 +42,9 @@ import java.util.List;
 @Validated
 public class OverseasPaymentController {
 
-    private final OverseasPaymentService    overseasPaymentService;
-    private final InternalTransferService   internalTransferService;
+    private final OverseasPaymentService        overseasPaymentService;
+    private final OverseasPaymentExcelService   overseasExcelService;
+    private final InternalTransferService       internalTransferService;
 
     /**
      * Overseas scheduled-payment list.
@@ -74,6 +89,47 @@ public class OverseasPaymentController {
     }
 
     /**
+     * Single overseas scheduled-payment row by {@code OVRS_PYMN_NO}.
+     */
+    @GetMapping("/scheduled/{id}")
+    public ApiResponse<OverseasScheduledRow> getScheduledById(@PathVariable("id") String id) {
+        return ApiResponse.ok(overseasPaymentService.getById(id));
+    }
+
+    /**
+     * Overseas payment-result list.
+     * Returns all batch records (OVRS_PYMN_SUMR) in the date range, ordered newest first.
+     * {@code trnf_yn = "Y"} → completed; {@code "N"} → in progress.
+     */
+    @GetMapping("/result")
+    public ApiResponse<OverseasResultListResponse> listResult(
+            @RequestParam("from_dt")
+            @Pattern(regexp = "^[0-9]{8}$", message = "from_dt must be yyyyMMdd")
+            String fromDt,
+
+            @RequestParam("to_dt")
+            @Pattern(regexp = "^[0-9]{8}$", message = "to_dt must be yyyyMMdd")
+            String toDt,
+
+            @RequestParam(value = "keyword", required = false)
+            @Size(max = 100)
+            String keyword,
+
+            @RequestParam(value = "page", defaultValue = "0") int page,
+            @RequestParam(value = "size", defaultValue = "0") int size) {
+
+        return ApiResponse.ok(overseasPaymentService.listResult(fromDt, toDt, keyword, page, size));
+    }
+
+    /**
+     * Single overseas payment-result row by {@code OVRS_PYMN_NO}.
+     */
+    @GetMapping("/result/{id}")
+    public ApiResponse<OverseasResultRow> getResultById(@PathVariable("id") String id) {
+        return ApiResponse.ok(overseasPaymentService.getResultById(id));
+    }
+
+    /**
      * Firm-banking-capable withdrawal accounts for the overseas payment
      * Excel upload dialog Step 3 ("Withdrawal Bank/Account No." picker).
      *
@@ -88,5 +144,33 @@ public class OverseasPaymentController {
     public ApiResponse<List<WithdrawalAccountRow>> listWithdrawalAccounts(
             @RequestParam(value = "ccy_cd", required = false) String ccyCd) {
         return ApiResponse.ok(internalTransferService.listWithdrawalAccounts(ccyCd));
+    }
+
+    /**
+     * Parse and validate an overseas payment Excel upload file.
+     * Returns all rows (valid + invalid) with per-cell error details so
+     * the frontend preview dialog can highlight errors inline.
+     *
+     * <p>Mirrors legacy {@code pymn_0007_001} batch-upload parse step.
+     */
+    @PostMapping(value = "/excel-preview", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ApiResponse<OverseasPaymentExcelPreview> excelPreview(
+            @RequestPart("file") MultipartFile file) {
+        return ApiResponse.ok(overseasExcelService.preview(file));
+    }
+
+    /**
+     * Persist the overseas-payment Excel batch summary.
+     * The frontend calls this after the user confirms in Step 3 of the
+     * Excel-upload dialog. Returns the allocated {@code OVRS_PYMN_NO}
+     * so the frontend can refresh the scheduled-payment list.
+     *
+     * <p>Wire: {@code POST /api/v1/payment/overseas-payment/excel-upload}
+     * with a JSON body carrying the account selection and row totals.
+     */
+    @PostMapping("/excel-upload")
+    public ApiResponse<OverseasPaymentExcelUploadResult> excelUpload(
+            @Valid @RequestBody OverseasPaymentExcelUploadRequest request) {
+        return ApiResponse.ok(overseasExcelService.submit(request));
     }
 }
