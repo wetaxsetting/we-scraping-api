@@ -45,7 +45,7 @@ public class OverseasApproverRepository {
         }
         List<Object[]> rows = em.createNativeQuery("""
                 SELECT appr_seq_no, apprvr_line_no, apprvr_id, apprvr_nm,
-                       apprvr_stts, mod_dtm, reg_img_url
+                       apprvr_stts, mod_dtm, NULL AS reg_img_url
                   FROM expt_resol_apprvr_infm
                  WHERE biz_key = :bizKey
                    AND appr_seq_no IN :apprSeqNos

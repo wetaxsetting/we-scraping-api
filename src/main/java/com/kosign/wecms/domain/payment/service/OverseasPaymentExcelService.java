@@ -7,7 +7,9 @@ import com.kosign.wecms.domain.payment.dto.OverseasPaymentExcelPreview;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentExcelPreviewRow;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentExcelUploadRequest;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentExcelUploadResult;
+import com.kosign.wecms.domain.payment.entity.OvrsPymnDtls;
 import com.kosign.wecms.domain.payment.entity.OvrsPymnSumr;
+import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnDtlsRepository;
 import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnSumrRepository;
 import com.kosign.wecms.domain.payment.overseas.service.OverseasPaymentKeyGenerator;
 import lombok.RequiredArgsConstructor;
@@ -60,6 +62,7 @@ public class OverseasPaymentExcelService {
     private static final DateTimeFormatter DTM_FMT    = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
 
     private final OvrsPymnSumrRepository       sumrRepository;
+    private final OvrsPymnDtlsRepository       dtlsRepository;
     private final OverseasPaymentKeyGenerator  keyGenerator;
 
     /** Header row index (0-based POI index; row 3 in Excel = index 2). */
@@ -221,15 +224,11 @@ public class OverseasPaymentExcelService {
     // -------------------------------------------------------------------------
 
     /**
-     * Persist the overseas-payment Excel batch summary into
-     * {@code OVRS_PYMN_SUMR} and return the allocated {@code OVRS_PYMN_NO}.
+     * Persist the overseas-payment Excel batch into {@code OVRS_PYMN_SUMR}
+     * (one summary row) and {@code OVRS_PYMN_DTLS} (one row per transaction),
+     * then return the allocated {@code OVRS_PYMN_NO}.
      *
-     * <p>The frontend sends only metadata (account selection + totals derived
-     * from the already-previewed rows); the actual file bytes are NOT stored
-     * server-side in this R&amp;D implementation — only the summary record is
-     * written so the scheduled-payment list can show the batch.
-     *
-     * @param req metadata gathered from the three Excel-upload dialog steps
+     * @param req batch metadata + full list of parsed transaction rows
      * @return the new batch key wrapped in {@link OverseasPaymentExcelUploadResult}
      */
     @Transactional
@@ -239,26 +238,56 @@ public class OverseasPaymentExcelService {
         String pymnNo    = keyGenerator.nextOvrsPymnNo(bizKey);
         String nowDtm    = ZonedDateTime.now(VIETNAM_ZONE).format(DTM_FMT);
 
-        OvrsPymnSumr row = new OvrsPymnSumr();
-        row.setBizKey(bizKey);
-        row.setOvrsPymnNo(pymnNo);
-        row.setOvrsPymnTypeCd("EX");                       // Excel-upload batch
-        row.setTitl(req.file_nm());
-        row.setCcyCd(req.ccy_cd());
-        row.setTotalTranAmt(req.total_tran_amt());
-        row.setTotTrnsCnt(req.tot_trns_cnt());
-        row.setOutBankCd(req.wdrl_bank_cd());
-        row.setOutBankNm(req.wdrl_bank_nm());
-        row.setWdrlActNo(req.wdrl_acct_no());
-        row.setOrgFileNm(req.file_nm());
-        row.setTrnfYn("N");
-        row.setRegDtm(nowDtm);
-        row.setRegId(userId);
+        // ── Summary row ──────────────────────────────────────────────────────
+        OvrsPymnSumr sumr = new OvrsPymnSumr();
+        sumr.setBizKey(bizKey);
+        sumr.setOvrsPymnNo(pymnNo);
+        sumr.setOvrsPymnTypeCd("EX");
+        sumr.setTitl(req.file_nm());
+        sumr.setCcyCd(req.ccy_cd());
+        sumr.setTotalTranAmt(req.total_tran_amt());
+        sumr.setTotTrnsCnt(req.tot_trns_cnt());
+        sumr.setOutBankCd(req.wdrl_bank_cd());
+        sumr.setOutBankNm(req.wdrl_bank_nm());
+        sumr.setWdrlActNo(req.wdrl_acct_no());
+        sumr.setOrgFileNm(req.file_nm());
+        sumr.setTrnfYn("N");
+        sumr.setRegDtm(nowDtm);
+        sumr.setRegId(userId);
+        sumrRepository.save(sumr);
 
-        sumrRepository.save(row);
-        log.info("feature=overseas-payment excel-upload saved bizKey={} ovrs_pymn_no={} file={}",
-                bizKey, pymnNo, req.file_nm());
+        // ── Detail rows ───────────────────────────────────────────────────────
+        List<OvrsPymnDtls> dtlsList = new ArrayList<>();
+        for (var src : req.rows()) {
+            OvrsPymnDtls dtl = new OvrsPymnDtls();
+            dtl.setBizKey(bizKey);
+            dtl.setOvrsPymnNo(pymnNo);
+            dtl.setTrnSeq(src.trn_seq());
+            dtl.setBnfcCode(src.bnfc_code());
+            dtl.setCcyCd(src.ccy_cd());
+            dtl.setTrnfAmt(src.trnf_amt());
+            dtl.setFeePayerCd(src.fee_payer_cd());
+            dtl.setMemo(src.memo());
+            dtl.setRprtAcctCd(nullIfBlank(src.rprt_acct_cd()));
+            dtl.setBnfcNm(src.bnfc_nm());
+            dtl.setBnfcBankNm(src.bnfc_bank_nm());
+            dtl.setBicCd(src.bic_cd());
+            dtl.setBnfcActNo(src.bnfc_acct_no());
+            dtl.setBnfcAddr(src.bnfc_addr());
+            dtl.setTrnfYn("N");
+            dtl.setRegDtm(nowDtm);
+            dtl.setRegId(userId);
+            dtlsList.add(dtl);
+        }
+        dtlsRepository.saveAll(dtlsList);
+
+        log.info("feature=overseas-payment excel-upload saved bizKey={} ovrs_pymn_no={} file={} rows={}",
+                bizKey, pymnNo, req.file_nm(), dtlsList.size());
         return new OverseasPaymentExcelUploadResult(pymnNo);
+    }
+
+    private static String nullIfBlank(String s) {
+        return (s == null || s.isBlank()) ? null : s;
     }
 
     /** Returns {@code true} when every cell in the row is blank/null. */
