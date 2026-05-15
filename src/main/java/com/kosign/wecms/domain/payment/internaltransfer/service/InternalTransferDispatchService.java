@@ -4,6 +4,7 @@ import com.kosign.wecms.common.auditlog.service.AuditLogContext;
 import com.kosign.wecms.common.auditlog.service.AuditLogService;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
+import com.kosign.wecms.domain.payment.dispatch.service.TransferDispatchExecutor;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.DispatchRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumr;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrDetl;
@@ -56,6 +57,7 @@ public class InternalTransferDispatchService {
     private final ScdulPymnSumrDetlRepository detlRepository;
     private final CutoffValidator             cutoffValidator;
     private final AuditLogService             auditLogService;
+    private final TransferDispatchExecutor    dispatchExecutor;
     private final Clock                       clock;
 
     /**
@@ -101,13 +103,17 @@ public class InternalTransferDispatchService {
                 : TransferNetwork.fromAntDivCd(lines.get(0).getAntDivCd());
         cutoffValidator.validate(master.getOutBankCd(), network);
 
-        // Stamp dispatch. Phase A: no TB_PAY_TARGET / TB_PAY_FILE_MST
-        // insert — those land with the matching schema migration.
+        // Insert dispatch rows (TB_PAY_TARGET for VND, TB_PAY_FILE_MST +
+        // TB_PAY_FILE_DATA otherwise). Shared with Vendor/Expense/Payroll
+        // dispatch — the executor branches on req.trnfCcyCd internally.
+        dispatchExecutor.execute(master, lines, req.trnfCcyCd());
+
+        // Stamp the master row. Dirty checking flushes the UPDATE
+        // together with the executor's inserts inside this @Transactional.
         master.setTrnfYn(TrnfYn.TRANSFERRED.code());
         master.setTrnfDtm(now);
         master.setModId(userId);
         master.setModDtm(now);
-        // JPA dirty checking flushes the UPDATE.
 
         auditLogService.append(AuditLogContext.builder()
                 .wsvcId(InternalTransferService.WSVC_ID)
@@ -118,7 +124,7 @@ public class InternalTransferDispatchService {
                 .msgArgs(new Object[]{ req.trnfCcyCd() })
                 .build());
 
-        log.info("feature=internal-transfer dispatch bizKey={} scdulPymnNo={} trnfCcyCd={} network={} (Phase A stub: no TB_PAY_TARGET write)",
-                bizKey, id, req.trnfCcyCd(), network);
+        log.info("feature=internal-transfer dispatch bizKey={} scdulPymnNo={} trnfCcyCd={} network={} lines={}",
+                bizKey, id, req.trnfCcyCd(), network, lines.size());
     }
 }

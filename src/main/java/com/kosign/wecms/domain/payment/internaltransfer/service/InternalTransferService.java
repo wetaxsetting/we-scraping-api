@@ -115,6 +115,11 @@ public class InternalTransferService {
 
     /** Legacy {@code APPRVR_STTS} code stamped on the master when an
      *  approver presses Approve — final outcome, batch is approved. */
+    /** APPR_STTS code stamped on Request Approval — "Pending", the initial
+     *  state before any approver has acted. Frontend renders this as the
+     *  yellow "Pending" badge per the legacy three-state UI rule (pending
+     *  → in_progress when the first approver acts → approved/rejected). */
+    static final String APPR_STTS_PENDING  = "P";
     static final String APPR_STTS_APPROVED = "C";
 
     /** Legacy {@code APPRVR_STTS} code stamped on the master when an
@@ -160,7 +165,7 @@ public class InternalTransferService {
      */
     @Transactional(readOnly = true)
     public ScheduledTransferListResponse list(
-            String fromDate, String toDate, String srchWd,
+            String fromDate, String toDate, String srchWd, String apprType,
             String sortField, String sortDirection,
             int page, int size) {
 
@@ -178,12 +183,14 @@ public class InternalTransferService {
         // `function lower(bytea) does not exist`. Mirrors the
         // `AcctMstrRepository#findFiltered` precedent.
         String srchWdPattern = buildLikePattern(srchWd);
+        String apprTypeArg   = (apprType == null || apprType.isBlank()) ? null : apprType.trim();
 
         Page<ScdulPymnSumr> rows = sumrRepository.search(
                 bizKey, ScdulPymnTypeCd.INTERNAL.code(),
                 fromDtm, toDtm,
                 srchWdPattern,
                 null,
+                apprTypeArg,
                 pageable);
 
         List<ScheduledTransferRow> dtoRows = rows.getContent().stream()
@@ -345,6 +352,28 @@ public class InternalTransferService {
             detl.setModId(userId);
             detl.setModDtm(now);
             detlRepository.save(detl);
+        }
+
+        // Preserve the uploaded Excel under ERP Transaction History so
+        // the user can later download it from Settings > ERP Transaction
+        // History (legacy parity with `PymnHelper.uploadPaymentExcel` +
+        // `ErpTrnsHisHelper.erpTrnsHisUploader`). TRNS_TYPE_CD = "16"
+        // (Internal Scheduled Transfer) lands the row in the "ERP" tab.
+        // The writer is REQUIRES_NEW + swallows its own errors, so an
+        // ERP audit-write failure cannot roll back the batch create.
+        if (master.getSaveFileNm() != null && !master.getSaveFileNm().isBlank()) {
+            try {
+                java.nio.file.Path source = fileResolver.resolve(bizKey, master.getSaveFileNm());
+                erpHistoryWriter.recordUploadedFile(
+                        ERP_TRNS_TYPE_INTERNAL_SCHEDULED_TRANSFER,
+                        source,
+                        master.getOrgFileNm());
+            } catch (RuntimeException ex) {
+                log.warn(
+                        "feature=internal-transfer ERP history skip "
+                      + "(path resolver rejected) bizKey={} scdulPymnNo={} saveFileNm={}",
+                        bizKey, scdulPymnNo, master.getSaveFileNm(), ex);
+            }
         }
 
         auditLogService.append(AuditLogContext.builder()
@@ -560,6 +589,12 @@ public class InternalTransferService {
             String apprSeqNo,
             com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalRequest req) {
         master.setApprSeqNo(apprSeqNo);
+        // Initial approval state — Pending. Flips to "I" (in progress)
+        // when the first approver acts, then "C" / "X" when the chain
+        // completes. Without this stamp the column stays null and the
+        // frontend falls back to the legacy "apprSeqNo present means in
+        // progress" path, masking the distinct Pending state.
+        master.setApprStts(APPR_STTS_PENDING);
         // POST_TITLE / POST_CONT are display fields on the legacy
         // BLTB_POST_INFM row. Until that table is ported, we stamp
         // POST_TITLE onto TITL so the list grid's Approval Title
@@ -740,7 +775,7 @@ public class InternalTransferService {
         if (bankCd == null || bankCd.isBlank()) {
             throw new BusinessException("WBE_VALIDATION");
         }
-        return excelParser.parse(file);
+        return excelParser.parse(file, bankCd);
     }
 
     /* ----------------------------------------------------------------

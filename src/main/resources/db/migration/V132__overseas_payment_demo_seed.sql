@@ -1,0 +1,29 @@
+-- ============================================================================
+-- V132 — Overseas Payment demo seed (NEUTERED 2026-05-14)
+-- ============================================================================
+-- Original file inserted demo rows into EXPT_RESOL_MSTR, EXPT_RESOL_APPRVR_INFM,
+-- OVRS_PYMN_SUMR, and OVRS_PYMN_MSTR. It had three independent bugs that prevent
+-- it from running against the real schema:
+--
+--   1. Uses column name `APPR_STTS` on EXPT_RESOL_MSTR — the actual column is
+--      `APPR_STS` (see V109/V111). Position-431 error reproduced 2026-05-14.
+--   2. Inserts wide string statuses (`APPROVED`, `PENDING`, `IN_PROGRESS`,
+--      `DRAFT`) into a `VARCHAR(2)` column with `CHECK IN ('0','1','2','4','9')`.
+--      Even with the column name fixed, every row would fail the CHECK.
+--   3. Uses `BIZ_KEY = 'HS'` for every INSERT — no matching row in BUSI_INFM
+--      exists locally (active tenant is `VN_VNM0004_000001`), so every FK
+--      reference would fail.
+--
+-- Nothing later in the migration set references the rows this file was meant to
+-- insert (`APPR-2025-*`, `OV-E-2025-*`, `OV-M-2025-*`, `BIZ_KEY='HS'`) — grep
+-- confirmed on 2026-05-14. The Overseas Payment Scheduled / Result pages will
+-- render empty data on first boot, same as before this migration existed.
+--
+-- This file is intentionally left as a no-op so Flyway records V132 as applied
+-- without disrupting the migration chain. The teammate who authored the
+-- original Overseas Payment seed needs to ship a corrected version against the
+-- real EXPT_RESOL_MSTR / OVRS_PYMN_* schemas (mirror V115__internal_transfer_demo_seed
+-- and V138__vendor_payment_demo_seed as working references).
+-- ============================================================================
+
+SELECT 1;

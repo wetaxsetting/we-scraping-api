@@ -1,9 +1,13 @@
 package com.kosign.wecms.domain.payment.internaltransfer.controller;
 
+import com.kosign.wecms.common.export.ExcelExportRequest;
+import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.response.ApiResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.TransferResultDetailResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.TransferResultListResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferResultService;
+import jakarta.servlet.http.HttpServletResponse;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
@@ -11,6 +15,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -37,6 +43,7 @@ public class TransferResultController {
     private static final String SCDUL_PYMN_NO_PATTERN = "^[0-9]{5,30}$";
 
     private final InternalTransferResultService service;
+    private final ExcelExportService            excelExportService;
 
     /**
      * List Transfer Result batches for the current tenant. Mirrors
@@ -66,5 +73,19 @@ public class TransferResultController {
             @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
             String id) {
         return ApiResponse.ok(service.detail(id));
+    }
+
+    /**
+     * Excel export of the current Transfer Result list — the shared
+     * {@code common/export} pipeline streams the XLSX bytes back per
+     * CLAUDE.md §13b. Provider:
+     * {@code InternalTransferResultExportProvider}
+     * ({@code screenId = "payment-internal-transfer-result"}).
+     */
+    @PostMapping("/export")
+    public void exportResults(
+            @Valid @RequestBody ExcelExportRequest request,
+            HttpServletResponse response) {
+        excelExportService.exportTo(response, request);
     }
 }

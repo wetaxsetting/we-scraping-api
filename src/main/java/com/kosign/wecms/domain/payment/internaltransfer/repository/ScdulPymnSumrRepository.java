@@ -58,6 +58,34 @@ public interface ScdulPymnSumrRepository extends JpaRepository<ScdulPymnSumr, Sc
      * driver then sends it as {@code bytea}. Mirrors the precedent
      * established by {@code AcctMstrRepository#findFiltered}.
      */
+    /**
+     * Filter dispatch table for the legacy {@code APPR_TYPE_CD}
+     * codes surfaced by the Approval Status dropdown on every
+     * Scheduled Payment list (Vendor / Expense / Payroll /
+     * Overseas / Internal Transfer). Mirrors the legacy
+     * {@code wabooks.enums.ApprSts} mapping used by
+     * {@code comm_0195_001} and the frontend's
+     * {@code deriveStatus} helper:
+     *
+     * <ul>
+     *   <li>{@code null} / blank → All (no filter).</li>
+     *   <li>{@code "00"} Draft — never submitted for approval
+     *       ({@code APPR_SEQ_NO} null or blank).</li>
+     *   <li>{@code "01"} Approved — {@code APPR_STTS = 'C'} OR
+     *       {@code TRNF_YN = 'Y'} (dispatched batches are
+     *       implicitly approved).</li>
+     *   <li>{@code "02"} Rejected — {@code APPR_STTS = 'X'}.</li>
+     *   <li>{@code "03"} In Progress — {@code APPR_SEQ_NO} set,
+     *       {@code APPR_STTS} null / {@code 'P'} / {@code 'I'},
+     *       and {@code TRNF_YN} ≠ {@code 'Y'} (not yet dispatched).</li>
+     *   <li>{@code "04"} Pending — {@code APPR_STTS = 'P'}.</li>
+     * </ul>
+     *
+     * <p>Other / unknown codes pass-through as no-op (the OR
+     * chain falls through and the whole {@code apprType} clause
+     * evaluates true). Same defensive degradation Spring uses
+     * elsewhere for unmapped enum values.
+     */
     @Query("""
             SELECT s FROM ScdulPymnSumr s
             WHERE s.bizKey             = :bizKey
@@ -67,6 +95,20 @@ public interface ScdulPymnSumrRepository extends JpaRepository<ScdulPymnSumr, Sc
                    OR LOWER(s.titl) LIKE :srchWdPattern
                    OR LOWER(COALESCE(s.apprSeqNo, '')) LIKE :srchWdPattern)
               AND (:trnfYn IS NULL OR s.trnfYn = :trnfYn)
+              AND (
+                    :apprType IS NULL
+                 OR :apprType = ''
+                 OR (:apprType = '00' AND (s.apprSeqNo IS NULL OR s.apprSeqNo = ''))
+                 OR (:apprType = '01' AND (s.apprStts = 'C' OR s.trnfYn = 'Y'))
+                 OR (:apprType = '02' AND s.apprStts = 'X')
+                 OR (:apprType = '03' AND s.apprSeqNo IS NOT NULL
+                                       AND s.apprSeqNo <> ''
+                                       AND (s.apprStts IS NULL
+                                            OR s.apprStts IN ('P','I'))
+                                       AND (s.trnfYn IS NULL OR s.trnfYn <> 'Y'))
+                 OR (:apprType = '04' AND s.apprStts = 'P')
+                 OR :apprType NOT IN ('00','01','02','03','04')
+              )
             """)
     Page<ScdulPymnSumr> search(
             @Param("bizKey")           String bizKey,
@@ -75,6 +117,7 @@ public interface ScdulPymnSumrRepository extends JpaRepository<ScdulPymnSumr, Sc
             @Param("toDtm")            String toDtm,
             @Param("srchWdPattern")    String srchWdPattern,
             @Param("trnfYn")           String trnfYn,
+            @Param("apprType")         String apprType,
             Pageable pageable);
 
     /**

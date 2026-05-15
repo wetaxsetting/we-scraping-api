@@ -98,6 +98,53 @@ public class ErpTrnsHistoryWriter {
      */
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     public void recordDeletedFile(String trnsTypeCd, Path sourceFile, String orgFileNm) {
+        recordFile("D", trnsTypeCd, sourceFile, orgFileNm);
+    }
+
+    /**
+     * Record an uploaded payment-batch file under ERP Transaction History
+     * so the user can download the Excel from the ERP-history panel
+     * after the batch is created. Writes {@code ERP_TYPE = 'E'} (ERP →
+     * WeCMS upload) so the row lands in the "ERP" tab.
+     *
+     * <p>Mirrors legacy {@code ErpTrnsHisHelper.erpTrnsHisUploader} —
+     * the only difference is the source bytes already live in the
+     * payment-module storage tree (e.g.
+     * {@code <storage-root>/<biz_key>/internal-transfer/<save_file_nm>}),
+     * so the writer copies them into the ERP-history tenant subtree
+     * before writing the row.
+     *
+     * <p>Caller responsibilities are identical to {@link #recordDeletedFile}:
+     * resolve the source path via the feature's file resolver, pass the
+     * matching {@code TRNS_TYPE_CD} ({@code "02"} Vendor Scheduled,
+     * {@code "03"} Expense Scheduled, {@code "12"} Payroll Scheduled,
+     * {@code "16"} Internal Scheduled Transfer), and pass the original
+     * filename.
+     *
+     * <p>Same failure stance as the delete path — no-op + WARN log on a
+     * missing source file or persistence failure. The caller's primary
+     * write (the payment-batch INSERT) must not fail because the audit
+     * copy could not be made.
+     *
+     * @param trnsTypeCd  ERP transaction-type code matching the
+     *                    {@code settings.erp_transaction_history.type.*}
+     *                    locale entries. {@code "02"} Vendor Scheduled,
+     *                    {@code "16"} Internal Scheduled Transfer, etc.
+     * @param sourceFile  absolute path to the original Excel on the
+     *                    payment-module storage tree. Copied verbatim;
+     *                    never moved.
+     * @param orgFileNm   original filename (the name the user uploaded).
+     *                    Preserved in {@code ORG_FILE_NM}; falls back to
+     *                    the source file's leaf name when blank.
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    public void recordUploadedFile(String trnsTypeCd, Path sourceFile, String orgFileNm) {
+        recordFile("E", trnsTypeCd, sourceFile, orgFileNm);
+    }
+
+    /** Shared body for {@link #recordDeletedFile} / {@link #recordUploadedFile}.
+     *  The only per-caller variant is the {@code erpType} bucket. */
+    private void recordFile(String erpType, String trnsTypeCd, Path sourceFile, String orgFileNm) {
         if (trnsTypeCd == null || trnsTypeCd.isBlank()) {
             log.warn("ERP audit-write skipped — trnsTypeCd is blank");
             return;
@@ -141,27 +188,20 @@ public class ErpTrnsHistoryWriter {
             //    surfaces as a periodic cleanup task in production).
             String regDtm = OffsetDateTime.now(ZoneOffset.UTC).format(REG_DTM_FORMAT);
             try {
-                insertRow(bizKey, trnsTypeCd, resolvedOrgFileNm, saveFileNm, fileSize, regId, regDtm);
+                insertRow(bizKey, erpType, trnsTypeCd, resolvedOrgFileNm, saveFileNm, fileSize, regId, regDtm);
             } catch (DataIntegrityViolationException race) {
                 log.info("ERP audit-write seq_no race detected — retrying once (bizKey={})", bizKey);
-                insertRow(bizKey, trnsTypeCd, resolvedOrgFileNm, saveFileNm, fileSize, regId, regDtm);
+                insertRow(bizKey, erpType, trnsTypeCd, resolvedOrgFileNm, saveFileNm, fileSize, regId, regDtm);
             }
 
-            log.info("ERP audit-write committed — bizKey={} trnsTypeCd={} saveFileNm={} size={}",
-                    bizKey, trnsTypeCd, saveFileNm, fileSize);
+            log.info("ERP audit-write committed — bizKey={} erpType={} trnsTypeCd={} saveFileNm={} size={}",
+                    bizKey, erpType, trnsTypeCd, saveFileNm, fileSize);
         } catch (IOException ex) {
-            // Don't propagate — the caller's primary mutation should
-            // complete even if we can't write the audit copy. Operations
-            // can spot the gap in WARN logs.
-            log.warn("ERP audit-write failed bizKey={} trnsTypeCd={} sourceFile={}",
-                    bizKey, trnsTypeCd, sourceFile, ex);
+            log.warn("ERP audit-write failed bizKey={} erpType={} trnsTypeCd={} sourceFile={}",
+                    bizKey, erpType, trnsTypeCd, sourceFile, ex);
         } catch (RuntimeException ex) {
-            // Catch any persistence / runtime failure for the same
-            // reason. The REQUIRES_NEW transaction will have rolled back
-            // the failed INSERT; the file copy may be left behind (one-
-            // shot orphan, no row referencing it).
-            log.warn("ERP audit-write failed bizKey={} trnsTypeCd={} sourceFile={}",
-                    bizKey, trnsTypeCd, sourceFile, ex);
+            log.warn("ERP audit-write failed bizKey={} erpType={} trnsTypeCd={} sourceFile={}",
+                    bizKey, erpType, trnsTypeCd, sourceFile, ex);
         }
     }
 
@@ -187,6 +227,7 @@ public class ErpTrnsHistoryWriter {
 
     private void insertRow(
             String bizKey,
+            String erpType,
             String trnsTypeCd,
             String orgFileNm,
             String saveFileNm,
@@ -200,7 +241,7 @@ public class ErpTrnsHistoryWriter {
         row.setOrgFileNm(orgFileNm);
         row.setSaveFileNm(saveFileNm);
         row.setFileSize(fileSize);
-        row.setErpType("D");                 // Deleted bucket
+        row.setErpType(erpType);             // 'D' deleted · 'E' ERP→WeCMS · 'W' WeCMS→ERP
         row.setTrnsTypeCd(trnsTypeCd);
         row.setRegId(regId);
         row.setRegDtm(regDtm);

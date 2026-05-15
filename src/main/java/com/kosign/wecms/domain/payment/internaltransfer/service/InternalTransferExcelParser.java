@@ -3,6 +3,9 @@ package com.kosign.wecms.domain.payment.internaltransfer.service;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ParseExcelResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ParsedTransferLine;
+import com.kosign.wecms.domain.payment.validation.FieldCd;
+import com.kosign.wecms.domain.payment.validation.PymnType;
+import com.kosign.wecms.domain.payment.validation.SpecialCharValidator;
 import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmBankCode;
 import com.kosign.wecms.domain.setting.firmbankingsettings.repository.TbFirmBankCodeRepository;
 import lombok.RequiredArgsConstructor;
@@ -121,9 +124,10 @@ public class InternalTransferExcelParser {
     };
 
     private final TbFirmBankCodeRepository firmBankCodeRepo;
+    private final SpecialCharValidator     specialCharValidator;
 
     @Transactional(readOnly = true)
-    public ParseExcelResponse parse(MultipartFile file) {
+    public ParseExcelResponse parse(MultipartFile file, String bankCd) {
         List<ParsedTransferLine> rows = new ArrayList<>();
         int sucCnt = 0;
         int errCnt = 0;
@@ -162,7 +166,7 @@ public class InternalTransferExcelParser {
                     break;
                 }
 
-                ParsedRow parsed = parseRow(row, fmt);
+                ParsedRow parsed = parseRow(row, fmt, bankCd);
                 rows.add(parsed.line);
                 if (parsed.hasError) {
                     errCnt++;
@@ -245,7 +249,7 @@ public class InternalTransferExcelParser {
      */
     private record FieldError(String fieldId, String cause) {}
 
-    private ParsedRow parseRow(Row row, DataFormatter fmt) {
+    private ParsedRow parseRow(Row row, DataFormatter fmt, String bankCd) {
         String bankCodeIn  = cellString(row, 0, fmt);
         String fincMdaNo   = cellString(row, 1, fmt);
         String tranAmtIn   = cellString(row, 3, fmt);
@@ -256,6 +260,17 @@ public class InternalTransferExcelParser {
         String docNo       = cellString(row, 8, fmt);
 
         List<FieldError> errors = new ArrayList<>();
+
+        // Special-character validation against the BLOCKED_CHARS_RULE
+        // table for the master's OUT_BANK_CD × INTR × RMKS tuple.
+        // Mirrors legacy `SpecialCharValidator.validate(...)` at
+        // pymn_0009_002_r001_act.jsp. Skips when the Remarks cell is
+        // blank — required-field check above is the parser's job.
+        if (!isBlank(tranUsag)) {
+            specialCharValidator
+                    .validate(bankCd, PymnType.INTERNAL_TRANSFER, FieldCd.REMARKS, tranUsag)
+                    .ifPresent(msg -> errors.add(new FieldError("TRAN_USAG", msg)));
+        }
 
         if (isBlank(fincMdaNo)) {
             errors.add(new FieldError(FLD_FINC_MDA_NO, "Deposit No. is required"));

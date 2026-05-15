@@ -115,12 +115,13 @@ public class InternalTransferController {
             @RequestParam("from_date")                                String fromDate,
             @RequestParam("to_date")                                  String toDate,
             @RequestParam(value = "srch_wd",        required = false) String srchWd,
+            @RequestParam(value = "appr_type",      required = false) String apprType,
             @RequestParam(value = "sort_field",     required = false) String sortField,
             @RequestParam(value = "sort_direction", required = false) String sortDirection,
             @RequestParam(value = "page",           defaultValue = "0")  int page,
             @RequestParam(value = "size",           defaultValue = "10") int size) {
         return ApiResponse.ok(service.list(
-                fromDate, toDate, srchWd, sortField, sortDirection, page, size));
+                fromDate, toDate, srchWd, apprType, sortField, sortDirection, page, size));
     }
 
     /**
