@@ -5,6 +5,8 @@ import com.kosign.wecms.common.auditlog.service.AuditLogService;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.common.web.SortDirection;
+import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxActionResponse;
+import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxService;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.CreateScheduledTransferRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.CreateScheduledTransferResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.CurrencyTotal;
@@ -122,6 +124,11 @@ public class InternalTransferService {
     static final String APPR_STTS_PENDING  = "P";
     static final String APPR_STTS_APPROVED = "C";
 
+    /** APPR_STTS code stamped on the master while approval is mid-chain —
+     *  ≥1 approver acted but more remain. Drives the orange "In Progress"
+     *  badge on the list. */
+    static final String APPR_STTS_IN_PROGRESS = "I";
+
     /** Legacy {@code APPRVR_STTS} code stamped on the master when an
      *  approver presses Reject — final outcome, batch is rejected. */
     static final String APPR_STTS_REJECTED = "X";
@@ -142,6 +149,11 @@ public class InternalTransferService {
     private final com.kosign.wecms.domain.banking.repository.BankInfmRepository bankInfmRepository;
     private final InternalTransferKeyGenerator keyGenerator;
     private final InternalTransferExcelParser  excelParser;
+    /** Approver-chain authority — delegate approve/reject here so the
+     *  approver chain advances correctly (multi-approver workflows stay
+     *  "In Progress" until every approver has acted). The Internal
+     *  Transfer master row then mirrors the resulting status. */
+    private final ApprovalBoxService           approvalBoxService;
     private final InternalTransferFileResolver fileResolver;
     private final AuditLogService              auditLogService;
     private final com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter erpHistoryWriter;
@@ -681,14 +693,29 @@ public class InternalTransferService {
             throw new BusinessException("WBE2081");
         }
 
-        String next        = req.isApprove() ? APPR_STTS_APPROVED : APPR_STTS_REJECTED;
-        String auditKey    = req.isApprove() ? AUDIT_APPROVE_KEY  : AUDIT_REJECT_KEY;
+        // Delegate the approver-chain logic to the approval-box service —
+        // it owns the APPRVR_STTS row updates, the next-approver promotion
+        // (W → P), and the master APPR_TYPE_CD transition. Approving one
+        // step in a multi-approver chain leaves the chain "In Progress"
+        // until every approver has acted; rejecting cancels the chain
+        // immediately.
+        ApprovalBoxActionResponse result = req.isApprove()
+                ? approvalBoxService.approve(master.getApprSeqNo())
+                : approvalBoxService.reject(master.getApprSeqNo());
+
+        // Mirror the resulting state onto SCDUL_PYMN_SUMR.APPR_STTS so the
+        // Internal Transfer list page (which reads from this column, not
+        // the EXPT_RESOL_* tables) reflects the chain progress. Approval-
+        // box returns "R" for rejected; the SCDUL_PYMN_SUMR convention is
+        // "X" — remap.
+        String next = mapApprStts(result.apprStts());
         master.setApprStts(next);
         master.setModDtm(OffsetDateTime.now(clock).format(DTM14));
         String userId = TenantContext.currentUserId();
         if (userId != null) master.setModId(userId);
         sumrRepository.saveAndFlush(master);
 
+        String auditKey = req.isApprove() ? AUDIT_APPROVE_KEY : AUDIT_REJECT_KEY;
         auditLogService.append(AuditLogContext.builder()
                 .wsvcId(WSVC_ID)
                 .refNo(REF_NO)
@@ -701,6 +728,20 @@ public class InternalTransferService {
         log.info(
                 "feature=internal-transfer approval-action bizKey={} scdulPymnNo={} apprSeqNo={} action={} apprStts={}",
                 bizKey, id, master.getApprSeqNo(), req.action(), next);
+    }
+
+    /** Map the approval-box service's `apprStts` ("P"/"I"/"C"/"R") onto
+     *  the SCDUL_PYMN_SUMR column convention ("P"/"I"/"C"/"X"). The only
+     *  divergence is Rejected: approval-box returns "R", SCDUL_PYMN_SUMR
+     *  stores "X". */
+    private static String mapApprStts(String raw) {
+        if (raw == null) return APPR_STTS_PENDING;
+        return switch (raw) {
+            case "C" -> APPR_STTS_APPROVED;
+            case "I" -> APPR_STTS_IN_PROGRESS;
+            case "R" -> APPR_STTS_REJECTED;
+            default  -> APPR_STTS_PENDING;
+        };
     }
 
     /* ----------------------------------------------------------------

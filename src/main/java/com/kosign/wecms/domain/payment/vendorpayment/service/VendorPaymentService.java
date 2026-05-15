@@ -9,6 +9,8 @@ import com.kosign.wecms.domain.banking.entity.AcctMstr;
 import com.kosign.wecms.domain.banking.entity.BankInfm;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
 import com.kosign.wecms.domain.banking.repository.BankInfmRepository;
+import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxActionResponse;
+import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxService;
 import com.kosign.wecms.domain.payment.dispatch.service.TransferDispatchExecutor;
 import com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalActionRequest;
@@ -113,9 +115,16 @@ public class VendorPaymentService {
      *  {@code wabooks.enums.ErpTypeCd.VENDOR_SCHEDULED_PAYMENT}. */
     static final String ERP_TRNS_TYPE_VENDOR_SCHEDULED_PAYMENT = "02";
 
+    /** APPR_STTS code stamped on Request Approval — initial Pending state. */
+    static final String APPR_STTS_PENDING  = "P";
+
     /** Legacy {@code APPRVR_STTS} code stamped on the master when an
      *  approver presses Approve. */
     static final String APPR_STTS_APPROVED = "C";
+
+    /** APPR_STTS code stamped while approval is mid-chain — ≥1 approver
+     *  acted but more remain. Drives the orange "In Progress" badge. */
+    static final String APPR_STTS_IN_PROGRESS = "I";
 
     /** Legacy {@code APPRVR_STTS} code stamped on the master when an
      *  approver presses Reject. */
@@ -135,6 +144,8 @@ public class VendorPaymentService {
     private final ErpTrnsHistoryWriter          erpHistoryWriter;
     private final AuditLogService               auditLogService;
     private final TransferDispatchExecutor      dispatchExecutor;
+    /** Approver-chain authority — see InternalTransferService for the rationale. */
+    private final ApprovalBoxService            approvalBoxService;
     private final Clock                         clock;
 
     /**
@@ -632,14 +643,20 @@ public class VendorPaymentService {
             throw new BusinessException("WBE2081");
         }
 
-        String next     = req.isApprove() ? APPR_STTS_APPROVED : APPR_STTS_REJECTED;
-        String auditKey = req.isApprove() ? AUDIT_APPROVE_KEY  : AUDIT_REJECT_KEY;
+        // Delegate approver-chain logic — multi-approver workflows stay
+        // "In Progress" until every approver has acted.
+        ApprovalBoxActionResponse result = req.isApprove()
+                ? approvalBoxService.approve(master.getApprSeqNo())
+                : approvalBoxService.reject(master.getApprSeqNo());
+
+        String next = mapApprStts(result.apprStts());
         master.setApprStts(next);
         master.setModDtm(OffsetDateTime.now(clock).format(DTM14));
         String userId = TenantContext.currentUserId();
         if (userId != null) master.setModId(userId);
         sumrRepository.saveAndFlush(master);
 
+        String auditKey = req.isApprove() ? AUDIT_APPROVE_KEY : AUDIT_REJECT_KEY;
         auditLogService.append(AuditLogContext.builder()
                 .wsvcId(WSVC_ID)
                 .refNo(REF_NO)
@@ -652,6 +669,17 @@ public class VendorPaymentService {
         log.info(
                 "feature=vendor-payment approval-action bizKey={} scdulPymnNo={} apprSeqNo={} action={} apprStts={}",
                 bizKey, id, master.getApprSeqNo(), req.action(), next);
+    }
+
+    /** Map approval-box "P/I/C/R" → SCDUL_PYMN_SUMR "P/I/C/X". */
+    private static String mapApprStts(String raw) {
+        if (raw == null) return APPR_STTS_PENDING;
+        return switch (raw) {
+            case "C" -> APPR_STTS_APPROVED;
+            case "I" -> APPR_STTS_IN_PROGRESS;
+            case "R" -> APPR_STTS_REJECTED;
+            default  -> APPR_STTS_PENDING;
+        };
     }
 
     /* ----------------------------------------------------------------
