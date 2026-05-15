@@ -1,6 +1,13 @@
 spring:
   application:
     name: wecms-api-main
+  # Optionally load a local `.env` file as additional configuration.
+  # Use `.env.example` as the template (commit it); copy to `.env` and
+  # fill in real values (`.env` is git-ignored). Keys defined here
+  # override the YAML `${VAR:default}` placeholders. OS env vars still
+  # win over `.env` if both are set.
+  config:
+    import: optional:file:./.env[.properties]
   profiles:
     active: local
   jpa:
