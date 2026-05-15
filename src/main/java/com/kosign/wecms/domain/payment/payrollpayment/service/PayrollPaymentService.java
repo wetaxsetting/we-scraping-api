@@ -9,6 +9,7 @@ import com.kosign.wecms.domain.banking.entity.AcctMstr;
 import com.kosign.wecms.domain.banking.entity.BankInfm;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
 import com.kosign.wecms.domain.banking.repository.BankInfmRepository;
+import com.kosign.wecms.domain.payment.dispatch.service.TransferDispatchExecutor;
 import com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalActionRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.CreateScheduledTransferRequest;
@@ -119,6 +120,7 @@ public class PayrollPaymentService {
     private final InternalTransferFileResolver  fileResolver;
     private final ErpTrnsHistoryWriter          erpHistoryWriter;
     private final AuditLogService               auditLogService;
+    private final TransferDispatchExecutor      dispatchExecutor;
     private final Clock                         clock;
 
     @Transactional(readOnly = true)
@@ -560,6 +562,8 @@ public class PayrollPaymentService {
                 : TransferNetwork.fromAntDivCd(lines.get(0).getAntDivCd());
         cutoffValidator.validate(master.getOutBankCd(), network);
 
+        dispatchExecutor.execute(master, lines, req.trnfCcyCd());
+
         master.setTrnfYn(TrnfYn.TRANSFERRED.code());
         master.setTrnfDtm(now);
         master.setModId(userId);
@@ -575,8 +579,8 @@ public class PayrollPaymentService {
                 .msgArgs(new Object[]{ req.trnfCcyCd() })
                 .build());
 
-        log.info("feature=payroll-payment dispatch bizKey={} scdulPymnNo={} trnfCcyCd={} network={} (Phase C stub: no TB_PAY_TARGET write)",
-                bizKey, id, req.trnfCcyCd(), network);
+        log.info("feature=payroll-payment dispatch bizKey={} scdulPymnNo={} trnfCcyCd={} network={} lines={}",
+                bizKey, id, req.trnfCcyCd(), network, lines.size());
     }
 
     /* ----------------------------------------------------------------

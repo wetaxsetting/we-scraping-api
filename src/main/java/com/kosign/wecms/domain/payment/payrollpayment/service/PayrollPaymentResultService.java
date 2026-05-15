@@ -3,6 +3,8 @@ package com.kosign.wecms.domain.payment.payrollpayment.service;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.common.web.SortDirection;
+import com.kosign.wecms.domain.payment.dispatch.DispatchCountRepository;
+import com.kosign.wecms.domain.payment.dispatch.DispatchCountRow;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.CurrencyTotal;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.TransferResultDetailResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.TransferResultLine;
@@ -23,7 +25,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -46,6 +50,7 @@ public class PayrollPaymentResultService {
 
     private final ScdulPymnSumrRepository     sumrRepository;
     private final ScdulPymnSumrDetlRepository detlRepository;
+    private final DispatchCountRepository     dispatchCountRepository;
 
     @Transactional(readOnly = true)
     public TransferResultListResponse list(
@@ -68,8 +73,10 @@ public class PayrollPaymentResultService {
                 null,
                 pageable);
 
+        Map<String, long[]> counts = loadDispatchCounts(bizKey, rows.getContent());
+
         List<TransferResultRow> dtoRows = rows.getContent().stream()
-                .map(PayrollPaymentResultService::toResultRow)
+                .map(s -> toResultRow(s, counts.get(s.getScdulPymnNo())))
                 .toList();
         List<CurrencyTotal> totals = computeTotals(rows.getContent());
 
@@ -78,6 +85,28 @@ public class PayrollPaymentResultService {
         return new TransferResultListResponse(
                 rows.getTotalElements(), page, pageable.getPageSize(),
                 totals, dtoRows);
+    }
+
+    /** Pull per-batch (succ, err) counts from the dispatch tables. See
+     *  {@link com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferResultService#loadDispatchCounts}. */
+    private Map<String, long[]> loadDispatchCounts(
+            String bizKey, List<ScdulPymnSumr> batches) {
+        if (batches.isEmpty()) return Collections.emptyMap();
+        List<String> ids = batches.stream().map(ScdulPymnSumr::getScdulPymnNo).toList();
+        try {
+            List<DispatchCountRow> raw = dispatchCountRepository.countByBatch(bizKey, ids);
+            Map<String, long[]> out = new HashMap<>(raw.size());
+            for (DispatchCountRow r : raw) {
+                long succ = r.getSuccCnt() != null ? r.getSuccCnt() : 0L;
+                long err  = r.getErrCnt()  != null ? r.getErrCnt()  : 0L;
+                out.put(r.getScdulPymnNo(), new long[] { succ, err });
+            }
+            return out;
+        } catch (Exception e) {
+            log.warn("feature=payroll-payment dispatch-count query failed — degrading to null counts ({})",
+                    e.getMessage());
+            return Collections.emptyMap();
+        }
     }
 
     /**
@@ -140,7 +169,9 @@ public class PayrollPaymentResultService {
                 null, null, null, null, null, null);
     }
 
-    private static TransferResultRow toResultRow(ScdulPymnSumr s) {
+    private static TransferResultRow toResultRow(ScdulPymnSumr s, long[] counts) {
+        BigDecimal succ = counts != null ? BigDecimal.valueOf(counts[0]) : null;
+        BigDecimal err  = counts != null ? BigDecimal.valueOf(counts[1]) : null;
         return new TransferResultRow(
                 s.getScdulPymnNo(),
                 s.getScdulPymnTypeCd(),
@@ -148,8 +179,8 @@ public class PayrollPaymentResultService {
                 s.getTitl(),
                 s.getTotalTranAmt(),
                 s.getTotTrnsCnt(),
-                null,
-                null,
+                succ,
+                err,
                 s.getTrnfYn(),
                 s.getRegDtm(),
                 s.getApprSeqNo(),
