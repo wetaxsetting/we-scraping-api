@@ -7,6 +7,7 @@ import com.kosign.wecms.common.enums.LangCd;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.exception.GlobalExceptionHandler;
 import com.kosign.wecms.common.i18n.MessageResolver;
+import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxActionResponse;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxBulkApproveResponse;
@@ -55,6 +56,7 @@ class ApprovalBoxControllerTest {
     @BeforeEach
     void setUp() {
         service = mock(ApprovalBoxService.class);
+        ExcelExportService excelExportService = mock(ExcelExportService.class);
 
         mapper = new ObjectMapper()
                 .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
@@ -68,7 +70,7 @@ class ApprovalBoxControllerTest {
         GlobalExceptionHandler advice = new GlobalExceptionHandler(messages);
 
         mvc = MockMvcBuilders
-                .standaloneSetup(new ApprovalBoxController(service))
+                .standaloneSetup(new ApprovalBoxController(service, excelExportService))
                 .setMessageConverters(jsonConverter)
                 .setControllerAdvice(advice)
                 .build();

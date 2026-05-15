@@ -3,6 +3,7 @@ package com.kosign.wecms.domain.payment.internaltransfer.service;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ParseExcelResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ParsedTransferLine;
+import com.kosign.wecms.domain.payment.validation.SpecialCharValidator;
 import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmBankCode;
 import com.kosign.wecms.domain.setting.firmbankingsettings.repository.TbFirmBankCodeRepository;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
@@ -41,14 +42,16 @@ class InternalTransferExcelParserTest {
     private static final String NM_SHINHAN    = "ShinhanBank";
     private static final String NM_WOORI      = "WooriBank";
 
+    private static final String MASTER_BANK_CD = "11704000";
     private final TbFirmBankCodeRepository repo = mock(TbFirmBankCodeRepository.class);
+    private final SpecialCharValidator specialCharValidator = mock(SpecialCharValidator.class);
 
     @Test
     void parses_valid_row_with_known_napas_bank_code() throws Exception {
         when(repo.findByAntDivCdAndBankCd(eq("NAPAS"), eq(NAPAS_SHINHAN)))
                 .thenReturn(Optional.of(napas(NAPAS_SHINHAN, NM_SHINHAN)));
 
-        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo);
+        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo, specialCharValidator);
         // Column order: Bank Code | Deposit No. | Bank | Transfer Amount |
         //               Transfer Currency | Remarks | Reporting Account |
         //               Description | Document No.
@@ -57,7 +60,7 @@ class InternalTransferExcelParserTest {
                   "Internal payment 1", "2001001", "VEHICLE FEE", "1C24TPA-25861" },
         });
 
-        ParseExcelResponse out = parser.parse(file(xlsx));
+        ParseExcelResponse out = parser.parse(file(xlsx), MASTER_BANK_CD);
 
         assertThat(out.totCnt()).isEqualByComparingTo(BigDecimal.ONE);
         assertThat(out.sucCnt()).isEqualByComparingTo(BigDecimal.ONE);
@@ -90,12 +93,12 @@ class InternalTransferExcelParserTest {
         when(repo.findFirstByAntDivCdAndCitadBankCd(eq("CITAD"), eq("203")))
                 .thenReturn(Optional.of(citadRow));
 
-        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo);
+        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo, specialCharValidator);
         byte[] xlsx = buildWorkbook(new String[][] {
                 { "203", "700071152854", "VCB", "50000", "VND", "", "", "", "" },
         });
 
-        ParsedTransferLine line = parser.parse(file(xlsx)).rows().get(0);
+        ParsedTransferLine line = parser.parse(file(xlsx), MASTER_BANK_CD).rows().get(0);
         assertThat(line.antDivCd()).isEqualTo("CITAD");
         assertThat(line.tarBankCd()).isEqualTo("203");
         assertThat(line.tarBankNm()).isEqualTo("VCB");
@@ -111,7 +114,7 @@ class InternalTransferExcelParserTest {
         when(repo.findByAntDivCdAndBankCd(eq("NAPAS"), eq(NAPAS_SHINHAN)))
                 .thenReturn(Optional.of(napas(NAPAS_SHINHAN, NM_SHINHAN)));
 
-        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo);
+        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo, specialCharValidator);
         // Row with: known bank code, blank deposit, blank amount,
         // blank currency. Description col is non-blank so the early-
         // break doesn't trigger.
@@ -119,7 +122,7 @@ class InternalTransferExcelParserTest {
                 { NAPAS_SHINHAN, "", "", "", "", "", "", "Some note", "" },
         });
 
-        ParsedTransferLine line = parser.parse(file(xlsx)).rows().get(0);
+        ParsedTransferLine line = parser.parse(file(xlsx), MASTER_BANK_CD).rows().get(0);
 
         // Both arrays use the same separator and have matching counts.
         assertThat(line.errFld()).isNotNull();
@@ -138,12 +141,12 @@ class InternalTransferExcelParserTest {
     void flags_invalid_bank_code_length() throws Exception {
         // 4-char input — neither CITAD (3) nor NAPAS (6). Parser keeps
         // the raw value on TAR_BANK_CD and flags ANT_DIV_CD.
-        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo);
+        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo, specialCharValidator);
         byte[] xlsx = buildWorkbook(new String[][] {
                 { "9999", "700071152854", "", "100", "VND", "", "", "", "" },
         });
 
-        ParsedTransferLine line = parser.parse(file(xlsx)).rows().get(0);
+        ParsedTransferLine line = parser.parse(file(xlsx), MASTER_BANK_CD).rows().get(0);
 
         assertThat(line.errFld()).contains("ANT_DIV_CD");
         assertThat(line.tarBankCd()).isEqualTo("9999");
@@ -154,12 +157,12 @@ class InternalTransferExcelParserTest {
         when(repo.findByAntDivCdAndBankCd(eq("NAPAS"), eq("999999")))
                 .thenReturn(Optional.empty());
 
-        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo);
+        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo, specialCharValidator);
         byte[] xlsx = buildWorkbook(new String[][] {
                 { "999999", "700071152854", "", "100", "VND", "", "", "", "" },
         });
 
-        ParsedTransferLine line = parser.parse(file(xlsx)).rows().get(0);
+        ParsedTransferLine line = parser.parse(file(xlsx), MASTER_BANK_CD).rows().get(0);
 
         assertThat(line.errFld()).contains("ANT_DIV_CD");
         assertThat(line.antDivCd()).isEqualTo("NAPAS");
@@ -177,7 +180,7 @@ class InternalTransferExcelParserTest {
         when(repo.findByAntDivCdAndBankCd(eq("NAPAS"), eq(NAPAS_SHINHAN)))
                 .thenReturn(Optional.of(napas(NAPAS_SHINHAN, NM_SHINHAN)));
 
-        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo);
+        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo, specialCharValidator);
         byte[] xlsx = buildWorkbook(new String[][] {
                 { NAPAS_SHINHAN, "1111111111", "", "100", "VND", "", "", "", "" },
                 { "", "", "", "", "", "", "", "", "" },
@@ -186,7 +189,7 @@ class InternalTransferExcelParserTest {
                 { NAPAS_SHINHAN, "2222222222", "", "200", "VND", "", "", "", "" },
         });
 
-        ParseExcelResponse out = parser.parse(file(xlsx));
+        ParseExcelResponse out = parser.parse(file(xlsx), MASTER_BANK_CD);
         assertThat(out.totCnt()).isEqualByComparingTo(BigDecimal.ONE);
         assertThat(out.sucCnt()).isEqualByComparingTo(BigDecimal.ONE);
         assertThat(out.errCnt()).isEqualByComparingTo(BigDecimal.ZERO);
@@ -195,13 +198,13 @@ class InternalTransferExcelParserTest {
     @Test
     void rejects_workbook_with_wrong_headers() throws Exception {
         // Headers that don't match any of EN / KO / VI → WBE2018.
-        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo);
+        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo, specialCharValidator);
         byte[] xlsx = buildWorkbookWithCustomHeaders(
                 new String[] { "Wrong1", "Wrong2", "Wrong3", "Wrong4", "Wrong5",
                                "Wrong6", "Wrong7", "Wrong8", "Wrong9" },
                 new String[][] { });
 
-        assertThatThrownBy(() -> parser.parse(file(xlsx)))
+        assertThatThrownBy(() -> parser.parse(file(xlsx), MASTER_BANK_CD))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("WBE2018");
     }
@@ -211,7 +214,7 @@ class InternalTransferExcelParserTest {
         when(repo.findByAntDivCdAndBankCd(eq("NAPAS"), eq(NAPAS_WOORI)))
                 .thenReturn(Optional.of(napas(NAPAS_WOORI, NM_WOORI)));
 
-        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo);
+        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo, specialCharValidator);
         byte[] xlsx = buildWorkbookWithCustomHeaders(
                 new String[] { "은행코드 *", "입금 계좌번호 *", "은행",
                                "이체 금액 *", "이체통화 *",
@@ -222,20 +225,20 @@ class InternalTransferExcelParserTest {
                           "", "", "", "" },
                 });
 
-        ParseExcelResponse out = parser.parse(file(xlsx));
+        ParseExcelResponse out = parser.parse(file(xlsx), MASTER_BANK_CD);
         assertThat(out.totCnt()).isEqualByComparingTo(BigDecimal.ONE);
         assertThat(out.errCnt()).isEqualByComparingTo(BigDecimal.ZERO);
     }
 
     @Test
     void throws_WBE2017_for_non_excel_bytes() {
-        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo);
+        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo, specialCharValidator);
         MockMultipartFile bad = new MockMultipartFile(
                 "file_data", "garbage.xlsx",
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 "not a real xlsx".getBytes());
 
-        assertThatThrownBy(() -> parser.parse(bad))
+        assertThatThrownBy(() -> parser.parse(bad, MASTER_BANK_CD))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("WBE2017");
     }

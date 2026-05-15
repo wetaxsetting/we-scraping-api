@@ -2,6 +2,7 @@ package com.kosign.wecms.domain.setting.firmbankinghistory.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.kosign.wecms.common.exception.GlobalExceptionHandler;
 import com.kosign.wecms.common.i18n.MessageResolver;
 import com.kosign.wecms.common.tenant.TenantContext;
@@ -58,6 +59,7 @@ class FirmBankingHistoryControllerTest {
         // would serialize camelCase Java field names verbatim and
         // the snake_case wire assertions would fail.
         ObjectMapper mapper = new ObjectMapper()
+                .registerModule(new JavaTimeModule())
                 .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
         MappingJackson2HttpMessageConverter converter =
                 new MappingJackson2HttpMessageConverter(mapper);
