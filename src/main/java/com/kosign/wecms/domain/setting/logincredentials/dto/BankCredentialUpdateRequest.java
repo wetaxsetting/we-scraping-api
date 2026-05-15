@@ -21,5 +21,14 @@ public record BankCredentialUpdateRequest(
         @Size(max = 2000) String     password,
         @Size(max = 2000) String     extra,
         @Size(max = 2000) String     loginType,
-        BigDecimal                   nxisasGbSeqNo
+        BigDecimal                   nxisasGbSeqNo,
+        /** Optional current-password guard. When non-null, the service
+         *  decrypts the stored ciphertext and rejects the update with
+         *  {@code WBE2091} if the value doesn't match — mirrors the
+         *  legacy {@code comm_0218_004_u001_act.jsp:55-57} WHERE-clause
+         *  guard that includes {@code decrypt(cert_info_detl_con) = ?}.
+         *  Null means "no guard" — kept optional so callers that don't
+         *  need the legacy parity (e.g. admin reset flows) can still
+         *  PATCH a single field. */
+        @Size(max = 2000) String     oldPassword
 ) { }

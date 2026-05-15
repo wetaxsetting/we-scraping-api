@@ -13,6 +13,7 @@ import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasLoginJobInput;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasLoginJobResult;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasOTPJobInput;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasOTPJobResult;
+import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasOutput;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasResult;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasThread;
 import org.slf4j.Logger;
@@ -214,6 +215,16 @@ public class NxisasGatewayClient {
     public NxisasLoginJobResult firstResult(NxisasApiOut<NxisasLoginJobResult> out) {
         NxisasResult<NxisasLoginJobResult> r = firstEntry(out);
         return r == null || r.getOutput() == null ? null : r.getOutput().getResult();
+    }
+
+    /** Bank-adapter Output wrapper from the first entry — carries the
+     *  per-adapter {@code ErrorCode} / {@code ErrorMessage} that sit at
+     *  a different layer than the gateway envelope {@code Common.Result_cd}.
+     *  Returns null when the response has no entries.
+     */
+    public <R> NxisasOutput<R> firstOutput(NxisasApiOut<R> out) {
+        NxisasResult<R> r = firstEntry(out);
+        return r == null ? null : r.getOutput();
     }
 
     public NxisasAcctListJobResult firstAcctListResult(NxisasApiOut<NxisasAcctListJobResult> out) {
