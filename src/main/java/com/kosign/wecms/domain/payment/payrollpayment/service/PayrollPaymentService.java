@@ -484,6 +484,8 @@ public class PayrollPaymentService {
     private void stampApproval(ScdulPymnSumr master, String apprSeqNo,
                                RequestApprovalRequest req) {
         master.setApprSeqNo(apprSeqNo);
+        // Initial Pending state — see InternalTransferService.stampApproval.
+        master.setApprStts("P");
         if (req.postTitle() != null && !req.postTitle().isBlank()) {
             master.setTitl(req.postTitle().trim());
         }

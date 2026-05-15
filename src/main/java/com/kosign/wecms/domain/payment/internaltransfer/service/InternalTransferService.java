@@ -115,6 +115,11 @@ public class InternalTransferService {
 
     /** Legacy {@code APPRVR_STTS} code stamped on the master when an
      *  approver presses Approve — final outcome, batch is approved. */
+    /** APPR_STTS code stamped on Request Approval — "Pending", the initial
+     *  state before any approver has acted. Frontend renders this as the
+     *  yellow "Pending" badge per the legacy three-state UI rule (pending
+     *  → in_progress when the first approver acts → approved/rejected). */
+    static final String APPR_STTS_PENDING  = "P";
     static final String APPR_STTS_APPROVED = "C";
 
     /** Legacy {@code APPRVR_STTS} code stamped on the master when an
@@ -584,6 +589,12 @@ public class InternalTransferService {
             String apprSeqNo,
             com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalRequest req) {
         master.setApprSeqNo(apprSeqNo);
+        // Initial approval state — Pending. Flips to "I" (in progress)
+        // when the first approver acts, then "C" / "X" when the chain
+        // completes. Without this stamp the column stays null and the
+        // frontend falls back to the legacy "apprSeqNo present means in
+        // progress" path, masking the distinct Pending state.
+        master.setApprStts(APPR_STTS_PENDING);
         // POST_TITLE / POST_CONT are display fields on the legacy
         // BLTB_POST_INFM row. Until that table is ported, we stamp
         // POST_TITLE onto TITL so the list grid's Approval Title
@@ -764,7 +775,7 @@ public class InternalTransferService {
         if (bankCd == null || bankCd.isBlank()) {
             throw new BusinessException("WBE_VALIDATION");
         }
-        return excelParser.parse(file);
+        return excelParser.parse(file, bankCd);
     }
 
     /* ----------------------------------------------------------------

@@ -1,5 +1,7 @@
 package com.kosign.wecms.domain.payment.expensepayment.controller;
 
+import com.kosign.wecms.common.export.ExcelExportRequest;
+import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.response.ApiResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalActionRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.CreateScheduledTransferRequest;
@@ -16,6 +18,7 @@ import com.kosign.wecms.domain.payment.internaltransfer.dto.WithdrawalAccountRow
 import com.kosign.wecms.domain.payment.expensepayment.service.ExpensePaymentResultService;
 import com.kosign.wecms.domain.payment.expensepayment.service.ExpensePaymentService;
 import com.kosign.wecms.domain.payment.expensepayment.service.ExpensePaymentService.DownloadResource;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -82,6 +85,7 @@ public class ExpensePaymentController {
 
     private final ExpensePaymentService       service;
     private final ExpensePaymentResultService resultService;
+    private final ExcelExportService          excelExportService;
 
     /**
      * List Scheduled Expense Payment batches for the current tenant.
@@ -153,6 +157,15 @@ public class ExpensePaymentController {
             @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
             String id) {
         return ApiResponse.ok(resultService.detail(id));
+    }
+
+    /** Excel export of the Expense Payment Result list. Provider:
+     *  {@code ExpensePaymentResultExportProvider} (CLAUDE.md §13b). */
+    @PostMapping("/results/export")
+    public void exportResults(
+            @Valid @RequestBody ExcelExportRequest request,
+            HttpServletResponse response) {
+        excelExportService.exportTo(response, request);
     }
 
     /* ----------------------------------------------------------------

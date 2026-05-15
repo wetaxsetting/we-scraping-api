@@ -593,6 +593,9 @@ public class VendorPaymentService {
     private void stampApproval(ScdulPymnSumr master, String apprSeqNo,
                                RequestApprovalRequest req) {
         master.setApprSeqNo(apprSeqNo);
+        // Initial Pending state — see InternalTransferService.stampApproval
+        // for the full rationale. Flips to "I" / "C" / "X" as approvers act.
+        master.setApprStts("P");
         if (req.postTitle() != null && !req.postTitle().isBlank()) {
             master.setTitl(req.postTitle().trim());
         }
