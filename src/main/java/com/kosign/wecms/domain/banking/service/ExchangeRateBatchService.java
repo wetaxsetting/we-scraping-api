@@ -85,82 +85,101 @@ public class ExchangeRateBatchService {
                     break; // no more seq_nos for this bank today
                 }
   
-                CooconExchangeRateResponse.ResultItem resultItem = responseOpt.get().getResultList().get(0);
-                if (resultItem == null || resultItem.getOutput() == null) {
+                // Use first ResultItem only to check the error code / break signal.
+                // Then iterate ALL ResultItems so currencies spread across multiple
+                // ResultList entries are not silently dropped.
+                CooconExchangeRateResponse.ResultItem firstItem = responseOpt.get().getResultList().get(0);
+                if (firstItem == null || firstItem.getOutput() == null) {
                     log.warn("Invalid output format for bank={} seqNo={}", bank.bankCd(), seqNo);
                     break;
                 }
 
-                String errorCode = resultItem.getOutput().getErrorCode();
-                if (!"00000000".equals(errorCode) || resultItem.getOutput().getResult() == null) {
+                String firstErrorCode = firstItem.getOutput().getErrorCode();
+                if (!"00000000".equals(firstErrorCode)) {
                     log.info("No data for bank={} seqNo={} (errorCode={}) — likely end of available rounds.",
-                            bank.bankCd(), seqNo, errorCode);
+                            bank.bankCd(), seqNo, firstErrorCode);
                     break; // Woori returns a non-success code when seqNo exceeds available rounds
                 }
 
-                List<CooconExchangeRateResponse.ForeignExchange> rates =
-                        resultItem.getOutput().getResult().getForeignExchange();
-                if (rates == null || rates.isEmpty()) {
-                    log.info("Empty rate list for bank={} seqNo={}", bank.bankCd(), seqNo);
-                    break;
-                }
+                int ratesSavedThisRound = 0;
+                for (CooconExchangeRateResponse.ResultItem resultItem : responseOpt.get().getResultList()) {
+                    if (resultItem == null || resultItem.getOutput() == null
+                            || resultItem.getOutput().getResult() == null) {
+                        continue;
+                    }
+                    if (!"00000000".equals(resultItem.getOutput().getErrorCode())) {
+                        continue;
+                    }
 
-                String standPoint = resultItem.getOutput().getResult().getStandPoint();
+                    List<CooconExchangeRateResponse.ForeignExchange> rates =
+                            resultItem.getOutput().getResult().getForeignExchange();
+                    if (rates == null || rates.isEmpty()) {
+                        continue;
+                    }
 
-                for (BusiInfm tenant : activeTenants) {
-                    for (CooconExchangeRateResponse.ForeignExchange rate : rates) {
-                        String ccyCd = rate.getCounterCurrency();
-                        try {
-                            Optional<BankExchRateInfm> existing = bankExchRateInfmRepository
-                                    .findByBizKeyAndBankCdAndRefDateAndCcyCdAndSeqNo(
-                                            tenant.getBizKey(), bank.bankCd(), inqDate, ccyCd, seqNo);
+                    String standPoint = resultItem.getOutput().getResult().getStandPoint();
 
-                            BankExchRateInfm entity;
-                            if (existing.isPresent()) {
-                                entity = existing.get();
-                                entity.setModDtm(nowDtm);
-                                entity.setModId(SYSTEM_USER);
-                                totalUpdated++;
-                            } else {
-                                entity = new BankExchRateInfm();
-                                entity.setBizKey(tenant.getBizKey());
-                                entity.setBankCd(bank.bankCd());
-                                entity.setRefDate(inqDate);
-                                entity.setCcyCd(ccyCd);
-                                entity.setSeqNo(seqNo);
-                                entity.setExchSeqNo(bankExchRateInfmRepository.findNextExchSeqNo(tenant.getBizKey()));
-                                entity.setRegDtm(nowDtm);
-                                entity.setRegUser(SYSTEM_USER);
-                                totalInserted++;
+                    for (BusiInfm tenant : activeTenants) {
+                        for (CooconExchangeRateResponse.ForeignExchange rate : rates) {
+                            String ccyCd = rate.getBaseCurrency();
+                            try {
+                                Optional<BankExchRateInfm> existing = bankExchRateInfmRepository
+                                        .findByBizKeyAndBankCdAndRefDateAndCcyCdAndSeqNo(
+                                                tenant.getBizKey(), bank.bankCd(), inqDate, ccyCd, seqNo);
+
+                                BankExchRateInfm entity;
+                                if (existing.isPresent()) {
+                                    entity = existing.get();
+                                    entity.setModDtm(nowDtm);
+                                    entity.setModId(SYSTEM_USER);
+                                    totalUpdated++;
+                                } else {
+                                    entity = new BankExchRateInfm();
+                                    entity.setBizKey(tenant.getBizKey());
+                                    entity.setBankCd(bank.bankCd());
+                                    entity.setRefDate(inqDate);
+                                    entity.setCcyCd(ccyCd);
+                                    entity.setSeqNo(seqNo);
+                                    entity.setExchSeqNo(bankExchRateInfmRepository.findNextExchSeqNo(tenant.getBizKey()));
+                                    entity.setRegDtm(nowDtm);
+                                    entity.setRegUser(SYSTEM_USER);
+                                    totalInserted++;
+                                }
+
+                                entity.setRefCcyCd(rate.getCounterCurrency());
+                                entity.setTranSellAmt(parseDecimal(rate.getTransferSell()));
+                                entity.setTranBuyAmt(parseDecimal(rate.getTransferBuy()));
+                                entity.setBuyAmt(parseDecimal(rate.getBuy()));
+                                entity.setSellAmt(parseDecimal(rate.getSell()));
+                                entity.setBasicRate(parseDecimal(rate.getBasicRate()));
+                                entity.setBasicTran(parseDecimal(rate.getBasicTransfer()));
+                                entity.setSrchDt(inqDate);
+                                entity.setClassExch(bank.category());
+                                entity.setModule(bank.module());
+                                entity.setStandPoint(standPoint);
+                                entity.setLastUpdateDate(rate.getBaseDate());
+                                entity.setLastUpdateTime(rate.getBaseTime());
+                                entity.setExchRateRegDtm(rate.getBaseDate() + rate.getBaseTime());
+
+                                bankExchRateInfmRepository.save(entity);
+                                ratesSavedThisRound++;
+
+                            } catch (Exception e) {
+                                log.error("Error saving rate for bank={} seqNo={} ccy={}: {}",
+                                        bank.bankCd(), seqNo, ccyCd, e.getMessage());
+                                totalErrors++;
                             }
-
-                            entity.setRefCcyCd(rate.getBaseCurrency());
-                            entity.setTranSellAmt(parseDecimal(rate.getTransferSell()));
-                            entity.setTranBuyAmt(parseDecimal(rate.getTransferBuy()));
-                            entity.setBuyAmt(parseDecimal(rate.getBuy()));
-                            entity.setSellAmt(parseDecimal(rate.getSell()));
-                            entity.setBasicRate(parseDecimal(rate.getBasicRate()));
-                            entity.setBasicTran(parseDecimal(rate.getBasicTransfer()));
-                            entity.setSrchDt(inqDate);
-                            entity.setClassExch(bank.category());
-                            entity.setModule(bank.module());
-                            entity.setStandPoint(standPoint);
-                            entity.setLastUpdateDate(rate.getBaseDate());
-                            entity.setLastUpdateTime(rate.getBaseTime());
-                            entity.setExchRateRegDtm(rate.getBaseDate() + rate.getBaseTime());
-
-                            bankExchRateInfmRepository.save(entity);
-
-                        } catch (Exception e) {
-                            log.error("Error saving rate for bank={} seqNo={} ccy={}: {}",
-                                    bank.bankCd(), seqNo, ccyCd, e.getMessage());
-                            totalErrors++;
                         }
                     }
                 }
 
-                log.info("bank={} seqNo={} — {} rates saved across {} tenants",
-                        bank.bankCd(), seqNo, rates.size(), activeTenants.size());
+                if (ratesSavedThisRound == 0) {
+                    log.info("Empty rate list for bank={} seqNo={}", bank.bankCd(), seqNo);
+                    break;
+                }
+
+                log.info("bank={} seqNo={} — {} saves across {} tenants",
+                        bank.bankCd(), seqNo, ratesSavedThisRound, activeTenants.size());
             }
         }
 

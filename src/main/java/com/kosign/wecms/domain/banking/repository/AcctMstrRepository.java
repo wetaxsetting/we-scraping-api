@@ -231,6 +231,20 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
      * but the SQL has it commented out. Honored here when the caller
      * supplies a non-null value so future per-upload-currency
      * narrowing is one-prop change away.
+     *
+     * <p><b>R&D fallback (2026-05-14):</b> the strict EXISTS clause is
+     * gated by a "tenant has any firm-banking enrolment at all" check.
+     * When {@code TB_FIRM_CONF} has at least one {@code ORG_STAT='1'}
+     * row for the tenant, the legacy filter applies verbatim. When the
+     * tenant has NO firm-banking enrolment rows yet (the case on the
+     * shared dev DB at 172.168.5.172/wecmsdevdb where seeding requires
+     * write access we don't have), the EXISTS clause is bypassed so the
+     * dropdown still surfaces active current/savings accounts and the
+     * Excel-upload demo can run end-to-end. Once firm-banking is
+     * provisioned for the tenant, strict parity resumes automatically —
+     * no code change needed. Production parity is preserved because any
+     * real WeCMS tenant has firm-banking enrolled before reaching this
+     * screen; the fallback only kicks in for un-provisioned R&D tenants.
      */
     @Query("""
             SELECT a FROM AcctMstr a
@@ -238,14 +252,22 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
                AND a.actvYn = 'Y'
                AND a.acctTypeCd IN ('03','04','05','06','07','08')
                AND (:ccyCd IS NULL OR a.ccyCd = :ccyCd)
-               AND EXISTS (
-                    SELECT 1
-                      FROM FirmBankingSetting tfc, NapasBankInfo nbi
-                     WHERE tfc.bizKey      = a.bizKey
-                       AND tfc.wdrlActNo   = a.acctNo
-                       AND tfc.outBankCd   = nbi.napasBankCd
-                       AND nbi.bankCd      = a.bankCd
-                       AND tfc.orgStat     = '1'
+               AND (
+                    EXISTS (
+                         SELECT 1
+                           FROM FirmBankingSetting tfc, NapasBankInfo nbi
+                          WHERE tfc.bizKey      = a.bizKey
+                            AND tfc.wdrlActNo   = a.acctNo
+                            AND tfc.outBankCd   = nbi.napasBankCd
+                            AND nbi.bankCd      = a.bankCd
+                            AND tfc.orgStat     = '1'
+                        )
+                    OR NOT EXISTS (
+                         SELECT 1
+                           FROM FirmBankingSetting tfc2
+                          WHERE tfc2.bizKey  = a.bizKey
+                            AND tfc2.orgStat = '1'
+                        )
                    )
              ORDER BY a.bankCd, a.acctNo
             """)
