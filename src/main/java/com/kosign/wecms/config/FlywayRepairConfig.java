@@ -52,6 +52,7 @@ public class FlywayRepairConfig {
      * <p>Currently guarded tables (all use {@code CREATE TABLE IF NOT EXISTS}):
      * <ul>
      *   <li>{@code overseas_payment_key_seq} — V135 / V136</li>
+     *   <li>{@code ovrs_pymn_dtls} — V138</li>
      * </ul>
      */
     private void purgeMissingTableEntries(Connection conn) throws SQLException {
@@ -59,6 +60,11 @@ public class FlywayRepairConfig {
             log.warn("FlywayRepairConfig: overseas_payment_key_seq is missing — " +
                      "purging stale V135/V136 history entries so migrate() recreates the table");
             deleteHistoryVersions(conn, "135", "136");
+        }
+        if (!tableExists(conn, "ovrs_pymn_dtls")) {
+            log.warn("FlywayRepairConfig: ovrs_pymn_dtls is missing — " +
+                     "purging stale V138 history entry so migrate() recreates the table");
+            deleteHistoryVersions(conn, "138");
         }
     }
 
