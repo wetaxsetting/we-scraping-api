@@ -9,6 +9,7 @@ import com.kosign.wecms.common.exception.GlobalExceptionHandler;
 import com.kosign.wecms.common.i18n.MessageResolver;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.TransferResultDetailResponse;
+import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.TransferResultListResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferResultService;
 import org.junit.jupiter.api.AfterEach;
@@ -40,10 +41,12 @@ class TransferResultControllerTest {
 
     private MockMvc mvc;
     private InternalTransferResultService service;
+    private ExcelExportService excelExportService;
 
     @BeforeEach
     void setUp() {
         service = mock(InternalTransferResultService.class);
+        excelExportService = mock(ExcelExportService.class);
 
         ObjectMapper mapper = new ObjectMapper()
                 .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
@@ -57,7 +60,7 @@ class TransferResultControllerTest {
         GlobalExceptionHandler advice = new GlobalExceptionHandler(messages);
 
         mvc = MockMvcBuilders
-                .standaloneSetup(new TransferResultController(service))
+                .standaloneSetup(new TransferResultController(service, excelExportService))
                 .setMessageConverters(jsonConverter)
                 .setControllerAdvice(advice)
                 .build();
@@ -101,7 +104,7 @@ class TransferResultControllerTest {
         TransferResultDetailResponse stub = new TransferResultDetailResponse(
                 "20260513000001", "11704000", "1234567890", "Demo",
                 null, null, null, null, "VND", "VND", "Y", null,
-                "demo.xlsx", null, null, null, null, List.of());
+                "demo.xlsx", null, "tester", null, null, null, List.of());
         when(service.detail(eq("20260513000001"))).thenReturn(stub);
 
         mvc.perform(get("/api/v1/payment/internal-transfer/results/20260513000001"))

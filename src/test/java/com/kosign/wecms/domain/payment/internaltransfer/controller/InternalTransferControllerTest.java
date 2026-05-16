@@ -11,6 +11,7 @@ import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.CreateScheduledTransferResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ScheduledTransferDetailResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ScheduledTransferListResponse;
+import com.kosign.wecms.domain.payment.internaltransfer.dto.TransferLineDetail;
 import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferDispatchService;
 import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService;
 import org.junit.jupiter.api.AfterEach;
@@ -21,6 +22,7 @@ import org.springframework.http.converter.json.MappingJackson2HttpMessageConvert
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -96,7 +98,7 @@ class InternalTransferControllerTest {
         ScheduledTransferListResponse stub = new ScheduledTransferListResponse(
                 0L, 0, 10, List.of(), List.of());
         when(service.list(eq("20260101"), eq("20260131"),
-                any(), any(), any(), anyInt(), anyInt())).thenReturn(stub);
+                any(), any(), any(), any(), anyInt(), anyInt())).thenReturn(stub);
 
         mvc.perform(get("/api/v1/payment/internal-transfer")
                         .param("from_date", "20260101")
@@ -125,9 +127,9 @@ class InternalTransferControllerTest {
     void should_return_detail_when_id_is_valid() throws Exception {
         ScheduledTransferDetailResponse stub = new ScheduledTransferDetailResponse(
                 "20260513000001", "03", "11704000", "1234567890",
-                "Demo", null, null, null, "tester",
-                null, null, null, "N", null, "VND", "VND",
-                "demo.xlsx", null, List.of());
+                "Demo", (BigDecimal) null, (BigDecimal) null, null, "tester",
+                null, null, null, null, null, "N", null, "VND", "VND",
+                "demo.xlsx", (BigDecimal) null, List.<TransferLineDetail>of());
         when(service.detail(eq("20260513000001"))).thenReturn(stub);
 
         mvc.perform(get("/api/v1/payment/internal-transfer/20260513000001"))

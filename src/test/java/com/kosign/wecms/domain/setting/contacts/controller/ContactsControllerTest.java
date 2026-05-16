@@ -12,6 +12,7 @@ import com.kosign.wecms.domain.setting.contacts.dto.ContactAccountRow;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactAddressRow;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactListResponse;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactRow;
+import com.kosign.wecms.domain.setting.contacts.service.ContactsFileService;
 import com.kosign.wecms.domain.setting.contacts.service.ContactsService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -53,10 +54,12 @@ class ContactsControllerTest {
 
     private MockMvc mvc;
     private ContactsService service;
+    private ContactsFileService fileService;
 
     @BeforeEach
     void setUp() {
         service = mock(ContactsService.class);
+        fileService = mock(ContactsFileService.class);
 
         ObjectMapper mapper = new ObjectMapper()
                 .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
@@ -70,7 +73,7 @@ class ContactsControllerTest {
         GlobalExceptionHandler advice = new GlobalExceptionHandler(messages);
 
         mvc = MockMvcBuilders
-                .standaloneSetup(new ContactsController(service))
+                .standaloneSetup(new ContactsController(service, fileService))
                 .setMessageConverters(jsonConverter)
                 .setControllerAdvice(advice)
                 .build();
