@@ -10,11 +10,11 @@ import jakarta.validation.constraints.Size;
  * all-null case with {@code WBE_VALIDATION}.
  *
  * <p>VAS mapping fields ({@code vasAcctSeqNo} / {@code vasAcctCd} /
- * {@code vasAcctNm}) are NOT in Batch A — they ship in Batch B alongside
- * the VAS picker dialog. Including them on the request would let a
- * malicious client overwrite the FK; keep the surface tight until the
- * picker lands and we can validate the FK against
- * {@code BUSI_VAS_ACCT_INFM}.
+ * {@code vasAcctNm}) ride together — when the caller wants to set a
+ * mapping, all three MUST be supplied; when the caller wants to clear
+ * one, all three MUST be explicitly empty strings (saving → no VAS).
+ * The service validates the FK against {@code BUSI_VAS_ACCT_INFM} so a
+ * malicious / stale client cannot stamp an arbitrary {@code seqNo}.
  */
 public record BankAccountUpdateRequest(
         @Size(max = 20)  String  nickname,
@@ -26,5 +26,19 @@ public record BankAccountUpdateRequest(
         /** Maturity date as ISO {@code yyyy-MM-dd}; service strips the
          *  hyphens before writing to the legacy `VARCHAR(8)` column.
          *  Empty string = clear the date (saving → current). */
-        @Size(max = 10)  String  maturityDate
+        @Size(max = 10)  String  maturityDate,
+        /** VAS Account FK — primary key on {@code BUSI_VAS_ACCT_INFM}.
+         *  {@code null} = leave the existing mapping unchanged; {@code 0}
+         *  / empty wire token = clear the mapping (all three VAS fields
+         *  go null on the parent row). Service validates the row is
+         *  {@code STTS='A'} + {@code DEL_YN='N'} for the current tenant. */
+        Long             vasAcctSeqNo,
+        /** Echo of {@code BUSI_VAS_ACCT_INFM.VAS_ACCT_CD} for the picked
+         *  row. Service ignores any value mismatched against the
+         *  authoritative DB row — kept on the wire purely so the dialog
+         *  can dispatch a single PATCH without a follow-up GET. */
+        @Size(max = 100) String  vasAcctCd,
+        /** Echo of {@code BUSI_VAS_ACCT_INFM.VAS_ACCT_NM}. Same wire-only
+         *  contract as {@code vasAcctCd}. */
+        @Size(max = 200) String  vasAcctNm
 ) { }

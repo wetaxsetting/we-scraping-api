@@ -41,10 +41,18 @@ public class SettingsBankAccountController {
     private final SettingsBankAccountService service;
     private final BankAccountPermissionService permissionService;
 
-    /** List all bank accounts under the current tenant. */
+    /** List all bank accounts under the current tenant.
+     *
+     *  <p>{@code sortField} is a View Setting {@code FIELD_ID} (e.g.
+     *  {@code BANK}, {@code BALANCE}) — resolved by
+     *  {@link com.kosign.wecms.domain.setting.bankaccount.service.BankAccountSortField}.
+     *  Unknown / blank values fall back to the legacy default ORDER BY
+     *  ({@code PRN_SEQ ASC, BANK_CD ASC, ACCT_NO ASC}). */
     @GetMapping
-    public ApiResponse<BankAccountListResponse> list() {
-        return ApiResponse.ok(service.list());
+    public ApiResponse<BankAccountListResponse> list(
+            @RequestParam(value = "sortField",     required = false) String sortField,
+            @RequestParam(value = "sortDirection", required = false) String sortDirection) {
+        return ApiResponse.ok(service.list(sortField, sortDirection));
     }
 
     /** Patch one bank-account master row. Mirrors legacy

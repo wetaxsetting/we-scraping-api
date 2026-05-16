@@ -5,6 +5,7 @@ import com.kosign.wecms.common.auditlog.service.AuditLogService;
 import com.kosign.wecms.common.enums.AcctTypeCd;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
+import com.kosign.wecms.common.web.SortDirection;
 import com.kosign.wecms.domain.banking.entity.AcctMstr;
 import com.kosign.wecms.domain.banking.entity.BankInfm;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
@@ -14,7 +15,11 @@ import com.kosign.wecms.domain.setting.bankaccount.dto.BankAccountRegisterReques
 import com.kosign.wecms.domain.setting.bankaccount.dto.BankAccountRegisterResponse;
 import com.kosign.wecms.domain.setting.bankaccount.dto.BankAccountRow;
 import com.kosign.wecms.domain.setting.bankaccount.dto.BankAccountUpdateRequest;
+import com.kosign.wecms.domain.setting.bankaccount.repository.AcctAuthInfoRepository;
+import com.kosign.wecms.domain.setting.vasaccount.entity.BusiVasAcctInfm;
+import com.kosign.wecms.domain.setting.vasaccount.repository.BusiVasAcctInfmRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -70,29 +75,92 @@ public class SettingsBankAccountService {
 
     private final AcctMstrRepository acctRepo;
     private final BankInfmRepository bankInfmRepo;
+    private final BusiVasAcctInfmRepository vasAcctRepo;
+    private final AcctAuthInfoRepository acctAuthRepo;
     private final AuditLogService auditLogService;
 
     /* -----------------------------------------------------------------
      *  LIST — every account for the tenant
      * ----------------------------------------------------------------- */
 
+    /** Legacy default ORDER BY — {@code PRN_SEQ ASC, BANK_CD ASC,
+     *  ACCT_NO ASC}. Mirrors {@code comm_0183_001_r001} and is also
+     *  woven into the secondary order when a user-driven sort runs so
+     *  equal-keyed rows keep a deterministic order across requests. */
+    private static final Sort DEFAULT_SORT = Sort.by(
+            Sort.Order.asc("prnSeq"),
+            Sort.Order.asc("bankCd"),
+            Sort.Order.asc("acctNo"));
+
     @Transactional(readOnly = true)
     public BankAccountListResponse list() {
+        return list(null, null);
+    }
+
+    /**
+     * Sort-aware variant. {@code sortField} is a View Setting
+     * {@code FIELD_ID} (e.g. {@code BANK}, {@code BALANCE}) resolved by
+     * {@link BankAccountSortField}; unknown / blank values fall back to
+     * {@link #DEFAULT_SORT}.
+     */
+    @Transactional(readOnly = true)
+    public BankAccountListResponse list(String sortField, String sortDirection) {
         String bizKey = TenantContext.currentBizKey();
         // Pull every account (active + inactive — legacy
         // comm_0183_001_r001 doesn't filter by ACTV_YN; users can see
-        // disabled rows so they can re-enable later). Order matches
-        // the live Bank Account page: PRN_SEQ ascending (NULLs last
-        // via Postgres default), then by bank/account for a stable
-        // tiebreaker.
-        List<AcctMstr> rows = acctRepo.findByBizKeyOrderByPrnSeqAscBankCdAscAcctNoAsc(bizKey);
+        // disabled rows so they can re-enable later).
+        Sort sort = buildSort(
+                BankAccountSortField.parse(sortField),
+                SortDirection.parse(sortDirection));
+        List<AcctMstr> rows = acctRepo.findByBizKey(bizKey, sort);
 
         Map<String, String> bankNames = resolveBankNames(rows);
 
         List<BankAccountRow> items = rows.stream()
-                .map(r -> toRow(r, bankNames))
+                .map(r -> toRow(r, bankNames, resolvePermissionLabels(bizKey, r)))
                 .toList();
         return new BankAccountListResponse(items);
+    }
+
+    /** Resolve the (viewLabel, withdrawalLabel) pair for one bank-account
+     *  row by looking up the active grantee count + first name for both
+     *  AUTH_TYPE codes. Mirrors legacy `comm_0183_001.ts:633` — first
+     *  grantee's name, plus "+ N more" when more than one. Returns a
+     *  two-element array: [viewLabel, withdrawalLabel]. Either can be
+     *  null when the account has no active grantee of that kind. */
+    private String[] resolvePermissionLabels(String bizKey, AcctMstr r) {
+        return new String[] {
+                composePermissionLabel(bizKey, r, "V"),
+                composePermissionLabel(bizKey, r, "W"),
+        };
+    }
+
+    private String composePermissionLabel(String bizKey, AcctMstr r, String authType) {
+        long count = acctAuthRepo.countActiveByAccount(
+                bizKey, r.getBankCd(), r.getAcctNo(), authType);
+        if (count == 0) return null;
+        List<String> firstName = acctAuthRepo.findFirstActiveUserName(
+                bizKey, r.getBankCd(), r.getAcctNo(), authType);
+        if (firstName.isEmpty()) return null;
+        String head = firstName.get(0);
+        if (count == 1) return head;
+        return head + " + " + (count - 1) + " more";
+    }
+
+    /**
+     * Build a Spring Data {@link Sort} from the validated whitelist enum +
+     * direction. The user's primary sort is always followed by
+     * {@link #DEFAULT_SORT} so equal-keyed rows stay deterministic across
+     * requests. Mirrors {@code AccountService.buildSort}.
+     */
+    private static Sort buildSort(BankAccountSortField field, SortDirection direction) {
+        if (field == null || direction == null) {
+            return DEFAULT_SORT;
+        }
+        Sort.Order primary = direction == SortDirection.ASC
+                ? Sort.Order.asc(field.entityProperty())
+                : Sort.Order.desc(field.entityProperty());
+        return Sort.by(primary).and(DEFAULT_SORT);
     }
 
     /* -----------------------------------------------------------------
@@ -104,7 +172,8 @@ public class SettingsBankAccountService {
         if (req.nickname() == null
                 && req.description() == null
                 && req.accountTypeCd() == null
-                && req.maturityDate() == null) {
+                && req.maturityDate() == null
+                && req.vasAcctSeqNo() == null) {
             throw new BusinessException("WBE_VALIDATION");
         }
         String bizKey = TenantContext.currentBizKey();
@@ -139,6 +208,34 @@ public class SettingsBankAccountService {
                         "WBE_BANK_ACCOUNT_INVALID_DATE", req.maturityDate());
             }
             row.setExpiDt(stripped);
+        }
+        // VAS Account triple — frontend ships {seqNo, cd, nm} together.
+        // seqNo == 0 (or null with cd/nm both blank) = clear the mapping;
+        // a positive seqNo = set the mapping after FK validation. The
+        // service is the authority on cd/nm — the wire's cd/nm fields
+        // are echoed convenience values, not load-bearing data.
+        if (req.vasAcctSeqNo() != null) {
+            Long seqNo = req.vasAcctSeqNo();
+            if (seqNo <= 0) {
+                row.setVasAcctSeqNo(null);
+                row.setVasAcctCd(null);
+                row.setVasAcctNm(null);
+            } else {
+                BusiVasAcctInfm vas = vasAcctRepo
+                        .findByBizKeyAndVasAcctSeqNoAndDelYn(bizKey, seqNo, "N")
+                        .orElseThrow(() -> new BusinessException(
+                                "WBE_BANK_ACCOUNT_INVALID_VAS_ACCT", String.valueOf(seqNo)));
+                // Reject inactive VAS rows on write — picker only ever
+                // offers active ones, but a stale browser tab could
+                // still POST a now-inactive seqNo.
+                if (!"A".equals(vas.getStts())) {
+                    throw new BusinessException(
+                            "WBE_BANK_ACCOUNT_INVALID_VAS_ACCT", String.valueOf(seqNo));
+                }
+                row.setVasAcctSeqNo(vas.getVasAcctSeqNo());
+                row.setVasAcctCd(vas.getVasAcctCd());
+                row.setVasAcctNm(vas.getVasAcctNm());
+            }
         }
         row.setModId(TenantContext.currentUserId());
         row.setModDtm(nowDtm14());
@@ -237,7 +334,10 @@ public class SettingsBankAccountService {
         return out;
     }
 
-    private static BankAccountRow toRow(AcctMstr e, Map<String, String> bankNames) {
+    private static BankAccountRow toRow(
+            AcctMstr e,
+            Map<String, String> bankNames,
+            String[] permissionLabels) {
         // Legacy `EXPI_DT` is yyyyMMdd; surface ISO yyyy-MM-dd on the
         // wire so the frontend can render via the shared date pipeline.
         String maturity = null;
@@ -267,7 +367,9 @@ public class SettingsBankAccountService {
                 e.getBal(),
                 e.getRealAmt(),
                 e.getModId(),
-                e.getModDtm()
+                e.getModDtm(),
+                permissionLabels[0],   // viewPermissionLabel
+                permissionLabels[1]    // withdrawalPermissionLabel
         );
     }
 

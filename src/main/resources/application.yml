@@ -120,6 +120,14 @@ wecms:
     # The default points at the same shared tree as ERP Transaction
     # History / Contacts so a developer laptop only needs one folder.
     storage-root: ${WECMS_PREFERENCES_STORAGE_ROOT:./tmp/preferences}
+  user-image:
+    # Local-disk root for Settings > Users avatar files
+    # (USER_BUSI_CONN_INFM.USER_IMG). Flat layout:
+    #   <storage-root>/<save_file_nm>
+    # Cross-tenant safety comes from the opaque HMAC-derived save
+    # filename, not from per-tenant directory isolation. Per-developer
+    # override via env var WECMS_USER_IMAGE_STORAGE_ROOT.
+    storage-root: ${WECMS_USER_IMAGE_STORAGE_ROOT:./tmp/user-image}
   coocon:
     # Coocon API credentials — mirrors <coocon> in JEX config
     # (WECMS DEV/.../VI/jex.wabooks_new.user.xml).

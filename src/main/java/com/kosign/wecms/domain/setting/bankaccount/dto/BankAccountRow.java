@@ -48,5 +48,18 @@ public record BankAccountRow(
          *  actor + date" cell until the per-row audit-log read endpoint
          *  ships in Batch B. */
         String     lastModifiedBy,
-        String     lastModifiedAt
+        String     lastModifiedAt,
+        /** "View Permission" label aggregate. Format:
+         *    null  = no active grantee → frontend renders the "View
+         *            Permission" link placeholder.
+         *    "X"   = single grantee.
+         *    "X + N more" = first grantee plus count of additional
+         *            active grantees. Server-side label keeps the
+         *            counting logic in one place; frontend just
+         *            displays it verbatim. */
+        String     viewPermissionLabel,
+        /** "Withdrawal Permission" label aggregate — same shape as
+         *  {@code viewPermissionLabel} but counts {@code AUTH_TYPE='W'}
+         *  rows. */
+        String     withdrawalPermissionLabel
 ) { }

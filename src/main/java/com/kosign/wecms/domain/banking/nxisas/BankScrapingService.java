@@ -1,14 +1,16 @@
 package com.kosign.wecms.domain.banking.nxisas;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.banking.bankcredentials.service.BankCredentialService;
 import com.kosign.wecms.domain.banking.bankcredentials.service.BankCredentialService.DecryptedCredential;
+import com.kosign.wecms.domain.banking.nxisas.dto.QnaQuestion;
 import com.kosign.wecms.domain.banking.nxisas.dto.ScrapeSessionResponse;
-import com.kosign.wecms.domain.banking.nxisas.dto.ScrapeSessionResponse.Status;
 import com.kosign.wecms.domain.banking.nxisas.dto.ScrapedAccount;
 import com.kosign.wecms.domain.banking.nxisas.dto.StartScrapeRequest;
 import com.kosign.wecms.domain.banking.nxisas.dto.SubmitChallengeRequest;
+import com.kosign.wecms.domain.banking.nxisas.dto.SubmitQnaRequest;
 import com.kosign.wecms.domain.banking.nxisas.dto.VerifyCredentialsRequest;
 import com.kosign.wecms.domain.banking.nxisas.NxisasGatewayClient.GatewayContinuation;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasAcctListJobInput;
@@ -16,8 +18,10 @@ import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasAcctListJobResul
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasApiOut;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasLoginJobInput;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasLoginJobResult;
+import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasCaptchaJobInput;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasOTPJobInput;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasOTPJobResult;
+import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasQnaJobInput;
 import com.kosign.wecms.domain.banking.nxisas.session.NxisasScrapeSession;
 import com.kosign.wecms.domain.banking.nxisas.session.NxisasSessionRegistry;
 import com.kosign.wecms.domain.banking.nxisas.session.ScrapeChallengeKind;
@@ -26,6 +30,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -101,13 +106,16 @@ public class BankScrapingService {
                                            String corporateId, String loginType,
                                            java.math.BigDecimal nxisasGbSeqNo,
                                            java.math.BigDecimal credentialSeqNo) {
-        // Resolve the Coocon adapter Module + Class (CORPORATE/COMMON)
-        // from the per-bank config. Legacy EXCH_0030_001:74-75 hardcodes
-        // these for Woori VN (11704020 → BANK_Woori/CORPORATE) and
-        // Shinhan VN (11704088 → BANK_Shinhan/COMMON); other banks are
-        // an OSMC-config follow-up. Coocon's gateway rejects threads
-        // with a missing/wrong Module or empty Class.
-        NxisasBankConfig.Entry cfg = bankConfig.find(bankCd)
+        // Resolve the Coocon adapter Module + Class
+        // (CORPORATE / COMMON / PERSONAL / DIGIBIZ / …) from the
+        // per-bank config — sub-type aware so the picker's
+        // nxisas_gb_seq_no radio dispatches Vietcom's DigiBiz path,
+        // BIDV's Personal path, etc. Falls back to the SEQ_NO=0
+        // default when no per-sub-type override is registered.
+        // Coocon's gateway rejects threads with a missing/wrong
+        // Module or empty Class.
+        Integer seqNoInt = nxisasGbSeqNo == null ? null : nxisasGbSeqNo.intValue();
+        NxisasBankConfig.Entry cfg = bankConfig.find(bankCd, seqNoInt)
                 .orElseThrow(() -> new BusinessException("WBE2093", bankCd));
 
         String bizKey = TenantContext.currentBizKey();
@@ -176,22 +184,35 @@ public class BankScrapingService {
             }
             log.info("NXISAS LOGIN rejected by bank adapter [bank={}, code={}, msg={}]",
                     bankModule, bankErrCode, bankErrMsg);
-            return new ScrapeSessionResponse(
-                    session.getSessionId(), Status.ERROR, null, null,
-                    bankErrCode, bankErrMsg);
+            return ScrapeSessionResponse.error(session.getSessionId(), bankErrCode, bankErrMsg);
         }
 
         ScrapeChallengeKind kind = challengeKindFrom(result);
         if (kind != null) {
             session.setStatus(NxisasScrapeSession.Status.AWAITING_CHALLENGE);
             session.setChallengeKind(kind);
-            session.setChallengePrompt(result == null ? null : result.getReq());
+            session.setChallengePrompt(result == null ? null : result.challengePrompt());
             registry.register(session);
-            return new ScrapeSessionResponse(
+            if (kind == ScrapeChallengeKind.QNA) {
+                List<QnaQuestion> questions = qnaQuestionsFrom(result);
+                return ScrapeSessionResponse.qnaChallenge(
+                        session.getSessionId(),
+                        session.getChallengePrompt(),
+                        questions);
+            }
+            if (kind == ScrapeChallengeKind.CAPTCHA) {
+                String image = captchaImageFrom(result);
+                String format = captchaImageFormatFor(bankCd);
+                return ScrapeSessionResponse.captchaChallenge(
+                        session.getSessionId(),
+                        session.getChallengePrompt(),
+                        image,
+                        format);
+            }
+            return ScrapeSessionResponse.challenge(
                     session.getSessionId(),
                     statusForChallenge(kind),
-                    session.getChallengePrompt(),
-                    null, null, null);
+                    session.getChallengePrompt());
         }
 
         // No challenge: gateway accepted the login outright. Proceed to acct-list.
@@ -233,11 +254,182 @@ public class BankScrapingService {
             session.setStatus(NxisasScrapeSession.Status.FAILED);
             session.setErrorCode(resultCd);
             session.setErrorMessage(resultMsg);
-            return new ScrapeSessionResponse(
-                    session.getSessionId(), Status.ERROR, null, null,
-                    resultCd, resultMsg);
+            return ScrapeSessionResponse.error(session.getSessionId(), resultCd, resultMsg);
         }
 
+        return runAcctList(session);
+    }
+
+    /**
+     * Resume an NXISAS scrape after a QNA (security-question) challenge.
+     * Mirrors legacy nxisas_v2.js:222-228 — the user picks ONE
+     * question from the LOGIN response's list and types its answer;
+     * we ship {@code {Question, HiddenValue, Answer}} back to Coocon.
+     *
+     * <p>The QNA response can:
+     * <ul>
+     *   <li>complete the login → proceed to ACCT_LIST</li>
+     *   <li>return another QNA / OTP / CAPTCHA challenge (wrong answer
+     *       or chained 2FA) → surface the new challenge back to the
+     *       frontend so the user can retry</li>
+     *   <li>error out → tear down the session and surface the code</li>
+     * </ul>
+     */
+    public ScrapeSessionResponse submitQna(UUID sessionId, SubmitQnaRequest req) {
+        String bizKey = TenantContext.currentBizKey();
+        String userId = TenantContext.currentUserId();
+        NxisasScrapeSession session = registry.find(sessionId, bizKey, userId)
+                .orElseThrow(() -> new BusinessException("WBE2060"));
+        session.touch();
+
+        if (session.getChallengeKind() != ScrapeChallengeKind.QNA) {
+            throw new BusinessException("WBE9001");
+        }
+
+        NxisasQnaJobInput.QnaResponse res = new NxisasQnaJobInput.QnaResponse();
+        res.setQuestion(req.question());
+        res.setHiddenValue(req.hiddenValue());
+        res.setAnswer(req.answer());
+        NxisasQnaJobInput qnaInput = new NxisasQnaJobInput();
+        qnaInput.setRes(res);
+
+        // Fresh Tr_seq per call — same legacy-parity rationale as
+        // submitOtp + runAcctList.
+        String trSeq = gateway.newTrSeq();
+        NxisasApiOut<NxisasLoginJobResult> qnaOut = gateway.submitQna(
+                session.getBankModule(), session.getBankCategory(), trSeq,
+                qnaInput, sessionContinuation(session));
+
+        storeContinuation(session, GatewayContinuation.from(qnaOut));
+
+        String resultCd = qnaOut == null || qnaOut.getCommon() == null
+                ? null : qnaOut.getCommon().getResultCd();
+        String resultMsg = qnaOut == null || qnaOut.getCommon() == null
+                ? null : qnaOut.getCommon().getResultMsg();
+        if (isGatewayError(resultCd)) {
+            session.setStatus(NxisasScrapeSession.Status.FAILED);
+            session.setErrorCode(resultCd);
+            session.setErrorMessage(resultMsg);
+            return ScrapeSessionResponse.error(session.getSessionId(), resultCd, resultMsg);
+        }
+
+        // Also surface bank-adapter-level errors (Output.ErrorCode != 00000000)
+        // — e.g. "wrong answer, try another question" comes back here.
+        NxisasLoginJobResult result = gateway.firstResult(qnaOut);
+        var bankOutput = gateway.firstOutput(qnaOut);
+        String bankErrCode = bankOutput == null ? null : bankOutput.getErrorCode();
+        if (bankErrCode != null && !bankErrCode.isBlank() && !"00000000".equals(bankErrCode)) {
+            String bankErrMsg = bankOutput.getErrorMessage();
+            if (bankErrMsg == null || bankErrMsg.isBlank()) bankErrMsg = bankOutput.getDetailMessage();
+            // Don't discard the session — the user may retry with a
+            // different question/answer combo. Frontend stays on the
+            // QNA dialog (status ERROR + the session's still in the
+            // registry); UX-wise this is the same as a wrong OTP.
+            return ScrapeSessionResponse.error(session.getSessionId(), bankErrCode, bankErrMsg);
+        }
+
+        // QNA can chain into another challenge (the bank may ask for OTP next).
+        ScrapeChallengeKind nextKind = challengeKindFrom(result);
+        if (nextKind != null) {
+            session.setChallengeKind(nextKind);
+            session.setChallengePrompt(result == null ? null : result.challengePrompt());
+            if (nextKind == ScrapeChallengeKind.QNA) {
+                List<QnaQuestion> questions = qnaQuestionsFrom(result);
+                return ScrapeSessionResponse.qnaChallenge(
+                        session.getSessionId(),
+                        session.getChallengePrompt(),
+                        questions);
+            }
+            return ScrapeSessionResponse.challenge(
+                    session.getSessionId(),
+                    statusForChallenge(nextKind),
+                    session.getChallengePrompt());
+        }
+
+        // QNA accepted, no further challenge — proceed to ACCT_LIST.
+        return runAcctList(session);
+    }
+
+    /**
+     * Resume an NXISAS scrape after a CAPTCHA challenge. Mirrors
+     * legacy nxisas_v2.js:243 — the user types the CAPTCHA text;
+     * we ship {@code Input.res = "<typed text>"} to Coocon under
+     * the {@code CAPTCHA} job discriminator.
+     *
+     * <p>Like QNA, the CAPTCHA response can either complete the login,
+     * chain into another challenge (wrong text → fresh CAPTCHA, or
+     * CAPTCHA → OTP), or error out.
+     */
+    public ScrapeSessionResponse submitCaptcha(UUID sessionId, SubmitChallengeRequest req) {
+        String bizKey = TenantContext.currentBizKey();
+        String userId = TenantContext.currentUserId();
+        NxisasScrapeSession session = registry.find(sessionId, bizKey, userId)
+                .orElseThrow(() -> new BusinessException("WBE2060"));
+        session.touch();
+
+        if (session.getChallengeKind() != ScrapeChallengeKind.CAPTCHA) {
+            throw new BusinessException("WBE9001");
+        }
+
+        NxisasCaptchaJobInput captchaInput = new NxisasCaptchaJobInput();
+        captchaInput.setRes(req.value());
+
+        String trSeq = gateway.newTrSeq();
+        NxisasApiOut<NxisasLoginJobResult> out = gateway.submitCaptcha(
+                session.getBankModule(), session.getBankCategory(), trSeq,
+                captchaInput, sessionContinuation(session));
+
+        storeContinuation(session, GatewayContinuation.from(out));
+
+        String resultCd = out == null || out.getCommon() == null
+                ? null : out.getCommon().getResultCd();
+        String resultMsg = out == null || out.getCommon() == null
+                ? null : out.getCommon().getResultMsg();
+        if (isGatewayError(resultCd)) {
+            session.setStatus(NxisasScrapeSession.Status.FAILED);
+            session.setErrorCode(resultCd);
+            session.setErrorMessage(resultMsg);
+            return ScrapeSessionResponse.error(session.getSessionId(), resultCd, resultMsg);
+        }
+
+        // Bank-adapter-level error (wrong CAPTCHA, etc.). Keep the
+        // session so the user can retry; the frontend stays on the
+        // CAPTCHA dialog and shows the error.
+        NxisasLoginJobResult result = gateway.firstResult(out);
+        var bankOutput = gateway.firstOutput(out);
+        String bankErrCode = bankOutput == null ? null : bankOutput.getErrorCode();
+        if (bankErrCode != null && !bankErrCode.isBlank() && !"00000000".equals(bankErrCode)) {
+            String bankErrMsg = bankOutput.getErrorMessage();
+            if (bankErrMsg == null || bankErrMsg.isBlank()) bankErrMsg = bankOutput.getDetailMessage();
+            return ScrapeSessionResponse.error(session.getSessionId(), bankErrCode, bankErrMsg);
+        }
+
+        // CAPTCHA can chain into another challenge (e.g. wrong text =>
+        // fresh CAPTCHA image, or CAPTCHA => OTP).
+        ScrapeChallengeKind nextKind = challengeKindFrom(result);
+        if (nextKind != null) {
+            session.setChallengeKind(nextKind);
+            session.setChallengePrompt(result == null ? null : result.challengePrompt());
+            if (nextKind == ScrapeChallengeKind.QNA) {
+                return ScrapeSessionResponse.qnaChallenge(
+                        session.getSessionId(),
+                        session.getChallengePrompt(),
+                        qnaQuestionsFrom(result));
+            }
+            if (nextKind == ScrapeChallengeKind.CAPTCHA) {
+                return ScrapeSessionResponse.captchaChallenge(
+                        session.getSessionId(),
+                        session.getChallengePrompt(),
+                        captchaImageFrom(result),
+                        captchaImageFormatFor(session.getBankModule()));
+            }
+            return ScrapeSessionResponse.challenge(
+                    session.getSessionId(),
+                    statusForChallenge(nextKind),
+                    session.getChallengePrompt());
+        }
+
+        // CAPTCHA accepted, no further challenge — proceed to ACCT_LIST.
         return runAcctList(session);
     }
 
@@ -263,9 +455,7 @@ public class BankScrapingService {
             session.setErrorCode(resultCd);
             session.setErrorMessage(resultMsg);
             registry.discard(session.getSessionId());
-            return new ScrapeSessionResponse(
-                    session.getSessionId(), Status.ERROR, null, null,
-                    resultCd, resultMsg);
+            return ScrapeSessionResponse.error(session.getSessionId(), resultCd, resultMsg);
         }
 
         List<ScrapedAccount> accounts = result == null || result.getAcctList() == null
@@ -280,8 +470,7 @@ public class BankScrapingService {
         registry.discard(session.getSessionId());
         log.info("NXISAS scrape completed [bank={}, accounts={}]",
                 session.getBankModule(), accounts.size());
-        return new ScrapeSessionResponse(
-                session.getSessionId(), Status.COMPLETED, null, accounts, null, null);
+        return ScrapeSessionResponse.completed(session.getSessionId(), accounts);
     }
 
     /** Build a {@link GatewayContinuation} from the session's stored gateway state. */
@@ -327,11 +516,74 @@ public class BankScrapingService {
         return null;
     }
 
-    private static Status statusForChallenge(ScrapeChallengeKind k) {
+    private static ScrapeSessionResponse.Status statusForChallenge(ScrapeChallengeKind k) {
         return switch (k) {
-            case OTP     -> Status.OTP_REQUIRED;
-            case CAPTCHA -> Status.CAPTCHA_REQUIRED;
-            case QNA     -> Status.QNA_REQUIRED;
+            case OTP     -> ScrapeSessionResponse.Status.OTP_REQUIRED;
+            case CAPTCHA -> ScrapeSessionResponse.Status.CAPTCHA_REQUIRED;
+            case QNA     -> ScrapeSessionResponse.Status.QNA_REQUIRED;
         };
+    }
+
+    /**
+     * Parse the LOGIN response's {@code Result.req} object into a
+     * typed question list. The bank adapter ships
+     * {@code {API:"QNA", req:[{HiddenValue, Question}, ...]}} —
+     * see Shinhan VN's response (snapshot 2026-05-15). Returns an
+     * empty list when the shape doesn't match (we never throw — the
+     * frontend would have nothing useful to render anyway, so we
+     * surface the empty list and let the QNA dialog show a clear
+     * "no questions returned" state).
+     */
+    private static List<QnaQuestion> qnaQuestionsFrom(NxisasLoginJobResult result) {
+        if (result == null || result.getReq() == null || !result.getReq().isObject()) {
+            return List.of();
+        }
+        JsonNode inner = result.getReq().get("req");
+        if (inner == null || !inner.isArray()) return List.of();
+        List<QnaQuestion> out = new ArrayList<>(inner.size());
+        for (JsonNode n : inner) {
+            String hidden = n.path("HiddenValue").asText("");
+            String question = n.path("Question").asText("");
+            if (hidden.isBlank() && question.isBlank()) continue;
+            out.add(new QnaQuestion(hidden, question));
+        }
+        return out;
+    }
+
+    /**
+     * Extract the base64 CAPTCHA image from the LOGIN response.
+     * Legacy nxisas_v2.js:1543 reads {@code obj.req.req} verbatim —
+     * the bank ships {@code req: { req: "<base64>" }} or sometimes
+     * {@code req: "<base64>"} directly. Both shapes handled here;
+     * returns null when nothing parseable is present.
+     */
+    private static String captchaImageFrom(NxisasLoginJobResult result) {
+        if (result == null || result.getReq() == null) return null;
+        JsonNode req = result.getReq();
+        // Object shape: { req: "<base64>" } (most adapters)
+        if (req.isObject()) {
+            JsonNode inner = req.get("req");
+            if (inner != null && inner.isTextual()) return inner.asText();
+        }
+        // String shape: req is itself the base64 payload
+        if (req.isTextual()) return req.asText();
+        return null;
+    }
+
+    /**
+     * CAPTCHA image MIME format. Legacy nxisas_v2.js:1539-1542 special-
+     * cases VIETNAM_GDT as {@code image/svg+xml}; everything else is
+     * {@code image/png}. The frontend renders as
+     * {@code data:image/{format};base64,…}.
+     *
+     * <p>The bank discriminator can be either the legacy {@code bank_cd}
+     * (e.g. {@code "VIETNAM_GDT"}) or the resolved Module path
+     * (e.g. {@code "GLOBAL/VNM/PUBLIC_GDT"}) — either disambiguates
+     * the SVG case.
+     */
+    private static String captchaImageFormatFor(String bankCdOrModule) {
+        if (bankCdOrModule == null) return "png";
+        if (bankCdOrModule.contains("GDT") || bankCdOrModule.contains("VIETNAM_GDT")) return "svg+xml";
+        return "png";
     }
 }

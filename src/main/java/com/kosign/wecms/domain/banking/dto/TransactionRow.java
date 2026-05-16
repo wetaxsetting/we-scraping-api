@@ -13,5 +13,8 @@ public record TransactionRow(
         @JsonProperty("RMRK")           String rmrk,
         @JsonProperty("CONF_YN")        String confYn,
         @JsonProperty("CONFIRMED_BY")   String confirmedBy,
-        @JsonProperty("CONFIRMED_DTM")  String confirmedDtm
+        @JsonProperty("CONFIRMED_DTM")  String confirmedDtm,
+        /** Smart Organizer match state — {@code 'Y'} when the row is
+         *  matched to a payment in {@code BUSI_MATCH_LOG} (LOCKED_YN='Y'). */
+        @JsonProperty("LINK_MATCH_YN")  String linkMatchYn
 ) { }

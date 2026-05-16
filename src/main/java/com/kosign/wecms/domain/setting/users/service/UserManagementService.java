@@ -12,6 +12,7 @@ import com.kosign.wecms.domain.auth.repository.UserBusiConnInfmRepository.Tenant
 import com.kosign.wecms.domain.auth.repository.UserInfmRepository;
 import com.kosign.wecms.domain.setting.users.dto.CheckLoginIdResponse;
 import com.kosign.wecms.domain.setting.users.dto.UserCreateRequest;
+// UserImageService.publicUrl is a static helper — same package, no import needed.
 import com.kosign.wecms.domain.setting.users.dto.UserListResponse;
 import com.kosign.wecms.domain.setting.users.dto.UserRowResponse;
 import com.kosign.wecms.domain.setting.users.dto.UserUpdateRequest;
@@ -345,7 +346,7 @@ public class UserManagementService {
                 r.getDeptNm(),
                 adminIds.contains(r.getUserId()),
                 Objects.equals(r.getUserId(), selfId),
-                r.getUserImg());
+                UserImageService.publicUrl(r.getUserId(), r.getUserImg()));
     }
 
     private UserRowResponse toRow(UserInfm user,
@@ -361,6 +362,6 @@ public class UserManagementService {
                 user.getDeptNm(),
                 isAdmin,
                 isSelf,
-                link.getUserImg());
+                UserImageService.publicUrl(user.getUserId(), link.getUserImg()));
     }
 }

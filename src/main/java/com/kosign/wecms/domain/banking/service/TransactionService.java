@@ -347,7 +347,8 @@ public class TransactionService {
                 r.getRmrk() != null ? r.getRmrk() : "",
                 confirmed ? "Y" : "N",
                 null,
-                null
+                null,
+                "Y".equals(r.getLinkMatchYn()) ? "Y" : "N"
         );
     }
 
