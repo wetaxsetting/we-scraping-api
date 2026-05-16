@@ -14,13 +14,15 @@ import com.kosign.wecms.common.web.SortableField;
  * {@code wecms-api-main/CLAUDE.md §"Common table sort"}):
  * <ul>
  *   <li>{@code CHECKBOX} — special row-selection column.</li>
- *   <li>{@code VAS_NAME} — projected from {@code BUSI_VAS_ACCT_INFM},
- *       no backing field on {@code AcctMstr}.</li>
  *   <li>{@code VIEW_PERMISSION} / {@code WITHDRAWAL_PERMISSION} —
  *       derived count + label from {@code ACCT_AUTH_INFO} aggregates.</li>
  *   <li>{@code AUDIT_LOGS} — derived from the latest {@code
  *       AUDIT_LOGS_INFM} row.</li>
  * </ul>
+ *
+ * <p>{@code VAS_NAME} is sortable as of 2026-05-15 — the denormalised
+ * {@code VAS_ACCT_NM} on {@code ACCT_MSTR} is the backing field, so
+ * the sort doesn't need to join {@code BUSI_VAS_ACCT_INFM}.
  *
  * <p>{@code BANK} sorts by {@code bankCd} (legacy parity — Account
  * Inquiry uses the same property; an alphabetical-by-display-name
@@ -33,7 +35,8 @@ public enum BankAccountSortField implements SortableField {
     DESCRIPTION      ("cont"),
     ACCOUNT_TYPE     ("acctTypeCd"),
     MATURITY_DATE    ("expiDt"),
-    VAS_CODE         ("vasAcctCd");
+    VAS_CODE         ("vasAcctCd"),
+    VAS_NAME         ("vasAcctNm");
 
     private final String entityProperty;
 

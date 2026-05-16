@@ -1,5 +1,6 @@
 package com.kosign.wecms.domain.banking.nxisas.session;
 
+import com.kosign.wecms.domain.banking.dto.TransactionsSyncRequest;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasAcctListEntry;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -8,6 +9,8 @@ import lombok.Setter;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.List;
 import java.util.UUID;
 
@@ -68,6 +71,56 @@ public class NxisasScrapeSession {
     @Setter(AccessLevel.PUBLIC) private String lbsNo = "";
     @Setter(AccessLevel.PUBLIC) private String ssSysNo = "";
     @Setter(AccessLevel.PUBLIC) private String threadNo = "";
+
+    // -- Bank-Transaction-Sync-only state -----------------------------
+    // Consumed by BankTransactionSyncService when this session is
+    // serving the Account Inquiry > Update popup (mode = SYNC).
+    // The Login Credentials flow (mode = SETUP) leaves these null.
+    /** Discriminator: SETUP = legacy comm_0218 add-credential flow;
+     *  SYNC = Account Inquiry &gt; Update popup. */
+    public enum Mode { SETUP, SYNC }
+    @Setter(AccessLevel.PUBLIC) private Mode mode = Mode.SETUP;
+
+    /** {@code yyyyMMdd} sync window start — captured on the initial
+     *  start() call so resumed steps after a QNA / OTP challenge use
+     *  the same window. */
+    @Setter(AccessLevel.PUBLIC) private String fromDt;
+    /** {@code yyyyMMdd} sync window end — see {@link #fromDt}. */
+    @Setter(AccessLevel.PUBLIC) private String toDt;
+
+    /** FIFO queue of accounts still to scrape after the current
+     *  LOGIN succeeds. Drained by the orchestrator inside
+     *  {@code submit*} after challenge resolution. The HEAD entry is
+     *  the account whose LOGIN is currently in flight (or just
+     *  succeeded and is awaiting TRANSACTION+BALANCE). */
+    @Setter(AccessLevel.PUBLIC) private Deque<TransactionsSyncRequest.AccountKey> accountsQueue
+            = new ArrayDeque<>();
+
+    /** Running count of credit (IN) rows Coocon returned across every
+     *  account in the batch — includes rows that hit the dedup skip,
+     *  not just newly-inserted ones. Surfaced on the {@code COMPLETED}
+     *  response so the popup can show the same totals as the Latest
+     *  Transaction History dialog (which reads from the DB) when the
+     *  user re-syncs an already-synced window. The field name keeps
+     *  the historical "Inserted" suffix for binary compatibility —
+     *  semantics changed; field name didn't. */
+    @Setter(AccessLevel.PUBLIC) private int totalCreditInserted = 0;
+    /** Running count of debit (OUT) rows Coocon returned. See
+     *  {@link #totalCreditInserted}. */
+    @Setter(AccessLevel.PUBLIC) private int totalDebitInserted = 0;
+    /** Sum of {@code TRSC_AMT} for every Coocon-returned IN row.
+     *  Surfaced on the {@code COMPLETED} response as the popup's
+     *  "Credit" amount. {@code BigDecimal.ZERO} when no rows
+     *  scraped; values from
+     *  {@link com.kosign.wecms.domain.banking.nxisas.BankTransactionSyncService}
+     *  are normalised positive (sign-flips happen before the sum). */
+    @Setter(AccessLevel.PUBLIC) private java.math.BigDecimal totalCreditAmount = java.math.BigDecimal.ZERO;
+    /** Sum of {@code TRSC_AMT} for every Coocon-returned OUT row.
+     *  See {@link #totalCreditAmount}. */
+    @Setter(AccessLevel.PUBLIC) private java.math.BigDecimal totalDebitAmount = java.math.BigDecimal.ZERO;
+    /** Count of accounts whose sync has completed (LOGIN +
+     *  TRANSACTION + BALANCE all succeeded + audit stamps written). */
+    @Setter(AccessLevel.PUBLIC) private int accountsSynced = 0;
 
     public void touch() {
         lastTouched = Instant.now();

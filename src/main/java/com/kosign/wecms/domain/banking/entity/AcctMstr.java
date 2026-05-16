@@ -108,6 +108,18 @@ public class AcctMstr {
     private String acctBalLstInqDtm;
 
     /**
+     * Last successful bank-login timestamp, {@code yyyyMMddHHmmss}.
+     * Legacy {@code ACCT_MSTR_U002} stamps this after a successful
+     * NXISAS scrape (see {@code fnsh_0001_001_c001_act.jsp:266-287}).
+     * The refactor's transaction-sync stub bumps this + {@code
+     * ACCT_BAL_LST_INQ_DTM} together so the on-screen "Last Update"
+     * column visibly moves without inventing fake transactions.
+     * Schema column added in V23 ({@code VARCHAR(14) NULL}).
+     */
+    @Column(name = "LST_LGN_SUC_DTM", length = 14)
+    private String lstLgnSucDtm;
+
+    /**
      * Manually-assigned print/display order. Legacy {@code fnsh_0001_001}
      * ORDERs Account Inquiry by {@code PRN_SEQ ASC} so users can pin
      * priority accounts to the top of the list. Schema column added in

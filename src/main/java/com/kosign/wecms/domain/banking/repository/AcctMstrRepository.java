@@ -6,6 +6,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -38,6 +39,22 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
     Optional<AcctMstr> findByBizKeyAndBankCdAndAcctNo(String bizKey, String bankCd, String acctNo);
 
     /**
+     * Bulk-delete every {@code ACCT_MSTR} row at one {@code (BIZ_KEY,
+     * BANK_CD)} pair. Called by the Disconnect path in the Login
+     * Credentials popup when the last remaining credential for that
+     * bank is removed — the linked accounts have no surviving login
+     * to scrape against, so they're cleaned up alongside.
+     *
+     * <p>Issued as a single {@code DELETE} statement to avoid an
+     * N+1 entity load. Returns the number of rows deleted so the
+     * caller can include it in audit logs / response payloads.
+     */
+    @Modifying
+    @Query("DELETE FROM AcctMstr a WHERE a.bizKey = :bizKey AND a.bankCd = :bankCd")
+    int deleteByBizKeyAndBankCd(@Param("bizKey") String bizKey,
+                                @Param("bankCd") String bankCd);
+
+    /**
      * All accounts for the tenant (active + inactive), ordered the way
      * Settings &gt; Bank Account renders them: print order first, then
      * bank then account no. Mirrors legacy {@code comm_0183_001_r001}
@@ -50,6 +67,16 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
      * for Banking &gt; Account Inquiry.
      */
     List<AcctMstr> findByBizKeyOrderByPrnSeqAscBankCdAscAcctNoAsc(String bizKey);
+
+    /**
+     * Sort-accepting variant of
+     * {@link #findByBizKeyOrderByPrnSeqAscBankCdAscAcctNoAsc(String)}.
+     * Used by Settings &gt; Bank Account when the caller supplies a
+     * common-sort {@code (sortField, sortDirection)} pair. The
+     * {@code Sort} is built from validated entity properties via
+     * {@code BankAccountSortField} — no raw wire strings reach JPA.
+     */
+    List<AcctMstr> findByBizKey(String bizKey, Sort sort);
 
     /**
      * All accounts for the tenant under one internal {@code BANK_CD},

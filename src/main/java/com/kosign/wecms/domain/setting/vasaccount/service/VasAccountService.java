@@ -9,6 +9,8 @@ import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.common.web.SortDirection;
 import com.kosign.wecms.domain.setting.vasaccount.dto.VasAccountCreateRequest;
 import com.kosign.wecms.domain.setting.vasaccount.dto.VasAccountListResponse;
+import com.kosign.wecms.domain.setting.vasaccount.dto.VasAccountLookupResponse;
+import com.kosign.wecms.domain.setting.vasaccount.dto.VasAccountLookupRow;
 import com.kosign.wecms.domain.setting.vasaccount.dto.VasAccountRow;
 import com.kosign.wecms.domain.setting.vasaccount.dto.VasAccountUpdateRequest;
 import com.kosign.wecms.domain.setting.vasaccount.entity.BusiVasAcctInfm;
@@ -217,6 +219,39 @@ public class VasAccountService {
                 .map(VasAccountService::toRow)
                 .toList();
     }
+
+    /* =================================================================
+     *  Lookup — active+live picker for the Edit Bank Account dialog.
+     *  Mirrors legacy `comm_1002_001` (VAS Account TextBox / typeahead).
+     * ================================================================= */
+
+    /**
+     * Returns the active + live VAS accounts for the current tenant,
+     * filtered by an optional substring. Used by the Edit Bank Account
+     * dialog's VAS Account picker — never call this for the management
+     * panel, which uses {@link #list} so it can paginate inactive rows.
+     *
+     * <p>Returns at most {@link #LOOKUP_MAX_ROWS} rows (cheap UI guard —
+     * the typeahead is not designed to render 10k items).
+     */
+    @Transactional(readOnly = true)
+    public VasAccountLookupResponse lookup(String searchWd) {
+        String bizKey = requireBizKey();
+        String keywordPattern = buildKeywordPattern(searchWd);
+        List<VasAccountLookupRow> items = repository.findLookup(bizKey, keywordPattern)
+                .stream()
+                .limit(LOOKUP_MAX_ROWS)
+                .map(v -> new VasAccountLookupRow(
+                        v.getVasAcctSeqNo(),
+                        v.getVasAcctCd(),
+                        v.getVasAcctNm()))
+                .toList();
+        return new VasAccountLookupResponse(items);
+    }
+
+    /** Hard cap on lookup rows — the picker is a typeahead, not a
+     *  full list. Matches the {@code MAX_PAGE_SIZE} on the list path. */
+    private static final int LOOKUP_MAX_ROWS = 500;
 
     /* =================================================================
      *  Detail

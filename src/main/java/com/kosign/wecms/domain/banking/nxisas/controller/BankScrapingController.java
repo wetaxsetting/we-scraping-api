@@ -5,6 +5,7 @@ import com.kosign.wecms.domain.banking.nxisas.BankScrapingService;
 import com.kosign.wecms.domain.banking.nxisas.dto.ScrapeSessionResponse;
 import com.kosign.wecms.domain.banking.nxisas.dto.StartScrapeRequest;
 import com.kosign.wecms.domain.banking.nxisas.dto.SubmitChallengeRequest;
+import com.kosign.wecms.domain.banking.nxisas.dto.SubmitQnaRequest;
 import com.kosign.wecms.domain.banking.nxisas.dto.VerifyCredentialsRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +22,8 @@ import java.util.UUID;
  *   POST /api/v1/banking/scraping/account-list             — start a scrape from a saved BANK_CERT_INFO row
  *   POST /api/v1/banking/scraping/verify                   — verify inline credentials BEFORE saving
  *   POST /api/v1/banking/scraping/{sessionId}/otp          — submit the OTP
+ *   POST /api/v1/banking/scraping/{sessionId}/qna          — submit a security-question answer
+ *   POST /api/v1/banking/scraping/{sessionId}/captcha      — submit a typed CAPTCHA value
  *
  * <p>Tenant + user are read from {@link com.kosign.wecms.common.tenant.TenantContext}
  * via the JWT; the route does not carry {@code bizKey}. Session id
@@ -63,5 +66,30 @@ public class BankScrapingController {
             @PathVariable UUID sessionId,
             @Valid @RequestBody SubmitChallengeRequest req) {
         return ApiResponse.ok(service.submitOtp(sessionId, req));
+    }
+
+    /**
+     * Resume a scrape after a QNA (security-question) challenge.
+     * The user picks ONE of the LOGIN response's questions and types
+     * its answer; the gateway may complete the login or come back
+     * with another challenge.
+     */
+    @PostMapping("/{sessionId}/qna")
+    public ApiResponse<ScrapeSessionResponse> submitQna(
+            @PathVariable UUID sessionId,
+            @Valid @RequestBody SubmitQnaRequest req) {
+        return ApiResponse.ok(service.submitQna(sessionId, req));
+    }
+
+    /**
+     * Resume a scrape after a CAPTCHA challenge. Wire body reuses
+     * {@link SubmitChallengeRequest} (same {@code {"value":"..."}}
+     * shape as OTP); the path segment is the discriminator.
+     */
+    @PostMapping("/{sessionId}/captcha")
+    public ApiResponse<ScrapeSessionResponse> submitCaptcha(
+            @PathVariable UUID sessionId,
+            @Valid @RequestBody SubmitChallengeRequest req) {
+        return ApiResponse.ok(service.submitCaptcha(sessionId, req));
     }
 }

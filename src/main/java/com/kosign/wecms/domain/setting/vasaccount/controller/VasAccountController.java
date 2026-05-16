@@ -8,6 +8,7 @@ import com.kosign.wecms.domain.setting.vasaccount.dto.VasAccountExcelImportReque
 import com.kosign.wecms.domain.setting.vasaccount.dto.VasAccountExcelImportResult;
 import com.kosign.wecms.domain.setting.vasaccount.dto.VasAccountExcelPreview;
 import com.kosign.wecms.domain.setting.vasaccount.dto.VasAccountListResponse;
+import com.kosign.wecms.domain.setting.vasaccount.dto.VasAccountLookupResponse;
 import com.kosign.wecms.domain.setting.vasaccount.dto.VasAccountRow;
 import com.kosign.wecms.domain.setting.vasaccount.dto.VasAccountUpdateRequest;
 import com.kosign.wecms.domain.setting.vasaccount.service.VasAccountExcelService;
@@ -94,6 +95,20 @@ public class VasAccountController {
             @RequestParam(value = "size",           defaultValue = "0") int        size) {
         return ApiResponse.ok(service.list(
                 searchWd, statuses, sortField, sortDirection, page, size));
+    }
+
+    /**
+     * Lightweight active+live picker — mirrors legacy {@code comm_1002_001}.
+     * Used by the Edit Bank Account dialog's VAS Account typeahead. Returns
+     * only {@code STTS='A'} + {@code DEL_YN='N'} rows; capped server-side.
+     *
+     * <p>The full management list ({@link #list}) is paginated and includes
+     * inactive rows; this endpoint is the read path for SELECTION ONLY.
+     */
+    @GetMapping("/lookup")
+    public ApiResponse<VasAccountLookupResponse> lookup(
+            @RequestParam(value = "search_wd", required = false) String searchWd) {
+        return ApiResponse.ok(service.lookup(searchWd));
     }
 
     /** Detail by {@code vas_acct_seq_no}. 404-equivalent surfaces as

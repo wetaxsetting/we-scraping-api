@@ -5,12 +5,24 @@ import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.response.ApiResponse;
 import com.kosign.wecms.domain.banking.dto.AccountListResponse;
 import com.kosign.wecms.domain.banking.dto.AccountLookupListResponse;
+import com.kosign.wecms.domain.banking.dto.RegisterAccountsRequest;
+import com.kosign.wecms.domain.banking.dto.RegisterAccountsResponse;
+import com.kosign.wecms.domain.banking.dto.CreateMatchRequest;
+import com.kosign.wecms.domain.banking.dto.MatchCandidateListResponse;
+import com.kosign.wecms.domain.banking.dto.MatchResultResponse;
 import com.kosign.wecms.domain.banking.dto.TransactionConfirmRequest;
 import com.kosign.wecms.domain.banking.dto.TransactionDetailResponse;
 import com.kosign.wecms.domain.banking.dto.TransactionListResponse;
 import com.kosign.wecms.domain.banking.dto.TransactionSummaryResponse;
+import com.kosign.wecms.domain.banking.dto.TransactionsSyncRequest;
+import com.kosign.wecms.domain.banking.dto.TransactionsSyncResponse;
+import com.kosign.wecms.domain.banking.nxisas.BankTransactionSyncService;
+import com.kosign.wecms.domain.banking.nxisas.dto.SubmitChallengeRequest;
+import com.kosign.wecms.domain.banking.nxisas.dto.SubmitQnaRequest;
 import com.kosign.wecms.domain.banking.service.AccountFilter;
+import com.kosign.wecms.domain.banking.service.AccountRegistrationService;
 import com.kosign.wecms.domain.banking.service.AccountService;
+import com.kosign.wecms.domain.banking.service.MatchService;
 import com.kosign.wecms.domain.banking.service.TransactionService;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
@@ -36,7 +48,10 @@ public class AccountController {
 
     private final AccountService accountService;
     private final TransactionService transactionService;
+    private final MatchService matchService;
     private final ExcelExportService excelExportService;
+    private final AccountRegistrationService accountRegistrationService;
+    private final BankTransactionSyncService bankTransactionSyncService;
 
     /**
      * Account Inquiry — VND/FCY share one endpoint with a {@code currency}
@@ -100,6 +115,77 @@ public class AccountController {
             @Valid @RequestBody ExcelExportRequest request,
             HttpServletResponse response) {
         excelExportService.exportTo(response, request);
+    }
+
+    /**
+     * Register the accounts a user picked in the Select Bank Accounts
+     * dialog after a successful NXISAS scrape. Mirrors legacy
+     * {@code fnsh_0101_001_c001} (comm_0218_nxisas.ts:1188): writes
+     * one row per picked account into {@code ACCT_MSTR} under the
+     * current tenant and the bank resolved from
+     * {@code BANK_CERT_INFO.SEQ_NO}.
+     *
+     * <p>Idempotent — re-registering the same {@code (BANK_CD, ACCT_NO)}
+     * is a no-op (skipped count on the response). When ALL picked rows
+     * are duplicates, the service raises
+     * {@code WBE_BANK_ACCOUNT_REGISTER_ALL_DUP} so the dialog can
+     * surface a meaningful message and the user can pick different
+     * accounts.
+     */
+    @PostMapping("/accounts/register")
+    public ApiResponse<RegisterAccountsResponse> registerAccounts(
+            @Valid @RequestBody RegisterAccountsRequest request) {
+        return ApiResponse.ok(accountRegistrationService.register(request));
+    }
+
+    /**
+     * Bank Transaction Sync — Account Inquiry &gt; Update popup.
+     *
+     * <p>Drives the real Coocon NXISAS scrape: per-account LOGIN
+     * → (challenge?) → TRANSACTION → BALANCE → dedup-INSERT into
+     * {@code ACCT_TRNS_HSTR} + refresh {@code ACCT_MSTR.BAL/REAL_AMT}.
+     * When a bank LOGIN returns an OTP / QNA / CAPTCHA challenge, the
+     * orchestrator persists the in-flight batch on a sync session and
+     * returns a {@code *_REQUIRED} response; the frontend opens the
+     * matching dialog, calls one of the resume endpoints below with
+     * the session id, and the orchestrator picks the loop back up.
+     *
+     * <p>Mirrors legacy {@code fnsh_0001_001_c001_act.jsp} for the
+     * LOGIN → TRANSACTION → BALANCE chain. Smart-Assist auto-match and
+     * push-notification dispatch (the rest of the legacy pipeline) are
+     * still out of scope.
+     */
+    @PostMapping("/accounts/transactions-sync")
+    public ApiResponse<TransactionsSyncResponse> syncTransactions(
+            @Valid @RequestBody TransactionsSyncRequest request) {
+        return ApiResponse.ok(accountService.syncTransactions(request));
+    }
+
+    /** Resume a sync after a security-question (QNA) answer. The
+     *  frontend echoes back the {@code session_id} the
+     *  {@code QNA_REQUIRED} response carried plus the chosen
+     *  question + user's answer. */
+    @PostMapping("/accounts/transactions-sync/{sessionId}/qna")
+    public ApiResponse<TransactionsSyncResponse> submitSyncQna(
+            @PathVariable java.util.UUID sessionId,
+            @Valid @RequestBody SubmitQnaRequest request) {
+        return ApiResponse.ok(bankTransactionSyncService.submitQna(sessionId, request));
+    }
+
+    /** Resume a sync after an OTP submission. */
+    @PostMapping("/accounts/transactions-sync/{sessionId}/otp")
+    public ApiResponse<TransactionsSyncResponse> submitSyncOtp(
+            @PathVariable java.util.UUID sessionId,
+            @Valid @RequestBody SubmitChallengeRequest request) {
+        return ApiResponse.ok(bankTransactionSyncService.submitOtp(sessionId, request));
+    }
+
+    /** Resume a sync after a CAPTCHA submission. */
+    @PostMapping("/accounts/transactions-sync/{sessionId}/captcha")
+    public ApiResponse<TransactionsSyncResponse> submitSyncCaptcha(
+            @PathVariable java.util.UUID sessionId,
+            @Valid @RequestBody SubmitChallengeRequest request) {
+        return ApiResponse.ok(bankTransactionSyncService.submitCaptcha(sessionId, request));
     }
 
     /**
@@ -201,6 +287,49 @@ public class AccountController {
             @PathVariable("trnsSeqNo") String trnsSeqNo) {
         transactionService.undoConfirm(acctSeqNo, trnsSeqNo);
         return ApiResponse.ok(null);
+    }
+
+    /**
+     * Smart Organizer — list domestic scheduled-payment candidates the
+     * user may match the bank transaction to. Mirrors legacy
+     * {@code comm_0196_002_r001}. Overseas payments are deferred to a
+     * follow-up slice.
+     */
+    @GetMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/match-candidates")
+    public ApiResponse<MatchCandidateListResponse> listMatchCandidates(
+            @PathVariable("acctSeqNo") String acctSeqNo,
+            @PathVariable("trnsSeqNo") String trnsSeqNo,
+            @RequestParam(value = "from",    required = false) String fromDt,
+            @RequestParam(value = "to",      required = false) String toDt,
+            @RequestParam(value = "keyword", required = false) String keyword) {
+        return ApiResponse.ok(matchService.listCandidates(acctSeqNo, trnsSeqNo, fromDt, toDt, keyword));
+    }
+
+    /**
+     * Smart Organizer — match the bank transaction to a payment line.
+     * Atomically writes {@code BUSI_MATCH_LOG} + flips
+     * {@code LINK_MATCH_YN='Y'} on {@code ACCT_TRNS_HSTR} and
+     * {@code SCDUL_PYMN_SUMR_DETL}. Mirrors legacy
+     * {@code comm_0196_001_c001}.
+     */
+    @PostMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/match")
+    public ApiResponse<MatchResultResponse> createMatch(
+            @PathVariable("acctSeqNo") String acctSeqNo,
+            @PathVariable("trnsSeqNo") String trnsSeqNo,
+            @Valid @RequestBody CreateMatchRequest request) {
+        return ApiResponse.ok(matchService.create(acctSeqNo, trnsSeqNo, request));
+    }
+
+    /**
+     * Smart Organizer — undo a match (legacy {@code comm_0196_002_u001}).
+     * Flips {@code LINK_MATCH_YN='N'} on both sides and
+     * {@code LOCKED_YN='N'} on the audit row (preserves history).
+     */
+    @DeleteMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/match")
+    public ApiResponse<MatchResultResponse> undoMatch(
+            @PathVariable("acctSeqNo") String acctSeqNo,
+            @PathVariable("trnsSeqNo") String trnsSeqNo) {
+        return ApiResponse.ok(matchService.undo(acctSeqNo, trnsSeqNo));
     }
 
     /**

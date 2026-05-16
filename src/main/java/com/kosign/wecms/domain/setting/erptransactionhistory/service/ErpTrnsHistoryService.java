@@ -175,6 +175,50 @@ public class ErpTrnsHistoryService {
                 result.getTotalPages());
     }
 
+    /**
+     * Same filters + sort as {@link #list}, but returns the entire
+     * filtered set unpaged. Consumed only by
+     * {@code ErpTrnsHistoryExportProvider} — the Excel export emits
+     * every matching row regardless of the user's current page, capped
+     * server-side by {@code ExcelExportService.MAX_ROWS = 50_000}.
+     *
+     * <p>Validation + tenant-scoping rules are identical to
+     * {@link #list}. The helper indexes added in V71
+     * ({@code IX_*_BIZ_REG_DTM}, {@code IX_*_BIZ_ERP_TYPE}) keep the
+     * typical 30-day window cheap; a pathological "all-time" filter
+     * would hit {@code WBE2011}.
+     */
+    @Transactional(readOnly = true)
+    public List<ErpTrnsHistoryRow> listAll(
+            String fromDate,
+            String toDate,
+            String erpType,
+            String trnsTypeCd,
+            String keyword,
+            String sortField,
+            String sortDirection) {
+
+        String fromDt = validateDate("from_date", fromDate);
+        String toDt   = validateDate("to_date",   toDate);
+        validatePeriod(fromDt, toDt);
+        String erpTypeFilter  = validateErpType(erpType);
+        String trnsTypeFilter = validateTrnsTypeCd(trnsTypeCd);
+        String keywordPattern = buildKeywordPattern(keyword);
+
+        Sort sort = buildSort(
+                ErpTrnsHistorySortField.parse(sortField),
+                SortDirection.parse(sortDirection));
+
+        String bizKey = TenantContext.currentBizKey();
+        Page<ErpTrnsHistoryProjection> result = repository.search(
+                bizKey, fromDt, toDt, erpTypeFilter, trnsTypeFilter, keywordPattern,
+                Pageable.unpaged(sort));
+
+        return result.getContent().stream()
+                .map(ErpTrnsHistoryService::toRow)
+                .toList();
+    }
+
     /* =================================================================
      *  Download
      * ================================================================= */

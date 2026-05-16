@@ -12,6 +12,8 @@ import com.kosign.wecms.domain.banking.dto.AccountRow;
 import com.kosign.wecms.domain.banking.dto.BankOption;
 import com.kosign.wecms.domain.banking.dto.CurrencyTotal;
 import com.kosign.wecms.domain.banking.dto.OwnAccountListResponse;
+import com.kosign.wecms.domain.banking.dto.TransactionsSyncRequest;
+import com.kosign.wecms.domain.banking.dto.TransactionsSyncResponse;
 import com.kosign.wecms.domain.banking.entity.AcctMstr;
 import com.kosign.wecms.domain.banking.entity.NapasBankInfo;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
@@ -65,6 +67,7 @@ public class AccountService {
     private final AcctMstrRepository acctRepo;
     private final BankCdResolver bankResolver;
     private final NapasBankInfoRepository napasBankInfoRepo;
+    private final com.kosign.wecms.domain.banking.nxisas.BankTransactionSyncService bankSync;
 
     /**
      * ACCT_TYPE_CD whitelists per CCY scope. Mirrors legacy
@@ -337,6 +340,46 @@ public class AccountService {
 
         return new AccountLookupListResponse(
                 rows.stream().map(AccountService::toLookupRow).toList());
+    }
+
+    /* ----------------------------------------------------------------- */
+    /*  Transaction Sync — Account Inquiry "Update" popup                */
+    /* ----------------------------------------------------------------- */
+
+    /**
+     * Bumps the per-account "last successful login" + "last balance
+     * inquiry" timestamps for every {@code (bankCd, acctNo)} in the
+     * request — the same columns legacy {@code ACCT_MSTR_U002} writes
+     * after a real NXISAS scrape ({@code fnsh_0001_001_c001_act.jsp:266-287}).
+     *
+     * <p>R&amp;D scope deliberately omits the bank-gateway leg (workspace
+     * CLAUDE.md: <em>"no bank integration, no coexistence work"</em>),
+     * so no {@code ACCT_TRNS_HSTR} rows are inserted, no balance change,
+     * no audit-log entry. The frontend "Last Update" column visibly
+     * moves because it reads {@code acctBalLstInqDtm}; that's the
+     * single user-visible side-effect the stub guarantees.
+     *
+     * <p>Fail-fast batch semantics — any {@code (bankCd, acctNo)} that
+     * doesn't resolve inside the caller's tenant throws
+     * {@code WBE_BANK_ACCOUNT_NOT_FOUND} and rolls the whole transaction
+     * back (partial sync would hide a stale-cache bug between the
+     * inquiry list and the request).
+     */
+    /**
+     * Account Inquiry &gt; Update popup &rarr; real NXISAS scrape via
+     * {@link com.kosign.wecms.domain.banking.nxisas.BankTransactionSyncService}.
+     * The orchestrator owns the LOGIN &rarr; TRANSACTION &rarr; BALANCE
+     * chain, the SHA-256 dedup, and the {@code ACCT_MSTR} balance
+     * refresh; this method is a thin delegate so the existing
+     * controller signature + auth path stay untouched.
+     *
+     * <p>Replaces the prior stub that only bumped
+     * {@code LST_LGN_SUC_DTM} / {@code ACCT_BAL_LST_INQ_DTM}. Real
+     * {@code credit_count} / {@code debit_count} are now returned;
+     * the popup totals badge stops showing {@code 0}.
+     */
+    public TransactionsSyncResponse syncTransactions(TransactionsSyncRequest req) {
+        return bankSync.start(req);
     }
 
     private static String requireBizKey() {

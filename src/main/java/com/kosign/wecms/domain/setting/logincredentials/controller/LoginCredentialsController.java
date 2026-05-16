@@ -10,8 +10,10 @@ import com.kosign.wecms.domain.setting.logincredentials.dto.GdtCredentialRequest
 import com.kosign.wecms.domain.setting.logincredentials.dto.GdtCredentialUpdateRequest;
 import com.kosign.wecms.domain.setting.logincredentials.dto.LoginCredentialAuditResponse;
 import com.kosign.wecms.domain.setting.logincredentials.dto.LoginCredentialListResponse;
+import com.kosign.wecms.domain.banking.nxisas.dto.ScrapeSessionResponse;
 import com.kosign.wecms.domain.setting.logincredentials.dto.RevealRequest;
 import com.kosign.wecms.domain.setting.logincredentials.dto.RevealResponse;
+import com.kosign.wecms.domain.setting.logincredentials.dto.VerifyBankPasswordRequest;
 import com.kosign.wecms.domain.setting.logincredentials.service.LoginCredentialsService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -101,6 +103,21 @@ public class LoginCredentialsController {
             @Valid @RequestBody BankCredentialUpdateRequest req) {
         service.updateBank(seqNo, req);
         return ApiResponse.ok(null);
+    }
+
+    /**
+     * Edit flow's pre-update verification — runs NXISAS LOGIN with the
+     * stored bank context + the user's typed new password, WITHOUT
+     * persisting anything. The frontend follows up with the standard
+     * {@link #updateBank} only when the scrape (and any challenge
+     * chain) reaches {@code COMPLETED}. On any error / wrong-password
+     * outcome the existing row stays untouched.
+     */
+    @PostMapping("/bank/{seqNo}/verify-update")
+    public ApiResponse<ScrapeSessionResponse> verifyBankPasswordUpdate(
+            @PathVariable BigDecimal seqNo,
+            @Valid @RequestBody VerifyBankPasswordRequest req) {
+        return ApiResponse.ok(service.verifyUpdate(seqNo, req.password()));
     }
 
     /** Create the GDT credential row for the current tenant. The

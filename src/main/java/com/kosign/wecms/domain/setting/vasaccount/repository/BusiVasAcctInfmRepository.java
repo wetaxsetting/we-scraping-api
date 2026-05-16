@@ -109,4 +109,30 @@ public interface BusiVasAcctInfmRepository extends JpaRepository<BusiVasAcctInfm
             @Param("bizKey") String bizKey,
             @Param("modId")  String modId,
             @Param("modDtm") String modDtm);
+
+    /**
+     * Active + live VAS accounts for the typeahead picker on Edit Bank
+     * Account. Mirrors legacy {@code comm_1002_001} — returns only
+     * {@code STTS='A'} + {@code DEL_YN='N'} rows; inactive / deleted
+     * entries are never offered as a new mapping target.
+     *
+     * <p>Optional substring filter ({@code keywordPattern}) matches
+     * either {@code vas_acct_cd} or {@code vas_acct_nm} (case
+     * insensitive). Same {@code (:p IS NULL OR …) ESCAPE '!'} pattern
+     * as {@link #search} for consistency. Ordered by code so the picker
+     * renders deterministically.
+     */
+    @Query("""
+           SELECT v FROM BusiVasAcctInfm v
+           WHERE v.bizKey = :bizKey
+             AND v.delYn  = 'N'
+             AND v.stts   = 'A'
+             AND (:keywordPattern IS NULL
+                  OR LOWER(v.vasAcctCd) LIKE :keywordPattern ESCAPE '!'
+                  OR LOWER(v.vasAcctNm) LIKE :keywordPattern ESCAPE '!')
+           ORDER BY v.vasAcctCd ASC
+           """)
+    java.util.List<BusiVasAcctInfm> findLookup(
+            @Param("bizKey")         String bizKey,
+            @Param("keywordPattern") String keywordPattern);
 }

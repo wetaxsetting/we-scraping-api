@@ -84,6 +84,32 @@ public class BankCredentialService {
     @Transactional(readOnly = true)
     public DecryptedCredential loadForScraping(BigDecimal seqNo) {
         BankCertInfo entity = loadOrThrow(seqNo);
+        return toDecrypted(entity);
+    }
+
+    /** Bank-level variant of {@link #loadForScraping(BigDecimal)} for the
+     *  Bank Transaction Sync orchestrator. The sync flow picks accounts
+     *  by {@code (bank_cd, acct_no)} (the Account Inquiry table's
+     *  natural key) — multiple accounts at one bank share the same
+     *  registered credential row, so resolving by {@code BANK_CD} is
+     *  enough. Throws {@code WBE2050} when no credential is registered
+     *  for the bank (matches the by-seq variant; frontend prompts the
+     *  user to register via Settings > Login Credentials first).
+     *
+     *  <p>Returns the lowest {@code SEQ_NO}'s credential when multiple
+     *  exist — deterministic, mirrors legacy behaviour (the JEX picker
+     *  surfaces the most recent registration but the sync helper
+     *  picks the first match it finds in {@code BANK_CERT_INFO}).
+     */
+    @Transactional(readOnly = true)
+    public DecryptedCredential loadForScrapingByBank(String bankCd) {
+        String bizKey = TenantContext.currentBizKey();
+        BankCertInfo entity = repository.findFirstByBizKeyAndBankCdOrderBySeqNoAsc(bizKey, bankCd)
+                .orElseThrow(() -> new BusinessException("WBE2050"));
+        return toDecrypted(entity);
+    }
+
+    private DecryptedCredential toDecrypted(BankCertInfo entity) {
         return new DecryptedCredential(
                 entity.getBankCd(),
                 entity.getCertInfoCon(),

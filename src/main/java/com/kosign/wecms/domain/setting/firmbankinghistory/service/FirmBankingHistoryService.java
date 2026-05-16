@@ -142,6 +142,51 @@ public class FirmBankingHistoryService {
                 result.getTotalPages());
     }
 
+    /**
+     * Same filters + sort as {@link #list}, but returns the entire
+     * filtered set unpaged. Consumed only by
+     * {@code FirmBankingHistoryExportProvider} — the Excel export emits
+     * every matching row regardless of the user's current page, capped
+     * server-side by {@code ExcelExportService.MAX_ROWS = 50_000}.
+     *
+     * <p>The validation and tenant-scoping rules are identical to
+     * {@link #list}; the only delta is the page-size knob ({@code
+     * Pageable.unpaged()} → no LIMIT clause). Concurrency / index
+     * considerations: the V_FIRM_BANKING_HISTORY view's primary access
+     * path is {@code (BIZ_KEY, SUBSTRING(TARN_DTM,1,8))} so a 30-day
+     * filter typically resolves to a few hundred rows — well below the
+     * 50k cap. A pathological "all-time" filter would hit the cap;
+     * {@code ExcelExportService} rejects with {@code WBE2011}.
+     */
+    @Transactional(readOnly = true)
+    public List<FirmBankingHistoryRow> listAll(
+            String fromDate,
+            String toDate,
+            String svcType,
+            String keyword,
+            String sortField,
+            String sortDirection) {
+
+        String fromDt = validateDate("from_date", fromDate);
+        String toDt   = validateDate("to_date",   toDate);
+        validatePeriod(fromDt, toDt);
+        String svcTypeFilter = validateSvcType(svcType);
+        String keywordPattern = buildKeywordPattern(keyword);
+
+        Sort sort = buildSort(
+                FirmBankingHistorySortField.parse(sortField),
+                SortDirection.parse(sortDirection));
+
+        String bizKey = TenantContext.currentBizKey();
+        Page<FirmBankingHistoryView> result = repository.search(
+                bizKey, fromDt, toDt, svcTypeFilter, keywordPattern,
+                Pageable.unpaged(sort));
+
+        return result.getContent().stream()
+                .map(FirmBankingHistoryService::toRow)
+                .toList();
+    }
+
     /* -----------------------------------------------------------------
      *  Validation
      * ----------------------------------------------------------------- */

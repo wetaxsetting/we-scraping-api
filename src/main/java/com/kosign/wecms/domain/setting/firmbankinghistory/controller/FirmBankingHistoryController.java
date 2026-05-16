@@ -1,10 +1,16 @@
 package com.kosign.wecms.domain.setting.firmbankinghistory.controller;
 
+import com.kosign.wecms.common.export.ExcelExportRequest;
+import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.response.ApiResponse;
 import com.kosign.wecms.domain.setting.firmbankinghistory.dto.FirmBankingHistoryListResponse;
 import com.kosign.wecms.domain.setting.firmbankinghistory.service.FirmBankingHistoryService;
+import jakarta.servlet.http.HttpServletResponse;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -26,6 +32,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class FirmBankingHistoryController {
 
     private final FirmBankingHistoryService service;
+    private final ExcelExportService excelExportService;
 
     /**
      * List firm-banking history rows for the current tenant.
@@ -56,5 +63,20 @@ public class FirmBankingHistoryController {
         return ApiResponse.ok(service.list(
                 fromDate, toDate, svcType, keyword,
                 sortField, sortDirection, page, size));
+    }
+
+    /**
+     * Stream the filtered + sorted firm-banking history rows as an XLSX.
+     * Shared pipeline — see {@link ExcelExportService} for the full
+     * contract (column intersection with View Setting, 50k-row cap,
+     * RFC 5987 filename encoding). The provider
+     * ({@code FirmBankingHistoryExportProvider}) re-runs the same
+     * filter path the list endpoint uses via {@code service.listAll}.
+     */
+    @PostMapping("/export")
+    public void export(
+            @Valid @RequestBody ExcelExportRequest request,
+            HttpServletResponse response) {
+        excelExportService.exportTo(response, request);
     }
 }

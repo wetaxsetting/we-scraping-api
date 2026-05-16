@@ -5,14 +5,20 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kosign.wecms.domain.banking.nxisas.audit.NxisasAuditLogger;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasAcctListJobInput;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasAcctListJobResult;
+import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasBalanceJobInput;
+import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasBalanceJobResult;
+import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasTransactionJobInput;
+import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasTransactionJobResult;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasApiIn;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasApiOut;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasCommon;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasJob;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasLoginJobInput;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasLoginJobResult;
+import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasCaptchaJobInput;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasOTPJobInput;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasOTPJobResult;
+import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasQnaJobInput;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasOutput;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasResult;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasThread;
@@ -68,11 +74,77 @@ public class NxisasGatewayClient {
                 new TypeReference<NxisasApiOut<NxisasOTPJobResult>>() { });
     }
 
+    /**
+     * Resume an NXISAS scrape after a QNA (security-question) challenge.
+     * The response shape matches {@link NxisasLoginJobResult} — on
+     * success {@code CallBackfunc} is null; on a wrong answer the
+     * gateway can come back with another QNA / OTP / CAPTCHA challenge
+     * inside the same shape.
+     */
+    public NxisasApiOut<NxisasLoginJobResult> submitQna(String module, String category, String trSeq,
+                                                       NxisasQnaJobInput input,
+                                                       GatewayContinuation cont) {
+        return call(module, category, trSeq, NxisasJob.QNA, input, cont,
+                new TypeReference<NxisasApiOut<NxisasLoginJobResult>>() { });
+    }
+
+    /**
+     * Resume an NXISAS scrape after a CAPTCHA challenge. Wire shape
+     * identical to OTP ({@code Input.res = "<typed text>"}); the
+     * {@code Job} field is the discriminator. Response reuses
+     * {@link NxisasLoginJobResult} for the same reason QNA does — a
+     * wrong CAPTCHA can chain into another challenge.
+     */
+    public NxisasApiOut<NxisasLoginJobResult> submitCaptcha(String module, String category, String trSeq,
+                                                            NxisasCaptchaJobInput input,
+                                                            GatewayContinuation cont) {
+        return call(module, category, trSeq, NxisasJob.CAPTCHA, input, cont,
+                new TypeReference<NxisasApiOut<NxisasLoginJobResult>>() { });
+    }
+
     public NxisasApiOut<NxisasAcctListJobResult> acctList(String module, String category, String trSeq,
                                                           NxisasAcctListJobInput input,
                                                           GatewayContinuation cont) {
         return call(module, category, trSeq, NxisasJob.ACCT_LIST, input, cont,
                 new TypeReference<NxisasApiOut<NxisasAcctListJobResult>>() { });
+    }
+
+    /**
+     * TRANSACTION job — pull the transaction list for one account over
+     * the requested {@code startDate..endDate} window (inclusive,
+     * yyyyMMdd). Mirrors legacy {@code fnsh_0001_001_c001_act.jsp}'s
+     * IsasJob.TRANSACTION_FIXED_DEPOSIT / IsasJob.TRANSACTION_FOREIGN —
+     * the Coocon adapter dispatches local vs FCY by the {@code currency}
+     * field in the input, so a single gateway method covers both legacy
+     * job types.
+     *
+     * <p>Must be called AFTER a successful LOGIN on the same session
+     * (Tr_seq fresh per call per legacy parity; continuation carries
+     * SAS_SessionID + Gw_sys_no + Thread_no + Lbs_no + Ss_sys_no).
+     */
+    public NxisasApiOut<NxisasTransactionJobResult> transaction(String module, String category, String trSeq,
+                                                                NxisasTransactionJobInput input,
+                                                                GatewayContinuation cont) {
+        return call(module, category, trSeq, NxisasJob.TRANSACTION, input, cont,
+                new TypeReference<NxisasApiOut<NxisasTransactionJobResult>>() { });
+    }
+
+    /**
+     * BALANCE job — fetch current balance + available balance for one
+     * account. Mirrors legacy IsasJob.BALANCE_FIXED_DEPOSIT /
+     * BALANCE_FOREIGN; one gateway method covers both, the adapter
+     * dispatches by {@code currency}.
+     *
+     * <p>Called after TRANSACTION so {@code ACCT_MSTR.BAL} +
+     * {@code ACCT_MSTR.REAL_AMT} stay in sync with the just-scraped
+     * ledger (legacy parity — `fnsh_0001_001_c001_act.jsp` runs the
+     * BALANCE job in the same thread chain as TRANSACTION).
+     */
+    public NxisasApiOut<NxisasBalanceJobResult> balance(String module, String category, String trSeq,
+                                                        NxisasBalanceJobInput input,
+                                                        GatewayContinuation cont) {
+        return call(module, category, trSeq, NxisasJob.BALANCE, input, cont,
+                new TypeReference<NxisasApiOut<NxisasBalanceJobResult>>() { });
     }
 
     /**
@@ -229,6 +301,16 @@ public class NxisasGatewayClient {
 
     public NxisasAcctListJobResult firstAcctListResult(NxisasApiOut<NxisasAcctListJobResult> out) {
         NxisasResult<NxisasAcctListJobResult> r = firstEntry(out);
+        return r == null || r.getOutput() == null ? null : r.getOutput().getResult();
+    }
+
+    public NxisasTransactionJobResult firstTransactionResult(NxisasApiOut<NxisasTransactionJobResult> out) {
+        NxisasResult<NxisasTransactionJobResult> r = firstEntry(out);
+        return r == null || r.getOutput() == null ? null : r.getOutput().getResult();
+    }
+
+    public NxisasBalanceJobResult firstBalanceResult(NxisasApiOut<NxisasBalanceJobResult> out) {
+        NxisasResult<NxisasBalanceJobResult> r = firstEntry(out);
         return r == null || r.getOutput() == null ? null : r.getOutput().getResult();
     }
 

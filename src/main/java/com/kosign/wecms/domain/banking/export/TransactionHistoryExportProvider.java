@@ -34,18 +34,26 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class TransactionHistoryExportProvider implements ExportRowProvider {
 
+    // Mirrors the V157 + V159 seed which aligns the screen with the
+    // legacy on-screen table (12 fields, all FIX_YN='N'). The matching
+    // panel fields (CONTACT_NM, CONFIRMED_BY) join via
+    // ACCT_TRNS_RCV_PAY_INFM; TRSC_ID / FILE_NM / MTCH_DT / MTCH_BY /
+    // PURPOSE are not yet on the refactor's `TransactionRow` DTO —
+    // the row mapper below emits empty strings for them until the
+    // DTO is extended in a follow-up.
     private static final Set<String> ALLOWED_FIELD_IDS = Set.of(
+            "TRSC_ID",
             "TRSC_DTM",
-            "RMRK",
             "DEPOSIT_AMT",
             "WITHDRAW_AMT",
             "BAL",
-            "VAS_ACCT_CD",
-            "RCV_PAY_USAG_CD",
-            "RCV_PAY_TRCO_NM",
-            "CONF_YN",
-            "CONFIRMED_BY_NM",
-            "BANK_REF_NO"
+            "RMRK",
+            "FILE_NM",
+            "MTCH_DT",
+            "MTCH_BY",
+            "PURPOSE",
+            "CONTACT_NM",
+            "CONFIRMED_BY"
     );
 
     private final TransactionService transactionService;
@@ -90,17 +98,18 @@ public class TransactionHistoryExportProvider implements ExportRowProvider {
 
     private static Map<String, Object> toFieldMap(TransactionRow r) {
         Map<String, Object> m = new HashMap<>();
-        m.put("TRSC_DTM",        composeDtm(r.trscDt(), r.trscTm()));
-        m.put("RMRK",            nullToEmpty(r.rmrk()));
-        m.put("DEPOSIT_AMT",     r.depositAmt());
-        m.put("WITHDRAW_AMT",    r.withdrawAmt());
-        m.put("BAL",             r.bal());
-        m.put("VAS_ACCT_CD",     "");
-        m.put("RCV_PAY_USAG_CD", "");
-        m.put("RCV_PAY_TRCO_NM", "");
-        m.put("CONF_YN",         "Y".equals(r.confYn()) ? "Y" : "N");
-        m.put("CONFIRMED_BY_NM", nullToEmpty(r.confirmedBy()));
-        m.put("BANK_REF_NO",     "");
+        m.put("TRSC_ID",      "");   // pending DTO extension
+        m.put("TRSC_DTM",     composeDtm(r.trscDt(), r.trscTm()));
+        m.put("DEPOSIT_AMT",  r.depositAmt());
+        m.put("WITHDRAW_AMT", r.withdrawAmt());
+        m.put("BAL",          r.bal());
+        m.put("RMRK",         nullToEmpty(r.rmrk()));
+        m.put("FILE_NM",      "");   // pending DTO extension
+        m.put("MTCH_DT",      "");   // pending DTO extension
+        m.put("MTCH_BY",      nullToEmpty(r.confirmedBy()));
+        m.put("PURPOSE",      "");   // pending DTO extension
+        m.put("CONTACT_NM",   "");   // pending DTO extension (ACCT_TRNS_RCV_PAY_INFM join)
+        m.put("CONFIRMED_BY", nullToEmpty(r.confirmedBy()));
         return m;
     }
 

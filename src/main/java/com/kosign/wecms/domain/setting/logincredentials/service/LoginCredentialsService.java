@@ -12,7 +12,11 @@ import com.kosign.wecms.domain.auth.repository.UserInfmRepository;
 import com.kosign.wecms.domain.banking.bankcredentials.entity.BankCertInfo;
 import com.kosign.wecms.domain.banking.bankcredentials.repository.BankCertInfoRepository;
 import com.kosign.wecms.domain.banking.bankcredentials.service.BankCertCryptoService;
+import com.kosign.wecms.domain.banking.nxisas.BankScrapingService;
+import com.kosign.wecms.domain.banking.nxisas.dto.ScrapeSessionResponse;
+import com.kosign.wecms.domain.banking.nxisas.dto.VerifyCredentialsRequest;
 import com.kosign.wecms.domain.banking.entity.BankInfm;
+import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
 import com.kosign.wecms.domain.banking.repository.BankInfmRepository;
 import com.kosign.wecms.domain.setting.logincredentials.dto.BankFormInfoResponse;
 import com.kosign.wecms.domain.setting.logincredentials.dto.BankFormInfoSubType;
@@ -107,11 +111,13 @@ public class LoginCredentialsService {
     private final BankCertInfoRepository    bankRepo;
     private final GdtCertInfoRepository     gdtRepo;
     private final BankInfmRepository        bankInfmRepo;
+    private final AcctMstrRepository        acctMstrRepo;
     private final UserInfmRepository        userRepo;
     private final BankCertCryptoService     crypto;
     private final PasswordEncoder           passwordEncoder;
     private final AuditLogService           auditLogService;
     private final AuditLogEntryRepository   auditLogReadRepo;
+    private final BankScrapingService       bankScrapingService;
 
     /* -----------------------------------------------------------------
      *  LIST — banking groups + single GDT row
@@ -192,7 +198,25 @@ public class LoginCredentialsService {
         if (TYPE_BANK.equals(normalizedType)) {
             BankCertInfo row = bankRepo.findByBizKeyAndSeqNo(bizKey, seqNo)
                     .orElseThrow(() -> new BusinessException("WBE2090"));
+            String bankCd = row.getBankCd();
             bankRepo.delete(row);
+            // Flush so the COUNT query below sees the deletion — without
+            // the flush the count would still include the just-deleted
+            // row and the cascade would never fire.
+            bankRepo.flush();
+            // Cascade-delete the linked ACCT_MSTR rows ONLY when this was
+            // the last surviving credential for that bank in the tenant.
+            // The legacy `fnif_0001_001_d001` had the cascade commented
+            // out at lines 153-168 (intent to cascade but unimplemented);
+            // the refactor closes that gap to prevent orphan accounts in
+            // Banking > Account Inquiry when a credential is removed.
+            // Preserves sibling-credential account links — if two
+            // credentials at the same bank exist, deleting one doesn't
+            // strip the other's accounts.
+            if (bankCd != null && !bankCd.isBlank()
+                    && bankRepo.countByBizKeyAndBankCd(bizKey, bankCd) == 0L) {
+                acctMstrRepo.deleteByBizKeyAndBankCd(bizKey, bankCd);
+            }
             appendAudit(REF_NO_BANK, seqNo.toPlainString());
         } else {
             GdtCertInfo row = gdtRepo.findByBizKeyAndSeqNo(bizKey, seqNo)
@@ -333,6 +357,44 @@ public class LoginCredentialsService {
                 .activityKey("audit.login_credentials.activity")
                 .detailKey("audit.login_credentials.update.detail")
                 .build());
+    }
+
+    /**
+     * Edit flow's pre-update bank-side verification. Loads the
+     * BANK_CERT_INFO row by SEQ_NO, runs an inline NXISAS LOGIN with
+     * the stored bank context + the user's typed NEW password, and
+     * returns the resulting {@link ScrapeSessionResponse}. NEVER
+     * writes to the DB — the existing row stays untouched regardless
+     * of outcome.
+     *
+     * <p>Frontend contract: on {@code COMPLETED}, the caller follows
+     * up with the standard {@code PUT /api/v1/login-credentials/bank/{seqNo}}
+     * carrying the new password to persist it. On any challenge
+     * ({@code OTP_REQUIRED} / {@code QNA_REQUIRED} /
+     * {@code CAPTCHA_REQUIRED}), the caller resumes via the existing
+     * scraping endpoints; the persist happens only after a final
+     * COMPLETED. On {@code ERROR}, the caller surfaces the bank-side
+     * error and does NOT call PUT — the user's existing password is
+     * preserved.
+     *
+     * <p>Tenant scope: the {@code TenantContext} guard inside
+     * {@link BankCertInfoRepository#findByBizKeyAndSeqNo} prevents
+     * cross-tenant access; a malicious / stale seqNo from a different
+     * BIZ_KEY surfaces as {@code WBE2090} (not found).
+     */
+    @Transactional(readOnly = true)
+    public ScrapeSessionResponse verifyUpdate(BigDecimal seqNo, String newPassword) {
+        String bizKey = TenantContext.currentBizKey();
+        BankCertInfo entity = bankRepo.findByBizKeyAndSeqNo(bizKey, seqNo)
+                .orElseThrow(() -> new BusinessException("WBE2090"));
+        VerifyCredentialsRequest req = new VerifyCredentialsRequest(
+                entity.getBankCd(),
+                entity.getCertInfoCon(),
+                newPassword,
+                entity.getNxisasGbSeqNo(),
+                entity.getCertInfoDetlCon2(),
+                entity.getCertInfoDetlCon3());
+        return bankScrapingService.verify(req);
     }
 
     /* -----------------------------------------------------------------
