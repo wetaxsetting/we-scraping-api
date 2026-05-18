@@ -74,6 +74,14 @@ public class ExptResolMstr {
     @Column(name = "DRAFT_USER_NM", length = 100, nullable = false)
     private String draftUserNm;
 
+    /** Legacy DEV columns — NOT NULL with no DEFAULT. Refactor doesn't
+     *  model "site" so writers stamp empty strings; reads ignore. */
+    @Column(name = "DRAFT_USER_SITE_CD", length = 20, nullable = false)
+    private String draftUserSiteCd;
+
+    @Column(name = "DRAFT_USER_SITE_NM", length = 200, nullable = false)
+    private String draftUserSiteNm;
+
     @Column(name = "TITL", length = 200, nullable = false)
     private String titl;
 

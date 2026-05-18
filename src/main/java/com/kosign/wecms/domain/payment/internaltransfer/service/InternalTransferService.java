@@ -6,6 +6,8 @@ import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.common.web.SortDirection;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxActionResponse;
+import com.kosign.wecms.domain.payment.approvalbox.service.ApprDv;
+import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxFanoutService;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxService;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.CreateScheduledTransferRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.CreateScheduledTransferResponse;
@@ -154,6 +156,10 @@ public class InternalTransferService {
      *  "In Progress" until every approver has acted). The Internal
      *  Transfer master row then mirrors the resulting status. */
     private final ApprovalBoxService           approvalBoxService;
+    /** Approval-Box fan-out — Request Approval writes the matching
+     *  rows into {@code EXPT_RESOL_MSTR} + {@code EXPT_RESOL_APPRVR_INFM}
+     *  so the legacy Approval Box list query sees the request. */
+    private final ApprovalBoxFanoutService     approvalBoxFanoutService;
     private final InternalTransferFileResolver fileResolver;
     private final AuditLogService              auditLogService;
     private final com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter erpHistoryWriter;
@@ -626,6 +632,22 @@ public class InternalTransferService {
         String userId = TenantContext.currentUserId();
         if (userId != null) master.setModId(userId);
         sumrRepository.saveAndFlush(master);
+
+        // Fan out to EXPT_RESOL_MSTR + EXPT_RESOL_APPRVR_INFM so the
+        // Approval Box list sees this request. Without this the
+        // stamped APPR_SEQ_NO lives only on SCDUL_PYMN_SUMR and the
+        // Approval Box query (resl_0001_001) returns nothing.
+        List<ApprovalBoxFanoutService.Approver> chain = req.approvers().stream()
+                .map(a -> new ApprovalBoxFanoutService.Approver(a.apprvrId(), a.apprvrNm()))
+                .toList();
+        approvalBoxFanoutService.fanout(
+                ApprDv.INTERNAL_TRANSFER,
+                apprSeqNo,
+                master.getTitl(),
+                master.getScdulPymnNo(),
+                master.getTotalTranAmt(),
+                req.payDate(),
+                chain);
     }
 
     /* ----------------------------------------------------------------

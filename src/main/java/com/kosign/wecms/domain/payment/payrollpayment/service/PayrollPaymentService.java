@@ -10,6 +10,8 @@ import com.kosign.wecms.domain.banking.entity.BankInfm;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
 import com.kosign.wecms.domain.banking.repository.BankInfmRepository;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxActionResponse;
+import com.kosign.wecms.domain.payment.approvalbox.service.ApprDv;
+import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxFanoutService;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxService;
 import com.kosign.wecms.domain.payment.dispatch.service.TransferDispatchExecutor;
 import com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter;
@@ -131,6 +133,8 @@ public class PayrollPaymentService {
     private final TransferDispatchExecutor      dispatchExecutor;
     /** Approver-chain authority — see InternalTransferService for the rationale. */
     private final ApprovalBoxService            approvalBoxService;
+    /** Approval-Box fan-out — see InternalTransferService for rationale. */
+    private final ApprovalBoxFanoutService      approvalBoxFanoutService;
     private final Clock                         clock;
 
     @Transactional(readOnly = true)
@@ -503,6 +507,20 @@ public class PayrollPaymentService {
         String userId = TenantContext.currentUserId();
         if (userId != null) master.setModId(userId);
         sumrRepository.saveAndFlush(master);
+
+        // Fan out to EXPT_RESOL_MSTR + EXPT_RESOL_APPRVR_INFM so the
+        // Approval Box list query sees this request.
+        List<ApprovalBoxFanoutService.Approver> chain = req.approvers().stream()
+                .map(a -> new ApprovalBoxFanoutService.Approver(a.apprvrId(), a.apprvrNm()))
+                .toList();
+        approvalBoxFanoutService.fanout(
+                ApprDv.PAYROLL,
+                apprSeqNo,
+                master.getTitl(),
+                master.getScdulPymnNo(),
+                master.getTotalTranAmt(),
+                req.payDate(),
+                chain);
     }
 
     /* ----------------------------------------------------------------
