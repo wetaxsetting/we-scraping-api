@@ -40,6 +40,14 @@ import org.springframework.data.repository.query.Param;
 public interface ExptResolMstrRepository
         extends JpaRepository<ExptResolMstr, ExptResolMstrId> {
 
+    /** Per-tenant MAX(apprSeqNo::bigint) for cross-table allocation.
+     *  Used by the overseas-payment request-approval path to ensure the
+     *  newly issued APPR_SEQ_NO is above any existing master rows. */
+    @Query(value = "SELECT MAX(CAST(appr_seq_no AS BIGINT)) FROM expt_resol_mstr " +
+                   "WHERE biz_key = :bizKey AND appr_seq_no ~ '^[0-9]+$'",
+           nativeQuery = true)
+    Long findMaxApprSeqNoByBizKey(@Param("bizKey") String bizKey);
+
     /**
      * Page slice with filter, search, sort, pagination, and per-user
      * visibility.

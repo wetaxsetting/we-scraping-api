@@ -4,11 +4,15 @@ import com.kosign.wecms.common.auditlog.service.AuditLogContext;
 import com.kosign.wecms.common.auditlog.service.AuditLogService;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
+import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolApprvrInfm;
+import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
+import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolApprvrInfmRepository;
+import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
+import com.kosign.wecms.domain.payment.approvalbox.service.ApprDv;
 import com.kosign.wecms.domain.payment.dto.OverseasApprover;
 import com.kosign.wecms.domain.payment.dto.OverseasCurrencyTotal;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentDetailResponse;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentDetailRowResponse;
-import com.kosign.wecms.domain.payment.dto.OverseasPaymentExcelDetailRow;
 import com.kosign.wecms.domain.payment.dto.OverseasResultListResponse;
 import com.kosign.wecms.domain.payment.dto.OverseasResultRow;
 import com.kosign.wecms.domain.payment.dto.OverseasScheduledListResponse;
@@ -22,6 +26,7 @@ import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnDtlsRepositor
 import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnSumrRepository;
 import com.kosign.wecms.domain.payment.repository.OverseasApproverRepository;
 import com.kosign.wecms.domain.payment.repository.OverseasPaymentRepository;
+import com.kosign.wecms.domain.auth.repository.BusiInfmRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -31,7 +36,6 @@ import java.math.BigDecimal;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -61,11 +65,14 @@ public class OverseasPaymentService {
     private static final DateTimeFormatter DTM_FMT      = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
     private static final String            WSVC_ID      = "overseas-payment";
 
-    private final OverseasPaymentRepository  paymentRepo;
-    private final OverseasApproverRepository approverRepo;
-    private final OvrsPymnSumrRepository     sumrRepository;
-    private final OvrsPymnDtlsRepository     dtlsRepository;
-    private final AuditLogService            auditLogService;
+    private final OverseasPaymentRepository      paymentRepo;
+    private final OverseasApproverRepository     approverRepo;
+    private final OvrsPymnSumrRepository         sumrRepository;
+    private final OvrsPymnDtlsRepository         dtlsRepository;
+    private final ExptResolMstrRepository        exptResolMstrRepository;
+    private final ExptResolApprvrInfmRepository  exptResolApprvrInfmRepository;
+    private final AuditLogService                auditLogService;
+    private final BusiInfmRepository             busiInfmRepository;
 
     /**
      * Overseas scheduled-payment list.
@@ -372,21 +379,95 @@ public class OverseasPaymentService {
                 bizKey, ovrsPymnNo, trnSeq, code);
     }
 
+    /** Per-tenant MAX+1 across both EXPT_RESOL_MSTR and OVRS_PYMN_SUMR so the
+     *  newly issued APPR_SEQ_NO is above any Phase-A-only legacy rows. */
     private String allocateApprSeqNo(String bizKey) {
-        Long max = sumrRepository.findMaxApprSeqNoByBizKey(bizKey);
-        long next = (max == null ? 0L : max) + 1L;
-        return Long.toString(next);
+        Long fromMstr = exptResolMstrRepository.findMaxApprSeqNoByBizKey(bizKey);
+        Long fromSumr = sumrRepository.findMaxApprSeqNoByBizKey(bizKey);
+        long max = Math.max(
+                fromMstr == null ? 0L : fromMstr,
+                fromSumr == null ? 0L : fromSumr);
+        return Long.toString(max + 1L);
     }
 
     private void stampApproval(OvrsPymnSumr sumr, String apprSeqNo, RequestApprovalRequest req) {
+        String bizKey  = sumr.getBizKey();
+        String userId  = TenantContext.currentUserId();
+        String userNm  = TenantContext.currentUserNm();
+        String nowDtm  = ZonedDateTime.now(VIETNAM_ZONE).format(DTM_FMT);
+        // yyyyMMdd and HHmmss slices of the 14-char timestamp
+        String draftDate = nowDtm.substring(0, 8);
+        String draftTime = nowDtm.substring(8, 14);
+
+        // 1. Stamp OVRS_PYMN_SUMR
         sumr.setApprSeqNo(apprSeqNo);
+        sumr.setApprStts("P");  // Pending
         if (req.postTitle() != null && !req.postTitle().isBlank()) {
             sumr.setTitl(req.postTitle().trim());
         }
-        String nowDtm = ZonedDateTime.now(VIETNAM_ZONE).format(DTM_FMT);
         sumr.setModDtm(nowDtm);
-        sumr.setModId(TenantContext.currentUserId());
+        sumr.setModId(userId);
         sumrRepository.save(sumr);
+
+        // 2. Write EXPT_RESOL_MSTR master row
+        ExptResolMstr mstr = new ExptResolMstr();
+        mstr.setBizKey(bizKey);
+        mstr.setApprSeqNo(apprSeqNo);
+        mstr.setApprDv(ApprDv.OVERSEAS.code());     // "34"
+        mstr.setApprSts("0");                       // initial pending state
+        mstr.setDraftDate(draftDate);
+        mstr.setDraftTime(draftTime);
+        mstr.setDraftUserId(userId != null ? userId : "");
+        mstr.setDraftUserNm(userNm != null ? userNm : "");
+        // Legacy NOT NULL display columns — values match DEV data for appr_dv='34' rows
+        mstr.setDraftUserSiteCd(bizKey);
+        String cmpnNm = busiInfmRepository.findById(bizKey)
+                .map(b -> b.getCmpnNm() != null ? b.getCmpnNm() : bizKey)
+                .orElse(bizKey);
+        mstr.setDraftUserSiteNm(cmpnNm);
+        mstr.setHandRegYn("Y");
+        mstr.setApprBoxUseYn("Y");
+        mstr.setApprDatDispYn("N");
+        mstr.setCmpnLogoDispYn("Y");
+        mstr.setRegDispYn("Y");
+        mstr.setTitl(req.postTitle() != null ? req.postTitle().trim() : "");
+        mstr.setDocNo(sumr.getOvrsPymnNo());
+        mstr.setDocNm(sumr.getTitl() != null ? sumr.getTitl() : sumr.getOvrsPymnNo());
+        // VN tenants: VND amount stored in the KHR column (legacy parity per entity Javadoc)
+        mstr.setTotPayKhrAmt(sumr.getTotalTranAmt());
+        mstr.setTotPayUsdAmt(BigDecimal.ZERO);
+        mstr.setTotPayVndAmt(sumr.getTotalTranAmt());
+        mstr.setPayDate(req.payDate() != null && !req.payDate().isBlank() ? req.payDate().trim() : null);
+        mstr.setDelYn("N");
+        mstr.setPayEndYn("N");
+        mstr.setApprTypeCd("00");   // Pending tab
+        mstr.setRegId(userId != null ? userId : "");
+        mstr.setRegDtm(nowDtm);
+        mstr.setModId(userId);
+        mstr.setModDtm(nowDtm);
+        exptResolMstrRepository.save(mstr);
+
+        // 3. Write EXPT_RESOL_APPRVR_INFM rows — first approver is "P" (active),
+        //    subsequent approvers are "W" (waiting for their turn)
+        List<RequestApprovalRequest.ApproverInput> approvers = req.approvers();
+        for (int i = 0; i < approvers.size(); i++) {
+            RequestApprovalRequest.ApproverInput ap = approvers.get(i);
+            ExptResolApprvrInfm row = new ExptResolApprvrInfm();
+            row.setBizKey(bizKey);
+            row.setApprSeqNo(apprSeqNo);
+            row.setApprvrId(ap.apprvrId());
+            row.setApprvrStts(i == 0 ? "P" : "W");
+            row.setApprvrNm(ap.apprvrNm());
+            row.setApprDtm(null);
+            row.setRegId(userId);
+            row.setRegDtm(nowDtm);
+            row.setModId(userId != null ? userId : "");
+            row.setModDtm(nowDtm);
+            row.setReadYn("N");
+            row.setApprvrLineNo(BigDecimal.valueOf(i + 1));
+            row.setApprLineNo(BigDecimal.valueOf(req.apprLineNo()));
+            exptResolApprvrInfmRepository.save(row);
+        }
     }
 
     // ─── mappers ──────────────────────────────────────────────────────────────
