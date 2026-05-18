@@ -33,7 +33,7 @@
 UPDATE SYS_SCR_OPTION_WECMS
    SET FIX_YN = 'N',
        MOD_ID = 'SYSTEM',
-       MOD_DTM = TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISS')
+       MOD_DTM = NOW()
  WHERE WEB_SVC_ID = 'bank-account'
    AND DYM_AREA_ID = 'default'
    AND FIELD_ID = 'BANK'
