@@ -11,7 +11,11 @@ import com.kosign.wecms.domain.banking.dto.CreateMatchRequest;
 import com.kosign.wecms.domain.banking.dto.MatchCandidateListResponse;
 import com.kosign.wecms.domain.banking.dto.MatchResultResponse;
 import com.kosign.wecms.domain.banking.dto.TransactionConfirmRequest;
+import com.kosign.wecms.domain.banking.dto.TransactionContactRequest;
 import com.kosign.wecms.domain.banking.dto.TransactionDetailResponse;
+import com.kosign.wecms.domain.banking.dto.TransactionPurposeRequest;
+import com.kosign.wecms.domain.banking.dto.TransactionReportingAccountRequest;
+import com.kosign.wecms.domain.banking.dto.TransactionVasAccountRequest;
 import com.kosign.wecms.domain.banking.dto.TransactionListResponse;
 import com.kosign.wecms.domain.banking.dto.TransactionSummaryResponse;
 import com.kosign.wecms.domain.banking.dto.TransactionsSyncRequest;
@@ -32,6 +36,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -287,6 +292,143 @@ public class AccountController {
             @PathVariable("trnsSeqNo") String trnsSeqNo) {
         transactionService.undoConfirm(acctSeqNo, trnsSeqNo);
         return ApiResponse.ok(null);
+    }
+
+    /**
+     * Assign / change the Reporting Account (chart of accounts) on one
+     * bank transaction. Writes {@code CHART_ACCT_CD} +
+     * {@code CHART_ACCT_SEQ_NO} on {@code ACCT_TRNS_HSTR}. Mirrors
+     * legacy {@code fnsh_0200_001_view.jsp} line 327's Reporting
+     * Account cell.
+     *
+     * <p>Validates the picked chart-of-accounts row against
+     * {@code CHART_ACCT_INFM} for the current tenant before the write
+     * commits — a stale frontend cannot drift the seq_no / code pair
+     * apart, and a deleted / inactive account cannot be assigned.
+     *
+     * <p>Returns the refreshed transaction detail payload so the
+     * frontend can re-render the row in place without a follow-up GET.
+     */
+    @PatchMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/reporting-account")
+    public ApiResponse<TransactionDetailResponse> updateTransactionReportingAccount(
+            @PathVariable("acctSeqNo") String acctSeqNo,
+            @PathVariable("trnsSeqNo") String trnsSeqNo,
+            @Valid @RequestBody TransactionReportingAccountRequest request) {
+        return ApiResponse.ok(
+                transactionService.updateReportingAccount(acctSeqNo, trnsSeqNo, request));
+    }
+
+    /**
+     * Clear the Reporting Account on one bank transaction. Nulls both
+     * {@code CHART_ACCT_CD} and {@code CHART_ACCT_SEQ_NO} on
+     * {@code ACCT_TRNS_HSTR}. Mirrors the legacy "× clear" affordance
+     * on the Reporting Account cell — the row falls back to the brand-
+     * blue "Select Account" placeholder after the clear.
+     *
+     * <p>Idempotent — clearing an already-empty row is a no-op (no
+     * error, just returns the refreshed detail). Returns the refreshed
+     * transaction detail so the frontend re-renders without a follow-
+     * up GET.
+     */
+    @DeleteMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/reporting-account")
+    public ApiResponse<TransactionDetailResponse> clearTransactionReportingAccount(
+            @PathVariable("acctSeqNo") String acctSeqNo,
+            @PathVariable("trnsSeqNo") String trnsSeqNo) {
+        return ApiResponse.ok(
+                transactionService.clearReportingAccount(acctSeqNo, trnsSeqNo));
+    }
+
+    /**
+     * Assign / change the Purpose ({@code USE_USAG_CD}) on one bank
+     * transaction. Writes {@code RCV_PAY_USAG_CD} on the matching
+     * {@code ACCT_TRNS_RCV_PAY_INFM} row — creating one when the
+     * transaction has no receipt/payment record yet (the Purpose
+     * picker is independent of the Confirm flow).
+     *
+     * <p>Validates the picked entry exists in
+     * {@code BUSI_USAG_SET_INFM} for the current tenant and is active
+     * ({@code USE_YN='Y'}) before the write commits.
+     */
+    @PatchMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/purpose")
+    public ApiResponse<TransactionDetailResponse> updateTransactionPurpose(
+            @PathVariable("acctSeqNo") String acctSeqNo,
+            @PathVariable("trnsSeqNo") String trnsSeqNo,
+            @Valid @RequestBody TransactionPurposeRequest request) {
+        return ApiResponse.ok(
+                transactionService.updatePurpose(acctSeqNo, trnsSeqNo, request));
+    }
+
+    /**
+     * Clear the Purpose on one bank transaction — nulls
+     * {@code RCV_PAY_USAG_CD} on every receipt/payment row tied to the
+     * transaction. Idempotent — clearing an already-empty record is a
+     * no-op.
+     */
+    @DeleteMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/purpose")
+    public ApiResponse<TransactionDetailResponse> clearTransactionPurpose(
+            @PathVariable("acctSeqNo") String acctSeqNo,
+            @PathVariable("trnsSeqNo") String trnsSeqNo) {
+        return ApiResponse.ok(
+                transactionService.clearPurpose(acctSeqNo, trnsSeqNo));
+    }
+
+    /**
+     * Assign / change the VAS Account ({@code VAS_ACCT_CD}) on one
+     * bank transaction. Writes the picked code on
+     * {@code ACCT_TRNS_RCV_PAY_INFM} — creating one when the
+     * transaction has no receipt/payment record yet. Validates the
+     * picker's choice exists in {@code BUSI_VAS_ACCT_INFM} for the
+     * current tenant and is active ({@code STTS='A'}, {@code DEL_YN='N'}).
+     */
+    @PatchMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/vas-account")
+    public ApiResponse<TransactionDetailResponse> updateTransactionVasAccount(
+            @PathVariable("acctSeqNo") String acctSeqNo,
+            @PathVariable("trnsSeqNo") String trnsSeqNo,
+            @Valid @RequestBody TransactionVasAccountRequest request) {
+        return ApiResponse.ok(
+                transactionService.updateVasAccount(acctSeqNo, trnsSeqNo, request));
+    }
+
+    /**
+     * Clear the VAS Account on one bank transaction. Idempotent —
+     * clearing an already-empty record is a no-op.
+     */
+    @DeleteMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/vas-account")
+    public ApiResponse<TransactionDetailResponse> clearTransactionVasAccount(
+            @PathVariable("acctSeqNo") String acctSeqNo,
+            @PathVariable("trnsSeqNo") String trnsSeqNo) {
+        return ApiResponse.ok(
+                transactionService.clearVasAccount(acctSeqNo, trnsSeqNo));
+    }
+
+    /**
+     * Assign / change the Contact ({@code TRCO_KEY}) on one bank
+     * transaction. Writes the snapshot pair
+     * ({@code RCV_PAY_TRCO_KEY} + {@code RCV_PAY_TRCO_NM}) on
+     * {@code ACCT_TRNS_RCV_PAY_INFM} — creating one when the
+     * transaction has no receipt/payment record yet. Validates the
+     * picker's choice exists in {@code TRCO_INFM} for the current
+     * tenant and is non-trashed ({@code TRCO_STTS != 'C'}).
+     */
+    @PatchMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/contact")
+    public ApiResponse<TransactionDetailResponse> updateTransactionContact(
+            @PathVariable("acctSeqNo") String acctSeqNo,
+            @PathVariable("trnsSeqNo") String trnsSeqNo,
+            @Valid @RequestBody TransactionContactRequest request) {
+        return ApiResponse.ok(
+                transactionService.updateContact(acctSeqNo, trnsSeqNo, request));
+    }
+
+    /**
+     * Clear the Contact on one bank transaction. Idempotent — clearing
+     * an already-empty record is a no-op.
+     */
+    @DeleteMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/contact")
+    public ApiResponse<TransactionDetailResponse> clearTransactionContact(
+            @PathVariable("acctSeqNo") String acctSeqNo,
+            @PathVariable("trnsSeqNo") String trnsSeqNo) {
+        return ApiResponse.ok(
+                transactionService.clearContact(acctSeqNo, trnsSeqNo));
     }
 
     /**

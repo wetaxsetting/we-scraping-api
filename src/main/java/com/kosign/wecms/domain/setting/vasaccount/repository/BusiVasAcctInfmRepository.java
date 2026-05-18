@@ -43,6 +43,15 @@ public interface BusiVasAcctInfmRepository extends JpaRepository<BusiVasAcctInfm
             String bizKey, String vasAcctCd, String delYn);
 
     /**
+     * Lookup by user-visible code + soft-delete flag. Used by the
+     * Transaction History VAS picker to validate the picker's choice
+     * (active + tenant-scoped) before writing
+     * {@code ACCT_TRNS_RCV_PAY_INFM.VAS_ACCT_CD}.
+     */
+    Optional<BusiVasAcctInfm> findByBizKeyAndVasAcctCdAndDelYn(
+            String bizKey, String vasAcctCd, String delYn);
+
+    /**
      * Paginated, filtered list. Uses the {@code (:p IS NULL OR ...)}
      * guard pattern so optional filters are skipped without method-
      * explosion. {@code keywordPattern} is built service-side (lower-

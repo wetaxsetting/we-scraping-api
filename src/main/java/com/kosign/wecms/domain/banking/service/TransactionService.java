@@ -4,14 +4,26 @@ import com.kosign.wecms.common.enums.InoutDv;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.banking.dto.TransactionConfirmRequest;
+import com.kosign.wecms.domain.banking.dto.TransactionContactRequest;
 import com.kosign.wecms.domain.banking.dto.TransactionDetailResponse;
 import com.kosign.wecms.domain.banking.dto.TransactionListResponse;
+import com.kosign.wecms.domain.banking.dto.TransactionPurposeRequest;
+import com.kosign.wecms.domain.banking.dto.TransactionReportingAccountRequest;
 import com.kosign.wecms.domain.banking.dto.TransactionRow;
 import com.kosign.wecms.domain.banking.dto.TransactionSummaryResponse;
+import com.kosign.wecms.domain.banking.dto.TransactionVasAccountRequest;
 import com.kosign.wecms.domain.banking.entity.AcctTrnsHstr;
 import com.kosign.wecms.domain.banking.entity.AcctTrnsRcvPayInfm;
 import com.kosign.wecms.domain.banking.repository.AcctTrnsHstrRepository;
 import com.kosign.wecms.domain.banking.repository.AcctTrnsRcvPayInfmRepository;
+import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount;
+import com.kosign.wecms.domain.setting.chartofaccounts.repository.ChartOfAccountRepository;
+import com.kosign.wecms.domain.setting.contacts.entity.TrcoInfm;
+import com.kosign.wecms.domain.setting.contacts.repository.TrcoInfmRepository;
+import com.kosign.wecms.domain.setting.purposesettings.entity.BusiUsagSet;
+import com.kosign.wecms.domain.setting.purposesettings.repository.PurposeSettingsRepository;
+import com.kosign.wecms.domain.setting.vasaccount.entity.BusiVasAcctInfm;
+import com.kosign.wecms.domain.setting.vasaccount.repository.BusiVasAcctInfmRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,8 +32,10 @@ import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -46,12 +60,26 @@ public class TransactionService {
     private static final String CODE_NOT_FOUND = "WBE_TRANSACTION_NOT_FOUND";
     private static final String CODE_ALREADY_CONFIRMED = "WBE_TRANSACTION_ALREADY_CONFIRMED";
     private static final String CODE_NOT_CONFIRMED = "WBE_TRANSACTION_NOT_CONFIRMED";
+    private static final String CODE_CHART_ACCT_NOT_FOUND =
+            "WBE_TRANSACTION_CHART_ACCOUNT_NOT_FOUND";
+    private static final String CODE_CHART_ACCT_CODE_MISMATCH =
+            "WBE_TRANSACTION_CHART_ACCOUNT_CODE_MISMATCH";
+    private static final String CODE_PURPOSE_NOT_FOUND =
+            "WBE_TRANSACTION_PURPOSE_NOT_FOUND";
+    private static final String CODE_VAS_NOT_FOUND =
+            "WBE_TRANSACTION_VAS_ACCOUNT_NOT_FOUND";
+    private static final String CODE_CONTACT_NOT_FOUND =
+            "WBE_TRANSACTION_CONTACT_NOT_FOUND";
 
     private static final DateTimeFormatter DTM_FMT =
             DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
 
     private final AcctTrnsHstrRepository txnRepo;
     private final AcctTrnsRcvPayInfmRepository rcvPayRepo;
+    private final ChartOfAccountRepository chartAcctRepo;
+    private final PurposeSettingsRepository purposeRepo;
+    private final BusiVasAcctInfmRepository vasAcctRepo;
+    private final TrcoInfmRepository contactRepo;
 
     @Transactional(readOnly = true)
     public TransactionListResponse list(String acctSeqNo, String fromDt, String toDt, String typeFilter) {
@@ -79,6 +107,8 @@ public class TransactionService {
                 .filter(row -> matchesCnfmFilter(confirmedSeqs.contains(row.getAcctSeqNo()), cnfmFilter))
                 .toList();
 
+        RcvPayClassification classification = rcvPayClassificationBySeq(r.bizKey, rows);
+
         BigDecimal depositTotal = BigDecimal.ZERO;
         BigDecimal withdrawTotal = BigDecimal.ZERO;
         for (AcctTrnsHstr row : rows) {
@@ -91,7 +121,12 @@ public class TransactionService {
         }
 
         List<TransactionRow> mapped = rows.stream()
-                .map(row -> toRow(row, confirmedSeqs.contains(row.getAcctSeqNo())))
+                .map(row -> toRow(row,
+                        confirmedSeqs.contains(row.getAcctSeqNo()),
+                        classification.purposeByAcctSeqNo().get(row.getAcctSeqNo()),
+                        classification.vasAcctCdByAcctSeqNo().get(row.getAcctSeqNo()),
+                        classification.trcoKeyByAcctSeqNo().get(row.getAcctSeqNo()),
+                        classification.trcoNmByAcctSeqNo().get(row.getAcctSeqNo())))
                 .toList();
 
         return new TransactionListResponse(
@@ -259,6 +294,338 @@ public class TransactionService {
         rcvPayRepo.save(confirmed);
     }
 
+    /**
+     * Assign / change the Reporting Account (chart of accounts) on one
+     * bank transaction. Writes {@code CHART_ACCT_CD} +
+     * {@code CHART_ACCT_SEQ_NO} directly on {@code ACCT_TRNS_HSTR} —
+     * mirrors legacy {@code fnsh_0200_001_view.jsp} line 327 where the
+     * picker cell reads those two columns off the transaction row.
+     *
+     * <p>Validates that the {@code (chart_acct_seq_no, chart_acct_cd)}
+     * pair refers to an active (non-deleted) row in
+     * {@code CHART_ACCT_INFM} for the current tenant. Mismatched code +
+     * seq combinations are rejected so a stale frontend cannot drift
+     * the two halves apart.
+     *
+     * <p>No audit-log row + no {@code MOD_DTM} bump on
+     * {@code ACCT_TRNS_RCV_PAY_INFM} — Reporting Account is an
+     * orthogonal classification, not part of the matching panel.
+     */
+    @Transactional
+    public TransactionDetailResponse updateReportingAccount(
+            String acctSeqNo, String trnsSeqNo,
+            TransactionReportingAccountRequest request) {
+        Resolved r = resolve(acctSeqNo);
+
+        AcctTrnsHstr row = txnRepo.findByBizKeyAndBankCdAndAcctNoOrderByTrscDtDescTrscTmDesc(
+                        r.bizKey, r.bankCd, r.acctNo)
+                .stream()
+                .filter(h -> trnsSeqNo.equals(h.getAcctSeqNo()))
+                .findFirst()
+                .orElseThrow(() -> new BusinessException(CODE_NOT_FOUND));
+
+        // Validate the picked chart-of-accounts row exists, is active,
+        // and the (seq_no, code) pair matches a single row. The
+        // UK(BIZ_KEY, CHART_ACCT_CD, DEL_YN='N') makes the lookup O(1).
+        ChartOfAccount chart = chartAcctRepo
+                .findByBizKeyAndChartAcctCdAndDelYn(r.bizKey, request.chartAcctCd(), "N")
+                .orElseThrow(() -> new BusinessException(CODE_CHART_ACCT_NOT_FOUND));
+        if (!chart.getChartAcctSeqNo().equals(request.chartAcctSeqNo())) {
+            throw new BusinessException(CODE_CHART_ACCT_CODE_MISMATCH);
+        }
+        if (!"A".equals(chart.getStts())) {
+            throw new BusinessException(CODE_CHART_ACCT_NOT_FOUND);
+        }
+
+        String userId = TenantContext.currentUserId();
+        String nowDtm = OffsetDateTime.now(ZoneOffset.UTC).format(DTM_FMT);
+        row.setChartAcctCd(request.chartAcctCd());
+        row.setChartAcctSeqNo(request.chartAcctSeqNo());
+        row.setModId(userId);
+        row.setModDtm(nowDtm);
+        txnRepo.save(row);
+
+        return detail(acctSeqNo, trnsSeqNo);
+    }
+
+    /**
+     * Clear the Reporting Account on one bank transaction — sets both
+     * {@code CHART_ACCT_CD} and {@code CHART_ACCT_SEQ_NO} to null on
+     * {@code ACCT_TRNS_HSTR}. Idempotent: clearing an already-empty
+     * row is a no-op (no error, refreshed detail returned).
+     */
+    @Transactional
+    public TransactionDetailResponse clearReportingAccount(String acctSeqNo, String trnsSeqNo) {
+        Resolved r = resolve(acctSeqNo);
+
+        AcctTrnsHstr row = txnRepo.findByBizKeyAndBankCdAndAcctNoOrderByTrscDtDescTrscTmDesc(
+                        r.bizKey, r.bankCd, r.acctNo)
+                .stream()
+                .filter(h -> trnsSeqNo.equals(h.getAcctSeqNo()))
+                .findFirst()
+                .orElseThrow(() -> new BusinessException(CODE_NOT_FOUND));
+
+        if (row.getChartAcctCd() != null || row.getChartAcctSeqNo() != null) {
+            String userId = TenantContext.currentUserId();
+            String nowDtm = OffsetDateTime.now(ZoneOffset.UTC).format(DTM_FMT);
+            row.setChartAcctCd(null);
+            row.setChartAcctSeqNo(null);
+            row.setModId(userId);
+            row.setModDtm(nowDtm);
+            txnRepo.save(row);
+        }
+
+        return detail(acctSeqNo, trnsSeqNo);
+    }
+
+    /**
+     * Assign / change the Purpose ({@code USE_USAG_CD}) on one bank
+     * transaction. Writes {@code RCV_PAY_USAG_CD} on the matching
+     * {@code ACCT_TRNS_RCV_PAY_INFM} row — creating one when the
+     * transaction has no receipt/payment record yet. Mirrors the
+     * Reporting Account precedent + legacy {@code fnsh_0200_001_c001}
+     * write path which persists USE_USAG_CD alongside the matching
+     * cluster.
+     *
+     * <p>Validates the picker's choice exists in {@code BUSI_USAG_SET_INFM}
+     * for the current tenant and is active ({@code USE_YN='Y'}) before
+     * the write commits.
+     */
+    @Transactional
+    public TransactionDetailResponse updatePurpose(
+            String acctSeqNo, String trnsSeqNo, TransactionPurposeRequest request) {
+        Resolved r = resolve(acctSeqNo);
+
+        AcctTrnsHstr row = txnRepo.findByBizKeyAndBankCdAndAcctNoOrderByTrscDtDescTrscTmDesc(
+                        r.bizKey, r.bankCd, r.acctNo)
+                .stream()
+                .filter(h -> trnsSeqNo.equals(h.getAcctSeqNo()))
+                .findFirst()
+                .orElseThrow(() -> new BusinessException(CODE_NOT_FOUND));
+
+        BusiUsagSet purpose = purposeRepo
+                .findByBizKeyAndUseUsagCd(r.bizKey, request.useUsagCd())
+                .orElseThrow(() -> new BusinessException(CODE_PURPOSE_NOT_FOUND));
+        if (!"Y".equals(purpose.getUseYn())) {
+            throw new BusinessException(CODE_PURPOSE_NOT_FOUND);
+        }
+
+        AcctTrnsRcvPayInfm entry = ensureRcvPayRow(r, trnsSeqNo, row);
+
+        String userId = TenantContext.currentUserId();
+        String nowDtm = OffsetDateTime.now(ZoneOffset.UTC).format(DTM_FMT);
+        entry.setRcvPayUsagCd(request.useUsagCd());
+        entry.setModId(userId);
+        entry.setModDtm(nowDtm);
+        rcvPayRepo.save(entry);
+
+        return detail(acctSeqNo, trnsSeqNo);
+    }
+
+    /**
+     * Clear the Purpose on one bank transaction — sets
+     * {@code RCV_PAY_USAG_CD} to null on every receipt/payment row tied
+     * to the transaction. Idempotent: clearing an already-empty record
+     * is a no-op.
+     */
+    @Transactional
+    public TransactionDetailResponse clearPurpose(String acctSeqNo, String trnsSeqNo) {
+        Resolved r = resolve(acctSeqNo);
+
+        // Ensure the transaction belongs to the tenant before mutating.
+        txnRepo.findByBizKeyAndBankCdAndAcctNoOrderByTrscDtDescTrscTmDesc(
+                        r.bizKey, r.bankCd, r.acctNo)
+                .stream()
+                .filter(h -> trnsSeqNo.equals(h.getAcctSeqNo()))
+                .findFirst()
+                .orElseThrow(() -> new BusinessException(CODE_NOT_FOUND));
+
+        String userId = TenantContext.currentUserId();
+        String nowDtm = OffsetDateTime.now(ZoneOffset.UTC).format(DTM_FMT);
+        for (AcctTrnsRcvPayInfm rp : rcvPayRepo.findByBizKeyAndAcctSeqNo(r.bizKey, trnsSeqNo)) {
+            if (rp.getRcvPayUsagCd() != null) {
+                rp.setRcvPayUsagCd(null);
+                rp.setModId(userId);
+                rp.setModDtm(nowDtm);
+                rcvPayRepo.save(rp);
+            }
+        }
+
+        return detail(acctSeqNo, trnsSeqNo);
+    }
+
+    /**
+     * Assign / change the VAS Account ({@code VAS_ACCT_CD}) on one bank
+     * transaction. Writes {@code VAS_ACCT_CD} on the matching
+     * {@code ACCT_TRNS_RCV_PAY_INFM} row — creating one when the
+     * transaction has no receipt/payment record yet. Validates the
+     * picker's choice exists in {@code BUSI_VAS_ACCT_INFM} for the
+     * current tenant and is active ({@code STTS='A'}, {@code DEL_YN='N'}).
+     */
+    @Transactional
+    public TransactionDetailResponse updateVasAccount(
+            String acctSeqNo, String trnsSeqNo, TransactionVasAccountRequest request) {
+        Resolved r = resolve(acctSeqNo);
+
+        AcctTrnsHstr row = txnRepo.findByBizKeyAndBankCdAndAcctNoOrderByTrscDtDescTrscTmDesc(
+                        r.bizKey, r.bankCd, r.acctNo)
+                .stream()
+                .filter(h -> trnsSeqNo.equals(h.getAcctSeqNo()))
+                .findFirst()
+                .orElseThrow(() -> new BusinessException(CODE_NOT_FOUND));
+
+        BusiVasAcctInfm vas = vasAcctRepo
+                .findByBizKeyAndVasAcctCdAndDelYn(r.bizKey, request.vasAcctCd(), "N")
+                .orElseThrow(() -> new BusinessException(CODE_VAS_NOT_FOUND));
+        if (!"A".equals(vas.getStts())) {
+            throw new BusinessException(CODE_VAS_NOT_FOUND);
+        }
+
+        AcctTrnsRcvPayInfm entry = ensureRcvPayRow(r, trnsSeqNo, row);
+
+        String userId = TenantContext.currentUserId();
+        String nowDtm = OffsetDateTime.now(ZoneOffset.UTC).format(DTM_FMT);
+        entry.setVasAcctCd(request.vasAcctCd());
+        entry.setModId(userId);
+        entry.setModDtm(nowDtm);
+        rcvPayRepo.save(entry);
+
+        return detail(acctSeqNo, trnsSeqNo);
+    }
+
+    /**
+     * Clear the VAS Account on one bank transaction — sets
+     * {@code VAS_ACCT_CD} to null on every receipt/payment row tied to
+     * the transaction. Idempotent.
+     */
+    @Transactional
+    public TransactionDetailResponse clearVasAccount(String acctSeqNo, String trnsSeqNo) {
+        Resolved r = resolve(acctSeqNo);
+
+        txnRepo.findByBizKeyAndBankCdAndAcctNoOrderByTrscDtDescTrscTmDesc(
+                        r.bizKey, r.bankCd, r.acctNo)
+                .stream()
+                .filter(h -> trnsSeqNo.equals(h.getAcctSeqNo()))
+                .findFirst()
+                .orElseThrow(() -> new BusinessException(CODE_NOT_FOUND));
+
+        String userId = TenantContext.currentUserId();
+        String nowDtm = OffsetDateTime.now(ZoneOffset.UTC).format(DTM_FMT);
+        for (AcctTrnsRcvPayInfm rp : rcvPayRepo.findByBizKeyAndAcctSeqNo(r.bizKey, trnsSeqNo)) {
+            if (rp.getVasAcctCd() != null) {
+                rp.setVasAcctCd(null);
+                rp.setModId(userId);
+                rp.setModDtm(nowDtm);
+                rcvPayRepo.save(rp);
+            }
+        }
+
+        return detail(acctSeqNo, trnsSeqNo);
+    }
+
+    /**
+     * Assign / change the Contact ({@code RCV_PAY_TRCO_KEY} +
+     * {@code RCV_PAY_TRCO_NM}) on one bank transaction. Mirrors legacy
+     * {@code fnsh_0200_001_c001} which stamps both the key and the
+     * name at pick time so the audit row preserves "what the contact
+     * was called when the user matched it" even if the master is
+     * renamed later. Validates the contact exists, is non-trashed
+     * ({@code TRCO_STTS != 'C'}), and belongs to the current tenant.
+     */
+    @Transactional
+    public TransactionDetailResponse updateContact(
+            String acctSeqNo, String trnsSeqNo, TransactionContactRequest request) {
+        Resolved r = resolve(acctSeqNo);
+
+        AcctTrnsHstr row = txnRepo.findByBizKeyAndBankCdAndAcctNoOrderByTrscDtDescTrscTmDesc(
+                        r.bizKey, r.bankCd, r.acctNo)
+                .stream()
+                .filter(h -> trnsSeqNo.equals(h.getAcctSeqNo()))
+                .findFirst()
+                .orElseThrow(() -> new BusinessException(CODE_NOT_FOUND));
+
+        TrcoInfm contact = contactRepo
+                .findByTrcoKeyAndBizKey(request.trcoKey(), r.bizKey)
+                .orElseThrow(() -> new BusinessException(CODE_CONTACT_NOT_FOUND));
+        if ("C".equals(contact.getTrcoStts())) {
+            throw new BusinessException(CODE_CONTACT_NOT_FOUND);
+        }
+
+        AcctTrnsRcvPayInfm entry = ensureRcvPayRow(r, trnsSeqNo, row);
+
+        String userId = TenantContext.currentUserId();
+        String nowDtm = OffsetDateTime.now(ZoneOffset.UTC).format(DTM_FMT);
+        entry.setRcvPayTrcoKey(contact.getTrcoKey());
+        entry.setRcvPayTrcoNm(contact.getTrcoCmnm());
+        entry.setModId(userId);
+        entry.setModDtm(nowDtm);
+        rcvPayRepo.save(entry);
+
+        return detail(acctSeqNo, trnsSeqNo);
+    }
+
+    /**
+     * Clear the Contact on one bank transaction — sets the snapshot
+     * pair ({@code RCV_PAY_TRCO_KEY} + {@code RCV_PAY_TRCO_NM}) to
+     * null on every receipt/payment row tied to the transaction.
+     * Idempotent.
+     */
+    @Transactional
+    public TransactionDetailResponse clearContact(String acctSeqNo, String trnsSeqNo) {
+        Resolved r = resolve(acctSeqNo);
+
+        txnRepo.findByBizKeyAndBankCdAndAcctNoOrderByTrscDtDescTrscTmDesc(
+                        r.bizKey, r.bankCd, r.acctNo)
+                .stream()
+                .filter(h -> trnsSeqNo.equals(h.getAcctSeqNo()))
+                .findFirst()
+                .orElseThrow(() -> new BusinessException(CODE_NOT_FOUND));
+
+        String userId = TenantContext.currentUserId();
+        String nowDtm = OffsetDateTime.now(ZoneOffset.UTC).format(DTM_FMT);
+        for (AcctTrnsRcvPayInfm rp : rcvPayRepo.findByBizKeyAndAcctSeqNo(r.bizKey, trnsSeqNo)) {
+            if (rp.getRcvPayTrcoKey() != null || rp.getRcvPayTrcoNm() != null) {
+                rp.setRcvPayTrcoKey(null);
+                rp.setRcvPayTrcoNm(null);
+                rp.setModId(userId);
+                rp.setModDtm(nowDtm);
+                rcvPayRepo.save(rp);
+            }
+        }
+
+        return detail(acctSeqNo, trnsSeqNo);
+    }
+
+    /**
+     * Returns the (single) {@code ACCT_TRNS_RCV_PAY_INFM} row for the
+     * transaction, or creates a fresh row when the matching cluster
+     * has never been touched. Used by Purpose / Reporting-Account-style
+     * mutations that need an underlying record to attach to without
+     * the user having clicked Confirm first.
+     */
+    private AcctTrnsRcvPayInfm ensureRcvPayRow(
+            Resolved r, String trnsSeqNo, AcctTrnsHstr hstr) {
+        List<AcctTrnsRcvPayInfm> existing =
+                rcvPayRepo.findByBizKeyAndAcctSeqNo(r.bizKey, trnsSeqNo);
+        if (!existing.isEmpty()) {
+            return existing.get(0);
+        }
+        String userId = TenantContext.currentUserId();
+        String nowDtm = OffsetDateTime.now(ZoneOffset.UTC).format(DTM_FMT);
+        AcctTrnsRcvPayInfm fresh = new AcctTrnsRcvPayInfm();
+        fresh.setBizKey(r.bizKey);
+        fresh.setAcctSeqNo(trnsSeqNo);
+        fresh.setRcvPaySeqNo(nextRcvPaySeqNo(r.bizKey, trnsSeqNo));
+        fresh.setBankCd(r.bankCd);
+        fresh.setAcctNo(r.acctNo);
+        fresh.setTrscDt(hstr.getTrscDt());
+        fresh.setRcvPayAmt(hstr.getTrscAmt());
+        fresh.setCnfmYn("N");
+        fresh.setRegId(userId);
+        fresh.setRegDtm(nowDtm);
+        return fresh;
+    }
+
     /* ------------------------------------------------------------------ */
 
     /**
@@ -333,7 +700,56 @@ public class TransactionService {
         return out;
     }
 
-    private TransactionRow toRow(AcctTrnsHstr r, boolean confirmed) {
+    /**
+     * Map each {@code ACCT_SEQ_NO} → the picked Purpose
+     * ({@code RCV_PAY_USAG_CD}) and VAS Account ({@code VAS_ACCT_CD})
+     * from {@code ACCT_TRNS_RCV_PAY_INFM}. The Purpose and VAS columns
+     * on the list page read these without a per-row detail fetch.
+     * Multiple RCV_PAY rows per transaction collapse to the most
+     * recently modified entry so the pickers reflect the canonical pick.
+     */
+    private RcvPayClassification rcvPayClassificationBySeq(
+            String bizKey, List<AcctTrnsHstr> rows) {
+        if (rows.isEmpty()) {
+            return new RcvPayClassification(Map.of(), Map.of(), Map.of(), Map.of());
+        }
+        List<String> seqs = rows.stream().map(AcctTrnsHstr::getAcctSeqNo).toList();
+        Map<String, String> purposes = new HashMap<>();
+        Map<String, String> vas = new HashMap<>();
+        Map<String, String> trcoKeys = new HashMap<>();
+        Map<String, String> trcoNms = new HashMap<>();
+        Map<String, String> modDtmByAcct = new HashMap<>();
+        for (AcctTrnsRcvPayInfm rp : rcvPayRepo.findByBizKeyAndAcctSeqNoIn(bizKey, seqs)) {
+            String key = rp.getAcctSeqNo();
+            String cur = rp.getModDtm() != null ? rp.getModDtm() : rp.getRegDtm();
+            String prev = modDtmByAcct.get(key);
+            if (prev != null && (cur == null || cur.compareTo(prev) < 0)) continue;
+            modDtmByAcct.put(key, cur);
+            String purpose = rp.getRcvPayUsagCd();
+            if (purpose != null && !purpose.isBlank()) purposes.put(key, purpose);
+            else purposes.remove(key);
+            String vasCd = rp.getVasAcctCd();
+            if (vasCd != null && !vasCd.isBlank()) vas.put(key, vasCd);
+            else vas.remove(key);
+            String trcoKey = rp.getRcvPayTrcoKey();
+            if (trcoKey != null && !trcoKey.isBlank()) trcoKeys.put(key, trcoKey);
+            else trcoKeys.remove(key);
+            String trcoNm = rp.getRcvPayTrcoNm();
+            if (trcoNm != null && !trcoNm.isBlank()) trcoNms.put(key, trcoNm);
+            else trcoNms.remove(key);
+        }
+        return new RcvPayClassification(purposes, vas, trcoKeys, trcoNms);
+    }
+
+    private record RcvPayClassification(
+            Map<String, String> purposeByAcctSeqNo,
+            Map<String, String> vasAcctCdByAcctSeqNo,
+            Map<String, String> trcoKeyByAcctSeqNo,
+            Map<String, String> trcoNmByAcctSeqNo) { }
+
+    private TransactionRow toRow(AcctTrnsHstr r, boolean confirmed,
+                                  String useUsagCd, String vasAcctCd,
+                                  String rcvPayTrcoKey, String rcvPayTrcoNm) {
         boolean isDeposit = InoutDv.IN.code().equals(r.getInoutDv());
         BigDecimal amt = r.getTrscAmt();
         return new TransactionRow(
@@ -348,7 +764,13 @@ public class TransactionService {
                 confirmed ? "Y" : "N",
                 null,
                 null,
-                "Y".equals(r.getLinkMatchYn()) ? "Y" : "N"
+                "Y".equals(r.getLinkMatchYn()) ? "Y" : "N",
+                r.getChartAcctCd(),
+                r.getChartAcctSeqNo(),
+                useUsagCd,
+                vasAcctCd,
+                rcvPayTrcoKey,
+                rcvPayTrcoNm
         );
     }
 

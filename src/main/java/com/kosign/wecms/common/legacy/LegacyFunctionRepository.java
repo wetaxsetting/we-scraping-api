@@ -139,6 +139,34 @@ public class LegacyFunctionRepository {
     }
 
     /**
+     * Banking &gt; Smart Organizer &mdash; allocate the next per-tenant
+     * {@code RMRK_SEQ_NO} by delegating to the local
+     * {@code wb_get_next_val('rmrk_org_infm', 'rmrk_seq_no', biz_key)}
+     * branch (V161). The branch is a refactor convenience &mdash; DEV's
+     * function currently returns {@code NULL} for this combination
+     * because legacy {@code fnsh_0200_002_c001_act.jsp} relies on the
+     * generic {@code SeqHelper.getNextVal(util, idoCon, RmrkOrgInfm.class,
+     * "rmrk_seq_no")} path which falls back to per-tenant MAX+1 inside
+     * the IDO layer. The refactor wires the same MAX+1 into
+     * {@code wb_get_next_val} so the funnel signature stays uniform
+     * across every Settings feature.
+     *
+     * <p>Concurrency: service wraps the call + INSERT in one
+     * {@code @Transactional}; PK conflict surfaces as
+     * {@code DataIntegrityViolationException} and the service retries
+     * once before surfacing the error envelope.
+     *
+     * <p>Retire plan: drop this method and the V161 branch once the
+     * legacy WeCMS / WABOOKS systems no longer call
+     * {@code wb_get_next_val} for {@code rmrk_org_infm} &mdash; see
+     * "Surviving legacy functions" in
+     * {@code wecms-api-main/CLAUDE.md}.
+     */
+    public String nextRmrkSeqNo(String bizKey) {
+        return nextVal("rmrk_org_infm", "rmrk_seq_no", bizKey, null, null, null, null, null);
+    }
+
+    /**
      * Settings &gt; Contacts &gt; Attachments &mdash; allocate the next
      * per-contact {@code FILE_ID} by delegating to the legacy
      * {@code wb_get_next_val('trco_info_file', 'file_id', trco_key)}

@@ -110,6 +110,24 @@ public class AcctTrnsHstr {
     @JdbcTypeCode(SqlTypes.CHAR)
     private String lockedYn;
 
+    /**
+     * Reporting Account (chart of accounts) assigned to the bank
+     * transaction. Mirrors legacy {@code fnsh_0200_001_view.jsp} line 327
+     * where the Reporting Account cell reads {@code CHART_ACCT_CD} /
+     * {@code CHART_ACCT_SEQ_NO} off the transaction row. Both columns are
+     * nullable — unassigned rows render the "Select Account" placeholder.
+     *
+     * <p>Surrogate FK to {@code CHART_ACCT_INFM} (no DB FK constraint —
+     * mirrors legacy parity; the service-layer guard in
+     * {@code TransactionService.updateReportingAccount} validates the
+     * code exists for the tenant before writing).
+     */
+    @Column(name = "CHART_ACCT_CD", length = 20)
+    private String chartAcctCd;
+
+    @Column(name = "CHART_ACCT_SEQ_NO", length = 10)
+    private String chartAcctSeqNo;
+
     @Column(name = "REG_ID", length = 100)
     private String regId;
 
