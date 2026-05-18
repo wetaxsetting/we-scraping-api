@@ -74,6 +74,14 @@ public class ExptResolMstr {
     @Column(name = "DRAFT_USER_NM", length = 100, nullable = false)
     private String draftUserNm;
 
+    /** BIZ_KEY of the drafting user's company — legacy parity value. */
+    @Column(name = "DRAFT_USER_SITE_CD", length = 20, nullable = false)
+    private String draftUserSiteCd;
+
+    /** Company name of the drafting user — legacy parity value. */
+    @Column(name = "DRAFT_USER_SITE_NM", length = 200, nullable = false)
+    private String draftUserSiteNm;
+
     @Column(name = "TITL", length = 200, nullable = false)
     private String titl;
 
@@ -100,6 +108,26 @@ public class ExptResolMstr {
 
     @Column(name = "DEL_YN", length = 1, nullable = false)
     private String delYn;
+
+    /** 'Y' = manually registered by drafting user (legacy default 'Y'). */
+    @Column(name = "HAND_REG_YN", length = 1, nullable = false)
+    private String handRegYn;
+
+    /** 'Y' = approval box feature is active for this document. */
+    @Column(name = "APPR_BOX_USE_YN", length = 1, nullable = false)
+    private String apprBoxUseYn;
+
+    /** 'N' = do not display approval date in the printed form. */
+    @Column(name = "APPR_DAT_DISP_YN", length = 1, nullable = false)
+    private String apprDatDispYn;
+
+    /** 'Y' = display company logo in the printed form. */
+    @Column(name = "CMPN_LOGO_DISP_YN", length = 1, nullable = false)
+    private String cmpnLogoDispYn;
+
+    /** 'Y' = display drafter details in the printed form. */
+    @Column(name = "REG_DISP_YN", length = 1, nullable = false)
+    private String regDispYn;
 
     @Column(name = "PAY_END_YN", length = 1, nullable = false)
     private String payEndYn;

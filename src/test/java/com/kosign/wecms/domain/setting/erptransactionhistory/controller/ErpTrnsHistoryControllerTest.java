@@ -6,6 +6,7 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.kosign.wecms.common.enums.LangCd;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.exception.GlobalExceptionHandler;
+import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.i18n.MessageResolver;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.setting.erptransactionhistory.dto.ErpTrnsHistoryListResponse;
@@ -100,7 +101,7 @@ class ErpTrnsHistoryControllerTest {
         GlobalExceptionHandler advice = new GlobalExceptionHandler(messages);
 
         mvc = MockMvcBuilders
-                .standaloneSetup(new ErpTrnsHistoryController(service))
+                .standaloneSetup(new ErpTrnsHistoryController(service, mock(ExcelExportService.class)))
                 .setMessageConverters(jsonConverter, resourceConverter, byteConverter)
                 .setControllerAdvice(advice)
                 .build();

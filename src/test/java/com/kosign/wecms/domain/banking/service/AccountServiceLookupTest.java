@@ -4,8 +4,10 @@ import com.kosign.wecms.common.enums.LangCd;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.banking.dto.AccountLookupListResponse;
+import com.kosign.wecms.domain.banking.bankcredentials.repository.BankCertInfoRepository;
 import com.kosign.wecms.domain.banking.entity.AcctMstr;
 import com.kosign.wecms.domain.banking.entity.NapasBankInfo;
+import com.kosign.wecms.domain.banking.nxisas.BankTransactionSyncService;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
 import com.kosign.wecms.domain.banking.repository.NapasBankInfoRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -49,9 +51,11 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class AccountServiceLookupTest {
 
-    @Mock AcctMstrRepository      acctRepo;
-    @Mock BankCdResolver          bankResolver;
-    @Mock NapasBankInfoRepository napasRepo;
+    @Mock AcctMstrRepository         acctRepo;
+    @Mock BankCdResolver             bankResolver;
+    @Mock NapasBankInfoRepository    napasRepo;
+    @Mock BankCertInfoRepository     bankCertRepo;
+    @Mock BankTransactionSyncService bankSync;
 
     AccountService service;
 
@@ -62,7 +66,7 @@ class AccountServiceLookupTest {
 
     @BeforeEach
     void setUp() {
-        service = new AccountService(acctRepo, bankResolver, napasRepo);
+        service = new AccountService(acctRepo, bankResolver, napasRepo, bankCertRepo, bankSync);
         TenantContext.set(USER, BIZ, LangCd.EN);
     }
 

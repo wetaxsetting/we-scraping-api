@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.kosign.wecms.common.exception.GlobalExceptionHandler;
+import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.i18n.MessageResolver;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.common.enums.LangCd;
@@ -72,7 +73,7 @@ class FirmBankingHistoryControllerTest {
         GlobalExceptionHandler advice = new GlobalExceptionHandler(messages);
 
         mvc = MockMvcBuilders
-                .standaloneSetup(new FirmBankingHistoryController(service))
+                .standaloneSetup(new FirmBankingHistoryController(service, mock(ExcelExportService.class)))
                 .setMessageConverters(converter)
                 .setControllerAdvice(advice)
                 .build();

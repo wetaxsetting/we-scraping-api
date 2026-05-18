@@ -4,11 +4,15 @@ import com.kosign.wecms.common.auditlog.service.AuditLogContext;
 import com.kosign.wecms.common.auditlog.service.AuditLogService;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
+import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolApprvrInfm;
+import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
+import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolApprvrInfmRepository;
+import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
+import com.kosign.wecms.domain.payment.approvalbox.service.ApprDv;
 import com.kosign.wecms.domain.payment.dto.OverseasApprover;
 import com.kosign.wecms.domain.payment.dto.OverseasCurrencyTotal;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentDetailResponse;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentDetailRowResponse;
-import com.kosign.wecms.domain.payment.dto.OverseasPaymentExcelDetailRow;
 import com.kosign.wecms.domain.payment.dto.OverseasResultListResponse;
 import com.kosign.wecms.domain.payment.dto.OverseasResultRow;
 import com.kosign.wecms.domain.payment.dto.OverseasScheduledListResponse;
@@ -22,16 +26,22 @@ import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnDtlsRepositor
 import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnSumrRepository;
 import com.kosign.wecms.domain.payment.repository.OverseasApproverRepository;
 import com.kosign.wecms.domain.payment.repository.OverseasPaymentRepository;
+import com.kosign.wecms.domain.auth.repository.BusiInfmRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
 import java.math.BigDecimal;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -61,11 +71,14 @@ public class OverseasPaymentService {
     private static final DateTimeFormatter DTM_FMT      = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
     private static final String            WSVC_ID      = "overseas-payment";
 
-    private final OverseasPaymentRepository  paymentRepo;
-    private final OverseasApproverRepository approverRepo;
-    private final OvrsPymnSumrRepository     sumrRepository;
-    private final OvrsPymnDtlsRepository     dtlsRepository;
-    private final AuditLogService            auditLogService;
+    private final OverseasPaymentRepository      paymentRepo;
+    private final OverseasApproverRepository     approverRepo;
+    private final OvrsPymnSumrRepository         sumrRepository;
+    private final OvrsPymnDtlsRepository         dtlsRepository;
+    private final ExptResolMstrRepository        exptResolMstrRepository;
+    private final ExptResolApprvrInfmRepository  exptResolApprvrInfmRepository;
+    private final AuditLogService                auditLogService;
+    private final BusiInfmRepository             busiInfmRepository;
 
     /**
      * Overseas scheduled-payment list.
@@ -150,6 +163,7 @@ public class OverseasPaymentService {
             String fromDt,
             String toDt,
             String keyword,
+            String trnfYn,
             int page,
             int size) {
 
@@ -161,18 +175,19 @@ public class OverseasPaymentService {
         int    pageIndex  = Math.max(0, page);
         int    offset     = pageIndex * pageSize;
         String likePat    = buildLikePattern(keyword);
+        String trnfFilter = (trnfYn != null && !trnfYn.isBlank()) ? trnfYn : null;
 
-        long totalCount = paymentRepo.countResult(bizKey, fromDt, toDt, likePat);
+        long totalCount = paymentRepo.countResult(bizKey, fromDt, toDt, likePat, trnfFilter);
 
         java.util.List<Object[]> rawRows = totalCount == 0
                 ? java.util.List.of()
-                : paymentRepo.findResult(bizKey, fromDt, toDt, likePat, offset, pageSize);
+                : paymentRepo.findResult(bizKey, fromDt, toDt, likePat, trnfFilter, offset, pageSize);
 
         java.util.List<OverseasResultRow> rows = rawRows.stream()
                 .map(this::mapResultRow)
                 .collect(java.util.stream.Collectors.toList());
 
-        java.util.List<Object[]> rawTotals = paymentRepo.sumResultByCurrency(bizKey, fromDt, toDt, likePat);
+        java.util.List<Object[]> rawTotals = paymentRepo.sumResultByCurrency(bizKey, fromDt, toDt, likePat, trnfFilter);
         java.util.List<OverseasCurrencyTotal> totals = rawTotals.stream()
                 .map(this::mapTotal)
                 .collect(java.util.stream.Collectors.toList());
@@ -186,6 +201,88 @@ public class OverseasPaymentService {
                 .orElseThrow(() -> new BusinessException("WBE_NOT_FOUND",
                         "overseas payment result not found: " + ovrsPymnNo));
         return mapResultRow(r);
+    }
+
+    /**
+     * Streams the Overseas Payment Result XLSX per the WeCMS spec:
+     * title row → summary row (USD/VND/KRW totals) → header row → one data row per
+     * OVRS_PYMN_DTLS across all matching batches.
+     *
+     * <p>Mirrors legacy {@code pymn_0007_001} Excel export path.
+     */
+    public void exportResult(String fromDt, String toDt, String keyword, String trnfYn,
+                             HttpServletResponse response) throws IOException {
+        if (fromDt == null || fromDt.isBlank()) throw new BusinessException("WBE_VALIDATION", "FROM_DT is required");
+        if (toDt   == null || toDt.isBlank())   throw new BusinessException("WBE_VALIDATION", "TO_DT is required");
+
+        String bizKey    = TenantContext.currentBizKey();
+        String trnfFilter = (trnfYn != null && !trnfYn.isBlank()) ? trnfYn : null;
+        String likePat    = buildLikePattern(keyword);
+
+        List<Object[]> batches = paymentRepo.findResultForExport(bizKey, fromDt, toDt, likePat, trnfFilter);
+
+        Map<String, BigDecimal> currencyTotals = new LinkedHashMap<>();
+        List<OverseasPaymentResultExcelWriter.ExportRow> exportRows = new ArrayList<>();
+
+        for (Object[] b : batches) {
+            String ovrsPymnNo  = toStr(b[0]);
+            String batchRegDtm = toStr(b[5]);
+            String draftUserNm = toStr(b[6]);
+            String regId       = toStr(b[7]);
+            String outBankNm   = toStr(b[8]);
+            String wdrlActNo   = toStr(b[9]);
+            String trnfYnVal   = toStr(b[10]);
+            String docNo       = toStr(b[11]);
+            String apprTitl    = toStr(b[12]);
+            String apprRegDtm  = toStr(b[13]);
+            String apprTypeCd  = toStr(b[14]);
+            String payDate     = toStr(b[15]);
+            String orgFileNm   = toStr(b[2]);
+            String requestor   = draftUserNm != null && !draftUserNm.isBlank()
+                    ? draftUserNm : OverseasPaymentResultExcelWriter.safe(regId);
+
+            List<OvrsPymnDtls> dtls =
+                    dtlsRepository.findByBizKeyAndOvrsPymnNoOrderByTrnSeqAsc(bizKey, ovrsPymnNo);
+
+            for (OvrsPymnDtls d : dtls) {
+                BigDecimal amt    = d.getTrnfAmt() != null ? d.getTrnfAmt() : BigDecimal.ZERO;
+                String     rowCcy = d.getCcyCd()   != null ? d.getCcyCd()   : toStr(b[1]);
+                currencyTotals.merge(rowCcy, amt, BigDecimal::add);
+
+                exportRows.add(new OverseasPaymentResultExcelWriter.ExportRow(
+                        OverseasPaymentResultExcelWriter.formatDtm(batchRegDtm),
+                        String.valueOf(d.getTrnSeq()),
+                        OverseasPaymentResultExcelWriter.mapStatus(trnfYnVal),
+                        OverseasPaymentResultExcelWriter.formatDtm(apprRegDtm),
+                        OverseasPaymentResultExcelWriter.stripExtension(orgFileNm),
+                        OverseasPaymentResultExcelWriter.safe(outBankNm),
+                        OverseasPaymentResultExcelWriter.safe(wdrlActNo),
+                        OverseasPaymentResultExcelWriter.safe(d.getBnfcNm()),
+                        OverseasPaymentResultExcelWriter.safe(d.getBnfcBankNm()),
+                        OverseasPaymentResultExcelWriter.safe(d.getBicCd()),
+                        OverseasPaymentResultExcelWriter.safe(d.getBnfcActNo()),
+                        OverseasPaymentResultExcelWriter.safe(d.getBnfcAddr()),
+                        rowCcy,
+                        amt,
+                        OverseasPaymentResultExcelWriter.mapFeePayer(d.getFeePayerCd()),
+                        OverseasPaymentResultExcelWriter.safe(d.getRprtAcctCd()),
+                        OverseasPaymentResultExcelWriter.safe(d.getMemo()),
+                        requestor,
+                        OverseasPaymentResultExcelWriter.formatDate(payDate),
+                        OverseasPaymentResultExcelWriter.mapApprovalStatus(apprTypeCd),
+                        OverseasPaymentResultExcelWriter.safe(docNo),
+                        OverseasPaymentResultExcelWriter.safe(apprTitl)
+                ));
+            }
+        }
+
+        String fileName = "OverseasPaymentResult.xlsx";
+        String encoded  = URLEncoder.encode(fileName, StandardCharsets.UTF_8).replace("+", "%20");
+        response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        response.setHeader("Content-Disposition", "attachment; filename*=UTF-8''" + encoded);
+        response.setHeader("Access-Control-Expose-Headers", "Content-Disposition");
+
+        OverseasPaymentResultExcelWriter.write(currencyTotals, exportRows, response.getOutputStream());
     }
 
     // ─── detail + request approval ───────────────────────────────────────────
@@ -372,21 +469,95 @@ public class OverseasPaymentService {
                 bizKey, ovrsPymnNo, trnSeq, code);
     }
 
+    /** Per-tenant MAX+1 across both EXPT_RESOL_MSTR and OVRS_PYMN_SUMR so the
+     *  newly issued APPR_SEQ_NO is above any Phase-A-only legacy rows. */
     private String allocateApprSeqNo(String bizKey) {
-        Long max = sumrRepository.findMaxApprSeqNoByBizKey(bizKey);
-        long next = (max == null ? 0L : max) + 1L;
-        return Long.toString(next);
+        Long fromMstr = exptResolMstrRepository.findMaxApprSeqNoByBizKey(bizKey);
+        Long fromSumr = sumrRepository.findMaxApprSeqNoByBizKey(bizKey);
+        long max = Math.max(
+                fromMstr == null ? 0L : fromMstr,
+                fromSumr == null ? 0L : fromSumr);
+        return Long.toString(max + 1L);
     }
 
     private void stampApproval(OvrsPymnSumr sumr, String apprSeqNo, RequestApprovalRequest req) {
+        String bizKey  = sumr.getBizKey();
+        String userId  = TenantContext.currentUserId();
+        String userNm  = TenantContext.currentUserNm();
+        String nowDtm  = ZonedDateTime.now(VIETNAM_ZONE).format(DTM_FMT);
+        // yyyyMMdd and HHmmss slices of the 14-char timestamp
+        String draftDate = nowDtm.substring(0, 8);
+        String draftTime = nowDtm.substring(8, 14);
+
+        // 1. Stamp OVRS_PYMN_SUMR
         sumr.setApprSeqNo(apprSeqNo);
+        sumr.setApprStts("P");  // Pending
         if (req.postTitle() != null && !req.postTitle().isBlank()) {
             sumr.setTitl(req.postTitle().trim());
         }
-        String nowDtm = ZonedDateTime.now(VIETNAM_ZONE).format(DTM_FMT);
         sumr.setModDtm(nowDtm);
-        sumr.setModId(TenantContext.currentUserId());
+        sumr.setModId(userId);
         sumrRepository.save(sumr);
+
+        // 2. Write EXPT_RESOL_MSTR master row
+        ExptResolMstr mstr = new ExptResolMstr();
+        mstr.setBizKey(bizKey);
+        mstr.setApprSeqNo(apprSeqNo);
+        mstr.setApprDv(ApprDv.OVERSEAS.code());     // "34"
+        mstr.setApprSts("0");                       // initial pending state
+        mstr.setDraftDate(draftDate);
+        mstr.setDraftTime(draftTime);
+        mstr.setDraftUserId(userId != null ? userId : "");
+        mstr.setDraftUserNm(userNm != null ? userNm : "");
+        // Legacy NOT NULL display columns — values match DEV data for appr_dv='34' rows
+        mstr.setDraftUserSiteCd(bizKey);
+        String cmpnNm = busiInfmRepository.findById(bizKey)
+                .map(b -> b.getCmpnNm() != null ? b.getCmpnNm() : bizKey)
+                .orElse(bizKey);
+        mstr.setDraftUserSiteNm(cmpnNm);
+        mstr.setHandRegYn("Y");
+        mstr.setApprBoxUseYn("Y");
+        mstr.setApprDatDispYn("N");
+        mstr.setCmpnLogoDispYn("Y");
+        mstr.setRegDispYn("Y");
+        mstr.setTitl(req.postTitle() != null ? req.postTitle().trim() : "");
+        mstr.setDocNo(sumr.getOvrsPymnNo());
+        mstr.setDocNm(sumr.getTitl() != null ? sumr.getTitl() : sumr.getOvrsPymnNo());
+        // VN tenants: VND amount stored in the KHR column (legacy parity per entity Javadoc)
+        mstr.setTotPayKhrAmt(sumr.getTotalTranAmt());
+        mstr.setTotPayUsdAmt(BigDecimal.ZERO);
+        mstr.setTotPayVndAmt(sumr.getTotalTranAmt());
+        mstr.setPayDate(req.payDate() != null && !req.payDate().isBlank() ? req.payDate().trim() : null);
+        mstr.setDelYn("N");
+        mstr.setPayEndYn("N");
+        mstr.setApprTypeCd("00");   // Pending tab
+        mstr.setRegId(userId != null ? userId : "");
+        mstr.setRegDtm(nowDtm);
+        mstr.setModId(userId);
+        mstr.setModDtm(nowDtm);
+        exptResolMstrRepository.save(mstr);
+
+        // 3. Write EXPT_RESOL_APPRVR_INFM rows — first approver is "P" (active),
+        //    subsequent approvers are "W" (waiting for their turn)
+        List<RequestApprovalRequest.ApproverInput> approvers = req.approvers();
+        for (int i = 0; i < approvers.size(); i++) {
+            RequestApprovalRequest.ApproverInput ap = approvers.get(i);
+            ExptResolApprvrInfm row = new ExptResolApprvrInfm();
+            row.setBizKey(bizKey);
+            row.setApprSeqNo(apprSeqNo);
+            row.setApprvrId(ap.apprvrId());
+            row.setApprvrStts(i == 0 ? "P" : "W");
+            row.setApprvrNm(ap.apprvrNm());
+            row.setApprDtm(null);
+            row.setRegId(userId);
+            row.setRegDtm(nowDtm);
+            row.setModId(userId != null ? userId : "");
+            row.setModDtm(nowDtm);
+            row.setReadYn("N");
+            row.setApprvrLineNo(BigDecimal.valueOf(i + 1));
+            row.setApprLineNo(BigDecimal.valueOf(req.apprLineNo()));
+            exptResolApprvrInfmRepository.save(row);
+        }
     }
 
     // ─── mappers ──────────────────────────────────────────────────────────────
@@ -472,7 +643,10 @@ public class OverseasPaymentService {
                 toStr(r[12]),        // docNo
                 toStr(r[13]),        // titl (approval title)
                 0,                   // successCount — not yet tracked at batch level
-                0                    // failedCount  — not yet tracked at batch level
+                0,                   // failedCount  — not yet tracked at batch level
+                toStr(r[14]),        // payDate
+                toStr(r[15]),        // apprStts (appr_type_cd)
+                toStr(r[16])         // apprvrNm (NULL — complex join deferred)
         );
     }
 
