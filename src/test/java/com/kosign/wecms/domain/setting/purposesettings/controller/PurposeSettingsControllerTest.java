@@ -2,6 +2,7 @@ package com.kosign.wecms.domain.setting.purposesettings.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.kosign.wecms.common.enums.LangCd;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.exception.GlobalExceptionHandler;
@@ -59,6 +60,7 @@ class PurposeSettingsControllerTest {
                 mock(com.kosign.wecms.domain.setting.purposesettings.service.PurposeExcelService.class);
 
         ObjectMapper mapper = new ObjectMapper()
+                .registerModule(new JavaTimeModule())
                 .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
         MappingJackson2HttpMessageConverter converter =
                 new MappingJackson2HttpMessageConverter(mapper);

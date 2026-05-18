@@ -1,6 +1,13 @@
 spring:
   application:
     name: wecms-api-main
+  # Optionally load a local `.env` file as additional configuration.
+  # Use `.env.example` as the template (commit it); copy to `.env` and
+  # fill in real values (`.env` is git-ignored). Keys defined here
+  # override the YAML `${VAR:default}` placeholders. OS env vars still
+  # win over `.env` if both are set.
+  config:
+    import: optional:file:./.env[.properties]
   profiles:
     active: local
   jpa:
@@ -75,7 +82,10 @@ wecms:
     expires-in-seconds: 3600
     issuer: wecms-api-main
   cors:
-    allowed-origins: http://localhost:3000
+    # Comma-separated list of allowed cross-origin frontends. Baseline
+    # is local dev only — each profile (application-local.yml etc.)
+    # adds its own environment origins on top.
+    allowed-origins: ${WECMS_CORS_ALLOWED_ORIGINS:http://localhost:3000}
   tenant:
     # Dormant config slot. Spring no longer auto-creates company/admin
     # data at startup — the BootstrapRunner that previously consumed

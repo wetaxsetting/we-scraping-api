@@ -17,6 +17,7 @@ import com.kosign.wecms.domain.setting.contacts.repository.TrcoAcctInfoRepositor
 import com.kosign.wecms.domain.setting.contacts.repository.TrcoAddrInfmRepository;
 import com.kosign.wecms.domain.setting.contacts.repository.TrcoInfmRepository;
 import com.kosign.wecms.domain.setting.contacts.repository.TrcoOvrsInfmRepository;
+import com.kosign.wecms.domain.setting.firmbankingsettings.repository.TbFirmBankCodeRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -74,6 +75,7 @@ class ContactsServiceTest {
     @Mock TrcoAddrInfmRepository addrRepo;
     @Mock TrcoAcctInfoRepository acctRepo;
     @Mock TrcoOvrsInfmRepository ovrsRepo;
+    @Mock TbFirmBankCodeRepository bankCodeRepo;
     @Mock PgroBsacLnknInfmRepository pgroRepo;
     @Mock AcctTrnsRcvPayInfmRepository acctTrnsRcvPayRepo;
     @Mock LegacyFunctionRepository legacyFn;
@@ -85,8 +87,8 @@ class ContactsServiceTest {
     void setUp() {
         validator = new ContactsValidator(trcoInfmRepo);
         service = new ContactsService(
-                trcoInfmRepo, addrRepo, acctRepo, ovrsRepo, pgroRepo,
-                acctTrnsRcvPayRepo, legacyFn, validator);
+                trcoInfmRepo, addrRepo, acctRepo, ovrsRepo, bankCodeRepo,
+                pgroRepo, acctTrnsRcvPayRepo, legacyFn, validator);
         TenantContext.set(USER, BIZ, LangCd.EN);
     }
 

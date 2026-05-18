@@ -137,14 +137,12 @@ class AccountServiceLookupTest {
     @Test
     void lookup_missingTenant_throwsWBE9999() {
         TenantContext.clear();
-        // We need the napas lookup to not be the one to throw — wire it
-        // so the test can demonstrate the tenant-context guard fires
-        // FIRST (the bizKey is read before the bank-cd lookup).
-        when(napasRepo.findById(NAPAS_SHINHAN))
-                .thenReturn(Optional.of(newNapas(NAPAS_SHINHAN, INTERNAL_SHINHAN)));
+        // requireBizKey() fires BEFORE the NAPAS lookup — no stub
+        // needed (Mockito strict stubs would reject an unused one).
 
         assertBusinessCode("WBE9999", () -> service.lookupForFirmBanking(NAPAS_SHINHAN));
-        verify(acctRepo, never()).findByBizKeyAndBankCdOrderByAcctNoAsc(any(), any());
+        verifyNoInteractions(napasRepo);
+        verifyNoInteractions(acctRepo);
     }
 
     @Test
