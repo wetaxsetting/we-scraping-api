@@ -11,11 +11,17 @@ import java.util.List;
  *
  * <p>Per the {@code daily-financial-report} feature spec the report now
  * carries per-account transaction drill-down ({@link CurrentAccountRow#transactions})
- * and a per-currency flow rollup ({@link #currencyFlow}) on top of the
- * legacy Financial Status header + Current Accounts ledger. Recompute of
- * the underlying summary tables ({@code DAILY_FINCL_REPT_DAILY_SUMR_DETL}
- * / {@code DAILY_FINCL_REPT_DAILY_CASH_SUMR}) remains JEX-owned for now;
+ * on top of the legacy Financial Status header + Current Accounts ledger.
+ * Recompute of the underlying summary tables
+ * ({@code DAILY_FINCL_REPT_DAILY_SUMR_DETL} /
+ * {@code DAILY_FINCL_REPT_DAILY_CASH_SUMR}) remains JEX-owned for now;
  * the refactor consumes the materialised rows.
+ *
+ * <p>The legacy WSVC contract carried a {@code CURRENCY_FLOW} rollup
+ * (REC3) but the live JEX panel doesn't render it. The refactor drops the
+ * field on both wire and frontend to match the production UI; if a future
+ * consumer needs the rollup, the field can be re-added without a schema
+ * change since it's a pure projection over {@code ACCT_MSTR}.
  *
  * <p>Wire is UPPER_SNAKE — Sprint 1 holdover until the matching frontend
  * types in {@code lib/types/api.ts} flip to lowercase per the CTO directive.
@@ -26,8 +32,7 @@ public record DailyFinancialCmcReport(
         @JsonProperty("ACTIVE_ACCOUNTS_ONLY")   boolean activeAccountsOnly,
         @JsonProperty("INCLUDE_INTERNAL_TRANSFERS") boolean includeInternalTransfers,
         @JsonProperty("FINANCIAL_STATUS")       List<FinancialStatusRow> financialStatus,
-        @JsonProperty("CURRENT_ACCOUNTS")       List<CurrentAccountRow> currentAccounts,
-        @JsonProperty("CURRENCY_FLOW")          List<CurrencyFlowRow> currencyFlow
+        @JsonProperty("CURRENT_ACCOUNTS")       List<CurrentAccountRow> currentAccounts
 ) {
     public record FinancialStatusRow(
             @JsonProperty("CCY_CD")           String ccyCd,
@@ -74,20 +79,5 @@ public record DailyFinancialCmcReport(
             @JsonProperty("RMRK")                String remark,
             @JsonProperty("RCV_PAY_USAG_CD")     String rcvPayUsageCd,
             @JsonProperty("RCV_PAY_USAG_NM")     String rcvPayUsageNm
-    ) { }
-
-    /**
-     * Per-currency flow rollup ({@code REC3} in the WSVC contract). Carries
-     * the day-opening balance, closing balance, and aggregate
-     * send/receive counters across every account in the currency.
-     */
-    public record CurrencyFlowRow(
-            @JsonProperty("CCY_CD")              String ccyCd,
-            @JsonProperty("BEF_DATE_BAL")        String beforeDateBalance,
-            @JsonProperty("BAL")                 String balance,
-            @JsonProperty("SND_CNT")             int sendCount,
-            @JsonProperty("SND_AMT")             String sendAmount,
-            @JsonProperty("RCV_CNT")             int receiveCount,
-            @JsonProperty("RCV_AMT")             String receiveAmount
     ) { }
 }

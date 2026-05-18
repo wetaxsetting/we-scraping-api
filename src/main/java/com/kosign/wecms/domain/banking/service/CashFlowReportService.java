@@ -5,51 +5,74 @@ import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.banking.dto.BankFilter;
 import com.kosign.wecms.domain.banking.dto.CashFlowReportResponse;
 import com.kosign.wecms.domain.banking.dto.CashFlowReportResponse.CashFlowRow;
-import com.kosign.wecms.domain.banking.dto.CashFlowReportResponse.MonthlyAmounts;
+import com.kosign.wecms.domain.banking.service.cashflow.BalanceCalculator;
+import com.kosign.wecms.domain.banking.service.cashflow.CashFlowRowAssembler;
+import com.kosign.wecms.domain.banking.service.cashflow.ChartOfAccountsHierarchy;
+import com.kosign.wecms.domain.banking.service.cashflow.FxConverter;
+import com.kosign.wecms.domain.banking.service.cashflow.MonthlyAmountAccumulator;
+import com.kosign.wecms.domain.banking.service.cashflow.PaymentDataAggregator;
+import com.kosign.wecms.domain.banking.service.cashflow.PaymentDataRow;
+import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount;
+import com.kosign.wecms.domain.setting.chartofaccounts.repository.ChartOfAccountRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
-import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Cash Flow report service — refactor of legacy {@code cash_0001_001_r001}.
  *
- * <p>The legacy IDO calls a single PostgreSQL function
- * {@code get_cashflow_report(biz_key, year, quarter, base_ccy, usd_rate,
- * krw_rate, bank_filt)} that walks the {@code CASH_FLOW} plan table,
- * applies FX conversion, and emits hierarchy-aware rows. The refactor
- * rule (api CLAUDE.md → "DB Function / Legacy Function Policy") forbids
- * introducing a new legacy PL/pgSQL helper in refactor feature code, and
- * {@code CASH_FLOW} is not in the PROD Active Table List today. The
- * Sprint stub below produces a deterministic seed shaped exactly like
- * the legacy output so the frontend matrix renders end-to-end. A future
- * MR replaces this with either a Java-side aggregation over
- * {@code ACCT_TRNS_HSTR} (the active source) or, if the plan-entry
- * feature lands, a real read from the migrated cash-flow tables.
+ * <p>Phase 2 replaces the deterministic stub with a real aggregation
+ * over the four legacy source tables ({@code ACCT_TRNS_HSTR},
+ * {@code CARD_TRNS_HSTR}, {@code OVRS_PYMN_MSTR}, {@code SCDUL_PYMN_SUMR}
+ * + {@code SCDUL_PYMN_SUMR_DETL}), grouped by {@code CHART_ACCT_INFM}
+ * hierarchy. Mirrors the legacy {@code get_cashflow_report()} PL/pgSQL
+ * function CTE-by-CTE — see docs/refactor-wecms/features/cash-flow-report.md
+ * §3 for the verified algorithm.
+ *
+ * <p>Pipeline:
+ * <ol>
+ *   <li>Load the tenant's CHART_ACCT_INFM rows once. Build a
+ *       {@link ChartOfAccountsHierarchy} view (replaces the legacy
+ *       {@code wb_get_chart_acct_level_text} helper).</li>
+ *   <li>Collect current-year + prior-year source rows via
+ *       {@link PaymentDataAggregator}. Both years use the same approval-status
+ *       resolver (replaces {@code wb_get_appr_stts}) — only Completed
+ *       rows survive.</li>
+ *   <li>Apply quarter + bank filters + FX conversion (current year only).
+ *       Prior year is FX-converted but never quarter / bank filtered
+ *       (legacy parity — §3.6).</li>
+ *   <li>Bucket per-L3-code monthly amounts via
+ *       {@link MonthlyAmountAccumulator}.</li>
+ *   <li>Compute {@code jan_opening_balance} from prior-year aggregates,
+ *       then Opening Balance / End Balance / Sales Profit accumulators
+ *       via {@link BalanceCalculator}.</li>
+ *   <li>Assemble the final ordered row list via
+ *       {@link CashFlowRowAssembler}.</li>
+ * </ol>
  *
  * <p>Validation mirrors {@code cash_0001_001_r001_act.jsp:19-36}:
- * {@code year} / {@code baseCurrency} required; rates required when the
- * plan carries a foreign-currency line that needs converting. The
- * legacy {@code login=N} flag is intentionally overridden — the
+ * {@code year} / {@code baseCurrency} required; rates required ONLY
+ * when the base currency differs (conditional check is documented as
+ * deliberate divergence D2 in §6 of the design doc).
+ *
+ * <p>The legacy {@code login=N} flag is intentionally overridden — the
  * controller requires authentication (Sonny override 2026-05-13).
  */
 @Service
 @RequiredArgsConstructor
 public class CashFlowReportService {
 
-    /** Row-type values emitted verbatim from the legacy function output. */
-    private static final String ROW_TYPE_OPENING_BALANCE = "Opening Balance";
-    private static final String ROW_TYPE_LEVEL_1 = "Level 1";
-    private static final String ROW_TYPE_LEVEL_2 = "Level 2";
-    private static final String ROW_TYPE_LEVEL_3 = "Level 3";
-    private static final String ROW_TYPE_LEVEL_1_SUBTOTAL = "Level 1 Subtotal";
-    private static final String ROW_TYPE_SALES_PROFIT = "SALES PROFIT";
-    private static final String ROW_TYPE_NON_SALES_PROFIT = "NON SALES PROFIT";
-    private static final String ROW_TYPE_END_BALANCE = "End Balance";
+    private final ChartOfAccountRepository chartRepo;
+    private final PaymentDataAggregator aggregator;
+    private final FxConverter fx;
+    private final BalanceCalculator balanceCalc;
+    private final CashFlowRowAssembler assembler;
 
     @Transactional(readOnly = true)
     public CashFlowReportResponse search(
@@ -65,16 +88,39 @@ public class CashFlowReportService {
 
         validate(year, quarter, baseCurrency, usdRate, krwRate);
 
-        List<CashFlowRow> rows = buildRows(baseCurrency, usdRate, krwRate);
+        // 1. Chart-of-accounts hierarchy for the tenant.
+        List<ChartOfAccount> tenantChart = chartRepo.findByBizKeyAndDelYn(bizKey, "N", Sort.unsorted());
+        ChartOfAccountsHierarchy hierarchy = new ChartOfAccountsHierarchy(tenantChart);
 
-        return new CashFlowReportResponse(
-                year,
-                quarter,
-                baseCurrency,
-                usdRate,
-                krwRate,
-                rows
-        );
+        // 2a. Collect current-year source rows, then apply filters + FX.
+        List<PaymentDataRow> currentRaw = aggregator.collect(bizKey, year);
+        List<PaymentDataRow> currentFiltered = aggregator.applyFilters(
+                currentRaw, quarter, bankFilters, baseCurrency, usdRate, krwRate, fx);
+        Map<String, MonthlyAmountAccumulator> currentL3Totals =
+                bucketByChartAcctCd(currentFiltered, hierarchy);
+
+        // 2b. Collect prior-year rows for the opening-balance carry-forward.
+        // No quarter / bank filter (legacy parity — §3.6). Same FX rates.
+        List<PaymentDataRow> prevRaw = aggregator.collect(bizKey, year - 1);
+        List<PaymentDataRow> prevConverted = aggregator.applyFxOnly(
+                prevRaw, baseCurrency, usdRate, krwRate, fx);
+        Map<String, MonthlyAmountAccumulator> prevL3Totals =
+                bucketByChartAcctCd(prevConverted, hierarchy);
+
+        // 3. Balance calculator: jan_opening_balance → Opening → End → Sales Profit.
+        BigDecimal janOpen = balanceCalc.janOpeningBalance(hierarchy, prevL3Totals);
+        MonthlyAmountAccumulator opening = balanceCalc.openingBalance(
+                hierarchy, currentL3Totals, janOpen);
+        MonthlyAmountAccumulator end = balanceCalc.endBalance(
+                hierarchy, currentL3Totals, opening);
+        MonthlyAmountAccumulator profit = balanceCalc.salesProfit(
+                hierarchy, currentL3Totals);
+
+        // 4. Assemble the ordered row list.
+        List<CashFlowRow> rows = assembler.assemble(
+                hierarchy, currentL3Totals, opening, end, profit, baseCurrency);
+
+        return new CashFlowReportResponse(year, quarter, baseCurrency, usdRate, krwRate, rows);
     }
 
     private void validate(int year, Integer quarter, String baseCurrency,
@@ -100,84 +146,27 @@ public class CashFlowReportService {
         }
     }
 
-    /* -------------------- Deterministic seed -------------------- */
-
-    private List<CashFlowRow> buildRows(String baseCurrency,
-                                        BigDecimal usdRate,
-                                        BigDecimal krwRate) {
-        List<CashFlowRow> rows = new ArrayList<>();
-
-        rows.add(row("00010", "OPEN", "Opening Balance", null, null,
-                ROW_TYPE_OPENING_BALANCE, "0", null,
-                baseCurrency, monthly(100_000_000L), bd(1_200_000_000L)));
-
-        // L1: Operating Inflow
-        rows.add(row("00100", "1", "Operating Inflow", null, null,
-                ROW_TYPE_LEVEL_1, "1", null,
-                baseCurrency, MonthlyAmounts.zero(), BigDecimal.ZERO));
-        rows.add(row("00110", "1.1", "Sales receipts", "INFL_SALE", "Sales receipts",
-                ROW_TYPE_LEVEL_2, "1", "1",
-                baseCurrency, monthly(80_000_000L), bd(960_000_000L)));
-        rows.add(row("00111", "1.1.1", "Domestic sales", "INFL_SALE_DOM", "Domestic sales",
-                ROW_TYPE_LEVEL_3, "1", "1.1",
-                baseCurrency, monthly(60_000_000L), bd(720_000_000L)));
-        rows.add(row("00112", "1.1.2", "Export sales", "INFL_SALE_EXP", "Export sales",
-                ROW_TYPE_LEVEL_3, "1", "1.1",
-                baseCurrency, monthly(20_000_000L), bd(240_000_000L)));
-        rows.add(row("00190", "1.S", "Operating Inflow Subtotal", null, null,
-                ROW_TYPE_LEVEL_1_SUBTOTAL, "1", "1",
-                baseCurrency, monthly(80_000_000L), bd(960_000_000L)));
-
-        // L1: Operating Outflow
-        rows.add(row("00200", "2", "Operating Outflow", null, null,
-                ROW_TYPE_LEVEL_1, "2", null,
-                baseCurrency, MonthlyAmounts.zero(), BigDecimal.ZERO));
-        rows.add(row("00210", "2.1", "Payroll", "OUTF_PAYR", "Payroll",
-                ROW_TYPE_LEVEL_2, "2", "2",
-                baseCurrency, monthly(40_000_000L), bd(480_000_000L)));
-        rows.add(row("00220", "2.2", "Office rent", "OUTF_RENT", "Office rent",
-                ROW_TYPE_LEVEL_2, "2", "2",
-                baseCurrency, monthly(12_000_000L), bd(144_000_000L)));
-        rows.add(row("00290", "2.S", "Operating Outflow Subtotal", null, null,
-                ROW_TYPE_LEVEL_1_SUBTOTAL, "2", "2",
-                baseCurrency, monthly(52_000_000L), bd(624_000_000L)));
-
-        // Profit lines
-        rows.add(row("00800", "P1", "Sales Profit", null, null,
-                ROW_TYPE_SALES_PROFIT, "P", null,
-                baseCurrency, monthly(28_000_000L), bd(336_000_000L)));
-        rows.add(row("00810", "P2", "Non-Sales Profit", null, null,
-                ROW_TYPE_NON_SALES_PROFIT, "P", null,
-                baseCurrency, MonthlyAmounts.zero(), BigDecimal.ZERO));
-
-        // End balance
-        rows.add(row("00900", "END", "End Balance", null, null,
-                ROW_TYPE_END_BALANCE, "9", null,
-                baseCurrency, monthly(128_000_000L), bd(1_536_000_000L)));
-
-        // FX conversion: legacy applies USD/KRW rates inside the function.
-        // The seed above is already expressed in the base currency, so no
-        // post-processing is required. When the real source lands, the
-        // service walks legacy USD/KRW lines and multiplies by the
-        // user-supplied rate before emitting the row's monthly amounts.
-        return rows;
-    }
-
-    private static CashFlowRow row(String dispOrd, String dispCd, String dispNm,
-                                   String itemCd, String itemNm,
-                                   String rowType, String groupCd, String parentL2,
-                                   String dispCcy, MonthlyAmounts monthly,
-                                   BigDecimal total) {
-        return new CashFlowRow(dispOrd, dispCd, dispNm, itemCd, itemNm,
-                rowType, groupCd, parentL2, dispCcy, monthly, total);
-    }
-
-    private static MonthlyAmounts monthly(long perMonth) {
-        BigDecimal v = bd(perMonth);
-        return new MonthlyAmounts(v, v, v, v, v, v, v, v, v, v, v, v);
-    }
-
-    private static BigDecimal bd(long v) {
-        return BigDecimal.valueOf(v).setScale(2, RoundingMode.HALF_UP);
+    /**
+     * Bucket converted source rows by {@code chart_acct_cd} → 12-month
+     * accumulator. Only rows whose {@code chart_acct_cd} maps to a
+     * known L3 in the hierarchy contribute — rows whose code isn't in
+     * the chart (or sits outside the ACC-* trees) are silently dropped,
+     * matching the legacy {@code level3_with_hierarchy} CTE's INNER
+     * JOIN behaviour.
+     */
+    private static Map<String, MonthlyAmountAccumulator> bucketByChartAcctCd(
+            List<PaymentDataRow> rows, ChartOfAccountsHierarchy hierarchy) {
+        // Pre-build the set of valid L3 codes so unrelated rows drop out fast.
+        java.util.Set<String> validL3 = hierarchy.l3Rows().stream()
+                .map(ChartOfAccount::getChartAcctCd)
+                .collect(java.util.stream.Collectors.toSet());
+        Map<String, MonthlyAmountAccumulator> out = new HashMap<>();
+        for (PaymentDataRow r : rows) {
+            if (r.chartAcctCd() == null) continue;
+            if (!validL3.contains(r.chartAcctCd())) continue;
+            out.computeIfAbsent(r.chartAcctCd(), k -> new MonthlyAmountAccumulator())
+                    .add(r.paymentMonth(), r.originalAmount());
+        }
+        return out;
     }
 }

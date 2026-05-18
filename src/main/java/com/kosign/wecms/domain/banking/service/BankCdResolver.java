@@ -34,7 +34,7 @@ import java.util.stream.Collectors;
  */
 @Component
 @RequiredArgsConstructor
-class BankCdResolver {
+public class BankCdResolver {
 
     /**
      * Pre-refactor English labels — kept as a fallback surface until
@@ -75,7 +75,7 @@ class BankCdResolver {
                         (a, b) -> a)));
     }
 
-    String resolveBankNm(String bankCd) {
+    public String resolveBankNm(String bankCd) {
         if (bankCd == null) return "";
         String cached = nameCache.get(bankCd);
         if (cached != null) return cached;
@@ -97,7 +97,7 @@ class BankCdResolver {
      * Falls back to the raw code when the enum / fallback map has no
      * entry — never throws, never returns null.
      */
-    String resolveAcctTypeNm(String acctTypeCd) {
+    public String resolveAcctTypeNm(String acctTypeCd) {
         if (acctTypeCd == null) return "";
         String trimmed = acctTypeCd.trim();
         return ACCT_TYPE_FALLBACK_LABELS.getOrDefault(trimmed, trimmed);
@@ -111,7 +111,7 @@ class BankCdResolver {
      * {@link AcctTypeCd#i18nKey()}; the resolver routes through the
      * enum so a future code addition lands in one place.
      */
-    String resolveAcctTypeKey(String acctTypeCd) {
+    public String resolveAcctTypeKey(String acctTypeCd) {
         return AcctTypeCd.fromCode(acctTypeCd)
                 .map(AcctTypeCd::i18nKey)
                 .orElse(null);

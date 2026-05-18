@@ -94,4 +94,45 @@ public interface ScdulPymnSumrDetlRepository
             @Param("scdulPymnDetlNo") String scdulPymnDetlNo,
             @Param("userId") String userId,
             @Param("nowDtm") String nowDtm);
+
+    /**
+     * Cash Flow report — scheduled-payment source rows.
+     *
+     * <p>Joins {@code SCDUL_PYMN_SUMR_DETL} to its header on
+     * {@code (biz_key, scdul_pymn_no)} and projects the columns the
+     * legacy {@code all_payment_data} scheduled UNION branch reads:
+     * detail's {@code tran_amt} + {@code chart_acct_cd}, header's
+     * {@code ccy_cd} / {@code out_bank_cd} / {@code wdrl_act_no} /
+     * {@code reg_dtm} / {@code appr_seq_no}.
+     *
+     * <p>Year is derived from the header's {@code reg_dtm}
+     * (registration time), NOT the detail's scheduled execution date —
+     * matches the legacy function's
+     * {@code EXTRACT(YEAR FROM TO_DATE(sps.reg_dtm,...))} predicate.
+     *
+     * <p>Approval-status filter is applied by
+     * {@link com.kosign.wecms.domain.banking.service.cashflow.ApprovalStatusResolver}
+     * downstream — this query returns ALL classified rows for the year.
+     */
+    @Query("""
+            SELECT d.chartAcctSeqNo AS chartAcctSeqNo,
+                   d.chartAcctCd    AS chartAcctCd,
+                   d.tranAmt        AS tranAmt,
+                   h.ccyCd          AS ccyCd,
+                   h.outBankCd      AS outBankCd,
+                   h.wdrlActNo      AS wdrlActNo,
+                   h.regDtm         AS regDtm,
+                   h.apprSeqNo      AS apprSeqNo
+              FROM ScdulPymnSumrDetl d
+              JOIN ScdulPymnSumr h
+                ON h.bizKey = d.bizKey
+               AND h.scdulPymnNo = d.scdulPymnNo
+             WHERE d.bizKey = :bizKey
+               AND d.chartAcctCd IS NOT NULL
+               AND d.chartAcctCd <> ''
+               AND SUBSTRING(h.regDtm, 1, 4) = :year
+            """)
+    List<ScdulPymnCashFlowRow> findCashFlowSourceRows(
+            @Param("bizKey") String bizKey,
+            @Param("year") String year);
 }
