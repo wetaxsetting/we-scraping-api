@@ -623,12 +623,12 @@ public class ExpensePaymentService {
         ScdulPymnSumr master = loadMaster(bizKey, id);
 
         if (master.getApprSeqNo() == null || master.getApprSeqNo().isBlank()) {
-            throw new BusinessException("WBE2080");
+            throw new BusinessException("WBE2094");
         }
 
         String current = master.getApprStts();
         if (APPR_STTS_APPROVED.equals(current) || APPR_STTS_REJECTED.equals(current)) {
-            throw new BusinessException("WBE2081");
+            throw new BusinessException("WBE2095");
         }
 
         String next     = req.isApprove() ? APPR_STTS_APPROVED : APPR_STTS_REJECTED;

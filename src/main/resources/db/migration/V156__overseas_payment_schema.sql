@@ -32,6 +32,9 @@ CREATE TABLE IF NOT EXISTS OVRS_PYMN_SUMR (
     OUT_BANK_CD         VARCHAR(20),
     WDRL_ACT_NO         VARCHAR(100),
 
+    -- Approval status (local-only Phase A bridge; see V151/V152 for context)
+    APPR_STTS           VARCHAR(1),
+
     -- Transfer completion flag (Y after TRNF_YN flip by batch)
     TRNF_YN             VARCHAR(1)      NOT NULL DEFAULT 'N',
 

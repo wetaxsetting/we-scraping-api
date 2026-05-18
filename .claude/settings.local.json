@@ -1,4 +1,10 @@
 {
+  "permissions": {
+    "allow": [
+      "Read(//d/KOSIGN/WeCMS/WECMS DEV/WECMS/src/**)",
+      "Bash(./gradlew bootRun --args='--spring.profiles.active=local')"
+    ]
+  },
   "enabledMcpjsonServers": [
     "figma",
     "postgres_dev",

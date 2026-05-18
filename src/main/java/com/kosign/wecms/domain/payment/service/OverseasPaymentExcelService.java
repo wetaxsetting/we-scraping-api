@@ -11,6 +11,7 @@ import com.kosign.wecms.domain.payment.entity.OvrsPymnDtls;
 import com.kosign.wecms.domain.payment.entity.OvrsPymnSumr;
 import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnDtlsRepository;
 import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnSumrRepository;
+import com.kosign.wecms.domain.payment.overseas.service.OverseasPaymentFileResolver;
 import com.kosign.wecms.domain.payment.overseas.service.OverseasPaymentKeyGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,13 +25,15 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
-import java.time.format.DateTimeFormatter;
-
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -64,6 +67,7 @@ public class OverseasPaymentExcelService {
     private final OvrsPymnSumrRepository       sumrRepository;
     private final OvrsPymnDtlsRepository       dtlsRepository;
     private final OverseasPaymentKeyGenerator  keyGenerator;
+    private final OverseasPaymentFileResolver  fileResolver;
 
     /** Header row index (0-based POI index; row 3 in Excel = index 2). */
     private static final int HEADER_ROW_INDEX   = 2;
@@ -228,15 +232,31 @@ public class OverseasPaymentExcelService {
      * (one summary row) and {@code OVRS_PYMN_DTLS} (one row per transaction),
      * then return the allocated {@code OVRS_PYMN_NO}.
      *
-     * @param req batch metadata + full list of parsed transaction rows
+     * <p>The physical Excel file is saved under the configured
+     * {@code wecms.overseas-payment.storage-root} so the Scheduled
+     * Payment detail page can stream it back via the download endpoint.
+     *
+     * @param req  batch metadata + full list of parsed transaction rows
+     * @param file the original uploaded Excel file (may be {@code null}
+     *             for legacy callers that do not supply the physical file)
      * @return the new batch key wrapped in {@link OverseasPaymentExcelUploadResult}
      */
     @Transactional
-    public OverseasPaymentExcelUploadResult submit(OverseasPaymentExcelUploadRequest req) {
+    public OverseasPaymentExcelUploadResult submit(OverseasPaymentExcelUploadRequest req,
+                                                    MultipartFile file) {
         String bizKey    = TenantContext.currentBizKey();
         String userId    = TenantContext.currentUserId();
+        ZonedDateTime now = ZonedDateTime.now(VIETNAM_ZONE);
+        String nowDtm    = now.format(DTM_FMT);
+        String todayPrefix = nowDtm.substring(0, 8);   // first 8 chars = yyyyMMdd
+
+        // Guard against double-submit: same file name on the same calendar day is rejected.
+        if (sumrRepository.existsByBizKeyAndOrgFileNmAndRegDtmStartingWith(
+                bizKey, req.file_nm(), todayPrefix)) {
+            throw new BusinessException("WBE2044", req.file_nm());
+        }
+
         String pymnNo    = keyGenerator.nextOvrsPymnNo(bizKey);
-        String nowDtm    = ZonedDateTime.now(VIETNAM_ZONE).format(DTM_FMT);
 
         // ── Summary row ──────────────────────────────────────────────────────
         OvrsPymnSumr sumr = new OvrsPymnSumr();
@@ -254,6 +274,17 @@ public class OverseasPaymentExcelService {
         sumr.setTrnfYn("N");
         sumr.setRegDtm(nowDtm);
         sumr.setRegId(userId);
+
+        // Persist the uploaded Excel to the configured storage root so the
+        // Scheduled Payment detail page can stream it back via the download endpoint.
+        if (file != null && !file.isEmpty()) {
+            String orgFileNm  = sanitiseOriginalFilename(file.getOriginalFilename());
+            String saveFileNm = pymnNo + "_" + orgFileNm;
+            persistUploadedFile(bizKey, saveFileNm, file);
+            sumr.setSaveFileNm(saveFileNm);
+            sumr.setFileSize(BigDecimal.valueOf(file.getSize()));
+        }
+
         sumrRepository.save(sumr);
 
         // ── Detail rows ───────────────────────────────────────────────────────
@@ -302,4 +333,80 @@ public class OverseasPaymentExcelService {
         }
         return true;
     }
+
+    // -------------------------------------------------------------------------
+    // File storage — write on submit, read on download
+    // -------------------------------------------------------------------------
+
+    /**
+     * Write the uploaded Excel bytes to
+     * {@code <storage-root>/<bizKey>/overseas-payment/<saveFileNm>}.
+     * Creates the parent directories if they do not exist.
+     */
+    private void persistUploadedFile(String bizKey, String saveFileNm, MultipartFile file) {
+        try {
+            Path dir = fileResolver.tenantDirectory(bizKey);
+            Files.createDirectories(dir);
+            Path target = fileResolver.resolve(bizKey, saveFileNm);
+            try (InputStream in = file.getInputStream()) {
+                Files.copy(in, target, StandardCopyOption.REPLACE_EXISTING);
+            }
+            log.debug("feature=overseas-payment file-saved bizKey={} saveFileNm={}", bizKey, saveFileNm);
+        } catch (IOException e) {
+            log.error("feature=overseas-payment file-write-failed bizKey={} saveFileNm={}",
+                    bizKey, saveFileNm, e);
+            throw new BusinessException("WBE2070");
+        }
+    }
+
+    /**
+     * Sanitise an original filename from a {@link MultipartFile}: strip
+     * path separators that some clients send, and fall back to
+     * {@code "upload.xlsx"} when the name is blank.
+     */
+    private static String sanitiseOriginalFilename(String raw) {
+        if (raw == null || raw.isBlank()) return "upload.xlsx";
+        String name = raw.replaceAll("[/\\\\]", "_").trim();
+        return name.isBlank() ? "upload.xlsx" : name;
+    }
+
+    /**
+     * Resolve the physical file behind an overseas payment batch upload.
+     *
+     * @param ovrsPymnNo the batch key
+     * @return a {@link DownloadResource} carrying the path, display name,
+     *         save name, and file size
+     * @throws BusinessException {@code WBE2069} when the batch has no file
+     *         (legacy DEV-imported row or pre-storage-rollout upload)
+     */
+    @Transactional(readOnly = true)
+    public DownloadResource resolveDownload(String ovrsPymnNo) {
+        String bizKey = TenantContext.currentBizKey();
+        OvrsPymnSumr sumr = sumrRepository.findByBizKeyAndOvrsPymnNo(bizKey, ovrsPymnNo)
+                .orElseThrow(() -> new BusinessException("WBE2069"));
+
+        String saveFileNm = sumr.getSaveFileNm();
+        if (saveFileNm == null || saveFileNm.isBlank()) {
+            throw new BusinessException("WBE2069");
+        }
+
+        Path path = fileResolver.resolve(bizKey, saveFileNm);
+        if (!Files.isReadable(path) || !Files.isRegularFile(path)) {
+            throw new BusinessException("WBE2069");
+        }
+
+        long fileSize = sumr.getFileSize() == null
+                ? path.toFile().length()
+                : sumr.getFileSize().longValueExact();
+        String displayName = (sumr.getOrgFileNm() == null || sumr.getOrgFileNm().isBlank())
+                ? saveFileNm
+                : sumr.getOrgFileNm();
+        return new DownloadResource(path, displayName, saveFileNm, fileSize);
+    }
+
+    /**
+     * Carrier for the resolved file — path + display name + file size.
+     */
+    public record DownloadResource(
+            Path path, String orgFileNm, String saveFileNm, long fileSize) { }
 }

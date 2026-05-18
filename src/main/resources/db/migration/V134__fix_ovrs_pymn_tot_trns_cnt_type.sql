@@ -7,8 +7,18 @@
 -- PostgreSQL silently succeeds if the column is already INTEGER (no-op),
 -- so this migration is safe on any DB state.
 
-ALTER TABLE OVRS_PYMN_SUMR
-    ALTER COLUMN TOT_TRNS_CNT TYPE INTEGER USING TOT_TRNS_CNT::INTEGER;
+-- Guard: tables are created in V156 with INTEGER already; this DO block is a
+-- no-op on fresh DBs (tables absent) and a type-fix on DBs where an earlier
+-- draft migration created the columns as NUMERIC(10).
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'ovrs_pymn_sumr') THEN
+        ALTER TABLE OVRS_PYMN_SUMR
+            ALTER COLUMN TOT_TRNS_CNT TYPE INTEGER USING TOT_TRNS_CNT::INTEGER;
+    END IF;
 
-ALTER TABLE OVRS_PYMN_MSTR
-    ALTER COLUMN TOT_TRNS_CNT TYPE INTEGER USING TOT_TRNS_CNT::INTEGER;
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'ovrs_pymn_mstr') THEN
+        ALTER TABLE OVRS_PYMN_MSTR
+            ALTER COLUMN TOT_TRNS_CNT TYPE INTEGER USING TOT_TRNS_CNT::INTEGER;
+    END IF;
+END $$;

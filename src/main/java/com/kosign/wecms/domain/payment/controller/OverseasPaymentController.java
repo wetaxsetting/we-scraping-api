@@ -1,6 +1,9 @@
 package com.kosign.wecms.domain.payment.controller;
 
+import com.kosign.wecms.common.export.ExcelExportRequest;
+import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.response.ApiResponse;
+import com.kosign.wecms.domain.payment.dto.OverseasPaymentDetailResponse;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentExcelPreview;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentExcelUploadRequest;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentExcelUploadResult;
@@ -8,17 +11,27 @@ import com.kosign.wecms.domain.payment.dto.OverseasResultListResponse;
 import com.kosign.wecms.domain.payment.dto.OverseasResultRow;
 import com.kosign.wecms.domain.payment.dto.OverseasScheduledListResponse;
 import com.kosign.wecms.domain.payment.dto.OverseasScheduledRow;
+import com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalActionRequest;
+import com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalRequest;
+import com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.WithdrawalAccountRow;
 import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService;
 import com.kosign.wecms.domain.payment.service.OverseasPaymentExcelService;
+import com.kosign.wecms.domain.payment.service.OverseasPaymentExcelService.DownloadResource;
 import com.kosign.wecms.domain.payment.service.OverseasPaymentService;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
+import org.springframework.core.io.InputStreamResource;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -28,7 +41,13 @@ import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * REST controller for overseas payment.
@@ -45,6 +64,7 @@ public class OverseasPaymentController {
     private final OverseasPaymentService        overseasPaymentService;
     private final OverseasPaymentExcelService   overseasExcelService;
     private final InternalTransferService       internalTransferService;
+    private final ExcelExportService            excelExportService;
 
     /**
      * Overseas scheduled-payment list.
@@ -97,6 +117,43 @@ public class OverseasPaymentController {
     }
 
     /**
+     * Full batch detail (summary + per-line rows) for the Request Approval
+     * and Approval Details dialogs.
+     * Mirrors legacy {@code pymn_0007_001} approval-dialog load.
+     */
+    @GetMapping("/scheduled/{id}/details")
+    public ApiResponse<OverseasPaymentDetailResponse> getScheduledDetail(
+            @PathVariable("id") String id) {
+        return ApiResponse.ok(overseasPaymentService.getDetail(id));
+    }
+
+    /**
+     * Submit an unapproved overseas payment batch to the approval engine.
+     * Phase A: stamps {@code APPR_SEQ_NO} on {@code OVRS_PYMN_SUMR} so the
+     * list row transitions to "pending" status. Full {@code EXPT_RESOL_MSTR}
+     * write is deferred.
+     */
+    @PostMapping("/{id}/request-approval")
+    public ApiResponse<RequestApprovalResponse> requestApproval(
+            @PathVariable("id") String id,
+            @Valid @RequestBody RequestApprovalRequest request) {
+        return ApiResponse.ok(overseasPaymentService.requestApproval(id, request));
+    }
+
+    /**
+     * Approve or reject an overseas payment batch.
+     * Phase A: stamps {@code APPR_STTS} on {@code OVRS_PYMN_SUMR}. Full
+     * {@code EXPT_RESOL_MSTR} write is deferred to Phase B.
+     */
+    @PostMapping("/{id}/approval-action")
+    public ApiResponse<Void> approvalAction(
+            @PathVariable("id") String id,
+            @Valid @RequestBody ApprovalActionRequest request) {
+        overseasPaymentService.actOnApproval(id, request);
+        return ApiResponse.ok(null);
+    }
+
+    /**
      * Overseas payment-result list.
      * Returns all batch records (OVRS_PYMN_SUMR) in the date range, ordered newest first.
      * {@code trnf_yn = "Y"} → completed; {@code "N"} → in progress.
@@ -130,6 +187,19 @@ public class OverseasPaymentController {
     }
 
     /**
+     * Assign or clear the reporting account for a single detail line.
+     * Pass {@code rprt_acct_cd: null} to clear the assignment.
+     */
+    @PatchMapping("/{id}/details/{trnSeq}/reporting-account")
+    public ApiResponse<Void> saveReportingAccount(
+            @PathVariable("id") String id,
+            @PathVariable("trnSeq") int trnSeq,
+            @RequestBody Map<String, String> body) {
+        overseasPaymentService.saveReportingAccount(id, trnSeq, body.get("rprt_acct_cd"));
+        return ApiResponse.ok(null);
+    }
+
+    /**
      * Firm-banking-capable withdrawal accounts for the overseas payment
      * Excel upload dialog Step 3 ("Withdrawal Bank/Account No." picker).
      *
@@ -147,6 +217,39 @@ public class OverseasPaymentController {
     }
 
     /**
+     * Download Excel for a single overseas payment result batch
+     * (OVRS_PYMN_SUMR + OVRS_PYMN_SUMR_DETL rows).
+     *
+     * <p>Injects the path-variable {@code id} as {@code ovrsPymnNo} into
+     * the request's filter map before forwarding to the shared
+     * {@link ExcelExportService}. The provider
+     * {@code OverseasPaymentResultDetailExportProvider} reads that key and
+     * loads the detail via {@link OverseasPaymentService#getDetail}.
+     */
+    @PostMapping("/result/{id}/export")
+    public void exportResultDetail(
+            @PathVariable("id") String id,
+            @Valid @RequestBody ExcelExportRequest request,
+            HttpServletResponse response) throws IOException {
+
+        Map<String, Object> mergedFilters = new HashMap<>();
+        if (request.filters() != null) mergedFilters.putAll(request.filters());
+        mergedFilters.put("ovrsPymnNo", id);
+
+        ExcelExportRequest merged = new ExcelExportRequest(
+                request.screenId(),
+                request.dymAreaId(),
+                request.fileName(),
+                request.title(),
+                mergedFilters,
+                request.sort(),
+                request.columns(),
+                request.subHeader()
+        );
+        excelExportService.exportTo(response, merged);
+    }
+
+    /**
      * Parse and validate an overseas payment Excel upload file.
      * Returns all rows (valid + invalid) with per-cell error details so
      * the frontend preview dialog can highlight errors inline.
@@ -160,17 +263,51 @@ public class OverseasPaymentController {
     }
 
     /**
-     * Persist the overseas-payment Excel batch summary.
-     * The frontend calls this after the user confirms in Step 3 of the
-     * Excel-upload dialog. Returns the allocated {@code OVRS_PYMN_NO}
-     * so the frontend can refresh the scheduled-payment list.
+     * Persist the overseas-payment Excel batch summary and save the
+     * physical Excel file to the configured storage root.
      *
      * <p>Wire: {@code POST /api/v1/payment/overseas-payment/excel-upload}
-     * with a JSON body carrying the account selection and row totals.
+     * as {@code multipart/form-data} with two parts:
+     * <ul>
+     *   <li>{@code file} — the original Excel file</li>
+     *   <li>{@code data} — JSON body carrying the account selection and row totals</li>
+     * </ul>
+     * Returns the allocated {@code OVRS_PYMN_NO}.
      */
-    @PostMapping("/excel-upload")
+    @PostMapping(value = "/excel-upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResponse<OverseasPaymentExcelUploadResult> excelUpload(
-            @Valid @RequestBody OverseasPaymentExcelUploadRequest request) {
-        return ApiResponse.ok(overseasExcelService.submit(request));
+            @RequestPart("file") MultipartFile file,
+            @RequestPart("data") @Valid OverseasPaymentExcelUploadRequest request) {
+        return ApiResponse.ok(overseasExcelService.submit(request, file));
+    }
+
+    /**
+     * Stream the original Excel file uploaded with an overseas payment batch.
+     * Drives the file-card download button on the Scheduled Payment detail page.
+     *
+     * <p>Errors:
+     * <ul>
+     *   <li>{@code WBE2069} — batch has no attached file (legacy DEV-imported row,
+     *       or pre-storage-rollout upload), or the file is missing / unreadable
+     *       on the configured storage root.</li>
+     * </ul>
+     */
+    @GetMapping("/scheduled/{id}/file")
+    public ResponseEntity<InputStreamResource> downloadFile(
+            @PathVariable("id") String id) throws IOException {
+        DownloadResource resolved = overseasExcelService.resolveDownload(id);
+        InputStream stream = Files.newInputStream(resolved.path());
+
+        ContentDisposition cd = ContentDisposition.builder("attachment")
+                .filename(resolved.orgFileNm(), StandardCharsets.UTF_8)
+                .build();
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .contentLength(resolved.fileSize())
+                .header(HttpHeaders.CONTENT_DISPOSITION, cd.toString())
+                .header("X-Content-Type-Options", "nosniff")
+                .header("Access-Control-Expose-Headers", HttpHeaders.CONTENT_DISPOSITION)
+                .body(new InputStreamResource(stream));
     }
 }

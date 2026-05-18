@@ -54,6 +54,12 @@ public class OvrsPymnSumr {
     @Column(name = "APPR_SEQ_NO", length = 20)
     private String apprSeqNo;
 
+    /** Phase-A bridge: approval status stamped by the approval-action endpoint.
+     *  DEV stores this in EXPT_RESOL_MSTR; this local column fills the gap
+     *  until EXPT_RESOL_MSTR writes are ported. C=approved, X=rejected, P=pending. */
+    @Column(name = "APPR_STTS", length = 1)
+    private String apprStts;
+
     @Column(name = "OUT_BANK_CD", length = 20)
     private String outBankCd;
 
@@ -74,6 +80,9 @@ public class OvrsPymnSumr {
 
     @Column(name = "FILE_URL", length = 500)
     private String fileUrl;
+
+    @Column(name = "FILE_SIZE", precision = 20, scale = 0)
+    private BigDecimal fileSize;
 
     @Column(name = "REG_DTM", length = 14, nullable = false)
     private String regDtm;

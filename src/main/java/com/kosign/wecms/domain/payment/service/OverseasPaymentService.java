@@ -1,13 +1,25 @@
 package com.kosign.wecms.domain.payment.service;
 
+import com.kosign.wecms.common.auditlog.service.AuditLogContext;
+import com.kosign.wecms.common.auditlog.service.AuditLogService;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.payment.dto.OverseasApprover;
 import com.kosign.wecms.domain.payment.dto.OverseasCurrencyTotal;
+import com.kosign.wecms.domain.payment.dto.OverseasPaymentDetailResponse;
+import com.kosign.wecms.domain.payment.dto.OverseasPaymentDetailRowResponse;
+import com.kosign.wecms.domain.payment.dto.OverseasPaymentExcelDetailRow;
 import com.kosign.wecms.domain.payment.dto.OverseasResultListResponse;
 import com.kosign.wecms.domain.payment.dto.OverseasResultRow;
 import com.kosign.wecms.domain.payment.dto.OverseasScheduledListResponse;
 import com.kosign.wecms.domain.payment.dto.OverseasScheduledRow;
+import com.kosign.wecms.domain.payment.entity.OvrsPymnDtls;
+import com.kosign.wecms.domain.payment.entity.OvrsPymnSumr;
+import com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalActionRequest;
+import com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalRequest;
+import com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalResponse;
+import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnDtlsRepository;
+import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnSumrRepository;
 import com.kosign.wecms.domain.payment.repository.OverseasApproverRepository;
 import com.kosign.wecms.domain.payment.repository.OverseasPaymentRepository;
 import lombok.RequiredArgsConstructor;
@@ -16,6 +28,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -42,8 +57,15 @@ public class OverseasPaymentService {
     public static final int DEFAULT_PAGE_SIZE = 10;
     public static final int MAX_PAGE_SIZE     = 100;
 
-    private final OverseasPaymentRepository paymentRepo;
+    private static final ZoneId            VIETNAM_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
+    private static final DateTimeFormatter DTM_FMT      = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
+    private static final String            WSVC_ID      = "overseas-payment";
+
+    private final OverseasPaymentRepository  paymentRepo;
     private final OverseasApproverRepository approverRepo;
+    private final OvrsPymnSumrRepository     sumrRepository;
+    private final OvrsPymnDtlsRepository     dtlsRepository;
+    private final AuditLogService            auditLogService;
 
     /**
      * Overseas scheduled-payment list.
@@ -166,58 +188,260 @@ public class OverseasPaymentService {
         return mapResultRow(r);
     }
 
+    // ─── detail + request approval ───────────────────────────────────────────
+
+    /**
+     * Full batch detail for the Request Approval / Approval Details dialogs.
+     * Returns summary metadata + per-line beneficiary rows.
+     * Mirrors legacy {@code pymn_0007_001} approval-request dialog load.
+     */
+    public OverseasPaymentDetailResponse getDetail(String ovrsPymnNo) {
+        String bizKey = TenantContext.currentBizKey();
+        OvrsPymnSumr sumr = sumrRepository.findByBizKeyAndOvrsPymnNo(bizKey, ovrsPymnNo)
+                .orElseThrow(() -> new BusinessException("WBE2045",
+                        "overseas payment not found: " + ovrsPymnNo));
+
+        List<OvrsPymnDtls> dtlList =
+                dtlsRepository.findByBizKeyAndOvrsPymnNoOrderByTrnSeqAsc(bizKey, ovrsPymnNo);
+
+        List<OverseasPaymentDetailRowResponse> rows = dtlList.stream()
+                .map(d -> new OverseasPaymentDetailRowResponse(
+                        d.getTrnSeq(),
+                        d.getBnfcCode(),
+                        d.getCcyCd(),
+                        d.getTrnfAmt() != null ? d.getTrnfAmt() : BigDecimal.ZERO,
+                        d.getFeePayerCd(),
+                        d.getMemo() != null ? d.getMemo() : "",
+                        d.getRprtAcctCd(),
+                        d.getBnfcNm(),
+                        d.getBnfcBankNm(),
+                        d.getBicCd(),
+                        d.getBnfcActNo(),
+                        d.getBnfcAddr(),
+                        d.getTrnfYn() != null ? d.getTrnfYn() : "N"))
+                .collect(Collectors.toList());
+
+        return new OverseasPaymentDetailResponse(
+                sumr.getOvrsPymnNo(),
+                sumr.getTitl(),
+                null,                       // apprStts — comes from EXPT_RESOL_MSTR (Phase A: not written yet)
+                sumr.getTotalTranAmt() != null ? sumr.getTotalTranAmt() : BigDecimal.ZERO,
+                sumr.getCcyCd(),
+                sumr.getTotTrnsCnt(),
+                sumr.getRegId(),
+                sumr.getRegDtm(),
+                sumr.getModDtm(),
+                sumr.getOutBankCd(),
+                sumr.getWdrlActNo(),
+                sumr.getCcyCd(),            // wdrlCcyCd — same as payment currency for Excel uploads
+                null,                       // docNo — EXPT_RESOL_MSTR deferred
+                sumr.getApprSeqNo(),
+                sumr.getOrgFileNm(),
+                null,                       // fileSize
+                sumr.getOrgFileNm(),
+                rows);
+    }
+
+    /**
+     * Phase-A "stamp-only" request-approval for overseas payment Excel batches.
+     * Stamps {@code APPR_SEQ_NO} on {@code OVRS_PYMN_SUMR} so the list query's
+     * {@code deriveStatus()} fallback flips the row to "pending" (LEFT JOIN miss
+     * on {@code EXPT_RESOL_MSTR} + non-null {@code apprSeqNo}).
+     *
+     * <p>Full {@code EXPT_RESOL_MSTR} / approver-chain write is deferred
+     * (same precedent as expense-payment / vendor-payment Phase A).
+     */
+    @Transactional
+    public RequestApprovalResponse requestApproval(String ovrsPymnNo, RequestApprovalRequest req) {
+        String bizKey = TenantContext.currentBizKey();
+        OvrsPymnSumr sumr = sumrRepository.findByBizKeyAndOvrsPymnNo(bizKey, ovrsPymnNo)
+                .orElseThrow(() -> new BusinessException("WBE2045",
+                        "overseas payment not found: " + ovrsPymnNo));
+
+        if ("Y".equals(sumr.getTrnfYn())) {
+            throw new BusinessException("WBE2095");
+        }
+
+        String existingStts = sumr.getApprStts();
+        if ("C".equals(existingStts)) {
+            // Approved and awaiting transfer — cannot re-submit; approver can revise via approval-action
+            throw new BusinessException("WBE2046");
+        }
+        if (sumr.getApprSeqNo() != null && !sumr.getApprSeqNo().isBlank()
+                && !"X".equals(existingStts)) {
+            // Already has a pending approval request (not rejected) — block duplicate
+            throw new BusinessException("WBE2046");
+        }
+        if ("X".equals(existingStts)) {
+            // Rejected: allow re-submission — reset state so a new approval chain starts
+            sumr.setApprStts(null);
+            sumr.setApprSeqNo(null);
+        }
+
+        if (req == null || req.approvers() == null || req.approvers().isEmpty()) {
+            throw new BusinessException("WBE_VALIDATION", "approvers is required");
+        }
+
+        String apprSeqNo = allocateApprSeqNo(bizKey);
+        try {
+            stampApproval(sumr, apprSeqNo, req);
+        } catch (org.springframework.dao.DataIntegrityViolationException race) {
+            log.info("feature=overseas-payment apprSeqNo race retrying once bizKey={}", bizKey);
+            apprSeqNo = allocateApprSeqNo(bizKey);
+            stampApproval(sumr, apprSeqNo, req);
+        }
+
+        auditLogService.append(AuditLogContext.builder()
+                .wsvcId(WSVC_ID)
+                .refNo(ovrsPymnNo)
+                .refNo1(apprSeqNo)
+                .activityKey("audit.overseas_payment.activity")
+                .detailKey("audit.overseas_payment.request_approval.detail")
+                .build());
+
+        log.info("feature=overseas-payment request-approval bizKey={} ovrsPymnNo={} apprSeqNo={} apprLineNo={} approvers={}",
+                bizKey, ovrsPymnNo, apprSeqNo, req.apprLineNo(), req.approvers().size());
+
+        return new RequestApprovalResponse(apprSeqNo);
+    }
+
+    /**
+     * Approve or reject an overseas payment batch (Phase A stamp-only).
+     * Flips {@code APPR_STTS} on {@code OVRS_PYMN_SUMR} to {@code "C"} (approved)
+     * or {@code "X"} (rejected).
+     *
+     * <p>Guards: {@code WBE2094} when no approval request exists yet;
+     * {@code WBE2095} when the batch is already in a final state.
+     */
+    @Transactional
+    public void actOnApproval(String ovrsPymnNo, ApprovalActionRequest req) {
+        String bizKey = TenantContext.currentBizKey();
+        OvrsPymnSumr sumr = sumrRepository.findByBizKeyAndOvrsPymnNo(bizKey, ovrsPymnNo)
+                .orElseThrow(() -> new BusinessException("WBE2045",
+                        "overseas payment not found: " + ovrsPymnNo));
+
+        if (sumr.getApprSeqNo() == null || sumr.getApprSeqNo().isBlank()) {
+            throw new BusinessException("WBE2094");
+        }
+
+        if ("Y".equals(sumr.getTrnfYn())) {
+            // Batch has already been transferred — approval decision is final
+            throw new BusinessException("WBE2095");
+        }
+
+        String next   = req.isApprove() ? "C" : "X";
+        String nowDtm = ZonedDateTime.now(VIETNAM_ZONE).format(DTM_FMT);
+        sumr.setApprStts(next);
+        sumr.setModDtm(nowDtm);
+        sumr.setModId(TenantContext.currentUserId());
+        sumrRepository.save(sumr);
+
+        String detailKey = req.isApprove()
+                ? "audit.overseas_payment.approve.detail"
+                : "audit.overseas_payment.reject.detail";
+        auditLogService.append(AuditLogContext.builder()
+                .wsvcId(WSVC_ID)
+                .refNo(ovrsPymnNo)
+                .refNo1(sumr.getApprSeqNo())
+                .activityKey("audit.overseas_payment.activity")
+                .detailKey(detailKey)
+                .build());
+
+        log.info("feature=overseas-payment approval-action bizKey={} ovrsPymnNo={} action={} apprSeqNo={}",
+                bizKey, ovrsPymnNo, req.action(), sumr.getApprSeqNo());
+    }
+
+    /**
+     * Saves the selected reporting account code on a single detail line.
+     * Mirrors the legacy inline account-picker save in the scheduled-payment
+     * detail dialog ({@code pymn_0007_001} detail row update).
+     */
+    @Transactional
+    public void saveReportingAccount(String ovrsPymnNo, int trnSeq, String rprtAcctCd) {
+        String bizKey = TenantContext.currentBizKey();
+        OvrsPymnDtls dtl = dtlsRepository
+                .findByBizKeyAndOvrsPymnNoAndTrnSeq(bizKey, ovrsPymnNo, trnSeq)
+                .orElseThrow(() -> new BusinessException("WBE2045",
+                        "detail line not found: " + ovrsPymnNo + " / " + trnSeq));
+
+        String code = (rprtAcctCd == null || rprtAcctCd.isBlank()) ? null : rprtAcctCd.trim();
+        dtl.setRprtAcctCd(code);
+        dtlsRepository.save(dtl);
+
+        log.info("feature=overseas-payment reporting-account bizKey={} ovrsPymnNo={} trnSeq={} rprtAcctCd={}",
+                bizKey, ovrsPymnNo, trnSeq, code);
+    }
+
+    private String allocateApprSeqNo(String bizKey) {
+        Long max = sumrRepository.findMaxApprSeqNoByBizKey(bizKey);
+        long next = (max == null ? 0L : max) + 1L;
+        return Long.toString(next);
+    }
+
+    private void stampApproval(OvrsPymnSumr sumr, String apprSeqNo, RequestApprovalRequest req) {
+        sumr.setApprSeqNo(apprSeqNo);
+        if (req.postTitle() != null && !req.postTitle().isBlank()) {
+            sumr.setTitl(req.postTitle().trim());
+        }
+        String nowDtm = ZonedDateTime.now(VIETNAM_ZONE).format(DTM_FMT);
+        sumr.setModDtm(nowDtm);
+        sumr.setModId(TenantContext.currentUserId());
+        sumrRepository.save(sumr);
+    }
+
     // ─── mappers ──────────────────────────────────────────────────────────────
 
     private OverseasScheduledRow mapRow(Object[] r, Map<String, List<Object[]>> approversBySeq) {
         String apprSeqNo = (String) r[11];
 
-        List<OverseasApprover> approvers = approversBySeq
-                .getOrDefault(apprSeqNo, List.of())
-                .stream()
-                .map(this::mapApprover)
-                .collect(Collectors.toList());
+        List<OverseasApprover> approvers = apprSeqNo == null
+                ? List.of()
+                : approversBySeq.getOrDefault(apprSeqNo, List.of())
+                        .stream()
+                        .map(this::mapApprover)
+                        .collect(Collectors.toList());
 
         Number apprvrTotCnt     = (Number) r[24];
         Number apprvrApprTotCnt = (Number) r[25];
 
         return new OverseasScheduledRow(
-                (String)     r[2],                                     // ovrsPymnNo
-                (String)     r[6],                                     // ccyCd
-                (String)     r[3],                                     // ovrsPymnTypeCd
-                (String)     r[5],                                     // titl
+                toStr(r[2]),                                           // ovrsPymnNo
+                toStr(r[6]),                                           // ccyCd
+                toStr(r[3]),                                           // ovrsPymnTypeCd
+                toStr(r[5]),                                           // titl
                 apprSeqNo,                                             // apprSeqNo
-                toBigDecimal(r[7]),                                     // totalTranAmt
-                toInt(r[8]),                                            // totTrnsCnt
-                (String)     r[9],                                     // regDtm
-                (String)     r[12],                                    // draftUserId
-                (String)     r[13],                                    // draftUserNm
-                (String)     r[15],                                    // apprStts
-                (String)     r[17],                                    // trnfYn
+                toBigDecimal(r[7]),                                    // totalTranAmt
+                toInt(r[8]),                                           // totTrnsCnt
+                toStr(r[9]),                                           // regDtm
+                toStr(r[12]),                                          // draftUserId
+                toStr(r[13]),                                          // draftUserNm
+                toStr(r[15]),                                          // apprStts
+                toStr(r[17]),                                          // trnfYn (CHAR(1) → Character)
                 apprvrApprTotCnt != null ? apprvrApprTotCnt.intValue() : 0,
                 apprvrTotCnt     != null ? apprvrTotCnt.intValue()     : 0,
-                (String)     r[18],                                    // apprDv
-                (String)     r[14],                                    // docNo
+                toStr(r[18]),                                          // apprDv
+                toStr(r[14]),                                          // docNo
                 null,                                                  // fileUrl (not in base query for R&D)
-                (String)     r[19],                                    // outBankCd
-                (String)     r[21],                                    // outBankNm
-                (String)     r[20],                                    // wdrlActNo
-                (String)     r[22],                                    // bnfcNm
-                (String)     r[1],                                     // ovrsPymnType ('E'/'M')
-                (String)     r[23],                                    // payDate
-                (String)     r[4],                                     // fileNm
-                (String)     r[10],                                    // regId
+                toStr(r[19]),                                          // outBankCd
+                toStr(r[21]),                                          // outBankNm
+                toStr(r[20]),                                          // wdrlActNo
+                toStr(r[22]),                                          // bnfcNm
+                toStr(r[1]),                                           // ovrsPymnType ('E'/'M')
+                toStr(r[23]),                                          // payDate
+                toStr(r[4]),                                           // fileNm
+                toStr(r[10]),                                          // regId
                 approvers
         );
     }
 
     private OverseasApprover mapApprover(Object[] r) {
         return new OverseasApprover(
-                (String) r[2],  // apprvrId
-                (String) r[3],  // apprvrNm
-                (String) r[4],  // apprvrStts
-                (String) r[1],  // apprvrLineNo
-                (String) r[5],  // modDtm
-                (String) r[6]   // regImgUrl
+                toStr(r[2]),  // apprvrId
+                toStr(r[3]),  // apprvrNm
+                toStr(r[4]),  // apprvrStts (CHAR(1))
+                toStr(r[1]),  // apprvrLineNo
+                toStr(r[5]),  // modDtm
+                toStr(r[6])   // regImgUrl
         );
     }
 
@@ -233,20 +457,20 @@ public class OverseasPaymentService {
     /** Maps a result-list query row (see {@link com.kosign.wecms.domain.payment.repository.OverseasPaymentRepository#buildResultSql}). */
     private OverseasResultRow mapResultRow(Object[] r) {
         return new OverseasResultRow(
-                (String)     r[0],   // ovrsPymnNo
-                (String)     r[1],   // ccyCd
-                (String)     r[2],   // fileNm (titl)
+                toStr(r[0]),         // ovrsPymnNo
+                toStr(r[1]),         // ccyCd
+                toStr(r[2]),         // fileNm
                 toBigDecimal(r[3]),  // totalTranAmt
                 toInt(r[4]),         // totTrnsCnt
-                (String)     r[5],   // regDtm
-                (String)     r[6],   // draftUserNm
-                (String)     r[7],   // regId
-                (String)     r[8],   // outBankNm
-                (String)     r[9],   // outBankCd
-                (String)     r[10],  // wdrlActNo
-                (String)     r[11],  // trnfYn
-                (String)     r[12],  // docNo
-                (String)     r[13],  // titl (approval title)
+                toStr(r[5]),         // regDtm
+                toStr(r[6]),         // draftUserNm
+                toStr(r[7]),         // regId
+                toStr(r[8]),         // outBankNm
+                toStr(r[9]),         // outBankCd
+                toStr(r[10]),        // wdrlActNo
+                toStr(r[11]),        // trnfYn (CHAR(1) → Character)
+                toStr(r[12]),        // docNo
+                toStr(r[13]),        // titl (approval title)
                 0,                   // successCount — not yet tracked at batch level
                 0                    // failedCount  — not yet tracked at batch level
         );
@@ -283,5 +507,11 @@ public class OverseasPaymentService {
         if (val == null) return 0;
         if (val instanceof Number n) return n.intValue();
         return Integer.parseInt(val.toString());
+    }
+
+    /** Handles CHAR(1) columns that JDBC/PostgreSQL returns as Character, not String. */
+    private String toStr(Object val) {
+        if (val == null) return null;
+        return val.toString();
     }
 }
