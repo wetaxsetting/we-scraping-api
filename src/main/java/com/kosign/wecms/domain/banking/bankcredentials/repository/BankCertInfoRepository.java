@@ -28,6 +28,39 @@ public interface BankCertInfoRepository extends JpaRepository<BankCertInfo, Bank
      *  linked by sibling credentials). */
     long countByBizKeyAndBankCd(String bizKey, String bankCd);
 
+    /**
+     * Tenant-scoped set of {@code BANK_CD} values that have at least one
+     * non-blank credential row registered. Drives the Account Inquiry
+     * "disconnected bank" flag: a row is connected when its
+     * {@code ACCT_MSTR.BANK_CD} appears in this set, regardless of
+     * whether {@code ACCT_MSTR.BANK_CERT_SEQ} happens to point at a
+     * specific cert row.
+     *
+     * <p>Per-bank rather than per-FK is intentional. The Login
+     * Credentials popup configures credentials at the bank level — once
+     * a bank has a credential, every account at that bank is
+     * connectable through it. The legacy {@code BANK_CERT_SEQ} FK on
+     * {@code ACCT_MSTR} goes stale whenever the user adds/deletes
+     * credentials (the new credential mints a fresh {@code SEQ_NO} but
+     * existing accounts keep their old reference), so resolving by FK
+     * produces false-negatives. Per-bank resolution sidesteps the
+     * staleness entirely.
+     *
+     * <p>The legacy disconnected-bank check at
+     * {@code fnsh_0005_001.ts:711} reads {@code CERT_INFO_CON} and
+     * {@code CERT_INFO_DV} from {@code ACCT_MSTR} directly, but the
+     * legacy IDO never selects those columns from that table, so the
+     * legacy frontend sees them as {@code null} on every row and the
+     * check is always-true. The refactor restores the intended
+     * semantics by joining {@code BANK_CERT_INFO} via {@code BANK_CD}.
+     */
+    @Query("SELECT DISTINCT b.bankCd FROM BankCertInfo b " +
+           "WHERE b.bizKey = :bizKey " +
+           "  AND b.bankCd IS NOT NULL AND TRIM(b.bankCd) <> '' " +
+           "  AND b.certInfoCon IS NOT NULL AND TRIM(b.certInfoCon) <> '' " +
+           "  AND b.certInfoDv  IS NOT NULL AND TRIM(b.certInfoDv)  <> ''")
+    List<String> findConnectedBankCds(String bizKey);
+
     /** Pick the first registered credential at one bank (legacy parity:
      *  multiple accounts at one bank share one credential row, so
      *  resolving by {@code (BIZ_KEY, BANK_CD)} is enough for the sync

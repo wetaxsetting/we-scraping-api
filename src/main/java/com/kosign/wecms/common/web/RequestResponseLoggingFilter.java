@@ -75,7 +75,17 @@ public class RequestResponseLoggingFilter extends OncePerRequestFilter {
     }
 
     private void logResponse(ContentCachingResponseWrapper res, long tookMs) {
-        String body = readBody(res.getContentAsByteArray(), res.getCharacterEncoding(), res.getContentType());
+        // Jackson writes JSON responses as UTF-8 regardless of what the
+        // servlet response advertises via getCharacterEncoding() — which
+        // defaults to ISO-8859-1 per the Servlet API. Force UTF-8 for
+        // JSON bodies so the log doesn't mojibake non-ASCII payloads
+        // (e.g. Korean error messages from the NXISAS scraping gateway).
+        // The actual response bytes on the wire are unaffected; this
+        // only fixes the log rendering.
+        String encoding = isJson(res.getContentType())
+                ? StandardCharsets.UTF_8.name()
+                : res.getCharacterEncoding();
+        String body = readBody(res.getContentAsByteArray(), encoding, res.getContentType());
         log.debug("\n<-- {} ({} ms)\n{}\n", res.getStatus(), tookMs, body);
     }
 

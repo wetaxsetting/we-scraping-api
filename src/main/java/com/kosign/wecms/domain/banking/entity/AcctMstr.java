@@ -69,6 +69,26 @@ public class AcctMstr {
     private String handRegYn;
 
     /**
+     * FK into {@code BANK_CERT_INFO(BIZ_KEY, SEQ_NO)}. NULL when the
+     * account has never been bound to a bank certificate. Drives the
+     * disconnected-bank check on Account Inquiry — the legacy
+     * {@code fnsh_0005_001.ts:711} predicate ({@code cert_info_con == ''
+     * && cert_info_dv == ''}) is satisfied whenever this FK is null OR
+     * points to a {@code BANK_CERT_INFO} row whose
+     * {@code CERT_INFO_CON} / {@code CERT_INFO_DV} are blank — the
+     * legacy IDO {@code ACCT_MSTR_R001} returns nulls in both cases.
+     * Schema column already mapped on the legacy table; surfaced here
+     * because Sprint 2 needs the FK to resolve cert state. The
+     * {@code CERT_INFO_CON} / {@code CERT_INFO_DV} columns on
+     * {@code ACCT_MSTR} that V23 added are legacy DDL leftovers that
+     * the live system never populates — they live on
+     * {@code BANK_CERT_INFO} instead, keyed by this seq.
+     */
+    @JdbcTypeCode(SqlTypes.NUMERIC)
+    @Column(name = "BANK_CERT_SEQ", precision = 10, scale = 0)
+    private Long bankCertSeq;
+
+    /**
      * Account nickname formatted via legacy {@code wb_format_acct_nick_nm}
      * (installed by V44). Hibernate splices this SQL fragment into every
      * {@code SELECT} that loads {@link AcctMstr}, so list / find /

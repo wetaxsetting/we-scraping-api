@@ -16,7 +16,6 @@ import com.kosign.wecms.domain.banking.nxisas.BankScrapingService;
 import com.kosign.wecms.domain.banking.nxisas.dto.ScrapeSessionResponse;
 import com.kosign.wecms.domain.banking.nxisas.dto.VerifyCredentialsRequest;
 import com.kosign.wecms.domain.banking.entity.BankInfm;
-import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
 import com.kosign.wecms.domain.banking.repository.BankInfmRepository;
 import com.kosign.wecms.domain.setting.logincredentials.dto.BankFormInfoResponse;
 import com.kosign.wecms.domain.setting.logincredentials.dto.BankFormInfoSubType;
@@ -111,7 +110,6 @@ public class LoginCredentialsService {
     private final BankCertInfoRepository    bankRepo;
     private final GdtCertInfoRepository     gdtRepo;
     private final BankInfmRepository        bankInfmRepo;
-    private final AcctMstrRepository        acctMstrRepo;
     private final UserInfmRepository        userRepo;
     private final BankCertCryptoService     crypto;
     private final PasswordEncoder           passwordEncoder;
@@ -198,25 +196,18 @@ public class LoginCredentialsService {
         if (TYPE_BANK.equals(normalizedType)) {
             BankCertInfo row = bankRepo.findByBizKeyAndSeqNo(bizKey, seqNo)
                     .orElseThrow(() -> new BusinessException("WBE2090"));
-            String bankCd = row.getBankCd();
             bankRepo.delete(row);
-            // Flush so the COUNT query below sees the deletion — without
-            // the flush the count would still include the just-deleted
-            // row and the cascade would never fire.
-            bankRepo.flush();
-            // Cascade-delete the linked ACCT_MSTR rows ONLY when this was
-            // the last surviving credential for that bank in the tenant.
-            // The legacy `fnif_0001_001_d001` had the cascade commented
-            // out at lines 153-168 (intent to cascade but unimplemented);
-            // the refactor closes that gap to prevent orphan accounts in
-            // Banking > Account Inquiry when a credential is removed.
-            // Preserves sibling-credential account links — if two
-            // credentials at the same bank exist, deleting one doesn't
-            // strip the other's accounts.
-            if (bankCd != null && !bankCd.isBlank()
-                    && bankRepo.countByBizKeyAndBankCd(bizKey, bankCd) == 0L) {
-                acctMstrRepo.deleteByBizKeyAndBankCd(bizKey, bankCd);
-            }
+            // Account rows are NOT cascade-deleted. A credential and the
+            // accounts it once authenticated are independent concepts —
+            // removing the credential just means "I can no longer log
+            // into the bank online", not "delete my accounts from the
+            // dashboard". The earlier refactor cascade (which read the
+            // legacy `fnif_0001_001_d001` comments as intent-to-cascade)
+            // was incorrect: removing it preserves real customer data
+            // on Banking > Account Inquiry, and the per-bank
+            // `certConnYn` derivation in `AccountService` now correctly
+            // surfaces those rows as "disconnected" with the tooltip
+            // until the user re-registers a credential.
             appendAudit(REF_NO_BANK, seqNo.toPlainString());
         } else {
             GdtCertInfo row = gdtRepo.findByBizKeyAndSeqNo(bizKey, seqNo)

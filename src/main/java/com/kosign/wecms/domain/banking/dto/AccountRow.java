@@ -32,5 +32,40 @@ public record AccountRow(
         String bal,
         String realAmt,
         String acctBalInqStts,
-        String acctBalUpdDtm
+        String acctBalUpdDtm,
+        /**
+         * Manual-registration flag — verbatim {@code "Y"} / {@code "N"}
+         * from {@code ACCT_MSTR.HAND_REG_YN}. Frontend disables the row's
+         * checkbox with the {@code account_inquiry.disabled.manual} tooltip
+         * when {@code "Y"} (legacy {@code fnsh_0005_001.ts:708-709}). Never
+         * null on the wire — backend coerces to {@code "N"} when the
+         * column carries SQL NULL.
+         */
+        String handRegYn,
+        /**
+         * Bank-certificate connection flag — backend-derived per-bank.
+         * {@code "Y"} when {@code ACCT_MSTR.BANK_CD} has at least one
+         * non-blank credential row in {@code BANK_CERT_INFO} for the
+         * tenant; {@code "N"} otherwise. Per-bank rather than per-FK
+         * (i.e. NOT resolving via {@code BANK_CERT_SEQ}) so the answer
+         * survives Login Credentials add/delete cycles that mint fresh
+         * {@code SEQ_NO}s diverging from the legacy FKs on existing
+         * accounts.
+         *
+         * <p>The legacy disconnected-bank check at
+         * {@code fnsh_0005_001.ts:711} reads {@code CERT_INFO_CON} and
+         * {@code CERT_INFO_DV} from the {@code ACCT_MSTR} row directly,
+         * but the legacy IDO {@code ACCT_MSTR_R001} never selects those
+         * two columns from that table — so the legacy frontend sees them
+         * as {@code null} on every row and the check is always-true.
+         * The refactor restores the intended semantics by joining
+         * {@code BANK_CERT_INFO} via {@code BANK_CERT_SEQ} where the
+         * real credential lives.
+         *
+         * <p>Frontend disables the row's checkbox with the
+         * {@code account_inquiry.disabled.disconnected} tooltip when
+         * {@code "N"} AND {@code handRegYn != "Y"} (manual wins over
+         * disconnected, matching legacy precedence).
+         */
+        String certConnYn
 ) { }

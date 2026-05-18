@@ -14,6 +14,7 @@ import com.kosign.wecms.domain.banking.dto.CurrencyTotal;
 import com.kosign.wecms.domain.banking.dto.OwnAccountListResponse;
 import com.kosign.wecms.domain.banking.dto.TransactionsSyncRequest;
 import com.kosign.wecms.domain.banking.dto.TransactionsSyncResponse;
+import com.kosign.wecms.domain.banking.bankcredentials.repository.BankCertInfoRepository;
 import com.kosign.wecms.domain.banking.entity.AcctMstr;
 import com.kosign.wecms.domain.banking.entity.NapasBankInfo;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
@@ -29,8 +30,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 /**
  * Account Inquiry (VND/FCY) service. Mirrors the legacy
@@ -67,6 +70,7 @@ public class AccountService {
     private final AcctMstrRepository acctRepo;
     private final BankCdResolver bankResolver;
     private final NapasBankInfoRepository napasBankInfoRepo;
+    private final BankCertInfoRepository bankCertInfoRepo;
     private final com.kosign.wecms.domain.banking.nxisas.BankTransactionSyncService bankSync;
 
     /**
@@ -190,7 +194,13 @@ public class AccountService {
                 resolved.keywordPattern,
                 effective);
 
-        List<AccountRow> rows = page.getContent().stream().map(this::toRow).toList();
+        // Cert-connection lookup is per-tenant and small (a handful of
+        // distinct bank codes). Load once per list call; rows resolve
+        // their certConnYn against an in-memory set keyed by BANK_CD.
+        Set<String> connectedBanks = loadConnectedBanks(bizKey);
+        List<AccountRow> rows = page.getContent().stream()
+                .map(a -> toRow(a, connectedBanks))
+                .toList();
 
         List<CcyAggregate> aggregates = acctRepo.aggregateByCcy(
                 bizKey,
@@ -254,7 +264,10 @@ public class AccountService {
         BigDecimal balTotal = sum(rows, AcctMstr::getBal);
         BigDecimal availTotal = sum(rows, AcctMstr::getRealAmt);
 
-        List<AccountRow> mapped = rows.stream().map(this::toRow).toList();
+        Set<String> connectedBanks = loadConnectedBanks(bizKey);
+        List<AccountRow> mapped = rows.stream()
+                .map(a -> toRow(a, connectedBanks))
+                .toList();
         return new OwnAccountListResponse(
                 mapped,
                 mapped.size(),
@@ -510,7 +523,21 @@ public class AccountService {
      *  Row mapping
      * ------------------------------------------------------------------ */
 
-    private AccountRow toRow(AcctMstr a) {
+    /**
+     * Tenant-scoped set of {@code BANK_CD} values that have at least one
+     * non-blank credential row registered in {@code BANK_CERT_INFO}. An
+     * {@code ACCT_MSTR} row is "connected" when its
+     * {@link AcctMstr#getBankCd()} appears in this set; everything else
+     * is "disconnected". Per-bank (not per-seq) so the answer survives
+     * the legacy {@code BANK_CERT_SEQ} FK going stale after a user
+     * add/delete on the Login Credentials popup. Loaded once per list
+     * call — no N+1.
+     */
+    private Set<String> loadConnectedBanks(String bizKey) {
+        return new HashSet<>(bankCertInfoRepo.findConnectedBankCds(bizKey));
+    }
+
+    private AccountRow toRow(AcctMstr a, Set<String> connectedBanks) {
         String bankNm = bankResolver.resolveBankNm(a.getBankCd());
         // Formatted nickname comes from legacy DB function
         // wb_format_acct_nick_nm via @Formula on AcctMstr (installed
@@ -520,6 +547,22 @@ public class AccountService {
         String displayNick = a.getFormattedAcctNickNm() != null
                 ? a.getFormattedAcctNickNm()
                 : a.getAcctNickNm();
+        // Disconnected-bank derivation. Legacy `fnsh_0005_001.ts:711`
+        // tests blank `CERT_INFO_CON` + blank `CERT_INFO_DV` on the row,
+        // but the legacy IDO selects those from `ACCT_MSTR` (where they
+        // are never populated) instead of joining `BANK_CERT_INFO`,
+        // which is where the real credential lives. The refactor
+        // restores the intended semantics: a row is connected when its
+        // `BANK_CD` has at least one non-blank credential in
+        // `BANK_CERT_INFO`. Per-bank rather than per-seq so the result
+        // stays correct after the user adds / deletes credentials on
+        // the Login Credentials popup (which mints fresh SEQ_NOs that
+        // diverge from the existing `ACCT_MSTR.BANK_CERT_SEQ` FKs).
+        // Manual-registration accounts skip the cert check entirely
+        // (handRegYn wins).
+        String handRegYn = "Y".equalsIgnoreCase(a.getHandRegYn()) ? "Y" : "N";
+        boolean certConnected = a.getBankCd() != null && connectedBanks.contains(a.getBankCd());
+        String certConnYn = certConnected ? "Y" : "N";
         return new AccountRow(
                 a.getBankCd() + "_" + a.getAcctNo(),
                 a.getBankCd(),
@@ -533,7 +576,9 @@ public class AccountService {
                 AmountFormatter.wire(a.getBal()),
                 AmountFormatter.wire(a.getRealAmt()),
                 a.getAcctBalInqStts(),
-                a.getAcctBalUpdDtm()
+                a.getAcctBalUpdDtm(),
+                handRegYn,
+                certConnYn
         );
     }
 
