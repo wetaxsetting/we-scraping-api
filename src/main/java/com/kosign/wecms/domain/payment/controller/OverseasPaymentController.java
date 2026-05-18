@@ -172,10 +172,15 @@ public class OverseasPaymentController {
             @Size(max = 100)
             String keyword,
 
+            /** {@code "Y"} = Completed only, {@code "N"} = In Progress only, absent = all. */
+            @RequestParam(value = "trnf_yn", required = false)
+            @Pattern(regexp = "^[YN]$", message = "trnf_yn must be Y or N")
+            String trnfYn,
+
             @RequestParam(value = "page", defaultValue = "0") int page,
             @RequestParam(value = "size", defaultValue = "0") int size) {
 
-        return ApiResponse.ok(overseasPaymentService.listResult(fromDt, toDt, keyword, page, size));
+        return ApiResponse.ok(overseasPaymentService.listResult(fromDt, toDt, keyword, trnfYn, page, size));
     }
 
     /**
@@ -184,6 +189,34 @@ public class OverseasPaymentController {
     @GetMapping("/result/{id}")
     public ApiResponse<OverseasResultRow> getResultById(@PathVariable("id") String id) {
         return ApiResponse.ok(overseasPaymentService.getResultById(id));
+    }
+
+    /**
+     * Streams the Overseas Payment Result XLSX for all batches matching the
+     * current filter (same params as {@link #listResult}).
+     * One Excel row per {@code OVRS_PYMN_DTLS} detail line.
+     */
+    @GetMapping("/result/export")
+    public void exportResult(
+            @RequestParam("from_dt")
+            @Pattern(regexp = "^[0-9]{8}$", message = "from_dt must be yyyyMMdd")
+            String fromDt,
+
+            @RequestParam("to_dt")
+            @Pattern(regexp = "^[0-9]{8}$", message = "to_dt must be yyyyMMdd")
+            String toDt,
+
+            @RequestParam(value = "keyword", required = false)
+            @Size(max = 100)
+            String keyword,
+
+            @RequestParam(value = "trnf_yn", required = false)
+            @Pattern(regexp = "^[YN]$", message = "trnf_yn must be Y or N")
+            String trnfYn,
+
+            HttpServletResponse response) throws IOException {
+
+        overseasPaymentService.exportResult(fromDt, toDt, keyword, trnfYn, response);
     }
 
     /**
