@@ -631,11 +631,11 @@ public class InternalTransferService {
      * <ul>
      *   <li>requires the batch to carry an {@code APPR_SEQ_NO}
      *       (i.e. the user previously hit Request Approval) — else
-     *       {@code WBE2080}.</li>
+     *       {@code WBE2094}.</li>
      *   <li>requires the batch to be still actionable — the current
      *       {@code APPR_STTS} must be null / {@code "P"} / {@code "I"};
      *       any final state ({@code "C"} / {@code "X"}) returns
-     *       {@code WBE2081}.</li>
+     *       {@code WBE2095}.</li>
      *   <li>stamps {@code APPR_STTS = "C"} on Approve, {@code "X"}
      *       on Reject.</li>
      *   <li>writes one audit row keyed by the action (Approve /
@@ -670,7 +670,7 @@ public class InternalTransferService {
         // but the inverse condition — Delete rejects rows WITH a seq,
         // approve/reject rejects rows WITHOUT one.
         if (master.getApprSeqNo() == null || master.getApprSeqNo().isBlank()) {
-            throw new BusinessException("WBE2080");
+            throw new BusinessException("WBE2094");
         }
 
         // Guard 2: the batch must still be actionable. Once stamped
@@ -678,7 +678,7 @@ public class InternalTransferService {
         // would silently overwrite history.
         String current = master.getApprStts();
         if (APPR_STTS_APPROVED.equals(current) || APPR_STTS_REJECTED.equals(current)) {
-            throw new BusinessException("WBE2081");
+            throw new BusinessException("WBE2095");
         }
 
         String next        = req.isApprove() ? APPR_STTS_APPROVED : APPR_STTS_REJECTED;

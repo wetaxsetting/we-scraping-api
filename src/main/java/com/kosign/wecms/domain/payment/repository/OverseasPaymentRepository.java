@@ -188,7 +188,7 @@ public class OverseasPaymentRepository {
                        erm.draft_user_id,
                        erm.draft_user_nm,
                        erm.doc_no,
-                       erm.appr_sts,
+                       COALESCE(ops.appr_stts, erm.appr_sts) AS appr_sts,
                        erm.appr_type_cd,
                        ops.trnf_yn,
                        erm.appr_dv,
@@ -282,7 +282,7 @@ public class OverseasPaymentRepository {
      * <pre>
      *  0  ovrs_pymn_no
      *  1  ccy_cd
-     *  2  titl (file name)
+     *  2  org_file_nm
      *  3  total_tran_amt
      *  4  tot_trns_cnt
      *  5  reg_dtm
@@ -348,7 +348,7 @@ public class OverseasPaymentRepository {
         return """
                 SELECT ops.ovrs_pymn_no,
                        ops.ccy_cd,
-                       ops.titl,
+                       ops.org_file_nm,
                        ops.total_tran_amt,
                        ops.tot_trns_cnt,
                        ops.reg_dtm,
