@@ -61,9 +61,12 @@ public class ChartOfAccountsHierarchy {
         }
 
         // L2 lookup: direct children of an ACC-* root.
+        // `LEVEL1_ROOTS` is a `Set.of(...)` immutable set which throws
+        // NPE on `.contains(null)` — guard the parent code first.
         this.l2ByCode = new HashMap<>();
         for (ChartOfAccount r : byCode.values()) {
-            if (LEVEL1_ROOTS.contains(r.getParentChartAcctCd())) {
+            String parentCd = r.getParentChartAcctCd();
+            if (parentCd != null && LEVEL1_ROOTS.contains(parentCd)) {
                 l2ByCode.put(r.getChartAcctCd(), r);
             }
         }
@@ -84,7 +87,8 @@ public class ChartOfAccountsHierarchy {
             ChartOfAccount l1 = byCode.get(l2.getParentChartAcctCd());
             if (l1 == null) continue;
             if (!"A".equals(l1.getStts())) continue;
-            if (!LEVEL1_ROOTS.contains(l1.getChartAcctCd())) continue;
+            String l1Cd = l1.getChartAcctCd();
+            if (l1Cd == null || !LEVEL1_ROOTS.contains(l1Cd)) continue;
             l3Active.add(r);
         }
     }
