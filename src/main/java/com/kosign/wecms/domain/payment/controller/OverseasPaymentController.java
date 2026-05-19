@@ -3,6 +3,7 @@ package com.kosign.wecms.domain.payment.controller;
 import com.kosign.wecms.common.export.ExcelExportRequest;
 import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.response.ApiResponse;
+import com.kosign.wecms.domain.payment.dto.ChangeApprovalLineRequest;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentDetailResponse;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentExcelPreview;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentExcelUploadRequest;
@@ -30,6 +31,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -141,6 +143,30 @@ public class OverseasPaymentController {
             @PathVariable("id") String id,
             @Valid @RequestBody RequestApprovalRequest request) {
         return ApiResponse.ok(overseasPaymentService.requestApproval(id, request));
+    }
+
+    /**
+     * Replace the approver chain on a pending overseas payment batch.
+     * Only allowed while {@code APPR_STTS = 'P'}.
+     */
+    @PatchMapping("/{id}/approval-line")
+    public ApiResponse<Void> changeApprovalLine(
+            @PathVariable("id") String id,
+            @Valid @RequestBody ChangeApprovalLineRequest request) {
+        overseasPaymentService.changeApprovalLine(id, request);
+        return ApiResponse.ok(null);
+    }
+
+    /**
+     * Retract the pending approval request on an overseas payment batch.
+     * Deletes the {@code EXPT_RESOL_MSTR} + {@code EXPT_RESOL_APPRVR_INFM} rows
+     * and resets {@code APPR_SEQ_NO} / {@code APPR_STTS} on {@code OVRS_PYMN_SUMR}
+     * so the batch returns to draft state. Only allowed while {@code APPR_STTS = 'P'}.
+     */
+    @DeleteMapping("/{id}/approval-line")
+    public ApiResponse<Void> removeApprovalLine(@PathVariable("id") String id) {
+        overseasPaymentService.removeApprovalLine(id);
+        return ApiResponse.ok(null);
     }
 
     /**
