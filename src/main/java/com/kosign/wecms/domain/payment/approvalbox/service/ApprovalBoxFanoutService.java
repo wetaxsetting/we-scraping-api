@@ -118,6 +118,15 @@ public class ApprovalBoxFanoutService {
         mstr.setPayDate(payDate != null && !payDate.isBlank() ? payDate : null);
         mstr.setDelYn("N");
         mstr.setPayEndYn("N");
+        // Legacy print-form flags — all NOT NULL with no DB DEFAULT. The
+        // refactor doesn't render the legacy print form, but the columns
+        // must be populated so the INSERT doesn't violate the constraint.
+        // Values mirror the legacy DEV defaults ('Y'/'N' from V109 schema).
+        mstr.setHandRegYn("Y");
+        mstr.setApprBoxUseYn("N");
+        mstr.setApprDatDispYn("N");
+        mstr.setCmpnLogoDispYn("N");
+        mstr.setRegDispYn("N");
         mstr.setApprTypeCd(APPR_TYPE_CD_PENDING);
         mstr.setRegId(userId);
         mstr.setRegDtm(nowDtm);
