@@ -45,9 +45,11 @@ public class ExchangeRateController {
      *
      * <pre>
      * GET /api/v1/banking/exchange-rates
-     *   ?ref_date=20250702   (optional — defaults to today Vietnam time)
-     *   &bank_cd=11704088    (optional — defaults to Shinhan Bank)
-     *   &seq_no=2            (optional — "1" morning, "2" afternoon; omit → latest)
+     *   ?ref_date=20250702      (optional — defaults to today Vietnam time)
+     *   &bank_cd=11704088       (optional — defaults to Shinhan Bank)
+     *   &seq_no=2               (optional — "1" morning, "2" afternoon; omit → latest)
+     *   &sort_field=CASH_BUY    (optional — CURRENCY | CASH_BUY | CASH_SELL | TT_BUY | TT_SELL)
+     *   &sort_direction=ASC     (optional — ASC | DESC; omit → default alphabetical by currency)
      * </pre>
      */
     @GetMapping("/exchange-rates")
@@ -62,9 +64,15 @@ public class ExchangeRateController {
 
             @RequestParam(value = "seq_no", required = false)
             @Pattern(regexp = "^[0-9]{1,2}$", message = "seq_no must be a 1-2 digit number")
-            String seqNo
+            String seqNo,
+
+            @RequestParam(value = "sort_field", required = false)
+            String sortField,
+
+            @RequestParam(value = "sort_direction", required = false)
+            String sortDirection
     ) {
-        ExchangeRateListResponse response = exchangeRateService.list(refDate, bankCd, seqNo);
+        ExchangeRateListResponse response = exchangeRateService.list(refDate, bankCd, seqNo, sortField, sortDirection);
         return ApiResponse.ok(response);
     }
 
