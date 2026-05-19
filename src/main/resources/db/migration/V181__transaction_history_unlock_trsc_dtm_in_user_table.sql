@@ -41,11 +41,11 @@ UPDATE SYS_SCR_OPTION_WECMS
    AND (FIX_YN <> 'N' OR USE_YN <> 'Y');
 
 -- (2) Force-unlock TRSC_DTM in every existing per-user override row.
+-- NOTE: USER_SCR_OPTION_WECMS does not have FIX_YN (only SYS table does).
 UPDATE USER_SCR_OPTION_WECMS
-   SET FIX_YN = 'N',
-       USE_YN = 'Y',
+   SET USE_YN = 'Y',
        MOD_ID = 'system',
        MOD_DTM = NOW()
  WHERE WEB_SVC_ID = 'banking-transaction-history'
    AND FIELD_ID   = 'TRSC_DTM'
-   AND (FIX_YN <> 'N' OR USE_YN <> 'Y');
+   AND USE_YN <> 'Y';
