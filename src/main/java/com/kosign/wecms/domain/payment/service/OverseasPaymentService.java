@@ -9,6 +9,7 @@ import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolApprvrInfmRepository;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprDv;
+import com.kosign.wecms.domain.payment.dto.ChangeApprovalLineRequest;
 import com.kosign.wecms.domain.payment.dto.OverseasApprover;
 import com.kosign.wecms.domain.payment.dto.OverseasCurrencyTotal;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentDetailResponse;
@@ -157,7 +158,11 @@ public class OverseasPaymentService {
         Object[] r = paymentRepo.findScheduledById(bizKey, ovrsPymnNo)
                 .orElseThrow(() -> new BusinessException("WBE_NOT_FOUND",
                         "overseas payment not found: " + ovrsPymnNo));
-        return mapRow(r, java.util.Map.of());
+        String apprSeqNo = (String) r[11];
+        Map<String, List<Object[]>> approversBySeq = apprSeqNo != null
+                ? approverRepo.findByApprSeqNos(bizKey, List.of(apprSeqNo))
+                : Map.of();
+        return mapRow(r, approversBySeq);
     }
 
     // ─── result list ──────────────────────────────────────────────────────────
@@ -324,10 +329,20 @@ public class OverseasPaymentService {
                         d.getTrnfYn() != null ? d.getTrnfYn() : "N"))
                 .collect(Collectors.toList());
 
+        String docNo = null;
+        if (sumr.getApprSeqNo() != null) {
+            ExptResolMstr mstr = exptResolMstrRepository.findById(
+                    new com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId(bizKey, sumr.getApprSeqNo())
+            ).orElse(null);
+            if (mstr != null) {
+                docNo = mstr.getDocNo();
+            }
+        }
+
         return new OverseasPaymentDetailResponse(
                 sumr.getOvrsPymnNo(),
                 sumr.getTitl(),
-                null,                       // apprStts — comes from EXPT_RESOL_MSTR (Phase A: not written yet)
+                sumr.getApprStts(),
                 sumr.getTotalTranAmt() != null ? sumr.getTotalTranAmt() : BigDecimal.ZERO,
                 sumr.getCcyCd(),
                 sumr.getTotTrnsCnt(),
@@ -337,7 +352,7 @@ public class OverseasPaymentService {
                 sumr.getOutBankCd(),
                 sumr.getWdrlActNo(),
                 sumr.getCcyCd(),            // wdrlCcyCd — same as payment currency for Excel uploads
-                null,                       // docNo — EXPT_RESOL_MSTR deferred
+                docNo,
                 sumr.getApprSeqNo(),
                 sumr.getOrgFileNm(),
                 null,                       // fileSize
@@ -564,6 +579,136 @@ public class OverseasPaymentService {
             row.setApprLineNo(BigDecimal.valueOf(req.apprLineNo()));
             exptResolApprvrInfmRepository.save(row);
         }
+    }
+
+    // ─── change approval line ────────────────────────────────────────────────
+
+    /**
+     * Replaces the approver chain on a pending overseas payment batch.
+     * Deletes existing {@code EXPT_RESOL_APPRVR_INFM} rows and inserts the
+     * new chain from the selected approval line. Only allowed when
+     * {@code APPR_STTS = 'P'} (pending — first approver has not yet acted).
+     *
+     * @throws BusinessException {@code WBE2045} — batch not found
+     * @throws BusinessException {@code WBE2097} — batch is not in pending state
+     */
+    @Transactional
+    public void changeApprovalLine(String ovrsPymnNo, ChangeApprovalLineRequest req) {
+        String bizKey = TenantContext.currentBizKey();
+        OvrsPymnSumr sumr = sumrRepository.findByBizKeyAndOvrsPymnNo(bizKey, ovrsPymnNo)
+                .orElseThrow(() -> new BusinessException("WBE2045",
+                        "overseas payment not found: " + ovrsPymnNo));
+
+        if (!"P".equals(sumr.getApprStts())) {
+            throw new BusinessException("WBE2097");
+        }
+        if ("Y".equals(sumr.getTrnfYn())) {
+            throw new BusinessException("WBE2095");
+        }
+
+        String apprSeqNo = sumr.getApprSeqNo();
+        String userId    = TenantContext.currentUserId();
+        String nowDtm    = ZonedDateTime.now(VIETNAM_ZONE).format(DTM_FMT);
+
+        // Replace approver chain
+        List<ExptResolApprvrInfm> existing = exptResolApprvrInfmRepository.findChain(bizKey, apprSeqNo);
+        exptResolApprvrInfmRepository.deleteAll(existing);
+        exptResolApprvrInfmRepository.flush();
+
+        List<ChangeApprovalLineRequest.ApproverInput> approvers = req.approvers();
+        for (int i = 0; i < approvers.size(); i++) {
+            ChangeApprovalLineRequest.ApproverInput ap = approvers.get(i);
+            ExptResolApprvrInfm row = new ExptResolApprvrInfm();
+            row.setBizKey(bizKey);
+            row.setApprSeqNo(apprSeqNo);
+            row.setApprvrId(ap.apprvrId());
+            row.setApprvrStts(i == 0 ? "P" : "W");
+            row.setApprvrNm(ap.apprvrNm());
+            row.setApprDtm(null);
+            row.setRegId(userId);
+            row.setRegDtm(nowDtm);
+            row.setModId(userId != null ? userId : "");
+            row.setModDtm(nowDtm);
+            row.setReadYn("N");
+            row.setApprvrLineNo(java.math.BigDecimal.valueOf(i + 1));
+            row.setApprLineNo(java.math.BigDecimal.valueOf(req.apprLineNo()));
+            exptResolApprvrInfmRepository.save(row);
+        }
+
+        // Touch mod timestamp on master rows
+        exptResolMstrRepository.findById(
+                new com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId(bizKey, apprSeqNo))
+                .ifPresent(mstr -> {
+                    mstr.setModId(userId != null ? userId : "");
+                    mstr.setModDtm(nowDtm);
+                    exptResolMstrRepository.save(mstr);
+                });
+
+        sumr.setModId(userId != null ? userId : "");
+        sumr.setModDtm(nowDtm);
+        sumrRepository.save(sumr);
+
+        log.info("feature=overseas-payment change-approval-line bizKey={} ovrsPymnNo={} apprSeqNo={} apprLineNo={} approvers={}",
+                bizKey, ovrsPymnNo, apprSeqNo, req.apprLineNo(), approvers.size());
+    }
+
+    // ─── remove approval line ─────────────────────────────────────────────────
+
+    /**
+     * Retracts the pending approval request on an overseas payment batch.
+     * Deletes {@code EXPT_RESOL_APPRVR_INFM} and {@code EXPT_RESOL_MSTR} rows,
+     * then clears {@code APPR_SEQ_NO} and {@code APPR_STTS} on {@code OVRS_PYMN_SUMR}
+     * so the batch returns to draft state. Only allowed when {@code APPR_STTS = 'P'}.
+     *
+     * @throws BusinessException {@code WBE2045} — batch not found
+     * @throws BusinessException {@code WBE2098} — batch is not in pending state
+     */
+    @Transactional
+    public void removeApprovalLine(String ovrsPymnNo) {
+        String bizKey = TenantContext.currentBizKey();
+        OvrsPymnSumr sumr = sumrRepository.findByBizKeyAndOvrsPymnNo(bizKey, ovrsPymnNo)
+                .orElseThrow(() -> new BusinessException("WBE2045",
+                        "overseas payment not found: " + ovrsPymnNo));
+
+        if (!"P".equals(sumr.getApprStts())) {
+            throw new BusinessException("WBE2098");
+        }
+        if ("Y".equals(sumr.getTrnfYn())) {
+            throw new BusinessException("WBE2095");
+        }
+
+        String apprSeqNo = sumr.getApprSeqNo();
+        String userId    = TenantContext.currentUserId();
+        String nowDtm    = ZonedDateTime.now(VIETNAM_ZONE).format(DTM_FMT);
+
+        // Delete approver chain rows
+        List<ExptResolApprvrInfm> existing = exptResolApprvrInfmRepository.findChain(bizKey, apprSeqNo);
+        exptResolApprvrInfmRepository.deleteAll(existing);
+        exptResolApprvrInfmRepository.flush();
+
+        // Delete master approval row
+        exptResolMstrRepository.findById(
+                new com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId(bizKey, apprSeqNo))
+                .ifPresent(exptResolMstrRepository::delete);
+        exptResolMstrRepository.flush();
+
+        // Reset the batch to draft state
+        sumr.setApprSeqNo(null);
+        sumr.setApprStts(null);
+        sumr.setModId(userId != null ? userId : "");
+        sumr.setModDtm(nowDtm);
+        sumrRepository.save(sumr);
+
+        auditLogService.append(AuditLogContext.builder()
+                .wsvcId(WSVC_ID)
+                .refNo(ovrsPymnNo)
+                .refNo1(apprSeqNo)
+                .activityKey("audit.overseas_payment.activity")
+                .detailKey("audit.overseas_payment.remove_approval.detail")
+                .build());
+
+        log.info("feature=overseas-payment remove-approval-line bizKey={} ovrsPymnNo={} apprSeqNo={}",
+                bizKey, ovrsPymnNo, apprSeqNo);
     }
 
     // ─── mappers ──────────────────────────────────────────────────────────────
