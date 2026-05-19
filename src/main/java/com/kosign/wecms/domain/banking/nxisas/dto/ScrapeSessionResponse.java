@@ -33,6 +33,11 @@ public record ScrapeSessionResponse(
          *  the legacy parity in nxisas_v2.js:1539-1542. */
         String captchaImageFormat,
         List<ScrapedAccount> accounts,
+        /** Scraped card list — populated when the session was started
+         *  with {@code scrape_kind = "CARD_INFO"} and the post-login
+         *  CARD_INFO job returned a result. Null on every ACCT_LIST
+         *  session (back-compat with existing callers). */
+        List<ScrapedCard> cards,
         String errorCode,
         String errorMessage
 ) {
@@ -46,26 +51,31 @@ public record ScrapeSessionResponse(
 
     /** OTP challenge — challengePrompt only. */
     public static ScrapeSessionResponse challenge(UUID sessionId, Status status, String prompt) {
-        return new ScrapeSessionResponse(sessionId, status, prompt, null, null, null, null, null, null);
+        return new ScrapeSessionResponse(sessionId, status, prompt, null, null, null, null, null, null, null);
     }
 
     /** QNA challenge — challengePrompt + structured question list. */
     public static ScrapeSessionResponse qnaChallenge(UUID sessionId, String prompt, List<QnaQuestion> questions) {
-        return new ScrapeSessionResponse(sessionId, Status.QNA_REQUIRED, prompt, questions, null, null, null, null, null);
+        return new ScrapeSessionResponse(sessionId, Status.QNA_REQUIRED, prompt, questions, null, null, null, null, null, null);
     }
 
     /** CAPTCHA challenge — base64 image + format. */
     public static ScrapeSessionResponse captchaChallenge(UUID sessionId, String prompt, String image, String format) {
-        return new ScrapeSessionResponse(sessionId, Status.CAPTCHA_REQUIRED, prompt, null, image, format, null, null, null);
+        return new ScrapeSessionResponse(sessionId, Status.CAPTCHA_REQUIRED, prompt, null, image, format, null, null, null, null);
     }
 
     /** Terminal error response (bank-side or gateway-side rejection). */
     public static ScrapeSessionResponse error(UUID sessionId, String errorCode, String errorMessage) {
-        return new ScrapeSessionResponse(sessionId, Status.ERROR, null, null, null, null, null, errorCode, errorMessage);
+        return new ScrapeSessionResponse(sessionId, Status.ERROR, null, null, null, null, null, null, errorCode, errorMessage);
     }
 
-    /** Terminal success — scraped accounts payload. */
+    /** Terminal success — scraped accounts payload (ACCT_LIST flow). */
     public static ScrapeSessionResponse completed(UUID sessionId, List<ScrapedAccount> accounts) {
-        return new ScrapeSessionResponse(sessionId, Status.COMPLETED, null, null, null, null, accounts, null, null);
+        return new ScrapeSessionResponse(sessionId, Status.COMPLETED, null, null, null, null, accounts, null, null, null);
+    }
+
+    /** Terminal success — scraped cards payload (CARD_INFO flow). */
+    public static ScrapeSessionResponse completedCards(UUID sessionId, List<ScrapedCard> cards) {
+        return new ScrapeSessionResponse(sessionId, Status.COMPLETED, null, null, null, null, null, cards, null, null);
     }
 }

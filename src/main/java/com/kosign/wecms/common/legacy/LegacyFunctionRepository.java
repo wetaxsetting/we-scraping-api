@@ -167,6 +167,34 @@ public class LegacyFunctionRepository {
     }
 
     /**
+     * Payment &gt; Card Transactions Sync &mdash; allocate the next per-tenant
+     * {@code CARD_SEQ_NO} for {@code CARD_TRNS_HSTR} via the local
+     * {@code wb_get_next_val('card_trns_hstr', 'card_seq_no', biz_key)}
+     * branch (V190). Mirrors {@code acct_trns_hstr.acct_seq_no} exactly:
+     * per-tenant MAX+1, retry-once discipline on PK collisions.
+     *
+     * <p>Used by {@code CardTransactionSyncService.applyResults} when
+     * inserting scraped {@code CARD_USING} transactions into the
+     * ledger. Concurrency: service wraps the call + INSERT in one
+     * {@code @Transactional}; PK conflict surfaces as
+     * {@code DataIntegrityViolationException} and the orchestrator
+     * retries the single row before surfacing the error envelope.
+     *
+     * <p>Returns a numeric text token (e.g. {@code "1234"}); the caller
+     * stores it verbatim in {@code CARD_TRNS_HSTR.CARD_SEQ_NO}
+     * (VARCHAR(20)).
+     *
+     * <p>Retire plan: drop this method and the V190 branch once the
+     * legacy WeCMS / WABOOKS systems no longer call
+     * {@code wb_get_next_val} for {@code card_trns_hstr} &mdash; see
+     * "Surviving legacy functions" in
+     * {@code wecms-api-main/CLAUDE.md}.
+     */
+    public String nextCardSeqNo(String bizKey) {
+        return nextVal("card_trns_hstr", "card_seq_no", bizKey, null, null, null, null, null);
+    }
+
+    /**
      * Settings &gt; Contacts &gt; Attachments &mdash; allocate the next
      * per-contact {@code FILE_ID} by delegating to the legacy
      * {@code wb_get_next_val('trco_info_file', 'file_id', trco_key)}

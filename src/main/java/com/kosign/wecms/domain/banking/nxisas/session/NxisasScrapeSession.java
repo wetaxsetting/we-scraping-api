@@ -76,9 +76,14 @@ public class NxisasScrapeSession {
     // Consumed by BankTransactionSyncService when this session is
     // serving the Account Inquiry > Update popup (mode = SYNC).
     // The Login Credentials flow (mode = SETUP) leaves these null.
-    /** Discriminator: SETUP = legacy comm_0218 add-credential flow;
-     *  SYNC = Account Inquiry &gt; Update popup. */
-    public enum Mode { SETUP, SYNC }
+    /** Discriminator: SETUP = legacy comm_0218 add-credential flow
+     *  (LOGIN + ACCT_LIST post-login);
+     *  SYNC = Account Inquiry &gt; Update popup (LOGIN + per-account
+     *  TRANSACTION + BALANCE);
+     *  CARD_REGISTER = Card Management Setting "Add Card" flow
+     *  (LOGIN + CARD_INFO post-login — registers cards into
+     *  {@code CARD_MSTR} via {@code POST /api/v1/payment/card-transactions/cards}). */
+    public enum Mode { SETUP, SYNC, CARD_REGISTER }
     @Setter(AccessLevel.PUBLIC) private Mode mode = Mode.SETUP;
 
     /** {@code yyyyMMdd} sync window start — captured on the initial

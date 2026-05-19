@@ -53,6 +53,8 @@ public class FlywayRepairConfig {
      * <ul>
      *   <li>{@code overseas_payment_key_seq} — V135 / V136</li>
      *   <li>{@code ovrs_pymn_dtls} — V138</li>
+     *   <li>{@code card_mstr} — V176</li>
+     *   <li>{@code card_trns_hstr} — V176 (same migration as {@code card_mstr})</li>
      * </ul>
      */
     private void purgeMissingTableEntries(Connection conn) throws SQLException {
@@ -65,6 +67,11 @@ public class FlywayRepairConfig {
             log.warn("FlywayRepairConfig: ovrs_pymn_dtls is missing — " +
                      "purging stale V138 history entry so migrate() recreates the table");
             deleteHistoryVersions(conn, "138");
+        }
+        if (!tableExists(conn, "card_mstr") || !tableExists(conn, "card_trns_hstr")) {
+            log.warn("FlywayRepairConfig: card_mstr/card_trns_hstr is missing — " +
+                     "purging stale V176 history entry so migrate() recreates both tables");
+            deleteHistoryVersions(conn, "176");
         }
     }
 

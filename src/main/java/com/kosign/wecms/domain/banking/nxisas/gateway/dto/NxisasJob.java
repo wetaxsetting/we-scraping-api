@@ -18,7 +18,9 @@ public enum NxisasJob {
     QNA("QNA"),
     ACCT_LIST("ACCT_LIST"),
     BALANCE("BALANCE"),
-    TRANSACTION("TRANSACTION");
+    TRANSACTION("TRANSACTION"),
+    CARD_INFO("CARD_INFO"),
+    CARD_USING("CARD_USING");
 
     private final String value;
 

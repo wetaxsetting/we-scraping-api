@@ -1,8 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Read(//d/KOSIGN/WeCMS/WECMS DEV/WECMS/src/**)",
-      "Bash(./gradlew bootRun --args='--spring.profiles.active=local')"
+      "Bash(./gradlew test:*)",
+      "Bash(./gradlew compileJava)",
+      "Bash(./gradlew bootRun --args='--spring.profiles.active=local')",
+      "mcp__postgres_dev__query"
     ]
   },
   "enabledMcpjsonServers": [
@@ -11,10 +13,5 @@
     "postgres_local",
     "playwright",
     "svn"
-  ],
-  "permissions": {
-    "allow": [
-      "Bash(./gradlew test:*)"
-    ]
-  }
+  ]
 }

@@ -7,6 +7,10 @@ import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasAcctListJobInput
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasAcctListJobResult;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasBalanceJobInput;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasBalanceJobResult;
+import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasCardInfoJobInput;
+import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasCardInfoJobResult;
+import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasCardUsingJobInput;
+import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasCardUsingJobResult;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasTransactionJobInput;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasTransactionJobResult;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasApiIn;
@@ -107,6 +111,54 @@ public class NxisasGatewayClient {
                                                           GatewayContinuation cont) {
         return call(module, category, trSeq, NxisasJob.ACCT_LIST, input, cont,
                 new TypeReference<NxisasApiOut<NxisasAcctListJobResult>>() { });
+    }
+
+    /**
+     * CARD_INFO job — pull the card list for the just-logged-in bank
+     * session. Parallel to {@link #acctList} but returns
+     * {@link NxisasCardInfoJobResult} (a list of card rows with
+     * {@code cardNum} / {@code cardType} / {@code holderName} etc.).
+     *
+     * <p>Mirrors legacy {@code nxisas_fnsh_r001_act.jsp:357-368} — the
+     * {@code CARD_INFO} branch where the {@code CardInfoInput} is an
+     * empty marker DTO and the response carries the scraped card list.
+     *
+     * <p>Must be called AFTER a successful LOGIN on the same session
+     * (Tr_seq fresh per call per legacy parity; continuation carries
+     * SAS_SessionID + Gw_sys_no + Thread_no + Lbs_no + Ss_sys_no).
+     */
+    public NxisasApiOut<NxisasCardInfoJobResult> cardInfo(String module, String category, String trSeq,
+                                                          NxisasCardInfoJobInput input,
+                                                          GatewayContinuation cont) {
+        return call(module, category, trSeq, NxisasJob.CARD_INFO, input, cont,
+                new TypeReference<NxisasApiOut<NxisasCardInfoJobResult>>() { });
+    }
+
+    /**
+     * CARD_USING job — pull the transaction list for one card over
+     * the requested {@code startDate..endDate} window (inclusive,
+     * yyyyMMdd). Mirrors legacy {@code nxisas_cardTranList.ts:212}
+     * — the Coocon adapter dispatches per bank/cardNum/cardType.
+     *
+     * <p>Must be called AFTER a successful LOGIN on the same session
+     * (Tr_seq fresh per call per legacy parity; continuation carries
+     * SAS_SessionID + Gw_sys_no + Thread_no + Lbs_no + Ss_sys_no).
+     */
+    public NxisasApiOut<NxisasCardUsingJobResult> cardUsing(String module, String category, String trSeq,
+                                                            NxisasCardUsingJobInput input,
+                                                            GatewayContinuation cont) {
+        return call(module, category, trSeq, NxisasJob.CARD_USING, input, cont,
+                new TypeReference<NxisasApiOut<NxisasCardUsingJobResult>>() { });
+    }
+
+    /** Helper for the CARD_USING post-login flow — peels the first
+     *  {@code resultList[0].output.result} off a Coocon CARD_USING
+     *  response. Returns {@code null} when the response shape is
+     *  degenerate (empty resultList, missing output, etc.) so the
+     *  caller can fall back to an empty transaction list. */
+    public NxisasCardUsingJobResult firstCardUsingResult(NxisasApiOut<NxisasCardUsingJobResult> out) {
+        NxisasResult<NxisasCardUsingJobResult> r = firstEntry(out);
+        return r == null || r.getOutput() == null ? null : r.getOutput().getResult();
     }
 
     /**
@@ -301,6 +353,16 @@ public class NxisasGatewayClient {
 
     public NxisasAcctListJobResult firstAcctListResult(NxisasApiOut<NxisasAcctListJobResult> out) {
         NxisasResult<NxisasAcctListJobResult> r = firstEntry(out);
+        return r == null || r.getOutput() == null ? null : r.getOutput().getResult();
+    }
+
+    /** Helper for the CARD_INFO post-login flow — peels the first
+     *  {@code resultList[0].output.result} off a Coocon CARD_INFO
+     *  response. Returns {@code null} when the response shape is
+     *  degenerate (empty resultList, missing output, etc.) so the
+     *  caller can fall back to an empty card list. */
+    public NxisasCardInfoJobResult firstCardInfoResult(NxisasApiOut<NxisasCardInfoJobResult> out) {
+        NxisasResult<NxisasCardInfoJobResult> r = firstEntry(out);
         return r == null || r.getOutput() == null ? null : r.getOutput().getResult();
     }
 

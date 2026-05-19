@@ -384,7 +384,8 @@ public class LoginCredentialsService {
                 newPassword,
                 entity.getNxisasGbSeqNo(),
                 entity.getCertInfoDetlCon2(),
-                entity.getCertInfoDetlCon3());
+                entity.getCertInfoDetlCon3(),
+                null /* scrapeKind — defaults to ACCT_LIST */);
         return bankScrapingService.verify(req);
     }
 

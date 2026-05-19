@@ -1,5 +1,12 @@
 -- =====================================================================
--- V152 — Settings > Bank Account: enable sort on the VAS_NAME column.
+-- V178 — Settings > Bank Account: enable sort on the VAS_NAME column.
+--
+-- File body originally headed "V152" → was renumbered to V164 in a
+-- previous dedup pass → renumbered again to V178 on 2026-05-19 to
+-- resolve a fresh collision with
+-- V164__bank_cert_info_seed_for_account_inquiry.sql.
+-- The migration is two idempotent UPDATEs + DELETE, so applying it
+-- after V164–V177 is functionally identical to the original ordering.
 --
 -- V127 shipped VAS_NAME with SORT_YN='N' because the legacy comment
 -- assumed the column was projected from BUSI_VAS_ACCT_INFM and had no
