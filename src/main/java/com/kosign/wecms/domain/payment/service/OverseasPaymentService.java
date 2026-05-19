@@ -96,7 +96,9 @@ public class OverseasPaymentService {
             List<String> apprTypeCds,
             String keyword,
             int page,
-            int size) {
+            int size,
+            String sortField,
+            String sortDirection) {
 
         if (fromDt == null || fromDt.isBlank()) {
             throw new BusinessException("WBE_VALIDATION", "FROM_DT is required");
@@ -112,12 +114,13 @@ public class OverseasPaymentService {
         int offset     = pageIndex * pageSize;
 
         String likePattern = buildLikePattern(keyword);
+        String orderBy     = buildOrderBy(OverseasScheduledSortField.parse(sortField), sortDirection, "reg_dtm DESC");
 
         long totalCount = paymentRepo.countScheduled(bizKey, fromDt, toDt, apprTypeCds, likePattern);
 
         List<Object[]> rawRows = totalCount == 0
                 ? List.of()
-                : paymentRepo.findScheduled(bizKey, fromDt, toDt, apprTypeCds, likePattern, offset, pageSize);
+                : paymentRepo.findScheduled(bizKey, fromDt, toDt, apprTypeCds, likePattern, offset, pageSize, orderBy);
 
         // Batch-fetch approvers for all rows on this page
         List<String> apprSeqNos = rawRows.stream()
@@ -165,7 +168,9 @@ public class OverseasPaymentService {
             String keyword,
             String trnfYn,
             int page,
-            int size) {
+            int size,
+            String sortField,
+            String sortDirection) {
 
         if (fromDt == null || fromDt.isBlank()) throw new BusinessException("WBE_VALIDATION", "FROM_DT is required");
         if (toDt   == null || toDt.isBlank())   throw new BusinessException("WBE_VALIDATION", "TO_DT is required");
@@ -176,12 +181,13 @@ public class OverseasPaymentService {
         int    offset     = pageIndex * pageSize;
         String likePat    = buildLikePattern(keyword);
         String trnfFilter = (trnfYn != null && !trnfYn.isBlank()) ? trnfYn : null;
+        String orderBy    = buildOrderBy(OverseasResultSortField.parse(sortField), sortDirection, "ops.reg_dtm DESC");
 
         long totalCount = paymentRepo.countResult(bizKey, fromDt, toDt, likePat, trnfFilter);
 
         java.util.List<Object[]> rawRows = totalCount == 0
                 ? java.util.List.of()
-                : paymentRepo.findResult(bizKey, fromDt, toDt, likePat, trnfFilter, offset, pageSize);
+                : paymentRepo.findResult(bizKey, fromDt, toDt, likePat, trnfFilter, offset, pageSize, orderBy);
 
         java.util.List<OverseasResultRow> rows = rawRows.stream()
                 .map(this::mapResultRow)
@@ -687,5 +693,17 @@ public class OverseasPaymentService {
     private String toStr(Object val) {
         if (val == null) return null;
         return val.toString();
+    }
+
+    private String buildOrderBy(OverseasScheduledSortField field, String direction, String fallback) {
+        if (field == null) return fallback;
+        String dir = "DESC".equalsIgnoreCase(direction) ? "DESC" : "ASC";
+        return field.sqlAlias() + " " + dir;
+    }
+
+    private String buildOrderBy(OverseasResultSortField field, String direction, String fallback) {
+        if (field == null) return fallback;
+        String dir = "DESC".equalsIgnoreCase(direction) ? "DESC" : "ASC";
+        return field.sqlExpr() + " " + dir;
     }
 }

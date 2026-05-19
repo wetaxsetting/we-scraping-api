@@ -75,9 +75,10 @@ public class OverseasPaymentRepository {
             List<String> apprTypeCds,
             String keyword,
             int offset,
-            int limit) {
+            int limit,
+            String orderByClause) {
 
-        String sql = buildUnionSql(apprTypeCds, keyword, false);
+        String sql = buildUnionSql(apprTypeCds, keyword, false, orderByClause);
         Query q = em.createNativeQuery(sql);
         bindParams(q, bizKey, fromDt, toDt, apprTypeCds, keyword);
         q.setFirstResult(offset);
@@ -97,7 +98,7 @@ public class OverseasPaymentRepository {
             List<String> apprTypeCds,
             String keyword) {
 
-        String innerSql = buildUnionSql(apprTypeCds, keyword, true);
+        String innerSql = buildUnionSql(apprTypeCds, keyword, true, null);
         String countSql = "SELECT COUNT(*) FROM (" + innerSql + ") __cnt";
         Query q = em.createNativeQuery(countSql);
         bindParams(q, bizKey, fromDt, toDt, apprTypeCds, keyword);
@@ -117,7 +118,7 @@ public class OverseasPaymentRepository {
             List<String> apprTypeCds,
             String keyword) {
 
-        String innerSql = buildUnionSql(apprTypeCds, keyword, true);
+        String innerSql = buildUnionSql(apprTypeCds, keyword, true, null);
         String sql = """
                 SELECT ccy_cd,
                        COALESCE(SUM(total_tran_amt), 0) AS totl_amt,
@@ -143,7 +144,7 @@ public class OverseasPaymentRepository {
      * in both SUMR and MSTR branches to match the JEX dynamic-SQL pattern
      * from pymn_0007_001_r001_act.jsp.
      */
-    private String buildUnionSql(List<String> apprTypeCds, String keyword, boolean forCount) {
+    private String buildUnionSql(List<String> apprTypeCds, String keyword, boolean forCount, String orderByClause) {
 
         boolean filterApprType = apprTypeCds != null && !apprTypeCds.isEmpty();
         boolean filterKeyword  = keyword != null;
@@ -247,8 +248,9 @@ public class OverseasPaymentRepository {
         if (forCount) {
             return union;
         }
-        // Add ORDER BY for paged list (mirrors JEX DYNAMIC_2 default sort: reg_dtm DESC)
-        return union + "\n ORDER BY reg_dtm DESC";
+        // orderByClause is a pre-validated whitelist value from OverseasScheduledSortField — never raw user input
+        String order = (orderByClause != null && !orderByClause.isBlank()) ? orderByClause : "reg_dtm DESC";
+        return union + "\n ORDER BY " + order;
     }
 
     // ─── single-row fetch ─────────────────────────────────────────────────────
@@ -261,7 +263,7 @@ public class OverseasPaymentRepository {
      */
     @SuppressWarnings("unchecked")
     public java.util.Optional<Object[]> findScheduledById(String bizKey, String ovrsPymnNo) {
-        String innerSql = buildUnionSql(null, null, false);
+        String innerSql = buildUnionSql(null, null, false, null);
         String sql = "SELECT * FROM (" + innerSql + ") __r WHERE __r.ovrs_pymn_no = :id LIMIT 1";
         Query q = em.createNativeQuery(sql);
         q.setParameter("bizKey", bizKey);
@@ -298,8 +300,11 @@ public class OverseasPaymentRepository {
      */
     @SuppressWarnings("unchecked")
     public List<Object[]> findResult(String bizKey, String fromDt, String toDt,
-                                     String keyword, String trnfYn, int offset, int limit) {
-        String sql = buildResultSql(keyword, trnfYn) + " ORDER BY ops.reg_dtm DESC";
+                                     String keyword, String trnfYn, int offset, int limit,
+                                     String orderByClause) {
+        // orderByClause is a pre-validated whitelist value from OverseasResultSortField — never raw user input
+        String order = (orderByClause != null && !orderByClause.isBlank()) ? orderByClause : "ops.reg_dtm DESC";
+        String sql = buildResultSql(keyword, trnfYn) + " ORDER BY " + order;
         Query q = em.createNativeQuery(sql);
         bindResultParams(q, bizKey, fromDt, toDt, keyword, trnfYn);
         q.setFirstResult(offset);

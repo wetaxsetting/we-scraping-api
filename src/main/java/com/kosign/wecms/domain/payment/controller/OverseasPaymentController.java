@@ -102,10 +102,13 @@ public class OverseasPaymentController {
             String keyword,
 
             @RequestParam(value = "page", defaultValue = "0") int page,
-            @RequestParam(value = "size", defaultValue = "0") int size) {
+            @RequestParam(value = "size", defaultValue = "0") int size,
+
+            @RequestParam(value = "sort_field",     required = false) String sortField,
+            @RequestParam(value = "sort_direction",  required = false) String sortDirection) {
 
         return ApiResponse.ok(
-                overseasPaymentService.list(fromDt, toDt, apprTypeCds, keyword, page, size));
+                overseasPaymentService.list(fromDt, toDt, apprTypeCds, keyword, page, size, sortField, sortDirection));
     }
 
     /**
@@ -178,9 +181,12 @@ public class OverseasPaymentController {
             String trnfYn,
 
             @RequestParam(value = "page", defaultValue = "0") int page,
-            @RequestParam(value = "size", defaultValue = "0") int size) {
+            @RequestParam(value = "size", defaultValue = "0") int size,
 
-        return ApiResponse.ok(overseasPaymentService.listResult(fromDt, toDt, keyword, trnfYn, page, size));
+            @RequestParam(value = "sort_field",     required = false) String sortField,
+            @RequestParam(value = "sort_direction",  required = false) String sortDirection) {
+
+        return ApiResponse.ok(overseasPaymentService.listResult(fromDt, toDt, keyword, trnfYn, page, size, sortField, sortDirection));
     }
 
     /**
