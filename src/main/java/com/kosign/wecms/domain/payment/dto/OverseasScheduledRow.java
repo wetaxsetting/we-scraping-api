@@ -14,7 +14,7 @@ import java.util.List;
  * <ul>
  *   <li>{@code ovrsPymnType} — {@code "E"} for batch/Excel upload,
  *       {@code "M"} for individual manual payment.</li>
- *   <li>{@code fileNm} — for type E this is the Excel filename (TITL);
+ *   <li>{@code fileNm} — for type E this is the original Excel filename (ORG_FILE_NM);
  *       for type M this is {@code BNFC_NM + " " + BNFC_ACCT_NO}.</li>
  *   <li>{@code outBankNm} — stored directly for R&D parity (JEX resolves
  *       via {@code wb_get_bank_name_any_code}).</li>

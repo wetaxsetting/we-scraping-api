@@ -178,7 +178,7 @@ public class OverseasPaymentRepository {
                        'E'                      AS ovrs_pymn_type,
                        ops.ovrs_pymn_no,
                        ops.ovrs_pymn_type_cd,
-                       ops.titl                 AS file_nm,
+                       ops.org_file_nm          AS file_nm,
                        erm.titl,
                        ops.ccy_cd,
                        ops.total_tran_amt,
