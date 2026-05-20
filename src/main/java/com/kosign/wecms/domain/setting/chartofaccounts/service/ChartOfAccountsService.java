@@ -7,6 +7,8 @@ import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.common.web.SortDirection;
 import com.kosign.wecms.domain.setting.chartofaccounts.ChartOfAccountsConstants;
+import com.kosign.wecms.domain.setting.chartofaccounts.dto.ChartOfAccountBulkUploadRequest;
+import com.kosign.wecms.domain.setting.chartofaccounts.dto.ChartOfAccountBulkUploadResponse;
 import com.kosign.wecms.domain.setting.chartofaccounts.dto.ChartOfAccountCreateRequest;
 import com.kosign.wecms.domain.setting.chartofaccounts.dto.ChartOfAccountListResponse;
 import com.kosign.wecms.domain.setting.chartofaccounts.dto.ChartOfAccountRow;
@@ -18,6 +20,8 @@ import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccountId;
 import com.kosign.wecms.domain.setting.chartofaccounts.repository.ChartOfAccountRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
@@ -101,6 +105,12 @@ public class ChartOfAccountsService {
     private final ChartOfAccountRepository  repo;
     private final LegacyFunctionRepository  legacyFnRepo;
     private final AuditLogService           auditLog;
+
+    /** Self-reference through the Spring proxy so {@link #bulkUpload}
+     *  can call {@link #create} with its own {@code @Transactional}
+     *  scope — each row gets an independent transaction. */
+    @Autowired @Lazy
+    private ChartOfAccountsService self;
 
     /* ---------------------------------------------------------------
      *  Reads
@@ -433,6 +443,34 @@ public class ChartOfAccountsService {
 
         appendAudit("audit.chart_of_accounts.delete.detail",
                 chartAcctSeqNo, archiveCode);
+    }
+
+    /**
+     * Bulk-create chart-of-accounts rows from an Excel upload batch.
+     * Each row in {@code req.items()} is processed independently: a
+     * failure on one row (duplicate code, depth exceeded, etc.) does
+     * NOT roll back rows that already committed. The totals are returned
+     * to the frontend so it can show the partial-failure dialog.
+     *
+     * <p>Calls {@link #create(ChartOfAccountCreateRequest)} through the
+     * Spring proxy ({@code self}) so each row runs in its own
+     * {@code @Transactional} scope.
+     */
+    public ChartOfAccountBulkUploadResponse bulkUpload(ChartOfAccountBulkUploadRequest req) {
+        int created = 0;
+        int failed  = 0;
+        for (ChartOfAccountCreateRequest item : req.items()) {
+            try {
+                self.create(item);
+                created++;
+            } catch (Exception e) {
+                log.warn("chart-of-accounts bulk-upload row skipped code={}: {}",
+                        item.chartAcctCd(), e.getMessage());
+                failed++;
+            }
+        }
+        log.info("chart-of-accounts bulk-upload done created={} failed={}", created, failed);
+        return new ChartOfAccountBulkUploadResponse(created, failed);
     }
 
     /* ---------------------------------------------------------------

@@ -1,6 +1,8 @@
 package com.kosign.wecms.domain.setting.chartofaccounts.controller;
 
 import com.kosign.wecms.common.response.ApiResponse;
+import com.kosign.wecms.domain.setting.chartofaccounts.dto.ChartOfAccountBulkUploadRequest;
+import com.kosign.wecms.domain.setting.chartofaccounts.dto.ChartOfAccountBulkUploadResponse;
 import com.kosign.wecms.domain.setting.chartofaccounts.dto.ChartOfAccountCreateRequest;
 import com.kosign.wecms.domain.setting.chartofaccounts.dto.ChartOfAccountListResponse;
 import com.kosign.wecms.domain.setting.chartofaccounts.dto.ChartOfAccountRow;
@@ -135,6 +137,23 @@ public class ChartOfAccountsController {
             @NotBlank @Pattern(regexp = "\\d{1,14}") String chartAcctSeqNo,
             @Valid @RequestBody ChartOfAccountUpdateRequest req) {
         return ApiResponse.ok(service.update(chartAcctSeqNo, req));
+    }
+
+    /**
+     * Bulk-create chart-of-accounts rows from an Excel upload batch.
+     * Each row is processed independently — a failure on one row does
+     * not roll back rows that already committed. Returns the created /
+     * failed totals so the frontend can show the partial-failure dialog.
+     *
+     * <p>The endpoint delegates to
+     * {@link ChartOfAccountsService#bulkUpload(ChartOfAccountBulkUploadRequest)}
+     * which calls the single-row {@link ChartOfAccountsService#create}
+     * through the Spring proxy so each row runs in its own transaction.
+     */
+    @PostMapping("/bulk-upload")
+    public ApiResponse<ChartOfAccountBulkUploadResponse> bulkUpload(
+            @Valid @RequestBody ChartOfAccountBulkUploadRequest req) {
+        return ApiResponse.ok(service.bulkUpload(req));
     }
 
     /**
