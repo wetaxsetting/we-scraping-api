@@ -159,10 +159,10 @@ wecms:
     # Local R&D / DEV defaults set in application-local.yml.
     # PROD: supply via WECMS_OSMC_URL / WECMS_OSMC_API_KEY /
     # WECMS_OSMC_API_ID / WECMS_OSMC_UNIQUE_KEY env vars.
-    url:        ${WECMS_OSMC_URL:}
-    api-key:    ${WECMS_OSMC_API_KEY:}
-    api-id:     ${WECMS_OSMC_API_ID:BI09}
-    unique-key: ${WECMS_OSMC_UNIQUE_KEY:}
+    url: ${WECMS_OSMC_URL:https://sgw.webcashvietnam.com/overseas/finance/scrap/bigdata_info.jsp}
+    api-key: ${WECMS_OSMC_API_KEY:r2L7U6KnB4T51VokPlkg}
+    api-id: ${WECMS_OSMC_API_ID:BI09}
+    unique-key: ${WECMS_OSMC_UNIQUE_KEY:0000099}
   # Internal Transfer feature config — cut-off-time defaults +
   # local-disk root for the Excel upload / download flow.
   # See application-local.yml for the full Woori + Shinhan table.
