@@ -16,6 +16,7 @@ import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolApprvrInfmRepository;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
+import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnSumrRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -69,6 +70,7 @@ class ApprovalBoxServiceTest {
 
     @Mock ExptResolMstrRepository       masterRepo;
     @Mock ExptResolApprvrInfmRepository approverRepo;
+    @Mock OvrsPymnSumrRepository        ovrsPymnSumrRepository;
     @Mock AuditLogService               auditLogService;
 
     ApprovalBoxService service;
@@ -81,7 +83,7 @@ class ApprovalBoxServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new ApprovalBoxService(masterRepo, approverRepo, auditLogService);
+        service = new ApprovalBoxService(masterRepo, approverRepo, ovrsPymnSumrRepository, auditLogService);
         // Default to non-admin so the visibility filter receives isAdmin=false.
         TenantContext.set(USER, USER, BIZ, LangCd.EN, TenantContext.AUTH_GR_USER, "F");
     }
