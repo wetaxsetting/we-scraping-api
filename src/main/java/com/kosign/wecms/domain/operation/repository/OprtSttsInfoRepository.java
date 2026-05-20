@@ -8,7 +8,15 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.List;
+
 public interface OprtSttsInfoRepository extends JpaRepository<OprtSttsInfo, OprtSttsInfoId> {
+
+    /** Every cached row for the tenant — drives the bulk-Update toolbar
+     *  action which re-polls each row against the GDT and upserts the
+     *  refreshed snapshot. */
+    List<OprtSttsInfo> findAllByBizKey(String bizKey);
+
 
     /**
      * Server-side filter + pagination for Operation Status Inquiry list /

@@ -3,7 +3,11 @@ package com.kosign.wecms.domain.operation.controller;
 import com.kosign.wecms.common.export.ExcelExportRequest;
 import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.response.ApiResponse;
+import com.kosign.wecms.domain.operation.dto.InquireOperationStatusRequest;
+import com.kosign.wecms.domain.operation.dto.InquireOperationStatusResponse;
 import com.kosign.wecms.domain.operation.dto.OperationStatusListResponse;
+import com.kosign.wecms.domain.operation.dto.UpdateOperationStatusRequest;
+import com.kosign.wecms.domain.operation.dto.UpdateOperationStatusResponse;
 import com.kosign.wecms.domain.operation.service.OperationStatusFilter;
 import com.kosign.wecms.domain.operation.service.OperationStatusService;
 import jakarta.servlet.http.HttpServletResponse;
@@ -15,6 +19,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/v1/addon")
@@ -76,5 +82,37 @@ public class OperationStatusController {
             @Valid @RequestBody ExcelExportRequest request,
             HttpServletResponse response) {
         excelExportService.exportTo(response, request);
+    }
+
+    /**
+     * "Get Business Info" — single Tax ID lookup via the OSMC → NXISAS →
+     * GDT (Tổng cục Thuế) business-registration bridge. Mirrors legacy
+     * {@code aosv_0001_002_r001_act.jsp:98}. Writes one
+     * {@code EXT_TRAN_CALL_HIS} + one {@code NXSIAS_MODULE_TRAN_LOG_HIS}
+     * audit row per call. Returns the GDT-matched registration so the
+     * popup can render Customer Name + Address fields.
+     */
+    @PostMapping("/operation-status/inquire")
+    public ApiResponse<InquireOperationStatusResponse> inquire(
+            @Valid @RequestBody InquireOperationStatusRequest request) {
+        return ApiResponse.ok(service.inquire(request.taxCode()));
+    }
+
+    /**
+     * Toolbar "Update" — re-polls cached {@code OPRT_STTS_INFO} rows
+     * from the GDT and upserts the refreshed snapshot. Mirrors legacy
+     * {@code aosv_0001_001_u001_act.jsp}.
+     *
+     * <p>Body is optional: when {@code tax_codes} is omitted / empty,
+     * every cached row in the tenant is re-polled. When it carries
+     * 1..N tax codes, only those rows are updated — used by the
+     * frontend when the user has selected specific rows via the
+     * checkbox column. Empty cache is a no-op (returns zero counts).
+     */
+    @PostMapping("/operation-status/update")
+    public ApiResponse<UpdateOperationStatusResponse> bulkUpdate(
+            @RequestBody(required = false) UpdateOperationStatusRequest request) {
+        List<String> taxCodes = request == null ? null : request.taxCodes();
+        return ApiResponse.ok(service.bulkUpdate(taxCodes));
     }
 }

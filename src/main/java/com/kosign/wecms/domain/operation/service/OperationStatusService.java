@@ -1,10 +1,22 @@
 package com.kosign.wecms.domain.operation.service;
 
+import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.common.web.SortDirection;
+import com.kosign.wecms.domain.banking.nxisas.audit.NxsiasModuleTranLogHisRepository;
+import com.kosign.wecms.domain.banking.nxisas.audit.entity.NxsiasModuleTranLogHis;
+import com.kosign.wecms.domain.banking.synchistory.entity.ExtTranCallHis;
+import com.kosign.wecms.domain.banking.synchistory.repository.ExtTranCallHisRepository;
+import com.kosign.wecms.domain.operation.client.OsmcGdtClient;
+import com.kosign.wecms.domain.operation.client.OsmcGdtClient.OsmcGdtRegistration;
+import com.kosign.wecms.domain.operation.client.OsmcGdtClient.OsmcGdtResult;
+import com.kosign.wecms.domain.operation.client.OsmcGdtClient.OsmcGdtSearchOutcome;
+import com.kosign.wecms.domain.operation.dto.InquireOperationStatusResponse;
 import com.kosign.wecms.domain.operation.dto.OperationStatusListResponse;
 import com.kosign.wecms.domain.operation.dto.OperationStatusRow;
+import com.kosign.wecms.domain.operation.dto.UpdateOperationStatusResponse;
 import com.kosign.wecms.domain.operation.entity.OprtSttsInfo;
+import com.kosign.wecms.domain.operation.entity.OprtSttsInfoId;
 import com.kosign.wecms.domain.operation.repository.OprtSttsInfoRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -14,8 +26,18 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+import java.security.SecureRandom;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 
 /**
  * Add-on &gt; Operation Status Inquiry service. Reads
@@ -43,6 +65,21 @@ public class OperationStatusService {
     public static final int DEFAULT_PAGE_SIZE = 10;
 
     private final OprtSttsInfoRepository repo;
+    private final ExtTranCallHisRepository extTranCallHisRepo;
+    private final NxsiasModuleTranLogHisRepository nxisasLogRepo;
+    private final OsmcGdtClient osmcClient;
+
+    /** Legacy {@code aosv_0001_002_r001} sentinels — pinned verbatim so
+     *  the audit rows the refactor writes line up with the live JEX
+     *  data when the two systems coexist on a shared DB. */
+    private static final String EXT_SVC_ID         = "BI09";
+    private static final String EXT_WEB_SVC_ID_R   = "aosv_0001_001_r001";
+    private static final String NXISAS_CLASS       = "COMMON";
+    private static final String NXISAS_MODULE      = "GLOBAL/VNM/PUBLIC_MASOTHUE";
+    private static final String NXISAS_JOB         = "BUSSINESS_REGISTRATION_LIST";
+
+    private static final DateTimeFormatter REF_DATE_FMT = DateTimeFormatter.ofPattern("yyyyMMdd");
+    private static final DateTimeFormatter DTM_14_FMT   = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
 
     /**
      * Default ORDER BY mirrors the legacy listing's practical order —
@@ -228,5 +265,274 @@ public class OperationStatusService {
         if (s.contains("tạm ngừng"))       return "suspended";
         if (s.contains("tạm nghỉ"))        return "suspended";
         return "not_registered";
+    }
+
+    /* ------------------------------------------------------------------
+     *  Inquire — single Tax ID lookup (Get Business Info popup)
+     * ------------------------------------------------------------------ */
+
+    /**
+     * "Get Business Info" — single Tax ID lookup against the GDT bridge.
+     * Mirrors legacy {@code aosv_0001_002_r001_act.jsp}:
+     * <ol>
+     *   <li>Allocate next {@code SEQ_NO} + insert {@code EXT_TRAN_CALL_HIS}
+     *       row (pre-call audit).</li>
+     *   <li>Call {@code TRCO_TRCO001_00003} via the OSMC bridge.</li>
+     *   <li>Patch the audit row with the bridge's error code / message.</li>
+     *   <li>Write a {@code NXSIAS_MODULE_TRAN_LOG_HIS} row (NXISAS audit).</li>
+     *   <li>Return the registration detail matching the requested tax code.</li>
+     * </ol>
+     * On bridge failure or empty {@code registrationDetail}, throws
+     * {@code BusinessException("WBE_OSMC_LOOKUP_FAILED")} so the frontend
+     * surfaces the orange warning + "Input tax ID to get customer info"
+     * empty-state.
+     */
+    @Transactional
+    public InquireOperationStatusResponse inquire(String taxCode) {
+        final String bizKey = TenantContext.currentBizKey();
+        final String userId = TenantContext.currentUserId();
+        final LocalDate today = LocalDate.now();
+        final String refDate = today.format(REF_DATE_FMT);
+
+        // 1. Pre-call audit row in EXT_TRAN_CALL_HIS.
+        BigDecimal seqNo = extTranCallHisRepo.findMaxSeqNoForDay(EXT_SVC_ID, refDate)
+                .add(BigDecimal.ONE);
+        ExtTranCallHis audit = new ExtTranCallHis();
+        audit.setSvcId(EXT_SVC_ID);
+        audit.setRefDate(refDate);
+        audit.setSeqNo(seqNo);
+        audit.setWebSvcId(EXT_WEB_SVC_ID_R);
+        audit.setBizKey(bizKey);
+        audit.setUserId(userId);
+        audit.setTaxcode(taxCode);
+        audit.setRegDtm(LocalDateTime.now(ZoneOffset.UTC).format(DTM_14_FMT));
+        extTranCallHisRepo.save(audit);
+
+        // 2. Call the OSMC bridge.
+        String uniqueKey = generateUniqueKey();
+        OsmcGdtResult result = osmcClient.lookup(List.of(taxCode), uniqueKey);
+
+        // 3. Patch the EXT_TRAN_CALL_HIS row with the bridge outcome.
+        audit.setRsltCd(result.errorCode());
+        audit.setErrCont(truncate(result.errorMessage(), 1000));
+        extTranCallHisRepo.save(audit);
+
+        // 4. NXISAS audit row.
+        writeNxisasAudit(bizKey, userId, taxCode, result.errorCode(),
+                         result.errorMessage());
+
+        // 5. Surface the matching registration row.
+        if (!result.isSuccess()) {
+            throw new BusinessException("WBE_OSMC_LOOKUP_FAILED",
+                    result.errorMessage() == null ? "" : result.errorMessage());
+        }
+        OsmcGdtRegistration hit = result.rows().stream()
+                .filter(r -> taxCode.equals(r.taxCode()))
+                .findFirst()
+                .orElse(null);
+        if (hit == null) {
+            // Legacy parity — WBE1152 surfaced on empty registrationDetail.
+            throw new BusinessException("WBE_OSMC_NO_RESULT");
+        }
+        return new InquireOperationStatusResponse(
+                hit.taxCode(),
+                hit.companyName(),
+                hit.companyStatus(),
+                resolveStatusCd(hit.companyStatus()),
+                hit.officeAdd(),
+                hit.representativeFirstName(),
+                hit.searchDatetime()
+        );
+    }
+
+    /* ------------------------------------------------------------------
+     *  Bulk update — Re-poll every cached row from the GDT
+     * ------------------------------------------------------------------ */
+
+    /**
+     * Toolbar "Update" — re-polls {@code OPRT_STTS_INFO} rows from the
+     * GDT and upserts fresh values. Mirrors legacy
+     * {@code aosv_0001_001_u001_act.jsp} but the input list comes from
+     * the local cache (legacy reads the same list off the request body).
+     * Per-row errors do not abort the batch — the count is returned for
+     * UI feedback.
+     *
+     * @param selectedTaxCodes when {@code null} or empty, every cached
+     *        row in the tenant is re-polled. When non-empty, only those
+     *        tax codes that exist in the local cache for the tenant are
+     *        re-polled — silently dropping any unknown codes so a stale
+     *        frontend selection can't cross the tenant boundary.
+     */
+    @Transactional
+    public UpdateOperationStatusResponse bulkUpdate(List<String> selectedTaxCodes) {
+        final String bizKey = TenantContext.currentBizKey();
+        final String userId = TenantContext.currentUserId();
+        final LocalDate today = LocalDate.now();
+        final String refDate = today.format(REF_DATE_FMT);
+
+        List<OprtSttsInfo> cached = repo.findAllByBizKey(bizKey);
+        if (cached.isEmpty()) {
+            return new UpdateOperationStatusResponse(0, 0, 0);
+        }
+
+        // Resolve the working set:
+        //   - null / empty selection -> every cached row.
+        //   - non-empty selection    -> intersection with cached (drops
+        //                               unknown / cross-tenant codes
+        //                               silently).
+        final Set<String> selectionSet =
+                (selectedTaxCodes == null || selectedTaxCodes.isEmpty())
+                        ? null
+                        : Set.copyOf(selectedTaxCodes);
+        List<String> taxCodes = cached.stream()
+                .map(OprtSttsInfo::getTaxcode)
+                .filter(tc -> selectionSet == null || selectionSet.contains(tc))
+                .toList();
+        if (taxCodes.isEmpty()) {
+            return new UpdateOperationStatusResponse(0, 0, 0);
+        }
+
+        // 1. EXT_TRAN_CALL_HIS pre-call row (batch — single SEQ_NO covers
+        //    the whole multi-tax-code request).
+        BigDecimal seqNo = extTranCallHisRepo.findMaxSeqNoForDay(EXT_SVC_ID, refDate)
+                .add(BigDecimal.ONE);
+        ExtTranCallHis audit = new ExtTranCallHis();
+        audit.setSvcId(EXT_SVC_ID);
+        audit.setRefDate(refDate);
+        audit.setSeqNo(seqNo);
+        audit.setWebSvcId(EXT_WEB_SVC_ID_R);
+        audit.setBizKey(bizKey);
+        audit.setUserId(userId);
+        audit.setRegDtm(LocalDateTime.now(ZoneOffset.UTC).format(DTM_14_FMT));
+        extTranCallHisRepo.save(audit);
+
+        // 2. OSMC bridge call.
+        String uniqueKey = generateUniqueKey();
+        OsmcGdtResult result = osmcClient.lookup(taxCodes, uniqueKey);
+
+        audit.setRsltCd(result.errorCode());
+        audit.setErrCont(truncate(result.errorMessage(), 1000));
+        extTranCallHisRepo.save(audit);
+
+        if (!result.isSuccess()) {
+            // Whole-batch failure — write one NXISAS audit row and
+            // surface to the caller. Local cache stays intact.
+            writeNxisasAudit(bizKey, userId, null, result.errorCode(),
+                             result.errorMessage());
+            throw new BusinessException("WBE_OSMC_LOOKUP_FAILED",
+                    result.errorMessage() == null ? "" : result.errorMessage());
+        }
+
+        // 3. Index returned details by tax code so we can resolve per
+        //    cached row deterministically. Defensive: GDT can echo
+        //    multiple details for one search but only the first match
+        //    on TAXCODE is upserted (mirrors aosv_0001_002_r001_act.jsp
+        //    behavior — see line 126 of legacy).
+        Map<String, OsmcGdtRegistration> detailByTaxCode = new HashMap<>();
+        for (OsmcGdtRegistration r : result.rows()) {
+            detailByTaxCode.putIfAbsent(r.taxCode(), r);
+        }
+
+        // Optional per-search outcome map (only populated when the
+        // gateway returned the RespData[] wrapper — flat-shape callers
+        // skip this branch).
+        Map<String, OsmcGdtSearchOutcome> outcomeByTaxCode = new HashMap<>();
+        for (OsmcGdtSearchOutcome o : result.outcomes()) {
+            outcomeByTaxCode.putIfAbsent(o.taxCode(), o);
+        }
+
+        // 4. Walk the cached list in request order so the counter is
+        //    derived per-tax-code (not by delta-math). Each cached row
+        //    either upserts (success) or writes a failure audit row.
+        int updated = 0;
+        int failed  = 0;
+        for (String taxCode : taxCodes) {
+            OsmcGdtRegistration r = detailByTaxCode.get(taxCode);
+            if (r != null) {
+                OprtSttsInfoId pk = new OprtSttsInfoId(bizKey, r.taxCode());
+                OprtSttsInfo row = repo.findById(pk).orElseGet(OprtSttsInfo::new);
+                row.setBizKey(bizKey);
+                row.setTaxcode(r.taxCode());
+                row.setCompanyname(r.companyName());
+                row.setCompanystatus(r.companyStatus());
+                row.setOfficeadd(r.officeAdd());
+                row.setRepresentativefirstname(
+                        r.representativeFirstName() == null ? "" : r.representativeFirstName());
+                row.setSearchdatetime(r.searchDatetime());
+                stampAudit(row, userId);
+                repo.save(row);
+                writeNxisasAudit(bizKey, userId, r.taxCode(), "00000000", null);
+                updated++;
+            } else {
+                // No detail returned for this tax code — either GDT
+                // didn't find it or per-search ErrorCode was non-zero.
+                // Write the audit row (legacy `_u001_act.jsp:206-221`)
+                // and count as failed; do NOT touch the cached row.
+                OsmcGdtSearchOutcome o = outcomeByTaxCode.get(taxCode);
+                String code = o == null ? "WBE_OSMC_NO_RESULT" : o.errorCode();
+                String msg  = o == null ? "No registration detail returned for tax code"
+                                        : o.errorMessage();
+                writeNxisasAudit(bizKey, userId, taxCode, code, msg);
+                failed++;
+            }
+        }
+        return new UpdateOperationStatusResponse(taxCodes.size(), updated, failed);
+    }
+
+    /* ------------------------------------------------------------------
+     *  Helpers
+     * ------------------------------------------------------------------ */
+
+    private void writeNxisasAudit(String bizKey, String userId, String taxCode,
+                                  String errorCode, String errorMessage) {
+        NxsiasModuleTranLogHis log = new NxsiasModuleTranLogHis();
+        log.setUuid(UUID.randomUUID().toString().replace("-", "").substring(0, 30));
+        log.setRegDtm(LocalDateTime.now(ZoneOffset.UTC).format(DTM_14_FMT));
+        log.setBizKey(bizKey);
+        log.setNxisasClass(NXISAS_CLASS);
+        log.setNxisasModule(NXISAS_MODULE);
+        log.setNxisasJob(NXISAS_JOB);
+        log.setNxisasErrCode(errorCode == null ? "" : errorCode);
+        log.setNxisasErrCont(errorMessage);
+        log.setRegId(userId);
+        if (taxCode != null) {
+            log.setReqData("{\"search\":\"" + taxCode.replace("\"", "\\\"") + "\"}");
+        }
+        nxisasLogRepo.save(log);
+    }
+
+
+    private void stampAudit(OprtSttsInfo row, String userId) {
+        String now = LocalDateTime.now(ZoneOffset.UTC).format(DTM_14_FMT);
+        String safeUser = userId == null ? "system" : userId;
+        if (row.getRegId() == null || row.getRegId().isBlank()) {
+            row.setRegId(safeUser);
+            row.setRegDtm(now);
+        }
+        row.setModId(safeUser);
+        row.setModDtm(now);
+    }
+
+    /** 7-character mixed-case alphanumeric correlation token sent as the
+     *  bridge's {@code UniqueKey} field. Matches the legacy bigdata
+     *  contract's {@code @Size(max = 7)} cap on {@code ApiIn.uniqueKey}
+     *  and the example shape ({@code rb3Xy43}). Fresh per call —
+     *  {@code SecureRandom} keeps it non-guessable so a leaked id can't
+     *  be replayed by a third party. */
+    private static String generateUniqueKey() {
+        char[] out = new char[7];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = UNIQUE_KEY_ALPHABET.charAt(RNG.nextInt(UNIQUE_KEY_ALPHABET.length()));
+        }
+        return new String(out);
+    }
+
+    private static final SecureRandom RNG = new SecureRandom();
+    private static final String UNIQUE_KEY_ALPHABET =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+    private static String truncate(String s, int max) {
+        if (s == null) return null;
+        return s.length() <= max ? s : s.substring(0, max);
     }
 }

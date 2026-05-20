@@ -148,6 +148,21 @@ wecms:
     smart-api-key: ${WECMS_COOCON_SMART_API_KEY}
     smart-api-url: ${WECMS_COOCON_SMART_API_URL}
     unique-key: ${WECMS_COOCON_UNIQUE_KEY}
+  osmc:
+    # GDT (Tổng cục Thuế) business-registration lookup — Coocon bigdata
+    # API (BI09). Legacy call site:
+    # WECMS DEV/.../aosv/aosv_0001_002_r001_act.jsp:98 →
+    # WABOOKSOSMCAPIUtil.callApi("TRCO_TRCO001_00003", ...) →
+    # kr.co.coocon.sgw.RestClient → coocon.api_url. Wire shape pinned by
+    # ApiIn.java / BI08In.java / BI08Out.java
+    # ({ ApiKey, ApiId, UniqueKey, Input: { search } }).
+    # Local R&D / DEV defaults set in application-local.yml.
+    # PROD: supply via WECMS_OSMC_URL / WECMS_OSMC_API_KEY /
+    # WECMS_OSMC_API_ID / WECMS_OSMC_UNIQUE_KEY env vars.
+    url:        ${WECMS_OSMC_URL:}
+    api-key:    ${WECMS_OSMC_API_KEY:}
+    api-id:     ${WECMS_OSMC_API_ID:BI09}
+    unique-key: ${WECMS_OSMC_UNIQUE_KEY:}
   # Internal Transfer feature config — cut-off-time defaults +
   # local-disk root for the Excel upload / download flow.
   # See application-local.yml for the full Woori + Shinhan table.
