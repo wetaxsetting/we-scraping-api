@@ -18,6 +18,7 @@ import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolApprvrInfmRepository;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
+import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnSumrRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -35,8 +36,11 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * Payment &gt; Approval Box service. Mirrors the legacy
@@ -115,6 +119,7 @@ public class ApprovalBoxService {
 
     private final ExptResolMstrRepository        masterRepository;
     private final ExptResolApprvrInfmRepository  approverRepository;
+    private final OvrsPymnSumrRepository         ovrsPymnSumrRepository;
     private final AuditLogService                auditLogService;
 
     /* =================================================================
@@ -174,8 +179,21 @@ public class ApprovalBoxService {
                 bizKey, userId, isAdmin, fromDt, toDt, keywordPattern);
         if (tabCounts == null) tabCounts = ApprovalBoxTabCounts.empty();
 
+        // Batch-fetch CCY_CD from OVRS_PYMN_SUMR for all apprSeqNos in this
+        // page so we don't hardcode "VND" for USD overseas-payment rows.
+        List<String> apprSeqNos = result.getContent().stream()
+                .map(ApprovalBoxProjection::apprSeqNo)
+                .filter(s -> s != null && !s.isBlank())
+                .distinct()
+                .collect(Collectors.toList());
+        Map<String, String> ccyByApprSeqNo = new HashMap<>();
+        if (!apprSeqNos.isEmpty()) {
+            ovrsPymnSumrRepository.findCcyCdByBizKeyAndApprSeqNos(bizKey, apprSeqNos)
+                    .forEach(row -> ccyByApprSeqNo.put((String) row[0], (String) row[1]));
+        }
+
         List<ApprovalBoxRow> rows = result.getContent().stream()
-                .map(p -> toRow(bizKey, p))
+                .map(p -> toRow(bizKey, p, ccyByApprSeqNo))
                 .toList();
 
         return new ApprovalBoxListResponse(
@@ -541,7 +559,8 @@ public class ApprovalBoxService {
      *  Row mapping — projection + chain → wire DTO
      * ================================================================= */
 
-    private ApprovalBoxRow toRow(String bizKey, ApprovalBoxProjection p) {
+    private ApprovalBoxRow toRow(String bizKey, ApprovalBoxProjection p,
+                                  Map<String, String> ccyByApprSeqNo) {
         List<ApprovalBoxApprover> approvers = approverRepository
                 .findChain(bizKey, p.apprSeqNo())
                 .stream()
@@ -550,14 +569,25 @@ public class ApprovalBoxService {
                 .map(ApprovalBoxService::toApprover)
                 .toList();
 
+        // Prefer the actual CCY_CD from OVRS_PYMN_SUMR; fall back to "VND" for
+        // payment types whose sibling table hasn't been joined yet.
+        String currency = ccyByApprSeqNo.getOrDefault(p.apprSeqNo(), "VND");
+        if (currency == null || currency.isBlank()) currency = "VND";
+
+        // Pick the amount column that matches the currency.
+        // USD payments store their amount in totPayUsdAmt; all others use totPayKhrAmt.
+        BigDecimal amt = "USD".equalsIgnoreCase(currency)
+                ? (p.totPayUsdAmt() != null ? p.totPayUsdAmt() : BigDecimal.ZERO)
+                : (p.totPayKhrAmt() != null ? p.totPayKhrAmt() : BigDecimal.ZERO);
+
         return new ApprovalBoxRow(
                 p.apprSeqNo(),
                 p.docNo(),
                 p.titl(),
                 p.apprDv(),
                 ApprDv.resolveSlug(p.apprDv()),
-                "VND",
-                (p.totPayKhrAmt() == null ? BigDecimal.ZERO : p.totPayKhrAmt()).toPlainString(),
+                currency,
+                amt.toPlainString(),
                 p.payDate(),
                 p.draftUserId(),
                 p.draftUserNm(),

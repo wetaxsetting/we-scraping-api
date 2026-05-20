@@ -6,6 +6,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -30,4 +32,13 @@ public interface OvrsPymnSumrRepository extends JpaRepository<OvrsPymnSumr, Ovrs
                    "WHERE biz_key = :bizKey AND appr_seq_no IS NOT NULL AND appr_seq_no ~ '^[0-9]+$'",
            nativeQuery = true)
     Long findMaxApprSeqNoByBizKey(@Param("bizKey") String bizKey);
+
+    /** Batch-fetch (apprSeqNo → ccyCd) pairs for the Approval Box list.
+     *  Returns only rows whose apprSeqNo is in the given set so the
+     *  caller can build a lookup map without an N+1 query. */
+    @Query("SELECT ops.apprSeqNo, ops.ccyCd FROM OvrsPymnSumr ops " +
+           "WHERE ops.bizKey = :bizKey AND ops.apprSeqNo IN :apprSeqNos")
+    List<Object[]> findCcyCdByBizKeyAndApprSeqNos(
+            @Param("bizKey")      String bizKey,
+            @Param("apprSeqNos") Collection<String> apprSeqNos);
 }

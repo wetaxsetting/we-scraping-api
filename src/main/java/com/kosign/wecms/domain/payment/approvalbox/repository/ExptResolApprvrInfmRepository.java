@@ -68,4 +68,23 @@ public interface ExptResolApprvrInfmRepository
             @Param("apprSeqNo") String apprSeqNo,
             @Param("modId")     String modId,
             @Param("modDtm")    String modDtm);
+
+    /** On external Reject (from Scheduled Payment page), mark ALL active
+     *  approvers — both pending ({@code 'P'}) and waiting ({@code 'W'}) — as
+     *  stopped ({@code 'S'}) in one round-trip. */
+    @Modifying
+    @Query("""
+           UPDATE ExptResolApprvrInfm a
+           SET a.apprvrStts = 'S',
+               a.modId      = :modId,
+               a.modDtm     = :modDtm
+           WHERE a.bizKey = :bizKey
+             AND a.apprSeqNo = :apprSeqNo
+             AND a.apprvrStts IN ('P', 'W')
+           """)
+    int stopAllActive(
+            @Param("bizKey")    String bizKey,
+            @Param("apprSeqNo") String apprSeqNo,
+            @Param("modId")     String modId,
+            @Param("modDtm")    String modDtm);
 }

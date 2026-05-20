@@ -189,7 +189,13 @@ public class OverseasPaymentRepository {
                        erm.draft_user_id,
                        erm.draft_user_nm,
                        erm.doc_no,
-                       COALESCE(ops.appr_stts, erm.appr_sts) AS appr_sts,
+                       CASE
+                           WHEN erm.appr_type_cd = '01' THEN 'C'
+                           WHEN erm.appr_type_cd = '02' THEN 'X'
+                           WHEN erm.appr_type_cd = '03' THEN 'I'
+                           WHEN erm.appr_type_cd = '00' THEN 'P'
+                           ELSE COALESCE(ops.appr_stts, erm.appr_sts)
+                       END AS appr_sts,
                        erm.appr_type_cd,
                        ops.trnf_yn,
                        erm.appr_dv,
@@ -224,7 +230,13 @@ public class OverseasPaymentRepository {
                        erm.draft_user_id,
                        erm.draft_user_nm,
                        erm.doc_no,
-                       erm.appr_sts,
+                       CASE
+                           WHEN erm.appr_type_cd = '01' THEN 'C'
+                           WHEN erm.appr_type_cd = '02' THEN 'X'
+                           WHEN erm.appr_type_cd = '03' THEN 'I'
+                           WHEN erm.appr_type_cd = '00' THEN 'P'
+                           ELSE erm.appr_sts
+                       END AS appr_sts,
                        erm.appr_type_cd,
                        opm.trnf_yn,
                        erm.appr_dv,
