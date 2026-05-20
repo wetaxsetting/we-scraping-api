@@ -70,6 +70,38 @@ public interface AcctTrnsHstrRepository extends JpaRepository<AcctTrnsHstr, Acct
             @Param("userId") String userId,
             @Param("nowDtm") String nowDtm);
 
+    /**
+     * Cash Flow report — bank-side source rows.
+     *
+     * <p>Mirrors the {@code all_payment_data} bank UNION branch of
+     * {@code get_cashflow_report()}: rows where {@code chart_acct_cd}
+     * is non-empty AND at least one {@code acct_trns_rcv_pay_infm}
+     * sibling row has {@code cnfm_yn = 'Y'}. The join is on
+     * {@code (biz_key, acct_seq_no)} — NOT the composite PK — so a
+     * single bank row may match multiple rcv_pay rows; the EXISTS guard
+     * keeps the result count = bank-row count regardless.
+     *
+     * <p>Year filter applied as a string-prefix on {@code trsc_dt}
+     * (yyyyMMdd format), matching the legacy
+     * {@code EXTRACT(YEAR FROM TO_DATE(...))} predicate.
+     */
+    @Query("""
+            SELECT h FROM AcctTrnsHstr h
+             WHERE h.bizKey = :bizKey
+               AND h.chartAcctCd IS NOT NULL
+               AND h.chartAcctCd <> ''
+               AND SUBSTRING(h.trscDt, 1, 4) = :year
+               AND EXISTS (
+                   SELECT 1 FROM AcctTrnsRcvPayInfm rp
+                    WHERE rp.bizKey = h.bizKey
+                      AND rp.acctSeqNo = h.acctSeqNo
+                      AND rp.cnfmYn = 'Y'
+               )
+            """)
+    List<AcctTrnsHstr> findCashFlowSourceRows(
+            @org.springframework.data.repository.query.Param("bizKey") String bizKey,
+            @org.springframework.data.repository.query.Param("year") String year);
+
     /** Smart Organizer — clear the bank-side match link (undo flow). */
     @Modifying
     @Transactional

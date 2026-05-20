@@ -10,6 +10,9 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
+import java.util.List;
+
 /**
  * Read + write repository for {@code EXPT_RESOL_MSTR}. Two custom
  * queries cover the Approval Box list page:
@@ -39,6 +42,14 @@ import org.springframework.data.repository.query.Param;
  */
 public interface ExptResolMstrRepository
         extends JpaRepository<ExptResolMstr, ExptResolMstrId> {
+
+    /** Per-tenant MAX(apprSeqNo::bigint) for cross-table allocation.
+     *  Used by the overseas-payment request-approval path to ensure the
+     *  newly issued APPR_SEQ_NO is above any existing master rows. */
+    @Query(value = "SELECT MAX(CAST(appr_seq_no AS BIGINT)) FROM expt_resol_mstr " +
+                   "WHERE biz_key = :bizKey AND appr_seq_no ~ '^[0-9]+$'",
+           nativeQuery = true)
+    Long findMaxApprSeqNoByBizKey(@Param("bizKey") String bizKey);
 
     /**
      * Page slice with filter, search, sort, pagination, and per-user
@@ -144,4 +155,31 @@ public interface ExptResolMstrRepository
             @Param("fromDate")       String fromDate,
             @Param("toDate")         String toDate,
             @Param("keywordPattern") String keywordPattern);
+
+    /**
+     * Cash Flow report support — return the subset of supplied
+     * {@code apprSeqNo}s whose {@code APPR_TYPE_CD = '01'} (Completed).
+     *
+     * <p>Replaces the legacy {@code wb_get_appr_stts(biz_key, reg_id,
+     * reg_id, appr_seq_no, appr_type_cd)} PL/pgSQL helper. Because the
+     * Cash Flow function always calls that helper with
+     * {@code apprvr_id = reg_id}, the IF branch always fires and the
+     * helper reduces to a simple {@code appr_type_cd} switch:
+     * {@code '01' -> 'C'} (Completed). The Cash Flow function then
+     * gates on {@code = 'C'}, so any other code is filtered out.
+     *
+     * <p>Returns an empty list when the input collection is empty
+     * (Spring Data emits {@code WHERE x IN ()} which Postgres rejects;
+     * callers MUST guard against that — see
+     * {@link com.kosign.wecms.domain.banking.service.cashflow.ApprovalStatusResolver}).
+     */
+    @Query("""
+            SELECT erm.apprSeqNo
+              FROM ExptResolMstr erm
+             WHERE erm.bizKey = :bizKey
+               AND erm.apprSeqNo IN :apprSeqNos
+               AND erm.apprTypeCd = '01'
+            """)
+    List<String> findCompletedApprSeqNos(@Param("bizKey") String bizKey,
+                                         @Param("apprSeqNos") Collection<String> apprSeqNos);
 }

@@ -108,6 +108,7 @@ public class BankTransactionSyncService {
     private final AcctTrnsHstrRepository trnsRepo;
     private final LegacyFunctionRepository legacyFn;
     private final NxisasSessionRegistry registry;
+    private final com.kosign.wecms.domain.banking.synchistory.service.SyncHistoryWriter syncHistoryWriter;
 
     // ─────────────────────────────────────────────────────────────────
     // Public entry points (called from AccountController)
@@ -312,6 +313,7 @@ public class BankTransactionSyncService {
                         stage, session.getBankModule(), code, msg);
                 session.setStatus(NxisasScrapeSession.Status.FAILED);
                 registry.discard(session.getSessionId());
+                logFailedAttempt(session, code, msg);
                 return TransactionsSyncResponse.error(session.getSessionId(), code, msg);
             }
         }
@@ -322,6 +324,7 @@ public class BankTransactionSyncService {
                     stage, session.getBankModule(), code);
             session.setStatus(NxisasScrapeSession.Status.FAILED);
             registry.discard(session.getSessionId());
+            logFailedAttempt(session, code, msg);
             return TransactionsSyncResponse.error(session.getSessionId(), code, msg);
         }
 
@@ -359,6 +362,34 @@ public class BankTransactionSyncService {
         processOneAccount(session, acct);
         session.getAccountsQueue().pollFirst();
         return advance(session);
+    }
+
+    /**
+     * Write an EXT_TRAN_CALL_HIS row for a failed scrape attempt. The
+     * failing account is the queue head — the orchestrator's bank-side
+     * LOGIN ran against it. When the queue is empty (defensive: a
+     * gateway timeout on the very first call can race the queue-head
+     * read) the row is skipped to avoid a NULL identifiers row.
+     */
+    private void logFailedAttempt(NxisasScrapeSession session, String rsltCd, String errCont) {
+        TransactionsSyncRequest.AccountKey head = session.getAccountsQueue().peekFirst();
+        if (head == null) return;
+        try {
+            syncHistoryWriter.recordAttempt(
+                    session.getBizKey(),
+                    session.getUserId(),
+                    head.bankCd(),
+                    head.acctNo(),
+                    session.getFromDt(),
+                    session.getToDt(),
+                    rsltCd == null || rsltCd.isBlank() ? "ERROR" : rsltCd,
+                    errCont == null ? "" : errCont
+            );
+        } catch (RuntimeException e) {
+            // Audit write is best-effort. Never let a logging failure
+            // mask the original sync error — log and swallow.
+            log.warn("Failed to persist EXT_TRAN_CALL_HIS row for sync failure", e);
+        }
     }
 
     /** Per-account TRANSACTION + BALANCE + persistence step. Called
@@ -400,6 +431,23 @@ public class BankTransactionSyncService {
         acct.setModDtm(nowDb);
 
         session.setAccountsSynced(session.getAccountsSynced() + 1);
+
+        // Audit-log this per-account success — one row in
+        // EXT_TRAN_CALL_HIS so the Bank Transaction Sync > History
+        // popup lists the attempt. Mirrors legacy WeCMS which writes
+        // the audit row at the end of each per-account scrape.
+        // REQUIRES_NEW propagation ensures a later failure on a
+        // different account doesn't roll this row back.
+        syncHistoryWriter.recordAttempt(
+                session.getBizKey(),
+                userId,
+                acct.getBankCd(),
+                acct.getAcctNo(),
+                session.getFromDt(),
+                session.getToDt(),
+                com.kosign.wecms.domain.banking.synchistory.service.SyncHistoryWriter.RSLT_CD_SUCCESS,
+                ""
+        );
     }
 
     /** Build the terminal {@code COMPLETED} response from the

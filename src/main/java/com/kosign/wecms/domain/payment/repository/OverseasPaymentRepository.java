@@ -75,9 +75,10 @@ public class OverseasPaymentRepository {
             List<String> apprTypeCds,
             String keyword,
             int offset,
-            int limit) {
+            int limit,
+            String orderByClause) {
 
-        String sql = buildUnionSql(apprTypeCds, keyword, false);
+        String sql = buildUnionSql(apprTypeCds, keyword, false, orderByClause);
         Query q = em.createNativeQuery(sql);
         bindParams(q, bizKey, fromDt, toDt, apprTypeCds, keyword);
         q.setFirstResult(offset);
@@ -97,7 +98,7 @@ public class OverseasPaymentRepository {
             List<String> apprTypeCds,
             String keyword) {
 
-        String innerSql = buildUnionSql(apprTypeCds, keyword, true);
+        String innerSql = buildUnionSql(apprTypeCds, keyword, true, null);
         String countSql = "SELECT COUNT(*) FROM (" + innerSql + ") __cnt";
         Query q = em.createNativeQuery(countSql);
         bindParams(q, bizKey, fromDt, toDt, apprTypeCds, keyword);
@@ -117,7 +118,7 @@ public class OverseasPaymentRepository {
             List<String> apprTypeCds,
             String keyword) {
 
-        String innerSql = buildUnionSql(apprTypeCds, keyword, true);
+        String innerSql = buildUnionSql(apprTypeCds, keyword, true, null);
         String sql = """
                 SELECT ccy_cd,
                        COALESCE(SUM(total_tran_amt), 0) AS totl_amt,
@@ -143,7 +144,7 @@ public class OverseasPaymentRepository {
      * in both SUMR and MSTR branches to match the JEX dynamic-SQL pattern
      * from pymn_0007_001_r001_act.jsp.
      */
-    private String buildUnionSql(List<String> apprTypeCds, String keyword, boolean forCount) {
+    private String buildUnionSql(List<String> apprTypeCds, String keyword, boolean forCount, String orderByClause) {
 
         boolean filterApprType = apprTypeCds != null && !apprTypeCds.isEmpty();
         boolean filterKeyword  = keyword != null;
@@ -247,8 +248,9 @@ public class OverseasPaymentRepository {
         if (forCount) {
             return union;
         }
-        // Add ORDER BY for paged list (mirrors JEX DYNAMIC_2 default sort: reg_dtm DESC)
-        return union + "\n ORDER BY reg_dtm DESC";
+        // orderByClause is a pre-validated whitelist value from OverseasScheduledSortField — never raw user input
+        String order = (orderByClause != null && !orderByClause.isBlank()) ? orderByClause : "reg_dtm DESC";
+        return union + "\n ORDER BY " + order;
     }
 
     // ─── single-row fetch ─────────────────────────────────────────────────────
@@ -261,7 +263,7 @@ public class OverseasPaymentRepository {
      */
     @SuppressWarnings("unchecked")
     public java.util.Optional<Object[]> findScheduledById(String bizKey, String ovrsPymnNo) {
-        String innerSql = buildUnionSql(null, null, false);
+        String innerSql = buildUnionSql(null, null, false, null);
         String sql = "SELECT * FROM (" + innerSql + ") __r WHERE __r.ovrs_pymn_no = :id LIMIT 1";
         Query q = em.createNativeQuery(sql);
         q.setParameter("bizKey", bizKey);
@@ -298,25 +300,29 @@ public class OverseasPaymentRepository {
      */
     @SuppressWarnings("unchecked")
     public List<Object[]> findResult(String bizKey, String fromDt, String toDt,
-                                     String keyword, int offset, int limit) {
-        String sql = buildResultSql(keyword) + " ORDER BY ops.reg_dtm DESC";
+                                     String keyword, String trnfYn, int offset, int limit,
+                                     String orderByClause) {
+        // orderByClause is a pre-validated whitelist value from OverseasResultSortField — never raw user input
+        String order = (orderByClause != null && !orderByClause.isBlank()) ? orderByClause : "ops.reg_dtm DESC";
+        String sql = buildResultSql(keyword, trnfYn) + " ORDER BY " + order;
         Query q = em.createNativeQuery(sql);
-        bindResultParams(q, bizKey, fromDt, toDt, keyword);
+        bindResultParams(q, bizKey, fromDt, toDt, keyword, trnfYn);
         q.setFirstResult(offset);
         q.setMaxResults(limit);
         return q.getResultList();
     }
 
-    public long countResult(String bizKey, String fromDt, String toDt, String keyword) {
-        String sql = "SELECT COUNT(*) FROM (" + buildResultSql(keyword) + ") __cnt";
+    public long countResult(String bizKey, String fromDt, String toDt, String keyword, String trnfYn) {
+        String sql = "SELECT COUNT(*) FROM (" + buildResultSql(keyword, trnfYn) + ") __cnt";
         Query q = em.createNativeQuery(sql);
-        bindResultParams(q, bizKey, fromDt, toDt, keyword);
+        bindResultParams(q, bizKey, fromDt, toDt, keyword, trnfYn);
         return ((Number) q.getSingleResult()).longValue();
     }
 
     @SuppressWarnings("unchecked")
-    public List<Object[]> sumResultByCurrency(String bizKey, String fromDt, String toDt, String keyword) {
-        String inner = buildResultSql(keyword);
+    public List<Object[]> sumResultByCurrency(String bizKey, String fromDt, String toDt,
+                                              String keyword, String trnfYn) {
+        String inner = buildResultSql(keyword, trnfYn);
         String sql = """
                 SELECT ccy_cd,
                        COALESCE(SUM(total_tran_amt), 0),
@@ -327,13 +333,13 @@ public class OverseasPaymentRepository {
                  ORDER BY ccy_cd
                 """.formatted(inner);
         Query q = em.createNativeQuery(sql);
-        bindResultParams(q, bizKey, fromDt, toDt, keyword);
+        bindResultParams(q, bizKey, fromDt, toDt, keyword, trnfYn);
         return q.getResultList();
     }
 
     @SuppressWarnings("unchecked")
     public java.util.Optional<Object[]> findResultById(String bizKey, String ovrsPymnNo) {
-        String sql = buildResultSql(null) + " AND ops.ovrs_pymn_no = :id LIMIT 1";
+        String sql = buildResultSql(null, null) + " AND ops.ovrs_pymn_no = :id LIMIT 1";
         Query q = em.createNativeQuery(sql);
         q.setParameter("bizKey", bizKey);
         q.setParameter("fromDt", "19000101");
@@ -343,8 +349,94 @@ public class OverseasPaymentRepository {
         return rows.isEmpty() ? java.util.Optional.empty() : java.util.Optional.of(rows.get(0));
     }
 
-    private String buildResultSql(String keyword) {
-        String kw = keyword != null ? " AND ops.titl ILIKE :keyword ESCAPE '!'" : "";
+    /**
+     * Full (unpaged) result list for Excel export — extends {@link #buildResultSql}
+     * with three extra columns needed by {@link com.kosign.wecms.domain.payment.service.OverseasPaymentResultExcelWriter}.
+     *
+     * <p>Column positions (0-based):
+     * <pre>
+     *  0  ovrs_pymn_no
+     *  1  ccy_cd
+     *  2  org_file_nm
+     *  3  total_tran_amt   (not needed per-row; kept for parity)
+     *  4  tot_trns_cnt     (not needed per-row; kept for parity)
+     *  5  reg_dtm          → Transfer Date Time (col A)
+     *  6  draft_user_nm    → Requestor (col R)
+     *  7  reg_id           → Requestor fallback (col R)
+     *  8  out_bank_nm      → Withdrawal Bank (col F)
+     *  9  wdrl_act_no      → Account No. (col G)
+     * 10  trnf_yn          → Status (col C)
+     * 11  doc_no           → Approval Ref. (col U)
+     * 12  appr_titl        → Approval Title (col V)
+     * 13  appr_reg_dtm     → Request Date/Time (col D)
+     * 14  appr_type_cd     → Approval Status (col T)
+     * 15  pay_date         → Scheduled Date (col S)
+     * </pre>
+     */
+    @SuppressWarnings("unchecked")
+    public List<Object[]> findResultForExport(String bizKey, String fromDt, String toDt,
+                                              String keyword, String trnfYn) {
+        String sql = buildResultExportSql(keyword, trnfYn) + " ORDER BY ops.reg_dtm DESC";
+        Query q = em.createNativeQuery(sql);
+        bindResultParams(q, bizKey, fromDt, toDt, keyword, trnfYn);
+        return q.getResultList();
+    }
+
+    private String buildResultExportSql(String keyword, String trnfYn) {
+        String kw   = keyword != null ? " AND ops.titl ILIKE :keyword ESCAPE '!'" : "";
+        String trnf = trnfYn  != null ? " AND ops.trnf_yn = :trnfYn" : "";
+        return """
+                SELECT ops.ovrs_pymn_no,
+                       ops.ccy_cd,
+                       ops.org_file_nm,
+                       ops.total_tran_amt,
+                       ops.tot_trns_cnt,
+                       ops.reg_dtm,
+                       erm.draft_user_nm,
+                       ops.reg_id,
+                       ops.out_bank_nm,
+                       ops.wdrl_act_no,
+                       ops.trnf_yn,
+                       erm.doc_no,
+                       erm.titl        AS appr_titl,
+                       erm.reg_dtm     AS appr_reg_dtm,
+                       erm.appr_type_cd,
+                       erm.pay_date
+                  FROM ovrs_pymn_sumr ops
+                  LEFT JOIN expt_resol_mstr erm
+                    ON ops.biz_key = erm.biz_key AND ops.appr_seq_no = erm.appr_seq_no
+                 WHERE ops.biz_key = :bizKey
+                   AND LEFT(ops.reg_dtm, 8) BETWEEN :fromDt AND :toDt
+                """ + kw + trnf;
+    }
+
+    /**
+     * Result-list projection.
+     *
+     * <p>Column positions (0-based):
+     * <pre>
+     *  0  ovrs_pymn_no
+     *  1  ccy_cd
+     *  2  org_file_nm
+     *  3  total_tran_amt
+     *  4  tot_trns_cnt
+     *  5  reg_dtm
+     *  6  draft_user_nm
+     *  7  reg_id
+     *  8  out_bank_nm
+     *  9  out_bank_cd
+     * 10  wdrl_act_no
+     * 11  trnf_yn
+     * 12  doc_no
+     * 13  appr_titl   (EXPT_RESOL_MSTR.TITL)
+     * 14  pay_date    (EXPT_RESOL_MSTR.PAY_DATE)
+     * 15  appr_stts   (EXPT_RESOL_MSTR.APPR_TYPE_CD)
+     * 16  apprvr_nm   (NULL — complex join deferred)
+     * </pre>
+     */
+    private String buildResultSql(String keyword, String trnfYn) {
+        String kw    = keyword != null ? " AND ops.titl ILIKE :keyword ESCAPE '!'" : "";
+        String trnf  = trnfYn  != null ? " AND ops.trnf_yn = :trnfYn" : "";
         return """
                 SELECT ops.ovrs_pymn_no,
                        ops.ccy_cd,
@@ -359,20 +451,25 @@ public class OverseasPaymentRepository {
                        ops.wdrl_act_no,
                        ops.trnf_yn,
                        erm.doc_no,
-                       erm.titl        AS appr_titl
+                       erm.titl          AS appr_titl,
+                       erm.pay_date,
+                       erm.appr_type_cd  AS appr_stts,
+                       NULL              AS apprvr_nm
                   FROM ovrs_pymn_sumr ops
                   LEFT JOIN expt_resol_mstr erm
                     ON ops.biz_key = erm.biz_key AND ops.appr_seq_no = erm.appr_seq_no
                  WHERE ops.biz_key = :bizKey
                    AND LEFT(ops.reg_dtm, 8) BETWEEN :fromDt AND :toDt
-                """ + kw;
+                """ + kw + trnf;
     }
 
-    private void bindResultParams(Query q, String bizKey, String fromDt, String toDt, String keyword) {
+    private void bindResultParams(Query q, String bizKey, String fromDt, String toDt,
+                                  String keyword, String trnfYn) {
         q.setParameter("bizKey", bizKey);
         q.setParameter("fromDt", fromDt);
         q.setParameter("toDt",   toDt);
         if (keyword != null) q.setParameter("keyword", keyword);
+        if (trnfYn  != null) q.setParameter("trnfYn",  trnfYn);
     }
 
     // ─── common helpers ───────────────────────────────────────────────────────

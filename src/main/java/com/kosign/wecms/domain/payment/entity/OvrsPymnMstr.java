@@ -82,6 +82,20 @@ public class OvrsPymnMstr {
     @Column(name = "APPR_SEQ_NO", length = 20)
     private String apprSeqNo;
 
+    /**
+     * Reporting Account (chart of accounts) classifier. Used by the
+     * Cash Flow report's overseas-payment aggregation (legacy
+     * {@code get_cashflow_report} reads this column directly off the
+     * row, matching the bank / card source pattern). Nullable —
+     * unclassified rows are excluded from the cash-flow aggregation
+     * via the {@code chart_acct_cd <> ''} predicate.
+     */
+    @Column(name = "CHART_ACCT_CD", length = 20)
+    private String chartAcctCd;
+
+    @Column(name = "CHART_ACCT_SEQ_NO", length = 10)
+    private String chartAcctSeqNo;
+
     @Column(name = "TRNF_YN", length = 1, nullable = false)
     private String trnfYn;
 

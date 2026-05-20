@@ -1,5 +1,6 @@
 package com.kosign.wecms.domain.banking.service;
 
+import com.kosign.wecms.common.web.SortDirection;
 import com.kosign.wecms.domain.banking.dto.ExchangeRateBankItem;
 import com.kosign.wecms.domain.banking.dto.ExchangeRateListResponse;
 import com.kosign.wecms.domain.banking.dto.ExchangeRateRow;
@@ -13,6 +14,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -54,11 +57,18 @@ public class ExchangeRateService {
      * <p>When {@code seqNo} is omitted, the latest batch round (highest SEQ_NO)
      * per currency pair is returned via DISTINCT ON.</p>
      *
-     * @param refDate  YYYYMMDD; {@code null} or blank → today (UTC+7 / Vietnam)
-     * @param bankCd   bank code; {@code null} or blank → {@link #DEFAULT_BANK_CD}
-     * @param seqNo    batch sequence number ("1", "2", …); {@code null} or blank → latest
+     * <p>When {@code sortField} and {@code sortDirection} are supplied the result
+     * rows are sorted in-memory after mapping. Unknown / blank {@code sortField}
+     * values fall back to the default alphabetical order by display currency.</p>
+     *
+     * @param refDate        YYYYMMDD; {@code null} or blank → today (UTC+7 / Vietnam)
+     * @param bankCd         bank code; {@code null} or blank → {@link #DEFAULT_BANK_CD}
+     * @param seqNo          batch sequence number ("1", "2", …); {@code null} or blank → latest
+     * @param sortField      FIELD_ID to sort by (CURRENCY | CASH_BUY | CASH_SELL | TT_BUY | TT_SELL)
+     * @param sortDirection  ASC | DESC; {@code null} or blank → ASC
      */
-    public ExchangeRateListResponse list(String refDate, String bankCd, String seqNo) {
+    public ExchangeRateListResponse list(String refDate, String bankCd, String seqNo,
+                                         String sortField, String sortDirection) {
         String resolvedDate = resolveDate(refDate);
         String resolvedBank = (bankCd != null && !bankCd.isBlank()) ? bankCd : DEFAULT_BANK_CD;
         boolean hasSeqNo    = seqNo != null && !seqNo.isBlank();
@@ -91,9 +101,11 @@ public class ExchangeRateService {
 
         String bankNm = bankCdResolver.resolveBankNm(resolvedBank);
 
-        List<ExchangeRateRow> rateRows = rows.stream()
+        List<ExchangeRateRow> rateRows = new ArrayList<>(rows.stream()
                 .map(this::toRow)
-                .toList();
+                .toList());
+
+        applySort(rateRows, sortField, sortDirection);
 
         List<com.kosign.wecms.domain.banking.dto.ExchangeRateRoundItem> rounds =
                 exchRateRepo.findDistinctRoundsByBankCdAndRefDate(resolvedBank, resolvedDate).stream()
@@ -174,5 +186,22 @@ public class ExchangeRateService {
             return refDate;
         }
         return LocalDate.now(VIETNAM_TZ).format(DATE8);
+    }
+
+    /**
+     * Sorts {@code rows} in-place using the whitelist-validated field + direction.
+     * Unknown / blank {@code sortField} leaves the list in its DB-returned order
+     * (alphabetical by currency via the native query's {@code ORDER BY ccy_cd ASC}).
+     */
+    private void applySort(List<ExchangeRateRow> rows, String sortField, String sortDirection) {
+        ExchangeRateSortField field = ExchangeRateSortField.parse(sortField);
+        if (field == null) return;
+
+        SortDirection dir = SortDirection.parse(sortDirection);
+        Comparator<ExchangeRateRow> cmp = field.comparator();
+        if (dir == SortDirection.DESC) {
+            cmp = cmp.reversed();
+        }
+        rows.sort(cmp);
     }
 }

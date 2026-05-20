@@ -31,5 +31,11 @@ public record OverseasResultRow(
         String docNo,
         String titl,
         Integer successCount,
-        Integer failedCount
+        Integer failedCount,
+        /** Scheduled transfer date — {@code EXPT_RESOL_MSTR.PAY_DATE} (yyyyMMdd). */
+        String payDate,
+        /** Approval workflow status code — {@code EXPT_RESOL_MSTR.APPR_TYPE_CD}. */
+        String apprStts,
+        /** Approver display name — complex join deferred; null for now. */
+        String apprvrNm
 ) {}
