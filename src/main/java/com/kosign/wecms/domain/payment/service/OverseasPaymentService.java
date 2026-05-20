@@ -454,6 +454,26 @@ public class OverseasPaymentService {
         sumr.setModId(TenantContext.currentUserId());
         sumrRepository.save(sumr);
 
+        // Keep EXPT_RESOL_MSTR.APPR_TYPE_CD in sync so the list filter and
+        // the status badge both derive from the same authoritative column.
+        String apprTypeCd = req.isApprove() ? "01" : "02";
+        exptResolMstrRepository.findById(
+                new com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId(bizKey, sumr.getApprSeqNo()))
+                .ifPresent(mstr -> {
+                    mstr.setApprTypeCd(apprTypeCd);
+                    mstr.setModId(TenantContext.currentUserId());
+                    mstr.setModDtm(nowDtm);
+                    exptResolMstrRepository.save(mstr);
+                });
+
+        // On reject: stop all pending + waiting approvers so the Approval Box
+        // detail view reflects the correct chain state.
+        if (!req.isApprove()) {
+            exptResolApprvrInfmRepository.stopAllActive(
+                    bizKey, sumr.getApprSeqNo(),
+                    TenantContext.currentUserId(), nowDtm);
+        }
+
         String detailKey = req.isApprove()
                 ? "audit.overseas_payment.approve.detail"
                 : "audit.overseas_payment.reject.detail";
@@ -544,10 +564,14 @@ public class OverseasPaymentService {
         mstr.setTitl(req.postTitle() != null ? req.postTitle().trim() : "");
         mstr.setDocNo(sumr.getOvrsPymnNo());
         mstr.setDocNm(sumr.getTitl() != null ? sumr.getTitl() : sumr.getOvrsPymnNo());
-        // VN tenants: VND amount stored in the KHR column (legacy parity per entity Javadoc)
-        mstr.setTotPayKhrAmt(sumr.getTotalTranAmt());
-        mstr.setTotPayUsdAmt(BigDecimal.ZERO);
-        mstr.setTotPayVndAmt(sumr.getTotalTranAmt());
+        // Store amount in the column matching the payment's currency so the
+        // Approval Box can derive the correct currency from the amounts.
+        // Legacy convention: VND uses the KHR column; USD uses the USD column.
+        BigDecimal amt = sumr.getTotalTranAmt() != null ? sumr.getTotalTranAmt() : BigDecimal.ZERO;
+        boolean isUsd = "USD".equalsIgnoreCase(sumr.getCcyCd());
+        mstr.setTotPayKhrAmt(isUsd ? BigDecimal.ZERO : amt);
+        mstr.setTotPayUsdAmt(isUsd ? amt : BigDecimal.ZERO);
+        mstr.setTotPayVndAmt(isUsd ? BigDecimal.ZERO : amt);
         mstr.setPayDate(req.payDate() != null && !req.payDate().isBlank() ? req.payDate().trim() : null);
         mstr.setDelYn("N");
         mstr.setPayEndYn("N");

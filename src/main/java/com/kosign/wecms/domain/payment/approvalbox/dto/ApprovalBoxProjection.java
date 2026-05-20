@@ -22,6 +22,7 @@ public record ApprovalBoxProjection(
         String     apprDv,
         String     docNm,
         BigDecimal totPayKhrAmt,
+        BigDecimal totPayUsdAmt,
         String     payDate,
         String     draftUserId,
         String     draftUserNm,
