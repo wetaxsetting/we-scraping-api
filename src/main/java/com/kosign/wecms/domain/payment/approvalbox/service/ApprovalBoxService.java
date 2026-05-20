@@ -574,11 +574,17 @@ public class ApprovalBoxService {
         String currency = ccyByApprSeqNo.getOrDefault(p.apprSeqNo(), "VND");
         if (currency == null || currency.isBlank()) currency = "VND";
 
-        // Pick the amount column that matches the currency.
-        // USD payments store their amount in totPayUsdAmt; all others use totPayKhrAmt.
-        BigDecimal amt = "USD".equalsIgnoreCase(currency)
-                ? (p.totPayUsdAmt() != null ? p.totPayUsdAmt() : BigDecimal.ZERO)
-                : (p.totPayKhrAmt() != null ? p.totPayKhrAmt() : BigDecimal.ZERO);
+        // Pick the amount column that matches the currency (3 currencies):
+        //   USD → TOT_PAY_USD_AMT
+        //   KRW → TOT_PAY_KHR_AMT (no dedicated KRW column)
+        //   VND (and default) → TOT_PAY_KHR_AMT (VN-tenant legacy alias for KHR column)
+        BigDecimal amt;
+        if ("USD".equalsIgnoreCase(currency)) {
+            amt = p.totPayUsdAmt() != null ? p.totPayUsdAmt() : BigDecimal.ZERO;
+        } else {
+            // VND and KRW both live in the KHR column
+            amt = p.totPayKhrAmt() != null ? p.totPayKhrAmt() : BigDecimal.ZERO;
+        }
 
         return new ApprovalBoxRow(
                 p.apprSeqNo(),

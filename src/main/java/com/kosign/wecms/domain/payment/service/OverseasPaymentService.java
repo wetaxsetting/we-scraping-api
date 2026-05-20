@@ -564,14 +564,18 @@ public class OverseasPaymentService {
         mstr.setTitl(req.postTitle() != null ? req.postTitle().trim() : "");
         mstr.setDocNo(sumr.getOvrsPymnNo());
         mstr.setDocNm(sumr.getTitl() != null ? sumr.getTitl() : sumr.getOvrsPymnNo());
-        // Store amount in the column matching the payment's currency so the
-        // Approval Box can derive the correct currency from the amounts.
-        // Legacy convention: VND uses the KHR column; USD uses the USD column.
+        // Store amount in the column that matches the payment currency.
+        // Column convention (3 currencies supported):
+        //   VND → TOT_PAY_KHR_AMT (VN-tenant legacy alias) + TOT_PAY_VND_AMT
+        //   USD → TOT_PAY_USD_AMT
+        //   KRW → TOT_PAY_KHR_AMT (no dedicated KRW column; KHR column used for non-USD foreign)
         BigDecimal amt = sumr.getTotalTranAmt() != null ? sumr.getTotalTranAmt() : BigDecimal.ZERO;
-        boolean isUsd = "USD".equalsIgnoreCase(sumr.getCcyCd());
-        mstr.setTotPayKhrAmt(isUsd ? BigDecimal.ZERO : amt);
-        mstr.setTotPayUsdAmt(isUsd ? amt : BigDecimal.ZERO);
-        mstr.setTotPayVndAmt(isUsd ? BigDecimal.ZERO : amt);
+        String ccy = sumr.getCcyCd() != null ? sumr.getCcyCd().toUpperCase() : "VND";
+        boolean isUsd = "USD".equals(ccy);
+        boolean isVnd = "VND".equals(ccy);
+        mstr.setTotPayKhrAmt(isUsd ? BigDecimal.ZERO : amt);   // VND + KRW
+        mstr.setTotPayUsdAmt(isUsd ? amt : BigDecimal.ZERO);   // USD only
+        mstr.setTotPayVndAmt(isVnd ? amt : BigDecimal.ZERO);   // VND only
         mstr.setPayDate(req.payDate() != null && !req.payDate().isBlank() ? req.payDate().trim() : null);
         mstr.setDelYn("N");
         mstr.setPayEndYn("N");

@@ -3,6 +3,8 @@ package com.kosign.wecms.domain.setting.contacts.controller;
 import com.kosign.wecms.common.response.ApiResponse;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactBankListResponse;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactBulkDeleteRequest;
+import com.kosign.wecms.domain.setting.contacts.dto.ContactBulkImportRequest;
+import com.kosign.wecms.domain.setting.contacts.dto.ContactBulkImportResponse;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactsByCodesRequest;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactCreateRequest;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactFileListResponse;
@@ -14,6 +16,7 @@ import com.kosign.wecms.domain.setting.contacts.dto.ContactRow;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactUpdateRequest;
 import com.kosign.wecms.domain.setting.contacts.service.ContactsFileService;
 import com.kosign.wecms.domain.setting.contacts.service.ContactsFileService.DownloadResource;
+import com.kosign.wecms.domain.setting.contacts.service.ContactsImportService;
 import com.kosign.wecms.domain.setting.contacts.service.ContactsService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -65,6 +68,7 @@ import org.springframework.web.multipart.MultipartFile;
 public class ContactsController {
 
     private final ContactsService service;
+    private final ContactsImportService importService;
     private final ContactsFileService fileService;
 
     /**
@@ -152,6 +156,22 @@ public class ContactsController {
             @Valid @RequestBody ContactBulkDeleteRequest request) {
         service.bulkSoftDelete(request.trcoKeys());
         return ApiResponse.ok(null);
+    }
+
+    /**
+     * Bulk import from Excel upload. Processes each row individually so
+     * a failure on one row does not roll back successfully imported rows.
+     * Always returns HTTP 200 — partial-import results are encoded in
+     * {@link ContactBulkImportResponse#errors()}.
+     *
+     * <p>Capped at 500 rows per call ({@link ContactBulkImportRequest}
+     * bean validation). The frontend client-side parser already validates
+     * and rejects structurally invalid rows before calling this endpoint.
+     */
+    @PostMapping("/excel/import")
+    public ApiResponse<ContactBulkImportResponse> excelImport(
+            @Valid @RequestBody ContactBulkImportRequest request) {
+        return ApiResponse.ok(importService.bulkImport(request));
     }
 
     /**
