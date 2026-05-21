@@ -1,12 +1,9 @@
 package com.kosign.wecms.domain.payment.cardtransactions.controller;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.PropertyNamingStrategies;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.kosign.wecms.common.enums.LangCd;
 import com.kosign.wecms.common.exception.BusinessException;
-import com.kosign.wecms.common.exception.GlobalExceptionHandler;
-import com.kosign.wecms.common.i18n.MessageResolver;
+import com.kosign.wecms.common.security.JwtAuthenticationEntryPoint;
+import com.kosign.wecms.common.security.JwtTokenProvider;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.ActiveCard;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardListResponse;
@@ -19,10 +16,19 @@ import com.kosign.wecms.domain.payment.cardtransactions.service.CardTransactions
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.MediaType;
-import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -32,7 +38,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -43,46 +48,51 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Standalone-MockMvc slice test for {@link CardTransactionsController}.
- * Verifies the snake_case wire contract (request + response), the
- * validation envelope, the discriminated PATCH body shape, and the
- * business-error envelope.
+ * {@code @WebMvcTest} slice test for {@link CardTransactionsController}.
  *
- * <p>Mirrors the {@code ChartOfAccountsControllerTest} pattern: Jackson
- * configured manually with {@code SNAKE_CASE} so the response bytes
- * match production exactly without spinning up the full Spring context.
+ * <p>Loads the real Spring MVC context from {@code application.yml} so
+ * that Jackson ({@code SNAKE_CASE} from {@code JacksonConfig}),
+ * {@code GlobalExceptionHandler}, and {@code MessageSource} are
+ * auto-configured — no manual wiring needed per test. Services are
+ * replaced by Mockito {@code @MockBean}s.
+ *
+ * <p>JWT security is bypassed by {@link TestSecurityConfig}: a
+ * {@code SecurityFilterChain} with {@code @Order(MIN_VALUE)} that
+ * permits all requests takes priority over the production chain, so
+ * the {@code JwtAuthenticationFilter} never runs. Tests set
+ * {@code TenantContext} directly in {@code @BeforeEach}.
  */
+@WebMvcTest(CardTransactionsController.class)
+@Import(CardTransactionsControllerTest.TestSecurityConfig.class)
+@TestPropertySource(properties = "wecms.jwt.secret=test-secret-at-least-32-bytes-long-for-hs256")
 class CardTransactionsControllerTest {
 
-    private MockMvc mvc;
-    private CardTransactionsService service;
-    private CardTransactionSyncService syncService;
-    private CardTranListR001Service cardTranListR001Service;
+    /** Replaces the JWT-gated production chain for all test requests. */
+    @TestConfiguration
+    static class TestSecurityConfig {
+        @Bean
+        @Order(Integer.MIN_VALUE)
+        SecurityFilterChain permitAllChain(HttpSecurity http) throws Exception {
+            return http
+                    .securityMatcher("/**")
+                    .csrf(AbstractHttpConfigurer::disable)
+                    .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
+                    .build();
+        }
+    }
+
+    @Autowired private MockMvc mvc;
+
+    @MockBean private CardTransactionsService     service;
+    @MockBean private CardTransactionSyncService  syncService;
+    @MockBean private CardTranListR001Service      cardTranListR001Service;
+    /** Required by {@code JwtAuthenticationFilter} (component-scanned into the slice). */
+    @MockBean private JwtTokenProvider            jwtTokenProvider;
+    /** Required by {@code SecurityConfig} constructor injection. */
+    @MockBean private JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint;
 
     @BeforeEach
     void setUp() {
-        service = mock(CardTransactionsService.class);
-        syncService = mock(CardTransactionSyncService.class);
-        cardTranListR001Service = mock(CardTranListR001Service.class);
-
-        ObjectMapper mapper = new ObjectMapper()
-                .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
-                .registerModule(new JavaTimeModule());
-        MappingJackson2HttpMessageConverter jsonConverter =
-                new MappingJackson2HttpMessageConverter(mapper);
-
-        MessageResolver messages = mock(MessageResolver.class);
-        when(messages.resolve(any(String.class))).thenReturn("Card transactions error.");
-        when(messages.resolve(any(String.class), any(Object[].class)))
-                .thenReturn("Card transactions error.");
-        GlobalExceptionHandler advice = new GlobalExceptionHandler(messages);
-
-        mvc = MockMvcBuilders
-                .standaloneSetup(new CardTransactionsController(service, syncService, cardTranListR001Service))
-                .setMessageConverters(jsonConverter)
-                .setControllerAdvice(advice)
-                .build();
-
         TenantContext.set("tester", "VN_VNM0004_000001", LangCd.EN);
     }
 
