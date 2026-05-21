@@ -8,6 +8,7 @@ import com.kosign.wecms.domain.banking.bankcredentials.service.BankCredentialSer
 import com.kosign.wecms.domain.banking.nxisas.dto.QnaQuestion;
 import com.kosign.wecms.domain.banking.nxisas.dto.ScrapeSessionResponse;
 import com.kosign.wecms.domain.banking.nxisas.dto.ScrapedAccount;
+import com.kosign.wecms.domain.banking.nxisas.dto.ScrapedCard;
 import com.kosign.wecms.domain.banking.nxisas.dto.StartScrapeRequest;
 import com.kosign.wecms.domain.banking.nxisas.dto.SubmitChallengeRequest;
 import com.kosign.wecms.domain.banking.nxisas.dto.SubmitQnaRequest;
@@ -71,7 +72,8 @@ public class BankScrapingService {
                 cred.corporateId(),
                 cred.loginType(),
                 cred.nxisasGbSeqNo(),
-                req.credentialSeqNo());
+                req.credentialSeqNo(),
+                NxisasScrapeSession.Mode.SETUP);
     }
 
     /**
@@ -89,6 +91,15 @@ public class BankScrapingService {
      * user's account selection.
      */
     public ScrapeSessionResponse verify(VerifyCredentialsRequest req) {
+        // Resolve the post-login flow from the optional scrape_kind hint.
+        // The Card Management modal sends "CARD_INFO" to register cards
+        // (LOGIN + CARD_INFO); everything else defaults to ACCT_LIST so
+        // the existing Login Credentials verify-before-save flow keeps
+        // working unchanged.
+        NxisasScrapeSession.Mode mode =
+                "CARD_INFO".equalsIgnoreCase(req.scrapeKind())
+                        ? NxisasScrapeSession.Mode.CARD_REGISTER
+                        : NxisasScrapeSession.Mode.SETUP;
         return runLogin(
                 req.bankCd(),
                 req.loginId(),
@@ -96,16 +107,22 @@ public class BankScrapingService {
                 req.extra(),
                 req.loginType(),
                 req.nxisasGbSeqNo(),
-                null);
+                null,
+                mode);
     }
 
-    /** Shared LOGIN → (challenge | ACCT_LIST) path. Both
+    /** Shared LOGIN → (challenge | post-login job) path. Both
      *  {@link #start(StartScrapeRequest)} and {@link #verify(VerifyCredentialsRequest)}
-     *  funnel here once they have plaintext credentials in hand. */
+     *  funnel here once they have plaintext credentials in hand. The
+     *  {@code mode} parameter selects which post-login Coocon job
+     *  dispatches when the bank accepts the login outright (no
+     *  challenge): SETUP → ACCT_LIST, CARD_REGISTER → CARD_INFO,
+     *  SYNC → owned by BankTransactionSyncService. */
     private ScrapeSessionResponse runLogin(String bankCd, String username, String password,
                                            String corporateId, String loginType,
                                            java.math.BigDecimal nxisasGbSeqNo,
-                                           java.math.BigDecimal credentialSeqNo) {
+                                           java.math.BigDecimal credentialSeqNo,
+                                           NxisasScrapeSession.Mode mode) {
         // Resolve the Coocon adapter Module + Class
         // (CORPORATE / COMMON / PERSONAL / DIGIBIZ / …) from the
         // per-bank config — sub-type aware so the picker's
@@ -126,6 +143,7 @@ public class BankScrapingService {
         NxisasScrapeSession session = new NxisasScrapeSession(
                 trSeq, bizKey, userId, credentialSeqNo, bankModule);
         session.setBankCategory(cfg.category());
+        session.setMode(mode);
 
         NxisasLoginJobInput loginInput = new NxisasLoginJobInput();
         loginInput.setLoginId(username);
@@ -215,8 +233,9 @@ public class BankScrapingService {
                     session.getChallengePrompt());
         }
 
-        // No challenge: gateway accepted the login outright. Proceed to acct-list.
-        return runAcctList(session);
+        // No challenge: gateway accepted the login outright. Proceed
+        // to the per-mode post-login job (ACCT_LIST / CARD_INFO).
+        return proceedAfterLogin(session);
     }
 
     public ScrapeSessionResponse submitOtp(UUID sessionId, SubmitChallengeRequest req) {
@@ -257,7 +276,7 @@ public class BankScrapingService {
             return ScrapeSessionResponse.error(session.getSessionId(), resultCd, resultMsg);
         }
 
-        return runAcctList(session);
+        return proceedAfterLogin(session);
     }
 
     /**
@@ -346,8 +365,9 @@ public class BankScrapingService {
                     session.getChallengePrompt());
         }
 
-        // QNA accepted, no further challenge — proceed to ACCT_LIST.
-        return runAcctList(session);
+        // QNA accepted, no further challenge — proceed to the per-mode
+        // post-login job (ACCT_LIST / CARD_INFO).
+        return proceedAfterLogin(session);
     }
 
     /**
@@ -429,8 +449,80 @@ public class BankScrapingService {
                     session.getChallengePrompt());
         }
 
-        // CAPTCHA accepted, no further challenge — proceed to ACCT_LIST.
-        return runAcctList(session);
+        // CAPTCHA accepted, no further challenge — proceed to the
+        // per-mode post-login job (ACCT_LIST / CARD_INFO).
+        return proceedAfterLogin(session);
+    }
+
+    /**
+     * Post-login dispatcher — branches on the session's {@code Mode} to
+     * run the right Coocon job after the bank accepts the login. Called
+     * from every path that completes a LOGIN (initial + every challenge
+     * resume). {@code SYNC} stays on this code path's ACCT_LIST fallback
+     * for safety; the real SYNC orchestration lives in
+     * {@link BankTransactionSyncService} which intercepts SYNC sessions
+     * earlier.
+     */
+    private ScrapeSessionResponse proceedAfterLogin(NxisasScrapeSession session) {
+        return session.getMode() == NxisasScrapeSession.Mode.CARD_REGISTER
+                ? runCardInfo(session)
+                : runAcctList(session);
+    }
+
+    /**
+     * Coocon CARD_INFO scrape after a successful LOGIN — mirrors
+     * {@link #runAcctList} but reads the bank's card list instead of
+     * the account list. Surfaces the result via
+     * {@link ScrapeSessionResponse#completedCards} so the frontend's
+     * "Confirm Cards" popup can render the scraped rows.
+     *
+     * <p>Mirrors legacy {@code nxisas_fnsh_r001_act.jsp:357-368} +
+     * {@code comm_0218_007_c001} — after the user ticks which cards to
+     * register, the frontend POSTs the selection to
+     * {@code POST /api/v1/payment/card-transactions/cards} which
+     * inserts the rows into {@code CARD_MSTR}.
+     */
+    private ScrapeSessionResponse runCardInfo(NxisasScrapeSession session) {
+        // Fresh Tr_seq per call — same legacy-parity rule as runAcctList.
+        String trSeq = gateway.newTrSeq();
+        var out = gateway.cardInfo(
+                session.getBankModule(), session.getBankCategory(), trSeq,
+                new com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasCardInfoJobInput(),
+                sessionContinuation(session));
+        var result = gateway.firstCardInfoResult(out);
+
+        String resultCd = out == null || out.getCommon() == null
+                ? null : out.getCommon().getResultCd();
+        String resultMsg = out == null || out.getCommon() == null
+                ? null : out.getCommon().getResultMsg();
+        if (isGatewayError(resultCd)) {
+            session.setStatus(NxisasScrapeSession.Status.FAILED);
+            session.setErrorCode(resultCd);
+            session.setErrorMessage(resultMsg);
+            registry.discard(session.getSessionId());
+            return ScrapeSessionResponse.error(session.getSessionId(), resultCd, resultMsg);
+        }
+
+        java.util.List<ScrapedCard> cards =
+                (result == null || result.getCardList() == null)
+                        ? java.util.List.of()
+                        : result.getCardList().stream()
+                                .map(e -> new ScrapedCard(
+                                        e.getCardNum(),
+                                        e.getCardType(),
+                                        e.getCardName(),
+                                        e.getHolderName(),
+                                        e.getIssueDate(),
+                                        e.getExpireDate(),
+                                        e.getAcctType(),
+                                        e.getPaymentAcctNum()))
+                                .toList();
+
+        session.setStatus(NxisasScrapeSession.Status.COMPLETED);
+        registry.discard(session.getSessionId());
+        log.info("NXISAS card-info scrape completed [bank={}, cards={}]",
+                session.getBankModule(), cards.size());
+        return ScrapeSessionResponse.completedCards(session.getSessionId(), cards);
     }
 
     private ScrapeSessionResponse runAcctList(NxisasScrapeSession session) {

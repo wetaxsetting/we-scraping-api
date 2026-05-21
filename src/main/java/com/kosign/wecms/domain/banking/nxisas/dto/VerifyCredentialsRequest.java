@@ -30,5 +30,12 @@ public record VerifyCredentialsRequest(
         @Size(max = 2000)           String extra,
         /** Optional Login Type selector (e.g. "OTP" / "EMAIL" / "SMS" /
          *  "ID"). Defaults to "ID" when null/blank. */
-        @Size(max = 2000)           String loginType
+        @Size(max = 2000)           String loginType,
+        /** Optional post-login scrape job — {@code "ACCT_LIST"}
+         *  (default; Login Credentials flow) or {@code "CARD_INFO"}
+         *  (Card Management "Add Card" flow). Maps to
+         *  {@link com.kosign.wecms.domain.banking.nxisas.session.NxisasScrapeSession.Mode}
+         *  on the session. Null / blank / unknown → ACCT_LIST for
+         *  back-compat. */
+        @Size(max = 20)             String scrapeKind
 ) { }

@@ -21,7 +21,7 @@ spring:
     # `ddl-auto: validate` depends on Flyway applying every entity-
     # mapped table (e.g. APPR_LINE_INFM from V90, CHART_ACCT_INFM from
     # V94, OVRS_PYMN_* from V112) — keep enabled at all times.
-    enabled: false
+    enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: false
     # Local-R&D drift recovery — the developer DB is single-user and

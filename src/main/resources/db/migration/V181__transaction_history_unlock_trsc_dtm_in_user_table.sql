@@ -1,6 +1,12 @@
 -- =====================================================================
--- V163 — Banking > Transaction History: defensively unlock TRSC_DTM
+-- V177 — Banking > Transaction History: defensively unlock TRSC_DTM
 -- (Date/Time) for environments that still carry the legacy V128 seed.
+--
+-- Originally landed as V163 on 2026-05-18 but collided with
+-- V163__overseas_payment_result_detail_view_setting_corrective.sql,
+-- which prevented Flyway from booting once it was re-enabled. Renumbered
+-- to V177 on 2026-05-19 to deduplicate. The migration body is still
+-- defensive + idempotent, so running it after V164–V176 is safe.
 --
 -- V157 + V159 reseeded `web_svc_id='banking-transaction-history'` with
 -- FIX_YN='N' on every row including TRSC_DTM, and wiped
