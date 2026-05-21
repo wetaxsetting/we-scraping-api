@@ -882,6 +882,25 @@ public class CardTransactionsService {
                 bizKey, apprSeqNo, apprLineNo, chainEntities.size());
     }
 
+    /**
+     * Preview the next {@code VO_YYMMDD_NNN} doc number for the
+     * current tenant. Used by the Card Request Approval popup which
+     * has no parent batch row to display while the user is filling
+     * the form — every other Payment module passes the parent's
+     * {@code SCDUL_PYMN_NO}.
+     *
+     * <p>Read-only / non-reserving: a second caller (or this caller's
+     * own later submit) may end up with a higher number if other
+     * Request Approvals land in between. The authoritative value is
+     * assigned by {@code ApprovalBoxFanoutService.fanout(...)} at
+     * submit time.
+     */
+    public com.kosign.wecms.domain.payment.cardtransactions.dto.NextDocNoResponse previewNextDocNo() {
+        String bizKey = TenantContext.currentBizKey();
+        String docNo = approvalBoxFanoutService.nextDocNo(bizKey, OffsetDateTime.now());
+        return new com.kosign.wecms.domain.payment.cardtransactions.dto.NextDocNoResponse(docNo);
+    }
+
     /** Per-tenant MAX(APPR_SEQ_NO::bigint) + 1 from the shared
      *  EXPT_RESOL_MSTR namespace. Mirrors the allocator used by every
      *  other Payment module (Internal Transfer / Vendor / Expense /

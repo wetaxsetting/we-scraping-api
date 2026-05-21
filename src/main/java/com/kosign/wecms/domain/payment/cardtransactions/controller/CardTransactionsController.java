@@ -10,6 +10,7 @@ import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTransactionPatch
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTransactionRow;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CreateCardsRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CreateCardsResponse;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.NextDocNoResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.RequestApprovalRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.RequestApprovalResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.SyncCardTransactionsRequest;
@@ -440,5 +441,17 @@ public class CardTransactionsController {
     public ApiResponse<RequestApprovalResponse> requestApproval(
             @Valid @RequestBody RequestApprovalRequest req) {
         return ApiResponse.ok(service.requestApproval(req));
+    }
+
+    /**
+     * Preview the next {@code VO_YYMMDD_NNN} document number for the
+     * current tenant. Used by the Request Approval popup to populate
+     * the read-only "Document No." field before the user submits —
+     * Card has no parent batch row to source it from. The value is a
+     * preview only; the authoritative number is allocated at submit.
+     */
+    @GetMapping("/next-doc-no")
+    public ApiResponse<NextDocNoResponse> nextDocNo() {
+        return ApiResponse.ok(service.previewNextDocNo());
     }
 }
