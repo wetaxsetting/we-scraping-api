@@ -59,6 +59,7 @@ public class AccountController {
     private final BankTransactionSyncService bankTransactionSyncService;
 
     /**
+     * Deploy
      * Account Inquiry — VND/FCY share one endpoint with a {@code currency}
      * query param ({@code VND}, {@code FCY}, {@code ALL}, or a literal
      * code). Mirrors legacy {@code fnsh_0001_001_r001} / {@code fnsh_0005_001_r001}.
