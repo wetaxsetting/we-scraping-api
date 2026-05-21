@@ -24,6 +24,13 @@ import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrDetl
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrId;
 import com.kosign.wecms.domain.payment.internaltransfer.repository.ScdulPymnSumrDetlRepository;
 import com.kosign.wecms.domain.payment.internaltransfer.repository.ScdulPymnSumrRepository;
+import com.kosign.wecms.domain.auth.repository.BusiInfmRepository;
+import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolApprvrInfm;
+import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
+import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolApprvrInfmRepository;
+import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
+import com.kosign.wecms.domain.payment.approvalbox.service.ApprDv;
+import com.kosign.wecms.domain.payment.service.DocNoGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -41,7 +48,9 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.Clock;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
 import java.util.List;
@@ -145,6 +154,8 @@ public class InternalTransferService {
     private static final DateTimeFormatter DTM14 =
             DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
 
+    private static final ZoneId VIETNAM_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
+
     private final ScdulPymnSumrRepository      sumrRepository;
     private final ScdulPymnSumrDetlRepository  detlRepository;
     private final com.kosign.wecms.domain.banking.repository.AcctMstrRepository acctMstrRepository;
@@ -164,6 +175,10 @@ public class InternalTransferService {
     private final AuditLogService              auditLogService;
     private final com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter erpHistoryWriter;
     private final Clock                        clock;
+    private final ExptResolMstrRepository       exptResolMstrRepository;
+    private final ExptResolApprvrInfmRepository exptResolApprvrInfmRepository;
+    private final DocNoGenerator                docNoGenerator;
+    private final BusiInfmRepository            busiInfmRepository;
 
     /* ----------------------------------------------------------------
      *  List
@@ -211,8 +226,9 @@ public class InternalTransferService {
                 apprTypeArg,
                 pageable);
 
+        Map<String, String> docNoByApprSeqNo = buildDocNoMap(bizKey, rows.getContent());
         List<ScheduledTransferRow> dtoRows = rows.getContent().stream()
-                .map(this::toListRow)
+                .map(s -> toListRow(s, docNoByApprSeqNo))
                 .toList();
         List<CurrencyTotal> totals = computeCurrencyTotals(rows.getContent());
 
@@ -230,11 +246,23 @@ public class InternalTransferService {
     @Transactional(readOnly = true)
     public ScheduledTransferDetailResponse detail(String id) {
         String bizKey = requireTenant();
-        ScdulPymnSumr master = loadMaster(bizKey, id);
+        // Primary lookup: treat id as SCDUL_PYMN_NO (internal key).
+        // Fallback: treat id as DOC_NO (VO_YYMMDD_NNN user-visible key).
+        ScdulPymnSumr master = sumrRepository
+                .findByBizKeyAndScdulPymnNoAndScdulPymnTypeCd(
+                        bizKey, id, ScdulPymnTypeCd.INTERNAL.code())
+                .or(() ->
+                    exptResolMstrRepository.findByBizKeyAndDocNoAndDelYn(bizKey, id, "N")
+                            .filter(m -> m.getApprSeqNo() != null)
+                            .flatMap(m -> sumrRepository.findByBizKeyAndApprSeqNoAndScdulPymnTypeCd(
+                                    bizKey, m.getApprSeqNo(), ScdulPymnTypeCd.INTERNAL.code()))
+                )
+                .orElseThrow(() -> new BusinessException("WBE2060"));
 
+        String resolvedId = master.getScdulPymnNo();
         Sort lineSort = Sort.by(Sort.Order.asc("scdulPymnDetlNo"));
         List<TransferLineDetail> lines = detlRepository
-                .findByBizKeyAndScdulPymnNo(bizKey, id, lineSort)
+                .findByBizKeyAndScdulPymnNo(bizKey, resolvedId, lineSort)
                 .stream()
                 .map(InternalTransferService::toLineDetail)
                 .toList();
@@ -568,12 +596,13 @@ public class InternalTransferService {
         // no wb_get_next_val). The wire field is a VARCHAR so we stamp
         // the decimal string. One retry handles the rare race.
         String apprSeqNo = allocateApprSeqNo(bizKey);
+        String docNo;
         try {
-            stampApproval(master, apprSeqNo, req);
+            docNo = stampApproval(master, apprSeqNo, req);
         } catch (org.springframework.dao.DataIntegrityViolationException race) {
             log.info("feature=internal-transfer apprSeqNo race retrying once bizKey={}", bizKey);
             apprSeqNo = allocateApprSeqNo(bizKey);
-            stampApproval(master, apprSeqNo, req);
+            docNo = stampApproval(master, apprSeqNo, req);
         }
 
         auditLogService.append(AuditLogContext.builder()
@@ -589,65 +618,107 @@ public class InternalTransferService {
                 "feature=internal-transfer request-approval bizKey={} scdulPymnNo={} apprSeqNo={} apprLineNo={} approvers={}",
                 bizKey, id, apprSeqNo, req.apprLineNo(), req.approvers().size());
 
-        return new com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalResponse(apprSeqNo);
+        return new com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalResponse(apprSeqNo, docNo);
     }
 
-    /** Per-tenant MAX(apprSeqNo::numeric) + 1, returned as a decimal
-     *  string (the column is VARCHAR for legacy parity). */
+    /** Per-tenant MAX+1 across both EXPT_RESOL_MSTR and SCDUL_PYMN_SUMR so the
+     *  newly issued APPR_SEQ_NO is above any existing rows in either table. */
     private String allocateApprSeqNo(String bizKey) {
-        Long max = sumrRepository.findMaxApprSeqNoByBizKey(bizKey);
-        long next = (max == null ? 0L : max) + 1L;
-        return Long.toString(next);
+        Long fromMstr = exptResolMstrRepository.findMaxApprSeqNoByBizKey(bizKey);
+        Long fromSumr = sumrRepository.findMaxApprSeqNoByBizKey(bizKey);
+        long max = Math.max(
+                fromMstr == null ? 0L : fromMstr,
+                fromSumr == null ? 0L : fromSumr);
+        return Long.toString(max + 1L);
     }
 
-    /** Stamp the approval fields on the master in one save. Separated
-     *  from the caller so the retry path doesn't duplicate the writes. */
-    private void stampApproval(
+    private String stampApproval(
             ScdulPymnSumr master,
             String apprSeqNo,
             com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalRequest req) {
+        String bizKey  = master.getBizKey();
+        String userId  = TenantContext.currentUserId();
+        String userNm  = TenantContext.currentUserNm();
+        String nowDtm  = ZonedDateTime.ofInstant(clock.instant(), VIETNAM_ZONE).format(DTM14);
+        String draftDate = nowDtm.substring(0, 8);
+        String draftTime = nowDtm.substring(8, 14);
+
+        // 1. Stamp SCDUL_PYMN_SUMR
         master.setApprSeqNo(apprSeqNo);
-        // Initial approval state — Pending. Flips to "I" (in progress)
-        // when the first approver acts, then "C" / "X" when the chain
-        // completes. Without this stamp the column stays null and the
-        // frontend falls back to the legacy "apprSeqNo present means in
-        // progress" path, masking the distinct Pending state.
         master.setApprStts(APPR_STTS_PENDING);
-        // POST_TITLE / POST_CONT are display fields on the legacy
-        // BLTB_POST_INFM row. Until that table is ported, we stamp
-        // POST_TITLE onto TITL so the list grid's Approval Title
-        // column shows the user's input (frontend list mapper
-        // already falls back to TITL when there's no separate
-        // post title).
         if (req.postTitle() != null && !req.postTitle().isBlank()) {
             master.setTitl(req.postTitle().trim());
         }
-        // PAY_DATE on the wire is yyyyMMdd. The current
-        // SCDUL_PYMN_SUMR entity doesn't map the pay-date column
-        // (V85 maps a subset of columns); the value rides through to
-        // the legacy BLTB_POST_INFM write when that path lands. For
-        // the refactor stub we accept + audit the value but don't
-        // stamp it on the master.
-        master.setModDtm(OffsetDateTime.now(clock).format(DTM14));
-        String userId = TenantContext.currentUserId();
+        master.setModDtm(nowDtm);
         if (userId != null) master.setModId(userId);
         sumrRepository.saveAndFlush(master);
 
-        // Fan out to EXPT_RESOL_MSTR + EXPT_RESOL_APPRVR_INFM so the
-        // Approval Box list sees this request. Without this the
-        // stamped APPR_SEQ_NO lives only on SCDUL_PYMN_SUMR and the
-        // Approval Box query (resl_0001_001) returns nothing.
-        List<ApprovalBoxFanoutService.Approver> chain = req.approvers().stream()
-                .map(a -> new ApprovalBoxFanoutService.Approver(a.apprvrId(), a.apprvrNm()))
-                .toList();
-        approvalBoxFanoutService.fanout(
-                ApprDv.INTERNAL_TRANSFER,
-                apprSeqNo,
-                master.getTitl(),
-                master.getScdulPymnNo(),
-                master.getTotalTranAmt(),
-                req.payDate(),
-                chain);
+        // 2. Write EXPT_RESOL_MSTR master row
+        ExptResolMstr mstr = new ExptResolMstr();
+        mstr.setBizKey(bizKey);
+        mstr.setApprSeqNo(apprSeqNo);
+        mstr.setApprDv(ApprDv.INTERNAL_TRANSFER.code());
+        mstr.setApprSts("0");
+        mstr.setDraftDate(draftDate);
+        mstr.setDraftTime(draftTime);
+        mstr.setDraftUserId(userId != null ? userId : "");
+        mstr.setDraftUserNm(userNm != null ? userNm : "");
+        mstr.setDraftUserSiteCd(bizKey);
+        String cmpnNm = busiInfmRepository.findById(bizKey)
+                .map(b -> b.getCmpnNm() != null ? b.getCmpnNm() : bizKey)
+                .orElse(bizKey);
+        mstr.setDraftUserSiteNm(cmpnNm);
+        mstr.setHandRegYn("Y");
+        mstr.setApprBoxUseYn("Y");
+        mstr.setApprDatDispYn("N");
+        mstr.setCmpnLogoDispYn("Y");
+        mstr.setRegDispYn("Y");
+        mstr.setTitl(req.postTitle() != null ? req.postTitle().trim() : "");
+        String docNo = docNoGenerator.nextDocNo(bizKey);
+        mstr.setDocNo(docNo);
+        mstr.setDocNm(master.getTitl() != null ? master.getTitl() : master.getScdulPymnNo());
+        BigDecimal amt = master.getTotalTranAmt() != null ? master.getTotalTranAmt() : BigDecimal.ZERO;
+        String ccy = master.getCcyCd() != null ? master.getCcyCd().toUpperCase() : "VND";
+        boolean isUsd = "USD".equals(ccy);
+        boolean isVnd = "VND".equals(ccy);
+        mstr.setTotPayKhrAmt(isUsd ? BigDecimal.ZERO : amt);
+        mstr.setTotPayUsdAmt(isUsd ? amt : BigDecimal.ZERO);
+        mstr.setTotPayVndAmt(isVnd ? amt : BigDecimal.ZERO);
+        mstr.setPayDate(req.payDate() != null && !req.payDate().isBlank() ? req.payDate().trim() : null);
+        mstr.setDelYn("N");
+        mstr.setPayEndYn("N");
+        mstr.setApprTypeCd("00");
+        mstr.setRegId(userId != null ? userId : "");
+        mstr.setRegDtm(nowDtm);
+        mstr.setModId(userId);
+        mstr.setModDtm(nowDtm);
+        exptResolMstrRepository.save(mstr);
+
+        // Write doc_no back to SCDUL_PYMN_SUMR so the list query can surface it
+        master.setErpFileNum(docNo);
+        sumrRepository.save(master);
+
+        // 3. Write EXPT_RESOL_APPRVR_INFM rows — first approver "P" (active), rest "W" (waiting)
+        List<com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalRequest.ApproverInput> approvers = req.approvers();
+        for (int i = 0; i < approvers.size(); i++) {
+            com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalRequest.ApproverInput ap = approvers.get(i);
+            ExptResolApprvrInfm row = new ExptResolApprvrInfm();
+            row.setBizKey(bizKey);
+            row.setApprSeqNo(apprSeqNo);
+            row.setApprvrId(ap.apprvrId());
+            row.setApprvrStts(i == 0 ? "P" : "W");
+            row.setApprvrNm(ap.apprvrNm());
+            row.setApprDtm(null);
+            row.setRegId(userId);
+            row.setRegDtm(nowDtm);
+            row.setModId(userId != null ? userId : "");
+            row.setModDtm(nowDtm);
+            row.setReadYn("N");
+            row.setApprvrLineNo(BigDecimal.valueOf(i + 1));
+            row.setApprLineNo(BigDecimal.valueOf(req.apprLineNo()));
+            exptResolApprvrInfmRepository.save(row);
+        }
+        return docNo;
     }
 
     /* ----------------------------------------------------------------
@@ -987,7 +1058,26 @@ public class InternalTransferService {
         return PageRequest.of(safePage, safeSize, sort);
     }
 
-    private ScheduledTransferRow toListRow(ScdulPymnSumr s) {
+    private Map<String, String> buildDocNoMap(String bizKey, List<ScdulPymnSumr> rows) {
+        List<String> apprSeqNos = rows.stream()
+                .map(ScdulPymnSumr::getApprSeqNo)
+                .filter(seq -> seq != null && !seq.isBlank())
+                .distinct()
+                .toList();
+        if (apprSeqNos.isEmpty()) return Map.of();
+        return exptResolMstrRepository.findByBizKeyAndApprSeqNoIn(bizKey, apprSeqNos)
+                .stream()
+                .filter(m -> m.getDocNo() != null)
+                .collect(java.util.stream.Collectors.toMap(
+                        ExptResolMstr::getApprSeqNo,
+                        ExptResolMstr::getDocNo,
+                        (a, b) -> a));
+    }
+
+    private ScheduledTransferRow toListRow(ScdulPymnSumr s, Map<String, String> docNoByApprSeqNo) {
+        String docNo = s.getApprSeqNo() != null
+                ? docNoByApprSeqNo.getOrDefault(s.getApprSeqNo(), s.getErpFileNum())
+                : s.getErpFileNum();
         return new ScheduledTransferRow(
                 s.getScdulPymnNo(),
                 s.getScdulPymnTypeCd(),
@@ -1011,7 +1101,7 @@ public class InternalTransferService {
                 s.getWdrlActNo(),
                 s.getPayTranDt(),
                 s.getOrgFileNm(),
-                s.getErpFileNum(),
+                docNo,
                 s.getWdrlCcyCd());
     }
 

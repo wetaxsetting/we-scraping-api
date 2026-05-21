@@ -40,7 +40,7 @@ import org.springframework.web.bind.annotation.RestController;
 @Validated
 public class TransferResultController {
 
-    private static final String SCDUL_PYMN_NO_PATTERN = "^[0-9]{5,30}$";
+    private static final String SCDUL_PYMN_NO_PATTERN = "^([0-9]{5,30}|VO_[0-9]{6}_[0-9]{1,9})$";
 
     private final InternalTransferResultService service;
     private final ExcelExportService            excelExportService;

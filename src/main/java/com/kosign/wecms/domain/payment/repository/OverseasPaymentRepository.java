@@ -271,12 +271,20 @@ public class OverseasPaymentRepository {
      * Fetch a single scheduled-payment row by {@code OVRS_PYMN_NO}.
      * Reuses the UNION ALL projection so the mapper in the service is shared.
      *
+     * <p>ORDER BY is stripped before wrapping as a derived table — it is unnecessary
+     * for a single-row primary-key lookup and can cause issues when Hibernate processes
+     * the outer WHERE clause against an ordered subquery.
+     *
      * @return the raw Object[] row, or an empty Optional when not found
      */
     @SuppressWarnings("unchecked")
     public java.util.Optional<Object[]> findScheduledById(String bizKey, String ovrsPymnNo) {
         String innerSql = buildUnionSql(null, null, false, null);
-        String sql = "SELECT * FROM (" + innerSql + ") __r WHERE __r.ovrs_pymn_no = :id LIMIT 1";
+        // Strip trailing ORDER BY — not needed for a single-row ID lookup and ORDER BY
+        // inside a derived table causes unnecessary complexity for the query planner.
+        int orderByIdx = innerSql.lastIndexOf("\n ORDER BY ");
+        String noOrderSql = orderByIdx >= 0 ? innerSql.substring(0, orderByIdx) : innerSql;
+        String sql = "SELECT * FROM (" + noOrderSql + ") __r WHERE __r.ovrs_pymn_no = :id LIMIT 1";
         Query q = em.createNativeQuery(sql);
         q.setParameter("bizKey", bizKey);
         q.setParameter("fromDt", "19000101");

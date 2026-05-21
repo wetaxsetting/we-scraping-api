@@ -170,6 +170,18 @@ public class OverseasPaymentController {
     }
 
     /**
+     * Delete a draft overseas payment batch (summary + detail rows).
+     * Only allowed when the batch has never been submitted for approval
+     * ({@code APPR_SEQ_NO} is null). Submitted batches must be retracted first
+     * via {@link #removeApprovalLine} before they can be deleted.
+     */
+    @DeleteMapping("/{id}")
+    public ApiResponse<Void> deleteDraftBatch(@PathVariable("id") String id) {
+        overseasPaymentService.deleteDraftBatch(id);
+        return ApiResponse.ok(null);
+    }
+
+    /**
      * Approve or reject an overseas payment batch.
      * Phase A: stamps {@code APPR_STTS} on {@code OVRS_PYMN_SUMR}. Full
      * {@code EXPT_RESOL_MSTR} write is deferred to Phase B.
