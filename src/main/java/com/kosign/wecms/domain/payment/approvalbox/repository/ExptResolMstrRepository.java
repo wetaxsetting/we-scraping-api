@@ -86,6 +86,40 @@ public interface ExptResolMstrRepository
             @Param("datePrefix") String datePrefix);
 
     /**
+     * Integer-typed convenience variant of {@link #findMaxDocNoSeqForDate}
+     * used by {@code ApprovalBoxFanoutService.nextDocNo} where the daily
+     * counter fits in an {@code int} (3-digit cap).
+     */
+    @Query(value = """
+           SELECT COALESCE(MAX(
+               CAST(SUBSTRING(doc_no FROM '[0-9]+$') AS INTEGER)
+           ), 0)
+           FROM expt_resol_mstr
+           WHERE biz_key   = :bizKey
+             AND del_yn    = 'N'
+             AND UPPER(doc_no) LIKE UPPER(:prefix) || '%'
+           """, nativeQuery = true)
+    Integer findMaxDocNoSeqByBizKeyAndPrefix(
+            @Param("bizKey") String bizKey,
+            @Param("prefix") String prefix);
+
+    /**
+     * Batch (APPR_SEQ_NO, DOC_NO) lookup as a tuple array. Used by
+     * {@code CardTransactionsService.resolveDocNos} to fill in the
+     * Approval Box document number on each ledger row.
+     */
+    @Query("""
+           SELECT erm.apprSeqNo, erm.docNo
+             FROM ExptResolMstr erm
+            WHERE erm.bizKey = :bizKey
+              AND erm.apprSeqNo IN :apprSeqNos
+              AND erm.delYn  = 'N'
+           """)
+    List<Object[]> findDocNoByApprSeqNos(
+            @Param("bizKey")     String bizKey,
+            @Param("apprSeqNos") Collection<String> apprSeqNos);
+
+    /**
      * Batch fetch — returns the (apprSeqNo, docNo) pairs for a set of
      * approval sequence numbers in a single query. Used by payment list
      * services to fill in DOC_NO for rows where the write-back to
@@ -127,7 +161,7 @@ public interface ExptResolMstrRepository
      */
     @Query("""
            SELECT new com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxProjection(
-               erm.apprSeqNo, erm.docNo, erm.titl, erm.apprDv, erm.docNm,
+               erm.apprSeqNo, erm.docNo, erm.titl, erm.apprDv, erm.docNm, erm.cont,
                erm.totPayKhrAmt, erm.totPayUsdAmt, erm.payDate, erm.draftUserId, erm.draftUserNm,
                erm.regDtm, erm.apprTypeCd, erm.payEndYn,
                (SELECT COUNT(a) FROM ExptResolApprvrInfm a
