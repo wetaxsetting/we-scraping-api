@@ -5,8 +5,12 @@ import com.kosign.wecms.common.auditlog.service.AuditLogService;
 import com.kosign.wecms.common.enums.LangCd;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
+import com.kosign.wecms.domain.banking.bankcredentials.repository.BankCertInfoRepository;
 import com.kosign.wecms.domain.banking.entity.BankInfm;
 import com.kosign.wecms.domain.banking.repository.BankInfmRepository;
+import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolApprvrInfmRepository;
+import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
+import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxFanoutService;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTransactionListResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTransactionRow;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.PatchDescriptionRequest;
@@ -17,6 +21,7 @@ import com.kosign.wecms.domain.payment.cardtransactions.entity.CardTrnsHstr;
 import com.kosign.wecms.domain.payment.cardtransactions.repository.CardMstrRepository;
 import com.kosign.wecms.domain.payment.cardtransactions.repository.CardTrnsHstrRepository;
 import com.kosign.wecms.domain.payment.cardtransactions.repository.CardTrnsHstrRepository.LedgerTotalsProjection;
+import com.kosign.wecms.domain.setting.approvalline.repository.ApprovalLineApproverRepository;
 import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount;
 import com.kosign.wecms.domain.setting.chartofaccounts.repository.ChartOfAccountRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -58,11 +63,16 @@ class CardTransactionsServiceTest {
     private static final String TENANT = "VN_VNM0004_000001";
     private static final String USER   = "tester";
 
-    @Mock private CardTrnsHstrRepository    cardTrnsRepo;
-    @Mock private CardMstrRepository        cardMstrRepo;
-    @Mock private BankInfmRepository        bankInfmRepo;
-    @Mock private ChartOfAccountRepository  chartAcctRepo;
-    @Mock private AuditLogService           auditLogService;
+    @Mock private CardTrnsHstrRepository           cardTrnsRepo;
+    @Mock private CardMstrRepository               cardMstrRepo;
+    @Mock private BankInfmRepository               bankInfmRepo;
+    @Mock private BankCertInfoRepository           bankCertInfoRepo;
+    @Mock private ChartOfAccountRepository         chartAcctRepo;
+    @Mock private AuditLogService                  auditLogService;
+    @Mock private ExptResolMstrRepository          exptResolMstrRepo;
+    @Mock private ExptResolApprvrInfmRepository    exptResolApprvrRepo;
+    @Mock private ApprovalLineApproverRepository   apprLineApproverRepo;
+    @Mock private ApprovalBoxFanoutService         approvalBoxFanoutService;
 
     @InjectMocks
     private CardTransactionsService service;
@@ -70,6 +80,8 @@ class CardTransactionsServiceTest {
     @BeforeEach
     void setUp() {
         TenantContext.set(USER, TENANT, LangCd.EN);
+        lenient().when(exptResolMstrRepo.findDocNoByApprSeqNos(any(), any()))
+                .thenReturn(List.of());
     }
 
     @AfterEach

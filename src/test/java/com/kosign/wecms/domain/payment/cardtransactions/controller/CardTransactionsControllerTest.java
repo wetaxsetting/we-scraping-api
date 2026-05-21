@@ -105,6 +105,7 @@ class CardTransactionsControllerTest {
                 "20251019", "114140",
                 "1007010", "100", "100",
                 "Lunch", "1390",
+                null,   // apprDocNo
                 "1", "payment.card_transactions.status.1",
                 List.of(), List.of(),
                 "lamine@gmail.com", "20251023073754",
