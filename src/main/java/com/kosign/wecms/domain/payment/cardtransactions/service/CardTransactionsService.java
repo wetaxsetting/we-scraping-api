@@ -121,6 +121,9 @@ public class CardTransactionsService {
      *  Vendor / Payroll — every Request Approval audit row uses the
      *  same detail key per module so the audit grid groups cleanly. */
     static final String AUDIT_REQUEST_APPROVAL_KEY  = "audit.card_transactions.request_approval.detail";
+    static final String AUDIT_WITHDRAW_APPROVAL_KEY = "audit.card_transactions.withdraw_approval.detail";
+    static final String AUDIT_CHANGE_APPROVAL_LINE_KEY =
+            "audit.card_transactions.change_approval_line.detail";
 
     /** {@code yyyyMMddHHmmss} formatter shared with the audit writer. */
     private static final DateTimeFormatter DTM14 =
@@ -156,6 +159,11 @@ public class CardTransactionsService {
      *  every other Payment module so the Approval Box id space is
      *  globally contiguous (legacy parity). */
     private final ExptResolMstrRepository          exptResolMstrRepo;
+    /** Approver-chain repo — used by the change-approval-line and
+     *  withdraw-approval paths to replace / delete the per-approver
+     *  rows alongside the master row. */
+    private final com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolApprvrInfmRepository
+                                                   exptResolApprvrRepo;
     /** Resolves the approver chain for the picked approval line. */
     private final ApprovalLineApproverRepository   apprLineApproverRepo;
     /** Writes EXPT_RESOL_MSTR + EXPT_RESOL_APPRVR_INFM rows so the
@@ -214,9 +222,10 @@ public class CardTransactionsService {
         // Pre-resolve bank names for the rows on this page so the row
         // mapper doesn't fan out one cache hit per row inside the stream.
         Map<String, String> bankNmByCd = resolveBankNames(entityPage.getContent());
+        Map<String, String> docNoByApprSeqNo = resolveDocNos(entityPage.getContent());
 
         List<CardTransactionRow> rows = entityPage.getContent().stream()
-                .map(e -> toRow(e, bankNmByCd))
+                .map(e -> toRow(e, bankNmByCd, docNoByApprSeqNo))
                 .toList();
 
         CardTransactionTotals totals = toTotals(raw);
@@ -256,8 +265,9 @@ public class CardTransactionsService {
                 pageable);
 
         Map<String, String> bankNmByCd = resolveBankNames(page.getContent());
+        Map<String, String> docNoByApprSeqNo = resolveDocNos(page.getContent());
         return page.getContent().stream()
-                .map(e -> toRow(e, bankNmByCd))
+                .map(e -> toRow(e, bankNmByCd, docNoByApprSeqNo))
                 .toList();
     }
 
@@ -282,8 +292,9 @@ public class CardTransactionsService {
                 cardTrnsRepo.findByBizKeyAndApprSeqNo(bizKey, apprSeqNo.trim());
         if (entities.isEmpty()) return List.of();
         Map<String, String> bankNmByCd = resolveBankNames(entities);
+        Map<String, String> docNoByApprSeqNo = resolveDocNos(entities);
         return entities.stream()
-                .map(e -> toRow(e, bankNmByCd))
+                .map(e -> toRow(e, bankNmByCd, docNoByApprSeqNo))
                 .toList();
     }
 
@@ -701,11 +712,11 @@ public class CardTransactionsService {
         // mirrors Internal Transfer / Expense / Vendor / Payroll.
         String apprSeqNo = allocateApprSeqNo(bizKey);
         try {
-            stampApproval(stampable, apprSeqNo, totalVndAmt, chain);
+            stampApproval(stampable, apprSeqNo, totalVndAmt, req.postTitle(), req.postCont(), req.payDate(), chain);
         } catch (org.springframework.dao.DataIntegrityViolationException race) {
             log.info("feature=card-transactions apprSeqNo race retrying once bizKey={}", bizKey);
             apprSeqNo = allocateApprSeqNo(bizKey);
-            stampApproval(stampable, apprSeqNo, totalVndAmt, chain);
+            stampApproval(stampable, apprSeqNo, totalVndAmt, req.postTitle(), req.postCont(), req.payDate(), chain);
         }
 
         auditLogService.append(AuditLogContext.builder()
@@ -723,6 +734,152 @@ public class CardTransactionsService {
 
         return new com.kosign.wecms.domain.payment.cardtransactions.dto.RequestApprovalResponse(
                 stampable.size(), skipped, apprSeqNo);
+    }
+
+    /**
+     * Withdraw a pending Card Approval — deletes the EXPT_RESOL_MSTR +
+     * EXPT_RESOL_APPRVR_INFM rows and clears {@code APPR_SEQ_NO} on
+     * every {@code CARD_TRNS_HSTR} row stamped with it. Mirrors legacy
+     * {@code comm_0195_001.ts:1347} `deleteApproval()` → `comm_0192_004_d001`
+     * scoped to a card-approval batch.
+     *
+     * <p>Refuses the operation when the master row is past Pending /
+     * In Progress (i.e. {@code APPR_TYPE_CD ∈ {'01','02'}} — Approved
+     * or Rejected) — closed approvals are immutable.
+     */
+    @Transactional
+    public void withdrawApproval(String apprSeqNo) {
+        if (apprSeqNo == null || apprSeqNo.isBlank()) {
+            throw new BusinessException("WBE_VALIDATION", "appr_seq_no: required");
+        }
+        String bizKey = requireTenant();
+        String userId = requireUserId();
+        String now    = nowDtm14();
+
+        var mstrId = new com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId(
+                bizKey, apprSeqNo.trim());
+        var mstr = exptResolMstrRepo.findById(mstrId)
+                .orElseThrow(() -> new BusinessException("WBE_NOT_FOUND",
+                        "Approval reference not found"));
+
+        // Guard: only Pending ("00") + In Progress ("03") are
+        // withdrawable. Closed approvals stay immutable.
+        String typeCd = mstr.getApprTypeCd();
+        if (!"00".equals(typeCd) && !"03".equals(typeCd)) {
+            throw new BusinessException("WBE_VALIDATION",
+                    "Only Pending or In Progress approvals can be withdrawn");
+        }
+
+        // Clear the stamp on every CARD_TRNS_HSTR row pointing at this
+        // approval before nuking the master — the row returns to
+        // "APPROVAL NOT REQUESTED" in the summary tiles.
+        var stamped = cardTrnsRepo.findByBizKeyAndApprSeqNo(bizKey, apprSeqNo.trim());
+        for (var ent : stamped) {
+            ent.setApprSeqNo(null);
+            ent.setModId(userId);
+            ent.setModDtm(now);
+            cardTrnsRepo.save(ent);
+        }
+
+        // Delete approver rows + master.
+        exptResolApprvrRepo.deleteByBizKeyAndApprSeqNo(bizKey, apprSeqNo.trim());
+        exptResolMstrRepo.delete(mstr);
+
+        auditLogService.append(AuditLogContext.builder()
+                .wsvcId(WSVC_ID)
+                .refNo(REF_NO)
+                .refNo1(apprSeqNo.trim())
+                .refNo2(String.valueOf(stamped.size()))
+                .activityKey(AUDIT_ACTIVITY_KEY)
+                .detailKey(AUDIT_WITHDRAW_APPROVAL_KEY)
+                .build());
+
+        log.info("feature=card-transactions withdraw-approval bizKey={} apprSeqNo={} cleared={}",
+                bizKey, apprSeqNo, stamped.size());
+    }
+
+    /**
+     * Change the approval line on a pending Card Approval — replaces
+     * every {@code EXPT_RESOL_APPRVR_INFM} row with the new line's
+     * approvers. {@code CARD_TRNS_HSTR.APPR_SEQ_NO} stays unchanged
+     * (legacy parity — only the approver chain rotates). Mirrors
+     * legacy {@code comm_0195_001.ts:278} `editApproval()` path.
+     *
+     * <p>Same Pending / In Progress guard as
+     * {@link #withdrawApproval(String)}.
+     */
+    @Transactional
+    public void changeApprovalLine(String apprSeqNo, Long apprLineNo) {
+        if (apprSeqNo == null || apprSeqNo.isBlank()) {
+            throw new BusinessException("WBE_VALIDATION", "appr_seq_no: required");
+        }
+        if (apprLineNo == null || apprLineNo <= 0) {
+            throw new BusinessException("WBE_VALIDATION", "appr_line_no: required");
+        }
+        String bizKey = requireTenant();
+        String userId = requireUserId();
+        String now    = nowDtm14();
+
+        var mstrId = new com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId(
+                bizKey, apprSeqNo.trim());
+        var mstr = exptResolMstrRepo.findById(mstrId)
+                .orElseThrow(() -> new BusinessException("WBE_NOT_FOUND",
+                        "Approval reference not found"));
+
+        String typeCd = mstr.getApprTypeCd();
+        if (!"00".equals(typeCd) && !"03".equals(typeCd)) {
+            throw new BusinessException("WBE_VALIDATION",
+                    "Only Pending or In Progress approvals can be edited");
+        }
+
+        // Resolve the new approver chain.
+        var chainEntities = apprLineApproverRepo
+                .findAllByBizKeyAndApprLineNoOrderByApprvrDispOrdAsc(bizKey, apprLineNo);
+        if (chainEntities.isEmpty()) {
+            throw new BusinessException("WBE_VALIDATION",
+                    "appr_line_no: no approvers found for the picked line");
+        }
+
+        // Wipe the existing approver rows and rebuild from the new
+        // line. Reset master to Pending so the new first approver
+        // becomes the active one.
+        exptResolApprvrRepo.deleteByBizKeyAndApprSeqNo(bizKey, apprSeqNo.trim());
+        exptResolApprvrRepo.flush();
+
+        int line = 1;
+        for (var a : chainEntities) {
+            var row = new com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolApprvrInfm();
+            row.setBizKey(bizKey);
+            row.setApprSeqNo(apprSeqNo.trim());
+            row.setApprvrId(a.getApprvrId());
+            row.setApprvrNm(a.getApprvrNm() != null ? a.getApprvrNm() : a.getApprvrId());
+            row.setApprvrStts(line == 1 ? "P" : "W");
+            row.setApprvrLineNo(BigDecimal.valueOf(line));
+            row.setReadYn("N");
+            row.setRegId(userId);
+            row.setRegDtm(now);
+            row.setModId(userId);
+            row.setModDtm(now);
+            exptResolApprvrRepo.save(row);
+            line++;
+        }
+
+        mstr.setApprTypeCd("00");  // back to Pending
+        mstr.setModId(userId);
+        mstr.setModDtm(now);
+        exptResolMstrRepo.save(mstr);
+
+        auditLogService.append(AuditLogContext.builder()
+                .wsvcId(WSVC_ID)
+                .refNo(REF_NO)
+                .refNo1(apprSeqNo.trim())
+                .refNo2(String.valueOf(apprLineNo))
+                .activityKey(AUDIT_ACTIVITY_KEY)
+                .detailKey(AUDIT_CHANGE_APPROVAL_LINE_KEY)
+                .build());
+
+        log.info("feature=card-transactions change-approval-line bizKey={} apprSeqNo={} newApprLineNo={} approvers={}",
+                bizKey, apprSeqNo, apprLineNo, chainEntities.size());
     }
 
     /** Per-tenant MAX(APPR_SEQ_NO::bigint) + 1 from the shared
@@ -746,6 +903,9 @@ public class CardTransactionsService {
             List<CardTrnsHstr> stampable,
             String apprSeqNo,
             BigDecimal totalVndAmt,
+            String postTitle,
+            String postCont,
+            String payDate,
             List<ApprovalBoxFanoutService.Approver> chain) {
 
         String userId = requireUserId();
@@ -754,18 +914,27 @@ public class CardTransactionsService {
         // Fan out FIRST so the EXPT_RESOL_MSTR INSERT races (PK
         // collision) before any CARD_TRNS_HSTR rows are mutated.
         // Card-transaction-specific notes:
-        //   - title = "Card Approval" (legacy DEV samples carry this
-        //     literal — the wire has no per-batch title field).
-        //   - docNo = apprSeqNo (no batch doc id like SCDUL_PYMN_NO).
-        //   - payDate = null (card transactions are post-purchase,
-        //     not scheduled).
+        //   - title = user-entered post_title from the Request Approval
+        //     popup; falls back to "Card Approval" only when the wire
+        //     field is blank (defensive — frontend already requires a
+        //     non-empty title before enabling Submit).
+        //   - docNo argument is ignored by fanout (overridden with
+        //     ApprovalBoxFanoutService.nextDocNo → VO_YYMMDD_NNN).
+        //   - payDate = user-picked Scheduled Date from the Request
+        //     Approval popup ({@code yyyyMMdd}). Optional; fanout skips
+        //     the column when blank.
+        String titl = postTitle != null && !postTitle.isBlank()
+                ? postTitle.trim()
+                : "Card Approval";
         approvalBoxFanoutService.fanout(
                 ApprDv.CORPORATE_CARD,
                 apprSeqNo,
-                "Card Approval",
+                titl,
                 apprSeqNo,
                 totalVndAmt,
-                null,
+                "VND",
+                payDate,
+                postCont,
                 chain);
 
         // Stamp APPR_SEQ_NO on every selected card row. After this the
@@ -931,7 +1100,10 @@ public class CardTransactionsService {
         return Sort.by(springDir, primary.get().entityProperty()).and(DEFAULT_SORT);
     }
 
-    private CardTransactionRow toRow(CardTrnsHstr e, Map<String, String> bankNmByCd) {
+    private CardTransactionRow toRow(
+            CardTrnsHstr e,
+            Map<String, String> bankNmByCd,
+            Map<String, String> docNoByApprSeqNo) {
         // CardMstr LEFT JOIN columns — Sprint 0 fetches the registry
         // names lazily per (bankCd, cardNo) on a per-page basis. With
         // typical pages of 15 rows and a low-cardinality cards table,
@@ -939,6 +1111,12 @@ public class CardTransactionsService {
         // CARD_MSTR_R002 JOIN columns are needed in volume, lift the
         // resolver to a request-scoped batch read.
         ActiveCard registry = resolveCardRegistryEntry(e.getBizKey(), e.getBankCd(), e.getCardNo());
+        // EXPT_RESOL_MSTR.DOC_NO ("VO_YYMMDD_NNN") for the row's
+        // approval reference. Null when the row hasn't been submitted
+        // for approval yet, or when the matching master row was deleted.
+        String apprDocNo = e.getApprSeqNo() != null && !e.getApprSeqNo().isBlank()
+                ? docNoByApprSeqNo.get(e.getApprSeqNo())
+                : null;
         return new CardTransactionRow(
                 e.getCardSeqNo(),
                 e.getBankCd(),
@@ -957,6 +1135,7 @@ public class CardTransactionsService {
                 e.getChartAcctCd(),
                 e.getCont(),
                 e.getApprSeqNo(),
+                apprDocNo,
                 e.getPrchStts(),
                 resolveSttsKey(e.getPrchStts()),
                 List.<LinkedDocRef>of(),       // Phase B placeholder — see service Javadoc
@@ -965,6 +1144,27 @@ public class CardTransactionsService {
                 e.getRegDtm(),
                 e.getModId(),
                 e.getModDtm());
+    }
+
+    /** Batch (APPR_SEQ_NO → DOC_NO) lookup against EXPT_RESOL_MSTR for
+     *  the page's set of approval references. One IN-query per ledger
+     *  load — keeps the per-row mapper a constant-time dictionary hit. */
+    private Map<String, String> resolveDocNos(List<CardTrnsHstr> rows) {
+        if (rows.isEmpty()) return Map.of();
+        String bizKey = rows.get(0).getBizKey();
+        java.util.Set<String> apprSeqNos = rows.stream()
+                .map(CardTrnsHstr::getApprSeqNo)
+                .filter(s -> s != null && !s.isBlank())
+                .collect(java.util.stream.Collectors.toSet());
+        if (apprSeqNos.isEmpty()) return Map.of();
+        Map<String, String> docByApprSeqNo = new HashMap<>();
+        exptResolMstrRepo.findDocNoByApprSeqNos(bizKey, apprSeqNos)
+                .forEach(arr -> {
+                    String apprSeqNo = (String) arr[0];
+                    String docNo     = (String) arr[1];
+                    if (apprSeqNo != null) docByApprSeqNo.put(apprSeqNo, docNo);
+                });
+        return docByApprSeqNo;
     }
 
     private ActiveCard resolveCardRegistryEntry(String bizKey, String bankCd, String cardNo) {

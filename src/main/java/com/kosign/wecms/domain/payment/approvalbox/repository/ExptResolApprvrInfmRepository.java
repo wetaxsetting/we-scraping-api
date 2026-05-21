@@ -87,4 +87,16 @@ public interface ExptResolApprvrInfmRepository
             @Param("apprSeqNo") String apprSeqNo,
             @Param("modId")     String modId,
             @Param("modDtm")    String modDtm);
+
+    /** Delete every approver row for one approval reference. Used by
+     *  the Card "withdraw approval" path (and any future module that
+     *  rolls back the EXPT_RESOL_MSTR row on cancel). */
+    @Modifying
+    @Query("""
+           DELETE FROM ExptResolApprvrInfm a
+           WHERE a.bizKey = :bizKey AND a.apprSeqNo = :apprSeqNo
+           """)
+    int deleteByBizKeyAndApprSeqNo(
+            @Param("bizKey")    String bizKey,
+            @Param("apprSeqNo") String apprSeqNo);
 }

@@ -519,7 +519,9 @@ public class PayrollPaymentService {
                 master.getTitl(),
                 master.getScdulPymnNo(),
                 master.getTotalTranAmt(),
+                master.getCcyCd(),
                 req.payDate(),
+                req.postCont(),
                 chain);
     }
 

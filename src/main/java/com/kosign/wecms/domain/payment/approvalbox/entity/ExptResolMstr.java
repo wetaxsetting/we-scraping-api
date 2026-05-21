@@ -91,6 +91,13 @@ public class ExptResolMstr {
     @Column(name = "DOC_NM", length = 100, nullable = false)
     private String docNm;
 
+    /** Free-form approval content / requestor note (legacy
+     *  {@code BLTB_POST_INFM.POST_CONT} surfaced through
+     *  {@code EXPT_RESOL_MSTR.CONT}). Renders in the "Approval Content"
+     *  section of the read-only Approval Details popup. */
+    @Column(name = "CONT", columnDefinition = "TEXT")
+    private String cont;
+
     /** Legacy column name preserved for schema parity — for VN tenants
      *  this stores the VND amount, not KHR. The refactor's wire field
      *  is the semantic {@code tot_pay_amt}. */

@@ -590,6 +590,7 @@ public class ApprovalBoxService {
                 p.apprSeqNo(),
                 p.docNo(),
                 p.titl(),
+                p.cont(),
                 p.apprDv(),
                 ApprDv.resolveSlug(p.apprDv()),
                 currency,

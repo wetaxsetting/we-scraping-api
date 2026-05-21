@@ -21,6 +21,10 @@ public record ApprovalBoxProjection(
         String     titl,
         String     apprDv,
         String     docNm,
+        /** {@code EXPT_RESOL_MSTR.CONT} — free-form approval content
+         *  set on Request Approval. Surfaces in the Approval Details
+         *  popup's "Approval Content" section. */
+        String     cont,
         BigDecimal totPayKhrAmt,
         BigDecimal totPayUsdAmt,
         String     payDate,

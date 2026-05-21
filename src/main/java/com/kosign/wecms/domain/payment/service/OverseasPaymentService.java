@@ -9,6 +9,7 @@ import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolApprvrInfmRepository;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprDv;
+import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxFanoutService;
 import com.kosign.wecms.domain.payment.dto.ChangeApprovalLineRequest;
 import com.kosign.wecms.domain.payment.dto.OverseasApprover;
 import com.kosign.wecms.domain.payment.dto.OverseasCurrencyTotal;
@@ -80,6 +81,10 @@ public class OverseasPaymentService {
     private final ExptResolApprvrInfmRepository  exptResolApprvrInfmRepository;
     private final AuditLogService                auditLogService;
     private final BusiInfmRepository             busiInfmRepository;
+    /** Shared {@code VO_YYMMDD_NNN} doc-no generator — same per-tenant
+     *  per-day counter every Payment module uses for the Approval Box
+     *  "Document No." column. */
+    private final ApprovalBoxFanoutService       approvalBoxFanoutService;
 
     /**
      * Overseas scheduled-payment list.
@@ -562,8 +567,17 @@ public class OverseasPaymentService {
         mstr.setCmpnLogoDispYn("Y");
         mstr.setRegDispYn("Y");
         mstr.setTitl(req.postTitle() != null ? req.postTitle().trim() : "");
-        mstr.setDocNo(sumr.getOvrsPymnNo());
+        // Canonical {@code VO_YYMMDD_NNN} doc-no — same per-tenant
+        // per-day counter every other Payment module uses, generated
+        // by the shared fanout service.
+        mstr.setDocNo(approvalBoxFanoutService.nextDocNo(
+                bizKey, ZonedDateTime.now(VIETNAM_ZONE).toOffsetDateTime()));
         mstr.setDocNm(sumr.getTitl() != null ? sumr.getTitl() : sumr.getOvrsPymnNo());
+        // Approval Content textarea — surfaces on the read-only
+        // Approval Details popup. Blank stays null so the popup
+        // hides the section.
+        mstr.setCont(req.postCont() != null && !req.postCont().isBlank()
+                ? req.postCont().trim() : null);
         // Store amount in the column that matches the payment currency.
         // Column convention (3 currencies supported):
         //   VND → TOT_PAY_KHR_AMT (VN-tenant legacy alias) + TOT_PAY_VND_AMT
