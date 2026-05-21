@@ -76,7 +76,7 @@ public class LegacyFunctionRepository {
      * legacy WeCMS / WABOOKS systems no longer call
      * {@code wb_get_next_val} for {@code trco_infm} &mdash; see
      * "Surviving legacy functions" in
-     * {@code wecms-api-main/CLAUDE.md}.
+     * {@code wecms-api/CLAUDE.md}.
      */
     public String nextTrcoKey(String bizKey) {
         return nextVal("trco_infm", "trco_key", bizKey, null, null, null, null, null);
@@ -103,7 +103,7 @@ public class LegacyFunctionRepository {
      * <p>Retire plan: drop this method and the V91 branch once the
      * legacy WeCMS / WABOOKS systems no longer call
      * {@code wb_get_next_val} for {@code appr_line_infm} &mdash; see
-     * "Surviving legacy functions" in {@code wecms-api-main/CLAUDE.md}.
+     * "Surviving legacy functions" in {@code wecms-api/CLAUDE.md}.
      */
     public String nextApprLineNo(String bizKey) {
         return nextVal("appr_line_infm", "appr_line_no", bizKey, null, null, null, null, null);
@@ -132,7 +132,7 @@ public class LegacyFunctionRepository {
      * <p>Retire plan: drop this method and the V95 branch once the
      * legacy WeCMS / WABOOKS systems no longer call
      * {@code wb_get_next_val} for {@code chart_acct_infm} &mdash; see
-     * "Surviving legacy functions" in {@code wecms-api-main/CLAUDE.md}.
+     * "Surviving legacy functions" in {@code wecms-api/CLAUDE.md}.
      */
     public String nextChartAcctSeqNo(String bizKey) {
         return nextVal("chart_acct_infm", "chart_acct_seq_no", bizKey, null, null, null, null, null);
@@ -160,7 +160,7 @@ public class LegacyFunctionRepository {
      * legacy WeCMS / WABOOKS systems no longer call
      * {@code wb_get_next_val} for {@code rmrk_org_infm} &mdash; see
      * "Surviving legacy functions" in
-     * {@code wecms-api-main/CLAUDE.md}.
+     * {@code wecms-api/CLAUDE.md}.
      */
     public String nextRmrkSeqNo(String bizKey) {
         return nextVal("rmrk_org_infm", "rmrk_seq_no", bizKey, null, null, null, null, null);
@@ -191,7 +191,7 @@ public class LegacyFunctionRepository {
      * <p>Retire plan: drop this method and the V99 branch once the
      * legacy WeCMS / WABOOKS systems no longer call
      * {@code wb_get_next_val} for {@code trco_info_file} &mdash; see
-     * "Surviving legacy functions" in {@code wecms-api-main/CLAUDE.md}.
+     * "Surviving legacy functions" in {@code wecms-api/CLAUDE.md}.
      */
     public String nextTrcoInfoFileFileId(String trcoKey) {
         return nextVal("trco_info_file", "file_id", trcoKey, null, null, null, null, null);

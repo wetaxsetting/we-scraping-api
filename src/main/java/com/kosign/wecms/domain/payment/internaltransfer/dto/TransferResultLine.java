@@ -10,7 +10,7 @@ import java.math.BigDecimal;
  * {@code rsMsg}, {@code procDttm}, {@code rsltDttm}) are joined from
  * the dispatch tables. Phase A returns null for these fields until
  * the dispatch tables (TB_PAY_TARGET / TB_PAY_FILE_DATA / conn tables)
- * are migrated — see {@code wecms-api-main/src/main/resources/db/migration/V85}.
+ * are migrated — see {@code wecms-api/src/main/resources/db/migration/V85}.
  */
 public record TransferResultLine(
         String     scdulPymnDetlNo,

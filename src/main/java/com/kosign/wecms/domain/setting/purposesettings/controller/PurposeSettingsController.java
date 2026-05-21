@@ -148,7 +148,7 @@ public class PurposeSettingsController {
      *  Excel — preview / import (legacy comm_0187_004 family)
      *
      *  The "Download Template" button is served by the static XLSX
-     *  shipped under `wecms-web-main/public/templates/purpose/`. No
+     *  shipped under `wecms-web/public/templates/purpose/`. No
      *  backend endpoint involved.
      * ================================================================= */
 

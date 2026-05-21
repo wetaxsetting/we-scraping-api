@@ -11,7 +11,7 @@ import com.kosign.wecms.common.web.SortableField;
  *
  * <p>Columns intentionally NOT in this whitelist (their seeds carry
  * {@code SORT_YN='N'} per the "seed + whitelist must agree" rule in
- * {@code wecms-api-main/CLAUDE.md §"Common table sort"}):
+ * {@code wecms-api/CLAUDE.md §"Common table sort"}):
  * <ul>
  *   <li>{@code CHECKBOX} — special row-selection column.</li>
  *   <li>{@code VIEW_PERMISSION} / {@code WITHDRAWAL_PERMISSION} —

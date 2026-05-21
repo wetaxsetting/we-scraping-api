@@ -6,7 +6,7 @@
 -- idempotent via ON CONFLICT DO NOTHING — V17 may be re-run safely and
 -- never overwrites edits a developer made in their local DB.
 --
--- Seed shape mirrors the static-UI mock rows in wecms-web-main so the
+-- Seed shape mirrors the static-UI mock rows in wecms-web so the
 -- Next.js pages render identical content against either source. Numeric
 -- amounts are stored as raw values; the frontend formats them for
 -- display.

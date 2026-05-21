@@ -1,6 +1,6 @@
 @echo off
 REM ---------------------------------------------------------------------------
-REM  Start wecms-api-main locally with the right JDK + env vars.
+REM  Start wecms-api locally with the right JDK + env vars.
 REM  Fails fast (with a clear message) if anything is misconfigured.
 REM ---------------------------------------------------------------------------
 
@@ -33,7 +33,7 @@ if errorlevel 1 (
 )
 
 REM --- 4. Run Spring Boot ---
-echo Starting wecms-api-main on port 8080 (profile: local)...
+echo Starting wecms-api on port 8080 (profile: local)...
 call gradlew.bat bootRun --args="--spring.profiles.active=local"
 
 endlocal

@@ -16,7 +16,7 @@
 -- Scope: F / M / H are the three product types the refactor's PrdtType
 -- enum recognises. Other legacy letters (W, R, B, E, U, L, S, P, C, D,
 -- T) are carried verbatim on the wire and JWT but not in the enum yet
--- — see wecms-api-main/CLAUDE.md §Product-type rule. M has no local
+-- — see wecms-api/CLAUDE.md §Product-type rule. M has no local
 -- tenant today; tests cover M via mocked BusiInfm fixtures.
 --
 -- Idempotent: the WHERE clause excludes rows that already carry a

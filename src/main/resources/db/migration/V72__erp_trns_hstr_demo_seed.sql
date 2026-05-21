@@ -4,7 +4,7 @@
 -- Idempotent demo seed pulled verbatim from JEX DEV (`wecmsvndev.erp_trns_hstr`,
 -- 2026-05-11) for tenant `VN_VNM0004_000001`. 30 rows total — top 10 per
 -- direction by REG_DTM DESC, SEQ_NO DESC — sized per the project's data-
--- migration rule in wecms-api-main/CLAUDE.md §"Data Migration Rule".
+-- migration rule in wecms-api/CLAUDE.md §"Data Migration Rule".
 --
 -- Mix of file sizes:
 --   FILE_SIZE > 0  — 30 of 30 rows (every seeded row references a real

@@ -26,7 +26,7 @@
 -- contacts can never collide with the seeded rows even after multiple
 -- re-seedings.
 --
--- Retirement plan (per `wecms-api-main/CLAUDE.md` "Surviving legacy
+-- Retirement plan (per `wecms-api/CLAUDE.md` "Surviving legacy
 -- functions"): drop this branch and the `sq_trco_key` sequence when the
 -- legacy WeCMS / WABOOKS systems no longer call `wb_get_next_val` for
 -- `trco_infm`, and replace `LegacyFunctionRepository.nextTrcoKey` with

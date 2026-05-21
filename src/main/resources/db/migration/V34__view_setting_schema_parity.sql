@@ -91,7 +91,7 @@ ALTER TABLE USER_SCR_OPTION_WECMS ALTER COLUMN DISP_YN SET NOT NULL;
 -- ----------------------------------------------------------------------------
 -- 4. Backfill SIZE values for `banking-account-inquiry-vnd` using FIGMA
 --    WB365 widths — the layout authority for the refactor (see
---    `wecms-web-main/app/globals.css` `--w-wb-col-*` tokens). Legacy DEV
+--    `wecms-web/app/globals.css` `--w-wb-col-*` tokens). Legacy DEV
 --    SIZE values disagree with Figma in 5 of 7 columns; using Figma values
 --    keeps the data layer consistent with what the table actually renders.
 --

@@ -8,7 +8,7 @@
 -- list page renders the same canonical column set.
 --
 -- Slugs per the central registry at
--- `wecms-web-main/lib/viewSettingScreens.ts`:
+-- `wecms-web/lib/viewSettingScreens.ts`:
 --   - payment-expense-payment-scheduled          (legacy pymn_0003_001)
 --   - payment-expense-payment-scheduled-detail   (legacy pymn_0003_003)
 --   - payment-expense-payment-result             (legacy pymn_0004_001)

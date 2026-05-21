@@ -18,7 +18,7 @@
 --     fields copy cleanly). No additional indexes.
 --
 -- Schema follows the Legacy Schema Parity Rule from
--- `wecms-api-main/CLAUDE.md`: column names UPPER_SNAKE_CASE, timestamp
+-- `wecms-api/CLAUDE.md`: column names UPPER_SNAKE_CASE, timestamp
 -- columns VARCHAR(14) (yyyyMMddHHmmss) to mirror DEV. Same precedent as
 -- V84 (contacts) — entities do NOT extend BaseEntity for these tables;
 -- the service stamps audit columns explicitly.

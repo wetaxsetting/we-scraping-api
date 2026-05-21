@@ -23,7 +23,7 @@
 -- column nor an action-menu column (the trailing download glyph is part
 -- of the FILE/ORG_FILE_NM cell, not a separate ETC column).
 --
--- See wecms-api-main/CLAUDE.md §"Screen Option (View Setting)" and the
+-- See wecms-api/CLAUDE.md §"Screen Option (View Setting)" and the
 -- §"Excel export" defence-in-depth rule.
 -- =============================================================================
 

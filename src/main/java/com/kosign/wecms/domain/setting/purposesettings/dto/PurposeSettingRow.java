@@ -6,7 +6,7 @@ import java.util.List;
  * One row of the Settings &gt; Purpose list. Sent nested — level-1 rows
  * carry their level-2 {@code children}; level-2 rows have {@code null}
  * children. The frontend's {@code PurposeNode} type expects exactly
- * this shape (see {@code wecms-web-main/components/settings/purpose/types.ts}).
+ * this shape (see {@code wecms-web/components/settings/purpose/types.ts}).
  *
  * <p>Wire field names auto-derived from camelCase via the global
  * Jackson SNAKE_CASE strategy ({@code JacksonConfig}); no per-field

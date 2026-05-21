@@ -2,7 +2,7 @@
 -- V31__remove_non_prod_active_tables.sql
 --
 -- Drops 6 local tables that are NOT in the PROD Active Table List defined in
--- wecms-api-main/CLAUDE.md §"PROD DB Table Scope for Refactoring".
+-- wecms-api/CLAUDE.md §"PROD DB Table Scope for Refactoring".
 --
 -- The PROD audit (run on the live wecms.vn database via pg_stat_user_tables)
 -- confirmed these tables are not populated in production. They were created

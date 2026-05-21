@@ -34,7 +34,7 @@ import java.util.stream.Collectors;
  */
 @Component
 @RequiredArgsConstructor
-class BankCdResolver {
+public class BankCdResolver {
 
     /**
      * Pre-refactor English labels — kept as a fallback surface until
@@ -75,7 +75,7 @@ class BankCdResolver {
                         (a, b) -> a)));
     }
 
-    String resolveBankNm(String bankCd) {
+    public String resolveBankNm(String bankCd) {
         if (bankCd == null) return "";
         String cached = nameCache.get(bankCd);
         if (cached != null) return cached;

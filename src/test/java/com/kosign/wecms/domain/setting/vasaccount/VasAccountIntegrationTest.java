@@ -27,7 +27,7 @@ import org.springframework.test.web.servlet.MockMvc;
  * <p><b>What's blocking activation</b> (tracked alongside this class):
  * <ul>
  *   <li>The repository carries no Testcontainers dependency
- *       ({@code wecms-api-main/CLAUDE.md}: "Not currently in
+ *       ({@code wecms-api/CLAUDE.md}: "Not currently in
  *       {@code build.gradle}: SpringDoc OpenAPI, Testcontainers. Add
  *       them in the sprint where the first feature actually needs them.").</li>
  *   <li>{@code application-test.yml} uses {@code ddl-auto=create-drop}

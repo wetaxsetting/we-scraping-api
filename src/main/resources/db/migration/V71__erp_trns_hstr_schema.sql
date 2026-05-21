@@ -2,7 +2,7 @@
 -- V71 — ERP_TRNS_HSTR: schema parity (Settings > ERP Transaction History)
 -- =============================================================================
 -- First migration for the ERP_TRNS_HSTR table — mirrors JEX DEV column-for-
--- column per the legacy-schema-parity rule in wecms-api-main/CLAUDE.md.
+-- column per the legacy-schema-parity rule in wecms-api/CLAUDE.md.
 --
 -- DEV source-of-truth audit (verified 2026-05-11 via postgres MCP):
 --   - 9 columns
@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS ERP_TRNS_HSTR (
 -- Performance index for the canonical date-range filter on the legacy IDO
 -- (R001 + R001_CNT both filter on SUBSTRING(REG_DTM, 1, 8)). DEV has no
 -- such index — extra performance indexes are allowed beyond DEV parity
--- per wecms-api-main/CLAUDE.md §"Legacy Schema Parity Rule".
+-- per wecms-api/CLAUDE.md §"Legacy Schema Parity Rule".
 CREATE INDEX IF NOT EXISTS IX_ERP_TRNS_HSTR_BIZ_REG_DTM
     ON ERP_TRNS_HSTR (BIZ_KEY, REG_DTM DESC);
 

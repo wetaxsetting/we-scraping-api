@@ -10,7 +10,7 @@
 -- Source: DEV `wecmsvndev.oprt_stts_info` snapshot 2026-05-04.
 -- Total rows in DEV for this tenant: 202; this migration takes the
 -- 30 latest by SEARCHDATETIME (matches the Data Migration Rule cap
--- in wecms-api-main/CLAUDE.md).
+-- in wecms-api/CLAUDE.md).
 --
 -- Schema parity verified (V16 matches DEV column-for-column) — no
 -- ALTER TABLE needed.

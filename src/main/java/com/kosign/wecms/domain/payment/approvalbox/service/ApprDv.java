@@ -16,7 +16,7 @@ import java.util.Optional;
  * (00, 10, 20, 30, 40, 50, 60, 70) that belong to other modules — they
  * are intentionally not modelled here.
  *
- * <p>Refactor enum policy ({@code wecms-api-main/CLAUDE.md} §"Domain
+ * <p>Refactor enum policy ({@code wecms-api/CLAUDE.md} §"Domain
  * enums"): non-persisted, no {@code @Enumerated}, {@code code()} carries
  * the verbatim legacy DB string, {@code i18nKey()} stays a stable key
  * with frontend-side resolution.

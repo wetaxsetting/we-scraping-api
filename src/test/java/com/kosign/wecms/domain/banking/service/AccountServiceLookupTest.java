@@ -21,10 +21,13 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+
+import com.kosign.wecms.domain.banking.nxisas.BankTransactionSyncService;
 
 /**
  * Coverage for the firm-banking-settings withdrawal-account autocomplete
@@ -62,7 +65,11 @@ class AccountServiceLookupTest {
 
     @BeforeEach
     void setUp() {
-        service = new AccountService(acctRepo, bankResolver, napasRepo);
+        // BankTransactionSyncService dependency added to AccountService in a
+        // prior MR; not exercised by this lookup-focused test — pass a
+        // pure mock so the constructor resolves.
+        service = new AccountService(acctRepo, bankResolver, napasRepo,
+                mock(BankTransactionSyncService.class));
         TenantContext.set(USER, BIZ, LangCd.EN);
     }
 

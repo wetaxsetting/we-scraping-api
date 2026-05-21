@@ -9,7 +9,7 @@ package com.kosign.wecms.domain.setting.erptransactionhistory.dto;
  *
  * <p>Wire shape mirrors the legacy IDO output plus two refactor additions:
  * {@code erp_type_key} and {@code trns_type_key} — server-resolved i18n
- * keys, per {@code wecms-api-main/CLAUDE.md §"Domain enums"} (frontend
+ * keys, per {@code wecms-api/CLAUDE.md §"Domain enums"} (frontend
  * renders via {@code t(key)} and falls back to the raw legacy code when
  * the key is null). The legacy frontend's hardcoded
  * {@code transactionDescription} switch ({@code comm_0219_001.ts:387-410})

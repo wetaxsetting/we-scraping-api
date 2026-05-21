@@ -30,7 +30,7 @@
 -- DataIntegrityViolationException and rolls the tx back (the user's
 -- retry produces a fresh allocation).
 --
--- Retirement plan (per `wecms-api-main/CLAUDE.md` "Surviving legacy
+-- Retirement plan (per `wecms-api/CLAUDE.md` "Surviving legacy
 -- functions"): drop this branch and migrate the call site to a
 -- Java-side per-tenant generator once the legacy WeCMS / WABOOKS
 -- systems no longer call `wb_get_next_val` for `appr_line_infm`.

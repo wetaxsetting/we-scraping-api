@@ -23,7 +23,7 @@
 -- read-only postgres_dev MCP). Logo paths point at
 -- /banklogo/<filename> — the legacy /assets_v2/images/banking_VN/...
 -- prefix was rewritten because the refactor stores those PNG assets
--- under public/banklogo/ in wecms-web-main. The {LANG_CODE} marker
+-- under public/banklogo/ in wecms-web. The {LANG_CODE} marker
 -- stays as-is; the frontend substitutes EN / KO / VI at render time.
 --
 -- Idempotent via ON CONFLICT DO NOTHING. The PK is

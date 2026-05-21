@@ -105,7 +105,7 @@ CREATE INDEX IF NOT EXISTS ix_audit_logs_infm__bank_acct
 --   DISP_ORD 10: AUDIT_LOGS       (NOT sortable — derived)
 --
 -- SORT_YN='N' for the 4 derived columns mirrors the rule in
--- wecms-api-main/CLAUDE.md §"Common table sort": every SORT_YN='Y'
+-- wecms-api/CLAUDE.md §"Common table sort": every SORT_YN='Y'
 -- column MUST have a backing whitelist enum constant in
 -- BankAccountSortField; derived columns intentionally do not.
 

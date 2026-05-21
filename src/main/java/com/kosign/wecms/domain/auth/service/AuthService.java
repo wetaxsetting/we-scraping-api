@@ -46,7 +46,7 @@ import java.util.stream.Collectors;
  * link → auto-pick → JWT issued → home" with **no chooser screen**.
  * Multi-link users are an exceptional / test-demo scenario only — the
  * chooser branch below is kept as a safe generic fallback, NOT as a
- * documented business pattern (see {@code wecms-api-main/CLAUDE.md}
+ * documented business pattern (see {@code wecms-api/CLAUDE.md}
  * §"Operational model: one user = one company account"). If / when real
  * multi-company users become a documented requirement, this Javadoc and
  * the matching CLAUDE.md bullets should be replaced with explicit rules.

@@ -7,7 +7,7 @@ import java.util.Optional;
  * Mirrors legacy {@code wabooks.enums.AuthType} (V/W/F codes).
  *
  * <p>Follows the standard enum shape from
- * {@code wecms-api-main/CLAUDE.md §"Domain enums"} — stable
+ * {@code wecms-api/CLAUDE.md §"Domain enums"} — stable
  * {@link #code()} accessor, optional {@link #i18nKey()}, lenient
  * {@link #fromCode(String)} for service-side parsing. Frontend never
  * receives this enum directly — Settings &gt; Bank Account exposes

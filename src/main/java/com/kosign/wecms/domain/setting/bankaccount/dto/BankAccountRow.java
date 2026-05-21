@@ -5,7 +5,7 @@ import java.math.BigDecimal;
 /**
  * One row in the Settings &gt; Bank Account list. Mirrors the static-UI
  * {@code BankAccountRow} shape in {@code
- * wecms-web-main/components/settings/bank-account/types.ts}.
+ * wecms-web/components/settings/bank-account/types.ts}.
  *
  * <p>Unlike Banking &gt; Account Inquiry's row (which surfaces balances),
  * this row carries the master-maintenance fields (nickname, description,

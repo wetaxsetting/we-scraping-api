@@ -4,7 +4,7 @@
 --
 -- Background
 -- ----------
--- The common table-sort feature (CLAUDE.md §13a / wecms-api-main "Common
+-- The common table-sort feature (CLAUDE.md §13a / wecms-api "Common
 -- table sort" section) gates the frontend's clickable-header glyph on
 -- SYS_SCR_OPTION_WECMS.SORT_YN. The earlier V34 seed declared every column
 -- on `banking-account-inquiry-vnd` with SORT_YN='Y' as a default, including

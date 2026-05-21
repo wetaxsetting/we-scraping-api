@@ -17,7 +17,7 @@
 --
 -- The Java whitelist enum `BankAccountSortField` ships the matching
 -- constant (`VAS_NAME → vasAcctNm`) in the same MR so the "seed +
--- whitelist must agree" rule from wecms-api-main/CLAUDE.md §"Common
+-- whitelist must agree" rule from wecms-api/CLAUDE.md §"Common
 -- table sort" is preserved.
 --
 -- Idempotent.

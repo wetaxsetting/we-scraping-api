@@ -15,7 +15,7 @@
 -- contents. Only column types / nullability tighten here.
 --
 -- Why screenId stays semantic kebab-case (per `lib/viewSettingScreens.ts`
--- registry + wecms-web-main/CLAUDE.md §13):
+-- registry + wecms-web/CLAUDE.md §13):
 --   - Refactor frontend has no `fnsh_0001_001` route segment.
 --   - Legacy JEX ids leaked into the refactor would orphan as the JEX
 --     namespace evolves.

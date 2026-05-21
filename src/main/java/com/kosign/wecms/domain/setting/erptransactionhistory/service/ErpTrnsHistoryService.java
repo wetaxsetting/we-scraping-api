@@ -64,7 +64,7 @@ import java.util.Set;
  *   <li>{@code page} / {@code size} are zero-based + clamped to
  *       {@link #MAX_PAGE_SIZE}; legacy was 1-based and unclamped.</li>
  *   <li>{@code erp_type_key} / {@code trns_type_key} server-resolved i18n
- *       keys per {@code wecms-api-main/CLAUDE.md §"Domain enums"}.</li>
+ *       keys per {@code wecms-api/CLAUDE.md §"Domain enums"}.</li>
  * </ul>
  *
  * <p><b>Tenant scoping</b>: {@code BIZ_KEY} is read from

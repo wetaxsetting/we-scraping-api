@@ -27,7 +27,7 @@ import com.kosign.wecms.common.enums.LangCd;
  * (WeCMS Lumens) and {@code H} (HAENGSUNG Electronics) explicitly via
  * {@link com.kosign.wecms.common.enums.PrdtType}; legacy DEV stores 11
  * additional letters which are carried verbatim but not modelled
- * (see {@code wecms-api-main/CLAUDE.md §Product-type rule}). Domain
+ * (see {@code wecms-api/CLAUDE.md §Product-type rule}). Domain
  * services that need to gate behaviour on product type MUST read from
  * {@link #currentPrdtType()} — never from a request body or query
  * parameter.

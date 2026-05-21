@@ -3,7 +3,7 @@
 --
 -- Creates the two PROD-active env-settings tables and seeds the SYS
 -- defaults that the refactor consumes today. Both tables exist in the
--- "PROD Active Table List" (see wecms-api-main/CLAUDE.md) so they are
+-- "PROD Active Table List" (see wecms-api/CLAUDE.md) so they are
 -- in scope for the refactor.
 --
 -- Why now: Firm Banking Settings panel exposes two automation toggles

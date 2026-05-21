@@ -6,7 +6,7 @@ import java.util.Optional;
  * Payment-module discriminator value for {@code SCDUL_PYMN_SUMR.SCDUL_PYMN_TYPE_CD}.
  * Mirrors legacy {@code wabooks.enums.ScdulPymnTypeCd}.
  *
- * <p>Per {@code wecms-api-main/CLAUDE.md} §"Domain enums" we do NOT bulk-port
+ * <p>Per {@code wecms-api/CLAUDE.md} §"Domain enums" we do NOT bulk-port
  * every legacy code — Internal Transfer's first consumer needs only its own
  * value ({@code "03"}) and the {@code fromCode(...)} parser. Other Payment
  * modules add their constants when they land.

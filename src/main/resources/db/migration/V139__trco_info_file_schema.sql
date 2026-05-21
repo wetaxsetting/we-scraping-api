@@ -4,7 +4,7 @@
 -- Settings > Contacts > Add / Edit attachments — `TRCO_INFO_FILE` schema.
 --
 -- PROD active-list scope expanded 2026-05-13 to include `TRCO_INFO_FILE`
--- (see `wecms-api-main/CLAUDE.md` § "PROD DB Table Scope for
+-- (see `wecms-api/CLAUDE.md` § "PROD DB Table Scope for
 -- Refactoring" → "Scope override 2026-05-13"). Mirrors legacy
 -- `comm_0184_002_c001_act.jsp:208-223` + `TrcoInfoFileDAO.create(...)`.
 --

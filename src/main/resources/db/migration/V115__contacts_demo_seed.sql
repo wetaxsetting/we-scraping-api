@@ -6,7 +6,7 @@
 -- from JEX DEV (`wecmsvndev` @ 10.254.242.254:54311) on 2026-05-13 via
 -- the read-only `postgres_dev` MCP.
 --
--- Scope (per Data Migration Rule in `wecms-api-main/CLAUDE.md`):
+-- Scope (per Data Migration Rule in `wecms-api/CLAUDE.md`):
 --   - Tenant pin: BIZ_KEY = 'VN_VNM0004_000001' only.
 --   - Row cap: <= 30 per table (DEV master row 30-newest by mod_dtm DESC).
 --   - Filter: HAND_TRCO_KEY IS NOT NULL AND coalesce(trco_stts,'') <> 'C'

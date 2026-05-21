@@ -32,7 +32,7 @@
 -- DataIntegrityViolationException and the service retries once before
 -- surfacing the error envelope.
 --
--- Retirement plan (per `wecms-api-main/CLAUDE.md` "Surviving legacy
+-- Retirement plan (per `wecms-api/CLAUDE.md` "Surviving legacy
 -- functions"): drop this branch and migrate the call site to a
 -- Java-side per-contact generator once the legacy WeCMS / WABOOKS
 -- systems no longer call `wb_get_next_val` for `trco_info_file`.

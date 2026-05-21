@@ -3,7 +3,7 @@
 --
 -- Replace V17's fabricated demo seed for `OPRT_STTS_INFO` with the 30
 -- most recent real DEV rows for tenant `VN_VNM0004_000001`. Per the
--- Data Migration Rule (wecms-api-main/CLAUDE.md): max 30 rows, only
+-- Data Migration Rule (wecms-api/CLAUDE.md): max 30 rows, only
 -- `VN_VNM0004_000001`, real DEV rows only — never fabricated.
 --
 -- The real DEV table (`wecmsvndev.oprt_stts_info`) has 202 rows for

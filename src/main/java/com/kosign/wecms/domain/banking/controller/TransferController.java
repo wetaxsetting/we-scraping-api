@@ -15,6 +15,14 @@ import org.springframework.web.bind.annotation.RestController;
  * Banking → Transfers. Sprint 1 ships read-only:
  *   - {@code /transfers/own-accounts} — STUB account list (no execution).
  *   - {@code /transfers/history}      — real read of NAPAS_REMIT_TRNS_HSTR.
+ *     <b>DEPRECATED Sprint 1 holdover</b> at the legacy URI shape with
+ *     UPPER_SNAKE wire (called out as a holdover in
+ *     {@code wecms-web/CLAUDE.md § Holdovers — ApiTransferRow /
+ *     ApiTransferHistoryResponse}). The spec-aligned replacement lives
+ *     under {@code /api/v1/banking/internal-transfer/transfer-history}
+ *     in {@code domain.banking.transferhistory.controller.TransferHistoryController}.
+ *     Remove this endpoint and its DTO file in the frontend cutover MR
+ *     after the consumer flips.
  *
  * Transfer execution (POST /transfers/own) is intentionally NOT
  * implemented — see §12 of task-sprint-1-banking-addon-backend-plan.
@@ -32,6 +40,13 @@ public class TransferController {
         return ApiResponse.ok(accountService.ownAccounts());
     }
 
+    /**
+     * @deprecated Sprint 1 interim endpoint. Use
+     *             {@code GET /api/v1/banking/internal-transfer/transfer-history}
+     *             (lowercase snake_case wire) instead. Removed in the
+     *             frontend cutover MR — see class Javadoc above.
+     */
+    @Deprecated
     @GetMapping("/history")
     public ApiResponse<TransferHistoryResponse> history(
             @RequestParam(value = "from",   required = false) String fromDt,

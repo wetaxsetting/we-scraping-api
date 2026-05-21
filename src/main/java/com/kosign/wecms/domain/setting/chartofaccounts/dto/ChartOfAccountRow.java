@@ -4,7 +4,7 @@ package com.kosign.wecms.domain.setting.chartofaccounts.dto;
  * Wire row for {@code GET /api/v1/settings/chart-of-accounts} (list +
  * single-row detail). Java field names are camelCase; the global
  * Jackson {@code SNAKE_CASE} naming strategy converts to snake_case on
- * the wire (see {@code wecms-api-main/CLAUDE.md §"API Naming &
+ * the wire (see {@code wecms-api/CLAUDE.md §"API Naming &
  * Serialization Standards"}).
  *
  * <p>Three computed fields ride alongside the raw entity columns:
