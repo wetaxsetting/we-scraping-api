@@ -26,7 +26,7 @@ spring:
     # without Flyway running, V163 never landed and Hibernate
     # validate failed with "missing column oat_idempotency_key in
     # table napas_remit_trns_hstr".
-    enabled: false
+    enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: false
     # Local-R&D drift recovery — the developer DB is single-user and
@@ -143,16 +143,16 @@ wecms:
     # filename, not from per-tenant directory isolation. Per-developer
     # override via env var WECMS_USER_IMAGE_STORAGE_ROOT.
     storage-root: ${WECMS_USER_IMAGE_STORAGE_ROOT:./tmp/user-image}
+ 
   coocon:
-    # Coocon API credentials — mirrors <coocon> in JEX config
-    # (WECMS DEV/.../VI/jex.wabooks_new.user.xml).
-    # DEV values are set in application-local.yml and application-dev.yml.
-    # PROD: supply all five via environment variables.
-    api-key: ${WECMS_COOCON_API_KEY}
-    api-url: ${WECMS_COOCON_API_URL}
-    smart-api-key: ${WECMS_COOCON_SMART_API_KEY}
-    smart-api-url: ${WECMS_COOCON_SMART_API_URL}
-    unique-key: ${WECMS_COOCON_UNIQUE_KEY}
+    # Coocon DEV credentials — mirrors <coocon> in VI/jex.wabooks_new.user.xml.
+    # Override any field via WECMS_COOCON_* env vars when testing against a
+    # different Coocon environment.
+    api-key: ${WECMS_COOCON_API_KEY:r2L7U6KnB4T51VokPlkg}
+    api-url: ${WECMS_COOCON_API_URL:https://dev2.coocon.co.kr:8443/overseas/finance/scrap/bigdata_info.jsp}
+    smart-api-key: ${WECMS_COOCON_SMART_API_KEY:fxAeocJbuweNTgv5FBns}
+    smart-api-url: ${WECMS_COOCON_SMART_API_URL:https://dev-sgw.webcashvietnam.com:8443/domestic/finance/scrap/smart_gateway.jsp}
+    unique-key: ${WECMS_COOCON_UNIQUE_KEY:0000099}
   osmc:
     # GDT (Tổng cục Thuế) business-registration lookup — Coocon bigdata
     # API (BI09). Legacy call site:
