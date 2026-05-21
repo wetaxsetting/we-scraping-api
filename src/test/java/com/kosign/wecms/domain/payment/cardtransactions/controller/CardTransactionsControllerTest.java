@@ -13,6 +13,8 @@ import com.kosign.wecms.domain.payment.cardtransactions.dto.CardListResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTransactionListResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTransactionRow;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTransactionTotals;
+import com.kosign.wecms.domain.payment.cardtransactions.service.CardTranListR001Service;
+import com.kosign.wecms.domain.payment.cardtransactions.service.CardTransactionSyncService;
 import com.kosign.wecms.domain.payment.cardtransactions.service.CardTransactionsService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -54,10 +56,14 @@ class CardTransactionsControllerTest {
 
     private MockMvc mvc;
     private CardTransactionsService service;
+    private CardTransactionSyncService syncService;
+    private CardTranListR001Service cardTranListR001Service;
 
     @BeforeEach
     void setUp() {
         service = mock(CardTransactionsService.class);
+        syncService = mock(CardTransactionSyncService.class);
+        cardTranListR001Service = mock(CardTranListR001Service.class);
 
         ObjectMapper mapper = new ObjectMapper()
                 .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
@@ -72,7 +78,7 @@ class CardTransactionsControllerTest {
         GlobalExceptionHandler advice = new GlobalExceptionHandler(messages);
 
         mvc = MockMvcBuilders
-                .standaloneSetup(new CardTransactionsController(service))
+                .standaloneSetup(new CardTransactionsController(service, syncService, cardTranListR001Service))
                 .setMessageConverters(jsonConverter)
                 .setControllerAdvice(advice)
                 .build();

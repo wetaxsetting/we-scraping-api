@@ -154,17 +154,13 @@ class CardTransactionsServiceTest {
                 .isEqualTo("WBE_CARD_TRANSACTIONS_PERIOD_INVALID");
     }
 
-    @Test
-    void list_periodCapExceededRejected() {
-        // 2020-01-01..2022-01-01 spans 731 days — well past the 365-day cap.
-        assertThatThrownBy(() -> service.list(
-                "20200101", "20220101", null, null, null, null, null, null, 0, 15))
-                .isInstanceOf(BusinessException.class)
-                .extracting(b -> ((BusinessException) b).getCode())
-                .isEqualTo("WBE_CARD_TRANSACTIONS_PERIOD_INVALID");
-    }
+    // Period cap test removed 2026-05-20 — legacy `card_0001_001_r001`
+    // has no 365-day limit (only start <= end). The refactor's earlier
+    // MAX_PERIOD_DAYS = 365 constant was dropped from
+    // `CardTransactionsService.validateDateRange` for legacy parity, so
+    // a >365-day range no longer throws.
 
-    /* =================================================================
+/* =================================================================
      *  patch description / purpose
      * ================================================================= */
 
