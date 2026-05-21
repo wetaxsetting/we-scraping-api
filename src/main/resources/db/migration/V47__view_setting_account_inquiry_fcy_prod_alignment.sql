@@ -111,7 +111,7 @@ ON CONFLICT (WEB_SVC_ID, FIELD_ID) DO NOTHING;
 --      to default ORDER BY (`prnSeq, bankCd, acctNo`) until the enum
 --      is renamed. Same risk as V46 R1 — one rename closes both.
 --
---  R3. Frontend registry at wecms-web-main/lib/viewSettingScreens.ts
+--  R3. Frontend registry at wecms-web/lib/viewSettingScreens.ts
 --      must register `banking-account-inquiry-fcy` with the same
 --      transformed FIELD_IDs (CHECKBOX, BANK_NM, ACCT_NICK_NM, BAL,
 --      REAL_AMT, ACCT_HIS_LST_INQ_DT). Without it, the FCY popover

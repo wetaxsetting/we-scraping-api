@@ -8,7 +8,7 @@
 --   Hibernate 6's `ddl-auto: validate` rejects PostgreSQL NUMERIC(p,0)
 --   against the Java `Long` / `Integer` mappings — it expects `BIGINT`
 --   for Long and `INTEGER` for Integer. The established refactor
---   convention (see wecms-api-main/CLAUDE.md "Legacy Schema Parity Rule"
+--   convention (see wecms-api/CLAUDE.md "Legacy Schema Parity Rule"
 --   exceptions) is to alter the local column to the Hibernate-friendly
 --   integer type and accept the small deviation from DEV's NUMERIC.
 --

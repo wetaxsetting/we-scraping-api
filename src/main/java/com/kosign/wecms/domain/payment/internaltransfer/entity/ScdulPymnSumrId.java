@@ -18,7 +18,7 @@ import java.io.Serializable;
  * refactor generates {@code SCDUL_PYMN_NO} via
  * {@link com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferKeyGenerator}
  * (NOT via the legacy {@code wb_get_next_val} branch — see
- * {@code wecms-api-main/CLAUDE.md} §"DB Function / Legacy Function Policy").
+ * {@code wecms-api/CLAUDE.md} §"DB Function / Legacy Function Policy").
  */
 @Getter
 @Setter

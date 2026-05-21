@@ -17,7 +17,7 @@ import java.util.Optional;
  * <p>{@code CHECKBOX} (DISP_ORD=0) and {@code ETC} (DISP_ORD=99) are
  * special FIELD_IDs and intentionally absent from the whitelist —
  * special rows are never sortable per
- * {@code wecms-api-main/CLAUDE.md} §"Common table sort".
+ * {@code wecms-api/CLAUDE.md} §"Common table sort".
  *
  * <p>{@code APPR_STTS} is seeded with {@code SORT_YN='N'} in V85 because
  * the column is computed from the EXPT_RESOL_MSTR join (not a direct

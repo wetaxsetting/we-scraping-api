@@ -25,7 +25,7 @@ import org.springframework.stereotype.Service;
  * scoped sequence.
  *
  * <p>Per the {@code DB Function / Legacy Function Policy} in
- * {@code wecms-api-main/CLAUDE.md}, this Java-side generator is preferred
+ * {@code wecms-api/CLAUDE.md}, this Java-side generator is preferred
  * over adding a new {@code wb_get_next_val} branch.
  */
 @Service

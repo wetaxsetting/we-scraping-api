@@ -9,7 +9,7 @@
 --
 -- WEB_SVC_ID `payment-vendor-payment-scheduled` is the refactor's
 -- semantic kebab slug per the central registry at
--- `wecms-web-main/lib/viewSettingScreens.ts`. Legacy WSVC ids
+-- `wecms-web/lib/viewSettingScreens.ts`. Legacy WSVC ids
 -- (`pymn_0001_001`) are NOT used per workspace CLAUDE.md
 -- §"Refactor identifier naming".
 --

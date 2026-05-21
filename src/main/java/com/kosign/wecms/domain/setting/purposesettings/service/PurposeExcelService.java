@@ -48,7 +48,7 @@ import java.util.Set;
  * preview → import contract.
  *
  * <p>"Download Template" is NOT served by this service. Pre-made XLSX
- * templates ship under {@code wecms-web-main/public/templates/purpose/}
+ * templates ship under {@code wecms-web/public/templates/purpose/}
  * and the frontend's download button is a plain anchor + locale-aware
  * URL (legacy parity).
  *
@@ -98,7 +98,7 @@ public class PurposeExcelService {
     public static final int MAX_ROWS = 500;
 
     /** Header row position (0-based POI index). The shipped Purpose
-     *  template (under {@code wecms-web-main/public/templates/purpose/})
+     *  template (under {@code wecms-web/public/templates/purpose/})
      *  reserves row 1 for the centred {@code "PURPOSE"} title cell and
      *  row 2 as a blank spacer, with the real column headers on row 3
      *  and data starting at row 4. POI indexes that as

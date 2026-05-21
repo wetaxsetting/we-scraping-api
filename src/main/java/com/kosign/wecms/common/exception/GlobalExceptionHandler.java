@@ -45,7 +45,7 @@ import java.util.concurrent.TimeoutException;
  * </ul>
  *
  * <p>The {@code BusinessException} → HTTP 200 contract is documented in
- * {@code wecms-api-main/CLAUDE.md} ("Response envelope") and is
+ * {@code wecms-api/CLAUDE.md} ("Response envelope") and is
  * preserved here intentionally — clients inspect {@code status.error},
  * not the HTTP code, for known business outcomes.
  */

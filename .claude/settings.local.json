@@ -15,7 +15,9 @@
       "Bash(git rm *)",
       "Bash(git mv *)",
       "PowerShell(try { $r = Invoke-RestMethod -Uri \"http://localhost:8080/actuator/health\" -TimeoutSec 5; $r | ConvertTo-Json -Compress } catch { \"ERR: $\\($_.Exception.Message\\)\" })",
-      "PowerShell(try { $r = Invoke-WebRequest -Uri \"http://localhost:8080/\" -TimeoutSec 5 -UseBasicParsing; \"HTTP $\\($r.StatusCode\\)\" } catch { \"ERR: $\\($_.Exception.Message\\)\" })"
+      "PowerShell(try { $r = Invoke-WebRequest -Uri \"http://localhost:8080/\" -TimeoutSec 5 -UseBasicParsing; \"HTTP $\\($r.StatusCode\\)\" } catch { \"ERR: $\\($_.Exception.Message\\)\" })",
+      "Bash(JAVA_HOME=\"C:/Program Files/Eclipse Adoptium/jdk-21.0.10.7-hotspot\" ./gradlew compileJava)",
+      "Bash(JAVA_HOME=\"C:/Program Files/Eclipse Adoptium/jdk-21.0.10.7-hotspot\" ./gradlew build)"
     ]
   },
   "enabledMcpjsonServers": [

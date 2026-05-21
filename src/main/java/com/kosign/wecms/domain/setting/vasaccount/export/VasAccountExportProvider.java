@@ -77,7 +77,7 @@ public class VasAccountExportProvider implements ExportRowProvider {
      *  <p>Matches the View Setting {@code WEB_SVC_ID} seeded in V79 —
      *  this string is the registry key shared with the frontend's
      *  {@code SCREEN_IDS.SETTINGS_VAS_ACCOUNT} constant in
-     *  {@code wecms-web-main/lib/viewSettingScreens.ts}. */
+     *  {@code wecms-web/lib/viewSettingScreens.ts}. */
     @Override
     public String screenId() {
         return "vas-account";

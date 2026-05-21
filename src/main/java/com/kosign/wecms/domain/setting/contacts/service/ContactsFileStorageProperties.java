@@ -29,6 +29,6 @@ public record ContactsFileStorageProperties(
 ) {
     /** Folder name under each tenant directory — never configurable;
      *  the slug is the API contract per
-     *  {@code wecms-api-main/CLAUDE.md §"Refactor identifier naming"}. */
+     *  {@code wecms-api/CLAUDE.md §"Refactor identifier naming"}. */
     public static final String SLUG_FOLDER = "contacts";
 }

@@ -11,7 +11,7 @@ import java.util.Optional;
  * "no rule".
  *
  * <p>Modernized refactor enum per
- * {@code wecms-api-main/CLAUDE.md §"Domain enums"}: carries
+ * {@code wecms-api/CLAUDE.md §"Domain enums"}: carries
  * {@code code()} only — no JEX {@code GenericEnum}, no
  * {@code @JsonValue} / {@code @JsonCreator}. The DB / entity column
  * stays {@code String}; the enum is used for service-layer validation

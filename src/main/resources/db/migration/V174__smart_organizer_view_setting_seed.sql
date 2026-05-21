@@ -5,7 +5,7 @@
 -- list table. Registers `web_svc_id = 'smart-organizer'` /
 -- `dym_area_id = 'default'` per the route-based slug convention in
 -- CLAUDE.md §"Refactor identifier naming" + the central frontend
--- registry at `wecms-web-main/lib/viewSettingScreens.ts`.
+-- registry at `wecms-web/lib/viewSettingScreens.ts`.
 --
 -- Mirrors the legacy `fnsh_0200_001_view.jsp` 10-column table layout:
 --

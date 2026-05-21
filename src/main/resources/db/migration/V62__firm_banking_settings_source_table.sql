@@ -15,7 +15,7 @@
 --     @JdbcTypeCode(SqlTypes.CHAR) on the matching String fields so
 --     Hibernate `validate` accepts the bpchar columns. This follows the
 --     V38 "direction locked" rule (entity-side annotation > CHAR→VARCHAR
---     migration) per wecms-api-main/CLAUDE.md.
+--     migration) per wecms-api/CLAUDE.md.
 --
 -- Encryption-at-rest: NONE — wdrl_act_no stays plain text per OQ-4
 -- (resolved 2026-05-09). DEV verification confirmed plain numeric on

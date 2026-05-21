@@ -20,7 +20,7 @@ import java.time.OffsetDateTime;
  * {@code wb_get_next_val('scdul_pymn_sumr', 'scdul_pymn_no', BIZ_KEY)}
  * branch — the refactor intentionally does NOT add new {@code wb_*}
  * function dependencies per
- * {@code wecms-api-main/CLAUDE.md} §"DB Function / Legacy Function Policy".
+ * {@code wecms-api/CLAUDE.md} §"DB Function / Legacy Function Policy".
  *
  * <p>Not present in DEV / PROD — this table exists only in the refactor's
  * local Flyway schema (created in V85).

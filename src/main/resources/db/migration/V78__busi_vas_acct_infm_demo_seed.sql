@@ -4,7 +4,7 @@
 -- Idempotent demo seed pulled verbatim from JEX DEV (wecmsvndev.busi_vas_acct_infm,
 -- 2026-05-11) for tenant VN_VNM0004_000001. 5 rows total — every live row
 -- (DEL_YN='N') for the tenant — sized well under the project's data-migration
--- rule cap (max 30 rows / tenant per wecms-api-main/CLAUDE.md §"Data Migration
+-- rule cap (max 30 rows / tenant per wecms-api/CLAUDE.md §"Data Migration
 -- Rule"). Soft-deleted rows are intentionally NOT seeded — refactor only ever
 -- reads DEL_YN='N' rows and the local DB stays light.
 --

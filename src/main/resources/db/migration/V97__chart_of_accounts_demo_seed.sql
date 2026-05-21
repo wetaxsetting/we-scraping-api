@@ -3,7 +3,7 @@
 --
 -- Settings > Chart of Accounts: demo seed for tenant VN_VNM0004_000001.
 -- Snapshot taken from real JEX DEV (wecmsvndevdb @ 10.254.242.254:54311,
--- 2026-05-13). Per the "Data Migration Rule" in wecms-api-main/CLAUDE.md:
+-- 2026-05-13). Per the "Data Migration Rule" in wecms-api/CLAUDE.md:
 -- only biz_key 'VN_VNM0004_000001', ≤ 30 rows, parents before children,
 -- foreign-key integrity preserved (here: PARENT_CHART_ACCT_CD references
 -- another row's CHART_ACCT_CD; no FK declared in DEV, but logical

@@ -82,4 +82,11 @@ public interface AcctAuthInfoRepository
             @Param("bankCd")   String bankCd,
             @Param("acctNo")   String acctNo,
             @Param("authType") String authType);
+
+    /** All active permission rows the user holds inside the tenant
+     *  (any account, any AUTH_TYPE) — used by Own Account Transfer to
+     *  project source-account authority in a single round-trip instead
+     *  of per-account N+1 lookups. */
+    List<AcctAuthInfo> findByBizKeyAndUserIdAndUseYn(
+            String bizKey, String userId, String useYn);
 }

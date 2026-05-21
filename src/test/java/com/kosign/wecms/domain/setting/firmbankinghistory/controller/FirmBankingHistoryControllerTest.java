@@ -72,6 +72,9 @@ class FirmBankingHistoryControllerTest {
         when(messages.resolve(any(String.class))).thenReturn("Required.");
         GlobalExceptionHandler advice = new GlobalExceptionHandler(messages);
 
+        // ExcelExportService dependency added to FirmBankingHistoryController
+        // in a prior MR; not exercised by this list-focused test — pass a
+        // pure mock so the constructor resolves.
         mvc = MockMvcBuilders
                 .standaloneSetup(new FirmBankingHistoryController(service, mock(ExcelExportService.class)))
                 .setMessageConverters(converter)

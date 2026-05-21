@@ -5,7 +5,7 @@ import java.util.Map;
 /**
  * DB FIELD_ID → canonical refactor FIELD_ID resolver, mirroring the
  * frontend's {@code FIELD_ID_ALIAS} map in
- * {@code wecms-web-main/components/shared/AccountInquiryPage.tsx}.
+ * {@code wecms-web/components/shared/AccountInquiryPage.tsx}.
  *
  * <p>The DB seed is the source of truth for column metadata
  * (CLAUDE.md §13). Operations may seed {@code SYS_SCR_OPTION_WECMS}

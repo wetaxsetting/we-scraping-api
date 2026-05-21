@@ -2,7 +2,7 @@
 -- V150: View Setting seeds — Payment > Vendor Payment Result (2 screens).
 --
 -- The Vendor Result + Result Detail screenIds were added to the frontend
--- registry (`wecms-web-main/lib/viewSettingScreens.ts`) when the Vendor
+-- registry (`wecms-web/lib/viewSettingScreens.ts`) when the Vendor
 -- Result page was wired, but the matching backend seeds in
 -- SYS_SCR_OPTION_WECMS were not landed in V141 (which seeded only
 -- payment-vendor-payment-scheduled + scheduled-detail). Result: hitting
@@ -15,7 +15,7 @@
 -- share the same canonical column set on both screens.
 --
 -- Slugs per the central registry at
--- `wecms-web-main/lib/viewSettingScreens.ts`:
+-- `wecms-web/lib/viewSettingScreens.ts`:
 --   - payment-vendor-payment-result          (legacy pymn_0002_001)
 --   - payment-vendor-payment-result-detail   (legacy pymn_0002_002)
 --

@@ -8,6 +8,7 @@ import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.exception.GlobalExceptionHandler;
 import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.i18n.MessageResolver;
+import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.setting.erptransactionhistory.dto.ErpTrnsHistoryListResponse;
 import com.kosign.wecms.domain.setting.erptransactionhistory.dto.ErpTrnsHistoryRow;
@@ -100,6 +101,9 @@ class ErpTrnsHistoryControllerTest {
         when(messages.resolve(any(String.class), any(Object[].class))).thenReturn("ERP transaction history error.");
         GlobalExceptionHandler advice = new GlobalExceptionHandler(messages);
 
+        // ExcelExportService dependency added to ErpTrnsHistoryController in a
+        // prior MR; not exercised by this list/download-focused test — pass a
+        // pure mock so the constructor resolves.
         mvc = MockMvcBuilders
                 .standaloneSetup(new ErpTrnsHistoryController(service, mock(ExcelExportService.class)))
                 .setMessageConverters(jsonConverter, resourceConverter, byteConverter)

@@ -11,7 +11,7 @@ import java.util.List;
  *
  * <p><b>Operational expectation.</b> Current WeCMS operation treats one
  * user as belonging to exactly one active company (see
- * {@code wecms-api-main/CLAUDE.md} §"Operational model"). The
+ * {@code wecms-api/CLAUDE.md} §"Operational model"). The
  * authenticated shape below is therefore the **normal production
  * response**; the chooser shape is an exceptional / test-demo path
  * that only fires when a user has ≥ 2 active USER_BUSI_CONN_INFM

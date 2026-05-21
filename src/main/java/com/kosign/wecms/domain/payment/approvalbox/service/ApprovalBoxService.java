@@ -77,7 +77,7 @@ import java.util.stream.Collectors;
  * The wire {@code appr_stts} ({@code P}/{@code I}/{@code C}/{@code R})
  * is computed in {@link #deriveApprStts} from {@code APPR_TYPE_CD}.
  * Replaces the legacy {@code wb_get_appr_stts(...)} PL/pgSQL helper per
- * {@code wecms-api-main/CLAUDE.md} §"DB Function / Legacy Function Policy".
+ * {@code wecms-api/CLAUDE.md} §"DB Function / Legacy Function Policy".
  *
  * <h2>Tenant scoping</h2>
  * {@code BIZ_KEY} is read from {@link TenantContext#currentBizKey()} and

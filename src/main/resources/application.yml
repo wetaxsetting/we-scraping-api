@@ -1,6 +1,6 @@
 spring:
   application:
-    name: wecms-api-main
+    name: wecms-api
   # Optionally load a local `.env` file as additional configuration.
   # Use `.env.example` as the template (commit it); copy to `.env` and
   # fill in real values (`.env` is git-ignored). Keys defined here
@@ -20,8 +20,13 @@ spring:
     # collisions were resolved in commit `fcd1be8`. Hibernate
     # `ddl-auto: validate` depends on Flyway applying every entity-
     # mapped table (e.g. APPR_LINE_INFM from V90, CHART_ACCT_INFM from
-    # V94, OVRS_PYMN_* from V112) — keep enabled at all times.
-    enabled: true
+    # V94, OVRS_PYMN_* from V112, NAPAS_REMIT_TRNS_HSTR.OAT_IDEMPOTENCY_KEY
+    # from V163) — keep enabled at all times. Re-enabled again
+    # 2026-05-18 after a debugging session left this at `false`;
+    # without Flyway running, V163 never landed and Hibernate
+    # validate failed with "missing column oat_idempotency_key in
+    # table napas_remit_trns_hstr".
+    enabled: false
     locations: classpath:db/migration
     baseline-on-migrate: false
     # Local-R&D drift recovery — the developer DB is single-user and
@@ -80,7 +85,7 @@ wecms:
     # Generate with:  openssl rand -hex 64
     secret: ${WECMS_JWT_SECRET}
     expires-in-seconds: 3600
-    issuer: wecms-api-main
+    issuer: wecms-api
   cors:
     # Comma-separated list of allowed cross-origin frontends. Baseline
     # is local dev only — each profile (application-local.yml etc.)

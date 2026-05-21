@@ -52,7 +52,7 @@ import java.util.Set;
  * project ships pre-made XLSX templates under
  * {@code WECMS_STATIC/web/file/excel/VN/WeCMS_VAS_Accounts_Bulk_Upload_{EN,KO,VI}.xlsx};
  * the refactor mirrors that approach by copying the three files into
- * {@code wecms-web-main/public/file/excel/VN/} and the frontend's
+ * {@code wecms-web/public/file/excel/VN/} and the frontend's
  * download button is a plain anchor + locale-aware URL (see
  * {@code components/settings/vas-account/ExcelUploadDialog.tsx}).
  *

@@ -8,7 +8,7 @@
 --   Legacy and current WeCMS operation do NOT officially support one login
 --   user belonging to multiple companies as a normal production case. The
 --   lamine cross-company link was demo/test data only, not a real legacy
---   requirement (see wecms-api-main/CLAUDE.md §"Project Overview" bullets
+--   requirement (see wecms-api/CLAUDE.md §"Project Overview" bullets
 --   on multi-company infrastructure vs. production default).
 --
 -- This migration removes only that one test link so 'lamine@gmail.com'

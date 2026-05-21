@@ -25,7 +25,7 @@
 --     so a future legacy data-migration path stays open.
 --
 -- PROD Active Table List entry: GDT_CERT_INFO is present in the active
--- scope (see wecms-api-main/CLAUDE.md → "PROD DB Table Scope for
+-- scope (see wecms-api/CLAUDE.md → "PROD DB Table Scope for
 -- Refactoring"), so this migration is in-scope per the refactoring
 -- enforcement rule.
 --

@@ -128,6 +128,19 @@ public class AcctMstr {
     private String acctBalLstInqDtm;
 
     /**
+     * Stash of the previous {@code BAL} value at the moment the balance
+     * was last corrected by a successful balance-refresh. Mirrors legacy
+     * {@code _u001_act.jsp:117-122}: when the engine reports a new
+     * balance that differs from what's on the row, the OLD balance is
+     * copied here before {@code BAL} is overwritten so users can see the
+     * delta. Schema column was added in V23 ({@code NUMERIC(20,6)
+     * DEFAULT 0}); first Java consumer is Own Account Transfer's
+     * balance-refresh endpoint.
+     */
+    @Column(name = "CORC_BF_BAL")
+    private BigDecimal corcBfBal;
+
+    /**
      * Last successful bank-login timestamp, {@code yyyyMMddHHmmss}.
      * Legacy {@code ACCT_MSTR_U002} stamps this after a successful
      * NXISAS scrape (see {@code fnsh_0001_001_c001_act.jsp:266-287}).

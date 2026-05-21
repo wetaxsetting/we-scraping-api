@@ -6,7 +6,7 @@ import java.math.BigDecimal;
  * One row in the {@code GET /api/v1/payment/internal-transfer} response.
  * Java fields stay camelCase; Jackson's global {@code SNAKE_CASE}
  * strategy emits the lowercase snake_case wire shape
- * (see {@code wecms-api-main/CLAUDE.md} §"API Naming &amp; Serialization
+ * (see {@code wecms-api/CLAUDE.md} §"API Naming &amp; Serialization
  * Standards").
  */
 public record ScheduledTransferRow(

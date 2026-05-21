@@ -22,7 +22,7 @@
 -- No CHECKBOX / ETC special rows — the panel has neither a row-selection
 -- column nor an action-menu column.
 --
--- See wecms-api-main/CLAUDE.md §"Screen Option (View Setting)" and the
+-- See wecms-api/CLAUDE.md §"Screen Option (View Setting)" and the
 -- §"Excel export" defence-in-depth rule.
 -- =============================================================================
 

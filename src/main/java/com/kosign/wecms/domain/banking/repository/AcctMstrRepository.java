@@ -10,6 +10,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 
@@ -301,4 +302,117 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
     List<AcctMstr> findWithdrawalAccounts(
             @Param("bizKey") String bizKey,
             @Param("ccyCd")  String ccyCd);
+
+    /* =================================================================
+     *  Own Account Transfer (refactor slug: own-account-transfer)
+     * ================================================================= */
+
+    /**
+     * Source-account list for {@code GET /api/v1/banking/own-account-transfer/source-accounts}.
+     * Mirrors legacy {@code _r001_act.jsp:144-194} + {@code IDO.ACCT_MSTR_R015.xml}
+     * minus the auth-pivot join (the service applies the USER-mode
+     * filter in Java against {@link AcctAuthInfoRepository} so the
+     * tenant-slice query stays a clean entity load and the test
+     * harness doesn't need to seed the pivot table for every fixture).
+     *
+     * <p>Filters (every predicate matches a legacy condition):
+     * <ul>
+     *   <li>{@code BIZ_KEY = :bizKey} — tenant scope.</li>
+     *   <li>{@code CCY_CD = 'VND'} — feature is VND-only.</li>
+     *   <li>{@code ACTV_YN = 'Y'} — inactive rows hidden.</li>
+     *   <li>{@code ACCT_TYPE_CD IN ('03','05')} — current + saving
+     *       only.</li>
+     *   <li>{@code BANK_CD IN :bankCds} — the service supplies either
+     *       the single requested bank or the 5-bank allow-list (1-bank
+     *       VIETIN-only for HAENGSUNG tenants).</li>
+     *   <li><b>HAENGSUNG saving-account gate</b> (only when
+     *       {@code :prdtTypeH = true}, off otherwise): saving accounts
+     *       ({@code 05}/{@code 06}/{@code 08}) are kept only when
+     *       {@code (EXPI_DT IS NULL OR EXPI_DT &gt;= :todayYmd)} AND
+     *       {@code BAL &gt; 0}. {@code EXPI_DT} is the legacy
+     *       {@code VARCHAR(8)} {@code yyyyMMdd} column so the
+     *       string-compare is parity-equivalent to legacy's
+     *       {@code TO_DATE(EXPI_DT,'YYYYMMDD') &gt;= CURRENT_DATE}.</li>
+     * </ul>
+     *
+     * <p>{@code :bankCds} must never be empty — the service constructs
+     * it with at least one bank (Postgres would reject an empty
+     * {@code IN ()} list).
+     */
+    @Query("""
+            SELECT a FROM AcctMstr a
+             WHERE a.bizKey      = :bizKey
+               AND a.ccyCd       = 'VND'
+               AND a.actvYn      = 'Y'
+               AND a.acctTypeCd IN ('03','05')
+               AND a.bankCd     IN :bankCds
+               AND (
+                    :prdtTypeH = false
+                 OR a.acctTypeCd NOT IN ('05','06','08')
+                 OR ((a.expiDt IS NULL OR a.expiDt >= :todayYmd) AND a.bal > 0)
+                   )
+            """)
+    List<AcctMstr> findOwnTransferSourceRows(
+            @Param("bizKey")    String bizKey,
+            @Param("bankCds")   List<String> bankCds,
+            @Param("prdtTypeH") boolean prdtTypeH,
+            @Param("todayYmd")  String todayYmd,
+            Sort sort);
+
+    /**
+     * Single-tenant balance-refresh patch invoked by
+     * {@code POST /api/v1/banking/own-account-transfer/balance-refresh}.
+     * Mirrors legacy {@code _u001_act.jsp:88-130} via a single
+     * conditional UPDATE — {@code COALESCE(:newX, X)} keeps the existing
+     * column value when the service passes {@code null} for that field,
+     * so the same SQL statement handles every branch of the legacy
+     * decision tree:
+     * <ul>
+     *   <li>Always patches {@code ACCT_BAL_INQ_STTS},
+     *       {@code ACCT_BAL_INQ_MSG}, {@code ACCT_BAL_LST_INQ_DTM},
+     *       {@code MOD_ID}, {@code MOD_DTM}.</li>
+     *   <li>On engine success ({@code status='00000000'}) AND a balance
+     *       delta: service passes non-null {@code :newBal} +
+     *       {@code :newCorcBfBal} + {@code :newUpdDtm}; the columns
+     *       update.</li>
+     *   <li>On engine success AND {@code real_amt} reported: service
+     *       passes non-null {@code :newRealAmt}; the column updates.</li>
+     *   <li>On engine failure ({@code status &ne; '00000000'}): every
+     *       optional param is null; only the status/msg/lst-inq
+     *       columns move.</li>
+     * </ul>
+     *
+     * <p>Returns the row count to the service for assertion (always 0
+     * or 1 — the PK is the full {@code (BIZ_KEY, BANK_CD, ACCT_NO)}
+     * tuple, so a hit is exactly one). The {@code @Modifying} annotation
+     * needs {@code clearAutomatically = true} so a follow-up
+     * {@code findById(...)} fetch sees the patched row instead of the
+     * stale L1 cache copy — the response DTO uses the post-patch BAL.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = """
+            UPDATE ACCT_MSTR
+               SET ACCT_BAL_INQ_STTS    = :stts,
+                   ACCT_BAL_INQ_MSG     = :msg,
+                   ACCT_BAL_LST_INQ_DTM = :nowDtm,
+                   MOD_ID               = :modId,
+                   MOD_DTM              = :nowDtm,
+                   BAL                  = COALESCE(:newBal, BAL),
+                   REAL_AMT             = COALESCE(:newRealAmt, REAL_AMT),
+                   CORC_BF_BAL          = COALESCE(:newCorcBfBal, CORC_BF_BAL),
+                   ACCT_BAL_UPD_DTM     = COALESCE(:newUpdDtm, ACCT_BAL_UPD_DTM)
+             WHERE BIZ_KEY = :bizKey AND BANK_CD = :bankCd AND ACCT_NO = :acctNo
+            """, nativeQuery = true)
+    int applyOwnTransferBalanceRefresh(
+            @Param("bizKey")       String bizKey,
+            @Param("bankCd")       String bankCd,
+            @Param("acctNo")       String acctNo,
+            @Param("stts")         String stts,
+            @Param("msg")          String msg,
+            @Param("nowDtm")       String nowDtm,
+            @Param("modId")        String modId,
+            @Param("newBal")       BigDecimal newBal,
+            @Param("newRealAmt")   BigDecimal newRealAmt,
+            @Param("newCorcBfBal") BigDecimal newCorcBfBal,
+            @Param("newUpdDtm")    String newUpdDtm);
 }

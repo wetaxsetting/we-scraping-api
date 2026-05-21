@@ -67,7 +67,7 @@ import java.util.Locale;
  * user's primary sort (when a valid {@code sortField} is passed) is
  * always followed by {@code REG_DTM DESC} as a deterministic
  * tiebreaker (rule from "Common table sort" in
- * {@code wecms-api-main/CLAUDE.md}).
+ * {@code wecms-api/CLAUDE.md}).
  */
 @Service
 @RequiredArgsConstructor

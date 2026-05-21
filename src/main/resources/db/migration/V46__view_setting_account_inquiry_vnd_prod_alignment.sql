@@ -112,7 +112,7 @@ ON CONFLICT (WEB_SVC_ID, FIELD_ID) DO NOTHING;
 --      property translation layer.
 --
 --  R2. Frontend column rendering and the registry at
---      wecms-web-main/lib/viewSettingScreens.ts must be updated to use
+--      wecms-web/lib/viewSettingScreens.ts must be updated to use
 --      the same transformed FIELD_IDs (BANK_NM, ACCT_NICK_NM, BAL,
 --      REAL_AMT, ACCT_HIS_LST_INQ_DT, plus CHECKBOX as the special
 --      anchor). Any reference to the old BANK / ACCOUNT_NICKNAME /
@@ -125,7 +125,7 @@ ON CONFLICT (WEB_SVC_ID, FIELD_ID) DO NOTHING;
 --      not just hidden by DISP_YN.
 --
 --  R4. SORT_YN='Y' on every column post-transformation. Per the
---      "Common table sort" rule (wecms-api-main/CLAUDE.md), every
+--      "Common table sort" rule (wecms-api/CLAUDE.md), every
 --      SORT_YN='Y' column must have a constant in the matching
 --      whitelist enum (AccountSortField). Until R1 is closed the
 --      backend silently falls through to default ORDER BY for clicks

@@ -17,7 +17,7 @@ import java.time.ZoneId;
  * {@code wb_get_next_val('scdul_pymn_sumr', 'scdul_pymn_no', BIZ_KEY)}
  * branch — the refactor does NOT add new {@code wb_*} function
  * dependencies per
- * {@code wecms-api-main/CLAUDE.md} §"DB Function / Legacy Function Policy".
+ * {@code wecms-api/CLAUDE.md} §"DB Function / Legacy Function Policy".
  *
  * <h2>Format</h2>
  *

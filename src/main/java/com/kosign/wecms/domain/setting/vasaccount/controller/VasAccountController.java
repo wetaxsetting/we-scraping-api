@@ -54,7 +54,7 @@ import java.util.List;
  * legacy {@code comm_0217_002_r001} / {@code _c001}. The "Download
  * Template" button is served by static XLSX assets (legacy parity —
  * {@code comm_0217_002.ts fnDownloadExcelForm} pattern) shipped
- * under {@code wecms-web-main/public/file/excel/VN/}, no backend
+ * under {@code wecms-web/public/file/excel/VN/}, no backend
  * endpoint involved.
  *
  * <p>XLSX export wired via the shared {@link ExcelExportService} + the
@@ -149,7 +149,7 @@ public class VasAccountController {
      *  Note: the "Download Template" button is served by the static
      *  XLSX assets the legacy project ships under
      *  WECMS_STATIC/web/file/excel/VN/WeCMS_VAS_Accounts_Bulk_Upload_{EN,KO,VI}.xlsx
-     *  — copied into wecms-web-main/public/file/excel/VN/ for the
+     *  — copied into wecms-web/public/file/excel/VN/ for the
      *  refactor. The frontend's "Download Template" button is a plain
      *  anchor + locale-aware URL; no backend endpoint involved.
      * ================================================================= */

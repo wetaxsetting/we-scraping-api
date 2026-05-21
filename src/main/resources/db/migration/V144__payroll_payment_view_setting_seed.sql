@@ -8,7 +8,7 @@
 -- canonical column set.
 --
 -- Slugs per the central registry at
--- `wecms-web-main/lib/viewSettingScreens.ts`:
+-- `wecms-web/lib/viewSettingScreens.ts`:
 --   - payment-payroll-payment-scheduled          (legacy pymn_0005_001)
 --   - payment-payroll-payment-scheduled-detail   (legacy pymn_0005_003)
 --   - payment-payroll-payment-result             (legacy pymn_0006_001)

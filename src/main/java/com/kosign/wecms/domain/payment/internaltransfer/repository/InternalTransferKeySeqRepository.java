@@ -17,7 +17,7 @@ import java.time.LocalDate;
  * and is the sole replacement for the legacy
  * {@code wb_get_next_val('scdul_pymn_sumr', 'scdul_pymn_no', BIZ_KEY)}
  * branch (intentionally NOT ported per
- * {@code wecms-api-main/CLAUDE.md} §"DB Function / Legacy Function Policy").
+ * {@code wecms-api/CLAUDE.md} §"DB Function / Legacy Function Policy").
  *
  * <p>Native SQL is necessary because Spring Data JPA cannot express
  * {@code INSERT … ON CONFLICT … DO UPDATE … RETURNING} as a derived

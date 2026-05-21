@@ -8,7 +8,7 @@ import com.kosign.wecms.common.web.SortableField;
  * mapped property is the matching JPA field on
  * {@link com.kosign.wecms.domain.setting.vasaccount.entity.BusiVasAcctInfm}.
  *
- * <p>Per the common-sort rule in {@code wecms-api-main/CLAUDE.md} §"Common
+ * <p>Per the common-sort rule in {@code wecms-api/CLAUDE.md} §"Common
  * table sort", every column with {@code SORT_YN='Y'} in the View Setting
  * seed (V79) MUST appear here:
  * <ul>

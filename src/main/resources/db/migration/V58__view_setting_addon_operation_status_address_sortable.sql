@@ -28,9 +28,9 @@
 -- so first-paint behaviour matches post-V58 seed.
 --
 -- See:
---  - wecms-api-main/.../service/OperationStatusSortField.java
---  - wecms-web-main/.../components/addon/operation-status/OperationStatusPage.tsx
---  - wecms-api-main/CLAUDE.md "Common table sort" rule (seed flag must
+--  - wecms-api/.../service/OperationStatusSortField.java
+--  - wecms-web/.../components/addon/operation-status/OperationStatusPage.tsx
+--  - wecms-api/CLAUDE.md "Common table sort" rule (seed flag must
 --    agree with whitelist enum)
 -- ============================================================================
 

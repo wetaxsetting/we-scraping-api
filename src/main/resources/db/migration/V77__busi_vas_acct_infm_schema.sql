@@ -2,7 +2,7 @@
 -- V77 — BUSI_VAS_ACCT_INFM: schema parity (Settings > VAS Account)
 -- =============================================================================
 -- First migration for the BUSI_VAS_ACCT_INFM table — mirrors JEX DEV column-
--- for-column per the legacy-schema-parity rule in wecms-api-main/CLAUDE.md.
+-- for-column per the legacy-schema-parity rule in wecms-api/CLAUDE.md.
 --
 -- DEV source-of-truth audit (verified 2026-05-11 via postgres MCP):
 --   - 13 columns
@@ -35,7 +35,7 @@
 --
 -- Surrogate-key generation:
 --   Refactor uses a Java-side generator (VasAcctSeqNoGenerator) — NOT a new
---   wb_get_next_val branch — per wecms-api-main/CLAUDE.md "DB Function /
+--   wb_get_next_val branch — per wecms-api/CLAUDE.md "DB Function /
 --   Legacy Function Policy" (prefer Java over PL/pgSQL for refactor writes).
 --
 -- Refactor-only deviation from DEV:
@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS BUSI_VAS_ACCT_INFM (
 
 -- Speed up the duplicate-code check (every create + dedup-on-rename hits this).
 -- DEV has no such index; extra performance indexes are allowed per the
--- wecms-api-main/CLAUDE.md Legacy Schema Parity Rule.
+-- wecms-api/CLAUDE.md Legacy Schema Parity Rule.
 CREATE INDEX IF NOT EXISTS IX_BUSI_VAS_ACCT_INFM_BIZ_CD_DEL
     ON BUSI_VAS_ACCT_INFM (BIZ_KEY, VAS_ACCT_CD, DEL_YN);
 

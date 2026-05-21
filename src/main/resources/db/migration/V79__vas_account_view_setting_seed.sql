@@ -9,7 +9,7 @@
 -- default. CHECKBOX special FIELD_ID is intentionally NOT seeded — DN-8
 -- (no bulk delete; legacy parity).
 --
--- Column conventions per wecms-api-main/CLAUDE.md §"Screen Option (View
+-- Column conventions per wecms-api/CLAUDE.md §"Screen Option (View
 -- Setting)":
 --   - FIELD_ID is uppercase and stable across releases
 --   - FIX_YN='Y' rows always persist as USE_YN='Y' regardless of payload

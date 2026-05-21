@@ -87,4 +87,12 @@ public class NapasRemitTrnsHstr {
 
     @Column(name = "REG_DTM", length = 14, nullable = false)
     private String regDtm;
+
+    /**
+     * Client-supplied idempotency key for the Own Account Transfer
+     * scraping-result intake. Added in V179. Unique per tenant when
+     * non-null; older rows from other transfer flows carry null.
+     */
+    @Column(name = "OAT_IDEMPOTENCY_KEY", length = 64)
+    private String oatIdempotencyKey;
 }

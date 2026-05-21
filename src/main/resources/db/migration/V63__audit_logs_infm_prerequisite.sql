@@ -24,7 +24,7 @@
 --
 -- The wsvc_id column carries the legacy JEX page id verbatim (e.g.
 -- 'comm_0220_001' for firm-banking-settings) per OQ-6. See
--- wecms-api-main/CLAUDE.md §"Refactor identifier naming".
+-- wecms-api/CLAUDE.md §"Refactor identifier naming".
 --
 -- Idempotent: CREATE TABLE IF NOT EXISTS.
 -- ============================================================================

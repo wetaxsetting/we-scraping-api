@@ -22,7 +22,7 @@ import com.kosign.wecms.common.web.SortableField;
  * {@code null} via {@link #parse(String)} so the service falls back to
  * the {@code REG_DTM DESC, SEQ_NO DESC} default rather than rejecting
  * the request. Sort whitelist contract is documented in
- * {@code wecms-api-main/CLAUDE.md §"Common table sort"}.
+ * {@code wecms-api/CLAUDE.md §"Common table sort"}.
  */
 public enum ErpTrnsHistorySortField implements SortableField {
 

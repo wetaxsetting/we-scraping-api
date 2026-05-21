@@ -48,7 +48,7 @@ import java.nio.file.Files;
  *
  * <p>REST base path is {@code /api/v1/payment/internal-transfer} —
  * follows the project's {@code /api/v1/<module>/<slug>} convention
- * per {@code wecms-api-main/CLAUDE.md} §"Refactor identifier naming"
+ * per {@code wecms-api/CLAUDE.md} §"Refactor identifier naming"
  * (canonical example {@code /api/v1/settings/firm-banking-settings}).
  *
  * <p>Wire format is lowercase snake_case via the global Jackson
@@ -239,7 +239,7 @@ public class InternalTransferController {
      * <p>Two-part multipart: {@code file_data} (binary) +
      * {@code request} (JSON). The frontend serialises the JSON body
      * with {@code Blob([JSON.stringify(req)], { type: "application/json" })}
-     * — see {@code wecms-web-main/lib/api/internalTransfer.ts}.
+     * — see {@code wecms-web/lib/api/internalTransfer.ts}.
      */
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResponse<CreateScheduledTransferResponse> create(

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# Start wecms-api-main locally with the right JDK + env vars.
+# Start wecms-api locally with the right JDK + env vars.
 # Fails fast (with a clear message) if anything is misconfigured.
 # ---------------------------------------------------------------------------
 set -eu
@@ -32,5 +32,5 @@ fi
 exec 3>&- 2>/dev/null || true
 
 # --- 4. Run Spring Boot ---
-echo "Starting wecms-api-main on port 8080 (profile: local)..."
+echo "Starting wecms-api on port 8080 (profile: local)..."
 exec ./gradlew bootRun --args='--spring.profiles.active=local'

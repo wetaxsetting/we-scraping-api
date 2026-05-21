@@ -14,7 +14,7 @@ import com.kosign.wecms.common.web.SortableField;
  * <p>Two View Setting columns are intentionally not sortable server-side:
  * {@code CHECKBOX} and {@code ETC} (the row-selection and action-icon
  * columns) — special FIELD_IDs that are never sortable per the
- * {@code wecms-api-main/CLAUDE.md §"Common table sort"} contract.
+ * {@code wecms-api/CLAUDE.md §"Common table sort"} contract.
  *
  * <p>Two View Setting columns are sortable on the wire but resolve to
  * an expression rather than a single entity property:

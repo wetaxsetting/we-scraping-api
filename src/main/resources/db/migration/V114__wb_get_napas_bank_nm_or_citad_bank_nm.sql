@@ -24,7 +24,7 @@
 -- 'vi'/'vn'. Korean and Khmer fall through to NULL. The refactor accepts
 -- this verbatim; the frontend's missing-name fallback handles it.
 --
--- Retirement plan (per `wecms-api-main/CLAUDE.md` "Surviving legacy
+-- Retirement plan (per `wecms-api/CLAUDE.md` "Surviving legacy
 -- functions"): drop the function and replace
 -- `LegacyFunctionRepository.resolveNapasOrCitadBankName` with a
 -- `BankCdResolver` call once the NAPAS + CITAD code space is fully

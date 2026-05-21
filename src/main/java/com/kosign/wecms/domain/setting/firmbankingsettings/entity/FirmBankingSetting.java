@@ -35,7 +35,7 @@ import java.math.BigDecimal;
  * fields carry {@link JdbcTypeCode @JdbcTypeCode(SqlTypes.CHAR)} so
  * {@code spring.jpa.hibernate.ddl-auto = validate} accepts them. This
  * follows the V38 "direction locked" rule from
- * {@code wecms-api-main/CLAUDE.md} (entity-side annotation &gt;
+ * {@code wecms-api/CLAUDE.md} (entity-side annotation &gt;
  * CHAR→VARCHAR migration).
  *
  * <p>Encryption: NONE for {@code wdrlActNo} or any other field. OQ-4

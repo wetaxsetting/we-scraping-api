@@ -27,7 +27,7 @@ import java.util.Optional;
  * feature.
  *
  * <p>Modernised enum policy (see
- * {@code wecms-api-main/CLAUDE.md §Domain enums}): {@code code()}
+ * {@code wecms-api/CLAUDE.md §Domain enums}): {@code code()}
  * exposes the verbatim DB letter; {@code i18nKey()} returns the
  * frontend i18n key under {@code auth.prdt_type.*}; no
  * {@code @JsonValue}, no {@code @Enumerated}, no localised label

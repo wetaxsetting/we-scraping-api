@@ -54,7 +54,7 @@ import java.util.Locale;
  *
  * <p>Surrogate keys: {@link VasAcctSeqNoGenerator} (Java-side, MAX+1)
  * replaces the legacy {@code wb_get_next_val} branch — refactor preference
- * per {@code wecms-api-main/CLAUDE.md} "DB Function / Legacy Function
+ * per {@code wecms-api/CLAUDE.md} "DB Function / Legacy Function
  * Policy".
  *
  * <p>Refactor enhancements vs. JEX:
@@ -64,7 +64,7 @@ import java.util.Locale;
  *   <li>{@code sort_field} validated against
  *       {@link VasAccountSortField} whitelist; unknown → default sort.</li>
  *   <li>{@code vas_acct_type_key} / {@code stts_key} server-resolved i18n
- *       keys per {@code wecms-api-main/CLAUDE.md} §"Domain enums".</li>
+ *       keys per {@code wecms-api/CLAUDE.md} §"Domain enums".</li>
  * </ul>
  */
 @Slf4j
