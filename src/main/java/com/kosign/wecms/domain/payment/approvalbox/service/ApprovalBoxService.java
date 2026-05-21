@@ -607,16 +607,20 @@ public class ApprovalBoxService {
         String currency = ccyByApprSeqNo.getOrDefault(p.apprSeqNo(), "VND");
         if (currency == null || currency.isBlank()) currency = "VND";
 
-        // Pick the amount column that matches the currency (3 currencies):
-        //   USD → TOT_PAY_USD_AMT
-        //   KRW → TOT_PAY_KHR_AMT (no dedicated KRW column)
-        //   VND (and default) → TOT_PAY_KHR_AMT (VN-tenant legacy alias for KHR column)
+        // Pick the amount column that matches the currency, with TOT_PAY_KHR_AMT
+        // as a fallback for legacy records written before the three-column split.
+        // Old code always wrote to KHR regardless of currency; new code writes
+        // to the correct column and sets KHR = 0 for USD rows.
+        BigDecimal khr = p.totPayKhrAmt() != null ? p.totPayKhrAmt() : BigDecimal.ZERO;
         BigDecimal amt;
         if ("USD".equalsIgnoreCase(currency)) {
-            amt = p.totPayUsdAmt() != null ? p.totPayUsdAmt() : BigDecimal.ZERO;
+            BigDecimal usd = p.totPayUsdAmt();
+            amt = (usd != null && usd.compareTo(BigDecimal.ZERO) != 0) ? usd : khr;
+        } else if ("VND".equalsIgnoreCase(currency)) {
+            BigDecimal vnd = p.totPayVndAmt();
+            amt = (vnd != null && vnd.compareTo(BigDecimal.ZERO) != 0) ? vnd : khr;
         } else {
-            // VND and KRW both live in the KHR column
-            amt = p.totPayKhrAmt() != null ? p.totPayKhrAmt() : BigDecimal.ZERO;
+            amt = khr;
         }
 
         return new ApprovalBoxRow(

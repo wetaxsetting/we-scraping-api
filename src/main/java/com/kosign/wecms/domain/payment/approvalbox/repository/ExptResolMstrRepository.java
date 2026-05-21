@@ -128,7 +128,7 @@ public interface ExptResolMstrRepository
     @Query("""
            SELECT new com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxProjection(
                erm.apprSeqNo, erm.docNo, erm.titl, erm.apprDv, erm.docNm,
-               erm.totPayKhrAmt, erm.totPayUsdAmt, erm.payDate, erm.draftUserId, erm.draftUserNm,
+               erm.totPayKhrAmt, erm.totPayUsdAmt, erm.totPayVndAmt, erm.payDate, erm.draftUserId, erm.draftUserNm,
                erm.regDtm, erm.apprTypeCd, erm.payEndYn,
                (SELECT COUNT(a) FROM ExptResolApprvrInfm a
                 WHERE a.bizKey = erm.bizKey AND a.apprSeqNo = erm.apprSeqNo),
