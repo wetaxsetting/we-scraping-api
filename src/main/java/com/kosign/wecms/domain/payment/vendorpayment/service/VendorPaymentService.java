@@ -30,6 +30,13 @@ import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrDetl
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrId;
 import com.kosign.wecms.domain.payment.internaltransfer.repository.ScdulPymnSumrDetlRepository;
 import com.kosign.wecms.domain.payment.internaltransfer.repository.ScdulPymnSumrRepository;
+import com.kosign.wecms.domain.auth.repository.BusiInfmRepository;
+import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolApprvrInfm;
+import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
+import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolApprvrInfmRepository;
+import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
+import com.kosign.wecms.domain.payment.approvalbox.service.ApprDv;
+import com.kosign.wecms.domain.payment.service.DocNoGenerator;
 import com.kosign.wecms.domain.payment.internaltransfer.service.CutoffValidator;
 import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferFileResolver;
 import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferKeyGenerator;
@@ -53,7 +60,9 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.Clock;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
 import java.util.List;
@@ -124,6 +133,8 @@ public class VendorPaymentService {
     private static final DateTimeFormatter DTM14 =
             DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
 
+    private static final ZoneId VIETNAM_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
+
     private final ScdulPymnSumrRepository       sumrRepository;
     private final ScdulPymnSumrDetlRepository   detlRepository;
     private final AcctMstrRepository            acctMstrRepository;
@@ -136,6 +147,10 @@ public class VendorPaymentService {
     private final AuditLogService               auditLogService;
     private final TransferDispatchExecutor      dispatchExecutor;
     private final Clock                         clock;
+    private final ExptResolMstrRepository       exptResolMstrRepository;
+    private final ExptResolApprvrInfmRepository exptResolApprvrInfmRepository;
+    private final DocNoGenerator                docNoGenerator;
+    private final BusiInfmRepository            busiInfmRepository;
 
     /**
      * List Vendor Payment batches for the current tenant in the given
@@ -170,8 +185,9 @@ public class VendorPaymentService {
                 apprTypeArg,
                 pageable);
 
+        Map<String, String> docNoByApprSeqNo = buildDocNoMap(bizKey, rows.getContent());
         List<ScheduledTransferRow> dtoRows = rows.getContent().stream()
-                .map(VendorPaymentService::toListRow)
+                .map(s -> toListRow(s, docNoByApprSeqNo))
                 .toList();
         List<CurrencyTotal> totals = computeCurrencyTotals(rows.getContent());
 
@@ -187,20 +203,35 @@ public class VendorPaymentService {
      * ---------------------------------------------------------------- */
 
     /**
-     * Detail by composite PK. Returns master fields + per-line list.
+     * Detail by SCDUL_PYMN_NO or DOC_NO. Returns master fields + per-line list.
      * Mirrors legacy {@code pymn_0001_002_r001} (Vendor Payment detail).
+     *
+     * <p>Accepts either the internal {@code SCDUL_PYMN_NO} key (numeric
+     * format) or the user-visible {@code DOC_NO} (VO_YYMMDD_NNN format).
+     * When the primary lookup by SCDUL_PYMN_NO misses, the service resolves
+     * {@code DOC_NO → EXPT_RESOL_MSTR.APPR_SEQ_NO → SCDUL_PYMN_SUMR}.
      */
     @Transactional(readOnly = true)
     public ScheduledTransferDetailResponse detail(String id) {
         String bizKey = requireTenant();
+        // Primary lookup: treat id as SCDUL_PYMN_NO (internal key).
         ScdulPymnSumr master = sumrRepository
                 .findByBizKeyAndScdulPymnNoAndScdulPymnTypeCd(
                         bizKey, id, ScdulPymnTypeCd.VENDOR.code())
+                .or(() ->
+                    // Fallback: treat id as DOC_NO (VO_YYMMDD_NNN user-visible key).
+                    // Resolves DOC_NO → APPR_SEQ_NO → SCDUL_PYMN_SUMR.
+                    exptResolMstrRepository.findByBizKeyAndDocNoAndDelYn(bizKey, id, "N")
+                            .filter(m -> m.getApprSeqNo() != null)
+                            .flatMap(m -> sumrRepository.findByBizKeyAndApprSeqNoAndScdulPymnTypeCd(
+                                    bizKey, m.getApprSeqNo(), ScdulPymnTypeCd.VENDOR.code()))
+                )
                 .orElseThrow(() -> new BusinessException("WBE2060"));
 
+        String resolvedId = master.getScdulPymnNo();
         Sort lineSort = Sort.by(Sort.Order.asc("scdulPymnDetlNo"));
         List<TransferLineDetail> lines = detlRepository
-                .findByBizKeyAndScdulPymnNo(bizKey, id, lineSort)
+                .findByBizKeyAndScdulPymnNo(bizKey, resolvedId, lineSort)
                 .stream()
                 .map(VendorPaymentService::toLineDetail)
                 .toList();
@@ -557,12 +588,13 @@ public class VendorPaymentService {
         }
 
         String apprSeqNo = allocateApprSeqNo(bizKey);
+        String docNo;
         try {
-            stampApproval(master, apprSeqNo, req);
+            docNo = stampApproval(master, apprSeqNo, req);
         } catch (org.springframework.dao.DataIntegrityViolationException race) {
             log.info("feature=vendor-payment apprSeqNo race retrying once bizKey={}", bizKey);
             apprSeqNo = allocateApprSeqNo(bizKey);
-            stampApproval(master, apprSeqNo, req);
+            docNo = stampApproval(master, apprSeqNo, req);
         }
 
         auditLogService.append(AuditLogContext.builder()
@@ -578,31 +610,105 @@ public class VendorPaymentService {
                 "feature=vendor-payment request-approval bizKey={} scdulPymnNo={} apprSeqNo={} apprLineNo={} approvers={}",
                 bizKey, id, apprSeqNo, req.apprLineNo(), req.approvers().size());
 
-        return new RequestApprovalResponse(apprSeqNo);
+        return new RequestApprovalResponse(apprSeqNo, docNo);
     }
 
-    /** Per-tenant MAX(apprSeqNo::numeric) + 1, returned as a decimal
-     *  string (VARCHAR column for legacy parity). Shared with Internal
-     *  Transfer — the column lives on the same physical table. */
+    /** Per-tenant MAX+1 across both EXPT_RESOL_MSTR and SCDUL_PYMN_SUMR so the
+     *  newly issued APPR_SEQ_NO is above any existing rows in either table. */
     private String allocateApprSeqNo(String bizKey) {
-        Long max = sumrRepository.findMaxApprSeqNoByBizKey(bizKey);
-        long next = (max == null ? 0L : max) + 1L;
-        return Long.toString(next);
+        Long fromMstr = exptResolMstrRepository.findMaxApprSeqNoByBizKey(bizKey);
+        Long fromSumr = sumrRepository.findMaxApprSeqNoByBizKey(bizKey);
+        long max = Math.max(
+                fromMstr == null ? 0L : fromMstr,
+                fromSumr == null ? 0L : fromSumr);
+        return Long.toString(max + 1L);
     }
 
-    private void stampApproval(ScdulPymnSumr master, String apprSeqNo,
-                               RequestApprovalRequest req) {
+    private String stampApproval(ScdulPymnSumr master, String apprSeqNo,
+                                RequestApprovalRequest req) {
+        String bizKey  = master.getBizKey();
+        String userId  = TenantContext.currentUserId();
+        String userNm  = TenantContext.currentUserNm();
+        String nowDtm  = ZonedDateTime.ofInstant(clock.instant(), VIETNAM_ZONE).format(DTM14);
+        String draftDate = nowDtm.substring(0, 8);
+        String draftTime = nowDtm.substring(8, 14);
+
+        // 1. Stamp SCDUL_PYMN_SUMR
         master.setApprSeqNo(apprSeqNo);
-        // Initial Pending state — see InternalTransferService.stampApproval
-        // for the full rationale. Flips to "I" / "C" / "X" as approvers act.
         master.setApprStts("P");
         if (req.postTitle() != null && !req.postTitle().isBlank()) {
             master.setTitl(req.postTitle().trim());
         }
-        master.setModDtm(OffsetDateTime.now(clock).format(DTM14));
-        String userId = TenantContext.currentUserId();
+        master.setModDtm(nowDtm);
         if (userId != null) master.setModId(userId);
         sumrRepository.saveAndFlush(master);
+
+        // 2. Write EXPT_RESOL_MSTR master row
+        ExptResolMstr mstr = new ExptResolMstr();
+        mstr.setBizKey(bizKey);
+        mstr.setApprSeqNo(apprSeqNo);
+        mstr.setApprDv(ApprDv.VENDOR.code());
+        mstr.setApprSts("0");
+        mstr.setDraftDate(draftDate);
+        mstr.setDraftTime(draftTime);
+        mstr.setDraftUserId(userId != null ? userId : "");
+        mstr.setDraftUserNm(userNm != null ? userNm : "");
+        mstr.setDraftUserSiteCd(bizKey);
+        String cmpnNm = busiInfmRepository.findById(bizKey)
+                .map(b -> b.getCmpnNm() != null ? b.getCmpnNm() : bizKey)
+                .orElse(bizKey);
+        mstr.setDraftUserSiteNm(cmpnNm);
+        mstr.setHandRegYn("Y");
+        mstr.setApprBoxUseYn("Y");
+        mstr.setApprDatDispYn("N");
+        mstr.setCmpnLogoDispYn("Y");
+        mstr.setRegDispYn("Y");
+        mstr.setTitl(req.postTitle() != null ? req.postTitle().trim() : "");
+        String docNo = docNoGenerator.nextDocNo(bizKey);
+        mstr.setDocNo(docNo);
+        mstr.setDocNm(master.getTitl() != null ? master.getTitl() : master.getScdulPymnNo());
+        BigDecimal amt = master.getTotalTranAmt() != null ? master.getTotalTranAmt() : BigDecimal.ZERO;
+        String ccy = master.getCcyCd() != null ? master.getCcyCd().toUpperCase() : "VND";
+        boolean isUsd = "USD".equals(ccy);
+        boolean isVnd = "VND".equals(ccy);
+        mstr.setTotPayKhrAmt(isUsd ? BigDecimal.ZERO : amt);
+        mstr.setTotPayUsdAmt(isUsd ? amt : BigDecimal.ZERO);
+        mstr.setTotPayVndAmt(isVnd ? amt : BigDecimal.ZERO);
+        mstr.setPayDate(req.payDate() != null && !req.payDate().isBlank() ? req.payDate().trim() : null);
+        mstr.setDelYn("N");
+        mstr.setPayEndYn("N");
+        mstr.setApprTypeCd("00");
+        mstr.setRegId(userId != null ? userId : "");
+        mstr.setRegDtm(nowDtm);
+        mstr.setModId(userId);
+        mstr.setModDtm(nowDtm);
+        exptResolMstrRepository.save(mstr);
+
+        // Write doc_no back to SCDUL_PYMN_SUMR so the list query can surface it
+        master.setErpFileNum(docNo);
+        sumrRepository.save(master);
+
+        // 3. Write EXPT_RESOL_APPRVR_INFM rows — first approver "P" (active), rest "W" (waiting)
+        List<RequestApprovalRequest.ApproverInput> approvers = req.approvers();
+        for (int i = 0; i < approvers.size(); i++) {
+            RequestApprovalRequest.ApproverInput ap = approvers.get(i);
+            ExptResolApprvrInfm row = new ExptResolApprvrInfm();
+            row.setBizKey(bizKey);
+            row.setApprSeqNo(apprSeqNo);
+            row.setApprvrId(ap.apprvrId());
+            row.setApprvrStts(i == 0 ? "P" : "W");
+            row.setApprvrNm(ap.apprvrNm());
+            row.setApprDtm(null);
+            row.setRegId(userId);
+            row.setRegDtm(nowDtm);
+            row.setModId(userId != null ? userId : "");
+            row.setModDtm(nowDtm);
+            row.setReadYn("N");
+            row.setApprvrLineNo(BigDecimal.valueOf(i + 1));
+            row.setApprLineNo(BigDecimal.valueOf(req.apprLineNo()));
+            exptResolApprvrInfmRepository.save(row);
+        }
+        return docNo;
     }
 
     /* ----------------------------------------------------------------
@@ -743,7 +849,27 @@ public class VendorPaymentService {
                 d.getBankTrnsShortId());
     }
 
-    private static ScheduledTransferRow toListRow(ScdulPymnSumr s) {
+    private Map<String, String> buildDocNoMap(String bizKey, List<ScdulPymnSumr> rows) {
+        List<String> apprSeqNos = rows.stream()
+                .map(ScdulPymnSumr::getApprSeqNo)
+                .filter(seq -> seq != null && !seq.isBlank())
+                .distinct()
+                .toList();
+        if (apprSeqNos.isEmpty()) return Map.of();
+        return exptResolMstrRepository.findByBizKeyAndApprSeqNoIn(bizKey, apprSeqNos)
+                .stream()
+                .filter(m -> m.getDocNo() != null)
+                .collect(java.util.stream.Collectors.toMap(
+                        com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr::getApprSeqNo,
+                        com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr::getDocNo,
+                        (a, b) -> a));
+    }
+
+    private static ScheduledTransferRow toListRow(ScdulPymnSumr s,
+            Map<String, String> docNoByApprSeqNo) {
+        String docNo = s.getApprSeqNo() != null
+                ? docNoByApprSeqNo.getOrDefault(s.getApprSeqNo(), s.getErpFileNum())
+                : s.getErpFileNum();
         return new ScheduledTransferRow(
                 s.getScdulPymnNo(),
                 s.getScdulPymnTypeCd(),
@@ -762,7 +888,7 @@ public class VendorPaymentService {
                 s.getWdrlActNo(),
                 s.getPayTranDt(),
                 s.getOrgFileNm(),
-                s.getErpFileNum(),
+                docNo,
                 s.getWdrlCcyCd());
     }
 

@@ -5,9 +5,12 @@ import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrId;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -38,6 +41,17 @@ public interface ScdulPymnSumrRepository extends JpaRepository<ScdulPymnSumr, Sc
      */
     Optional<ScdulPymnSumr> findByBizKeyAndScdulPymnNoAndScdulPymnTypeCd(
             String bizKey, String scdulPymnNo, String scdulPymnTypeCd);
+
+    /**
+     * Fallback detail read — single row by tenant + approval sequence number +
+     * payment type. Used when the caller supplies a DOC_NO (VO_YYMMDD_NNN)
+     * instead of a SCDUL_PYMN_NO: the service resolves DOC_NO → APPR_SEQ_NO
+     * via EXPT_RESOL_MSTR, then calls this to get the SCDUL_PYMN_SUMR row.
+     * Type discriminator keeps Vendor / Expense / Payroll isolated even though
+     * the APPR_SEQ_NO namespace is shared.
+     */
+    Optional<ScdulPymnSumr> findByBizKeyAndApprSeqNoAndScdulPymnTypeCd(
+            String bizKey, String apprSeqNo, String scdulPymnTypeCd);
 
     /**
      * List read — paged, filtered by tenant + payment type + date range
@@ -148,4 +162,32 @@ public interface ScdulPymnSumrRepository extends JpaRepository<ScdulPymnSumr, Sc
                AND s.appr_seq_no ~ '^[0-9]+$'
             """, nativeQuery = true)
     Long findMaxApprSeqNoByBizKey(@Param("bizKey") String bizKey);
+
+    /** Batch-fetch (apprSeqNo → ccyCd) pairs for the Approval Box list.
+     *  Mirrors the equivalent query on {@code OvrsPymnSumrRepository} — both
+     *  are merged by {@code ApprovalBoxService} so the correct amount column
+     *  is picked regardless of payment type. */
+    @Query("SELECT s.apprSeqNo, s.ccyCd FROM ScdulPymnSumr s " +
+           "WHERE s.bizKey = :bizKey AND s.apprSeqNo IN :apprSeqNos")
+    List<Object[]> findCcyCdByBizKeyAndApprSeqNos(
+            @Param("bizKey")      String bizKey,
+            @Param("apprSeqNos") Collection<String> apprSeqNos);
+
+    /** Write back the approval status from the Approval Box to the payment
+     *  batch row. Called by {@code ApprovalBoxService} after approve / reject
+     *  so the Scheduled Payment list pages reflect the updated status. */
+    @Modifying
+    @Query("""
+            UPDATE ScdulPymnSumr s
+               SET s.apprStts = :apprStts,
+                   s.modId    = :modId,
+                   s.modDtm   = :modDtm
+             WHERE s.bizKey      = :bizKey
+               AND s.apprSeqNo   = :apprSeqNo
+            """)
+    int updateApprStts(@Param("bizKey")    String bizKey,
+                       @Param("apprSeqNo") String apprSeqNo,
+                       @Param("apprStts")  String apprStts,
+                       @Param("modId")     String modId,
+                       @Param("modDtm")    String modDtm);
 }

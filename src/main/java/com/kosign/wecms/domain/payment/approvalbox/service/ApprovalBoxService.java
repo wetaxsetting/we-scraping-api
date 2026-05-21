@@ -18,6 +18,7 @@ import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolApprvrInfmRepository;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
+import com.kosign.wecms.domain.payment.internaltransfer.repository.ScdulPymnSumrRepository;
 import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnSumrRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -120,6 +121,7 @@ public class ApprovalBoxService {
     private final ExptResolMstrRepository        masterRepository;
     private final ExptResolApprvrInfmRepository  approverRepository;
     private final OvrsPymnSumrRepository         ovrsPymnSumrRepository;
+    private final ScdulPymnSumrRepository        scdulPymnSumrRepository;
     private final AuditLogService                auditLogService;
 
     /* =================================================================
@@ -179,8 +181,12 @@ public class ApprovalBoxService {
                 bizKey, userId, isAdmin, fromDt, toDt, keywordPattern);
         if (tabCounts == null) tabCounts = ApprovalBoxTabCounts.empty();
 
-        // Batch-fetch CCY_CD from OVRS_PYMN_SUMR for all apprSeqNos in this
-        // page so we don't hardcode "VND" for USD overseas-payment rows.
+        // Batch-fetch CCY_CD from both OVRS_PYMN_SUMR and SCDUL_PYMN_SUMR for all
+        // apprSeqNos in this page.  SCDUL covers Internal Transfer / Expense /
+        // Vendor / Payroll; OVRS covers Overseas.  The two result sets are merged
+        // so USD batches from either table resolve to the correct amount column
+        // (TOT_PAY_USD_AMT) instead of falling back to the "VND" default and
+        // reading the wrong (zero) TOT_PAY_KHR_AMT value.
         List<String> apprSeqNos = result.getContent().stream()
                 .map(ApprovalBoxProjection::apprSeqNo)
                 .filter(s -> s != null && !s.isBlank())
@@ -190,6 +196,11 @@ public class ApprovalBoxService {
         if (!apprSeqNos.isEmpty()) {
             ovrsPymnSumrRepository.findCcyCdByBizKeyAndApprSeqNos(bizKey, apprSeqNos)
                     .forEach(row -> ccyByApprSeqNo.put((String) row[0], (String) row[1]));
+            // SCDUL_PYMN_SUMR rows don't appear in OVRS, so query it separately;
+            // putIfAbsent keeps the OVRS value when both tables happen to carry
+            // the same apprSeqNo (shouldn't occur, but defensive).
+            scdulPymnSumrRepository.findCcyCdByBizKeyAndApprSeqNos(bizKey, apprSeqNos)
+                    .forEach(row -> ccyByApprSeqNo.putIfAbsent((String) row[0], (String) row[1]));
         }
 
         List<ApprovalBoxRow> rows = result.getContent().stream()
@@ -427,6 +438,11 @@ public class ApprovalBoxService {
         ctx.master.setModDtm(nowDtm);
         masterRepository.save(ctx.master);
 
+        // Write APPR_STTS back to the payment source table so list pages reflect the new status.
+        String apprStts = ApprTypeCd.APPROVED.equals(ctx.master.getApprTypeCd()) ? "C" : "I";
+        writeBackApprStts(ctx.bizKey, ctx.master.getApprSeqNo(), ctx.master.getApprDv(),
+                apprStts, ctx.userId, nowDtm);
+
         ctx.totalCount    = approverRepository.findChain(
                 ctx.bizKey, ctx.master.getApprSeqNo()).size();
         ctx.approvedCount = approverRepository.countByStatus(
@@ -451,10 +467,27 @@ public class ApprovalBoxService {
         ctx.master.setModDtm(nowDtm);
         masterRepository.save(ctx.master);
 
+        // Write APPR_STTS = 'X' back to the payment source table.
+        writeBackApprStts(ctx.bizKey, ctx.master.getApprSeqNo(), ctx.master.getApprDv(),
+                "X", ctx.userId, nowDtm);
+
         ctx.totalCount    = approverRepository.findChain(
                 ctx.bizKey, ctx.master.getApprSeqNo()).size();
         ctx.approvedCount = approverRepository.countByStatus(
                 ctx.bizKey, ctx.master.getApprSeqNo(), ApprvrStts.APPROVED);
+    }
+
+    /** Routes the APPR_STTS write-back to the correct payment source table.
+     *  OVERSEAS (apprDv='34') lives in OVRS_PYMN_SUMR; every other
+     *  payment type (Internal Transfer/Vendor/Expense/Payroll) lives in
+     *  SCDUL_PYMN_SUMR. */
+    private void writeBackApprStts(String bizKey, String apprSeqNo, String apprDv,
+                                   String apprStts, String modId, String modDtm) {
+        if (ApprDv.OVERSEAS.code().equals(apprDv)) {
+            ovrsPymnSumrRepository.updateApprStts(bizKey, apprSeqNo, apprStts, modId, modDtm);
+        } else {
+            scdulPymnSumrRepository.updateApprStts(bizKey, apprSeqNo, apprStts, modId, modDtm);
+        }
     }
 
     private void promoteNextWaiting(ApproveContext ctx, String nowDtm) {

@@ -3,6 +3,7 @@ package com.kosign.wecms.domain.payment.overseas.repository;
 import com.kosign.wecms.domain.payment.entity.OvrsPymnSumr;
 import com.kosign.wecms.domain.payment.entity.OvrsPymnSumrId;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -33,6 +34,12 @@ public interface OvrsPymnSumrRepository extends JpaRepository<OvrsPymnSumr, Ovrs
            nativeQuery = true)
     Long findMaxApprSeqNoByBizKey(@Param("bizKey") String bizKey);
 
+    /** Look up the batch row that owns the given approval sequence number.
+     *  Used as a fallback when the caller supplies a DOC_NO instead of
+     *  an OVRS_PYMN_NO — the service resolves DOC_NO → APPR_SEQ_NO via
+     *  EXPT_RESOL_MSTR, then calls this to get the OVRS_PYMN_SUMR row. */
+    Optional<OvrsPymnSumr> findByBizKeyAndApprSeqNo(String bizKey, String apprSeqNo);
+
     /** Batch-fetch (apprSeqNo → ccyCd) pairs for the Approval Box list.
      *  Returns only rows whose apprSeqNo is in the given set so the
      *  caller can build a lookup map without an N+1 query. */
@@ -41,4 +48,22 @@ public interface OvrsPymnSumrRepository extends JpaRepository<OvrsPymnSumr, Ovrs
     List<Object[]> findCcyCdByBizKeyAndApprSeqNos(
             @Param("bizKey")      String bizKey,
             @Param("apprSeqNos") Collection<String> apprSeqNos);
+
+    /** Write back the approval status from the Approval Box to the overseas
+     *  payment batch row. Called by {@code ApprovalBoxService} after approve /
+     *  reject so the Overseas Payment list page reflects the updated status. */
+    @Modifying
+    @Query("""
+            UPDATE OvrsPymnSumr s
+               SET s.apprStts = :apprStts,
+                   s.modId    = :modId,
+                   s.modDtm   = :modDtm
+             WHERE s.bizKey      = :bizKey
+               AND s.apprSeqNo   = :apprSeqNo
+            """)
+    int updateApprStts(@Param("bizKey")    String bizKey,
+                       @Param("apprSeqNo") String apprSeqNo,
+                       @Param("apprStts")  String apprStts,
+                       @Param("modId")     String modId,
+                       @Param("modDtm")    String modDtm);
 }

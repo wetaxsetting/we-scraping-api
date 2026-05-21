@@ -4,6 +4,9 @@ import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxProjection;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxTabCounts;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId;
+import java.util.Collection;
+import java.util.List;
+import java.util.Optional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -40,6 +43,13 @@ import org.springframework.data.repository.query.Param;
 public interface ExptResolMstrRepository
         extends JpaRepository<ExptResolMstr, ExptResolMstrId> {
 
+    /** Look up a non-deleted approval master row by its user-visible document number.
+     *  Used by the overseas-payment detail endpoint to resolve a DOC_NO
+     *  (VO_YYMMDD_NNN format) sent by the frontend into the APPR_SEQ_NO
+     *  needed to find the matching OVRS_PYMN_SUMR row. */
+    Optional<ExptResolMstr> findByBizKeyAndDocNoAndDelYn(
+            String bizKey, String docNo, String delYn);
+
     /** Per-tenant MAX(apprSeqNo::bigint) for cross-table allocation.
      *  Used by the overseas-payment request-approval path to ensure the
      *  newly issued APPR_SEQ_NO is above any existing master rows. */
@@ -47,6 +57,42 @@ public interface ExptResolMstrRepository
                    "WHERE biz_key = :bizKey AND appr_seq_no ~ '^[0-9]+$'",
            nativeQuery = true)
     Long findMaxApprSeqNoByBizKey(@Param("bizKey") String bizKey);
+
+    /**
+     * Returns the MAX trailing numeric sequence extracted from existing
+     * {@code DOC_NO} values that share the same tenant + date prefix
+     * (e.g. {@code "VO_260512_"}).
+     *
+     * <p>Used by {@code DocNoGenerator} to compute the next
+     * {@code VO_YYMMDD_NNN} value. The regex {@code '[0-9]+$'} strips the
+     * padded-zero suffix (e.g. {@code "001"} → {@code 1}); CAST to NUMERIC
+     * handles strings of any length. Returns 0 when no rows match so the
+     * caller always gets a concrete starting point.
+     */
+    @Query(value = """
+           SELECT COALESCE(MAX(
+               CAST(SUBSTRING(doc_no FROM '[0-9]+$') AS NUMERIC)
+           ), 0)
+           FROM expt_resol_mstr
+           WHERE biz_key   = :bizKey
+             AND del_yn    = 'N'
+             AND UPPER(doc_no) LIKE UPPER(:datePrefix) || '%'
+           """, nativeQuery = true)
+    Long findMaxDocNoSeqForDate(
+            @Param("bizKey")     String bizKey,
+            @Param("datePrefix") String datePrefix);
+
+    /**
+     * Batch fetch — returns the (apprSeqNo, docNo) pairs for a set of
+     * approval sequence numbers in a single query. Used by payment list
+     * services to fill in DOC_NO for rows where the write-back to
+     * SCDUL_PYMN_SUMR.ERP_FILE_NUM did not occur (seed / legacy data).
+     */
+    @Query("SELECT erm FROM ExptResolMstr erm " +
+           "WHERE erm.bizKey = :bizKey AND erm.apprSeqNo IN :apprSeqNos AND erm.delYn = 'N'")
+    List<ExptResolMstr> findByBizKeyAndApprSeqNoIn(
+            @Param("bizKey")      String bizKey,
+            @Param("apprSeqNos") Collection<String> apprSeqNos);
 
     /**
      * Page slice with filter, search, sort, pagination, and per-user

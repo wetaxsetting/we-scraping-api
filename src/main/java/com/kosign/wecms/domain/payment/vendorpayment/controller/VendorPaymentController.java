@@ -78,10 +78,11 @@ import org.springframework.web.multipart.MultipartFile;
 @Validated
 public class VendorPaymentController {
 
-    /** Path-segment guard for {@code scdul_pymn_no} values. Mirrors
-     *  the InternalTransferController precedent — permissive 5..30 digits
-     *  to accept legacy DEV-imported ids during seed work. */
-    private static final String SCDUL_PYMN_NO_PATTERN = "^[0-9]{5,30}$";
+    /** Path-segment guard for {@code scdul_pymn_no} values. Accepts both
+     *  the internal numeric key (5–30 digits) and the user-visible DOC_NO
+     *  (VO_YYMMDD_NNN format, e.g. VO_260521_001) so the frontend can
+     *  navigate to the detail page using either identifier. */
+    private static final String SCDUL_PYMN_NO_PATTERN = "^([0-9]{5,30}|VO_[0-9]{6}_[0-9]{1,9})$";
 
     private final VendorPaymentService       service;
     private final VendorPaymentResultService resultService;
