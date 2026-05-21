@@ -175,10 +175,10 @@ public class ApprovalBoxService {
 
         Page<ApprovalBoxProjection> result = masterRepository.search(
                 bizKey, userId, isAdmin,
-                fromDt, toDt, apprTypeFilter, keywordPattern, pageable);
+                fromDt, toDt, apprTypeFilter, keywordPattern, keywordPattern, pageable);
 
         ApprovalBoxTabCounts tabCounts = masterRepository.countTabs(
-                bizKey, userId, isAdmin, fromDt, toDt, keywordPattern);
+                bizKey, userId, isAdmin, fromDt, toDt, keywordPattern, keywordPattern);
         if (tabCounts == null) tabCounts = ApprovalBoxTabCounts.empty();
 
         // Batch-fetch CCY_CD from both OVRS_PYMN_SUMR and SCDUL_PYMN_SUMR for all

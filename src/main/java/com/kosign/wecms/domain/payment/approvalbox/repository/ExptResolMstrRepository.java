@@ -161,7 +161,7 @@ public interface ExptResolMstrRepository
      */
     @Query("""
            SELECT new com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxProjection(
-               erm.apprSeqNo, erm.docNo, erm.titl, erm.apprDv, erm.docNm,
+               erm.apprSeqNo, erm.docNo, erm.titl, erm.apprDv, erm.docNm, erm.cont,
                erm.totPayKhrAmt, erm.totPayUsdAmt, erm.totPayVndAmt, erm.payDate, erm.draftUserId, erm.draftUserNm,
                erm.regDtm, erm.apprTypeCd, erm.payEndYn,
                (SELECT COUNT(a) FROM ExptResolApprvrInfm a
@@ -176,9 +176,9 @@ public interface ExptResolMstrRepository
              AND erm.draftDate BETWEEN :fromDate AND :toDate
              AND (:apprTypeCd IS NULL OR erm.apprTypeCd = :apprTypeCd)
              AND (:keywordPattern IS NULL OR
-                  LOWER(erm.docNm) LIKE :keywordPattern ESCAPE '!' OR
-                  LOWER(erm.titl)  LIKE :keywordPattern ESCAPE '!' OR
-                  LOWER(erm.docNo) LIKE :keywordPattern ESCAPE '!')
+                  LOWER(erm.docNm) LIKE :keywordLike ESCAPE '!' OR
+                  LOWER(erm.titl)  LIKE :keywordLike ESCAPE '!' OR
+                  LOWER(erm.docNo) LIKE :keywordLike ESCAPE '!')
              AND ( :isAdmin = TRUE
                    OR erm.regId = :userId
                    OR EXISTS (SELECT 1 FROM ExptResolApprvrInfm a
@@ -194,6 +194,7 @@ public interface ExptResolMstrRepository
             @Param("toDate")         String toDate,
             @Param("apprTypeCd")     String apprTypeCd,
             @Param("keywordPattern") String keywordPattern,
+            @Param("keywordLike")    String keywordLike,
             Pageable pageable);
 
     /**
@@ -218,9 +219,9 @@ public interface ExptResolMstrRepository
              AND erm.apprDv IN ('21','31','32','33','34','35')
              AND erm.draftDate BETWEEN :fromDate AND :toDate
              AND (:keywordPattern IS NULL OR
-                  LOWER(erm.docNm) LIKE :keywordPattern ESCAPE '!' OR
-                  LOWER(erm.titl)  LIKE :keywordPattern ESCAPE '!' OR
-                  LOWER(erm.docNo) LIKE :keywordPattern ESCAPE '!')
+                  LOWER(erm.docNm) LIKE :keywordLike ESCAPE '!' OR
+                  LOWER(erm.titl)  LIKE :keywordLike ESCAPE '!' OR
+                  LOWER(erm.docNo) LIKE :keywordLike ESCAPE '!')
              AND ( :isAdmin = TRUE
                    OR erm.regId = :userId
                    OR EXISTS (SELECT 1 FROM ExptResolApprvrInfm a
@@ -234,7 +235,8 @@ public interface ExptResolMstrRepository
             @Param("isAdmin")        boolean isAdmin,
             @Param("fromDate")       String fromDate,
             @Param("toDate")         String toDate,
-            @Param("keywordPattern") String keywordPattern);
+            @Param("keywordPattern") String keywordPattern,
+            @Param("keywordLike")    String keywordLike);
 
     /**
      * Cash Flow report support — return the subset of supplied
