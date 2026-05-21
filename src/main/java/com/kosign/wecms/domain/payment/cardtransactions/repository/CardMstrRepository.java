@@ -57,16 +57,21 @@ public interface CardMstrRepository extends JpaRepository<CardMstr, CardMstrId> 
      * which the JEX side feeds into {@code nxisas_cardTranList}.
      *
      * <p>Ordered by bank then card-no for deterministic per-credential
-     * batching. {@code BANK_CERT_SEQ} is null on rows whose legacy
-     * import never carried a credential — those rows are excluded
-     * from the sync since the orchestrator can't authenticate without
-     * one.
+     * batching. Rows where {@code BANK_CERT_SEQ IS NULL} are
+     * INCLUDED — the orchestrator falls back to resolving the
+     * credential via {@code BankCertInfoRepository.findFirstByBizKeyAndBankCdOrderBySeqNoAsc(...)}
+     * so orphan rows from the original Add Card flow (which inserted
+     * cards with {@code BANK_CERT_SEQ} NULL because the
+     * {@code ApiScrapeSessionResponse} didn't surface the cert
+     * SEQ_NO) still scrape successfully as long as any credential
+     * for the bank exists in {@code BANK_CERT_INFO}. Cards whose
+     * bank has zero credentials at all surface as
+     * {@code WBE_CARD_SYNC_NO_CREDENTIAL} per card.
      */
     @Query("""
             SELECT c FROM CardMstr c
              WHERE c.bizKey = :bizKey
                AND c.actvYn = 'Y'
-               AND c.bankCertSeq IS NOT NULL
              ORDER BY c.bankCd ASC, c.cardNo ASC
             """)
     List<CardMstr> findActiveCardsForSync(@Param("bizKey") String bizKey);

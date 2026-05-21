@@ -10,6 +10,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -177,6 +178,35 @@ public interface CardTrnsHstrRepository extends JpaRepository<CardTrnsHstr, Card
             String trscTm, java.math.BigDecimal trscAmt);
 
     /**
+     * Cash Flow report aggregator read &mdash; all classified card
+     * transactions for the tenant in a calendar year. Mirrors the
+     * legacy {@code get_cashflow_report()} function body's per-source
+     * predicate:
+     * {@code WHERE biz_key = ? AND chart_acct_cd <> '' AND
+     * EXTRACT(YEAR FROM TO_DATE(trsc_dt,'YYYYMMDD')) = ?}.
+     *
+     * <p>The year filter is applied as a string-prefix match
+     * ({@code SUBSTRING(trsc_dt, 1, 4) = :year}) so the index on
+     * {@code (biz_key, chart_acct_cd, trsc_dt)} is usable. The
+     * approval-status gate runs in Java, not in this query.
+     *
+     * <p>Previously lived on a parallel {@code banking.repository.CardTrnsHstrRepository};
+     * consolidated here on 2026-05-20 to remove the bean-name +
+     * Hibernate-entity-name collision between the two repository /
+     * entity pairs.
+     */
+    @Query("""
+            SELECT c FROM CardTrnsHstr c
+             WHERE c.bizKey = :bizKey
+               AND c.chartAcctCd IS NOT NULL
+               AND c.chartAcctCd <> ''
+               AND SUBSTRING(c.trscDt, 1, 4) = :year
+            """)
+    List<CardTrnsHstr> findClassifiedByBizKeyAndYear(
+            @Param("bizKey") String bizKey,
+            @Param("year")   String year);
+
+    /**
      * Narrow {@code CONT} writer. Returns the number of rows affected so
      * the service can throw {@code WBE_CARD_TRANSACTIONS_NOT_FOUND}
      * when the PK doesn't resolve in the tenant.
@@ -251,4 +281,23 @@ public interface CardTrnsHstrRepository extends JpaRepository<CardTrnsHstr, Card
         Long       getTotlApprNotReqCnt();
         BigDecimal getTotlApprNotReqAmt();
     }
+
+    /**
+     * Every card transaction stamped with the given {@code APPR_SEQ_NO}
+     * for the tenant. Ordered by transaction date / time desc so the
+     * Approval Box detail popup shows the most recent purchase first.
+     *
+     * <p>Consumed by the Approval Box's per-card detail loader to
+     * populate the Transaction Details grid when the user opens the
+     * read-only Approval Details popup for an {@code APPR_DV='33'} row.
+     */
+    @Query("""
+            SELECT c FROM CardTrnsHstr c
+             WHERE c.bizKey    = :bizKey
+               AND c.apprSeqNo = :apprSeqNo
+             ORDER BY c.trscDt DESC, c.trscTm DESC, c.cardSeqNo DESC
+            """)
+    java.util.List<CardTrnsHstr> findByBizKeyAndApprSeqNo(
+            @Param("bizKey")    String bizKey,
+            @Param("apprSeqNo") String apprSeqNo);
 }

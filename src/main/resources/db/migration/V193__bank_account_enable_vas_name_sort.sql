@@ -1,5 +1,5 @@
 -- =====================================================================
--- V178 — Settings > Bank Account: enable sort on the VAS_NAME column.
+-- V193 — Settings > Bank Account: enable sort on the VAS_NAME column.
 --
 -- File body originally headed "V152" → was renumbered to V164 in a
 -- previous dedup pass → renumbered again to V178 on 2026-05-19 to

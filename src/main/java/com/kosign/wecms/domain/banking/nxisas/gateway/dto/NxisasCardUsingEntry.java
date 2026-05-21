@@ -7,30 +7,39 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 /**
- * One row of {@code NxisasCardUsingJobResult.tranList} — a single
- * card transaction returned by the Coocon CARD_USING job. Field
- * names mirror the Coocon adapter output for VN bank card scrapes
- * (verified against the legacy {@code _v2nxisas.callNxisas} output
- * shape).
+ * One row of {@code NxisasCardUsingCardArr.cardUsing} &mdash; a single
+ * card transaction returned by the Coocon CARD_USING job. Field names
+ * mirror the Coocon CMO class
+ * {@code kr.co.coocon.ibasews.cmo.CARD_USING} verbatim (see legacy
+ * {@code fnsh_0001_001_c001_act.jsp:1325-1410} for the canonical
+ * read shape).
  *
- * <p>Mapped onto {@code CARD_TRNS_HSTR} per the legacy
- * {@code fnsh_0001_001_c001} insert flow:
+ * <p>Mapped onto {@code CARD_TRNS_HSTR} per the legacy save flow:
  *
  * <ul>
- *   <li>{@code tranDate}     → {@code TRSC_DT} (yyyyMMdd)</li>
- *   <li>{@code tranTime}     → {@code TRSC_TM} (HHmmss; optional)</li>
- *   <li>{@code merchant}     → {@code MERCH_NM}</li>
- *   <li>{@code amount}       → {@code TRSC_AMT}</li>
- *   <li>{@code currency}     → {@code CCY_CD}</li>
- *   <li>{@code inoutDv}      → {@code INOUT_DV} ("1" / "2")</li>
- *   <li>{@code authCode}     → {@code AUTH_CODE}</li>
- *   <li>{@code city}         → {@code CITY}</li>
- *   <li>{@code prchStts}     → {@code PRCH_STTS}</li>
- *   <li>{@code usingType}    → {@code USING_TYPE}</li>
+ *   <li>{@code usingDate}      &rarr; {@code TRSC_DT} (yyyyMMdd)</li>
+ *   <li>{@code usingTime}      &rarr; {@code TRSC_TM} (HHmmss; optional)</li>
+ *   <li>{@code franchise}      &rarr; {@code MERCH_NM}</li>
+ *   <li>{@code usingAmt}       &rarr; {@code TRSC_AMT}</li>
+ *   <li>{@code currency}       &rarr; {@code CCY_CD}</li>
+ *   <li>{@code authCode}       &rarr; {@code AUTH_CODE}</li>
+ *   <li>{@code city}           &rarr; {@code CITY}</li>
+ *   <li>{@code purchaseStatus} &rarr; {@code PRCH_STTS} (mapped per
+ *       bank by {@code CardTransactionSyncService#mapPurchaseStatus})</li>
+ *   <li>{@code usingType}      &rarr; {@code USING_TYPE}</li>
+ *   <li>{@code cardName}       &rarr; {@code CARD_NM}</li>
+ *   <li>{@code cardNum}        &rarr; cross-check against the requested
+ *       card (defence-in-depth; the orchestrator already knows the
+ *       card from the per-cert loop)</li>
  * </ul>
  *
- * <p>Banks that omit a field send {@code null} — the mapper writes
- * the entity column as {@code null} too (legacy parity).
+ * <p>Coocon's CARD_USING response does NOT carry an {@code inoutDv}
+ * field &mdash; card transactions are always debits, so the service
+ * stamps {@code INOUT_DV='2'} unconditionally. Same for {@code note}
+ * &mdash; Coocon doesn't return one, the column stays null.
+ *
+ * <p>Banks that omit any field send {@code null} &mdash; the mapper
+ * writes the entity column as {@code null} too (legacy parity).
  */
 @Getter
 @Setter
@@ -38,15 +47,15 @@ import lombok.Setter;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class NxisasCardUsingEntry {
 
-    @JsonProperty("tranDate")  private String tranDate;
-    @JsonProperty("tranTime")  private String tranTime;
-    @JsonProperty("merchant")  private String merchant;
-    @JsonProperty("amount")    private String amount;
-    @JsonProperty("currency")  private String currency;
-    @JsonProperty("inoutDv")   private String inoutDv;
-    @JsonProperty("authCode")  private String authCode;
-    @JsonProperty("city")      private String city;
-    @JsonProperty("prchStts")  private String prchStts;
-    @JsonProperty("usingType") private String usingType;
-    @JsonProperty("note")      private String note;
+    @JsonProperty("cardNum")        private String cardNum;
+    @JsonProperty("cardName")       private String cardName;
+    @JsonProperty("usingDate")      private String usingDate;
+    @JsonProperty("usingTime")      private String usingTime;
+    @JsonProperty("franchise")      private String franchise;
+    @JsonProperty("usingAmt")       private String usingAmt;
+    @JsonProperty("currency")       private String currency;
+    @JsonProperty("authCode")       private String authCode;
+    @JsonProperty("city")           private String city;
+    @JsonProperty("purchaseStatus") private String purchaseStatus;
+    @JsonProperty("usingType")      private String usingType;
 }

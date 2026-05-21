@@ -2,9 +2,9 @@ package com.kosign.wecms.domain.banking.service.cashflow;
 
 import com.kosign.wecms.domain.banking.dto.BankFilter;
 import com.kosign.wecms.domain.banking.entity.AcctTrnsHstr;
-import com.kosign.wecms.domain.banking.entity.CardTrnsHstr;
 import com.kosign.wecms.domain.banking.repository.AcctTrnsHstrRepository;
-import com.kosign.wecms.domain.banking.repository.CardTrnsHstrRepository;
+import com.kosign.wecms.domain.payment.cardtransactions.entity.CardTrnsHstr;
+import com.kosign.wecms.domain.payment.cardtransactions.repository.CardTrnsHstrRepository;
 import com.kosign.wecms.domain.payment.entity.OvrsPymnMstr;
 import com.kosign.wecms.domain.payment.internaltransfer.repository.ScdulPymnCashFlowRow;
 import com.kosign.wecms.domain.payment.internaltransfer.repository.ScdulPymnSumrDetlRepository;

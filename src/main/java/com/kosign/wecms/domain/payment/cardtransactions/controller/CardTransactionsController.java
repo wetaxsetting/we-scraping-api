@@ -3,15 +3,21 @@ package com.kosign.wecms.domain.payment.cardtransactions.controller;
 import com.kosign.wecms.common.response.ApiResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardListResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardManagementListResponse;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTranListPeriodLimitRequest;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTranListPeriodLimitResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTransactionListResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTransactionPatchRequest;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTransactionRow;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CreateCardsRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CreateCardsResponse;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.RequestApprovalRequest;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.RequestApprovalResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.SyncCardTransactionsRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.SyncCardTransactionsResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.UpdateCardActiveRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.UpdateCardInfoRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.UpdateReportingAccountRequest;
+import com.kosign.wecms.domain.payment.cardtransactions.service.CardTranListR001Service;
 import com.kosign.wecms.domain.payment.cardtransactions.service.CardTransactionSyncService;
 import com.kosign.wecms.domain.payment.cardtransactions.service.CardTransactionsService;
 import jakarta.validation.Valid;
@@ -88,6 +94,7 @@ public class CardTransactionsController {
 
     private final CardTransactionsService    service;
     private final CardTransactionSyncService syncService;
+    private final CardTranListR001Service    cardTranListR001Service;
 
     /* ----------------------------------------------------------------
      *  Read — list
@@ -127,6 +134,25 @@ public class CardTransactionsController {
         return ApiResponse.ok(service.list(
                 fromDt, toDt, srchWd, bankCds, cardNos, linkYn,
                 sortField, sortDirection, page, size));
+    }
+
+    /* ----------------------------------------------------------------
+     *  Read — card transactions for one APPR_SEQ_NO
+     *
+     *  Consumed by the Approval Box's shared
+     *  `<ApprovalDetailsDialog kind="card">` popup so the Transaction
+     *  Details section shows every card stamped with the picked
+     *  approval reference. Mirrors the legacy
+     *  `comm_0195_001.ts:CardDetails(data.REC4)` data path.
+     * ---------------------------------------------------------------- */
+
+    @GetMapping("/by-approval/{apprSeqNo}")
+    public ApiResponse<java.util.List<CardTransactionRow>> listByApproval(
+            @PathVariable("apprSeqNo")
+            @Pattern(regexp = "^[0-9]{1,15}$",
+                     message = "appr_seq_no: invalid format")
+            String apprSeqNo) {
+        return ApiResponse.ok(service.listByApprSeqNo(apprSeqNo));
     }
 
     /* ----------------------------------------------------------------
@@ -346,5 +372,39 @@ public class CardTransactionsController {
     public ApiResponse<SyncCardTransactionsResponse> sync(
             @Valid @RequestBody SyncCardTransactionsRequest req) {
         return ApiResponse.ok(syncService.sync(req));
+    }
+
+    /**
+     * Update Cards popup &mdash; per-bank period-limit lookup. Mirrors
+     * legacy {@code POST nxisas_cardTranList_r001.jct} feeding the
+     * popup's {@code setLimitPeriod()} / date-range validator.
+     *
+     * <p>Caller posts {@code REC_IN = [{bank_cd, bank_cert_seq}, ...]};
+     * service queries {@code BANK_INFM_DETL} where
+     * {@code BANK_DETL_INFO_CD IN ('26','27')} joined through
+     * {@code BANK_CERT_INFO.NXISAS_GB_SEQ_NO}; returns one row per
+     * input pair with {@code cont1} (count) + {@code cont2} (unit).
+     * Falls back to the legacy default ({@code 90 days}) when the
+     * refactor hasn't seeded the per-bank rows yet.
+     */
+    @PostMapping("/period-limits")
+    public ApiResponse<CardTranListPeriodLimitResponse> periodLimits(
+            @Valid @RequestBody CardTranListPeriodLimitRequest req) {
+        return ApiResponse.ok(cardTranListR001Service.fetch(req));
+    }
+
+    /**
+     * Batch &quot;Request Approval&quot; for selected card-transaction
+     * rows. Mirrors legacy {@code card_0001_001.ts:661-676} which
+     * routed every Request Approval click through
+     * {@code comm_0194_001.act} ({@code APPR_DV='33'}). Stamps
+     * {@code APPR_SEQ_NO} on every selected row. See
+     * {@code CardTransactionsService#requestApproval} for the
+     * EXPT_RESOL_MSTR follow-up note.
+     */
+    @PostMapping("/request-approval")
+    public ApiResponse<RequestApprovalResponse> requestApproval(
+            @Valid @RequestBody RequestApprovalRequest req) {
+        return ApiResponse.ok(service.requestApproval(req));
     }
 }

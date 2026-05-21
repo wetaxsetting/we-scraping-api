@@ -1,5 +1,5 @@
 -- ============================================================================
--- V170 — Chart of Accounts: extend demo seed for VN_VNM0004_000001 with the
+-- V191 — Chart of Accounts: extend demo seed for VN_VNM0004_000001 with the
 --        full DEV L2/L3 tree under ACC-01 / ACC-02 / ACC-03.
 --
 -- V97 only imported 9 rows for tenant VN_VNM0004_000001, which left ACC-02

@@ -1,5 +1,5 @@
 -- =============================================================================
--- V176 — Payment > Card Transactions (slug: card-transactions) schema + seed
+-- V192 — Payment > Card Transactions (slug: card-transactions) schema + seed
 -- =============================================================================
 -- Two PROD-active-list tables ported column-for-column from DEV
 -- (wecmsvndevdb @ 10.254.242.254:54311, verified 2026-05-18 via the read-only
