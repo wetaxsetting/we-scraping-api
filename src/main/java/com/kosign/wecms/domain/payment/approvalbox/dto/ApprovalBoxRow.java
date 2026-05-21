@@ -38,6 +38,12 @@ public record ApprovalBoxRow(
         /** User-supplied subject. */
         String title,
 
+        /** Free-form approval content ({@code EXPT_RESOL_MSTR.CONT}).
+         *  Optional textarea the requestor fills in on the Request
+         *  Approval dialog; rendered on the Approval Details popup's
+         *  "Approval Content" section. */
+        String cont,
+
         /** Raw {@code APPR_DV} digit (one of {@code 21}/{@code 31}/
          *  {@code 32}/{@code 33}/{@code 34}/{@code 35}). Kept on the wire
          *  for legacy traceability — frontend reads {@link #typeLabel}. */

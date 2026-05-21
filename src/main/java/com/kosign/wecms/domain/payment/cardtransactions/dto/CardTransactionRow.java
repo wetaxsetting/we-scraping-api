@@ -44,6 +44,12 @@ public record CardTransactionRow(
         String           chartAcctCd,
         String           cont,
         String           apprSeqNo,
+        /** {@code EXPT_RESOL_MSTR.DOC_NO} (e.g. {@code "VO_260521_001"})
+         *  for the approval the row was submitted under. Null when the
+         *  row carries no {@code APPR_SEQ_NO} (yellow / not requested).
+         *  The frontend's Approval Ref. column renders this instead of
+         *  the raw numeric {@code APPR_SEQ_NO}. */
+        String           apprDocNo,
         String           stts,
         String           sttsKey,
         List<LinkedDocRef> linkedDocs,

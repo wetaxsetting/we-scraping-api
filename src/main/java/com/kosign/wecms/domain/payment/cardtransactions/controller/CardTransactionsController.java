@@ -10,6 +10,7 @@ import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTransactionPatch
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTransactionRow;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CreateCardsRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CreateCardsResponse;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.NextDocNoResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.RequestApprovalRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.RequestApprovalResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.SyncCardTransactionsRequest;
@@ -153,6 +154,40 @@ public class CardTransactionsController {
                      message = "appr_seq_no: invalid format")
             String apprSeqNo) {
         return ApiResponse.ok(service.listByApprSeqNo(apprSeqNo));
+    }
+
+    /**
+     * Withdraw a pending Card Approval — kebab-menu "Delete" on the
+     * Approval Details popup. Deletes the EXPT_RESOL_MSTR +
+     * EXPT_RESOL_APPRVR_INFM rows for this {@code apprSeqNo} and
+     * clears every {@code CARD_TRNS_HSTR.APPR_SEQ_NO} pointing at it.
+     */
+    @DeleteMapping("/by-approval/{apprSeqNo}")
+    public ApiResponse<Void> withdrawApproval(
+            @PathVariable("apprSeqNo")
+            @Pattern(regexp = "^[0-9]{1,15}$",
+                     message = "appr_seq_no: invalid format")
+            String apprSeqNo) {
+        service.withdrawApproval(apprSeqNo);
+        return ApiResponse.ok(null);
+    }
+
+    /**
+     * Change the approval line on a pending Card Approval — kebab-menu
+     * "Edit" on the Approval Details popup. Replaces every
+     * EXPT_RESOL_APPRVR_INFM row with the new approval line's
+     * approvers and resets the master to Pending.
+     */
+    @PutMapping("/by-approval/{apprSeqNo}/approval-line")
+    public ApiResponse<Void> changeApprovalLine(
+            @PathVariable("apprSeqNo")
+            @Pattern(regexp = "^[0-9]{1,15}$",
+                     message = "appr_seq_no: invalid format")
+            String apprSeqNo,
+            @org.springframework.web.bind.annotation.RequestBody
+            com.kosign.wecms.domain.payment.cardtransactions.dto.ChangeApprovalLineRequest req) {
+        service.changeApprovalLine(apprSeqNo, req != null ? req.apprLineNo() : null);
+        return ApiResponse.ok(null);
     }
 
     /* ----------------------------------------------------------------
@@ -406,5 +441,17 @@ public class CardTransactionsController {
     public ApiResponse<RequestApprovalResponse> requestApproval(
             @Valid @RequestBody RequestApprovalRequest req) {
         return ApiResponse.ok(service.requestApproval(req));
+    }
+
+    /**
+     * Preview the next {@code VO_YYMMDD_NNN} document number for the
+     * current tenant. Used by the Request Approval popup to populate
+     * the read-only "Document No." field before the user submits —
+     * Card has no parent batch row to source it from. The value is a
+     * preview only; the authoritative number is allocated at submit.
+     */
+    @GetMapping("/next-doc-no")
+    public ApiResponse<NextDocNoResponse> nextDocNo() {
+        return ApiResponse.ok(service.previewNextDocNo());
     }
 }

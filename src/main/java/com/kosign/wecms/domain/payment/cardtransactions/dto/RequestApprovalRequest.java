@@ -3,6 +3,7 @@ package com.kosign.wecms.domain.payment.cardtransactions.dto;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.Size;
 
 import java.util.List;
 
@@ -34,5 +35,24 @@ public record RequestApprovalRequest(
         List<String> cardSeqNos,
         @NotNull
         @Positive
-        Long apprLineNo) {
+        Long apprLineNo,
+        /** Big title the user typed at the top of the Request Approval
+         *  popup. Surfaces verbatim on the Approval Box list +
+         *  Approval Details popup ({@code EXPT_RESOL_MSTR.TITL}).
+         *  Mirrors the {@code post_title} field shipped by every other
+         *  Payment module. */
+        String postTitle,
+        /** Free-form approval content / requestor note — the textarea
+         *  in the Request Approval dialog's "Approval Content" section.
+         *  Optional. Surfaces on the Approval Details popup
+         *  ({@code EXPT_RESOL_MSTR.CONT}). */
+        String postCont,
+        /** Scheduled date picker on the Request Approval popup,
+         *  {@code yyyyMMdd}. Optional. Surfaces on the Approval Box
+         *  list + Approval Details popup
+         *  ({@code EXPT_RESOL_MSTR.PAY_DATE}). Mirrors the
+         *  {@code pay_date} field shipped by every other Payment
+         *  module. */
+        @Size(max = 8)
+        String payDate) {
 }
