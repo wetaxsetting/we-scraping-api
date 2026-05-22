@@ -140,6 +140,26 @@ public class BusaDocMstr {
     @Column(name = "HAND_REG_YN", length = 1, nullable = false)
     private String handRegYn;
 
+    /** Use date for manually-registered receipts — paired with
+     *  {@link #handRegYn}={@code 'Y'} rows. Legacy {@code card_0001_002_r002}
+     *  filters Receipt-tab rows on this column instead of
+     *  {@code ISSU_DT}. {@code YYYYMMDD}. */
+    @Column(name = "USE_DT", length = 14)
+    private String useDt;
+
+    /** Usage / Purpose code on manually-registered receipts (legacy
+     *  Receipt tab "Purpose" column). Resolves to a friendly name via
+     *  a future JOIN to {@code USAG_INFM}; for now the wire ships the
+     *  code as-is. */
+    @Column(name = "BUSA_USAG_CD", length = 20)
+    private String busaUsagCd;
+
+    /** Free-form description / note (legacy Receipt tab "Description"
+     *  column; same column as the e-Invoice's "Note" field — it's a
+     *  shared text column on the master row). */
+    @Column(name = "CONT", columnDefinition = "TEXT")
+    private String cont;
+
     @Column(name = "REG_ID", length = 100, nullable = false)
     private String regId;
 

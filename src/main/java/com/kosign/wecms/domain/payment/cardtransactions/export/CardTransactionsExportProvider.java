@@ -30,14 +30,13 @@ import java.util.Set;
  * {@code linkYn} (optional Y/N). Sort is honoured via
  * {@code CardTrnsHstrSortField} whitelist.
  *
- * <p>Allowed FIELD_ID set mirrors the V176 View Setting seed for
- * {@code dym_area_id='table1'} minus the special CHECKBOX / MEMO rows.
- * Projection-only columns ({@code DISP_DOC_ID}, {@code APPR_DOC_NO},
- * {@code CHART_ACCT_NM}, {@code CARD_TRNS_USAGE_NM}) are NOT in
- * Sprint 0's allowed set because the service doesn't surface them as
- * Phase B placeholders go through the matching wire columns
- * ({@code apprSeqNo}, {@code chartAcctCd}). Add them to the allow-list
- * when the Phase B joins ship.
+ * <p>Allowed FIELD_ID set mirrors the V204 View Setting reseed for
+ * {@code dym_area_id='default'} minus the special CHECKBOX / MEMO_ICON
+ * rows (those are admin-controlled and never reach the export pipeline
+ * per {@code ScreenOptionService.SPECIAL_FIELD_IDS}). FIELD_IDs that
+ * have not yet been wired through the service projection
+ * ({@code LINK_REF}) are intentionally omitted — add when the Phase B
+ * linked-document join ships its dedicated wire field.
  */
 @Component
 @RequiredArgsConstructor
@@ -52,6 +51,7 @@ public class CardTransactionsExportProvider implements ExportRowProvider {
             "CCY_CD",
             "TRSC_AMT",
             "STTS",
+            "CARD_TRNS_USAGE_NM",
             "CONT",
             "APPR_SEQ_NO",
             "CHART_ACCT_CD"
@@ -113,6 +113,7 @@ public class CardTransactionsExportProvider implements ExportRowProvider {
         m.put("CCY_CD",       nullToEmpty(r.ccyCd()));
         m.put("TRSC_AMT",     r.trscAmt());
         m.put("STTS",         nullToEmpty(r.stts()));
+        m.put("CARD_TRNS_USAGE_NM", nullToEmpty(r.cardTrnsUsageCode()));
         m.put("CONT",         nullToEmpty(r.cont()));
         m.put("APPR_SEQ_NO",  nullToEmpty(r.apprSeqNo()));
         m.put("CHART_ACCT_CD",nullToEmpty(r.chartAcctCd()));
