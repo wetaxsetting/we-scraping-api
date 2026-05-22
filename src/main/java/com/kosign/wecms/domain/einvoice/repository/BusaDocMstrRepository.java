@@ -99,4 +99,161 @@ public interface BusaDocMstrRepository extends JpaRepository<BusaDocMstr, BusaDo
             @Param("fromDt")         String fromDt,
             @Param("toDt")           String toDt,
             @Param("keywordPattern") String keywordPattern);
+
+    /**
+     * Card-link list — every BUSA_DOC_MSTR row eligible to be linked to
+     * a card transaction in the
+     * "Link Card Payments with the Expenses" popup
+     * (legacy {@code card_0001_002_r001_act.jsp}).
+     *
+     * <p>Filter chain (legacy parity):
+     * <ul>
+     *   <li>{@code BIZ_KEY = :bizKey}</li>
+     *   <li>{@code DOC_TYPE = 'B'} (Bill / e-Invoice)</li>
+     *   <li>{@code HAND_REG_YN = 'N'} (synced from GDT, NOT manually
+     *       entered — receipts go through the {@code r002} sibling)</li>
+     *   <li>{@code PROV_STTS NOT IN ('EE','VD')} (hides Rejected /
+     *       Voided)</li>
+     *   <li>{@code ISSU_DT BETWEEN :fromDt AND :toDt}</li>
+     *   <li>{@code NOT EXISTS} on {@code BUSA_DOC_RCV_PAY_HIS} — excludes
+     *       documents already linked to ANY receive / payment record
+     *       (any payment method, not just CARD; mirrors legacy
+     *       {@code (BIZ_KEY, DOC_ID) NOT IN (SELECT BIZ_KEY, DOC_ID FROM
+     *       BUSA_DOC_RCV_PAY_HIS)} subquery)</li>
+     *   <li>Optional search on {@code TRCO_CMNM} / {@code TRCO_CMENM} /
+     *       {@code DISP_DOC_ID} (legacy `srchWd`)</li>
+     * </ul>
+     *
+     * <p>Returns most-recent issue date first, deterministic by
+     * {@code DOC_ID} secondary key. Caller paginates via the supplied
+     * {@link org.springframework.data.domain.Pageable}.
+     *
+     * <p>Native query because {@code BUSA_DOC_RCV_PAY_HIS} has no JPA
+     * entity yet (only its V13 schema). Adding a one-shot entity for a
+     * single NOT EXISTS clause is overkill; the native form keeps the
+     * surface narrow.
+     */
+    @Query(value = """
+            SELECT m.* FROM BUSA_DOC_MSTR m
+             WHERE m.BIZ_KEY      = :bizKey
+               AND m.DOC_TYPE     = 'B'
+               AND m.HAND_REG_YN  = 'N'
+               AND COALESCE(m.PROV_STTS, '') NOT IN ('EE', 'VD')
+               AND m.ISSU_DT BETWEEN :fromDt AND :toDt
+               AND NOT EXISTS (
+                   SELECT 1 FROM BUSA_DOC_RCV_PAY_HIS h
+                    WHERE h.BIZ_KEY = m.BIZ_KEY
+                      AND h.DOC_ID  = m.DOC_ID)
+               AND (:keywordPattern IS NULL
+                    OR LOWER(COALESCE(m.TRCO_CMNM,    '')) LIKE :keywordPattern ESCAPE '!'
+                    OR LOWER(COALESCE(m.TRCO_CMENM,   '')) LIKE :keywordPattern ESCAPE '!'
+                    OR LOWER(COALESCE(m.DISP_DOC_ID,  '')) LIKE :keywordPattern ESCAPE '!')
+             ORDER BY m.ISSU_DT DESC, m.DOC_ID DESC
+            """,
+            countQuery = """
+                    SELECT COUNT(*) FROM BUSA_DOC_MSTR m
+                     WHERE m.BIZ_KEY      = :bizKey
+                       AND m.DOC_TYPE     = 'B'
+                       AND m.HAND_REG_YN  = 'N'
+                       AND COALESCE(m.PROV_STTS, '') NOT IN ('EE', 'VD')
+                       AND m.ISSU_DT BETWEEN :fromDt AND :toDt
+                       AND NOT EXISTS (
+                           SELECT 1 FROM BUSA_DOC_RCV_PAY_HIS h
+                            WHERE h.BIZ_KEY = m.BIZ_KEY
+                              AND h.DOC_ID  = m.DOC_ID)
+                       AND (:keywordPattern IS NULL
+                            OR LOWER(COALESCE(m.TRCO_CMNM,    '')) LIKE :keywordPattern ESCAPE '!'
+                            OR LOWER(COALESCE(m.TRCO_CMENM,   '')) LIKE :keywordPattern ESCAPE '!'
+                            OR LOWER(COALESCE(m.DISP_DOC_ID,  '')) LIKE :keywordPattern ESCAPE '!')
+                    """,
+            nativeQuery = true)
+    Page<BusaDocMstr> findLinkableEInvoices(
+            @Param("bizKey")         String bizKey,
+            @Param("fromDt")         String fromDt,
+            @Param("toDt")           String toDt,
+            @Param("keywordPattern") String keywordPattern,
+            Pageable pageable);
+
+    /**
+     * Card-link "Receipt" tab list — manually-registered expenses
+     * eligible to be linked to a card transaction. Mirrors legacy
+     * {@code card_0001_002_r002_act.jsp}.
+     *
+     * <p>Filter chain — same as {@link #findLinkableEInvoices} except:
+     * <ul>
+     *   <li>{@code DOC_TYPE='E'} (Expense — manual receipts)</li>
+     *   <li>{@code HAND_REG_YN='Y'} (hand-registered — distinguishes
+     *       manual receipts from GDT-synced bills)</li>
+     *   <li>Date range applies to {@code USE_DT} (not {@code ISSU_DT}) —
+     *       legacy receipts file the "when was this used" date, while
+     *       e-Invoices file the "when was this issued by GDT" date</li>
+     *   <li>Search additionally matches the {@code BUSA_USAG_CD}
+     *       (Purpose) column</li>
+     * </ul>
+     */
+    @Query(value = """
+            SELECT m.* FROM BUSA_DOC_MSTR m
+             WHERE m.BIZ_KEY      = :bizKey
+               AND m.DOC_TYPE     = 'E'
+               AND m.HAND_REG_YN  = 'Y'
+               AND COALESCE(m.PROV_STTS, '') NOT IN ('EE', 'VD')
+               AND COALESCE(m.USE_DT, m.ISSU_DT) BETWEEN :fromDt AND :toDt
+               AND NOT EXISTS (
+                   SELECT 1 FROM BUSA_DOC_RCV_PAY_HIS h
+                    WHERE h.BIZ_KEY = m.BIZ_KEY
+                      AND h.DOC_ID  = m.DOC_ID)
+               AND (:keywordPattern IS NULL
+                    OR LOWER(COALESCE(m.TRCO_CMNM,     '')) LIKE :keywordPattern ESCAPE '!'
+                    OR LOWER(COALESCE(m.TRCO_CMENM,    '')) LIKE :keywordPattern ESCAPE '!'
+                    OR LOWER(COALESCE(m.DISP_DOC_ID,   '')) LIKE :keywordPattern ESCAPE '!'
+                    OR LOWER(COALESCE(m.BUSA_USAG_CD,  '')) LIKE :keywordPattern ESCAPE '!')
+             ORDER BY COALESCE(m.USE_DT, m.ISSU_DT) DESC, m.DOC_ID DESC
+            """,
+            countQuery = """
+                    SELECT COUNT(*) FROM BUSA_DOC_MSTR m
+                     WHERE m.BIZ_KEY      = :bizKey
+                       AND m.DOC_TYPE     = 'E'
+                       AND m.HAND_REG_YN  = 'Y'
+                       AND COALESCE(m.PROV_STTS, '') NOT IN ('EE', 'VD')
+                       AND COALESCE(m.USE_DT, m.ISSU_DT) BETWEEN :fromDt AND :toDt
+                       AND NOT EXISTS (
+                           SELECT 1 FROM BUSA_DOC_RCV_PAY_HIS h
+                            WHERE h.BIZ_KEY = m.BIZ_KEY
+                              AND h.DOC_ID  = m.DOC_ID)
+                       AND (:keywordPattern IS NULL
+                            OR LOWER(COALESCE(m.TRCO_CMNM,     '')) LIKE :keywordPattern ESCAPE '!'
+                            OR LOWER(COALESCE(m.TRCO_CMENM,    '')) LIKE :keywordPattern ESCAPE '!'
+                            OR LOWER(COALESCE(m.DISP_DOC_ID,   '')) LIKE :keywordPattern ESCAPE '!'
+                            OR LOWER(COALESCE(m.BUSA_USAG_CD,  '')) LIKE :keywordPattern ESCAPE '!')
+                    """,
+            nativeQuery = true)
+    Page<BusaDocMstr> findLinkableReceipts(
+            @Param("bizKey")         String bizKey,
+            @Param("fromDt")         String fromDt,
+            @Param("toDt")           String toDt,
+            @Param("keywordPattern") String keywordPattern,
+            Pageable pageable);
+
+    /**
+     * Fetch the linkable docs for an in-progress link write. Used by
+     * the link create path to validate every requested {@code doc_id}
+     * (a) exists, (b) belongs to the caller's tenant, (c) is still
+     * eligible (not already linked / not Rejected / not Voided) before
+     * inserting the {@code BUSA_DOC_RCV_PAY_HIS} rows.
+     */
+    @Query(value = """
+            SELECT m.* FROM BUSA_DOC_MSTR m
+             WHERE m.BIZ_KEY = :bizKey
+               AND m.DOC_ID IN (:docIds)
+               AND m.DOC_TYPE IN ('B', 'E')
+               AND COALESCE(m.PROV_STTS, '') NOT IN ('EE', 'VD')
+               AND NOT EXISTS (
+                   SELECT 1 FROM BUSA_DOC_RCV_PAY_HIS h
+                    WHERE h.BIZ_KEY = m.BIZ_KEY
+                      AND h.DOC_ID  = m.DOC_ID)
+            """,
+            nativeQuery = true)
+    List<BusaDocMstr> findLinkableByDocIds(
+            @Param("bizKey") String bizKey,
+            @Param("docIds") List<String> docIds);
 }

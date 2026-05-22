@@ -1,6 +1,9 @@
 package com.kosign.wecms.domain.payment.cardtransactions.controller;
 
+import com.kosign.wecms.common.export.ExcelExportRequest;
+import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.response.ApiResponse;
+import jakarta.servlet.http.HttpServletResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardListResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardManagementListResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTranListPeriodLimitRequest;
@@ -10,6 +13,17 @@ import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTransactionPatch
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTransactionRow;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CreateCardsRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CreateCardsResponse;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.CreateReceiptRequest;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.CreateReceiptResponse;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.CreateMemoRequest;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.MemoListResponse;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.MemoRow;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.PurposeOption;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.ReceiptDetailResponse;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.LinkExpensesRequest;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.LinkExpensesResponse;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.LinkableEInvoiceListResponse;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.LinkableReceiptListResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.NextDocNoResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.RequestApprovalRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.RequestApprovalResponse;
@@ -96,6 +110,10 @@ public class CardTransactionsController {
     private final CardTransactionsService    service;
     private final CardTransactionSyncService syncService;
     private final CardTranListR001Service    cardTranListR001Service;
+    /** Shared Excel writer — orchestrates the
+     *  {@link com.kosign.wecms.domain.payment.cardtransactions.export.CardTransactionsExportProvider}
+     *  + writes the XLSX response. */
+    private final ExcelExportService         excelExportService;
 
     /* ----------------------------------------------------------------
      *  Read — list
@@ -444,6 +462,29 @@ public class CardTransactionsController {
     }
 
     /**
+     * Excel export — Card Transactions list. Mirrors
+     * {@code POST /banking/accounts/export} (CLAUDE.md §"Excel export
+     * — common/export shared pipeline"). The shared
+     * {@link ExcelExportService} resolves
+     * {@link com.kosign.wecms.domain.payment.cardtransactions.export.CardTransactionsExportProvider}
+     * via {@code screenId="card-transactions"}, fetches all filtered +
+     * sorted rows through {@link CardTransactionsService#listAllRows},
+     * intersects the requested columns with the V203 View Setting seed
+     * + the provider's allow-list, and streams XLSX bytes on the
+     * response.
+     *
+     * <p>{@code POST} (not {@code GET}) so the column spec, filter
+     * state, and sort travel as a JSON body without query-string
+     * length limits.
+     */
+    @PostMapping("/export")
+    public void exportCardTransactions(
+            @Valid @RequestBody ExcelExportRequest request,
+            HttpServletResponse response) {
+        excelExportService.exportTo(response, request);
+    }
+
+    /**
      * Preview the next {@code VO_YYMMDD_NNN} document number for the
      * current tenant. Used by the Request Approval popup to populate
      * the read-only "Document No." field before the user submits —
@@ -453,5 +494,158 @@ public class CardTransactionsController {
     @GetMapping("/next-doc-no")
     public ApiResponse<NextDocNoResponse> nextDocNo() {
         return ApiResponse.ok(service.previewNextDocNo());
+    }
+
+    /**
+     * List e-Invoice rows eligible to be linked to a card transaction.
+     * Backs the Expenses e-Invoice tab on the
+     * "Link Card Payments with the Expenses" popup
+     * (legacy {@code card_0001_002_r001.act}).
+     *
+     * <p>Filter chain (legacy parity):
+     * <ul>
+     *   <li>{@code DOC_TYPE='B'} + {@code HAND_REG_YN='N'} — GDT-synced
+     *       Bills only; receipts go through a sibling endpoint.</li>
+     *   <li>{@code PROV_STTS NOT IN ('EE','VD')}.</li>
+     *   <li>{@code ISSU_DT BETWEEN from_dt AND to_dt}.</li>
+     *   <li>NOT already linked ({@code BUSA_DOC_RCV_PAY_HIS}
+     *       NOT EXISTS).</li>
+     *   <li>Optional {@code search} on merchant name / display doc id.</li>
+     * </ul>
+     */
+    @GetMapping("/links/e-invoices")
+    public ApiResponse<LinkableEInvoiceListResponse> listLinkableEInvoices(
+            @RequestParam("from_dt") @Pattern(regexp = "^[0-9]{8}$") String fromDt,
+            @RequestParam("to_dt")   @Pattern(regexp = "^[0-9]{8}$") String toDt,
+            @RequestParam(value = "search", required = false) String search,
+            @RequestParam(value = "page", required = false, defaultValue = "0")  int page,
+            @RequestParam(value = "size", required = false, defaultValue = "50") int size) {
+        return ApiResponse.ok(service.listLinkableEInvoices(fromDt, toDt, search, page, size));
+    }
+
+    /**
+     * List manually-registered receipts eligible to be linked to a card
+     * transaction. Backs the <i>Receipt</i> tab on the
+     * "Link Card Payments with the Expenses" popup
+     * (legacy {@code card_0001_002_r002.act}).
+     *
+     * <p>Same filter shape as {@link #listLinkableEInvoices} but
+     * {@code DOC_TYPE='E'} + {@code HAND_REG_YN='Y'} and dates filter on
+     * {@code USE_DT}.
+     */
+    @GetMapping("/links/receipts")
+    public ApiResponse<LinkableReceiptListResponse> listLinkableReceipts(
+            @RequestParam("from_dt") @Pattern(regexp = "^[0-9]{8}$") String fromDt,
+            @RequestParam("to_dt")   @Pattern(regexp = "^[0-9]{8}$") String toDt,
+            @RequestParam(value = "search", required = false) String search,
+            @RequestParam(value = "page", required = false, defaultValue = "0")  int page,
+            @RequestParam(value = "size", required = false, defaultValue = "50") int size) {
+        return ApiResponse.ok(service.listLinkableReceipts(fromDt, toDt, search, page, size));
+    }
+
+    /**
+     * Link one or more expenses / receipts to a card transaction. Mirrors
+     * legacy {@code card_0001_002_c001.act}. The sum of every
+     * {@code dedu_amt} MUST equal the card transaction's
+     * {@code TRSC_AMT} exactly (legacy {@code WBE0001}; refactor
+     * {@code WBE_LINK_AMOUNT_MISMATCH}). Wraps the insert of one
+     * {@code CARD_TRNS_RCV_PAY_INFM} row + N
+     * {@code BUSA_DOC_RCV_PAY_HIS} rows in one transaction.
+     */
+    @PostMapping("/links")
+    public ApiResponse<LinkExpensesResponse> linkExpenses(
+            @Valid @RequestBody LinkExpensesRequest req) {
+        return ApiResponse.ok(service.linkExpenses(req));
+    }
+
+    /**
+     * Unlink every document linked to a card transaction. Mirrors
+     * legacy {@code card_0001_002_u001.act}. Idempotent — calling it
+     * on an unlinked card silently returns 0.
+     */
+    @DeleteMapping("/links/{card_seq_no}")
+    public ApiResponse<Void> unlinkExpenses(
+            @PathVariable("card_seq_no")
+            @NotBlank @Size(max = 20) String cardSeqNo) {
+        service.unlinkExpenses(cardSeqNo);
+        return ApiResponse.ok(null);
+    }
+
+    /**
+     * Create a manually-registered receipt. Mirrors legacy
+     * {@code prch_0011_001} — writes one {@code BUSA_DOC_MSTR} row
+     * ({@code DOC_TYPE='E'} + {@code HAND_REG_YN='Y'}) and returns the
+     * newly-allocated {@code doc_id} so the frontend can select it
+     * immediately on the Receipt tab.
+     */
+    @PostMapping("/receipts")
+    public ApiResponse<CreateReceiptResponse> createReceipt(
+            @Valid @RequestBody CreateReceiptRequest req) {
+        return ApiResponse.ok(service.createReceipt(req));
+    }
+
+    /**
+     * Read-only detail of one receipt / bill. Backs the View Detail
+     * action on the Card Transactions list's linked-doc cell. Returns
+     * {@code WBE_NOT_FOUND} when the doc is missing or in another
+     * tenant. Mirrors legacy {@code card_0001_001.ts:337-350}
+     * `.detail-receipt` / `.detail-e-invoice`.
+     */
+    @GetMapping("/receipts/{doc_id}")
+    public ApiResponse<ReceiptDetailResponse> getReceiptDetail(
+            @PathVariable("doc_id")
+            @NotBlank @Size(max = 50) String docId) {
+        return ApiResponse.ok(service.getReceiptDetail(docId));
+    }
+
+    /**
+     * List Purpose options for the New Receipt popup's dropdown.
+     * Mirrors legacy {@code prch_0011_001.ts:91} USAG combo. Returns
+     * {@code USE_USAG_CD} + already-localized {@code usag_nm} per the
+     * caller's {@code Accept-Language}.
+     *
+     * @param grpCd  {@code USAG_GRP_CD} filter; defaults to {@code "6"}
+     *               (the New Receipt popup's bucket — manual expenses)
+     */
+    @GetMapping("/purpose-options")
+    public ApiResponse<List<PurposeOption>> purposeOptions(
+            @RequestParam(value = "grp_cd", required = false) String grpCd) {
+        return ApiResponse.ok(service.listPurposeOptions(grpCd));
+    }
+
+    /**
+     * List every memo attached to one card transaction. Backs the
+     * side-panel memo drawer (legacy {@code card_0001_001.ts:1262-1276}
+     * {@code getMemoPopup2}). Returns rows newest-first with author
+     * display names resolved server-side.
+     */
+    @GetMapping("/memos")
+    public ApiResponse<MemoListResponse> listMemos(
+            @RequestParam("card_seq_no")
+            @NotBlank @Size(max = 50) String cardSeqNo) {
+        return ApiResponse.ok(service.listMemos(cardSeqNo));
+    }
+
+    /**
+     * Add one memo to a card transaction. Mirrors legacy
+     * {@code MEMO_INFM_C001} via the polymorphic
+     * {@code wabooks.dao.MemoInfmDAO}.
+     */
+    @PostMapping("/memos")
+    public ApiResponse<MemoRow> createMemo(
+            @Valid @RequestBody CreateMemoRequest req) {
+        return ApiResponse.ok(service.createMemo(req));
+    }
+
+    /**
+     * Delete one memo. Hard delete (legacy {@code MEMO_INFM_D001}
+     * parity). The refactor restricts delete to the memo's author —
+     * non-authors get {@code WBE_MEMO_NOT_AUTHOR}.
+     */
+    @DeleteMapping("/memos/{seq_no}")
+    public ApiResponse<Void> deleteMemo(
+            @PathVariable("seq_no") java.math.BigDecimal seqNo) {
+        service.deleteMemo(seqNo);
+        return ApiResponse.ok(null);
     }
 }
