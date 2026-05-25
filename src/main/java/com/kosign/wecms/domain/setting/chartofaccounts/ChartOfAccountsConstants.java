@@ -21,10 +21,24 @@ public final class ChartOfAccountsConstants {
      *  contacts precedent of carrying the UPPER_SNAKE table name. */
     public static final String AUDIT_REF_NO = "CHART_ACCT_INFM";
 
-    /** Maximum hierarchy depth permitted. PO requirement baked into
-     *  legacy {@code IDO.CHART_ACCT_INFM_R002.xml:62-99}'s {@code
-     *  CHART_ACCT_LEVEL} CASE. Refactor enforces at write time too. */
-    public static final int MAX_HIERARCHY_DEPTH = 4;
+    /** Maximum hierarchy depth permitted.
+     *
+     *  <p><b>Business rule (PO directive 2026-05-25):</b> only level 2
+     *  and level 3 are user-creatable; level 1 is reserved for the
+     *  three seeded roots ({@link #RESTRICTED_CODES}: ACC-01 / ACC-02 /
+     *  ACC-03). Total depth cap is therefore <b>3</b> &mdash; tighter
+     *  than the legacy {@code IDO.CHART_ACCT_INFM_R002.xml:62-99}
+     *  4-level CASE projection AND the legacy upload's max-5 guard
+     *  ({@code comm_0223_002_r001_act.jsp:401}).
+     *
+     *  <p>The depth check in {@code ChartOfAccountsService.create} +
+     *  {@link com.kosign.wecms.domain.setting.chartofaccounts.service.ChartOfAccountsValidator#assertDepthCap}
+     *  reject any write that would push a leaf beyond this cap with
+     *  {@code WBE_CHART_OF_ACCOUNTS_DEPTH_EXCEEDED}. The companion
+     *  parent-required check ({@code WBE_CHART_OF_ACCOUNTS_PARENT_REQUIRED})
+     *  blocks the level-1 case so the same write path covers
+     *  "no level 1, max level 3" together. */
+    public static final int MAX_HIERARCHY_DEPTH = 3;
 
     /** System-managed root codes that cannot be edited / deleted via
      *  the public CRUD endpoints. Legacy parity — same set hard-coded

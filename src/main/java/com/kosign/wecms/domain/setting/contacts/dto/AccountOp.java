@@ -20,7 +20,7 @@ public record AccountOp(
         @Size(max = 20)
         String trcoAcctKey,
 
-        @Size(max = 200)
+        @Size(max = 100)
         String bankNm,
 
         @Size(max = 100)

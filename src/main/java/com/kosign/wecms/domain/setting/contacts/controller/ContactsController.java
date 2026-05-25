@@ -6,6 +6,10 @@ import com.kosign.wecms.domain.setting.contacts.dto.ContactBulkDeleteRequest;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactBulkImportRequest;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactBulkImportResponse;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactsByCodesRequest;
+import com.kosign.wecms.domain.setting.contacts.dto.ContactsExcelPreflightRequest;
+import com.kosign.wecms.domain.setting.contacts.dto.ContactsExcelPreflightResponse;
+import com.kosign.wecms.domain.setting.contacts.dto.ContactsExcelResolveRecipientsRequest;
+import com.kosign.wecms.domain.setting.contacts.dto.ContactsExcelResolveRecipientsResponse;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactCreateRequest;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactFileListResponse;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactFileRow;
@@ -172,6 +176,45 @@ public class ContactsController {
     public ApiResponse<ContactBulkImportResponse> excelImport(
             @Valid @RequestBody ContactBulkImportRequest request) {
         return ApiResponse.ok(importService.bulkImport(request));
+    }
+
+    /**
+     * Preflight check &mdash; given a batch of parsed Excel rows, return
+     * which {@code hand_trco_key} / {@code trco_tax_id} values already
+     * exist as an active contact in the tenant. The frontend uses the
+     * result to red-flag duplicate rows in the preview table BEFORE the
+     * user clicks Upload, so the case "Success: 38 imported, 3 failed
+     * (already exists)" surfaces as preview errors instead of a
+     * post-upload dialog.
+     *
+     * <p>Mirrors legacy {@code comm_0184_007_r001_act.jsp:401-450 /
+     * 567-630} which calls {@code getContact()} + {@code getTaxId()}
+     * per row at parse time and stamps {@code ERR_FLD} /
+     * {@code ERR_FLD_CAUS} into the returned record.
+     */
+    @PostMapping("/excel/preflight")
+    public ApiResponse<ContactsExcelPreflightResponse> excelPreflight(
+            @Valid @RequestBody ContactsExcelPreflightRequest request) {
+        return ApiResponse.ok(service.preflightExcelImport(request));
+    }
+
+    /**
+     * Bulk recipient resolution for the Local-Contact Excel-upload
+     * preview &mdash; one round-trip resolves every parsed row's
+     * bank-name &rarr; ({@code NAPAS_BANK_CD} / {@code CITAD_BANK_CD})
+     * AND fires the firm-banking inquiry for NAPAS-VND rows so the
+     * preview table shows the Recipient column populated before the
+     * user clicks Upload.
+     *
+     * <p>Mirrors the per-row work in legacy
+     * {@code comm_0184_007_r001_act.jsp:475-533}: bank cell &rarr;
+     * {@code TB_FIRM_BANK_CODE.ENG_ABRVAT_NM} match-count routing +
+     * {@code FIRM_PROC.inquiryAccount(...)} for NAPAS-VND.
+     */
+    @PostMapping("/excel/resolve-recipients")
+    public ApiResponse<ContactsExcelResolveRecipientsResponse> excelResolveRecipients(
+            @Valid @RequestBody ContactsExcelResolveRecipientsRequest request) {
+        return ApiResponse.ok(service.resolveExcelImportRecipients(request));
     }
 
     /**

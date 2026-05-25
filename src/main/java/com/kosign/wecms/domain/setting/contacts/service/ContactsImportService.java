@@ -51,7 +51,7 @@ public class ContactsImportService {
         for (int i = 0; i < rows.size(); i++) {
             ContactCreateRequest req = rows.get(i);
             try {
-                contactsService.create(req);
+                contactsService.createForImport(req);
                 imported++;
             } catch (BusinessException ex) {
                 String message = messageResolver.resolve(ex.getCode(), ex.getArgs());

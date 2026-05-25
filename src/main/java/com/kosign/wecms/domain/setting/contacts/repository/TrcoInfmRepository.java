@@ -91,6 +91,44 @@ public interface TrcoInfmRepository extends JpaRepository<TrcoInfm, String> {
     boolean existsByBizKeyAndTrcoTaxId(String bizKey, String trcoTaxId);
 
     /**
+     * Bulk-exists check for {@code HAND_TRCO_KEY} &mdash; returns the
+     * subset of {@code keys} that already point to an <em>active</em>
+     * (non-trashed) contact in the tenant. Mirrors legacy
+     * {@code comm_0184_007_r001_act.jsp:203-217 getDynamic0}, which
+     * filters {@code trco_stts <> 'C'} so a code reused after trash is
+     * permitted.
+     *
+     * <p>Used by the Excel-upload preflight endpoint so the preview
+     * table can flag DB duplicates before the user clicks Upload.
+     */
+    @Query("""
+        SELECT t.handTrcoKey FROM TrcoInfm t
+        WHERE t.bizKey = :bizKey
+          AND t.handTrcoKey IN :keys
+          AND (t.trcoStts IS NULL OR t.trcoStts <> 'C')
+        """)
+    List<String> findExistingActiveHandTrcoKeys(
+            @Param("bizKey") String bizKey,
+            @Param("keys") Collection<String> keys);
+
+    /**
+     * Bulk-exists check for {@code TRCO_TAX_ID} &mdash; returns the
+     * subset of {@code taxIds} already in use by an active contact in
+     * the tenant. Mirrors legacy
+     * {@code comm_0184_007_r001_act.jsp:219-233 getDynamic1}.
+     */
+    @Query("""
+        SELECT t.trcoTaxId FROM TrcoInfm t
+        WHERE t.bizKey = :bizKey
+          AND t.trcoTaxId IS NOT NULL
+          AND t.trcoTaxId IN :taxIds
+          AND (t.trcoStts IS NULL OR t.trcoStts <> 'C')
+        """)
+    List<String> findExistingActiveTrcoTaxIds(
+            @Param("bizKey") String bizKey,
+            @Param("taxIds") Collection<String> taxIds);
+
+    /**
      * Paged + filtered list. Returns only managed
      * ({@code HAND_TRCO_KEY IS NOT NULL}) non-trashed
      * ({@code TRCO_STTS} null or != {@code 'C'}) rows for the tenant.

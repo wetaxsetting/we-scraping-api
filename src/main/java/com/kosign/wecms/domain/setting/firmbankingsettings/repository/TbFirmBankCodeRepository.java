@@ -70,4 +70,31 @@ public interface TbFirmBankCodeRepository extends JpaRepository<TbFirmBankCode, 
      */
     Optional<TbFirmBankCode> findFirstByAntDivCdAndCitadBankCd(
             String antDivCd, String citadBankCd);
+
+    /**
+     * Reverse name &rarr; code lookup &mdash; returns every NAPAS / CITAD
+     * row whose English abbreviation matches {@code engAbrvatNm}.
+     * Mirrors legacy {@code comm_0184_007_r001_act.jsp:235-264 getBankName
+     * / getBankCode}: the Excel-upload parser passes the bank name
+     * cell verbatim ({@code "VietinBank"}, {@code "ABBank"}, &hellip;) and
+     * the count of matches drives the routing:
+     * <ul>
+     *   <li>0 matches &rarr; bank not found, row flagged.</li>
+     *   <li>1 match &rarr; check the row's {@code antDivCd} to know
+     *       whether to stamp {@code NAPAS_BANK_CD} or
+     *       {@code CITAD_BANK_CD}.</li>
+     *   <li>2+ matches (legacy assumes name overlap between NAPAS and
+     *       CITAD) &rarr; route as NAPAS, take the NAPAS row.</li>
+     * </ul>
+     */
+    List<TbFirmBankCode> findByEngAbrvatNm(String engAbrvatNm);
+
+    /**
+     * Bulk variant of {@link #findByEngAbrvatNm} &mdash; one query for the
+     * whole batch of distinct bank names parsed from the Excel sheet so
+     * the Excel-upload preflight does not fan out into N round trips.
+     * Caller groups the returned rows by {@code engAbrvatNm} on the
+     * service side.
+     */
+    List<TbFirmBankCode> findByEngAbrvatNmIn(Collection<String> engAbrvatNms);
 }

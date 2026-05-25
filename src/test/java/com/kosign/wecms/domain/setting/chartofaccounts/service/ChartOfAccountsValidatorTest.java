@@ -103,30 +103,30 @@ class ChartOfAccountsValidatorTest {
     }
 
     @Test
-    void assertDepthCap_rejectsWritePushingSubtreeBeyondFour() {
-        // Tree:        ROOT (1) → MID (2) → LEAF (3)
-        // Edit LEAF.parent = LEAF_GROUP under a level-3 node would make
-        // LEAF level 4. Then adding another level-5 descendant would
-        // be rejected at write time. Here we directly test the helper:
-        // setting LEAF as a child of a hypothetical chain that already
-        // makes its new depth > 4.
+    void assertDepthCap_rejectsWritePushingSubtreeBeyondThree() {
+        // PO directive 2026-05-25: MAX_HIERARCHY_DEPTH lowered to 3.
+        // Only level 2 (parent is a level-1 root) and level 3
+        // (parent is a level-2) are user-creatable.
+        //
+        // Tree:        ROOT (1) → L2 (2) → L3 (3)
+        // Re-parent NEW under L3 — new depth = 4 → rejected.
+        // Re-parent NEW under L2 — new depth = 3 → permitted.
         Map<String, ChartOfAccount> byCode = new HashMap<>();
         byCode.put("ROOT",  entity("1", "ROOT",  null));
         byCode.put("L2",    entity("2", "L2",    "ROOT"));
         byCode.put("L3",    entity("3", "L3",    "L2"));
-        byCode.put("L4",    entity("4", "L4",    "L3"));
-        byCode.put("NEW",   entity("5", "NEW",   null));
+        byCode.put("NEW",   entity("4", "NEW",   null));
 
-        // Re-parent NEW under L4 — new depth = 5 → rejected.
+        // Re-parent NEW under L3 — new depth = 4 → rejected.
         assertThatThrownBy(() ->
-                ChartOfAccountsValidator.assertDepthCap("NEW", "L4", byCode))
+                ChartOfAccountsValidator.assertDepthCap("NEW", "L3", byCode))
                 .isInstanceOf(BusinessException.class)
                 .extracting(b -> ((BusinessException) b).getCode())
                 .isEqualTo("WBE_CHART_OF_ACCOUNTS_DEPTH_EXCEEDED");
 
-        // Re-parent NEW under L3 — new depth = 4 → permitted.
+        // Re-parent NEW under L2 — new depth = 3 → permitted.
         assertThatCode(() ->
-                ChartOfAccountsValidator.assertDepthCap("NEW", "L3", byCode))
+                ChartOfAccountsValidator.assertDepthCap("NEW", "L2", byCode))
                 .doesNotThrowAnyException();
     }
 

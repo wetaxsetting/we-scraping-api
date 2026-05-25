@@ -1,6 +1,8 @@
 package com.kosign.wecms.domain.setting.chartofaccounts.controller;
 
 import com.kosign.wecms.common.response.ApiResponse;
+import com.kosign.wecms.domain.setting.chartofaccounts.dto.ChartOfAccountBulkActionRequest;
+import com.kosign.wecms.domain.setting.chartofaccounts.dto.ChartOfAccountBulkActionResponse;
 import com.kosign.wecms.domain.setting.chartofaccounts.dto.ChartOfAccountBulkUploadRequest;
 import com.kosign.wecms.domain.setting.chartofaccounts.dto.ChartOfAccountBulkUploadResponse;
 import com.kosign.wecms.domain.setting.chartofaccounts.dto.ChartOfAccountCreateRequest;
@@ -154,6 +156,34 @@ public class ChartOfAccountsController {
     public ApiResponse<ChartOfAccountBulkUploadResponse> bulkUpload(
             @Valid @RequestBody ChartOfAccountBulkUploadRequest req) {
         return ApiResponse.ok(service.bulkUpload(req));
+    }
+
+    /**
+     * Bulk soft-delete chart-of-accounts rows by seq_no. Powers the
+     * Settings panel's multi-select Delete button (rendered only when
+     * the user has checked at least one row). Each seq_no is processed
+     * independently — failures (restricted code, not found, etc.) are
+     * tallied in {@code failed} and do NOT roll back rows that already
+     * committed.
+     */
+    @PostMapping("/bulk-delete")
+    public ApiResponse<ChartOfAccountBulkActionResponse> bulkDelete(
+            @Valid @RequestBody ChartOfAccountBulkActionRequest req) {
+        return ApiResponse.ok(service.bulkDelete(req));
+    }
+
+    /**
+     * Bulk deactivate chart-of-accounts rows by seq_no — flips
+     * {@code STTS='I'} on every selected row. Powers the Settings
+     * panel's multi-select Deactivate button. Idempotent per-row:
+     * already-inactive rows pass through with no DB write. Restricted
+     * roots ({@code ACC-01 / 02 / 03}) are tallied in {@code failed}
+     * via {@code WBE_CHART_OF_ACCOUNTS_RESTRICTED_CODE}.
+     */
+    @PostMapping("/bulk-deactivate")
+    public ApiResponse<ChartOfAccountBulkActionResponse> bulkDeactivate(
+            @Valid @RequestBody ChartOfAccountBulkActionRequest req) {
+        return ApiResponse.ok(service.bulkDeactivate(req));
     }
 
     /**

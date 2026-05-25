@@ -20,20 +20,20 @@ public record OverseasOp(
         @Size(max = 20)
         String trcoOvrsKey,
 
-        @Size(max = 200)
+        @Size(max = 255)
         String beneName,
 
-        @Size(max = 100)
+        @Size(max = 255)
         String beneAcctNo,
 
-        @Size(max = 50)
+        @Size(max = 255)
         String bicCode,
 
-        @Size(max = 200)
+        @Size(max = 255)
         String beneBankName,
 
         @Size(max = 20)
         String beneBankCode,
 
-        @Size(max = 500)
+        @Size(max = 255)
         String beneAddr) { }

@@ -36,19 +36,102 @@ public final class ChartOfAccountsTreeBuilder {
     private ChartOfAccountsTreeBuilder() { }
 
     /**
-     * Build list-shaped rows in the order the input slice was given.
-     * The service is responsible for fetching the slice already sorted
-     * (Spring Data {@code Sort} on the repository) — this method
-     * preserves order.
+     * Build list-shaped rows in <b>DFS pre-order</b> by parent &mdash; each
+     * level-1 root is followed immediately by its descendant subtree
+     * (level 2 children sorted by {@code chartAcctCd ASC}, each level 2
+     * followed by its level-3 children, …). Roots are sorted by
+     * {@code chartAcctCd ASC} so the three seeded roots line up as
+     * {@code ACC-01 / ACC-02 / ACC-03}, then any non-restricted level-1
+     * rows after them.
+     *
+     * <p>The previous version preserved the repository's input order,
+     * which left children scattered across the page. The DFS-pre-order
+     * matches the PO-requested display shape (per Figma 9196:12740 +
+     * 2026-05-25 directive):
+     *
+     * <pre>
+     * ACC-01 (level 1)
+     *   22223333 (level 2)
+     *     10070    (level 3)
+     *     10070    (level 3)
+     *   22223333 (level 2)
+     *   22223333 (level 2)
+     *     10070    (level 3)
+     *     10070    (level 3)
+     * ACC-02 …
+     * </pre>
+     *
+     * <p>Orphan / cycle rows (those with {@code chartAcctLevel == null}
+     * after the index pass) are emitted at the end, sorted by code, so
+     * they still appear in the list (grandfathered DEV data) but don't
+     * confuse the tree shape.
      */
     public static List<ChartOfAccountRow> buildRows(List<ChartOfAccount> tenantSlice) {
         if (tenantSlice.isEmpty()) return List.of();
         Index ix = index(tenantSlice);
-        List<ChartOfAccountRow> out = new ArrayList<>(tenantSlice.size());
+
+        // Children-by-parent map for the DFS walk. Each list is sorted
+        // by chartAcctCd ASC so siblings appear alphabetically. Rows
+        // whose chartAcctLevel is null (orphan / cycle) are excluded
+        // here and appended at the end of the output.
+        Map<String, List<ChartOfAccount>> childrenByParent = new HashMap<>();
+        List<ChartOfAccount> roots = new ArrayList<>();
+        List<ChartOfAccount> orphans = new ArrayList<>();
         for (ChartOfAccount row : tenantSlice) {
-            out.add(toRow(row, ix));
+            Integer level = ix.levelByCode.get(row.getChartAcctCd());
+            if (level == null) {
+                orphans.add(row);
+                continue;
+            }
+            String parent = row.getParentChartAcctCd();
+            if (parent == null || parent.isBlank()) {
+                roots.add(row);
+            } else {
+                childrenByParent
+                        .computeIfAbsent(parent, k -> new ArrayList<>())
+                        .add(row);
+            }
         }
+        Comparator<ChartOfAccount> byCodeAsc =
+                Comparator.comparing(ChartOfAccount::getChartAcctCd);
+        roots.sort(byCodeAsc);
+        orphans.sort(byCodeAsc);
+        for (List<ChartOfAccount> siblings : childrenByParent.values()) {
+            siblings.sort(byCodeAsc);
+        }
+
+        List<ChartOfAccountRow> out = new ArrayList<>(tenantSlice.size());
+        Set<String> visited = new HashSet<>();
+        for (ChartOfAccount root : roots) {
+            emitSubtree(root, childrenByParent, ix, visited, out);
+        }
+        // Append orphans / cycle rows after the well-formed tree so
+        // they still surface in the UI but don't break the visual
+        // grouping users expect.
+        for (ChartOfAccount o : orphans) out.add(toRow(o, ix));
         return out;
+    }
+
+    /**
+     * DFS pre-order emitter. Cycle-safe — a row whose code is already
+     * in {@code visited} (e.g. legacy DEV's self-referencing seq 104)
+     * is skipped instead of recursing infinitely. The cap-bound
+     * {@link #resolveLevel} guarantees such rows surface with
+     * {@code chartAcctLevel == null} and land in the orphan tail, but
+     * the {@code visited} check is the structural safety net.
+     */
+    private static void emitSubtree(ChartOfAccount node,
+                                    Map<String, List<ChartOfAccount>> childrenByParent,
+                                    Index ix,
+                                    Set<String> visited,
+                                    List<ChartOfAccountRow> out) {
+        if (!visited.add(node.getChartAcctCd())) return;
+        out.add(toRow(node, ix));
+        List<ChartOfAccount> children = childrenByParent.get(node.getChartAcctCd());
+        if (children == null) return;
+        for (ChartOfAccount child : children) {
+            emitSubtree(child, childrenByParent, ix, visited, out);
+        }
     }
 
     /**

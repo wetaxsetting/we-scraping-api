@@ -92,12 +92,66 @@ public final class ChartOfAccountsValidator {
      * Throw {@code WBE_CHART_OF_ACCOUNTS_PARENT_NOT_FOUND} when
      * {@code newParentCd} is non-blank but doesn't resolve to an
      * active row in the supplied tenant slice. Null / blank parent is
-     * legal (= root row).
+     * legal at this layer; {@link #assertParentRequired} is what
+     * enforces the user-facing rule that every user-created row needs
+     * a parent.
      */
     public static void assertParentExists(String newParentCd, Map<String, ChartOfAccount> activeByCode) {
         if (newParentCd == null || newParentCd.isBlank()) return;
         if (!activeByCode.containsKey(newParentCd)) {
             throw new BusinessException("WBE_CHART_OF_ACCOUNTS_PARENT_NOT_FOUND", newParentCd);
+        }
+    }
+
+    /**
+     * Throw {@code WBE_CHART_OF_ACCOUNTS_PARENT_REQUIRED} when the
+     * caller tries to create / update a row without a parent code.
+     *
+     * <p><b>Business rule (PO directive 2026-05-25):</b> only level 2
+     * and level 3 are user-creatable; level 1 (root rows with NULL
+     * parent) is reserved for the three seeded
+     * {@link ChartOfAccountsConstants#RESTRICTED_CODES} (ACC-01,
+     * ACC-02, ACC-03). The combination of this check + the
+     * {@link ChartOfAccountsConstants#MAX_HIERARCHY_DEPTH}=3 cap
+     * confines every user-driven write to level 2 or level 3 exactly.
+     *
+     * <p>This rule applies to the dialog single-create, the Excel
+     * upload bulk path (which routes through {@code create()}), and
+     * the inline parent rename on update. The DB schema still permits
+     * NULL parent because the seed itself populates the three roots
+     * with NULL parent; the rule lives at the service layer so seeds
+     * stay legal.
+     */
+    public static void assertParentRequired(String parentCd) {
+        if (parentCd == null || parentCd.isBlank()) {
+            throw new BusinessException("WBE_CHART_OF_ACCOUNTS_PARENT_REQUIRED");
+        }
+    }
+
+    /**
+     * Throw {@code WBE_CHART_OF_ACCOUNTS_CAL_RULE_LEVEL3_ONLY} when a
+     * non-blank {@code calRule} is set on a row that wouldn't be at
+     * level 3.
+     *
+     * <p><b>Business rule (PO directive 2026-05-25):</b> the Calc Rule
+     * ({@code +} / {@code -}, stored on the wire as {@code P} /
+     * {@code M}) is meaningful only on leaf rollups at level 3. Levels
+     * 1 and 2 act as grouping headers and must not carry a sign — the
+     * display in the table screenshot showed level-2 rows under
+     * ACC-03 incorrectly rendering a {@code +} / {@code -} badge,
+     * which this guard blocks on the write side.
+     *
+     * <p>A null / blank {@code calRule} is always permitted (level 1
+     * and 2 rows just don't carry one). This rule complements
+     * {@link #assertParentRequired} + the level-3 cap so the three
+     * user-facing rules ride together on every write.
+     */
+    public static void assertCalRuleLevel3Only(String parentCd, String calRule,
+                                               Map<String, ChartOfAccount> activeByCode) {
+        if (calRule == null || calRule.isBlank()) return;
+        int level = computeNewDepth(parentCd, activeByCode);
+        if (level != 3) {
+            throw new BusinessException("WBE_CHART_OF_ACCOUNTS_CAL_RULE_LEVEL3_ONLY");
         }
     }
 

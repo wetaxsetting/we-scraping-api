@@ -18,9 +18,9 @@ import java.util.List;
  */
 public record ContactCreateRequest(
         @NotBlank
-        @Size(max = 20)
-        @Pattern(regexp = "^[A-Za-z0-9_\\-.]+$",
-                message = "hand_trco_key must be alphanumeric + _ - .")
+        @Size(max = 100)
+        @Pattern(regexp = "^\\S+$",
+                message = "hand_trco_key must not contain whitespace")
         String handTrcoKey,
 
         @NotBlank
@@ -31,7 +31,7 @@ public record ContactCreateRequest(
         @Size(max = 200)
         String trcoCmenm,
 
-        @Size(max = 40)
+        @Size(max = 100)
         String trcoTaxId,
 
         @NotBlank

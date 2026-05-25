@@ -27,6 +27,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * Settings &gt; Users — CRUD service backing the panel at
@@ -341,7 +342,7 @@ public class UserManagementService {
                 r.getUserId(),
                 r.getUserNm(),
                 r.getEml(),
-                r.getClphNo(),
+                sanitizePhoneNumber(r.getClphNo()),
                 r.getPosiNm(),
                 r.getDeptNm(),
                 adminIds.contains(r.getUserId()),
@@ -357,11 +358,29 @@ public class UserManagementService {
                 user.getUserId(),
                 user.getUserNm(),
                 user.getEml(),
-                user.getClphNo(),
+                sanitizePhoneNumber(user.getClphNo()),
                 user.getPosiNm(),
                 user.getDeptNm(),
                 isAdmin,
                 isSelf,
                 UserImageService.publicUrl(user.getUserId(), link.getUserImg()));
+    }
+
+    // Plausible phone glyphs: digits, plus, space, dash, parens, dot.
+    // Legacy JEX stores CLPH_NO AES-encrypted via DB-side encrypt() /
+    // decrypt() (see IDO.USER_INFM_R001.xml:27, IDO.USER_INFM_C001.xml:43).
+    // Refactor doesn't install those legacy PL/pgSQL helpers, so rows
+    // imported from DEV (V5 / V72 / V73) ship base64 ciphertext like
+    // "5s3hGJCIQMt0op+pZGU42Q==". Anything outside the phone charset is
+    // dropped here so the panel renders blank instead of leaking the
+    // encrypted bytes. Refactor-created users save plain text and pass
+    // through untouched.
+    private static final Pattern PHONE_GLYPHS = Pattern.compile("^[+0-9 ()\\-.]+$");
+
+    private static String sanitizePhoneNumber(String raw) {
+        if (raw == null) return "";
+        String trimmed = raw.trim();
+        if (trimmed.isEmpty()) return "";
+        return PHONE_GLYPHS.matcher(trimmed).matches() ? trimmed : "";
     }
 }

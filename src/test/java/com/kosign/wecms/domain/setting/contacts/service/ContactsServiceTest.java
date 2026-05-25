@@ -58,8 +58,9 @@ import static org.mockito.Mockito.when;
  *       rejects out-of-range upsert).</li>
  *   <li>List happy path with sort + filter + tenant scoping.</li>
  *   <li>{@code getOne} not-found / wrong-tenant collapse.</li>
- *   <li>Local contact requires &gt;= 1 upsert account
- *       ({@code WBE_CONTACTS_LOCAL_BANK_REQUIRED}).</li>
+ *   <li>Local contact with zero accounts succeeds (legacy parity —
+ *       {@code comm_0184_002_c001_act.jsp:69-80} only validates rows
+ *       carrying {@code NAPAS_BANK_CD} / {@code CITAD_BANK_CD}).</li>
  *   <li>Duplicate {@code hand_trco_key} / {@code trco_tax_id} rejected
  *       at create.</li>
  * </ul>
@@ -79,6 +80,7 @@ class ContactsServiceTest {
     @Mock PgroBsacLnknInfmRepository pgroRepo;
     @Mock AcctTrnsRcvPayInfmRepository acctTrnsRcvPayRepo;
     @Mock LegacyFunctionRepository legacyFn;
+    @Mock com.kosign.wecms.domain.setting.firmbankingsettings.repository.FirmBankingSettingRepository firmBankingSettingRepo;
 
     private ContactsService service;
     private ContactsValidator validator;
@@ -88,7 +90,8 @@ class ContactsServiceTest {
         validator = new ContactsValidator(trcoInfmRepo);
         service = new ContactsService(
                 trcoInfmRepo, addrRepo, acctRepo, ovrsRepo, bankCodeRepo,
-                pgroRepo, acctTrnsRcvPayRepo, legacyFn, validator);
+                pgroRepo, acctTrnsRcvPayRepo, legacyFn, validator,
+                new com.kosign.wecms.common.firmbanking.FirmBankingInquiryService(firmBankingSettingRepo));
         TenantContext.set(USER, BIZ, LangCd.EN);
     }
 
@@ -146,10 +149,11 @@ class ContactsServiceTest {
 
         org.mockito.ArgumentCaptor<Pageable> cap = org.mockito.ArgumentCaptor.forClass(Pageable.class);
         verify(trcoInfmRepo).search(eq(BIZ), any(), any(), cap.capture());
-        // Default ORDER BY: modDtm DESC, trcoKey DESC.
+        // Default ORDER BY: handTrcoKey ASC, trcoKey DESC (legacy
+        // SortHelper.java for comm_0184_001_r001).
         Sort.Order primary = cap.getValue().getSort().iterator().next();
-        assertThat(primary.getProperty()).isEqualTo("modDtm");
-        assertThat(primary.isDescending()).isTrue();
+        assertThat(primary.getProperty()).isEqualTo("handTrcoKey");
+        assertThat(primary.isAscending()).isTrue();
     }
 
     /* =================================================================
@@ -232,17 +236,30 @@ class ContactsServiceTest {
     }
 
     @Test
-    void create_localWithoutBankThrowsLocalBankRequired() {
+    void create_localWithoutBankSucceedsPerLegacyParity() {
+        // Legacy `comm_0184_002_c001_act.jsp:69-80` allows a Local
+        // contact with zero account rows — the per-row required-fields
+        // check only fires for rows carrying NAPAS_BANK_CD or
+        // CITAD_BANK_CD. The refactor matches that surface as of
+        // 2026-05-25 (the previous WBE_CONTACTS_LOCAL_BANK_REQUIRED
+        // rule has been retired).
         ContactCreateRequest req = new ContactCreateRequest(
                 "NB", "Co", "Co EN", null, "L",
                 List.of(),
                 List.of(),  // zero accounts on a Local contact
                 List.of());
         when(trcoInfmRepo.existsByBizKeyAndHandTrcoKey(BIZ, "NB")).thenReturn(false);
+        when(legacyFn.nextTrcoKey(BIZ)).thenReturn(TRCO_KEY);
+        when(trcoInfmRepo.findByTrcoKeyAndBizKey(TRCO_KEY, BIZ))
+                .thenReturn(Optional.of(stubMaster(TRCO_KEY, "NB", "L")));
+        when(addrRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+        when(acctRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+        when(ovrsRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
 
-        assertThatThrownBy(() -> service.create(req))
-                .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("WBE_CONTACTS_LOCAL_BANK_REQUIRED");
+        ContactRow row = service.create(req);
+
+        assertThat(row.trcoKey()).isEqualTo(TRCO_KEY);
+        verify(legacyFn).nextTrcoKey(BIZ);
     }
 
     @Test

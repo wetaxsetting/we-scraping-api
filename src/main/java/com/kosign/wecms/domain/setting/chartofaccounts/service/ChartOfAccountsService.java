@@ -7,6 +7,8 @@ import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.common.web.SortDirection;
 import com.kosign.wecms.domain.setting.chartofaccounts.ChartOfAccountsConstants;
+import com.kosign.wecms.domain.setting.chartofaccounts.dto.ChartOfAccountBulkActionRequest;
+import com.kosign.wecms.domain.setting.chartofaccounts.dto.ChartOfAccountBulkActionResponse;
 import com.kosign.wecms.domain.setting.chartofaccounts.dto.ChartOfAccountBulkUploadRequest;
 import com.kosign.wecms.domain.setting.chartofaccounts.dto.ChartOfAccountBulkUploadResponse;
 import com.kosign.wecms.domain.setting.chartofaccounts.dto.ChartOfAccountCreateRequest;
@@ -222,8 +224,19 @@ public class ChartOfAccountsService {
         Map<String, ChartOfAccount> activeByCode =
                 ChartOfAccountsValidator.indexActiveByCode(tenantSlice);
 
+        // Parent code is required on every user-driven create. PO
+        // directive 2026-05-25 — level 1 (NULL parent) is reserved for
+        // the three seeded RESTRICTED_CODES (ACC-01/02/03); user-driven
+        // writes must land at level 2 or level 3. The depth-cap check
+        // below (MAX_HIERARCHY_DEPTH=3) covers the upper bound.
+        ChartOfAccountsValidator.assertParentRequired(parentCode);
         ChartOfAccountsValidator.assertNotSelfParent(code, parentCode);
         ChartOfAccountsValidator.assertParentExists(parentCode, activeByCode);
+        // Calc Rule only allowed on level-3 rows. PO directive
+        // 2026-05-25 — level 1 + level 2 act as grouping headers and
+        // must not carry a +/- sign.
+        ChartOfAccountsValidator.assertCalRuleLevel3Only(
+                parentCode, req.calRule(), activeByCode);
         // Depth check assumes the new row is a leaf with no descendants
         // yet — so the deepest leaf is just the row's own depth.
         if (parentCode != null) {
@@ -326,6 +339,10 @@ public class ChartOfAccountsService {
         String newParentCode = blankToNull(req.parentChartAcctCd());
 
         ChartOfAccountsValidator.assertNotRenamingToRestricted(existing.getChartAcctCd(), newCode);
+        // Parent stays required on Update — the user cannot promote a
+        // level-2/3 row to a level-1 root by clearing its parent. Roots
+        // are reserved for the three seeded RESTRICTED_CODES.
+        ChartOfAccountsValidator.assertParentRequired(newParentCode);
         ChartOfAccountsValidator.assertNotSelfParent(newCode, newParentCode);
 
         if (!newCode.equals(existing.getChartAcctCd())) {
@@ -344,6 +361,12 @@ public class ChartOfAccountsService {
         ChartOfAccountsValidator.assertParentExists(newParentCode, activeByCode);
         ChartOfAccountsValidator.assertNoCycle(newCode, newParentCode, activeByCode);
         ChartOfAccountsValidator.assertDepthCap(existing.getChartAcctCd(), newParentCode, activeByCode);
+        // Calc Rule only allowed on level-3 rows (PO directive
+        // 2026-05-25). Rejects edits that try to attach a +/- sign to
+        // a level-1 / level-2 row, even if the row already had one in
+        // grandfathered DEV data.
+        ChartOfAccountsValidator.assertCalRuleLevel3Only(
+                newParentCode, req.calRule(), activeByCode);
 
         applyRequest(existing, newCode, req, newParentCode);
         existing.setModId(userId);
@@ -443,6 +466,104 @@ public class ChartOfAccountsService {
 
         appendAudit("audit.chart_of_accounts.delete.detail",
                 chartAcctSeqNo, archiveCode);
+    }
+
+    /**
+     * Deactivate a chart-of-accounts row — flip {@code STTS='I'}. Idempotent:
+     * already-inactive rows pass through with no DB write. Mirrors the
+     * legacy update path's status flip, scoped to the single column so the
+     * bulk-action surface does not require the caller to ship every form
+     * field. Restricted roots ({@code ACC-01 / 02 / 03}) are rejected with
+     * {@code WBE_CHART_OF_ACCOUNTS_RESTRICTED_CODE} — matches Update's
+     * restricted-edit guard.
+     *
+     * @throws BusinessException {@code WBE_CHART_OF_ACCOUNTS_NOT_FOUND}
+     *         when no active row matches the PK for the current tenant;
+     *         {@code WBE_CHART_OF_ACCOUNTS_RESTRICTED_CODE} when the
+     *         row's code is in
+     *         {@link ChartOfAccountsConstants#RESTRICTED_CODES}.
+     */
+    @Transactional
+    public ChartOfAccountRow deactivate(String chartAcctSeqNo) {
+        String bizKey = requireBizKey();
+        String userId = requireUserId();
+        String now    = utcNow14();
+
+        ChartOfAccount existing = repo.findById(new ChartOfAccountId(bizKey, chartAcctSeqNo))
+                .filter(c -> ChartOfAccountsConstants.DEL_YN_ACTIVE.equals(c.getDelYn()))
+                .orElseThrow(() -> {
+                    log.warn("chart-of-accounts deactivate missing-row bizKey={} seqNo={}",
+                            bizKey, chartAcctSeqNo);
+                    return new BusinessException("WBE_CHART_OF_ACCOUNTS_NOT_FOUND");
+                });
+
+        ChartOfAccountsValidator.assertNotRestricted(existing.getChartAcctCd());
+
+        if (ChartOfAccountsConstants.STTS_INACTIVE.equals(existing.getStts())) {
+            // Idempotent — already inactive. Skip the audit write to avoid
+            // log noise on bulk re-runs.
+            return projectSavedRow(bizKey, existing);
+        }
+
+        existing.setStts(ChartOfAccountsConstants.STTS_INACTIVE);
+        existing.setModId(userId);
+        existing.setModDtm(now);
+        repo.save(existing);
+
+        log.info("chart-of-accounts deactivated bizKey={} seqNo={} code={}",
+                bizKey, chartAcctSeqNo, existing.getChartAcctCd());
+
+        appendAudit("audit.chart_of_accounts.deactivate.detail",
+                chartAcctSeqNo, existing.getChartAcctCd());
+        return projectSavedRow(bizKey, existing);
+    }
+
+    /**
+     * Bulk soft-delete chart-of-accounts rows by seq_no. Each row is
+     * processed independently via {@link #delete(String)} through the
+     * Spring proxy ({@code self}) so per-row failures (restricted code,
+     * not found, etc.) do NOT roll back rows that already committed.
+     * Matches the {@link #bulkUpload(ChartOfAccountBulkUploadRequest)}
+     * precedent.
+     */
+    public ChartOfAccountBulkActionResponse bulkDelete(ChartOfAccountBulkActionRequest req) {
+        int processed = 0;
+        int failed    = 0;
+        for (String seqNo : req.chartAcctSeqNos()) {
+            try {
+                self.delete(seqNo);
+                processed++;
+            } catch (Exception e) {
+                log.warn("chart-of-accounts bulk-delete row skipped seqNo={}: {}",
+                        seqNo, e.getMessage());
+                failed++;
+            }
+        }
+        log.info("chart-of-accounts bulk-delete done processed={} failed={}", processed, failed);
+        return new ChartOfAccountBulkActionResponse(processed, failed);
+    }
+
+    /**
+     * Bulk deactivate chart-of-accounts rows by seq_no. Each row is
+     * processed independently via {@link #deactivate(String)} through
+     * the Spring proxy ({@code self}) so per-row failures do NOT roll
+     * back rows that already committed.
+     */
+    public ChartOfAccountBulkActionResponse bulkDeactivate(ChartOfAccountBulkActionRequest req) {
+        int processed = 0;
+        int failed    = 0;
+        for (String seqNo : req.chartAcctSeqNos()) {
+            try {
+                self.deactivate(seqNo);
+                processed++;
+            } catch (Exception e) {
+                log.warn("chart-of-accounts bulk-deactivate row skipped seqNo={}: {}",
+                        seqNo, e.getMessage());
+                failed++;
+            }
+        }
+        log.info("chart-of-accounts bulk-deactivate done processed={} failed={}", processed, failed);
+        return new ChartOfAccountBulkActionResponse(processed, failed);
     }
 
     /**

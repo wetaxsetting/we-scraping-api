@@ -1,0 +1,136 @@
+# ====================================================================
+# SIT / shared dev-server profile.
+#
+# Activation:
+#   --spring.profiles.active=sit   (CLI)
+#   SPRING_PROFILES_ACTIVE=sit     (env)
+#
+# Design intent — this file is a STRICT environment, sibling to
+# application-prod.yml:
+#   * No secrets in the repo. Every sensitive value comes from an env
+#     var with NO default, so the JVM refuses to start when ops forgets
+#     to set one (fail-fast > silent misconfig).
+#   * No hard-coded host paths. Storage roots are env-driven so the
+#     same JAR runs on any SIT box.
+#   * No Flyway leniency. Strict checksum validation + in-order applies
+#     so SIT cannot silently start with a modified migration history.
+#   * No SQL logging. Hibernate at INFO; SQL/trace switched off.
+#
+# Common / cross-environment settings (Hibernate dialect, time zone,
+# multipart caps, JWT issuer, trace-id log pattern, default port,
+# CORS shape) stay in application.yml. Local-developer defaults stay
+# in application-local.yml. This file only carries the SIT-specific
+# overrides.
+#
+# Required environment variables (JVM will fail to start without these):
+#   WECMS_DB_URL           — jdbc:postgresql://<host>:<port>/<db>
+#   WECMS_DB_USERNAME      — PostgreSQL user with refactor schema access
+#   WECMS_DB_PASSWORD      — PostgreSQL password
+#   WECMS_JWT_SECRET       — HS256/HS512 signing secret (>= 32 bytes;
+#                            generate with `openssl rand -hex 64`)
+#   WECMS_CORS_ALLOWED_ORIGINS
+#                          — comma-separated list of SIT frontend
+#                            origins (e.g. https://sit-wecms.example.vn)
+#
+# Storage-root env vars (one per feature; missing → app refuses to
+# start because @NotBlank on each *StorageProperties record):
+#   WECMS_ERP_TRANSACTION_HISTORY_STORAGE_ROOT
+#   WECMS_CONTACTS_STORAGE_ROOT
+#   WECMS_PREFERENCES_STORAGE_ROOT
+#   WECMS_INTERNAL_TRANSFER_STORAGE_ROOT
+#   WECMS_OVERSEAS_PAYMENT_STORAGE_ROOT
+#   WECMS_USER_IMAGE_STORAGE_ROOT
+#
+# Recommended SIT layout:
+#   - All storage roots share one parent directory on a dedicated
+#     volume, e.g. /var/wecms/file-data (Linux) or D:/wecms/file-data
+#     (Windows). The Spring service user MUST have read+write on it.
+#   - On first request the per-tenant subtree
+#     (<storage-root>/<biz_key>/<feature-slug>/) is created
+#     automatically by Files.createDirectories; only the parent of the
+#     storage-root needs to exist with write permission.
+#   - Operators set the same value for every WECMS_*_STORAGE_ROOT (the
+#     features namespace themselves via the slug subfolder), or
+#     diverge per feature if SIT has feature-specific volumes.
+#
+# Optional env vars (override base defaults from application.yml):
+#   WECMS_COOCON_*         — point at non-default Coocon endpoint
+#   WECMS_OSMC_*           — point at non-default GDT lookup endpoint
+#   WECMS_SHINHAN_BANK_CD  — internal-transfer cut-off bank code
+#   WECMS_WOORI_BANK_CD    — internal-transfer cut-off bank code
+# ====================================================================
+
+spring:
+  datasource:
+    url: ${WECMS_DB_URL}
+    username: ${WECMS_DB_USERNAME}
+    password: ${WECMS_DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      # Never `update` / `create` / `create-drop` outside local. Schema
+      # changes ship via Flyway migrations.
+      ddl-auto: validate
+    show-sql: false
+    open-in-view: false
+  flyway:
+    enabled: true
+    baseline-on-migrate: false
+    # SIT must NOT tolerate checksum drift or out-of-order applies —
+    # this is the first environment downstream of a developer laptop,
+    # so the strict behaviour is what catches "I edited an applied
+    # migration" mistakes before they reach UAT/PROD.
+    out-of-order: false
+    validate-on-migrate: true
+
+server:
+  error:
+    # No stack traces or binding diagnostics on the wire. Errors still
+    # carry the WBE code + traceId via ApiResponse — that is the
+    # operator-facing surface (grep the traceId in server logs).
+    include-message: never
+    include-stacktrace: never
+    include-binding-errors: never
+
+logging:
+  level:
+    root: INFO
+    com.kosign.wecms: INFO
+    org.springframework.security: WARN
+    org.hibernate: WARN
+    org.hibernate.SQL: WARN
+    org.springframework.jdbc.core: WARN
+    org.hibernate.orm.jdbc.bind: WARN
+
+wecms:
+  jwt:
+    # No default — JwtTokenProvider fails fast at startup if the secret
+    # is missing or shorter than 32 bytes.
+    secret: ${WECMS_JWT_SECRET}
+
+  cors:
+    # No default — every SIT origin must be enumerated by ops. A
+    # missing value collapses to the empty string and CorsConfig
+    # rejects every cross-origin request, which is the safe failure
+    # mode (better than silently allowing localhost).
+    allowed-origins: ${WECMS_CORS_ALLOWED_ORIGINS}
+
+  # ------------------------------------------------------------------
+  # File storage roots — env-var driven, no SIT-specific path baked
+  # into the repo. Each *StorageProperties record is @NotBlank, so a
+  # missing env var causes Spring to refuse to start with a clear
+  # binding error (better than discovering the misconfig at first
+  # upload and reading WBE_*_FILE_STORAGE_FAILED).
+  # ------------------------------------------------------------------
+  erp-transaction-history:
+    storage-root: ${WECMS_ERP_TRANSACTION_HISTORY_STORAGE_ROOT}
+  contacts:
+    storage-root: ${WECMS_CONTACTS_STORAGE_ROOT}
+  preferences:
+    storage-root: ${WECMS_PREFERENCES_STORAGE_ROOT}
+  internal-transfer:
+    storage-root: ${WECMS_INTERNAL_TRANSFER_STORAGE_ROOT}
+  overseas-payment:
+    storage-root: ${WECMS_OVERSEAS_PAYMENT_STORAGE_ROOT}
+  user-image:
+    storage-root: ${WECMS_USER_IMAGE_STORAGE_ROOT}

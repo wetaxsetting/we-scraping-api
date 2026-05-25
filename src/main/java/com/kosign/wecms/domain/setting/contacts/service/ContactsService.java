@@ -99,12 +99,18 @@ public class ContactsService {
     public static final int MAX_PAGE_SIZE = 100;
     public static final int DEFAULT_PAGE_SIZE = 15;
 
-    /** Default ORDER BY when no user sort is supplied. Mirrors the
-     *  legacy listing's implicit ordering (latest-edited first). The
-     *  {@code trcoKey DESC} tiebreaker keeps a deterministic order
-     *  across paged requests for rows that share a {@code modDtm}. */
+    /** Default ORDER BY when no user sort is supplied. Mirrors legacy
+     *  {@code SortHelper.java} (`else if ("comm_0184_001_r001".equals(webSvcId))
+     *  { sortItems.add("hand_trco_key:asc"); }`) — alphabetical by
+     *  Contact Code so Local + Overseas naturally interleave on each
+     *  page instead of clustering by recency. The {@code trcoKey DESC}
+     *  tiebreaker keeps a deterministic order for rows that share a
+     *  {@code hand_trco_key}. (The previous {@code mod_dtm DESC}
+     *  default put a freshly-uploaded batch on top, hiding rows of the
+     *  other location type behind pagination — see the user-reported
+     *  issue 2026-05-25.) */
     static final Sort DEFAULT_SORT =
-            Sort.by(Sort.Order.desc("modDtm"), Sort.Order.desc("trcoKey"));
+            Sort.by(Sort.Order.asc("handTrcoKey"), Sort.Order.desc("trcoKey"));
 
     /** {@code yyyyMMddHHmmss} formatter for the legacy
      *  {@code VARCHAR(14)} audit columns. UTC. */
@@ -119,6 +125,7 @@ public class ContactsService {
     private final AcctTrnsRcvPayInfmRepository acctTrnsRcvPayRepo;
     private final LegacyFunctionRepository legacyFn;
     private final ContactsValidator validator;
+    private final com.kosign.wecms.common.firmbanking.FirmBankingInquiryService firmBankingInquiry;
 
     /* =================================================================
      *  List + getOne
@@ -246,6 +253,81 @@ public class ContactsService {
         } catch (DataIntegrityViolationException ex) {
             return persistNewContact(req, bizKey);
         }
+    }
+
+    /**
+     * Bulk-import counterpart of {@link #create}. Routes through
+     * {@link ContactsValidator#validateImport} so the "Local contact
+     * must carry at least one bank account" rule is skipped &mdash;
+     * legacy {@code comm_0184_007} allows a Local row with no bank
+     * info (bank fields are optional as a group). All other
+     * tenant-aware checks (duplicate hand_trco_key / tax_id, payload
+     * dedup, address disp_ord) still run.
+     */
+    @Transactional
+    public ContactRow createForImport(ContactCreateRequest req) {
+        String bizKey = TenantContext.currentBizKey();
+        validator.validateImport(req, bizKey);
+
+        try {
+            return persistNewContact(req, bizKey);
+        } catch (DataIntegrityViolationException ex) {
+            return persistNewContact(req, bizKey);
+        }
+    }
+
+    /**
+     * Excel-upload preflight &mdash; runs the per-tenant DB-existence
+     * checks (HAND_TRCO_KEY + TRCO_TAX_ID) over the parsed rows so the
+     * preview table can flag duplicates BEFORE the user clicks Upload.
+     * Mirrors the row-iteration in legacy
+     * {@code comm_0184_007_r001_act.jsp:401-450 / 567-630} which calls
+     * {@code getContact()} + {@code getTaxId()} per row at parse time.
+     *
+     * <p>Read-only. Two batched {@code SELECT … IN (…)} queries
+     * (one per field) regardless of row count, so 500 rows = 2 round
+     * trips instead of 1000.
+     */
+    @Transactional(readOnly = true)
+    public com.kosign.wecms.domain.setting.contacts.dto.ContactsExcelPreflightResponse preflightExcelImport(
+            com.kosign.wecms.domain.setting.contacts.dto.ContactsExcelPreflightRequest req) {
+        String bizKey = TenantContext.currentBizKey();
+        var rows = req.rows();
+
+        // Collect non-blank codes + tax IDs once for the IN-queries.
+        Set<String> handTrcoKeysToCheck = new HashSet<>();
+        Set<String> trcoTaxIdsToCheck = new HashSet<>();
+        for (var row : rows) {
+            if (row.handTrcoKey() != null && !row.handTrcoKey().isBlank()) {
+                handTrcoKeysToCheck.add(row.handTrcoKey());
+            }
+            if (row.trcoTaxId() != null && !row.trcoTaxId().isBlank()) {
+                trcoTaxIdsToCheck.add(row.trcoTaxId());
+            }
+        }
+
+        Set<String> existingCodes = handTrcoKeysToCheck.isEmpty()
+                ? Set.of()
+                : new HashSet<>(trcoInfmRepo.findExistingActiveHandTrcoKeys(bizKey, handTrcoKeysToCheck));
+        Set<String> existingTaxIds = trcoTaxIdsToCheck.isEmpty()
+                ? Set.of()
+                : new HashSet<>(trcoInfmRepo.findExistingActiveTrcoTaxIds(bizKey, trcoTaxIdsToCheck));
+
+        List<com.kosign.wecms.domain.setting.contacts.dto.ContactsExcelPreflightResponse.Result> results =
+                new ArrayList<>(rows.size());
+        for (int i = 0; i < rows.size(); i++) {
+            var row = rows.get(i);
+            boolean codeDup = row.handTrcoKey() != null
+                    && !row.handTrcoKey().isBlank()
+                    && existingCodes.contains(row.handTrcoKey());
+            boolean taxIdDup = row.trcoTaxId() != null
+                    && !row.trcoTaxId().isBlank()
+                    && existingTaxIds.contains(row.trcoTaxId());
+            results.add(new com.kosign.wecms.domain.setting.contacts.dto.ContactsExcelPreflightResponse.Result(
+                    i, codeDup, taxIdDup));
+        }
+
+        return new com.kosign.wecms.domain.setting.contacts.dto.ContactsExcelPreflightResponse(results);
     }
 
     private ContactRow persistNewContact(ContactCreateRequest req, String bizKey) {
@@ -731,24 +813,143 @@ public class ContactsService {
     }
 
     /**
-     * Lookup Recipient — <b>deterministic stub</b>. The legacy
-     * endpoint ({@code comm_1003_001}) calls the firm-banking
-     * scraping module via {@code FIRM_PROC.inquiryAccount}; that
-     * integration is intentionally out of refactor scope (workspace
-     * memory {@code project_refactoring_scope.md}). The stub returns
-     * a synthetic recipient name keyed off the last 4 digits of the
-     * account number so the popup's verified-recipient UX flow can
-     * still be exercised end-to-end during local R&amp;D.
+     * Bulk bank-name &rarr; bank-code resolution + per-row recipient
+     * inquiry for the Local-Contact Excel-upload preview. Mirrors the
+     * legacy preview's per-row work in
+     * {@code comm_0184_007_r001_act.jsp:475-533}: the bank cell is
+     * matched against {@code TB_FIRM_BANK_CODE.ENG_ABRVAT_NM}, the
+     * match-count drives NAPAS-vs-CITAD routing, and NAPAS rows
+     * additionally fire {@link FirmBankingInquiryService#inquiryAccount}
+     * to stamp the holder name on the preview row.
      *
-     * <p>When real bank integration lands, swap this method's body
-     * for the legacy {@code FIRM_PROC} call and keep the signature.
+     * <p>Match-count routing (legacy parity, lines 481-505):
+     * <ul>
+     *   <li>0 matches &rarr; {@code bankFound = false}; frontend flags
+     *       the bank cell red.</li>
+     *   <li>1 match &rarr; honour the row's {@code ANT_DIV_CD}.</li>
+     *   <li>&ge; 2 matches (legacy assumption: name overlap between
+     *       NAPAS and CITAD) &rarr; treat as NAPAS, prefer the NAPAS
+     *       row.</li>
+     * </ul>
+     *
+     * <p>One DB call regardless of row count &mdash; the distinct bank
+     * names go through {@link TbFirmBankCodeRepository#findByEngAbrvatNmIn}.
+     * The recipient inquiry fans out per NAPAS-VND row but each call is
+     * a fast in-memory stub today (real bank API later, behind the
+     * shared {@link FirmBankingInquiryService} seam).
+     */
+    @Transactional(readOnly = true)
+    public com.kosign.wecms.domain.setting.contacts.dto.ContactsExcelResolveRecipientsResponse resolveExcelImportRecipients(
+            com.kosign.wecms.domain.setting.contacts.dto.ContactsExcelResolveRecipientsRequest req) {
+        var rows = req.rows();
+
+        // Tenant-level firm-banking gate (legacy comm_1003_001_act.jsp's
+        // contactInfo!=null branch). When the tenant has no active
+        // TB_FIRM_CONF row we still resolve bank codes for every row
+        // (so NAPAS_BANK_CD / CITAD_BANK_CD on the import payload stays
+        // correct) but skip every per-row recipient inquiry — there is
+        // nothing to inquire against. Saves N DB hits per upload.
+        boolean inquiryEnabled = firmBankingInquiry.hasActiveFirmConfig();
+
+        // One IN-query for every distinct non-blank bank name.
+        Set<String> distinctBankNames = new HashSet<>();
+        for (var row : rows) {
+            if (row.bankName() != null && !row.bankName().isBlank()) {
+                distinctBankNames.add(row.bankName().trim());
+            }
+        }
+        // Group every TB_FIRM_BANK_CODE row by name. Multiple matches
+        // per name are expected (NAPAS row + CITAD row sharing the same
+        // ENG_ABRVAT_NM).
+        Map<String, List<TbFirmBankCode>> banksByName = new HashMap<>();
+        if (!distinctBankNames.isEmpty()) {
+            for (TbFirmBankCode b : bankCodeRepo.findByEngAbrvatNmIn(distinctBankNames)) {
+                banksByName.computeIfAbsent(b.getEngAbrvatNm(), k -> new ArrayList<>()).add(b);
+            }
+        }
+
+        List<com.kosign.wecms.domain.setting.contacts.dto.ContactsExcelResolveRecipientsResponse.Result> results =
+                new ArrayList<>(rows.size());
+        for (var row : rows) {
+            String name = row.bankName() == null ? "" : row.bankName().trim();
+            if (name.isEmpty()) {
+                // Frontend already flagged this row's bank cell during
+                // client-side parsing; we still emit a Result entry so
+                // the index alignment is 1:1.
+                results.add(new com.kosign.wecms.domain.setting.contacts.dto.ContactsExcelResolveRecipientsResponse.Result(
+                        row.rowIndex(), false, null, null, null, null));
+                continue;
+            }
+
+            List<TbFirmBankCode> matches = banksByName.getOrDefault(name, List.of());
+            if (matches.isEmpty()) {
+                results.add(new com.kosign.wecms.domain.setting.contacts.dto.ContactsExcelResolveRecipientsResponse.Result(
+                        row.rowIndex(), false, null, null, null, null));
+                continue;
+            }
+
+            // Pick the NAPAS row when the name maps to both NAPAS and
+            // CITAD (legacy r001_act.jsp:485-491). When only one match,
+            // honour whichever ant_div_cd it is.
+            TbFirmBankCode picked = null;
+            if (matches.size() >= 2) {
+                for (TbFirmBankCode m : matches) {
+                    if ("NAPAS".equals(m.getAntDivCd())) { picked = m; break; }
+                }
+                if (picked == null) picked = matches.get(0);
+            } else {
+                picked = matches.get(0);
+            }
+
+            String antDiv = picked.getAntDivCd();
+            String napasCd = "NAPAS".equals(antDiv) ? picked.getBankCd() : null;
+            String citadCd = "CITAD".equals(antDiv) ? picked.getBankCd() : null;
+
+            String holderName = "";
+            // Recipient inquiry runs only for NAPAS rows whose currency
+            // is VND — mirrors the dialog's `showLookup` gate
+            // (`bankStatus !== 'N' && currency !== 'USD'`) and the
+            // legacy upload's `cellValue_.endsWith("NAPAS")` branch at
+            // r001_act.jsp:531. Also skip when the tenant-level firm
+            // config check above said there's nothing to inquire against.
+            if (inquiryEnabled && napasCd != null && "VND".equalsIgnoreCase(row.currency())) {
+                holderName = firmBankingInquiry.inquiryAccount(napasCd, row.acctNo()).orElse("");
+            }
+
+            results.add(new com.kosign.wecms.domain.setting.contacts.dto.ContactsExcelResolveRecipientsResponse.Result(
+                    row.rowIndex(), true, antDiv, napasCd, citadCd, holderName));
+        }
+
+        return new com.kosign.wecms.domain.setting.contacts.dto.ContactsExcelResolveRecipientsResponse(results);
+    }
+
+    /**
+     * Lookup Recipient &mdash; "Lookup Recipient" button on the Add /
+     * Edit Contact popup. Delegates to the shared
+     * {@link com.kosign.wecms.common.firmbanking.FirmBankingInquiryService}
+     * so the popup, the Excel-upload preview ({@link #resolveExcelImportRecipients}),
+     * and any future Payment / Transfer flow all share one bank-API
+     * seam.
+     *
+     * <p>Legacy mirror: {@code comm_0184_002.ts:530-580 lookUpRecipitend}
+     * &rarr; {@code comm_1003_001} &rarr; {@code FIRM_PROC.inquiryAccount}.
+     * The shared service is NAPAS-only by contract; CITAD bank codes
+     * pass through to the manual Recipient Name field in the dialog
+     * UI (see {@code AddNewContactDialog.tsx} {@code showLookup}
+     * gate). When called with only {@code citadBankCd}, this method
+     * returns an empty string so the existing dialog branches
+     * unchanged.
      */
     public ContactLookupRecipientResponse lookupRecipient(ContactLookupRecipientRequest req) {
-        String acctNo = req.acctNo() == null ? "" : req.acctNo().trim();
-        if (acctNo.length() < 4) {
-            return new ContactLookupRecipientResponse("MOCK ACCOUNT HOLDER");
+        String napasBankCd = req.napasBankCd();
+        if (napasBankCd == null || napasBankCd.isBlank()) {
+            // CITAD-only call — the dialog won't actually fire this in
+            // practice (the Lookup button hides for CITAD) but a stale
+            // client should get an empty response instead of a mock.
+            return new ContactLookupRecipientResponse("");
         }
-        String suffix = acctNo.substring(acctNo.length() - 4);
-        return new ContactLookupRecipientResponse("MOCK ACCOUNT HOLDER " + suffix);
+        return firmBankingInquiry.inquiryAccount(napasBankCd, req.acctNo())
+                .map(ContactLookupRecipientResponse::new)
+                .orElse(new ContactLookupRecipientResponse(""));
     }
 }

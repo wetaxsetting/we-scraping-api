@@ -70,23 +70,25 @@ class ChartOfAccountsTreeBuilderTest {
     }
 
     @Test
-    void rows_depthCapDropsLevelFiveRows() {
-        // Build a 5-deep chain: A → B → C → D → E. E must surface as
-        // level null.
+    void rows_depthCapDropsRowsBeyondLevelThree() {
+        // PO directive 2026-05-25: MAX_HIERARCHY_DEPTH = 3. Only
+        // level 1 (seeded roots), level 2, and level 3 are valid
+        // levels in the tree projection; anything deeper surfaces as
+        // null so the frontend can footnote it as grandfathered data.
+        //
+        // Build a 4-deep chain: A → B → C → D. D must surface as null.
         ChartOfAccount a = row("1", "A", "A", null, "A");
         ChartOfAccount b = row("2", "B", "B", "A",  "A");
         ChartOfAccount c = row("3", "C", "C", "B",  "A");
         ChartOfAccount d = row("4", "D", "D", "C",  "A");
-        ChartOfAccount e = row("5", "E", "E", "D",  "A");
         List<ChartOfAccountRow> projected =
-                ChartOfAccountsTreeBuilder.buildRows(List.of(a, b, c, d, e));
+                ChartOfAccountsTreeBuilder.buildRows(List.of(a, b, c, d));
         Map<String, ChartOfAccountRow> byCode = byCode(projected);
         assertThat(byCode.get("A").chartAcctLevel()).isEqualTo(1);
         assertThat(byCode.get("B").chartAcctLevel()).isEqualTo(2);
         assertThat(byCode.get("C").chartAcctLevel()).isEqualTo(3);
-        assertThat(byCode.get("D").chartAcctLevel()).isEqualTo(4);
-        // E exceeds the 4-level cap.
-        assertThat(byCode.get("E").chartAcctLevel()).isNull();
+        // D exceeds the 3-level cap.
+        assertThat(byCode.get("D").chartAcctLevel()).isNull();
     }
 
     @Test
