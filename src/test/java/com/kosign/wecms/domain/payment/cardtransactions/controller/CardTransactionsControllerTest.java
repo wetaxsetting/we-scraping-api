@@ -6,6 +6,7 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.kosign.wecms.common.enums.LangCd;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.exception.GlobalExceptionHandler;
+import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.i18n.MessageResolver;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.ActiveCard;
@@ -58,12 +59,14 @@ class CardTransactionsControllerTest {
     private CardTransactionsService service;
     private CardTransactionSyncService syncService;
     private CardTranListR001Service cardTranListR001Service;
+    private ExcelExportService excelExportService;
 
     @BeforeEach
     void setUp() {
         service = mock(CardTransactionsService.class);
         syncService = mock(CardTransactionSyncService.class);
         cardTranListR001Service = mock(CardTranListR001Service.class);
+        excelExportService = mock(ExcelExportService.class);
 
         ObjectMapper mapper = new ObjectMapper()
                 .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
@@ -78,7 +81,7 @@ class CardTransactionsControllerTest {
         GlobalExceptionHandler advice = new GlobalExceptionHandler(messages);
 
         mvc = MockMvcBuilders
-                .standaloneSetup(new CardTransactionsController(service, syncService, cardTranListR001Service))
+                .standaloneSetup(new CardTransactionsController(service, syncService, cardTranListR001Service, excelExportService))
                 .setMessageConverters(jsonConverter)
                 .setControllerAdvice(advice)
                 .build();
