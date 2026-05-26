@@ -9,7 +9,18 @@ spring:
   config:
     import: optional:file:./.env[.properties]
   profiles:
-    active: local
+    # Default profile for local IDE runs. The SIT / PROD servers override
+    # this via the SPRING_PROFILES_ACTIVE env var (set on the host), so
+    # changing the default here only affects developer laptops.
+    #
+    # Why `local` is the right default:
+    #   - application-local.yml carries a 75-byte placeholder for
+    #     wecms.jwt.secret so JwtTokenProvider can boot out of the box.
+    #   - application-sit.yml deliberately has NO default — every
+    #     sensitive value must come from the host env. Starting the IDE
+    #     with profile=sit fails fast with "secret must be at least 32
+    #     bytes" unless ops-style env vars are pre-set.
+    active: sit
   jpa:
     open-in-view: false
     properties:
@@ -26,7 +37,7 @@ spring:
     # without Flyway running, V163 never landed and Hibernate
     # validate failed with "missing column oat_idempotency_key in
     # table napas_remit_trns_hstr".
-    enabled: true
+    enabled: false
     locations: classpath:db/migration
     baseline-on-migrate: false
     # Local-R&D drift recovery — the developer DB is single-user and

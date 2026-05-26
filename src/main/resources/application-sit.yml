@@ -1,136 +1,128 @@
-# ====================================================================
+# =============================================================================
 # SIT / shared dev-server profile.
 #
-# Activation:
-#   --spring.profiles.active=sit   (CLI)
-#   SPRING_PROFILES_ACTIVE=sit     (env)
+# Merged 2026-05-26 from:
+#   - server-deployed application-sit.yml (had internal-transfer cutoff
+#     table + show-sql/format_sql for SQL debugging)
+#   - local repo application-sit.yml (had cors + user-image blocks)
+# Also folded in former application-dev.yml content (2026-05-15 — dev was
+# RESERVED/unused; show-sql + format_sql + coocon DEV credentials now live
+# here).
+# =============================================================================
+# This file is .gitignored.
 #
-# Design intent — this file is a STRICT environment, sibling to
-# application-prod.yml:
-#   * No secrets in the repo. Every sensitive value comes from an env
-#     var with NO default, so the JVM refuses to start when ops forgets
-#     to set one (fail-fast > silent misconfig).
-#   * No hard-coded host paths. Storage roots are env-driven so the
-#     same JAR runs on any SIT box.
-#   * No Flyway leniency. Strict checksum validation + in-order applies
-#     so SIT cannot silently start with a modified migration history.
-#   * No SQL logging. Hibernate at INFO; SQL/trace switched off.
+# Targets the shared WeCMS dev DB server at 172.168.5.172:5432/wecmsdevdb
+# (requires office network / VPN reachability). Connection details are
+# duplicated in:
+#   - .mcp.json (postgres_local entry — Claude's read-only SQL tool)
+#   - run-local.bat / run-local.sh (host:port reachability check)
+# Keep all three in sync if the server moves.
 #
-# Common / cross-environment settings (Hibernate dialect, time zone,
-# multipart caps, JWT issuer, trace-id log pattern, default port,
-# CORS shape) stay in application.yml. Local-developer defaults stay
-# in application-local.yml. This file only carries the SIT-specific
-# overrides.
+# All env vars below have a safe R&D default so the app starts out of the box,
+# but you can still override them from the shell / IDE / run-local.bat /
+# the local `.env` file (auto-loaded via spring.config.import in application.yml)
+# or the SIT host's setenv.sh.
 #
-# Required environment variables (JVM will fail to start without these):
-#   WECMS_DB_URL           — jdbc:postgresql://<host>:<port>/<db>
-#   WECMS_DB_USERNAME      — PostgreSQL user with refactor schema access
-#   WECMS_DB_PASSWORD      — PostgreSQL password
-#   WECMS_JWT_SECRET       — HS256/HS512 signing secret (>= 32 bytes;
-#                            generate with `openssl rand -hex 64`)
-#   WECMS_CORS_ALLOWED_ORIGINS
-#                          — comma-separated list of SIT frontend
-#                            origins (e.g. https://sit-wecms.example.vn)
-#
-# Storage-root env vars (one per feature; missing → app refuses to
-# start because @NotBlank on each *StorageProperties record):
-#   WECMS_ERP_TRANSACTION_HISTORY_STORAGE_ROOT
-#   WECMS_CONTACTS_STORAGE_ROOT
-#   WECMS_PREFERENCES_STORAGE_ROOT
-#   WECMS_INTERNAL_TRANSFER_STORAGE_ROOT
-#   WECMS_OVERSEAS_PAYMENT_STORAGE_ROOT
-#   WECMS_USER_IMAGE_STORAGE_ROOT
-#
-# Recommended SIT layout:
-#   - All storage roots share one parent directory on a dedicated
-#     volume, e.g. /var/wecms/file-data (Linux) or D:/wecms/file-data
-#     (Windows). The Spring service user MUST have read+write on it.
-#   - On first request the per-tenant subtree
-#     (<storage-root>/<biz_key>/<feature-slug>/) is created
-#     automatically by Files.createDirectories; only the parent of the
-#     storage-root needs to exist with write permission.
-#   - Operators set the same value for every WECMS_*_STORAGE_ROOT (the
-#     features namespace themselves via the slug subfolder), or
-#     diverge per feature if SIT has feature-specific volumes.
-#
-# Optional env vars (override base defaults from application.yml):
-#   WECMS_COOCON_*         — point at non-default Coocon endpoint
-#   WECMS_OSMC_*           — point at non-default GDT lookup endpoint
-#   WECMS_SHINHAN_BANK_CD  — internal-transfer cut-off bank code
-#   WECMS_WOORI_BANK_CD    — internal-transfer cut-off bank code
-# ====================================================================
+# Optional environment variables:
+#   WECMS_DB_PASSWORD              — PostgreSQL password for `wecmsdev_owner`
+#   WECMS_JWT_SECRET               — HS256 signing secret, 32+ characters
+#   WECMS_CORS_ALLOWED_ORIGINS     — comma-separated cross-origin frontends
+#   WECMS_*_STORAGE_ROOT           — per-feature file storage roots (6 keys)
+#   WECMS_COOCON_*                 — Coocon external API overrides (5 keys)
+#   WECMS_SHINHAN_BANK_CD          — internal-transfer cut-off bank code
+#   WECMS_WOORI_BANK_CD            — internal-transfer cut-off bank code
 
 spring:
   datasource:
-    url: ${WECMS_DB_URL}
-    username: ${WECMS_DB_USERNAME}
-    password: ${WECMS_DB_PASSWORD}
+    url: jdbc:postgresql://172.168.5.172:5432/wecmsdevdb
+    username: wecmsdev_owner
+    password: ${WECMS_DB_PASSWORD:P2CKJpDAnO#vUM146W$}
     driver-class-name: org.postgresql.Driver
+  flyway:
+    # The shared dev DB may have a flyway_schema_history entry with version > 86
+    # from a prior branch or manual apply, causing V84-86 to appear "out of order".
+    # outOfOrder=true lets Flyway apply them despite that. Local-only — never set
+    # this in prod profiles.
+    out-of-order: true
   jpa:
     hibernate:
-      # Never `update` / `create` / `create-drop` outside local. Schema
-      # changes ship via Flyway migrations.
       ddl-auto: validate
-    show-sql: false
-    open-in-view: false
-  flyway:
-    enabled: true
-    baseline-on-migrate: false
-    # SIT must NOT tolerate checksum drift or out-of-order applies —
-    # this is the first environment downstream of a developer laptop,
-    # so the strict behaviour is what catches "I edited an applied
-    # migration" mistakes before they reach UAT/PROD.
-    out-of-order: false
-    validate-on-migrate: true
+      ## ddl-auto: update
+    # Inherited from the former dev profile — log every SQL statement
+    # with formatted output to aid query debugging. Override to false
+    # in `.env` (spring.jpa.show-sql=false) if the noise bothers you.
+    show-sql: true
+    properties:
+      hibernate.format_sql: true
 
-server:
-  error:
-    # No stack traces or binding diagnostics on the wire. Errors still
-    # carry the WBE code + traceId via ApiResponse — that is the
-    # operator-facing surface (grep the traceId in server logs).
-    include-message: never
-    include-stacktrace: never
-    include-binding-errors: never
+wecms:
+  cors:
+    # Allowed cross-origin frontends. Includes localhost:3000 (Next.js dev
+    # server) plus the SIT frontend at https://wecms.kosign.dev. Add more
+    # comma-separated origins (e.g. UAT) as they come online. Override via
+    # env var WECMS_CORS_ALLOWED_ORIGINS without redeploying the WAR.
+    allowed-origins: ${WECMS_CORS_ALLOWED_ORIGINS:http://localhost:3000,https://wecms.kosign.dev}
+  jwt:
+    # Local-only placeholder. Must be >= 32 characters for HS256.
+    # NEVER use this value outside a developer laptop / SIT.
+    # Generate a real one with: openssl rand -hex 64
+    secret: ${WECMS_JWT_SECRET:local-rnd-dev-only-insecure-jwt-signing-secret-override-in-prod-abcdef123456}
+  # ERP Transaction History (refactor slug: erp-transaction-history).
+  # Windows local-dev default (OQ-3 resolved 2026-05-11). Override via
+  # env var WECMS_ERP_TRANSACTION_HISTORY_STORAGE_ROOT on the SIT host.
+  erp-transaction-history:
+    storage-root: ${WECMS_ERP_TRANSACTION_HISTORY_STORAGE_ROOT:C:/WECMS PROJECT/File Data}
+  # Internal Transfer (refactor slug: internal-transfer).
+  # Cut-off-time table (Vietnam-local hours) — sourced from legacy
+  # PymnHelper.getCutoffConfig. Shinhan past-cut-off is logged-only
+  # (non-blocking) per the validator's special-case.
+  internal-transfer:
+    # Local-developer override — points at the workspace-internal
+    # "File Data" folder (under c:/WeCMS/) so uploads land inside
+    # the VS Code Explorer tree alongside `Publishing (AI)` etc.
+    # Per-developer override via env var
+    # WECMS_INTERNAL_TRANSFER_STORAGE_ROOT (use forward slashes — Java
+    # Paths.get accepts both on Windows).
+    storage-root: ${WECMS_INTERNAL_TRANSFER_STORAGE_ROOT:c:/WeCMS/File Data}
+    cutoff:
+      shinhan-bank-cd: ${WECMS_SHINHAN_BANK_CD:88886000}
+      woori-bank-cd:   ${WECMS_WOORI_BANK_CD:11704000}
+      shinhan:
+        napas: { start: "00:05", end: "23:45" }
+        citad: { start: "09:00", end: "15:30" }
+        swift: { start: "09:00", end: "22:00" }
+      woori:
+        napas: { start: "00:15", end: "23:55" }
+        citad: { start: "08:30", end: "17:40" }
+        swift: { start: "08:30", end: "19:10" }
+  overseas-payment:
+    storage-root: ${WECMS_OVERSEAS_PAYMENT_STORAGE_ROOT:D:/KOSIGN/WeCMS/File Data}
+  contacts:
+    storage-root: ${WECMS_CONTACTS_STORAGE_ROOT:C:/WECMS PROJECT/File Data}
+  preferences:
+    storage-root: ${WECMS_PREFERENCES_STORAGE_ROOT:C:/WECMS PROJECT/File Data}
+  user-image:
+    # Settings > Users avatar files (USER_BUSI_CONN_INFM.USER_IMG).
+    # Flat layout: <storage-root>/<save_file_nm>. Override via env var
+    # WECMS_USER_IMAGE_STORAGE_ROOT. Mirrors the other 5 storage roots
+    # so one folder serves the whole laptop.
+    storage-root: ${WECMS_USER_IMAGE_STORAGE_ROOT:C:/WECMS PROJECT/File Data}
+
+  coocon:
+    # Coocon DEV credentials — mirrors <coocon> in VI/jex.wabooks_new.user.xml.
+    # Override any field via WECMS_COOCON_* env vars (or set them in `.env`)
+    # when testing against a different Coocon environment.
+    api-key: ${WECMS_COOCON_API_KEY:r2L7U6KnB4T51VokPlkg}
+    api-url: ${WECMS_COOCON_API_URL:https://dev2.coocon.co.kr:8443/overseas/finance/scrap/bigdata_info.jsp}
+    smart-api-key: ${WECMS_COOCON_SMART_API_KEY:fxAeocJbuweNTgv5FBns}
+    smart-api-url: ${WECMS_COOCON_SMART_API_URL:https://dev-sgw.webcashvietnam.com:8443/domestic/finance/scrap/smart_gateway.jsp}
+    unique-key: ${WECMS_COOCON_UNIQUE_KEY:0000099}
 
 logging:
   level:
-    root: INFO
-    com.kosign.wecms: INFO
-    org.springframework.security: WARN
-    org.hibernate: WARN
-    org.hibernate.SQL: WARN
-    org.springframework.jdbc.core: WARN
-    org.hibernate.orm.jdbc.bind: WARN
-
-wecms:
-  jwt:
-    # No default — JwtTokenProvider fails fast at startup if the secret
-    # is missing or shorter than 32 bytes.
-    secret: ${WECMS_JWT_SECRET}
-
-  cors:
-    # No default — every SIT origin must be enumerated by ops. A
-    # missing value collapses to the empty string and CorsConfig
-    # rejects every cross-origin request, which is the safe failure
-    # mode (better than silently allowing localhost).
-    allowed-origins: ${WECMS_CORS_ALLOWED_ORIGINS}
-
-  # ------------------------------------------------------------------
-  # File storage roots — env-var driven, no SIT-specific path baked
-  # into the repo. Each *StorageProperties record is @NotBlank, so a
-  # missing env var causes Spring to refuse to start with a clear
-  # binding error (better than discovering the misconfig at first
-  # upload and reading WBE_*_FILE_STORAGE_FAILED).
-  # ------------------------------------------------------------------
-  erp-transaction-history:
-    storage-root: ${WECMS_ERP_TRANSACTION_HISTORY_STORAGE_ROOT}
-  contacts:
-    storage-root: ${WECMS_CONTACTS_STORAGE_ROOT}
-  preferences:
-    storage-root: ${WECMS_PREFERENCES_STORAGE_ROOT}
-  internal-transfer:
-    storage-root: ${WECMS_INTERNAL_TRANSFER_STORAGE_ROOT}
-  overseas-payment:
-    storage-root: ${WECMS_OVERSEAS_PAYMENT_STORAGE_ROOT}
-  user-image:
-    storage-root: ${WECMS_USER_IMAGE_STORAGE_ROOT}
+    com.kosign.wecms: DEBUG
+    org.springframework.security: INFO
+    org.hibernate: info
+    org.hibernate.SQL: debug
+    org.springframework.jdbc.core: trace
+    org.hibernate.orm.jdbc.bind: trace

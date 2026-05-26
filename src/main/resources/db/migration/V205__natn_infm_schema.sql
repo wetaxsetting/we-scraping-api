@@ -1,5 +1,9 @@
 -- ---------------------------------------------------------------------------
--- V200 — NATN_INFM (country master) schema
+-- V205 — NATN_INFM (country master) schema
+--
+-- Renumbered 2026-05-26 from V200 → V205 to resolve a collision with
+-- V200__card_trns_rcv_pay_infm.sql (parallel branch grabbed V200 first).
+-- Paired with V206__natn_infm_seed.sql (was V201).
 --
 -- Backs the global phone-country picker consumed by Settings > Users
 -- Add/Edit form (Figma 142:17631 / 5300:31189). Mirrors the legacy JEX

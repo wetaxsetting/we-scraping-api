@@ -21,7 +21,10 @@
       "Read(//c/Program Files/Java/**)",
       "Read(//c/Program Files/Eclipse Adoptium/**)",
       "Bash(where java *)",
-      "Bash(JAVA_HOME=\"/c/Program Files/Eclipse Adoptium/jdk-21.0.10.7-hotspot\" ./gradlew build *)"
+      "Bash(JAVA_HOME=\"/c/Program Files/Eclipse Adoptium/jdk-21.0.10.7-hotspot\" ./gradlew build *)",
+      "Bash(JAVA_HOME=\"C:\\\\Program Files\\\\Java\\\\jdk-21.0.10.7-hotspot\" ./gradlew build *)",
+      "PowerShell($env:JAVA_HOME = \"C:\\\\Program Files\\\\Eclipse Adoptium\\\\jdk-21.0.10.7-hotspot\"; .\\\\gradlew.bat build)",
+      "Bash(findstr /i env)"
     ]
   },
   "enabledMcpjsonServers": [

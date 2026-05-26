@@ -1,5 +1,9 @@
 -- ---------------------------------------------------------------------------
--- V201 — NATN_INFM seed
+-- V206 — NATN_INFM seed
+--
+-- Renumbered 2026-05-26 from V201 → V206 to align with the
+-- V205__natn_infm_schema.sql rename (V200/V201 → V205/V206 to resolve a
+-- parallel-branch collision).
 --
 -- Generic country directory. Mirrors the project's existing flag-asset
 -- set under `wecms-web/public/assets/flag/` so any future consumer of
