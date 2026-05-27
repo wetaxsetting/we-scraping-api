@@ -18,18 +18,18 @@ import jakarta.validation.constraints.Pattern;
  * enforces).
  */
 public record SyncCardTransactionsRequest(
-        @NotBlank @Pattern(regexp = "^\\d{8}$", message = "from_dt: invalid format")
-        String fromDt,
-        @NotBlank @Pattern(regexp = "^\\d{8}$", message = "to_dt: invalid format")
-        String toDt,
-        /** When {@code true}, the orchestrator ignores {@code fromDt} and
+        @NotBlank @Pattern(regexp = "^\\d{8}$", message = "from_date: invalid format")
+        String fromDate,
+        @NotBlank @Pattern(regexp = "^\\d{8}$", message = "to_date: invalid format")
+        String toDate,
+        /** When {@code true}, the orchestrator ignores {@code fromDate} and
          *  derives the range from each eligible card's
          *  {@code TRN_LST_SUC_DTM} (the timestamp of its previous
          *  successful sync). When any card has never been synced, falls
-         *  back to {@code today &minus; 90 days}. {@code toDt} is also
+         *  back to {@code today &minus; 90 days}. {@code toDate} is also
          *  forced to today server-side so the UX matches the legacy
          *  popup's "from latest updated date to today" copy.
-         *  <p>Frontend still ships {@code fromDt} / {@code toDt} when
+         *  <p>Frontend still ships {@code fromDate} / {@code toDate} when
          *  Auto is checked so the wire shape stays uniform — the
          *  values are ignored on the server. */
         Boolean auto) {

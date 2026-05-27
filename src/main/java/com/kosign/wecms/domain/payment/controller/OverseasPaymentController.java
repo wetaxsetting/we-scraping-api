@@ -74,8 +74,8 @@ public class OverseasPaymentController {
      *
      * <p>Wire parameters (all query-string, snake_case):
      * <ul>
-     *   <li>{@code from_dt} — required, yyyyMMdd</li>
-     *   <li>{@code to_dt}   — required, yyyyMMdd</li>
+     *   <li>{@code from_date} — required, yyyyMMdd</li>
+     *   <li>{@code to_date}   — required, yyyyMMdd</li>
      *   <li>{@code appr_type_cd} — repeatable; filters by approval status
      *       (e.g. {@code APPROVED}, {@code PENDING}). Omit for all statuses.</li>
      *   <li>{@code keyword} — partial match on file title (type E) or beneficiary
@@ -88,12 +88,12 @@ public class OverseasPaymentController {
      */
     @GetMapping("/scheduled")
     public ApiResponse<OverseasScheduledListResponse> listScheduled(
-            @RequestParam("from_dt")
-            @Pattern(regexp = "^[0-9]{8}$", message = "from_dt must be yyyyMMdd")
+            @RequestParam("from_date")
+            @Pattern(regexp = "^[0-9]{8}$", message = "from_date must be yyyyMMdd")
             String fromDt,
 
-            @RequestParam("to_dt")
-            @Pattern(regexp = "^[0-9]{8}$", message = "to_dt must be yyyyMMdd")
+            @RequestParam("to_date")
+            @Pattern(regexp = "^[0-9]{8}$", message = "to_date must be yyyyMMdd")
             String toDt,
 
             @RequestParam(value = "appr_type_cd", required = false)
@@ -201,12 +201,12 @@ public class OverseasPaymentController {
      */
     @GetMapping("/result")
     public ApiResponse<OverseasResultListResponse> listResult(
-            @RequestParam("from_dt")
-            @Pattern(regexp = "^[0-9]{8}$", message = "from_dt must be yyyyMMdd")
+            @RequestParam("from_date")
+            @Pattern(regexp = "^[0-9]{8}$", message = "from_date must be yyyyMMdd")
             String fromDt,
 
-            @RequestParam("to_dt")
-            @Pattern(regexp = "^[0-9]{8}$", message = "to_dt must be yyyyMMdd")
+            @RequestParam("to_date")
+            @Pattern(regexp = "^[0-9]{8}$", message = "to_date must be yyyyMMdd")
             String toDt,
 
             @RequestParam(value = "keyword", required = false)
@@ -242,12 +242,12 @@ public class OverseasPaymentController {
      */
     @GetMapping("/result/export")
     public void exportResult(
-            @RequestParam("from_dt")
-            @Pattern(regexp = "^[0-9]{8}$", message = "from_dt must be yyyyMMdd")
+            @RequestParam("from_date")
+            @Pattern(regexp = "^[0-9]{8}$", message = "from_date must be yyyyMMdd")
             String fromDt,
 
-            @RequestParam("to_dt")
-            @Pattern(regexp = "^[0-9]{8}$", message = "to_dt must be yyyyMMdd")
+            @RequestParam("to_date")
+            @Pattern(regexp = "^[0-9]{8}$", message = "to_date must be yyyyMMdd")
             String toDt,
 
             @RequestParam(value = "keyword", required = false)
