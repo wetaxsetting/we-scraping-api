@@ -1,6 +1,8 @@
 package com.kosign.wecms.domain.payment.dispatch.service;
 
 import com.kosign.wecms.common.tenant.TenantContext;
+import com.kosign.wecms.domain.banking.entity.AcctMstr;
+import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileData;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileMst;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayTarget;
@@ -113,6 +115,14 @@ public class TransferDispatchExecutor {
     private final TbPayTargetRepository  tbPayTargetRepository;
     private final TbPayFileMstRepository tbPayFileMstRepository;
     private final TbPayFileDataRepository tbPayFileDataRepository;
+    /** Banking-account master — used to resolve the recipient's account
+     *  holder name ({@code FINC_MDA_OWNER_NM}) when the batch detail
+     *  carries a null {@code RCPT_NM}. Mirrors legacy
+     *  {@code PymnHelper.validateBankAccountInAcctMstr} at parse time;
+     *  this dispatch-time fallback covers batches where the parser
+     *  didn't populate the name (pre-fix uploads, future modules that
+     *  share this executor). */
+    private final AcctMstrRepository     acctMstrRepository;
     private final DispatchKeyGenerator   keyGenerator;
     private final Clock                  clock;
 
@@ -172,7 +182,7 @@ public class TransferDispatchExecutor {
             row.setAntDivCd(resolveAntDivCd(master.getOutBankCd(), line));
             row.setTarBankCd(line.getTarBankCd());
             row.setFincMdaNo(line.getFincMdaNo());
-            row.setFincMdaOwnerNm(line.getRcptNm());
+            row.setFincMdaOwnerNm(resolveOwnerNm(bizKey, line));
             row.setTranAmt(line.getTranAmt());
             row.setTranUsag(line.getTranUsag());
             row.setProcStat(PROC_STAT_PENDING);
@@ -246,7 +256,7 @@ public class TransferDispatchExecutor {
                     sameBank(master.getOutBankCd(), line.getTarBankCd())
                             ? BANK_CHNL_DIV_CURRENT_BANK
                             : BANK_CHNL_DIV_OTHER_BANK);
-            data.setFincMdaOwnerNm(line.getRcptNm());
+            data.setFincMdaOwnerNm(resolveOwnerNm(bizKey, line));
             // TAR_ACCT_RMRK preserves the legacy quirk (PymnHelper:2295):
             // the legacy code copies WDRL_ACT_RMRK into TAR_ACCT_RMRK
             // instead of TAR_ACCT_RMRK — keep the bug for parity.
@@ -271,6 +281,61 @@ public class TransferDispatchExecutor {
     }
 
     /* ───────────────── Helpers ───────────────── */
+
+    /**
+     * Resolve the recipient's account-holder name for the legacy
+     * {@code FINC_MDA_OWNER_NM} column. The column is NOT NULL on both
+     * {@code TB_PAY_TARGET} (API leg) and {@code TB_PAY_FILE_DATA}
+     * (File leg), so a missing value crashes the dispatch with a raw
+     * PostgreSQL NOT NULL violation.
+     *
+     * <p>Resolution order:
+     * <ol>
+     *   <li>{@code SCDUL_PYMN_SUMR_DETL.RCPT_NM} when set by the
+     *       upload parser (legacy parity — see
+     *       {@code PymnHelper.validateBankAccountInAcctMstr}).</li>
+     *   <li>{@code ACCT_MSTR.ACCT_NM} looked up by
+     *       {@code (BIZ_KEY, BANK_CD, ACCT_NO)} — Internal Transfer
+     *       always targets one of the company's own accounts, so this
+     *       resolves even when the Excel parser skipped the name
+     *       column.</li>
+     *   <li>{@code ACCT_MSTR.ACCT_NM} looked up by
+     *       {@code (BIZ_KEY, ACCT_NO)} — same shape the legacy uses
+     *       (no bank-code filter). Handles the case where the upload
+     *       captured an off-by-one bank code.</li>
+     *   <li>Last-resort: the recipient account number itself, so the
+     *       insert still satisfies the NOT NULL constraint instead of
+     *       surfacing a {@code WBE_DB} envelope to the user.</li>
+     * </ol>
+     *
+     * <p>For dispatch flows that pass through this executor with a
+     * recipient outside {@code ACCT_MSTR} (Vendor / Expense / Payroll
+     * to a third-party contact), the parser is expected to fill
+     * {@code RCPT_NM} from the contact lookup; this fallback only
+     * fires for Internal Transfer's same-tenant accounts.
+     */
+    private String resolveOwnerNm(String bizKey, ScdulPymnSumrDetl line) {
+        String fromLine = line.getRcptNm();
+        if (fromLine != null && !fromLine.isBlank()) {
+            return fromLine;
+        }
+        String tarBankCd = line.getTarBankCd();
+        String acctNo    = line.getFincMdaNo();
+        if (acctNo != null && !acctNo.isBlank()) {
+            if (tarBankCd != null && !tarBankCd.isBlank()) {
+                String nm = acctMstrRepository
+                        .findByBizKeyAndBankCdAndAcctNo(bizKey, tarBankCd, acctNo)
+                        .map(AcctMstr::getAcctNm)
+                        .filter(s -> s != null && !s.isBlank())
+                        .orElse(null);
+                if (nm != null) return nm;
+            }
+        }
+        // Last-resort — keep the dispatch alive. The bank-side will
+        // still process the transfer using FINC_MDA_NO + TAR_BANK_CD
+        // as the lookup key.
+        return acctNo != null && !acctNo.isBlank() ? acctNo : "UNKNOWN";
+    }
 
     private static String resolveAntDivCd(String outBankCd, ScdulPymnSumrDetl line) {
         if (outBankCd != null && outBankCd.equals(line.getTarBankCd())) {

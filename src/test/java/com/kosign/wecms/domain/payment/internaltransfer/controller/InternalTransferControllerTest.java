@@ -126,7 +126,7 @@ class InternalTransferControllerTest {
     @Test
     void should_return_detail_when_id_is_valid() throws Exception {
         ScheduledTransferDetailResponse stub = new ScheduledTransferDetailResponse(
-                "20260513000001", "03", "11704000", "1234567890",
+                "20260513000001", "03", "11704000", null, "1234567890",
                 "Demo", (BigDecimal) null, (BigDecimal) null, null, "tester",
                 null, null, null, null, null, "N", null, "VND", "VND",
                 "demo.xlsx", (BigDecimal) null, List.<TransferLineDetail>of());

@@ -405,6 +405,11 @@ public class OverseasPaymentRepository {
     private String buildResultExportSql(String keyword, String trnfYn) {
         String kw   = keyword != null ? " AND ops.titl ILIKE :keyword ESCAPE '!'" : "";
         String trnf = trnfYn  != null ? " AND ops.trnf_yn = :trnfYn" : "";
+        // `trnf_dtm IS NOT NULL` — Excel export of Payment Result must
+        // mirror the on-screen Result list filter so the user gets the
+        // exact same row set in the workbook. Without this guard a
+        // freshly-uploaded Overseas batch (no dispatch yet) leaks into
+        // the export. Same fix applied to the in-app list SQL above.
         return """
                 SELECT ops.ovrs_pymn_no,
                        ops.ccy_cd,
@@ -426,6 +431,7 @@ public class OverseasPaymentRepository {
                   LEFT JOIN expt_resol_mstr erm
                     ON ops.biz_key = erm.biz_key AND ops.appr_seq_no = erm.appr_seq_no
                  WHERE ops.biz_key = :bizKey
+                   AND ops.trnf_dtm IS NOT NULL
                    AND LEFT(ops.reg_dtm, 8) BETWEEN :fromDt AND :toDt
                 """ + kw + trnf;
     }
@@ -457,6 +463,12 @@ public class OverseasPaymentRepository {
     private String buildResultSql(String keyword, String trnfYn) {
         String kw    = keyword != null ? " AND ops.titl ILIKE :keyword ESCAPE '!'" : "";
         String trnf  = trnfYn  != null ? " AND ops.trnf_yn = :trnfYn" : "";
+        // `trnf_dtm IS NOT NULL` scopes Payment Result to batches the
+        // user has actually clicked Transfer on. Without this, every
+        // freshly-uploaded Overseas batch that's still in the approval
+        // flow leaks into Payment Result reading as "In Progress" even
+        // though no dispatch has been attempted. Same fix that landed
+        // for Internal Transfer / Vendor / Expense / Payroll.
         return """
                 SELECT ops.ovrs_pymn_no,
                        ops.ccy_cd,
@@ -479,6 +491,7 @@ public class OverseasPaymentRepository {
                   LEFT JOIN expt_resol_mstr erm
                     ON ops.biz_key = erm.biz_key AND ops.appr_seq_no = erm.appr_seq_no
                  WHERE ops.biz_key = :bizKey
+                   AND ops.trnf_dtm IS NOT NULL
                    AND LEFT(ops.reg_dtm, 8) BETWEEN :fromDt AND :toDt
                 """ + kw + trnf;
     }

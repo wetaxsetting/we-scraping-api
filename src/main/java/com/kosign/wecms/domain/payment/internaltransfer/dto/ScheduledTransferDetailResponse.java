@@ -12,6 +12,14 @@ public record ScheduledTransferDetailResponse(
         String                    scdulPymnNo,
         String                    scdulPymnTypeCd,
         String                    outBankCd,
+        /** Human-readable name of the withdrawal bank — resolved on the
+         *  api side via the shared two-step lookup
+         *  ({@code BankCdResolver} → V86 NAPAS / CITAD fallback) so the
+         *  Approval Details / Scheduled Transfer Detail popups render
+         *  "Woori VN" / "ShinhanBank" / etc. instead of the raw code
+         *  (e.g. {@code "11704020"}). {@code null} when neither lookup
+         *  matches — the frontend falls back to the code alone. */
+        String                    outBankNm,
         String                    wdrlActNo,
         String                    titl,
         BigDecimal                totalTranAmt,

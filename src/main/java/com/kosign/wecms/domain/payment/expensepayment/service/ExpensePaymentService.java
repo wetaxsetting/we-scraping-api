@@ -117,6 +117,10 @@ public class ExpensePaymentService {
     static final String AUDIT_REQUEST_APPROVAL_KEY = "audit.expense_payment.request_approval.detail";
     static final String AUDIT_APPROVE_KEY          = "audit.expense_payment.approve.detail";
     static final String AUDIT_REJECT_KEY           = "audit.expense_payment.reject.detail";
+    static final String AUDIT_WITHDRAW_APPROVAL_KEY =
+            "audit.expense_payment.withdraw_approval.detail";
+    static final String AUDIT_CHANGE_APPROVAL_LINE_KEY =
+            "audit.expense_payment.change_approval_line.detail";
     static final String AUDIT_CREATE_KEY           = "audit.expense_payment.create.detail";
 
     /** ERP Transaction History {@code TRNS_TYPE_CD} for Expense Scheduled
@@ -158,6 +162,9 @@ public class ExpensePaymentService {
     private final TransferDispatchExecutor      dispatchExecutor;
     /** Approver-chain authority — see InternalTransferService for the rationale. */
     private final ApprovalBoxService            approvalBoxService;
+    /** Shared projector that resolves the per-line bank name +
+     *  chart-account breadcrumb the Request Approval dialog renders. */
+    private final com.kosign.wecms.domain.payment.common.TransferLineDetailMapper transferLineDetailMapper;
     /** Approval-Box fan-out — see InternalTransferService for rationale. */
     private final ApprovalBoxFanoutService      approvalBoxFanoutService;
     private final Clock                         clock;
@@ -245,16 +252,19 @@ public class ExpensePaymentService {
 
         String resolvedId = master.getScdulPymnNo();
         Sort lineSort = Sort.by(Sort.Order.asc("scdulPymnDetlNo"));
+        java.util.Map<String, com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount> chartByCode =
+                transferLineDetailMapper.buildChartIndex(bizKey);
         List<TransferLineDetail> lines = detlRepository
                 .findByBizKeyAndScdulPymnNo(bizKey, resolvedId, lineSort)
                 .stream()
-                .map(ExpensePaymentService::toLineDetail)
+                .map(d -> transferLineDetailMapper.toLineDetail(d, chartByCode))
                 .toList();
 
         return new ScheduledTransferDetailResponse(
                 master.getScdulPymnNo(),
                 master.getScdulPymnTypeCd(),
                 master.getOutBankCd(),
+                transferLineDetailMapper.resolveBankNm(master.getOutBankCd()),
                 master.getWdrlActNo(),
                 master.getTitl(),
                 master.getTotalTranAmt(),
@@ -781,6 +791,81 @@ public class ExpensePaymentService {
                 bizKey, id, master.getApprSeqNo(), req.action(), next);
     }
 
+    /**
+     * Withdraw an in-flight approval request on a batch — kebab "Delete"
+     * action on the Approval Details popup. Mirrors
+     * {@link com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService#withdrawApproval}.
+     */
+    @Transactional
+    public void withdrawApproval(String id) {
+        String bizKey = requireTenant();
+        ScdulPymnSumr master = loadMaster(bizKey, id);
+
+        String apprSeqNo = master.getApprSeqNo();
+        if (apprSeqNo == null || apprSeqNo.isBlank()) {
+            throw new BusinessException("WBE2094");
+        }
+
+        approvalBoxFanoutService.withdrawApproval(apprSeqNo);
+
+        master.setApprSeqNo(null);
+        master.setApprStts(null);
+        master.setErpFileNum(null);
+        master.setModDtm(OffsetDateTime.now(clock).format(DTM14));
+        String userId = TenantContext.currentUserId();
+        if (userId != null) master.setModId(userId);
+        sumrRepository.saveAndFlush(master);
+
+        auditLogService.append(AuditLogContext.builder()
+                .wsvcId(WSVC_ID)
+                .refNo(REF_NO)
+                .refNo1(id)
+                .refNo2(apprSeqNo)
+                .activityKey(AUDIT_ACTIVITY_KEY)
+                .detailKey(AUDIT_WITHDRAW_APPROVAL_KEY)
+                .build());
+
+        log.info("feature=expense-payment withdraw-approval bizKey={} scdulPymnNo={} apprSeqNo={}",
+                bizKey, id, apprSeqNo);
+    }
+
+    /**
+     * Replace the approver chain on an in-flight approval request with
+     * the approvers attached to {@code apprLineNo} — kebab "Edit" action.
+     * Mirrors
+     * {@link com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService#changeApprovalLine}.
+     */
+    @Transactional
+    public void changeApprovalLine(String id, Long apprLineNo) {
+        String bizKey = requireTenant();
+        ScdulPymnSumr master = loadMaster(bizKey, id);
+
+        String apprSeqNo = master.getApprSeqNo();
+        if (apprSeqNo == null || apprSeqNo.isBlank()) {
+            throw new BusinessException("WBE2094");
+        }
+
+        approvalBoxFanoutService.changeApprovalLine(apprSeqNo, apprLineNo);
+
+        master.setApprStts(APPR_STTS_PENDING);
+        master.setModDtm(OffsetDateTime.now(clock).format(DTM14));
+        String userId = TenantContext.currentUserId();
+        if (userId != null) master.setModId(userId);
+        sumrRepository.saveAndFlush(master);
+
+        auditLogService.append(AuditLogContext.builder()
+                .wsvcId(WSVC_ID)
+                .refNo(REF_NO)
+                .refNo1(id)
+                .refNo2(apprSeqNo)
+                .activityKey(AUDIT_ACTIVITY_KEY)
+                .detailKey(AUDIT_CHANGE_APPROVAL_LINE_KEY)
+                .build());
+
+        log.info("feature=expense-payment change-approval-line bizKey={} scdulPymnNo={} apprSeqNo={} newApprLineNo={}",
+                bizKey, id, apprSeqNo, apprLineNo);
+    }
+
     /** Map approval-box "P/I/C/R" → SCDUL_PYMN_SUMR "P/I/C/X". */
     private static String mapApprStts(String raw) {
         if (raw == null) return APPR_STTS_PENDING;
@@ -856,27 +941,6 @@ public class ExpensePaymentService {
                 .findByBizKeyAndScdulPymnNoAndScdulPymnTypeCd(
                         bizKey, scdulPymnNo, ScdulPymnTypeCd.EXPENSE.code())
                 .orElseThrow(() -> new BusinessException("WBE2060"));
-    }
-
-    private static TransferLineDetail toLineDetail(ScdulPymnSumrDetl d) {
-        return new TransferLineDetail(
-                d.getScdulPymnDetlNo(),
-                d.getAntDivCd(),
-                d.getRcptNm(),
-                d.getTarBankCd(),
-                d.getFincMdaNo(),
-                d.getTranUsag(),
-                d.getTranAmt(),
-                d.getTrnfCcyCd(),
-                d.getTrcoKey(),
-                d.getHandTrcoKey(),
-                d.getDocNo(),
-                d.getNote(),
-                d.getCitadBankCd(),
-                d.getChartAcctCd(),
-                d.getChartAcctSeqNo(),
-                d.getDepoCcyCd(),
-                d.getBankTrnsShortId());
     }
 
     private java.util.Map<String, String> buildDocNoMap(String bizKey, List<ScdulPymnSumr> rows) {

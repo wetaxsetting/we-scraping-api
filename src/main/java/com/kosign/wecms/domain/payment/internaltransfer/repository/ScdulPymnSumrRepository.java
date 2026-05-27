@@ -135,6 +135,36 @@ public interface ScdulPymnSumrRepository extends JpaRepository<ScdulPymnSumr, Sc
             Pageable pageable);
 
     /**
+     * Same shape as {@link #search} but with the extra
+     * {@code trnf_dtm IS NOT NULL} filter that scopes the Result list to
+     * batches the user has actually dispatched (or attempted to
+     * dispatch). Without this filter, freshly-uploaded batches that are
+     * still in the approval flow leak into Transfer Result and read as
+     * "In Progress" — which they aren't; they haven't been dispatched
+     * yet. {@code trnf_dtm} is set by {@code InternalTransferDispatch
+     * Service.dispatch}; un-dispatched rows have it as {@code null}.
+     */
+    @Query("""
+            SELECT s FROM ScdulPymnSumr s
+            WHERE s.bizKey             = :bizKey
+              AND s.scdulPymnTypeCd    = :scdulPymnTypeCd
+              AND s.regDtm BETWEEN :fromDtm AND :toDtm
+              AND s.trnfDtm IS NOT NULL
+              AND (:srchWdPattern IS NULL
+                   OR LOWER(s.titl) LIKE :srchWdPattern
+                   OR LOWER(COALESCE(s.apprSeqNo, '')) LIKE :srchWdPattern)
+              AND (:trnfYn IS NULL OR s.trnfYn = :trnfYn)
+            """)
+    Page<ScdulPymnSumr> searchDispatched(
+            @Param("bizKey")           String bizKey,
+            @Param("scdulPymnTypeCd")  String scdulPymnTypeCd,
+            @Param("fromDtm")          String fromDtm,
+            @Param("toDtm")            String toDtm,
+            @Param("srchWdPattern")    String srchWdPattern,
+            @Param("trnfYn")           String trnfYn,
+            Pageable pageable);
+
+    /**
      * Per-tenant MAX(apprSeqNo::numeric) for the synthesised
      * approval-sequence-number generator used by
      * {@code InternalTransferService.requestApproval}. Mirrors the

@@ -75,10 +75,15 @@ public class InternalTransferResultService {
         // states which require the dispatch tables.
         String trnfYnFilter = emptyToNull(trnfStts);
 
-        Page<ScdulPymnSumr> rows = sumrRepository.search(
+        // Use `searchDispatched` (not `search`) so only batches the user
+        // has actually clicked Transfer on appear here — `trnf_dtm IS NOT
+        // NULL` is the canonical marker. Without that filter, every
+        // freshly-uploaded batch that's still in the approval flow leaks
+        // into Transfer Result reading as "In Progress" even though no
+        // dispatch has been attempted.
+        Page<ScdulPymnSumr> rows = sumrRepository.searchDispatched(
                 bizKey, ScdulPymnTypeCd.INTERNAL.code(),
                 fromDtm, toDtm, emptyToNull(srchWd), trnfYnFilter,
-                null,                                       // apprType — Result lists filter by trnfStts only
                 pageable);
 
         Map<String, long[]> counts = loadDispatchCounts(bizKey, rows.getContent());

@@ -12,6 +12,11 @@ public record TransferLineDetail(
         String     antDivCd,
         String     rcptNm,
         String     tarBankCd,
+        /** Human-readable name resolved from {@code tarBankCd} via
+         *  {@code BankCdResolver}. Null when the code is missing or
+         *  doesn't match a known {@code BANK_INFM} row. The frontend's
+         *  Request Approval dialog renders this next to the bank code. */
+        String     tarBankNm,
         String     fincMdaNo,
         String     tranUsag,
         BigDecimal tranAmt,
@@ -23,5 +28,10 @@ public record TransferLineDetail(
         String     citadBankCd,
         String     chartAcctCd,
         String     chartAcctSeqNo,
+        /** Display breadcrumb for the chart-of-accounts entry — e.g.
+         *  {@code "EXPENSES > PAYMENT"}. Built server-side by walking
+         *  up the parent chain on {@code CHART_ACCT_INFM}. Null when
+         *  the row carries no chart account or the lookup misses. */
+        String     chartAcctBreadcrumb,
         String     depoCcyCd,
         String     bankTrnsShortId) { }

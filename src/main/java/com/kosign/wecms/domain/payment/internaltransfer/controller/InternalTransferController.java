@@ -27,6 +27,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -199,6 +200,22 @@ public class InternalTransferController {
                 .body(new InputStreamResource(stream));
     }
 
+    /**
+     * Preview the next {@code VO_YYMMDD_NNN} document number for the
+     * current tenant. Used by the Request Approval popup to populate
+     * the read-only "Document No." field before submit, so Internal
+     * Transfer renders the same friendly id format as Card
+     * Transactions ({@code VO_260527_001}) instead of the raw
+     * 14-digit {@code SCDUL_PYMN_NO}. The value is a preview only;
+     * the authoritative number is stamped at submit by
+     * {@link InternalTransferService#requestApproval}.
+     */
+    @GetMapping("/next-doc-no")
+    public ApiResponse<com.kosign.wecms.domain.payment.internaltransfer.dto.NextDocNoResponse>
+            nextDocNo() {
+        return ApiResponse.ok(service.previewNextDocNo());
+    }
+
     /* ----------------------------------------------------------------
      *  Excel upload — parse step (legacy pymn_0009_002_r001)
      * ---------------------------------------------------------------- */
@@ -327,6 +344,62 @@ public class InternalTransferController {
             @Valid @RequestBody
             com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalRequest req) {
         return ApiResponse.ok(service.requestApproval(id, req));
+    }
+
+    /* ----------------------------------------------------------------
+     *  Withdraw approval — kebab "Delete" on the Approval Details popup
+     *  (legacy comm_0195_001 menu)
+     * ---------------------------------------------------------------- */
+
+    /**
+     * Withdraw an in-flight approval request on this batch. Deletes the
+     * matching {@code EXPT_RESOL_MSTR} + {@code EXPT_RESOL_APPRVR_INFM}
+     * rows, then clears the back-stamped {@code APPR_SEQ_NO} +
+     * {@code ERP_FILE_NUM} + {@code APPR_STTS} on the batch master so
+     * the row returns to draftable state.
+     *
+     * <p>Refuses when the request is already in a closed state
+     * (Approved / Rejected). Mirrors the legacy
+     * {@code comm_0195_001} kebab → Delete path and the Card
+     * Transactions {@code DELETE /by-approval/{apprSeqNo}} contract.
+     */
+    @DeleteMapping("/{id}/approval")
+    public ApiResponse<Void> withdrawApproval(
+            @PathVariable("id")
+            @Size(max = 30)
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id) {
+        service.withdrawApproval(id);
+        return ApiResponse.ok(null);
+    }
+
+    /* ----------------------------------------------------------------
+     *  Change approval line — kebab "Edit" on the Approval Details popup
+     *  (legacy comm_0195_001 editApproval flow)
+     * ---------------------------------------------------------------- */
+
+    /**
+     * Replace the approver chain on an in-flight approval request with
+     * the chain attached to the supplied {@code appr_line_no}. Resets
+     * the master back to Pending so the new first approver becomes
+     * active. Refuses when the request is already in a closed state
+     * (Approved / Rejected).
+     *
+     * <p>Mirrors the Card Transactions
+     * {@code PUT /by-approval/{apprSeqNo}/approval-line} contract — same
+     * single-field request body the cross-module Approval Details
+     * handler posts.
+     */
+    @PutMapping("/{id}/approval-line")
+    public ApiResponse<Void> changeApprovalLine(
+            @PathVariable("id")
+            @Size(max = 30)
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id,
+            @Valid @RequestBody
+            com.kosign.wecms.domain.payment.internaltransfer.dto.ChangeApprovalLineRequest req) {
+        service.changeApprovalLine(id, req.apprLineNo());
+        return ApiResponse.ok(null);
     }
 
     /* ----------------------------------------------------------------

@@ -39,6 +39,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -168,6 +169,33 @@ public class PayrollPaymentController {
             String id,
             @Valid @RequestBody ApprovalActionRequest req) {
         service.actOnApproval(id, req);
+        return ApiResponse.ok(null);
+    }
+
+    /** Withdraw an in-flight approval request — kebab "Delete" on the
+     *  Approval Details popup. Mirrors the Internal Transfer contract. */
+    @DeleteMapping("/{id}/approval")
+    public ApiResponse<Void> withdrawApproval(
+            @PathVariable("id")
+            @Size(max = 30)
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id) {
+        service.withdrawApproval(id);
+        return ApiResponse.ok(null);
+    }
+
+    /** Replace the approver chain on an in-flight approval request —
+     *  kebab "Edit" on the Approval Details popup. Mirrors the Internal
+     *  Transfer contract. */
+    @PutMapping("/{id}/approval-line")
+    public ApiResponse<Void> changeApprovalLine(
+            @PathVariable("id")
+            @Size(max = 30)
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id,
+            @Valid @RequestBody
+            com.kosign.wecms.domain.payment.internaltransfer.dto.ChangeApprovalLineRequest req) {
+        service.changeApprovalLine(id, req.apprLineNo());
         return ApiResponse.ok(null);
     }
 

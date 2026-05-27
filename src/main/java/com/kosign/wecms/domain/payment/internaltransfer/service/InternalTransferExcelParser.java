@@ -1,6 +1,9 @@
 package com.kosign.wecms.domain.payment.internaltransfer.service;
 
 import com.kosign.wecms.common.exception.BusinessException;
+import com.kosign.wecms.common.tenant.TenantContext;
+import com.kosign.wecms.domain.banking.entity.AcctMstr;
+import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ParseExcelResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ParsedTransferLine;
 import com.kosign.wecms.domain.payment.validation.FieldCd;
@@ -125,6 +128,12 @@ public class InternalTransferExcelParser {
 
     private final TbFirmBankCodeRepository firmBankCodeRepo;
     private final SpecialCharValidator     specialCharValidator;
+    /** Banking-account master — used to resolve {@code RCPT_NM} from
+     *  the company's own account directory. Internal Transfer always
+     *  targets one of the company's own accounts, so {@code ACCT_NM}
+     *  is the recipient's holder name. Mirrors legacy
+     *  {@code PymnHelper.validateBankAccountInAcctMstr}. */
+    private final AcctMstrRepository       acctMstrRepository;
 
     @Transactional(readOnly = true)
     public ParseExcelResponse parse(MultipartFile file, String bankCd) {
@@ -342,10 +351,32 @@ public class InternalTransferExcelParser {
         String errFld   = buildErrPair(errors, FieldError::fieldId);
         String errCause = buildErrPair(errors, FieldError::cause);
 
+        // Resolve RCPT_NM from ACCT_MSTR — Internal Transfer always
+        // targets one of the company's own accounts, so the recipient's
+        // holder name is on `ACCT_MSTR.ACCT_NM`. Mirrors legacy
+        // `PymnHelper.validateBankAccountInAcctMstr`:636 which sets
+        // `recItem.put("RCPT_NM", acctMstr.getAcctNm())` after the
+        // `(biz_key, acct_no)` lookup. Without this the dispatch
+        // INSERT into `tb_pay_file_data` would NULL-violate on
+        // `finc_mda_owner_nm`. Best-effort: when the account isn't in
+        // ACCT_MSTR for this tenant, leave the name null — the
+        // dispatch executor's fallback covers that path and the
+        // user-visible error is the same WBE1194 the legacy raises on
+        // unknown accounts (deferred to a follow-up MR).
+        String rcptNm = null;
+        if (!isBlank(fincMdaNo) && !isBlank(resolvedBankCd)) {
+            String bizKey = TenantContext.currentBizKey();
+            rcptNm = acctMstrRepository
+                    .findByBizKeyAndBankCdAndAcctNo(bizKey, resolvedBankCd, fincMdaNo.trim())
+                    .map(AcctMstr::getAcctNm)
+                    .filter(s -> s != null && !s.isBlank())
+                    .orElse(null);
+        }
+
         ParsedTransferLine line = new ParsedTransferLine(
                 tranAmt,
                 resolvedAntDiv,
-                null,                     // RCPT_NM — JEX template has no recipient-name column
+                rcptNm,                   // RCPT_NM — resolved from ACCT_MSTR.ACCT_NM (legacy parity)
                 resolvedBankCd,
                 resolvedBankNm,
                 emptyToNull(fincMdaNo),

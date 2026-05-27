@@ -1,10 +1,14 @@
 package com.kosign.wecms.domain.payment.approvalbox.service;
 
+import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolApprvrInfm;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
+import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolApprvrInfmRepository;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
+import com.kosign.wecms.domain.setting.approvalline.entity.ApprovalLineApprover;
+import com.kosign.wecms.domain.setting.approvalline.repository.ApprovalLineApproverRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -61,6 +65,7 @@ public class ApprovalBoxFanoutService {
 
     private final ExptResolMstrRepository       mstrRepository;
     private final ExptResolApprvrInfmRepository approverRepository;
+    private final ApprovalLineApproverRepository apprLineApproverRepository;
     private final Clock                         clock;
 
     /**
@@ -222,4 +227,135 @@ public class ApprovalBoxFanoutService {
 
     /** Approver-row input — name + id pair from the request body. */
     public record Approver(String apprvrId, String apprvrNm) { }
+
+    /* ----------------------------------------------------------------
+     *  Shared withdraw / change-approval-line — used by every Payment
+     *  module's Approval Details kebab menu (Card Transactions,
+     *  Internal Transfer, Vendor / Expense / Payroll / Overseas as they
+     *  port). Both touch only EXPT_RESOL_MSTR + EXPT_RESOL_APPRVR_INFM,
+     *  so the logic is module-agnostic. Each caller wraps these in its
+     *  own service-level transaction so the per-module back-stamp
+     *  cleanup (e.g. clearing SCDUL_PYMN_SUMR.APPR_SEQ_NO for Internal
+     *  Transfer) lands in the same atomic unit.
+     * ---------------------------------------------------------------- */
+
+    /**
+     * Withdraw an in-flight Approval Box request. Refuses unless the
+     * master is in Pending ({@code "00"}) or In Progress ({@code "03"})
+     * — closed approvals (Approved / Rejected) stay immutable.
+     *
+     * <p>Returns the loaded master so the caller can read whatever
+     * audit fields it needs (e.g. the back-stamped {@code DOC_NO}) AFTER
+     * the master + approver rows have been cleared from the DB. The
+     * tx is the caller's — this method assumes it is invoked from
+     * inside a {@code @Transactional} per-module service method.
+     *
+     * <p>Per-module back-stamp cleanup (Card unstamps
+     * {@code CARD_TRNS_HSTR.APPR_SEQ_NO}; Internal Transfer clears
+     * {@code SCDUL_PYMN_SUMR.APPR_SEQ_NO} + {@code ERP_FILE_NUM}) is the
+     * caller's responsibility — this method only touches the approval
+     * tables. Audit-log writes are also the caller's responsibility so
+     * each module stamps its own {@code WSVC_ID} slug.
+     *
+     * @param apprSeqNo The approval sequence number to withdraw.
+     * @return the loaded {@link ExptResolMstr} BEFORE deletion, for the
+     *         caller's read needs. Never {@code null}.
+     * @throws BusinessException {@code WBE_NOT_FOUND} when the row is
+     *         missing in the current tenant; {@code WBE_VALIDATION}
+     *         when the row is already in a closed state or
+     *         {@code apprSeqNo} is blank.
+     */
+    public ExptResolMstr withdrawApproval(String apprSeqNo) {
+        if (apprSeqNo == null || apprSeqNo.isBlank()) {
+            throw new BusinessException("WBE_VALIDATION", "appr_seq_no: required");
+        }
+        String bizKey = TenantContext.currentBizKey();
+
+        ExptResolMstrId id = new ExptResolMstrId(bizKey, apprSeqNo.trim());
+        ExptResolMstr mstr = mstrRepository.findById(id)
+                .orElseThrow(() -> new BusinessException("WBE_NOT_FOUND",
+                        "Approval reference not found"));
+
+        String typeCd = mstr.getApprTypeCd();
+        if (!"00".equals(typeCd) && !"03".equals(typeCd)) {
+            throw new BusinessException("WBE_VALIDATION",
+                    "Only Pending or In Progress approvals can be withdrawn");
+        }
+
+        approverRepository.deleteByBizKeyAndApprSeqNo(bizKey, apprSeqNo.trim());
+        mstrRepository.delete(mstr);
+        return mstr;
+    }
+
+    /**
+     * Replace the per-approver chain on an in-flight Approval Box
+     * request with the chain attached to {@code apprLineNo}. Resets the
+     * master back to Pending so the first approver of the new chain
+     * becomes the active one. Same Pending / In Progress guard as
+     * {@link #withdrawApproval}.
+     *
+     * <p>Mirrors the legacy {@code comm_0195_001.ts:278} editApproval
+     * flow. Audit + per-module back-stamp updates are the caller's
+     * responsibility.
+     *
+     * @return the loaded {@link ExptResolMstr} AFTER the rewrite, for
+     *         the caller's read needs.
+     */
+    @SuppressWarnings("UnusedReturnValue")
+    public ExptResolMstr changeApprovalLine(String apprSeqNo, Long apprLineNo) {
+        if (apprSeqNo == null || apprSeqNo.isBlank()) {
+            throw new BusinessException("WBE_VALIDATION", "appr_seq_no: required");
+        }
+        if (apprLineNo == null || apprLineNo <= 0) {
+            throw new BusinessException("WBE_VALIDATION", "appr_line_no: required");
+        }
+        String bizKey = TenantContext.currentBizKey();
+        String userId = TenantContext.currentUserId();
+        String now    = OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC).format(DTM14);
+
+        ExptResolMstrId id = new ExptResolMstrId(bizKey, apprSeqNo.trim());
+        ExptResolMstr mstr = mstrRepository.findById(id)
+                .orElseThrow(() -> new BusinessException("WBE_NOT_FOUND",
+                        "Approval reference not found"));
+
+        String typeCd = mstr.getApprTypeCd();
+        if (!"00".equals(typeCd) && !"03".equals(typeCd)) {
+            throw new BusinessException("WBE_VALIDATION",
+                    "Only Pending or In Progress approvals can be edited");
+        }
+
+        List<ApprovalLineApprover> chain = apprLineApproverRepository
+                .findAllByBizKeyAndApprLineNoOrderByApprvrDispOrdAsc(bizKey, apprLineNo);
+        if (chain.isEmpty()) {
+            throw new BusinessException("WBE_VALIDATION",
+                    "appr_line_no: no approvers found for the picked line");
+        }
+
+        approverRepository.deleteByBizKeyAndApprSeqNo(bizKey, apprSeqNo.trim());
+        approverRepository.flush();
+
+        int line = 1;
+        for (ApprovalLineApprover a : chain) {
+            ExptResolApprvrInfm row = new ExptResolApprvrInfm();
+            row.setBizKey(bizKey);
+            row.setApprSeqNo(apprSeqNo.trim());
+            row.setApprvrId(a.getApprvrId());
+            row.setApprvrNm(a.getApprvrNm() != null ? a.getApprvrNm() : a.getApprvrId());
+            row.setApprvrStts(line == 1 ? APPRVR_STTS_PENDING : APPRVR_STTS_WAITING);
+            row.setApprvrLineNo(BigDecimal.valueOf(line));
+            row.setReadYn("N");
+            row.setRegId(userId);
+            row.setRegDtm(now);
+            row.setModId(userId);
+            row.setModDtm(now);
+            approverRepository.save(row);
+            line++;
+        }
+
+        mstr.setApprTypeCd(APPR_TYPE_CD_PENDING);
+        mstr.setModId(userId);
+        mstr.setModDtm(now);
+        mstrRepository.save(mstr);
+        return mstr;
+    }
 }

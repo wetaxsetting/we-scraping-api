@@ -24,7 +24,11 @@
       "Bash(JAVA_HOME=\"/c/Program Files/Eclipse Adoptium/jdk-21.0.10.7-hotspot\" ./gradlew build *)",
       "Bash(JAVA_HOME=\"C:\\\\Program Files\\\\Java\\\\jdk-21.0.10.7-hotspot\" ./gradlew build *)",
       "PowerShell($env:JAVA_HOME = \"C:\\\\Program Files\\\\Eclipse Adoptium\\\\jdk-21.0.10.7-hotspot\"; .\\\\gradlew.bat build)",
-      "Bash(findstr /i env)"
+      "Bash(findstr /i env)",
+      "Read(//c/Users/lenovo/AppData/Local/Temp/claude/C--WeCMS-wecms-api-main/09eec13a-cdb2-474d-9fdf-8ca68e4b0f23/tasks/**)",
+      "Bash(netstat -ano)",
+      "Bash(tasklist *)",
+      "PowerShell(Get-Process *)"
     ]
   },
   "enabledMcpjsonServers": [

@@ -67,10 +67,12 @@ public class PayrollPaymentResultService {
         String trnfYnFilter = emptyToNull(trnfStts);
         String srchWdPattern = buildLikePattern(srchWd);
 
-        Page<ScdulPymnSumr> rows = sumrRepository.search(
+        // `searchDispatched` filters on `trnf_dtm IS NOT NULL` so only
+        // batches the user has actually clicked Transfer on appear here.
+        // Same fix that landed for Internal Transfer / Vendor / Expense.
+        Page<ScdulPymnSumr> rows = sumrRepository.searchDispatched(
                 bizKey, ScdulPymnTypeCd.PAYROLL.code(),
                 fromDtm, toDtm, srchWdPattern, trnfYnFilter,
-                null,
                 pageable);
 
         Map<String, long[]> counts = loadDispatchCounts(bizKey, rows.getContent());

@@ -53,10 +53,13 @@ import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.TreeMap;
+import java.util.stream.Collectors;
 
 /**
  * Payment &gt; Internal Transfer — core service. Mirrors the legacy
@@ -125,6 +128,10 @@ public class InternalTransferService {
             "audit.internal_transfer.approve.detail";
     static final String AUDIT_REJECT_KEY  =
             "audit.internal_transfer.reject.detail";
+    static final String AUDIT_WITHDRAW_APPROVAL_KEY =
+            "audit.internal_transfer.withdraw_approval.detail";
+    static final String AUDIT_CHANGE_APPROVAL_LINE_KEY =
+            "audit.internal_transfer.change_approval_line.detail";
 
     /** Legacy {@code APPRVR_STTS} code stamped on the master when an
      *  approver presses Approve — final outcome, batch is approved. */
@@ -179,6 +186,10 @@ public class InternalTransferService {
     private final ExptResolApprvrInfmRepository exptResolApprvrInfmRepository;
     private final DocNoGenerator                docNoGenerator;
     private final BusiInfmRepository            busiInfmRepository;
+    /** Shared projector that resolves the per-line bank name +
+     *  chart-account breadcrumb the Request Approval dialog renders.
+     *  See {@code domain/payment/common/TransferLineDetailMapper}. */
+    private final com.kosign.wecms.domain.payment.common.TransferLineDetailMapper transferLineDetailMapper;
 
     /* ----------------------------------------------------------------
      *  List
@@ -261,16 +272,29 @@ public class InternalTransferService {
 
         String resolvedId = master.getScdulPymnNo();
         Sort lineSort = Sort.by(Sort.Order.asc("scdulPymnDetlNo"));
+        // Build the per-tenant chart-account index ONCE so each line's
+        // breadcrumb walks the parent chain in-memory (no N+1 lookups).
+        Map<String, com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount> chartByCode =
+                transferLineDetailMapper.buildChartIndex(bizKey);
         List<TransferLineDetail> lines = detlRepository
                 .findByBizKeyAndScdulPymnNo(bizKey, resolvedId, lineSort)
                 .stream()
-                .map(InternalTransferService::toLineDetail)
+                .map(d -> transferLineDetailMapper.toLineDetail(d, chartByCode))
                 .toList();
+
+        // Resolve the withdrawal bank's human name via the same two-step
+        // lookup the per-line "Deposit Bank" cell uses (BANK_INFM →
+        // V86 NAPAS / CITAD fallback). Without this the Approval Details
+        // popup's "Withdrawal Bank" row would render the raw code (e.g.
+        // "11704020" — Woori) instead of "Woori VN", mismatching the
+        // legacy live system.
+        String outBankNm = transferLineDetailMapper.resolveBankNm(master.getOutBankCd());
 
         return new ScheduledTransferDetailResponse(
                 master.getScdulPymnNo(),
                 master.getScdulPymnTypeCd(),
                 master.getOutBankCd(),
+                outBankNm,
                 master.getWdrlActNo(),
                 master.getTitl(),
                 master.getTotalTranAmt(),
@@ -567,6 +591,26 @@ public class InternalTransferService {
      * {@code DataIntegrityViolationException} catches the rare
      * collision; a third writer in the same instant gets a 500.
      */
+    /**
+     * Preview the next {@code VO_YYMMDD_NNN} document number for the
+     * current tenant. Used by the Request Approval popup to populate
+     * the read-only "Document No." field before submit so the dialog
+     * shows the same friendly id format as Card Transactions — the
+     * authoritative value is stamped server-side by
+     * {@link #requestApproval} at submit time.
+     *
+     * <p>Read-only / non-reserving: a second caller (or this caller's
+     * own later submit) may receive a higher number if other Request
+     * Approvals land in between. Frontend treats the preview as
+     * informational and renders whatever value the server returns.
+     */
+    @Transactional(readOnly = true)
+    public com.kosign.wecms.domain.payment.internaltransfer.dto.NextDocNoResponse previewNextDocNo() {
+        String bizKey = requireTenant();
+        String docNo = docNoGenerator.nextDocNo(bizKey);
+        return new com.kosign.wecms.domain.payment.internaltransfer.dto.NextDocNoResponse(docNo);
+    }
+
     @Transactional
     public com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalResponse requestApproval(
             String id,
@@ -821,6 +865,108 @@ public class InternalTransferService {
         log.info(
                 "feature=internal-transfer approval-action bizKey={} scdulPymnNo={} apprSeqNo={} action={} apprStts={}",
                 bizKey, id, master.getApprSeqNo(), req.action(), next);
+    }
+
+    /**
+     * Withdraw an in-flight approval request on a batch. Deletes the
+     * {@code EXPT_RESOL_MSTR} + {@code EXPT_RESOL_APPRVR_INFM} rows via
+     * the shared {@link ApprovalBoxFanoutService#withdrawApproval} and
+     * clears the batch's back-stamp ({@code APPR_SEQ_NO},
+     * {@code ERP_FILE_NUM}, {@code APPR_STTS}) so the row returns to
+     * the draftable state. Same Pending / In Progress guard as the
+     * shared method — closed approvals stay immutable.
+     *
+     * <p>Mirrors the legacy {@code comm_0195_001} kebab → Delete path.
+     */
+    @Transactional
+    public void withdrawApproval(String id) {
+        String bizKey = requireTenant();
+        ScdulPymnSumr master = loadMaster(bizKey, id);
+
+        String apprSeqNo = master.getApprSeqNo();
+        if (apprSeqNo == null || apprSeqNo.isBlank()) {
+            // Same code Approve/Reject uses — "this batch has no live
+            // approval to act on" — so the frontend can surface a
+            // single error envelope for every "operates on a request"
+            // call.
+            throw new BusinessException("WBE2094");
+        }
+
+        // Shared cleanup — deletes master + approver rows, enforces the
+        // Pending / In Progress guard. Throws WBE_VALIDATION if the row
+        // is already closed.
+        approvalBoxFanoutService.withdrawApproval(apprSeqNo);
+
+        // Clear the batch's back-stamp so it returns to draftable state
+        // (the Request Approval popup re-opens, Delete row icon shows
+        // again, list status badge flips back to Draft).
+        master.setApprSeqNo(null);
+        master.setApprStts(null);
+        master.setErpFileNum(null);
+        master.setModDtm(OffsetDateTime.now(clock).format(DTM14));
+        String userId = TenantContext.currentUserId();
+        if (userId != null) master.setModId(userId);
+        sumrRepository.saveAndFlush(master);
+
+        auditLogService.append(AuditLogContext.builder()
+                .wsvcId(WSVC_ID)
+                .refNo(REF_NO)
+                .refNo1(id)
+                .refNo2(apprSeqNo)
+                .activityKey(AUDIT_ACTIVITY_KEY)
+                .detailKey(AUDIT_WITHDRAW_APPROVAL_KEY)
+                .build());
+
+        log.info("feature=internal-transfer withdraw-approval bizKey={} scdulPymnNo={} apprSeqNo={}",
+                bizKey, id, apprSeqNo);
+    }
+
+    /**
+     * Replace the approver chain on an in-flight approval request with
+     * the approvers attached to {@code apprLineNo}. Resets the master
+     * back to Pending so the new first approver becomes active.
+     * Delegates the per-row work to
+     * {@link ApprovalBoxFanoutService#changeApprovalLine}; this method
+     * just resolves the {@code APPR_SEQ_NO} from the batch and writes
+     * the per-module audit row + mirrors the Pending state onto
+     * {@code SCDUL_PYMN_SUMR.APPR_STTS}.
+     *
+     * <p>Mirrors the legacy {@code comm_0195_001} edit-mode flow used
+     * by Card Transactions' Approval Details popup.
+     */
+    @Transactional
+    public void changeApprovalLine(String id, Long apprLineNo) {
+        String bizKey = requireTenant();
+        ScdulPymnSumr master = loadMaster(bizKey, id);
+
+        String apprSeqNo = master.getApprSeqNo();
+        if (apprSeqNo == null || apprSeqNo.isBlank()) {
+            throw new BusinessException("WBE2094");
+        }
+
+        approvalBoxFanoutService.changeApprovalLine(apprSeqNo, apprLineNo);
+
+        // Master returns to "Pending" — the new first approver is the
+        // active one. Mirror the state onto SCDUL_PYMN_SUMR so the
+        // list page's status badge re-renders as Pending without a
+        // round-trip through the Approval Box join.
+        master.setApprStts(APPR_STTS_PENDING);
+        master.setModDtm(OffsetDateTime.now(clock).format(DTM14));
+        String userId = TenantContext.currentUserId();
+        if (userId != null) master.setModId(userId);
+        sumrRepository.saveAndFlush(master);
+
+        auditLogService.append(AuditLogContext.builder()
+                .wsvcId(WSVC_ID)
+                .refNo(REF_NO)
+                .refNo1(id)
+                .refNo2(apprSeqNo)
+                .activityKey(AUDIT_ACTIVITY_KEY)
+                .detailKey(AUDIT_CHANGE_APPROVAL_LINE_KEY)
+                .build());
+
+        log.info("feature=internal-transfer change-approval-line bizKey={} scdulPymnNo={} apprSeqNo={} newApprLineNo={}",
+                bizKey, id, apprSeqNo, apprLineNo);
     }
 
     /** Map the approval-box service's `apprStts` ("P"/"I"/"C"/"R") onto
@@ -1105,26 +1251,6 @@ public class InternalTransferService {
                 s.getWdrlCcyCd());
     }
 
-    private static TransferLineDetail toLineDetail(ScdulPymnSumrDetl d) {
-        return new TransferLineDetail(
-                d.getScdulPymnDetlNo(),
-                d.getAntDivCd(),
-                d.getRcptNm(),
-                d.getTarBankCd(),
-                d.getFincMdaNo(),
-                d.getTranUsag(),
-                d.getTranAmt(),
-                d.getTrnfCcyCd(),
-                d.getTrcoKey(),
-                d.getHandTrcoKey(),
-                d.getDocNo(),
-                d.getNote(),
-                d.getCitadBankCd(),
-                d.getChartAcctCd(),
-                d.getChartAcctSeqNo(),
-                d.getDepoCcyCd(),
-                d.getBankTrnsShortId());
-    }
 
     /** Compute per-currency totals on the **page slice** (matches the
      *  visible rows the frontend will paint in the totals footer). */

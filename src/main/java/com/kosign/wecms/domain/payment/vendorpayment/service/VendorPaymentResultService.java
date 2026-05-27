@@ -66,10 +66,16 @@ public class VendorPaymentResultService {
         String trnfYnFilter = emptyToNull(trnfStts);
         String srchWdPattern = buildLikePattern(srchWd);
 
-        Page<ScdulPymnSumr> rows = sumrRepository.search(
+        // Use `searchDispatched` (not `search`) so only batches the user
+        // has actually clicked Transfer on appear here — `trnf_dtm IS NOT
+        // NULL` is the canonical marker. Without that filter, every
+        // freshly-uploaded batch that's still in the approval flow leaks
+        // into Payment Result reading as "In Progress" even though no
+        // dispatch has been attempted. Same fix that landed for Internal
+        // Transfer's TransferResultService.
+        Page<ScdulPymnSumr> rows = sumrRepository.searchDispatched(
                 bizKey, ScdulPymnTypeCd.VENDOR.code(),
                 fromDtm, toDtm, srchWdPattern, trnfYnFilter,
-                null,                                       // apprType — Result lists filter by trnfStts only
                 pageable);
 
         Map<String, long[]> counts = loadDispatchCounts(bizKey, rows.getContent());

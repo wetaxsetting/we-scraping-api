@@ -66,10 +66,12 @@ public class ExpensePaymentResultService {
         String trnfYnFilter = emptyToNull(trnfStts);
         String srchWdPattern = buildLikePattern(srchWd);
 
-        Page<ScdulPymnSumr> rows = sumrRepository.search(
+        // `searchDispatched` filters on `trnf_dtm IS NOT NULL` so only
+        // batches the user has actually clicked Transfer on appear here.
+        // Same fix that landed for Internal Transfer / Vendor.
+        Page<ScdulPymnSumr> rows = sumrRepository.searchDispatched(
                 bizKey, ScdulPymnTypeCd.EXPENSE.code(),
                 fromDtm, toDtm, srchWdPattern, trnfYnFilter,
-                null,                                       // apprType — Result lists filter by trnfStts only
                 pageable);
 
         Map<String, long[]> counts = loadDispatchCounts(bizKey, rows.getContent());
