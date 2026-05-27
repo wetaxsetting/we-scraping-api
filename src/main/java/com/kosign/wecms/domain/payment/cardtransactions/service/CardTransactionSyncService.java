@@ -133,7 +133,7 @@ public class CardTransactionSyncService {
 
         log.info("---------------------------- card-sync :: START ----------------------------");
         log.info("card-sync :: bizKey={} from={} to={} auto={}",
-                bizKey, req.fromDt(), req.toDt(), req.auto());
+                bizKey, req.fromDate(), req.toDate(), req.auto());
         log.info("---------------------------- card-sync :: START ----------------------------");
 
         // 1. Load active cards that have a saved credential.
@@ -152,8 +152,8 @@ public class CardTransactionSyncService {
         //     pins the end to today. Mirrors legacy
         //     nxisas_cardTranList getInitStartDate + the popup's
         //     "from latest updated date to today" copy.
-        String fromDt = req.fromDt();
-        String toDt   = req.toDt();
+        String fromDt = req.fromDate();
+        String toDt   = req.toDate();
         if (Boolean.TRUE.equals(req.auto())) {
             String today = now.substring(0, 8);
             String minLastSuc = cards.stream()

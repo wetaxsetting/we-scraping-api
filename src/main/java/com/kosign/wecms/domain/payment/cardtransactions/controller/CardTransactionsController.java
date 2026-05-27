@@ -139,8 +139,8 @@ public class CardTransactionsController {
      */
     @GetMapping
     public ApiResponse<CardTransactionListResponse> list(
-            @RequestParam("from_dt")                                @NotBlank @Pattern(regexp = "^\\d{8}$") String       fromDt,
-            @RequestParam("to_dt")                                  @NotBlank @Pattern(regexp = "^\\d{8}$") String       toDt,
+            @RequestParam("from_date")                                @NotBlank @Pattern(regexp = "^\\d{8}$") String       fromDt,
+            @RequestParam("to_date")                                  @NotBlank @Pattern(regexp = "^\\d{8}$") String       toDt,
             @RequestParam(value = "srch_wd",        required = false)                                       String       srchWd,
             @RequestParam(value = "bank_cd",        required = false)                                       List<String> bankCds,
             @RequestParam(value = "card_no",        required = false)                                       List<String> cardNos,
@@ -507,7 +507,7 @@ public class CardTransactionsController {
      *   <li>{@code DOC_TYPE='B'} + {@code HAND_REG_YN='N'} — GDT-synced
      *       Bills only; receipts go through a sibling endpoint.</li>
      *   <li>{@code PROV_STTS NOT IN ('EE','VD')}.</li>
-     *   <li>{@code ISSU_DT BETWEEN from_dt AND to_dt}.</li>
+     *   <li>{@code ISSU_DT BETWEEN from_date AND to_date}.</li>
      *   <li>NOT already linked ({@code BUSA_DOC_RCV_PAY_HIS}
      *       NOT EXISTS).</li>
      *   <li>Optional {@code search} on merchant name / display doc id.</li>
@@ -515,8 +515,8 @@ public class CardTransactionsController {
      */
     @GetMapping("/links/e-invoices")
     public ApiResponse<LinkableEInvoiceListResponse> listLinkableEInvoices(
-            @RequestParam("from_dt") @Pattern(regexp = "^[0-9]{8}$") String fromDt,
-            @RequestParam("to_dt")   @Pattern(regexp = "^[0-9]{8}$") String toDt,
+            @RequestParam("from_date") @Pattern(regexp = "^[0-9]{8}$") String fromDt,
+            @RequestParam("to_date")   @Pattern(regexp = "^[0-9]{8}$") String toDt,
             @RequestParam(value = "search", required = false) String search,
             @RequestParam(value = "page", required = false, defaultValue = "0")  int page,
             @RequestParam(value = "size", required = false, defaultValue = "50") int size) {
@@ -535,8 +535,8 @@ public class CardTransactionsController {
      */
     @GetMapping("/links/receipts")
     public ApiResponse<LinkableReceiptListResponse> listLinkableReceipts(
-            @RequestParam("from_dt") @Pattern(regexp = "^[0-9]{8}$") String fromDt,
-            @RequestParam("to_dt")   @Pattern(regexp = "^[0-9]{8}$") String toDt,
+            @RequestParam("from_date") @Pattern(regexp = "^[0-9]{8}$") String fromDt,
+            @RequestParam("to_date")   @Pattern(regexp = "^[0-9]{8}$") String toDt,
             @RequestParam(value = "search", required = false) String search,
             @RequestParam(value = "page", required = false, defaultValue = "0")  int page,
             @RequestParam(value = "size", required = false, defaultValue = "50") int size) {
