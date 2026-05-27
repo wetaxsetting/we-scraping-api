@@ -4,8 +4,6 @@ import com.kosign.wecms.common.export.ExcelExportRequest;
 import com.kosign.wecms.common.export.ExcelSortSpec;
 import com.kosign.wecms.common.export.ExportFetch;
 import com.kosign.wecms.common.export.ExportRowProvider;
-import com.kosign.wecms.domain.banking.service.AmountFormatter;
-import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxApprover;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxListResponse;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxRow;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxService;
@@ -44,21 +42,26 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class ApprovalBoxExportProvider implements ExportRowProvider {
 
-    /** FIELD_IDs allowed in the Excel export — matches the V84
-     *  {@code payment-approval-box} View Setting seed minus the special
-     *  {@code CHECKBOX} / {@code ETC} rows (filtered server-side by
-     *  {@code ScreenOptionService.SPECIAL_FIELD_IDS} regardless). */
+    /** FIELD_IDs allowed in the Excel export — matches the legacy
+     *  {@code resl_0001_001_osmc.makeGrid_excel} column set (10 columns
+     *  in legacy order). The Approver column is intentionally excluded
+     *  from the workbook (legacy {@code FIELD_ID === "APPRER_NM_2"}
+     *  branch returns early at line 1186-1188 in
+     *  {@code resl_0001_001_osmc.ts}). The on-screen table still shows
+     *  Approver; the Excel export deliberately drops it because the
+     *  multi-line "name + count + chevron" cell does not flatten to a
+     *  meaningful spreadsheet column. */
     private static final Set<String> ALLOWED_FIELD_IDS = Set.of(
             "REG_DTM",
             "DOC_NM",
             "DOC_NO",
             "TITL",
+            "FILE_NM",
             "CURRENCY",
             "TOT_PAY_AMT",
             "PAY_END_YN",
             "PAY_DATE",
-            "DRAFT_USER_NM",
-            "APPRER_NM"
+            "DRAFT_USER_NM"
     );
 
     /** Mirrors the frontend's `TAB_TO_APPR_TYPE_CD` map in
@@ -86,7 +89,10 @@ public class ApprovalBoxExportProvider implements ExportRowProvider {
 
     @Override
     public String screenId() {
-        return "payment-approval-box";
+        // Must match the View Setting `WEB_SVC_ID` seeded in V109 / V207
+        // and the frontend's `SCREEN_IDS.PAYMENT_APPROVAL_BOX` constant
+        // (both are `"approval-box"` — no `payment-` prefix).
+        return "approval-box";
     }
 
     @Override
@@ -118,49 +124,162 @@ public class ApprovalBoxExportProvider implements ExportRowProvider {
 
         List<ApprovalBoxRow> rows = data.list() != null ? data.list() : List.of();
         List<Map<String, Object>> mapped = new ArrayList<>(rows.size());
-        java.math.BigDecimal vndTotal = java.math.BigDecimal.ZERO;
+        // Per-currency totals — legacy `resl_0001_001` subheader shows
+        // "Total USD : … / Total VND : … / Total KRW : …" with separate
+        // sums per currency code. Use a LinkedHashMap so the iteration
+        // order is stable (USD, VND, KRW — same as the on-screen footer).
+        java.util.LinkedHashMap<String, java.math.BigDecimal> totalsByCcy =
+                new java.util.LinkedHashMap<>();
+        totalsByCcy.put("USD", java.math.BigDecimal.ZERO);
+        totalsByCcy.put("VND", java.math.BigDecimal.ZERO);
+        totalsByCcy.put("KRW", java.math.BigDecimal.ZERO);
         for (ApprovalBoxRow r : rows) {
             mapped.add(toFieldMap(r));
             java.math.BigDecimal amt = parseAmount(r.totPayAmt());
-            if (amt != null && "VND".equalsIgnoreCase(r.currency())) {
-                vndTotal = vndTotal.add(amt);
+            String ccy = r.currency() != null ? r.currency().toUpperCase(Locale.ROOT) : "";
+            if (amt != null && totalsByCcy.containsKey(ccy)) {
+                totalsByCcy.put(ccy, totalsByCcy.get(ccy).add(amt));
             }
         }
 
-        String subHeader = composeSubHeader(mapped.size(), vndTotal);
-        return ExportFetch.of(mapped, subHeader);
+        String left  = composeSubHeaderLeft(fromDate, toDate);
+        String right = composeSubHeaderRight(mapped.size(), totalsByCcy);
+        return ExportFetch.of(mapped, left, right);
     }
 
-    /** {@code <count> document(s)  ·  VND: <total>}. Locale rendering
-     *  via {@link AmountFormatter#forDisplay} mirrors the on-screen
-     *  footer + the print summary line. */
-    private String composeSubHeader(int rowCount, java.math.BigDecimal vndTotal) {
-        return String.format(
-                Locale.ROOT,
-                "%d document(s)  ·  VND: %s",
-                rowCount,
-                AmountFormatter.forDisplay(vndTotal, "VND"));
+    /** Mirrors the legacy {@code resl_0001_001_osmc.download_excel}
+     *  {@code left_title} composition (lines 1170):
+     *  {@code Date: 28-Nov-2025 ~ 27-May-2026}. Empty date components
+     *  degrade to an empty string so a missing filter doesn't render
+     *  literal {@code Date: null ~ null}. */
+    private String composeSubHeaderLeft(String fromDate, String toDate) {
+        String fromDisplay = formatDateLegacy(fromDate);
+        String toDisplay   = formatDateLegacy(toDate);
+        if (fromDisplay.isEmpty() && toDisplay.isEmpty()) return "";
+        return "Date: " + fromDisplay + " ~ " + toDisplay;
     }
 
-    /** Project one row onto a FIELD_ID-keyed map. Amount cells stay
-     *  raw decimal — the POI writer applies {@code #,##0.##} from the
-     *  column's {@code format = "amount"} declaration. Status &
-     *  scheduled date follow legacy formatting (Y/N for `PAY_END_YN`,
-     *  yyyyMMdd → DD-MM-YYYY for `PAY_DATE`). */
+    /** Mirrors the legacy {@code resl_0001_001_osmc.download_excel}
+     *  {@code right_title} composition (lines 1163-1173). Format:
+     *  <pre>
+     *  370 document(s) : Total USD : 202.845,00 / Total VND : 14.267.246.047
+     *  </pre>
+     *  Currency totals use vi-VN locale (dots for thousands, comma for
+     *  decimals) so the output matches the legacy excel screenshot. */
+    private String composeSubHeaderRight(
+            int rowCount,
+            java.util.LinkedHashMap<String, java.math.BigDecimal> totalsByCcy
+    ) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(rowCount).append(" document(s)");
+        for (Map.Entry<String, java.math.BigDecimal> e : totalsByCcy.entrySet()) {
+            sb.append(" : Total ").append(e.getKey()).append(" : ")
+              .append(formatTotalLegacy(e.getValue(), e.getKey()));
+            // Legacy uses " / " between currency totals; we put it after
+            // every entry except the last via a marker we trim below.
+            sb.append(" /");
+        }
+        if (sb.length() > 0 && sb.charAt(sb.length() - 1) == '/') {
+            sb.setLength(sb.length() - 2); // trim " /"
+        }
+        return sb.toString();
+    }
+
+    /** Format a currency total with vi-VN locale (dots = thousands,
+     *  comma = decimals). Matches the legacy excel "202.845,00" for USD
+     *  and "14.267.246.047" for VND. */
+    private static String formatTotalLegacy(java.math.BigDecimal value, String currency) {
+        Locale viVn = Locale.forLanguageTag("vi-VN");
+        java.text.NumberFormat nf = java.text.NumberFormat.getNumberInstance(viVn);
+        if ("USD".equalsIgnoreCase(currency)) {
+            nf.setMinimumFractionDigits(2);
+            nf.setMaximumFractionDigits(2);
+        } else {
+            nf.setMinimumFractionDigits(0);
+            nf.setMaximumFractionDigits(0);
+        }
+        return nf.format(value != null ? value : java.math.BigDecimal.ZERO);
+    }
+
+    /** Convert {@code yyyyMMdd} or {@code yyyyMMddHHmmss} → {@code DD-Mon-YYYY}
+     *  ({@code 26-Dec-2025}). Matches the legacy excel date format
+     *  ({@code resl_0001_001_osmc.formatExcel} pipes raw values through
+     *  {@code common.app.formatDateLang} which produces this shape under
+     *  the English locale). */
+    private static String formatDateLegacy(String raw) {
+        if (raw == null) return "";
+        String s = raw.trim();
+        if (s.length() < 8) return "";
+        try {
+            int year  = Integer.parseInt(s.substring(0, 4));
+            int month = Integer.parseInt(s.substring(4, 6));
+            int day   = Integer.parseInt(s.substring(6, 8));
+            if (month < 1 || month > 12) return s;
+            String[] months = {
+                    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+            };
+            return String.format("%02d-%s-%04d", day, months[month - 1], year);
+        } catch (NumberFormatException e) {
+            return s;
+        }
+    }
+
+    /** Project one row onto a FIELD_ID-keyed map. Mirrors the legacy
+     *  {@code resl_0001_001_osmc.formatExcel} cell formatting:
+     *  <ul>
+     *    <li>Dates → {@code DD-Mon-YYYY} (e.g. {@code 26-Dec-2025}).</li>
+     *    <li>Type → human-readable label (matches the on-screen Type column).</li>
+     *    <li>Approval Status → status label only ({@code Pending} /
+     *        {@code Approved} / {@code Rejected} / {@code In Progress})
+     *        — no {@code 1/3} count suffix in the workbook.</li>
+     *    <li>Amount → raw decimal; POI writer applies {@code #,##0.##}
+     *        from the column's {@code format = "amount"} declaration.</li>
+     *  </ul>
+     */
     private static Map<String, Object> toFieldMap(ApprovalBoxRow r) {
         Map<String, Object> m = new HashMap<>();
         java.math.BigDecimal amt = parseAmount(r.totPayAmt());
-        m.put("REG_DTM",       formatDateTime(r.regDtm()));
+        m.put("REG_DTM",       formatDateLegacy(extractDatePart(r.regDtm())));
         m.put("DOC_NM",        nullToEmpty(r.typeLabel()));
         m.put("DOC_NO",        nullToEmpty(r.docNo()));
         m.put("TITL",          nullToEmpty(r.title()));
+        // FILE_NM is a frontend-only column today — the sibling-table
+        // join that populates the uploaded file name on the wire is
+        // deferred (see design-backend.md §13 D1). Emit an empty cell
+        // so the column renders blank in the workbook instead of
+        // disappearing from the allow-list intersection.
+        m.put("FILE_NM",       "");
         m.put("CURRENCY",      nullToEmpty(r.currency()));
         m.put("TOT_PAY_AMT",   amt != null ? amt : java.math.BigDecimal.ZERO);
-        m.put("PAY_END_YN",    "Y".equalsIgnoreCase(r.payEndYn()) ? "Y" : "N");
-        m.put("PAY_DATE",      formatDate(r.payDate()));
+        m.put("PAY_END_YN",    apprSttsLabel(r.apprStts()));
+        m.put("PAY_DATE",      formatDateLegacy(r.payDate()));
         m.put("DRAFT_USER_NM", nullToEmpty(r.draftUserNm()));
-        m.put("APPRER_NM",     composeApproverCell(r.approvers(), r.apprvrTotCnt()));
         return m;
+    }
+
+    /** {@code yyyyMMddHHmmss} → {@code yyyyMMdd} so the legacy date
+     *  formatter can render the registration timestamp as a plain
+     *  date. Returns the input unchanged when it's already 8 chars or
+     *  empty / null. */
+    private static String extractDatePart(String raw) {
+        if (raw == null) return null;
+        return raw.length() >= 14 ? raw.substring(0, 8) : raw;
+    }
+
+    /** Map the derived {@code APPR_STTS} code to the same English label
+     *  the legacy {@code resl_0001_001_osmc.formatExcel} emits (lines
+     *  1207-1230). Code only — no {@code N/N} count suffix in Excel
+     *  (the legacy excel cell drops the count too). */
+    private static String apprSttsLabel(String code) {
+        if (code == null) return "";
+        return switch (code) {
+            case "P" -> "Pending";
+            case "C" -> "Approved";
+            case "R" -> "Rejected";
+            case "I" -> "In Progress";
+            default  -> code;
+        };
     }
 
     /** Parse the wire-string amount (now a {@code String} on
@@ -177,35 +296,6 @@ public class ApprovalBoxExportProvider implements ExportRowProvider {
         } catch (NumberFormatException e) {
             return null;
         }
-    }
-
-    /** Single-line approver cell: {@code <first approver> (+N)} when
-     *  there are additional approvers, just the first name when there's
-     *  only one. Empty when the chain is missing. */
-    private static String composeApproverCell(List<ApprovalBoxApprover> approvers, long totalCount) {
-        if (approvers == null || approvers.isEmpty()) return "";
-        ApprovalBoxApprover first = approvers.get(0);
-        String firstName = first != null && first.apprvrNm() != null ? first.apprvrNm() : "";
-        long remainder = totalCount - 1;
-        if (remainder <= 0) return firstName;
-        return firstName + "  (+" + remainder + ")";
-    }
-
-    /** {@code yyyyMMddHHmmss} → {@code DD-MM-YYYY HH:mm:ss}. Returns
-     *  the raw string when the input doesn't match the legacy 14-char
-     *  shape (defensive — the export must never throw on malformed
-     *  legacy seed rows). */
-    private static String formatDateTime(String raw) {
-        if (raw == null || raw.length() != 14) return nullToEmpty(raw);
-        return raw.substring(6, 8) + "-" + raw.substring(4, 6) + "-" + raw.substring(0, 4)
-             + " " + raw.substring(8, 10) + ":" + raw.substring(10, 12) + ":" + raw.substring(12, 14);
-    }
-
-    /** {@code yyyyMMdd} → {@code DD-MM-YYYY}. Same defensive fallback
-     *  as {@link #formatDateTime}. */
-    private static String formatDate(String raw) {
-        if (raw == null || raw.length() != 8) return nullToEmpty(raw);
-        return raw.substring(6, 8) + "-" + raw.substring(4, 6) + "-" + raw.substring(0, 4);
     }
 
     private static String stringOrNull(Object raw) {

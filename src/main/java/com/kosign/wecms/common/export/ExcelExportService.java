@@ -91,6 +91,10 @@ public class ExcelExportService {
 
         String fileName = sanitizeFileName(request.fileName(), request.screenId());
         String subHeader = fetch.subHeader() != null ? fetch.subHeader() : request.subHeader();
+        // Optional right-aligned subheader half — providers emit it to
+        // mirror legacy `{left_title, right_title}` excel layouts (e.g.
+        // Approval Box). Null = legacy single-cell centered subheader.
+        String subHeaderRight = fetch.subHeaderRight();
         // In-sheet title cell: prefer the caller's `title` (the
         // on-screen page title — `계좌 조회 (VND)` / `Account Inquiry
         // (VND)`) so the spreadsheet header reads naturally. Fall back
@@ -109,7 +113,7 @@ public class ExcelExportService {
         configureResponseHeaders(response, fileName);
 
         try (OutputStream out = response.getOutputStream()) {
-            writer.write(out, title, subHeader, columns, rows);
+            writer.write(out, title, subHeader, subHeaderRight, columns, rows);
         } catch (IOException e) {
             // Once headers + bytes are partially flushed there's no
             // clean way to switch the response back to a JSON error

@@ -68,10 +68,31 @@ public class ExcelWorkbookWriter {
     private static final DateTimeFormatter DISPLAY_DATE =
             DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
+    /** Legacy single-cell subheader (centered, merged across columns). */
     public void write(
             OutputStream out,
             String title,
             String subHeader,
+            List<ExcelColumnSpec> columns,
+            List<Map<String, Object>> rows
+    ) throws IOException {
+        write(out, title, subHeader, null, columns, rows);
+    }
+
+    /**
+     * @param subHeaderRight Optional right-aligned half of the subheader
+     *   row, mirroring the legacy {@code {left_title, right_title}}
+     *   composition used by Approval Box. When non-null, the row splits
+     *   into two merged halves: left-aligned {@code subHeader} on
+     *   columns {@code [0 .. mid-1]}, right-aligned {@code subHeaderRight}
+     *   on columns {@code [mid .. last]}. When null, falls back to the
+     *   legacy centered merged cell.
+     */
+    public void write(
+            OutputStream out,
+            String title,
+            String subHeader,
+            String subHeaderRight,
             List<ExcelColumnSpec> columns,
             List<Map<String, Object>> rows
     ) throws IOException {
@@ -102,18 +123,41 @@ public class ExcelWorkbookWriter {
             titleRow.setHeightInPoints(22f);
             rowIdx++;
 
-            // Sub-header row (count + totals); merged across columns
-            if (subHeader != null && !subHeader.isBlank()) {
+            // Sub-header row (count + totals).
+            boolean hasLeft  = subHeader != null && !subHeader.isBlank();
+            boolean hasRight = subHeaderRight != null && !subHeaderRight.isBlank();
+            if (hasLeft || hasRight) {
                 Row subRow = sheet.createRow(rowIdx);
-                Cell subCell = subRow.createCell(0);
-                subCell.setCellValue(subHeader);
-                subCell.setCellStyle(styles.subHeader);
-                mergeIfMulti(sheet, rowIdx, 0, colCount - 1);
+                if (hasRight && colCount > 1) {
+                    // Two-cell split — mirrors legacy `{left_title, right_title}`.
+                    // Left half = columns [0 .. mid-1], left-aligned.
+                    // Right half = columns [mid .. last], right-aligned.
+                    int mid = colCount / 2;
+                    Cell leftCell = subRow.createCell(0);
+                    leftCell.setCellValue(hasLeft ? subHeader : "");
+                    leftCell.setCellStyle(styles.subHeaderLeft);
+                    mergeIfMulti(sheet, rowIdx, 0, mid - 1);
+
+                    Cell rightCell = subRow.createCell(mid);
+                    rightCell.setCellValue(subHeaderRight);
+                    rightCell.setCellStyle(styles.subHeaderRight);
+                    mergeIfMulti(sheet, rowIdx, mid, colCount - 1);
+                } else {
+                    // Single merged centered cell (legacy single-line shape).
+                    Cell subCell = subRow.createCell(0);
+                    subCell.setCellValue(hasLeft ? subHeader : subHeaderRight);
+                    subCell.setCellStyle(styles.subHeader);
+                    mergeIfMulti(sheet, rowIdx, 0, colCount - 1);
+                }
                 // Grow the row to fit the wrapped content. Single-line
                 // subheaders keep the legacy 18pt height; multi-line
                 // subheaders allocate ~14pt per visual line plus a
                 // small padding so descenders don't clip.
-                int lineCount = 1 + (int) subHeader.chars().filter(ch -> ch == '\n').count();
+                String leftStr  = hasLeft  ? subHeader      : "";
+                String rightStr = hasRight ? subHeaderRight : "";
+                int leftLines  = 1 + (int) leftStr.chars().filter(ch -> ch == '\n').count();
+                int rightLines = 1 + (int) rightStr.chars().filter(ch -> ch == '\n').count();
+                int lineCount  = Math.max(leftLines, rightLines);
                 subRow.setHeightInPoints(
                         lineCount == 1 ? 18f : Math.max(18f, lineCount * 14f + 4f));
                 rowIdx++;
@@ -440,6 +484,10 @@ public class ExcelWorkbookWriter {
     private static final class Styles {
         final CellStyle title;
         final CellStyle subHeader;
+        // Left- and right-aligned subheader styles for the legacy
+        // {left_title, right_title} two-cell layout (Approval Box).
+        final CellStyle subHeaderLeft;
+        final CellStyle subHeaderRight;
         final CellStyle header;
         // Per-alignment text / number / amount styles — POI CellStyles
         // are pooled (not per-cell) so a 50k export uses 9 styles total.
@@ -447,9 +495,13 @@ public class ExcelWorkbookWriter {
         final Map<ExcelAlignment, CellStyle> number = new HashMap<>();
         final Map<ExcelAlignment, CellStyle> amount = new HashMap<>();
 
-        Styles(CellStyle title, CellStyle subHeader, CellStyle header) {
+        Styles(CellStyle title, CellStyle subHeader,
+               CellStyle subHeaderLeft, CellStyle subHeaderRight,
+               CellStyle header) {
             this.title = title;
             this.subHeader = subHeader;
+            this.subHeaderLeft = subHeaderLeft;
+            this.subHeaderRight = subHeaderRight;
             this.header = header;
         }
 
@@ -469,7 +521,7 @@ public class ExcelWorkbookWriter {
         titleStyle.setAlignment(HorizontalAlignment.CENTER);
         titleStyle.setVerticalAlignment(VerticalAlignment.CENTER);
 
-        // Subheader (summary line)
+        // Subheader (summary line) — centered (legacy single-cell shape)
         Font subFont = wb.createFont();
         subFont.setFontHeightInPoints((short) 11);
         subFont.setFontName("Arial");
@@ -482,6 +534,22 @@ public class ExcelWorkbookWriter {
         // export provider's per-CCY block format). No-op for single-
         // line subheaders that fit the merged cell width.
         subStyle.setWrapText(true);
+
+        // Subheader (left-aligned half) — used when the provider supplies
+        // a separate right-aligned half (legacy `{left_title, right_title}`
+        // shape — e.g. Approval Box).
+        CellStyle subStyleLeft = wb.createCellStyle();
+        subStyleLeft.setFont(subFont);
+        subStyleLeft.setAlignment(HorizontalAlignment.LEFT);
+        subStyleLeft.setVerticalAlignment(VerticalAlignment.CENTER);
+        subStyleLeft.setWrapText(true);
+
+        // Subheader (right-aligned half)
+        CellStyle subStyleRight = wb.createCellStyle();
+        subStyleRight.setFont(subFont);
+        subStyleRight.setAlignment(HorizontalAlignment.RIGHT);
+        subStyleRight.setVerticalAlignment(VerticalAlignment.CENTER);
+        subStyleRight.setWrapText(true);
 
         // Header row
         Font headerFont = wb.createFont();
@@ -496,7 +564,7 @@ public class ExcelWorkbookWriter {
         headerStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);
         applyThinBorder(headerStyle);
 
-        Styles styles = new Styles(titleStyle, subStyle, headerStyle);
+        Styles styles = new Styles(titleStyle, subStyle, subStyleLeft, subStyleRight, headerStyle);
 
         // Body styles — text / number / amount × LEFT / RIGHT / CENTER
         short amountFmt = wb.createDataFormat().getFormat("#,##0.##");
