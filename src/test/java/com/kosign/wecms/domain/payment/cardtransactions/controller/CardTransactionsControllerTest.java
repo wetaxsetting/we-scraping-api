@@ -126,8 +126,8 @@ class CardTransactionsControllerTest {
                 any(), any(), anyInt(), anyInt())).thenReturn(payload);
 
         mvc.perform(get("/api/v1/payment/card-transactions")
-                        .param("from_dt", "20250101")
-                        .param("to_dt",   "20251231"))
+                        .param("from_date", "20250101")
+                        .param("to_date",   "20251231"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status.error",                  is(false)))
                 .andExpect(jsonPath("$.status.code",                   is("WBI0000")))
@@ -148,13 +148,13 @@ class CardTransactionsControllerTest {
     @Test
     void list_missingFromDtReturnsValidationEnvelope() throws Exception {
         mvc.perform(get("/api/v1/payment/card-transactions")
-                        .param("to_dt", "20251231"))
+                        .param("to_date", "20251231"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status.error", is(true)))
                 .andExpect(jsonPath("$.status.code",  is("WBE_VALIDATION")));
     }
 
-    // `@Pattern` on the `@RequestParam` from_dt / to_dt is a method-
+    // `@Pattern` on the `@RequestParam` from_date / to_date is a method-
     // parameter constraint that requires Spring's
     // MethodValidationPostProcessor (registered automatically under
     // @SpringBootTest but NOT by MockMvcBuilders.standaloneSetup). Like
@@ -174,8 +174,8 @@ class CardTransactionsControllerTest {
                 any(), any(), anyInt(), anyInt())).thenReturn(empty);
 
         mvc.perform(get("/api/v1/payment/card-transactions")
-                        .param("from_dt",        "20250101")
-                        .param("to_dt",          "20251231")
+                        .param("from_date",      "20250101")
+                        .param("to_date",        "20251231")
                         .param("srch_wd",        "Coffee")
                         .param("bank_cd",        "11704020")
                         .param("bank_cd",        "11704088")
