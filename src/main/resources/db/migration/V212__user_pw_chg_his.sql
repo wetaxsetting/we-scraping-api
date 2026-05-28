@@ -1,5 +1,5 @@
 -- ============================================================================
--- V207__user_pw_chg_his.sql
+-- V212__user_pw_chg_his.sql
 --
 -- Change Password feature schema. One PROD-active-list table ported from
 -- legacy JEX (USER_PW_CHG_HIS — the password-change-history ledger that backs
