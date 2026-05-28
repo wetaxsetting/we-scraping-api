@@ -1,5 +1,6 @@
 package com.kosign.wecms.domain.banking.nxisas;
 
+import com.kosign.wecms.config.CooconProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -12,7 +13,9 @@ import java.time.Duration;
 
 /**
  * Spring wiring for the NXISAS gateway client. Builds one shared
- * {@link RestClient} bean with the configured timeout and base URL.
+ * {@link RestClient} bean using the Coocon smart-gateway URL (shared
+ * with the FX-rate batch — both endpoints live on the same gateway)
+ * and the NXISAS-side timeout knob.
  *
  * <p>Also enables Spring scheduling so the
  * {@link com.kosign.wecms.domain.banking.nxisas.session.NxisasSessionRegistry}
@@ -26,13 +29,13 @@ import java.time.Duration;
 public class NxisasConfig {
 
     @Bean("nxisasRestClient")
-    public RestClient nxisasRestClient(NxisasGatewayProperties props) {
+    public RestClient nxisasRestClient(NxisasGatewayProperties props, CooconProperties coocon) {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         Duration timeout = Duration.ofSeconds(props.timeoutSeconds());
         factory.setConnectTimeout(timeout);
         factory.setReadTimeout(timeout);
         return RestClient.builder()
-                .baseUrl(props.url())
+                .baseUrl(coocon.smartApiUrl())
                 .requestFactory(factory)
                 .defaultHeader("Content-Type", MediaType.APPLICATION_JSON_VALUE)
                 .defaultHeader("Accept", MediaType.APPLICATION_JSON_VALUE)

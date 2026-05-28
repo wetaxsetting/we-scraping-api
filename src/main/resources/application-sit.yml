@@ -110,8 +110,10 @@ wecms:
 
   coocon:
     # Coocon DEV credentials — mirrors <coocon> in VI/jex.wabooks_new.user.xml.
-    # Override any field via WECMS_COOCON_* env vars (or set them in `.env`)
-    # when testing against a different Coocon environment.
+    # Single source of truth for BOTH the FX-rate batch AND the bank-
+    # scraping flow (NXISAS reuses smart-api-url + smart-api-key). SIT
+    # uses the DEV host (Sonny, 2026-05-28); PROD host is reserved for
+    # UAT/PROD. Override via WECMS_COOCON_* env vars (or set in `.env`).
     api-key: ${WECMS_COOCON_API_KEY:r2L7U6KnB4T51VokPlkg}
     api-url: ${WECMS_COOCON_API_URL:https://dev2.coocon.co.kr:8443/overseas/finance/scrap/bigdata_info.jsp}
     smart-api-key: ${WECMS_COOCON_SMART_API_KEY:fxAeocJbuweNTgv5FBns}

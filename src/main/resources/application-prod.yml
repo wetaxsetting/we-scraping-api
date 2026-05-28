@@ -27,7 +27,12 @@ server:
     include-binding-errors: never
 
 # Coocon: ALL five variables MUST be set as environment variables in PROD.
-# There are no defaults here — the app will refuse to start with a missing value.
+# There are no defaults here — the app will refuse to start with a missing
+# value. The smart-api-url + smart-api-key pair drives BOTH the FX-rate batch
+# AND the bank-scraping flow (NXISAS reuses the same smart-gateway with the
+# same credentials — there is no separate WECMS_NXISAS_* set). PROD/UAT host
+# (Sonny, 2026-05-28):
+#   https://sgw.webcashvietnam.com/domestic/finance/scrap/smart_gateway.jsp
 # Required env vars:
 #   WECMS_COOCON_API_KEY
 #   WECMS_COOCON_API_URL

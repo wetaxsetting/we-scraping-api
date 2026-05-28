@@ -2,6 +2,7 @@ package com.kosign.wecms.domain.banking.nxisas;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.kosign.wecms.config.CooconProperties;
 import com.kosign.wecms.domain.banking.nxisas.audit.NxisasAuditLogger;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasAcctListJobInput;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasAcctListJobResult;
@@ -51,16 +52,16 @@ public class NxisasGatewayClient {
     private static final Logger log = LoggerFactory.getLogger(NxisasGatewayClient.class);
 
     private final RestClient restClient;
-    private final NxisasGatewayProperties props;
+    private final CooconProperties coocon;
     private final ObjectMapper objectMapper;
     private final NxisasAuditLogger audit;
 
     public NxisasGatewayClient(@Qualifier("nxisasRestClient") RestClient restClient,
-                               NxisasGatewayProperties props,
+                               CooconProperties coocon,
                                ObjectMapper objectMapper,
                                NxisasAuditLogger audit) {
         this.restClient = restClient;
-        this.props = props;
+        this.coocon = coocon;
         this.objectMapper = objectMapper;
         this.audit = audit;
     }
@@ -289,7 +290,7 @@ public class NxisasGatewayClient {
     private <I> NxisasApiIn<I> buildEnvelope(String module, String category, String trSeq, NxisasJob job, I input,
                                              GatewayContinuation cont) {
         NxisasCommon common = new NxisasCommon();
-        common.setAuthKey(props.apiKey());
+        common.setAuthKey(coocon.smartApiKey());
         // nxisas_fnsh_r001_act.jsp:137 always generates a fresh DTM14
         // timestamp for Tr_seq on every call — even continuation calls.
         // The echoed Tr_seq from the previous response is NOT forwarded.

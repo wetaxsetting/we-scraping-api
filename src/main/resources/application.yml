@@ -20,7 +20,7 @@ spring:
     #     sensitive value must come from the host env. Starting the IDE
     #     with profile=sit fails fast with "secret must be at least 32
     #     bytes" unless ops-style env vars are pre-set.
-    active: sit
+    active: local
   jpa:
     open-in-view: false
     properties:
@@ -157,8 +157,16 @@ wecms:
  
   coocon:
     # Coocon DEV credentials — mirrors <coocon> in VI/jex.wabooks_new.user.xml.
-    # Override any field via WECMS_COOCON_* env vars when testing against a
-    # different Coocon environment.
+    # Single source of truth for BOTH the FX-rate batch (CooconApiClient,
+    # uses smart-api-url + smart-api-key) AND the bank-scraping flow
+    # (NxisasGatewayClient, reuses the same smart-api-url + smart-api-key
+    # — NXISAS is just the protocol/job-type name the Coocon smart-gateway
+    # exposes for bank login / OTP / ACCT_LIST). Override any field via
+    # WECMS_COOCON_* env vars when testing against a different Coocon
+    # environment.
+    # Per-environment smart-gateway hosts (Sonny, 2026-05-28):
+    #   DEV / SIT  → https://dev-sgw.webcashvietnam.com:8443/...
+    #   UAT / PROD → https://sgw.webcashvietnam.com/...           (no port, no 'dev-' prefix)
     api-key: ${WECMS_COOCON_API_KEY:r2L7U6KnB4T51VokPlkg}
     api-url: ${WECMS_COOCON_API_URL:https://dev2.coocon.co.kr:8443/overseas/finance/scrap/bigdata_info.jsp}
     smart-api-key: ${WECMS_COOCON_SMART_API_KEY:fxAeocJbuweNTgv5FBns}
