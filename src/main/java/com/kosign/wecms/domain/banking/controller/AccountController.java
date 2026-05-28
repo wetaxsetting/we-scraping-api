@@ -131,12 +131,12 @@ public class AccountController {
      * current tenant and the bank resolved from
      * {@code BANK_CERT_INFO.SEQ_NO}.
      *
-     * <p>Idempotent — re-registering the same {@code (BANK_CD, ACCT_NO)}
-     * is a no-op (skipped count on the response). When ALL picked rows
-     * are duplicates, the service raises
-     * {@code WBE_BANK_ACCOUNT_REGISTER_ALL_DUP} so the dialog can
-     * surface a meaningful message and the user can pick different
-     * accounts.
+     * <p>Upsert — re-registering an existing {@code (BANK_CD, ACCT_NO)}
+     * UPDATEs the row (nickname / details / type / balance + credential
+     * re-link) instead of erroring, matching legacy
+     * {@code fnsh_0101_001_c001}. The response carries
+     * {@code (inserted, updated)} counts; the only business error is the
+     * empty-payload guard ({@code WBE_BANK_ACCOUNT_REGISTER_EMPTY}).
      */
     @PostMapping("/accounts/register")
     public ApiResponse<RegisterAccountsResponse> registerAccounts(

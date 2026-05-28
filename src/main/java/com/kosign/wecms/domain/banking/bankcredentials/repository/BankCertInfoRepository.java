@@ -15,6 +15,22 @@ public interface BankCertInfoRepository extends JpaRepository<BankCertInfo, Bank
 
     Optional<BankCertInfo> findByBizKeyAndSeqNo(String bizKey, BigDecimal seqNo);
 
+    /**
+     * Find-or-create dedup key — mirrors the legacy
+     * {@code fnsh_0101_001_c001:166-194} lookup that reuses an existing
+     * {@code BANK_CERT_INFO} row instead of minting a duplicate. A bank
+     * credential is uniquely identified within a tenant by
+     * {@code (BANK_CD, CERT_INFO_CON, NXISAS_GB_SEQ_NO)}; re-registering
+     * the same login (requester then approver, or a retried save) must
+     * reuse this row so the same {@code CERT_INFO_CON} never renders
+     * twice in the per-{@code BANK_CD} credentials popup.
+     *
+     * <p>{@code firstBy} + {@code OrderBySeqNoAsc} makes the result
+     * deterministic if legacy data ever carried a pre-existing duplicate.
+     */
+    Optional<BankCertInfo> findFirstByBizKeyAndBankCdAndCertInfoConAndNxisasGbSeqNoOrderBySeqNoAsc(
+            String bizKey, String bankCd, String certInfoCon, BigDecimal nxisasGbSeqNo);
+
     /** Next SEQ_NO for the tenant. Returns 0 if no rows exist, so the
      *  caller increments to 1. Bound to {@code BIZ_KEY} — the tenant's
      *  own seq space. */
