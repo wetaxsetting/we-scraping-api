@@ -6,6 +6,9 @@ import com.kosign.wecms.domain.payment.internaltransfer.dto.TransferLineDetail;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrDetl;
 import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount;
 import com.kosign.wecms.domain.setting.chartofaccounts.repository.ChartOfAccountRepository;
+import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmBankCode;
+import com.kosign.wecms.domain.setting.firmbankingsettings.repository.TbFirmBankCodeRepository;
+import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Component;
@@ -53,6 +56,14 @@ public class TransferLineDetailMapper {
      *  `BANK_INFM`. Falls back to the legacy `wb_get_napas_bank_nm_or
      *  _citad_bank_nm` function ported in V86 over `tb_firm_bank_code`. */
     private final LegacyFunctionRepository legacyFunctionRepository;
+    /** Last-resort lookup against {@code TB_FIRM_BANK_CODE.CITAD_BANK_CD}
+     *  for canonical 3-char CITAD codes (e.g. {@code "616"}) that the
+     *  legacy {@code wb_get_napas_bank_nm_or_citad_bank_nm} function
+     *  misses because it queries by {@code bank_cd} only — Shinhan's
+     *  CITAD rows carry branch codes like {@code "01616001"} in
+     *  {@code BANK_CD}, never bare {@code "616"}. The canonical code
+     *  lives in the {@code CITAD_BANK_CD} column. */
+    private final TbFirmBankCodeRepository tbFirmBankCodeRepository;
 
     /** Build a per-tenant {@code code → ChartOfAccount} index used by
      *  {@link #toLineDetail} to walk parent chains in-memory. Call once
@@ -131,16 +142,41 @@ public class TransferLineDetailMapper {
 
     private String resolveBankName(String bankCd) {
         if (bankCd == null || bankCd.isBlank()) return null;
-        String resolved = bankCdResolver.resolveBankNm(bankCd);
-        if (resolved != null && !resolved.isBlank() && !resolved.equals(bankCd)) {
+        // Trim — legacy CHAR(N) columns sometimes carry padded values
+        // when copied from Excel uploads. Padded codes miss the
+        // `BANK_INFM` cache and the `CITAD_BANK_CD` bpchar comparison.
+        String code = bankCd.trim();
+        if (code.isEmpty()) return null;
+        String resolved = bankCdResolver.resolveBankNm(code);
+        if (resolved != null && !resolved.isBlank() && !resolved.equals(code)) {
             return resolved;
         }
         // BankCdResolver echoed the code back (no BANK_INFM match).
         // Retry via the legacy NAPAS / CITAD function — "en" mirrors
         // legacy `LangCd.EN` since the dialog renders English labels.
-        String napas = legacyFunctionRepository.resolveNapasOrCitadBankName(bankCd, "en");
-        if (napas != null && !napas.isBlank() && !napas.equals(bankCd)) {
+        String napas = legacyFunctionRepository.resolveNapasOrCitadBankName(code, "en");
+        if (napas != null && !napas.isBlank() && !napas.equals(code)) {
             return napas;
+        }
+        // Final fallback — the legacy function only matches `BANK_CD`,
+        // but CITAD codes on the line are sometimes the canonical
+        // 3-char form (e.g. `616` for Shinhan) which lives in the
+        // `CITAD_BANK_CD` column, not `BANK_CD` (Shinhan's `BANK_CD`
+        // values are branch codes like `01616001`). Look up by the
+        // companion column so Vendor / Expense / Internal Transfer
+        // detail pages can resolve "616" → "ShinhanBank".
+        //
+        // Matches the same two-step pattern the Excel parser uses
+        // (`VendorPaymentExcelParser.resolveAcctBankIdentity` etc.),
+        // keeping name-display + validation lookups consistent.
+        Optional<TbFirmBankCode> citadHit =
+                tbFirmBankCodeRepository.findFirstByAntDivCdAndCitadBankCd("CITAD", code);
+        if (citadHit.isPresent()) {
+            TbFirmBankCode b = citadHit.get();
+            String engNm = b.getEngAbrvatNm();
+            if (engNm != null && !engNm.isBlank()) return engNm;
+            String bankNm = b.getBankNm();
+            if (bankNm != null && !bankNm.isBlank()) return bankNm;
         }
         return null;
     }

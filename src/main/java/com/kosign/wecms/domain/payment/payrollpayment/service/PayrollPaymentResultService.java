@@ -3,6 +3,7 @@ package com.kosign.wecms.domain.payment.payrollpayment.service;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.common.web.SortDirection;
+import com.kosign.wecms.domain.payment.common.TransferLineDetailMapper;
 import com.kosign.wecms.domain.payment.dispatch.DispatchCountRepository;
 import com.kosign.wecms.domain.payment.dispatch.DispatchCountRow;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.CurrencyTotal;
@@ -51,6 +52,12 @@ public class PayrollPaymentResultService {
     private final ScdulPymnSumrRepository     sumrRepository;
     private final ScdulPymnSumrDetlRepository detlRepository;
     private final DispatchCountRepository     dispatchCountRepository;
+    /** Shared bank-name resolver — same chain used by the Scheduled
+     *  detail (BANK_INFM → V86 NAPAS/CITAD function →
+     *  CITAD_BANK_CD canonical fallback). Surfaces `tarBankNm` on
+     *  each Result line so the Deposit Bank cell renders the bank
+     *  name alongside the code. */
+    private final TransferLineDetailMapper    transferLineDetailMapper;
 
     @Transactional(readOnly = true)
     public TransferResultListResponse list(
@@ -126,7 +133,7 @@ public class PayrollPaymentResultService {
         List<TransferResultLine> lines = detlRepository
                 .findByBizKeyAndScdulPymnNo(bizKey, id, lineSort)
                 .stream()
-                .map(PayrollPaymentResultService::toResultLine)
+                .map(this::toResultLine)
                 .toList();
 
         return new TransferResultDetailResponse(
@@ -151,13 +158,14 @@ public class PayrollPaymentResultService {
 
     /* ---------------------------------------------------------------- */
 
-    private static TransferResultLine toResultLine(ScdulPymnSumrDetl d) {
+    private TransferResultLine toResultLine(ScdulPymnSumrDetl d) {
         return new TransferResultLine(
                 d.getScdulPymnDetlNo(),
                 d.getTranAmt(),
                 d.getAntDivCd(),
                 d.getRcptNm(),
                 d.getTarBankCd(),
+                transferLineDetailMapper.resolveBankNm(d.getTarBankCd()),
                 d.getFincMdaNo(),
                 d.getTranUsag(),
                 d.getTrnfCcyCd(),

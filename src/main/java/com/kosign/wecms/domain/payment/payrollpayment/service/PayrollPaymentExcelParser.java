@@ -1,8 +1,14 @@
 package com.kosign.wecms.domain.payment.payrollpayment.service;
 
 import com.kosign.wecms.common.exception.BusinessException;
+import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ParseExcelResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ParsedTransferLine;
+import com.kosign.wecms.domain.payment.validation.FieldCd;
+import com.kosign.wecms.domain.payment.validation.PymnType;
+import com.kosign.wecms.domain.payment.validation.SpecialCharValidator;
+import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount;
+import com.kosign.wecms.domain.setting.chartofaccounts.repository.ChartOfAccountRepository;
 import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmBankCode;
 import com.kosign.wecms.domain.setting.firmbankingsettings.repository.TbFirmBankCodeRepository;
 import lombok.RequiredArgsConstructor;
@@ -66,6 +72,10 @@ public class PayrollPaymentExcelParser {
     private static final String FLD_RCPT_NM       = "RCPT_NM";
     private static final String FLD_TRAN_AMT      = "TRAN_AMT";
     private static final String FLD_TRNF_CCY_CD   = "TRNF_CCY_CD";
+    private static final String FLD_CHART_ACCT_CD = "CHART_ACCT_CD";
+
+    /** Database column length cap on {@code SCDUL_PYMN_SUMR_DETL.CHART_ACCT_CD}. */
+    private static final int CHART_ACCT_CD_MAX_LEN = 20;
 
     private static final int HEADER_ROW = 3;
     private static final int FIRST_DATA_ROW = 4;
@@ -93,9 +103,11 @@ public class PayrollPaymentExcelParser {
     };
 
     private final TbFirmBankCodeRepository firmBankCodeRepo;
+    private final ChartOfAccountRepository chartAcctRepo;
+    private final SpecialCharValidator     specialCharValidator;
 
     @Transactional(readOnly = true)
-    public ParseExcelResponse parse(MultipartFile file) {
+    public ParseExcelResponse parse(MultipartFile file, String bankCd) {
         List<ParsedTransferLine> rows = new ArrayList<>();
         int sucCnt = 0;
         int errCnt = 0;
@@ -130,7 +142,7 @@ public class PayrollPaymentExcelParser {
                     break;
                 }
 
-                ParsedRow parsed = parseRow(row, fmt);
+                ParsedRow parsed = parseRow(row, fmt, bankCd);
                 rows.add(parsed.line);
                 if (parsed.hasError) {
                     errCnt++;
@@ -191,7 +203,7 @@ public class PayrollPaymentExcelParser {
     private record ParsedRow(ParsedTransferLine line, boolean hasError) {}
     private record FieldError(String fieldId, String cause) {}
 
-    private ParsedRow parseRow(Row row, DataFormatter fmt) {
+    private ParsedRow parseRow(Row row, DataFormatter fmt, String bankCd) {
         String bankCodeIn  = cellString(row, 0, fmt);
         String tarBankNm   = cellString(row, 1, fmt);
         String fincMdaNo   = cellString(row, 2, fmt);
@@ -270,6 +282,56 @@ public class PayrollPaymentExcelParser {
             trnfCcyCd = trnfCcyIn.trim().toUpperCase();
         }
 
+        // Reporting Account validation — lookup CHART_ACCT_INFM for
+        // the current tenant; stamp BOTH chart_acct_cd + seq_no so the
+        // saved row carries the seq_no the picker/breadcrumb need.
+        String bizKey = TenantContext.currentBizKey();
+        String resolvedChartAcctSeqNo = null;
+        String resolvedChartAcctCd    = null;
+        if (!isBlank(chartAcctCd)) {
+            String trimmed = chartAcctCd.trim();
+            if (trimmed.length() > CHART_ACCT_CD_MAX_LEN) {
+                errors.add(new FieldError(FLD_CHART_ACCT_CD,
+                        "Reporting Account exceeds " + CHART_ACCT_CD_MAX_LEN
+                                + " characters: " + trimmed));
+            } else if (bizKey == null) {
+                errors.add(new FieldError(FLD_CHART_ACCT_CD,
+                        "Tenant context missing — please re-login"));
+            } else {
+                Optional<ChartOfAccount> hit =
+                        chartAcctRepo.findByBizKeyAndChartAcctCdAndDelYn(bizKey, trimmed, "N");
+                if (hit.isPresent()) {
+                    resolvedChartAcctCd    = hit.get().getChartAcctCd();
+                    resolvedChartAcctSeqNo = hit.get().getChartAcctSeqNo();
+                } else {
+                    // Preserve the typed value so the preview cell shows
+                    // the user what they entered (mirrors the bank-code
+                    // branch above). The pipe-separated err_fld + cause
+                    // pair drives the red highlight + tooltip on the wire.
+                    resolvedChartAcctCd = trimmed;
+                    errors.add(new FieldError(FLD_CHART_ACCT_CD,
+                            "Reporting Account is not registered: " + trimmed));
+                }
+            }
+        }
+
+        // Special-character checks against BLOCKED_CHARS_RULE. Mirrors
+        // legacy `pymn_0005_002_r001_act.jsp:311` (RCPT_NM cell col 3)
+        // and `:350` (TRAN_USAG cell col 6). Bank-specific — missing
+        // rule for the (bankCd, PAYROLL_PAYMENT, fieldCd) tuple means
+        // the call is a no-op, so this is safe before BLOCKED_CHARS_RULE
+        // is seeded for Payroll.
+        if (!isBlank(rcptNm)) {
+            specialCharValidator
+                    .validate(bankCd, PymnType.PAYROLL_PAYMENT, FieldCd.RECIPIENT_NAME, rcptNm)
+                    .ifPresent(msg -> errors.add(new FieldError(FLD_RCPT_NM, msg)));
+        }
+        if (!isBlank(tranUsag)) {
+            specialCharValidator
+                    .validate(bankCd, PymnType.PAYROLL_PAYMENT, FieldCd.REMARKS, tranUsag)
+                    .ifPresent(msg -> errors.add(new FieldError("TRAN_USAG", msg)));
+        }
+
         String errFld   = buildErrPair(errors, FieldError::fieldId);
         String errCause = buildErrPair(errors, FieldError::cause);
 
@@ -290,8 +352,8 @@ public class PayrollPaymentExcelParser {
                 null,                          // CITAD_BANK_CD — bank-code resolver detail (Phase 2)
                 null,                          // TRCO_CMNM — n/a
                 null,                          // TRCO_CMENM — n/a
-                null,
-                emptyToNull(chartAcctCd),
+                resolvedChartAcctSeqNo,        // CHART_ACCT_SEQ_NO — looked up from CHART_ACCT_INFM
+                resolvedChartAcctCd,           // CHART_ACCT_CD — normalized to the registered code
                 trnfCcyCd,
                 null);
         return new ParsedRow(line, !errors.isEmpty());

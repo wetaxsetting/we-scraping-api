@@ -335,8 +335,9 @@ public class OverseasPaymentController {
      */
     @PostMapping(value = "/excel-preview", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResponse<OverseasPaymentExcelPreview> excelPreview(
-            @RequestPart("file") MultipartFile file) {
-        return ApiResponse.ok(overseasExcelService.preview(file));
+            @RequestPart("file")                              MultipartFile file,
+            @RequestParam(value = "bank_cd", required = false) String       bankCd) {
+        return ApiResponse.ok(overseasExcelService.preview(file, bankCd));
     }
 
     /**

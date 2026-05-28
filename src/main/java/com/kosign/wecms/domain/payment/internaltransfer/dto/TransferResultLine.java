@@ -18,6 +18,11 @@ public record TransferResultLine(
         String     antDivCd,
         String     rcptNm,
         String     tarBankCd,
+        /** Server-resolved human-readable bank name — same two-step
+         *  lookup the Scheduled detail line uses (BANK_INFM → V86
+         *  NAPAS / CITAD function → CITAD_BANK_CD canonical fallback).
+         *  Null when nothing matches; frontend renders the code alone. */
+        String     tarBankNm,
         String     fincMdaNo,
         String     tranUsag,
         String     ccyCd,

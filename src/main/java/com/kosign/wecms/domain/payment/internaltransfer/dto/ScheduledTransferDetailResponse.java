@@ -43,4 +43,11 @@ public record ScheduledTransferDetailResponse(
         String                    wdrlCcyCd,
         String                    orgFileNm,
         BigDecimal                fileSize,
-        List<TransferLineDetail>  rows) { }
+        List<TransferLineDetail>  rows,
+        /** Approval-request attachments registered against this
+         *  batch's {@code APPR_SEQ_NO}. Empty when the batch has no
+         *  approval submission yet, or when the user submitted with
+         *  zero attachments. Driven by {@code EXPT_RESOL_FILE} via
+         *  {@code ExptResolFileRepository}; the Approval Details popup
+         *  renders one chip per row. */
+        List<ApprovalAttachmentRow> attachments) { }

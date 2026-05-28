@@ -4,7 +4,14 @@ import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ParseExcelResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ParsedTransferLine;
+import com.kosign.wecms.domain.payment.validation.FieldCd;
+import com.kosign.wecms.domain.payment.validation.PymnType;
+import com.kosign.wecms.domain.payment.validation.SpecialCharValidator;
+import com.kosign.wecms.domain.setting.contacts.entity.TrcoAcctInfo;
+import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount;
+import com.kosign.wecms.domain.setting.chartofaccounts.repository.ChartOfAccountRepository;
 import com.kosign.wecms.domain.setting.contacts.entity.TrcoInfm;
+import com.kosign.wecms.domain.setting.contacts.repository.TrcoAcctInfoRepository;
 import com.kosign.wecms.domain.setting.contacts.repository.TrcoInfmRepository;
 import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmBankCode;
 import com.kosign.wecms.domain.setting.firmbankingsettings.repository.TbFirmBankCodeRepository;
@@ -68,12 +75,28 @@ import java.util.Optional;
  *   <li>Document No. — {@code DOC_NO}</li>
  * </ol>
  *
- * <p>Phase 1 scope: header layout validation + per-cell parsing
- * succeed. The legacy contact-master validation (lookup
- * {@code TRCO_INFM} by {@code HAND_TRCO_KEY}, then cross-check
- * recipient name / company name) lands when Contacts becomes a hard
- * dependency on the refactor side — until then {@code HAND_TRCO_KEY}
- * is carried verbatim through the wire to the save step.
+ * <p>Per-row validation chain (mirrors legacy
+ * {@code PymnHelper.readExcel:490-566}):
+ * <ol>
+ *   <li>Resolve {@code HAND_TRCO_KEY} (col 7) against
+ *       {@code TRCO_INFM} via
+ *       {@link TrcoInfmRepository#findActiveByBizKeyAndHandTrcoKey} &mdash;
+ *       legacy {@code ckContactCode}.</li>
+ *   <li>Resolve {@code FINC_MDA_NO} (col 1) against
+ *       {@code TRCO_ACCT_INFO} via
+ *       {@link TrcoAcctInfoRepository#findByBizKeyAndTrcoKeyAndAcctNo}
+ *       for the resolved contact &mdash; legacy {@code ckDepositNo}.
+ *       The matched row's bank code (NAPAS_BANK_CD or CITAD_BANK_CD,
+ *       chosen by {@code ANT_DIV_CD}) must equal the Excel
+ *       {@code TAR_BANK_CD}; otherwise the line errors on
+ *       {@code FINC_MDA_NO} (deposit not registered) or
+ *       {@code ANT_DIV_CD} (bank-code mismatch).</li>
+ *   <li>For CITAD only, cross-fill {@code RCPT_NM} from
+ *       {@code TRCO_ACCT_INFO.FINC_MDA_OWNER_NM} &mdash; legacy
+ *       {@code getfincMdaOwnerNmFromAcctInfo}. NAPAS recipient-name
+ *       lookup (legacy {@code ckRecName} via external bank service)
+ *       is still deferred.</li>
+ * </ol>
  */
 @Slf4j
 @Component
@@ -85,6 +108,10 @@ public class ExpensePaymentExcelParser {
     private static final String FLD_TRAN_AMT      = "TRAN_AMT";
     private static final String FLD_TRNF_CCY_CD   = "TRNF_CCY_CD";
     private static final String FLD_HAND_TRCO_KEY = "HAND_TRCO_KEY";
+    private static final String FLD_CHART_ACCT_CD = "CHART_ACCT_CD";
+
+    /** Database column length cap on {@code SCDUL_PYMN_SUMR_DETL.CHART_ACCT_CD}. */
+    private static final int CHART_ACCT_CD_MAX_LEN = 20;
 
     private static final int HEADER_ROW = 3;
     private static final int FIRST_DATA_ROW = 4;
@@ -121,9 +148,12 @@ public class ExpensePaymentExcelParser {
 
     private final TbFirmBankCodeRepository firmBankCodeRepo;
     private final TrcoInfmRepository       contactRepo;
+    private final TrcoAcctInfoRepository   contactAcctRepo;
+    private final ChartOfAccountRepository chartAcctRepo;
+    private final SpecialCharValidator     specialCharValidator;
 
     @Transactional(readOnly = true)
-    public ParseExcelResponse parse(MultipartFile file) {
+    public ParseExcelResponse parse(MultipartFile file, String bankCd) {
         List<ParsedTransferLine> rows = new ArrayList<>();
         int sucCnt = 0;
         int errCnt = 0;
@@ -159,7 +189,7 @@ public class ExpensePaymentExcelParser {
                     break;
                 }
 
-                ParsedRow parsed = parseRow(row, fmt);
+                ParsedRow parsed = parseRow(row, fmt, bankCd);
                 rows.add(parsed.line);
                 if (parsed.hasError) {
                     errCnt++;
@@ -220,7 +250,7 @@ public class ExpensePaymentExcelParser {
     private record ParsedRow(ParsedTransferLine line, boolean hasError) {}
     private record FieldError(String fieldId, String cause) {}
 
-    private ParsedRow parseRow(Row row, DataFormatter fmt) {
+    private ParsedRow parseRow(Row row, DataFormatter fmt, String bankCd) {
         String bankCodeIn  = cellString(row, 0, fmt);
         String fincMdaNo   = cellString(row, 1, fmt);
         String tranAmtIn   = cellString(row, 3, fmt);
@@ -237,7 +267,7 @@ public class ExpensePaymentExcelParser {
             errors.add(new FieldError(FLD_FINC_MDA_NO, "Deposit No. is required"));
         }
 
-        // Contact Code — required on the Vendor template (header `*`).
+        // Contact Code — required on the Expense template (header `*`).
         // Mirrors legacy `PymnHelper.ckContactCode` (lines 1169-1227):
         //
         //   1. Required-and-not-blank.
@@ -253,6 +283,7 @@ public class ExpensePaymentExcelParser {
         //
         // The tenant scope comes from TenantContext.currentBizKey() —
         // never trust a wire-supplied biz_key here.
+        String bizKey = TenantContext.currentBizKey();
         String resolvedTrcoKey    = null;
         String resolvedTrcoCmnm   = null;
         String resolvedTrcoCmenm  = null;
@@ -261,32 +292,30 @@ public class ExpensePaymentExcelParser {
         } else if (handTrcoKey.length() > 20) {
             errors.add(new FieldError(FLD_HAND_TRCO_KEY,
                     "Contact Code exceeds 20 characters: " + handTrcoKey));
+        } else if (bizKey == null) {
+            // Should never happen — the controller is authenticated.
+            // Defensive fallback so the parser never NPEs.
+            errors.add(new FieldError(FLD_HAND_TRCO_KEY,
+                    "Tenant context missing — please re-login"));
         } else {
-            String bizKey = TenantContext.currentBizKey();
-            if (bizKey == null) {
-                // Should never happen — the controller is authenticated.
-                // Defensive fallback so the parser never NPEs.
-                errors.add(new FieldError(FLD_HAND_TRCO_KEY,
-                        "Tenant context missing — please re-login"));
+            Optional<TrcoInfm> hit =
+                    contactRepo.findActiveByBizKeyAndHandTrcoKey(bizKey, handTrcoKey.trim());
+            if (hit.isPresent()) {
+                TrcoInfm c = hit.get();
+                resolvedTrcoKey   = c.getTrcoKey();
+                resolvedTrcoCmnm  = c.getTrcoCmnm();
+                resolvedTrcoCmenm = c.getTrcoCmenm();
             } else {
-                java.util.Optional<TrcoInfm> hit =
-                        contactRepo.findActiveByBizKeyAndHandTrcoKey(bizKey, handTrcoKey.trim());
-                if (hit.isPresent()) {
-                    TrcoInfm c = hit.get();
-                    resolvedTrcoKey   = c.getTrcoKey();
-                    resolvedTrcoCmnm  = c.getTrcoCmnm();
-                    resolvedTrcoCmenm = c.getTrcoCmenm();
-                } else {
-                    errors.add(new FieldError(FLD_HAND_TRCO_KEY,
-                            "Contact Code is not registered: " + handTrcoKey));
-                }
+                errors.add(new FieldError(FLD_HAND_TRCO_KEY,
+                        "Contact Code is not registered: " + handTrcoKey));
             }
         }
 
         // Bank Code resolution via TB_FIRM_BANK_CODE.
         String resolvedBankCd = null;
         String resolvedBankNm = null;
-        String resolvedAntDiv = null;
+        String resolvedAntDiv = "";              // empty when bank cell is blank or wrong-length
+        TbFirmBankCode excelBankRow = null;       // kept for bank-identity matching below
         if (isBlank(bankCodeIn)) {
             errors.add(new FieldError(FLD_ANT_DIV_CD, "Bank Code is required"));
         } else {
@@ -308,6 +337,7 @@ public class ExpensePaymentExcelParser {
             if (hit.isPresent()) {
                 resolvedBankCd = trimmed;
                 resolvedBankNm = displayName(hit.get());
+                excelBankRow   = hit.get();
             } else if (resolvedAntDiv.isEmpty()) {
                 resolvedBankCd = trimmed;
                 resolvedBankNm = "";
@@ -316,6 +346,73 @@ public class ExpensePaymentExcelParser {
                 resolvedBankNm = "";
                 errors.add(new FieldError(FLD_ANT_DIV_CD,
                         "Unknown Bank Code: " + trimmed));
+            }
+        }
+
+        // Deposit account validation — mirrors legacy `PymnHelper.ckDepositNo`
+        // (lines 1138-1166) + the CITAD branch of `readExcel:519-565`:
+        //
+        //   - Find every TRCO_ACCT_INFO row for (BIZ_KEY, TRCO_KEY, ACCT_NO).
+        //   - Match the row whose stored bank resolves to the same bank
+        //     identity (TB_FIRM_BANK_CODE.eng_abrvat_nm) as the Excel
+        //     bank code. A single bank (e.g. "ShinhanBank") has a NAPAS
+        //     row (`BANK_CD=970424`) and one or more CITAD rows
+        //     (`BANK_CD=01616001` etc., `CITAD_BANK_CD=616`); the
+        //     contact's TRCO_ACCT_INFO row may carry whichever variant
+        //     the registration picker happened to surface. Direct
+        //     same-variant equality is the fast path; bank-identity
+        //     resolution is the cross-variant fallback so a NAPAS-typed
+        //     Excel cell can still validate against a CITAD-saved
+        //     contact account (and vice versa) when both point to the
+        //     same bank.
+        //   - On miss: "Deposit account not registered" / "Bank Code
+        //     mismatch" against the appropriate FIELD_ID.
+        //   - For CITAD only, cross-fill RCPT_NM from FINC_MDA_OWNER_NM.
+        //
+        // Only runs when the contact + bank-code + deposit-no upstream
+        // checks all passed — otherwise the user already has a clearer
+        // upstream error and the lookup would be noise.
+        String resolvedRcptNm = null;
+        if (resolvedTrcoKey != null
+                && resolvedBankCd != null
+                && !resolvedAntDiv.isEmpty()
+                && !isBlank(fincMdaNo)) {
+            List<TrcoAcctInfo> accts = contactAcctRepo.findByBizKeyAndTrcoKeyAndAcctNo(
+                    bizKey, resolvedTrcoKey, fincMdaNo.trim());
+            if (accts.isEmpty()) {
+                errors.add(new FieldError(FLD_FINC_MDA_NO,
+                        "Deposit account is not registered for this contact: " + fincMdaNo));
+            } else {
+                String excelIdent = bankIdentity(excelBankRow);
+                TrcoAcctInfo match = null;
+                for (TrcoAcctInfo a : accts) {
+                    // Fast path: same-variant code equality.
+                    String acctBankCd = "NAPAS".equals(resolvedAntDiv)
+                            ? a.getNapasBankCd()
+                            : a.getCitadBankCd();
+                    if (resolvedBankCd.equals(acctBankCd)) {
+                        match = a;
+                        break;
+                    }
+                    // Cross-variant: resolve the account's stored bank
+                    // (whichever of napas / citad columns is populated)
+                    // back to a TB_FIRM_BANK_CODE row and compare its
+                    // engAbrvatNm to the Excel side.
+                    if (excelIdent != null) {
+                        String acctIdent = resolveAcctBankIdentity(a);
+                        if (excelIdent.equals(acctIdent)) {
+                            match = a;
+                            break;
+                        }
+                    }
+                }
+                if (match == null) {
+                    errors.add(new FieldError(FLD_ANT_DIV_CD,
+                            "Bank Code does not match the contact's registered account: " + resolvedBankCd));
+                } else if ("CITAD".equals(resolvedAntDiv)
+                        && !isBlank(match.getFincMdaOwnerNm())) {
+                    resolvedRcptNm = match.getFincMdaOwnerNm();
+                }
             }
         }
 
@@ -343,13 +440,62 @@ public class ExpensePaymentExcelParser {
             trnfCcyCd = trnfCcyIn.trim().toUpperCase();
         }
 
+        // Reporting Account validation — lookup CHART_ACCT_INFM for
+        // the current tenant; stamp BOTH chart_acct_cd + seq_no so the
+        // saved row carries the seq_no the picker/breadcrumb need.
+        String resolvedChartAcctSeqNo = null;
+        String resolvedChartAcctCd    = null;
+        if (!isBlank(chartAcctCd)) {
+            String trimmed = chartAcctCd.trim();
+            if (trimmed.length() > CHART_ACCT_CD_MAX_LEN) {
+                errors.add(new FieldError(FLD_CHART_ACCT_CD,
+                        "Reporting Account exceeds " + CHART_ACCT_CD_MAX_LEN
+                                + " characters: " + trimmed));
+            } else if (bizKey == null) {
+                errors.add(new FieldError(FLD_CHART_ACCT_CD,
+                        "Tenant context missing — please re-login"));
+            } else {
+                Optional<ChartOfAccount> hit =
+                        chartAcctRepo.findByBizKeyAndChartAcctCdAndDelYn(bizKey, trimmed, "N");
+                if (hit.isPresent()) {
+                    resolvedChartAcctCd    = hit.get().getChartAcctCd();
+                    resolvedChartAcctSeqNo = hit.get().getChartAcctSeqNo();
+                } else {
+                    // Preserve the typed value so the preview cell shows
+                    // the user what they entered (mirrors the bank-code
+                    // branch above). The pipe-separated err_fld + cause
+                    // pair drives the red highlight + tooltip on the wire.
+                    resolvedChartAcctCd = trimmed;
+                    errors.add(new FieldError(FLD_CHART_ACCT_CD,
+                            "Reporting Account is not registered: " + trimmed));
+                }
+            }
+        }
+
+        // Special-character checks against BLOCKED_CHARS_RULE. Mirrors
+        // legacy `PymnHelper.readExcel:451` (REMARKS / TRAN_USAG cell)
+        // and `:540` (CITAD-cross-filled RCPT_NM). Bank-specific —
+        // missing rule for the (bankCd, EXPENSE_PAYMENT, fieldCd) tuple
+        // means the call is a no-op, so this is safe before
+        // BLOCKED_CHARS_RULE is seeded for Expense.
+        if (!isBlank(tranUsag)) {
+            specialCharValidator
+                    .validate(bankCd, PymnType.EXPENSE_PAYMENT, FieldCd.REMARKS, tranUsag)
+                    .ifPresent(msg -> errors.add(new FieldError("TRAN_USAG", msg)));
+        }
+        if (!isBlank(resolvedRcptNm)) {
+            specialCharValidator
+                    .validate(bankCd, PymnType.EXPENSE_PAYMENT, FieldCd.RECIPIENT_NAME, resolvedRcptNm)
+                    .ifPresent(msg -> errors.add(new FieldError("RCPT_NM", msg)));
+        }
+
         String errFld   = buildErrPair(errors, FieldError::fieldId);
         String errCause = buildErrPair(errors, FieldError::cause);
 
         ParsedTransferLine line = new ParsedTransferLine(
                 tranAmt,
                 resolvedAntDiv,
-                null,                          // RCPT_NM — derived from contact bank-account lookup; out of Phase 1
+                resolvedRcptNm,                // RCPT_NM — CITAD cross-fill from TRCO_ACCT_INFO.FINC_MDA_OWNER_NM
                 resolvedBankCd,
                 resolvedBankNm,
                 emptyToNull(fincMdaNo),
@@ -363,8 +509,8 @@ public class ExpensePaymentExcelParser {
                 null,                          // CITAD_BANK_CD — bank-code resolver detail (Phase 2)
                 resolvedTrcoCmnm,              // TRCO_CMNM — cross-filled from Contacts master
                 resolvedTrcoCmenm,             // TRCO_CMENM — cross-filled from Contacts master
-                null,
-                emptyToNull(chartAcctCd),
+                resolvedChartAcctSeqNo,        // CHART_ACCT_SEQ_NO — looked up from CHART_ACCT_INFM
+                resolvedChartAcctCd,           // CHART_ACCT_CD — normalized to the registered code
                 trnfCcyCd,
                 null);
         return new ParsedRow(line, !errors.isEmpty());
@@ -374,6 +520,49 @@ public class ExpensePaymentExcelParser {
         if (!isBlank(b.getEngAbrvatNm())) return b.getEngAbrvatNm();
         if (!isBlank(b.getBankNm()))      return b.getBankNm();
         return b.getBankCd();
+    }
+
+    /**
+     * Stable cross-variant bank identifier — {@code ENG_ABRVAT_NM}
+     * ("ShinhanBank") is shared between a bank's NAPAS row and every
+     * CITAD branch row, so it pivots a code-mismatched contact account
+     * onto the same bank as the Excel cell.
+     */
+    private static String bankIdentity(TbFirmBankCode b) {
+        if (b == null) return null;
+        String engNm = b.getEngAbrvatNm();
+        if (engNm != null && !engNm.isBlank()) return engNm.trim();
+        String bankNm = b.getBankNm();
+        if (bankNm != null && !bankNm.isBlank()) return bankNm.trim();
+        return null;
+    }
+
+    /**
+     * Resolve a contact account's stored bank to its
+     * {@link #bankIdentity(TbFirmBankCode)} so cross-variant matching
+     * (NAPAS-typed Excel cell against a CITAD-saved contact, or vice
+     * versa) works against {@code TB_FIRM_BANK_CODE}. CITAD lookup
+     * tries the branch-{@code BANK_CD} lookup first ({@code 01616001}
+     * style) and falls back to the canonical {@code CITAD_BANK_CD}
+     * column ({@code 616} style) so both legacy save patterns resolve.
+     */
+    private String resolveAcctBankIdentity(TrcoAcctInfo a) {
+        String napasCd = a.getNapasBankCd();
+        if (napasCd != null && !napasCd.isBlank()) {
+            Optional<TbFirmBankCode> hit =
+                    firmBankCodeRepo.findByAntDivCdAndBankCd("NAPAS", napasCd.trim());
+            if (hit.isPresent()) return bankIdentity(hit.get());
+        }
+        String citadCd = a.getCitadBankCd();
+        if (citadCd != null && !citadCd.isBlank()) {
+            String trimmed = citadCd.trim();
+            Optional<TbFirmBankCode> hit =
+                    firmBankCodeRepo.findByAntDivCdAndBankCd("CITAD", trimmed);
+            if (hit.isPresent()) return bankIdentity(hit.get());
+            hit = firmBankCodeRepo.findFirstByAntDivCdAndCitadBankCd("CITAD", trimmed);
+            if (hit.isPresent()) return bankIdentity(hit.get());
+        }
+        return null;
     }
 
     private static String buildErrPair(

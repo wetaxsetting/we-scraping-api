@@ -14,6 +14,7 @@ import com.kosign.wecms.domain.payment.internaltransfer.dto.ScheduledTransferDet
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ScheduledTransferListResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.TransferResultDetailResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.TransferResultListResponse;
+import com.kosign.wecms.domain.payment.internaltransfer.dto.UpdateReportingAccountRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.WithdrawalAccountRow;
 import com.kosign.wecms.domain.payment.expensepayment.service.ExpensePaymentResultService;
 import com.kosign.wecms.domain.payment.expensepayment.service.ExpensePaymentService;
@@ -37,6 +38,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -84,6 +86,10 @@ public class ExpensePaymentController {
      *  (VO_YYMMDD_NNN format, e.g. VO_260521_002) so the frontend can
      *  navigate to the detail page using either identifier. */
     private static final String SCDUL_PYMN_NO_PATTERN = "^([0-9]{5,30}|VO_[0-9]{6}_[0-9]{1,9})$";
+
+    /** Line-id format on {@code SCDUL_PYMN_SUMR_DETL.SCDUL_PYMN_DETL_NO}
+     *  — alphanumeric, 1-20 chars (mirrors Internal Transfer). */
+    private static final String SCDUL_PYMN_DETL_NO_PATTERN = "^[A-Za-z0-9]{1,20}$";
 
     private final ExpensePaymentService       service;
     private final ExpensePaymentResultService resultService;
@@ -240,6 +246,26 @@ public class ExpensePaymentController {
             @Valid @RequestBody
             com.kosign.wecms.domain.payment.internaltransfer.dto.ChangeApprovalLineRequest req) {
         service.changeApprovalLine(id, req.apprLineNo());
+        return ApiResponse.ok(null);
+    }
+
+    /**
+     * Update the chart-of-accounts assignment on one Expense Payment
+     * line. Mirrors Internal Transfer's contract — used by the
+     * Scheduled detail page's inline picker.
+     */
+    @PatchMapping("/{id}/lines/{lineId}/reporting-account")
+    public ApiResponse<Void> updateReportingAccount(
+            @PathVariable("id")
+            @Size(max = 30)
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id,
+            @PathVariable("lineId")
+            @Size(max = 20)
+            @Pattern(regexp = SCDUL_PYMN_DETL_NO_PATTERN, message = "lineId: invalid scdul_pymn_detl_no format")
+            String lineId,
+            @Valid @RequestBody UpdateReportingAccountRequest req) {
+        service.updateReportingAccount(id, lineId, req);
         return ApiResponse.ok(null);
     }
 

@@ -40,6 +40,23 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
     Optional<AcctMstr> findByBizKeyAndBankCdAndAcctNo(String bizKey, String bankCd, String acctNo);
 
     /**
+     * Tenant-scoped lookup by account number only — mirrors legacy
+     * {@code PymnHelper.validateBankAccountInAcctMstr} (lines 622-625)
+     * which deliberately filters on {@code (biz_key, acct_no)} without
+     * a {@code bank_cd} predicate. The Excel cell ships the NAPAS /
+     * CITAD code (e.g. {@code 970424}) while {@code ACCT_MSTR.BANK_CD}
+     * stores the bank's internal 8-char code (e.g. {@code 11704088});
+     * the two formats are incompatible so the bank-code filter is
+     * deliberately dropped on this path.
+     *
+     * <p>Returns the first match — within a tenant the same
+     * {@code ACCT_NO} can technically exist under two {@code BANK_CD}s
+     * but never does in practice on real data (the legacy code does
+     * the same first-row pick via {@code findByDynamic}).
+     */
+    Optional<AcctMstr> findFirstByBizKeyAndAcctNo(String bizKey, String acctNo);
+
+    /**
      * Bulk-delete every {@code ACCT_MSTR} row at one {@code (BIZ_KEY,
      * BANK_CD)} pair. Called by the Disconnect path in the Login
      * Credentials popup when the last remaining credential for that

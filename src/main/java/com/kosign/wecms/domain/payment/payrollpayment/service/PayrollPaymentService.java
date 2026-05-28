@@ -28,6 +28,7 @@ import com.kosign.wecms.domain.payment.internaltransfer.dto.ScheduledTransferLis
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ScheduledTransferRow;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.TransferLineDetail;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.TransferLineInput;
+import com.kosign.wecms.domain.payment.internaltransfer.dto.UpdateReportingAccountRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.WithdrawalAccountRow;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumr;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrDetl;
@@ -97,6 +98,7 @@ public class PayrollPaymentService {
     static final String REF_NO = "SCDUL_PYMN_SUMR";
 
     static final String AUDIT_ACTIVITY_KEY         = "audit.payroll_payment.activity";
+    static final String AUDIT_UPDATE_KEY           = "audit.payroll_payment.update.detail";
     static final String AUDIT_DELETE_KEY           = "audit.payroll_payment.delete.detail";
     static final String AUDIT_DISPATCH_KEY         = "audit.payroll_payment.dispatch.detail";
     static final String AUDIT_REQUEST_APPROVAL_KEY = "audit.payroll_payment.request_approval.detail";
@@ -254,7 +256,11 @@ public class PayrollPaymentService {
                 master.getWdrlCcyCd(),
                 master.getOrgFileNm(),
                 master.getFileSize(),
-                lines);
+                lines,
+                // Approval-request attachments — wired only on Internal
+                // Transfer today; Payroll ports the same pattern in a
+                // follow-up MR.
+                java.util.List.of());
     }
 
     /* ----------------------------------------------------------------
@@ -303,7 +309,7 @@ public class PayrollPaymentService {
         if (bankCd == null || bankCd.isBlank()) {
             throw new BusinessException("WBE_VALIDATION");
         }
-        return excelParser.parse(file);
+        return excelParser.parse(file, bankCd);
     }
 
     @Transactional
@@ -437,6 +443,51 @@ public class PayrollPaymentService {
 
     public record DownloadResource(
             java.nio.file.Path path, String orgFileNm, String saveFileNm, long fileSize) { }
+
+    /* ----------------------------------------------------------------
+     *  Update reporting account (legacy pymn_0009_002_u002)
+     * ---------------------------------------------------------------- */
+
+    /**
+     * Update the chart-of-accounts assignment on one Payroll Payment
+     * line. Mirrors
+     * {@link com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService#updateReportingAccount}
+     * — same wire shape, same audit pattern, scoped to the Payroll
+     * {@code SCDUL_PYMN_TYPE_CD} via {@link #loadMaster}.
+     */
+    @Transactional
+    public void updateReportingAccount(String id, String lineId,
+                                       UpdateReportingAccountRequest req) {
+        String bizKey = requireTenant();
+        String userId = TenantContext.currentUserId();
+        String now    = OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC).format(DTM14);
+
+        ScdulPymnSumr master = loadMaster(bizKey, id);
+        if (TrnfYn.TRANSFERRED.code().equals(master.getTrnfYn())) {
+            throw new BusinessException("WBE2064");
+        }
+
+        ScdulPymnSumrDetl detl = detlRepository
+                .findByBizKeyAndScdulPymnNoAndScdulPymnDetlNo(bizKey, id, lineId)
+                .orElseThrow(() -> new BusinessException("WBE2061"));
+
+        detl.setChartAcctSeqNo(req.chartAcctSeqNo());
+        detl.setChartAcctCd(req.chartAcctCd());
+        detl.setModId(userId);
+        detl.setModDtm(now);
+
+        auditLogService.append(AuditLogContext.builder()
+                .wsvcId(WSVC_ID)
+                .refNo(REF_NO)
+                .refNo1(id)
+                .refNo2(lineId)
+                .activityKey(AUDIT_ACTIVITY_KEY)
+                .detailKey(AUDIT_UPDATE_KEY)
+                .build());
+
+        log.info("feature=payroll-payment update-reporting bizKey={} scdulPymnNo={} lineId={} chartAcctCd={}",
+                bizKey, id, lineId, req.chartAcctCd());
+    }
 
     /* ----------------------------------------------------------------
      *  Delete draft batch (legacy pymn_0005_001_d001)

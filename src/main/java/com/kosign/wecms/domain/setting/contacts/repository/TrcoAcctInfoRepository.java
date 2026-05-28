@@ -20,6 +20,25 @@ public interface TrcoAcctInfoRepository
     List<TrcoAcctInfo> findByBizKeyAndTrcoKeyIn(
             String bizKey, Collection<String> trcoKeys);
 
+    /**
+     * Tenant-scoped lookup of every {@code TRCO_ACCT_INFO} row that
+     * matches a single {@code (BIZ_KEY, TRCO_KEY, ACCT_NO)} triple.
+     * Returns a list because the legacy PK is
+     * {@code (BIZ_KEY, TRCO_KEY, TRCO_ACCT_KEY)} &mdash; the same
+     * account number may appear under multiple {@code TRCO_ACCT_KEY}
+     * rows with different bank codes (one NAPAS, one CITAD). Callers
+     * pick the row whose bank code matches the user's Excel input.
+     *
+     * <p>Mirrors legacy {@code PymnHelper.ckDepositNo} (lines 1138-1166)
+     * &mdash; the query used by the payment-upload parser to verify
+     * that the deposit account number entered against a contact in the
+     * Excel template is actually registered under that contact in
+     * {@code TRCO_ACCT_INFO}, and to read {@code FINC_MDA_OWNER_NM} for
+     * the CITAD recipient-name cross-fill.
+     */
+    List<TrcoAcctInfo> findByBizKeyAndTrcoKeyAndAcctNo(
+            String bizKey, String trcoKey, String acctNo);
+
     @Transactional
     long deleteByBizKeyAndTrcoKeyAndTrcoAcctKey(
             String bizKey, String trcoKey, String trcoAcctKey);
