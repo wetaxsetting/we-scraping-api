@@ -184,6 +184,9 @@ public class InternalTransferService {
     private final Clock                        clock;
     private final ExptResolMstrRepository       exptResolMstrRepository;
     private final ExptResolApprvrInfmRepository exptResolApprvrInfmRepository;
+    /** Approval-request attachments — written on submit, read on
+     *  detail, streamed on download. See V208. */
+    private final com.kosign.wecms.domain.payment.internaltransfer.repository.ExptResolFileRepository exptResolFileRepository;
     private final DocNoGenerator                docNoGenerator;
     private final BusiInfmRepository            busiInfmRepository;
     /** Shared projector that resolves the per-line bank name +
@@ -290,6 +293,25 @@ public class InternalTransferService {
         // legacy live system.
         String outBankNm = transferLineDetailMapper.resolveBankNm(master.getOutBankCd());
 
+        // Approval-request attachments registered against this batch's
+        // APPR_SEQ_NO. Empty when the batch has not been submitted for
+        // approval yet, or when the user submitted with no files. The
+        // ApprovalDetailsDialog popup renders one chip per row +
+        // streams the binary back via the download endpoint.
+        java.util.List<com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalAttachmentRow> attachments =
+                master.getApprSeqNo() == null || master.getApprSeqNo().isBlank()
+                        ? java.util.List.of()
+                        : exptResolFileRepository
+                                .findByBizKeyAndApprSeqNoOrderByFileIdAsc(bizKey, master.getApprSeqNo())
+                                .stream()
+                                .map(f -> new com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalAttachmentRow(
+                                        f.getFileId(),
+                                        f.getOrgFileNm(),
+                                        f.getFileSize(),
+                                        f.getRegNm(),
+                                        f.getRegDtm()))
+                                .toList();
+
         return new ScheduledTransferDetailResponse(
                 master.getScdulPymnNo(),
                 master.getScdulPymnTypeCd(),
@@ -319,7 +341,8 @@ public class InternalTransferService {
                 master.getWdrlCcyCd(),
                 master.getOrgFileNm(),
                 master.getFileSize(),
-                lines);
+                lines,
+                attachments);
     }
 
     /* ----------------------------------------------------------------
@@ -614,7 +637,8 @@ public class InternalTransferService {
     @Transactional
     public com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalResponse requestApproval(
             String id,
-            com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalRequest req) {
+            com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalRequest req,
+            java.util.List<org.springframework.web.multipart.MultipartFile> attachments) {
         String bizKey = requireTenant();
         ScdulPymnSumr master = loadMaster(bizKey, id);
 
@@ -649,6 +673,17 @@ public class InternalTransferService {
             docNo = stampApproval(master, apprSeqNo, req);
         }
 
+        // Approval-request attachments — stream each file to disk under
+        // `<storage-root>/<biz_key>/approval-attachments/<appr_seq_no>/`
+        // and insert one EXPT_RESOL_FILE row per file. Runs INSIDE the
+        // same @Transactional so a partial failure (disk write OK + DB
+        // insert fail, or vice versa) rolls back the metadata; the disk
+        // copy of any partially-written files survives but is harmless
+        // because the matching DB row never committed (the user can
+        // re-submit). Empty / null list is the no-attachment path —
+        // legacy parity with the JSON-only contract.
+        persistApprovalAttachments(bizKey, apprSeqNo, attachments);
+
         auditLogService.append(AuditLogContext.builder()
                 .wsvcId(WSVC_ID)
                 .refNo(REF_NO)
@@ -659,10 +694,78 @@ public class InternalTransferService {
                 .build());
 
         log.info(
-                "feature=internal-transfer request-approval bizKey={} scdulPymnNo={} apprSeqNo={} apprLineNo={} approvers={}",
-                bizKey, id, apprSeqNo, req.apprLineNo(), req.approvers().size());
+                "feature=internal-transfer request-approval bizKey={} scdulPymnNo={} apprSeqNo={} apprLineNo={} approvers={} attachments={}",
+                bizKey, id, apprSeqNo, req.apprLineNo(), req.approvers().size(),
+                attachments == null ? 0 : attachments.size());
 
         return new com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalResponse(apprSeqNo, docNo);
+    }
+
+    /**
+     * Stream every {@code MultipartFile} in {@code attachments} to disk
+     * and insert one {@code EXPT_RESOL_FILE} row per file. Files are
+     * stored under
+     * {@code <storage-root>/<biz_key>/approval-attachments/<apprSeqNo>/}
+     * with a per-row composite filename so duplicates in the same
+     * upload never collide. Empty / null list is a no-op.
+     */
+    private void persistApprovalAttachments(
+            String bizKey,
+            String apprSeqNo,
+            java.util.List<org.springframework.web.multipart.MultipartFile> attachments) {
+        if (attachments == null || attachments.isEmpty()) {
+            return;
+        }
+        String userId = TenantContext.currentUserId();
+        String userNm = TenantContext.currentUserNm();
+        String nowDtm = ZonedDateTime.ofInstant(clock.instant(), VIETNAM_ZONE).format(DTM14);
+
+        java.nio.file.Path apprDir = fileResolver.approvalAttachmentDirectory(bizKey, apprSeqNo);
+        try {
+            java.nio.file.Files.createDirectories(apprDir);
+        } catch (java.io.IOException ex) {
+            log.error("feature=internal-transfer request-approval attachment-mkdir-failed bizKey={} apprSeqNo={} err={}",
+                    bizKey, apprSeqNo, ex.getMessage());
+            throw new BusinessException("WBE2070");
+        }
+
+        int seq = 1;
+        for (org.springframework.web.multipart.MultipartFile file : attachments) {
+            if (file == null || file.isEmpty()) {
+                continue;
+            }
+            String fileId    = Integer.toString(seq++);
+            String orgFileNm = sanitiseOriginalFilename(file.getOriginalFilename());
+            // Compose a collision-free disk name — appr seq + per-file
+            // sequence + sanitised original filename. The original is
+            // preserved in `ORG_FILE_NM` for display; the on-disk name
+            // is internal.
+            String saveFileNm = apprSeqNo + "_" + fileId + "_" + orgFileNm;
+            java.nio.file.Path target = fileResolver.resolveApprovalAttachment(
+                    bizKey, apprSeqNo, saveFileNm);
+            try {
+                // Use the Path overload to avoid the
+                // @NonNull-warned `target.toFile()` indirection.
+                file.transferTo(target);
+            } catch (java.io.IOException ex) {
+                log.error("feature=internal-transfer request-approval attachment-write-failed bizKey={} apprSeqNo={} fileId={} err={}",
+                        bizKey, apprSeqNo, fileId, ex.getMessage());
+                throw new BusinessException("WBE2070");
+            }
+
+            com.kosign.wecms.domain.payment.internaltransfer.entity.ExptResolFile row =
+                    new com.kosign.wecms.domain.payment.internaltransfer.entity.ExptResolFile();
+            row.setBizKey(bizKey);
+            row.setApprSeqNo(apprSeqNo);
+            row.setFileId(fileId);
+            row.setOrgFileNm(orgFileNm);
+            row.setSaveFileNm(saveFileNm);
+            row.setFileSize(Long.toString(file.getSize()));
+            row.setRegId(userId);
+            row.setRegNm(userNm == null ? userId : userNm);
+            row.setRegDtm(nowDtm);
+            exptResolFileRepository.save(row);
+        }
     }
 
     /** Per-tenant MAX+1 across both EXPT_RESOL_MSTR and SCDUL_PYMN_SUMR so the
@@ -1168,6 +1271,40 @@ public class InternalTransferService {
      */
     public record DownloadResource(
             Path path, String orgFileNm, String saveFileNm, long fileSize) { }
+
+    /**
+     * Resolve the disk path + display filename for one approval-request
+     * attachment. Mirrors {@link #resolveDownload}'s contract — same
+     * tenant scoping, same {@code WBE2069} error envelope when the row
+     * exists but the on-disk file is missing.
+     */
+    @Transactional(readOnly = true)
+    public DownloadResource resolveApprovalAttachmentDownload(
+            String scdulPymnNo, String apprSeqNo, String fileId) {
+        String bizKey = requireTenant();
+        // Tenant-scope the master lookup first — defends against a
+        // caller passing an apprSeqNo from another tenant. The master
+        // also gives us the cross-check that this APPR_SEQ_NO actually
+        // belongs to this batch.
+        ScdulPymnSumr master = loadMaster(bizKey, scdulPymnNo);
+        if (master.getApprSeqNo() == null
+                || !master.getApprSeqNo().equals(apprSeqNo)) {
+            throw new BusinessException("WBE2069");
+        }
+        com.kosign.wecms.domain.payment.internaltransfer.entity.ExptResolFile row =
+                exptResolFileRepository
+                        .findByBizKeyAndApprSeqNoAndFileId(bizKey, apprSeqNo, fileId)
+                        .orElseThrow(() -> new BusinessException("WBE2069"));
+        Path path = fileResolver.resolveApprovalAttachment(
+                bizKey, apprSeqNo, row.getSaveFileNm());
+        if (!Files.isReadable(path) || !Files.isRegularFile(path)) {
+            throw new BusinessException("WBE2069");
+        }
+        long fileSize = row.getFileSize() == null
+                ? path.toFile().length()
+                : Long.parseLong(row.getFileSize());
+        return new DownloadResource(path, row.getOrgFileNm(), row.getSaveFileNm(), fileSize);
+    }
 
     private String requireTenant() {
         String bizKey = TenantContext.currentBizKey();

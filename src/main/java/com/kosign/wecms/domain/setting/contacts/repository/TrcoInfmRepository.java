@@ -85,6 +85,31 @@ public interface TrcoInfmRepository extends JpaRepository<TrcoInfm, String> {
             @Param("handTrcoKey") String handTrcoKey);
 
     /**
+     * Tenant-scoped lookup of an <em>overseas</em> contact by
+     * {@code HAND_TRCO_KEY}. Mirrors legacy
+     * {@code pymn_0007_003_r001_act.jsp:128-134} which filters on
+     * {@code biz_key + hand_trco_key + trco_type = 'O' +
+     * (trco_stts <> 'C' OR NULL)} before reading the overseas
+     * beneficiary detail row via {@code TRCO_OVRS_INFM}.
+     *
+     * <p>Distinct from {@link #findActiveByBizKeyAndHandTrcoKey} (used by
+     * Vendor / Expense / Payroll) — that one accepts any
+     * {@code TRCO_TYPE}; overseas-batch upload must reject Local-type
+     * contacts so a mis-typed code never resolves to a domestic
+     * recipient.
+     */
+    @Query("""
+        SELECT t FROM TrcoInfm t
+        WHERE t.bizKey = :bizKey
+          AND t.handTrcoKey = :handTrcoKey
+          AND t.trcoType = 'O'
+          AND (t.trcoStts IS NULL OR t.trcoStts <> 'C')
+        """)
+    Optional<TrcoInfm> findActiveOverseasByBizKeyAndHandTrcoKey(
+            @Param("bizKey") String bizKey,
+            @Param("handTrcoKey") String handTrcoKey);
+
+    /**
      * Duplicate-{@code TRCO_TAX_ID} check &mdash; per-tenant unique
      * contract. Mirrors legacy {@code TrcoHelper.validateTrcoTaxDuplicate}.
      */

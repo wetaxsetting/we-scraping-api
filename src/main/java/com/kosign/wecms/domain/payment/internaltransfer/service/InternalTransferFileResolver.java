@@ -89,6 +89,65 @@ public class InternalTransferFileResolver {
                 .toAbsolutePath().normalize();
     }
 
+    /**
+     * Resolve the absolute path for an approval-attachment binary —
+     * {@code <storage-root>/<biz_key>/approval-attachments/<appr_seq_no>/<save_file_nm>}.
+     * Path traversal is guarded the same way as {@link #resolve}: the
+     * resolved path MUST stay inside the per-approval subtree, so a
+     * future writer mistake (or a {@code SAVE_FILE_NM} column carrying
+     * {@code ".."} segments) cannot escape.
+     *
+     * @throws IllegalArgumentException when any input is blank or the
+     *         resolved path escapes the per-approval subtree.
+     */
+    public Path resolveApprovalAttachment(
+            String bizKey, String apprSeqNo, String saveFileNm) {
+        if (bizKey == null || bizKey.isBlank()) {
+            throw new IllegalArgumentException("bizKey is required");
+        }
+        if (apprSeqNo == null || apprSeqNo.isBlank()) {
+            throw new IllegalArgumentException("apprSeqNo is required");
+        }
+        if (saveFileNm == null || saveFileNm.isBlank()) {
+            throw new IllegalArgumentException("saveFileNm is required");
+        }
+        Path apprRoot = approvalAttachmentDirectory(bizKey, apprSeqNo);
+        Path resolved = apprRoot.resolve(saveFileNm).toAbsolutePath().normalize();
+        if (!resolved.startsWith(apprRoot)) {
+            throw new IllegalArgumentException(
+                    "Resolved attachment path escapes the per-approval subtree: " + resolved);
+        }
+        return resolved;
+    }
+
+    /**
+     * Per-approval directory under
+     * {@code <storage-root>/<biz_key>/approval-attachments/<appr_seq_no>/}.
+     * The service calls {@code Files.createDirectories(...)} on this
+     * once before streaming each file (matches the upload-batch pattern
+     * on {@link #tenantDirectory}).
+     */
+    public Path approvalAttachmentDirectory(String bizKey, String apprSeqNo) {
+        if (bizKey == null || bizKey.isBlank()) {
+            throw new IllegalArgumentException("bizKey is required");
+        }
+        if (apprSeqNo == null || apprSeqNo.isBlank()) {
+            throw new IllegalArgumentException("apprSeqNo is required");
+        }
+        return storageRoot
+                .resolve(bizKey)
+                .resolve(APPROVAL_ATTACHMENT_SLUG)
+                .resolve(apprSeqNo)
+                .toAbsolutePath()
+                .normalize();
+    }
+
+    /** Slug subfolder for approval-request attachments. Mirrors the
+     *  {@link InternalTransferStorageProperties#SLUG_FOLDER} convention
+     *  but lives under a sibling subtree so the per-batch Excel and
+     *  the per-approval attachments stay cleanly separated. */
+    public static final String APPROVAL_ATTACHMENT_SLUG = "approval-attachments";
+
     /** Test seam — exposes the absolute storage root the resolver
      *  was wired with. */
     public Path getStorageRoot() {

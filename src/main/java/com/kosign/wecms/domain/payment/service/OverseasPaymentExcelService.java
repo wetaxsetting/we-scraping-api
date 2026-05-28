@@ -13,6 +13,13 @@ import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnDtlsRepositor
 import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnSumrRepository;
 import com.kosign.wecms.domain.payment.overseas.service.OverseasPaymentFileResolver;
 import com.kosign.wecms.domain.payment.overseas.service.OverseasPaymentKeyGenerator;
+import com.kosign.wecms.domain.payment.validation.FieldCd;
+import com.kosign.wecms.domain.payment.validation.PymnType;
+import com.kosign.wecms.domain.payment.validation.SpecialCharValidator;
+import com.kosign.wecms.domain.setting.contacts.entity.TrcoInfm;
+import com.kosign.wecms.domain.setting.contacts.entity.TrcoOvrsInfm;
+import com.kosign.wecms.domain.setting.contacts.repository.TrcoInfmRepository;
+import com.kosign.wecms.domain.setting.contacts.repository.TrcoOvrsInfmRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.ss.usermodel.Cell;
@@ -36,6 +43,7 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Parses and validates an overseas payment Excel upload file.
@@ -68,6 +76,9 @@ public class OverseasPaymentExcelService {
     private final OvrsPymnDtlsRepository       dtlsRepository;
     private final OverseasPaymentKeyGenerator  keyGenerator;
     private final OverseasPaymentFileResolver  fileResolver;
+    private final TrcoInfmRepository           contactRepo;
+    private final TrcoOvrsInfmRepository       overseasContactRepo;
+    private final SpecialCharValidator         specialCharValidator;
 
     /** Header row index (0-based POI index; row 3 in Excel = index 2). */
     private static final int HEADER_ROW_INDEX   = 2;
@@ -95,7 +106,7 @@ public class OverseasPaymentExcelService {
      * @throws BusinessException {@code WBE2042} when the header row is missing or malformed
      * @throws BusinessException {@code WBE2043} on a corrupt / unreadable workbook
      */
-    public OverseasPaymentExcelPreview preview(MultipartFile file) {
+    public OverseasPaymentExcelPreview preview(MultipartFile file, String bankCd) {
         if (file == null || file.isEmpty()) {
             throw new BusinessException("WBE_VALIDATION", "file: required");
         }
@@ -136,6 +147,39 @@ public class OverseasPaymentExcelService {
                 validateRequired(beneficiaryCode,  "beneficiaryCode", errors);
                 validateRequired(memo,             "memo",            errors);
 
+                // Resolve beneficiary detail server-side from
+                // TRCO_INFM + TRCO_OVRS_INFM. Mirrors legacy
+                // pymn_0007_003_r001_act.jsp#getOverseasContactInfo
+                // (lines 125-150) + getOverseasContactDetails (152-238).
+                ResolvedBeneficiary bnfc = resolveBeneficiary(beneficiaryCode, errors);
+
+                // Special-character checks against BLOCKED_CHARS_RULE.
+                // Mirrors legacy pymn_0007_003_r001_act.jsp:
+                //   :175 — BENEFICIARY_NAME (cross-filled BNFC_NM)
+                //   :197 — BENEFICIARY_ADDRESS (cross-filled BNFC_ADDR)
+                //   :372 — MEMO (Excel cell, col 4)
+                // Bank-specific — missing rule for the (bankCd,
+                // OVERSEAS_PAYMENT, fieldCd) tuple means the call is a
+                // no-op, so this is safe before BLOCKED_CHARS_RULE is
+                // seeded for Overseas.
+                if (bankCd != null && !bankCd.isBlank()) {
+                    if (bnfc.bnfcNm() != null) {
+                        specialCharValidator
+                                .validate(bankCd, PymnType.OVERSEAS_PAYMENT, FieldCd.BENEFICIARY_NAME, bnfc.bnfcNm())
+                                .ifPresent(msg -> errors.add(new OverseasPaymentExcelFieldError("bnfcNm", msg)));
+                    }
+                    if (bnfc.bnfcAddr() != null) {
+                        specialCharValidator
+                                .validate(bankCd, PymnType.OVERSEAS_PAYMENT, FieldCd.BENEFICIARY_ADDRESS, bnfc.bnfcAddr())
+                                .ifPresent(msg -> errors.add(new OverseasPaymentExcelFieldError("bnfcAddr", msg)));
+                    }
+                    if (memo != null && !memo.isBlank()) {
+                        specialCharValidator
+                                .validate(bankCd, PymnType.OVERSEAS_PAYMENT, FieldCd.MEMO, memo)
+                                .ifPresent(msg -> errors.add(new OverseasPaymentExcelFieldError("memo", msg)));
+                    }
+                }
+
                 boolean valid = errors.isEmpty();
                 if (valid) completed++; else errored++;
 
@@ -147,6 +191,8 @@ public class OverseasPaymentExcelService {
                         r + 1,
                         currency, amount, feePayer,
                         beneficiaryCode, memo, reportingAccount,
+                        bnfc.bnfcNm(), bnfc.bicCode(), bnfc.bnfcAcctNo(),
+                        bnfc.bnfcAddr(), bnfc.bnfcBankNm(), bnfc.bnfcBankCd(),
                         valid, errors));
             }
 
@@ -180,6 +226,110 @@ public class OverseasPaymentExcelService {
         if (value == null || value.isBlank()) {
             errors.add(new OverseasPaymentExcelFieldError(fieldId, fieldId + " is required"));
         }
+    }
+
+    /**
+     * Backend resolver for the overseas beneficiary detail bundle.
+     * Three outcomes:
+     * <ul>
+     *   <li><b>Blank beneficiary code</b> — already flagged by
+     *       {@link #validateRequired}; returns empty so the preview
+     *       carries nulls without piling on more errors.</li>
+     *   <li><b>Code does not resolve</b> to an overseas
+     *       ({@code TRCO_TYPE='O'}) contact for the tenant — emits
+     *       one error on {@code beneficiaryCode} (legacy {@code WBE1189})
+     *       plus per-field errors on every beneficiary field so the
+     *       preview highlights every cell (legacy
+     *       {@code pymn_0007_003_r001_act.jsp:142-148}).</li>
+     *   <li><b>Code resolves</b> — cross-fills BNFC_NM, BIC_CODE,
+     *       BNFC_ACCT_NO, BNFC_ADDR, BNFC_BANK_NM, BNFC_BANK_CD from
+     *       {@code TRCO_OVRS_INFM}. Per-field error emitted for any
+     *       column that's blank in the master row (legacy
+     *       {@code WBW1159} at lines 218-232).</li>
+     * </ul>
+     */
+    private ResolvedBeneficiary resolveBeneficiary(
+            String beneficiaryCode,
+            List<OverseasPaymentExcelFieldError> errors) {
+        if (beneficiaryCode == null || beneficiaryCode.isBlank()) {
+            return ResolvedBeneficiary.EMPTY;
+        }
+
+        String bizKey = TenantContext.currentBizKey();
+        if (bizKey == null) {
+            errors.add(new OverseasPaymentExcelFieldError(
+                    "beneficiaryCode", "Tenant context missing — please re-login"));
+            return ResolvedBeneficiary.EMPTY;
+        }
+
+        Optional<TrcoInfm> contactHit = contactRepo
+                .findActiveOverseasByBizKeyAndHandTrcoKey(bizKey, beneficiaryCode.trim());
+        if (contactHit.isEmpty()) {
+            errors.add(new OverseasPaymentExcelFieldError(
+                    "beneficiaryCode",
+                    "Beneficiary code is not registered: " + beneficiaryCode));
+            errors.add(new OverseasPaymentExcelFieldError("bnfcNm",      "Beneficiary Name is missing"));
+            errors.add(new OverseasPaymentExcelFieldError("bicCode",     "BIC Code is missing"));
+            errors.add(new OverseasPaymentExcelFieldError("bnfcAcctNo",  "Beneficiary Account No. is missing"));
+            errors.add(new OverseasPaymentExcelFieldError("bnfcAddr",    "Beneficiary Address is missing"));
+            errors.add(new OverseasPaymentExcelFieldError("bnfcBankNm",  "Beneficiary Bank Name is missing"));
+            return ResolvedBeneficiary.EMPTY;
+        }
+
+        List<TrcoOvrsInfm> ovrsRows = overseasContactRepo
+                .findByBizKeyAndTrcoKey(bizKey, contactHit.get().getTrcoKey());
+        if (ovrsRows.isEmpty()) {
+            // Contact exists but has no overseas-detail row at all.
+            errors.add(new OverseasPaymentExcelFieldError("bnfcNm",      "Beneficiary Name is missing"));
+            errors.add(new OverseasPaymentExcelFieldError("bicCode",     "BIC Code is missing"));
+            errors.add(new OverseasPaymentExcelFieldError("bnfcAcctNo",  "Beneficiary Account No. is missing"));
+            errors.add(new OverseasPaymentExcelFieldError("bnfcAddr",    "Beneficiary Address is missing"));
+            errors.add(new OverseasPaymentExcelFieldError("bnfcBankNm",  "Beneficiary Bank Name is missing"));
+            return ResolvedBeneficiary.EMPTY;
+        }
+
+        TrcoOvrsInfm o = ovrsRows.get(0);
+        String bnfcNm     = trimToNull(o.getBeneName());
+        String bicCode    = trimToNull(stripWhitespace(o.getBicCode()));
+        String bnfcAcctNo = trimToNull(stripWhitespace(o.getBeneAcctNo()));
+        String bnfcAddr   = trimToNull(o.getBeneAddr());
+        String bnfcBankNm = trimToNull(o.getBeneBankName());
+        String bnfcBankCd = trimToNull(stripWhitespace(o.getBeneBankCode()));
+
+        if (bnfcNm     == null) errors.add(new OverseasPaymentExcelFieldError("bnfcNm",      "Beneficiary Name is missing"));
+        if (bicCode    == null) errors.add(new OverseasPaymentExcelFieldError("bicCode",     "BIC Code is missing"));
+        if (bnfcAcctNo == null) errors.add(new OverseasPaymentExcelFieldError("bnfcAcctNo",  "Beneficiary Account No. is missing"));
+        if (bnfcAddr   == null) errors.add(new OverseasPaymentExcelFieldError("bnfcAddr",    "Beneficiary Address is missing"));
+        if (bnfcBankNm == null) errors.add(new OverseasPaymentExcelFieldError("bnfcBankNm",  "Beneficiary Bank Name is missing"));
+
+        return new ResolvedBeneficiary(bnfcNm, bicCode, bnfcAcctNo, bnfcAddr, bnfcBankNm, bnfcBankCd);
+    }
+
+    private static String trimToNull(String s) {
+        if (s == null) return null;
+        String t = s.trim();
+        return t.isEmpty() ? null : t;
+    }
+
+    private static String stripWhitespace(String s) {
+        return s == null ? null : s.replaceAll("\\s+", "");
+    }
+
+    /**
+     * Six-field beneficiary projection used by {@link #resolveBeneficiary}.
+     * Component values are {@code null} when blank in the master row
+     * (the corresponding error has already landed in the row's
+     * {@code errors} list).
+     */
+    private record ResolvedBeneficiary(
+            String bnfcNm,
+            String bicCode,
+            String bnfcAcctNo,
+            String bnfcAddr,
+            String bnfcBankNm,
+            String bnfcBankCd) {
+        static final ResolvedBeneficiary EMPTY =
+                new ResolvedBeneficiary(null, null, null, null, null, null);
     }
 
     private void validateAmount(String raw, List<OverseasPaymentExcelFieldError> errors) {

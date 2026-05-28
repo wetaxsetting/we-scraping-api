@@ -348,30 +348,57 @@ public class InternalTransferExcelParser {
             trnfCcyCd = trnfCcyIn.trim().toUpperCase();
         }
 
+        // Resolve RCPT_NM + DEPO_CCY_CD from ACCT_MSTR — Internal
+        // Transfer always targets one of the company's own accounts, so
+        // the recipient's holder name lives on `ACCT_MSTR.ACCT_NM` and
+        // the destination currency on `ACCT_MSTR.CCY_CD`. Mirrors legacy
+        // `PymnHelper.validateBankAccountInAcctMstr` (lines 613-645)
+        // verbatim — the legacy query is `(biz_key, acct_no)` ONLY,
+        // with no `bank_cd` predicate, because the Excel cell ships a
+        // NAPAS / CITAD code (e.g. `970424`) while `ACCT_MSTR.BANK_CD`
+        // stores the bank's internal 8-char code (e.g. `11704088`); the
+        // two formats are incompatible so filtering by bank_cd on this
+        // path produces false negatives. Behaviour:
+        //   - On hit  → set RCPT_NM + DEPO_CCY_CD (legacy lines 636-639).
+        //   - On miss → emit "Deposit account not registered" against
+        //               FINC_MDA_NO (legacy line 631-632: WBE1194).
+        // The lookup runs only when the upstream bank-code + deposit-no
+        // checks both passed; otherwise the user already has a clearer
+        // upstream error and the ACCT_MSTR query would be noise.
+        String rcptNm    = null;
+        String depoCcyCd = null;
+        if (!isBlank(fincMdaNo) && !isBlank(resolvedBankCd) && errors.stream()
+                .noneMatch(e -> FLD_ANT_DIV_CD.equals(e.fieldId()) || FLD_FINC_MDA_NO.equals(e.fieldId()))) {
+            String bizKey = TenantContext.currentBizKey();
+            Optional<AcctMstr> acctHit = acctMstrRepository
+                    .findFirstByBizKeyAndAcctNo(bizKey, fincMdaNo.trim());
+            if (acctHit.isPresent()) {
+                AcctMstr a = acctHit.get();
+                if (!isBlank(a.getAcctNm())) rcptNm = a.getAcctNm();
+                if (!isBlank(a.getCcyCd())) depoCcyCd = a.getCcyCd();
+            } else {
+                errors.add(new FieldError(FLD_FINC_MDA_NO,
+                        "Deposit account is not registered in the company's bank accounts: " + fincMdaNo));
+            }
+        }
+
+        // Special-character check on the cross-filled RCPT_NM. Mirrors
+        // legacy `PymnHelper.readExcelFromInternalTransfer:985` — the
+        // NAPAS branch validates the resolved recipient name against the
+        // BLOCKED_CHARS_RULE table for (bankCd, INTERNAL_TRANSFER,
+        // RECIPIENT_NAME). When no rule is registered the call is a no-op,
+        // so this is safe to land before the rule rows are seeded.
+        if (!isBlank(rcptNm)) {
+            specialCharValidator
+                    .validate(bankCd, PymnType.INTERNAL_TRANSFER, FieldCd.RECIPIENT_NAME, rcptNm)
+                    .ifPresent(msg -> errors.add(new FieldError("RCPT_NM", msg)));
+        }
+
+        // errFld / errCause must be built AFTER the ACCT_MSTR check so
+        // any newly-added FINC_MDA_NO error from that step is included
+        // in the preview's red-cell pair list.
         String errFld   = buildErrPair(errors, FieldError::fieldId);
         String errCause = buildErrPair(errors, FieldError::cause);
-
-        // Resolve RCPT_NM from ACCT_MSTR — Internal Transfer always
-        // targets one of the company's own accounts, so the recipient's
-        // holder name is on `ACCT_MSTR.ACCT_NM`. Mirrors legacy
-        // `PymnHelper.validateBankAccountInAcctMstr`:636 which sets
-        // `recItem.put("RCPT_NM", acctMstr.getAcctNm())` after the
-        // `(biz_key, acct_no)` lookup. Without this the dispatch
-        // INSERT into `tb_pay_file_data` would NULL-violate on
-        // `finc_mda_owner_nm`. Best-effort: when the account isn't in
-        // ACCT_MSTR for this tenant, leave the name null — the
-        // dispatch executor's fallback covers that path and the
-        // user-visible error is the same WBE1194 the legacy raises on
-        // unknown accounts (deferred to a follow-up MR).
-        String rcptNm = null;
-        if (!isBlank(fincMdaNo) && !isBlank(resolvedBankCd)) {
-            String bizKey = TenantContext.currentBizKey();
-            rcptNm = acctMstrRepository
-                    .findByBizKeyAndBankCdAndAcctNo(bizKey, resolvedBankCd, fincMdaNo.trim())
-                    .map(AcctMstr::getAcctNm)
-                    .filter(s -> s != null && !s.isBlank())
-                    .orElse(null);
-        }
 
         ParsedTransferLine line = new ParsedTransferLine(
                 tranAmt,
@@ -390,7 +417,7 @@ public class InternalTransferExcelParser {
                 null,
                 emptyToNull(chartAcctCd),
                 trnfCcyCd,
-                null);
+                depoCcyCd);                  // DEPO_CCY_CD — resolved from ACCT_MSTR.CCY_CD (legacy parity)
         return new ParsedRow(line, !errors.isEmpty());
     }
 

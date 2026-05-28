@@ -201,6 +201,46 @@ public class InternalTransferController {
     }
 
     /**
+     * Stream one approval-request attachment back to the caller. Binary
+     * by-path lookup goes through {@code EXPT_RESOL_FILE} (per-tenant,
+     * per-APPR_SEQ_NO), so the URL carries the batch id (cross-checks
+     * tenant), the {@code apprSeqNo} (cross-checks the batch's own
+     * APPR_SEQ_NO), and the per-row {@code fileId} (PK column).
+     * {@code Content-Disposition} carries the original filename the
+     * user picked at upload time.
+     */
+    @GetMapping("/{id}/approval/{apprSeqNo}/attachments/{fileId}")
+    public ResponseEntity<InputStreamResource> downloadApprovalAttachment(
+            @PathVariable("id")
+            @Size(max = 30)
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id,
+            @PathVariable("apprSeqNo")
+            @Size(max = 15)
+            @Pattern(regexp = "^[0-9]+$", message = "apprSeqNo: digits only")
+            String apprSeqNo,
+            @PathVariable("fileId")
+            @Size(max = 100)
+            @Pattern(regexp = "^[A-Za-z0-9_-]+$", message = "fileId: invalid format")
+            String fileId) throws IOException {
+        DownloadResource resolved = service.resolveApprovalAttachmentDownload(
+                id, apprSeqNo, fileId);
+        InputStream stream = Files.newInputStream(resolved.path());
+
+        ContentDisposition cd = ContentDisposition.builder("attachment")
+                .filename(resolved.orgFileNm(), StandardCharsets.UTF_8)
+                .build();
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .contentLength(resolved.fileSize())
+                .header(HttpHeaders.CONTENT_DISPOSITION, cd.toString())
+                .header("X-Content-Type-Options", "nosniff")
+                .header("Access-Control-Expose-Headers", HttpHeaders.CONTENT_DISPOSITION)
+                .body(new InputStreamResource(stream));
+    }
+
+    /**
      * Preview the next {@code VO_YYMMDD_NNN} document number for the
      * current tenant. Used by the Request Approval popup to populate
      * the read-only "Document No." field before submit, so Internal
@@ -334,16 +374,34 @@ public class InternalTransferController {
      * approval-line snapshot (legacy BLTB_POST_INFM /
      * EXPT_RESOL_MSTR fan-out) lands when those tables are ported.
      */
-    @org.springframework.web.bind.annotation.PostMapping("/{id}/request-approval")
+    /**
+     * Multipart variant — accepts the JSON {@code request} part plus
+     * zero-or-more {@code attachments} file parts. The service streams
+     * each file under
+     * {@code <storage-root>/<biz_key>/approval-attachments/<appr_seq_no>/...}
+     * and inserts one {@code EXPT_RESOL_FILE} row per file. The
+     * binaries are surfaced back to the user via the matching download
+     * endpoint and the {@code attachments[]} array on the detail
+     * response.
+     *
+     * <p>Empty file list (zero parts) ⇒ legacy JSON behaviour: no
+     * attachments registered.
+     */
+    @org.springframework.web.bind.annotation.PostMapping(
+            path = "/{id}/request-approval",
+            consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResponse<com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalResponse>
-    requestApproval(
+    requestApprovalMultipart(
             @PathVariable("id")
             @Size(max = 30)
             @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
             String id,
-            @Valid @RequestBody
-            com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalRequest req) {
-        return ApiResponse.ok(service.requestApproval(id, req));
+            @org.springframework.web.bind.annotation.RequestPart("request")
+            @Valid
+            com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalRequest req,
+            @org.springframework.web.bind.annotation.RequestPart(value = "attachments", required = false)
+            java.util.List<org.springframework.web.multipart.MultipartFile> attachments) {
+        return ApiResponse.ok(service.requestApproval(id, req, attachments));
     }
 
     /* ----------------------------------------------------------------
