@@ -74,6 +74,12 @@ public record TransactionsSyncResponse(
         /** {@code "png"} or {@code "svg+xml"} per the legacy parity
          *  in nxisas_v2.js:1539-1542. CAPTCHA-only. */
         String captchaImageFormat,
+        /** Bank-credential username for the account whose LOGIN raised
+         *  the challenge — echoed back so the Security Question popup
+         *  can render the registered Login ID. Populated on
+         *  {@code QNA_REQUIRED} today; {@code null} for every other
+         *  status (dropped from the wire by {@code @JsonInclude(NON_NULL)}). */
+        String loginId,
 
         /** ──── ERROR-only ──── */
         String errorCode,
@@ -98,7 +104,7 @@ public record TransactionsSyncResponse(
                 creditTotal == null ? "0" : creditTotal.toPlainString(),
                 debitTotal  == null ? "0" : debitTotal.toPlainString(),
                 lastUpdate,
-                null, null, null, null,
+                null, null, null, null, null,
                 null, null);
     }
 
@@ -107,17 +113,20 @@ public record TransactionsSyncResponse(
         return new TransactionsSyncResponse(
                 sessionId, Status.OTP_REQUIRED,
                 null, null, null, null, null, null,
-                prompt, null, null, null,
+                prompt, null, null, null, null,
                 null, null);
     }
 
-    /** QNA challenge — frontend opens the QNA question-picker dialog. */
+    /** QNA challenge — frontend opens the QNA question-picker dialog.
+     *  {@code loginId} is the credential username the LOGIN call sent;
+     *  surfaced so the Security Question popup can render it in the
+     *  read-only Login ID slot (parity with the legacy popup). */
     public static TransactionsSyncResponse qnaChallenge(
-            UUID sessionId, String prompt, List<QnaQuestion> questions) {
+            UUID sessionId, String prompt, List<QnaQuestion> questions, String loginId) {
         return new TransactionsSyncResponse(
                 sessionId, Status.QNA_REQUIRED,
                 null, null, null, null, null, null,
-                prompt, questions, null, null,
+                prompt, questions, null, null, loginId,
                 null, null);
     }
 
@@ -127,7 +136,7 @@ public record TransactionsSyncResponse(
         return new TransactionsSyncResponse(
                 sessionId, Status.CAPTCHA_REQUIRED,
                 null, null, null, null, null, null,
-                prompt, null, image, format,
+                prompt, null, image, format, null,
                 null, null);
     }
 
@@ -136,7 +145,7 @@ public record TransactionsSyncResponse(
         return new TransactionsSyncResponse(
                 sessionId, Status.ERROR,
                 null, null, null, null, null, null,
-                null, null, null, null,
+                null, null, null, null, null,
                 code, message);
     }
 }

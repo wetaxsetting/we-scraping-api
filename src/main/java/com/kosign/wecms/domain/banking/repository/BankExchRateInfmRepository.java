@@ -112,4 +112,34 @@ public interface BankExchRateInfmRepository extends JpaRepository<BankExchRateIn
            value = "SELECT CAST(COALESCE(MAX(exch_seq_no::numeric), 0) + 1 AS varchar) " +
                    "FROM bank_exch_rate_infm WHERE biz_key = :bizKey")
     String findNextExchSeqNo(@Param("bizKey") String bizKey);
+
+    /**
+     * Returns the highest existing batch-round {@code SEQ_NO} (as the
+     * largest integer-cast value) for the given bank + reference date
+     * + counter currency, across ALL tenants. Used by the Woori batch
+     * (legacy {@code EXCH_0020_001}) to compute the next round number:
+     * {@code MAX(seq_no) + 1}, defaulting to 1 when no row exists.
+     *
+     * <p>Mirrors legacy SQL at
+     * {@code bcs.jex.wabooks.exch.EXCH_0020_001#execute}:
+     *
+     * <pre>{@code
+     *   SELECT seq_no FROM bank_exch_rate_infm
+     *    WHERE bank_cd = ? AND ref_date = ? AND ccy_cd = ?
+     *    ORDER BY CAST(seq_no AS integer) DESC LIMIT 1
+     * }</pre>
+     *
+     * <p>No {@code biz_key} filter — legacy treats Woori rounds as
+     * global per (bank, date, currency) so every tenant shares the same
+     * seq_no value within one batch run.
+     */
+    @Query(nativeQuery = true, value = """
+            SELECT seq_no FROM bank_exch_rate_infm
+             WHERE bank_cd = :bankCd AND ref_date = :refDate AND ccy_cd = :ccyCd
+             ORDER BY CAST(seq_no AS integer) DESC
+             LIMIT 1
+            """)
+    Optional<String> findHighestSeqNo(@Param("bankCd") String bankCd,
+                                      @Param("refDate") String refDate,
+                                      @Param("ccyCd") String ccyCd);
 }

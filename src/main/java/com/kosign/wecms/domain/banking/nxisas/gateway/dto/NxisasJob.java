@@ -20,7 +20,14 @@ public enum NxisasJob {
     BALANCE("BALANCE"),
     TRANSACTION("TRANSACTION"),
     CARD_INFO("CARD_INFO"),
-    CARD_USING("CARD_USING");
+    CARD_USING("CARD_USING"),
+    /**
+     * Foreign-exchange rate inquiry — used by the Exchange Rate batch
+     * (legacy BCS EXCH_0001_001 / EXCH_0010_001 / EXCH_0020_001). No
+     * session is held; one call per (bank, seqNo) pair returns the
+     * full {@code foreignExchange[]} list for that round.
+     */
+    FOREIGN_EXCHANGE("FOREIGN_EXCHANGE");
 
     private final String value;
 
