@@ -1,10 +1,12 @@
 package com.kosign.wecms.domain.auth.controller;
 
 import com.kosign.wecms.common.response.ApiResponse;
+import com.kosign.wecms.domain.auth.dto.ChangePasswordRequest;
 import com.kosign.wecms.domain.auth.dto.LoginRequest;
 import com.kosign.wecms.domain.auth.dto.LoginResponse;
 import com.kosign.wecms.domain.auth.dto.MeResponse;
 import com.kosign.wecms.domain.auth.service.AuthService;
+import com.kosign.wecms.domain.auth.service.ChangePasswordService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +27,7 @@ public class AuthController {
     private static final String DEFAULT_LANG = "EN";
 
     private final AuthService authService;
+    private final ChangePasswordService changePasswordService;
 
     @PostMapping("/login")
     public ApiResponse<LoginResponse> login(
@@ -56,6 +59,22 @@ public class AuthController {
     @PostMapping("/logout")
     public ApiResponse<Void> logout() {
         return ApiResponse.ok("Logout successful", null);
+    }
+
+    /**
+     * Self-service password change for the logged-in user. Protected by the
+     * global {@code anyRequest().authenticated()} rule — the JWT filter has
+     * already bound the caller into {@code TenantContext}, so no user id is
+     * accepted from the body (the credential being changed is always the
+     * caller's own). Port of legacy {@code comm_0400_001_u001} /
+     * {@code comm_0401_001}.
+     */
+    @PostMapping("/change-password")
+    public ApiResponse<Void> changePassword(
+            @Valid @RequestBody ChangePasswordRequest req,
+            HttpServletRequest servletReq) {
+        changePasswordService.changePassword(req, clientIp(servletReq));
+        return ApiResponse.ok("Password changed", null);
     }
 
     private String clientIp(HttpServletRequest req) {

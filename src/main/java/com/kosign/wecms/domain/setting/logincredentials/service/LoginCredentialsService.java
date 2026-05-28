@@ -7,15 +7,15 @@ import com.kosign.wecms.common.auditlog.service.AuditLogService;
 import com.kosign.wecms.common.enums.LangCd;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
-import com.kosign.wecms.domain.auth.entity.UserInfm;
-import com.kosign.wecms.domain.auth.repository.UserInfmRepository;
 import com.kosign.wecms.domain.banking.bankcredentials.entity.BankCertInfo;
 import com.kosign.wecms.domain.banking.bankcredentials.repository.BankCertInfoRepository;
 import com.kosign.wecms.domain.banking.bankcredentials.service.BankCertCryptoService;
 import com.kosign.wecms.domain.banking.nxisas.BankScrapingService;
 import com.kosign.wecms.domain.banking.nxisas.dto.ScrapeSessionResponse;
 import com.kosign.wecms.domain.banking.nxisas.dto.VerifyCredentialsRequest;
+import com.kosign.wecms.domain.banking.entity.AcctMstr;
 import com.kosign.wecms.domain.banking.entity.BankInfm;
+import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
 import com.kosign.wecms.domain.banking.repository.BankInfmRepository;
 import com.kosign.wecms.domain.setting.logincredentials.dto.BankFormInfoResponse;
 import com.kosign.wecms.domain.setting.logincredentials.dto.BankFormInfoSubType;
@@ -29,6 +29,7 @@ import com.kosign.wecms.domain.setting.logincredentials.dto.CredentialCreateResp
 import com.kosign.wecms.domain.setting.logincredentials.dto.GdtCredentialRequest;
 import com.kosign.wecms.domain.setting.logincredentials.dto.GdtCredentialUpdateRequest;
 import com.kosign.wecms.domain.setting.logincredentials.dto.LoginCredentialAccount;
+import com.kosign.wecms.domain.setting.logincredentials.dto.LoginCredentialBankAccount;
 import com.kosign.wecms.domain.setting.logincredentials.dto.LoginCredentialAuditResponse;
 import com.kosign.wecms.domain.setting.logincredentials.dto.LoginCredentialAuditRow;
 import com.kosign.wecms.domain.setting.logincredentials.dto.LoginCredentialGroup;
@@ -37,7 +38,7 @@ import com.kosign.wecms.domain.setting.logincredentials.dto.RevealResponse;
 import com.kosign.wecms.domain.setting.logincredentials.entity.GdtCertInfo;
 import com.kosign.wecms.domain.setting.logincredentials.repository.GdtCertInfoRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -50,6 +51,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.TreeMap;
 
 /**
@@ -110,9 +112,8 @@ public class LoginCredentialsService {
     private final BankCertInfoRepository    bankRepo;
     private final GdtCertInfoRepository     gdtRepo;
     private final BankInfmRepository        bankInfmRepo;
-    private final UserInfmRepository        userRepo;
+    private final AcctMstrRepository        acctMstrRepo;
     private final BankCertCryptoService     crypto;
-    private final PasswordEncoder           passwordEncoder;
     private final AuditLogService           auditLogService;
     private final AuditLogEntryRepository   auditLogReadRepo;
     private final BankScrapingService       bankScrapingService;
@@ -138,6 +139,19 @@ public class LoginCredentialsService {
         }
         Map<String, String> bankNames = resolveBankNames(byBank.keySet());
 
+        // Linked bank accounts per BANK_CD — mirrors the legacy
+        // BANK_CERT_INFO_R005 REC_1 subquery (keyed only on BIZ_KEY +
+        // BANK_CD, no ACTV_YN filter), so every credential row under a
+        // bank surfaces the same account list. One tenant-wide query
+        // grouped in Java rather than a per-bank fan-out.
+        Map<String, List<LoginCredentialBankAccount>> accountsByBank = new HashMap<>();
+        for (AcctMstr acct : acctMstrRepo.findByBizKeyOrderByPrnSeqAscBankCdAscAcctNoAsc(bizKey)) {
+            accountsByBank
+                    .computeIfAbsent(acct.getBankCd(), k -> new ArrayList<>())
+                    .add(new LoginCredentialBankAccount(
+                            acct.getBankCd(), acct.getAcctNo(), acct.getAcctNickNm()));
+        }
+
         for (Map.Entry<String, List<BankCertInfo>> e : byBank.entrySet()) {
             String bankCd = e.getKey();
             List<BankCertInfo> rows = e.getValue();
@@ -153,7 +167,8 @@ public class LoginCredentialsService {
                     bankNames.getOrDefault(bankCd, bankCd),
                     latestModBy,
                     latestModAt,
-                    accounts));
+                    accounts,
+                    accountsByBank.getOrDefault(bankCd, List.of())));
         }
 
         // --- GDT: zero or one group, accounts = whatever the tenant has ---
@@ -178,7 +193,8 @@ public class LoginCredentialsService {
                     GDT_INSTITUTION_LABEL,
                     latestModBy,
                     latestModAt,
-                    accounts));
+                    accounts,
+                    List.of()));
         }
 
         return new LoginCredentialListResponse(out);
@@ -263,9 +279,73 @@ public class LoginCredentialsService {
     public CredentialCreateResponse createBank(BankCredentialCreateRequest req) {
         String bizKey = TenantContext.currentBizKey();
         String userId = TenantContext.currentUserId();
+        // NXISAS_GB_SEQ_NO defaults to 0 (Corporate sub-type) when the
+        // picker has no sub-type radio — must match the value used on
+        // both the dedup lookup and the insert so they agree.
+        BigDecimal gbSeq = req.nxisasGbSeqNo() != null ? req.nxisasGbSeqNo() : BigDecimal.ZERO;
+
+        // --- Find-or-create dedup (legacy fnsh_0101_001_c001:166-194) ---
+        // A bank credential is uniquely identified by
+        // (BIZ_KEY, BANK_CD, CERT_INFO_CON, NXISAS_GB_SEQ_NO). Re-registering
+        // the same login — requester then approver, or a retried save after
+        // a transient scrape failure — reuses the existing row instead of
+        // minting a fresh SEQ_NO. This is the root-cause fix for duplicated
+        // LOGIN IDs in the credentials popup: the legacy R007 list (and the
+        // refactor list()) group by BANK_CD, so two rows sharing one
+        // CERT_INFO_CON render the login id twice.
+        Optional<BankCertInfo> existing = bankRepo
+                .findFirstByBizKeyAndBankCdAndCertInfoConAndNxisasGbSeqNoOrderBySeqNoAsc(
+                        bizKey, req.bankCd(), req.loginId(), gbSeq);
+        if (existing.isPresent()) {
+            // Reuse as-is (legacy branch 1-1: "result exists → move on").
+            // The stored password is intentionally NOT overwritten here —
+            // password changes flow through the explicit Edit / verify-update
+            // path, matching legacy which never re-encrypts on the find
+            // branch. No audit row: nothing was created.
+            return new CredentialCreateResponse(existing.get().getSeqNo());
+        }
+
+        BankCertInfo saved;
+        try {
+            saved = insertBankCredential(bizKey, userId, gbSeq, req);
+        } catch (DataIntegrityViolationException race) {
+            // Concurrent create raced us — either a sibling request inserted
+            // the same login, or the MAX+1 allocator collided on the
+            // (BIZ_KEY, SEQ_NO) PK. Re-read once: reuse the sibling's row if
+            // it's the same login, else retry the MAX+1 allocation a single
+            // time. Guarded read + one-shot retry mirrors the Contacts /
+            // Chart-of-Accounts pattern (no DB unique constraint is added —
+            // DEV parity keeps the legacy schema shape, see report).
+            Optional<BankCertInfo> raced = bankRepo
+                    .findFirstByBizKeyAndBankCdAndCertInfoConAndNxisasGbSeqNoOrderBySeqNoAsc(
+                            bizKey, req.bankCd(), req.loginId(), gbSeq);
+            if (raced.isPresent()) {
+                return new CredentialCreateResponse(raced.get().getSeqNo());
+            }
+            saved = insertBankCredential(bizKey, userId, gbSeq, req);
+        }
+
+        auditLogService.append(AuditLogContext.builder()
+                .wsvcId(WSVC_ID)
+                .refNo(REF_NO_BANK)
+                .refNo1(saved.getSeqNo().toPlainString())
+                .activityKey("audit.login_credentials.activity")
+                .detailKey("audit.login_credentials.create.detail")
+                .build());
+
+        return new CredentialCreateResponse(saved.getSeqNo());
+    }
+
+    /** Insert a brand-new {@code BANK_CERT_INFO} row with a fresh
+     *  per-tenant {@code SEQ_NO}. Split out of {@link #createBank} so the
+     *  find-or-create dedup can retry it on a concurrent-insert race.
+     *  {@code saveAndFlush} surfaces a duplicate / PK collision as a
+     *  {@link DataIntegrityViolationException} inside the caller's try
+     *  rather than deferring it to commit. */
+    private BankCertInfo insertBankCredential(String bizKey, String userId,
+                                              BigDecimal gbSeq, BankCredentialCreateRequest req) {
         BigDecimal nextSeq = bankRepo.findMaxSeqNo(bizKey).add(BigDecimal.ONE);
         String now = nowDtm14();
-
         BankCertInfo entity = new BankCertInfo();
         entity.setBizKey(bizKey);
         entity.setSeqNo(nextSeq);
@@ -281,23 +361,12 @@ public class LoginCredentialsService {
         // password slot is encrypted at rest).
         if (req.extra() != null)     entity.setCertInfoDetlCon2(req.extra());
         if (req.loginType() != null) entity.setCertInfoDetlCon3(req.loginType());
-        entity.setNxisasGbSeqNo(
-                req.nxisasGbSeqNo() != null ? req.nxisasGbSeqNo() : BigDecimal.ZERO);
+        entity.setNxisasGbSeqNo(gbSeq);
         entity.setRegId(userId);
         entity.setRegDtm(now);
         entity.setModId(userId);
         entity.setModDtm(now);
-        BankCertInfo saved = bankRepo.save(entity);
-
-        auditLogService.append(AuditLogContext.builder()
-                .wsvcId(WSVC_ID)
-                .refNo(REF_NO_BANK)
-                .refNo1(saved.getSeqNo().toPlainString())
-                .activityKey("audit.login_credentials.activity")
-                .detailKey("audit.login_credentials.create.detail")
-                .build());
-
-        return new CredentialCreateResponse(saved.getSeqNo());
+        return bankRepo.saveAndFlush(entity);
     }
 
     /* -----------------------------------------------------------------
@@ -397,6 +466,16 @@ public class LoginCredentialsService {
     public CredentialCreateResponse createGdt(GdtCredentialRequest req) {
         String bizKey = TenantContext.currentBizKey();
         String userId = TenantContext.currentUserId();
+        // Duplicate guard — legacy comm_0218_003_c001:123-128 (WBE0003)
+        // parity. WeCMS allows exactly ONE GDT (tax-portal) credential per
+        // company; a second create is blocked here so direct API calls,
+        // a second browser tab, or stale frontend state can't insert a
+        // duplicate. Edits flow through updateGdt instead. The guarded
+        // read runs inside this @Transactional method alongside the
+        // insert so a fast double-submit cannot slip two rows through.
+        if (!gdtRepo.findByBizKeyOrderBySeqNoAsc(bizKey).isEmpty()) {
+            throw new BusinessException("WBE_LOGIN_CREDENTIAL_GDT_EXISTS");
+        }
         BigDecimal nextSeq = gdtRepo.findMaxSeqNo(bizKey).add(BigDecimal.ONE);
         String now = nowDtm14();
 
@@ -449,34 +528,39 @@ public class LoginCredentialsService {
     }
 
     /* -----------------------------------------------------------------
-     *  REVEAL — decrypt password after re-auth
+     *  REVEAL — confirm the credential's OWN password, then return it
      * ----------------------------------------------------------------- */
 
     @Transactional(readOnly = true)
     public RevealResponse reveal(String type, BigDecimal seqNo, String userPassword) {
         String bizKey = TenantContext.currentBizKey();
-        String userId = TenantContext.currentUserId();
         String normalizedType = normalizeType(type);
 
-        UserInfm user = userRepo.findById(userId)
-                .orElseThrow(() -> new BusinessException("WBE1009"));
-        if (!passwordEncoder.matches(userPassword, user.getUserPw())) {
-            throw new BusinessException("WBE2091");
-        }
-
+        // Load the credential row (Bank vs GDT) and decrypt its stored
+        // password. Tenant scope is enforced by findByBizKeyAndSeqNo.
+        String loginId;
+        String storedPassword;
         if (TYPE_BANK.equals(normalizedType)) {
             BankCertInfo row = bankRepo.findByBizKeyAndSeqNo(bizKey, seqNo)
                     .orElseThrow(() -> new BusinessException("WBE2090"));
-            return new RevealResponse(
-                    row.getCertInfoCon(),
-                    crypto.decrypt(row.getCertInfoDetlCon()));
+            loginId = row.getCertInfoCon();
+            storedPassword = crypto.decrypt(row.getCertInfoDetlCon());
         } else {
             GdtCertInfo row = gdtRepo.findByBizKeyAndSeqNo(bizKey, seqNo)
                     .orElseThrow(() -> new BusinessException("WBE2090"));
-            return new RevealResponse(
-                    row.getCertInfoCon(),
-                    crypto.decrypt(row.getCertInfoDetlCon()));
+            loginId = row.getCertInfoCon();
+            storedPassword = crypto.decrypt(row.getCertInfoDetlCon());
         }
+
+        // Legacy comm_0218_008_r001 parity: the Confirmation popup
+        // confirms the user knows the CREDENTIAL's own password — the
+        // legacy IDO matched `... AND decrypt(cert_info_detl_con) = ?`.
+        // It does NOT check the WeCMS account password. Mismatch → WBE2091
+        // (same outcome the legacy "no row matched" surfaced to the user).
+        if (storedPassword == null || !storedPassword.equals(userPassword)) {
+            throw new BusinessException("WBE2091");
+        }
+        return new RevealResponse(loginId, storedPassword);
     }
 
     /* -----------------------------------------------------------------
@@ -559,13 +643,15 @@ public class LoginCredentialsService {
         return new LoginCredentialAccount(
                 e.getSeqNo(),
                 e.getCertInfoCon(),
-                e.getNxisasGbSeqNo());
+                e.getNxisasGbSeqNo(),
+                e.getCertInfoDetlCon3());
     }
 
     private static LoginCredentialAccount toGdtAccount(GdtCertInfo e) {
         return new LoginCredentialAccount(
                 e.getSeqNo(),
                 e.getCertInfoCon(),
+                null,
                 null);
     }
 

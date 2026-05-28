@@ -24,5 +24,13 @@ public record LoginCredentialGroup(
         String                       modifiedBy,
         /** Last MOD_DTM (legacy yyyyMMddHHmmss) across the group. */
         String                       modifiedAt,
-        List<LoginCredentialAccount> accounts
+        List<LoginCredentialAccount> accounts,
+        /**
+         * Bank accounts linked to this BANK_CD, mirroring the legacy
+         * {@code BANK_CERT_INFO_R005} {@code REC_1} aggregation (keyed on
+         * {@code (BIZ_KEY, BANK_CD)}). Drives the Registered Login
+         * Credentials popup's "Bank Account" column + {@code +N} badge.
+         * Always empty for GDT (no bank accounts).
+         */
+        List<LoginCredentialBankAccount> bankAccounts
 ) { }
