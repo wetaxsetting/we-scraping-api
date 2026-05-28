@@ -25,6 +25,9 @@ import com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalReque
 import com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalResponse;
 import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnDtlsRepository;
 import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnSumrRepository;
+import com.kosign.wecms.domain.payment.overseas.service.OverseasDispatchExecutor;
+import com.kosign.wecms.domain.payment.dispatch.service.DispatchResult;
+import com.kosign.wecms.domain.payment.dispatch.service.DispatchResultResolver;
 import com.kosign.wecms.domain.payment.repository.OverseasApproverRepository;
 import com.kosign.wecms.domain.payment.repository.OverseasPaymentRepository;
 import com.kosign.wecms.domain.auth.repository.BusiInfmRepository;
@@ -76,6 +79,11 @@ public class OverseasPaymentService {
     private final OverseasApproverRepository     approverRepo;
     private final OvrsPymnSumrRepository         sumrRepository;
     private final OvrsPymnDtlsRepository         dtlsRepository;
+    private final OverseasDispatchExecutor       dispatchExecutor;
+    /** Phase 2 dispatch-result resolver — surfaces PROC_STAT / RS_CD /
+     *  RS_MSG / PROC_DTTM / RSLT_DTTM per beneficiary line on the
+     *  Overseas Result detail page. */
+    private final DispatchResultResolver         dispatchResultResolver;
     private final ExptResolMstrRepository        exptResolMstrRepository;
     private final ExptResolApprvrInfmRepository  exptResolApprvrInfmRepository;
     private final AuditLogService                auditLogService;
@@ -354,21 +362,34 @@ public class OverseasPaymentService {
         List<OvrsPymnDtls> dtlList =
                 dtlsRepository.findByBizKeyAndOvrsPymnNoOrderByTrnSeqAsc(bizKey, ovrsPymnNo);
 
+        // Phase 2 — one bulk lookup against TB_PAY_FILE_MST + TB_PAY_FILE_DATA
+        // (Overseas is always File path) so the per-line PROC_STAT / RS_CD /
+        // PROC_DTTM / RSLT_DTTM round-trip on the wire.
+        Map<String, DispatchResult> resultByTrnSeq =
+                dispatchResultResolver.resolveOverseas(sumr, dtlList);
+
         List<OverseasPaymentDetailRowResponse> rows = dtlList.stream()
-                .map(d -> new OverseasPaymentDetailRowResponse(
-                        d.getTrnSeq(),
-                        d.getBnfcCode(),
-                        d.getCcyCd(),
-                        d.getTrnfAmt() != null ? d.getTrnfAmt() : BigDecimal.ZERO,
-                        d.getFeePayerCd(),
-                        d.getMemo() != null ? d.getMemo() : "",
-                        d.getRprtAcctCd(),
-                        d.getBnfcNm(),
-                        d.getBnfcBankNm(),
-                        d.getBicCd(),
-                        d.getBnfcActNo(),
-                        d.getBnfcAddr(),
-                        d.getTrnfYn() != null ? d.getTrnfYn() : "N"))
+                .map(d -> {
+                    DispatchResult r = resultByTrnSeq.getOrDefault(
+                            d.getTrnSeq() == null ? null : String.valueOf(d.getTrnSeq()),
+                            DispatchResult.EMPTY);
+                    return new OverseasPaymentDetailRowResponse(
+                            d.getTrnSeq(),
+                            d.getBnfcCode(),
+                            d.getCcyCd(),
+                            d.getTrnfAmt() != null ? d.getTrnfAmt() : BigDecimal.ZERO,
+                            d.getFeePayerCd(),
+                            d.getMemo() != null ? d.getMemo() : "",
+                            d.getRprtAcctCd(),
+                            d.getBnfcNm(),
+                            d.getBnfcBankNm(),
+                            d.getBicCd(),
+                            d.getBnfcActNo(),
+                            d.getBnfcAddr(),
+                            d.getTrnfYn() != null ? d.getTrnfYn() : "N",
+                            r.procStat(), r.procStatKey(), r.procDttm(), r.rsltDttm(),
+                            r.rsCd(), r.rsMsg());
+                })
                 .collect(Collectors.toList());
 
         String docNo = null;
@@ -526,6 +547,81 @@ public class OverseasPaymentService {
 
         log.info("feature=overseas-payment approval-action bizKey={} ovrsPymnNo={} action={} apprSeqNo={}",
                 bizKey, ovrsPymnNo, req.action(), sumr.getApprSeqNo());
+    }
+
+    /**
+     * Execute the "Transfer" dispatch flow for an approved Overseas batch.
+     * Mirrors legacy {@code pymn_0007_001_c001_act.jsp:100-456} for the
+     * type='S' (Summary/batch) path. The type='M' (single beneficiary)
+     * path lands when the Overseas Master UI is ported.
+     *
+     * <p>Sequence:
+     * <ol>
+     *   <li>Resolve master + verify it's the current tenant's row.</li>
+     *   <li>Reject when {@code TRNF_YN='Y'} ({@code WBE2064} — already
+     *       dispatched).</li>
+     *   <li>Reject when {@code APPR_SEQ_NO} is null or
+     *       {@code APPR_STTS != 'C'} (must be approved first).</li>
+     *   <li>Load all detail lines via the OvrsPymnDtls repo; reject if
+     *       empty.</li>
+     *   <li>Delegate to {@link OverseasDispatchExecutor#execute} which
+     *       writes {@code TB_PAY_FILE_MST} + one {@code TB_PAY_FILE_DATA}
+     *       per line and stamps shadow keys on the master + each line.</li>
+     *   <li>Stamp {@code TRNF_YN='Y'}, {@code TRNF_DT}=now, {@code MOD_DTM},
+     *       {@code MOD_ID} on the master.</li>
+     *   <li>Append an audit row.</li>
+     * </ol>
+     *
+     * <p>The bank-network integration (SWIFT callback flipping
+     * {@code PROC_STAT} to '0'/'3') is handled by the live JEX dispatch
+     * daemon — refactor R&D is local-only.
+     */
+    @Transactional
+    public void dispatch(String ovrsPymnNo) {
+        String bizKey = TenantContext.currentBizKey();
+        String userId = TenantContext.currentUserId();
+        String nowDtm = ZonedDateTime.now(VIETNAM_ZONE).format(DTM_FMT);
+
+        OvrsPymnSumr sumr = resolveSumr(bizKey, ovrsPymnNo);
+
+        if ("Y".equals(sumr.getTrnfYn())) {
+            throw new BusinessException("WBE2064");
+        }
+        if (sumr.getApprSeqNo() == null || sumr.getApprSeqNo().isBlank()) {
+            throw new BusinessException("WBE2063");
+        }
+        if (!"C".equals(sumr.getApprStts())) {
+            // Approval-action must have flipped APPR_STTS to 'C' first.
+            throw new BusinessException("WBE2063");
+        }
+
+        List<OvrsPymnDtls> lines = dtlsRepository
+                .findByBizKeyAndOvrsPymnNoOrderByTrnSeqAsc(bizKey, sumr.getOvrsPymnNo());
+        if (lines.isEmpty()) {
+            throw new BusinessException("WBE2061");
+        }
+
+        // Writes TB_PAY_FILE_MST + TB_PAY_FILE_DATA inside this
+        // @Transactional. Stamps PAY_TRAN_DT + PAY_FILE_SEQ_NO on master
+        // and PAY_TRAN_DT + PAY_TRAN_SEQ on each detail.
+        dispatchExecutor.execute(sumr, lines);
+
+        sumr.setTrnfYn("Y");
+        sumr.setTrnfDt(nowDtm);
+        sumr.setModDtm(nowDtm);
+        sumr.setModId(userId);
+        sumrRepository.save(sumr);
+
+        auditLogService.append(AuditLogContext.builder()
+                .wsvcId(WSVC_ID)
+                .refNo(sumr.getOvrsPymnNo())
+                .refNo1(sumr.getApprSeqNo())
+                .activityKey("audit.overseas_payment.activity")
+                .detailKey("audit.overseas_payment.dispatch.detail")
+                .build());
+
+        log.info("feature=overseas-payment dispatch bizKey={} ovrsPymnNo={} lines={} ccyCd={}",
+                bizKey, sumr.getOvrsPymnNo(), lines.size(), sumr.getCcyCd());
     }
 
     /**

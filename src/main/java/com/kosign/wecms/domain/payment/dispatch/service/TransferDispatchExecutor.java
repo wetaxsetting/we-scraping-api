@@ -235,6 +235,14 @@ public class TransferDispatchExecutor {
 
         tbPayFileMstRepository.save(mst);
 
+        // Stamp the master's shadow keys so the Result-detail IDO query
+        // (SCDUL_PYMN_SUMR_R006) can join SCDUL_PYMN_SUMR → TB_PAY_FILE_MST
+        // via (SPS.PAY_TRAN_DT, SPS.PAY_FILE_SEQ_NO). Legacy PymnHelper:2366-2367
+        // does the same — without this stamp, Phase 2 reads back null for
+        // every File-path batch's master PROC_STAT.
+        master.setPayTranDt(tranDt);
+        master.setPayFileSeqNo(fileSeqNo);
+
         // 2. Detail rows. SEQ starts at 1 and increments per line.
         BigDecimal seq = BigDecimal.ONE;
         for (ScdulPymnSumrDetl line : lines) {
@@ -267,11 +275,18 @@ public class TransferDispatchExecutor {
 
             tbPayFileDataRepository.save(data);
 
-            // Stamp shadow keys back on the detail.
+            // Stamp shadow keys back on the detail. Legacy parity (per
+            // PymnHelper:2347 + IDO SCDUL_PYMN_SUMR_R006.xml:178-182): the
+            // File-path join uses `SPMD.PAY_TRAN_SEQ` against
+            // `TB_PAY_FILE_DATA.SEQ` (cast to varchar) — the same
+            // `pay_tran_seq` column the API path uses. The `pay_file_seq_no`
+            // + `pay_seq` columns on the detail row are refactor-only and
+            // intentionally left null (JEX DEV: 0/486 detail rows
+            // populate either column).
             line.setPayTranDt(tranDt);
-            line.setPayTranSeq(null);
-            line.setPayFileSeqNo(fileSeqNo);
-            line.setPaySeq(seq);
+            line.setPayTranSeq(seq.toPlainString());
+            line.setPayFileSeqNo(null);
+            line.setPaySeq(null);
 
             seq = seq.add(BigDecimal.ONE);
         }

@@ -27,23 +27,34 @@ import java.util.List;
  * service. Mirrors legacy {@code pymn_0009_001_c001} including
  * {@link CutoffValidator} timing checks + the {@code TRNF_YN} stamp.
  *
- * <h2>Phase A scope — local stub for the routing decision</h2>
+ * <h2>Phase 1 dispatch (2026-05-28)</h2>
  *
- * <p>Per the prompt's "Bank-network integration, real SMTP, real signing
- * — local stubs only" rule and backend doc §13, Phase A:
+ * <p>The dispatch flow now writes the legacy {@code TB_PAY_*} rows via
+ * the shared {@link TransferDispatchExecutor}:
  * <ul>
  *   <li>Loads the master + lines, validates approval state +
  *       cut-off-time.</li>
- *   <li>Stamps {@code TRNF_YN='Y'}, {@code TRNF_DTM}=now, audit
- *       row.</li>
- *   <li>Does NOT insert {@code TB_PAY_TARGET} / {@code TB_PAY_FILE_MST}
- *       / {@code TB_PAY_FILE_DATA} rows — those tables are not yet
- *       migrated locally (see backend doc §13 + database doc §2.4).</li>
+ *   <li>Delegates to {@link TransferDispatchExecutor#execute} which
+ *       branches on {@code TRNF_CCY_CD}:
+ *       <ul>
+ *         <li><b>VND → API path</b>: insert one {@code TB_PAY_TARGET}
+ *             per detail line; stamp {@code PAY_TRAN_DT} +
+ *             {@code PAY_TRAN_SEQ} on each detail.</li>
+ *         <li><b>Non-VND → File path</b>: insert one
+ *             {@code TB_PAY_FILE_MST} header + one
+ *             {@code TB_PAY_FILE_DATA} per detail line; stamp
+ *             {@code PAY_TRAN_DT} + {@code PAY_FILE_SEQ_NO} on the
+ *             master and {@code PAY_TRAN_DT} +
+ *             {@code PAY_TRAN_SEQ} (the file-data seq, as varchar)
+ *             on each detail — legacy parity per PymnHelper:2347.</li>
+ *       </ul></li>
+ *   <li>Stamps {@code TRNF_YN='Y'}, {@code TRNF_DTM}=now on the master,
+ *       writes the audit row.</li>
  * </ul>
  *
- * <p>The routing-flag computation
- * (API-path vs File-path based on {@code OUT_BANK_CD} + currencies)
- * lands when the dispatch tables land.
+ * <p>The bank-network integration (NAPAS / CITAD / SWIFT callbacks
+ * flipping {@code PROC_STAT} to '0' / '3') is handled by the live JEX
+ * dispatch daemon — refactor R&D is local-only.
  */
 @Slf4j
 @Service

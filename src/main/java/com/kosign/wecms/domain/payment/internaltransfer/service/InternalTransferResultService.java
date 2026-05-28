@@ -5,6 +5,8 @@ import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.common.web.SortDirection;
 import com.kosign.wecms.domain.payment.common.TransferLineDetailMapper;
 import com.kosign.wecms.domain.payment.dispatch.DispatchCountRepository;
+import com.kosign.wecms.domain.payment.dispatch.service.DispatchResult;
+import com.kosign.wecms.domain.payment.dispatch.service.DispatchResultResolver;
 import com.kosign.wecms.domain.payment.dispatch.DispatchCountRow;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.CurrencyTotal;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.TransferResultDetailResponse;
@@ -64,6 +66,11 @@ public class InternalTransferResultService {
      *  each Result line so the Deposit Bank cell renders
      *  "970424 - ShinhanBank" instead of just "970424". */
     private final TransferLineDetailMapper     transferLineDetailMapper;
+    /** Phase 2 dispatch-result resolver — surfaces PROC_STAT / RS_CD /
+     *  RS_MSG / PROC_DTTM / RSLT_DTTM per line by reading back
+     *  TB_PAY_TARGET / TB_PAY_FILE_MST / TB_PAY_FILE_DATA / TB_FIRM_TRAN.
+     *  Mirrors the legacy {@code SCDUL_PYMN_SUMR_R006} IDO query. */
+    private final DispatchResultResolver       dispatchResultResolver;
 
     @Transactional(readOnly = true)
     public TransferResultListResponse list(
@@ -144,10 +151,16 @@ public class InternalTransferResultService {
                 .orElseThrow(() -> new BusinessException("WBE2060"));
 
         Sort lineSort = Sort.by(Sort.Order.asc("scdulPymnDetlNo"));
-        List<TransferResultLine> lines = detlRepository
-                .findByBizKeyAndScdulPymnNo(bizKey, id, lineSort)
-                .stream()
-                .map(this::toResultLine)
+        List<ScdulPymnSumrDetl> detailRows = detlRepository
+                .findByBizKeyAndScdulPymnNo(bizKey, id, lineSort);
+        // Phase 2: one bulk lookup per detail() call against TB_PAY_* +
+        // TB_FIRM_TRAN so the per-line PROC_STAT / RS_CD / RS_MSG /
+        // PROC_DTTM / RSLT_DTTM round-trip to the frontend.
+        Map<String, DispatchResult> resultByDetlNo =
+                dispatchResultResolver.resolve(master, detailRows);
+        List<TransferResultLine> lines = detailRows.stream()
+                .map(d -> toResultLine(d, resultByDetlNo.getOrDefault(
+                        d.getScdulPymnDetlNo(), DispatchResult.EMPTY)))
                 .toList();
 
         return new TransferResultDetailResponse(
@@ -191,7 +204,7 @@ public class InternalTransferResultService {
                 s.getErpFileNum());
     }
 
-    private TransferResultLine toResultLine(ScdulPymnSumrDetl d) {
+    private TransferResultLine toResultLine(ScdulPymnSumrDetl d, DispatchResult r) {
         return new TransferResultLine(
                 d.getScdulPymnDetlNo(),
                 d.getTranAmt(),
@@ -209,7 +222,8 @@ public class InternalTransferResultService {
                 d.getChartAcctCd(),
                 d.getChartAcctSeqNo(),
                 d.getBankTrnsShortId(),
-                null, null, null, null, null, null);  // dispatch fields — Phase B
+                r.procStat(), r.procStatKey(), r.procDttm(), r.rsltDttm(),
+                r.rsCd(), r.rsMsg());
     }
 
     private String requireTenant() {

@@ -933,9 +933,10 @@ public class ExpensePaymentService {
      * Execute the dispatch flow. Mirrors
      * {@link com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferDispatchService#dispatch}
      * but stamps the Expense type discriminator and Expense audit keys.
-     * Cut-off-time gate + {@code TRNF_YN='Y'} stamp; the bank-network
-     * insert ({@code TB_PAY_TARGET} / {@code TB_PAY_FILE_MST}) is a
-     * Phase B follow-up.
+     * Cut-off-time gate, {@code TRNF_YN='Y'} stamp on the master,
+     * and {@code TB_PAY_TARGET} / {@code TB_PAY_FILE_MST} +
+     * {@code TB_PAY_FILE_DATA} writes via the shared
+     * {@code TransferDispatchExecutor}.
      */
     @Transactional
     public void dispatch(String id, DispatchRequest req) {
