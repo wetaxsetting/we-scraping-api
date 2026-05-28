@@ -93,6 +93,13 @@ public class BankTransactionSyncService {
      *  the NXISAS layer ({@code BankScrapingService.isGatewayError}). */
     private static final String OK_CODE = "00000000";
 
+    /** Coocon "no new transactions in window" — terminal success with
+     *  zero rows, NOT an error. Legacy WeCMS parity:
+     *  {@code fnsh_0001_001_c001_act.jsp} treats this code identically
+     *  to {@code 00000000} when deciding whether to surface a failure
+     *  dialog. Refactor decision 6 (2026-05-28). */
+    private static final String OK_CODE_NO_NEW = "42110000";
+
     /** Legacy {@code yyyyMMddHHmmss} compact audit-column format. */
     private static final DateTimeFormatter DTM_14 = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
     /** Display-form {@code yyyy-MM-dd HH:mm:ss} returned to the
@@ -129,6 +136,26 @@ public class BankTransactionSyncService {
         final String toDt = req.toDt() == null
                 ? startedAt.format(DT_8)
                 : req.toDt().replace("-", "");
+
+        // Legacy 92-day cap (nxisas_tranList.js line 220 parity).
+        // Frontend enforces the same rule locally; re-validate here so
+        // a stale / spoofed client can't trigger an oversized Coocon
+        // TRANSACTION job. Inclusive day count to match what the user
+        // sees on the date chips.
+        if (req.fromDt() != null && req.toDt() != null) {
+            try {
+                java.time.LocalDate from = java.time.LocalDate.parse(fromDt, DT_8);
+                java.time.LocalDate to   = java.time.LocalDate.parse(toDt,   DT_8);
+                long days = java.time.temporal.ChronoUnit.DAYS.between(from, to) + 1;
+                if (days > 92) {
+                    throw new BusinessException("WBE_BANK_TRANSACTION_SYNC_RANGE_TOO_LONG");
+                }
+            } catch (java.time.format.DateTimeParseException e) {
+                // Malformed date — surface as validation error rather than
+                // crashing on the Coocon job input.
+                throw new BusinessException("WBE_VALIDATION");
+            }
+        }
 
         // Legacy parity (fnsh_0001_001.ts:399 — `if (data('yn') == 'Y') ...`):
         // hand-registered accounts have no bank credential so the
@@ -242,6 +269,12 @@ public class BankTransactionSyncService {
 
             // Configure the session for the HEAD account's bank.
             DecryptedCredential cred = credentialService.loadForScrapingByBank(acct.getBankCd());
+            // Capture the credential username on the session so a
+            // subsequent QNA challenge response can echo it back to the
+            // Security Question popup. The popup has no other path to
+            // the value because the credential lives entirely
+            // server-side in BANK_CERT_INFO.
+            session.setLoginId(cred.username());
             Integer subTypeSeqNo = cred.nxisasGbSeqNo() == null ? null
                     : cred.nxisasGbSeqNo().intValue();
             NxisasBankConfig.Entry cfg = bankConfig.find(acct.getBankCd(), subTypeSeqNo)
@@ -306,7 +339,8 @@ public class BankTransactionSyncService {
         NxisasOutput<?> bankOut = gateway.firstOutput(out);
         if (bankOut != null) {
             String code = bankOut.getErrorCode();
-            if (code != null && !code.isBlank() && !OK_CODE.equals(code)) {
+            if (code != null && !code.isBlank()
+                    && !OK_CODE.equals(code) && !OK_CODE_NO_NEW.equals(code)) {
                 String msg = bankOut.getErrorMessage();
                 if (msg == null || msg.isBlank()) msg = bankOut.getDetailMessage();
                 log.info("BankTransactionSync {} bank-rejected [bank={}, code={}, msg={}]",
@@ -340,7 +374,8 @@ public class BankTransactionSyncService {
                 return TransactionsSyncResponse.qnaChallenge(
                         session.getSessionId(),
                         session.getChallengePrompt(),
-                        qnaQuestionsFrom(result));
+                        qnaQuestionsFrom(result),
+                        session.getLoginId());
             }
             if (kind == ScrapeChallengeKind.CAPTCHA) {
                 return TransactionsSyncResponse.captchaChallenge(
@@ -574,7 +609,9 @@ public class BankTransactionSyncService {
                 cfg.module(), cfg.category(), trSeq, in, continuationOf(session));
 
         NxisasOutput<NxisasBalanceJobResult> bankOut = gateway.firstOutput(out);
-        if (bankOut == null || !OK_CODE.equals(bankOut.getErrorCode())) {
+        if (bankOut == null
+                || (!OK_CODE.equals(bankOut.getErrorCode())
+                    && !OK_CODE_NO_NEW.equals(bankOut.getErrorCode()))) {
             log.warn("BankTransactionSync BALANCE soft-failed [bank={}, acct={}, code={}]",
                     acct.getBankCd(), acct.getAcctNo(),
                     bankOut == null ? "null" : bankOut.getErrorCode());
@@ -673,7 +710,8 @@ public class BankTransactionSyncService {
         NxisasOutput<?> bankOut = gateway.firstOutput(out);
         if (bankOut != null) {
             String code = bankOut.getErrorCode();
-            if (code != null && !code.isBlank() && !OK_CODE.equals(code)) {
+            if (code != null && !code.isBlank()
+                    && !OK_CODE.equals(code) && !OK_CODE_NO_NEW.equals(code)) {
                 log.info("BankTransactionSync {} rejected [bank={}, code={}, msg={}]",
                         stage, bankCd, code, bankOut.getErrorMessage());
                 throw new BusinessException("WBE2095", bankCd, code);

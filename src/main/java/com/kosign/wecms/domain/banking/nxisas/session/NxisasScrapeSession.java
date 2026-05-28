@@ -127,6 +127,14 @@ public class NxisasScrapeSession {
      *  TRANSACTION + BALANCE all succeeded + audit stamps written). */
     @Setter(AccessLevel.PUBLIC) private int accountsSynced = 0;
 
+    /** Bank credential username for the account currently being scraped.
+     *  Captured each time {@link com.kosign.wecms.domain.banking.bankcredentials.service.BankCredentialService}
+     *  resolves a credential at the head of {@link #accountsQueue}, so a
+     *  challenge response ({@code QNA_REQUIRED} today; OTP / CAPTCHA can
+     *  follow) can echo it back to the frontend's Security Question
+     *  popup. Never sent to Coocon — display-only. */
+    @Setter(AccessLevel.PUBLIC) private String loginId;
+
     public void touch() {
         lastTouched = Instant.now();
     }

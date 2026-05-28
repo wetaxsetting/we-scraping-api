@@ -12,6 +12,8 @@ import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasCardInfoJobInput
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasCardInfoJobResult;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasCardUsingJobInput;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasCardUsingJobResult;
+import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasForeignExchangeJobInput;
+import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasForeignExchangeJobResult;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasTransactionJobInput;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasTransactionJobResult;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasApiIn;
@@ -180,6 +182,26 @@ public class NxisasGatewayClient {
                                                                 GatewayContinuation cont) {
         return call(module, category, trSeq, NxisasJob.TRANSACTION, input, cont,
                 new TypeReference<NxisasApiOut<NxisasTransactionJobResult>>() { });
+    }
+
+    /**
+     * FOREIGN_EXCHANGE job — fetch the FX-rate list for one bank+round
+     * on one inquiry date. Mirrors legacy BCS
+     * {@code bcs.jex.wabooks.exch.EXCH_0001_001#execute} (and the
+     * EXCH_0010 / EXCH_0020 siblings) — same wire envelope as
+     * {@link #acctList} / {@link #transaction}, but with no session
+     * continuation (FX has no LOGIN step: every call is standalone with
+     * an empty {@code SAS_SessionID}). Module + Class are supplied by
+     * the caller per bank (Shinhan = {@code GLOBAL/GBL/BANK_Shinhan} /
+     * {@code COMMON}, Woori = {@code GLOBAL/GBL/BANK_Woori} /
+     * {@code CORPORATE}).
+     */
+    public NxisasApiOut<NxisasForeignExchangeJobResult> foreignExchange(
+            String module, String category, String trSeq,
+            NxisasForeignExchangeJobInput input) {
+        return call(module, category, trSeq, NxisasJob.FOREIGN_EXCHANGE, input,
+                GatewayContinuation.empty(),
+                new TypeReference<NxisasApiOut<NxisasForeignExchangeJobResult>>() { });
     }
 
     /**
@@ -374,6 +396,18 @@ public class NxisasGatewayClient {
 
     public NxisasBalanceJobResult firstBalanceResult(NxisasApiOut<NxisasBalanceJobResult> out) {
         NxisasResult<NxisasBalanceJobResult> r = firstEntry(out);
+        return r == null || r.getOutput() == null ? null : r.getOutput().getResult();
+    }
+
+    /** Helper for FOREIGN_EXCHANGE — peels the first
+     *  {@code resultList[0].output.result} off a Coocon FX response.
+     *  Returns {@code null} when the response shape is degenerate
+     *  (empty resultList, missing output, bank-adapter error, etc.) so
+     *  the caller can decide whether to skip the round or surface an
+     *  error to ops. */
+    public NxisasForeignExchangeJobResult firstForeignExchangeResult(
+            NxisasApiOut<NxisasForeignExchangeJobResult> out) {
+        NxisasResult<NxisasForeignExchangeJobResult> r = firstEntry(out);
         return r == null || r.getOutput() == null ? null : r.getOutput().getResult();
     }
 

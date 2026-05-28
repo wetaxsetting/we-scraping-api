@@ -70,6 +70,25 @@ spring:
       max-file-size: 10MB
       max-request-size: 50MB
 
+  task:
+    scheduling:
+      # Single-threaded scheduler — Spring Boot's default is also 1,
+      # set explicitly here so it can't drift via auto-config changes.
+      # Single thread guarantees @Scheduled methods on the same bean
+      # never overlap with themselves on the same JVM (cross-JVM
+      # overlap requires ShedLock — not wired today; flagged for any
+      # multi-instance deploy).
+      #
+      # Timezone for cron triggers: NOT settable via Spring property
+      # in Spring Boot 3.x — every @Scheduled annotation that fires
+      # in a specific local-time window MUST carry an explicit
+      # zone = "Asia/Ho_Chi_Minh" (see ExchangeRateBatchService).
+      # Docker / Linux hosts default to UTC; without the `zone`
+      # attribute the FX batches would fire 7 hours late.
+      pool:
+        size: 1
+      thread-name-prefix: wecms-scheduler-
+
 server:
   port: 8080
   error:
@@ -157,13 +176,15 @@ wecms:
  
   coocon:
     # Coocon DEV credentials — mirrors <coocon> in VI/jex.wabooks_new.user.xml.
-    # Single source of truth for BOTH the FX-rate batch (CooconApiClient,
-    # uses smart-api-url + smart-api-key) AND the bank-scraping flow
-    # (NxisasGatewayClient, reuses the same smart-api-url + smart-api-key
-    # — NXISAS is just the protocol/job-type name the Coocon smart-gateway
-    # exposes for bank login / OTP / ACCT_LIST). Override any field via
-    # WECMS_COOCON_* env vars when testing against a different Coocon
-    # environment.
+    # Single source of truth for every Coocon smart-gateway call —
+    # account scraping (LOGIN/OTP/QnA/CAPTCHA/ACCT_LIST/TRANSACTION/
+    # BALANCE), card scraping (CARD_INFO/CARD_USING), and FX-rate
+    # batch (FOREIGN_EXCHANGE). All three flows route through the
+    # unified NxisasGatewayClient, which reads smart-api-url +
+    # smart-api-key. NXISAS is the protocol/job-type family the
+    # Coocon smart-gateway exposes — there is no separate FX-rate
+    # endpoint. Override any field via WECMS_COOCON_* env vars when
+    # testing against a different Coocon environment.
     # Per-environment smart-gateway hosts (Sonny, 2026-05-28):
     #   DEV / SIT  → https://dev-sgw.webcashvietnam.com:8443/...
     #   UAT / PROD → https://sgw.webcashvietnam.com/...           (no port, no 'dev-' prefix)

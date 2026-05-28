@@ -79,10 +79,14 @@ public class ExchangeRateService {
 
         // When no explicit date was requested and today has no data, trigger the batch
         // synchronously to fetch from Coocon API (on-demand loading for the first caller).
+        // runOnDemand() is @Transactional(REQUIRES_NEW) — it suspends this read-only
+        // outer transaction and runs the per-bank persistence loops in a fresh writable
+        // transaction. Without REQUIRES_NEW the inner UPSERTs would join the read-only
+        // outer tx and fail under strict JDBC drivers.
         if (rows.isEmpty() && refDate == null) {
             log.info("No exchange rates found for today. Triggering on-demand fetch from Coocon API.");
             try {
-                exchangeRateBatchService.fetchAndSaveExchangeRates();
+                exchangeRateBatchService.runOnDemand();
                 rows = fetchRows(resolvedBank, resolvedDate, hasSeqNo ? seqNo : null);
             } catch (Exception e) {
                 log.error("On-demand exchange rate fetch failed", e);
