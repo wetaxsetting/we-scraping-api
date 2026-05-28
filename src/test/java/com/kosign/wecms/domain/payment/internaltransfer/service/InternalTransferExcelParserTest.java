@@ -1,6 +1,9 @@
 package com.kosign.wecms.domain.payment.internaltransfer.service;
 
+import com.kosign.wecms.common.enums.LangCd;
 import com.kosign.wecms.common.exception.BusinessException;
+import com.kosign.wecms.common.tenant.TenantContext;
+import com.kosign.wecms.domain.banking.entity.AcctMstr;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ParseExcelResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ParsedTransferLine;
@@ -11,6 +14,8 @@ import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockMultipartFile;
 
@@ -21,6 +26,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -44,9 +50,26 @@ class InternalTransferExcelParserTest {
     private static final String NM_WOORI      = "WooriBank";
 
     private static final String MASTER_BANK_CD = "11704000";
+    private static final String TEST_BIZ_KEY   = "VN_VNM0004_000001";
     private final TbFirmBankCodeRepository repo = mock(TbFirmBankCodeRepository.class);
     private final SpecialCharValidator specialCharValidator = mock(SpecialCharValidator.class);
     private final AcctMstrRepository acctMstrRepository = mock(AcctMstrRepository.class);
+
+    @BeforeEach
+    void setUpTenant() {
+        // Parser's deposit-account validation reads TenantContext + ACCT_MSTR.
+        // Provide a tenant + a default account hit so previously-valid rows
+        // keep parsing cleanly. Tests that want to exercise the "account not
+        // registered" branch can override the stub with their own mock.
+        TenantContext.set("testuser", "testuser", TEST_BIZ_KEY, LangCd.EN);
+        when(acctMstrRepository.findFirstByBizKeyAndAcctNo(eq(TEST_BIZ_KEY), any()))
+                .thenReturn(Optional.of(stubAcct()));
+    }
+
+    @AfterEach
+    void clearTenant() {
+        TenantContext.clear();
+    }
 
     @Test
     void parses_valid_row_with_known_napas_bank_code() throws Exception {
@@ -255,6 +278,13 @@ class InternalTransferExcelParserTest {
         b.setAntDivCd("NAPAS");
         b.setEngAbrvatNm(engAbrvatNm);
         return b;
+    }
+
+    private static AcctMstr stubAcct() {
+        AcctMstr a = new AcctMstr();
+        a.setAcctNm("STUB ACCOUNT");
+        a.setCcyCd("VND");
+        return a;
     }
 
     private static MockMultipartFile file(byte[] bytes) {

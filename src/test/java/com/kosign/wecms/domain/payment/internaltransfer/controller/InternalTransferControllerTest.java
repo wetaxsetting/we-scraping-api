@@ -8,6 +8,7 @@ import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.exception.GlobalExceptionHandler;
 import com.kosign.wecms.common.i18n.MessageResolver;
 import com.kosign.wecms.common.tenant.TenantContext;
+import com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalAttachmentRow;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.CreateScheduledTransferResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ScheduledTransferDetailResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ScheduledTransferListResponse;
@@ -129,7 +130,8 @@ class InternalTransferControllerTest {
                 "20260513000001", "03", "11704000", null, "1234567890",
                 "Demo", (BigDecimal) null, (BigDecimal) null, null, "tester",
                 null, null, null, null, null, "N", null, "VND", "VND",
-                "demo.xlsx", (BigDecimal) null, List.<TransferLineDetail>of());
+                "demo.xlsx", (BigDecimal) null, List.<TransferLineDetail>of(),
+                List.<ApprovalAttachmentRow>of());
         when(service.detail(eq("20260513000001"))).thenReturn(stub);
 
         mvc.perform(get("/api/v1/payment/internal-transfer/20260513000001"))
