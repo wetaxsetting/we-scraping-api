@@ -18,14 +18,6 @@ import java.util.Optional;
  */
 public interface OvrsPymnSumrRepository extends JpaRepository<OvrsPymnSumr, OvrsPymnSumrId> {
 
-    /**
-     * Guards against accidental double-submit: returns true when the same
-     * tenant already has a batch with the same original filename and the
-     * same REG_DTM date prefix (first 8 chars = yyyyMMdd).
-     */
-    boolean existsByBizKeyAndOrgFileNmAndRegDtmStartingWith(
-            String bizKey, String orgFileNm, String regDtmDatePrefix);
-
     Optional<OvrsPymnSumr> findByBizKeyAndOvrsPymnNo(String bizKey, String ovrsPymnNo);
 
     /** Per-tenant MAX(apprSeqNo::bigint) for the request-approval sequence. */

@@ -68,7 +68,7 @@ public class OverseasPaymentResultDetailExportProvider implements ExportRowProvi
         for (OverseasPaymentDetailRowResponse r : detail.rows()) {
             Map<String, Object> m = new HashMap<>();
             m.put("BNFC_BANK_NM", r.bnfcBankNm() != null ? r.bnfcBankNm() : "");
-            m.put("BNFC_ACCT_NO", r.bnfcActNo()  != null ? r.bnfcActNo()  : "");
+            m.put("BNFC_ACCT_NO", r.bnfcAcctNo() != null ? r.bnfcAcctNo() : "");
             m.put("BNFC_NM",      r.bnfcNm()     != null ? r.bnfcNm()     : "");
             m.put("CCY_CD",       r.ccyCd()       != null ? r.ccyCd()      : "");
             m.put("TRNF_AMT",     r.trnfAmt()     != null ? r.trnfAmt()    : BigDecimal.ZERO);

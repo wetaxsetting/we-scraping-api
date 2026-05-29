@@ -66,7 +66,7 @@ public class OvrsPymnDtls {
     private String bicCd;
 
     @Column(name = "BNFC_ACCT_NO", length = 100)
-    private String bnfcActNo;
+    private String bnfcAcctNo;
 
     @Column(name = "BNFC_ADDR", length = 500)
     private String bnfcAddr;

@@ -325,6 +325,30 @@ public class InternalTransferController {
     }
 
     /* ----------------------------------------------------------------
+     *  Re-run one detail line (legacy pymn_0010_002.ts:441-472)
+     * ---------------------------------------------------------------- */
+
+    /**
+     * Re-fire dispatch for a single Transfer Result line whose bank-side
+     * response is a transient failure (RS_CD ∈ {"0001"…"0005"}) AND whose
+     * PROC_DTTM is today. Clears RS_CD on TB_PAY_FILE_DATA so the bank
+     * daemon re-picks the row on its next sweep.
+     */
+    @PostMapping("/{id}/lines/{lineId}/rerun")
+    public ApiResponse<Void> rerun(
+            @PathVariable("id")
+            @Size(max = 30)
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id,
+            @PathVariable("lineId")
+            @Size(max = 20)
+            @Pattern(regexp = SCDUL_PYMN_DETL_NO_PATTERN, message = "lineId: invalid scdul_pymn_detl_no format")
+            String lineId) {
+        service.rerun(id, lineId);
+        return ApiResponse.ok(null);
+    }
+
+    /* ----------------------------------------------------------------
      *  Dispatch / Execute Transfer (legacy pymn_0009_001_c001)
      * ---------------------------------------------------------------- */
 

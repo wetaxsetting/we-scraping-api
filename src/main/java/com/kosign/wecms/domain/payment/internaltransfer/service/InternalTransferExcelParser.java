@@ -9,6 +9,8 @@ import com.kosign.wecms.domain.payment.internaltransfer.dto.ParsedTransferLine;
 import com.kosign.wecms.domain.payment.validation.FieldCd;
 import com.kosign.wecms.domain.payment.validation.PymnType;
 import com.kosign.wecms.domain.payment.validation.SpecialCharValidator;
+import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount;
+import com.kosign.wecms.domain.setting.chartofaccounts.repository.ChartOfAccountRepository;
 import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmBankCode;
 import com.kosign.wecms.domain.setting.firmbankingsettings.repository.TbFirmBankCodeRepository;
 import lombok.RequiredArgsConstructor;
@@ -83,10 +85,14 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class InternalTransferExcelParser {
 
-    private static final String FLD_ANT_DIV_CD  = "ANT_DIV_CD";
-    private static final String FLD_FINC_MDA_NO = "FINC_MDA_NO";
-    private static final String FLD_TRAN_AMT    = "TRAN_AMT";
-    private static final String FLD_TRNF_CCY_CD = "TRNF_CCY_CD";
+    private static final String FLD_ANT_DIV_CD    = "ANT_DIV_CD";
+    private static final String FLD_FINC_MDA_NO   = "FINC_MDA_NO";
+    private static final String FLD_TRAN_AMT      = "TRAN_AMT";
+    private static final String FLD_TRNF_CCY_CD   = "TRNF_CCY_CD";
+    private static final String FLD_CHART_ACCT_CD = "CHART_ACCT_CD";
+
+    /** Database column length cap on {@code SCDUL_PYMN_SUMR_DETL.CHART_ACCT_CD}. */
+    private static final int CHART_ACCT_CD_MAX_LEN = 20;
 
     /** Header row layout — see class Javadoc. */
     private static final int HEADER_ROW = 3;
@@ -128,6 +134,16 @@ public class InternalTransferExcelParser {
 
     private final TbFirmBankCodeRepository firmBankCodeRepo;
     private final SpecialCharValidator     specialCharValidator;
+    /** Cross-row consistency guard — single currency per file + single
+     *  network per file + VND/USD whitelist. Mirrors legacy
+     *  {@code PymnHelper.java:420-436} + {@code :1261-1297}. */
+    private final com.kosign.wecms.domain.payment.common.UploadConsistencyValidator
+                                           uploadConsistencyValidator;
+    /** Resolves {@code CHART_ACCT_INFM} for the Reporting Account
+     *  cell (column 6). Mirrors legacy {@code PymnHelper.ckChartAcctCd}
+     *  — active-only lookup; rejects codes that don't exist for the
+     *  tenant. Same pattern as Vendor / Expense / Payroll parsers. */
+    private final ChartOfAccountRepository chartAcctRepo;
     /** Banking-account master — used to resolve {@code RCPT_NM} from
      *  the company's own account directory. Internal Transfer always
      *  targets one of the company's own accounts, so {@code ACCT_NM}
@@ -194,6 +210,20 @@ public class InternalTransferExcelParser {
             log.warn("feature=internal-transfer parse-excel format-error: {}", ex.getMessage());
             throw new BusinessException("WBE2017");
         }
+
+        // Cross-row consistency — legacy parity with PymnHelper:
+        //   • assertSingleCurrency: WBW1160 → refactor WBE2120 (mixed VND/USD).
+        //   • assertCurrencyWhitelist: WBE1162 → refactor folds into WBE2120
+        //     so the user sees the bad currency directly.
+        //   • assertSingleNetwork: WBE1191 → refactor WBE2121 (mixed CITAD/NAPAS).
+        // Blank values are ignored — per-row required-field checks above
+        // already flagged them on the offending row.
+        List<String> ccyList = rows.stream()
+                .map(ParsedTransferLine::trnfCcyCd).toList();
+        uploadConsistencyValidator.assertSingleCurrency(ccyList);
+        uploadConsistencyValidator.assertCurrencyWhitelist(ccyList);
+        uploadConsistencyValidator.assertSingleNetwork(rows.stream()
+                .map(ParsedTransferLine::antDivCd).toList());
 
         int totCnt = rows.size();
         log.info("feature=internal-transfer parse-excel totCnt={} sucCnt={} errCnt={}",
@@ -394,6 +424,53 @@ public class InternalTransferExcelParser {
                     .ifPresent(msg -> errors.add(new FieldError("RCPT_NM", msg)));
         }
 
+        // Note — recipient-name inquiry (ckRecName) is intentionally
+        // NOT wired here. Legacy parity:
+        // `PymnHelper.readExcelFromInternalTransfer` (lines 648-857)
+        // does not call `ckRecName` because Internal Transfer always
+        // targets one of the company's OWN accounts (resolved from
+        // `ACCT_MSTR.ACCT_NM` above), not a third-party recipient. The
+        // bank-side `inquiryAccount` lookup is reserved for the Vendor
+        // / Expense parsers where the recipient lives outside the
+        // company on a contact's bank account.
+
+        // Reporting Account validation — mirrors Vendor / Expense / Payroll
+        // parsers (same legacy helper `PymnHelper.ckChartAcctCd`). When
+        // the cell is non-blank we resolve the user-typed code against
+        // CHART_ACCT_INFM for the current tenant and stamp BOTH
+        // `chart_acct_cd` (normalised) + `chart_acct_seq_no` (resolved)
+        // onto the line so the saved detail row carries the seq_no the
+        // breadcrumb / picker resolver depends on. Inactive / deleted
+        // codes are rejected.
+        String bizKey = TenantContext.currentBizKey();
+        String resolvedChartAcctSeqNo = null;
+        String resolvedChartAcctCd    = null;
+        if (!isBlank(chartAcctCd)) {
+            String trimmedChart = chartAcctCd.trim();
+            if (trimmedChart.length() > CHART_ACCT_CD_MAX_LEN) {
+                errors.add(new FieldError(FLD_CHART_ACCT_CD,
+                        "Reporting Account exceeds " + CHART_ACCT_CD_MAX_LEN
+                                + " characters: " + trimmedChart));
+            } else if (bizKey == null) {
+                errors.add(new FieldError(FLD_CHART_ACCT_CD,
+                        "Tenant context missing — please re-login"));
+            } else {
+                Optional<ChartOfAccount> hit =
+                        chartAcctRepo.findByBizKeyAndChartAcctCdAndDelYn(bizKey, trimmedChart, "N");
+                if (hit.isPresent()) {
+                    resolvedChartAcctCd    = hit.get().getChartAcctCd();
+                    resolvedChartAcctSeqNo = hit.get().getChartAcctSeqNo();
+                } else {
+                    // Preserve the typed value so the preview cell shows
+                    // the user what they entered. Same pattern as the
+                    // bank-code branch above.
+                    resolvedChartAcctCd = trimmedChart;
+                    errors.add(new FieldError(FLD_CHART_ACCT_CD,
+                            "Reporting Account is not registered: " + trimmedChart));
+                }
+            }
+        }
+
         // errFld / errCause must be built AFTER the ACCT_MSTR check so
         // any newly-added FINC_MDA_NO error from that step is included
         // in the preview's red-cell pair list.
@@ -414,8 +491,8 @@ public class InternalTransferExcelParser {
                 emptyToNull(docNo),
                 emptyToNull(note),
                 null, null, null,
-                null,
-                emptyToNull(chartAcctCd),
+                resolvedChartAcctSeqNo,      // CHART_ACCT_SEQ_NO — looked up from CHART_ACCT_INFM
+                resolvedChartAcctCd,         // CHART_ACCT_CD — normalised to the registered code
                 trnfCcyCd,
                 depoCcyCd);                  // DEPO_CCY_CD — resolved from ACCT_MSTR.CCY_CD (legacy parity)
         return new ParsedRow(line, !errors.isEmpty());

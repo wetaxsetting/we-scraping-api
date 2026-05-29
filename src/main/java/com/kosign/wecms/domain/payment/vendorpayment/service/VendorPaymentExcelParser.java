@@ -151,6 +151,19 @@ public class VendorPaymentExcelParser {
     private final TrcoAcctInfoRepository   contactAcctRepo;
     private final ChartOfAccountRepository chartAcctRepo;
     private final SpecialCharValidator     specialCharValidator;
+    /** Cross-bank recipient-name verification — legacy
+     *  {@code PymnHelper.ckRecName}. Calls the firm-banking inquiry API
+     *  on NAPAS rows and compares the bank-returned
+     *  {@code FINC_MDA_OWNER_NM} against the contact's stored owner
+     *  name. Returns silently when the inquiry service has no firm-
+     *  banking config OR the socket call is not yet implemented. */
+    private final com.kosign.wecms.common.firmbanking.FirmBankingInquiryService
+                                           firmBankingInquiryService;
+    /** Cross-row consistency guard — single currency per file + single
+     *  network per file + VND/USD whitelist. Mirrors legacy
+     *  {@code PymnHelper.java:420-436} + {@code :1261-1297}. */
+    private final com.kosign.wecms.domain.payment.common.UploadConsistencyValidator
+                                           uploadConsistencyValidator;
 
     @Transactional(readOnly = true)
     public ParseExcelResponse parse(MultipartFile file, String bankCd) {
@@ -206,6 +219,15 @@ public class VendorPaymentExcelParser {
             log.warn("feature=vendor-payment parse-excel format-error: {}", ex.getMessage());
             throw new BusinessException("WBE2017");
         }
+
+        // Cross-row consistency — legacy parity with PymnHelper
+        // (WBW1160 + WBE1162 → WBE2120; WBE1191 → WBE2121).
+        List<String> ccyList = rows.stream()
+                .map(ParsedTransferLine::trnfCcyCd).toList();
+        uploadConsistencyValidator.assertSingleCurrency(ccyList);
+        uploadConsistencyValidator.assertCurrencyWhitelist(ccyList);
+        uploadConsistencyValidator.assertSingleNetwork(rows.stream()
+                .map(ParsedTransferLine::antDivCd).toList());
 
         int totCnt = rows.size();
         log.info("feature=vendor-payment parse-excel totCnt={} sucCnt={} errCnt={}",
@@ -373,6 +395,12 @@ public class VendorPaymentExcelParser {
         // checks all passed — otherwise the user already has a clearer
         // upstream error and the lookup would be noise.
         String resolvedRcptNm = null;
+        // Captured contact-side owner name for the ckRecName check below.
+        // Vendor uploads carry no user-typed RCPT_NM column, so the
+        // comparison source for the bank inquiry is the contact's stored
+        // FINC_MDA_OWNER_NM. Populated for BOTH NAPAS and CITAD when a
+        // matching contact-account row is found.
+        String contactOwnerNmForCheck = null;
         if (resolvedTrcoKey != null
                 && resolvedBankCd != null
                 && !resolvedAntDiv.isEmpty()
@@ -409,11 +437,49 @@ public class VendorPaymentExcelParser {
                 if (match == null) {
                     errors.add(new FieldError(FLD_ANT_DIV_CD,
                             "Bank Code does not match the contact's registered account: " + resolvedBankCd));
-                } else if ("CITAD".equals(resolvedAntDiv)
-                        && !isBlank(match.getFincMdaOwnerNm())) {
-                    resolvedRcptNm = match.getFincMdaOwnerNm();
+                } else {
+                    if ("CITAD".equals(resolvedAntDiv)
+                            && !isBlank(match.getFincMdaOwnerNm())) {
+                        resolvedRcptNm = match.getFincMdaOwnerNm();
+                    }
+                    // Capture the contact's stored owner name for the
+                    // ckRecName check below — used on NAPAS rows where
+                    // the bank inquiry returns the real account-holder
+                    // name and we compare it against what the user has
+                    // saved against that contact.
+                    if (!isBlank(match.getFincMdaOwnerNm())) {
+                        contactOwnerNmForCheck = match.getFincMdaOwnerNm().trim();
+                    }
                 }
             }
+        }
+
+        // Cross-bank recipient-name verification — legacy
+        // `PymnHelper.ckRecName` (line 860). NAPAS rows call the
+        // firm-banking inquiry API and compare the bank-returned
+        // FINC_MDA_OWNER_NM against the contact's stored owner name.
+        // CITAD is skipped (the legacy `showLookup` gate rejects it).
+        // The inquiry returns Optional.empty() until the WB_00000100
+        // socket call is wired, so this block is a no-op today —
+        // matching legacy's "no firm-banking config" silent-skip
+        // (PymnHelper.ckRecName line 1037 "contactInfo == null").
+        if ("NAPAS".equals(resolvedAntDiv)
+                && !isBlank(resolvedBankCd)
+                && !isBlank(fincMdaNo)
+                && contactOwnerNmForCheck != null) {
+            // Capture into a final local for the lambda closure.
+            final String contactOwnerNm = contactOwnerNmForCheck;
+            firmBankingInquiryService
+                    .inquiryAccount(resolvedBankCd, fincMdaNo)
+                    .ifPresent(bankOwnerNm -> {
+                        String fromBank = bankOwnerNm.trim();
+                        if (!fromBank.isEmpty()
+                                && !fromBank.equalsIgnoreCase(contactOwnerNm)) {
+                            errors.add(new FieldError("RCPT_NM",
+                                    "Recipient name does not match the bank's record: "
+                                            + fromBank));
+                        }
+                    });
         }
 
         BigDecimal tranAmt = null;

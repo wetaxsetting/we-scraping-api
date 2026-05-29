@@ -89,6 +89,13 @@ public class OverseasPaymentService {
     private final AuditLogService                auditLogService;
     private final BusiInfmRepository             busiInfmRepository;
     private final DocNoGenerator                 docNoGenerator;
+    /** Pre-dispatch cut-off window guard. Mirrors legacy
+     *  {@code PymnHelper.validateTransferTiming} — weekend block for
+     *  non-NAPAS networks (so every SWIFT dispatch is blocked on
+     *  Sat / Sun) + per-(bank, network) cutoff window. Closes the G6
+     *  gap from the 2026-05-29 dispatch audit. */
+    private final com.kosign.wecms.domain.payment.internaltransfer.service.CutoffValidator
+                                                 cutoffValidator;
 
     /**
      * Overseas scheduled-payment list.
@@ -300,7 +307,7 @@ public class OverseasPaymentService {
                         OverseasPaymentResultExcelWriter.safe(d.getBnfcNm()),
                         OverseasPaymentResultExcelWriter.safe(d.getBnfcBankNm()),
                         OverseasPaymentResultExcelWriter.safe(d.getBicCd()),
-                        OverseasPaymentResultExcelWriter.safe(d.getBnfcActNo()),
+                        OverseasPaymentResultExcelWriter.safe(d.getBnfcAcctNo()),
                         OverseasPaymentResultExcelWriter.safe(d.getBnfcAddr()),
                         rowCcy,
                         amt,
@@ -384,7 +391,7 @@ public class OverseasPaymentService {
                             d.getBnfcNm(),
                             d.getBnfcBankNm(),
                             d.getBicCd(),
-                            d.getBnfcActNo(),
+                            d.getBnfcAcctNo(),
                             d.getBnfcAddr(),
                             d.getTrnfYn() != null ? d.getTrnfYn() : "N",
                             r.procStat(), r.procStatKey(), r.procDttm(), r.rsltDttm(),
@@ -507,32 +514,82 @@ public class OverseasPaymentService {
             throw new BusinessException("WBE2095");
         }
 
-        String next   = req.isApprove() ? "C" : "X";
+        String userId = TenantContext.currentUserId();
         String nowDtm = ZonedDateTime.now(VIETNAM_ZONE).format(DTM_FMT);
+        String apprSeqNo = sumr.getApprSeqNo();
+
+        // Locate the caller's per-approver row and flip its status so the
+        // per-row "X/Y" badge on the list (count of apprvr_stts='A') stays
+        // in sync with the master APPR_STTS. Mirrors
+        // ApprovalBoxService.applyApprove / applyReject — without this
+        // step the master flips to 'C'/'X' but every EXPT_RESOL_APPRVR_INFM
+        // row stays at 'P'/'W', producing the "Approved 0/1" badge bug.
+        ExptResolApprvrInfm callerRow = exptResolApprvrInfmRepository
+                .findById(new com.kosign.wecms.domain.payment.approvalbox.entity
+                        .ExptResolApprvrInfmId(bizKey, apprSeqNo, userId))
+                .orElse(null);
+        if (callerRow != null) {
+            callerRow.setApprvrStts(req.isApprove() ? "A" : "R");
+            callerRow.setApprDtm(nowDtm);
+            callerRow.setModId(userId);
+            callerRow.setModDtm(nowDtm);
+            exptResolApprvrInfmRepository.save(callerRow);
+        }
+
+        // Decide the master's terminal status. Approve only finalises to
+        // 'C' once no pending + waiting peers remain; otherwise the master
+        // stays in 'I' (in-progress) and the next waiting peer is promoted
+        // to PENDING. Reject is always terminal.
+        String next;
+        String apprTypeCd;
+        if (req.isApprove()) {
+            long pendingRemaining = exptResolApprvrInfmRepository
+                    .countByStatus(bizKey, apprSeqNo, "P");
+            long waitingRemaining = exptResolApprvrInfmRepository
+                    .countByStatus(bizKey, apprSeqNo, "W");
+            if (pendingRemaining == 0 && waitingRemaining == 0) {
+                next       = "C";
+                apprTypeCd = "01";
+            } else {
+                next       = "I";
+                apprTypeCd = "03";
+                // Promote the next WAITING approver (by line_no) to PENDING.
+                List<ExptResolApprvrInfm> chain = exptResolApprvrInfmRepository
+                        .findChain(bizKey, apprSeqNo);
+                for (ExptResolApprvrInfm a : chain) {
+                    if ("W".equals(a.getApprvrStts())) {
+                        a.setApprvrStts("P");
+                        a.setModId(userId);
+                        a.setModDtm(nowDtm);
+                        exptResolApprvrInfmRepository.save(a);
+                        break;
+                    }
+                }
+            }
+        } else {
+            next       = "X";
+            apprTypeCd = "02";
+            // Downstream cascade: every WAITING peer → 'S' (stopped).
+            exptResolApprvrInfmRepository.stopDownstream(
+                    bizKey, apprSeqNo, userId, nowDtm);
+        }
+
         sumr.setApprStts(next);
         sumr.setModDtm(nowDtm);
-        sumr.setModId(TenantContext.currentUserId());
+        sumr.setModId(userId);
         sumrRepository.save(sumr);
 
         // Keep EXPT_RESOL_MSTR.APPR_TYPE_CD in sync so the list filter and
         // the status badge both derive from the same authoritative column.
-        String apprTypeCd = req.isApprove() ? "01" : "02";
+        final String finalApprTypeCd = apprTypeCd;
         exptResolMstrRepository.findById(
-                new com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId(bizKey, sumr.getApprSeqNo()))
+                new com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId(bizKey, apprSeqNo))
                 .ifPresent(mstr -> {
-                    mstr.setApprTypeCd(apprTypeCd);
-                    mstr.setModId(TenantContext.currentUserId());
+                    mstr.setApprTypeCd(finalApprTypeCd);
+                    mstr.setModId(userId);
                     mstr.setModDtm(nowDtm);
                     exptResolMstrRepository.save(mstr);
                 });
-
-        // On reject: stop all pending + waiting approvers so the Approval Box
-        // detail view reflects the correct chain state.
-        if (!req.isApprove()) {
-            exptResolApprvrInfmRepository.stopAllActive(
-                    bizKey, sumr.getApprSeqNo(),
-                    TenantContext.currentUserId(), nowDtm);
-        }
 
         String detailKey = req.isApprove()
                 ? "audit.overseas_payment.approve.detail"
@@ -600,6 +657,15 @@ public class OverseasPaymentService {
         if (lines.isEmpty()) {
             throw new BusinessException("WBE2061");
         }
+
+        // Cut-off time guard — legacy parity (PymnHelper.validateTransferTiming,
+        // pymn_0007_001_c001_act.jsp:140). Overseas always uses the SWIFT
+        // network so weekend dispatches are blocked, and any configured
+        // per-(bank, SWIFT) cutoff window is enforced. Unknown banks /
+        // missing windows silently pass — matching the SCDUL modules.
+        cutoffValidator.validate(
+                sumr.getOutBankCd(),
+                com.kosign.wecms.domain.payment.internaltransfer.service.TransferNetwork.SWIFT);
 
         // Writes TB_PAY_FILE_MST + TB_PAY_FILE_DATA inside this
         // @Transactional. Stamps PAY_TRAN_DT + PAY_FILE_SEQ_NO on master

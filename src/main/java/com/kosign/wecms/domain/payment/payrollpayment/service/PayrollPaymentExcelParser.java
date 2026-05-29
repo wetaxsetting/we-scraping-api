@@ -105,6 +105,11 @@ public class PayrollPaymentExcelParser {
     private final TbFirmBankCodeRepository firmBankCodeRepo;
     private final ChartOfAccountRepository chartAcctRepo;
     private final SpecialCharValidator     specialCharValidator;
+    /** Cross-row consistency guard — single currency per file + single
+     *  network per file + VND/USD whitelist. Mirrors legacy
+     *  {@code PymnHelper.java:420-436} + {@code :1261-1297}. */
+    private final com.kosign.wecms.domain.payment.common.UploadConsistencyValidator
+                                           uploadConsistencyValidator;
 
     @Transactional(readOnly = true)
     public ParseExcelResponse parse(MultipartFile file, String bankCd) {
@@ -159,6 +164,15 @@ public class PayrollPaymentExcelParser {
             log.warn("feature=payroll-payment parse-excel format-error: {}", ex.getMessage());
             throw new BusinessException("WBE2017");
         }
+
+        // Cross-row consistency — legacy parity with PymnHelper
+        // (WBW1160 + WBE1162 → WBE2120; WBE1191 → WBE2121).
+        List<String> ccyList = rows.stream()
+                .map(ParsedTransferLine::trnfCcyCd).toList();
+        uploadConsistencyValidator.assertSingleCurrency(ccyList);
+        uploadConsistencyValidator.assertCurrencyWhitelist(ccyList);
+        uploadConsistencyValidator.assertSingleNetwork(rows.stream()
+                .map(ParsedTransferLine::antDivCd).toList());
 
         int totCnt = rows.size();
         log.info("feature=payroll-payment parse-excel totCnt={} sucCnt={} errCnt={}",

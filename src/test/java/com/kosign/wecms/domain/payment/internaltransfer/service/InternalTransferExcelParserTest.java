@@ -7,7 +7,10 @@ import com.kosign.wecms.domain.banking.entity.AcctMstr;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ParseExcelResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ParsedTransferLine;
+import com.kosign.wecms.domain.payment.common.UploadConsistencyValidator;
 import com.kosign.wecms.domain.payment.validation.SpecialCharValidator;
+import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount;
+import com.kosign.wecms.domain.setting.chartofaccounts.repository.ChartOfAccountRepository;
 import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmBankCode;
 import com.kosign.wecms.domain.setting.firmbankingsettings.repository.TbFirmBankCodeRepository;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
@@ -53,6 +56,8 @@ class InternalTransferExcelParserTest {
     private static final String TEST_BIZ_KEY   = "VN_VNM0004_000001";
     private final TbFirmBankCodeRepository repo = mock(TbFirmBankCodeRepository.class);
     private final SpecialCharValidator specialCharValidator = mock(SpecialCharValidator.class);
+    private final UploadConsistencyValidator uploadConsistencyValidator = mock(UploadConsistencyValidator.class);
+    private final ChartOfAccountRepository chartAcctRepository = mock(ChartOfAccountRepository.class);
     private final AcctMstrRepository acctMstrRepository = mock(AcctMstrRepository.class);
 
     @BeforeEach
@@ -64,6 +69,12 @@ class InternalTransferExcelParserTest {
         TenantContext.set("testuser", "testuser", TEST_BIZ_KEY, LangCd.EN);
         when(acctMstrRepository.findFirstByBizKeyAndAcctNo(eq(TEST_BIZ_KEY), any()))
                 .thenReturn(Optional.of(stubAcct()));
+        // Reporting-account validation reads CHART_ACCT_INFM. Echo the
+        // queried code back as a registered chart account so previously-
+        // valid rows keep parsing cleanly. Tests exercising the "not
+        // registered" branch use a blank reporting account instead.
+        when(chartAcctRepository.findByBizKeyAndChartAcctCdAndDelYn(eq(TEST_BIZ_KEY), any(), eq("N")))
+                .thenAnswer(inv -> Optional.of(stubChart(inv.getArgument(1))));
     }
 
     @AfterEach
@@ -76,7 +87,7 @@ class InternalTransferExcelParserTest {
         when(repo.findByAntDivCdAndBankCd(eq("NAPAS"), eq(NAPAS_SHINHAN)))
                 .thenReturn(Optional.of(napas(NAPAS_SHINHAN, NM_SHINHAN)));
 
-        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo, specialCharValidator, acctMstrRepository);
+        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo, specialCharValidator, uploadConsistencyValidator, chartAcctRepository, acctMstrRepository);
         // Column order: Bank Code | Deposit No. | Bank | Transfer Amount |
         //               Transfer Currency | Remarks | Reporting Account |
         //               Description | Document No.
@@ -118,7 +129,7 @@ class InternalTransferExcelParserTest {
         when(repo.findFirstByAntDivCdAndCitadBankCd(eq("CITAD"), eq("203")))
                 .thenReturn(Optional.of(citadRow));
 
-        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo, specialCharValidator, acctMstrRepository);
+        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo, specialCharValidator, uploadConsistencyValidator, chartAcctRepository, acctMstrRepository);
         byte[] xlsx = buildWorkbook(new String[][] {
                 { "203", "700071152854", "VCB", "50000", "VND", "", "", "", "" },
         });
@@ -139,7 +150,7 @@ class InternalTransferExcelParserTest {
         when(repo.findByAntDivCdAndBankCd(eq("NAPAS"), eq(NAPAS_SHINHAN)))
                 .thenReturn(Optional.of(napas(NAPAS_SHINHAN, NM_SHINHAN)));
 
-        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo, specialCharValidator, acctMstrRepository);
+        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo, specialCharValidator, uploadConsistencyValidator, chartAcctRepository, acctMstrRepository);
         // Row with: known bank code, blank deposit, blank amount,
         // blank currency. Description col is non-blank so the early-
         // break doesn't trigger.
@@ -166,7 +177,7 @@ class InternalTransferExcelParserTest {
     void flags_invalid_bank_code_length() throws Exception {
         // 4-char input — neither CITAD (3) nor NAPAS (6). Parser keeps
         // the raw value on TAR_BANK_CD and flags ANT_DIV_CD.
-        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo, specialCharValidator, acctMstrRepository);
+        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo, specialCharValidator, uploadConsistencyValidator, chartAcctRepository, acctMstrRepository);
         byte[] xlsx = buildWorkbook(new String[][] {
                 { "9999", "700071152854", "", "100", "VND", "", "", "", "" },
         });
@@ -182,7 +193,7 @@ class InternalTransferExcelParserTest {
         when(repo.findByAntDivCdAndBankCd(eq("NAPAS"), eq("999999")))
                 .thenReturn(Optional.empty());
 
-        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo, specialCharValidator, acctMstrRepository);
+        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo, specialCharValidator, uploadConsistencyValidator, chartAcctRepository, acctMstrRepository);
         byte[] xlsx = buildWorkbook(new String[][] {
                 { "999999", "700071152854", "", "100", "VND", "", "", "", "" },
         });
@@ -205,7 +216,7 @@ class InternalTransferExcelParserTest {
         when(repo.findByAntDivCdAndBankCd(eq("NAPAS"), eq(NAPAS_SHINHAN)))
                 .thenReturn(Optional.of(napas(NAPAS_SHINHAN, NM_SHINHAN)));
 
-        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo, specialCharValidator, acctMstrRepository);
+        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo, specialCharValidator, uploadConsistencyValidator, chartAcctRepository, acctMstrRepository);
         byte[] xlsx = buildWorkbook(new String[][] {
                 { NAPAS_SHINHAN, "1111111111", "", "100", "VND", "", "", "", "" },
                 { "", "", "", "", "", "", "", "", "" },
@@ -223,7 +234,7 @@ class InternalTransferExcelParserTest {
     @Test
     void rejects_workbook_with_wrong_headers() throws Exception {
         // Headers that don't match any of EN / KO / VI → WBE2018.
-        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo, specialCharValidator, acctMstrRepository);
+        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo, specialCharValidator, uploadConsistencyValidator, chartAcctRepository, acctMstrRepository);
         byte[] xlsx = buildWorkbookWithCustomHeaders(
                 new String[] { "Wrong1", "Wrong2", "Wrong3", "Wrong4", "Wrong5",
                                "Wrong6", "Wrong7", "Wrong8", "Wrong9" },
@@ -239,7 +250,7 @@ class InternalTransferExcelParserTest {
         when(repo.findByAntDivCdAndBankCd(eq("NAPAS"), eq(NAPAS_WOORI)))
                 .thenReturn(Optional.of(napas(NAPAS_WOORI, NM_WOORI)));
 
-        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo, specialCharValidator, acctMstrRepository);
+        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo, specialCharValidator, uploadConsistencyValidator, chartAcctRepository, acctMstrRepository);
         byte[] xlsx = buildWorkbookWithCustomHeaders(
                 new String[] { "은행코드 *", "입금 계좌번호 *", "은행",
                                "이체 금액 *", "이체통화 *",
@@ -257,7 +268,7 @@ class InternalTransferExcelParserTest {
 
     @Test
     void throws_WBE2017_for_non_excel_bytes() {
-        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo, specialCharValidator, acctMstrRepository);
+        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo, specialCharValidator, uploadConsistencyValidator, chartAcctRepository, acctMstrRepository);
         MockMultipartFile bad = new MockMultipartFile(
                 "file_data", "garbage.xlsx",
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -285,6 +296,13 @@ class InternalTransferExcelParserTest {
         a.setAcctNm("STUB ACCOUNT");
         a.setCcyCd("VND");
         return a;
+    }
+
+    private static ChartOfAccount stubChart(String chartAcctCd) {
+        ChartOfAccount c = new ChartOfAccount();
+        c.setChartAcctCd(chartAcctCd);
+        c.setChartAcctSeqNo("1");
+        return c;
     }
 
     private static MockMultipartFile file(byte[] bytes) {

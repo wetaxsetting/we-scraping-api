@@ -21,7 +21,7 @@ public record OverseasPaymentDetailRowResponse(
         String  bnfcNm,
         String  bnfcBankNm,
         String  bicCd,
-        String  bnfcActNo,
+        String  bnfcAcctNo,
         String  bnfcAddr,
         /** {@code "Y"} = transferred (success), {@code "N"} = pending. */
         String  trnfYn,

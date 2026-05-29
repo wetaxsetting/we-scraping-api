@@ -130,6 +130,17 @@ public class InternalTransferService {
             "audit.internal_transfer.reject.detail";
     static final String AUDIT_WITHDRAW_APPROVAL_KEY =
             "audit.internal_transfer.withdraw_approval.detail";
+    /** Audit detail key for per-line Re-run action — mirrors legacy
+     *  {@code pymn_0010_002.ts:441-472} (ETC column Re-run button that
+     *  re-fires the dispatch on a transient-failure row). */
+    static final String AUDIT_RERUN_KEY = "audit.internal_transfer.rerun.detail";
+
+    /** Transient bank-side response codes that the legacy live system
+     *  considers retryable. Mirror of
+     *  {@code pymn_0010_002.ts:441} {@code validResponseCode}. */
+    static final java.util.Set<String> RERUN_VALID_RS_CDS =
+            java.util.Set.of("0001", "0002", "0003", "0004", "0005");
+
     static final String AUDIT_CHANGE_APPROVAL_LINE_KEY =
             "audit.internal_transfer.change_approval_line.detail";
 
@@ -193,6 +204,19 @@ public class InternalTransferService {
      *  chart-account breadcrumb the Request Approval dialog renders.
      *  See {@code domain/payment/common/TransferLineDetailMapper}. */
     private final com.kosign.wecms.domain.payment.common.TransferLineDetailMapper transferLineDetailMapper;
+    /** Folds a user-supplied bank code (NAPAS or internal {@code BANK_CD})
+     *  into the canonical NAPAS code before it lands on
+     *  {@code SCDUL_PYMN_SUMR.OUT_BANK_CD}. Mirrors legacy
+     *  {@code PymnHelper.uploadPaymentExcel:1315-1317}. */
+    private final com.kosign.wecms.domain.payment.common.OutBankCdNormalizer outBankCdNormalizer;
+    /** Dispatch-table writes for the per-line Re-run action — clears
+     *  {@code RS_CD} so the bank-side daemon re-picks up the row.
+     *  Mirrors the legacy {@code pymn_0010_002.ts:441-472} Re-run popup. */
+    private final com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileDataRepository tbPayFileDataRepository;
+    /** Per-line dispatch-result lookup — shared resolver that hides the
+     *  API vs File path branching. Used here to verify Re-run
+     *  eligibility ({@code RS_CD} ∈ transient set + {@code PROC_DTTM} today). */
+    private final com.kosign.wecms.domain.payment.dispatch.service.DispatchResultResolver dispatchResultResolver;
 
     /* ----------------------------------------------------------------
      *  List
@@ -390,7 +414,12 @@ public class InternalTransferService {
         master.setBizKey(bizKey);
         master.setScdulPymnNo(scdulPymnNo);
         master.setScdulPymnTypeCd(ScdulPymnTypeCd.INTERNAL.code());
-        master.setOutBankCd(req.bankCd());
+        // Legacy parity (PymnHelper.uploadPaymentExcel:1315-1317): the user
+        // may type either the public NAPAS code (970xxx) or the internal
+        // BANK_CD (1170xxxx). Either way, OUT_BANK_CD must be persisted as
+        // the canonical NAPAS code so downstream cut-off / dispatch keys
+        // resolve correctly.
+        master.setOutBankCd(outBankCdNormalizer.normalize(req.bankCd()));
         master.setWdrlActNo(req.acctNo());
         master.setCcyCd(req.ccyCd());
         master.setWdrlCcyCd(req.ccyCd());
@@ -527,6 +556,105 @@ public class InternalTransferService {
 
         log.info("feature=internal-transfer update-reporting bizKey={} scdulPymnNo={} lineId={} chartAcctCd={}",
                 bizKey, id, lineId, req.chartAcctCd());
+    }
+
+    /* ----------------------------------------------------------------
+     *  Re-run one detail line (legacy pymn_0010_002.ts:441-472)
+     *
+     *  Fires when the user clicks the ETC-column "Re-run" button on a
+     *  dispatched line whose bank-side response is a transient failure
+     *  (RS_CD ∈ {"0001"…"0005"}) AND whose PROC_DTTM is today. Resets
+     *  PROC_STAT='9' + clears the result fields on the matching
+     *  TB_PAY_FILE_DATA row so the bank-side daemon re-picks it up
+     *  on its next sweep.
+     *
+     *  Refactor R&D scope: the actual bank daemon doesn't run locally,
+     *  so a successful Re-run leaves the dispatch row in "pending"
+     *  state until manual intervention. Production parity is in the
+     *  endpoint behaviour, not in the downstream effect.
+     * ---------------------------------------------------------------- */
+
+    @Transactional
+    public void rerun(String scdulPymnNo, String scdulPymnDetlNo) {
+        String bizKey = requireTenant();
+
+        // 1. Master + detail existence + tenant scope.
+        ScdulPymnSumr master = loadMaster(bizKey, scdulPymnNo);
+        ScdulPymnSumrDetl detl = detlRepository
+                .findByBizKeyAndScdulPymnNoAndScdulPymnDetlNo(bizKey, scdulPymnNo, scdulPymnDetlNo)
+                .orElseThrow(() -> new BusinessException("WBE2061"));
+
+        // 2. Both shadow keys + master PAY_FILE_SEQ_NO must be stamped
+        //    — i.e. the line has been through dispatch.
+        String tranDt    = detl.getPayTranDt();
+        String tranSeq   = detl.getPayTranSeq();
+        String fileSeqNo = master.getPayFileSeqNo();
+        if (tranDt == null || tranDt.isBlank()
+                || tranSeq == null || tranSeq.isBlank()
+                || fileSeqNo == null || fileSeqNo.isBlank()) {
+            // WBE2080 — line has no dispatch row yet.
+            throw new BusinessException("WBE2122");
+        }
+
+        // 3. Eligibility via the shared resolver — surfaces the same
+        //    (PROC_STAT / RS_CD / PROC_DTTM / RSLT_DTTM) tuple the
+        //    Result-detail read endpoint serves. Avoids duplicating the
+        //    API/File-path branching here. Mirrors legacy
+        //    pymn_0010_002.ts:441-449 (validResponseCode + executedToday).
+        java.util.Map<String,
+                com.kosign.wecms.domain.payment.dispatch.service.DispatchResult> results =
+                dispatchResultResolver.resolve(master, java.util.List.of(detl));
+        com.kosign.wecms.domain.payment.dispatch.service.DispatchResult result =
+                results.get(scdulPymnDetlNo);
+        if (result == null || result.rsCd() == null
+                || !RERUN_VALID_RS_CDS.contains(result.rsCd())) {
+            // WBE2123 — RS_CD not in transient set (or no result yet).
+            throw new BusinessException("WBE2123");
+        }
+        String procDttm = result.procDttm();
+        if (procDttm == null || procDttm.length() < 8) {
+            throw new BusinessException("WBE2124");
+        }
+        String todayYmd = OffsetDateTime.now(clock)
+                .withOffsetSameInstant(ZoneOffset.UTC)
+                .format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+        if (!todayYmd.equals(procDttm.substring(0, 8))) {
+            // WBE2124 — line was not executed today; can't be re-run.
+            throw new BusinessException("WBE2124");
+        }
+
+        // 4. Clear RS_CD on TB_PAY_FILE_DATA so the bank-side daemon
+        //    re-picks up the row on its next sweep. Other result fields
+        //    (PROC_STAT / PROC_DTTM / RSLT_DTTM / RS_MSG) live on
+        //    TB_PAY_FILE_MST or aren't mapped on the per-line entity —
+        //    R&D scope limits the reset to the per-line RS_CD column
+        //    that the entity exposes.
+        java.math.BigDecimal seq;
+        try {
+            seq = new java.math.BigDecimal(tranSeq);
+        } catch (NumberFormatException ex) {
+            throw new BusinessException("WBE2122");
+        }
+        com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileDataId dataId =
+                new com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileDataId(
+                        tranDt, bizKey, fileSeqNo, seq);
+        tbPayFileDataRepository.findById(dataId).ifPresent(data -> {
+            data.setRsCd(null);
+            tbPayFileDataRepository.save(data);
+        });
+
+        // 5. Audit log.
+        auditLogService.append(AuditLogContext.builder()
+                .wsvcId(WSVC_ID)
+                .refNo(REF_NO)
+                .refNo1(scdulPymnNo)
+                .refNo2(scdulPymnDetlNo)
+                .activityKey(AUDIT_ACTIVITY_KEY)
+                .detailKey(AUDIT_RERUN_KEY)
+                .build());
+
+        log.info("feature=internal-transfer rerun bizKey={} scdulPymnNo={} lineId={} tranDt={} seq={}",
+                bizKey, scdulPymnNo, scdulPymnDetlNo, tranDt, seq);
     }
 
     /* ----------------------------------------------------------------
