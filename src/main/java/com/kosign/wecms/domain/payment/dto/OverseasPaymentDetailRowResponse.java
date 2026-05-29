@@ -21,8 +21,20 @@ public record OverseasPaymentDetailRowResponse(
         String  bnfcNm,
         String  bnfcBankNm,
         String  bicCd,
-        String  bnfcActNo,
+        String  bnfcAcctNo,
         String  bnfcAddr,
         /** {@code "Y"} = transferred (success), {@code "N"} = pending. */
-        String  trnfYn
+        String  trnfYn,
+        /** Phase 2 — dispatch result fields populated from
+         *  {@code TB_PAY_FILE_MST} / {@code TB_PAY_FILE_DATA} via
+         *  {@link com.kosign.wecms.domain.payment.dispatch.service.DispatchResultResolver#resolveOverseas}.
+         *  All null until the bank-side daemon updates the dispatch
+         *  rows; the frontend Result detail page renders the neutral
+         *  state when null. */
+        String  procStat,
+        String  procStatKey,
+        String  procDttm,
+        String  rsltDttm,
+        String  rsCd,
+        String  rsMsg
 ) {}

@@ -6,6 +6,8 @@ import com.kosign.wecms.common.web.SortDirection;
 import com.kosign.wecms.domain.payment.common.TransferLineDetailMapper;
 import com.kosign.wecms.domain.payment.dispatch.DispatchCountRepository;
 import com.kosign.wecms.domain.payment.dispatch.DispatchCountRow;
+import com.kosign.wecms.domain.payment.dispatch.service.DispatchResult;
+import com.kosign.wecms.domain.payment.dispatch.service.DispatchResultResolver;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.CurrencyTotal;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.TransferResultDetailResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.TransferResultLine;
@@ -57,6 +59,10 @@ public class VendorPaymentResultService {
      *  each Result line so the Deposit Bank cell renders the bank
      *  name alongside the code. */
     private final TransferLineDetailMapper    transferLineDetailMapper;
+    /** Phase 2 dispatch-result resolver — see
+     *  {@link com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferResultService}
+     *  for the contract; shared across all 4 SCDUL_PYMN modules. */
+    private final DispatchResultResolver      dispatchResultResolver;
 
     @Transactional(readOnly = true)
     public TransferResultListResponse list(
@@ -142,10 +148,13 @@ public class VendorPaymentResultService {
                 .orElseThrow(() -> new BusinessException("WBE2060"));
 
         Sort lineSort = Sort.by(Sort.Order.asc("scdulPymnDetlNo"));
-        List<TransferResultLine> lines = detlRepository
-                .findByBizKeyAndScdulPymnNo(bizKey, id, lineSort)
-                .stream()
-                .map(this::toResultLine)
+        List<ScdulPymnSumrDetl> detailRows = detlRepository
+                .findByBizKeyAndScdulPymnNo(bizKey, id, lineSort);
+        Map<String, DispatchResult> resultByDetlNo =
+                dispatchResultResolver.resolve(master, detailRows);
+        List<TransferResultLine> lines = detailRows.stream()
+                .map(d -> toResultLine(d, resultByDetlNo.getOrDefault(
+                        d.getScdulPymnDetlNo(), DispatchResult.EMPTY)))
                 .toList();
 
         return new TransferResultDetailResponse(
@@ -170,7 +179,7 @@ public class VendorPaymentResultService {
 
     /* ---------------------------------------------------------------- */
 
-    private TransferResultLine toResultLine(ScdulPymnSumrDetl d) {
+    private TransferResultLine toResultLine(ScdulPymnSumrDetl d, DispatchResult r) {
         return new TransferResultLine(
                 d.getScdulPymnDetlNo(),
                 d.getTranAmt(),
@@ -188,7 +197,8 @@ public class VendorPaymentResultService {
                 d.getChartAcctCd(),
                 d.getChartAcctSeqNo(),
                 d.getBankTrnsShortId(),
-                null, null, null, null, null, null);
+                r.procStat(), r.procStatKey(), r.procDttm(), r.rsltDttm(),
+                r.rsCd(), r.rsMsg());
     }
 
     private static TransferResultRow toResultRow(ScdulPymnSumr s, long[] counts) {

@@ -69,6 +69,28 @@ public class OvrsPymnSumr {
     @Column(name = "TRNF_YN", length = 1, nullable = false)
     private String trnfYn;
 
+    /** Transfer datetime (yyyyMMddHHmmss) — Overseas legacy uses
+     *  {@code TRNF_DT} where SCDUL_PYMN uses {@code TRNF_DTM}. Stamped
+     *  by the dispatch flow alongside {@code TRNF_YN='Y'}. */
+    @Column(name = "TRNF_DT", length = 14)
+    private String trnfDt;
+
+    /** Withdrawal-account currency — distinct from {@link #ccyCd} which
+     *  is the transfer currency. Populated by the Excel upload + read by
+     *  the dispatch flow when deciding the TB_PAY_FILE_DATA currency. */
+    @Column(name = "WDRL_CCY_CD", length = 3)
+    private String wdrlCcyCd;
+
+    /** File-batch transfer date (yyyyMMdd) — shadow key stamped by the
+     *  dispatch flow. Joins to {@code TB_PAY_FILE_MST.TRAN_DT}. */
+    @Column(name = "PAY_TRAN_DT", length = 8)
+    private String payTranDt;
+
+    /** File-batch sequence — shadow key stamped by the dispatch flow.
+     *  Joins to {@code TB_PAY_FILE_MST.FILE_SEQ_NO}. */
+    @Column(name = "PAY_FILE_SEQ_NO", length = 7)
+    private String payFileSeqNo;
+
     @Column(name = "OUT_BANK_NM", length = 100)
     private String outBankNm;
 

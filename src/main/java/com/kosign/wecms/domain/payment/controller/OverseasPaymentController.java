@@ -195,6 +195,23 @@ public class OverseasPaymentController {
     }
 
     /**
+     * Execute the dispatch ("Transfer") flow on an approved Overseas
+     * batch. Writes {@code TB_PAY_FILE_MST} + {@code TB_PAY_FILE_DATA}
+     * rows via the shared dispatch infrastructure and stamps
+     * {@code TRNF_YN='Y'} + {@code TRNF_DT} on the master. Mirrors the
+     * SCDUL_PYMN family's {@code POST .../dispatch} endpoint surface.
+     *
+     * <p>No request body — the dispatch is a pure server-side flip
+     * (no currency override; Overseas always uses the File path and
+     * the batch's own {@code CCY_CD} is the transfer currency).
+     */
+    @PostMapping("/{id}/dispatch")
+    public ApiResponse<Void> dispatch(@PathVariable("id") String id) {
+        overseasPaymentService.dispatch(id);
+        return ApiResponse.ok(null);
+    }
+
+    /**
      * Overseas payment-result list.
      * Returns all batch records (OVRS_PYMN_SUMR) in the date range, ordered newest first.
      * {@code trnf_yn = "Y"} → completed; {@code "N"} → in progress.

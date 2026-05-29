@@ -66,13 +66,25 @@ public class OvrsPymnDtls {
     private String bicCd;
 
     @Column(name = "BNFC_ACCT_NO", length = 100)
-    private String bnfcActNo;
+    private String bnfcAcctNo;
 
     @Column(name = "BNFC_ADDR", length = 500)
     private String bnfcAddr;
 
     @Column(name = "TRNF_YN", length = 1, nullable = false)
     private String trnfYn = "N";
+
+    /** File-batch transfer date (yyyyMMdd) — shadow key stamped by the
+     *  dispatch flow. Joins to {@code TB_PAY_FILE_DATA.TRAN_DT}. */
+    @Column(name = "PAY_TRAN_DT", length = 8)
+    private String payTranDt;
+
+    /** Per-line bank-side sequence (varchar of the matching
+     *  {@code TB_PAY_FILE_DATA.SEQ}). Joins the line to its dispatch row
+     *  for the Result-detail PROC_STAT/RS_CD lookup. Legacy parity per
+     *  the same column on {@code SCDUL_PYMN_SUMR_DETL}. */
+    @Column(name = "PAY_TRAN_SEQ", length = 10)
+    private String payTranSeq;
 
     @Column(name = "REG_DTM", length = 14, nullable = false)
     private String regDtm;

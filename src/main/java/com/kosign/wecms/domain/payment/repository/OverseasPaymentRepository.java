@@ -405,11 +405,12 @@ public class OverseasPaymentRepository {
     private String buildResultExportSql(String keyword, String trnfYn) {
         String kw   = keyword != null ? " AND ops.titl ILIKE :keyword ESCAPE '!'" : "";
         String trnf = trnfYn  != null ? " AND ops.trnf_yn = :trnfYn" : "";
-        // `trnf_dtm IS NOT NULL` — Excel export of Payment Result must
-        // mirror the on-screen Result list filter so the user gets the
-        // exact same row set in the workbook. Without this guard a
-        // freshly-uploaded Overseas batch (no dispatch yet) leaks into
-        // the export. Same fix applied to the in-app list SQL above.
+        // `ops.trnf_yn = 'Y'` mirrors legacy pymn_0008_002_r001_act.jsp:41-42
+        // — Payment Result lists only dispatched batches. The earlier
+        // refactor revision used `ops.trnf_dtm IS NOT NULL` which
+        // references a column that does not exist on OVRS_PYMN_SUMR
+        // (legacy uses TRNF_DT, refactor V212 added TRNF_DT). The wrong
+        // predicate silently filtered every row out.
         return """
                 SELECT ops.ovrs_pymn_no,
                        ops.ccy_cd,
@@ -431,7 +432,7 @@ public class OverseasPaymentRepository {
                   LEFT JOIN expt_resol_mstr erm
                     ON ops.biz_key = erm.biz_key AND ops.appr_seq_no = erm.appr_seq_no
                  WHERE ops.biz_key = :bizKey
-                   AND ops.trnf_dtm IS NOT NULL
+                   AND ops.trnf_yn = 'Y'
                    AND LEFT(ops.reg_dtm, 8) BETWEEN :fromDt AND :toDt
                 """ + kw + trnf;
     }
@@ -463,12 +464,14 @@ public class OverseasPaymentRepository {
     private String buildResultSql(String keyword, String trnfYn) {
         String kw    = keyword != null ? " AND ops.titl ILIKE :keyword ESCAPE '!'" : "";
         String trnf  = trnfYn  != null ? " AND ops.trnf_yn = :trnfYn" : "";
-        // `trnf_dtm IS NOT NULL` scopes Payment Result to batches the
-        // user has actually clicked Transfer on. Without this, every
-        // freshly-uploaded Overseas batch that's still in the approval
-        // flow leaks into Payment Result reading as "In Progress" even
-        // though no dispatch has been attempted. Same fix that landed
-        // for Internal Transfer / Vendor / Expense / Payroll.
+        // `ops.trnf_yn = 'Y'` mirrors legacy
+        // pymn_0008_002_r001_act.jsp:41-42 (`sps.trnf_yn = ?`,
+        // `TrnfYn.TRANFER.getValue()`) — Payment Result lists only
+        // dispatched batches. The earlier refactor revision used
+        // `ops.trnf_dtm IS NOT NULL` which references a column that
+        // does not exist on OVRS_PYMN_SUMR (legacy + V212 use TRNF_DT).
+        // The wrong predicate silently filtered every dispatched batch
+        // out of the Result list.
         return """
                 SELECT ops.ovrs_pymn_no,
                        ops.ccy_cd,
@@ -491,7 +494,7 @@ public class OverseasPaymentRepository {
                   LEFT JOIN expt_resol_mstr erm
                     ON ops.biz_key = erm.biz_key AND ops.appr_seq_no = erm.appr_seq_no
                  WHERE ops.biz_key = :bizKey
-                   AND ops.trnf_dtm IS NOT NULL
+                   AND ops.trnf_yn = 'Y'
                    AND LEFT(ops.reg_dtm, 8) BETWEEN :fromDt AND :toDt
                 """ + kw + trnf;
     }

@@ -271,6 +271,21 @@ public class VendorPaymentController {
         return ApiResponse.ok(null);
     }
 
+    /** Re-run one Result-detail line. Legacy `pymn_0002_002.ts:441-472`. */
+    @PostMapping("/{id}/lines/{lineId}/rerun")
+    public ApiResponse<Void> rerun(
+            @PathVariable("id")
+            @Size(max = 30)
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id,
+            @PathVariable("lineId")
+            @Size(max = 20)
+            @Pattern(regexp = SCDUL_PYMN_DETL_NO_PATTERN, message = "lineId: invalid scdul_pymn_detl_no format")
+            String lineId) {
+        service.rerun(id, lineId);
+        return ApiResponse.ok(null);
+    }
+
     /** Execute the dispatch flow. Legacy {@code pymn_0001_001_c001}. */
     @PostMapping("/{id}/dispatch")
     public ApiResponse<Void> dispatch(

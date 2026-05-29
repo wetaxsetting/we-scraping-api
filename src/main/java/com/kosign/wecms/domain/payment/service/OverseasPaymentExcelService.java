@@ -142,10 +142,22 @@ public class OverseasPaymentExcelService {
 
                 List<OverseasPaymentExcelFieldError> errors = new ArrayList<>();
                 validateRequired(currency,        "currency",        errors);
+                // Legacy parity: currency must be exactly 3 chars
+                // (pymn_0007_002_r001_act.jsp:286-303).
+                if (currency != null && !currency.isBlank() && currency.trim().length() != 3) {
+                    errors.add(new OverseasPaymentExcelFieldError(
+                            "currency", "currency must be 3 characters"));
+                }
                 validateAmount(amount,                               errors);
                 validateRequired(feePayer,         "feePayer",        errors);
                 validateRequired(beneficiaryCode,  "beneficiaryCode", errors);
                 validateRequired(memo,             "memo",            errors);
+                // Legacy parity: memo capped at 200 chars
+                // (pymn_0007_002_r001_act.jsp:322 — checkValidStringInMax).
+                if (memo != null && memo.length() > 200) {
+                    errors.add(new OverseasPaymentExcelFieldError(
+                            "memo", "memo must be 200 characters or less"));
+                }
 
                 // Resolve beneficiary detail server-side from
                 // TRCO_INFM + TRCO_OVRS_INFM. Mirrors legacy
@@ -398,29 +410,44 @@ public class OverseasPaymentExcelService {
         String userId    = TenantContext.currentUserId();
         ZonedDateTime now = ZonedDateTime.now(VIETNAM_ZONE);
         String nowDtm    = now.format(DTM_FMT);
-        String todayPrefix = nowDtm.substring(0, 8);   // first 8 chars = yyyyMMdd
 
-        // Guard against double-submit: same file name on the same calendar day is rejected.
-        if (sumrRepository.existsByBizKeyAndOrgFileNmAndRegDtmStartingWith(
-                bizKey, req.file_nm(), todayPrefix)) {
-            throw new BusinessException("WBE2044", req.file_nm());
-        }
+        // Legacy parity: no same-day filename guard. Legacy JEX
+        // (pymn_0007_002_c001_act.jsp) accepts unlimited uploads of the
+        // same Excel filename — the user-supplied TITL is the only
+        // human-facing identifier, and OVRS_PYMN_NO is the actual key.
+        // An earlier refactor revision added a "rename to re-upload"
+        // block; removed for parity with the other 4 payment modules.
 
         String pymnNo    = keyGenerator.nextOvrsPymnNo(bizKey);
+
+        // Legacy parity (pymn_0007_002_c001_act.jsp:144-145, :161, :197, :207-208):
+        // server recomputes the row count + total transfer amount from the
+        // detail list — the client values are advisory only.
+        int      serverTotTrnsCnt   = req.rows().size();
+        BigDecimal serverTotalAmt   = BigDecimal.ZERO;
+        for (var src : req.rows()) {
+            if (src.trnf_amt() != null) {
+                serverTotalAmt = serverTotalAmt.add(src.trnf_amt());
+            }
+        }
 
         // ── Summary row ──────────────────────────────────────────────────────
         OvrsPymnSumr sumr = new OvrsPymnSumr();
         sumr.setBizKey(bizKey);
         sumr.setOvrsPymnNo(pymnNo);
-        sumr.setOvrsPymnTypeCd("EX");
+        // Legacy OVRS_PYMN_TYPE_CD = "01" (pymn_0007_002_c001_act.jsp:139).
+        sumr.setOvrsPymnTypeCd("01");
         sumr.setTitl(req.file_nm());
         sumr.setCcyCd(req.ccy_cd());
-        sumr.setTotalTranAmt(req.total_tran_amt());
-        sumr.setTotTrnsCnt(req.tot_trns_cnt());
+        sumr.setTotalTranAmt(serverTotalAmt);
+        sumr.setTotTrnsCnt(serverTotTrnsCnt);
         sumr.setOutBankCd(req.wdrl_bank_cd());
         sumr.setOutBankNm(req.wdrl_bank_nm());
         sumr.setWdrlActNo(req.wdrl_acct_no());
         sumr.setOrgFileNm(req.file_nm());
+        // Legacy parity (pymn_0007_002_c001_act.jsp:148): stamp upload
+        // timestamp into TRNF_DT so the result-list query has a date anchor.
+        sumr.setTrnfDt(nowDtm);
         sumr.setTrnfYn("N");
         sumr.setRegDtm(nowDtm);
         sumr.setRegId(userId);
@@ -453,7 +480,7 @@ public class OverseasPaymentExcelService {
             dtl.setBnfcNm(src.bnfc_nm());
             dtl.setBnfcBankNm(src.bnfc_bank_nm());
             dtl.setBicCd(src.bic_cd());
-            dtl.setBnfcActNo(src.bnfc_acct_no());
+            dtl.setBnfcAcctNo(src.bnfc_acct_no());
             dtl.setBnfcAddr(src.bnfc_addr());
             dtl.setTrnfYn("N");
             dtl.setRegDtm(nowDtm);

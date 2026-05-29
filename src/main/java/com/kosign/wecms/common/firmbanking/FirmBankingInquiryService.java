@@ -59,15 +59,22 @@ import java.util.Optional;
  *       name as {@code WBE1143} "Recipient Name not found".</li>
  * </ol>
  *
- * <p><b>Status today:</b> deterministic stub. The gate (step 1) IS
- * implemented &mdash; an absent {@code TB_FIRM_CONF} row makes this
- * method return {@code Optional.empty()} just like legacy. The socket
- * call (steps 2-5) is replaced by a synthetic name keyed off the last
- * 4 digits of the account number so the popup's verified-recipient
- * UX flow and the Excel-upload preview both stay exercisable in local
- * R&amp;D. <b>When real bank integration lands, replace the
- * &quot;Stub path&quot; block below &mdash; the public signature, the
- * firm-config gate, and every caller stay untouched.</b>
+ * <p><b>Status today:</b> the {@code TB_FIRM_CONF} gate (step 1) IS
+ * implemented &mdash; absence of an active row makes this method return
+ * {@code Optional.empty()} just like legacy. The socket call (steps
+ * 2-5) is <b>NOT IMPLEMENTED</b>: when a firm-config row exists, the
+ * method currently logs a warning and returns {@code Optional.empty()}
+ * so callers (Excel upload parsers, popup lookup) silently skip name
+ * verification &mdash; the same behaviour as legacy's
+ * &quot;{@code contactInfo == null}&quot; branch
+ * ({@code PymnHelper.ckRecName} line 1037).
+ *
+ * <p><b>Production work required:</b> replace the
+ * &quot;Production socket call&quot; block below with the real
+ * {@code WB_00000100} implementation. The public signature, the
+ * firm-config gate, and every caller stay untouched &mdash; once the
+ * socket lands, recipient-name verification activates automatically
+ * across every wired upload parser.
  *
  * <p><b>Workspace memory:</b> {@code project_refactoring_scope.md}
  * states the refactor is local-only R&amp;D with no bank integration;
@@ -132,31 +139,46 @@ public class FirmBankingInquiryService {
         }
 
         // ============================================================
-        // Stub path — replace this block with the real socket call when
-        // the firm-banking gateway integration lands.
+        // Production socket call — REPLACE THIS BLOCK with the real
+        // implementation. Returns Optional.empty() until the team wires
+        // the WB_00000100 socket protocol; meanwhile every caller (Excel
+        // upload parsers, popup lookup) silently skips name verification,
+        // which matches the legacy "no firm-banking config" branch
+        // (PymnHelper.ckRecName line 1037 "contactInfo == null").
         //
-        // Real implementation will (per legacy):
-        //   1. Apply UAT product-type override on outBankCd / bankPrtnId.
+        // What this method MUST do per legacy FIRM_PROC.inquiryAccount:
+        //   1. Apply UAT product-type override on outBankCd / bankPrtnId
+        //      (Shinhan 970424 → WEBC1/HASU1; Woori 970457 →
+        //       000001008/000001020). See PymnHelper.java:916-946.
         //   2. Build WB_00000100 fixed-width payload using:
-        //        ID         = firmConf.vanOrgCd
+        //        ID         = firmConf.get().getVanOrgCd()
         //        BANK_CD    = outBankCd  (post-UAT-override)
         //        PRTN_ID    = bankPrtnId (post-UAT-override)
         //        TAR_BANK_CD       = napasBankCd
         //        TAR_FINC_MDA_DIV  = 'A'
-        //        TAR_FINC_MDA_NO   = acctNo
-        //        WITHD_ACCT_NO     = firmConf.wdrlActNo
+        //        TAR_FINC_MDA_NO   = trimmed (acctNo)
+        //        WITHD_ACCT_NO     = firmConf.get().getWdrlActNo()
         //        BIZ_KEY           = TenantContext.currentBizKey()
         //        TNO               = yyyyMMddHHmmss + UUID
         //        TR_DV_CD / TK_DV_CD = "0000" / "0100"
-        //   3. Send via socket/wecms_batch (127.0.0.1:11000), receive
-        //      700-byte response (TK_DV_CD echoes back as "0110").
-        //   4. Parse FINC_MDA_OWNER_NM; return Optional.of(name) when
-        //      non-blank, Optional.empty() otherwise.
+        //   3. Send via socket (legacy: 127.0.0.1:11000, resource
+        //      socket/wecms_batch), receive 700-byte response
+        //      (TK_DV_CD echoes back as "0110").
+        //   4. Parse FINC_MDA_OWNER_NM. Return Optional.of(name) when
+        //      RC == "0000" AND name is non-blank; Optional.empty()
+        //      otherwise.
+        //
+        // See `docs/refactor-wecms/features/payment/recipient-name-inquiry.md`
+        // (when written) for the full handoff brief.
         // ============================================================
-        String suffix = trimmed.length() <= 4
-                ? trimmed
-                : trimmed.substring(trimmed.length() - 4);
-        return Optional.of("MOCK ACCOUNT HOLDER " + suffix);
+        log.warn(
+                "feature=firm-banking inquiry-account not-implemented: "
+                + "TB_FIRM_CONF row found for tenant but WB_00000100 socket "
+                + "call has not been wired yet. Returning Optional.empty() "
+                + "so callers skip recipient-name verification — production "
+                + "must implement the socket call. napasBankCd={} acctNo=(masked)",
+                napasBankCd);
+        return Optional.empty();
     }
 
     /**
