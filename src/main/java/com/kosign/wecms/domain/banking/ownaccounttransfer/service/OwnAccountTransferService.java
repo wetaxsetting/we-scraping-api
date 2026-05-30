@@ -22,6 +22,9 @@ import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.response.SourceAcc
 import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.response.SourceAccountRow;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.response.TargetAccountListResponse;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.response.TargetAccountRow;
+import com.kosign.wecms.domain.banking.bankcredentials.entity.BankCertInfo;
+import com.kosign.wecms.domain.banking.bankcredentials.repository.BankCertInfoRepository;
+import com.kosign.wecms.domain.banking.bankcredentials.service.BankCertCryptoService;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
 import com.kosign.wecms.domain.banking.repository.BankInfmRepository;
 import com.kosign.wecms.domain.banking.repository.NapasBankInfoRepository;
@@ -40,11 +43,14 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Banking &gt; Own Account Transfer — service for the four endpoints
@@ -104,6 +110,8 @@ public class OwnAccountTransferService {
     private final BankInfmRepository           bankInfmRepo;
     private final NapasBankInfoRepository      napasBankInfoRepo;
     private final NapasRemitTrnsHstrRepository napasRemitTrnsHstrRepo;
+    private final BankCertInfoRepository       bankCertInfoRepo;
+    private final BankCertCryptoService        bankCertCrypto;
     private final AuditLogService              auditLog;
 
     /* =================================================================
@@ -183,6 +191,13 @@ public class OwnAccountTransferService {
                 ? Map.of()
                 : loadUserGrants(bizKey, userId);
 
+        // Phase B: batch-load BankCertInfo rows keyed by SEQ_NO so per-row
+        // cert projection is O(1) (avoids N+1 lookup per source-account).
+        // Per-row strategy: ACCT_MSTR.BANK_CERT_SEQ → BANK_CERT_INFO.SEQ_NO.
+        // Pre-Phase-B rows (no BANK_CERT_SEQ) get null cert fields and the
+        // composer's `hasSavedBankCert(source)` pre-flight handles them.
+        final Map<BigDecimal, BankCertInfo> certBySeq = loadBankCerts(bizKey, rows);
+
         final List<SourceAccountRow> projected = new java.util.ArrayList<>(rows.size());
         BigDecimal totBal     = BigDecimal.ZERO;
         BigDecimal totAviBal  = BigDecimal.ZERO;
@@ -192,7 +207,10 @@ public class OwnAccountTransferService {
             final GrantFlags grants = userGrants.getOrDefault(key, GrantFlags.EMPTY);
             if (!isAdmin && !grants.hasAny()) continue;
             final boolean canTransfer = isAdmin || grants.hasW();
-            projected.add(toSourceRow(a, canTransfer));
+            final BankCertInfo cert = a.getBankCertSeq() == null
+                    ? null
+                    : certBySeq.get(BigDecimal.valueOf(a.getBankCertSeq()));
+            projected.add(toSourceRow(a, canTransfer, cert));
             if (a.getBal()     != null) totBal    = totBal.add(a.getBal());
             if (a.getRealAmt() != null) totAviBal = totAviBal.add(a.getRealAmt());
         }
@@ -764,8 +782,21 @@ public class OwnAccountTransferService {
 
     /** Project a managed {@link AcctMstr} into the wire shape. Bank
      *  name resolves via {@code BANK_INFM}; falls back to the code
-     *  itself when the dictionary has no row. */
-    private SourceAccountRow toSourceRow(AcctMstr a, boolean canTransfer) {
+     *  itself when the dictionary has no row.
+     *
+     *  <p>Cert fields (Phase B activation): when a {@link BankCertInfo}
+     *  row is resolved (non-null), populate {@code certInfoCon} /
+     *  {@code certInfoDetlCon} (decrypted) / {@code certInfoDetlCon2} /
+     *  {@code nxisasGbSeqNo}. Otherwise leave them null and the
+     *  composer's pre-flight surfaces the "cert not configured"
+     *  warning. */
+    private SourceAccountRow toSourceRow(AcctMstr a, boolean canTransfer, BankCertInfo cert) {
+        final String certInfoCon       = cert == null ? null : cert.getCertInfoCon();
+        final String certInfoDetlCon   = cert == null ? null : decryptOrNull(cert.getCertInfoDetlCon());
+        final String certInfoDetlCon2  = cert == null ? null : decryptOrNull(cert.getCertInfoDetlCon2());
+        final String nxisasGbSeqNo     = cert == null || cert.getNxisasGbSeqNo() == null
+                ? null
+                : cert.getNxisasGbSeqNo().toPlainString();
         return new SourceAccountRow(
                 a.getBankCd(),
                 resolveBankName(a.getBankCd()),
@@ -780,7 +811,54 @@ public class OwnAccountTransferService {
                 a.getAcctBalUpdDtm(),
                 a.getAcctBalLstInqDtm(),
                 a.getBankCertSeq() == null ? null : a.getBankCertSeq().toString(),
+                certInfoCon,
+                certInfoDetlCon,
+                certInfoDetlCon2,
+                nxisasGbSeqNo,
                 canTransfer);
+    }
+
+    /** Batch-load every {@link BankCertInfo} row referenced by the
+     *  source rows' {@code BANK_CERT_SEQ} values. Avoids the N+1 query
+     *  pattern when projecting cert fields per row.
+     *
+     *  <p>Implementation note: {@link BankCertInfoRepository} doesn't
+     *  expose a batch-by-seq finder yet, so we filter the tenant's
+     *  cert list once and index by seq. Tenant cert tables are small
+     *  (single-digit to ~30 rows) so the full list is cheap. If a
+     *  future tenant grows beyond ~100 cert rows, add a
+     *  {@code findByBizKeyAndSeqNoIn} query and switch to it. */
+    private Map<BigDecimal, BankCertInfo> loadBankCerts(String bizKey, List<AcctMstr> rows) {
+        final Set<BigDecimal> wantedSeqs = new HashSet<>();
+        for (AcctMstr a : rows) {
+            if (a.getBankCertSeq() != null) {
+                wantedSeqs.add(BigDecimal.valueOf(a.getBankCertSeq()));
+            }
+        }
+        if (wantedSeqs.isEmpty()) return Collections.emptyMap();
+        final List<BankCertInfo> all = bankCertInfoRepo.findByBizKeyOrderBySeqNoAsc(bizKey);
+        final Map<BigDecimal, BankCertInfo> bySeq = new HashMap<>(all.size());
+        for (BankCertInfo b : all) {
+            if (b.getSeqNo() != null && wantedSeqs.contains(b.getSeqNo())) {
+                bySeq.put(b.getSeqNo(), b);
+            }
+        }
+        return bySeq;
+    }
+
+    /** Run {@link BankCertCryptoService#decrypt(String)} but swallow
+     *  failures into a null projection — a cert column the crypto
+     *  service rejects must not crash the whole page load. The
+     *  decrypt path itself is already plaintext-tolerant for R&D
+     *  seed data; this is just defence in depth. */
+    private String decryptOrNull(String ciphertext) {
+        if (ciphertext == null || ciphertext.isEmpty()) return null;
+        try {
+            return bankCertCrypto.decrypt(ciphertext);
+        } catch (Exception ex) {
+            log.warn("oat source-row cert decrypt failed — projecting as null", ex);
+            return null;
+        }
     }
 
     private String resolveBankName(String bankCd) {

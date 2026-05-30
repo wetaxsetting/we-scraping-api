@@ -3,12 +3,18 @@ package com.kosign.wecms.domain.banking.ownaccounttransfer.controller;
 import com.kosign.wecms.common.response.ApiResponse;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.request.BalanceRefreshRequest;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.request.EngineConnectionCheckRequest;
+import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.request.NxisasCertAcctListRequest;
+import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.request.NxisasDecryptRequest;
+import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.request.NxisasLoggingRequest;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.request.ScrapingResultIntakeRequest;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.response.BalanceRefreshResponse;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.response.NapasBankInfoRow;
+import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.response.NxisasCertAcctListResponse;
+import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.response.NxisasDecryptResponse;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.response.ScrapingResultResponse;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.response.SourceAccountListResponse;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.response.TargetAccountListResponse;
+import com.kosign.wecms.domain.banking.ownaccounttransfer.service.OatNxisasService;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.service.OwnAccountTransferService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -64,6 +70,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class OwnAccountTransferController {
 
     private final OwnAccountTransferService service;
+    private final OatNxisasService          nxisasService;
 
     /**
      * Source-account picker. All three params are optional; the
@@ -192,5 +199,73 @@ public class OwnAccountTransferController {
     public ApiResponse<ScrapingResultResponse> recordScrapingResult(
             @Valid @RequestBody ScrapingResultIntakeRequest req) {
         return ApiResponse.ok(service.recordScrapingResult(req));
+    }
+
+    /* =================================================================
+     *  Phase B — bundle-facing NXiSAS endpoints
+     *  -----------------------------------------------------------------
+     *  These four endpoints port the legacy JEX
+     *  {@code nxisas_acctList_r003} / {@code nxisas_decrypt} /
+     *  {@code nxisas_encrypt} / {@code nxisas_logging} actions so the
+     *  browser bundle's {@code jexjs.createAjaxUtil(...)} calls resolve
+     *  to real Spring REST endpoints (routed through the frontend
+     *  {@code jexjs-adapter.ts ENDPOINT_MAP}). Tenant scope rides on
+     *  the JWT — none of these endpoints accept a wire {@code biz_key}.
+     *
+     *  All four URLs live UNDER the OAT controller because OAT is the
+     *  first (today only) consumer. If a future feature (E-Invoice,
+     *  Operation Status) needs them, lift the service + DTOs to a
+     *  shared {@code domain/banking/nxisas/} module and add per-feature
+     *  controller endpoints alongside.
+     * ================================================================= */
+
+    /**
+     * Refactor port of legacy {@code nxisas_acctList_r003}. Resolves
+     * the five cert payload fields the bundle's
+     * {@code _v2nxisas.getCertInfo(seqNo)} consumes. Today the OAT
+     * composer pre-populates these on the source-account row, so the
+     * endpoint is a fallback — but the bundle calls it directly during
+     * 2nd-cert flows.
+     */
+    @PostMapping("/nxisas/cert-acct-list")
+    public ApiResponse<NxisasCertAcctListResponse> nxisasCertAcctList(
+            @Valid @RequestBody NxisasCertAcctListRequest req) {
+        return ApiResponse.ok(nxisasService.certAcctList(req));
+    }
+
+    /**
+     * Refactor port of legacy {@code nxisas_decrypt}. Coocon SEED-CBC
+     * is not bundled; this is a structured pass-through so the bundle's
+     * response chain doesn't crash. See {@link OatNxisasService#passthrough}
+     * for the rationale.
+     */
+    @PostMapping("/nxisas/decrypt")
+    public ApiResponse<NxisasDecryptResponse> nxisasDecrypt(
+            @RequestBody NxisasDecryptRequest req) {
+        return ApiResponse.ok(nxisasService.passthrough(req));
+    }
+
+    /**
+     * Refactor port of legacy {@code nxisas_encrypt}. Same pass-through
+     * shape as {@code /nxisas/decrypt} — no Coocon SEED-CBC encrypt
+     * path bundled.
+     */
+    @PostMapping("/nxisas/encrypt")
+    public ApiResponse<NxisasDecryptResponse> nxisasEncrypt(
+            @RequestBody NxisasDecryptRequest req) {
+        return ApiResponse.ok(nxisasService.passthrough(req));
+    }
+
+    /**
+     * Refactor port of legacy {@code nxisas_logging}. The bundle posts
+     * a serialised {@code _threadArray} as {@code JSON_STR}; the
+     * service writes one {@code NXSIAS_MODULE_TRAN_LOG_HIS} row per
+     * terminal job. Returns {@code 204 No Content} — the row IS the
+     * artifact.
+     */
+    @PostMapping("/nxisas/logging")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void nxisasLogging(@RequestBody NxisasLoggingRequest req) {
+        nxisasService.recordLogging(req);
     }
 }
