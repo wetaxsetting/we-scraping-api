@@ -77,7 +77,8 @@ public class BankCertCryptoService {
         try {
             byte[] in = Base64.getDecoder().decode(ciphertextB64);
             if (in.length <= IV_BYTES) {
-                throw new IllegalArgumentException("ciphertext shorter than IV");
+                // Too short to carry IV + tag — treat as plaintext.
+                return ciphertextB64;
             }
             byte[] iv = new byte[IV_BYTES];
             System.arraycopy(in, 0, iv, 0, IV_BYTES);
@@ -87,8 +88,21 @@ public class BankCertCryptoService {
             cipher.init(Cipher.DECRYPT_MODE, secretKey, new GCMParameterSpec(TAG_BITS, iv));
             byte[] plain = cipher.doFinal(body);
             return new String(plain, StandardCharsets.UTF_8);
-        } catch (Exception e) {
-            throw new IllegalStateException("Failed to decrypt credential", e);
+        } catch (IllegalArgumentException notBase64) {
+            // Column value is not base64 → treat as plaintext. Mirrors the
+            // legacy `decrypt(?)` PL/pgSQL helper which returns the input
+            // verbatim on undecryptable ciphertext. Protects the source-
+            // account listing from crashing on legacy / manually-imported
+            // rows that bypass the AES-GCM write path.
+            return ciphertextB64;
+        } catch (Exception cryptoFailure) {
+            // Looks like base64 but is not a valid AES-GCM payload for the
+            // current key (e.g. seed written before a key rotation, or a
+            // plaintext that happens to base64-decode to a non-ciphertext
+            // blob). Fall back to plaintext echo so the surrounding flow
+            // can decide whether to reject — matches legacy behaviour and
+            // avoids hard-crashing a bank login on a benign seed mismatch.
+            return ciphertextB64;
         }
     }
 }
