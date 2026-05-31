@@ -11,12 +11,19 @@ import java.math.BigDecimal;
  * from the dispatch tables (TB_PAY_TARGET / TB_PAY_FILE_DATA) once
  * those land. Phase A returns null for these fields until the dispatch
  * tables are migrated.
+ *
+ * <p>{@code fileNm} is sourced from {@code ScdulPymnSumr.orgFileNm} —
+ * the original Excel name the user uploaded. Distinct from {@code titl}
+ * which carries the approval-request title set when the batch was
+ * submitted for approval (rendered in the separate "Approval Title"
+ * column on the legacy {@code pymn_0010_001} list).
  */
 public record TransferResultRow(
         String     scdulPymnNo,
         String     scdulPymnTypeCd,
         String     ccyCd,
         String     titl,
+        String     fileNm,
         BigDecimal totalTranAmt,
         BigDecimal totTrnsCnt,
         BigDecimal totTrnsSuccCnt,

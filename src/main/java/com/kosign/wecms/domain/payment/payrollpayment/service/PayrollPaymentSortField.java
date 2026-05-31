@@ -8,22 +8,36 @@ import java.util.Optional;
  * Per-screen sort whitelist for the Payroll Payment "Scheduled Payment"
  * list endpoint (legacy {@code pymn_0005_001_r001}).
  *
- * <p>Mirrors {@link com.kosign.wecms.domain.payment.expensepayment.service.ExpensePaymentSortField}
+ * <p>Mirrors {@link com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferSortField}
  * one-for-one. Payroll, Expense, Vendor, and Internal Transfer share the
  * same physical {@code SCDUL_PYMN_SUMR} table — only the type discriminator
  * ({@code SCDUL_PYMN_TYPE_CD = '00'}) differs — so the same entity
  * property names apply.
+ *
+ * <p>Aligned with the V232 legacy {@code pymn_0005_001} seed FIELD_IDs
+ * (FILE_NM=File Name, DRAFT_USER_NM=Requestor, APPR_DOC_NO=Approval Ref,
+ * TITL=Approval Title; the V144-era REG_ID / APPR_SEQ_NO / TRNF_YN / DOC_NO
+ * constants are removed because the V232 seed no longer carries those
+ * FIELD_IDs).
+ *
+ * <p>{@code APPRVR_NM} (Approver) and {@code APPR_FUND_TP} (Payroll Type)
+ * are intentionally absent: both project from {@code EXPT_RESOL_MSTR} /
+ * the approval-line join, which the single-table paged query can't sort
+ * on. The seed carries {@code SORT_YN='Y'} for legacy parity but the
+ * frontend omits them from {@code SORTABLE_COLUMNS} so no glyph renders —
+ * same deferral as Internal Transfer's APPRVR_NM.
  */
 public enum PayrollPaymentSortField implements SortableField {
 
     REG_DTM       ("regDtm"),
-    TITL          ("titl"),
+    FILE_NM       ("orgFileNm"),
     TOT_TRNS_CNT  ("totTrnsCnt"),
     TOTAL_TRAN_AMT("totalTranAmt"),
-    REG_ID        ("regId"),
-    APPR_SEQ_NO   ("apprSeqNo"),
-    TRNF_YN       ("trnfYn"),
-    DOC_NO        ("erpFileNum");
+    PAY_DATE      ("payTranDt"),
+    APPR_STTS     ("apprStts"),
+    DRAFT_USER_NM ("regId"),
+    APPR_DOC_NO   ("erpFileNum"),
+    TITL          ("titl");
 
     private final String entityProperty;
 

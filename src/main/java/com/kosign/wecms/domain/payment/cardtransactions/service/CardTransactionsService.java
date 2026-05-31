@@ -1706,6 +1706,38 @@ public class CardTransactionsService {
                 bizKey, cardSeqNo, req.chartAcctCd());
     }
 
+    /**
+     * Clear (null out) {@code CHART_ACCT_SEQ_NO} + {@code CHART_ACCT_CD} on
+     * one row. Backs the clear-first × button on the inline Reporting
+     * Account cell — there is no chart-of-accounts validation because the
+     * target is null. Reuses the same `patchReportingAccount` modifying
+     * query with null binds, and the same audit activity / detail key as
+     * the paired update (clearing is a reporting-account change).
+     */
+    @Transactional
+    public void clearReportingAccount(String cardSeqNo) {
+        String bizKey = requireTenant();
+
+        int rows = cardTrnsRepo.patchReportingAccount(
+                bizKey, cardSeqNo,
+                null, null,
+                requireUserId(), nowDtm14());
+        if (rows == 0) {
+            throw new BusinessException("WBE_CARD_TRANSACTIONS_NOT_FOUND");
+        }
+
+        auditLogService.append(AuditLogContext.builder()
+                .wsvcId(WSVC_ID)
+                .refNo(REF_NO)
+                .refNo1(cardSeqNo)
+                .activityKey(AUDIT_ACTIVITY_KEY)
+                .detailKey(AUDIT_UPDATE_REPORTING_ACCOUNT_KEY)
+                .build());
+
+        log.info("feature=card-transactions clear-reporting bizKey={} cardSeqNo={}",
+                bizKey, cardSeqNo);
+    }
+
     /* ----------------------------------------------------------------
      *  Helpers
      * ---------------------------------------------------------------- */

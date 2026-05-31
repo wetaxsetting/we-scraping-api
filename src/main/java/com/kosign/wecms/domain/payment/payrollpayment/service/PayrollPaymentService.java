@@ -39,6 +39,7 @@ import com.kosign.wecms.domain.auth.repository.BusiInfmRepository;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolApprvrInfm;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolApprvrInfmRepository;
+import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprDv;
 import com.kosign.wecms.domain.payment.service.DocNoGenerator;
@@ -201,9 +202,12 @@ public class PayrollPaymentService {
                 apprTypeArg,
                 pageable);
 
-        Map<String, String> docNoByApprSeqNo = buildDocNoMap(bizKey, rows.getContent());
+        // One EXPT_RESOL_MSTR fetch feeds both the Approval Ref (DOC_NO)
+        // and the Payroll Type (APPR_FUND_TP) columns — both join from
+        // EXPT_RESOL_MSTR on APPR_SEQ_NO (legacy IDO.SCDUL_PYMN_SUMR_R002).
+        Map<String, ExptResolMstr> exptBySeqNo = fetchExptResolByApprSeqNo(bizKey, rows.getContent());
         List<ScheduledTransferRow> dtoRows = rows.getContent().stream()
-                .map(r -> toListRow(r, docNoByApprSeqNo))
+                .map(r -> toListRow(r, exptBySeqNo))
                 .toList();
         List<CurrencyTotal> totals = computeCurrencyTotals(rows.getContent());
 
@@ -956,7 +960,14 @@ public class PayrollPaymentService {
                 .orElseThrow(() -> new BusinessException("WBE2060"));
     }
 
-    private Map<String, String> buildDocNoMap(String bizKey, List<ScdulPymnSumr> rows) {
+    /**
+     * Fetch the {@code EXPT_RESOL_MSTR} rows backing the current page's
+     * batches, keyed by {@code APPR_SEQ_NO}. One query; callers derive
+     * both {@code DOC_NO} (Approval Ref) and {@code APPR_FUND_TP}
+     * (Payroll Type) from the same rows — mirrors the legacy
+     * {@code IDO.SCDUL_PYMN_SUMR_R002} LEFT JOIN.
+     */
+    private Map<String, ExptResolMstr> fetchExptResolByApprSeqNo(String bizKey, List<ScdulPymnSumr> rows) {
         List<String> apprSeqNos = rows.stream()
                 .map(ScdulPymnSumr::getApprSeqNo)
                 .filter(seq -> seq != null && !seq.isBlank())
@@ -965,18 +976,22 @@ public class PayrollPaymentService {
         if (apprSeqNos.isEmpty()) return Map.of();
         return exptResolMstrRepository.findByBizKeyAndApprSeqNoIn(bizKey, apprSeqNos)
                 .stream()
-                .filter(m -> m.getDocNo() != null)
                 .collect(java.util.stream.Collectors.toMap(
-                        com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr::getApprSeqNo,
-                        com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr::getDocNo,
+                        ExptResolMstr::getApprSeqNo,
+                        m -> m,
                         (a, b) -> a));
     }
 
     private static ScheduledTransferRow toListRow(ScdulPymnSumr s,
-                                                   Map<String, String> docNoByApprSeqNo) {
-        String docNo = s.getApprSeqNo() != null
-                ? docNoByApprSeqNo.getOrDefault(s.getApprSeqNo(), s.getErpFileNum())
+                                                   Map<String, ExptResolMstr> exptBySeqNo) {
+        ExptResolMstr erm = s.getApprSeqNo() != null ? exptBySeqNo.get(s.getApprSeqNo()) : null;
+        String docNo = (erm != null && erm.getDocNo() != null)
+                ? erm.getDocNo()
                 : s.getErpFileNum();
+        // Payroll Type — joined from EXPT_RESOL_MSTR.APPR_FUND_TP
+        // ("0"=Salary, "1"=Bonus, else blank; resolved to a label
+        // on the frontend). Null until the batch has an approval row.
+        String apprFundTp = erm != null ? erm.getApprFundTp() : null;
         return new ScheduledTransferRow(
                 s.getScdulPymnNo(),
                 s.getScdulPymnTypeCd(),
@@ -996,7 +1011,8 @@ public class PayrollPaymentService {
                 s.getPayTranDt(),
                 s.getOrgFileNm(),
                 docNo,
-                s.getWdrlCcyCd());
+                s.getWdrlCcyCd(),
+                apprFundTp);
     }
 
     private static List<CurrencyTotal> computeCurrencyTotals(List<ScdulPymnSumr> rows) {

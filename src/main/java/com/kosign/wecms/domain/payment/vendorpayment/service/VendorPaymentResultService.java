@@ -209,6 +209,7 @@ public class VendorPaymentResultService {
                 s.getScdulPymnTypeCd(),
                 s.getCcyCd(),
                 s.getTitl(),
+                s.getOrgFileNm(),
                 s.getTotalTranAmt(),
                 s.getTotTrnsCnt(),
                 succ,

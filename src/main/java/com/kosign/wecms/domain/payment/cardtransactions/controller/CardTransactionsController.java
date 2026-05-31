@@ -283,6 +283,25 @@ public class CardTransactionsController {
         return ApiResponse.ok(null);
     }
 
+    /**
+     * Clear (null out) {@code CHART_ACCT_SEQ_NO} + {@code CHART_ACCT_CD} on
+     * one row — the clear-first flow's × button on the inline Reporting
+     * Account cell. Mirrors the Transaction History reporting-account clear.
+     *
+     * <p>Errors: {@code WBE_CARD_TRANSACTIONS_NOT_FOUND} — row missing OR
+     * wrong tenant. Idempotent — clearing an already-empty row succeeds.
+     */
+    @DeleteMapping("/{card_seq_no}/reporting-account")
+    public ApiResponse<Void> clearReportingAccount(
+            @PathVariable("card_seq_no")
+            @NotBlank @Size(max = 20)
+            @Pattern(regexp = CARD_SEQ_NO_PATTERN,
+                    message = "card_seq_no: invalid format")
+            String cardSeqNo) {
+        service.clearReportingAccount(cardSeqNo);
+        return ApiResponse.ok(null);
+    }
+
     /* ----------------------------------------------------------------
      *  Card Management Setting modal (legacy card_0001_003)
      * ---------------------------------------------------------------- */

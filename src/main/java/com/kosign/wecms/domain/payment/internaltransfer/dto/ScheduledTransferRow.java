@@ -28,4 +28,47 @@ public record ScheduledTransferRow(
         String     payDate,
         String     fileNm,
         String     docNo,
-        String     wdrlCcyCd) { }
+        String     wdrlCcyCd,
+        /**
+         * Legacy {@code APPR_FUND_TP} (Payroll Type) — joined from
+         * {@code EXPT_RESOL_MSTR}. {@code "0"}=Salary, {@code "1"}=Bonus,
+         * else blank. Only the Payroll Scheduled list populates it
+         * (legacy {@code pymn_0005_001}); the Internal Transfer / Vendor /
+         * Expense siblings pass {@code null} via the legacy constructor
+         * below.
+         */
+        String     apprFundTp) {
+
+    /**
+     * Backward-compatible constructor for the sibling modules (Internal
+     * Transfer / Vendor / Expense) that don't carry a Payroll Type
+     * column — delegates to the canonical constructor with
+     * {@code apprFundTp = null} so their {@code toListRow(...)} call
+     * sites compile unchanged.
+     */
+    public ScheduledTransferRow(
+            String     scdulPymnNo,
+            String     scdulPymnTypeCd,
+            String     ccyCd,
+            String     titl,
+            String     apprSeqNo,
+            BigDecimal totalTranAmt,
+            BigDecimal totTrnsCnt,
+            String     regDtm,
+            String     regId,
+            String     apprStts,
+            String     apprSttsKey,
+            String     trnfStts,
+            String     trnfYn,
+            String     outBankCd,
+            String     wdrlActNo,
+            String     payDate,
+            String     fileNm,
+            String     docNo,
+            String     wdrlCcyCd) {
+        this(scdulPymnNo, scdulPymnTypeCd, ccyCd, titl, apprSeqNo,
+             totalTranAmt, totTrnsCnt, regDtm, regId, apprStts,
+             apprSttsKey, trnfStts, trnfYn, outBankCd, wdrlActNo,
+             payDate, fileNm, docNo, wdrlCcyCd, null);
+    }
+}
