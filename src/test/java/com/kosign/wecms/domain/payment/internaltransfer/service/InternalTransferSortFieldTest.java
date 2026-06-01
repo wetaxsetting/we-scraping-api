@@ -39,7 +39,7 @@ class InternalTransferSortFieldTest {
         assertThat(InternalTransferSortField.REG_DTM.entityProperty()).isEqualTo("regDtm");
         assertThat(InternalTransferSortField.TITL.entityProperty()).isEqualTo("titl");
         assertThat(InternalTransferSortField.TOTAL_TRAN_AMT.entityProperty()).isEqualTo("totalTranAmt");
-        assertThat(InternalTransferSortField.TRNF_YN.entityProperty()).isEqualTo("trnfYn");
+        assertThat(InternalTransferSortField.PAY_DATE.entityProperty()).isEqualTo("payTranDt");
     }
 
     @Test
@@ -50,7 +50,7 @@ class InternalTransferSortFieldTest {
 
     @Test
     void result_parse_should_map_canonical_field_ids() {
-        assertThat(InternalTransferResultSortField.parse("TRNF_YN"))
-                .contains(InternalTransferResultSortField.TRNF_YN);
+        assertThat(InternalTransferResultSortField.parse("PROC_STAT"))
+                .contains(InternalTransferResultSortField.PROC_STAT);
     }
 }

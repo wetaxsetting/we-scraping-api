@@ -23,11 +23,24 @@ class CardTrnsHstrSortFieldTest {
         assertThat(CardTrnsHstrSortField.parse("   ")).isEmpty();
         assertThat(CardTrnsHstrSortField.parse("DROP_TABLE")).isEmpty();
         assertThat(CardTrnsHstrSortField.parse("checkbox_1")).isEmpty();
-        // Projection-only columns are intentionally absent from the
-        // whitelist — they ship with SORT_YN='N' in the V176 seed.
-        assertThat(CardTrnsHstrSortField.parse("DISP_DOC_ID")).isEmpty();
-        assertThat(CardTrnsHstrSortField.parse("APPR_DOC_NO")).isEmpty();
-        assertThat(CardTrnsHstrSortField.parse("CHART_ACCT_NM")).isEmpty();
+        // Special FIELD_IDs ride through View Setting but are never
+        // sortable — absent from the whitelist per CLAUDE.md §"Common
+        // table sort".
+        assertThat(CardTrnsHstrSortField.parse("MEMO")).isEmpty();
+    }
+
+    @Test
+    void parse_mapsProjectionOnlyColumnsToProxyConstants() {
+        // The V237 reseed flipped every one of the 13 user data columns
+        // to SORT_YN='Y', so the projection-only columns now resolve to
+        // their proxy-mapped constants (no silent default-ORDER-BY
+        // fallback for a column the UI shows as sortable).
+        assertThat(CardTrnsHstrSortField.parse("DISP_DOC_ID"))
+                .contains(CardTrnsHstrSortField.DISP_DOC_ID);
+        assertThat(CardTrnsHstrSortField.parse("APPR_DOC_NO"))
+                .contains(CardTrnsHstrSortField.APPR_DOC_NO);
+        assertThat(CardTrnsHstrSortField.parse("CHART_ACCT_NM"))
+                .contains(CardTrnsHstrSortField.CHART_ACCT_NM);
     }
 
     @Test

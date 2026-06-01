@@ -31,7 +31,9 @@
       "PowerShell(Get-Process *)",
       "PowerShell(.\\\\gradlew build -x test 2>&1 | Select-Object -Last 80)",
       "PowerShell(.\\\\gradlew build 2>&1 | Select-Object -Last 100)",
-      "PowerShell(.\\\\gradlew build 2>&1 | Select-Object -Last 60)"
+      "PowerShell(.\\\\gradlew build 2>&1 | Select-Object -Last 60)",
+      "PowerShell(.\\\\gradlew.bat compileJava --rerun-tasks 2>&1 | Select-Object -Last 40)",
+      "PowerShell(Get-NetTCPConnection *)"
     ]
   },
   "enabledMcpjsonServers": [

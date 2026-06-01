@@ -83,11 +83,17 @@ public class TransferDispatchExecutor {
 
     /** Hard-coded {@code TB_PAY_FILE_MST.FUND_TP} = 'O' (other). Legacy
      *  PymnHelper:2222 uses {@code FundTp.OTHER}. */
-    private static final String FUND_TP_OTHER = "O";
+    // Legacy parity — FundTp.OTHER = "9" (wabooks/enums/FundTp.java:9).
+    // Verified against JEX DEV: tb_pay_file_mst.fund_tp ∈ {'0','1','9','S'}
+    // — the letter 'O' was never a valid value.
+    private static final String FUND_TP_OTHER = "9";
 
     /** Hard-coded {@code TB_PAY_FILE_MST.TRAN_TP} = 'D' (deposit). Legacy
      *  PymnHelper:2223 uses {@code TranTpF.DEPOSIT}. */
-    private static final String TRAN_TP_DEPOSIT = "D";
+    // Legacy parity — TranTpF.DEPOSIT = "1" (wabooks/enums/TranTpF.java:8).
+    // Verified against JEX DEV: tb_pay_file_mst.tran_tp = '1' on every row
+    // — the letter 'D' was never a valid value.
+    private static final String TRAN_TP_DEPOSIT = "1";
 
     /** {@code TB_PAY_FILE_DATA.FINC_MDA_DIV} = 'A' (account). Legacy
      *  PymnHelper:2259 uses {@code FincMdaDiv.ACCOUNT}. */

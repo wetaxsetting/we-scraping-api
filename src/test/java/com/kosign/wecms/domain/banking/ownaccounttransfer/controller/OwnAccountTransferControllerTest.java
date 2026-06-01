@@ -12,6 +12,7 @@ import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.response.BalanceRe
 import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.response.NapasBankInfoRow;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.response.SourceAccountListResponse;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.response.SourceAccountRow;
+import com.kosign.wecms.domain.banking.ownaccounttransfer.service.OatNxisasService;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.service.OwnAccountTransferService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -52,10 +53,12 @@ class OwnAccountTransferControllerTest {
 
     private MockMvc mvc;
     private OwnAccountTransferService service;
+    private OatNxisasService nxisasService;
 
     @BeforeEach
     void setUp() {
         service = mock(OwnAccountTransferService.class);
+        nxisasService = mock(OatNxisasService.class);
 
         ObjectMapper mapper = new ObjectMapper()
                 .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
@@ -70,7 +73,7 @@ class OwnAccountTransferControllerTest {
         GlobalExceptionHandler advice = new GlobalExceptionHandler(messages);
 
         mvc = MockMvcBuilders
-                .standaloneSetup(new OwnAccountTransferController(service))
+                .standaloneSetup(new OwnAccountTransferController(service, nxisasService))
                 .setMessageConverters(jsonConverter)
                 .setControllerAdvice(advice)
                 .build();
@@ -95,7 +98,9 @@ class OwnAccountTransferControllerTest {
                 new BigDecimal("100.00"), new BigDecimal("90.00"),
                 "VND", "00000000", null,
                 "20260518100000", "20260518100000",
-                "12345", true);
+                "12345",
+                null, null, null, null,
+                true);
         SourceAccountListResponse payload = new SourceAccountListResponse(
                 List.of(row), 1, new BigDecimal("100.00"), new BigDecimal("90.00"),
                 List.of("11704088", "11704003", "11704004", "11704001", "11704020"));
