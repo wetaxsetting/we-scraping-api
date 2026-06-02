@@ -1,0 +1,154 @@
+%% WeCMS-API — Full-project ERD (Shared/Common hub + cross-module relationships)
+%% Source of truth: Flyway migrations + JPA entities. Generated 2026-06-01.
+%% This diagram shows the Shared/Common tables in full plus the cross-module spine:
+%% how each module anchors on the multi-tenant hub BUSI_INFM (BIZ_KEY) and the key
+%% cross-module logical links. Per-module attribute detail lives in the module .mmd files.
+%% FK = declared FOREIGN KEY in SQL. LOGICAL = column references another table but NO FK is enforced.
+erDiagram
+    %% ---- Shared / Common (hub) ----
+    BUSI_INFM {
+        varchar BIZ_KEY PK
+        varchar BUSI_NM
+        varchar NTNL_CD "logical -> NATN_INFM"
+        varchar PRDT_TYPE "F|M|H.."
+        varchar DEL_YN "Y|N"
+    }
+    USER_INFM {
+        varchar USER_ID PK
+        varchar USER_NM
+        varchar ACTV_YN "Y|N"
+        varchar LOCK_YN "Y|N"
+        varchar DEL_YN "Y|N"
+        varchar LANG_CD "EN|KO|KM|VI"
+    }
+    USER_BUSI_CONN_INFM {
+        varchar USER_ID PK,FK "-> USER_INFM"
+        varchar BIZ_KEY PK,FK "-> BUSI_INFM"
+        varchar DEL_YN "Y|N"
+    }
+    BUSI_ADMN_INFM {
+        varchar BIZ_KEY PK,FK "-> BUSI_INFM"
+        varchar USER_ID PK,FK "-> USER_INFM"
+    }
+    EMPL_INFM {
+        varchar BIZ_KEY PK,FK "-> BUSI_INFM"
+        varchar EMPL_NO PK
+        varchar EMPL_NM
+    }
+    USER_LOGIN_HIS {
+        varchar USER_ID PK "logical -> USER_INFM"
+        timestamptz REG_DTM PK
+        varchar RSLT_CD "SUCCESS|FAIL"
+    }
+    USER_PW_CHG_HIS {
+        varchar USER_ID PK "logical -> USER_INFM"
+        bigint REG_SEQ_NO PK
+    }
+    BANK_INFM {
+        varchar BANK_CD PK
+        varchar RPRS_BANK_NM
+    }
+    BANK_INFM_DETL {
+        varchar BANK_CD PK "logical -> BANK_INFM"
+        varchar BANK_DETL_INFO_CD PK
+        varchar START_DATE PK
+    }
+    NAPAS_BANK_INFO {
+        varchar NAPAS_BANK_CD PK
+        varchar BANK_CD "logical -> BANK_INFM"
+    }
+    NATN_INFM {
+        varchar NTNL_CD PK
+        varchar NATL_NM
+    }
+    AUDIT_LOGS_INFM {
+        varchar BIZ_KEY PK
+        numeric AUDIT_LOGS_SEQ_NO PK
+        varchar WSVC_ID PK "route slug"
+        varchar LANG_CD PK
+        varchar REF_NO
+    }
+    SYS_SCR_OPTION_WECMS {
+        varchar WEB_SVC_ID PK
+        varchar FIELD_ID PK
+        varchar USE_YN "Y|N"
+        varchar FIX_YN "Y|N"
+    }
+    USER_SCR_OPTION_WECMS {
+        varchar BIZ_KEY PK
+        varchar USER_ID PK "logical -> USER_INFM"
+        varchar WEB_SVC_ID PK "logical -> SYS_SCR_OPTION_WECMS"
+        varchar FIELD_ID PK
+    }
+    USER_MENU_AUTH_INFM {
+        varchar BIZ_KEY PK
+        varchar USER_ID PK "logical -> USER_INFM"
+        varchar MENU_AUTH_CD PK "menu slug"
+        varchar USE_YN "Y"
+    }
+    SHEDLOCK {
+        varchar NAME PK "job id"
+        timestamp LOCK_UNTIL
+    }
+
+    %% ---- One representative anchor entity per module (full detail in module .mmd) ----
+    ACCT_MSTR {
+        varchar BIZ_KEY PK
+        varchar BANK_CD PK
+        varchar ACCT_NO PK
+    }
+    SCDUL_PYMN_SUMR {
+        varchar BIZ_KEY PK
+        varchar SCDUL_PYMN_NO PK
+    }
+    EXPT_RESOL_MSTR {
+        varchar BIZ_KEY PK
+        varchar APPR_SEQ_NO PK
+    }
+    BUSA_DOC_MSTR {
+        varchar BIZ_KEY PK
+        varchar DOC_ID PK
+    }
+    CARD_TRNS_HSTR {
+        varchar BIZ_KEY PK
+        varchar CARD_SEQ_NO PK
+    }
+    TRCO_INFM {
+        varchar TRCO_KEY PK
+        varchar BIZ_KEY
+    }
+    CHART_ACCT_INFM {
+        varchar BIZ_KEY PK
+        varchar CHART_ACCT_SEQ_NO PK
+    }
+
+    %% ---- Shared / Common internal ----
+    BUSI_INFM ||--o{ USER_BUSI_CONN_INFM : "FK"
+    USER_INFM ||--o{ USER_BUSI_CONN_INFM : "FK"
+    BUSI_INFM ||--o{ BUSI_ADMN_INFM      : "FK"
+    USER_INFM ||--o{ BUSI_ADMN_INFM      : "FK"
+    BUSI_INFM ||--o{ EMPL_INFM           : "FK"
+    USER_INFM ||--o{ USER_LOGIN_HIS      : "LOGICAL"
+    USER_INFM ||--o{ USER_PW_CHG_HIS     : "LOGICAL"
+    USER_INFM ||--o{ USER_MENU_AUTH_INFM : "LOGICAL"
+    NATN_INFM ||--o{ BUSI_INFM           : "LOGICAL (NTNL_CD)"
+    BANK_INFM ||--o{ BANK_INFM_DETL      : "LOGICAL (BANK_CD)"
+    BANK_INFM ||--o{ NAPAS_BANK_INFO     : "LOGICAL (BANK_CD)"
+    SYS_SCR_OPTION_WECMS ||--o{ USER_SCR_OPTION_WECMS : "LOGICAL (defaults)"
+
+    %% ---- Tenant hub -> each module (all LOGICAL via BIZ_KEY unless noted) ----
+    BUSI_INFM ||--o{ ACCT_MSTR       : "Banking (LOGICAL)"
+    BUSI_INFM ||--o{ SCDUL_PYMN_SUMR : "Payment (FK)"
+    BUSI_INFM ||--o{ EXPT_RESOL_MSTR : "Payment-approval (FK)"
+    BUSI_INFM ||--o{ BUSA_DOC_MSTR   : "Add-on e-invoice (LOGICAL)"
+    BUSI_INFM ||--o{ CARD_TRNS_HSTR  : "Add-on card (LOGICAL)"
+    BUSI_INFM ||--o{ TRCO_INFM       : "Settings-contacts (LOGICAL)"
+    BUSI_INFM ||--o{ CHART_ACCT_INFM : "Settings-COA (LOGICAL)"
+
+    %% ---- Cross-module logical links ----
+    BANK_INFM       ||--o{ ACCT_MSTR       : "bank ref (LOGICAL)"
+    EXPT_RESOL_MSTR ||--o{ SCDUL_PYMN_SUMR : "approves (LOGICAL APPR_SEQ_NO)"
+    EXPT_RESOL_MSTR ||--o{ CARD_TRNS_HSTR  : "approves (LOGICAL APPR_SEQ_NO)"
+    TRCO_INFM       ||--o{ SCDUL_PYMN_SUMR : "payee (LOGICAL via detail)"
+    CHART_ACCT_INFM ||--o{ CARD_TRNS_HSTR  : "GL account (LOGICAL)"
+    CHART_ACCT_INFM ||--o{ SCDUL_PYMN_SUMR : "GL account (LOGICAL via detail)"

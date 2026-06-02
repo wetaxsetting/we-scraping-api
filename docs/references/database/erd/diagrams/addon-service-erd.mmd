@@ -1,0 +1,83 @@
+%% WeCMS-API — Add-on Service module ERD (e-Invoice, Operation Status, Card Transactions)
+%% Source of truth: Flyway migrations + JPA entities under domain/einvoice, domain/operation, domain/payment/cardtransactions
+%% Generated 2026-06-01. Tenant-scoped by BIZ_KEY.
+%% FK = declared FOREIGN KEY in SQL. LOGICAL = column references another table but NO FK is enforced.
+%% NOTE: the V14 report tables (BUSI_COND_DAILY_SUMR(_DETL), SELL_HIS_DAILY_SUMR(_DETL), BAT_CALL_HIS)
+%%       were DROPPED in V31 (not in PROD active list) and are intentionally omitted.
+erDiagram
+    BUSA_DOC_MSTR {
+        varchar BIZ_KEY PK
+        varchar DOC_ID PK
+        char DOC_TYPE "I sales|B expense"
+        varchar INV_TYPE "C commercial|tax"
+        varchar PROV_STTS "OP|PP|PA|VD|EE"
+        varchar PAY_DUE_CD "15|30|60|00"
+        varchar HAND_REG_YN "Y|N"
+        varchar TRCO_TAX_ID "logical -> OPRT_STTS_INFO"
+        varchar REG_DTM
+    }
+    EINV_FEE_DETL {
+        varchar BIZ_KEY PK
+        varchar DOC_ID PK "logical -> BUSA_DOC_MSTR"
+        numeric DISP_ORD PK
+        varchar EINV_FEENAME
+        numeric EINV_FEE
+    }
+    EINV_TAX_DETL {
+        varchar BIZ_KEY PK
+        varchar DOC_ID PK "logical -> BUSA_DOC_MSTR"
+        numeric DISP_ORD PK
+        varchar EINV_TAXRATE
+        numeric TAX_AMT
+    }
+    OPRT_STTS_INFO {
+        varchar BIZ_KEY PK
+        varchar TAXCODE PK
+        varchar COMPANYNAME
+        varchar COMPANYSTATUS "free-form GDT text"
+        varchar SEARCHDATETIME
+    }
+    EXT_TRAN_CALL_HIS {
+        varchar SVC_ID PK
+        varchar REF_DATE PK
+        numeric SEQ_NO PK
+        varchar WEB_SVC_ID
+        varchar TAXCODE "logical -> OPRT_STTS_INFO"
+        varchar BIZ_KEY
+        varchar RSLT_CD
+    }
+    CARD_MSTR {
+        varchar BIZ_KEY PK
+        varchar BANK_CD PK
+        varchar CARD_NO PK
+        char CARD_TYPE_CD
+        varchar CARD_NICK_NM
+        varchar CARD_HLDR_NM
+        char ACTV_YN "Y|N"
+    }
+    CARD_TRNS_HSTR {
+        varchar BIZ_KEY PK
+        varchar CARD_SEQ_NO PK
+        varchar BANK_CD "logical -> CARD_MSTR"
+        varchar CARD_NO "logical -> CARD_MSTR"
+        varchar TRSC_DT
+        char INOUT_DV "0|1|2"
+        numeric TRSC_AMT
+        varchar APPR_SEQ_NO "logical -> EXPT_RESOL_MSTR"
+        varchar CHART_ACCT_SEQ_NO "logical -> CHART_ACCT_INFM"
+        char ERP_SND_YN "Y|N"
+    }
+    CARD_TRNS_RCV_PAY_INFM {
+        varchar BIZ_KEY PK
+        varchar CARD_SEQ_NO PK "logical -> CARD_TRNS_HSTR"
+        numeric RCV_PAY_SEQ_NO PK
+        varchar BANK_CD
+        varchar CARD_NO
+        numeric RCV_PAY_AMT
+    }
+
+    BUSA_DOC_MSTR  ||--o{ EINV_FEE_DETL          : "fee lines (LOGICAL)"
+    BUSA_DOC_MSTR  ||--o{ EINV_TAX_DETL          : "tax lines (LOGICAL)"
+    OPRT_STTS_INFO ||--o{ EXT_TRAN_CALL_HIS      : "GDT call log (LOGICAL)"
+    CARD_MSTR      ||--o{ CARD_TRNS_HSTR         : "card transactions (LOGICAL, LEFT JOIN)"
+    CARD_TRNS_HSTR ||--o{ CARD_TRNS_RCV_PAY_INFM : "receipt/payment link (LOGICAL)"

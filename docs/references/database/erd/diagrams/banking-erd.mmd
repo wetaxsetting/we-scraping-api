@@ -1,0 +1,108 @@
+%% WeCMS-API — Banking module ERD
+%% Source of truth: Flyway migrations under src/main/resources/db/migration + JPA entities under domain/banking
+%% Generated 2026-06-01. Relationships are tenant-scoped by BIZ_KEY.
+%% FK = declared FOREIGN KEY in SQL. LOGICAL = column references another table but NO FK is enforced.
+erDiagram
+    ACCT_MSTR {
+        varchar BIZ_KEY PK
+        varchar BANK_CD PK "logical -> BANK_INFM"
+        varchar ACCT_NO PK
+        varchar ACCT_TYPE_CD "code: 02..08"
+        varchar CCY_CD "VND|USD|KRW.."
+        varchar ACCT_NICK_NM
+        numeric PRN_SEQ "print order"
+        varchar ACCT_BAL_INQ_STTS
+        varchar ACTV_YN "use flag Y|N"
+        varchar REG_DTM
+        varchar MOD_DTM
+    }
+    ACCT_TRNS_HSTR {
+        varchar BIZ_KEY PK
+        varchar ACCT_SEQ_NO PK
+        varchar BANK_CD "logical -> ACCT_MSTR"
+        varchar ACCT_NO "logical -> ACCT_MSTR"
+        varchar TRSC_DT
+        varchar INOUT_DV "in/out direction"
+        numeric TRSC_AMT
+        varchar BANK_TRNS_FULL_ID "dedup hash"
+        varchar LINK_MATCH_YN "Y|N"
+        varchar LOCKED_YN "user-locked Y|N"
+    }
+    ACCT_TRNS_RCV_PAY_INFM {
+        varchar BIZ_KEY PK
+        varchar ACCT_SEQ_NO PK "logical -> ACCT_TRNS_HSTR"
+        varchar RCV_PAY_SEQ_NO PK
+        varchar RCV_PAY_TRCO_KEY "logical -> TRCO_INFM"
+        varchar RCV_PAY_USAG_CD
+        varchar RCV_PAY_AMT
+        varchar CNFM_YN "Y|N"
+    }
+    BUSA_DOC_RCV_PAY_HIS {
+        varchar BIZ_KEY PK
+        varchar DOC_ID PK "logical -> BUSA_DOC_MSTR"
+        numeric SEQ_NO PK
+        varchar ACCT_SEQ_NO "logical -> ACCT_TRNS_HSTR"
+        numeric AMT
+    }
+    NAPAS_REMIT_TRNS_HSTR {
+        varchar BIZ_KEY PK
+        numeric SEQ_NO PK
+        varchar OUT_BANK_CODE "logical -> BANK_INFM"
+        varchar IN_NAPAS_BANK_CODE "logical -> NAPAS_BANK_INFO"
+        varchar CCY_CD
+        numeric TRSC_AMT
+        varchar TRNS_STTS "status code"
+    }
+    BANK_EXCH_RATE_INFM {
+        varchar BIZ_KEY PK
+        varchar BANK_CD PK "logical -> BANK_INFM"
+        varchar REF_DATE PK
+        varchar CCY_CD PK
+        varchar EXCH_SEQ_NO PK
+        numeric BUY_AMT
+        numeric SELL_AMT
+        varchar ERP_SND_YN "Y|N"
+    }
+    RMRK_ORG_INFM {
+        varchar BIZ_KEY PK
+        bigint RMRK_SEQ_NO PK
+        varchar RCV_PAY_DV "RCV|PAY"
+        varchar RMRK "rule text"
+        char MATCH_TYPE "E|I"
+        integer DISP_ORD
+        varchar USE_USAG_CD "logical -> USAG_INFM"
+        bigint VAS_ACCT_SEQ_NO "logical -> BUSI_VAS_ACCT_INFM"
+    }
+    MEMO_INFM {
+        varchar BIZ_KEY PK
+        varchar WEB_SVC_ID PK "page slug"
+        numeric SEQ_NO PK
+        varchar COLOR "color category"
+        varchar REF_NO "polymorphic parent id"
+        varchar MEMO
+    }
+    BUSI_MATCH_LOG {
+        varchar BIZ_KEY PK
+        varchar MATCH_LOG_SEQ PK
+        varchar BANK_TRNS_FULL_ID "logical -> ACCT_TRNS_HSTR"
+        varchar PAY_TRNS_ID
+        char MATCH_TYPE_CD
+        varchar LOCKED_YN "Y|N"
+    }
+    DAILY_CASH_REPT_DAILY_SUMR_DETL {
+        varchar BIZ_KEY PK
+        varchar REF_DATE PK
+        char CCY_CD PK "VND|USD|KRW"
+        char ACCT_TYPE_CD PK
+        varchar BANK_CD PK "logical -> ACCT_MSTR"
+        varchar ACCT_NO PK "logical -> ACCT_MSTR"
+        numeric BAL
+        numeric SND_AMT
+        numeric RCV_AMT
+    }
+
+    ACCT_MSTR        ||--o{ ACCT_TRNS_HSTR                  : "has transactions (LOGICAL)"
+    ACCT_MSTR        ||--o{ DAILY_CASH_REPT_DAILY_SUMR_DETL : "daily summary (LOGICAL)"
+    ACCT_TRNS_HSTR   ||--o{ ACCT_TRNS_RCV_PAY_INFM          : "receipt/payment match (LOGICAL)"
+    ACCT_TRNS_HSTR   ||--o{ BUSA_DOC_RCV_PAY_HIS            : "doc payment link (LOGICAL)"
+    ACCT_TRNS_HSTR   ||--o{ BUSI_MATCH_LOG                  : "match audit (LOGICAL)"

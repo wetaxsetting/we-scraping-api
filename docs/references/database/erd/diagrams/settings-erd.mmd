@@ -1,0 +1,176 @@
+%% WeCMS-API — Settings module ERD
+%% Source of truth: Flyway migrations + JPA entities under domain/setting
+%% Generated 2026-06-01. Tenant-scoped by BIZ_KEY (except global lookups TB_FIRM_BANK_CODE, sys_env_set_infm, USAG_INFM*).
+%% FK = declared FOREIGN KEY in SQL. LOGICAL = column references another table but NO FK is enforced.
+erDiagram
+    ACCT_AUTH_INFO {
+        varchar BIZ_KEY PK
+        varchar USER_ID PK "logical -> USER_INFM"
+        varchar BANK_CD PK
+        varchar ACCT_NO PK "logical -> ACCT_MSTR"
+        varchar AUTH_TYPE PK "V|W|F"
+        varchar USE_YN "Y|N"
+    }
+    CHART_ACCT_INFM {
+        varchar BIZ_KEY PK
+        varchar CHART_ACCT_SEQ_NO PK
+        varchar CHART_ACCT_CD UK
+        varchar CHART_ACCT_NM_EN
+        varchar STTS "A|I"
+        char DEL_YN "Y|N"
+        varchar PARENT_CHART_ACCT_CD "self-ref (LOGICAL)"
+        char CAL_RULE "P|M"
+    }
+    TRCO_INFM {
+        varchar TRCO_KEY PK "global sequence"
+        varchar BIZ_KEY "logical -> BUSI_INFM"
+        varchar TRCO_NICK_NM UK
+        varchar TRCO_TAX_ID
+        varchar TRSC_CCY_CD "VND|USD"
+        char TRCO_INQ_YN "Y|N"
+        varchar HAND_TRCO_KEY "self-ref (LOGICAL)"
+        varchar DFLT_TRCO_KEY "self-ref (LOGICAL)"
+    }
+    TRCO_ADDR_INFM {
+        varchar TRCO_KEY PK,FK "-> TRCO_INFM"
+        varchar BIZ_KEY PK
+        varchar TRCO_ADDR_KEY PK
+        numeric DISP_ORD "1 current|2 previous"
+    }
+    TRCO_ACCT_INFO {
+        varchar BIZ_KEY PK
+        varchar TRCO_KEY PK,FK "-> TRCO_INFM"
+        varchar TRCO_ACCT_KEY PK
+        varchar BANK_CD
+        varchar ACCT_NO
+        varchar NAPAS_BANK_YN "Y|N"
+    }
+    TRCO_OVRS_INFM {
+        varchar TRCO_KEY PK "logical -> TRCO_INFM"
+        varchar BIZ_KEY PK
+        varchar TRCO_OVRS_KEY PK
+        varchar BENE_NAME
+        varchar BIC_CODE
+    }
+    PGRO_BSAC_LNKN_INFM {
+        varchar BIZ_KEY PK,FK "-> BUSI_INFM"
+        varchar USER_ID PK
+        varchar GRP_CD PK "B|S"
+        varchar TRCO_KEY PK,FK "-> TRCO_INFM"
+    }
+    TRCO_INFO_FILE {
+        varchar TRCO_KEY PK,FK "-> TRCO_INFM"
+        varchar FILE_ID PK
+        varchar ORG_FILE_NM
+        varchar SAVE_FILE_NM
+    }
+    APPR_LINE_INFM {
+        varchar BIZ_KEY PK
+        bigint APPR_LINE_NO PK
+        varchar APPR_LINE_NM
+        varchar REG_DTM
+    }
+    APPR_LINE_INFM_DETL {
+        varchar BIZ_KEY PK
+        bigint APPR_LINE_NO PK "logical -> APPR_LINE_INFM"
+        integer APPRVR_DISP_ORD PK "1..5"
+        varchar APPRVR_ID PK
+        char APPRVR_STTS
+    }
+    TB_FIRM_CONF {
+        varchar BIZ_KEY PK
+        varchar OUT_BANK_CD PK "logical -> TB_FIRM_BANK_CODE"
+        varchar WDRL_ACT_NO PK "logical -> ACCT_MSTR"
+        varchar ORG_STAT "0|1|2|3"
+        char FILE_TYPE "SHB|WRB"
+    }
+    TB_FIRM_TRAN {
+        varchar TRAN_DT PK
+        varchar BIZ_KEY PK
+        varchar TRAN_SEQ PK
+        varchar OUT_BANK_CD
+        varchar PROC_STAT "success/fail code"
+        varchar RS_CD
+    }
+    TB_FIRM_BANK_CODE {
+        varchar BANK_CD PK "global lookup"
+        varchar ANT_DIV_CD "NAPAS.."
+        varchar BANK_NM
+        varchar BANK_STAS "0|1"
+    }
+    NXSIAS_MODULE_TRAN_LOG_HIS {
+        varchar BIZ_KEY PK
+        varchar REG_DTM PK
+        varchar UUID PK
+        varchar NXISAS_TYPE
+        varchar NXISAS_JOB
+        varchar NXISAS_ERR_CODE
+    }
+    ERP_TRNS_HSTR {
+        varchar BIZ_KEY PK
+        bigint SEQ_NO PK
+        varchar ORG_FILE_NM
+        char ERP_TYPE "W|E|D"
+        char TRNS_TYPE_CD "01..17"
+        varchar REG_DTM
+    }
+    BUSI_VAS_ACCT_INFM {
+        varchar BIZ_KEY PK
+        bigint VAS_ACCT_SEQ_NO PK
+        varchar VAS_ACCT_CD
+        char VAS_ACCT_TYPE "0|1|2"
+        char STTS "A|I"
+        char DEL_YN "Y|N"
+    }
+    USAG_INFM {
+        varchar USE_USAG_CD PK "global"
+        varchar USAG_GRP_CD
+        varchar ACCT_CD
+        varchar DEL_YN "Y|N"
+        varchar HAND_USE_USAG_CD
+    }
+    USAG_INFM_LANG_DETL {
+        varchar USE_USAG_CD PK,FK "-> USAG_INFM (logical)"
+        varchar LANG_CODE PK "EN|KO|KM|VI"
+        varchar USAG_NM
+    }
+    BUSI_USAG_SET_INFM {
+        varchar BIZ_KEY PK
+        varchar USE_USAG_CD PK
+        varchar USE_YN "Y|N"
+        varchar PARENT_USE_USAG_CD "self-ref (LOGICAL)"
+    }
+    SYS_ENV_SET_INFM {
+        varchar ENV_SET_INF PK "5-char code"
+        varchar ENV_SET_CONT
+    }
+    BUSI_ENV_SET_INFM {
+        varchar BIZ_KEY PK,FK "-> BUSI_INFM"
+        varchar ENV_SET_INF PK,FK "-> SYS_ENV_SET_INFM"
+        varchar ENV_SET_CONT
+    }
+    BANK_CERT_INFO {
+        varchar BIZ_KEY PK
+        numeric SEQ_NO PK
+        varchar BANK_CD
+        varchar CERT_INFO_DV "credential type"
+        varchar CERT_INFO_DETL_CON "AES-GCM blob"
+    }
+    GDT_CERT_INFO {
+        varchar BIZ_KEY PK
+        numeric SEQ_NO PK
+        varchar CERT_INFO_DV "credential type"
+        varchar CERT_INFO_DETL_CON "AES-GCM blob"
+    }
+
+    TRCO_INFM            ||--o{ TRCO_ADDR_INFM      : "addresses (FK)"
+    TRCO_INFM            ||--o{ TRCO_ACCT_INFO      : "local accounts (FK)"
+    TRCO_INFM            ||--o{ TRCO_OVRS_INFM      : "overseas beneficiaries (LOGICAL)"
+    TRCO_INFM            ||--o{ TRCO_INFO_FILE      : "attachments (FK)"
+    TRCO_INFM            ||--o{ PGRO_BSAC_LNKN_INFM : "group links (FK)"
+    APPR_LINE_INFM       ||--o{ APPR_LINE_INFM_DETL : "approver chain (LOGICAL)"
+    TB_FIRM_BANK_CODE    ||--o{ TB_FIRM_CONF        : "bank dictionary (LOGICAL, view join)"
+    SYS_ENV_SET_INFM     ||--o{ BUSI_ENV_SET_INFM   : "per-tenant override (FK)"
+    USAG_INFM            ||--o{ USAG_INFM_LANG_DETL : "language detail (LOGICAL)"
+    CHART_ACCT_INFM      ||--o{ CHART_ACCT_INFM     : "parent/child (LOGICAL self-ref)"
+    BUSI_USAG_SET_INFM   ||--o{ BUSI_USAG_SET_INFM  : "parent/child (LOGICAL self-ref)"

@@ -39,9 +39,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -104,6 +107,22 @@ public class OwnAccountTransferService {
             DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
     private static final DateTimeFormatter DT_FORMAT =
             DateTimeFormatter.ofPattern("yyyyMMdd");
+
+    /**
+     * Display timezone for balance-refresh timestamps. {@code acct_mstr}
+     * stores {@code ACCT_BAL_LST_INQ_DTM} / {@code ACCT_BAL_UPD_DTM} as a
+     * naive {@code yyyyMMddHHmmss} wall-clock in <b>UTC</b> — both legacy
+     * (JEX {@code DateTimeUtils.utcNow()} at
+     * {@code trns_0001_001_u001_act.jsp:91}) and this service
+     * ({@link #utcNow14()}) write UTC. Legacy converts that stored UTC to
+     * the login user's timezone on read
+     * ({@code DateTimeUtils.normalizeResult(dtm, loginUser)} at
+     * {@code _u001_act.jsp:45}); the refactor mirrors that here with the
+     * project's standard zone (Vietnam / Cambodia, UTC+7 — same
+     * {@code Asia/Ho_Chi_Minh} used by Exchange-Rate / Approval-Box).
+     * Without this, the frontend (which renders the 14-char string as a
+     * wall-clock) showed times 7h behind local. */
+    private static final ZoneId PROJECT_DISPLAY_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
 
     private final AcctMstrRepository           acctMstrRepo;
     private final AcctAuthInfoRepository       acctAuthRepo;
@@ -808,8 +827,12 @@ public class OwnAccountTransferService {
                 a.getCcyCd(),
                 a.getAcctBalInqStts(),
                 a.getAcctBalInqMsg(),
-                a.getAcctBalUpdDtm(),
-                a.getAcctBalLstInqDtm(),
+                // Convert the UTC-stored wall-clock to the project
+                // display zone (UTC+7) — mirrors legacy read-time
+                // `normalizeResult(..., loginUser)`. Drives the composer
+                // "Last updated time" + main-page "Last Refresh" column.
+                toDisplayZone14(a.getAcctBalUpdDtm()),
+                toDisplayZone14(a.getAcctBalLstInqDtm()),
                 a.getBankCertSeq() == null ? null : a.getBankCertSeq().toString(),
                 certInfoCon,
                 certInfoDetlCon,
@@ -892,6 +915,27 @@ public class OwnAccountTransferService {
 
     private static String utcNow14() {
         return OffsetDateTime.now(ZoneOffset.UTC).format(DTM_FORMAT);
+    }
+
+    /**
+     * Convert a UTC-stored {@code yyyyMMddHHmmss} wall-clock string to
+     * the {@link #PROJECT_DISPLAY_ZONE} (UTC+7) for display. Mirrors
+     * legacy {@code DateTimeUtils.normalizeResult(dtm, loginUser)} which
+     * converted the UTC-stored {@code ACCT_BAL_LST_INQ_DTM} to the login
+     * user's timezone on read. Null / blank / unparseable input is
+     * returned unchanged so a malformed cell never breaks the list load
+     * and never surfaces as {@code "undefined"} / an exception.
+     */
+    private static String toDisplayZone14(String utc14) {
+        if (utc14 == null || utc14.isBlank()) return utc14;
+        try {
+            return LocalDateTime.parse(utc14, DTM_FORMAT)
+                    .atZone(ZoneOffset.UTC)
+                    .withZoneSameInstant(PROJECT_DISPLAY_ZONE)
+                    .format(DTM_FORMAT);
+        } catch (DateTimeParseException ex) {
+            return utc14;
+        }
     }
 
     /* ---------- value-type helpers ---------- */
