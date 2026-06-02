@@ -14,10 +14,11 @@ expense / payroll / overseas) with approval status, scheduled date, requestor, a
 Supports approve / reject and hover cards. Gates dispatch of firm-banking transfers.
 
 ## Controllers
-- `ApprovalBoxController` — list pending items, item detail, approve / reject. See [approval-box/api-flow.md](approval-box/api-flow.md), [approval-box/design-backend.md](approval-box/design-backend.md).
+- `ApprovalBoxController` — list, approve / reject, bulk-approve, Excel export, and (non-card) withdraw + change-approval-line. See [approval-box/api-flow.md](approval-box/api-flow.md), [approval-box/design-backend.md](approval-box/design-backend.md). Endpoint inventory + decisions: [approval-box/parity-fixes-2026-06.md](approval-box/parity-fixes-2026-06.md).
+- `DELETE /{apprSeqNo}/withdraw` + `PUT /{apprSeqNo}/approval-line` cover the non-card types (Internal Transfer / Vendor / Expense / Payroll / Overseas); card keeps its dedicated `card-transactions/by-approval/{apprSeqNo}` endpoints.
 
 ## Services
-- `ApprovalBoxService` — inbox query (cross-feature), approve/reject state transitions, audit via shared `AuditLogService`.
+- `ApprovalBoxService` — inbox query (cross-feature), approve/reject state transitions, withdraw + change-approval-line (delegating to the shared `ApprovalBoxFanoutService`), all-rows Excel fetch (`listForExport`), audit via shared `AuditLogService`.
 
 ## DTOs
 - `ApprovalBoxRow` / `ApprovalBoxListResponse` / `ApprovalActionRequest` (lowercase snake_case wire).
@@ -41,8 +42,16 @@ Supports approve / reject and hover cards. Gates dispatch of firm-banking transf
 ## Related APIs
 - Approve / reject + inbox list under `domain.payment.approvalbox`. Migration: [approval-box/migration-plan.md](approval-box/migration-plan.md).
 
+## Parity Fixes & Decisions (2026-06-02)
+Confirmed post-Phase-1 behaviors — full detail + SIT checklist + deferred items in [approval-box/parity-fixes-2026-06.md](approval-box/parity-fixes-2026-06.md):
+- **Excel export** returns all matching records (filter/sort honoured), bounded only by the shared 50k safety cap — not page-bound, not capped at 100.
+- **Withdraw / Edit approval line** available for all six types (Internal Transfer / Vendor / Expense / Payroll / Overseas / Card); non-card via the generic endpoints, card via its dedicated ones; reuses `ApprovalBoxFanoutService`.
+- **File Name** column sources `COALESCE(SCDUL.ORG_FILE_NM, OVRS.ORG_FILE_NM)` (not `TITL`); long names ellipsis-truncate with the full value on native-`title` hover.
+- **Pagination** default page size is **10** by project decision (intentional divergence from legacy 15).
+- **Deferred / out of scope:** ERP synchronization · approval notification/comment creation · uploader visibility branch · Vietnamese translated keyword search.
+
 ## Related Docs
-- Detailed design set: [approval-box/](approval-box/) (discovery · design-backend · design-frontend · api-flow · database-impact · migration-plan)
+- Detailed design set: [approval-box/](approval-box/) (discovery · design-backend · design-frontend · api-flow · database-impact · migration-plan · parity-fixes-2026-06)
 - Web counterpart: [approval-box.md](../../../../wecms-web/docs/features/payment/approval-box.md)
 - Cross-sibling index: [_payment-module-overview.md](_payment-module-overview.md)
 - Consumed by: [internal-transfer/README.md](internal-transfer/README.md), [vendor-payment/README.md](vendor-payment/README.md), [expense-payment/README.md](expense-payment/README.md), [payroll/README.md](payroll/README.md), [overseas-payment/README.md](overseas-payment/README.md)

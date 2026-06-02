@@ -95,6 +95,15 @@ public class ApprovalBoxService {
     public static final int DEFAULT_PAGE_SIZE = 15;
     public static final int MAX_BULK_SIZE     = 100;
 
+    /** Upper bound for the unpaged Excel-export fetch. Matches the
+     *  shared {@code ExcelExportService.MAX_ROWS = 50_000} safety cap so
+     *  the single-page export query and the streaming writer agree on
+     *  the ceiling. The export path deliberately bypasses
+     *  {@link #MAX_PAGE_SIZE} (which bounds the on-screen list) so a
+     *  filtered result of more than one page still exports in full up to
+     *  this protection limit. */
+    public static final int MAX_EXPORT_ROWS   = 50_000;
+
     /** Refactor route slug used as the audit-log {@code wsvc_id}
      *  discriminator across every Approval Box write. Per workspace
      *  CLAUDE.md §"Refactor identifier naming" — slug, not legacy
@@ -106,6 +115,8 @@ public class ApprovalBoxService {
     private static final String AUDIT_APPROVE_DETAIL    = "audit.approval_box.approve.detail";
     private static final String AUDIT_REJECT_DETAIL     = "audit.approval_box.reject.detail";
     private static final String AUDIT_BULK_DETAIL       = "audit.approval_box.bulk_approve.detail";
+    private static final String AUDIT_WITHDRAW_DETAIL   = "audit.approval_box.withdraw.detail";
+    private static final String AUDIT_CHANGE_LINE_DETAIL = "audit.approval_box.change_approval_line.detail";
 
     /** Default ORDER BY when the wire {@code sort_field} doesn't resolve
      *  to a whitelisted enum constant. {@code regDtm DESC, apprSeqNo
@@ -123,6 +134,7 @@ public class ApprovalBoxService {
     private final OvrsPymnSumrRepository         ovrsPymnSumrRepository;
     private final ScdulPymnSumrRepository        scdulPymnSumrRepository;
     private final AuditLogService                auditLogService;
+    private final ApprovalBoxFanoutService       fanoutService;
 
     /* =================================================================
      *  List
@@ -181,31 +193,7 @@ public class ApprovalBoxService {
                 bizKey, userId, isAdmin, fromDt, toDt, keywordPattern, keywordPattern);
         if (tabCounts == null) tabCounts = ApprovalBoxTabCounts.empty();
 
-        // Batch-fetch CCY_CD from both OVRS_PYMN_SUMR and SCDUL_PYMN_SUMR for all
-        // apprSeqNos in this page.  SCDUL covers Internal Transfer / Expense /
-        // Vendor / Payroll; OVRS covers Overseas.  The two result sets are merged
-        // so USD batches from either table resolve to the correct amount column
-        // (TOT_PAY_USD_AMT) instead of falling back to the "VND" default and
-        // reading the wrong (zero) TOT_PAY_KHR_AMT value.
-        List<String> apprSeqNos = result.getContent().stream()
-                .map(ApprovalBoxProjection::apprSeqNo)
-                .filter(s -> s != null && !s.isBlank())
-                .distinct()
-                .collect(Collectors.toList());
-        Map<String, String> ccyByApprSeqNo = new HashMap<>();
-        if (!apprSeqNos.isEmpty()) {
-            ovrsPymnSumrRepository.findCcyCdByBizKeyAndApprSeqNos(bizKey, apprSeqNos)
-                    .forEach(row -> ccyByApprSeqNo.put((String) row[0], (String) row[1]));
-            // SCDUL_PYMN_SUMR rows don't appear in OVRS, so query it separately;
-            // putIfAbsent keeps the OVRS value when both tables happen to carry
-            // the same apprSeqNo (shouldn't occur, but defensive).
-            scdulPymnSumrRepository.findCcyCdByBizKeyAndApprSeqNos(bizKey, apprSeqNos)
-                    .forEach(row -> ccyByApprSeqNo.putIfAbsent((String) row[0], (String) row[1]));
-        }
-
-        List<ApprovalBoxRow> rows = result.getContent().stream()
-                .map(p -> toRow(bizKey, p, ccyByApprSeqNo))
-                .toList();
+        List<ApprovalBoxRow> rows = mapProjections(bizKey, result.getContent());
 
         return new ApprovalBoxListResponse(
                 rows,
@@ -214,6 +202,55 @@ public class ApprovalBoxService {
                 result.getNumber(),
                 result.getSize(),
                 result.getTotalPages());
+    }
+
+    /* =================================================================
+     *  List (Excel export) — all matching rows, unpaged
+     * ================================================================= */
+
+    /**
+     * Fetch <em>every</em> row matching the current filters for the Excel
+     * export — same query path, filter, sort, tenant scope, and per-row
+     * mapping as {@link #list}, but without the {@link #MAX_PAGE_SIZE}
+     * page clamp. Bounded by {@link #MAX_EXPORT_ROWS} (= the shared
+     * {@code ExcelExportService.MAX_ROWS} safety limit) so the export
+     * stays memory-bounded.
+     *
+     * <p>Consumed by {@code ApprovalBoxExportProvider.fetch(...)}. Tab
+     * counts are not computed (the workbook subheader is a per-currency
+     * total over the returned rows, not a tab breakdown). Legacy parity:
+     * {@code resl_0001_001} Excel runs the same list query with
+     * {@code PAGE_PER_CNT = 0} (all rows).
+     */
+    @Transactional(readOnly = true)
+    public List<ApprovalBoxRow> listForExport(
+            String fromDate,
+            String toDate,
+            String srchWd,
+            String apprTypeCd,
+            String sortField,
+            String sortDirection) {
+
+        String fromDt = validateDate("from_date", fromDate);
+        String toDt   = validateDate("to_date",   toDate);
+        validatePeriod(fromDt, toDt);
+        String apprTypeFilter = validateApprTypeCd(apprTypeCd);
+        String keywordPattern = buildKeywordPattern(srchWd);
+
+        Sort sort = buildSort(
+                ApprovalBoxSortField.parse(sortField),
+                SortDirection.parse(sortDirection));
+        Pageable pageable = PageRequest.of(0, MAX_EXPORT_ROWS, sort);
+
+        String  bizKey  = TenantContext.currentBizKey();
+        String  userId  = TenantContext.currentUserId();
+        boolean isAdmin = TenantContext.currentIsAdmin();
+
+        Page<ApprovalBoxProjection> result = masterRepository.search(
+                bizKey, userId, isAdmin,
+                fromDt, toDt, apprTypeFilter, keywordPattern, keywordPattern, pageable);
+
+        return mapProjections(bizKey, result.getContent());
     }
 
     /* =================================================================
@@ -360,6 +397,97 @@ public class ApprovalBoxService {
         }
 
         return new ApprovalBoxBulkApproveResponse(successes, failures);
+    }
+
+    /* =================================================================
+     *  Withdraw / Change approval line (non-card payment types)
+     * ================================================================= */
+
+    /**
+     * Withdraw an in-flight Approval Box request for any non-card payment
+     * type (Internal Transfer / Vendor / Expense / Payroll / Overseas).
+     * Delegates the approval-table work to
+     * {@link ApprovalBoxFanoutService#withdrawApproval} (Pending /
+     * In Progress guard + delete of {@code EXPT_RESOL_MSTR} +
+     * {@code EXPT_RESOL_APPRVR_INFM}), then clears the source payment
+     * batch's stamp so it returns to Draft, then writes one audit row.
+     * Mirrors the card-specific
+     * {@code CardTransactionsService.withdrawApproval} flow (which clears
+     * {@code CARD_TRNS_HSTR} instead).
+     *
+     * <p>Card ({@code APPR_DV = '33'}) keeps its dedicated
+     * {@code /card-transactions/by-approval/{apprSeqNo}} endpoint; the
+     * frontend never routes card rows here. The back-stamp routing below
+     * matches {@link #writeBackApprStts} exactly (OVERSEAS → OVRS, every
+     * other type → SCDUL).
+     *
+     * @throws BusinessException {@code WBE_NOT_FOUND} when the master is
+     *         missing for the tenant; {@code WBE_VALIDATION} when the
+     *         master is already Approved / Rejected or {@code apprSeqNo}
+     *         is blank (both surfaced by the fanout helper).
+     */
+    @Transactional
+    public void withdraw(String apprSeqNo) {
+        ExptResolMstr master = fanoutService.withdrawApproval(apprSeqNo);
+
+        String userId = TenantContext.currentUserId();
+        String nowDtm = OffsetDateTime.now(ZoneOffset.UTC).format(DTM14);
+        clearSourceApprStamp(master.getBizKey(), master.getApprSeqNo(),
+                master.getApprDv(), userId, nowDtm);
+
+        auditLogService.append(AuditLogContext.builder()
+                .wsvcId(AUDIT_WSVC_ID)
+                .refNo(REF_NO_EXPT_RESOL_MSTR)
+                .refNo1(master.getApprSeqNo())
+                .activityKey(AUDIT_ACTIVITY_KEY)
+                .detailKey(AUDIT_WITHDRAW_DETAIL)
+                .build());
+
+        log.info("approval-box withdraw bizKey={} apprSeqNo={} apprDv={} userId={}",
+                master.getBizKey(), master.getApprSeqNo(), master.getApprDv(), userId);
+    }
+
+    /**
+     * Replace the approver chain on an in-flight Approval Box request for
+     * any non-card payment type with the chain attached to
+     * {@code apprLineNo}, resetting the master to Pending. Delegates to
+     * {@link ApprovalBoxFanoutService#changeApprovalLine} (Pending /
+     * In Progress guard + chain rebuild) then writes one audit row. The
+     * source payment batch's {@code APPR_SEQ_NO} is intentionally left
+     * unchanged — only the approver chain rotates (legacy + card parity).
+     *
+     * @throws BusinessException same code set as {@link #withdraw} plus
+     *         {@code WBE_VALIDATION} when {@code apprLineNo} is blank or
+     *         resolves to no approvers.
+     */
+    @Transactional
+    public void changeApprovalLine(String apprSeqNo, Long apprLineNo) {
+        ExptResolMstr master = fanoutService.changeApprovalLine(apprSeqNo, apprLineNo);
+
+        auditLogService.append(AuditLogContext.builder()
+                .wsvcId(AUDIT_WSVC_ID)
+                .refNo(REF_NO_EXPT_RESOL_MSTR)
+                .refNo1(master.getApprSeqNo())
+                .activityKey(AUDIT_ACTIVITY_KEY)
+                .detailKey(AUDIT_CHANGE_LINE_DETAIL)
+                .build());
+
+        log.info("approval-box change-approval-line bizKey={} apprSeqNo={} newApprLineNo={}",
+                master.getBizKey(), master.getApprSeqNo(), apprLineNo);
+    }
+
+    /** Clear the approval stamp on the source payment batch so a
+     *  withdrawn request returns to Draft. Routing matches
+     *  {@link #writeBackApprStts}: OVERSEAS ({@code '34'}) → OVRS_PYMN_SUMR,
+     *  every other non-card type → SCDUL_PYMN_SUMR. A zero-row update is a
+     *  harmless no-op (e.g. seed data with no source row). */
+    private void clearSourceApprStamp(String bizKey, String apprSeqNo, String apprDv,
+                                      String userId, String nowDtm) {
+        if (ApprDv.OVERSEAS.code().equals(apprDv)) {
+            ovrsPymnSumrRepository.clearApprSeqNo(bizKey, apprSeqNo, userId, nowDtm);
+        } else {
+            scdulPymnSumrRepository.clearApprSeqNo(bizKey, apprSeqNo, userId, nowDtm);
+        }
     }
 
     /* =================================================================
@@ -592,8 +720,59 @@ public class ApprovalBoxService {
      *  Row mapping — projection + chain → wire DTO
      * ================================================================= */
 
+    /**
+     * Map a page of projections to wire rows, shared by {@link #list} and
+     * {@link #listForExport}. Batch-fetches CCY_CD from both
+     * OVRS_PYMN_SUMR and SCDUL_PYMN_SUMR for every apprSeqNo in the slice
+     * (SCDUL covers Internal Transfer / Expense / Vendor / Payroll; OVRS
+     * covers Overseas). The two result sets are merged so a USD batch
+     * from either table resolves to the correct amount column instead of
+     * falling back to the "VND" default.
+     */
+    private List<ApprovalBoxRow> mapProjections(
+            String bizKey, List<ApprovalBoxProjection> projections) {
+        List<String> apprSeqNos = projections.stream()
+                .map(ApprovalBoxProjection::apprSeqNo)
+                .filter(s -> s != null && !s.isBlank())
+                .distinct()
+                .collect(Collectors.toList());
+        Map<String, String> ccyByApprSeqNo = new HashMap<>();
+        Map<String, String> fileNameByApprSeqNo = new HashMap<>();
+        if (!apprSeqNos.isEmpty()) {
+            ovrsPymnSumrRepository.findCcyCdByBizKeyAndApprSeqNos(bizKey, apprSeqNos)
+                    .forEach(row -> ccyByApprSeqNo.put((String) row[0], (String) row[1]));
+            // putIfAbsent keeps the OVRS value when both tables happen to
+            // carry the same apprSeqNo (shouldn't occur, but defensive).
+            scdulPymnSumrRepository.findCcyCdByBizKeyAndApprSeqNos(bizKey, apprSeqNos)
+                    .forEach(row -> ccyByApprSeqNo.putIfAbsent((String) row[0], (String) row[1]));
+
+            // File Name — uploaded batch file name. Legacy reads
+            // COALESCE(SCDUL.TITL, OVRS.TITL) because it stored the file
+            // name in TITL; the refactor moved it to ORG_FILE_NM (TITL now
+            // holds the typed title), so the refactor-correct source is
+            // COALESCE(SCDUL.ORG_FILE_NM, OVRS.ORG_FILE_NM) — matching the
+            // orgFileNm source the Scheduled Transfer / Transfer Result
+            // pages already use. SCDUL wins, so load it first (put) and let
+            // OVRS fill only the gaps (putIfAbsent). Skip nulls so a null
+            // SCDUL file name doesn't mask a populated OVRS one (mirrors the
+            // COALESCE fall-through); a null on both stays blank, per spec.
+            scdulPymnSumrRepository.findOrgFileNmByBizKeyAndApprSeqNos(bizKey, apprSeqNos)
+                    .forEach(row -> {
+                        if (row[1] != null) fileNameByApprSeqNo.put((String) row[0], (String) row[1]);
+                    });
+            ovrsPymnSumrRepository.findOrgFileNmByBizKeyAndApprSeqNos(bizKey, apprSeqNos)
+                    .forEach(row -> {
+                        if (row[1] != null) fileNameByApprSeqNo.putIfAbsent((String) row[0], (String) row[1]);
+                    });
+        }
+        return projections.stream()
+                .map(p -> toRow(bizKey, p, ccyByApprSeqNo, fileNameByApprSeqNo))
+                .toList();
+    }
+
     private ApprovalBoxRow toRow(String bizKey, ApprovalBoxProjection p,
-                                  Map<String, String> ccyByApprSeqNo) {
+                                  Map<String, String> ccyByApprSeqNo,
+                                  Map<String, String> fileNameByApprSeqNo) {
         List<ApprovalBoxApprover> approvers = approverRepository
                 .findChain(bizKey, p.apprSeqNo())
                 .stream()
@@ -627,6 +806,7 @@ public class ApprovalBoxService {
                 p.apprSeqNo(),
                 p.docNo(),
                 p.titl(),
+                fileNameByApprSeqNo.getOrDefault(p.apprSeqNo(), ""),
                 p.cont(),
                 p.apprDv(),
                 ApprDv.resolveSlug(p.apprDv()),

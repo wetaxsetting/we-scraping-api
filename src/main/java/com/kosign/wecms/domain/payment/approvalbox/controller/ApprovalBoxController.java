@@ -7,14 +7,17 @@ import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxActionResponse
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxBulkApproveRequest;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxBulkApproveResponse;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxListResponse;
+import com.kosign.wecms.domain.payment.approvalbox.dto.ChangeApprovalLineRequest;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxService;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -99,6 +102,35 @@ public class ApprovalBoxController {
     @PostMapping("/{apprSeqNo}/reject")
     public ApiResponse<ApprovalBoxActionResponse> reject(@PathVariable String apprSeqNo) {
         return ApiResponse.ok(service.reject(apprSeqNo));
+    }
+
+    /**
+     * Withdraw an in-flight approval for a non-card payment type
+     * (Internal Transfer / Vendor / Expense / Payroll / Overseas).
+     * Deletes the {@code EXPT_RESOL_MSTR} + {@code EXPT_RESOL_APPRVR_INFM}
+     * rows and clears the source payment batch's stamp so it returns to
+     * Draft. Card approvals keep their dedicated
+     * {@code /card-transactions/by-approval/{apprSeqNo}} endpoint.
+     * Mirrors legacy {@code comm_0195_001.ts deleteApproval()}.
+     */
+    @DeleteMapping("/{apprSeqNo}/withdraw")
+    public ApiResponse<Void> withdraw(@PathVariable String apprSeqNo) {
+        service.withdraw(apprSeqNo);
+        return ApiResponse.ok(null);
+    }
+
+    /**
+     * Change the approval line on an in-flight approval for a non-card
+     * payment type — replaces the approver chain with the picked line's
+     * approvers and resets the master to Pending. Mirrors legacy
+     * {@code comm_0195_001.ts editApproval()}.
+     */
+    @PutMapping("/{apprSeqNo}/approval-line")
+    public ApiResponse<Void> changeApprovalLine(
+            @PathVariable String apprSeqNo,
+            @Valid @RequestBody ChangeApprovalLineRequest req) {
+        service.changeApprovalLine(apprSeqNo, req != null ? req.apprLineNo() : null);
+        return ApiResponse.ok(null);
     }
 
     /**

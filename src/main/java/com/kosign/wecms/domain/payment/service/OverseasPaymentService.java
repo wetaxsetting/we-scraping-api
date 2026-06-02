@@ -91,7 +91,7 @@ public class OverseasPaymentService {
     private final DocNoGenerator                 docNoGenerator;
     /** Pre-dispatch cut-off window guard. Mirrors legacy
      *  {@code PymnHelper.validateTransferTiming} — weekend block for
-     *  non-NAPAS networks (so every SWIFT dispatch is blocked on
+     *  non-NAPAS networks (so every SWIFT dispatch is blocked on   
      *  Sat / Sun) + per-(bank, network) cutoff window. Closes the G6
      *  gap from the 2026-05-29 dispatch audit. */
     private final com.kosign.wecms.domain.payment.internaltransfer.service.CutoffValidator
