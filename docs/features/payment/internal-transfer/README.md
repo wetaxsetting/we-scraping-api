@@ -2,10 +2,15 @@
 
 ## Screens (this feature)
 
-- [scheduled-transfer.md](scheduled-transfer.md)
-- [scheduled-transfer-details.md](scheduled-transfer-details.md)
-- [transfer-result.md](transfer-result.md)
-- [transfer-result-details.md](transfer-result-details.md)
+The four screens are sections of this hub (no separate per-screen files). Full per-screen detail is in
+§3 "Screen inventory (JEX → refactor)" below; one-line summaries:
+
+| Screen | JEX WSVC | Scope | Status |
+|---|---|---|---|
+| Scheduled Transfer | `pymn_0009_001` | List + create scheduled internal transfer batches (Excel upload, request approval, transfer). | Locked baseline (Phase A backend + partial frontend) |
+| Scheduled Transfer Details | `pymn_0009_001` (view `pymn_0009_003`) | Drill-down detail of one scheduled batch — line items, amounts, withdrawal account, approver chain. | Locked baseline (Phase A backend + partial frontend) |
+| Transfer Result | `pymn_0010_001` | Executed internal-transfer results with status filter (Incomplete / Processing / Success / Failed). | Locked baseline (Phase A backend + partial frontend) |
+| Transfer Result Details | `pymn_0010_001` (view `pymn_0010_002`) | Per-transaction result detail (Success / Failed + failure reason) for one executed item. | Locked baseline (Phase A backend + partial frontend) |
 
 
 | Field | Value |
@@ -20,10 +25,10 @@
 | Frontend route base | `/payment/internal-transfer` |
 | View Setting WEB_SVC_IDs | `payment-internal-transfer-scheduled` (Scheduled Transfer list), `payment-internal-transfer-result` (Transfer Result list), `payment-internal-transfer-scheduled-detail`, `payment-internal-transfer-result-detail` |
 | Audit `WSVC_ID` (refactor slug) | `internal-transfer` (17 chars — fits `AUDIT_LOGS_INFM.WSVC_ID VARCHAR(20)`) |
-| Status | **Implemented — documenting as locked baseline** (last verified 2026-05-21). Backend lands in [com.kosign.wecms.domain.payment.internaltransfer](../../../../src/main/java/com/kosign/wecms/domain/payment/internaltransfer); frontend in [components/payment/internal-transfer/](../../../../../wecms-web/components/payment/internal-transfer). Sibling Payment sub-modules (vendor-payment / expense-payment / payroll) mirror this design — see [_payment-module-overview.md](../_payment-module-overview.md). |
+| Status | **Implemented — documenting as locked baseline** (last verified 2026-05-21). Backend lands in [com.kosign.wecms.domain.payment.internaltransfer](../../../../src/main/java/com/kosign/wecms/domain/payment/internaltransfer); frontend in [components/payment/internal-transfer/](../../../../../wecms-web/components/payment/internal-transfer). Sibling Payment sub-modules (vendor-payment / expense-payment / payroll) mirror this design — see [payment hub README](../README.md). |
 | Sprint | Sprint 2 (Payment module — Internal Transfer first; locked baseline for Vendor / Expense / Payroll ports) |
 | Author | Claude Code (R&D planning, 2026-05-13; Phase A backend + frontend Phase A; refreshed 2026-05-21 against as-implemented code) |
-| Companion docs | [_payment-module-overview.md](../_payment-module-overview.md) (cross-sibling index) · [migration/internal-transfer-mapping.md](../../../references/migration/internal-transfer-mapping.md) · [database/payment/internal-transfer-schema.md](../../../references/database/payment/internal-transfer-schema.md) · [backend/internal-transfer.md](../../../references/business-rules/internal-transfer.md) · [frontend/internal-transfer.md](../../../../../wecms-web/docs/features/payment/internal-transfer/README.md) · [audits/internal-transfer-parity-checklist.md](../../../references/audits/internal-transfer-parity-checklist.md) |
+| Companion docs | [payment hub README](../README.md) (cross-sibling index) · [migration/internal-transfer-mapping.md](../../../references/migration/internal-transfer-mapping.md) · [database/payment/internal-transfer-schema.md](../../../references/database/payment/internal-transfer-schema.md) · [backend/internal-transfer.md](../../../references/business-rules/internal-transfer.md) · [frontend/internal-transfer.md](../../../../../wecms-web/docs/features/payment/internal-transfer/README.md) · [audits/internal-transfer-parity-checklist.md](../../../references/audits/internal-transfer-parity-checklist.md) |
 
 > **Identifier rule.** Every refactor surface — Next.js route, Spring REST URI, Java package, DTO names, frontend feature folder, i18n key prefix, log tag, View Setting `screenId`, and `AUDIT_LOGS_INFM.WSVC_ID` — uses the kebab-case slug `internal-transfer`. Legacy JEX WSVC ids (`pymn_0009_001`, `pymn_0009_002_c001`, …) appear in this doc **only** as JEX file:line citations or in migration-traceability prose. See workspace [CLAUDE.md](../../../../CLAUDE.md) § Cross-Tree Rules and [wecms-api/CLAUDE.md](../../../../CLAUDE.md) § "Refactor identifier naming".
 
@@ -583,7 +588,7 @@ Items requiring PO (Mr. Jung) / lead (Sonny) confirmation. Each item flagged **B
 
 ## 13. Sibling parity — where Vendor / Expense / Payroll diverge
 
-Internal Transfer is the **locked baseline** for the Payment module. The three sibling sub-modules (`vendor-payment`, `expense-payment`, `payroll`) port the same shape — backend package layout under `domain/payment/<sibling>/{controller, service, export}`, frontend folder under `components/payment/<sibling>/`, four routes (Scheduled list + detail + Result list + detail), and a per-sibling upload dialog wrapping the shared [`<PaymentExcelUploadDialog>`](../../../../../wecms-web/components/payment/shared/PaymentExcelUploadDialog.tsx). See [_payment-module-overview.md](../_payment-module-overview.md) for the full sibling index + the "how to add a new payment sub-module" checklist.
+Internal Transfer is the **locked baseline** for the Payment module. The three sibling sub-modules (`vendor-payment`, `expense-payment`, `payroll`) port the same shape — backend package layout under `domain/payment/<sibling>/{controller, service, export}`, frontend folder under `components/payment/<sibling>/`, four routes (Scheduled list + detail + Result list + detail), and a per-sibling upload dialog wrapping the shared [`<PaymentExcelUploadDialog>`](../../../../../wecms-web/components/payment/shared/PaymentExcelUploadDialog.tsx). See [payment hub README](../README.md) for the full sibling index + the "how to add a new payment sub-module" checklist.
 
 Verified divergences from this baseline (sourced from sibling controllers / services / Excel parsers / Figma handoffs):
 
@@ -601,9 +606,9 @@ Verified divergences from this baseline (sourced from sibling controllers / serv
 | Detail page transaction table | 11-column canonical `resultDetailColumns` from [detailColumns.tsx](../../../../../wecms-web/components/payment/shared/detailColumns.tsx) | per-Vendor column set | per-Expense column set | **5-column** payroll-specific layout (per Figma — narrower table than the canonical 11) | Figma + per-sibling Detail page components |
 | Result Detail Excel export | `POST /api/v1/payment/internal-transfer/results/export` via [`InternalTransferResultExportProvider`](../../../../src/main/java/com/kosign/wecms/domain/payment/internaltransfer/export) | `POST /api/v1/payment/vendor-payment/results/export` via [`VendorPaymentResultExportProvider`](../../../../src/main/java/com/kosign/wecms/domain/payment/vendorpayment/export) | `POST /api/v1/payment/expense-payment/results/export` via [`ExpensePaymentResultExportProvider`](../../../../src/main/java/com/kosign/wecms/domain/payment/expensepayment/export) | `POST /api/v1/payment/payroll-payment/results/export` via [`PayrollPaymentResultExportProvider`](../../../../src/main/java/com/kosign/wecms/domain/payment/payrollpayment/export) | per-sibling `export/` folder |
 
-The shared infrastructure under [`payment/dispatch/`](../../../../src/main/java/com/kosign/wecms/domain/payment/dispatch), [`payment/validation/`](../../../../src/main/java/com/kosign/wecms/domain/payment/validation), [`payment/approvalbox/`](../../../../src/main/java/com/kosign/wecms/domain/payment/approvalbox), and [`payment/export/`](../../../../src/main/java/com/kosign/wecms/domain/payment/export) is **identical across all four siblings** — see [_payment-module-overview.md](../_payment-module-overview.md) §"Shared backend infrastructure index". Per-feature stubs for the three siblings live at [vendor-payment.md](../vendor-payment/README.md), [expense-payment.md](../expense-payment/README.md), [payroll.md](../payroll/README.md).
+The shared infrastructure under [`payment/dispatch/`](../../../../src/main/java/com/kosign/wecms/domain/payment/dispatch), [`payment/validation/`](../../../../src/main/java/com/kosign/wecms/domain/payment/validation), [`payment/approvalbox/`](../../../../src/main/java/com/kosign/wecms/domain/payment/approvalbox), and [`payment/export/`](../../../../src/main/java/com/kosign/wecms/domain/payment/export) is **identical across all four siblings** — see [payment hub README](../README.md) §"Shared backend infrastructure index". Per-feature stubs for the three siblings live at [vendor-payment/README.md](../vendor-payment/README.md), [expense-payment/README.md](../expense-payment/README.md), [payroll/README.md](../payroll/README.md).
 
-> Out of scope for this section: **Overseas Payment** (`payment/overseas/` + `app/(dashboard)/payment/overseas-payment/`) lives in a separate domain that uses the `OVRS_PYMN_MSTR` / `OVRS_PYMN_SUMR` / `OVRS_PYMN_DTLS` table family — NOT `SCDUL_PYMN_SUMR` — and has no `SCDUL_PYMN_TYPE_CD` discriminator ([pymn_0007_001_r001_act.jsp:198](../../../../../WECMS%20DEV/WECMS/web/WEB-INF/action/jex/wabooks/pymn/pymn_0007_001_r001_act.jsp#L198) routes to `getDynamicOvrs()` instead). Cross-linked from [_payment-module-overview.md](../_payment-module-overview.md) but not documented as a sibling here.
+> Out of scope for this section: **Overseas Payment** (`payment/overseas/` + `app/(dashboard)/payment/overseas-payment/`) lives in a separate domain that uses the `OVRS_PYMN_MSTR` / `OVRS_PYMN_SUMR` / `OVRS_PYMN_DTLS` table family — NOT `SCDUL_PYMN_SUMR` — and has no `SCDUL_PYMN_TYPE_CD` discriminator ([pymn_0007_001_r001_act.jsp:198](../../../../../WECMS%20DEV/WECMS/web/WEB-INF/action/jex/wabooks/pymn/pymn_0007_001_r001_act.jsp#L198) routes to `getDynamicOvrs()` instead). Cross-linked from [payment hub README](../README.md) but not documented as a sibling here.
 
 ---
 

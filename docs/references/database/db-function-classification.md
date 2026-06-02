@@ -2,7 +2,7 @@
 
 **Scope:** wecms-api/ (Needs Confirmation) (Spring Boot 3.5.13, Java 21, Flyway, single tenant `VN_VNM0004_000001`).
 **Status:** Plan only — no code changes, no Flyway migrations, no DB writes.
-**Companion plan:** [task-plan-common-backend-functional-seahorse.md](../planning/roadmap/task-plan-common-backend-functional-seahorse.md) — bootstrap & `wb_get_next_val` strategy, Phase 1/2/3 framing reused below.
+**Companion plan:** [task-plan-common-backend-functional-seahorse.md](../../planning/roadmap/task-plan-common-backend-functional-seahorse.md) — bootstrap & `wb_get_next_val` strategy, Phase 1/2/3 framing reused below.
 
 ---
 
@@ -264,7 +264,7 @@ The plan itself is verified by sampling — pick one function per group and conf
 4. **Utility sample** — read `pg_get_functiondef('remove_accents'::regprocedure)`; confirm `Normalizer.NFD` + diacritic strip is sufficient and check the Vietnamese-specific `đ → d` mapping.
 5. **API-like sample** — read `pg_get_functiondef('comm_0900_001'::regprocedure)`; identify every table it writes to **before** any Spring caller invokes it.
 
-Each sample queries metadata only — no DML, no `EXPLAIN ANALYZE`, no `DO $$` (per [.claude/rules/database.md](../../../.claude/rules/database.md)).
+Each sample queries metadata only — no DML, no `EXPLAIN ANALYZE`, no `DO $$` (per [.claude/rules/database.md](../../../../.claude/rules/database.md)).
 
 ---
 

@@ -1,7 +1,7 @@
 # Purpose Settings — Spring Boot backend design
 
 **Refactor slug:** `purpose-settings`
-**Sibling docs:** [feature spec](../../../features/settings/purpose.md) · [JEX → Spring mapping](../../migration/purpose-settings.md) · DB schema (Needs Confirmation) · [frontend design](../../../../../wecms-web/docs/features/settings/purpose.md) · [task plan](../../../planning/settings/purpose-settings-task-plan.md).
+**Sibling docs:** [feature spec](../../../features/settings/purpose.md) · [JEX → Spring mapping](../../migration/purpose-settings.md) · DB schema (Needs Confirmation) · [frontend design](../../../../../wecms-web/docs/features/settings/purpose.md) · [task plan](../../../archive/planning/settings/purpose-settings-task-plan.md).
 **Mirrors live JEX:** `comm_0187_001_r001/_r002/_c001/_u002/_u004` + `comm_0187_004_c001`. Out of scope: `_u003` reset, `comm_0187_003_*` unused/restore, `comm_0187_002` standardization.
 
 This document is the design contract for the Phase 2 backend implementation. No Java code is written in Phase 1.

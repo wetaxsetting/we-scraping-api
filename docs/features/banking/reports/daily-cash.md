@@ -160,7 +160,7 @@ Snapshot of every bank account balance and same-day flow on a chosen reference d
   1. Currency summary cards (one per currency in `currencySummary`) — KPI tile typography `text-3xl font-semibold`.
   2. Account grid (DataGrid component, columns drive by View Setting).
   3. Currency rollup footer.
-- Export: button calls `/api/v1/reports/daily-cash/export.xlsx` with the same params.
+- Export: button calls `/api/v1/banking/reports/daily-cash-report/export` with the same params.
 
 i18n keys live in `messages/{en,ko,vi}/reports/daily_cash.json` with the dictionary mirrored from `rept_0009_001_osmc.ts`.
 

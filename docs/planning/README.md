@@ -6,9 +6,21 @@ Sprint plans and long-running task plans for the refactor.
 
 Sprint logs, sprint task plans, multi-feature task plans. One file per sprint or major task.
 
+## Subfolders
+
+| Folder | Holds |
+|---|---|
+| [open-questions/](open-questions/) | Cross-feature OQ tracking (OQ-DOC / OQ-DB / banking-reports) — **do not auto-close** |
+| [roadmap/](roadmap/) | Long-running / foundational task plans (e.g. common-backend seahorse) |
+| [phase-1/](phase-1/) | Residual Phase-1 work only — completed Phase-1 plans were archived to [../archive/planning/phase-1/](../archive/planning/phase-1/) |
+| [phase-2/](phase-2/) | Phase-2 landing zone (no plans yet) |
+| [addon/](addon/) | Active plans for Add-on Service features (e-invoices, operation-status) — **not yet implemented** |
+
+> **Completed plans are archived.** Once a feature ships, its task plan moves to [../archive/planning/](../archive/planning/). Only active / in-flight planning lives here.
+
 ## What goes here
 
-- Sprint task plans (`task-sprint-N-<topic>.md`)
+- Sprint task plans (`task-sprint-N-<topic>.md`) for **in-flight** sprints
 - Cross-feature task plans (`task-plan-<topic>.md`)
 - Sprint retros (if written down)
 - Refactor roadmap docs

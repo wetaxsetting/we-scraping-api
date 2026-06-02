@@ -62,12 +62,12 @@ Sprint and feature plans whose scope sits in the Phase 1 deliverable window (log
 | From | To |
 |---|---|
 | `planning/account-inquiry-and-transaction-history-plan.md` | `planning/phase-1/account-inquiry-and-transaction-history-plan.md` |
-| `planning/approval-line-plan.md` | `planning/phase-1/approval-line-plan.md` |
-| `planning/chart-of-accounts-plan.md` | `planning/phase-1/chart-of-accounts-plan.md` |
-| `planning/contacts-tasks.md` | `planning/phase-1/contacts-tasks.md` |
-| `planning/task-sprint-0-login-refactor.md` | `planning/phase-1/task-sprint-0-login-refactor.md` |
-| `planning/task-sprint-1-backend-golden-chipmunk.md` | `planning/phase-1/task-sprint-1-backend-golden-chipmunk.md` |
-| `planning/transfer-history-plan.md` | `planning/phase-1/transfer-history-plan.md` |
+| `planning/approval-line-plan.md` | `archive/planning/phase-1/approval-line-plan.md` |
+| `planning/chart-of-accounts-plan.md` | `archive/planning/phase-1/chart-of-accounts-plan.md` |
+| `planning/contacts-tasks.md` | `archive/planning/phase-1/contacts-tasks.md` |
+| `planning/task-sprint-0-login-refactor.md` | `archive/planning/phase-1/task-sprint-0-login-refactor.md` |
+| `planning/task-sprint-1-backend-golden-chipmunk.md` | `archive/planning/phase-1/task-sprint-1-backend-golden-chipmunk.md` |
+| `planning/transfer-history-plan.md` | `archive/planning/phase-1/transfer-history-plan.md` |
 
 ### planning/ → planning/open-questions/
 
@@ -170,7 +170,7 @@ All four return empty.
 Spot-checks confirmed two representative cases:
 
 - `audits/migration-audit/firm-banking-settings-review-2026-05-09.md:6` — links to feature spec resolve via `../../features/settings/firm-banking-settings.md` (depth +1 from the original `audits/` root).
-- `planning/phase-1/transfer-history-plan.md:13` — links to feature spec resolve via `../../features/banking/transfer-history.md` (depth +1 from the original `planning/` root).
+- `archive/planning/phase-1/transfer-history-plan.md:13` — links to feature spec resolve via `../../features/banking/transfer-history.md` (depth +1 from the original `planning/` root).
 
 ---
 

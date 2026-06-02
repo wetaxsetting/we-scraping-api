@@ -3,7 +3,7 @@
 **Slug:** `chart-of-accounts`
 **Refactor home:** Spring Boot ([wecms-api/](../../../)) + Next.js Settings panel ([wecms-web/components/settings/chart-of-accounts/](../../../../wecms-web/components/settings/chart-of-accounts/)).
 **Legacy WSVC ids (traceability only — never echoed in refactor identifiers):** `comm_0223_001` (main view + CRUD), `comm_0223_002` (Excel bulk upload).
-**Related docs:** [feature spec](../../features/settings/chart-of-accounts.md) · [backend design](../business-rules/chart-of-accounts.md) · [frontend design](../../../../wecms-web/docs/features/settings/chart-of-accounts.md) · [database](../database/chart-of-accounts.md) · [plan](../../planning/phase-1/chart-of-accounts-plan.md).
+**Related docs:** [feature spec](../../features/settings/chart-of-accounts.md) · [backend design](../business-rules/chart-of-accounts.md) · [frontend design](../../../../wecms-web/docs/features/settings/chart-of-accounts.md) · [database](../database/chart-of-accounts.md) · [plan](../../archive/planning/phase-1/chart-of-accounts-plan.md).
 
 The legacy implementation lives entirely under the WABOOKS `comm` namespace. Every artifact below is read-only reference for the refactor — never edit, never deploy, never wire two-way.
 
@@ -203,9 +203,9 @@ Legacy WSVC ids (`comm_0223_001`, `comm_0223_002`) appear nowhere except this do
 
 ## 6. Out-of-scope (defer to later sprints)
 
-- **`fnsh_0200_001` Income Statement / Trial Balance report** that joins `CHART_ACCT_INFM` with `ACCT_TRNS_HSTR` — ports with the Reports module.
+- **`fnsh_0200_001` Smart Organizer (VND) / `fnsh_0200_002` Organizer Setting** — the auto-categorizing transaction view (`WSVC.fnsh_0200_001.xml`: "Transactions History >> Smart Organizer") that surfaces each transaction's `CHART_ACCT_CD` as a "Reporting Account" column by joining `ACCT_TRNS_HSTR` ↔ `RMRK_ORG_INFM` organizer rules ↔ chart-account names. Read-side consumer of `CHART_ACCT_INFM`; ports with the Banking transaction module, not Reports. (No Income Statement / Trial Balance screen exists in JEX.)
 - **`ACCT_TRNS_HSTR.CHART_ACCT_CD` FK / write-side enforcement** — ports with the Banking transaction module.
 - **`CARD_TRNS_HSTR` join** — ports with the Card module (not yet on the refactor roadmap).
 - **Upload-history audit ledger** (`comm_0223_002_r001` / `_r002`) — ports with the broader `ERP_TRNS_HSTR`-style audit feature.
 
-These are tracked in [docs/refactor-wecms/planning/phase-1/chart-of-accounts-plan.md](../../planning/phase-1/chart-of-accounts-plan.md) §"Out of scope".
+These are tracked in [docs/refactor-wecms/archive/planning/phase-1/chart-of-accounts-plan.md](../../archive/planning/phase-1/chart-of-accounts-plan.md) §"Out of scope".

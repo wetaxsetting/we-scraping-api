@@ -1,7 +1,7 @@
 # Purpose Settings — Task plan (Phase 1 → Phase 4)
 
 **Refactor slug:** `purpose-settings`
-**Sibling docs:** [feature spec](../../features/settings/purpose.md) · [JEX → Spring mapping](../../references/migration/purpose-settings.md) · [backend design](../../references/business-rules/settings/purpose-settings.md) · [frontend design](../../../../wecms-web/docs/features/settings/purpose.md) · [DB schema](../../references/database/settings/purpose-settings-schema.md).
+**Sibling docs:** [feature spec](../../../features/settings/purpose.md) · [JEX → Spring mapping](../../../references/migration/purpose-settings.md) · [backend design](../../../references/business-rules/settings/purpose-settings.md) · [frontend design](../../../../../wecms-web/docs/features/settings/purpose.md) · [DB schema](../../../references/database/settings/purpose-settings-schema.md).
 **Budget context:** 8 dev days + 2 test days per memory `project_team_roster.md` (Sonny lead, Arthur dev, Mr. Youvita AI-assisted test, Mr. Jung PO).
 **Phase 1 status:** Spec + design docs complete. Frontend static UI already exists. Backend not started.
 
@@ -38,21 +38,21 @@ Effort estimate: **3 days** for Arthur with AI assistance. Each task is a discre
    - Phase 2 owner: while extracting, re-grep for a `disp_ord` branch where `coalesce(trim($4), '') = ''` (empty `usag_grp_cd`) — if found, the create path uses `wb_get_next_val(..., 'disp_ord', biz_key, '')` instead of the in-service `MAX+1`. Document the result of this check in a comment on the V80a migration.
 
 2. **Flyway V80 — `busi_usag_set_infm_schema.sql`** (1 hour)
-   - Create the table per [database doc §3](../../references/database/settings/purpose-settings-schema.md).
+   - Create the table per [database doc §3](../../../references/database/settings/purpose-settings-schema.md).
    - Run `./gradlew flywayMigrate` locally; verify against the verification queries in §8 of the DB doc.
    - **Risk:** JDK21 toolchain — memory `project_local_java_toolchain.md` notes the local `JAVA_HOME` issue. Arthur sets `JAVA_HOME=JDK21` before running Gradle.
 
 3. **Flyway V81 — `busi_usag_set_infm_purpose_in_use_view.sql`** (30 min)
-   - Create `v_purpose_in_use` view per [database doc §3](../../references/database/settings/purpose-settings-schema.md).
+   - Create `v_purpose_in_use` view per [database doc §3](../../../references/database/settings/purpose-settings-schema.md).
    - Verification query: `SELECT * FROM v_purpose_in_use LIMIT 5;`.
 
 4. **Entity + composite PK** (1 hour)
-   - `BusiUsagSet.java` extends `BaseEntity` per [backend §5.1](../../references/business-rules/settings/purpose-settings.md).
+   - `BusiUsagSet.java` extends `BaseEntity` per [backend §5.1](../../../references/business-rules/settings/purpose-settings.md).
    - `BusiUsagSetId.java` Serializable composite key.
    - Resolve **OQ-Backend-1** — confirm `BaseEntity` `@PrePersist` doesn't break against the missing `REG_*` columns; override locally if needed.
 
 5. **Repository** (1 hour)
-   - `PurposeSettingsRepository` extends `JpaRepository` + `JpaSpecificationExecutor` per [backend §4](../../references/business-rules/settings/purpose-settings.md).
+   - `PurposeSettingsRepository` extends `JpaRepository` + `JpaSpecificationExecutor` per [backend §4](../../../references/business-rules/settings/purpose-settings.md).
    - Includes `nextUseUsagCd(bizKey)` native query against the ported `wb_get_next_val(...)` function — see backend §4 for the signature.
    - `PurposeInUseRepository` over the view, marked `@Immutable`.
    - `PurposeInUseRow` projection entity (Serializable, PK = composite `BusiUsagSetId` of (`biz_key`, `use_usag_cd`)).
@@ -65,8 +65,8 @@ Effort estimate: **3 days** for Arthur with AI assistance. Each task is a discre
 ### Day 2 — Service + DTOs + audit-log integration
 
 7. **DTO records** (1 hour)
-   - `PurposeSettingRow`, `PurposeSettingDetail`, `PurposeSettingListResponse`, `PurposeSettingCreateRequest`, `PurposeSettingUpdateRequest`, `PurposeReorderItem`, `PurposeReorderRequest`, `PurposeUploadRow`, `PurposeUploadRequest`, `PurposeUploadError`, `PurposeUploadResult` per [backend §5.3](../../references/business-rules/settings/purpose-settings.md).
-   - Bean Validation annotations per [backend §6](../../references/business-rules/settings/purpose-settings.md).
+   - `PurposeSettingRow`, `PurposeSettingDetail`, `PurposeSettingListResponse`, `PurposeSettingCreateRequest`, `PurposeSettingUpdateRequest`, `PurposeReorderItem`, `PurposeReorderRequest`, `PurposeUploadRow`, `PurposeUploadRequest`, `PurposeUploadError`, `PurposeUploadResult` per [backend §5.3](../../../references/business-rules/settings/purpose-settings.md).
+   - Bean Validation annotations per [backend §6](../../../references/business-rules/settings/purpose-settings.md).
 
 8. **Service skeleton + tree assembly** (2 hours)
    - `PurposeSettingsService.list()` + `detail()` first — read-only path.
@@ -87,7 +87,7 @@ Effort estimate: **3 days** for Arthur with AI assistance. Each task is a discre
 ### Day 3 — Controller + upload + tests + i18n keys
 
 11. **Controller** (1 hour)
-    - `PurposeSettingsController` with all 7 endpoints per [backend §2](../../references/business-rules/settings/purpose-settings.md).
+    - `PurposeSettingsController` with all 7 endpoints per [backend §2](../../../references/business-rules/settings/purpose-settings.md).
     - `@PreAuthorize("hasRole('ADMIN')")` on every mutation.
 
 12. **`upload(...)` service method** (1.5 hours)
@@ -121,11 +121,11 @@ Effort estimate: **2 days** for Arthur. Phase 3 starts after backend MR1+MR2 lan
 ### Day 4 — Wire types, mappers, API client, list/detail wiring
 
 1. **New file: `lib/api/purposeSettings.ts`** (1 hour)
-    - Wire types + 7 Axios wrappers per [frontend §3](../../../../wecms-web/docs/features/settings/purpose.md).
+    - Wire types + 7 Axios wrappers per [frontend §3](../../../../../wecms-web/docs/features/settings/purpose.md).
     - `unwrap<T>(...)` helper (same shape as `fetchFirmBankingSettings`).
 
 2. **Extend `types.ts`** (15 min)
-    - Add `useUsagCd`, `modId?`, `modDtm?` to `PurposeNode` per [frontend §6](../../../../wecms-web/docs/features/settings/purpose.md).
+    - Add `useUsagCd`, `modId?`, `modDtm?` to `PurposeNode` per [frontend §6](../../../../../wecms-web/docs/features/settings/purpose.md).
 
 3. **Add `mapPurposeSettingRow` to `lib/api/mappers.ts`** (15 min)
     - Wire-snake_case → in-memory camelCase.
@@ -171,7 +171,7 @@ Effort estimate: **2 days** for Arthur. Phase 3 starts after backend MR1+MR2 lan
     - No Figma re-confirmation needed — Sonny confirmed the static UI direction (2026-05-12).
 
 12. **Demo seed — Flyway V82** (30 min)
-    - Idempotent INSERT seeding ~6 purposes for `VN_VNM0004_000001` per [database §3 V82](../../references/database/settings/purpose-settings-schema.md).
+    - Idempotent INSERT seeding ~6 purposes for `VN_VNM0004_000001` per [database §3 V82](../../../references/database/settings/purpose-settings-schema.md).
 
 **Day 5 evening — frontend PR up.** Single MR (it's all wire-up; no architectural splits).
 
@@ -183,7 +183,7 @@ Effort estimate: **2 days** (1.5 dev fix-up + 0.5 dedicated test by Mr. Youvita)
 
 ### Day 6 morning — Mr. Youvita scripted regression
 
-For tenant `VN_VNM0004_000001`, walk every state per [feature §8](../../features/settings/purpose.md):
+For tenant `VN_VNM0004_000001`, walk every state per [feature §8](../../../features/settings/purpose.md):
 
 1. **List loads** with 5 DEV + 6 seeded purposes = 11 rows.
 2. **Add level-1** — verify POST 200 + row appears in list.
@@ -208,7 +208,7 @@ For tenant `VN_VNM0004_000001`, walk every state per [feature §8](../../feature
 18. **Excel upload — duplicate against existing** — same.
 19. **Audit log** — open the DB and verify a Purpose audit row exists for each Create / Update / Delete / Reorder / Upload event; verify `wsvc_id = 'purpose-settings'`, `ref_no = 'BUSI_USAG_SET_INFM'`, `ref_no1 = use_usag_cd`, `ref_no2 = hand_use_usag_cd`.
 20. **Permission gate** — log in as a non-admin user; verify all mutating endpoints return 403; verify GET still works.
-21. **JWT expiry** — let the token expire; verify the global session-expired dialog fires per [wecms-web/CLAUDE.md](../../../../wecms-web/CLAUDE.md).
+21. **JWT expiry** — let the token expire; verify the global session-expired dialog fires per [wecms-web/CLAUDE.md](../../../../../wecms-web/CLAUDE.md).
 
 ### Day 6 afternoon — Arthur fixes regressions
 
@@ -226,28 +226,28 @@ Sourced from the sibling docs. Each must be answered before its dependent task l
 
 | OQ | Sibling doc | Blocking task | Default decision (if PO doesn't override) |
 |---|---|---|---|
-| OQ-1 (Excel template format) | [feature](../../features/settings/purpose.md) | Phase 3 task #10 — **DECIDED 2026-05-12** | Follow the existing VAS Account Excel upload template pattern. Purpose's static-UI `<ExcelUploadDialog>` is correct as-is. Final columns / validation can be adjusted later if PO supplies different requirements. |
-| OQ-2 (Inline form parent input) | [feature](../../features/settings/purpose.md) | Phase 3 task #11 — **DECIDED 2026-05-12** | Current static UI is correct. Parent selector shows level-1 rows only; child (level-2) rows never selectable as parent. No UI change needed. |
-| OQ-3 (`use_usag_cd` generation) | [feature](../../features/settings/purpose.md) | Phase 2 task #9 — **DECIDED 2026-05-12** | Port the legacy `wb_get_next_val(...)` DB function (V80a). Call `wb_get_next_val('busi_usag_set_infm', 'use_usag_cd', biz_key, '')` from the service via a native query. PK-collision retry-once handles the function's missing lock. `disp_ord` uses in-service `MAX+1` unless Phase 2 task #1 finds a matching `disp_ord` branch on DEV for `usag_grp_cd = ''`. |
-| OQ-4 (`hand_use_usag_cd` dup on update) | [feature](../../features/settings/purpose.md) | Phase 2 task #8 | Preserve legacy — no check |
-| OQ-5 (Payment / transfer reference check on delete) | [feature](../../features/settings/purpose.md) | Phase 2 task #8 — **DECIDED 2026-05-12** | **Recursive hard-fail.** Block delete when the row itself OR any of its active children is referenced by an active banking-transaction-history / payment / transfer record. No soft-warn. Wire code is `WBE1199` (per OQ-8 — single broadened code; no new `WBE_PURPOSE_*` family). Consumer-table list still TBD (Phase 2 task #8 enumerates `PYMN_*` / `TRNS_*` / `SCDUL_*` / `OVRS_*` / `EXPS_*` exhaustively as branch-(b) UNIONs in `v_purpose_in_use`). |
-| OQ-6 (Permission boundary) | [feature](../../features/settings/purpose.md) | Phase 2 task #10 | `@PreAuthorize("hasRole('ADMIN')")` on mutations |
-| OQ-7 (Partial unique index) | [feature](../../features/settings/purpose.md) | Phase 2.5 (optional) | Off by default |
-| OQ-8 (Error code finalization) | [feature](../../features/settings/purpose.md) | Phase 2 task #13 — **DECIDED 2026-05-12** | **No new `WBE_PURPOSE_*` family.** Reuse legacy `WBW1152` / `WBW1138` / `WBE1199` + generic `WBE_VALIDATION` / `WBE1009` / `WBE9999`. `WBE1199`'s wire scope broadens to cover both children case AND OQ-5 transaction-reference case under one localized message. |
-| OQ-FE-1 (View Setting adoption) | [feature](../../features/settings/purpose.md) | none — already decided | Do NOT adopt |
-| OQ-FE-2 (Search input on panel) | [feature](../../features/settings/purpose.md) | Phase 3 (only if Figma adds it) | Skip until Figma demands it |
-| OQ-Backend-1 (`BaseEntity` REG_* on this table) | [backend](../../references/business-rules/settings/purpose-settings.md) | Phase 2 task #3 | Override `@PrePersist` for `BusiUsagSet` |
-| OQ-Backend-2 (Advisory-lock key) | [backend](../../references/business-rules/settings/purpose-settings.md) | — | **OBSOLETE** — `wb_get_next_val` replaces in-service MAX+1, so the advisory lock isn't used. Concurrency handled by PK retry-once. |
-| OQ-Backend-3 (Tree assembly server-side) | [backend](../../references/business-rules/settings/purpose-settings.md) | Phase 2 task #7 | Server-side |
-| OQ-Backend-4 (Pagination on list) | [backend](../../references/business-rules/settings/purpose-settings.md) | Phase 2 task #7 | No pagination — full list |
-| OQ-DB-1 (Materialized view) | [database](../../references/database/settings/purpose-settings-schema.md) | Phase 2.5 (optional) | Regular VIEW |
-| OQ-DB-2 (FK on `parent_use_usag_cd`) | [database](../../references/database/settings/purpose-settings-schema.md) | Phase 2.5 (optional) | No FK |
-| OQ-DB-3 (Partial unique indexes) | [database](../../references/database/settings/purpose-settings-schema.md) | Phase 2.5 (optional) | Off |
-| OQ-DB-5 (`numeric → Integer`) | [database](../../references/database/settings/purpose-settings-schema.md) | Phase 2 task #5 | Verify in `@DataJpaTest`; bump to `INTEGER` only if Hibernate complains |
-| OQ-FE-Frontend-1 (Parent dropdown) | [frontend](../../../../wecms-web/docs/features/settings/purpose.md) | Phase 3 task #11 — **DECIDED 2026-05-12** | Current static UI is correct. Selector lists level-1 rows only. No UI change. |
-| OQ-FE-Frontend-2 (Toggle endpoint shape) | [frontend](../../../../wecms-web/docs/features/settings/purpose.md) | Phase 3 task #8 | Full PUT (no PATCH `/toggle`) |
-| OQ-FE-Frontend-3 (Reorder debounce) | [frontend](../../../../wecms-web/docs/features/settings/purpose.md) | Phase 3 task #9 | 300ms debounce |
-| OQ-FE-Frontend-4 (Loading skeleton) | [frontend](../../../../wecms-web/docs/features/settings/purpose.md) | Phase 3 task #4 | Simple `<tr>` placeholder rows |
+| OQ-1 (Excel template format) | [feature](../../../features/settings/purpose.md) | Phase 3 task #10 — **DECIDED 2026-05-12** | Follow the existing VAS Account Excel upload template pattern. Purpose's static-UI `<ExcelUploadDialog>` is correct as-is. Final columns / validation can be adjusted later if PO supplies different requirements. |
+| OQ-2 (Inline form parent input) | [feature](../../../features/settings/purpose.md) | Phase 3 task #11 — **DECIDED 2026-05-12** | Current static UI is correct. Parent selector shows level-1 rows only; child (level-2) rows never selectable as parent. No UI change needed. |
+| OQ-3 (`use_usag_cd` generation) | [feature](../../../features/settings/purpose.md) | Phase 2 task #9 — **DECIDED 2026-05-12** | Port the legacy `wb_get_next_val(...)` DB function (V80a). Call `wb_get_next_val('busi_usag_set_infm', 'use_usag_cd', biz_key, '')` from the service via a native query. PK-collision retry-once handles the function's missing lock. `disp_ord` uses in-service `MAX+1` unless Phase 2 task #1 finds a matching `disp_ord` branch on DEV for `usag_grp_cd = ''`. |
+| OQ-4 (`hand_use_usag_cd` dup on update) | [feature](../../../features/settings/purpose.md) | Phase 2 task #8 | Preserve legacy — no check |
+| OQ-5 (Payment / transfer reference check on delete) | [feature](../../../features/settings/purpose.md) | Phase 2 task #8 — **DECIDED 2026-05-12** | **Recursive hard-fail.** Block delete when the row itself OR any of its active children is referenced by an active banking-transaction-history / payment / transfer record. No soft-warn. Wire code is `WBE1199` (per OQ-8 — single broadened code; no new `WBE_PURPOSE_*` family). Consumer-table list still TBD (Phase 2 task #8 enumerates `PYMN_*` / `TRNS_*` / `SCDUL_*` / `OVRS_*` / `EXPS_*` exhaustively as branch-(b) UNIONs in `v_purpose_in_use`). |
+| OQ-6 (Permission boundary) | [feature](../../../features/settings/purpose.md) | Phase 2 task #10 | `@PreAuthorize("hasRole('ADMIN')")` on mutations |
+| OQ-7 (Partial unique index) | [feature](../../../features/settings/purpose.md) | Phase 2.5 (optional) | Off by default |
+| OQ-8 (Error code finalization) | [feature](../../../features/settings/purpose.md) | Phase 2 task #13 — **DECIDED 2026-05-12** | **No new `WBE_PURPOSE_*` family.** Reuse legacy `WBW1152` / `WBW1138` / `WBE1199` + generic `WBE_VALIDATION` / `WBE1009` / `WBE9999`. `WBE1199`'s wire scope broadens to cover both children case AND OQ-5 transaction-reference case under one localized message. |
+| OQ-FE-1 (View Setting adoption) | [feature](../../../features/settings/purpose.md) | none — already decided | Do NOT adopt |
+| OQ-FE-2 (Search input on panel) | [feature](../../../features/settings/purpose.md) | Phase 3 (only if Figma adds it) | Skip until Figma demands it |
+| OQ-Backend-1 (`BaseEntity` REG_* on this table) | [backend](../../../references/business-rules/settings/purpose-settings.md) | Phase 2 task #3 | Override `@PrePersist` for `BusiUsagSet` |
+| OQ-Backend-2 (Advisory-lock key) | [backend](../../../references/business-rules/settings/purpose-settings.md) | — | **OBSOLETE** — `wb_get_next_val` replaces in-service MAX+1, so the advisory lock isn't used. Concurrency handled by PK retry-once. |
+| OQ-Backend-3 (Tree assembly server-side) | [backend](../../../references/business-rules/settings/purpose-settings.md) | Phase 2 task #7 | Server-side |
+| OQ-Backend-4 (Pagination on list) | [backend](../../../references/business-rules/settings/purpose-settings.md) | Phase 2 task #7 | No pagination — full list |
+| OQ-DB-1 (Materialized view) | [database](../../../references/database/settings/purpose-settings-schema.md) | Phase 2.5 (optional) | Regular VIEW |
+| OQ-DB-2 (FK on `parent_use_usag_cd`) | [database](../../../references/database/settings/purpose-settings-schema.md) | Phase 2.5 (optional) | No FK |
+| OQ-DB-3 (Partial unique indexes) | [database](../../../references/database/settings/purpose-settings-schema.md) | Phase 2.5 (optional) | Off |
+| OQ-DB-5 (`numeric → Integer`) | [database](../../../references/database/settings/purpose-settings-schema.md) | Phase 2 task #5 | Verify in `@DataJpaTest`; bump to `INTEGER` only if Hibernate complains |
+| OQ-FE-Frontend-1 (Parent dropdown) | [frontend](../../../../../wecms-web/docs/features/settings/purpose.md) | Phase 3 task #11 — **DECIDED 2026-05-12** | Current static UI is correct. Selector lists level-1 rows only. No UI change. |
+| OQ-FE-Frontend-2 (Toggle endpoint shape) | [frontend](../../../../../wecms-web/docs/features/settings/purpose.md) | Phase 3 task #8 | Full PUT (no PATCH `/toggle`) |
+| OQ-FE-Frontend-3 (Reorder debounce) | [frontend](../../../../../wecms-web/docs/features/settings/purpose.md) | Phase 3 task #9 | 300ms debounce |
+| OQ-FE-Frontend-4 (Loading skeleton) | [frontend](../../../../../wecms-web/docs/features/settings/purpose.md) | Phase 3 task #4 | Simple `<tr>` placeholder rows |
 
 **Critical-path questions for PO sync (Mr. Jung):**
 - **OQ-5** — ~~needs explicit consumer-table list~~ **DECIDED 2026-05-12** (recursive hard-fail per Sonny / Figma). Consumer-table enumeration is a Phase 2 engineering task (not a PO decision), branches landed incrementally as each consumer entity ports into the refactor.
@@ -288,17 +288,17 @@ A feature is "done" when:
 - [ ] No `@JsonProperty("UPPER_SNAKE")` in any of the new DTO records
 - [ ] No legacy WSVC id (`comm_0187_001`, etc.) appears anywhere in the new code except JEX file:line citations
 - [ ] No instance of `text-[Npx]` / `font-[Nweight]` / inline `style={{ fontFamily: ... }}` in the new frontend code
-- [ ] [docs/refactor-wecms/audits/](../../references/audits/) carries a Phase 4 parity audit comparing refactor behavior vs. JEX for the 21 scenarios
+- [ ] [docs/refactor-wecms/audits/](../../../references/audits/) carries a Phase 4 parity audit comparing refactor behavior vs. JEX for the 21 scenarios
 
 ---
 
 ## 8. References
 
-- [docs/refactor-wecms/features/settings/purpose-settings.md](../../features/settings/purpose.md) — feature spec.
-- [docs/refactor-wecms/migration/purpose-settings.md](../../references/migration/purpose-settings.md) — JEX → Spring mapping.
-- [docs/refactor-wecms/backend/settings/purpose-settings.md](../../references/business-rules/settings/purpose-settings.md) — backend design.
-- [docs/refactor-wecms/frontend/settings/purpose-settings.md](../../../../wecms-web/docs/features/settings/purpose.md) — frontend design.
-- [docs/refactor-wecms/database/settings/purpose-settings-schema.md](../../references/database/settings/purpose-settings-schema.md) — DB schema.
+- [docs/refactor-wecms/features/settings/purpose-settings.md](../../../features/settings/purpose.md) — feature spec.
+- [docs/refactor-wecms/migration/purpose-settings.md](../../../references/migration/purpose-settings.md) — JEX → Spring mapping.
+- [docs/refactor-wecms/backend/settings/purpose-settings.md](../../../references/business-rules/settings/purpose-settings.md) — backend design.
+- [docs/refactor-wecms/frontend/settings/purpose-settings.md](../../../../../wecms-web/docs/features/settings/purpose.md) — frontend design.
+- [docs/refactor-wecms/database/settings/purpose-settings-schema.md](../../../references/database/settings/purpose-settings-schema.md) — DB schema.
 - [docs/refactor-wecms/planning/settings/erp-transaction-history-plan.md](erp-transaction-history-plan.md) — closest planning precedent.
 - Memory `project_team_roster.md` — 8+2 dev/test budget.
 - Memory `project_local_java_toolchain.md` — JDK21 toolchain note.

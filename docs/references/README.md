@@ -9,12 +9,11 @@ points at.
 | Folder | Contents |
 |---|---|
 | [api-spec/](api-spec/) | REST endpoint / DTO contracts (`*-api.md`), per-domain API specs, [api-mapping.md](api-spec/api-mapping.md) cross-feature index |
-| [database/](database/) | Schema design, ERD, Flyway notes, indexing, [table-mapping/](database/table-mapping/), [manual-tenant-setup.md](database/manual-tenant-setup.md) |
+| [database/](database/) | Schema design, ERD, Flyway notes, indexing, [table-mapping/](database/table-mapping/), [manual-tenant-setup.md](database/manual-tenant-setup.md), [db-function-classification.md](database/db-function-classification.md) |
 | [business-rules/](business-rules/) | Service / domain design — entities, repositories, services, security, settings, per-feature business logic |
-| [migration/](migration/) | JEX → Spring service/field mapping, [jex-analysis/](migration/jex-analysis/), screen-mapping, risk/rollout, [MIGRATION_PLAYBOOK.md](migration/MIGRATION_PLAYBOOK.md) |
-| [audits/](audits/) | Parity audits (refactor vs JEX) — DB, API, migration, security, UX |
+| [migration/](migration/) | JEX → Spring service/field mapping, [jex-analysis/](migration/jex-analysis/), screen-mapping, [MIGRATION_PLAYBOOK.md](migration/MIGRATION_PLAYBOOK.md) |
+| [audits/](audits/) | Parity audits (refactor vs JEX) — per-feature parity checklists & dated reviews |
 | [api/](api/) · [external/](external/) · [figma/](figma/) · [jex/](jex/) | Curated reference-note subfolders (framework cheatsheets, external links, Figma notes, JEX pointers) |
-| [crystalline-honking-sky.md](crystalline-honking-sky.md) | DB-function classification & migration priority (exploration note) |
 
 ## What goes here
 

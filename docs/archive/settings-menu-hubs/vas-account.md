@@ -45,4 +45,4 @@ Base URI `/api/v1/settings/vas-account` (JWT, snake_case wire):
 
 ## Notes
 "Use VAS Account" is a tenant feature toggle owned by **Preferences** (`BUSI_ENV_SET_INFM`) — see
-[preferences.md](../../features/settings/preferences.md). Web/UI: [../../../wecms-web/docs/settings/vas-account.md](../../../../wecms-web/docs/archive/settings-vas-account.md).
+[preferences.md](../../features/settings/preferences.md). Web/UI: [wecms-web/docs/features/settings/vas-account.md](../../../../wecms-web/docs/features/settings/vas-account.md).

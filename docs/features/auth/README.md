@@ -37,7 +37,7 @@ Covered by `login-auth.md`:
 
 ## Related reference
 
-- Sprint plan: [`../../planning/phase-1/task-sprint-0-login-refactor.md`](../../planning/phase-1/task-sprint-0-login-refactor.md)
+- Sprint plan: [`../../archive/planning/phase-1/task-sprint-0-login-refactor.md`](../../archive/planning/phase-1/task-sprint-0-login-refactor.md)
 - Bootstrap / password strategy: [`../../planning/roadmap/task-plan-common-backend-functional-seahorse.md`](../../planning/roadmap/task-plan-common-backend-functional-seahorse.md)
 - Endpoint index: [`../../references/api-spec/api-mapping.md`](../../references/api-spec/api-mapping.md) · JEX→Spring: [`../../references/migration/service-mapping.md`](../../references/migration/service-mapping.md)
 - JEX functional reference (read-only): [`../../../../docs/jex/features/login-wecms.md`](../../../../docs/jex/features/login-wecms.md), [`../../../../docs/jex/features/login-spring-boot-migration.md`](../../../../docs/jex/features/login-spring-boot-migration.md), [`../../../../docs/jex/api-spec/auth.md`](../../../../docs/jex/api-spec/auth.md)

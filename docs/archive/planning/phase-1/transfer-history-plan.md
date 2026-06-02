@@ -11,9 +11,9 @@ last_updated: 2026-05-20
 Step-by-step plan for porting **Banking > Internal Transfer > Transfer History**
 to wecms-api (Spring Boot 3.5.13) + wecms-web (Next.js 16) under the refactor
 R&D scope. Companion to
-[docs/refactor-wecms/features/banking/transfer-history.md](../../features/banking/own-account-transfer/transfer-history.md)
+[docs/refactor-wecms/features/banking/transfer-history.md](../../../features/banking/own-account-transfer/transfer-history.md)
 (spec) and
-[docs/refactor-wecms/migration/transfer-history.md](../../references/migration/transfer-history.md)
+[docs/refactor-wecms/migration/transfer-history.md](../../../references/migration/transfer-history.md)
 (mapping).
 
 Read-only scope — this is a list endpoint over an already-ported table.
@@ -52,7 +52,7 @@ backend, `FE-N` for frontend, `E2E-N` for integration). Estimates are in
 |---|---|---|---|---|
 | **BE-1** | Generate `NapasRemitTrnsHstr` JPA entity + `NapasRemitTrnsHstrId` composite key in `domain/banking/transferhistory/entity/`. 21 columns mapped 1:1, `@Table(name = "NAPAS_REMIT_TRNS_HSTR")`, extends `BaseEntity`, `@JdbcTypeCode(SqlTypes.CHAR)` on `TRANS_TYPE` / `CCY_CD` / `FEE_DFR_SBJ` / `TRNS_STLM_YN` (CHAR columns, same precedent as V38 `sort_yn`). | `BaseEntity` (audit columns), `LangCd` enum, project Lombok config | 0.25 d | OQ-1 resolved |
 | **BE-2** | (Optional) Add Flyway seed migration `V{N}__transfer_history_seed.sql` importing ~25 most-recent rows from DEV via `INSERT … ON CONFLICT DO NOTHING`. Skip if local DB already has rows from V22 / V29. | Idempotent migration pattern from V22 / V72 / V87 | 0.25 d | BE-1; access to DEV via `postgres_dev` MCP (read-only) |
-| **BE-3** | `NapasRemitTrnsHstrRepository extends JpaRepository<NapasRemitTrnsHstr, NapasRemitTrnsHstrId>` — `findAll(Specification, Pageable)` + one `@Query` for the totals projection (mirrors `NAPAS_REMIT_TRNS_HSTR_R003_CNT`). Tenant-scoped — `BIZ_KEY` constraint per [wecms-api § Repositories](../../../CLAUDE.md). | Spring Data JPA, existing `TenantContext.currentBizKey()` | 0.5 d | BE-1 |
+| **BE-3** | `NapasRemitTrnsHstrRepository extends JpaRepository<NapasRemitTrnsHstr, NapasRemitTrnsHstrId>` — `findAll(Specification, Pageable)` + one `@Query` for the totals projection (mirrors `NAPAS_REMIT_TRNS_HSTR_R003_CNT`). Tenant-scoped — `BIZ_KEY` constraint per [wecms-api § Repositories](../../../../CLAUDE.md). | Spring Data JPA, existing `TenantContext.currentBizKey()` | 0.5 d | BE-1 |
 | **BE-4** | DTOs as Java **records** under `domain/banking/transferhistory/dto/`: `TransferHistoryListRequest` (validated query params), `TransferHistoryRow`, `TransferHistoryTotals`, `TransferHistoryListResponse`. **Field names camelCase; no `@JsonProperty` unless wire diverges from snake-cased field.** | Global `JacksonConfig` SNAKE_CASE strategy, existing `@Pattern` / `@Min` validators | 0.5 d | — |
 | **BE-5** | `TransferHistorySortField` enum (one constant per allowed `data-sort` value: `TRNS_DT`, `OUT_BANK_NM`, `IN_BANK_NM`, `TRSC_AMT`, `RMRK`) per the "Common table sort" rule + project-wide whitelist precedent. | `ContactSortField` / `ApprovalLineSortField` precedent | 0.25 d | BE-4 |
 | **BE-6** | `TransferHistoryService` — orchestrate validation, BIZ_KEY scoping via `TenantContext`, batched bank-name + user-name resolution, period-cap guard, sort whitelist, paged repository call + totals call, projection to `TransferHistoryRow`. Per OQ-1: `BankCdResolver` for `out_bank_nm`; `LegacyFunctionRepository.resolveNapasOrCitadBankName` (V86) for `in_bank_nm` unless PO overrides. | `BankCdResolver`, `LegacyFunctionRepository`, `TenantContext`, `UserInfmRepository` | 1.0 d | BE-3, BE-4, BE-5 |
@@ -67,13 +67,13 @@ backend, `FE-N` for frontend, `E2E-N` for integration). Estimates are in
 
 | Task | Description | Reuses | Est. | Depends on |
 |---|---|---|---|---|
-| **FE-1** | Flip `ApiTransferRow` / `ApiTransferHistoryResponse` in [`wecms-web/lib/types/api.ts`](../../../../wecms-web/lib/types/api.ts) from UPPER_SNAKE holdover to lowercase snake_case wire shape (per [wecms-web § Holdovers](../../../../wecms-web/CLAUDE.md)). | Existing `ApiResponse<T>` envelope | 0.25 d | Phase A complete |
-| **FE-2** | Add wire-to-in-memory mapper `toTransferHistoryRow(...)` + `toTransferHistoryResponse(...)` in [`lib/api/mappers.ts`](../../../../wecms-web/lib/api/mappers.ts). In-memory shape camelCase semantic — `TransferHistoryRow` interface declared in `components/banking/internal-transfer/types.ts`. | Existing mapper file | 0.25 d | FE-1 |
-| **FE-3** | Hook `useTransferHistory({ fromDt, toDt, status, sortField, sortDirection, pageNo, pageSize })` in `lib/banking/useTransferHistory.ts` — Axios call via the existing `api` client, returns `{ rows, totals, isLoading, error }`. Error path uses `useDialog({ type: "error" })` per [wecms-web § Dialog variant](../../../../wecms-web/CLAUDE.md). | Existing `api` (lib/axios.ts), `useDialog()`, `lib/i18n` | 0.5 d | FE-2 |
+| **FE-1** | Flip `ApiTransferRow` / `ApiTransferHistoryResponse` in [`wecms-web/lib/types/api.ts`](../../../../../wecms-web/lib/types/api.ts) from UPPER_SNAKE holdover to lowercase snake_case wire shape (per [wecms-web § Holdovers](../../../../../wecms-web/CLAUDE.md)). | Existing `ApiResponse<T>` envelope | 0.25 d | Phase A complete |
+| **FE-2** | Add wire-to-in-memory mapper `toTransferHistoryRow(...)` + `toTransferHistoryResponse(...)` in [`lib/api/mappers.ts`](../../../../../wecms-web/lib/api/mappers.ts). In-memory shape camelCase semantic — `TransferHistoryRow` interface declared in `components/banking/internal-transfer/types.ts`. | Existing mapper file | 0.25 d | FE-1 |
+| **FE-3** | Hook `useTransferHistory({ fromDt, toDt, status, sortField, sortDirection, pageNo, pageSize })` in `lib/banking/useTransferHistory.ts` — Axios call via the existing `api` client, returns `{ rows, totals, isLoading, error }`. Error path uses `useDialog({ type: "error" })` per [wecms-web § Dialog variant](../../../../../wecms-web/CLAUDE.md). | Existing `api` (lib/axios.ts), `useDialog()`, `lib/i18n` | 0.5 d | FE-2 |
 | **FE-4** | `TransferHistoryPage.tsx` composing existing `<PageHeader>` + `<DateRangePicker>` + status radios + `<TransferHistoryTable>` + `<TransferHistoryTableColumns>` + `<Pagination>` + footer row. **No new abstractions.** | Shared shell, `<StatusBadge>`, `<PageHeader>`, `<PageActionButtons>`, `<SearchInput>` (if PO wants keyword), `<Pagination>`, `<DateRangePicker>` (scaffold exists, no real picker yet — uses the same shell as other banking pages) | 1.0 d | FE-3 |
-| **FE-5** | i18n entries in [`locales/en.json`](../../../../wecms-web/locales/en.json) / `ko.json` / `vi.json` under `banking.transfer_history.*` (15 keys per spec §9.1). | Existing in-house i18n provider | 0.25 d | FE-4 |
+| **FE-5** | i18n entries in [`locales/en.json`](../../../../../wecms-web/locales/en.json) / `ko.json` / `vi.json` under `banking.transfer_history.*` (15 keys per spec §9.1). | Existing in-house i18n provider | 0.25 d | FE-4 |
 | **FE-6** | Route: `app/(dashboard)/banking/internal-transfer/transfer-history/page.tsx` (thin server component, sets `metadata`, renders `<TransferHistoryPage />`). | `<AppShell>` via `(dashboard)/layout.tsx`, `HOME_ROUTE` constant in `lib/routes.ts` if a redirect is needed | 0.1 d | FE-4 |
-| **FE-7** | Sidebar entry — flip the existing placeholder `internal-transfer/transfer-history` link in [`Sidebar.tsx`](../../../../wecms-web/components/layout/Sidebar.tsx) from `href=undefined` to a real route. | Existing sidebar config | 0.1 d | FE-6 |
+| **FE-7** | Sidebar entry — flip the existing placeholder `internal-transfer/transfer-history` link in [`Sidebar.tsx`](../../../../../wecms-web/components/layout/Sidebar.tsx) from `href=undefined` to a real route. | Existing sidebar config | 0.1 d | FE-6 |
 | **FE-8** | Tests (Vitest + React Testing Library, when the project test config supports them — otherwise smoke test only): mapper round-trip, hook happy path, error dialog opens on 500. | Existing test setup if present | 0.5 d | FE-3 |
 
 **Phase B subtotal:** ~3.0 dev days.
@@ -85,7 +85,7 @@ backend, `FE-N` for frontend, `E2E-N` for integration). Estimates are in
 | **E2E-1** | Manual smoke run by Mr. Youvita (AI-assisted tester): empty range, success-only filter, failed-only filter, single-day range, paging across ≥ 2 pages, status badge colours, error dialog on bad token. Compare side-by-side with live JEX `https://dev.wecms.vn/trns_0003_001.act` for parity. | 1.0 test day | Phase A + B complete |
 | **E2E-2** | Verify wire shape via `curl` — `GET /api/v1/banking/internal-transfer/transfer-history?from_dt=YYYYMMDD&to_dt=YYYYMMDD` returns the snake_case envelope; trace_id grepable in logs. | 0.25 test day | Phase A complete |
 | **E2E-3** | Backend MR + frontend MR open as a paired set on GitLab (workspace full-stack ownership rule). Reviewer checklist: no UPPER_SNAKE `@JsonProperty` left; sort whitelist enforced; no JEX trees touched; no `coocon.exe` / `ProcessBuilder` reference anywhere in the Java side. | 0.25 d | Phase B complete |
-| **E2E-4** | Update [docs/refactor-wecms/features/banking/transfer-history.md](../../features/banking/own-account-transfer/transfer-history.md) `status:` frontmatter to `working`; update [wecms-api/CLAUDE.md § Feature Status](../../../CLAUDE.md) and [wecms-web/CLAUDE.md § Feature Status](../../../../wecms-web/CLAUDE.md) with one row each. | 0.25 d | E2E-1 passes |
+| **E2E-4** | Update [docs/refactor-wecms/features/banking/transfer-history.md](../../../features/banking/own-account-transfer/transfer-history.md) `status:` frontmatter to `working`; update [wecms-api/CLAUDE.md § Feature Status](../../../../CLAUDE.md) and [wecms-web/CLAUDE.md § Feature Status](../../../../../wecms-web/CLAUDE.md) with one row each. | 0.25 d | E2E-1 passes |
 
 **Phase C subtotal:** ~1.75 days (≈1.25 dev + 1 test).
 
@@ -108,7 +108,7 @@ with margin.
 
 ## 3. Sequencing rule (do NOT parallelise)
 
-Per [wecms-api § Scope Guard](../../../CLAUDE.md), this is a backend
+Per [wecms-api § Scope Guard](../../../../CLAUDE.md), this is a backend
 + frontend joint MR pair. Sequence:
 
 ```
@@ -120,7 +120,7 @@ OQ resolved → Phase A (BE-1 … BE-9) → Phase B (FE-1 … FE-8) → Phase C
 
 The static-UI scaffolding (`TransferHistoryTable.tsx`,
 `TransferHistoryTableColumns.tsx`) already exists with mock data — but per the
-[wecms-web § Holdovers](../../../../wecms-web/CLAUDE.md) rule, **do not
+[wecms-web § Holdovers](../../../../../wecms-web/CLAUDE.md) rule, **do not
 pre-migrate** the wire types or mappers until the backend lands.
 
 ---

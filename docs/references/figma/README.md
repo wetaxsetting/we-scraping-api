@@ -19,4 +19,4 @@ Per memory `feedback_figma_first`: when given a Figma URL for a UI task, call `g
 ## Related
 
 - Workspace CLAUDE.md — Global Typography section (the live system is still the **typography contract** across all trees; Figma is the source for new design layouts).
-- UX audits: [`../../audits/ux-audit/`](../audits/ux-audit/)
+- Parity audits: [`../audits/`](../audits/)

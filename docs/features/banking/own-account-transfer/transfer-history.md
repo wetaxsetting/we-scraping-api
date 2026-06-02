@@ -12,7 +12,7 @@ last_updated: 2026-05-20
 > [wecms-api/src/main/java/com/kosign/wecms/domain/banking/transferhistory/](../../../../src/main/java/com/kosign/wecms/domain/banking/transferhistory/)
 > with the shared `NapasRemitTrnsHstr` entity reused (no duplicate
 > entity). Helper index shipped as
-> `V181__transfer_history_helper_index.sql` (Needs Confirmation — source file not found).
+> `V196__transfer_history_helper_index.sql`.
 > Sprint-1 interim endpoint at `/api/v1/banking/transfers/history`
 > retained `@Deprecated` until removed in a follow-up cleanup.
 
@@ -273,7 +273,7 @@ The refactor resolves them in Java:
   `BankCdResolver` service.
 - `in_bank_nm` — same as Contacts' OQ-7 unverified-coverage situation. Two
   options:
-  1. **Reuse the V86 `wb_get_napas_bank_nm_or_citad_bank_nm` funnel** via
+  1. **Reuse the V114 `wb_get_napas_bank_nm_or_citad_bank_nm` funnel** via
      `LegacyFunctionRepository.resolveNapasOrCitadBankName(code, langCd)` —
      already wired for Contacts; lowest-risk parity (see
      [wecms-api/CLAUDE.md § Surviving legacy functions](../../../../CLAUDE.md)).
@@ -556,7 +556,7 @@ All eight OQs resolved by the PO with spec-default selections in Prompt 3
 
 | # | Resolution |
 |---|---|
-| OQ-1 | **Resolved — V86 funnel.** Use `LegacyFunctionRepository.resolveNapasOrCitadBankName(code, langCd)` for `in_bank_nm`. Implementation: [TransferHistoryQueryService.toRow:212](../../../../src/main/java/com/kosign/wecms/domain/banking/transferhistory/service/TransferHistoryQueryService.java). |
+| OQ-1 | **Resolved — V114 funnel.** Use `LegacyFunctionRepository.resolveNapasOrCitadBankName(code, langCd)` for `in_bank_nm`. Implementation: [TransferHistoryQueryService.toRow:212](../../../../src/main/java/com/kosign/wecms/domain/banking/transferhistory/service/TransferHistoryQueryService.java). |
 | OQ-2 | **Resolved — no period cap.** Bean Validation enforces `\d{8}` shape + `to_dt ≥ from_dt`; no `WBE_TRANSFER_HISTORY_PERIOD_TOO_LONG` code. |
 | OQ-3 | **Resolved — ship the helper index in the same MR.** `V181__transfer_history_helper_index.sql` (Needs Confirmation — source file not found). |
 | OQ-4 | **Resolved — no audit write.** Legacy-parity (matches `approval-line` / `erp-transaction-history` precedent). `AuditLogService` is intentionally NOT a dependency. |

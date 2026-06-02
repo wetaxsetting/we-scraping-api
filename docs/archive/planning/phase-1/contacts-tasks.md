@@ -3,15 +3,15 @@
 | Field | Value |
 |---|---|
 | Refactor slug | `contacts` |
-| Functional spec | [`docs/refactor-wecms/features/contacts/contacts.md`](../../features/settings/contacts.md) |
-| Backend design | [`docs/refactor-wecms/backend/contacts-design.md`](../../references/business-rules/contacts-design.md) |
-| Frontend design | [`docs/refactor-wecms/frontend/contacts-design.md`](../../../../wecms-web/docs/features/settings/contacts.md) |
-| Schema | [`docs/refactor-wecms/database/contacts-schema.md`](../../references/database/contacts-schema.md) |
-| Migration mapping | [`docs/refactor-wecms/migration/api-mapping/contacts-mapping.md`](../../references/migration/contacts-mapping.md) |
+| Functional spec | [`docs/refactor-wecms/features/contacts/contacts.md`](../../../features/settings/contacts.md) |
+| Backend design | [`docs/refactor-wecms/backend/contacts-design.md`](../../../references/business-rules/contacts-design.md) |
+| Frontend design | [`docs/refactor-wecms/frontend/contacts-design.md`](../../../../../wecms-web/docs/features/settings/contacts.md) |
+| Schema | [`docs/refactor-wecms/database/contacts-schema.md`](../../../references/database/contacts-schema.md) |
+| Migration mapping | [`docs/refactor-wecms/migration/api-mapping/contacts-mapping.md`](../../../references/migration/contacts-mapping.md) |
 
 This file is the step-by-step task list the implementation prompts will follow. Prompt 2 (backend MR) and Prompt 3 (frontend MR) each consume one half of this plan. Each task names the file(s) touched, the existing shared modules to reuse, and the exit criterion that gates the next task.
 
-> **Open questions OQ-1 … OQ-8** in [`contacts.md` § 14](../../features/settings/contacts.md) must be answered by Sonny / PO **before** Prompt 2 starts. They drive concrete code decisions (TRCO_KEY generator shape, in-use guard scope, etc.). The plan below assumes the answers are in.
+> **Open questions OQ-1 … OQ-8** in [`contacts.md` § 14](../../../features/settings/contacts.md) must be answered by Sonny / PO **before** Prompt 2 starts. They drive concrete code decisions (TRCO_KEY generator shape, in-use guard scope, etc.). The plan below assumes the answers are in.
 
 ---
 
@@ -64,7 +64,7 @@ Backend MR lands first; frontend MR builds against the running local backend. Bo
 
 ### Task B1 — DEV parity audit (read-only)
 
-- Run information-schema queries for `TRCO_INFM`, `TRCO_ADDR_INFM`, `TRCO_ACCT_INFO`, `TRCO_OVRS_INFM`, `PGRO_BSAC_LNKN_INFM` via `postgres_dev` MCP per [`.claude/rules/database.md`](../../../../.claude/rules/database.md) — columns, types, lengths, defaults, PK / UK / CHECK / FK, indexes.
+- Run information-schema queries for `TRCO_INFM`, `TRCO_ADDR_INFM`, `TRCO_ACCT_INFO`, `TRCO_OVRS_INFM`, `PGRO_BSAC_LNKN_INFM` via `postgres_dev` MCP per [`.claude/rules/database.md`](../../../../../.claude/rules/database.md) — columns, types, lengths, defaults, PK / UK / CHECK / FK, indexes.
 - Record DEV column counts in `docs/refactor-wecms/database/contacts-schema.md` migration header.
 - Confirm `wb_get_next_val('trco_infm','trco_key', …)` return shape (drives OQ-4 final decision).
 - **Exit**: parity snapshot pasted into the MR description.
@@ -72,7 +72,7 @@ Backend MR lands first; frontend MR builds against the running local backend. Bo
 ### Task B2 — Flyway migration V{n}__contacts_schema.sql
 
 - File: `wecms-api/src/main/resources/db/migration/V{n}__contacts_schema.sql`.
-- Use the outline in [`contacts-schema.md` § 4](../../references/database/contacts-schema.md). Extend with every DEV column from the B1 audit.
+- Use the outline in [`contacts-schema.md` § 4](../../../references/database/contacts-schema.md). Extend with every DEV column from the B1 audit.
 - Use `CREATE TABLE IF NOT EXISTS` + `CREATE INDEX IF NOT EXISTS` + `ALTER TABLE ADD COLUMN IF NOT EXISTS`.
 - Create `sq_trco_key` (Option A) or per-tenant sequences (Option B) per OQ-4.
 - Add deferrable FKs on the three child tables → `TRCO_INFM`.
@@ -89,8 +89,8 @@ Backend MR lands first; frontend MR builds against the running local backend. Bo
 ### Task B4 — Flyway View Setting seed V{n+2}__contacts_view_setting_seed.sql
 
 - File: `wecms-api/src/main/resources/db/migration/V{n+2}__contacts_view_setting_seed.sql`.
-- 8 rows (`CHECKBOX`, 6 data columns, `ETC`) per [`contacts-schema.md` § 4 V{n+2}](../../references/database/contacts-schema.md).
-- `BANK_NM` + `TRCO_BSUN_POST_ADRS` get `SORT_YN='N'` so the whitelist+seed rule from [`wecms-api/CLAUDE.md` § Common table sort](../../../CLAUDE.md) is satisfied.
+- 8 rows (`CHECKBOX`, 6 data columns, `ETC`) per [`contacts-schema.md` § 4 V{n+2}](../../../references/database/contacts-schema.md).
+- `BANK_NM` + `TRCO_BSUN_POST_ADRS` get `SORT_YN='N'` so the whitelist+seed rule from [`wecms-api/CLAUDE.md` § Common table sort](../../../../CLAUDE.md) is satisfied.
 - **Exit**: `SELECT * FROM SYS_SCR_OPTION_WECMS WHERE WEB_SVC_ID='contacts'` returns 8 rows.
 
 ### Task B5 — Entities + Composite IDs
@@ -101,7 +101,7 @@ Backend MR lands first; frontend MR builds against the running local backend. Bo
   - `domain/setting/contacts/entity/TrcoAcctInfo.java` + `TrcoAcctInfoId.java`
   - `domain/setting/contacts/entity/TrcoOvrsInfm.java` + `TrcoOvrsInfmId.java`
   - `domain/setting/contacts/entity/PgroBsacLnknInfm.java` + `PgroBsacLnknInfmId.java` (only if not already shared)
-- Each extends [`BaseEntity`](../../../src/main/java/com/kosign/wecms/common/entity/BaseEntity.java) for audit columns. `@IdClass` for the composite PK. `@Column(name = "UPPER_SNAKE")` per the legacy schema parity rule.
+- Each extends [`BaseEntity`](../../../../src/main/java/com/kosign/wecms/common/entity/BaseEntity.java) for audit columns. `@IdClass` for the composite PK. `@Column(name = "UPPER_SNAKE")` per the legacy schema parity rule.
 - Map only the **Sprint subset** of fields needed for read + write (not every DEV column). Document this in the entity Javadoc.
 - **Exit**: `./gradlew compileJava` green; `bootRun` starts up with `ddl-auto: validate` matching the mapped columns.
 
@@ -196,7 +196,7 @@ Backend MR lands first; frontend MR builds against the running local backend. Bo
 
 ### Task B16 — Update CLAUDE.md
 
-- Append a row to the "Feature Status" table in [`wecms-api/CLAUDE.md`](../../../CLAUDE.md) for `domain/setting/contacts`.
+- Append a row to the "Feature Status" table in [`wecms-api/CLAUDE.md`](../../../../CLAUDE.md) for `domain/setting/contacts`.
 - Add the new Flyway versions to the migrations table in the same file.
 - Mention any new repository methods added to `AcctTrnsRcvPayInfmRepository`.
 - **Exit**: documentation reflects the merged state.
@@ -256,7 +256,7 @@ Backend MR lands first; frontend MR builds against the running local backend. Bo
 ### Task F8 — ContactsPanel + table + row + badge
 
 - Files:
-  - `wecms-web/components/settings/contacts/ContactsPanel.tsx` — Settings panel shape per [`wecms-web/CLAUDE.md` § 3a](../../../../wecms-web/CLAUDE.md).
+  - `wecms-web/components/settings/contacts/ContactsPanel.tsx` — Settings panel shape per [`wecms-web/CLAUDE.md` § 3a](../../../../../wecms-web/CLAUDE.md).
   - `wecms-web/components/settings/contacts/ContactsTable.tsx`
   - `wecms-web/components/settings/contacts/ContactsTableRow.tsx`
   - `wecms-web/components/settings/contacts/RowActionMenu.tsx`
@@ -287,7 +287,7 @@ Backend MR lands first; frontend MR builds against the running local backend. Bo
 
 ### Task F11 — Smoke test (UI)
 
-- Per [`wecms-web/CLAUDE.md` § Doing tasks](../../../../wecms-web/CLAUDE.md): start the dev server and walk the feature in a browser.
+- Per [`wecms-web/CLAUDE.md` § Doing tasks](../../../../../wecms-web/CLAUDE.md): start the dev server and walk the feature in a browser.
 - `npm run dev` against the running local backend.
 - Open Settings → Contacts. Verify:
   - 30 rows render with the View Setting columns.
@@ -303,7 +303,7 @@ Backend MR lands first; frontend MR builds against the running local backend. Bo
 
 ### Task F12 — Update CLAUDE.md
 
-- Append the Contacts route to the "Feature Status" table in [`wecms-web/CLAUDE.md`](../../../../wecms-web/CLAUDE.md). It is a Settings panel, not a top-level route — note that explicitly.
+- Append the Contacts route to the "Feature Status" table in [`wecms-web/CLAUDE.md`](../../../../../wecms-web/CLAUDE.md). It is a Settings panel, not a top-level route — note that explicitly.
 - Add `Settings > Contacts` to the Settings submenu list referenced in §3.
 - **Exit**: documentation reflects the merged state.
 
@@ -364,7 +364,7 @@ Frontend:
 - Any new `CREATE FUNCTION` in a Contacts migration.
 - Any direct read of `response.data.trco_key` in a component (must go through the mapper).
 - Any per-page scrollbar override; any inline `text-[Npx]` / `font-[N]`; any non-Inter / non-Noto-KR font family.
-- Any new endpoint under `/api/v1/comm_0184_*` or a Spring package `com.kosign.wecms.domain.comm.comm_0184` — legacy WSVC ids are forbidden in refactor identifiers (workspace [`CLAUDE.md`](../../../../CLAUDE.md) § Cross-Tree Rules).
+- Any new endpoint under `/api/v1/comm_0184_*` or a Spring package `com.kosign.wecms.domain.comm.comm_0184` — legacy WSVC ids are forbidden in refactor identifiers (workspace [`CLAUDE.md`](../../../../../CLAUDE.md) § Cross-Tree Rules).
 - Editing anything under `WECMS DEV/`, `SOURCE_CODE_ADMIN/`, `SOURCED_OSMC/`, or `DEV ADMIN/`.
 
 ---

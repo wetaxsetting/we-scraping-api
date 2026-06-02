@@ -4,7 +4,7 @@
 **System:** Refactor (Spring Boot + Next.js)
 **Screen:** Settings > Users (Figma 142:22998 empty · 142:23223 selected · 142:17631 add)
 **JEX functional reference:** `admn_0021_*` WSVCs + `USER_INFM` / `USER_BUSI_CONN_INFM` / `BUSI_ADMN_INFM` / `USER_MENU_AUTH_INFM` tables
-**Status:** Plan — not yet implemented
+**Status:** Implemented — User Management endpoints are live (check-id, GET/PUT/DELETE /{user_id}, menu-entitlement GET/PUT, image upload/get/delete)
 **Date:** 2026-05-14
 **Author:** Claude (Opus 4.7)
 
@@ -15,7 +15,7 @@
 Wire the **Settings > Users** panel end-to-end:
 
 - Frontend UI is **already built** (static UI complete, `components/settings/users/*`). Forms are uncontrolled and Save is a no-op.
-- Backend has **no user-management endpoints** yet. Only the read-only `UserDirectoryService` (picker lookup) exists.
+- Backend ships the full User Management surface via `UserManagementController` (`/api/v1/settings/users`).
 - This MR adds: full CRUD over `USER_INFM` + tenant link in `USER_BUSI_CONN_INFM`, hard 5-user plan limit, admin-role toggle through `BUSI_ADMN_INFM`, menu-entitlement read/write through `USER_MENU_AUTH_INFM`, and the React Hook Form + API wiring on the panel.
 
 Scope is **full-stack feature** with **hard plan cap**.

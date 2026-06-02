@@ -6,6 +6,18 @@ Refactor-side test strategy and per-feature test plans.
 
 Test plans for the Spring Boot + Next.js refactor: unit, integration, E2E, AI-assisted manual scenarios.
 
+## Subfolders
+
+| Folder | Holds |
+|---|---|
+| [integration/](integration/) | Spring Boot integration / repository-layer test plans |
+| [sit/](sit/) | System integration test plans (SIT environment) |
+| [regression/](regression/) | Regression suites guarding shipped features |
+| [performance/](performance/) | Load / performance test plans |
+| [uat/](uat/) | User-acceptance test scripts (AI-assisted manual) |
+
+Per-feature test plans (e.g. [vas-account.md](vas-account.md)) sit at this root and cross-link to the feature spec under [../features/](../features/).
+
 ## What goes here
 
 - Per-feature test plans (manual + automated scenarios)

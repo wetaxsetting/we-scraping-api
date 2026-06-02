@@ -7,7 +7,7 @@
 | Status | Planning |
 | JEX twin | `rept_0015_001` (view) + `rept_0015_001_r001` (read API) |
 | Refactor route | `/banking/reports/daily-financial` (Next.js) |
-| Refactor base URI | `/api/v1/reports/daily-financial` (Spring Boot) |
+| Refactor base URI | `/api/v1/banking/reports/daily-financial` (Spring Boot) |
 | Audit `WSVC_ID` | `daily-financial-report` (slug — never `rept_0015_001`) |
 | View Setting `WEB_SVC_ID` | `daily-financial-report` |
 | i18n key prefix | `reports.daily_financial.*` |
@@ -81,7 +81,7 @@ Used by treasury / accounting for daily reconciliation; this is also the screen 
 
 ## 3. REST endpoint
 
-### `GET /api/v1/reports/daily-financial`
+### `GET /api/v1/banking/reports/daily-financial`
 
 | Param | Type | Required | Notes |
 |---|---|---|---|
@@ -135,7 +135,7 @@ Used by treasury / accounting for daily reconciliation; this is also the screen 
 }
 ```
 
-Note: `transactions` may be served inline (small days) or lazy-loaded per account via `GET /api/v1/reports/daily-financial/accounts/{bankCd}/{accountNo}/transactions?referenceDate=...` to keep the initial payload bounded — TBD by perf testing.
+Note: `transactions` may be served inline (small days) or lazy-loaded per account via `GET /api/v1/banking/reports/daily-financial/accounts/{bankCd}/{accountNo}/transactions?referenceDate=...` to keep the initial payload bounded — TBD by perf testing.
 
 ### Errors
 
@@ -152,7 +152,7 @@ Note: `transactions` may be served inline (small days) or lazy-loaded per accoun
 - Filter bar: date + currency radio + two checkboxes.
 - Grid: collapsible rows. Top level = accounts; click to expand the transaction sub-grid. Use the typography tokens `text-table-header` / `text-table-cell`.
 - Footer: currency flow rollup.
-- Export: `/api/v1/reports/daily-financial/export.xlsx`, template = `WeCMS_Daily_Financial_Report_<lang>.xlsx`.
+- Export: `/api/v1/banking/reports/daily-financial/export.xlsx`, template = `WeCMS_Daily_Financial_Report_<lang>.xlsx`.
 
 i18n: `messages/{en,ko,vi}/reports/daily_financial.json`.
 

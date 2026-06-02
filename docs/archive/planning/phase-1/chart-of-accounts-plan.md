@@ -4,7 +4,7 @@
 **Team:** Sonny (lead), Arthur (dev), Mr. Youvita (AI-assisted tester), Mr. Jung (PO) — per memory `project_team_roster.md`.
 **Budget:** 8 developer-days + 2 test-days (refactor sprint norm).
 **Status:** Planning only — no code written, no Flyway applied.
-**Related docs:** [feature spec](../../features/settings/chart-of-accounts.md) · [migration map](../../references/migration/chart-of-accounts.md) · [backend](../../references/business-rules/chart-of-accounts.md) · [frontend](../../../../wecms-web/docs/features/settings/chart-of-accounts.md) · [database](../../references/database/chart-of-accounts.md).
+**Related docs:** [feature spec](../../../features/settings/chart-of-accounts.md) · [migration map](../../../references/migration/chart-of-accounts.md) · [backend](../../../references/business-rules/chart-of-accounts.md) · [frontend](../../../../../wecms-web/docs/features/settings/chart-of-accounts.md) · [database](../../../references/database/chart-of-accounts.md).
 
 ---
 
@@ -16,7 +16,7 @@
 - Per-tenant `wb_get_next_val('chart_acct_infm','chart_acct_seq_no')` branch (V94).
 - Flyway schema (V93) + restricted-root seed for all tenants (V95) + demo seed for `VN_VNM0004_000001` (V96).
 - Next.js Settings panel wiring the existing static UI (`ChartOfAccountsPanel`) to the real endpoints.
-- Audit-log write per CRUD op (default ON; see OQ-Audit in [backend doc §7](../../references/business-rules/chart-of-accounts.md#7-audit-logging)).
+- Audit-log write per CRUD op (default ON; see OQ-Audit in [backend doc §7](../../../references/business-rules/chart-of-accounts.md#7-audit-logging)).
 - i18n keys in EN (+ KO from legacy dictionary if available).
 
 **Phase 2 — follow-up MR (out of Phase 1 scope):**
@@ -70,7 +70,7 @@
 | FE-7 | Parent picker — fetch via `fetchChartOfAccountsTree()`; client-side disabling of self / descendants / level-4 nodes; refresh tree on every mutation | Arthur | 0.5 d | FE-2, BE-6 |
 | FE-8 | i18n — add the `settings.chart_of_accounts.*` keys to `en.json` + carry-over to `ko.json` from legacy ML dictionary; defer `vi.json` if no verified translator | Arthur | 0.25 d | parallel |
 | FE-9 | Sort wiring — register `useTableSort()` cycle on `CHART_ACCT_CD`, `CHART_ACCT_NM_EN`, `STTS`, `MOD_DTM`; verify backend whitelist agrees | Sonny | 0.25 d | FE-4, BE-6 |
-| FE-10 | Restricted-code rendering — disable Edit / Delete buttons + tooltip for rows where `restricted === true`; render `chart_acct_nm_en` for the canonical EN label per [§13a-bis](../../../../wecms-web/CLAUDE.md) | Arthur | 0.25 d | FE-4 |
+| FE-10 | Restricted-code rendering — disable Edit / Delete buttons + tooltip for rows where `restricted === true`; render `chart_acct_nm_en` for the canonical EN label per [§13a-bis](../../../../../wecms-web/CLAUDE.md) | Arthur | 0.25 d | FE-4 |
 
 **Frontend subtotal:** 3.0 dev-days.
 
@@ -139,7 +139,7 @@ Half a day of float against the 8 dev + 2 test budget. Tight; risks below could 
 | R-3 | Per-tenant `wb_get_next_val` branch returns a value lower than V96 demo seed's max (`112` for tenant 000001) — would cause an immediate UK collision on the first refactor-created row | Low | High — write path broken on day-one | The branch is per-tenant `MAX+1`, so it picks up from `113` automatically. V96 seed deliberately preserves DEV `seq_no` (70..112). Verify in BE-5 by calling the branch from `psql` against the seeded local DB and confirming `>= 113`. |
 | R-4 | The 4-level depth cap is computed differently in legacy R002 (read-time CASE) vs. refactor (write-time validator). A row that snuck past as legal depth in JEX shows up as `chart_acct_level=null` in the refactor list | Medium (legacy data is messy — DEV has self-referential rows!) | Low | List endpoint still surfaces these rows with `chart_acct_level=null`; frontend renders them under a "Deprecated depth" footnote. Existing data is grandfathered; only new edits trip the validator. |
 | R-5 | `CHART_ACCT_TYPE` is unused in DEV but `NOT NULL` ambiguity could surface if a future seed sets it | Very low | Low | Confirmed `NULL`-able from DEV introspection; no defensive logic needed. |
-| R-6 | `<ExcelUploadDialog>` wrapper at [`components/settings/chart-of-accounts/ExcelUploadDialog.tsx`](../../../../wecms-web/components/settings/chart-of-accounts/ExcelUploadDialog.tsx) was already wired against static mockData; the panel might still pass mock rows | Low | Low (UI-only) | FE-4 verifies the wrapper's `rows` prop is the mocked-template state (Phase-1 inert), not derived from the live list. The wrapper stays unchanged — Phase 2 wires `onUpload`. |
+| R-6 | `<ExcelUploadDialog>` wrapper at [`components/settings/chart-of-accounts/ExcelUploadDialog.tsx`](../../../../../wecms-web/components/settings/chart-of-accounts/ExcelUploadDialog.tsx) was already wired against static mockData; the panel might still pass mock rows | Low | Low (UI-only) | FE-4 verifies the wrapper's `rows` prop is the mocked-template state (Phase-1 inert), not derived from the live list. The wrapper stays unchanged — Phase 2 wires `onUpload`. |
 | R-7 | Audit-log volume — every CRUD writes an `AUDIT_LOGS_INFM` row. Chart of Accounts is low-traffic so this is fine, but cross-feature audit-log growth is a known watch-point | Very low | Very low | Confirmed in BE-11. Reuse the existing Settings audit precedent (firm-banking-settings / contacts already write); no schema impact. |
 | R-8 | Java local toolchain — Sonny's `JAVA_HOME` is Java 11 per memory `project_local_java_toolchain.md`; Gradle resolution fails until manually set to JDK 21 | Certain | Medium (delays bring-up) | First task on day 1: Sonny sets `JAVA_HOME` to JDK 21 in the IDE + terminal. ~15 min, but document the workaround in the kickoff Slack so Arthur doesn't repeat it. |
 | R-9 | Local DB cut-over to shared dev server `172.168.5.172:5432/wecmsdevdb` (per memory `reference_local_db_setup.md`) — VPN required; password lives in `.gitignored` files | Certain | Medium | Confirm VPN access for both Sonny + Arthur on day 1. Confirm both have an up-to-date `.gitignored` password file. Confirm Flyway can write a new migration to that shared DB without conflicting with other refactor work in flight. |
@@ -149,7 +149,7 @@ Half a day of float against the 8 dev + 2 test budget. Tight; risks below could 
 
 ## 5. Open questions & decisions needed from PO (Mr. Jung)
 
-Reproduced here from the [feature spec §7](../../features/settings/chart-of-accounts.md#7-open-questions-for-mr-jung-po) — every question MUST be resolved before the named blocking task starts.
+Reproduced here from the [feature spec §7](../../../features/settings/chart-of-accounts.md#7-open-questions-for-mr-jung-po) — every question MUST be resolved before the named blocking task starts.
 
 | # | Question | Blocking task | Recommended default | Due |
 |---|---|---|---|---|
@@ -174,7 +174,7 @@ Lock OQ-3, OQ-4, OQ-5, OQ-6 at kickoff (day 1). The remaining OQs can resolve as
 - [ ] QA-1..5 verified on local DB (both seeded tenants); Mr. Youvita signs off.
 - [ ] No new `@JsonProperty("UPPER_SNAKE")` on any new DTO field.
 - [ ] No new shared frontend component added — the panel composes existing shells / hooks / dialogs.
-- [ ] No new legacy DB function created (besides the V94 `wb_get_next_val` branch documented in [wecms-api/CLAUDE.md "Surviving legacy functions"](../../../CLAUDE.md)).
+- [ ] No new legacy DB function created (besides the V94 `wb_get_next_val` branch documented in [wecms-api/CLAUDE.md "Surviving legacy functions"](../../../../CLAUDE.md)).
 - [ ] Audit-log writes produce one `AUDIT_LOGS_INFM` row per Create / Update / Delete; row carries the slug `chart-of-accounts` in `WSVC_ID` (NOT `comm_0223_001`).
 - [ ] `CLAUDE.md` updates land in the same MR (Flyway table + Surviving legacy functions table + Feature Status table).
 

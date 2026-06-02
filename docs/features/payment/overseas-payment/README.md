@@ -2,10 +2,15 @@
 
 ## Screens (this feature)
 
-- [scheduled-payment.md](scheduled-payment.md)
-- [scheduled-payment-details.md](scheduled-payment-details.md)
-- [payment-result.md](payment-result.md)
-- [payment-result-details.md](payment-result-details.md)
+The four screens are sections of this hub (no separate per-screen files) — expanded under "Menu
+sections (family hub)" below. One-line summaries:
+
+| Screen | JEX WSVC | Scope | Status |
+|---|---|---|---|
+| Scheduled Payment | `pymn_0007_001` | List + create scheduled overseas payments (Excel upload, request-approval, transfer). Source `OVRS_PYMN_MSTR`/`OVRS_PYMN_SUMR`. | Documented at hub level 2026-06-01; deepen to baseline parity in a follow-up |
+| Scheduled Payment Details | `pymn_0007_001` | Drill-down detail of a scheduled overseas payment row (beneficiary, FX, amount, approver chain). Source `OVRS_PYMN_DTLS`. | Documented at hub level 2026-06-01; deepen to baseline parity in a follow-up |
+| Payment Result | `pymn_0008_001` | Executed overseas-payment results with status (Incomplete / Processing / Success / Failed). | Documented at hub level 2026-06-01; deepen to baseline parity in a follow-up |
+| Payment Result Details | `pymn_0008_001` | Per-transaction result detail with beneficiary info and failure reason. | Documented at hub level 2026-06-01; deepen to baseline parity in a follow-up |
 
 
 | Field | Value |
@@ -21,7 +26,7 @@
 > **Separate table family.** Unlike Internal Transfer / Vendor / Expense / Payroll (which share
 > `SCDUL_PYMN_SUMR(_DETL)` discriminated by `SCDUL_PYMN_TYPE_CD`), Overseas Payment uses its **own
 > tables** `OVRS_PYMN_MSTR` / `OVRS_PYMN_SUMR` / `OVRS_PYMN_DTLS` and a dedicated `getDynamicOvrs()`
-> read path — see [_payment-module-overview.md](../_payment-module-overview.md) §1.
+> read path — see [payment hub README](../README.md) §1.
 
 ## Overview
 Overseas (foreign) remittance payments with beneficiary/FX detail. Mirrors the sibling payment shape
@@ -64,7 +69,7 @@ Per-transaction result detail with beneficiary info and failure reason.
 - Standard envelope; `WBE_VALIDATION` / `WBE9999`. **Confirm overseas-specific codes against the service.**
 
 ## Cross-links
-- Cross-sibling index: [_payment-module-overview.md](../_payment-module-overview.md)
+- Cross-sibling index: [payment hub README](../README.md)
 - FX lookup: [exchange-rate-inquiry.md](../exchange-rate-inquiry.md)
 - Approval flow: [approval-box/discovery.md](../approval-box/discovery.md)
 - Web/UI: [`../../../../wecms-web/docs/features/payment/overseas-payment.md`](../../../../../wecms-web/docs/features/payment/overseas-payment/README.md)

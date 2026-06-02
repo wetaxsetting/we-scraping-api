@@ -22,7 +22,7 @@
 
 ## 1. Context
 
-Mr. Jung's 2026-04-23 directive (see [wecms-menu-refactoring-timeline.md](../../../../docs/jex/features/wecms-menu-refactoring-timeline.md)) compresses the full menu tree into 8 dev days. Sprint 0 already locked the foundation in wecms-api/ (Needs Confirmation) (auth, JWT, tenant context, `ApiResponse<T>`, `BaseEntity`, Flyway V1–V10). Sprint 1 must now deliver:
+Mr. Jung's 2026-04-23 directive (see [wecms-menu-refactoring-timeline.md](../../../../../docs/jex/features/wecms-menu-refactoring-timeline.md)) compresses the full menu tree into 8 dev days. Sprint 0 already locked the foundation in wecms-api/ (Needs Confirmation) (auth, JWT, tenant context, `ApiResponse<T>`, `BaseEntity`, Flyway V1–V10). Sprint 1 must now deliver:
 
 - **Banking** (Sonny) — 9 screens: VND/FCY account inquiry + transaction history, Own Account Transfer + Transfer History, 3 Reports.
 - **Add-on Service** (Sonny) — 3 screens: Sales/Expense e-Invoices, Operation Status Inquiry.
@@ -44,7 +44,7 @@ Because R&D is **localhost-only** with no live engine/bank/tax integration, ever
 
 ### 2.1 Package layout — extend the existing `domain/{module}/` convention
 
-Per [wecms-api/CLAUDE.md](../../../CLAUDE.md) §Architecture Rules — new feature code goes under `domain/{jex-module-code}/`. Sprint 1 introduces three new domain modules + one shared adapter package.
+Per [wecms-api/CLAUDE.md](../../../../CLAUDE.md) §Architecture Rules — new feature code goes under `domain/{jex-module-code}/`. Sprint 1 introduces three new domain modules + one shared adapter package.
 
 ```
 com.kosign.wecms
@@ -231,21 +231,21 @@ These will be enumerated in the deliverable plan doc; calling them out here so t
 ## 7. Critical Files (read-only references during implementation)
 
 Legacy JEX functional spec:
-- [WECMS DEV/WECMS/web/view/jex/wabooks/fnsh/](../../../../WECMS%20DEV/WECMS/web/view/jex/wabooks/fnsh) — JSP views (fnsh_0001/0002/0005/0006)
-- [WECMS DEV/WECMS/web/view/jex/wabooks/trns/](../../../../WECMS%20DEV/WECMS/web/view/jex/wabooks/trns) — transfer JSPs
-- [WECMS DEV/WECMS/web/view/jex/wabooks/rept/](../../../../WECMS%20DEV/WECMS/web/view/jex/wabooks/rept) — report JSPs
-- [WECMS DEV/WECMS/web/view/jex/wabooks/einv/](../../../../WECMS%20DEV/WECMS/web/view/jex/wabooks/einv) — e-invoice JSPs
+- [WECMS DEV/WECMS/web/view/jex/wabooks/fnsh/](../../../../../WECMS%20DEV/WECMS/web/view/jex/wabooks/fnsh) — JSP views (fnsh_0001/0002/0005/0006)
+- [WECMS DEV/WECMS/web/view/jex/wabooks/trns/](../../../../../WECMS%20DEV/WECMS/web/view/jex/wabooks/trns) — transfer JSPs
+- [WECMS DEV/WECMS/web/view/jex/wabooks/rept/](../../../../../WECMS%20DEV/WECMS/web/view/jex/wabooks/rept) — report JSPs
+- [WECMS DEV/WECMS/web/view/jex/wabooks/einv/](../../../../../WECMS%20DEV/WECMS/web/view/jex/wabooks/einv) — e-invoice JSPs
 - `WECMS DEV/WECMS/web/WEB-INF/action/jex/wabooks/{fnsh,trns,rept,einv}/*_act.jsp` — action JSPs (one per API)
 - `WECMS DEV/WECMS_ETC/xml/service/WSVC/WSVC.{service-id}.xml` — request/response field schema
 - `WECMS DEV/WECMS/src/wabooks/helper/{Fnsh,Trns,Rept,Trco}Helper.java` — business logic to port
 - `WECMS DEV/WECMS/src/bcs/jex/wabooks/oprt/OPRT_0001_001.java` — OSMC integration reference
 
 wecms-api conventions to follow:
-- [wecms-api/CLAUDE.md](../../../CLAUDE.md) — architecture rules
-- [wecms-api/src/main/java/com/kosign/wecms/common/response/ApiResponse.java](../../../src/main/java/com/kosign/wecms/common/response/ApiResponse.java) — envelope shape
-- [wecms-api/src/main/java/com/kosign/wecms/common/entity/BaseEntity.java](../../../src/main/java/com/kosign/wecms/common/entity/BaseEntity.java) — audit columns to extend
-- [wecms-api/src/main/java/com/kosign/wecms/domain/auth/](../../../src/main/java/com/kosign/wecms/domain/auth/) — reference module to mirror
-- [wecms-api/src/main/resources/db/migration/](../../../src/main/resources/db/migration/) — Flyway V1–V10 examples
+- [wecms-api/CLAUDE.md](../../../../CLAUDE.md) — architecture rules
+- [wecms-api/src/main/java/com/kosign/wecms/common/response/ApiResponse.java](../../../../src/main/java/com/kosign/wecms/common/response/ApiResponse.java) — envelope shape
+- [wecms-api/src/main/java/com/kosign/wecms/common/entity/BaseEntity.java](../../../../src/main/java/com/kosign/wecms/common/entity/BaseEntity.java) — audit columns to extend
+- [wecms-api/src/main/java/com/kosign/wecms/domain/auth/](../../../../src/main/java/com/kosign/wecms/domain/auth/) — reference module to mirror
+- [wecms-api/src/main/resources/db/migration/](../../../../src/main/resources/db/migration/) — Flyway V1–V10 examples
 
 ---
 
@@ -371,7 +371,7 @@ Original (incorrect) text retained for diff visibility:
 ### 11.4 trns_0003_001 is NOT a stub
 
 The original §5 Q2 claimed `trns_0003_001` is a stub. Reading
-[trns_0003_001_r001_act.jsp](../../../../WECMS%20DEV/WECMS/web/WEB-INF/action/jex/wabooks/trns/trns_0003_001_r001_act.jsp)
+[trns_0003_001_r001_act.jsp](../../../../../WECMS%20DEV/WECMS/web/WEB-INF/action/jex/wabooks/trns/trns_0003_001_r001_act.jsp)
 shows it queries the `NAPAS_REMIT_TRNS_HSTR` IDO (`R003` + `R003_CNT`).
 NAPAS is the Vietnamese real-time inter-bank remittance system, so
 this table holds historical transfer records. Q2 in §5 should be
@@ -413,7 +413,7 @@ endpoint table.
 
 The static UI's TypeScript types use camelCase
 (`accountNo`, `companyName`, `taxCode`). Per
-[wecms-web/CLAUDE.md](../../../../wecms-web/CLAUDE.md) §"API / DB Rules"
+[wecms-web/CLAUDE.md](../../../../../wecms-web/CLAUDE.md) §"API / DB Rules"
 and the existing `LoginResponse`, the **wire contract** is UPPER_SNAKE
 (`ACCT_NO`, `COMPANY_NM`, `TAX_NO`) — the frontend will run a
 field-mapper before rendering. Sprint 1 backend therefore emits
@@ -467,7 +467,7 @@ casually.
 ### 11.10 ApiResponse / DTO conventions confirmed compatible
 
 - `ApiResponse<T>` envelope (`COMMON_HEAD` + `REC`) is in place at
-  [common/response/ApiResponse.java](../../../src/main/java/com/kosign/wecms/common/response/ApiResponse.java).
+  [common/response/ApiResponse.java](../../../../src/main/java/com/kosign/wecms/common/response/ApiResponse.java).
   All Sprint 1 endpoints reuse it as-is.
 - `BaseEntity` (REG_ID/REG_DTM/MOD_ID/MOD_DTM) is the audit base for
   any new entity that has those columns. `OPRT_STTS_INFO` and
@@ -557,7 +557,7 @@ query` in the service:
   (Drops Q3 from §5 and removes `rept_0001_001` from the §3 endpoint
   table.)
 - All "static UI only" interactions documented in
-  [wecms-web/CLAUDE.md](../../../../wecms-web/CLAUDE.md) "Feature
+  [wecms-web/CLAUDE.md](../../../../../wecms-web/CLAUDE.md) "Feature
   Status" table — buttons that have no handler yet (Print, Export,
   Excel, Update, Smart Organizer, Change Password) stay frontend-only
   in Sprint 1.
@@ -687,7 +687,7 @@ adapters**. Remaining risks:
 | R6: 8-day budget over-runs | Med | High | Phases 4–9 are independent; if blocked, ship the unblocked subset behind a feature flag (frontend-side) and demo the rest as static UI. |
 | R7: Pagination over `ACCT_TRNS_HSTR` and `NAPAS_REMIT_TRNS_HSTR` | Low | Low | Local seed is small (5–10 rows). Performance shape is a Sprint 2+ concern. |
 | R8: `BUSA_DOC_MSTR` 100-column legacy table — entity drift | Med | Med | Entity maps only the ~12 columns the UI reads; `// only Sprint 1 fields — extend as needed` comment on the entity. |
-| R9: Frontend `daily-financial-hs` Figma differs from CMC — backend stub returns wrong shape | Low | Low | Stub mirrors the camelCase types in [DailyFinancialHsPage](../../../../wecms-web/components/banking/reports/daily-financial-hs/) — verify the JSON shape against that file before merging. |
+| R9: Frontend `daily-financial-hs` Figma differs from CMC — backend stub returns wrong shape | Low | Low | Stub mirrors the camelCase types in [DailyFinancialHsPage](../../../../../wecms-web/components/banking/reports/daily-financial-hs/) — verify the JSON shape against that file before merging. |
 
 ### 13.7 Open questions for the user (Q1–Q5, replaces §5)
 
@@ -1126,7 +1126,7 @@ these reasons:
 ## 18. Final DB Parity Audit (2026-04-30)
 
 Full local-vs-DEV audit across all 23 in-scope tables. Detailed report at
-[db-parity-audit-2026-04-30.md](../../references/audits/db-parity-audit-2026-04-30.md). Highlights:
+[db-parity-audit-2026-04-30.md](../../../references/audits/db-parity-audit-2026-04-30.md). Highlights:
 
 **Findings:**
 - Column count: aligned for all 23 tables.

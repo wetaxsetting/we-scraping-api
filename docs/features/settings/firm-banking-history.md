@@ -694,7 +694,7 @@ Listed for traceability:
 - Any **write** flow against the source tables (no `c001` / `u001` / `d001` exists in JEX for this page either; the page is purely an audit reader).
 - **Bank integration / NXISAS bridge.** Refactor R&D scope is local-only; the source rows are populated by the live JEX system / external gateways. The refactor has no live-row insertion path. **Demo seed migration** in V59 will copy a representative slice from DEV per the [Data Migration Rule](../../../CLAUDE.md).
 - **GDT live-pull.** No "Update" / "Inquire" button in legacy; none in refactor.
-- **Excel export.** Defer to Phase 2 PO confirmation. If approved, the implementation pattern is the same as `addon/sales-einvoices/export` — one new `ExportRowProvider`, one `@PostMapping("/api/v1/settings/firm-banking-history/export")`. `screenId="firm-banking-history"`.
+- **Excel export — implemented**: `POST /api/v1/settings/firm-banking-history/export` (`FirmBankingHistoryExportProvider`).
 - **Print.** Legacy has none.
 - **Per-row drill-down to the source-leg native screen** (e.g. clicking a NAPAS row to open the NAPAS transfer detail). Not in legacy; potential UX enhancement for later.
 - **Realtime / push refresh.** This is a manual refresh page.

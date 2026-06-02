@@ -4,7 +4,7 @@
 |---|---|
 | Slug | `internal-transfer` |
 | Module | `payment` |
-| Companion docs | [features/payment/internal-transfer.md](../../../features/payment/internal-transfer/README.md) · [features/payment/_payment-module-overview.md](../../../features/payment/_payment-module-overview.md) · [migration/internal-transfer-mapping.md](../../migration/internal-transfer-mapping.md) · [backend/internal-transfer.md](../../business-rules/internal-transfer.md) |
+| Companion docs | [features/payment/internal-transfer.md](../../../features/payment/internal-transfer/README.md) · [features/payment/README.md](../../../features/payment/README.md) · [migration/internal-transfer-mapping.md](../../migration/internal-transfer-mapping.md) · [backend/internal-transfer.md](../../business-rules/internal-transfer.md) |
 | Flyway versions (shipped) | **V131** schema (`SCDUL_PYMN_SUMR` + `_DETL` + `INTERNAL_TRANSFER_KEY_SEQ`) · **V133** demo seed · **V136** APPR_STTS column · **V146** `scdul_pymn_sumr_chk01` CHECK relaxation for Payroll · **V148** dispatch tables (TB_PAY_TARGET / TB_PAY_FILE_MST / TB_PAY_FILE_DATA / TB_FIRM_*) · **V149** `BLOCKED_CHARS_RULE` schema + seed · **V188** `SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN` schema · **V189** payment-dispatch tables follow-up. See [src/main/resources/db/migration/](../../../../src/main/resources/db/migration/) for the full set. |
 | Reconciled against DEV | 2026-05-13 via `postgres` MCP `information_schema` queries |
 | Status | **Implemented** — schema is the as-shipped state of `wecms-api` HEAD; refactor-only deviations from DEV documented inline. |

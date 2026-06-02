@@ -1205,11 +1205,11 @@ Subject to OQ-5 resolution unblocking BE-4 / BE-5.
 
 ## Appendix A — Cross-references
 
-- Workspace root rules: [c:\WECMS PROJECT\CLAUDE.md](../../../../CLAUDE.md) — typography, identifier-naming, AI output folders.
-- Spring Boot rules: [c:\WECMS PROJECT\wecms-api\CLAUDE.md](../../../CLAUDE.md) — wire format, View Setting, Excel export, common sort, audit, NXISAS gateway.
-- Next.js rules: [c:\WECMS PROJECT\wecms-web\CLAUDE.md](../../../../wecms-web/CLAUDE.md) — routing, typography, View Setting frontend.
-- JEX framework rules: [c:\WECMS PROJECT\WECMS DEV\CLAUDE.md](../../../../WECMS%20DEV/CLAUDE.md) — JEX is READ-ONLY.
-- DB read rules: [c:\WECMS PROJECT\.claude\rules\database.md](../../../../.claude/rules/database.md).
+- Workspace root rules: [workspace `CLAUDE.md`](../../../../CLAUDE.md) — typography, identifier-naming, AI output folders.
+- Spring Boot rules: [`wecms-api/CLAUDE.md`](../../../CLAUDE.md) — wire format, View Setting, Excel export, common sort, audit, NXISAS gateway.
+- Next.js rules: [`wecms-web/CLAUDE.md`](../../../../wecms-web/CLAUDE.md) — routing, typography, View Setting frontend.
+- JEX framework rules: [`WECMS DEV/CLAUDE.md`](../../../../WECMS%20DEV/CLAUDE.md) — JEX is READ-ONLY.
+- DB read rules: [`.claude/rules/database.md`](../../../../.claude/rules/database.md).
 - Existing addon static-UI feature docs: [sales-e-invoices.md](../../features/addon-service/sales-e-invoices.md), [expenses-e-invoices.md](../../features/addon-service/expenses-e-invoices.md).
 - Migration mapping (companion doc): [sales-and-expense-einvoices.md](../../references/migration/sales-and-expense-einvoices.md).
 - NXISAS gateway reference (banking side, fully built): [wecms-api/src/main/java/com/kosign/wecms/domain/banking/nxisas/](../../../src/main/java/com/kosign/wecms/domain/banking/nxisas/).

@@ -14,7 +14,8 @@ Single place to track unresolved questions that block planning or implementation
 
 ## Open items
 
-- [`banking-reports-remaining-scope.md`](banking-reports-remaining-scope.md)
+- [`banking-reports-remaining-scope.md`](banking-reports-remaining-scope.md) — Daily Financial CMC/HS + Cash Flow scope (OQ-1/2/3, all open)
+- [`database-follow-up.md`](database-follow-up.md) — schema-correctness items OQ-DB-1 … OQ-DB-6 (all open)
 - [`documentation-follow-up.md`](documentation-follow-up.md) — post-migration doc decisions: ~~OQ-DOC-1 login-auth doc~~ ✅ resolved 2026-06-01 (`features/auth/`), ~~OQ-DOC-2 view-setting doc~~ ✅ resolved 2026-06-01 (`features/common/`), OQ-DOC-3 historical source refs, OQ-DOC-4 Smart Organizer scope, OQ-DOC-5 Transaction History API/DB contract, OQ-DOC-6 Banking report JEX mapping; **round-2 audit (2026-06-01):** OQ-DOC-7 bank-credentials↔login-credentials boundary, OQ-DOC-8 Daily Financial HS scope, OQ-DOC-9 Users doc accuracy, OQ-DOC-10 exchange-rate management scope, OQ-DOC-11 web change-password doc, OQ-DOC-12 approval-workflow/attachments cross-cutting docs, OQ-DOC-13 notifications/dashboard (not implemented). Raised 2026-06-01.
 
 ## Convention

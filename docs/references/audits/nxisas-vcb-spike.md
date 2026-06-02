@@ -38,8 +38,8 @@ The actual scraping "engine" is plain Java source the JEX project already owns a
 
 Migrations:
 
-- `V86__bank_cert_info.sql` (Needs Confirmation — source file not found) — `BANK_CERT_INFO`, composite PK `(BIZ_KEY, SEQ_NO)`, 16 columns mirroring legacy column-for-column.
-- `V87__nxsias_module_tran_log_his.sql` (Needs Confirmation — source file not found) — `NXSIAS_MODULE_TRAN_LOG_HIS`, composite PK `(UUID, REG_DTM)`, one row per outbound gateway call.
+- `V100__bank_cert_info.sql` — `BANK_CERT_INFO`, composite PK `(BIZ_KEY, SEQ_NO)`, 16 columns mirroring legacy column-for-column.
+- `V101__nxsias_module_tran_log_his.sql` — `NXSIAS_MODULE_TRAN_LOG_HIS`, composite PK `(UUID, REG_DTM)`, one row per outbound gateway call.
 
 Both follow the Legacy Schema Parity Rule — `VARCHAR(14)` audit columns, `BIZ_KEY VARCHAR(20)`, `NUMERIC(10,0)` for seq columns. Neither has been applied yet — Flyway runs on first `bootRun`.
 
@@ -97,7 +97,7 @@ These are all deferred to the follow-up feature MR once Option A is approved.
 
 | Check | Status | Notes |
 |---|---|---|
-| Flyway V86/V87 apply | ⏳ Untested | Will run on first `bootRun`. SQL was reviewed by hand against legacy entity files for column-for-column parity. |
+| Flyway V100/V101 apply | ⏳ Untested | Will run on first `bootRun`. SQL was reviewed by hand against legacy entity files for column-for-column parity. |
 | AES-GCM round-trip unit test | ❌ Not written | Code is in place; smoke test belongs in the follow-up MR. |
 | Credential CRUD via Postman | ⏳ Untested | Backend compiles; not exercised. |
 | WireMock-stubbed acct-list happy path | ❌ Not written | Plan called for it; deferred to follow-up. |
@@ -122,7 +122,7 @@ Option C (sidecar) was the contingency for "JAR won't load under Java 21". Since
 ## Concrete next steps (in order)
 
 1. **Get gateway access from Sonny:** real `smart_api_key`, Webcash IP allowlist for the dev laptop, VCB sandbox login. This is the only remaining blocker for end-to-end verification.
-2. **Boot the refactor stack** (`./gradlew bootRun` + `npm run dev`) once V86/V87 apply cleanly. Validate the CRUD path via Postman.
+2. **Boot the refactor stack** (`./gradlew bootRun` + `npm run dev`) once V100/V101 apply cleanly. Validate the CRUD path via Postman.
 3. **Write the AES-GCM unit test** + a WireMock-stubbed `NxisasGatewayClient` integration test. Add to CI.
 4. **Exercise the live VCB flow** end-to-end through the Next.js page. Confirm the OTP round-trip closes.
 5. **Promote `/banking/credentials` to a real feature MR** — add the sidebar entry, switch error banners to `useDialog()`, port the table to `DataTableShell`, add KO/VI locale entries, and add a basic View Setting + Excel export wiring per the project rules.
@@ -187,8 +187,8 @@ src/main/java/com/kosign/wecms/domain/banking/nxisas/
   session/ScrapeChallengeKind.java
 
 src/main/resources/db/migration/
-  V86__bank_cert_info.sql
-  V87__nxsias_module_tran_log_his.sql
+  V100__bank_cert_info.sql
+  V101__nxsias_module_tran_log_his.sql
 
 src/main/resources/
   messages.properties        (WBE2050–WBE2062)

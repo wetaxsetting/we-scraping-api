@@ -17,6 +17,7 @@ Diagrammatic + textual ERDs covering the live refactor schema (**80 tables**). C
 | [payment-erd.md](payment-erd.md) | [diagrams/payment-erd.mmd](diagrams/payment-erd.mmd) | `domain/payment` — scheduled/overseas payment, approval box, dispatch, validation |
 | [addon-service-erd.md](addon-service-erd.md) | [diagrams/addon-service-erd.mmd](diagrams/addon-service-erd.mmd) | `domain/einvoice`, `domain/operation`, card transactions |
 | [settings-erd.md](settings-erd.md) | [diagrams/settings-erd.mmd](diagrams/settings-erd.mmd) | `domain/setting` — bank-account, COA, contacts, approval line, firm-banking, ERP, VAS, purpose, env, credentials |
+| [common-erd.md](common-erd.md) | [diagrams/common-erd.mmd](diagrams/common-erd.mmd) | Shared / cross-domain hub — `BUSI_INFM`, users, audit logs, screen options, common reference tables |
 
 ## Conventions
 

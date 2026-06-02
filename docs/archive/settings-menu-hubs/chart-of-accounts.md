@@ -12,7 +12,7 @@ list, parent-picker tree, create, update, delete, with per-mutation audit loggin
 - DB schema: [../database/chart-of-accounts.md](../../references/database/chart-of-accounts.md)
 - Feature spec: [../features/accounting/chart-of-accounts.md](../../features/settings/chart-of-accounts.md)
 - JEX → Spring mapping: [../migration/chart-of-accounts.md](../../references/migration/chart-of-accounts.md)
-- Task plan: [../planning/phase-1/chart-of-accounts-plan.md](../../planning/phase-1/chart-of-accounts-plan.md)
+- Task plan: [../archive/planning/phase-1/chart-of-accounts-plan.md](../../archive/planning/phase-1/chart-of-accounts-plan.md)
 
 ## Related APIs
 Base URI `/api/v1/settings/chart-of-accounts` (JWT, snake_case wire):
@@ -42,4 +42,4 @@ Base URI `/api/v1/settings/chart-of-accounts` (JWT, snake_case wire):
 - Standard envelope; `WBE_VALIDATION` / `WBE9999`.
 
 ## Notes
-Web/UI: [../../../wecms-web/docs/settings/chart-of-accounts.md](../../../../wecms-web/docs/archive/settings-chart-of-accounts.md).
+Web/UI: [wecms-web/docs/features/settings/chart-of-accounts.md](../../../../wecms-web/docs/features/settings/chart-of-accounts.md).

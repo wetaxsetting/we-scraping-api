@@ -384,7 +384,7 @@ REPRESENTATIVEFIRSTNAME       →  representativefirstname    →  (not surfaced
 ### External API dependency
 
 - **Legacy:** Inquire / Update buttons call the GDT (Vietnamese General Department of Taxation — Tổng cục Thuế) lookup endpoint via the NXISAS bridge through OSMC (`nxisas_oprtstts_*` services; OSMC handler `TRCO_TRCO001_00003` per the inline TODO at [`OperationStatusService.java:21`](../../../src/main/java/com/kosign/wecms/domain/operation/service/OperationStatusService.java)).
-- **Refactor R&D scope:** **NO external integration.** Local-only per [project_refactoring_scope.md](../../../../C:/Users/Sokny Ran\.claude\projects\c--WECMS-PROJECT\memory\project_refactoring_scope.md). Inquire / Update buttons stay locally-bound until / unless NXISAS is ported. The `refreshKey++` Update behaviour and the `WBE_NOT_IMPLEMENTED` Inquire stub are explicit Phase-1 placeholders.
+- **Refactor R&D scope:** **NO external integration.** Local-only R&D (per the project refactoring-scope decision — tracked in project memory `project_refactoring_scope.md`, which is not part of this repository). Inquire / Update buttons stay locally-bound until / unless NXISAS is ported. The `refreshKey++` Update behaviour and the `WBE_NOT_IMPLEMENTED` Inquire stub are explicit Phase-1 placeholders.
 
 ### Refactor doc cross-references
 

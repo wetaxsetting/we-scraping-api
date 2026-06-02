@@ -1,7 +1,7 @@
 # Purpose Settings — Database schema + Flyway plan
 
 **Refactor slug:** `purpose-settings`
-**Sibling docs:** [feature spec](../../../features/settings/purpose.md) · [JEX → Spring mapping](../../migration/purpose-settings.md) · [backend design](../../business-rules/settings/purpose-settings.md) · [frontend design](../../../../../wecms-web/docs/features/settings/purpose.md) · [task plan](../../../planning/settings/purpose-settings-task-plan.md).
+**Sibling docs:** [feature spec](../../../features/settings/purpose.md) · [JEX → Spring mapping](../../migration/purpose-settings.md) · [backend design](../../business-rules/settings/purpose-settings.md) · [frontend design](../../../../../wecms-web/docs/features/settings/purpose.md) · [task plan](../../../archive/planning/settings/purpose-settings-task-plan.md).
 **Live DB verified:** JEX DEV `wecmsvndev.busi_usag_set_infm` via the `postgres` MCP (2026-05-12). Local refactor DB target: `localhost:5434/wecms_dev` per memory `reference_local_db_setup.md`.
 
 This document is the DDL design contract for Phase 2. **No DDL is executed in Phase 1.** Per [.claude/rules/database.md](../../../../../.claude/rules/database.md): the `postgres` MCP is read-only DEV-only — no DDL/DML, no PROD. Phase 2 lands the schema via Flyway migrations on the local refactor DB.

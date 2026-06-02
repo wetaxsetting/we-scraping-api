@@ -14,7 +14,7 @@ detail. Supports list, detail, create, update, delete. Slug: `contacts`. Mirrors
 - Feature spec: [../features/contacts/contacts.md](../../features/settings/contacts.md)
 - JEX → Spring mapping: [../migration/contacts-mapping.md](../../references/migration/contacts-mapping.md) ·
   [../migration/api-mapping/contacts-mapping.md](../../references/migration/contacts-mapping.md)
-- Task plan: [../planning/contacts-tasks.md](../../planning/phase-1/contacts-tasks.md)
+- Task plan: [../planning/contacts-tasks.md](../../archive/planning/phase-1/contacts-tasks.md)
 
 ## Related APIs
 Base URI `/api/v1/settings/contacts` (JWT, snake_case wire): list / detail / create / update /
@@ -44,5 +44,5 @@ delete, with nested address + account + overseas sub-resources handled in the sa
 - Standard envelope; `WBE_VALIDATION` / `WBE9999`.
 
 ## Notes
-Web/UI: [../../../wecms-web/docs/settings/contacts.md](../../../../wecms-web/docs/archive/settings-contacts.md).
-An archived earlier draft exists at [../archive/features/contacts.md](../features/contacts.md).
+Web/UI: [wecms-web/docs/features/settings/contacts.md](../../../../wecms-web/docs/features/settings/contacts.md).
+An archived earlier draft exists at [../archive/features/contacts.md](../../features/settings/contacts.md).

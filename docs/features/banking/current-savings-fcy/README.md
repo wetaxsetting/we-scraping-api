@@ -10,7 +10,7 @@ USD-only screen to a multi-currency scope (`currency=FCY` or a concrete `currenc
 |---|---|---|
 | Account Inquiry (FCY) | [account-inquiry.md](account-inquiry.md) | Implemented |
 | Transaction History (FCY) | [transaction-history.md](transaction-history.md) | Implemented |
-| Smart Organizer (FCY) | [smart-organizer.md](smart-organizer.md) | ⚠️ discovery scaffold (no refactor implementation yet) |
+| Smart Organizer (FCY) | [smart-organizer.md](smart-organizer.md) | Backend implemented (shares Smart Organizer controllers/services + V172–V174 with the VND twin) |
 
 ## Related reference docs
 

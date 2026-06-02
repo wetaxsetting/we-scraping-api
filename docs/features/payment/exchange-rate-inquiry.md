@@ -50,8 +50,8 @@ this query to the Spring repository.
 
 | Layer | Status | Notes |
 |---|---|---|
-| Database DDL | ✅ Done | V84 migration creates `BANK_EXCH_RATE_INFM` |
-| Database seed | ✅ Done | V87 seeds 15 currency rows (historical date 20250425) |
+| Database DDL | ✅ Done | V127 migration creates `BANK_EXCH_RATE_INFM` |
+| Database seed | ✅ Done | V130 seeds 15 currency rows (historical date 20250425) |
 | Spring Boot controller | ✅ Done | `ExchangeRateController` wired, basic Javadoc |
 | Spring Boot service | ✅ Done | `ExchangeRateService.list()` with fallback logic |
 | Spring Boot repository | ✅ Done | `BankExchRateInfmRepository` with JPQL queries |
@@ -161,7 +161,7 @@ this query to the Spring repository.
 **Fallback-to-latest-date path** (backend only): When `refDate` is omitted and today's
 date has no rows in the database (batch hasn't run yet), `ExchangeRateService` calls
 `findLatestRefDate()` to find the most recent date with data and retries. This path
-activates automatically in dev/UAT where the V87 seed uses a fixed historical date
+activates automatically in dev/UAT where the V130 seed uses a fixed historical date
 (`20250425`). The path does NOT activate when an explicit `ref_date` is supplied — in
 that case an empty rate list is returned without fallback.
 
@@ -171,7 +171,7 @@ that case an empty rate list is returned without fallback.
 
 ### Table: BANK_EXCH_RATE_INFM
 
-Created by Flyway migration V84. PostgreSQL DDL:
+Created by Flyway migration V127. PostgreSQL DDL:
 
 ```
 BANK_EXCH_RATE_INFM
@@ -213,7 +213,7 @@ BANK_EXCH_RATE_INFM
 supports the primary query pattern of looking up all rates for a tenant on a given date.
 
 **Note on `SEQ_NO` vs. `EXCH_SEQ_NO`:** The JEX entity uses `EXCH_SEQ_NO` as the PK
-column and `SEQ_NO` as a separate data column sourced from the Coocon response. The V84
+column and `SEQ_NO` as a separate data column sourced from the Coocon response. The V127
 DDL preserves both. The JEX IDO R002 queries by the data-column `SEQ_NO`, not by
 `EXCH_SEQ_NO` (the PK part). The Spring entity maps both correctly.
 
@@ -247,17 +247,19 @@ occurred on the same day, the response contains duplicate currency rows (one per
 which the frontend renders as duplicate table rows — a data integrity regression relative
 to JEX. See Gap B-3 for the fix.
 
-The V87 seed inserts only `EXCH_SEQ_NO='1'` rows (single historical date, single run),
+The V130 seed inserts only `EXCH_SEQ_NO='1'` rows (single historical date, single run),
 so this duplication cannot be observed with the current seed data alone.
 
 ### Flyway Migrations
 
 | Version | File | Purpose |
 |---|---|---|
-| V84 | `V84__bank_exch_rate_infm_table.sql` | Creates `BANK_EXCH_RATE_INFM` with composite PK, rate columns, ERP flag, audit columns, and the `IDX_BANK_EXCH_RATE_INFM_BIZ_DATE` index |
-| V87 | `V87__bank_exch_rate_infm_seed.sql` | Inserts 15 seed rows (USD, JPY, EUR, CNY, GBP, HKD, SGD, CHF, AUD, CAD, NZD, THB, MYR, VND, TWD) for BIZ_KEY=`VN_VNM0004_000001`, BANK_CD=`11704088`, REF_DATE=`20250425`, EXCH_SEQ_NO=`1`. Rate values are KRW-denominated (e.g. USD = 1360.00 KRW basic rate). |
+| V127 | `V127__bank_exch_rate_infm_table.sql` | Creates `BANK_EXCH_RATE_INFM` with composite PK, rate columns, ERP flag, audit columns, and the `IDX_BANK_EXCH_RATE_INFM_BIZ_DATE` index |
+| V130 | `V130__bank_exch_rate_infm_seed.sql` | Inserts 15 seed rows (USD, JPY, EUR, CNY, GBP, HKD, SGD, CHF, AUD, CAD, NZD, THB, MYR, VND, TWD) for BIZ_KEY=`VN_VNM0004_000001`, BANK_CD=`11704088`, REF_DATE=`20250425`, EXCH_SEQ_NO=`1`. Rate values are KRW-denominated (e.g. USD = 1360.00 KRW basic rate). |
 
-**Seed vs. mock currency unit mismatch:** The V87 seed stores KRW-denominated rates
+> Note: these files' internal `-- Vxx` header comments still show the draft numbers V84/V87 (renumbered on commit).
+
+**Seed vs. mock currency unit mismatch:** The V130 seed stores KRW-denominated rates
 (USD `BASIC_RATE = 1360.00`, i.e. 1 USD ≈ 1360 KRW). The `exchangeRateMatrixRows` mock
 in `mockData.ts` contains VND-denominated rates (USD `cashBuy = "25,890.00"`, i.e. 1 USD
 ≈ 25,890 VND). When the API returns seed data, `apiRowToMatrix()` renders the KRW rates;

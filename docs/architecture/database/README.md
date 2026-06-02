@@ -18,5 +18,5 @@ Flyway-owns-the-schema rule, and the DB-function / legacy-PL-pgSQL migration str
 ## What does NOT go here
 
 - Per-table / per-feature schema → [references/database/](../../references/database/)
-- Per-function inventory detail → [references/crystalline-honking-sky.md](../../references/crystalline-honking-sky.md) (DB-function classification & migration priority)
+- Per-function inventory detail → [references/database/db-function-classification.md](../../references/database/db-function-classification.md) (DB-function classification & migration priority)
 - Flyway migration list — see [wecms-api/CLAUDE.md](../../../CLAUDE.md) §"Database (LOCAL)"

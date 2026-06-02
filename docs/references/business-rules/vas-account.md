@@ -185,13 +185,9 @@ public record VasAccountImportRequest(
 ) {}
 
 public record VasAccountImportResult(int insertedCount, int replacedCount) {}
-
-public record VasAccountCellValidationRequest(
-    @NotBlank @Pattern(regexp="^(VAS_ACCT_CD|VAS_ACCT_NM|VAS_ACCT_TYPE|VAS_ACCT_ENM|CONT|STTS)$") String fieldId,
-    String value,
-    String currentVasAcctSeqNo            // optional — when validating an edit-in-place cell on an existing row
-) {}
 ```
+
+> Cell-validation (`validateCell` / `/excel/cell/validate`) was retired — see the feature hub §3 and audit F2.
 
 `FieldError` is a tiny record `{ String code, String message }` — same pattern as existing form-validation responses.
 
@@ -319,9 +315,6 @@ public class VasAccountExcelService {
     /** Parses the uploaded sheet, runs per-row validation, returns the preview. */
     public VasAccountExcelPreview preview(MultipartFile file);
 
-    /** Re-validates one field for one row — used by inline edit on the preview grid. */
-    public FieldError validateCell(VasAccountCellValidationRequest req);
-
     /** Persists the (already-validated) preview rows. Mode A = append, R = replace-all. */
     @Transactional
     public VasAccountImportResult import_(VasAccountImportRequest req);
@@ -395,7 +388,7 @@ Per `wecms-api/CLAUDE.md` "DB Function / Legacy Function Policy", this is prefer
 
 | Layer | Annotation | Notes |
 |---|---|---|
-| `list` / `detail` / `preview` / `validateCell` / `export` | `@Transactional(readOnly = true)` | read-only |
+| `list` / `detail` / `preview` / `export` | `@Transactional(readOnly = true)` | read-only |
 | `create` / `update` / `softDelete` | `@Transactional` | atomic per row |
 | `import_` (`A` append) | `@Transactional` | atomic insert batch; failure on any row rolls the whole batch back (legacy parity) |
 | `import_` (`R` replace) | `@Transactional` | soft-delete + bulk insert in one transaction; failure rolls back the wipe (critical — user expects all-or-nothing) |

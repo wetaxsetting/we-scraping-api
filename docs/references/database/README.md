@@ -17,7 +17,12 @@ Per-feature DB design and Flyway migration intent. The actual SQL files live in 
 ## Sub-folders
 
 - [erd/](erd/) — **Entity-Relationship Diagrams** for the whole schema (80 tables). Start at [erd/full-project-erd.md](erd/full-project-erd.md) for the cross-module map, then the per-module docs ([banking](erd/banking-erd.md) · [payment](erd/payment-erd.md) · [addon-service](erd/addon-service-erd.md) · [settings](erd/settings-erd.md)). Mermaid sources live in [erd/diagrams/](erd/diagrams/).
-- [flyway/](flyway/) — migration notes · [indexing/](indexing/) — index strategy · [query-analysis/](query-analysis/) — query plans · [table-mapping/](table-mapping/) — table inventory.
+- [flyway/](flyway/) — migration notes · [indexing/](indexing/) — index strategy · [table-mapping/](table-mapping/) — table inventory.
+
+## Key reference docs
+
+- [db-function-classification.md](db-function-classification.md) — inventory & migration-priority classification of all ~168 legacy PL/pgSQL functions (companion to the policy doc [../../architecture/database/db-function-strategy.md](../../architecture/database/db-function-strategy.md)).
+- [database-coverage-matrix.md](database-coverage-matrix.md) · [table-ownership.md](table-ownership.md) · [manual-tenant-setup.md](manual-tenant-setup.md)
 
 ## What does NOT go here
 

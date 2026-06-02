@@ -34,7 +34,7 @@ under "Needs Confirmation" are **content decisions**, not broken links.
   [`../../../../wecms-web/docs/features/auth/login-auth.md`](../../../../wecms-web/docs/features/auth/login-auth.md) + `README.md`.
   Both `service-mapping.md` (`migration/`) and `api-mapping.md` (`api-spec/`) updated to link them.
 - **Historical record (as raised):** `login-auth` was plain-text *Needs Confirmation* in both mapping files; no refactor-side doc existed.
-- **Related existing docs (JEX, read-only reference):** [`docs/jex/features/login-spring-boot-migration.md`](../../../../docs/jex/features/login-spring-boot-migration.md), [`docs/jex/features/login-wecms.md`](../../../../docs/jex/features/login-wecms.md), [`docs/jex/api-spec/auth.md`](../../../../docs/jex/api-spec/auth.md); refactor plan: [`../phase-1/task-sprint-0-login-refactor.md`](../phase-1/task-sprint-0-login-refactor.md).
+- **Related existing docs (JEX, read-only reference):** [`docs/jex/features/login-spring-boot-migration.md`](../../../../docs/jex/features/login-spring-boot-migration.md), [`docs/jex/features/login-wecms.md`](../../../../docs/jex/features/login-wecms.md), [`docs/jex/api-spec/auth.md`](../../../../docs/jex/api-spec/auth.md); refactor plan: [`../../archive/planning/phase-1/task-sprint-0-login-refactor.md`](../../archive/planning/phase-1/task-sprint-0-login-refactor.md).
 - **Suggested files (as proposed):** `wecms-api/docs/features/login-auth.md`, `wecms-web/docs/features/login-auth.md`. **Final placement:** under `features/auth/` (system-feature domain), slug `login-auth` preserved.
 - **API surface:** `POST /api/v1/auth/login`, `GET /api/v1/auth/me` (JEX `logn_0001_001`).
 
@@ -57,8 +57,8 @@ Each was referenced by docs but no longer exists at the cited path; references h
 |---|---|
 | `OtpChallengeDialog.tsx` | absent; only `components/banking/own-account-transfer/OtpAuthDialog.tsx` exists (possible rename — confirm) |
 | `lib/api/settings.ts` | absent; no equivalent found |
-| `V86__bank_cert_info.sql` | absent under that name |
-| `V87__nxsias_module_tran_log_his.sql` | absent under that name |
+| `V86__bank_cert_info.sql` | absent under that name — RESOLVED (pending confirmation): exists on disk as V100__bank_cert_info.sql / V101__nxsias_module_tran_log_his.sql respectively (draft-number drift). |
+| `V87__nxsias_module_tran_log_his.sql` | absent under that name — RESOLVED (pending confirmation): exists on disk as V100__bank_cert_info.sql / V101__nxsias_module_tran_log_his.sql respectively (draft-number drift). |
 | `V181__transfer_history_helper_index.sql` | `V181` is now a different migration (`…unlock_trsc_dtm_in_user_table.sql`) |
 | `Claude Code (AI)/sql/firm_banking_dispatch_remaining_tables_20260518.sql` | absent (generated SQL artifact — confirm if renamed/dropped) |
 
@@ -69,11 +69,8 @@ Each was referenced by docs but no longer exists at the cited path; references h
 
 ## Needs Confirmation — Banking (raised 2026-06-01, from the Banking docs restructure)
 
-### OQ-DOC-4 — Smart Organizer scope
-- **Decision needed:**
-  - Is Smart Organizer (VND / FCY) in scope for the refactor?
-  - Is it backend/API implemented, static-UI only, or deferred?
-- **Current state:** no refactor endpoint/page; docs created as **discovery scaffolds** only. Not in the legacy `docs/jex/screen-flows/banking.md` 9-screen list.
+### OQ-DOC-4 — Smart Organizer scope — RESOLVED (verified 2026-06-02)
+- **Resolution:** Smart Organizer **is** in scope and **is implemented**. Backend ships `SmartOrganizerController` + `OrganizerRuleController` + services with migrations V172 (`smart_organizer_rmrk_org_infm_schema`), V173 (`wb_get_next_val_rmrk_org_infm`), V174 (`smart_organizer_view_setting_seed`); the Next.js route `app/(dashboard)/banking/smart-organizer/` exists (VND; an FCY-specific page is not yet split out — the shared route serves it). The feature docs were corrected from their original "discovery scaffold" framing; residual `Needs Confirmation` detail in those docs reconciles against the shipped code in the next stabilisation pass. Not in the legacy `docs/jex/screen-flows/banking.md` 9-screen list (newer feature).
 - **References:**
   - JEX source: `fnsh_0200_001` (`WECMS DEV/WECMS_STATIC/ts-src/js/jex/wabooks/fnsh/fnsh_0200_001.ts`), `fnsh_0200_002`
   - [`../../features/banking/smart-organizer-vnd.md`](../../features/banking/current-savings-vnd/smart-organizer.md) · [`../../features/banking/smart-organizer-fcy.md`](../../features/banking/current-savings-fcy/smart-organizer.md)
@@ -134,7 +131,7 @@ features were **documented in this pass** (no OQ needed): `common/audit-log.md`,
 
 ### OQ-DOC-12 — Cross-cutting common docs: approval-workflow + attachments
 - **Decision needed:** do we want unifying `common/` docs, or keep these per-feature?
-- **Current state:** **Approval** is implemented as two distinct concerns — approval-**LINE** (config master data, [`../../features/settings/approval-line.md`](../../features/settings/approval-line.md)) and approval-**BOX** (payment execution inbox, [`../../features/payment/approval-box.md`](../../features/payment/approval-box.md)); both documented, but no doc explains the engine/flow that links them. **File upload / attachments** is implemented per-feature (Contacts `ContactsFileService`; ERP / firm-banking downloads) with no generic spec.
+- **Current state:** **Approval** is implemented as two distinct concerns — approval-**LINE** (config master data, [`../../features/settings/approval-line.md`](../../features/settings/approval-line.md)) and approval-**BOX** (payment execution inbox, [`../../features/payment/approval-box/README.md`](../../features/payment/approval-box/README.md)); both documented, but no doc explains the engine/flow that links them. **File upload / attachments** is implemented per-feature (Contacts `ContactsFileService`; ERP / firm-banking downloads) with no generic spec.
 - **Action:** decide whether to add `common/approval-workflow.md` and/or `common/attachments.md` as **cross-link-only** explainers (no content duplication), or leave per-feature. No doc created in this pass to avoid duplication.
 
 ### OQ-DOC-13 — Notifications & Dashboard (not implemented)

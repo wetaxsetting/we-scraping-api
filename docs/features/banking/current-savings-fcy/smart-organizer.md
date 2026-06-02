@@ -5,7 +5,7 @@
 **Route (proposed):** `/banking/smart-organizer-fcy`
 **Refactor screen ID / slug:** `banking-smart-organizer-fcy`
 **JEX counterpart:** `fnsh_0200_002` (view) — `WECMS DEV/WECMS_STATIC/ts-src/js/jex/wabooks/fnsh/fnsh_0200_002.ts` (FCY sibling of `fnsh_0200_001`); FCY source helper `fnsh_0006_001_osmc_VN.ts`.
-**Status:** ⚠️ **DISCOVERY — not yet in the refactor.** No endpoint/page/design exists; content derived from JEX source only. **Not a contract.**
+**Status:** ✅ **Backend implemented** (shares the Smart Organizer controllers/services + migrations V172–V174 with the VND twin — see [smart-organizer-vnd.md](../current-savings-vnd/smart-organizer.md)). The FCY currency context is a presentation variant over the same backend. JEX-derived detail below is the functional spec; reconcile divergence against the shipped code.
 
 ## Overview
 FCY variant of Smart Organizer — the auto-categorizing transaction view (system-assigned usage
@@ -16,8 +16,8 @@ accounts. Shares the Smart Organizer concept with the VND twin
 - Web/UI: [`../../../../wecms-web/docs/features/banking/smart-organizer-fcy.md`](../../../../../wecms-web/docs/features/banking/current-savings-fcy/smart-organizer.md)
 - Related: FCY transaction list — [transaction-history-fcy.md](transaction-history.md)
 
-## Related APIs *(none yet — proposed)*
-- `GET /api/v1/banking/smart-organizer?currency=FCY` *(proposed; may share the VND endpoint with a currency discriminator)*
+## Related APIs *(implemented — shared with VND)*
+- `GET /api/v1/banking/smart-organizer` (shares the VND endpoint; FCY is a currency-context variant). Confirm the exact currency discriminator against `SmartOrganizerController`.
 
 ## Database Tables *(Needs Confirmation)*
 - Same sources as Smart Organizer VND (see [smart-organizer-vnd.md](../current-savings-vnd/smart-organizer.md)); confirm against `fnsh_0200_002` IDO.
@@ -30,4 +30,4 @@ accounts. Shares the Smart Organizer concept with the VND twin
 ## Error Cases *(Needs Confirmation)*
 
 ## Notes
-**Action required (discovery):** same as VND — confirm refactor scope before authoring a real spec.
+Implemented on the backend alongside the VND twin (shared controllers/services + V172–V174). Remaining `Needs Confirmation` markers on table/rule detail reconcile against the shipped code in the next stabilisation pass.

@@ -6,7 +6,7 @@
 **Frontend placement:** Settings modal panel ([components/settings/login-credentials/LoginCredentialsPanel.tsx](../../../../wecms-web/components/settings/login-credentials/LoginCredentialsPanel.tsx)).
 **View Setting screenId (per [lib/viewSettingScreens.ts](../../../../wecms-web/lib/viewSettingScreens.ts)):** *not adopted* — the panel has no toolbar list-icon button (same precedent as `erp-transaction-history`, `approval-line`, `chart-of-accounts`). The slug is reserved in the registry for future log/audit consistency.
 **JEX counterparts:** WSVCs `comm_0218_003_c001` (Add — create bank credential), `comm_0218_004_u001` (Edit — change password with `decrypt(...)` guard), `comm_0218_nxisas` (`enter_login_popup` → `_v2nxisas.callNxisas` LOGIN + ACCT_LIST orchestration). Plus the GDT sibling (`comm_0218_005_*`) for the tax-authority credentials variant.
-**Status:** **Phase 3 — wired full-stack.** Backend CRUD over `BANK_CERT_INFO` is live; Coocon LOGIN + OTP + ACCT_LIST orchestration is wired through `/api/v1/banking/scraping/*`; frontend Settings panel composes the full Figma Add and Registered chains end-to-end. GDT branch + Audit Logs body are static-UI until their respective endpoints land (OQ-1, OQ-2).
+**Status:** **Phase 3 — wired full-stack.** Backend CRUD over `BANK_CERT_INFO` is live; Coocon LOGIN + OTP + ACCT_LIST orchestration is wired through `/api/v1/banking/scraping/*`; frontend Settings panel composes the full Figma Add and Registered chains end-to-end. GDT create/update (OQ-1), Audit Logs (OQ-2), and password Reveal (OQ-3) are **wired end-to-end** (verified 2026-06-02 — see §10). The only residual gap is Delete-wiring in the panel (OQ-4 — backend endpoint exists, panel kebab fires the confirmation dialog only).
 
 > Legacy WSVC ids appear in this document only as JEX file:line citations and as migration-traceability prose. Every new identifier surface (REST URI, Java package, log tags, audit `WSVC_ID`) carries the kebab-case slug `login-credentials`, never `comm_0218_003`. Cross-tree rule: workspace [CLAUDE.md §Cross-Tree Rules](../../../../CLAUDE.md); backend identifier rules: [wecms-api/CLAUDE.md §Refactor identifier naming](../../../CLAUDE.md); frontend rules: [wecms-web/CLAUDE.md §Routing + §3a Settings Panel](../../../../wecms-web/CLAUDE.md).
 
@@ -25,9 +25,9 @@ The Login Credentials screen is the per-tenant master list of **bank login crede
   5. If Coocon returns `OTP_REQUIRED` → `OtpChallengeDialog.tsx` (Needs Confirmation — source file not found) → `POST /api/v1/banking/scraping/{sessionId}/otp`.
   6. On `COMPLETED` → pick accounts in [SelectBankAccountsDialog](../../../../wecms-web/components/shared/popups/SelectBankAccountsDialog.tsx) → `POST /api/v1/login-credentials/bank` persists the credential row.
 - **Edit** the password on a registered row — [RegisteredLoginCredentialsDialog](../../../../wecms-web/components/shared/popups/RegisteredLoginCredentialsDialog.tsx) → [EditLoginIdPasswordDialog](../../../../wecms-web/components/shared/popups/EditLoginIdPasswordDialog.tsx). Backend re-runs Coocon `verify` with the new password, then `PUT /api/v1/login-credentials/bank/{seqNo}` with the `old_password` guard (mirrors legacy `decrypt(cert_info_detl_con) = ?` at `comm_0218_004_u001_act.jsp:55-57`).
-- **Reveal** a masked password — [PasswordConfirmationDialog](../../../../wecms-web/components/shared/popups/PasswordConfirmationDialog.tsx) (static UI — the live reveal endpoint is deferred per OQ-3; password ciphertext stays server-side).
+- **Reveal** a masked password — [PasswordConfirmationDialog](../../../../wecms-web/components/shared/popups/PasswordConfirmationDialog.tsx) calls `revealLoginCredential` against `POST /api/v1/login-credentials/{type}/{seqNo}/reveal` on a successful re-auth (wired — RESOLVED OQ-3, 2026-06-02; password ciphertext stays server-side until the re-auth passes).
 - **Delete** a credential row — kebab menu → confirmation. **Static UI only today** (OQ-4); `DELETE /api/v1/banking/credentials/{seqNo}` exists on the older CRUD slice but is not yet wired into the Settings panel.
-- **Audit Logs** — opens [AuditLogsDialog](../../../../wecms-web/components/shared/popups/AuditLogsDialog.tsx) with the per-row event log. **Body is mock data** (`auditLogsMockData.ts` (removed Sprint 1 — Needs Confirmation if still referenced)) — Phase 2 backend port is OQ-2.
+- **Audit Logs** — opens [AuditLogsDialog](../../../../wecms-web/components/shared/popups/AuditLogsDialog.tsx) with the per-row event log, fetched live via `fetchLoginCredentialAuditLogs` against `GET /api/v1/login-credentials/{type}/{seqNo}/audit-logs` (wired — RESOLVED OQ-2, 2026-06-02; no mock fallback).
 
 The panel is the **first Settings submenu that actually drives a live external system** (Coocon NXISAS). Every other Settings panel reads/writes its own DB rows; this one stands up a multi-step state machine that crosses the gateway boundary, handles 2-factor challenges, and persists only after the gateway confirms the credentials work.
 
@@ -57,9 +57,9 @@ JEX file citations (source of truth for behavior — read-only):
 | Add credential — persist (`comm_0218_003_c001`) | **In scope** — `POST /api/v1/login-credentials/bank` lands the verified credential into `BANK_CERT_INFO` after the user picks accounts. Per-account persistence into `ACCT_MSTR` is **out of scope** for this slice — see OQ-5. |
 | Edit credential — change password (`comm_0218_004_u001`) | **In scope** — `PUT /api/v1/login-credentials/bank/{seqNo}` enforces the `old_password` guard (`WBE2091`) AND re-verifies the new password against Coocon before committing. |
 | Delete credential | **Backend ready, frontend deferred** — `DELETE /api/v1/banking/credentials/{seqNo}` exists; the Settings panel's kebab → Delete currently fires only the confirmation dialog (OQ-4). |
-| Reveal password | **Out of scope** — `PasswordConfirmationDialog` is wired as static UI; the live reveal endpoint requires a separate audit + policy decision (OQ-3). |
-| GDT credentials (tax authority) | **Static UI** — [GdtCredentialsDialog](../../../../wecms-web/components/shared/popups/GdtCredentialsDialog.tsx) mounts but doesn't persist. The legacy `comm_0218_005_*` port lands in the GDT feature slice (OQ-1). |
-| Audit Logs body | **Static UI** — mock rows; the live query against `AUDIT_LOGS_INFM WHERE WSVC_ID='login-credentials'` (refactor slug, NOT `comm_0218_*`) lands with the audit-write retrofit (OQ-2). |
+| Reveal password | **In scope — wired (RESOLVED OQ-3, 2026-06-02)** — `POST /api/v1/login-credentials/{type}/{seqNo}/reveal` decrypts-and-shows on a successful re-auth; `PasswordConfirmationDialog` calls `revealLoginCredential`. |
+| GDT credentials (tax authority) | **In scope — wired (RESOLVED OQ-1, 2026-06-02)** — `POST` / `PUT /api/v1/login-credentials/gdt` persist the GDT branch; [GdtCredentialsDialog](../../../../wecms-web/components/shared/popups/GdtCredentialsDialog.tsx) upserts via `createGdtLoginCredential` / `updateGdtLoginCredential`. |
+| Audit Logs body | **In scope — wired (RESOLVED OQ-2, 2026-06-02)** — `GET /api/v1/login-credentials/{type}/{seqNo}/audit-logs` backs the dialog; the frontend fetches via `fetchLoginCredentialAuditLogs` (no mock fallback). Query targets `AUDIT_LOGS_INFM WHERE WSVC_ID='login-credentials'` (refactor slug, NOT `comm_0218_*`). |
 | CAPTCHA / Q&A challenge branches | **Out of scope** — Coocon may return `CAPTCHA_REQUIRED` / `QNA_REQUIRED` for some banks; the panel surfaces a system error dialog ("unsupported challenge") and collapses the flow. Add when a real bank in the local test set demands it. |
 | Bulk import from Excel | **Not planned** — credentials are entered through the Coocon-verified flow; bulk upload would bypass the verify-before-save guarantee. |
 
@@ -269,11 +269,11 @@ Error envelopes always include `path` + `trace_id` per [wecms-api/CLAUDE.md §AP
 
 ---
 
-## 7. Audit trail (planned — OQ-2)
+## 7. Audit trail (wired — RESOLVED OQ-2, 2026-06-02)
 
-The Settings panel exposes an Audit Logs link that opens [AuditLogsDialog](../../../../wecms-web/components/shared/popups/AuditLogsDialog.tsx). Body is mock today (`auditLogsMockData.ts` (removed Sprint 1 — Needs Confirmation if still referenced)).
+The Settings panel exposes an Audit Logs link that opens [AuditLogsDialog](../../../../wecms-web/components/shared/popups/AuditLogsDialog.tsx), fetched live via `fetchLoginCredentialAuditLogs` against `GET /api/v1/login-credentials/{type}/{seqNo}/audit-logs` (no mock fallback).
 
-When wired, the panel queries:
+The panel queries:
 
 ```sql
 SELECT REG_DTM, REG_ID, AUDIT_ACTV_CD, AUDIT_DETL
@@ -345,11 +345,11 @@ Until tests land, the integration check is **manual against the local Coocon tes
 
 > OQ format: question — owner — status — proposed resolution.
 
-**OQ-1 — GDT credentials wire-up.** The GDT branch ([GdtCredentialsDialog](../../../../wecms-web/components/shared/popups/GdtCredentialsDialog.tsx)) renders correctly but doesn't persist. The legacy `comm_0218_005_*` write path needs porting to a new backend slice (likely `POST /api/v1/login-credentials/gdt`) plus a parallel `GDT_CERT_INFO` table audit. Owner: backend. Status: deferred to GDT feature MR.
+**OQ-1 — GDT credentials wire-up. RESOLVED (verified 2026-06-02): GDT create/update wired end-to-end.** Backend exposes `POST` / `PUT /api/v1/login-credentials/gdt`; the frontend [LoginCredentialsPanel](../../../../wecms-web/components/settings/login-credentials/LoginCredentialsPanel.tsx) upserts the GDT branch via `createGdtLoginCredential` / `updateGdtLoginCredential` against those endpoints (no longer non-persisting). The wire base path is `/api/v1/login-credentials` (not `/settings/login-credentials`). Owner: backend.
 
-**OQ-2 — Audit Logs body.** Mock today. Wire to `AUDIT_LOGS_INFM` filtered by `WSVC_ID = 'login-credentials'`. Pairs with the audit-write retrofit in the service layer. Owner: backend. Status: deferred — bundle with the audit-write rollout across Settings panels.
+**OQ-2 — Audit Logs body. RESOLVED (verified 2026-06-02): audit logs wired end-to-end (not mock).** Backend exposes `GET /api/v1/login-credentials/{type}/{seqNo}/audit-logs`; the frontend fetches it via `fetchLoginCredentialAuditLogs` — no static seed / mock fallback remains. Owner: backend.
 
-**OQ-3 — Password reveal endpoint.** `PasswordConfirmationDialog` collects the WeCMS user's login password as a re-auth gate but no decrypt endpoint exists. Proposed: `POST /api/v1/login-credentials/bank/{seqNo}/reveal` body `{ current_password }` returns the decrypted password once on success; rejected after N failures (lock the user). Owner: PO + security review. Status: pending decision — risk of broadening the attack surface vs. UX value.
+**OQ-3 — Password reveal endpoint. RESOLVED (verified 2026-06-02): reveal wired end-to-end.** Backend exposes `POST /api/v1/login-credentials/{type}/{seqNo}/reveal`; the frontend's `PasswordConfirmationDialog` calls `revealLoginCredential` to decrypt-and-show on a successful re-auth. Owner: PO + security review (the decided behaviour shipped).
 
 **OQ-4 — Delete wiring in the panel.** Backend endpoint exists (`DELETE /api/v1/banking/credentials/{seqNo}`); the panel's kebab → Delete fires only the confirmation dialog today. Trivial wire-up; bundled with OQ-2 (audit-write) so the delete event records correctly. Owner: frontend + backend. Status: ready to land.
 
@@ -384,16 +384,16 @@ Until tests land, the integration check is **manual against the local Coocon tes
 |---|---|---|
 | Backend CRUD | ✅ Complete | [BankCredentialController](../../../src/main/java/com/kosign/wecms/domain/banking/bankcredentials/controller/BankCredentialController.java) |
 | Backend Coocon orchestration | ✅ Complete | `domain/banking/scraping/` |
-| Backend audit-write | ⏳ Deferred | OQ-2 |
+| Backend audit-logs (read) | ✅ Wired | OQ-2 (RESOLVED 2026-06-02) — `GET .../audit-logs` |
 | Backend delete wiring (frontend caller) | ⏳ Deferred | OQ-4 |
-| Backend GDT slice | ⏳ Deferred | OQ-1 |
-| Backend password-reveal endpoint | ⏳ Pending PO | OQ-3 |
+| Backend GDT slice | ✅ Wired | OQ-1 (RESOLVED 2026-06-02) — `POST` / `PUT /api/v1/login-credentials/gdt` |
+| Backend password-reveal endpoint | ✅ Wired | OQ-3 (RESOLVED 2026-06-02) — `POST .../reveal` |
 | Frontend Settings panel | ✅ Complete | [LoginCredentialsPanel.tsx](../../../../wecms-web/components/settings/login-credentials/LoginCredentialsPanel.tsx) |
 | Frontend Add chain (verify → OTP → persist) | ✅ Wired | `handleVerifyLogin` / `handleOtpSubmit` / `handlePersistCredential` |
 | Frontend Edit chain (verify + WBE2091 → PUT) | ✅ Wired | `handleEditSave` / `handleEditOtpSubmit` / `persistEditedPassword` |
-| Frontend GDT chain | ⏳ Static UI | OQ-1 |
-| Frontend Audit Logs body | ⏳ Static UI | OQ-2 |
+| Frontend GDT chain | ✅ Wired | OQ-1 (RESOLVED 2026-06-02) — `createGdtLoginCredential` / `updateGdtLoginCredential` |
+| Frontend Audit Logs body | ✅ Wired | OQ-2 (RESOLVED 2026-06-02) — `fetchLoginCredentialAuditLogs`, no mock |
 | Frontend Delete | ⏳ Static UI | OQ-4 |
-| Frontend Password Reveal | ⏳ Static UI | OQ-3 |
+| Frontend Password Reveal | ✅ Wired | OQ-3 (RESOLVED 2026-06-02) — `revealLoginCredential` |
 | Standalone `/banking/credentials` spike route | 🗑 Removed | The earlier `app/(dashboard)/banking/credentials/` route was the verify-before-save spike that predated the Settings panel. Removed — the Settings panel is the canonical UI surface. |
 | Feature doc (this file) | ✅ Authored | — |

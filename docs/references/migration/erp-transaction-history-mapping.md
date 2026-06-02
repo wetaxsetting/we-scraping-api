@@ -2,7 +2,7 @@
 
 **Refactor slug:** `erp-transaction-history`
 **JEX path:** Settings > ERP Transaction History (`comm_0219_001` family — `r001`, `c001`, `r002`).
-**Sibling docs:** [feature spec](../../features/settings/transaction-history.md) · [DB schema](../database/settings/erp-transaction-history-schema.md) · [backend design](../business-rules/settings/erp-transaction-history.md) · [frontend design](../../../../wecms-web/docs/features/settings/transaction-history.md) · [plan](../../planning/settings/erp-transaction-history-plan.md).
+**Sibling docs:** [feature spec](../../features/settings/transaction-history.md) · [DB schema](../database/settings/erp-transaction-history-schema.md) · [backend design](../business-rules/settings/erp-transaction-history.md) · [frontend design](../../../../wecms-web/docs/features/settings/transaction-history.md) · [plan](../../archive/planning/settings/erp-transaction-history-plan.md).
 
 This is the JEX → Spring service-by-service mapping. Each row pairs one
 legacy artifact (WSVC operation + IDO + JSP) with its Spring REST endpoint,

@@ -1,4 +1,5 @@
 # Contacts — Database Schema Design
+> **Status (verified 2026-06-02): Implemented — code is authoritative.** This doc predates the shipped implementation and describes design-stage decisions that were resolved the OTHER way. Where it conflicts with `domain/setting/contacts/`, the code wins. Specifically: TRCO_KEY is allocated via the `wb_get_next_val('trco_infm','trco_key')` branch through `LegacyFunctionRepository.nextTrcoKey` (there is **no** Java `TrcoKeyGeneratorService`); `TRCO_INFO_FILE` **is** in scope (attachments shipped via `ContactsFileService`); bank-name resolution uses the ported `wb_get_napas_bank_nm_or_citad_bank_nm` via `LegacyFunctionRepository.resolveNapasOrCitadBankName` (**not** `BankCdResolver`). See `wecms-api/CLAUDE.md` → Feature Status (contacts) + "Surviving legacy functions". The §§ on key-generation / bank-resolution / file-scope below are stale and flagged for a follow-up rewrite.
 
 | Field | Value |
 |---|---|
@@ -85,7 +86,7 @@ CREATE TABLE IF NOT EXISTS TRCO_INFM (
     REG_DTM                TIMESTAMPTZ  NOT NULL DEFAULT now(),       -- local deviation
     MOD_ID                 VARCHAR(100),
     MOD_DTM                TIMESTAMPTZ  NOT NULL DEFAULT now(),
-    CONSTRAINT trco_infm_pk PRIMARY KEY (BIZ_KEY, TRCO_KEY)
+    CONSTRAINT trco_infm_pk PRIMARY KEY (TRCO_KEY)
 );
 CREATE INDEX IF NOT EXISTS ix_trco_infm_biz_handkey ON TRCO_INFM (BIZ_KEY, HAND_TRCO_KEY);
 CREATE INDEX IF NOT EXISTS ix_trco_infm_biz_taxid   ON TRCO_INFM (BIZ_KEY, TRCO_TAX_ID);

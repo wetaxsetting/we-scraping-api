@@ -60,7 +60,7 @@ Use when you don't want the formula on every entity load (e.g. it's only needed 
 
 - **One function per migration is OK** but cluster related functions when they share dependencies (`wb_format_acct_nick_nm` + `wb_get_bank_nm` + `BANK_INFM_DETL` shipped together in V44 because the formatter calls the lookup).
 - **Migrate when you need it.** Don't pre-emptively migrate functions for screens not yet in scope.
-- **Document the function in the feature spec** that triggered the migration. Future work that uses the same function adds itself to the function's reference list in function-inventory.md (Needs Confirmation) (when that index is created).
+- **Document the function in the feature spec** that triggered the migration. The full per-function inventory & migration-priority classification lives in [../../references/database/db-function-classification.md](../../references/database/db-function-classification.md) — add new call-site references there.
 
 ## Risks managed by this strategy
 

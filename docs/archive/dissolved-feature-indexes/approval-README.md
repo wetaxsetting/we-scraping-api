@@ -28,4 +28,4 @@ Approval covers the approval-line master and detail model: the per-tenant chain 
 - Backend service: [`../../backend/approval-line.md`](../../references/business-rules/approval-line.md)
 - Frontend screen: [`../../frontend/approval-line.md`](../../../../wecms-web/docs/features/settings/approval-line.md)
 - JEX → Spring migration: [`../../migration/approval-line.md`](../../references/migration/approval-line.md)
-- Plan: [`../../planning/phase-1/approval-line-plan.md`](../../planning/phase-1/approval-line-plan.md)
+- Plan: [`../../archive/planning/phase-1/approval-line-plan.md`](../../archive/planning/phase-1/approval-line-plan.md)

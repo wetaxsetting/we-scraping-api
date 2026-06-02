@@ -3,7 +3,7 @@
 **Slug:** `chart-of-accounts`
 **Tree:** [wecms-api/](../../../)
 **Package:** `com.kosign.wecms.domain.setting.chartofaccounts`
-**Related docs:** [feature spec](../../features/settings/chart-of-accounts.md) · [migration map](../migration/chart-of-accounts.md) · [database](../database/chart-of-accounts.md) · [frontend](../../../../wecms-web/docs/features/settings/chart-of-accounts.md) · [plan](../../planning/phase-1/chart-of-accounts-plan.md).
+**Related docs:** [feature spec](../../features/settings/chart-of-accounts.md) · [migration map](../migration/chart-of-accounts.md) · [database](../database/chart-of-accounts.md) · [frontend](../../../../wecms-web/docs/features/settings/chart-of-accounts.md) · [plan](../../archive/planning/phase-1/chart-of-accounts-plan.md).
 
 This document is the implementation reference for the Spring Boot side. It does not write code — it specifies the package layout, classes, endpoints, payloads, validations, transaction boundaries, and the audit-log + error-handling integration. The matching frontend lives in [wecms-web/components/settings/chart-of-accounts/](../../../../wecms-web/components/settings/chart-of-accounts/) (covered in the [frontend design](../../../../wecms-web/docs/features/settings/chart-of-accounts.md)).
 
@@ -191,7 +191,7 @@ Flow:
 5. Audit log: ChartOfAccountsAuditLogger.logCreate(entity, prior=null).
 6. Return ChartOfAccountRow projection.
 
-Retry-on-collision: if save() throws DataIntegrityViolationException (race on (biz_key, code, del_yn)), retry once after re-running step 3. Second failure → WBE_CHART_OF_ACCOUNTS_DUPLICATE_CODE. Matches the one-shot retry pattern in ContactsService#create (V85).
+Retry-on-collision: if save() throws DataIntegrityViolationException (race on (biz_key, code, del_yn)), retry once after re-running step 3. Second failure → WBE_CHART_OF_ACCOUNTS_DUPLICATE_CODE. Matches the one-shot retry pattern in ContactsService#create (V113).
 ```
 
 ### 4.4 `ChartOfAccountsService#update` — `@Transactional`

@@ -1,5 +1,7 @@
 # Plan — Account Inquiry & Transaction History (Refactor Completion)
 
+> **Status (2026-06-02): partially complete — kept active.** Account Inquiry (VND/FCY) has shipped; the residual scope is the **Transaction-History frontend wiring**. This is the only Phase-1 plan still in active `planning/` — its shipped siblings were archived to [../../archive/planning/phase-1/](../../archive/planning/phase-1/). Archive this file once Transaction-History frontend lands.
+
 **Date:** 2026-05-14 (revised 2026-05-15 after code audit)
 **Author:** Arthur (dev) — drafted via Claude
 **Scope:** Close remaining JEX → Spring/Next.js parity gaps for the two menus.

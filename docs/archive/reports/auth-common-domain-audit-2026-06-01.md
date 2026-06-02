@@ -30,7 +30,7 @@ read-only reference. The work was **create + cross-link**, not relocate.
 
 ## AUTH
 
-- **Existing docs found:** sprint-0 login plan ([`../../planning/phase-1/task-sprint-0-login-refactor.md`](../../planning/phase-1/task-sprint-0-login-refactor.md)), security design scaffold ([`../../references/business-rules/security/README.md`](../../references/business-rules/security/README.md)), shared permission catalogue ([`../../../../docs/_shared/permission-roles.md`](../../../../docs/_shared/permission-roles.md)), JEX login refs (read-only). No refactor-side feature doc existed.
+- **Existing docs found:** sprint-0 login plan ([`../../archive/planning/phase-1/task-sprint-0-login-refactor.md`](../../archive/planning/phase-1/task-sprint-0-login-refactor.md)), security design scaffold ([`../../references/business-rules/security/README.md`](../../references/business-rules/security/README.md)), shared permission catalogue ([`../../../../docs/_shared/permission-roles.md`](../../../../docs/_shared/permission-roles.md)), JEX login refs (read-only). No refactor-side feature doc existed.
 - **Created:** [`../../features/auth/README.md`](../../features/auth/README.md), [`../../features/auth/login-auth.md`](../../features/auth/login-auth.md); frontend [`../../../../wecms-web/docs/features/auth/README.md`](../../../../wecms-web/docs/features/auth/README.md), [`../../../../wecms-web/docs/features/auth/login-auth.md`](../../../../wecms-web/docs/features/auth/login-auth.md).
 - **Explicitly NOT auth (kept in Settings):** `login-credentials.md` (bank/GDT scraping creds), `users.md` (user admin), `change-password.md` (ProfileMenu).
 
@@ -44,7 +44,7 @@ read-only reference. The work was **create + cross-link**, not relocate.
 
 | Document | Path | Action |
 |---|---|---|
-| Login refactor plan | planning/phase-1/task-sprint-0-login-refactor.md | Keep |
+| Login refactor plan | archive/planning/phase-1/task-sprint-0-login-refactor.md | Keep |
 | Backend security design | references/business-rules/security/README.md | Keep + cross-link |
 | Permissions (api/web) | docs/permissions.md | Cross-link (shared — not absorbed) |
 | login-credentials / users / change-password | features/settings/ | Keep (Settings, not Auth) |

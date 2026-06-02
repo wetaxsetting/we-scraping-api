@@ -12,7 +12,7 @@ workflows. Supports list, detail, create, update, delete. Slug: `approval-line`.
 - Feature spec: [../features/approval/approval-line.md](../../features/settings/approval-line.md)
 - JEX → Spring mapping: [../migration/approval-line.md](../../references/migration/approval-line.md)
 - JEX add-flow analysis: [../migration/jex-analysis/approval-line-add-flow-analysis.md](../../references/migration/jex-analysis/approval-line-add-flow-analysis.md)
-- Task plan: [../planning/phase-1/approval-line-plan.md](../../planning/phase-1/approval-line-plan.md)
+- Task plan: [../archive/planning/phase-1/approval-line-plan.md](../../archive/planning/phase-1/approval-line-plan.md)
 
 ## Related APIs
 Base URI `/api/v1/settings/approval-line` (JWT, snake_case wire):
@@ -44,4 +44,4 @@ Base URI `/api/v1/settings/approval-line` (JWT, snake_case wire):
 - Plus `WBE_VALIDATION`, `WBE_DB`, `WBE9999`.
 
 ## Notes
-Web/UI: [../../../wecms-web/docs/settings/approval-line.md](../../../../wecms-web/docs/archive/settings-approval-line.md).
+Web/UI: [wecms-web/docs/features/settings/approval-line.md](../../../../wecms-web/docs/features/settings/approval-line.md).

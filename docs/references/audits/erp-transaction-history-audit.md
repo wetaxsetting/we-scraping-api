@@ -201,7 +201,7 @@ $ ./gradlew test --tests 'com.kosign.wecms.domain.setting.erptransactionhistory.
 - `docs/refactor-wecms/features/settings/erp-transaction-history.md` — current with the read-only scope, OQ resolutions, JEX citations.
 - `docs/refactor-wecms/migration/erp-transaction-history-mapping.md` — every implemented WSVC operation has its REST counterpart row; deviations called out.
 - `docs/refactor-wecms/frontend/settings/erp-transaction-history.md` — matches shipped behaviour (panel inside `<SettingsModal>`, no VS, download via `lib/file.ts`).
-- `docs/refactor-wecms/planning/settings/erp-transaction-history-plan.md` — all OQs marked resolved with dates.
+- `docs/refactor-wecms/archive/planning/settings/erp-transaction-history-plan.md` — all OQs marked resolved with dates.
 
 ### H.2 DRIFT — V75 (NUMERIC → BIGINT hotfix) not reflected in 4 docs **← FIXES REQUIRED**
 

@@ -29,4 +29,4 @@ Contacts manages tenant trading partners (`TRCO_INFM`) — the third-party accou
 - Frontend design: [`../../frontend/contacts-design.md`](../../../../wecms-web/docs/features/settings/contacts.md)
 - Schema: [`../../database/contacts-schema.md`](../../references/database/contacts-schema.md)
 - Migration map: [`../../migration/api-mapping/contacts-mapping.md`](../../references/migration/contacts-mapping.md)
-- Plan: [`../../planning/phase-1/contacts-tasks.md`](../../planning/phase-1/contacts-tasks.md)
+- Plan: [`../../archive/planning/phase-1/contacts-tasks.md`](../../archive/planning/phase-1/contacts-tasks.md)

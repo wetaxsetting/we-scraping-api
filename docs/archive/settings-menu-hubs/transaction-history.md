@@ -15,7 +15,7 @@ batch writers are out of scope.
 - JEX → Spring mapping: [../migration/erp-transaction-history-mapping.md](../../references/migration/erp-transaction-history-mapping.md) ·
   [../migration/api-mapping/erp-transaction-history-mapping.md](../../references/migration/erp-transaction-history-mapping.md)
 - Parity audit: [../audits/erp-transaction-history-audit.md](../../references/audits/erp-transaction-history-audit.md)
-- Task plan: [../planning/settings/erp-transaction-history-plan.md](../../planning/settings/erp-transaction-history-plan.md)
+- Task plan: [../archive/planning/settings/erp-transaction-history-plan.md](../../archive/planning/settings/erp-transaction-history-plan.md)
 
 ## Related APIs
 Base URI `/api/v1/settings/erp-transaction-history` (JWT, snake_case wire):
@@ -43,4 +43,4 @@ Base URI `/api/v1/settings/erp-transaction-history` (JWT, snake_case wire):
 - Standard envelope; `WBE9999`.
 
 ## Notes
-Web/UI: [../../../wecms-web/docs/settings/transaction-history.md](../../../../wecms-web/docs/archive/settings-transaction-history.md).
+Web/UI: [wecms-web/docs/features/settings/transaction-history.md](../../../../wecms-web/docs/features/settings/transaction-history.md).

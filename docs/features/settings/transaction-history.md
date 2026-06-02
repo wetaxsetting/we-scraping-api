@@ -6,7 +6,7 @@
 **Frontend placement:** Settings modal panel (component folder will be renamed from `components/settings/transaction-history/` to `components/settings/erp-transaction-history/`).
 **View Setting screenId (per [lib/viewSettingScreens.ts](../../../../wecms-web/lib/viewSettingScreens.ts)):** `erp-transaction-history` (`DYM_AREA_ID = "default"`).
 **JEX counterparts:** legacy WSVCs `comm_0219_001` (View), `comm_0219_001_r001` (list), `comm_0219_001_c001` (upload), `comm_0219_001_r002` (download). Legacy IDOs: `ERP_TRNS_HSTR_R001`, `ERP_TRNS_HSTR_R001_CNT`, `ERP_TRNS_HSTR_C001`, `ERP_TRNS_HSTR_U001`, `ERP_TRNS_HSTR_D001`.
-**Status:** **Phase 1 — design only.** No backend / frontend code yet.
+**Status:** **Implemented (backend)** — ERP Transaction History read/download/export endpoints are live; see wecms-api/CLAUDE.md.
 
 > Legacy WSVC ids appear in this document only as JEX file:line citations and as migration-traceability prose. Every new identifier surface (REST URI, Java package, View Setting screenId, log tags, audit `WSVC_ID`) carries the kebab-case slug `erp-transaction-history`, never `comm_0219_001`. Cross-tree rule: workspace [CLAUDE.md §Cross-Tree Rules](../../../../CLAUDE.md); backend identifier rules: [wecms-api/CLAUDE.md §Refactor identifier naming](../../../CLAUDE.md); frontend rules: [wecms-web/CLAUDE.md §Routing + §13 View Setting](../../../../wecms-web/CLAUDE.md).
 
@@ -347,7 +347,7 @@ in [docs/refactor-wecms/frontend/settings/erp-transaction-history.md](../../../.
 
 ### Cross-cutting
 
-- Planning doc: [docs/refactor-wecms/planning/settings/erp-transaction-history-plan.md](../../planning/settings/erp-transaction-history-plan.md).
+- Planning doc: [docs/refactor-wecms/archive/planning/settings/erp-transaction-history-plan.md](../../archive/planning/settings/erp-transaction-history-plan.md).
 - Bug reports (if any during Phase 2 / 3): `docs/bug-reports/` with `System: Refactor`.
 
 ---

@@ -130,8 +130,8 @@ The function calls two other PL/pgSQL helpers. The refactor **does NOT port thes
 | `CHART_ACCT_INFM` | The **row backbone**. Tenant-scoped Chart of Accounts with 3-level hierarchy. Restricted root rows `ACC-01` / `ACC-02` / `ACC-03` are seeded for every tenant (V96) as the three Level-1 categories. The function reads `chart_acct_cd`, `chart_acct_nm_ko`, `chart_acct_nm_en`, `parent_chart_acct_cd`, `cal_rule`, `stts`, `del_yn`. | ✅ V94 schema + V96 restricted roots + V97 demo data (9 of DEV's 29 active rows; top-up needed for parity). |
 | `ACCT_TRNS_HSTR` | Bank transaction history. The function reads `chart_acct_seq_no`, `chart_acct_cd` **directly off this table** (a column on the row, not via a join). Transaction date / amount / currency / bank_cd / acct_no for the source row. The function joins to `acct_trns_rcv_pay_infm` only to enforce the confirmation filter (`cnfm_yn = 'Y'`). | ✅ V13 + V23 column parity. |
 | `ACCT_TRNS_RCV_PAY_INFM` | **Confirmation gate** for bank transactions — only `cnfm_yn = 'Y'` rows pass through. Joined via `(biz_key, acct_seq_no)` — **NOT** the composite `(biz_key, bank_cd, acct_no, trsc_dt)` PK. The `rcv_pay_usag_cd` / `usag_detl_cd` / `vas_acct_cd` columns on this table are NOT consulted by the cash-flow report. (Rev 1 incorrectly documented them as the bank-side classifier.) | ✅ V13 + V21. |
-| `CARD_TRNS_HSTR` | Corporate card transactions. Reads `chart_acct_seq_no`, `chart_acct_cd` directly off the row. Joined to `expt_resol_mstr` for the approval-status gate. | ❌ **NOT migrated locally.** Lives in DEV's `wecmsvndev` schema (not `public`). Must ship in Phase 1 as a new Flyway migration (`V166__card_trns_hstr_schema.sql`). |
-| `OVRS_PYMN_MSTR` | Overseas payments. Reads `chart_acct_seq_no`, `chart_acct_cd`, `trnf_amt`, `trnf_ccy_cd`, `dbt_acct_cd`, `dbt_acct_no`, `appr_seq_no`, `reg_dtm`. Joined to `expt_resol_mstr` for the approval-status gate. | ✅ V130 (overseas payment schema MR). |
+| `CARD_TRNS_HSTR` | Corporate card transactions. Reads `chart_acct_seq_no`, `chart_acct_cd` directly off the row. Joined to `expt_resol_mstr` for the approval-status gate. | ✅ `V184__card_trns_hstr_schema.sql` (Card Transactions schema MR; sibling `CARD_TRNS_RCV_PAY_INFM` in `V200`). |
+| `OVRS_PYMN_MSTR` | Overseas payments. Reads `chart_acct_seq_no`, `chart_acct_cd`, `trnf_amt`, `trnf_ccy_cd`, `dbt_acct_cd`, `dbt_acct_no`, `appr_seq_no`, `reg_dtm`. Joined to `expt_resol_mstr` for the approval-status gate. | ✅ V156 (overseas payment schema MR; details in V138). |
 | `SCDUL_PYMN_SUMR` (header) | Scheduled payment summary header. Reads `scdul_pymn_no`, `out_bank_cd`, `wdrl_act_no`, `ccy_cd`, `appr_seq_no`, `reg_dtm`. | ✅ V131 (internal transfer schema MR). |
 | `SCDUL_PYMN_SUMR_DETL` (detail) | Scheduled payment line items. Reads `chart_acct_seq_no`, `chart_acct_cd`, `tran_amt`. Joined to the header by `(biz_key, scdul_pymn_no)`, then to `expt_resol_mstr` for approval status. | ✅ V131. |
 | `EXPT_RESOL_MSTR` | **NOT a row source.** Used only as the join target for `wb_get_appr_stts(...)` to confirm the source transaction's approval is in state `'C'` (Completed). The function joins the 3 non-bank sources to this table on `appr_seq_no` and gates on the helper's return value. | ✅ V109 (approval box schema MR). |
@@ -421,8 +421,8 @@ This Phase 0 doc establishes the design; Phase 2 implements it. Sketch only — 
 | `CHART_ACCT_INFM` | ✅ V94 schema + V96 restricted roots + V97 demo data (9 rows for tenant 000001 — DEV has 29; top-up planned in Phase 1) |
 | `ACCT_TRNS_HSTR` | ✅ V13 + V23 |
 | `ACCT_TRNS_RCV_PAY_INFM` | ✅ V13 + V21 |
-| `CARD_TRNS_HSTR` | ❌ **NOT migrated locally.** Phase 1 ships V166 with schema + JPA entity. |
-| `OVRS_PYMN_MSTR` | ✅ V130 (overseas payment schema MR) |
+| `CARD_TRNS_HSTR` | ✅ V184 schema (`card_trns_hstr_schema`) + JPA entity; sibling `CARD_TRNS_RCV_PAY_INFM` in V200. |
+| `OVRS_PYMN_MSTR` | ✅ V156 (overseas payment schema MR; details V138) |
 | `EXPT_RESOL_MSTR` | ✅ V109 (approval box schema MR) — used only as approval-status join target |
 | `SCDUL_PYMN_SUMR` | ✅ V131 (internal transfer schema MR) |
 | `SCDUL_PYMN_SUMR_DETL` | ✅ V131 |
@@ -439,7 +439,7 @@ Earlier seed plans assumed "30 latest rows per table". The decoded function show
 
 ### 7.4 Phase 1 deliverables (revised)
 
-- `wecms-api/src/main/resources/db/migration/V166__card_trns_hstr_schema.sql` — table schema + helper indexes (idempotent). Includes sibling `CARD_TRNS_RCV_PAY_INFM` for completeness even though the report doesn't use it.
+- `wecms-api/src/main/resources/db/migration/V184__card_trns_hstr_schema.sql` — table schema + helper indexes (idempotent), shipped. The sibling `CARD_TRNS_RCV_PAY_INFM` landed in `V200__card_trns_rcv_pay_infm.sql`.
 - `wecms-api/src/main/java/com/kosign/wecms/domain/banking/entity/CardTrnsHstr.java` — JPA entity for the new table. Composite PK `(BIZ_KEY, CARD_SEQ_NO)`. Extends `BaseEntity` for audit columns. (Sibling `CardTrnsRcvPayInfm` entity NOT created in Phase 1 — no consumer.)
 - `wecms-api/src/main/java/com/kosign/wecms/domain/banking/repository/CardTrnsHstrRepository.java` — `JpaRepository<CardTrnsHstr, CardTrnsHstrId>` with one method: `aggregateMonthlyByChartCode(bizKey, year)` for the Phase 2 aggregator.
 - `Claude Code (AI)/sql/cash_flow_report_parity_seed_20260518.sql` — INSERTs for all four source tables (`ACCT_TRNS_HSTR`, `CARD_TRNS_HSTR`, `OVRS_PYMN_MSTR`, `SCDUL_PYMN_SUMR(_DETL)`) plus the `CHART_ACCT_INFM` top-up. Filtered to tenant `VN_VNM0004_000001`, years 2024 + 2025, preserving DEV PKs. Idempotent via `INSERT … ON CONFLICT DO NOTHING`. **Developer executes manually** (NOT Flyway, per user request).

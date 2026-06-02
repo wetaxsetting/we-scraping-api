@@ -5,7 +5,7 @@
 **Auditor:** Sonny (AI-assisted)
 **Scope:** Phase 1 docs → Phase 2 backend → Phase 3 frontend (incl. Excel upload), end-to-end review against rules, JEX source-of-truth, and design docs.
 
-**Sibling docs:** [feature spec](../../features/settings/purpose.md) · [migration](../migration/purpose-settings.md) · [backend](../business-rules/settings/purpose-settings.md) · [frontend](../../../../wecms-web/docs/features/settings/purpose.md) · [schema](../database/settings/purpose-settings-schema.md) · [task plan](../../planning/settings/purpose-settings-task-plan.md).
+**Sibling docs:** [feature spec](../../features/settings/purpose.md) · [migration](../migration/purpose-settings.md) · [backend](../business-rules/settings/purpose-settings.md) · [frontend](../../../../wecms-web/docs/features/settings/purpose.md) · [schema](../database/settings/purpose-settings-schema.md) · [task plan](../../archive/planning/settings/purpose-settings-task-plan.md).
 
 ---
 

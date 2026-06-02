@@ -4,7 +4,7 @@
 |---|---|
 | Slug | `internal-transfer` |
 | Module | `payment` |
-| Companion docs | [features/payment/internal-transfer.md](../../features/payment/internal-transfer/README.md) · [features/payment/_payment-module-overview.md](../../features/payment/_payment-module-overview.md) · [migration/internal-transfer-mapping.md](../migration/internal-transfer-mapping.md) · [backend/internal-transfer.md](../business-rules/internal-transfer.md) · [frontend/internal-transfer.md](../../../../wecms-web/docs/features/payment/internal-transfer/README.md) · [database/payment/internal-transfer-schema.md](../database/payment/internal-transfer-schema.md) |
+| Companion docs | [features/payment/internal-transfer.md](../../features/payment/internal-transfer/README.md) · [features/payment/README.md](../../features/payment/README.md) · [migration/internal-transfer-mapping.md](../migration/internal-transfer-mapping.md) · [backend/internal-transfer.md](../business-rules/internal-transfer.md) · [frontend/internal-transfer.md](../../../../wecms-web/docs/features/payment/internal-transfer/README.md) · [database/payment/internal-transfer-schema.md](../database/payment/internal-transfer-schema.md) |
 | Sprint state | **Phase A landed (backend + frontend data-layer + upload-dialog wrapper).** Phase B (page rewiring + dispatch-table writes + ERP_TRNS_HSTR + CHART_ACCT guard) outstanding. Last verified 2026-05-21 against `wecms-api` + `wecms-web` HEAD. |
 
 > Boxes ticked `[x]` reflect what was verified against the implemented code on the last-verified date. Boxes left `[ ]` are Phase B + Prompt-4-style sign-off items that need a follow-up review pass. Where a row reads `(Phase B)`, that work is intentionally deferred — not failed.

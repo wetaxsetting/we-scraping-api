@@ -2,10 +2,15 @@
 
 ## Screens (this feature)
 
-- [scheduled-payment.md](scheduled-payment.md)
-- [scheduled-payment-details.md](scheduled-payment-details.md)
-- [payment-result.md](payment-result.md)
-- [payment-result-details.md](payment-result-details.md)
+The four screens are sections of this hub (no separate per-screen files). File-level detail is in §1.2
+(frontend) + §1.3 (routes) below; one-line summaries:
+
+| Screen | JEX WSVC | Scope | Status |
+|---|---|---|---|
+| Scheduled Payment | `pymn_0003_001` | List + create scheduled expense payment batches (Excel upload, request approval, transfer). | Implemented in code; doc stub (backfill pending) |
+| Scheduled Payment Details | `pymn_0003_001` | Drill-down detail of one scheduled expense payment batch — line items, reporting account, approver chain. | Implemented in code; doc stub (backfill pending) |
+| Payment Result | `pymn_0004_001` | Executed expense-payment results with status filter; renders the totals footer (unlike Internal Transfer). | Implemented in code; doc stub (backfill pending) |
+| Payment Result Details | `pymn_0004_001` | Per-transaction result detail (canonical 11-column `resultDetailColumns`). | Implemented in code; doc stub (backfill pending) |
 
 
 | Field | Value |
@@ -19,7 +24,7 @@
 | REST URI base | `/api/v1/payment/expense-payment` |
 | Frontend route base | `/payment/expense-payment` |
 | Status | **Implementation status: documented retroactively against existing code as of 2026-05-22.** Backend + frontend pages exist; this stub preserves the implementation in the docs surface so it isn't lost. A full-spec follow-up MR is needed to bring this doc to parity with [internal-transfer.md](../internal-transfer/README.md). |
-| Baseline | [internal-transfer.md](../internal-transfer/README.md) — Expense mirrors this shape; see [_payment-module-overview.md](../_payment-module-overview.md). |
+| Baseline | [internal-transfer/README.md](../internal-transfer/README.md) — Expense mirrors this shape; see [payment hub README](../README.md). |
 
 ---
 
@@ -34,7 +39,7 @@
   - `ExpensePaymentExcelParser.java` — Apache POI walk + per-cell validation (uses `PymnType.EXPENSE_PAYMENT("EXPN")` for `BLOCKED_CHARS_RULE` lookup).
   - `ExpensePaymentSortField.java` + `ExpensePaymentResultSortField.java` — sort whitelists.
 - **Export:** [`ExpensePaymentResultExportProvider.java`](../../../../src/main/java/com/kosign/wecms/domain/payment/expensepayment/export/ExpensePaymentResultExportProvider.java) — implements `ExportRowProvider`.
-- **Shared infrastructure consumed** (do not fork — see [_payment-module-overview.md §2](../_payment-module-overview.md)):
+- **Shared infrastructure consumed** (do not fork — see [payment hub README §2](../README.md)):
   - Master/detail entities + dispatch entities + `SpecialCharValidator` + `ApprovalBoxService` + `AuditLogService` — same set as Internal Transfer / Vendor.
 
 ### 1.2 Frontend ([`components/payment/expense-payment/`](../../../../../wecms-web/components/payment/expense-payment))
@@ -82,13 +87,13 @@
 | Key-sequence helper table | `INTERNAL_TRANSFER_KEY_SEQ` | Expense maintains its own per-(tenant, day) sequence — table name TBD-by-code-inspection |
 | Approval-line semantics | Standard | Expense may carry per-line reporting-account binding semantics that Vendor doesn't (needs PO confirmation) |
 
-Per [_payment-module-overview.md §2 + §3](../_payment-module-overview.md), Expense consumes the shared infrastructure verbatim.
+Per [payment hub README §2 + §3](../README.md), Expense consumes the shared infrastructure verbatim.
 
 ---
 
 ## 3. Open documentation gaps (backfill in a follow-up MR)
 
-Same gap list as [vendor-payment.md §3](../vendor-payment/README.md) — Sections 1–12 of the per-feature spec are not yet written; companion docs (`migration/expense-payment-mapping.md`, `backend/expense-payment.md`, `frontend/expense-payment.md`, `database/payment/expense-payment-schema.md`, `audits/expense-payment-parity-checklist.md`) are not yet created.
+Same gap list as [vendor-payment/README.md §3](../vendor-payment/README.md) — Sections 1–12 of the per-feature spec are not yet written; companion docs (`migration/expense-payment-mapping.md`, `backend/expense-payment.md`, `frontend/expense-payment.md`, `database/payment/expense-payment-schema.md`, `audits/expense-payment-parity-checklist.md`) are not yet created.
 
 Most important pieces to backfill first:
 

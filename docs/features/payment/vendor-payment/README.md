@@ -2,10 +2,15 @@
 
 ## Screens (this feature)
 
-- [scheduled-payment.md](scheduled-payment.md)
-- [scheduled-payment-details.md](scheduled-payment-details.md)
-- [payment-result.md](payment-result.md)
-- [payment-result-details.md](payment-result-details.md)
+The four screens are sections of this hub (no separate per-screen files). File-level detail is in §1.2
+(frontend) + §1.3 (routes) below; one-line summaries:
+
+| Screen | JEX WSVC | Scope | Status |
+|---|---|---|---|
+| Scheduled Payment | `pymn_0001_001` | List + create scheduled vendor payment batches (Excel upload, request approval, transfer). | Implemented in code; doc stub (backfill pending) |
+| Scheduled Payment Details | `pymn_0001_001` | Drill-down detail of one scheduled vendor payment batch — line items, amounts, approver chain. | Implemented in code; doc stub (backfill pending) |
+| Payment Result | `pymn_0002_001` | Executed vendor-payment results with status filter; renders the totals footer (unlike Internal Transfer). | Implemented in code; doc stub (backfill pending) |
+| Payment Result Details | `pymn_0002_001` | Per-transaction result detail (canonical 11-column `resultDetailColumns`). | Implemented in code; doc stub (backfill pending) |
 
 
 | Field | Value |
@@ -19,7 +24,7 @@
 | REST URI base | `/api/v1/payment/vendor-payment` |
 | Frontend route base | `/payment/vendor-payment` |
 | Status | **Implementation status: documented retroactively against existing code as of 2026-05-22.** Backend + frontend pages exist; this stub preserves the implementation in the docs surface so it isn't lost. A full-spec follow-up MR is needed to bring this doc to parity with [internal-transfer.md](../internal-transfer/README.md). |
-| Baseline | [internal-transfer.md](../internal-transfer/README.md) — Vendor mirrors this shape; see [_payment-module-overview.md](../_payment-module-overview.md). |
+| Baseline | [internal-transfer/README.md](../internal-transfer/README.md) — Vendor mirrors this shape; see [payment hub README](../README.md). |
 
 > **What this stub is for.** Internal Transfer is the locked baseline for the Payment module. Vendor Payment, Expense Payment, and Payroll were implemented in code (backend controller / service / export + frontend pages + locale entries) but never received the same per-feature spec treatment. This stub captures the file inventory + the divergences from the Internal Transfer baseline so reviewers can trace the implementation. A future MR fills in the equivalent of Internal Transfer's §3 (screen inventory) through §11 (cross-tree traceability).
 
@@ -50,7 +55,7 @@
   - `VendorPaymentSortField.java` — list-page sort whitelist (implements `SortableField`).
   - `VendorPaymentResultSortField.java` — result-list sort whitelist.
 - **Export:** [`VendorPaymentResultExportProvider.java`](../../../../src/main/java/com/kosign/wecms/domain/payment/vendorpayment/export/VendorPaymentResultExportProvider.java) — implements `ExportRowProvider`.
-- **Shared infrastructure consumed** (do not fork — see [_payment-module-overview.md §2](../_payment-module-overview.md)):
+- **Shared infrastructure consumed** (do not fork — see [payment hub README §2](../README.md)):
   - Entities `ScdulPymnSumr` + `ScdulPymnSumrDetl` (from `internaltransfer/entity/` — historically) plus dispatch entities `TbPayTarget` / `TbPayFileMst` / `TbPayFileData` from `payment/dispatch/entity/`.
   - `SpecialCharValidator` + `BlockedCharsRuleRepository` from `payment/validation/`.
   - `ApprovalBoxService` from `payment/approvalbox/` for `request-approval` + `approval-action` delegation.
@@ -101,7 +106,7 @@
 | Audit `WSVC_ID` | `internal-transfer` | `vendor-payment` |
 | Key-sequence helper table | `INTERNAL_TRANSFER_KEY_SEQ` (PK `(BIZ_KEY, KEY_DT)`) | Vendor maintains its own per-(tenant, day) sequence — table name TBD-by-code-inspection |
 
-Per [_payment-module-overview.md §2 + §3](../_payment-module-overview.md), Vendor consumes the shared infrastructure verbatim (`payment/dispatch/`, `payment/validation/`, `payment/approvalbox/`, `payment/export/`).
+Per [payment hub README §2 + §3](../README.md), Vendor consumes the shared infrastructure verbatim (`payment/dispatch/`, `payment/validation/`, `payment/approvalbox/`, `payment/export/`).
 
 ---
 

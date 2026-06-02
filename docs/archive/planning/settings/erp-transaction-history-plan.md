@@ -2,9 +2,9 @@
 
 **Refactor slug:** `erp-transaction-history`
 **Owner:** Sonny (frontend) + Arthur (backend). Mr. Youvita runs the testing phase.
-**Sibling docs:** [feature spec](../../features/settings/transaction-history.md) · [migration map](../../references/migration/erp-transaction-history-mapping.md) · [DB schema](../../references/database/settings/erp-transaction-history-schema.md) · [backend design](../../references/business-rules/settings/erp-transaction-history.md) · [frontend design](../../../../wecms-web/docs/features/settings/transaction-history.md).
+**Sibling docs:** [feature spec](../../../features/settings/transaction-history.md) · [migration map](../../../references/migration/erp-transaction-history-mapping.md) · [DB schema](../../../references/database/settings/erp-transaction-history-schema.md) · [backend design](../../../references/business-rules/settings/erp-transaction-history.md) · [frontend design](../../../../../wecms-web/docs/features/settings/transaction-history.md).
 **Status:** **Phase 1 — design only.** Implementation pending kickoff.
-**Sprint slot:** Settings module — fits inside the existing 8-dev-day plan ([docs/jex/features/wecms-menu-refactoring-timeline.md](../../../../docs/jex/features/wecms-menu-refactoring-timeline.md) line 764).
+**Sprint slot:** Settings module — fits inside the existing 8-dev-day plan ([docs/jex/features/wecms-menu-refactoring-timeline.md](../../../../../docs/jex/features/wecms-menu-refactoring-timeline.md) line 764).
 
 This plan is the work-order for taking the feature from "design complete"
 to "Phase 2 backend wired + Phase 3 frontend wired". It also captures the
@@ -17,7 +17,7 @@ risks and open questions blocking each phase.
 | Step | Owner | Output |
 |---|---|---|
 | Review the four design docs (feature / migration / backend / frontend) in this folder | All | Sign-off in MR description before code lands |
-| Re-run the schema-parity audit on `erp_trns_hstr` via the `postgres` MCP — confirm DEV column types match the entity design in [backend doc §2](../../references/business-rules/settings/erp-transaction-history.md). | Arthur | Audit row in [docs/refactor-wecms/audits/](../../references/audits/) if drift is found |
+| Re-run the schema-parity audit on `erp_trns_hstr` via the `postgres` MCP — confirm DEV column types match the entity design in [backend doc §2](../../../references/business-rules/settings/erp-transaction-history.md). | Arthur | Audit row in [docs/refactor-wecms/audits/](../../../references/audits/) if drift is found |
 | ~~Inspect `SortHelper` for the legacy default sort~~ — **Resolved 2026-05-11**: refactor uses `regDtm DESC, seqNo DESC`. Future SortHelper inspection may adjust this with no contract change. | — | Already locked in backend doc §4 |
 | ~~Confirm OQ-1 with PO (Mr. Jung)~~ — **Resolved 2026-05-11**: refactor does not port the upload action; each future Payment feature writes its own audit row | — | Already recorded in feature spec §9 |
 | ~~Confirm OQ-2 with PO~~ — **Resolved 2026-05-11**: refactor is product-agnostic; no `prdt_type` on the wire; no `StoredUser.prdtType`; HAENGSUNG variants intentionally not mirrored | — | Already recorded in feature spec §9 |
@@ -36,15 +36,15 @@ Dependency: Day 0 sign-off complete.
 
 | Task | Owner | Notes |
 |---|---|---|
-| Create `domain/setting/erptransactionhistory/` package + entity (`ErpTrnsHstr` + `ErpTrnsHstrId`) | Arthur | per [backend doc §2](../../references/business-rules/settings/erp-transaction-history.md) |
-| Create repository with `search()` + `countAllDirections()` JPQL | Arthur | per [backend doc §3](../../references/business-rules/settings/erp-transaction-history.md) |
-| Create `ErpTrnsHistorySortField` enum | Arthur | per [backend doc §5](../../references/business-rules/settings/erp-transaction-history.md) |
-| Create DTOs (`Request` / `Row` / `Response` + Bean Validation) | Arthur | per [backend doc §6](../../references/business-rules/settings/erp-transaction-history.md) |
-| Add `WBE2014` / `WBE2015` / `WBE9001` + `settings.erp_transaction_history.*` keys to `messages.properties` (EN only initially) | Arthur | per [backend doc §9](../../references/business-rules/settings/erp-transaction-history.md) |
-| Add `wecms.erp-transaction-history` config + `ErpTrnsHistoryFileResolver` | Arthur | per [backend doc §10](../../references/business-rules/settings/erp-transaction-history.md) |
+| Create `domain/setting/erptransactionhistory/` package + entity (`ErpTrnsHstr` + `ErpTrnsHstrId`) | Arthur | per [backend doc §2](../../../references/business-rules/settings/erp-transaction-history.md) |
+| Create repository with `search()` + `countAllDirections()` JPQL | Arthur | per [backend doc §3](../../../references/business-rules/settings/erp-transaction-history.md) |
+| Create `ErpTrnsHistorySortField` enum | Arthur | per [backend doc §5](../../../references/business-rules/settings/erp-transaction-history.md) |
+| Create DTOs (`Request` / `Row` / `Response` + Bean Validation) | Arthur | per [backend doc §6](../../../references/business-rules/settings/erp-transaction-history.md) |
+| Add `WBE2014` / `WBE2015` / `WBE9001` + `settings.erp_transaction_history.*` keys to `messages.properties` (EN only initially) | Arthur | per [backend doc §9](../../../references/business-rules/settings/erp-transaction-history.md) |
+| Add `wecms.erp-transaction-history` config + `ErpTrnsHistoryFileResolver` | Arthur | per [backend doc §10](../../../references/business-rules/settings/erp-transaction-history.md) |
 | Flyway: schema-parity migration (additive) if Day-0 audit found drift | Arthur | header documents column delta |
 | Flyway: seed `erp_trns_hstr` rows for tenant `VN_VNM0004_000001` (≤30 latest per direction `W` / `E` / `D` = up to 90 rows) | Arthur | `INSERT ... ON CONFLICT DO NOTHING` |
-| ~~Flyway: seed `SYS_SCR_OPTION_WECMS` rows for the slug~~ — **dropped per OQ-FE-2.** Panel does not adopt View Setting; no seed. | — | per [migration doc §7](../../references/migration/erp-transaction-history-mapping.md) — entire View Setting section now marked NOT ADOPTED |
+| ~~Flyway: seed `SYS_SCR_OPTION_WECMS` rows for the slug~~ — **dropped per OQ-FE-2.** Panel does not adopt View Setting; no seed. | — | per [migration doc §7](../../../references/migration/erp-transaction-history-mapping.md) — entire View Setting section now marked NOT ADOPTED |
 | Fixture files committed under `src/test/resources/erp-transaction-history/fixtures/` | Arthur | small text files matching the seeded `save_file_nm` for ≤5 rows |
 
 ### 1.2 Day 2 — Service + controller + tests
@@ -53,11 +53,11 @@ Dependency: Day 0 sign-off complete.
 |---|---|---|
 | Implement `ErpTrnsHistoryService#search` (validation, like-escape, pageable, default sort) | Arthur | mirrors `FirmBankingHistoryService` |
 | Implement `ErpTrnsHistoryService#resolveDownload` + `#resolveThumbnail` (501 stub) | Arthur | |
-| Implement `ErpTrnsHistoryController` (list + download + thumbnail) | Arthur | snake_case `@RequestParam` names per [wecms-api/CLAUDE.md §"API Naming"](../../../CLAUDE.md) |
-| Write `ErpTrnsHistoryServiceTest` (Mockito) | Arthur | per [backend doc §11](../../references/business-rules/settings/erp-transaction-history.md) |
+| Implement `ErpTrnsHistoryController` (list + download + thumbnail) | Arthur | snake_case `@RequestParam` names per [wecms-api/CLAUDE.md §"API Naming"](../../../../CLAUDE.md) |
+| Write `ErpTrnsHistoryServiceTest` (Mockito) | Arthur | per [backend doc §11](../../../references/business-rules/settings/erp-transaction-history.md) |
 | Write `ErpTrnsHistoryControllerTest` (standalone MockMvc) | Arthur | snake_case wire shape + error envelope coverage |
 | Run `./gradlew build` (compile + unit tests + Hibernate `validate`) | Arthur | gate to MR |
-| Manual smoke against the local DB via curl / Bruno — verify all 7 manual smoke steps in [backend doc §11](../../references/business-rules/settings/erp-transaction-history.md) | Arthur | screenshot the audit row showing `wsvc_id='erp-transaction-history'` |
+| Manual smoke against the local DB via curl / Bruno — verify all 7 manual smoke steps in [backend doc §11](../../../references/business-rules/settings/erp-transaction-history.md) | Arthur | screenshot the audit row showing `wsvc_id='erp-transaction-history'` |
 | Open MR — wire backend + Flyway seeds + tests in one atomic change | Arthur | reviewer: Sonny |
 
 **Phase 2 exit gate:**
@@ -91,18 +91,18 @@ Dependency: Phase 2 deployed locally + contract frozen.
 
 | Task | Owner | Notes |
 |---|---|---|
-| Rename `components/settings/transaction-history/` → `components/settings/erp-transaction-history/`; rename inner components, mock files, types | Sonny | per [frontend doc §1](../../../../wecms-web/docs/features/settings/transaction-history.md) |
+| Rename `components/settings/transaction-history/` → `components/settings/erp-transaction-history/`; rename inner components, mock files, types | Sonny | per [frontend doc §1](../../../../../wecms-web/docs/features/settings/transaction-history.md) |
 | Update `SettingsNav` to import the new panel name | Sonny | atomic with the rename |
 | Move locale keys `settings.transaction_history.*` → `settings.erp_transaction_history.*` in `locales/{en,ko,vi}.json` | Sonny | delete the old namespace |
-| Add new locale keys (full list in [migration doc §8](../../references/migration/erp-transaction-history-mapping.md)) | Sonny | EN verified; KO / VI placeholders or omitted |
+| Add new locale keys (full list in [migration doc §8](../../../references/migration/erp-transaction-history-mapping.md)) | Sonny | EN verified; KO / VI placeholders or omitted |
 
 ### 3.2 API plumbing
 
 | Task | Owner | Notes |
 |---|---|---|
-| Add `ApiErpTransactionHistoryRow` + `ApiErpTransactionHistoryListResponse` to `lib/types/api.ts` | Sonny | snake_case wire shape per [frontend doc §5](../../../../wecms-web/docs/features/settings/transaction-history.md) |
-| Add `lib/api/erpTransactionHistory.ts` (`fetchErpTransactionHistory` + `getErpTransactionHistoryDownloadUrl`) | Sonny | per [frontend doc §6](../../../../wecms-web/docs/features/settings/transaction-history.md) |
-| Add `mapErpTransactionHistoryRow` to `lib/api/mappers.ts` | Sonny | per [frontend doc §7](../../../../wecms-web/docs/features/settings/transaction-history.md) |
+| Add `ApiErpTransactionHistoryRow` + `ApiErpTransactionHistoryListResponse` to `lib/types/api.ts` | Sonny | snake_case wire shape per [frontend doc §5](../../../../../wecms-web/docs/features/settings/transaction-history.md) |
+| Add `lib/api/erpTransactionHistory.ts` (`fetchErpTransactionHistory` + `getErpTransactionHistoryDownloadUrl`) | Sonny | per [frontend doc §6](../../../../../wecms-web/docs/features/settings/transaction-history.md) |
+| Add `mapErpTransactionHistoryRow` to `lib/api/mappers.ts` | Sonny | per [frontend doc §7](../../../../../wecms-web/docs/features/settings/transaction-history.md) |
 | Add `lib/file.ts` `downloadFile(url, filename)` — axios + blob + synthetic anchor click. Reads filename from `Content-Disposition` (preferred) or the caller-supplied fallback. Throws `ApiCallError` on JSON-envelope failures. | Sonny | First consumer = ERP transaction history File cell; future consumers = Payment file downloads, Smart Organizer attachments. Per OQ-FE-1 resolution. |
 | ~~Add `prdtType` to `StoredUser` + auth wire types~~ — dropped per OQ-2 (refactor is product-agnostic) | — | No auth change |
 | ~~Add `SCREEN_IDS.ERP_TRANSACTION_HISTORY` to `lib/viewSettingScreens.ts`~~ — **dropped per OQ-FE-2.** Panel does not adopt View Setting. | — | |
@@ -111,14 +111,14 @@ Dependency: Phase 2 deployed locally + contract frozen.
 
 | Task | Owner | Notes |
 |---|---|---|
-| Flip `<ErpTransactionHistoryPanel>` from mock data to `useApiData` + `fetchErpTransactionHistory` + `mapErpTransactionHistoryRow` | Sonny | per [frontend doc §15](../../../../wecms-web/docs/features/settings/transaction-history.md) |
+| Flip `<ErpTransactionHistoryPanel>` from mock data to `useApiData` + `fetchErpTransactionHistory` + `mapErpTransactionHistoryRow` | Sonny | per [frontend doc §15](../../../../../wecms-web/docs/features/settings/transaction-history.md) |
 | Replace the static date range with the shared `<InteractiveDateRangePicker>` (last-30-days default) | Sonny | mirrors `<FirmBankingHistoryPanel>` |
-| Wire the universal Deleted-tab transaction-type subset filter (the only legacy per-tab filter preserved — applies to every tenant per OQ-2) | Sonny | per [frontend doc §11](../../../../wecms-web/docs/features/settings/transaction-history.md) |
-| Wire `useTableSort()` + `<TableHeaderCell sortable=...>` for the 4 sortable columns | Sonny | per [frontend doc §10](../../../../wecms-web/docs/features/settings/transaction-history.md) |
-| ~~Wire `<ViewSettingPopover>`~~ — **dropped per OQ-FE-2.** Panel does not adopt View Setting. | — | per [frontend doc §9](../../../../wecms-web/docs/features/settings/transaction-history.md) — section now marked NOT ADOPTED |
+| Wire the universal Deleted-tab transaction-type subset filter (the only legacy per-tab filter preserved — applies to every tenant per OQ-2) | Sonny | per [frontend doc §11](../../../../../wecms-web/docs/features/settings/transaction-history.md) |
+| Wire `useTableSort()` + `<TableHeaderCell sortable=...>` for the 4 sortable columns | Sonny | per [frontend doc §10](../../../../../wecms-web/docs/features/settings/transaction-history.md) |
+| ~~Wire `<ViewSettingPopover>`~~ — **dropped per OQ-FE-2.** Panel does not adopt View Setting. | — | per [frontend doc §9](../../../../../wecms-web/docs/features/settings/transaction-history.md) — section now marked NOT ADOPTED |
 | Wire the File column download via `lib/file.ts` | Sonny | |
 | Switch error surface to `useDialog().open({ type: "error", errorCode, description })` | Sonny | global pattern |
-| Verify all 4 breakpoints (375 / 768 / 1024 / 1440) | Sonny | per [wecms-web/CLAUDE.md §"Responsive rules"](../../../../wecms-web/CLAUDE.md) |
+| Verify all 4 breakpoints (375 / 768 / 1024 / 1440) | Sonny | per [wecms-web/CLAUDE.md §"Responsive rules"](../../../../../wecms-web/CLAUDE.md) |
 | `npm run lint` + `npm run build` + `npm run test` | Sonny | gate to MR |
 | Open MR — rename + plumbing + panel rewrite | Sonny | reviewer: Arthur |
 
@@ -203,18 +203,18 @@ All open questions are tracked in the design docs they affect; this section is t
 
 | ID | Topic | Where it's tracked | Blocking? |
 |---|---|---|---|
-| OQ-1 | Refactor scope of `comm_0219_001_c001` upload action | [Feature spec §9](../../features/settings/transaction-history.md) | ✅ Resolved 2026-05-11 — do not port; each future Payment feature writes its own audit row |
-| OQ-2 | `prdtType` source from auth wire | [Feature spec §9](../../features/settings/transaction-history.md) | ✅ Resolved 2026-05-11 — refactor is product-agnostic; no auth wire change |
-| OQ-3 | NAS root configuration on refactor side | [Feature spec §9](../../features/settings/transaction-history.md) | ✅ Resolved 2026-05-11 — `wecms.erp-transaction-history.storage-root="C:/WECMS PROJECT/File Data"` |
-| OQ-4 | `wb_get_user_nm` parity strategy | [Feature spec §9](../../features/settings/transaction-history.md) | Phase 2 — addressed via LEFT JOIN |
-| OQ-5 | FILE column sortability | [Feature spec §9](../../features/settings/transaction-history.md) | Resolved — `SORT_YN='N'` in the seed |
-| OQ-6 | HAENGSUNG-only `TRNS_TYPE_CD` filter | [Feature spec §9](../../features/settings/transaction-history.md) | ✅ Resolved 2026-05-11 — folded into OQ-2; all 17 codes visible to every tenant |
-| OQ-7 | Legacy `SortHelper` default sort | [Feature spec §9](../../features/settings/transaction-history.md) | ✅ Resolved 2026-05-11 — `regDtm DESC, seqNo DESC` |
-| OQ-8 | Soft-delete write path | [Feature spec §9](../../features/settings/transaction-history.md) | Per-Payment-feature scope — out of this plan |
-| OQ-9 | `PageInfo` ↔ `Pageable` conversion | [Feature spec §9](../../features/settings/transaction-history.md) | Resolved — service layer handles 1-based ↔ 0-based |
-| OQ-FE-1 | Download flow auth (`<a>` vs. XHR+blob) | [Frontend doc §22](../../../../wecms-web/docs/features/settings/transaction-history.md) | ✅ Resolved 2026-05-11 — XHR+blob via `lib/file.ts` `downloadFile(url, filename)` |
-| OQ-FE-2 | View Setting list-icon button | [Frontend doc §22](../../../../wecms-web/docs/features/settings/transaction-history.md) | ✅ Resolved 2026-05-11 — not adopted; legacy JEX has no equivalent button |
-| OQ-FE-3 | `prdtType` source from auth wire (= OQ-2) | [Frontend doc §22](../../../../wecms-web/docs/features/settings/transaction-history.md) | ✅ Resolved 2026-05-11 — folded into OQ-2 |
+| OQ-1 | Refactor scope of `comm_0219_001_c001` upload action | [Feature spec §9](../../../features/settings/transaction-history.md) | ✅ Resolved 2026-05-11 — do not port; each future Payment feature writes its own audit row |
+| OQ-2 | `prdtType` source from auth wire | [Feature spec §9](../../../features/settings/transaction-history.md) | ✅ Resolved 2026-05-11 — refactor is product-agnostic; no auth wire change |
+| OQ-3 | NAS root configuration on refactor side | [Feature spec §9](../../../features/settings/transaction-history.md) | ✅ Resolved 2026-05-11 — `wecms.erp-transaction-history.storage-root="C:/WECMS PROJECT/File Data"` |
+| OQ-4 | `wb_get_user_nm` parity strategy | [Feature spec §9](../../../features/settings/transaction-history.md) | Phase 2 — addressed via LEFT JOIN |
+| OQ-5 | FILE column sortability | [Feature spec §9](../../../features/settings/transaction-history.md) | Resolved — `SORT_YN='N'` in the seed |
+| OQ-6 | HAENGSUNG-only `TRNS_TYPE_CD` filter | [Feature spec §9](../../../features/settings/transaction-history.md) | ✅ Resolved 2026-05-11 — folded into OQ-2; all 17 codes visible to every tenant |
+| OQ-7 | Legacy `SortHelper` default sort | [Feature spec §9](../../../features/settings/transaction-history.md) | ✅ Resolved 2026-05-11 — `regDtm DESC, seqNo DESC` |
+| OQ-8 | Soft-delete write path | [Feature spec §9](../../../features/settings/transaction-history.md) | Per-Payment-feature scope — out of this plan |
+| OQ-9 | `PageInfo` ↔ `Pageable` conversion | [Feature spec §9](../../../features/settings/transaction-history.md) | Resolved — service layer handles 1-based ↔ 0-based |
+| OQ-FE-1 | Download flow auth (`<a>` vs. XHR+blob) | [Frontend doc §22](../../../../../wecms-web/docs/features/settings/transaction-history.md) | ✅ Resolved 2026-05-11 — XHR+blob via `lib/file.ts` `downloadFile(url, filename)` |
+| OQ-FE-2 | View Setting list-icon button | [Frontend doc §22](../../../../../wecms-web/docs/features/settings/transaction-history.md) | ✅ Resolved 2026-05-11 — not adopted; legacy JEX has no equivalent button |
+| OQ-FE-3 | `prdtType` source from auth wire (= OQ-2) | [Frontend doc §22](../../../../../wecms-web/docs/features/settings/transaction-history.md) | ✅ Resolved 2026-05-11 — folded into OQ-2 |
 
 ---
 

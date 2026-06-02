@@ -76,26 +76,26 @@ Full index in [features/banking/README.md](features/banking/README.md).
 
 | Group | Items |
 |---|---|
-| Current & Savings (VND) | [account-inquiry-vnd](features/banking/current-savings-vnd/account-inquiry.md) · [transaction-history-vnd](features/banking/current-savings-vnd/transaction-history.md) · [smart-organizer-vnd](features/banking/current-savings-vnd/smart-organizer.md) ⚠️ |
-| Current & Savings (FCY) | [account-inquiry-fcy](features/banking/current-savings-fcy/account-inquiry.md) · [transaction-history-fcy](features/banking/current-savings-fcy/transaction-history.md) · [smart-organizer-fcy](features/banking/current-savings-fcy/smart-organizer.md) ⚠️ |
+| Current & Savings (VND) | [account-inquiry-vnd](features/banking/current-savings-vnd/account-inquiry.md) · [transaction-history-vnd](features/banking/current-savings-vnd/transaction-history.md) · [smart-organizer-vnd](features/banking/current-savings-vnd/smart-organizer.md) |
+| Current & Savings (FCY) | [account-inquiry-fcy](features/banking/current-savings-fcy/account-inquiry.md) · [transaction-history-fcy](features/banking/current-savings-fcy/transaction-history.md) · [smart-organizer-fcy](features/banking/current-savings-fcy/smart-organizer.md) |
 | Internal Transfer | [own-account-transfer](features/banking/own-account-transfer/own-account-transfer.md) · [transfer-history](features/banking/own-account-transfer/transfer-history.md) |
 | Reports | [daily-cash](features/banking/reports/daily-cash.md) · [daily-financial](features/banking/reports/daily-financial.md) · [cash-flow](features/banking/reports/cash-flow.md) |
 
-⚠️ Smart Organizer = discovery scaffold (no refactor implementation yet).
+Smart Organizer is backend-implemented (`SmartOrganizerController` + `OrganizerRuleController` + V172–V174) with a Next.js route; its feature docs carry residual `Needs Confirmation` detail to reconcile against the shipped code.
 
 ### Payment menu (`features/payment/`)
 
-Family-hub per **Payment** menu group (each hub covers its Scheduled / Result + Details sub-items).
-Cross-sibling index: [features/payment/_payment-module-overview.md](features/payment/_payment-module-overview.md); full index in [features/payment/README.md](features/payment/README.md).
+Family-hub per **Payment** menu group (each hub covers its Scheduled / Result + Details sub-items as sections).
+Full index + cross-sibling / shared-infra authority: [features/payment/README.md](features/payment/README.md).
 
 | Group | Hub |
 |---|---|
-| Approval Management → Approval Box | [features/payment/approval-box/](features/payment/approval-box.md) |
-| Internal Transfer | [features/payment/internal-transfer.md](features/payment/internal-transfer/README.md) ⭐ |
-| Vendor Payment | [features/payment/vendor-payment.md](features/payment/vendor-payment/README.md) 🟡 stub |
-| Expense Payment | [features/payment/expense-payment.md](features/payment/expense-payment/README.md) 🟡 stub |
-| Payroll | [features/payment/payroll.md](features/payment/payroll/README.md) 🟡 stub |
-| Overseas Payment | [features/payment/overseas-payment.md](features/payment/overseas-payment/README.md) 🆕 |
+| Approval Management → Approval Box | [features/payment/approval-box/](features/payment/approval-box/README.md) |
+| Internal Transfer | [features/payment/internal-transfer/](features/payment/internal-transfer/README.md) ⭐ |
+| Vendor Payment | [features/payment/vendor-payment/](features/payment/vendor-payment/README.md) 🟡 stub |
+| Expense Payment | [features/payment/expense-payment/](features/payment/expense-payment/README.md) 🟡 stub |
+| Payroll | [features/payment/payroll/](features/payment/payroll/README.md) 🟡 stub |
+| Overseas Payment | [features/payment/overseas-payment/](features/payment/overseas-payment/README.md) 🆕 |
 | Add-on → Exchange Rate Inquiry | [features/payment/exchange-rate-inquiry.md](features/payment/exchange-rate-inquiry.md) |
 | Corporate Card → Card Transactions | [features/payment/card-transactions.md](features/payment/card-transactions.md) |
 

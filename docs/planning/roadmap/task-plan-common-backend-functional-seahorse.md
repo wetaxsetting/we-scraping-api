@@ -25,7 +25,7 @@ This plan defines the safest path from "manual SQL + DB functions" → service-d
 ## 1. Current Legacy Flow (summary)
 
 - **Bootstrap is JEX-only and 100% manual SQL.** Two IDOs (`WB_INIT_BUSI_DATA`, `WB_INIT_USER_DATA`) wrap the inserts; no `_act.jsp` or admin page creates the first company.
-- **`wb_get_next_val(table, field, p1..p6)`** is at [WECMS DEV/WECMS_DOC/database/ddl/functions.sql:5159](../../WECMS DEV/WECMS_DOC/database/ddl/functions.sql>) — a ~40-branch PL/pgSQL switch. Three algorithm classes:
+- **`wb_get_next_val(table, field, p1..p6)`** is at [WECMS DEV/WECMS_DOC/database/ddl/functions.sql:5159](../../../../WECMS%20DEV/WECMS_DOC/database/ddl/functions.sql) — a ~40-branch PL/pgSQL switch. Three algorithm classes:
   - `BIZ_KEY` → sequence `sq_biz_key`.
   - `TRCO_KEY` → sequence `sq_trco_key`.
   - `EMPL_NO` → date-prefixed `YYYYMMDD_nnn` via row count per `(BIZ_KEY, date)`.

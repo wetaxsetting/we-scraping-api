@@ -16,4 +16,4 @@ Document index choices per table: PK, composite UK, supporting indexes for hot q
 ## Related
 
 - Schema: [`../`](../)
-- Query analysis: [`../query-analysis/`](../query-analysis/)
+- Table mapping: [`../table-mapping/`](../table-mapping/)

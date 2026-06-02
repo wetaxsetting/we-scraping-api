@@ -9,7 +9,7 @@ balance inquiry, transaction ledger, and the Smart Organizer view.
 |---|---|---|
 | Account Inquiry (VND) | [account-inquiry.md](account-inquiry.md) | Implemented |
 | Transaction History (VND) | [transaction-history.md](transaction-history.md) | Implemented |
-| Smart Organizer (VND) | [smart-organizer.md](smart-organizer.md) | ⚠️ discovery scaffold (no refactor implementation yet) |
+| Smart Organizer (VND) | [smart-organizer.md](smart-organizer.md) | Backend implemented (`SmartOrganizerController` + `OrganizerRuleController` + V172–V174); Next.js route exists |
 
 ## Related reference docs
 

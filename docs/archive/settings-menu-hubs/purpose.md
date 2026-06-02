@@ -48,4 +48,4 @@ Base URI `/api/v1/settings/purpose-settings` (JWT, lowercase snake_case wire):
 
 ## Notes
 Phase 2 backend design contract — see linked backend doc for package layout, DTOs, and audit-log
-integration. Web/UI behavior: [../../../wecms-web/docs/settings/purpose.md](../../../../wecms-web/docs/archive/settings-purpose.md).
+integration. Web/UI behavior: [wecms-web/docs/features/settings/purpose.md](../../../../wecms-web/docs/features/settings/purpose.md).

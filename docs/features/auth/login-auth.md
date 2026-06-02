@@ -9,7 +9,7 @@
 [`../../../../docs/jex/features/login-wecms.md`](../../../../docs/jex/features/login-wecms.md),
 [`../../../../docs/jex/features/login-spring-boot-migration.md`](../../../../docs/jex/features/login-spring-boot-migration.md),
 [`../../../../docs/jex/api-spec/auth.md`](../../../../docs/jex/api-spec/auth.md);
-source-of-truth JSPs cited in [`../../planning/phase-1/task-sprint-0-login-refactor.md`](../../planning/phase-1/task-sprint-0-login-refactor.md).
+source-of-truth JSPs cited in [`../../archive/planning/phase-1/task-sprint-0-login-refactor.md`](../../archive/planning/phase-1/task-sprint-0-login-refactor.md).
 
 > Created 2026-06-01 to resolve **OQ-DOC-1**. This doc is the canonical feature spine; the deep
 > sprint design lives in the linked plan, security design in
@@ -109,4 +109,4 @@ post-auth gates · rate-limiting. (See `wecms-api/CLAUDE.md` §"Known Issues" + 
 - Security design: [`../../references/business-rules/security/README.md`](../../references/business-rules/security/README.md)
 - Permission / role catalogue (shared): [`../../../../docs/_shared/permission-roles.md`](../../../../docs/_shared/permission-roles.md)
 - Endpoint index: [`../../references/api-spec/api-mapping.md`](../../references/api-spec/api-mapping.md) · JEX→Spring: [`../../references/migration/service-mapping.md`](../../references/migration/service-mapping.md)
-- Sprint plan: [`../../planning/phase-1/task-sprint-0-login-refactor.md`](../../planning/phase-1/task-sprint-0-login-refactor.md)
+- Sprint plan: [`../../archive/planning/phase-1/task-sprint-0-login-refactor.md`](../../archive/planning/phase-1/task-sprint-0-login-refactor.md)

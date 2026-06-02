@@ -11,14 +11,14 @@ Per-feature migration mapping: which JEX WSVC/IDO maps to which Spring controlle
 - Per-feature mapping files (one per JEX feature being refactored)
 - JEX WSVC ID → Spring controller method
 - JEX IDO query → JPA repository method (or `@Query`)
-- Field-by-field mapping (`UPPER_SNAKE` JEX field → Java property → JSON `UPPER_SNAKE` via `@JsonProperty`)
+- Field-by-field mapping (`UPPER_SNAKE` JEX field → camelCase Java property → lowercase `snake_case` JSON via the global Jackson `SNAKE_CASE` strategy; `@JsonProperty` only where the wire name diverges)
 - Behavior delta (anything intentionally different from JEX, with reason)
 - Cutover strategy (when/if applicable — currently R&D only, no live cutover)
 
 ## What does NOT go here
 
-- Backend REST design → [../backend/](../business-rules/)
-- Frontend page design → [../frontend/](../../../../wecms-web/docs/)
+- Backend REST design → [../business-rules/](../business-rules/)
+- Frontend page design → [wecms-web/docs/](../../../../wecms-web/docs/)
 - DB schema design → [../database/](../database/)
 - Parity audit reports → [../audits/](../audits/)
 - JEX behavior — read-only reference at [../../jex/](../../../../docs/jex/)

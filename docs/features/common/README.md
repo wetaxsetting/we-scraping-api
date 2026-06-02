@@ -23,7 +23,7 @@ once and consumed product-wide. It was formalized 2026-06-01 to resolve **OQ-DOC
 | **Audit logging** (`AUDIT_LOGS_INFM`) | ✅ yes (shared writer) | [audit-log.md](audit-log.md) — shared service; design detail in [`../../references/business-rules/security/README.md`](../../references/business-rules/security/README.md) + shared [`../../../../docs/security/`](../../../../docs/security/) |
 | **Common API envelope / codes** | reference | [`../../../../docs/jex/api-spec/common.md`](../../../../docs/jex/api-spec/common.md) (JEX) + [`../../error-codes.md`](../../error-codes.md) |
 | **Tenant context** | design | resolved per request from the JWT — see [`login-auth.md`](../auth/login-auth.md) + security design |
-| **Approval workflow** (approval-LINE vs approval-BOX) | documented per-feature | [`../settings/approval-line.md`](../settings/approval-line.md) (config) + [`../payment/approval-box.md`](../payment/approval-box.md) (execution). Unifying cross-link doc pending **OQ-DOC-12**. |
+| **Approval workflow** (approval-LINE vs approval-BOX) | documented per-feature | [`../settings/approval-line.md`](../settings/approval-line.md) (config) + [`../payment/approval-box/README.md`](../payment/approval-box/README.md) (execution). Unifying cross-link doc pending **OQ-DOC-12**. |
 | **Attachments / file upload** | per-feature | Contacts file upload in [`../settings/contacts.md`](../settings/contacts.md); ERP / firm-banking downloads in their specs. Generic doc pending **OQ-DOC-12**. |
 | Notifications · Dashboard | **not yet in scope** | no refactor endpoint exists (**OQ-DOC-13**); add a doc here when the feature lands. Do **not** pre-create empty stubs. |
 

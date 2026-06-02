@@ -11,7 +11,7 @@ last_updated: 2026-05-20
 Service-by-service mapping for the **Banking > Internal Transfer > Transfer
 History** port. Companion to
 [docs/refactor-wecms/features/banking/transfer-history.md](../../features/banking/own-account-transfer/transfer-history.md)
-and [docs/refactor-wecms/planning/phase-1/transfer-history-plan.md](../../planning/phase-1/transfer-history-plan.md).
+and [docs/refactor-wecms/archive/planning/phase-1/transfer-history-plan.md](../../archive/planning/phase-1/transfer-history-plan.md).
 
 Naming and identifier rules per
 [wecms-api/CLAUDE.md § Refactor identifier naming](../../../CLAUDE.md)
@@ -89,7 +89,7 @@ consumer arrives.
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| `in_bank_nm` parity drift between `BANK_INFM` and the legacy `WB_GET_NAPAS_BANK_NM` lookup | Medium | Default plan: reuse the V86 surviving legacy function via `LegacyFunctionRepository` (Contacts precedent). Resolve OQ-1 with PO before coding. |
+| `in_bank_nm` parity drift between `BANK_INFM` and the legacy `WB_GET_NAPAS_BANK_NM` lookup | Medium | Default plan: reuse the V114 surviving legacy function via `LegacyFunctionRepository` (Contacts precedent). Resolve OQ-1 with PO before coding. |
 | Sort-field whitelist is stricter than legacy (refactor whitelists; JEX takes any `paramSort` string) | Low | Document in the MR; matches the project-wide rule established for `approval-line` / `contacts`. |
 | Wire-type cutover for `ApiTransferRow` cascades through every consumer | Medium | Coordinate frontend + backend in one MR; rely on `tsc --noEmit` to catch consumers; pre-merge dev run + Mr. Youvita's manual smoke test. |
 | Helper index timing — ship vs defer | Low | Resolve OQ-3 with PO; default is to defer until baseline measurement. |

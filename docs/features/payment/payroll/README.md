@@ -2,10 +2,15 @@
 
 ## Screens (this feature)
 
-- [scheduled-payment.md](scheduled-payment.md)
-- [scheduled-payment-details.md](scheduled-payment-details.md)
-- [payment-result.md](payment-result.md)
-- [payment-result-details.md](payment-result-details.md)
+The four screens are sections of this hub (no separate per-screen files). File-level detail is in §1.2
+(frontend) + §1.3 (routes) + §2b (Scheduled View Setting); one-line summaries:
+
+| Screen | JEX WSVC | Scope | Status |
+|---|---|---|---|
+| Scheduled Payment | `pymn_0005_001` | List + create scheduled payroll batches (Excel upload, payroll-period selector, request approval, transfer). Legacy column parity in §2b (V232). | Implemented in code; doc stub (backfill pending) |
+| Scheduled Payment Details | `pymn_0005_001` | Drill-down detail of one scheduled payroll batch — employee lines, salary breakdown, approver chain. | Implemented in code; doc stub (backfill pending) |
+| Payment Result | `pymn_0006_001` | Executed payroll results with status filter; renders the totals footer. | Implemented in code; doc stub (backfill pending) |
+| Payment Result Details | `pymn_0006_001` | Per-transaction result detail — **5-column Payroll-specific layout** per Figma (not the canonical 11-column set). | Implemented in code; doc stub (backfill pending) |
 
 
 | Field | Value |
@@ -19,7 +24,7 @@
 | REST URI base | `/api/v1/payment/payroll-payment` |
 | Frontend route base | `/payment/payroll` |
 | Status | **Implementation status: documented retroactively against existing code as of 2026-05-22.** Backend + frontend pages exist; this stub preserves the implementation in the docs surface so it isn't lost. A full-spec follow-up MR is needed to bring this doc to parity with [internal-transfer.md](../internal-transfer/README.md). |
-| Baseline | [internal-transfer.md](../internal-transfer/README.md) — Payroll mirrors this shape; see [_payment-module-overview.md](../_payment-module-overview.md). |
+| Baseline | [internal-transfer/README.md](../internal-transfer/README.md) — Payroll mirrors this shape; see [payment hub README](../README.md). |
 
 > **Special note.** Payroll uses `SCDUL_PYMN_TYPE_CD = "00"`. The `scdul_pymn_sumr_chk01` CHECK constraint was relaxed in [V146__scdul_pymn_sumr_chk01_allow_payroll.sql](../../../../src/main/resources/db/migration/V146__scdul_pymn_sumr_chk01_allow_payroll.sql) to admit `'00'`. Don't tighten the CHECK without re-allowing all four siblings.
 
@@ -36,7 +41,7 @@
   - `PayrollPaymentExcelParser.java` — Apache POI walk (uses `PymnType.PAYROLL_PAYMENT("PAYR")` for blocked-chars lookup).
   - `PayrollPaymentSortField.java` + `PayrollPaymentResultSortField.java` — sort whitelists.
 - **Export:** [`PayrollPaymentResultExportProvider.java`](../../../../src/main/java/com/kosign/wecms/domain/payment/payrollpayment/export/PayrollPaymentResultExportProvider.java) — implements `ExportRowProvider`.
-- **Shared infrastructure consumed** — same as other siblings per [_payment-module-overview.md §2](../_payment-module-overview.md).
+- **Shared infrastructure consumed** — same as other siblings per [payment hub README §2](../README.md).
 
 ### 1.2 Frontend ([`components/payment/payroll/`](../../../../../wecms-web/components/payment/payroll))
 
@@ -86,7 +91,7 @@
 | Slug asymmetry | matches across all surfaces (`internal-transfer`) | Frontend `payroll`, backend `payroll-payment`, audit `payroll-payment` — the only sibling with a slug asymmetry. Confirmed acceptable; documented here so a future audit doesn't try to "fix" it. |
 | Payroll-period concept | n/a | Payroll has a **payroll-period selector** above the file pane in the upload dialog (the per-feature extra-step content), distinct from Internal Transfer's withdrawal-account picker. |
 
-Per [_payment-module-overview.md §2 + §3](../_payment-module-overview.md), Payroll consumes the shared infrastructure verbatim.
+Per [payment hub README §2 + §3](../README.md), Payroll consumes the shared infrastructure verbatim.
 
 ---
 
@@ -123,7 +128,7 @@ Touched files: [V232 migration](../../../../src/main/resources/db/migration/V232
 
 ## 3. Open documentation gaps (backfill in a follow-up MR)
 
-Same gap list as [vendor-payment.md §3](../vendor-payment/README.md) — full §1–§12 spec + 5 companion docs are not yet written.
+Same gap list as [vendor-payment/README.md §3](../vendor-payment/README.md) — full §1–§12 spec + 5 companion docs are not yet written.
 
 Payroll-specific pieces to backfill with priority:
 

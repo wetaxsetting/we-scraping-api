@@ -58,7 +58,7 @@ Full attribute detail: [`diagrams/settings-erd.mmd`](diagrams/settings-erd.mmd).
 - **Soft-delete / use flags:** `ACCT_AUTH_INFO.USE_YN`, `CHART_ACCT_INFM.DEL_YN` (revive-on-create / archive-rename-on-delete), `TRCO_INFM.TRCO_INQ_YN`, `BUSI_VAS_ACCT_INFM.DEL_YN`, `USAG_INFM.DEL_YN`, `BUSI_USAG_SET_INFM.USE_YN`/`DISP_YN`.
 - **Code / enum columns:** `AUTH_TYPE` (V/W/F), `CHART_ACCT_INFM.STTS` (A/I) + `CAL_RULE` (P/M), `PGRO_BSAC_LNKN_INFM.GRP_CD` (B/S), `TB_FIRM_CONF.ORG_STAT` (0–3) + `FILE_TYPE` (SHB/WRB), `BUSI_VAS_ACCT_INFM.VAS_ACCT_TYPE` (0/1/2) + `STTS` (A/I), `ERP_TRNS_HSTR.ERP_TYPE` (W/E/D) + `TRNS_TYPE_CD` (01–17), `NXISAS_TYPE`/`NXISAS_JOB`, `CERT_INFO_DV`.
 - **Self-referencing hierarchies:** `CHART_ACCT_INFM.PARENT_CHART_ACCT_CD` and `BUSI_USAG_SET_INFM.PARENT_USE_USAG_CD` are logical self-references (validated in service, no FK).
-- **Refactor type deviations (Hibernate `validate`):** `APPR_LINE_NO` NUMERIC→BIGINT (V92), `APPRVR_DISP_ORD` NUMERIC→INTEGER (V92), `ERP_TRNS_HSTR.SEQ_NO`/`FILE_SIZE` NUMERIC→BIGINT (V75), `DISP_ORD` NUMERIC→INTEGER (V89). DB stays otherwise column-for-column with DEV.
+- **Refactor type deviations (Hibernate `validate`):** `APPR_LINE_NO` NUMERIC→BIGINT (V92), `APPRVR_DISP_ORD` NUMERIC→INTEGER (V92), `ERP_TRNS_HSTR.SEQ_NO`/`FILE_SIZE` NUMERIC→BIGINT (V75), `DISP_ORD` NUMERIC→INTEGER (V117). DB stays otherwise column-for-column with DEV.
 
 ## Relationships
 

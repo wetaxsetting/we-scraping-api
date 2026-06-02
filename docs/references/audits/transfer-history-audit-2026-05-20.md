@@ -79,7 +79,7 @@ Verified via `find -mmin -30` after each prompt — every diff is constrained to
 
 - Spec at [docs/refactor-wecms/features/banking/transfer-history.md](../../features/banking/own-account-transfer/transfer-history.md) ✓
 - Migration at [docs/refactor-wecms/migration/transfer-history.md](../migration/transfer-history.md) ✓
-- Plan at [docs/refactor-wecms/planning/phase-1/transfer-history-plan.md](../../planning/phase-1/transfer-history-plan.md) ✓
+- Plan at [docs/refactor-wecms/archive/planning/phase-1/transfer-history-plan.md](../../archive/planning/phase-1/transfer-history-plan.md) ✓
 - This audit at [docs/refactor-wecms/audits/migration-audit/transfer-history-audit-2026-05-20.md](transfer-history-audit-2026-05-20.md) ✓
 - Zero new files under `docs/jex/` ✓
 
@@ -230,7 +230,7 @@ private static Specification<NapasRemitTrnsHstr> buildSpec(
 | Sort dynamic | `trns_0003_001_r001_act.jsp:146` (`SortHelper.getSortDynamic`) | [TransferHistorySortField.java](../../../src/main/java/com/kosign/wecms/domain/banking/transferhistory/dto/TransferHistorySortField.java) whitelist | ✓ but see F-5 (Results col) |
 | Totals + counts per CCY | `IDO.NAPAS_REMIT_TRNS_HSTR_R003_CNT.xml:24-34` | [TransferHistoryRepository.java:38-58](../../../src/main/java/com/kosign/wecms/domain/banking/transferhistory/repository/TransferHistoryRepository.java) JPQL `CASE WHEN ccyCd = 'VND'…` | ✓ |
 | `wb_get_bank_nm(_, 'S')` | `IDO.NAPAS_REMIT_TRNS_HSTR_R003.xml:29` | [TransferHistoryQueryService.java:231-233](../../../src/main/java/com/kosign/wecms/domain/banking/transferhistory/service/TransferHistoryQueryService.java) via `BankCdResolver.resolveBankNm` reads `BANK_INFM.RPRS_BANK_NM` | ✓ (semantic equivalent, may show different display string — see F-1 of audit field-resolution caveat) |
-| `WB_GET_NAPAS_BANK_NM(_, 'S', 'EN')` | `IDO.NAPAS_REMIT_TRNS_HSTR_R003.xml:30` | [TransferHistoryQueryService.java:234-236](../../../src/main/java/com/kosign/wecms/domain/banking/transferhistory/service/TransferHistoryQueryService.java) via `LegacyFunctionRepository.resolveNapasOrCitadBankName(code, langCd)` (V86 funnel) | ✓ (OQ-1 default) |
+| `WB_GET_NAPAS_BANK_NM(_, 'S', 'EN')` | `IDO.NAPAS_REMIT_TRNS_HSTR_R003.xml:30` | [TransferHistoryQueryService.java:234-236](../../../src/main/java/com/kosign/wecms/domain/banking/transferhistory/service/TransferHistoryQueryService.java) via `LegacyFunctionRepository.resolveNapasOrCitadBankName(code, langCd)` (V114 funnel) | ✓ (OQ-1 default) |
 | `WB_GET_USER_NM(REG_ID)` | `IDO.NAPAS_REMIT_TRNS_HSTR_R003.xml:31` | [TransferHistoryQueryService.java:264-279](../../../src/main/java/com/kosign/wecms/domain/banking/transferhistory/service/TransferHistoryQueryService.java) batched `userRepo.findAllById(ids)` | ✓ |
 | `normalizeTrnsDtFrmUTC` | `trns_0003_001_r001_act.jsp:101-105` | **NONE** — see F-1 | ✗ **missing** |
 | Success code `"00000000"` ⇔ "success" / non-`00000000` ⇔ "failed" sentinel | `trns_0003_001_r001_act.jsp:74-80` + `trns_0003_001.ts:326-336` | [TransferHistoryQueryService.java:60-66](../../../src/main/java/com/kosign/wecms/domain/banking/transferhistory/service/TransferHistoryQueryService.java) + [mappers.ts:375-376](../../../../wecms-web/lib/api/mappers.ts) | ✓ |
@@ -304,7 +304,7 @@ All within the allowed set documented at `.claude/rules/database.md`. No `INSERT
 |---|---|---|
 | Tenant scoping | `TenantContext.currentBizKey()` / `currentLangCd()` | [TransferHistoryQueryService.java:88](../../../src/main/java/com/kosign/wecms/domain/banking/transferhistory/service/TransferHistoryQueryService.java) + line 120 |
 | OUT_BANK_NM | `BankCdResolver.resolveBankNm` | line 231-233 |
-| IN_BANK_NM | `LegacyFunctionRepository.resolveNapasOrCitadBankName` (V86) | line 234-236 |
+| IN_BANK_NM | `LegacyFunctionRepository.resolveNapasOrCitadBankName` (V114) | line 234-236 |
 | User-name resolution | `UserInfmRepository.findAllById` | line 270-272 |
 | Sort whitelist contract | `SortableField` / `SortDirection` | TransferHistorySortField.java |
 | Response envelope | `ApiResponse.ok(...)` | TransferHistoryController.java:96 |
@@ -392,7 +392,7 @@ Not applicable — Transfer History does not invoke the engine. Spec §3 documen
 | Default page size when omitted | `list_defaultPageSizeIs15WhenPagePerCntIsNull` | ⚠ asserts 15; frontend default is now 10 — see F-3 |
 | Page number 1-based → 0-based conversion | `list_pageNoIsConvertedFromOneBasedToZeroBased` | ✓ |
 | Bank-name cache hits once per distinct code | `list_resolvesEachBankCodeAtMostOncePerPage` | ✓ |
-| KO/KM locales collapse to `en` for the V86 funnel | `list_korenAndKhmerLocalesCollapseToEnglishForLegacyFn` | ✓ |
+| KO/KM locales collapse to `en` for the V114 funnel | `list_korenAndKhmerLocalesCollapseToEnglishForLegacyFn` | ✓ |
 | Permission denial (no JWT) | covered by Spring Security at chain level — same global pattern as every other endpoint; not a per-feature test | ✓ (implicit) |
 | Coocon timeout / non-zero exit | N/A — read-only feature; tests in the Register MR | ✓ (N/A) |
 
@@ -447,7 +447,7 @@ A single cleanup MR can close everything below.
 ## Audit method
 
 - Re-read [CLAUDE.md](../../../../CLAUDE.md), [wecms-api/CLAUDE.md](../../../CLAUDE.md), [wecms-web/CLAUDE.md](../../../../wecms-web/CLAUDE.md), [AGENTS.md](../../../../wecms-web/AGENTS.md), [.claude/rules/database.md](../../../../.claude/rules/database.md).
-- Re-read [features/banking/transfer-history.md](../../features/banking/own-account-transfer/transfer-history.md), [migration/transfer-history.md](../migration/transfer-history.md), [planning/phase-1/transfer-history-plan.md](../../planning/phase-1/transfer-history-plan.md).
+- Re-read [features/banking/transfer-history.md](../../features/banking/own-account-transfer/transfer-history.md), [migration/transfer-history.md](../migration/transfer-history.md), [archive/planning/phase-1/transfer-history-plan.md](../../archive/planning/phase-1/transfer-history-plan.md).
 - Read every new file under `wecms-api/src/main/java/com/kosign/wecms/domain/banking/transferhistory/`, `wecms-api/src/main/resources/db/migration/V181__transfer_history_helper_index.sql`, and the two test files.
 - Read the new + modified files under `wecms-web/components/banking/internal-transfer/`, `wecms-web/lib/api/banking.ts` (`fetchTransferHistory` only), `wecms-web/lib/api/mappers.ts` (`mapTransferHistoryRow` + `mapTransferHistoryTotals`), `wecms-web/lib/types/api.ts` (the flipped row + response types), `wecms-web/lib/viewSettingScreens.ts` (the new screenId entry), `wecms-web/locales/{en,ko,vi}.json`.
 - Read the cited JEX source files: [trns_0003_001_view.jsp](../../../../WECMS%20DEV/WECMS/web/view/jex/wabooks/trns/trns_0003_001_view.jsp), [trns_0003_001_r001_act.jsp](../../../../WECMS%20DEV/WECMS/web/WEB-INF/action/jex/wabooks/trns/trns_0003_001_r001_act.jsp), [IDO.NAPAS_REMIT_TRNS_HSTR_R003.xml](../../../../WECMS%20DEV/WECMS_ETC/xml/service/IDO/IDO.NAPAS_REMIT_TRNS_HSTR_R003.xml), [IDO.NAPAS_REMIT_TRNS_HSTR_R003_CNT.xml](../../../../WECMS%20DEV/WECMS_ETC/xml/service/IDO/IDO.NAPAS_REMIT_TRNS_HSTR_R003_CNT.xml), [WSVC.trns_0003_001_r001.xml](../../../../WECMS%20DEV/WECMS_ETC/xml/service/WSVC/WSVC.trns_0003_001_r001.xml), [NapasRemitTrnsHstrDAO.java](../../../../WECMS%20DEV/WECMS/src/wabooks/dao/NapasRemitTrnsHstrDAO.java).

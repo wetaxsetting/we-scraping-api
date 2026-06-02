@@ -42,12 +42,11 @@ mirrors the four-layer pyramid the refactor already uses for Auth and Banking:
 | 3 | Preview returns per-row errors map | 2 valid + 1 invalid → `tot_cnt=3, suc_cnt=2, err_cnt=1`; errors map populated for row 3 |
 | 4 | Preview duplicate against live row | Row with `vas_acct_cd` matching a `del_yn='N'` row → error `WBE0003` in row's `errors.vas_acct_cd` |
 | 5 | Preview does NOT trigger DB writes | Mock repo verifies only reads | No `save()` / `update*()` calls |
-| 6 | Cell validate single field | `fieldId="VAS_ACCT_CD"`, `value="ab"` | Returns `{ code: "WBE0001", message: "Invalid VAS_ACCT_CD" }` (length < 3) |
-| 7 | Import `A` append happy path | 5 valid rows, none duplicate | Inserts 5; emits ONE `EXCEL_IMPORT_APPEND` audit row with `inserted_count=5` |
-| 8 | Import `A` race-safe dedup | Preview passed, but a race-inserted row appeared before commit | First conflict throws `WBE0003`; transaction rolls back; no rows inserted |
-| 9 | Import `R` replace happy path | 5 rows + 3 existing live rows for tenant | All 3 existing soft-deleted; 5 new inserted; one `EXCEL_IMPORT_REPLACE` audit row |
-| 10 | Import `R` rolls back on insert failure | Replace mode; one row violates constraint mid-batch | Soft-deletes rolled back; tenant data unchanged |
-| 11 | Import rejects unknown `upld_optn` | `upld_optn="X"` | `WBE_VALIDATION` (caught by `@Pattern`) |
+| 6 | Import `A` append happy path | 5 valid rows, none duplicate | Inserts 5; emits ONE `EXCEL_IMPORT_APPEND` audit row with `inserted_count=5` |
+| 7 | Import `A` race-safe dedup | Preview passed, but a race-inserted row appeared before commit | First conflict throws `WBE0003`; transaction rolls back; no rows inserted |
+| 8 | Import `R` replace happy path | 5 rows + 3 existing live rows for tenant | All 3 existing soft-deleted; 5 new inserted; one `EXCEL_IMPORT_REPLACE` audit row |
+| 9 | Import `R` rolls back on insert failure | Replace mode; one row violates constraint mid-batch | Soft-deletes rolled back; tenant data unchanged |
+| 10 | Import rejects unknown `upld_optn` | `upld_optn="X"` | `WBE_VALIDATION` (caught by `@Pattern`) |
 
 ### `VasAccountSortFieldTest`
 
@@ -191,9 +190,8 @@ The refactor doesn't currently ship Spring Cloud Contract — wire-shape stabili
 |---|---|---|
 | 1 | File picker → preview step | Upload a mocked 3-row valid file → preview grid renders 3 rows |
 | 2 | Preview row error renders | Mocked preview row with `errors: { vas_acct_cd: { code:"WBE0003", … } }` → row highlighted; cell shows the message |
-| 3 | Inline cell edit triggers `validateCell` | Edit a value → debounced 200 ms → POST `/excel/cell/validate` once |
-| 4 | Replace mode shows confirmation dialog | Click Save with `upldOptn="R"` → `useDialog({ type:"confirmation" })` fired; only on confirm does the import POST run |
-| 5 | Import success refreshes list | Mock 200 → close upload dialog; assert list `refetch` called |
+| 3 | Replace mode shows confirmation dialog | Click Save with `upldOptn="R"` → `useDialog({ type:"confirmation" })` fired; only on confirm does the import POST run |
+| 4 | Import success refreshes list | Mock 200 → close upload dialog; assert list `refetch` called |
 
 ### View Setting integration
 

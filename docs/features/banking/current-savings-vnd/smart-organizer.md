@@ -5,7 +5,7 @@
 **Route (proposed):** `/banking/smart-organizer`
 **Refactor screen ID / slug:** `banking-smart-organizer-vnd`
 **JEX counterpart:** `fnsh_0200_001` (view) / `fnsh_0200_001_r001` (read) — `WECMS DEV/WECMS_STATIC/ts-src/js/jex/wabooks/fnsh/fnsh_0200_001.ts`.
-**Status:** ⚠️ **DISCOVERY — not yet in the refactor.** No Spring Boot endpoint, no Next.js page, no refactor design doc existed before this scaffold. Content below is derived from the JEX source only; **do not treat as a contract.** Not present in the legacy `docs/jex/screen-flows/banking.md` 9-screen list (newer feature).
+**Status:** ✅ **Backend implemented.** `SmartOrganizerController` + `OrganizerRuleController` + their services are live (migrations V172 `smart_organizer_rmrk_org_infm_schema`, V173 `wb_get_next_val_rmrk_org_infm`, V174 `smart_organizer_view_setting_seed`). The Next.js route `app/(dashboard)/banking/smart-organizer/` also exists. The JEX-derived behavioural detail below is retained as the functional spec; reconcile any divergence against the shipped controllers. Not present in the legacy `docs/jex/screen-flows/banking.md` 9-screen list (newer feature).
 
 ## Overview
 Smart Organizer is an **auto-categorizing transaction view**: it lists account transactions with a
@@ -18,9 +18,9 @@ Settings" rule popup. From the JEX page (`fnsh_0200_001`):
 - Web/UI: [`../../../../wecms-web/docs/features/banking/smart-organizer-vnd.md`](../../../../../wecms-web/docs/features/banking/current-savings-vnd/smart-organizer.md)
 - Related: VND transaction list — [transaction-history-vnd.md](transaction-history.md); FCY twin — [smart-organizer-fcy.md](../current-savings-fcy/smart-organizer.md)
 
-## Related APIs *(none yet — proposed)*
-- `GET /api/v1/banking/smart-organizer` — categorized transaction list *(proposed)*
-- Organizer settings CRUD *(proposed — mirrors the `fnsh_0200` settings popup)*
+## Related APIs *(implemented — see `SmartOrganizerController` + `OrganizerRuleController`)*
+- `GET /api/v1/banking/smart-organizer` — categorized transaction list
+- Organizer settings (rule) CRUD via `OrganizerRuleController` (mirrors the `fnsh_0200` settings popup). Confirm exact paths against the live controllers.
 
 ## Database Tables *(Needs Confirmation)*
 - Sources the account transaction history (as Transaction History) plus a usage/purpose mapping for
@@ -35,6 +35,4 @@ Settings" rule popup. From the JEX page (`fnsh_0200_001`):
 ## Error Cases *(Needs Confirmation)*
 
 ## Notes
-**Action required (discovery):** confirm refactor scope for Smart Organizer — is it in scope for the
-R&D refactor, or static-UI/deferred? Then promote this scaffold to a real spec. JEX source files:
-`fnsh_0200_001.ts` (+ `fnsh_0200_002.ts`), `fnsh_0002_001_osmc_VN.ts`.
+Smart Organizer is implemented on the backend (`SmartOrganizerController` + `OrganizerRuleController` + V172–V174) and has a Next.js route. This doc still carries `Needs Confirmation` markers on the table/business-rule detail — those should be reconciled against the shipped code in the next stabilisation pass. JEX source files (functional reference): `fnsh_0200_001.ts` (+ `fnsh_0200_002.ts`), `fnsh_0002_001_osmc_VN.ts`.

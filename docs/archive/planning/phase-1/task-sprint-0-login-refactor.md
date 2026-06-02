@@ -11,7 +11,7 @@
 The WeCMS login currently lives in the JEX framework (`WECMS DEV/`). We are translating **only** the login feature into the new stack as R&D: Spring Boot 3.5.13 on the API side and Next.js 16 + Bootstrap 5 on the web side, against a fresh local PostgreSQL (`localhost:5434/wecms_dev`). The UI matches the Figma/screenshot: split-screen with a marketing panel on the left and an ID/Password/Save-ID/Login form on the right — **no** signup, forgot-password, or BIZ_KEY chooser.
 
 **Decisions already taken (confirmed with user 2026-04-21):**
-- **Tenant (BIZ_KEY) resolution:** server-derived. Client never sends BIZ_KEY. **Final position (2026-04-22):** strict single-tenant R&D — the active `BIZ_KEY` is pinned to the literal value **`VN_VNM0004_000001`** (the specific WeCMS business unit). No wildcards, no multi-tenant picker. `wecms.tenant.biz-key` in [application.yml](../../../src/main/resources/application.yml) is the single source of truth, validated by `TenantProperties` to reject anything containing `%`. Users not linked to this exact tenant are rejected with `WBE1009`.
+- **Tenant (BIZ_KEY) resolution:** server-derived. Client never sends BIZ_KEY. **Final position (2026-04-22):** strict single-tenant R&D — the active `BIZ_KEY` is pinned to the literal value **`VN_VNM0004_000001`** (the specific WeCMS business unit). No wildcards, no multi-tenant picker. `wecms.tenant.biz-key` in [application.yml](../../../../src/main/resources/application.yml) is the single source of truth, validated by `TenantProperties` to reject anything containing `%`. Users not linked to this exact tenant are rejected with `WBE1009`.
 - **Lockout:** `LOCK_YN`/`ACTV_YN`/`DEL_YN` flag checks + full `USER_LOGIN_HIS` logging — but the 5-failure auto-lock counter is **deferred**.
 - **Tokens:** access token only, ~60-minute TTL (matches legacy session timeout).
 - **Seed data source (added 2026-04-22):** login-related rows (`BUSI_INFM`, `USER_INFM`, `USER_BUSI_CONN_INFM`) are copied from JEX DEV `wecmsvndevdb` via Flyway migration `V5`. Additive, idempotent (`ON CONFLICT DO NOTHING`), never drops or resets local data.
@@ -24,13 +24,13 @@ The WeCMS login currently lives in the JEX framework (`WECMS DEV/`). We are tran
 
 | Layer | File | Key lines |
 |---|---|---|
-| Action (PC) | [WECMS DEV/WECMS/web/WEB-INF/action/jex/wabooks/logn/logn_0001_001_r001_act.jsp](../../../../WECMS%20DEV/WECMS/web/WEB-INF/action/jex/wabooks/logn/logn_0001_001_r001_act.jsp) | 114–138, 347–376 |
-| Action (Mobile) | [WECMS DEV/WECMS/web/WEB-INF/action/jex/wabooks/api/mrec/WABOOKS_MREC_R002_act.jsp](../../../../WECMS%20DEV/WECMS/web/WEB-INF/action/jex/wabooks/api/mrec/WABOOKS_MREC_R002_act.jsp) | 44–172 |
-| WSVC (contract) | [WECMS DEV/WECMS_ETC/xml/service/WSVC/WSVC.logn_0001_001_r001.xml](../../../../WECMS%20DEV/WECMS_ETC/xml/service/WSVC/WSVC.logn_0001_001_r001.xml) | — |
-| Orchestrator | [WECMS DEV/WECMS/src/wabooks/helper/SzonHelper.java](../../../../WECMS%20DEV/WECMS/src/wabooks/helper/SzonHelper.java) | `logn_2001_001_r001`, `logn_0001_001_r001` |
-| Session + audit | [WECMS DEV/WECMS/src/wabooks/session/UserLoginManager.java](../../../../WECMS%20DEV/WECMS/src/wabooks/session/UserLoginManager.java) | 39–129 |
-| User lookup | [WECMS DEV/WECMS/src/wabooks/dao/UserInfmDAO.java](../../../../WECMS%20DEV/WECMS/src/wabooks/dao/UserInfmDAO.java) + [IDO.USER_INFM_R004.xml](../../../../WECMS%20DEV/WECMS_ETC/xml/service/IDO/IDO.USER_INFM_R004.xml) |
-| Entities | [UserInfm.java](../../../../WECMS%20DEV/WECMS/src/wabooks/entity/UserInfm.java), [UserLoginHis.java](../../../../WECMS%20DEV/WECMS/src/wabooks/entity/UserLoginHis.java), [UserBusiConnInfm.java](../../../../WECMS%20DEV/WECMS/src/wabooks/entity/UserBusiConnInfm.java) |
+| Action (PC) | [WECMS DEV/WECMS/web/WEB-INF/action/jex/wabooks/logn/logn_0001_001_r001_act.jsp](../../../../../WECMS%20DEV/WECMS/web/WEB-INF/action/jex/wabooks/logn/logn_0001_001_r001_act.jsp) | 114–138, 347–376 |
+| Action (Mobile) | [WECMS DEV/WECMS/web/WEB-INF/action/jex/wabooks/api/mrec/WABOOKS_MREC_R002_act.jsp](../../../../../WECMS%20DEV/WECMS/web/WEB-INF/action/jex/wabooks/api/mrec/WABOOKS_MREC_R002_act.jsp) | 44–172 |
+| WSVC (contract) | [WECMS DEV/WECMS_ETC/xml/service/WSVC/WSVC.logn_0001_001_r001.xml](../../../../../WECMS%20DEV/WECMS_ETC/xml/service/WSVC/WSVC.logn_0001_001_r001.xml) | — |
+| Orchestrator | [WECMS DEV/WECMS/src/wabooks/helper/SzonHelper.java](../../../../../WECMS%20DEV/WECMS/src/wabooks/helper/SzonHelper.java) | `logn_2001_001_r001`, `logn_0001_001_r001` |
+| Session + audit | [WECMS DEV/WECMS/src/wabooks/session/UserLoginManager.java](../../../../../WECMS%20DEV/WECMS/src/wabooks/session/UserLoginManager.java) | 39–129 |
+| User lookup | [WECMS DEV/WECMS/src/wabooks/dao/UserInfmDAO.java](../../../../../WECMS%20DEV/WECMS/src/wabooks/dao/UserInfmDAO.java) + [IDO.USER_INFM_R004.xml](../../../../../WECMS%20DEV/WECMS_ETC/xml/service/IDO/IDO.USER_INFM_R004.xml) |
+| Entities | [UserInfm.java](../../../../../WECMS%20DEV/WECMS/src/wabooks/entity/UserInfm.java), [UserLoginHis.java](../../../../../WECMS%20DEV/WECMS/src/wabooks/entity/UserLoginHis.java), [UserBusiConnInfm.java](../../../../../WECMS%20DEV/WECMS/src/wabooks/entity/UserBusiConnInfm.java) |
 
 ### Request / response flow
 
@@ -89,7 +89,7 @@ frontend login → POST /logn_0001_001_r001.act
 
 ## Step 2 — Proposed Backend Structure (`wecms-api`)
 
-Follows [wecms-api/CLAUDE.md](../../../CLAUDE.md) — domain-driven, lightweight. `auth` is the JEX `logn` module.
+Follows [wecms-api/CLAUDE.md](../../../../CLAUDE.md) — domain-driven, lightweight. `auth` is the JEX `logn` module.
 
 ```
 src/main/
@@ -203,9 +203,9 @@ SpringDoc / Testcontainers are **deferred** for this sprint — the existing Spr
 
 ## Step 3 — Proposed Frontend Structure (`wecms-web`)
 
-Follows [wecms-web/CLAUDE.md](../../../../wecms-web/CLAUDE.md) — Next.js 16 App Router, Bootstrap 5 + react-bootstrap, mobile-first responsive.
+Follows [wecms-web/CLAUDE.md](../../../../../wecms-web/CLAUDE.md) — Next.js 16 App Router, Bootstrap 5 + react-bootstrap, mobile-first responsive.
 
-> ⚠️ **Next.js 16 caveat** — per [wecms-web/AGENTS.md](../../../../wecms-web/AGENTS.md), Next.js 16 has breaking changes from earlier versions. The implementer must consult `node_modules/next/dist/docs/` (especially App Router, route handlers, metadata) before coding rather than relying on training-data memory.
+> ⚠️ **Next.js 16 caveat** — per [wecms-web/AGENTS.md](../../../../../wecms-web/AGENTS.md), Next.js 16 has breaking changes from earlier versions. The implementer must consult `node_modules/next/dist/docs/` (especially App Router, route handlers, metadata) before coding rather than relying on training-data memory.
 
 ```
 wecms-web/
@@ -234,7 +234,7 @@ wecms-web/
 └── (package.json, tsconfig.json, etc.)
 ```
 
-### Sprint 0 prerequisites (mandated by [wecms-web/CLAUDE.md](../../../../wecms-web/CLAUDE.md) §"Tailwind → Bootstrap conversion pending")
+### Sprint 0 prerequisites (mandated by [wecms-web/CLAUDE.md](../../../../../wecms-web/CLAUDE.md) §"Tailwind → Bootstrap conversion pending")
 
 Before the login UI is written:
 
@@ -343,7 +343,7 @@ Each step is small enough to verify before the next.
 
 ### Data copied from JEX DEV (added 2026-04-22)
 
-Flyway migration [`V5__seed_from_jex_dev_20260422.sql`](../../../src/main/resources/db/migration/V5__seed_from_jex_dev_20260422.sql) populates the local `wecms_dev` with login-related rows from JEX DEV (`wecmsvndevdb`):
+Flyway migration [`V5__seed_from_jex_dev_20260422.sql`](../../../../src/main/resources/db/migration/V5__seed_from_jex_dev_20260422.sql) populates the local `wecms_dev` with login-related rows from JEX DEV (`wecmsvndevdb`):
 
 | Table | Rows copied | Filter |
 |---|---|---|
@@ -386,12 +386,12 @@ Flyway migration [`V5__seed_from_jex_dev_20260422.sql`](../../../src/main/resour
 
 **Implementation:**
 
-- **[`LegacyHashPasswordEncoder`](../../../src/main/java/com/kosign/wecms/common/security/LegacyHashPasswordEncoder.java)** — Java reimplementation of `public.hash()`. `Base64.encode(SHA-256(UTF-8 bytes))`. Constant-time compare.
-- **[`WecmsPasswordEncoder`](../../../src/main/java/com/kosign/wecms/common/security/WecmsPasswordEncoder.java)** — composes `BCryptPasswordEncoder(10)` + `LegacyHashPasswordEncoder`. Dispatches on the `$2a/$2b/$2y$` prefix; `upgradeEncoding()` returns `true` for any non-BCrypt stored value.
-- **[`SecurityConfig`](../../../src/main/java/com/kosign/wecms/config/SecurityConfig.java)** — exposes `WecmsPasswordEncoder` as the `PasswordEncoder` bean.
-- **[`AuthService`](../../../src/main/java/com/kosign/wecms/domain/auth/service/AuthService.java)** — after a successful `matches()`, calls `upgradeEncoding()` and re-encodes + `userRepo.save()` if true. Logs `Upgraded stored password for user X from legacy hash to BCrypt`.
-- **[`LegacyHashPasswordEncoderTest`](../../../src/test/java/com/kosign/wecms/common/security/LegacyHashPasswordEncoderTest.java)** — pins `encode("Password!1")` to the exact reference value I pulled from `SELECT hash('Password!1')` on wecmsvndevdb. Fails loudly if either side ever drifts.
-- **[`V10__demo_legacy_hash_user.sql`](../../../src/main/resources/db/migration/V10__demo_legacy_hash_user.sql)** — seeds a `legacyuser` row whose `USER_PW` is the raw legacy hash, so the upgrade path is demonstrable end-to-end.
+- **[`LegacyHashPasswordEncoder`](../../../../src/main/java/com/kosign/wecms/common/security/LegacyHashPasswordEncoder.java)** — Java reimplementation of `public.hash()`. `Base64.encode(SHA-256(UTF-8 bytes))`. Constant-time compare.
+- **[`WecmsPasswordEncoder`](../../../../src/main/java/com/kosign/wecms/common/security/WecmsPasswordEncoder.java)** — composes `BCryptPasswordEncoder(10)` + `LegacyHashPasswordEncoder`. Dispatches on the `$2a/$2b/$2y$` prefix; `upgradeEncoding()` returns `true` for any non-BCrypt stored value.
+- **[`SecurityConfig`](../../../../src/main/java/com/kosign/wecms/config/SecurityConfig.java)** — exposes `WecmsPasswordEncoder` as the `PasswordEncoder` bean.
+- **[`AuthService`](../../../../src/main/java/com/kosign/wecms/domain/auth/service/AuthService.java)** — after a successful `matches()`, calls `upgradeEncoding()` and re-encodes + `userRepo.save()` if true. Logs `Upgraded stored password for user X from legacy hash to BCrypt`.
+- **[`LegacyHashPasswordEncoderTest`](../../../../src/test/java/com/kosign/wecms/common/security/LegacyHashPasswordEncoderTest.java)** — pins `encode("Password!1")` to the exact reference value I pulled from `SELECT hash('Password!1')` on wecmsvndevdb. Fails loudly if either side ever drifts.
+- **[`V10__demo_legacy_hash_user.sql`](../../../../src/main/resources/db/migration/V10__demo_legacy_hash_user.sql)** — seeds a `legacyuser` row whose `USER_PW` is the raw legacy hash, so the upgrade path is demonstrable end-to-end.
 
 **Live verification (2026-04-22):**
 
@@ -412,15 +412,15 @@ Flyway migration [`V5__seed_from_jex_dev_20260422.sql`](../../../src/main/resour
 
 Directive: local schema must mirror WeCMS DEV exactly. No renames, no removals, all legacy columns present. Types may be adjusted.
 
-- **[`V7__align_schema_to_legacy_exact.sql`](../../../src/main/resources/db/migration/V7__align_schema_to_legacy_exact.sql)** — one migration that:
+- **[`V7__align_schema_to_legacy_exact.sql`](../../../../src/main/resources/db/migration/V7__align_schema_to_legacy_exact.sql)** — one migration that:
   - Renames `REG_USER → REG_ID`, `MOD_USER → MOD_ID` on all three tables (matches legacy audit columns)
   - Renames `BUSI_INFM.BUSI_NM → CMPN_NM`
   - Drops `USER_INFM.LANG_CD` — this column was invented by me; legacy never had it. `LANG_CD` is now derived from the `Accept-Language` request header and returned in the login response / JWT claim.
   - Adds 9 missing legacy columns to `USER_INFM` (`CLPH_NO`, `USER_IMG`, `LST_LGN_DATE`, `MOB_LST_LGN_DATE`, `PW_CHG_REQ_SEQ_NO`, `BIZ_KEY`, `EMPL_NO`, `DEPT_NM`, `POSI_NM`)
   - Adds 2 missing legacy columns to `USER_BUSI_CONN_INFM` (`USER_IMG`, `MOB_LST_LGN_DATE`)
   - Adds 36 missing legacy columns to `BUSI_INFM` — the table now has all 45 legacy columns (`CMPN_ENM`, `TAX_ID`, `RPPR_NM`, `TEL_NO`, `FXNO`, `EML`, address block, `JOIN_DT`, `FST_JOIN_*`, `FST_USE_DATE`, date range block, `BUSI_STTS`, `NTNL_CD`, banking block, `CHNL_ID`, `OVERDUE_YN`, `CANC_DATE`, `WIZ_RUN_YN`, `CMPN_STAMP`, `BUSI_NICK_NM`, `ALLI_CMPN_*`, `PRDT_TYPE`, `OWAC_NM`, `MEMO`, `PAID_START_DATE`, `CMPN_QR_CD_IMG`, `ERP_CD`)
-- **[`V8__add_busi_infm_del_yn.sql`](../../../src/main/resources/db/migration/V8__add_busi_infm_del_yn.sql)** — `BUSI_INFM.DEL_YN` was missed in V1 and again in V7; this one-line migration adds it and backfills the seeded row to `'N'`.
-- **[`V9__normalise_busi_infm_char_columns.sql`](../../../src/main/resources/db/migration/V9__normalise_busi_infm_char_columns.sql)** — widens `WIZ_RUN_YN` and `ERP_CD` from `CHAR(1)` to `VARCHAR(1)` for the same reason V3 normalised the YN columns (Hibernate treats `String @Column(length=1)` as VARCHAR(1)).
+- **[`V8__add_busi_infm_del_yn.sql`](../../../../src/main/resources/db/migration/V8__add_busi_infm_del_yn.sql)** — `BUSI_INFM.DEL_YN` was missed in V1 and again in V7; this one-line migration adds it and backfills the seeded row to `'N'`.
+- **[`V9__normalise_busi_infm_char_columns.sql`](../../../../src/main/resources/db/migration/V9__normalise_busi_infm_char_columns.sql)** — widens `WIZ_RUN_YN` and `ERP_CD` from `CHAR(1)` to `VARCHAR(1)` for the same reason V3 normalised the YN columns (Hibernate treats `String @Column(length=1)` as VARCHAR(1)).
 
 **Type adjustments** (within the "types may be adjusted" allowance):
 | Legacy | Local | Why |
@@ -432,7 +432,7 @@ Directive: local schema must mirror WeCMS DEV exactly. No renames, no removals, 
 
 **Nullability relaxed.** Legacy has many NOT NULL columns (e.g. `TAX_ID`, `CMPN_ENM`, `CHNL_ID`). Locally these are nullable so the existing R&D rows (V2 seeds + V5/V6 filtered imports) stay valid without fabricating placeholder values. A future direct COPY from legacy supplies the real values.
 
-**LoginResponse / JWT** still returns `LANG_CD` — now resolved in [`AuthController`](../../../src/main/java/com/kosign/wecms/domain/auth/controller/AuthController.java) from the `Accept-Language` header (first tag mapped to `EN/KO/KM/VI`, default `EN`). Verified live:
+**LoginResponse / JWT** still returns `LANG_CD` — now resolved in [`AuthController`](../../../../src/main/java/com/kosign/wecms/domain/auth/controller/AuthController.java) from the `Accept-Language` header (first tag mapped to `EN/KO/KM/VI`, default `EN`). Verified live:
 - `Accept-Language: ko-KR,ko;q=0.9` → `LANG_CD: "KO"`
 - no header → `LANG_CD: "EN"`
 
@@ -440,12 +440,12 @@ Directive: local schema must mirror WeCMS DEV exactly. No renames, no removals, 
 
 Directive: the local DB must hold and use only rows for BIZ_KEY **`VN_VNM0004_000001`**. No wildcards.
 
-- **[`V6__scope_to_single_tenant.sql`](../../../src/main/resources/db/migration/V6__scope_to_single_tenant.sql)** — explicit, versioned, one-shot DELETE:
+- **[`V6__scope_to_single_tenant.sql`](../../../../src/main/resources/db/migration/V6__scope_to_single_tenant.sql)** — explicit, versioned, one-shot DELETE:
   1. `USER_BUSI_CONN_INFM` rows where `BIZ_KEY <> 'VN_VNM0004_000001'`
   2. `USER_INFM` rows with no remaining active link (orphans)
   3. `BUSI_INFM` rows other than the scope
   4. `USER_LOGIN_HIS` rows for users that no longer exist
-- **Runtime enforcement:** [`AuthService`](../../../src/main/java/com/kosign/wecms/domain/auth/service/AuthService.java) reads `TenantProperties.bizKey` and calls `findByUserIdAndBizKeyAndDelYn(userId, bizKey, "N")`. An `Optional.empty()` → `WBE1009` + `USER_LOGIN_HIS` row with `RSLT_CONT = TENANT_OUT_OF_SCOPE`.
+- **Runtime enforcement:** [`AuthService`](../../../../src/main/java/com/kosign/wecms/domain/auth/service/AuthService.java) reads `TenantProperties.bizKey` and calls `findByUserIdAndBizKeyAndDelYn(userId, bizKey, "N")`. An `Optional.empty()` → `WBE1009` + `USER_LOGIN_HIS` row with `RSLT_CONT = TENANT_OUT_OF_SCOPE`.
 - **Config validation:** `TenantProperties.bizKey` is `@Pattern(regexp = "^[A-Z0-9_]+$")`, which forbids `%` and guarantees the value can never drift into a `LIKE`-style wildcard.
 - **Is this a "reset"?** No. The app never drops data by itself — Flyway runs each versioned migration exactly once. `V6` is a deliberate, reviewed scope change, not an automatic wipe.
 
@@ -469,7 +469,7 @@ Live curl verification:
 - `USER_BUSI_CONN_INFM.LST_LGN_DATE = now()` on success.
 - Tenant is derived server-side via the `USER_INFM` ↔ `USER_BUSI_CONN_INFM` linkage (legacy expects exactly one active row for the login path).
 - 60-minute session lifetime: legacy `setMaxInactiveInterval(3600)` → JWT `exp = iat + 3600s`.
-- Response envelope `{ COMMON_HEAD, REC }` (per [docs/api-spec/common.md](../../../../docs/jex/api-spec/common.md)).
+- Response envelope `{ COMMON_HEAD, REC }` (per [docs/api-spec/common.md](../../../../../docs/jex/api-spec/common.md)).
 - Table names (`USER_INFM`, `USER_BUSI_CONN_INFM`, `USER_LOGIN_HIS`, `BUSI_INFM`) and UPPER_SNAKE_CASE field IDs.
 
 ### Simplified (vs. legacy)
@@ -498,7 +498,7 @@ Live curl verification:
 
 ### Assumptions
 
-- Local PostgreSQL (`localhost:5434/wecms_dev`) is reachable and the `postgres` user password is set via `WECMS_DB_PASSWORD` env var (per [wecms-api/CLAUDE.md](../../../CLAUDE.md)).
+- Local PostgreSQL (`localhost:5434/wecms_dev`) is reachable and the `postgres` user password is set via `WECMS_DB_PASSWORD` env var (per [wecms-api/CLAUDE.md](../../../../CLAUDE.md)).
 - `WECMS_JWT_SECRET` env var will be set for `bootRun` (we will document this in `application-local.yml` comments and fail fast if missing).
 - The Next.js dev server on `http://localhost:3000` is the only CORS origin for R&D.
 - The 8 feature icons + WeCMS logo can be exported from Figma as SVG; if not yet available, we use placeholder SVGs with the correct labels.

@@ -3,7 +3,7 @@
 **Refactor slug:** `own-account-transfer`
 **Refactor route:** `/banking/own-account-transfer`
 **JEX counterpart:** `trns_0001_001` (cited only as functional reference — see [docs/jex/](../../../../../docs/jex))
-**Status:** Phase 1 — design only. No code in this phase.
+**Status:** Implemented (backend + frontend landed; Path A endpoints live). Composer credential-collection deferred (OQ-FE-1).
 **Linked design docs:**
 - Migration mapping: [../../migration/banking/own-account-transfer.md](../../../references/migration/banking/own-account-transfer.md)
 - Backend design:   [../../backend/banking/own-account-transfer-api.md](../../../references/api-spec/banking/own-account-transfer-api.md)
