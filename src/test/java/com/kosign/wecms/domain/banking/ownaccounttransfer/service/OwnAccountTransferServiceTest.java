@@ -107,6 +107,32 @@ class OwnAccountTransferServiceTest {
     }
 
     @Test
+    void list_balanceTimestamps_convertedFromUtcToProjectZoneUtcPlus7() {
+        // acct_mstr stores ACCT_BAL_LST_INQ_DTM / ACCT_BAL_UPD_DTM as a
+        // UTC wall-clock (legacy DateTimeUtils.utcNow() + refactor
+        // utcNow14()). The source-row projection must convert it to the
+        // project display zone (Asia/Ho_Chi_Minh, UTC+7) — mirroring
+        // legacy read-time normalizeResult(..., loginUser) — so the
+        // composer "Last updated time" + main "Last Refresh" don't show
+        // times 7h behind local.
+        setUpAdmin();
+        AcctMstr a = acct(SHINHAN, "0001", new BigDecimal("100.00"), new BigDecimal("90.00"));
+        a.setAcctBalLstInqDtm("20260601075200"); // 07:52 UTC
+        a.setAcctBalUpdDtm("20260601075200");
+        when(acctMstrRepo.findOwnTransferSourceRows(
+                eq(TENANT), anyList(), eq(false), anyString(), any(Sort.class)))
+                .thenReturn(List.of(a));
+        stubBankName(SHINHAN, "Shinhan VN");
+
+        SourceAccountListResponse resp = service.listSourceAccounts(null, null, null);
+
+        assertThat(resp.list()).hasSize(1);
+        // 07:52 UTC → 14:52 (UTC+7), same day.
+        assertThat(resp.list().get(0).acctBalLstInqDtm()).isEqualTo("20260601145200");
+        assertThat(resp.list().get(0).acctBalUpdDtm()).isEqualTo("20260601145200");
+    }
+
+    @Test
     void list_haengsung_forcesVietinOnlyAndPassesPrdtTypeFlag() {
         setUpHaengsungAdmin();
         when(acctMstrRepo.findOwnTransferSourceRows(

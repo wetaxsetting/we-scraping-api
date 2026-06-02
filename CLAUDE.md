@@ -39,23 +39,26 @@ When in doubt, ask the user. The cost of pausing to confirm is low; the cost of 
 
 ## Documentation Structure Rules
 
-All refactor backend documentation lives under [`docs/refactor-wecms/`](../docs/refactor-wecms/). Never write refactor docs under `docs/jex/` — that tree is **read-only** functional reference for the live JEX system.
+All refactor backend documentation lives under this project's own [`docs/`](docs/) tree (relocated 2026-06-01 out of the deprecated workspace-level `docs/refactor-wecms/`). Never write refactor docs under `docs/jex/` — that tree is **read-only** functional reference for the live JEX system.
 
 | Doc type | Path |
 |---|---|
-| Backend API design (controllers, DTOs, services, repositories, validation, errors) | [docs/refactor-wecms/backend/](../docs/refactor-wecms/backend/) |
-| JEX → Spring service mapping (which WSVC/IDO maps to which controller/service, field-by-field) | [docs/refactor-wecms/migration/](../docs/refactor-wecms/migration/) |
-| DB schema design + Flyway migration notes | [docs/refactor-wecms/database/](../docs/refactor-wecms/database/) |
-| DB parity audits (refactor vs JEX) | [docs/refactor-wecms/audits/](../docs/refactor-wecms/audits/) |
-| Refactor feature specs (kebab-case must match the JEX counterpart) | [docs/refactor-wecms/features/](../docs/refactor-wecms/features/) |
-| Sprint / task plans | [docs/refactor-wecms/planning/](../docs/refactor-wecms/planning/) |
-| System architecture (cross-feature) | [docs/refactor-wecms/architecture/](../docs/refactor-wecms/architecture/) |
-| Refactor-side test plans | [docs/refactor-wecms/testing/](../docs/refactor-wecms/testing/) |
-| Bug reports (tag `System: Refactor`) | [docs/bug-reports/](../docs/bug-reports/) |
+| Backend API contracts (controllers, DTOs, validation, errors) | [docs/api-spec/](docs/api-spec/) |
+| Service / domain design (services, repositories, entities, security, settings) | [docs/business-rules/](docs/business-rules/) |
+| JEX → Spring service mapping (which WSVC/IDO maps to which controller/service, field-by-field) | [docs/migration/](docs/migration/) |
+| DB schema design + Flyway migration notes | [docs/database/](docs/database/) |
+| DB parity audits (refactor vs JEX) | [docs/audits/](docs/audits/) |
+| Refactor feature specs (kebab-case must match the JEX counterpart) | [docs/features/](docs/features/) |
+| Sprint / task plans | [docs/planning/](docs/planning/) |
+| System architecture (cross-feature) | [docs/architecture/](docs/architecture/) |
+| Refactor-side test plans | [docs/testing/](docs/testing/) |
+| Bug reports (tag `System: Refactor`) | [../docs/bug-reports/](../docs/bug-reports/) (shared, workspace root) |
+
+> The deprecated [`docs/refactor-wecms/`](../docs/refactor-wecms/) tree is retained read-only; deep links elsewhere in this file still point there and remain valid.
 
 **JEX is read-only reference.** Read JEX entity, DAO, IDO XML, WSVC XML, and `_act.jsp` (under `WECMS DEV/`) plus the canonical specs under [docs/jex/](../docs/jex/) as the functional spec for any service being translated. **Never implement JEX patterns directly** — the refactor is a clean Spring Boot rewrite informed by JEX behavior, not a port. No `JexData`, no `IDODynamic`, no `_act.jsp`-style logic, no `getInput()/getOutput()` envelope mimicry inside Java code.
 
-**Naming traceability:** when a feature exists on both sides, the JEX spec at `docs/jex/features/<slug>.md` and the refactor spec at `docs/refactor-wecms/features/<slug>.md` must share the same kebab-case `<slug>`.
+**Naming traceability:** when a feature exists on both sides, the JEX spec at `docs/jex/features/<slug>.md` and the refactor spec at `wecms-api/docs/features/<slug>.md` must share the same kebab-case `<slug>`.
 
 ## Project Overview
 

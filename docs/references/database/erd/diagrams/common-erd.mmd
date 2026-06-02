@@ -1,0 +1,143 @@
+%% WeCMS-API — Shared / Common module ERD
+%% Source of truth: Flyway migrations + JPA entities (domain/auth, domain/common, common/*).
+%% Generated 2026-06-01 (ERD Phase 2). These tables back auth, tenancy, reference data,
+%% audit, and the global View-Setting / menu features — consumed by every module.
+%% FK = declared FOREIGN KEY in SQL. LOGICAL = column references another table but NO FK is enforced.
+erDiagram
+    BUSI_INFM {
+        varchar BIZ_KEY PK
+        varchar BUSI_NM
+        varchar NTNL_CD "logical -> NATN_INFM"
+        varchar PRDT_TYPE "F|M|H.."
+        varchar BUSI_STTS "N normal"
+        varchar DEL_YN "Y|N"
+        varchar REG_DTM
+        varchar MOD_DTM
+    }
+    USER_INFM {
+        varchar USER_ID PK
+        varchar USER_NM
+        varchar USER_PW "BCrypt / legacy SHA-256"
+        varchar EML
+        varchar ACTV_YN "Y|N"
+        varchar LOCK_YN "Y|N"
+        varchar DEL_YN "Y|N"
+        varchar LANG_CD "EN|KO|KM|VI"
+    }
+    USER_BUSI_CONN_INFM {
+        varchar USER_ID PK,FK "-> USER_INFM"
+        varchar BIZ_KEY PK,FK "-> BUSI_INFM"
+        varchar EMPL_NO
+        timestamptz LST_LGN_DATE
+        varchar DEL_YN "Y|N"
+    }
+    BUSI_ADMN_INFM {
+        varchar BIZ_KEY PK,FK "-> BUSI_INFM"
+        varchar USER_ID PK,FK "-> USER_INFM"
+        varchar USER_NM
+    }
+    EMPL_INFM {
+        varchar BIZ_KEY PK,FK "-> BUSI_INFM"
+        varchar EMPL_NO PK
+        varchar EMPL_NM
+        varchar BANK_CD "logical -> BANK_INFM"
+        varchar ACCT_NO
+    }
+    USER_LOGIN_HIS {
+        varchar USER_ID PK "logical -> USER_INFM"
+        timestamptz REG_DTM PK
+        varchar REG_UID PK
+        varchar IP_ADDR
+        varchar LGN_CHNL "PC|MOB"
+        varchar RSLT_CD "SUCCESS|FAIL"
+    }
+    USER_PW_CHG_HIS {
+        varchar USER_ID PK "logical -> USER_INFM"
+        bigint REG_SEQ_NO PK
+        varchar USER_PW "BCrypt hash"
+        timestamptz REG_DTM
+    }
+    BANK_INFM {
+        varchar BANK_CD PK
+        varchar RPRS_BANK_NM
+        varchar START_DATE
+        varchar END_DATE
+    }
+    BANK_INFM_DETL {
+        varchar BANK_CD PK "logical -> BANK_INFM"
+        varchar BANK_DETL_INFO_CD PK "10 short name.."
+        varchar START_DATE PK
+        varchar BANK_DETL_INFO_CONT
+    }
+    NAPAS_BANK_INFO {
+        varchar NAPAS_BANK_CD PK
+        varchar SHORT_NAME
+        varchar LONG_NAME_EN
+        varchar LONG_NAME_VN
+        varchar BANK_CD "logical -> BANK_INFM"
+    }
+    NATN_INFM {
+        varchar NTNL_CD PK
+        varchar NATL_NM
+        varchar NATN_NUM
+        varchar TIME_ZONE
+    }
+    AUDIT_LOGS_INFM {
+        varchar BIZ_KEY PK
+        numeric AUDIT_LOGS_SEQ_NO PK
+        varchar WSVC_ID PK "route slug"
+        varchar LANG_CD PK "EN|KO|VI|KM"
+        varchar REF_NO "entity type"
+        varchar AUDIT_LOGS_ACTV "activity type"
+        text AUDIT_LOGS_ACTV_DTL "detail JSON"
+        varchar REG_ID
+        varchar REG_DTM
+    }
+    SYS_SCR_OPTION_WECMS {
+        varchar WEB_SVC_ID PK
+        varchar FIELD_ID PK
+        varchar DYM_AREA_ID "area key"
+        integer DISP_ORD
+        varchar USE_YN "Y|N"
+        char FIX_YN "Y|N"
+        varchar DISP_YN "Y|N"
+        char SORT_YN "Y|N"
+        varchar SIZE "px width"
+    }
+    USER_SCR_OPTION_WECMS {
+        varchar BIZ_KEY PK
+        varchar USER_ID PK "logical -> USER_INFM"
+        varchar WEB_SVC_ID PK "logical -> SYS_SCR_OPTION_WECMS"
+        varchar FIELD_ID PK
+        varchar DYM_AREA_ID
+        integer DISP_ORD
+        varchar USE_YN "Y|N"
+        varchar DISP_YN "Y|N"
+    }
+    USER_MENU_AUTH_INFM {
+        varchar BIZ_KEY PK
+        varchar USER_ID PK "logical -> USER_INFM"
+        varchar MENU_AUTH_CD PK "menu slug"
+        varchar USE_YN "Y only"
+    }
+    SHEDLOCK {
+        varchar NAME PK "job id"
+        timestamp LOCK_UNTIL
+        timestamp LOCKED_AT
+        varchar LOCKED_BY "instance id"
+    }
+
+    BUSI_INFM ||--o{ USER_BUSI_CONN_INFM : "FK"
+    USER_INFM ||--o{ USER_BUSI_CONN_INFM : "FK"
+    BUSI_INFM ||--o{ BUSI_ADMN_INFM      : "FK"
+    USER_INFM ||--o{ BUSI_ADMN_INFM      : "FK"
+    BUSI_INFM ||--o{ EMPL_INFM           : "FK"
+    USER_INFM ||--o{ USER_LOGIN_HIS      : "LOGICAL (USER_ID)"
+    USER_INFM ||--o{ USER_PW_CHG_HIS     : "LOGICAL (USER_ID)"
+    USER_INFM ||--o{ USER_MENU_AUTH_INFM : "LOGICAL (USER_ID)"
+    USER_INFM ||--o{ USER_SCR_OPTION_WECMS : "LOGICAL (USER_ID)"
+    NATN_INFM ||--o{ BUSI_INFM           : "LOGICAL (NTNL_CD)"
+    BANK_INFM ||--o{ BANK_INFM_DETL      : "LOGICAL (BANK_CD)"
+    BANK_INFM ||--o{ NAPAS_BANK_INFO     : "LOGICAL (BANK_CD)"
+    BANK_INFM ||--o{ EMPL_INFM           : "LOGICAL (BANK_CD)"
+    SYS_SCR_OPTION_WECMS ||--o{ USER_SCR_OPTION_WECMS : "LOGICAL (defaults)"

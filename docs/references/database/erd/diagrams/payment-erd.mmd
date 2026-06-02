@@ -1,0 +1,176 @@
+%% WeCMS-API — Payment module ERD
+%% Source of truth: Flyway migrations + JPA entities under domain/payment
+%% Generated 2026-06-01. Tenant-scoped by BIZ_KEY.
+%% FK = declared FOREIGN KEY in SQL. LOGICAL = column references another table but NO FK is enforced.
+erDiagram
+    SCDUL_PYMN_SUMR {
+        varchar BIZ_KEY PK,FK "-> BUSI_INFM"
+        varchar SCDUL_PYMN_NO PK
+        varchar SCDUL_PYMN_TYPE_CD "00 payroll|01 vendor|02 expense|03 internal"
+        varchar APPR_SEQ_NO "logical -> EXPT_RESOL_MSTR"
+        varchar TRNF_YN "Y|N"
+        varchar REG_DTM
+    }
+    SCDUL_PYMN_SUMR_DETL {
+        varchar BIZ_KEY PK
+        varchar SCDUL_PYMN_NO PK,FK "-> SCDUL_PYMN_SUMR"
+        varchar SCDUL_PYMN_DETL_NO PK
+        varchar TRCO_KEY "logical -> TRCO_INFM"
+        varchar CHART_ACCT_SEQ_NO "logical -> CHART_ACCT_INFM"
+        varchar PAY_TRAN_DT "logical -> TB_PAY_TARGET"
+        varchar PAY_FILE_SEQ_NO "logical -> TB_PAY_FILE_DATA"
+    }
+    INTERNAL_TRANSFER_KEY_SEQ {
+        varchar BIZ_KEY PK
+        date KEY_DT PK
+        integer LAST_SEQ
+    }
+    SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN {
+        varchar BIZ_KEY PK
+        varchar SCDUL_PYMN_NO PK
+        varchar SCDUL_PYMN_DETL_NO PK
+        varchar TRAN_DT "logical -> TB_PAY_TARGET"
+        varchar TRAN_SEQ "logical -> TB_PAY_TARGET"
+    }
+    OVRS_PYMN_SUMR {
+        varchar BIZ_KEY PK
+        varchar OVRS_PYMN_NO PK
+        varchar OVRS_PYMN_TYPE_CD "E excel|M manual"
+        varchar APPR_SEQ_NO "logical -> EXPT_RESOL_MSTR"
+        varchar APPR_STTS
+        varchar TRNF_YN "Y|N"
+    }
+    OVRS_PYMN_MSTR {
+        varchar BIZ_KEY PK
+        varchar OVRS_PYMN_NO PK
+        varchar APPR_SEQ_NO "logical -> EXPT_RESOL_MSTR"
+        varchar FEE_PAYER_CD "O|S|B"
+        varchar TRNF_YN "Y|N"
+    }
+    OVRS_PYMN_DTLS {
+        varchar BIZ_KEY PK
+        varchar OVRS_PYMN_NO PK "logical -> OVRS_PYMN_SUMR"
+        integer TRN_SEQ PK
+        varchar CCY_CD
+        numeric TRNF_AMT
+        varchar TRNF_YN "Y|N"
+    }
+    OVERSEAS_PAYMENT_KEY_SEQ {
+        varchar BIZ_KEY PK
+        date KEY_DT PK
+        integer LAST_SEQ
+    }
+    EXPT_RESOL_MSTR {
+        varchar BIZ_KEY PK,FK "-> BUSI_INFM"
+        varchar APPR_SEQ_NO PK
+        varchar APPR_DV "approval division code"
+        varchar APPR_STS "0 draft|1 pending|2 approved|4 rejected"
+        varchar DEL_YN "Y|N"
+        varchar REG_DTM
+    }
+    EXPT_RESOL_APPRVR_INFM {
+        varchar BIZ_KEY PK
+        varchar APPR_SEQ_NO PK "logical -> EXPT_RESOL_MSTR"
+        varchar APPRVR_ID PK
+        char APPRVR_STTS "P|A|R"
+        varchar READ_YN "Y|N"
+    }
+    EXPT_RESOL_FILE {
+        varchar BIZ_KEY PK
+        varchar APPR_SEQ_NO PK "logical -> EXPT_RESOL_MSTR"
+        varchar FILE_ID PK
+        varchar ORG_FILE_NM
+        varchar SAVE_FILE_NM
+    }
+    TB_PAY_TARGET {
+        varchar TRAN_DT PK
+        varchar BIZ_KEY PK
+        varchar TRAN_SEQ PK
+        varchar OUT_BANK_CD
+        varchar ANT_DIV_CD "NAPAS|SWIFT|CITAD"
+        numeric TRAN_AMT
+        char PROC_STAT "9 pending|C complete"
+    }
+    TB_PAY_FILE_MST {
+        varchar TRAN_DT PK
+        varchar BIZ_KEY PK
+        varchar FILE_SEQ_NO PK
+        varchar OUT_BANK_CD
+        char TRAN_TP
+        char PROC_STAT "9 pending.."
+    }
+    TB_PAY_FILE_DATA {
+        varchar TRAN_DT PK
+        varchar BIZ_KEY PK
+        varchar FILE_SEQ_NO PK "logical -> TB_PAY_FILE_MST"
+        numeric SEQ PK
+        varchar TAR_BANK_CD
+        numeric TRAN_AMT
+        char PROC_RSLT_DIV
+    }
+    TB_BATCH_SCHEDULE_INFO {
+        varchar BATCH_ID PK
+        varchar OUT_BANK_CD PK
+        char BATCH_START_TM
+        char ANT_WHERE_USE_YN "Y|N"
+    }
+    TB_BATCH_SCHEDULE_DTL {
+        varchar BATCH_ID PK "logical -> TB_BATCH_SCHEDULE_INFO"
+        varchar OUT_BANK_CD PK
+        char ANT_DIV_CD PK
+    }
+    TB_FIRM_BAT_API_TRAN {
+        varchar TRAN_DT PK
+        varchar BIZ_KEY PK
+        varchar TRAN_SEQ PK
+        char API_TRAN_TP PK
+        varchar OUT_BANK_CD PK
+        varchar BANK_PRTN_ID PK
+        numeric BAT_AMT
+    }
+    TB_FIRM_FILE_MST {
+        varchar TRAN_DT PK
+        varchar BIZ_KEY PK
+        varchar FILE_SEQ_NO PK
+        varchar FIRM_FILE_NM PK
+        char PROC_STAT
+    }
+    TB_FIRM_FILE_DATA {
+        varchar TRAN_DT PK
+        varchar FILE_SEQ_NO PK "logical -> TB_FIRM_FILE_MST"
+        varchar FIRM_FILE_NM PK
+        numeric SEQ PK
+        varchar BIZ_KEY "non-PK"
+        numeric TRAN_AMT
+    }
+    TB_FIRM_FILE_RSLT {
+        varchar TRAN_DT PK
+        varchar BIZ_KEY PK
+        varchar FIRM_FILE_NM PK
+        numeric SEQ PK
+        char PROC_RSLT_DIV
+        varchar RS_CD "response code"
+    }
+    BLOCKED_CHARS_RULE {
+        varchar RULE_ID PK
+        varchar BANK_CD
+        varchar PYMN_TPYE "INTR|VEND|EXPN|PAYR|OVER"
+        varchar FIELD_CD "RMKS|RCPT|MEMO|BENA|BEAD"
+        char STATUS "Y|N"
+    }
+
+    SCDUL_PYMN_SUMR        ||--o{ SCDUL_PYMN_SUMR_DETL                 : "has lines (FK)"
+    SCDUL_PYMN_SUMR_DETL   ||--o| SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN : "dispatch bridge (LOGICAL)"
+    SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN ||--o| TB_PAY_TARGET          : "API dispatch (LOGICAL)"
+    SCDUL_PYMN_SUMR_DETL   ||--o| TB_PAY_FILE_DATA                    : "file dispatch (LOGICAL)"
+    EXPT_RESOL_MSTR        ||--o{ SCDUL_PYMN_SUMR                     : "approves batch (LOGICAL)"
+    EXPT_RESOL_MSTR        ||--o{ OVRS_PYMN_SUMR                      : "approves batch (LOGICAL)"
+    EXPT_RESOL_MSTR        ||--o{ OVRS_PYMN_MSTR                      : "approves payment (LOGICAL)"
+    EXPT_RESOL_MSTR        ||--o{ EXPT_RESOL_APPRVR_INFM              : "approver chain (LOGICAL)"
+    EXPT_RESOL_MSTR        ||--o{ EXPT_RESOL_FILE                     : "attachments (LOGICAL)"
+    OVRS_PYMN_SUMR         ||--o{ OVRS_PYMN_DTLS                      : "has lines (LOGICAL)"
+    TB_PAY_FILE_MST        ||--o{ TB_PAY_FILE_DATA                    : "file lines (LOGICAL)"
+    TB_PAY_TARGET          ||--o| TB_FIRM_FILE_MST                    : "gateway dispatch (LOGICAL)"
+    TB_FIRM_FILE_MST       ||--o{ TB_FIRM_FILE_DATA                   : "gateway lines (LOGICAL)"
+    TB_FIRM_FILE_DATA      ||--o{ TB_FIRM_FILE_RSLT                   : "gateway result (LOGICAL)"
+    TB_BATCH_SCHEDULE_INFO ||--o{ TB_BATCH_SCHEDULE_DTL               : "schedule detail (LOGICAL)"

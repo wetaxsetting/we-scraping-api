@@ -39,6 +39,10 @@ class InternalTransferSortFieldTest {
         assertThat(InternalTransferSortField.REG_DTM.entityProperty()).isEqualTo("regDtm");
         assertThat(InternalTransferSortField.TITL.entityProperty()).isEqualTo("titl");
         assertThat(InternalTransferSortField.TOTAL_TRAN_AMT.entityProperty()).isEqualTo("totalTranAmt");
+        // Audit fix 2026-06-01: the legacy V131-era `TRNF_YN` constant was
+        // removed from `InternalTransferSortField` when the V217 seed
+        // dropped that FIELD_ID (see the enum's class Javadoc). Assert a
+        // current constant instead so the test matches production.
         assertThat(InternalTransferSortField.PAY_DATE.entityProperty()).isEqualTo("payTranDt");
     }
 
@@ -50,7 +54,13 @@ class InternalTransferSortFieldTest {
 
     @Test
     void result_parse_should_map_canonical_field_ids() {
+        // Audit fix 2026-06-01: `InternalTransferResultSortField` no longer
+        // carries the V131-era `TRNF_YN` constant (V219 seed dropped it).
+        // `PROC_STAT` is the current Transfer-Status FIELD_ID (maps to the
+        // `trnfYn` entity property) — assert it instead.
         assertThat(InternalTransferResultSortField.parse("PROC_STAT"))
                 .contains(InternalTransferResultSortField.PROC_STAT);
+        assertThat(InternalTransferResultSortField.PROC_STAT.entityProperty())
+                .isEqualTo("trnfYn");
     }
 }

@@ -53,12 +53,10 @@ class OwnAccountTransferControllerTest {
 
     private MockMvc mvc;
     private OwnAccountTransferService service;
-    private OatNxisasService nxisasService;
 
     @BeforeEach
     void setUp() {
         service = mock(OwnAccountTransferService.class);
-        nxisasService = mock(OatNxisasService.class);
 
         ObjectMapper mapper = new ObjectMapper()
                 .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
@@ -92,15 +90,7 @@ class OwnAccountTransferControllerTest {
 
     @Test
     void sourceAccounts_happyPathSerialisesSnakeCase() throws Exception {
-        SourceAccountRow row = new SourceAccountRow(
-                "11704088", "Shinhan VN", "0001", "Main",
-                "03",
-                new BigDecimal("100.00"), new BigDecimal("90.00"),
-                "VND", "00000000", null,
-                "20260518100000", "20260518100000",
-                "12345",
-                null, null, null, null,
-                true);
+        SourceAccountRow row = sampleSourceRow();
         SourceAccountListResponse payload = new SourceAccountListResponse(
                 List.of(row), 1, new BigDecimal("100.00"), new BigDecimal("90.00"),
                 List.of("11704088", "11704003", "11704004", "11704001", "11704020"));
@@ -305,5 +295,36 @@ class OwnAccountTransferControllerTest {
                 .andExpect(jsonPath("$.status.error", is(true)))
                 .andExpect(jsonPath("$.status.code",
                         is("WBE_OWN_ACCOUNT_TRANSFER_NAPAS_NOT_FOUND")));
+    }
+
+    /* =================================================================
+     *  Test fixtures
+     * ================================================================= */
+
+    /**
+     * Canonical {@link SourceAccountRow} fixture for the happy-path
+     * serialisation assertions. Centralised as a factory so a future
+     * DTO field addition (this record gained five Phase-B cert fields
+     * in the composer/cert MR) only touches this one method instead of
+     * every inline {@code new SourceAccountRow(...)} call site.
+     *
+     * <p>Field order mirrors the record: bank/acct identity → balances →
+     * ccy → last-inquiry telemetry → {@code bankCertSeq} → the four
+     * Phase-B cert fields → {@code canTransfer}. The cert fields carry
+     * representative non-null values; the happy-path test asserts only
+     * the non-cert columns + {@code bank_cert_seq} + {@code can_transfer}.
+     */
+    private static SourceAccountRow sampleSourceRow() {
+        return new SourceAccountRow(
+                "11704088", "Shinhan VN", "0001", "Main",
+                "03",
+                new BigDecimal("100.00"), new BigDecimal("90.00"),
+                "VND", "00000000", null,
+                "20260518100000", "20260518100000",
+                "12345",
+                // Phase-B cert fields: certInfoCon / certInfoDetlCon
+                // (decrypted) / certInfoDetlCon2 / nxisasGbSeqNo.
+                "cert-login-id", "cert-login-pw", null, "9001",
+                true);
     }
 }
