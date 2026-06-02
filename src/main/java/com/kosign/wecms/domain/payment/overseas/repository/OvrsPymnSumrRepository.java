@@ -41,6 +41,20 @@ public interface OvrsPymnSumrRepository extends JpaRepository<OvrsPymnSumr, Ovrs
             @Param("bizKey")      String bizKey,
             @Param("apprSeqNos") Collection<String> apprSeqNos);
 
+    /** Batch-fetch (apprSeqNo → ORG_FILE_NM) pairs for the Approval Box
+     *  "File Name" column — the OVRS half of the refactor source
+     *  {@code COALESCE(SCDUL.ORG_FILE_NM, OVRS.ORG_FILE_NM)} (the refactor
+     *  stores the uploaded file name in {@code ORG_FILE_NM}, not the
+     *  legacy {@code TITL} which now holds the typed title). Applied with
+     *  lower precedence than SCDUL in the service merge. {@code ORG_FILE_NM}
+     *  is null for overseas batches whose submit path does not stamp it —
+     *  the column then renders blank (per spec). */
+    @Query("SELECT ops.apprSeqNo, ops.orgFileNm FROM OvrsPymnSumr ops " +
+           "WHERE ops.bizKey = :bizKey AND ops.apprSeqNo IN :apprSeqNos")
+    List<Object[]> findOrgFileNmByBizKeyAndApprSeqNos(
+            @Param("bizKey")      String bizKey,
+            @Param("apprSeqNos") Collection<String> apprSeqNos);
+
     /** Write back the approval status from the Approval Box to the overseas
      *  payment batch row. Called by {@code ApprovalBoxService} after approve /
      *  reject so the Overseas Payment list page reflects the updated status. */
@@ -56,6 +70,27 @@ public interface OvrsPymnSumrRepository extends JpaRepository<OvrsPymnSumr, Ovrs
     int updateApprStts(@Param("bizKey")    String bizKey,
                        @Param("apprSeqNo") String apprSeqNo,
                        @Param("apprStts")  String apprStts,
+                       @Param("modId")     String modId,
+                       @Param("modDtm")    String modDtm);
+
+    /** Clear the approval stamp on the overseas payment batch when its
+     *  Approval Box request is withdrawn — nulls {@code APPR_SEQ_NO} +
+     *  {@code APPR_STTS} so the row returns to Draft. Called by
+     *  {@code ApprovalBoxService.withdraw} after
+     *  {@code ApprovalBoxFanoutService.withdrawApproval} deletes the master.
+     *  Locator is (bizKey, apprSeqNo) — same key the write-back uses. */
+    @Modifying
+    @Query("""
+            UPDATE OvrsPymnSumr s
+               SET s.apprSeqNo = null,
+                   s.apprStts  = null,
+                   s.modId     = :modId,
+                   s.modDtm    = :modDtm
+             WHERE s.bizKey      = :bizKey
+               AND s.apprSeqNo   = :apprSeqNo
+            """)
+    int clearApprSeqNo(@Param("bizKey")    String bizKey,
+                       @Param("apprSeqNo") String apprSeqNo,
                        @Param("modId")     String modId,
                        @Param("modDtm")    String modDtm);
 }

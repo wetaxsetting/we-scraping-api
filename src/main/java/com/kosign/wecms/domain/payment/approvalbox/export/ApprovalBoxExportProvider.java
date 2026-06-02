@@ -4,7 +4,6 @@ import com.kosign.wecms.common.export.ExcelExportRequest;
 import com.kosign.wecms.common.export.ExcelSortSpec;
 import com.kosign.wecms.common.export.ExportFetch;
 import com.kosign.wecms.common.export.ExportRowProvider;
-import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxListResponse;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxRow;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxService;
 import lombok.RequiredArgsConstructor;
@@ -78,13 +77,6 @@ public class ApprovalBoxExportProvider implements ExportRowProvider {
             "in_progress", "03"
     );
 
-    /** Hard ceiling on the legacy {@code SortHelper}-driven service —
-     *  matches {@code ApprovalBoxService.MAX_PAGE_SIZE} so a single
-     *  page call covers the entire export. Bumping the global
-     *  {@code MAX_ROWS} cap in {@code ExcelExportService} above this
-     *  value requires switching to a paged loop here. */
-    private static final int EXPORT_PAGE_SIZE = 1000;
-
     private final ApprovalBoxService approvalBoxService;
 
     @Override
@@ -114,15 +106,13 @@ public class ApprovalBoxExportProvider implements ExportRowProvider {
         String sortField     = sort != null ? sort.field()     : null;
         String sortDirection = sort != null ? sort.direction() : null;
 
-        // Reuse the same paginated list path the on-screen list uses
-        // — single source of truth for the filter / sort chain. The
-        // upper EXPORT_PAGE_SIZE matches the service's internal cap.
-        ApprovalBoxListResponse data = approvalBoxService.list(
-                fromDate, toDate, keyword, apprType,
-                sortField, sortDirection,
-                0, EXPORT_PAGE_SIZE);
-
-        List<ApprovalBoxRow> rows = data.list() != null ? data.list() : List.of();
+        // Reuse the same query / filter / sort / tenant chain the
+        // on-screen list uses, but fetch EVERY matching row (unpaged, up
+        // to the shared 50k safety cap) — not just the current page. This
+        // is the Excel-export parity fix: legacy resl_0001_001 runs the
+        // same query with PAGE_PER_CNT = 0 (all rows).
+        List<ApprovalBoxRow> rows = approvalBoxService.listForExport(
+                fromDate, toDate, keyword, apprType, sortField, sortDirection);
         List<Map<String, Object>> mapped = new ArrayList<>(rows.size());
         // Per-currency totals — legacy `resl_0001_001` subheader shows
         // "Total USD : … / Total VND : … / Total KRW : …" with separate
@@ -244,12 +234,11 @@ public class ApprovalBoxExportProvider implements ExportRowProvider {
         m.put("DOC_NM",        nullToEmpty(r.typeLabel()));
         m.put("DOC_NO",        nullToEmpty(r.docNo()));
         m.put("TITL",          nullToEmpty(r.title()));
-        // FILE_NM is a frontend-only column today — the sibling-table
-        // join that populates the uploaded file name on the wire is
-        // deferred (see design-backend.md §13 D1). Emit an empty cell
-        // so the column renders blank in the workbook instead of
-        // disappearing from the allow-list intersection.
-        m.put("FILE_NM",       "");
+        // FILE_NM = uploaded payment-batch title, resolved server-side via
+        // the SCDUL/OVRS sibling-table batch fetch (legacy
+        // COALESCE(SCDUL.TITL, OVRS.TITL), IDO R003:146). Blank when the
+        // approval has no source batch row carrying a title.
+        m.put("FILE_NM",       nullToEmpty(r.fileName()));
         m.put("CURRENCY",      nullToEmpty(r.currency()));
         m.put("TOT_PAY_AMT",   amt != null ? amt : java.math.BigDecimal.ZERO);
         m.put("PAY_END_YN",    apprSttsLabel(r.apprStts()));

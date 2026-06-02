@@ -7,6 +7,10 @@
 
 Companion docs: [discovery.md](discovery.md), [design-backend.md](design-backend.md), [design-frontend.md](design-frontend.md), [database-impact.md](database-impact.md), [api-flow.md](api-flow.md).
 
+> **Status update (2026-06-02) — this is a historical plan; several "Deferred" rows below have since shipped.**
+> Implemented & verified beyond Phase 1: detail popup (Phase 2), approve/reject (Phase 3), withdraw/delete + change-approval-line for non-card types and card (Phase 4 scope, via the generic endpoints + `ApprovalBoxFanoutService`), and bulk-approve (backend; UI deferred). Excel export now returns **all** matching rows (bounded by the shared 50k cap), not the original single-page cap. The File-Name column sources `COALESCE(SCDUL.ORG_FILE_NM, OVRS.ORG_FILE_NM)` — superseding the §1.1 "search hits raw TITL only" and the [design-backend.md](design-backend.md) §13 D1 file-name deferral. Default page size is **10** by project decision (not the legacy 15). Still deferred / out of scope: **ERP synchronization, approval notification/comment creation, uploader visibility branch, Vietnamese translated keyword search**.
+> Single source of truth for the post-Phase-1 behaviors, decisions, and the SIT checklist: [parity-fixes-2026-06.md](parity-fixes-2026-06.md). The phase tables below are retained as the original plan-of-record.
+
 ---
 
 ## 1 · JEX-vs-Spring component mapping

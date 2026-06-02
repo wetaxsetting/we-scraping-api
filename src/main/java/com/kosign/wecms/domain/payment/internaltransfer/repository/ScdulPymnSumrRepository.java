@@ -203,6 +203,24 @@ public interface ScdulPymnSumrRepository extends JpaRepository<ScdulPymnSumr, Sc
             @Param("bizKey")      String bizKey,
             @Param("apprSeqNos") Collection<String> apprSeqNos);
 
+    /** Batch-fetch (apprSeqNo → ORG_FILE_NM) pairs for the Approval Box
+     *  "File Name" column. Legacy {@code IDO.EXPT_RESOL_MSTR_R003.xml:146}
+     *  reads {@code COALESCE(SCDUL_PYMN_SUMR.TITL, OVRS_PYMN_SUMR.TITL)}
+     *  because legacy stored the uploaded file name in {@code TITL}; the
+     *  refactor moved the file name to {@code ORG_FILE_NM} (TITL now holds
+     *  the typed document title — see
+     *  {@code InternalTransferService.requestApproval}), so the refactor
+     *  equivalent is {@code COALESCE(SCDUL.ORG_FILE_NM, OVRS.ORG_FILE_NM)}.
+     *  Matches the {@code orgFileNm} source already used by the Scheduled
+     *  Transfer / Transfer Result list pages. The service merges this with
+     *  the OVRS variant (SCDUL takes precedence). Separate from the CCY_CD
+     *  fetch so the proven currency resolution is untouched. */
+    @Query("SELECT s.apprSeqNo, s.orgFileNm FROM ScdulPymnSumr s " +
+           "WHERE s.bizKey = :bizKey AND s.apprSeqNo IN :apprSeqNos")
+    List<Object[]> findOrgFileNmByBizKeyAndApprSeqNos(
+            @Param("bizKey")      String bizKey,
+            @Param("apprSeqNos") Collection<String> apprSeqNos);
+
     /** Write back the approval status from the Approval Box to the payment
      *  batch row. Called by {@code ApprovalBoxService} after approve / reject
      *  so the Scheduled Payment list pages reflect the updated status. */
@@ -218,6 +236,27 @@ public interface ScdulPymnSumrRepository extends JpaRepository<ScdulPymnSumr, Sc
     int updateApprStts(@Param("bizKey")    String bizKey,
                        @Param("apprSeqNo") String apprSeqNo,
                        @Param("apprStts")  String apprStts,
+                       @Param("modId")     String modId,
+                       @Param("modDtm")    String modDtm);
+
+    /** Clear the approval stamp on the payment batch when its Approval Box
+     *  request is withdrawn — nulls {@code APPR_SEQ_NO} + {@code APPR_STTS}
+     *  so the row returns to Draft ({@code apprSeqNo IS NULL} → tab '00' in
+     *  {@link #search}). Called by {@code ApprovalBoxService.withdraw} after
+     *  {@code ApprovalBoxFanoutService.withdrawApproval} deletes the master.
+     *  Locator is (bizKey, apprSeqNo) — same key the write-back uses. */
+    @Modifying
+    @Query("""
+            UPDATE ScdulPymnSumr s
+               SET s.apprSeqNo = null,
+                   s.apprStts  = null,
+                   s.modId     = :modId,
+                   s.modDtm    = :modDtm
+             WHERE s.bizKey      = :bizKey
+               AND s.apprSeqNo   = :apprSeqNo
+            """)
+    int clearApprSeqNo(@Param("bizKey")    String bizKey,
+                       @Param("apprSeqNo") String apprSeqNo,
                        @Param("modId")     String modId,
                        @Param("modDtm")    String modDtm);
 }

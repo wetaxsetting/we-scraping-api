@@ -38,6 +38,15 @@ public record ApprovalBoxRow(
         /** User-supplied subject. */
         String title,
 
+        /** Uploaded payment-batch file name — legacy
+         *  {@code COALESCE(SCDUL_PYMN_SUMR.TITL, OVRS_PYMN_SUMR.TITL)}
+         *  ({@code IDO.EXPT_RESOL_MSTR_R003.xml:146}). Resolved via the
+         *  same sibling-table batch fetch as {@link #currency}; blank
+         *  when no source batch row carries a title (e.g. an approval
+         *  with no matching SCDUL/OVRS summary — same as the legacy
+         *  COALESCE of two nulls). Wire name {@code file_name}. */
+        String fileName,
+
         /** Free-form approval content ({@code EXPT_RESOL_MSTR.CONT}).
          *  Optional textarea the requestor fills in on the Request
          *  Approval dialog; rendered on the Approval Details popup's
