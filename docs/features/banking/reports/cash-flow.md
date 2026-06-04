@@ -287,17 +287,31 @@ Filter applies to ALL FOUR sources because the FX-conversion + filter is at the 
 
 `EXPT_RESOL_MSTR` does NOT appear in this filter because it's not a row source — it's the approval-status join target.
 
-### 3.11 Quarter handling (verified — server DOES filter)
+### 3.11 Quarter handling — refactor does NOT filter server-side (RESOLVED 2026-06-04)
 
-`quarter` ∈ {1, 2, 3, 4} or `null`. When non-null, `filtered_payment_data` excludes transaction rows whose `payment_month` is not in that quarter's months. **However**, the function still emits all 12 month columns — months outside the quarter just resolve to zero amounts via `COALESCE(SUM(...), 0)`.
+**Legacy function:** `get_cashflow_report` *can* filter by `quarter` ∈ {1,2,3,4} — when non-null,
+`filtered_payment_data` excludes transaction rows whose `payment_month` is not in that quarter's
+months (still emitting all 12 columns, out-of-quarter months resolving to zero). **But the live legacy
+UI never exercises this** — `cash_0001_001.ts` always sends `YEAR_QUAT=null` and hides month columns
+client-side (`applyQuarterVisibility`). So the *user-observable* legacy behavior is: **balances are
+always full-year; quarter only hides columns.**
 
-This means:
+**Refactor decision (PO 2026-06-04: KEEP LEGACY BEHAVIOR).** The refactor matches the live legacy UI,
+not the dormant function path. It does **NOT** filter by quarter server-side:
 
-- The wire shape always has 12 months — frontend column-hide remains the cosmetic layer.
-- The Opening/End Balance carry-forward for months OUTSIDE the requested quarter is computed against ZERO source amounts for those months. For Q2 (months 4-6), `OpeningBalance[Jul] = jan_opening_balance + sum(rev[1..6]) − sum(exp[1..6])` where months 1-3 contribute zero (filtered out) and only months 4-6 carry their real values. This is **arguably surprising** for the user but it's the legacy behaviour — refactor mirrors it.
-- A QA test should verify a Q2 query returns Q1 months at zero AND that End Balance at Dec carries forward through that zero-padding. **Document this in the parity-audit harness.**
+- `CashFlowReportService.search` always aggregates the full Jan–Dec year.
+- `PaymentDataAggregator.applyFilters` has **no** `quarter` parameter — bank filter + FX only.
+- The Next.js page hides out-of-quarter month columns client-side; `fetchCashFlow` does **not** send a
+  `quarter` query param.
+- Opening / End / monthly amounts are **identical** regardless of quarter selection.
 
-The previous-year carry-forward (`opening_balance_calc`) is NOT quarter-filtered — it always sums the entire 12 months of the previous year. So opening Jan stays the same regardless of which quarter is requested for the current year.
+An earlier refactor build did filter server-side (trimming current-year activity → different End
+Balance); that was the Critical parity gap **D-1 / G5**. It has been removed and is guarded by
+`CashFlowReportQuarterParityTest` (This Year vs Q1–Q4 → identical rows). Full history + evidence:
+[docs/features/cash-flow/parity-audit/gap-report.md §4 G5](../../../../../docs/features/cash-flow/parity-audit/gap-report.md).
+
+The previous-year carry-forward (`opening_balance_calc`) was never quarter-filtered on either side —
+it always sums the entire 12 months of the previous year, so opening Jan is invariant to quarter.
 
 ---
 
@@ -310,7 +324,7 @@ Implemented at [CashFlowReportController.java:36](../../../../src/main/java/com/
 | Param | Type | Required | Notes |
 |---|---|---|---|
 | `year` | `int` (YYYY) | yes | 1900–2999. |
-| `quarter` | `int` 1..4 | no | Forwarded to service but does not shrink the response. |
+| `quarter` | `int` 1..4 | no | Accepted + validated (1..4) and echoed back, but **does not affect the calculation** — the full Jan–Dec year is always computed (legacy parity, gap D-1/G5, PO 2026-06-04). Frontend uses it for client-side column visibility only. |
 | `baseCurrency` | enum `VND` / `USD` / `KRW` | yes | Display currency. |
 | `usdRate` | `BigDecimal` | conditional | Required when `baseCurrency != USD`. |
 | `krwRate` | `BigDecimal` | conditional | Required when `baseCurrency != KRW`. |
@@ -498,7 +512,11 @@ Service composes: hierarchy walk → 5 aggregations → FX conversion → rollup
 - **`wb_get_appr_stts(...)` decode.** The function signature `(biz_key, reg_id, reg_id, appr_seq_no, appr_type_cd)` is unusual — passing `reg_id` twice. Phase 2 should read this helper's body to understand the approval-chain walk, then port the logic to `ApprovalStatusResolver` in Java. The `appr_type_cd` parameter suggests different approval-line types behave differently — check.
 - **Hardcoded INVESTMENT codes.** The list `{'2001026','2001027','2002003','2002002'}` is in the function body verbatim. Phase 2 should confirm with Sonny / Mr. Jung whether this is documented business logic (and thus stays hardcoded in `BalanceCalculator`) or a bug that should be data-driven (e.g. via a new column on `chart_acct_infm`).
 - **Tenant data confirmation.** Tenant `VN_VNM0004_000001` is the only DEV tenant with a Chart of Accounts. Phase 2 parity tests use this tenant only. For cross-tenant isolation tests, the Phase 2 harness should seed a minimal CoA for tenant 000014 (HAENGSUNG) and confirm the report returns empty for tenants without any CoA rows.
-- **Quarter-filter zero-padding semantics.** §3.11 documents a surprising behaviour: requesting Q2 zeros out months 1, 3, 7-12 in the source aggregation but still emits 12 columns with Opening/End Balance carrying the year-to-date math against zeros. Phase 2 parity test must cover this; UX may want to revisit whether the legacy semantics are actually desired (a follow-up product question, not blocking).
+- ~~**Quarter-filter zero-padding semantics.**~~ **RESOLVED 2026-06-04 (gap D-1/G5).** PO chose KEEP
+  LEGACY BEHAVIOR — the refactor does NOT filter by quarter server-side (the dormant function path is
+  not mirrored). Full Jan–Dec is always computed; quarter is client-side column visibility only.
+  Guarded by `CashFlowReportQuarterParityTest`. See §3.11 and
+  [docs/features/cash-flow/parity-audit/gap-report.md §4 G5](../../../../../docs/features/cash-flow/parity-audit/gap-report.md).
 - **Item-code labelling for screenshot.** The screenshot's item codes (`1025001`, `7001001`, `6018001/2`, `2001001-2001009`) are from a different production tenant (matching the hardcoded INVESTMENT carve-out — `2001026/27` align with the `2001XXX` numeric family). **No Phase 0/1/2 action required** for the refactor; the report will render those codes correctly once HAENGSUNG's CoA lands locally.
 
 These questions do not block Phase 0 / 1 sign-off. The first two are resolved in Phase 2 by reading the helper functions and consulting Sonny.

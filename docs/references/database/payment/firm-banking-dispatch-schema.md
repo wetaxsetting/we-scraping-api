@@ -6,7 +6,7 @@
 | Module | `payment` |
 | Companion docs | [internal-transfer-schema.md](internal-transfer-schema.md) (dispatch path peer) · `wecms-api/CLAUDE.md` §"PROD Active Table List" |
 | DDL script | `firm_banking_dispatch_remaining_tables_20260518.sql` (Needs Confirmation — source file not found) — run manually against the local refactor DB. |
-| Reconciled against DEV | 2026-05-18 via `postgres_dev` MCP `information_schema.columns` + `pg_indexes` |
+| Reconciled against DEV | 2026-05-18 via `postgres_dev_server_jexframe` MCP `information_schema.columns` + `pg_indexes` |
 
 > Schema-only port. No service / repository / entity / DTO is wired in this MR — V176 is a pure DDL pre-step so the Internal Transfer Phase B dispatch path (and the Vendor / Expense / Payroll modules that follow per `project_payment_module_reference.md`) can build entities + repositories against a parity-checked schema.
 

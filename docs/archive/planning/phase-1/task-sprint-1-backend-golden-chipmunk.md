@@ -311,7 +311,7 @@ list.
 
 ### 11.2 Local DB only has 7 auth-related tables
 
-Verified via `mcp__postgres_local__query`:
+Verified via `mcp__postgres_dev_server_refactor__query`:
 
 ```
 busi_admn_infm, busi_infm, empl_infm, flyway_schema_history,
@@ -332,7 +332,7 @@ contract for V13–V17.
 
 ### 11.3 All proposed legacy tables exist in JEX DEV
 
-Verified via `mcp__postgres_dev__query` against `wecmsvndev` schema —
+Verified via `mcp__postgres_dev_server_jexframe__query` against `wecmsvndev` schema —
 every table the plan proposes to mirror is present, with column counts
 in parentheses:
 
@@ -645,7 +645,7 @@ stay safe.
 **Verification before each migration lands:** run the
 `information_schema` schema check from `.claude/rules/database.md`
 against the local DB to confirm no clashes; then run the same query
-read-only against DEV (`mcp__postgres_dev__query`) to confirm column
+read-only against DEV (`mcp__postgres_dev_server_jexframe__query`) to confirm column
 parity for any column the entity maps. Drift between DEV and the
 Sprint 1 column subset is acceptable — Sprint 1 is intentionally a
 subset.
@@ -657,7 +657,7 @@ a green build + a passing smoke test before the next starts.
 
 | # | Phase | Scope | Done when |
 |---:|---|---|---|
-| 1 | **Schema confirmation** | For every column the Sprint 1 entities map, confirm name + type via `mcp__postgres_dev__query` against `wecmsvndev`. Drop any column the static UI doesn't need. | All NEEDS_CONFIRMATION cleared in the deliverable plan doc. |
+| 1 | **Schema confirmation** | For every column the Sprint 1 entities map, confirm name + type via `mcp__postgres_dev_server_jexframe__query` against `wecmsvndev`. Drop any column the static UI doesn't need. | All NEEDS_CONFIRMATION cleared in the deliverable plan doc. |
 | 2 | **V13–V17 migrations** | Idempotent CREATE/ALTER with `IF NOT EXISTS` + seed via `ON CONFLICT DO NOTHING`. | `./gradlew bootRun --args='--spring.profiles.active=local'` starts; `flyway_schema_history` shows V13–V17 success rows. |
 | 3 | **Entities + repositories** | One entity per table (Sprint 1 column subset only), one repository per entity, all derived methods. No `@Query` unless §13.6 risk row R3 forces it. | `./gradlew compileJava` green; `ddl-auto: validate` passes. |
 | 4 | **Pure-DB services + controllers — Banking core** | Phase delivers #1, #2, #3, #4. Lock the "JEX-port" service template here. | Smoke `curl` per endpoint returns `COMMON_HEAD.ERROR=false` from seeded data. |
@@ -694,7 +694,7 @@ adapters**. Remaining risks:
 These are the only unanswered questions after this revision —
 answers unblock §13.5 phases:
 
-- **Q1 (was Q1):** Confirm Sprint 1 starts with empty banking/e-invoice/operation tables on local. Verified via `mcp__postgres_local__query` — none of these tables exist locally. → V13–V17 are pure CREATE migrations. ✅ Already answered.
+- **Q1 (was Q1):** Confirm Sprint 1 starts with empty banking/e-invoice/operation tables on local. Verified via `mcp__postgres_dev_server_refactor__query` — none of these tables exist locally. → V13–V17 are pure CREATE migrations. ✅ Already answered.
 - **Q2 (was Q4):** NXISAS / Bank / OSMC / EInvoice / ReportBatch — confirm Sprint 1 ships zero of these adapters; demo will show "engine offline" is implicit. **Need user sign-off** since this is the biggest scope reduction vs. the original plan.
 - **Q3 (was Q7):** `ACCT_TRNS_HSTR` "confirmed" flag implementation — derived `existsBy…` vs. native query. **Need user preference** before phase 4.
 - **Q4 (was Q9):** Cross-aggregate FKs in entities — plain `@Column` String IDs (no `@JoinColumn`)? Default proposal: yes. **Need user sign-off** before phase 3.
@@ -781,7 +781,7 @@ This rule supersedes any earlier "subset only" advice in §11.3 / §13 / §10.x 
 - Flyway V23 applied cleanly on local DB; `flyway_schema_history` shows V23 success row.
 - Hibernate `ddl-auto: validate` passes — the existing entity-mapped columns still match their declared types, and the new columns are simply ignored by the validator.
 - `Started WecmsApiMainApplication in 17.889 seconds` on port 18083.
-- Local column counts now match DEV for the 6 previously-mismatched tables (verified via `mcp__postgres_local__query`).
+- Local column counts now match DEV for the 6 previously-mismatched tables (verified via `mcp__postgres_dev_server_refactor__query`).
 
 ---
 

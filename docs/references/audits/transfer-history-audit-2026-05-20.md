@@ -282,7 +282,7 @@ log.debug("[transfer-history] bizKey={} from={} to={} status={} rows={}/{}",
 
 ### D.5 Postgres MCP access (per [.claude/rules/database.md](../../../../.claude/rules/database.md))
 
-The Prompt 2 audit used the `postgres_dev` MCP for:
+The Prompt 2 audit used the `postgres_dev_server_jexframe` MCP for:
 - `information_schema.columns` (read-only)
 - `pg_constraint` (read-only)
 - `pg_indexes` (read-only)

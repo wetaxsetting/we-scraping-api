@@ -11,9 +11,10 @@ import lombok.Setter;
 
 /**
  * Mirrors legacy wecmsvndev.OPRT_STTS_INFO. Backs the Add-on > Operation
- * Status Inquiry list. Sprint 1 reads only from seeded data; the live
- * OSMC → tax authority refresh path is intentionally NOT wired (see §11.8
- * + §12 of the Sprint 1 plan).
+ * Status Inquiry list. Rows are read by the list endpoint, written by the
+ * Inquire-popup Save ({@code aosv_0001_002_c001}) and the bulk Update
+ * re-poll ({@code aosv_0001_001_u001}) — both of which fetch live data
+ * through the wired OSMC → GDT bridge.
  */
 @Getter
 @Setter

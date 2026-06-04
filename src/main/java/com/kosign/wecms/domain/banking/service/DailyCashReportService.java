@@ -2,10 +2,11 @@ package com.kosign.wecms.domain.banking.service;
 
 import com.kosign.wecms.common.auditlog.service.AuditLogContext;
 import com.kosign.wecms.common.auditlog.service.AuditLogService;
+import com.kosign.wecms.common.enums.AcctTypeCd;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.banking.dto.DailyCashReportResponse;
-import com.kosign.wecms.domain.banking.entity.DailyCashReptDailySumrDetl;
-import com.kosign.wecms.domain.banking.repository.DailyCashReptDailySumrDetlRepository;
+import com.kosign.wecms.domain.banking.repository.DailyCashAccountProjection;
+import com.kosign.wecms.domain.banking.repository.DailyCashRecomputeRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,12 +19,21 @@ import java.util.Map;
 
 /**
  * Daily Cash report — builds the three-tier response (currency summary,
- * per-account detail, currency flow rollup) from
- * {@code DAILY_CASH_REPT_DAILY_SUMR_DETL}. The legacy currency-level
- * summary and flow rollup tables are NOT in the PROD Active Table List,
- * so summary + flow are computed by aggregation over the detail rows
- * (column-equivalent to the legacy R003/R004 reads — same source data,
- * different aggregation path).
+ * per-account detail, currency flow rollup) by <b>live recompute</b> from
+ * {@code ACCT_MSTR} + {@code ACCT_TRNS_HSTR} at request time
+ * ({@link DailyCashRecomputeRepository#findAccountsAsOf}), the refactor
+ * equivalent of legacy {@code rept_0900_001_rec1}. This replaces the prior
+ * read of the batch snapshot {@code DAILY_CASH_REPT_DAILY_SUMR_DETL}, so a
+ * selected date returns accounts (with balances) even when the nightly
+ * batch produced no snapshot for it — matching legacy, which recomputes via
+ * the {@code rec1/rec2} DB functions on every read.
+ *
+ * <p>The per-currency summary (legacy {@code rec2}) is computed by
+ * aggregating the recomputed account rows by account-type bucket — the
+ * identical {@code SUM(CASE …)} legacy {@code rec2} performs over
+ * {@code rec1}. Cash (legacy {@code rec3/rec4}) reads {@code CASH_REPY_MSTR},
+ * which is out of the refactor PROD active-table scope, so {@code total_cash}
+ * stays {@code 0}.
  *
  * Refactor slug: {@code daily-cash-report} — used as the audit
  * {@code WSVC_ID} and as the View Setting {@code WEB_SVC_ID}.
@@ -32,18 +42,11 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class DailyCashReportService {
 
-    /** Legacy account-type codes — see JEX {@code AcctTypeCd} enum. */
-    private static final String TYPE_CASH        = "01"; // physical cash
-    private static final String TYPE_DEMAND      = "11"; // current / demand deposit
-    private static final String TYPE_SAVINGS     = "12"; // savings / passbook
-    private static final String TYPE_TERM        = "13"; // term deposit
-    private static final String TYPE_LOAN        = "21";
-
     /** Tenant local currency. VND today; resolves per-tenant when the
      *  refactor introduces base-currency settings (spec §7 OQ-3). */
     private static final String LOCAL_CCY = "VND";
 
-    private final DailyCashReptDailySumrDetlRepository detlRepo;
+    private final DailyCashRecomputeRepository recomputeRepo;
     private final BankCdResolver bankResolver;
     private final AuditLogService auditLogService;
 
@@ -52,7 +55,11 @@ public class DailyCashReportService {
         final String bizKey = TenantContext.currentBizKey();
         final String refDate = toRefDate(asOfDate);
 
-        List<DailyCashReptDailySumrDetl> rows = detlRepo.findRows(
+        // Live recompute (legacy rec1 equivalent) — reads ACCT_MSTR +
+        // ACCT_TRNS_HSTR, not the batch snapshot, so any date with master
+        // accounts returns rows. Currency filter mirrors the legacy
+        // dynamic-0 (exact pin OR exclude tenant-local for FCY).
+        List<DailyCashAccountProjection> rows = recomputeRepo.findAccountsAsOf(
                 bizKey, refDate,
                 filter.exact(),
                 filter.exclude(LOCAL_CCY));
@@ -60,14 +67,14 @@ public class DailyCashReportService {
         List<DailyCashReportResponse.AccountRow> accounts = new ArrayList<>(rows.size());
         Map<String, CurrencyAccumulator> byCcy = new LinkedHashMap<>();
 
-        for (DailyCashReptDailySumrDetl r : rows) {
+        for (DailyCashAccountProjection r : rows) {
             String ccy = trim(r.getCcyCd());
             String type = trim(r.getAcctTypeCd());
 
             accounts.add(new DailyCashReportResponse.AccountRow(
-                    r.getBizKey(),
-                    r.getLstCollDate(),
-                    r.getRefDate(),
+                    bizKey,
+                    null, // last-collected-date — no snapshot on the live-recompute path
+                    refDate,
                     ccy,
                     type,
                     r.getBankCd(),
@@ -132,15 +139,23 @@ public class DailyCashReportService {
         BigDecimal rcvCnt  = BigDecimal.ZERO;
         BigDecimal rcvAmt  = BigDecimal.ZERO;
 
-        void add(String type, DailyCashReptDailySumrDetl r) {
+        void add(String type, DailyCashAccountProjection r) {
             BigDecimal bal = nz(r.getBal());
-            switch (type) {
-                case TYPE_CASH    -> cash    = cash.add(bal);
-                case TYPE_DEMAND  -> demand  = demand.add(bal);
-                case TYPE_SAVINGS -> savings = savings.add(bal);
-                case TYPE_TERM    -> term    = term.add(bal);
-                case TYPE_LOAN    -> loan    = loan.add(bal);
-                default           -> { /* unrecognised type — leave totals untouched */ }
+            // DB-confirmed legacy mapping (rept_0900_001_rec2): 03/04 = current/demand,
+            // 05/06 = savings, 02 = term/fixed deposit, 01 = loan. 07/08 are in NO legacy
+            // summary bucket. CASH is never derived from ACCT_TYPE_CD — legacy TOTL_CASH
+            // comes from cash_repy_mstr (rec3/rec4), which is out of the refactor active-
+            // table scope, so `cash` stays 0. Unknown / unmapped codes contribute to
+            // nothing (safe no-op).
+            AcctTypeCd acctType = AcctTypeCd.fromCode(type).orElse(null);
+            if (acctType != null) {
+                switch (acctType) {
+                    case LOAN                     -> loan    = loan.add(bal);    // 01
+                    case DEPOSIT                  -> term    = term.add(bal);    // 02
+                    case CURRENT_KHR, CURRENT_USD -> demand  = demand.add(bal);  // 03, 04
+                    case SAVINGS_KHR, SAVINGS_USD -> savings = savings.add(bal); // 05, 06
+                    case CURRENT_KRW, SAVINGS_KRW -> { /* 07, 08 — not in any legacy summary bucket */ }
+                }
             }
             sndCnt = sndCnt.add(nz(r.getSndCnt()));
             sndAmt = sndAmt.add(nz(r.getSndAmt()));

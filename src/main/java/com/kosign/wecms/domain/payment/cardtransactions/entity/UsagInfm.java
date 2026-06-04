@@ -18,7 +18,7 @@ import lombok.Setter;
  * <p>Localized names live on the sibling
  * {@code USAG_INFM_LANG_DETL} table — see {@link UsagInfmLangDetl}.
  *
- * <p>Schema landed in V201; DEV parity verified via postgres_dev
+ * <p>Schema landed in V201; DEV parity verified via postgres_dev_server_jexframe
  * MCP 2026-05-22 (11 columns; single-key PK on {@code USE_USAG_CD}).
  */
 @Getter

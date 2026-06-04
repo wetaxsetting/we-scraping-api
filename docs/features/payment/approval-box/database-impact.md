@@ -280,7 +280,7 @@ ON CONFLICT (WEB_SVC_ID, DYM_AREA_ID, FIELD_ID) DO NOTHING;
 -- EXPT_RESOL_MSTR + their EXPT_RESOL_APPRVR_INFM children). The Sprint 1+
 -- "real DEV data" rule applies — see V22/V29/V83 precedents.
 -- The seed script is generated separately into Claude Code (AI)/sql/ via the
--- canonical mcp__postgres_dev__query → INSERT-script pipeline. NOT inlined
+-- canonical mcp__postgres_dev_server_jexframe__query → INSERT-script pipeline. NOT inlined
 -- here to keep this migration file diff-reviewable.
 -- ----------------------------------------------------------------------------
 ```

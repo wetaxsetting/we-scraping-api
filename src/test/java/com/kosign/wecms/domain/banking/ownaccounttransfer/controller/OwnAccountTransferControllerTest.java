@@ -53,10 +53,12 @@ class OwnAccountTransferControllerTest {
 
     private MockMvc mvc;
     private OwnAccountTransferService service;
+    private OatNxisasService          nxisasService;
 
     @BeforeEach
     void setUp() {
-        service = mock(OwnAccountTransferService.class);
+        service       = mock(OwnAccountTransferService.class);
+        nxisasService = mock(OatNxisasService.class);
 
         ObjectMapper mapper = new ObjectMapper()
                 .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)

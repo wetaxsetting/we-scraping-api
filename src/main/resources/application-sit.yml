@@ -14,7 +14,7 @@
 # Targets the shared WeCMS dev DB server at 172.168.5.172:5432/wecmsdevdb
 # (requires office network / VPN reachability). Connection details are
 # duplicated in:
-#   - .mcp.json (postgres_local entry — Claude's read-only SQL tool)
+#   - .mcp.json (postgres_dev_server_refactor entry — Claude's read-only SQL tool)
 #   - run-local.bat / run-local.sh (host:port reachability check)
 # Keep all three in sync if the server moves.
 #

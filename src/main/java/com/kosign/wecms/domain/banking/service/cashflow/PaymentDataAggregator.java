@@ -40,8 +40,6 @@ import java.util.stream.Collectors;
  *       {@code wb_get_appr_stts(...) = 'C'} predicate filters them
  *       (no row in {@code expt_resol_mstr} → helper returns NULL → not
  *       'C').</li>
- *   <li>Apply quarter filter (per-row month membership in the quarter's
- *       months — legacy {@code filtered_payment_data} predicate).</li>
  *   <li>Apply bank filter (legacy "any of BANK_CD, ACCT_NO, or both
  *       matches any entry" — see §3.10).</li>
  *   <li>Apply FX conversion via {@link FxConverter}. Bank rows pass
@@ -71,9 +69,10 @@ public class PaymentDataAggregator {
 
     /**
      * Pull, project, and approval-filter all rows for the year.
-     * Quarter + bank filter are applied by the caller via
-     * {@link #applyFilters} so this method can serve the prior-year
-     * carry-forward path which never quarter-filters.
+     * The bank filter is applied by the caller via {@link #applyFilters}
+     * so this method can also serve the prior-year carry-forward path
+     * (which never bank-filters). Quarter is NOT a calculation input on
+     * either path — see {@link #applyFilters}.
      */
     public List<PaymentDataRow> collect(String bizKey, int year) {
         String yearStr = String.valueOf(year);
@@ -166,24 +165,32 @@ public class PaymentDataAggregator {
     }
 
     /**
-     * Apply quarter + bank filter, then FX-convert each row's amount to
-     * the base currency. Returns rows whose {@code originalAmount} has
-     * been replaced with the converted value via a new
-     * {@link PaymentDataRow} (record immutability).
+     * Apply the bank filter, then FX-convert each row's amount to the
+     * base currency. Returns rows whose {@code originalAmount} has been
+     * replaced with the converted value via a new {@link PaymentDataRow}
+     * (record immutability).
+     *
+     * <p><b>Quarter is intentionally NOT applied here.</b> Legacy
+     * {@code cash_0001_001} always computes the full Jan–Dec year and
+     * lets the frontend hide the out-of-quarter month columns
+     * client-side ({@code applyQuarterVisibility} in
+     * {@code cash_0001_001.ts}; the legacy UI sends {@code YEAR_QUAT=null}
+     * to {@code get_cashflow_report}). Quarter must therefore never trim
+     * the aggregated set, or the Opening / End balances would differ from
+     * legacy. PO decision (parity gap D-1 / G5, 2026-06-04): KEEP LEGACY
+     * BEHAVIOR — quarter is a column-visibility concern only. See
+     * docs/features/cash-flow/parity-audit/gap-report.md.
      */
     public List<PaymentDataRow> applyFilters(List<PaymentDataRow> rows,
-                                              Integer quarter,
                                               Collection<BankFilter> bankFilters,
                                               String baseCurrency,
                                               BigDecimal usdRate,
                                               BigDecimal krwRate,
                                               FxConverter fx) {
-        Set<Integer> visibleMonths = monthsOfQuarter(quarter);
         boolean hasBankFilter = bankFilters != null && !bankFilters.isEmpty();
 
         List<PaymentDataRow> out = new ArrayList<>(rows.size());
         for (PaymentDataRow r : rows) {
-            if (visibleMonths != null && !visibleMonths.contains(r.paymentMonth())) continue;
             if (hasBankFilter && !matchesBankFilter(r, bankFilters)) continue;
             BigDecimal converted = fx.convert(
                     r.originalAmount(), r.originalCurrency(),
@@ -242,21 +249,6 @@ public class PaymentDataAggregator {
         if (trscDt == null || trscDt.length() < 6) return -1;
         try { return Integer.parseInt(trscDt.substring(4, 6)); }
         catch (NumberFormatException e) { return -1; }
-    }
-
-    /**
-     * Visible months for a quarter. Returns {@code null} when
-     * {@code quarter} is {@code null} (no filter — every month passes).
-     */
-    private static Set<Integer> monthsOfQuarter(Integer quarter) {
-        if (quarter == null) return null;
-        return switch (quarter) {
-            case 1 -> Set.of(1, 2, 3);
-            case 2 -> Set.of(4, 5, 6);
-            case 3 -> Set.of(7, 8, 9);
-            case 4 -> Set.of(10, 11, 12);
-            default -> null;
-        };
     }
 
     /**

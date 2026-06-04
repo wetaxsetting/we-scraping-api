@@ -4,6 +4,7 @@ import com.kosign.wecms.domain.einvoice.entity.BusaDocMstr;
 import com.kosign.wecms.domain.einvoice.entity.BusaDocMstrId;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -256,4 +257,35 @@ public interface BusaDocMstrRepository extends JpaRepository<BusaDocMstr, BusaDo
     List<BusaDocMstr> findLinkableByDocIds(
             @Param("bizKey") String bizKey,
             @Param("docIds") List<String> docIds);
+
+    /**
+     * Detail-history popup query — refactor port of
+     * {@code nxisas_einvhis_dt_r001_act.jsp:57-79}. Lists every invoice a
+     * single GDT inquiry batch produced, filtered exactly as legacy:
+     * <ul>
+     *   <li>{@code DOC_TYPE = :docType} (Sales {@code 'I'} only — the
+     *       legacy action rejects Expense)</li>
+     *   <li>{@code BIZ_KEY = :bizKey} — tenant scope</li>
+     *   <li>{@code ISSU_DT BETWEEN :fromDt AND :toDt}</li>
+     *   <li>{@code MOD_DTM = :modDtm} — the exact batch timestamp</li>
+     *   <li>{@code HAND_REG_YN = 'N'} — scraped (not hand-registered) rows</li>
+     * </ul>
+     * Ordering comes from the caller-supplied {@link Sort} (default
+     * {@code issu_dt DESC} per the legacy {@code SortHelper} whitelist).
+     */
+    @Query("""
+            SELECT m FROM BusaDocMstr m
+             WHERE m.docType = :docType
+               AND m.bizKey = :bizKey
+               AND m.issuDt BETWEEN :fromDt AND :toDt
+               AND m.modDtm = :modDtm
+               AND m.handRegYn = 'N'
+            """)
+    List<BusaDocMstr> findDetailHistory(
+            @Param("bizKey")  String bizKey,
+            @Param("docType") String docType,
+            @Param("fromDt")  String fromDt,
+            @Param("toDt")    String toDt,
+            @Param("modDtm")  String modDtm,
+            Sort sort);
 }

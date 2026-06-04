@@ -64,7 +64,7 @@ Backend MR lands first; frontend MR builds against the running local backend. Bo
 
 ### Task B1 — DEV parity audit (read-only)
 
-- Run information-schema queries for `TRCO_INFM`, `TRCO_ADDR_INFM`, `TRCO_ACCT_INFO`, `TRCO_OVRS_INFM`, `PGRO_BSAC_LNKN_INFM` via `postgres_dev` MCP per [`.claude/rules/database.md`](../../../../../.claude/rules/database.md) — columns, types, lengths, defaults, PK / UK / CHECK / FK, indexes.
+- Run information-schema queries for `TRCO_INFM`, `TRCO_ADDR_INFM`, `TRCO_ACCT_INFO`, `TRCO_OVRS_INFM`, `PGRO_BSAC_LNKN_INFM` via `postgres_dev_server_jexframe` MCP per [`.claude/rules/database.md`](../../../../../.claude/rules/database.md) — columns, types, lengths, defaults, PK / UK / CHECK / FK, indexes.
 - Record DEV column counts in `docs/refactor-wecms/database/contacts-schema.md` migration header.
 - Confirm `wb_get_next_val('trco_infm','trco_key', …)` return shape (drives OQ-4 final decision).
 - **Exit**: parity snapshot pasted into the MR description.
@@ -82,7 +82,7 @@ Backend MR lands first; frontend MR builds against the running local backend. Bo
 ### Task B3 — Flyway seed V{n+1}__contacts_seed.sql
 
 - File: `wecms-api/src/main/resources/db/migration/V{n+1}__contacts_seed.sql`.
-- Pull up to 30 most-recent rows from DEV via the `postgres_dev` MCP, scoped to `BIZ_KEY = 'VN_VNM0004_000001'`. Order: parents first (`TRCO_INFM`), then children — avoids FK violations.
+- Pull up to 30 most-recent rows from DEV via the `postgres_dev_server_jexframe` MCP, scoped to `BIZ_KEY = 'VN_VNM0004_000001'`. Order: parents first (`TRCO_INFM`), then children — avoids FK violations.
 - Every insert uses `ON CONFLICT (...) DO NOTHING`.
 - **Exit**: re-running `./gradlew bootRun` is idempotent; row counts match the cap.
 

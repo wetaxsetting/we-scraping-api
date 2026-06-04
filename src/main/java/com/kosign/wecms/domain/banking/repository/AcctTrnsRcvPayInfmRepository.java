@@ -25,6 +25,23 @@ public interface AcctTrnsRcvPayInfmRepository extends JpaRepository<AcctTrnsRcvP
     List<AcctTrnsRcvPayInfm> findByBizKeyAndAcctSeqNoIn(String bizKey, List<String> acctSeqNos);
 
     /**
+     * Internal-transfer classification for the Daily Financial report.
+     * Returns the receipt/payment rows whose {@code RCV_PAY_USAG_CD} is
+     * one of the legacy internal-transfer usage codes
+     * ({@code 4000000008 / 6000000062 / 4000000104 / 6000000061} —
+     * verbatim from {@code rept_0015_001_r001_act.jsp:264-267}), scoped
+     * to the supplied transaction {@code ACCT_SEQ_NO}s (the day's
+     * transactions). The service collects the matched {@code acctSeqNo}
+     * set and splits each transaction into the SND/RCV vs. INTL_SND/
+     * INTL_RCV buckets.
+     *
+     * <p>{@code acctSeqNos} must be non-empty — the service skips the
+     * call when the day has no transactions.
+     */
+    List<AcctTrnsRcvPayInfm> findByBizKeyAndAcctSeqNoInAndRcvPayUsagCdIn(
+            String bizKey, List<String> acctSeqNos, List<String> rcvPayUsagCds);
+
+    /**
      * Settings &gt; Contacts in-use guard (OQ-2 resolved 2026-05-12 /
      * legacy {@code WBE1190}). Returns {@code true} when at least one
      * payment / receipt row in the tenant references the given contact

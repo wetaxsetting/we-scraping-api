@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Scope | The 12 tables + 2 sequences from the PO's inventory image (2026-05-18) |
-| Source of truth | DEV `wecmsvndev` — verified 2026-05-18 via `postgres_dev` MCP |
+| Source of truth | DEV `wecmsvndev` — verified 2026-05-18 via `postgres_dev_server_jexframe` MCP |
 | Companion docs | [firm-banking-dispatch-schema.md](firm-banking-dispatch-schema.md) (DDL for the 6 newly-created tables) · [internal-transfer-schema.md](internal-transfer-schema.md) (dispatch's master/detail peer) |
 
 This doc maps how the 12 tables relate to each other. **DEV has zero FK constraints across these tables** — every relationship below is an *implicit* join discovered by matching key columns. Referential integrity is enforced entirely in application code.

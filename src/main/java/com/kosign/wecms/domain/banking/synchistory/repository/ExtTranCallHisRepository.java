@@ -80,4 +80,40 @@ public interface ExtTranCallHisRepository extends JpaRepository<ExtTranCallHis, 
             @Param("ccyNot") String ccyNot,
             @Param("bankCd") String bankCd,
             @Param("successFilter") Boolean successFilter);
+
+    /**
+     * e-Invoice "Latest Inquiry History" list. Mirrors legacy
+     * {@code nxisas_einvhis_r001_act.jsp} / {@code IDO.EXT_TRAN_CALL_HIS_R002}:
+     * filter on {@code SUBSTRING(REG_DTM,1,8)} window + tenant +
+     * {@code SVC_ID LIKE} (default {@code 'GDT_INQUIRY%'} = both Sales +
+     * Expenses), newest first. No {@code ACCT_MSTR} join (GDT calls carry
+     * no bank account).
+     *
+     * <p>Params mirror the legacy inputs:
+     * <ul>
+     *   <li>{@code bizKey} — tenant scope (legacy {@code loginUser.getBizKey()}).</li>
+     *   <li>{@code fromDt} / {@code toDt} — {@code yyyyMMdd} window on the
+     *       inquiry timestamp (legacy {@code substring(reg_dtm,1,8) between}).</li>
+     *   <li>{@code svcPattern} — {@code SVC_ID LIKE} pattern
+     *       ({@code 'GDT_INQUIRY_SALES'} / {@code 'GDT_INQUIRY_EXPENSES'} /
+     *       {@code 'GDT_INQUIRY%'}).</li>
+     *   <li>{@code success} — {@code null} = All, {@code TRUE} = success
+     *       only ({@code RSLT_CD = '00000000'}), {@code FALSE} = failed
+     *       only (legacy {@code STTS} 0/1).</li>
+     * </ul>
+     */
+    @Query("SELECT h FROM ExtTranCallHis h " +
+           "WHERE h.bizKey = :bizKey " +
+           "  AND SUBSTRING(h.regDtm, 1, 8) BETWEEN :fromDt AND :toDt " +
+           "  AND h.svcId LIKE :svcPattern " +
+           "  AND ( :successFilter IS NULL " +
+           "        OR ( :successFilter = TRUE  AND h.rsltCd = '00000000' ) " +
+           "        OR ( :successFilter = FALSE AND ( h.rsltCd IS NULL OR h.rsltCd <> '00000000' ) ) ) " +
+           "ORDER BY h.regDtm DESC")
+    List<ExtTranCallHis> findEInvoiceInquiryHistory(
+            @Param("bizKey") String bizKey,
+            @Param("fromDt") String fromDt,
+            @Param("toDt") String toDt,
+            @Param("svcPattern") String svcPattern,
+            @Param("successFilter") Boolean successFilter);
 }

@@ -1,3 +1,5 @@
+> ⚠️ **Design-history document — status claims are stale.** The consolidated, code-accurate backend docs now live in **[expenses-e-invoices/](expenses-e-invoices/README.md)** (which documents the deltas over the shared [sales-e-invoices/](sales-e-invoices/README.md) backend). This file predates the wiring and still flags the `EXPENSE → 'E'` `resolveDocType` "blocker" — that is resolved: the mapping is `EXPENSE → 'B'` and the Expenses list/export paths are wired. Read this file for original design rationale; read the folder for current behaviour.
+
 # Add-on Service > Expenses e-Invoices — Refactor Feature Spec
 
 **Module:** Add-on Service

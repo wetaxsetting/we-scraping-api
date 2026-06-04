@@ -1,5 +1,7 @@
 # Add-on Service > Operation Status Inquiry — Backend API Design
 
+> **Consolidated feature docs:** see [../../../features/addon-service/operation-status-inquiry/](../../../features/addon-service/operation-status-inquiry/) — especially [interface-specification.md](../../../features/addon-service/operation-status-inquiry/interface-specification.md) for the current (completed) REST contract. This file remains the deep API-design reference.
+
 **Module:** Add-on Service · `domain/operation/`
 **Refactor screen ID (proposed):** `addon-operation-status`
 **JEX counterpart:** `aosv_0001_001_r001` (read) — `aosv_0001_001_u001` (write, OUT of scope)

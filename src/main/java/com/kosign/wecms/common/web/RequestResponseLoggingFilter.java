@@ -15,6 +15,8 @@ import org.springframework.web.util.ContentCachingResponseWrapper;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
+import java.util.Set;
 
 /**
  * Logs every HTTP request + response (method, URI, query, status, duration,
@@ -32,6 +34,22 @@ public class RequestResponseLoggingFilter extends OncePerRequestFilter {
 
     private static final int MAX_BODY_CHARS = 8_000;
     private static final ObjectMapper PRETTY = new ObjectMapper();
+
+    /**
+     * Content types whose response body is binary and must never be
+     * stringified into the log. The XLSX MIME type is the motivating case:
+     * {@code application/vnd.openxmlformats-officedocument.spreadsheetml.sheet}
+     * contains the substring {@code "xml"} (inside "open<b>xml</b>formats"),
+     * so the generic {@link #isTextual} heuristic wrongly treated it as text
+     * and dumped the ZIP body ({@code PK ... xl/workbook.xml ...}) to the log.
+     * This explicit set is checked first. {@code image/*} is matched by prefix.
+     */
+    private static final Set<String> BINARY_CONTENT_TYPES = Set.of(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.ms-excel",
+            "application/octet-stream",
+            "application/pdf"
+    );
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
@@ -75,6 +93,20 @@ public class RequestResponseLoggingFilter extends OncePerRequestFilter {
     }
 
     private void logResponse(ContentCachingResponseWrapper res, long tookMs) {
+        String contentType = res.getContentType();
+
+        // Binary / download responses (XLSX export, PDF, octet-stream, images)
+        // must never be stringified — dumping a ZIP/PDF body produces noise like
+        // `PK ... xl/workbook.xml ...` in the log. Log only the metadata.
+        if (isBinaryDownload(contentType)) {
+            log.debug("\n<-- {} ({} ms) content-type={} size={} bytes\n[binary response body omitted]\n",
+                    res.getStatus(),
+                    tookMs,
+                    contentType,
+                    res.getContentAsByteArray().length);
+            return;
+        }
+
         // Jackson writes JSON responses as UTF-8 regardless of what the
         // servlet response advertises via getCharacterEncoding() — which
         // defaults to ISO-8859-1 per the Servlet API. Force UTF-8 for
@@ -82,11 +114,26 @@ public class RequestResponseLoggingFilter extends OncePerRequestFilter {
         // (e.g. Korean error messages from the NXISAS scraping gateway).
         // The actual response bytes on the wire are unaffected; this
         // only fixes the log rendering.
-        String encoding = isJson(res.getContentType())
+        String encoding = isJson(contentType)
                 ? StandardCharsets.UTF_8.name()
                 : res.getCharacterEncoding();
-        String body = readBody(res.getContentAsByteArray(), encoding, res.getContentType());
+        String body = readBody(res.getContentAsByteArray(), encoding, contentType);
         log.debug("\n<-- {} ({} ms)\n{}\n", res.getStatus(), tookMs, body);
+    }
+
+    /**
+     * True when the response content type denotes a binary download whose body
+     * must not be logged. Matches the explicit {@link #BINARY_CONTENT_TYPES}
+     * set plus any {@code image/*} type. Parameters (e.g. {@code ;charset=…})
+     * are stripped before comparison.
+     */
+    private boolean isBinaryDownload(String contentType) {
+        if (contentType == null) return false;
+        String ct = contentType.toLowerCase(Locale.ROOT);
+        int semi = ct.indexOf(';');
+        if (semi >= 0) ct = ct.substring(0, semi);
+        ct = ct.trim();
+        return ct.startsWith("image/") || BINARY_CONTENT_TYPES.contains(ct);
     }
 
     private String readBody(byte[] buf, String encoding, String contentType) {

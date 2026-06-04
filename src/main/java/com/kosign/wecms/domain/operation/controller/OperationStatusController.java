@@ -3,9 +3,11 @@ package com.kosign.wecms.domain.operation.controller;
 import com.kosign.wecms.common.export.ExcelExportRequest;
 import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.response.ApiResponse;
+import com.kosign.wecms.domain.operation.dto.CreateOperationStatusRequest;
 import com.kosign.wecms.domain.operation.dto.InquireOperationStatusRequest;
 import com.kosign.wecms.domain.operation.dto.InquireOperationStatusResponse;
 import com.kosign.wecms.domain.operation.dto.OperationStatusListResponse;
+import com.kosign.wecms.domain.operation.dto.OperationStatusRow;
 import com.kosign.wecms.domain.operation.dto.UpdateOperationStatusRequest;
 import com.kosign.wecms.domain.operation.dto.UpdateOperationStatusResponse;
 import com.kosign.wecms.domain.operation.service.OperationStatusFilter;
@@ -82,6 +84,21 @@ public class OperationStatusController {
             @Valid @RequestBody ExcelExportRequest request,
             HttpServletResponse response) {
         excelExportService.exportTo(response, request);
+    }
+
+    /**
+     * Inquire-popup "Save" — persists the GDT-looked-up registration into
+     * {@code OPRT_STTS_INFO}. Mirrors legacy {@code aosv_0001_002_c001}.
+     * Create-only: a duplicate {@code (BIZ_KEY, TAXCODE)} returns
+     * {@code WBE_OPERATION_STATUS_DUPLICATE} (legacy {@code WBE0003}).
+     * Tenant is resolved from the JWT via {@code TenantContext}; the wire
+     * never carries {@code BIZ_KEY}. Returns the persisted row in the same
+     * shape the list endpoint emits.
+     */
+    @PostMapping("/operation-status")
+    public ApiResponse<OperationStatusRow> create(
+            @Valid @RequestBody CreateOperationStatusRequest request) {
+        return ApiResponse.ok(service.create(request));
     }
 
     /**

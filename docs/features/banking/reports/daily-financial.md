@@ -1,16 +1,25 @@
-# Daily Financial Report — Refactor Feature Spec
+# Daily Financial Report — Refactor Feature Spec (one-page stub)
+
+> **Superseded in detail — see the full package.** This one-page stub is retained as the short
+> feature-spec entry, but the **authoritative, implementation-accurate documentation** for Daily
+> Financial lives in the package at [`daily-financial/`](daily-financial/README.md). When the stub
+> and the package disagree, **the package wins** (it is reconciled against the actual code as of the
+> 2026-06-04 P0 fix). Two drifts the stub originally carried are corrected below and noted here for
+> traceability:
+> 1. **Slug** — the canonical slug is **`daily-financial`** (route-based), not `daily-financial-report`. Audit `WSVC_ID` and View Setting `WEB_SVC_ID` (when seeded) both use `daily-financial`.
+> 2. **Read strategy + params** — the implemented endpoint uses **`asOf` / `currencyScope`** (not `referenceDate` / `currency`) and **live-computes** from in-scope operational tables (Strategy B), it does **not** read materialized summary tables (those are out of the PROD Active Table List). See [P0-fix-plan.md §1](daily-financial/P0-fix-plan.md) + [migration-guide.md §3](daily-financial/migration-guide.md#3-target-spring-architecture).
 
 | Field | Value |
 |---|---|
-| Slug | `daily-financial-report` (runtime id; file renamed to `daily-financial.md` to match the menu) |
+| Slug | `daily-financial` (route-based; file is `daily-financial.md` to match the menu) |
 | Module | Banking → Reports |
-| Status | Planning |
+| Status | **Implemented — READY FOR SIT (in-PROD scope)** · full status: [daily-financial/README.md §5](daily-financial/README.md#5-sit-readiness-2026-06) |
 | JEX twin | `rept_0015_001` (view) + `rept_0015_001_r001` (read API) |
 | Refactor route | `/banking/reports/daily-financial` (Next.js) |
 | Refactor base URI | `/api/v1/banking/reports/daily-financial` (Spring Boot) |
-| Audit `WSVC_ID` | `daily-financial-report` (slug — never `rept_0015_001`) |
-| View Setting `WEB_SVC_ID` | `daily-financial-report` |
-| i18n key prefix | `reports.daily_financial.*` |
+| Audit `WSVC_ID` | `daily-financial` (slug — never `rept_0015_001`) |
+| View Setting `WEB_SVC_ID` | `daily-financial` (not yet seeded — couples with the server-side Excel provider, P1) |
+| i18n key prefix | frontend `report.daily_financial.*` |
 
 ---
 
@@ -23,19 +32,19 @@ A deeper version of the Daily Cash Report: same as-of snapshot, but every accoun
 
 Used by treasury / accounting for daily reconciliation; this is also the screen that drives the Excel report `WeCMS_Daily_Financial_Report_*.xlsx`.
 
-### In scope
+### In scope (as implemented — see the package for the authoritative state)
 
-- Search with `referenceDate` + `currency` + `activeAccountsOnly` + `includeInternalTransfers`.
-- Four-tier response: currency summary (`REC`), account list (`REC1`), account with nested transactions (`REC2` → `REC2_1`), currency flow rollup (`REC3`).
-- Excel export bound to the existing template.
-- View Setting on the account grid and the transaction sub-grid.
-- Audit log on search and export.
+- Search with **`asOf`** + **`currencyScope`** + `activeAccountsOnly` + `includeInternalTransfers` (the implemented param names; the stub's earlier `referenceDate`/`currency` is corrected).
+- Financial Status per-currency totals (`REC`) + Current/Savings account rows (`REC1`) — **live-computed** from `ACCT_TRNS_HSTR` / `ACCT_TRNS_RCV_PAY_INFM` / `ACCT_MSTR` (Strategy B).
+- Transaction-history drill-down **popup** (`rept_0015_002` → `GET …/daily-financial/transactions`).
 
-### Out of scope
+### Out of scope / deferred (not gaps — see [refactor-gap-analysis.md](daily-financial/refactor-gap-analysis.md))
 
-- Owning the nightly summary recompute (`d001`/`c002` operations the JEX action triggers) — the refactor consumes the materialized summary tables; the recompute job migrates as a separate feature.
-- Edit/annotate transactions (read-only report).
-- Multi-day range.
+- **Materialized summary tables + nightly recompute** (`wb_insert_daily_fincl_*`, C002/D002) — *not consumed*; the refactor live-computes instead, and the batch owns the writes. (The original stub's "consumes the materialized summary tables" line is corrected — those tables are not in the PROD Active Table List.)
+- **Inline per-account transactions (REC2_1)** — empty in v1; the popup serves the drilldown (P1).
+- **Server-side Excel provider** — frontend ships a client-side export; no backend `DailyFinancialExportProvider` yet (P1).
+- **Cash book (REC3) + receipt/payment & cash-book detail popups (`rept_0015_003/004`)** + time-deposit/loan panels — out of PROD scope / commented out in legacy.
+- Edit/annotate transactions (read-only report); multi-day range.
 
 ---
 
@@ -83,14 +92,16 @@ Used by treasury / accounting for daily reconciliation; this is also the screen 
 
 ### `GET /api/v1/banking/reports/daily-financial`
 
+> **Implemented param names** (corrected from the stub's original `referenceDate`/`currency`). See [interface-specification.md §3](daily-financial/interface-specification.md) for the authoritative contract.
+
 | Param | Type | Required | Notes |
 |---|---|---|---|
-| `referenceDate` | `LocalDate` | yes | Maps to `REF_DATE` (YYYYMMDD). |
-| `currency` | enum `ALL` / `FCY` / `VND` / `USD` / `KHR` | no, default `ALL` | Same semantics as Daily Cash. |
-| `activeAccountsOnly` | `boolean` | no, default `true` | Maps to `ACTV_ACCT_ONLY_YN`. |
-| `includeInternalTransfers` | `boolean` | no, default `true` | Maps to `INCL_INTL_TRNS_YN`. |
+| `asOf` | `String` (`yyyyMMdd`) | no, defaults to today | Maps to legacy `REF_DATE`. Drives the day aggregates + as-of balance. |
+| `currencyScope` | `ALL` / `FCY` / `VND` | no, default `ALL` | `VND` = exactly VND; `FCY` = every currency ≠ VND. |
+| `activeAccountsOnly` | `boolean` | no, default `true` | Maps to `ACTV_ACCT_ONLY_YN`. **`false` not yet honored** (active-only finder retained — P1/G-6). |
+| `includeInternalTransfers` | `boolean` | no, default `true` | Maps to `INCL_INTL_TRNS_YN`. Splits internal columns; **exclusion-from-totals is display-only** in v1 (P1/G-4). |
 
-`biz_key` from session.
+`biz_key` from the JWT (`TenantContext.currentBizKey()`), never from the request.
 
 ### Response shape
 

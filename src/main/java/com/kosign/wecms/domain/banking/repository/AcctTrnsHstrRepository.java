@@ -21,6 +21,32 @@ public interface AcctTrnsHstrRepository extends JpaRepository<AcctTrnsHstr, Acct
             String bizKey, String bankCd, String acctNo);
 
     /**
+     * All transactions for a tenant on a single {@code TRSC_DT}
+     * ({@code yyyyMMdd}). Powers the Daily Financial per-account daily
+     * debit/credit aggregates (legacy {@code DAILY_FINCL_REPT_DAILY_SUMR_DETL}
+     * SND/RCV/INTL columns, live-computed — see
+     * {@code docs/features/banking/reports/daily-financial/P0-fix-plan.md}).
+     * Grouping by {@code (bank_cd, acct_no)} happens in the service.
+     */
+    List<AcctTrnsHstr> findByBizKeyAndTrscDt(String bizKey, String trscDt);
+
+    /**
+     * As-of end-of-day balance source for Daily Financial — the most
+     * recent transaction row on or before {@code asOf} for one account.
+     * Its {@code BAL} is the running balance after that transaction, i.e.
+     * the account's end-of-day balance as of the selected date (legacy
+     * {@code DAILY_FINCL_REPT_DAILY_SUMR_DETL.BAL}, live-computed).
+     *
+     * <p>Ordered {@code TRSC_DT desc, TRSC_TM desc, ACCT_SEQ_NO desc} so
+     * the latest same-day transaction wins. Returns empty when the
+     * account has no history on or before {@code asOf}; the service then
+     * falls back to {@code ACCT_MSTR.BAL}.
+     */
+    java.util.Optional<AcctTrnsHstr>
+        findFirstByBizKeyAndBankCdAndAcctNoAndTrscDtLessThanEqualOrderByTrscDtDescTrscTmDescAcctSeqNoDesc(
+            String bizKey, String bankCd, String acctNo, String asOf);
+
+    /**
      * Idempotency lookup for the Bank Transaction Sync orchestrator —
      * mirrors legacy {@code fnsh_0001_001_c001_act.jsp:853} (Coocon JOB
      * pump checks {@code biz_key = ? AND bank_trns_full_id = ? AND
