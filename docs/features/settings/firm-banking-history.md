@@ -519,7 +519,7 @@ No new error codes are introduced. The existing framework codes (`WBE_VALIDATION
 
 ### 6.1 Source tables (DEV — read-only reference, mirror locally)
 
-Schema captured from `wecmsvndev` on 2026-05-08 via the read-only `postgres_dev` MCP. Full column lists in [../../database/settings/firm-banking-history-schema.md](../../references/database/settings/firm-banking-history-schema.md). High-level shape:
+Schema captured from `wecmsvndev` on 2026-05-08 via the read-only `postgres_dev_server_jexframe` MCP. Full column lists in [../../database/settings/firm-banking-history-schema.md](../../references/database/settings/firm-banking-history-schema.md). High-level shape:
 
 | Table | PK | Columns used by this screen | DEV row count (2026-05-08) | Local status |
 |---|---|---|---|---|

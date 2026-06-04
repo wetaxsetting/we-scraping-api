@@ -11,6 +11,7 @@ import com.kosign.wecms.domain.operation.client.OsmcGdtClient;
 import com.kosign.wecms.domain.operation.client.OsmcGdtClient.OsmcGdtRegistration;
 import com.kosign.wecms.domain.operation.client.OsmcGdtClient.OsmcGdtResult;
 import com.kosign.wecms.domain.operation.client.OsmcGdtClient.OsmcGdtSearchOutcome;
+import com.kosign.wecms.domain.operation.dto.CreateOperationStatusRequest;
 import com.kosign.wecms.domain.operation.dto.InquireOperationStatusResponse;
 import com.kosign.wecms.domain.operation.dto.OperationStatusListResponse;
 import com.kosign.wecms.domain.operation.dto.OperationStatusRow;
@@ -23,6 +24,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -45,12 +47,16 @@ import java.util.UUID;
  * row is a tax-authority operating-status snapshot for one counterparty
  * (per (BIZ_KEY, TAXCODE) pair).
  *
- * <p>Refactor R&amp;D scope is local-only — the live OSMC → GDT refresh
- * path (legacy NXISAS / {@code TRCO_TRCO001_00003}) is intentionally
- * NOT wired. The Inquire / Update buttons on the page either re-fetch
- * the local snapshot ({@code refreshKey++} on the frontend) or stay
- * inert. Bulk Inquire + audit-log writes to {@code EXT_TRAN_CALL_HIS}
- * land if/when the NXISAS bridge is ported.
+ * <p>The live OSMC → GDT bridge IS wired: {@link #inquire} (single
+ * lookup, legacy {@code aosv_0001_002_r001}) and {@link #bulkUpdate}
+ * (re-poll + upsert, legacy {@code aosv_0001_001_u001}) both call the
+ * real {@link OsmcGdtClient} and write {@code EXT_TRAN_CALL_HIS} +
+ * {@code NXSIAS_MODULE_TRAN_LOG_HIS} audit rows. {@link #create}
+ * persists a freshly-looked-up registration (legacy
+ * {@code aosv_0001_002_c001}, create-only with a duplicate guard).
+ * {@link #list} reads the cached {@code OPRT_STTS_INFO} snapshot. The
+ * gateway host is environment-config-driven ({@code wecms.osmc.*}); a
+ * non-PROD run must override it off the live Coocon default.
  */
 @Service
 @RequiredArgsConstructor
@@ -343,6 +349,66 @@ public class OperationStatusService {
                 hit.representativeFirstName(),
                 hit.searchDatetime()
         );
+    }
+
+    /* ------------------------------------------------------------------
+     *  Create — persist the inquired row (popup Save)
+     * ------------------------------------------------------------------ */
+
+    /**
+     * Inquire-popup "Save" — persists a GDT-looked-up registration into
+     * {@code OPRT_STTS_INFO}. Mirrors legacy
+     * {@code aosv_0001_002_c001_act.jsp}:
+     * <ol>
+     *   <li>Required-field validation (handled by bean validation on
+     *       {@link CreateOperationStatusRequest}).</li>
+     *   <li>Duplicate guard on {@code (BIZ_KEY, TAXCODE)} —
+     *       {@code existsById} → {@code WBE_OPERATION_STATUS_DUPLICATE}
+     *       (legacy {@code WBE0003}). Create-only, never an upsert (the
+     *       bulk Update path owns the refresh/upsert flow).</li>
+     *   <li>Insert with {@code REG_ID}/{@code REG_DTM} stamped from the
+     *       JWT-bound user.</li>
+     * </ol>
+     *
+     * <p>Tenant is read from {@link TenantContext}; the wire never carries
+     * {@code BIZ_KEY}. A concurrent insert of the same key surfaces as
+     * {@link DataIntegrityViolationException} and is mapped to the same
+     * duplicate error so the caller sees a friendly message, not a 500.
+     *
+     * @return the persisted row in the same wire shape the list endpoint
+     *         emits, so the popup can optimistically reflect it.
+     */
+    @Transactional
+    public OperationStatusRow create(CreateOperationStatusRequest req) {
+        final String bizKey = TenantContext.currentBizKey();
+        final String userId = TenantContext.currentUserId();
+
+        OprtSttsInfoId pk = new OprtSttsInfoId(bizKey, req.taxCode());
+        if (repo.existsById(pk)) {
+            throw new BusinessException("WBE_OPERATION_STATUS_DUPLICATE", req.taxCode());
+        }
+
+        OprtSttsInfo row = new OprtSttsInfo();
+        row.setBizKey(bizKey);
+        row.setTaxcode(req.taxCode());
+        row.setCompanyname(req.companyNm());
+        row.setCompanystatus(req.companyStatus());
+        row.setOfficeadd(req.officeAdd());
+        row.setSearchdatetime(req.searchDatetime());
+        // GDT may return a blank representative; the column is NOT NULL, so
+        // coalesce null → "" (same handling as bulkUpdate's upsert path).
+        row.setRepresentativefirstname(
+                req.representativeFirstName() == null ? "" : req.representativeFirstName());
+        stampAudit(row, userId);
+
+        try {
+            repo.save(row);
+        } catch (DataIntegrityViolationException e) {
+            // Lost the race against a concurrent Save of the same
+            // (BIZ_KEY, TAXCODE) — surface the duplicate, not a 500.
+            throw new BusinessException("WBE_OPERATION_STATUS_DUPLICATE", req.taxCode());
+        }
+        return toRow(row);
     }
 
     /* ------------------------------------------------------------------

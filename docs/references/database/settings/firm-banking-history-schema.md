@@ -5,13 +5,13 @@
 **Migration mapping:** [../../migration/firm-banking-history-mapping.md](../../migration/firm-banking-history-mapping.md)
 **JEX reference:** `IDO.TB_FIRM_TRAN_R002.xml` (multi-leg UNION) — read-only
 
-> No DDL is executed in Phase 1. The `postgres_dev` MCP is read-only. This file specifies the migrations Phase 2 will author and apply.
+> No DDL is executed in Phase 1. The `postgres_dev_server_jexframe` MCP is read-only. This file specifies the migrations Phase 2 will author and apply.
 
 ---
 
 ## 1. Source tables (legacy DEV — schema captured 2026-05-08)
 
-Schema captured live from `wecmsvndev` via the read-only `postgres_dev` MCP. Refactor mirrors **column-for-column**, with the documented intentional divergences from [docs/refactor-wecms/audits/db-parity-audit-2026-04-30.md § 3a–3b](../../audits/db-parity-audit-2026-04-30.md) (CHAR→VARCHAR, varchar(14)→TIMESTAMPTZ kept as varchar(14) for the legacy `REG_DTM` columns to keep behaviour parity).
+Schema captured live from `wecmsvndev` via the read-only `postgres_dev_server_jexframe` MCP. Refactor mirrors **column-for-column**, with the documented intentional divergences from [docs/refactor-wecms/audits/db-parity-audit-2026-04-30.md § 3a–3b](../../audits/db-parity-audit-2026-04-30.md) (CHAR→VARCHAR, varchar(14)→TIMESTAMPTZ kept as varchar(14) for the legacy `REG_DTM` columns to keep behaviour parity).
 
 ### 1.1 `TB_FIRM_TRAN` — Firm Banking gateway log (Korean firm-banking leg)
 
@@ -258,7 +258,7 @@ The view is queried with `WHERE BIZ_KEY = ? AND TARN_DTM BETWEEN ? AND ? [AND SV
 
 **Order matters.** V59 must precede V60 (the view references the new tables). V60 must precede V61 (View Setting seed depends on the View Setting tables, which already exist from V30 — so no new dependency, but the screen needs to "exist" conceptually). V62 is independent of V61.
 
-**Do not run any of these in Phase 1.** The `postgres_dev` MCP is read-only; the local DB is owned by Sonny's developer setup.
+**Do not run any of these in Phase 1.** The `postgres_dev_server_jexframe` MCP is read-only; the local DB is owned by Sonny's developer setup.
 
 ---
 

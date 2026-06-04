@@ -820,7 +820,13 @@ public class OwnAccountTransferService {
                 a.getBankCd(),
                 resolveBankName(a.getBankCd()),
                 a.getAcctNo(),
-                a.getAcctNickNm() != null ? a.getAcctNickNm() : a.getAcctNm(),
+                // Account Nickname column — legacy parity
+                // (`trns_0001_001_v001.ts:497` renders
+                // `null2void(ACCT_NICK_NM)`: the raw nickname, blank when
+                // null). Do NOT fall back to ACCT_NM (the product name,
+                // e.g. "E-Time Deposit (VND)") — legacy never shows it in
+                // this column.
+                a.getAcctNickNm(),
                 a.getAcctTypeCd(),
                 a.getBal(),
                 a.getRealAmt(),

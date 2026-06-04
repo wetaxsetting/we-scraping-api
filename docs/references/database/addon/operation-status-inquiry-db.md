@@ -1,5 +1,7 @@
 # Add-on Service > Operation Status Inquiry — Database Design
 
+> **Consolidated feature docs:** see [../../../features/addon-service/operation-status-inquiry/](../../../features/addon-service/operation-status-inquiry/) — especially [database-mapping.md](../../../features/addon-service/operation-status-inquiry/database-mapping.md) for the implemented entity ↔ schema mapping. This file remains the deep DB-design reference.
+
 **Module:** Add-on Service · `domain/operation/`
 **Refactor screen ID (proposed):** `addon-operation-status`
 **JEX counterpart:** `aosv_0001_001_r001`

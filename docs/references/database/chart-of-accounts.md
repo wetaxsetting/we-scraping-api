@@ -81,7 +81,7 @@ Numbering note: this doc was authored pre-implementation reserving V93–V96; on
 ```sql
 -- V94__chart_of_accounts_schema.sql
 -- Column count parity with DEV: 15
--- DEV introspection: 2026-05-13 (postgres_dev MCP)
+-- DEV introspection: 2026-05-13 (postgres_dev_server_jexframe MCP)
 -- Refactor naming: kebab-case slug `chart-of-accounts` — no `comm_0223_001` anywhere.
 
 CREATE TABLE IF NOT EXISTS CHART_ACCT_INFM (

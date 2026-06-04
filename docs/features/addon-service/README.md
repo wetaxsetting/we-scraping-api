@@ -10,9 +10,11 @@ Add-ons are auxiliary modules that ship alongside the core WeCMS feature set: e-
 
 | File | Refactor scope |
 |---|---|
-| [sales-e-invoices.md](sales-e-invoices.md) | Sales e-invoice fetch / display / status sync |
-| [expenses-e-invoices.md](expenses-e-invoices.md) | Expense e-invoice fetch / display / status sync |
-| [operation-status-inquiry.md](operation-status-inquiry.md) | Operational status / job monitoring view |
+| [sales-e-invoices/](sales-e-invoices/) ✅ · [sales-e-invoices.md](sales-e-invoices.md) | Sales e-invoice list / export / scrape-intake / history (**consolidated, code-accurate docs in the folder**; the single file is design-history) |
+| [expenses-e-invoices/](expenses-e-invoices/) ✅ · [expenses-e-invoices.md](expenses-e-invoices.md) | Expense e-invoice — shares the Sales backend (`type=EXPENSE` / `DOC_TYPE='B'`); folder documents the deltas |
+| [operation-status-inquiry.md](operation-status-inquiry.md) · [operation-status-inquiry/](operation-status-inquiry/) ✅ | Tax-authority operating-status inquiry (consolidated feature docs in the folder; the single file is design-history) |
+
+> **e-Invoice status (2026-06-04):** the Sales/Expenses backend is implemented end-to-end (list + multi-currency totals + pagination/sort + two XLSX exports + two-phase scrape intake + GDT inquiry/detail history). The folder docs supersede the "static UI only / `EXPENSE→'E'` bug" claims in the single-file specs — `resolveDocType` maps `EXPENSE→'B'` and the list/export/scrape paths are wired.
 
 ## Document standards
 

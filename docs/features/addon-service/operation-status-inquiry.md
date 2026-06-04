@@ -1,5 +1,7 @@
 # Add-on Service > Operation Status Inquiry — Refactor Feature Spec
 
+> **✅ Feature complete (2026-06-04).** Inquire / Update / Save / Export are all implemented and frontend-wired. The status notes further down this file are **design-history** from when parts were still deferred — for the current, code-accurate state see the consolidated folder: [operation-status-inquiry/README.md](operation-status-inquiry/README.md) (business-flow · functional-specification · database-mapping · interface-specification · source-code-index · migration-guide · test-scenarios · refactor-gap-analysis).
+
 **Module:** Add-on Service
 **Menu:** Operation Status Inquiry (Vietnamese tax-authority operating status of customers / suppliers)
 **Route:** [/addon/operation-status](../../../../wecms-web/app/(dashboard)/addon/operation-status/page.tsx)
