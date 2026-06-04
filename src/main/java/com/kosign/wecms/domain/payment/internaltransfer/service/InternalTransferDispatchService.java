@@ -4,7 +4,6 @@ import com.kosign.wecms.common.auditlog.service.AuditLogContext;
 import com.kosign.wecms.common.auditlog.service.AuditLogService;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
-import com.kosign.wecms.domain.payment.dispatch.service.TransferDispatchExecutor;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.DispatchRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumr;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrDetl;
@@ -29,13 +28,18 @@ import java.util.List;
  *
  * <h2>Phase 1 dispatch (2026-05-28)</h2>
  *
- * <p>The dispatch flow now writes the legacy {@code TB_PAY_*} rows via
- * the shared {@link TransferDispatchExecutor}:
+ * <p>The dispatch flow writes the legacy {@code TB_PAY_*} rows via the
+ * Internal-Transfer-specific {@link InternalTransferDispatchExecutor}
+ * (G18/G19/G20 legacy-parity routing/currency/channel — the shared
+ * {@code TransferDispatchExecutor} used by Vendor/Expense/Payroll is left
+ * unchanged):
  * <ul>
  *   <li>Loads the master + lines, validates approval state +
  *       cut-off-time.</li>
- *   <li>Delegates to {@link TransferDispatchExecutor#execute} which
- *       branches on {@code TRNF_CCY_CD}:
+ *   <li>Delegates to {@link InternalTransferDispatchExecutor#execute} which
+ *       applies the legacy routing rule (API path when
+ *       {@code (TRNF_CCY_CD=="VND" && !isShinhanUsdToVnd) || isWooriUsdToVnd},
+ *       else file path):
  *       <ul>
  *         <li><b>VND → API path</b>: insert one {@code TB_PAY_TARGET}
  *             per detail line; stamp {@code PAY_TRAN_DT} +
@@ -66,10 +70,10 @@ public class InternalTransferDispatchService {
 
     private final ScdulPymnSumrRepository     sumrRepository;
     private final ScdulPymnSumrDetlRepository detlRepository;
-    private final CutoffValidator             cutoffValidator;
-    private final AuditLogService             auditLogService;
-    private final TransferDispatchExecutor    dispatchExecutor;
-    private final Clock                       clock;
+    private final CutoffValidator                 cutoffValidator;
+    private final AuditLogService                 auditLogService;
+    private final InternalTransferDispatchExecutor dispatchExecutor;
+    private final Clock                           clock;
 
     /**
      * Execute the dispatch flow. Mirrors
@@ -114,9 +118,11 @@ public class InternalTransferDispatchService {
                 : TransferNetwork.fromAntDivCd(lines.get(0).getAntDivCd());
         cutoffValidator.validate(master.getOutBankCd(), network);
 
-        // Insert dispatch rows (TB_PAY_TARGET for VND, TB_PAY_FILE_MST +
-        // TB_PAY_FILE_DATA otherwise). Shared with Vendor/Expense/Payroll
-        // dispatch — the executor branches on req.trnfCcyCd internally.
+        // Insert dispatch rows (TB_PAY_TARGET for the API path, TB_PAY_FILE_MST
+        // + TB_PAY_FILE_DATA for the file path). Uses the Internal-Transfer-
+        // specific executor (G18/G19/G20 legacy-parity routing/currency/channel)
+        // so Vendor/Expense/Payroll — which still use the shared
+        // TransferDispatchExecutor — are unaffected.
         dispatchExecutor.execute(master, lines, req.trnfCcyCd());
 
         // Stamp the master row. Dirty checking flushes the UPDATE

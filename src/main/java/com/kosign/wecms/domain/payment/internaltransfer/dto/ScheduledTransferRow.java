@@ -1,6 +1,7 @@
 package com.kosign.wecms.domain.payment.internaltransfer.dto;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 /**
  * One row in the {@code GET /api/v1/payment/internal-transfer} response.
@@ -37,14 +38,73 @@ public record ScheduledTransferRow(
          * Expense siblings pass {@code null} via the legacy constructor
          * below.
          */
-        String     apprFundTp) {
+        String     apprFundTp,
+        /**
+         * First approver's display name (legacy {@code APPRVR_NM}, line-1 of
+         * the {@code EXPT_RESOL_APPRVR_INFM} chain). {@code null} when the
+         * batch has no approval request yet. Only the Internal Transfer
+         * Scheduled list populates it ({@code pymn_0009_001}); the Vendor /
+         * Expense / Payroll siblings pass {@code null} via the
+         * backward-compatible constructors below.
+         */
+        String     approver,
+        /**
+         * Total number of approvers in the chain ({@code EXPT_RESOL_APPRVR_INFM}
+         * line count) — drives the legacy "{@code [N]}" count badge next to the
+         * approver name. {@code null} when the batch has no approval request
+         * yet. Only the Internal Transfer Scheduled list populates it; the
+         * Vendor / Expense / Payroll siblings pass {@code null} via the
+         * backward-compatible constructors below.
+         */
+        Integer    approverCount,
+        /**
+         * Full approval chain (name + status + datetime), in
+         * {@code APPRVR_LINE_NO} order — feeds the legacy {@code pymn_0009_001}
+         * approver-cell click popup (Phase 2). {@code null} when the batch has
+         * no approval request yet. Only the Internal Transfer Scheduled list
+         * populates it; the Vendor / Expense / Payroll siblings pass
+         * {@code null} via the backward-compatible constructors below.
+         */
+        List<ScheduledTransferApprover> approvers) {
 
     /**
-     * Backward-compatible constructor for the sibling modules (Internal
-     * Transfer / Vendor / Expense) that don't carry a Payroll Type
-     * column — delegates to the canonical constructor with
-     * {@code apprFundTp = null} so their {@code toListRow(...)} call
-     * sites compile unchanged.
+     * Payroll-shaped constructor (carries {@code apprFundTp}, no
+     * {@code approver}/{@code approverCount}/{@code approvers}) — delegates
+     * with those set to {@code null} so the Payroll {@code toListRow(...)}
+     * call site compiles unchanged.
+     */
+    public ScheduledTransferRow(
+            String     scdulPymnNo,
+            String     scdulPymnTypeCd,
+            String     ccyCd,
+            String     titl,
+            String     apprSeqNo,
+            BigDecimal totalTranAmt,
+            BigDecimal totTrnsCnt,
+            String     regDtm,
+            String     regId,
+            String     apprStts,
+            String     apprSttsKey,
+            String     trnfStts,
+            String     trnfYn,
+            String     outBankCd,
+            String     wdrlActNo,
+            String     payDate,
+            String     fileNm,
+            String     docNo,
+            String     wdrlCcyCd,
+            String     apprFundTp) {
+        this(scdulPymnNo, scdulPymnTypeCd, ccyCd, titl, apprSeqNo,
+             totalTranAmt, totTrnsCnt, regDtm, regId, apprStts,
+             apprSttsKey, trnfStts, trnfYn, outBankCd, wdrlActNo,
+             payDate, fileNm, docNo, wdrlCcyCd, apprFundTp, null, null, null);
+    }
+
+    /**
+     * Backward-compatible constructor for the sibling modules (Vendor /
+     * Expense) that carry neither a Payroll Type nor an Approver column —
+     * delegates with {@code apprFundTp = null} and {@code approver = null}
+     * so their {@code toListRow(...)} call sites compile unchanged.
      */
     public ScheduledTransferRow(
             String     scdulPymnNo,
@@ -69,6 +129,6 @@ public record ScheduledTransferRow(
         this(scdulPymnNo, scdulPymnTypeCd, ccyCd, titl, apprSeqNo,
              totalTranAmt, totTrnsCnt, regDtm, regId, apprStts,
              apprSttsKey, trnfStts, trnfYn, outBankCd, wdrlActNo,
-             payDate, fileNm, docNo, wdrlCcyCd, null);
+             payDate, fileNm, docNo, wdrlCcyCd, null, null, null, null);
     }
 }

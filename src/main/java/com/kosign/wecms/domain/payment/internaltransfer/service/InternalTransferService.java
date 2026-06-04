@@ -266,9 +266,11 @@ public class InternalTransferService {
                 apprTypeArg,
                 pageable);
 
-        Map<String, String> docNoByApprSeqNo = buildDocNoMap(bizKey, rows.getContent());
+        Map<String, String> docNoByApprSeqNo    = buildDocNoMap(bizKey, rows.getContent());
+        Map<String, String> payDateByApprSeqNo  = buildPayDateMap(bizKey, rows.getContent());
+        Map<String, ApproverSummary> approverByApprSeqNo = buildFirstApproverMap(bizKey, rows.getContent());
         List<ScheduledTransferRow> dtoRows = rows.getContent().stream()
-                .map(s -> toListRow(s, docNoByApprSeqNo))
+                .map(s -> toListRow(s, docNoByApprSeqNo, payDateByApprSeqNo, approverByApprSeqNo))
                 .toList();
         List<CurrencyTotal> totals = computeCurrencyTotals(rows.getContent());
 
@@ -319,6 +321,22 @@ public class InternalTransferService {
         // legacy live system.
         String outBankNm = transferLineDetailMapper.resolveBankNm(master.getOutBankCd());
 
+        // Requester display name — legacy pymn_0009_003 fills #requestor_name
+        // from EXPT_RESOL_MSTR.DRAFT_USER_NM (looked up by APPR_SEQ_NO). Reuses
+        // the existing single-element IN finder (no new repo method); null when
+        // the batch has no approval request yet, so the frontend falls back to
+        // reg_id. Same pattern as the Transfer Result Detail requestor field.
+        String apprSeqNo = master.getApprSeqNo();
+        String requestor = (apprSeqNo != null && !apprSeqNo.isBlank())
+                ? exptResolMstrRepository
+                        .findByBizKeyAndApprSeqNoIn(bizKey, java.util.List.of(apprSeqNo))
+                        .stream()
+                        .findFirst()
+                        .map(ExptResolMstr::getDraftUserNm)
+                        .filter(s -> s != null && !s.isBlank())
+                        .orElse(null)
+                : null;
+
         // Approval-request attachments registered against this batch's
         // APPR_SEQ_NO. Empty when the batch has not been submitted for
         // approval yet, or when the user submitted with no files. The
@@ -349,6 +367,7 @@ public class InternalTransferService {
                 master.getTotTrnsCnt(),
                 master.getErpFileNum(),
                 master.getRegId(),
+                requestor,
                 master.getRegDtm(),
                 master.getApprSeqNo(),
                 // appr_stts — sourced from SCDUL_PYMN_SUMR.APPR_STTS (V120).
@@ -1496,10 +1515,31 @@ public class InternalTransferService {
                         (a, b) -> a));
     }
 
-    private ScheduledTransferRow toListRow(ScdulPymnSumr s, Map<String, String> docNoByApprSeqNo) {
-        String docNo = s.getApprSeqNo() != null
-                ? docNoByApprSeqNo.getOrDefault(s.getApprSeqNo(), s.getErpFileNum())
+    private ScheduledTransferRow toListRow(
+            ScdulPymnSumr s,
+            Map<String, String> docNoByApprSeqNo,
+            Map<String, String> payDateByApprSeqNo,
+            Map<String, ApproverSummary> approverByApprSeqNo) {
+        String apprSeqNo = s.getApprSeqNo();
+        boolean hasAppr = apprSeqNo != null && !apprSeqNo.isBlank();
+        String docNo = hasAppr
+                ? docNoByApprSeqNo.getOrDefault(apprSeqNo, s.getErpFileNum())
                 : s.getErpFileNum();
+        // Schedule Date = EXPT_RESOL_MSTR.PAY_DATE (the requested payment
+        // date set at Request Approval), NOT SCDUL_PYMN_SUMR.PAY_TRAN_DT
+        // (the dispatch date, which is null until the batch is transferred).
+        // Mirrors legacy pymn_0009_001 list PAY_DATE column.
+        String payDate  = hasAppr ? payDateByApprSeqNo.get(apprSeqNo) : null;
+        // Approver = first approver's name (line-1 of the
+        // EXPT_RESOL_APPRVR_INFM chain); approverCount = chain length (the
+        // legacy "[N]" badge). Blank/null until the batch is submitted for
+        // approval. Mirrors legacy pymn_0009_001 APPRVR_NM cell (Phase 1 —
+        // name + count badge + dropdown; hover popup deferred to Phase 2).
+        ApproverSummary appr = hasAppr ? approverByApprSeqNo.get(apprSeqNo) : null;
+        String  approver      = appr != null ? appr.firstName() : null;
+        Integer approverCount = appr != null ? appr.count()     : null;
+        List<com.kosign.wecms.domain.payment.internaltransfer.dto.ScheduledTransferApprover> approvers =
+                appr != null ? appr.approvers() : null;
         return new ScheduledTransferRow(
                 s.getScdulPymnNo(),
                 s.getScdulPymnTypeCd(),
@@ -1521,10 +1561,81 @@ public class InternalTransferService {
                 s.getTrnfYn(),
                 s.getOutBankCd(),
                 s.getWdrlActNo(),
-                s.getPayTranDt(),
+                payDate,
                 s.getOrgFileNm(),
                 docNo,
-                s.getWdrlCcyCd());
+                s.getWdrlCcyCd(),
+                null,      // appr_fund_tp — Payroll-only column
+                approver,
+                approverCount,
+                approvers);
+    }
+
+    /** First approver name + total chain length + the full ordered chain
+     *  (name/status/datetime) for one approval request — feeds the Scheduled
+     *  list "Approver" cell (name + "[N]" + Phase-2 click popup). */
+    private record ApproverSummary(
+            String firstName,
+            int count,
+            List<com.kosign.wecms.domain.payment.internaltransfer.dto.ScheduledTransferApprover> approvers) {}
+
+    /**
+     * Map {@code APPR_SEQ_NO → EXPT_RESOL_MSTR.PAY_DATE} (the requested
+     * payment date, {@code yyyyMMdd}) for the rows on the current page.
+     * Drives the Scheduled Transfer list's "Schedule Date" column. One
+     * batched query; empty when no row has been submitted for approval.
+     */
+    private Map<String, String> buildPayDateMap(String bizKey, List<ScdulPymnSumr> rows) {
+        List<String> apprSeqNos = rows.stream()
+                .map(ScdulPymnSumr::getApprSeqNo)
+                .filter(seq -> seq != null && !seq.isBlank())
+                .distinct()
+                .toList();
+        if (apprSeqNos.isEmpty()) return Map.of();
+        return exptResolMstrRepository.findByBizKeyAndApprSeqNoIn(bizKey, apprSeqNos)
+                .stream()
+                .filter(m -> m.getPayDate() != null && !m.getPayDate().isBlank())
+                .collect(java.util.stream.Collectors.toMap(
+                        ExptResolMstr::getApprSeqNo,
+                        ExptResolMstr::getPayDate,
+                        (a, b) -> a));
+    }
+
+    /**
+     * Map {@code APPR_SEQ_NO → {first approver name, chain length}} from the
+     * {@code EXPT_RESOL_APPRVR_INFM} chain (ordered by {@code APPRVR_LINE_NO}).
+     * Drives the Scheduled Transfer list's "Approver" cell — the primary
+     * approver name + the legacy "{@code [N]}" count badge. One
+     * {@code findChain} per distinct approval request on the page
+     * (≤ page size); empty when no row has been submitted for approval.
+     */
+    private Map<String, ApproverSummary> buildFirstApproverMap(String bizKey, List<ScdulPymnSumr> rows) {
+        List<String> apprSeqNos = rows.stream()
+                .map(ScdulPymnSumr::getApprSeqNo)
+                .filter(seq -> seq != null && !seq.isBlank())
+                .distinct()
+                .toList();
+        if (apprSeqNos.isEmpty()) return Map.of();
+        Map<String, ApproverSummary> out = new java.util.HashMap<>(apprSeqNos.size());
+        for (String seq : apprSeqNos) {
+            var chain = exptResolApprvrInfmRepository.findChain(bizKey, seq);
+            if (!chain.isEmpty()) {
+                String nm = chain.get(0).getApprvrNm();
+                String firstName = (nm != null && !nm.isBlank()) ? nm.trim() : null;
+                // Full ordered chain for the Phase-2 click popup
+                // (name + status + approval datetime). findChain is already
+                // ordered by APPRVR_LINE_NO ASC.
+                List<com.kosign.wecms.domain.payment.internaltransfer.dto.ScheduledTransferApprover> list =
+                        chain.stream()
+                                .map(a -> new com.kosign.wecms.domain.payment.internaltransfer.dto.ScheduledTransferApprover(
+                                        a.getApprvrNm(),
+                                        a.getApprvrStts(),
+                                        a.getApprDtm()))
+                                .toList();
+                out.put(seq, new ApproverSummary(firstName, chain.size(), list));
+            }
+        }
+        return out;
     }
 
 
