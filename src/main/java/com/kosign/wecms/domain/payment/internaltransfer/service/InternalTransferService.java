@@ -9,6 +9,7 @@ import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxActionResponse
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprDv;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxFanoutService;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxService;
+import com.kosign.wecms.domain.notification.service.NotificationService;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.CreateScheduledTransferRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.CreateScheduledTransferResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.CurrencyTotal;
@@ -195,6 +196,7 @@ public class InternalTransferService {
     private final Clock                        clock;
     private final ExptResolMstrRepository       exptResolMstrRepository;
     private final ExptResolApprvrInfmRepository exptResolApprvrInfmRepository;
+    private final NotificationService           notificationService;
     /** Approval-request attachments — written on submit, read on
      *  detail, streamed on download. See V208. */
     private final com.kosign.wecms.domain.payment.internaltransfer.repository.ExptResolFileRepository exptResolFileRepository;
@@ -993,6 +995,15 @@ public class InternalTransferService {
             row.setApprLineNo(BigDecimal.valueOf(req.apprLineNo()));
             exptResolApprvrInfmRepository.save(row);
         }
+
+        // Phase-1 notification producer: fan an approval-request notification
+        // out to the approver chain. Best-effort + isolated (REQUIRES_NEW) so a
+        // notification failure never rolls back this approval submission.
+        notificationService.notifyApprovalRequested(
+                ApprDv.INTERNAL_TRANSFER.slug(), apprSeqNo, docNo, req.postTitle(),
+                approvers.stream()
+                        .map(a -> new NotificationService.Recipient(a.apprvrId(), a.apprvrNm()))
+                        .toList());
         return docNo;
     }
 

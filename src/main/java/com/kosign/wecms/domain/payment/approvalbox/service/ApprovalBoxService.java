@@ -18,6 +18,9 @@ import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolApprvrInfmRepository;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
+import com.kosign.wecms.domain.auth.entity.BusiAdmnInfm;
+import com.kosign.wecms.domain.auth.repository.BusiAdmnInfmRepository;
+import com.kosign.wecms.domain.notification.service.NotificationService;
 import com.kosign.wecms.domain.payment.internaltransfer.repository.ScdulPymnSumrRepository;
 import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnSumrRepository;
 import lombok.RequiredArgsConstructor;
@@ -38,6 +41,7 @@ import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -135,6 +139,8 @@ public class ApprovalBoxService {
     private final ScdulPymnSumrRepository        scdulPymnSumrRepository;
     private final AuditLogService                auditLogService;
     private final ApprovalBoxFanoutService       fanoutService;
+    private final NotificationService            notificationService;
+    private final BusiAdmnInfmRepository         busiAdmnInfmRepository;
 
     /* =================================================================
      *  List
@@ -254,6 +260,35 @@ public class ApprovalBoxService {
     }
 
     /* =================================================================
+     *  Approver chain (read) — shared by the payment Scheduled detail
+     *  pages so they render the REAL EXPT_RESOL_APPRVR_INFM statuses and
+     *  gate Approve/Reject on "current user is the active pending
+     *  approver" (legacy APPR_YN / comm_0195_001 parity), instead of a
+     *  synthesised chain.
+     * ================================================================= */
+
+    /**
+     * Return the ordered approver chain ({@code APPRVR_LINE_NO ASC}) for one
+     * approval document. Read-only; tenant-scoped via {@link TenantContext}.
+     * Carries the real per-approver {@code APPRVR_STTS} (P/A/R/W/S) so the
+     * frontend can show the current pending approver and the per-row status
+     * chips. Returns an empty list when the document has no approver rows.
+     *
+     * @throws BusinessException {@code WBE_VALIDATION} when {@code apprSeqNo}
+     *         is blank.
+     */
+    @Transactional(readOnly = true)
+    public List<ApprovalBoxApprover> approvers(String apprSeqNo) {
+        if (apprSeqNo == null || apprSeqNo.isBlank()) {
+            throw new BusinessException("WBE_VALIDATION", "appr_seq_no: is required");
+        }
+        String bizKey = TenantContext.currentBizKey();
+        return approverRepository.findChain(bizKey, apprSeqNo).stream()
+                .map(ApprovalBoxService::toApprover)
+                .toList();
+    }
+
+    /* =================================================================
      *  Approve
      * ================================================================= */
 
@@ -302,6 +337,14 @@ public class ApprovalBoxService {
         log.info("approval-box approved bizKey={} apprSeqNo={} approverId={} newApprTypeCd={}",
                 ctx.master.getBizKey(), ctx.master.getApprSeqNo(), ctx.userId,
                 ctx.master.getApprTypeCd());
+
+        // Phase-3 producer (best-effort, isolated): notify the legacy R008 set
+        // — other approvers on the line (P/A/R) + business admins, excluding
+        // the acting approver and the requester. Fires on every approve step.
+        notificationService.notifyApprovalDecision(
+                true, ApprDv.resolveSlug(ctx.master.getApprDv()), ctx.master.getApprSeqNo(),
+                ctx.master.getDocNo(), ctx.master.getTitl(), resolveDecisionRecipients(ctx));
+
         return new ApprovalBoxActionResponse(
                 ctx.master.getApprSeqNo(),
                 deriveApprStts(ctx.master.getApprTypeCd()),
@@ -340,6 +383,14 @@ public class ApprovalBoxService {
 
         log.info("approval-box rejected bizKey={} apprSeqNo={} approverId={}",
                 ctx.master.getBizKey(), ctx.master.getApprSeqNo(), ctx.userId);
+
+        // Phase-3 producer (best-effort, isolated): notify the legacy R008 set
+        // — other approvers on the line (P/A/R) + business admins, excluding
+        // the acting approver and the requester.
+        notificationService.notifyApprovalDecision(
+                false, ApprDv.resolveSlug(ctx.master.getApprDv()), ctx.master.getApprSeqNo(),
+                ctx.master.getDocNo(), ctx.master.getTitl(), resolveDecisionRecipients(ctx));
+
         return new ApprovalBoxActionResponse(
                 ctx.master.getApprSeqNo(),
                 deriveApprStts(ctx.master.getApprTypeCd()),
@@ -630,6 +681,49 @@ public class ApprovalBoxService {
                 return;
             }
         }
+    }
+
+    /**
+     * Resolve the approve / reject notification recipient set, mirroring legacy
+     * {@code EXPT_RESOL_APPRVR_INFM_R008} (PO decision — follow legacy
+     * recipients):
+     * <ul>
+     *   <li>other approvers on the line in status {@code P}/{@code A}/{@code R}
+     *       (excludes {@code W} waiting / {@code S} stopped — same as R008);</li>
+     *   <li>plus every business admin of the tenant ({@code BUSI_ADMN_INFM});</li>
+     *   <li>minus the acting approver and minus the requester / owner
+     *       (R008's {@code APPRVR_ID <> :USER_ID} + {@code APPRVR_LINE_NO <> 0}).</li>
+     * </ul>
+     * Resolved against the post-action chain state (statuses already mutated),
+     * which is exactly when legacy R008 runs. De-duplicated, order-stable.
+     * Notification recipient names are not persisted, so the id doubles as the
+     * {@code Recipient} name.
+     */
+    private List<NotificationService.Recipient> resolveDecisionRecipients(ApproveContext ctx) {
+        String actingUser = ctx.userId;
+        String requester  = ctx.master.getDraftUserId();
+        LinkedHashSet<String> ids = new LinkedHashSet<>();
+
+        for (ExptResolApprvrInfm a : approverRepository.findChain(
+                ctx.bizKey, ctx.master.getApprSeqNo())) {
+            String st = a.getApprvrStts();
+            if (ApprvrStts.PENDING.equals(st)
+                    || ApprvrStts.APPROVED.equals(st)
+                    || ApprvrStts.REJECTED.equals(st)) {
+                ids.add(a.getApprvrId());
+            }
+        }
+        for (BusiAdmnInfm adm : busiAdmnInfmRepository.findAllByBizKey(ctx.bizKey)) {
+            ids.add(adm.getUserId());
+        }
+
+        ids.remove(actingUser);
+        if (requester != null) ids.remove(requester);
+        ids.removeIf(id -> id == null || id.isBlank());
+
+        return ids.stream()
+                .map(id -> new NotificationService.Recipient(id, id))
+                .toList();
     }
 
     /* =================================================================

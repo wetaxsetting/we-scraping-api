@@ -13,6 +13,7 @@ import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxActionResponse
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprDv;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxFanoutService;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxService;
+import com.kosign.wecms.domain.notification.service.NotificationService;
 import com.kosign.wecms.domain.payment.dispatch.service.TransferDispatchExecutor;
 import com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalActionRequest;
@@ -188,6 +189,7 @@ public class ExpensePaymentService {
     private final Clock                         clock;
     private final ExptResolMstrRepository       exptResolMstrRepository;
     private final ExptResolApprvrInfmRepository exptResolApprvrInfmRepository;
+    private final NotificationService           notificationService;
     private final DocNoGenerator                docNoGenerator;
     private final BusiInfmRepository            busiInfmRepository;
 
@@ -869,6 +871,15 @@ public class ExpensePaymentService {
             row.setApprLineNo(BigDecimal.valueOf(req.apprLineNo()));
             exptResolApprvrInfmRepository.save(row);
         }
+
+        // Phase-1 notification producer: fan an approval-request notification
+        // out to the approver chain. Best-effort + isolated (REQUIRES_NEW) so a
+        // notification failure never rolls back this approval submission.
+        notificationService.notifyApprovalRequested(
+                ApprDv.EXPENSE.slug(), apprSeqNo, docNo, req.postTitle(),
+                approvers.stream()
+                        .map(a -> new NotificationService.Recipient(a.apprvrId(), a.apprvrNm()))
+                        .toList());
         return docNo;
     }
 

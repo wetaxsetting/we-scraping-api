@@ -32,4 +32,11 @@ public interface BusiAdmnInfmRepository extends JpaRepository<BusiAdmnInfm, Busi
      * an admin row is removed (either by demote on PUT or by delete).
      */
     long countByBizKey(String bizKey);
+
+    /**
+     * Every BUSI_ADMN_INFM row for a tenant. Used by the Approval Box
+     * approve/reject notification producer to resolve the business-admin
+     * recipients (legacy {@code EXPT_RESOL_APPRVR_INFM_R008} admin branch).
+     */
+    List<BusiAdmnInfm> findAllByBizKey(String bizKey);
 }

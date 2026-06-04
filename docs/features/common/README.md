@@ -25,7 +25,8 @@ once and consumed product-wide. It was formalized 2026-06-01 to resolve **OQ-DOC
 | **Tenant context** | design | resolved per request from the JWT — see [`login-auth.md`](../auth/login-auth.md) + security design |
 | **Approval workflow** (approval-LINE vs approval-BOX) | documented per-feature | [`../settings/approval-line.md`](../settings/approval-line.md) (config) + [`../payment/approval-box/README.md`](../payment/approval-box/README.md) (execution). Unifying cross-link doc pending **OQ-DOC-12**. |
 | **Attachments / file upload** | per-feature | Contacts file upload in [`../settings/contacts.md`](../settings/contacts.md); ERP / firm-banking downloads in their specs. Generic doc pending **OQ-DOC-12**. |
-| Notifications · Dashboard | **not yet in scope** | no refactor endpoint exists (**OQ-DOC-13**); add a doc here when the feature lands. Do **not** pre-create empty stubs. |
+| **Notifications** | ✅ **implemented** | `domain/notification/` — `NOTIFICATION` table (`V238`) + 4 endpoints under `/api/v1/notifications` + approval request/approve/reject producers. Spec: [`../../../../docs/refactor-wecms/features/notifications.md`](../../../../docs/refactor-wecms/features/notifications.md). |
+| Dashboard | **not yet in scope** | no refactor endpoint exists (**OQ-DOC-13**); add a doc here when the feature lands. Do **not** pre-create empty stubs. |
 
 ## What does NOT live here
 

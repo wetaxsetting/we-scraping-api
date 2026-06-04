@@ -173,7 +173,14 @@ wecms:
     # filename, not from per-tenant directory isolation. Per-developer
     # override via env var WECMS_USER_IMAGE_STORAGE_ROOT.
     storage-root: ${WECMS_USER_IMAGE_STORAGE_ROOT:./tmp/user-image}
- 
+  overseas-payment:
+    # Local-disk root for Overseas Payment Excel uploads
+    # (OVRS_PYMN_MSTR batches — flat layout: <storage-root>/<save_file_nm>).
+    # CI / unit-test / local default; profile-specific overrides live in
+    # application-{profile}.yml. Per-developer override via env var
+    # WECMS_OVERSEAS_PAYMENT_STORAGE_ROOT.
+    storage-root: ${WECMS_OVERSEAS_PAYMENT_STORAGE_ROOT:./tmp/overseas-payment}
+
   coocon:
     # Coocon DEV credentials — mirrors <coocon> in VI/jex.wabooks_new.user.xml.
     # Single source of truth for every Coocon smart-gateway call —

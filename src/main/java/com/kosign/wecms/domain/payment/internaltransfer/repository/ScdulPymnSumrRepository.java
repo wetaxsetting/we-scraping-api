@@ -135,21 +135,27 @@ public interface ScdulPymnSumrRepository extends JpaRepository<ScdulPymnSumr, Sc
             Pageable pageable);
 
     /**
-     * Same shape as {@link #search} but with the extra
-     * {@code trnf_dtm IS NOT NULL} filter that scopes the Result list to
-     * batches the user has actually dispatched (or attempted to
-     * dispatch). Without this filter, freshly-uploaded batches that are
-     * still in the approval flow leak into Transfer Result and read as
-     * "In Progress" — which they aren't; they haven't been dispatched
-     * yet. {@code trnf_dtm} is set by {@code InternalTransferDispatch
-     * Service.dispatch}; un-dispatched rows have it as {@code null}.
+     * Same shape as {@link #search} but scoped to dispatched batches —
+     * the Result list. Uses {@code trnf_yn = 'Y'} as the dispatched flag,
+     * matching the legacy marker and the corrected Overseas Result query
+     * ({@code OverseasPaymentRepository.buildResultSql}). Un-dispatched
+     * batches still in the approval flow carry {@code trnf_yn} NULL/<>'Y'
+     * and are excluded.
+     *
+     * <p>History: this previously gated on {@code trnf_dtm IS NOT NULL},
+     * but {@code TRNF_DTM} is written only by the runtime dispatch path
+     * ({@code InternalTransferDispatchService.dispatch} and the per-module
+     * dispatch flows) and is never populated by demo seeds — so every
+     * seeded {@code TRNF_YN='Y'} batch was silently filtered out and the
+     * Result lists read empty. {@code trnf_yn = 'Y'} restores parity with
+     * Overseas and the legacy behaviour.
      */
     @Query("""
             SELECT s FROM ScdulPymnSumr s
             WHERE s.bizKey             = :bizKey
               AND s.scdulPymnTypeCd    = :scdulPymnTypeCd
               AND s.regDtm BETWEEN :fromDtm AND :toDtm
-              AND s.trnfDtm IS NOT NULL
+              AND s.trnfYn = 'Y'
               AND (:srchWdPattern IS NULL
                    OR LOWER(s.titl) LIKE :srchWdPattern
                    OR LOWER(COALESCE(s.apprSeqNo, '')) LIKE :srchWdPattern)
