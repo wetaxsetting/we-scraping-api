@@ -31,4 +31,40 @@ public record TransferResultRow(
         String     trnfStts,
         String     regDtm,
         String     apprSeqNo,
-        String     docNo) { }
+        String     docNo,
+        /**
+         * Legacy {@code APPR_FUND_TP} (Payroll Type) — joined from
+         * {@code EXPT_RESOL_MSTR} on {@code APPR_SEQ_NO}. {@code "0"}=Salary,
+         * {@code "1"}=Bonus, {@code "9"}/null render blank on the Result list
+         * (legacy {@code pymn_0006_001.js} parity). Only the Payroll Result
+         * list populates it (legacy {@code SCDUL_PYMN_SUMR_R010}); the Vendor /
+         * Expense / Internal Transfer siblings pass {@code null} via the
+         * backward-compatible constructor below.
+         */
+        String     apprFundTp) {
+
+    /**
+     * Backward-compatible constructor for the sibling Result services
+     * (Vendor / Expense / Internal Transfer) that don't carry a Payroll Type —
+     * delegates with {@code apprFundTp = null} so their {@code toResultRow(...)}
+     * call sites compile unchanged (they emit {@code appr_fund_tp} as null).
+     */
+    public TransferResultRow(
+            String     scdulPymnNo,
+            String     scdulPymnTypeCd,
+            String     ccyCd,
+            String     titl,
+            String     fileNm,
+            BigDecimal totalTranAmt,
+            BigDecimal totTrnsCnt,
+            BigDecimal totTrnsSuccCnt,
+            BigDecimal totTrnsErrorCnt,
+            String     trnfStts,
+            String     regDtm,
+            String     apprSeqNo,
+            String     docNo) {
+        this(scdulPymnNo, scdulPymnTypeCd, ccyCd, titl, fileNm, totalTranAmt,
+             totTrnsCnt, totTrnsSuccCnt, totTrnsErrorCnt, trnfStts, regDtm,
+             apprSeqNo, docNo, null);
+    }
+}

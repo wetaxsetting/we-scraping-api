@@ -17,6 +17,13 @@ public interface BusiMatchLogRepository extends JpaRepository<BusiMatchLog, Busi
     Optional<BusiMatchLog> findFirstByBizKeyAndPayTrnsIdAndLockedYn(
             String bizKey, String payTrnsId, String lockedYn);
 
+    /** Find a match-log row for a specific (bank txn, payment) pair at a given
+     *  lock state — used by the Payroll batch match for the duplicate guard
+     *  (LOCKED_YN='Y') and the re-lock upsert lookup (LOCKED_YN='N'). Mirrors
+     *  legacy {@code comm_0197_001_c001} {@code getExistingMatchDynamic}. */
+    Optional<BusiMatchLog> findFirstByBizKeyAndBankTrnsShortIdAndPayTrnsIdAndLockedYn(
+            String bizKey, String bankTrnsShortId, String payTrnsId, String lockedYn);
+
     /** Used by the MAX+1 sequence generator to find the highest
      *  numeric `match_log_seq` for the tenant. */
     List<BusiMatchLog> findByBizKey(String bizKey);

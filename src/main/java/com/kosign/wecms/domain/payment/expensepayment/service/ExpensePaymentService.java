@@ -24,6 +24,8 @@ import com.kosign.wecms.domain.payment.internaltransfer.dto.DispatchRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ParseExcelResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalResponse;
+import com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalAttachmentRow;
+import com.kosign.wecms.domain.payment.internaltransfer.dto.ScheduledTransferApprover;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ScheduledTransferDetailResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ScheduledTransferListResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ScheduledTransferRow;
@@ -40,6 +42,7 @@ import com.kosign.wecms.domain.auth.repository.BusiInfmRepository;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolApprvrInfm;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolApprvrInfmRepository;
+import com.kosign.wecms.domain.payment.internaltransfer.repository.ExptResolFileRepository;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprDv;
 import com.kosign.wecms.domain.payment.service.DocNoGenerator;
@@ -189,6 +192,11 @@ public class ExpensePaymentService {
     private final Clock                         clock;
     private final ExptResolMstrRepository       exptResolMstrRepository;
     private final ExptResolApprvrInfmRepository exptResolApprvrInfmRepository;
+    /** Approval-request attachments ({@code EXPT_RESOL_FILE}) keyed by
+     *  {@code APPR_SEQ_NO} — surfaces the Scheduled-detail {@code attachments}
+     *  list (consumed by the shared Approval Details popup). Shared
+     *  repository; same wiring as {@code InternalTransferService}. */
+    private final ExptResolFileRepository       exptResolFileRepository;
     private final NotificationService           notificationService;
     private final DocNoGenerator                docNoGenerator;
     private final BusiInfmRepository            busiInfmRepository;
@@ -230,9 +238,12 @@ public class ExpensePaymentService {
         // This is the authoritative source — ERP_FILE_NUM write-back may be absent on
         // legacy / seed records submitted before the fix.
         java.util.Map<String, String> docNoByApprSeqNo = buildDocNoMap(bizKey, rows.getContent());
+        // G4: Approver column — first approver name + chain length ([N] badge) +
+        // full ordered chain (popup). Mirrors InternalTransferService.buildFirstApproverMap.
+        Map<String, ApproverSummary> approverByApprSeqNo = buildFirstApproverMap(bizKey, rows.getContent());
 
         List<ScheduledTransferRow> dtoRows = rows.getContent().stream()
-                .map(s -> toListRow(s, docNoByApprSeqNo))
+                .map(s -> toListRow(s, docNoByApprSeqNo, approverByApprSeqNo))
                 .toList();
         List<CurrencyTotal> totals = computeCurrencyTotals(rows.getContent());
 
@@ -280,6 +291,40 @@ public class ExpensePaymentService {
                 .map(d -> transferLineDetailMapper.toLineDetail(d, chartByCode))
                 .toList();
 
+        // G2 (Scheduled detail): requester display name (legacy #requestor_name cell =
+        // EXPT_RESOL_MSTR.DRAFT_USER_NM), looked up by APPR_SEQ_NO. null when the batch has
+        // no approval request yet — the frontend falls back to regId. Same wiring as the
+        // Result-detail fix + InternalTransferService.
+        String apprSeqNo = master.getApprSeqNo();
+        String requestor = (apprSeqNo != null && !apprSeqNo.isBlank())
+                ? exptResolMstrRepository
+                        .findByBizKeyAndApprSeqNoIn(bizKey, java.util.List.of(apprSeqNo))
+                        .stream()
+                        .findFirst()
+                        .map(ExptResolMstr::getDraftUserNm)
+                        .filter(s -> s != null && !s.isBlank())
+                        .orElse(null)
+                : null;
+
+        // G5 (Scheduled detail): approval-request attachments from EXPT_RESOL_FILE,
+        // keyed by APPR_SEQ_NO (ordered by FILE_ID). Empty when the batch has no
+        // approval request yet. Byte-identical to InternalTransferService.detail().
+        // The shared Approval Details popup consumes this list; the detail page's
+        // own file card stays the uploaded-Excel file (legacy parity).
+        List<ApprovalAttachmentRow> attachments =
+                (apprSeqNo == null || apprSeqNo.isBlank())
+                        ? List.of()
+                        : exptResolFileRepository
+                                .findByBizKeyAndApprSeqNoOrderByFileIdAsc(bizKey, apprSeqNo)
+                                .stream()
+                                .map(f -> new ApprovalAttachmentRow(
+                                        f.getFileId(),
+                                        f.getOrgFileNm(),
+                                        f.getFileSize(),
+                                        f.getRegNm(),
+                                        f.getRegDtm()))
+                                .toList();
+
         return new ScheduledTransferDetailResponse(
                 master.getScdulPymnNo(),
                 master.getScdulPymnTypeCd(),
@@ -291,6 +336,7 @@ public class ExpensePaymentService {
                 master.getTotTrnsCnt(),
                 master.getErpFileNum(),
                 master.getRegId(),
+                requestor,
                 master.getRegDtm(),
                 master.getApprSeqNo(),
                 master.getApprStts(),
@@ -303,10 +349,7 @@ public class ExpensePaymentService {
                 master.getOrgFileNm(),
                 master.getFileSize(),
                 lines,
-                // Approval-request attachments — wired only on Internal
-                // Transfer today; Expense ports the same pattern in a
-                // follow-up MR.
-                java.util.List.of());
+                attachments);
     }
 
     /* ----------------------------------------------------------------
@@ -1108,10 +1151,19 @@ public class ExpensePaymentService {
     }
 
     private static ScheduledTransferRow toListRow(ScdulPymnSumr s,
-            java.util.Map<String, String> docNoByApprSeqNo) {
+            java.util.Map<String, String> docNoByApprSeqNo,
+            Map<String, ApproverSummary> approverByApprSeqNo) {
         String docNo = s.getApprSeqNo() != null
                 ? docNoByApprSeqNo.getOrDefault(s.getApprSeqNo(), s.getErpFileNum())
                 : s.getErpFileNum();
+        // G4: Approver column — null pre-approval (no APPR_SEQ_NO / no chain),
+        // so the shared shell leaves the cell blank exactly like legacy.
+        ApproverSummary appr = s.getApprSeqNo() != null
+                ? approverByApprSeqNo.get(s.getApprSeqNo())
+                : null;
+        String  approver      = appr != null ? appr.firstName() : null;
+        Integer approverCount = appr != null ? appr.count()     : null;
+        List<ScheduledTransferApprover> approvers = appr != null ? appr.approvers() : null;
         return new ScheduledTransferRow(
                 s.getScdulPymnNo(),
                 s.getScdulPymnTypeCd(),
@@ -1131,7 +1183,52 @@ public class ExpensePaymentService {
                 s.getPayTranDt(),
                 s.getOrgFileNm(),
                 docNo,
-                s.getWdrlCcyCd());
+                s.getWdrlCcyCd(),
+                null,                       // appr_fund_tp — Payroll-only column
+                approver,
+                approverCount,
+                approvers);
+    }
+
+    /** First approver name + total chain length + the full ordered chain
+     *  (name/status/datetime) for one approval request — feeds the Scheduled
+     *  list "Approver" cell (name + "[N]" + click popup). Mirrors
+     *  {@code InternalTransferService.ApproverSummary}. */
+    private record ApproverSummary(
+            String firstName,
+            int count,
+            List<ScheduledTransferApprover> approvers) {}
+
+    /**
+     * Map {@code APPR_SEQ_NO → {first approver name, chain length, chain}} from
+     * the {@code EXPT_RESOL_APPRVR_INFM} chain (ordered by {@code APPRVR_LINE_NO}).
+     * Drives the Scheduled Payment list's "Approver" cell — primary approver
+     * name + the legacy "{@code [N]}" count badge (= chain length) + the click
+     * popup. One {@code findChain} per distinct approval request on the page
+     * (≤ page size); empty when no row has been submitted for approval.
+     * Byte-identical to {@code InternalTransferService.buildFirstApproverMap}.
+     */
+    private Map<String, ApproverSummary> buildFirstApproverMap(String bizKey, List<ScdulPymnSumr> rows) {
+        List<String> apprSeqNos = rows.stream()
+                .map(ScdulPymnSumr::getApprSeqNo)
+                .filter(seq -> seq != null && !seq.isBlank())
+                .distinct()
+                .toList();
+        if (apprSeqNos.isEmpty()) return Map.of();
+        Map<String, ApproverSummary> out = new java.util.HashMap<>(apprSeqNos.size());
+        for (String seq : apprSeqNos) {
+            var chain = exptResolApprvrInfmRepository.findChain(bizKey, seq);
+            if (!chain.isEmpty()) {
+                String nm = chain.get(0).getApprvrNm();
+                String firstName = (nm != null && !nm.isBlank()) ? nm.trim() : null;
+                List<ScheduledTransferApprover> list = chain.stream()
+                        .map(a -> new ScheduledTransferApprover(
+                                a.getApprvrNm(), a.getApprvrStts(), a.getApprDtm()))
+                        .toList();
+                out.put(seq, new ApproverSummary(firstName, chain.size(), list));
+            }
+        }
+        return out;
     }
 
     private static List<CurrencyTotal> computeCurrencyTotals(List<ScdulPymnSumr> rows) {
