@@ -34,15 +34,66 @@ public record TransferResultDetailResponse(
         BigDecimal               sucCnt,
         BigDecimal               errCnt,
         BigDecimal               prcCnt,
-        List<TransferResultLine> rows) {
+        List<TransferResultLine> rows,
+        /** Banking-match link flag (legacy {@code SCDUL_PYMN_SUMR.LINK_MATCH_YN}):
+         *  {@code "Y"} when the batch is matched to a bank transaction, else
+         *  {@code "N"}/null. Drives the Payroll Result-detail header Match-vs-Unmatch
+         *  visibility (Phase 1 read-only; the match/unmatch write path lands later).
+         *  Header-level / batch-level — Payroll is 1:1 batch ↔ bank txn. */
+        String                   linkMatchYn,
+        /** Matched bank transaction's account sequence (legacy
+         *  {@code SCDUL_PYMN_SUMR.ACCT_SEQ_NO}). null when unmatched. */
+        String                   acctSeqNo,
+        /** Matched bank transaction short id (legacy
+         *  {@code SCDUL_PYMN_SUMR.BANK_TRNS_SHORT_ID}). Rendered as the matched-ref;
+         *  null when unmatched. */
+        String                   bankTrnsShortId,
+        /** Matched bank transaction full id (legacy
+         *  {@code SCDUL_PYMN_SUMR.BANK_TRNS_FULL_ID}). null when unmatched. */
+        String                   bankTrnsFullId) {
 
     /**
-     * Backward-compatible constructor for the sibling result services
-     * (Vendor / Expense / Payroll) that don't resolve a withdrawal-bank name
-     * or requester name — delegates with {@code outBankNm = null} and
-     * {@code requestor = null} so their {@code detail(...)} call sites compile
-     * unchanged (they emit the additive fields as {@code null}). Only the
-     * Internal Transfer result detail populates them.
+     * Constructor matching the prior canonical 21-component shape (no header
+     * banking-match fields) — delegates with {@code linkMatchYn} /
+     * {@code acctSeqNo} / {@code bankTrnsShortId} / {@code bankTrnsFullId} all
+     * {@code null}. Keeps the Vendor / Expense / Internal Transfer result-detail
+     * call sites compiling unchanged; only the Payroll result detail populates the
+     * banking-match fields (Phase 1).
+     */
+    public TransferResultDetailResponse(
+            String                   scdulPymnNo,
+            String                   outBankCd,
+            String                   outBankNm,
+            String                   wdrlActNo,
+            String                   titl,
+            BigDecimal               totalTranAmt,
+            BigDecimal               totTrnsCnt,
+            String                   apprSeqNo,
+            String                   docNo,
+            String                   ccyCd,
+            String                   wdrlCcyCd,
+            String                   trnfYn,
+            String                   trnfDtm,
+            String                   orgFileNm,
+            BigDecimal               fileSize,
+            String                   regId,
+            String                   requestor,
+            BigDecimal               sucCnt,
+            BigDecimal               errCnt,
+            BigDecimal               prcCnt,
+            List<TransferResultLine> rows) {
+        this(scdulPymnNo, outBankCd, outBankNm, wdrlActNo, titl, totalTranAmt,
+             totTrnsCnt, apprSeqNo, docNo, ccyCd, wdrlCcyCd, trnfYn, trnfDtm,
+             orgFileNm, fileSize, regId, requestor, sucCnt, errCnt, prcCnt, rows,
+             null, null, null, null);
+    }
+
+    /**
+     * Backward-compatible constructor for sibling result services that don't
+     * resolve a withdrawal-bank name or requester name — delegates with
+     * {@code outBankNm = null}, {@code requestor = null}, and the four
+     * banking-match fields {@code null} so their {@code detail(...)} call sites
+     * compile unchanged.
      */
     public TransferResultDetailResponse(
             String                   scdulPymnNo,
@@ -66,6 +117,7 @@ public record TransferResultDetailResponse(
             List<TransferResultLine> rows) {
         this(scdulPymnNo, outBankCd, null, wdrlActNo, titl, totalTranAmt,
              totTrnsCnt, apprSeqNo, docNo, ccyCd, wdrlCcyCd, trnfYn, trnfDtm,
-             orgFileNm, fileSize, regId, null, sucCnt, errCnt, prcCnt, rows);
+             orgFileNm, fileSize, regId, null, sucCnt, errCnt, prcCnt, rows,
+             null, null, null, null);
     }
 }

@@ -16,6 +16,12 @@ import com.kosign.wecms.domain.payment.internaltransfer.dto.TransferResultDetail
 import com.kosign.wecms.domain.payment.internaltransfer.dto.TransferResultListResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.UpdateReportingAccountRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.WithdrawalAccountRow;
+import com.kosign.wecms.domain.payment.internaltransfer.service.ScdulPymnTypeCd;
+import com.kosign.wecms.domain.payment.match.dto.PaymentLineMatchCandidateListResponse;
+import com.kosign.wecms.domain.payment.match.dto.PaymentLineMatchRequest;
+import com.kosign.wecms.domain.payment.match.dto.PaymentLineMatchResultResponse;
+import com.kosign.wecms.domain.payment.match.dto.PaymentLineUnmatchAllResponse;
+import com.kosign.wecms.domain.payment.match.service.DomesticPaymentLineMatchService;
 import com.kosign.wecms.domain.payment.vendorpayment.service.VendorPaymentResultService;
 import com.kosign.wecms.domain.payment.vendorpayment.service.VendorPaymentService;
 import com.kosign.wecms.domain.payment.vendorpayment.service.VendorPaymentService.DownloadResource;
@@ -91,9 +97,10 @@ public class VendorPaymentController {
      *  — alphanumeric, 1-20 chars (mirrors Internal Transfer). */
     private static final String SCDUL_PYMN_DETL_NO_PATTERN = "^[A-Za-z0-9]{1,20}$";
 
-    private final VendorPaymentService       service;
-    private final VendorPaymentResultService resultService;
-    private final ExcelExportService         excelExportService;
+    private final VendorPaymentService            service;
+    private final VendorPaymentResultService      resultService;
+    private final ExcelExportService              excelExportService;
+    private final DomesticPaymentLineMatchService lineMatchService;
 
     /**
      * List Scheduled Vendor Payment batches for the current tenant.
@@ -367,5 +374,64 @@ public class VendorPaymentController {
                 .header("X-Content-Type-Options", "nosniff")
                 .header("Access-Control-Expose-Headers", HttpHeaders.CONTENT_DISPOSITION)
                 .body(new InputStreamResource(stream));
+    }
+
+    /* ============================================================
+     * Banking Match (Phase 2) — per-line, legacy comm_0197_* domestic path.
+     * Vendor batches carry SCDUL_PYMN_TYPE_CD = '01'.
+     * ============================================================ */
+
+    /**
+     * Candidate bank transactions for a Vendor payment line
+     * (legacy {@code comm_0197_001_r001} domestic path).
+     */
+    @GetMapping("/{id}/lines/{lineId}/match/candidates")
+    public ApiResponse<PaymentLineMatchCandidateListResponse> matchCandidates(
+            @PathVariable("id")
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id,
+            @PathVariable("lineId")
+            @Pattern(regexp = SCDUL_PYMN_DETL_NO_PATTERN, message = "lineId: invalid scdul_pymn_detl_no format")
+            String lineId,
+            @RequestParam(value = "match_rmrk_yn", required = false) String matchRmrkYn,
+            @RequestParam(value = "srch_wd",       required = false) String srchWd) {
+        return ApiResponse.ok(lineMatchService.listCandidates(
+                ScdulPymnTypeCd.VENDOR.code(), id, lineId, matchRmrkYn, srchWd));
+    }
+
+    /** Match a Vendor payment line to a bank transaction (legacy {@code comm_0197_001_c001}). */
+    @PostMapping("/{id}/lines/{lineId}/match")
+    public ApiResponse<PaymentLineMatchResultResponse> match(
+            @PathVariable("id")
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id,
+            @PathVariable("lineId")
+            @Pattern(regexp = SCDUL_PYMN_DETL_NO_PATTERN, message = "lineId: invalid scdul_pymn_detl_no format")
+            String lineId,
+            @Valid @RequestBody PaymentLineMatchRequest req) {
+        return ApiResponse.ok(lineMatchService.match(
+                ScdulPymnTypeCd.VENDOR.code(), id, lineId, req));
+    }
+
+    /** Unmatch a single Vendor payment line (legacy {@code comm_0197_002_u001}). */
+    @DeleteMapping("/{id}/lines/{lineId}/match")
+    public ApiResponse<PaymentLineMatchResultResponse> unmatch(
+            @PathVariable("id")
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id,
+            @PathVariable("lineId")
+            @Pattern(regexp = SCDUL_PYMN_DETL_NO_PATTERN, message = "lineId: invalid scdul_pymn_detl_no format")
+            String lineId) {
+        return ApiResponse.ok(lineMatchService.unmatch(
+                ScdulPymnTypeCd.VENDOR.code(), id, lineId));
+    }
+
+    /** Unmatch every matched line under a Vendor batch (legacy {@code comm_0197_001_u001}). */
+    @DeleteMapping("/{id}/matches")
+    public ApiResponse<PaymentLineUnmatchAllResponse> unmatchAll(
+            @PathVariable("id")
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id) {
+        return ApiResponse.ok(lineMatchService.unmatchAll(ScdulPymnTypeCd.VENDOR.code(), id));
     }
 }

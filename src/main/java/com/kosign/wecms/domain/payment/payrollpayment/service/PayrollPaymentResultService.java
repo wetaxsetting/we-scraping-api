@@ -3,6 +3,8 @@ package com.kosign.wecms.domain.payment.payrollpayment.service;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.common.web.SortDirection;
+import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
+import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
 import com.kosign.wecms.domain.payment.common.TransferLineDetailMapper;
 import com.kosign.wecms.domain.payment.dispatch.DispatchCountRepository;
 import com.kosign.wecms.domain.payment.dispatch.DispatchCountRow;
@@ -63,6 +65,11 @@ public class PayrollPaymentResultService {
     /** Phase 2 dispatch-result resolver — shared across all 4 SCDUL_PYMN
      *  modules. See {@code DispatchResultResolver} for the contract. */
     private final DispatchResultResolver      dispatchResultResolver;
+    /** Approval master — read-only here to surface the requester name
+     *  ({@code DRAFT_USER_NM}) on the result-detail header (legacy
+     *  {@code pymn_0006_002} Requestor field). Same wiring as
+     *  {@link com.kosign.wecms.domain.payment.vendorpayment.service.VendorPaymentResultService}. */
+    private final ExptResolMstrRepository     exptResolMstrRepository;
 
     @Transactional(readOnly = true)
     public TransferResultListResponse list(
@@ -89,8 +96,18 @@ public class PayrollPaymentResultService {
 
         Map<String, long[]> counts = loadDispatchCounts(bizKey, rows.getContent());
 
+        // PR1: Payroll Type — join EXPT_RESOL_MSTR.APPR_FUND_TP on APPR_SEQ_NO
+        // for the current page (legacy SCDUL_PYMN_SUMR_R010 LEFT JOIN). One IN
+        // query; "0"=Salary / "1"=Bonus / "9"/null render blank on the FE
+        // (pymn_0006_001.js parity). Same source the Payroll Scheduled list
+        // already uses (PayrollPaymentService.fetchExptResolByApprSeqNo).
+        Map<String, String> apprFundTpBySeqNo = loadApprFundTpBySeqNo(bizKey, rows.getContent());
+
         List<TransferResultRow> dtoRows = rows.getContent().stream()
-                .map(s -> toResultRow(s, counts.get(s.getScdulPymnNo())))
+                .map(s -> toResultRow(
+                        s,
+                        counts.get(s.getScdulPymnNo()),
+                        s.getApprSeqNo() != null ? apprFundTpBySeqNo.get(s.getApprSeqNo()) : null))
                 .toList();
         List<CurrencyTotal> totals = computeTotals(rows.getContent());
 
@@ -124,6 +141,31 @@ public class PayrollPaymentResultService {
     }
 
     /**
+     * PR1: map {@code APPR_SEQ_NO → APPR_FUND_TP} from {@code EXPT_RESOL_MSTR}
+     * for the current page's batches — drives the Result-list "Payroll Type"
+     * column (legacy {@code SCDUL_PYMN_SUMR_R010} LEFT JOIN on
+     * {@code (BIZ_KEY, APPR_SEQ_NO)}). One {@code IN} query; empty when no row
+     * on the page has been submitted for approval. Same source the Payroll
+     * Scheduled list uses ({@code PayrollPaymentService.fetchExptResolByApprSeqNo}).
+     */
+    private Map<String, String> loadApprFundTpBySeqNo(
+            String bizKey, List<ScdulPymnSumr> batches) {
+        List<String> apprSeqNos = batches.stream()
+                .map(ScdulPymnSumr::getApprSeqNo)
+                .filter(seq -> seq != null && !seq.isBlank())
+                .distinct()
+                .toList();
+        if (apprSeqNos.isEmpty()) return Collections.emptyMap();
+        return exptResolMstrRepository.findByBizKeyAndApprSeqNoIn(bizKey, apprSeqNos)
+                .stream()
+                .filter(m -> m.getApprSeqNo() != null && m.getApprFundTp() != null)
+                .collect(java.util.stream.Collectors.toMap(
+                        ExptResolMstr::getApprSeqNo,
+                        ExptResolMstr::getApprFundTp,
+                        (a, b) -> a));
+    }
+
+    /**
      * Payment Result detail. Mirrors legacy {@code pymn_0006_002_r001}.
      */
     @Transactional(readOnly = true)
@@ -144,9 +186,37 @@ public class PayrollPaymentResultService {
                         d.getScdulPymnDetlNo(), DispatchResult.EMPTY)))
                 .toList();
 
+        // G1: header tab counts (All / Success / Failed / In Progress) —
+        // mirrors legacy pymn_0006_002_r001's TOT_CNT/SUC_CNT/ERR_CNT/PRC_CNT.
+        // Derived from the already-resolved per-line statuses so the header
+        // numbers equal the per-line chip distribution the user sees. Same
+        // pattern as VendorPaymentResultService / InternalTransferResultService.
+        long[] counts = countByStatus(lines);
+
+        // Issue-1 (Result detail): withdrawal bank display name (legacy OUT_BANK_NM) —
+        // same shared resolver the per-line Deposit Bank cell uses. null when
+        // unresolvable; the frontend falls back to the raw outBankCd. Lets the
+        // Payroll Result-detail header render the bank name like Vendor/Expense.
+        String outBankNm = transferLineDetailMapper.resolveBankNm(master.getOutBankCd());
+
+        // G2: requester display name (legacy pymn_0006_002 EXPT_RESOL_MSTR.DRAFT_USER_NM),
+        // looked up by APPR_SEQ_NO. null when the batch has no approval request yet —
+        // the frontend falls back to regId. Mirrors VendorPaymentResultService.
+        String apprSeqNo = master.getApprSeqNo();
+        String requestor = (apprSeqNo != null && !apprSeqNo.isBlank())
+                ? exptResolMstrRepository
+                        .findByBizKeyAndApprSeqNoIn(bizKey, List.of(apprSeqNo))
+                        .stream()
+                        .findFirst()
+                        .map(ExptResolMstr::getDraftUserNm)
+                        .filter(s -> s != null && !s.isBlank())
+                        .orElse(null)
+                : null;
+
         return new TransferResultDetailResponse(
                 master.getScdulPymnNo(),
                 master.getOutBankCd(),
+                outBankNm,
                 master.getWdrlActNo(),
                 master.getTitl(),
                 master.getTotalTranAmt(),
@@ -160,8 +230,63 @@ public class PayrollPaymentResultService {
                 master.getOrgFileNm(),
                 master.getFileSize(),
                 master.getRegId(),
-                null, null, null,
-                lines);
+                requestor,
+                // suc/err/prc — derived from the resolved per-line statuses
+                // (countByStatus). Array order is [success, failed, inProgress].
+                BigDecimal.valueOf(counts[0]),
+                BigDecimal.valueOf(counts[1]),
+                BigDecimal.valueOf(counts[2]),
+                lines,
+                // Phase 1 — header-level banking-match state, read straight from
+                // SCDUL_PYMN_SUMR (legacy pymn_0006_002: LINK_MATCH_YN drives the
+                // Match-vs-Unmatch header visibility; ACCT_SEQ_NO / BANK_TRNS_*
+                // are the matched-ref). Read-only here; the candidate-search +
+                // match/unmatch write path is a later phase. Payroll is the only
+                // module that populates these (header-level 1:1 batch match).
+                master.getLinkMatchYn(),
+                master.getAcctSeqNo(),
+                master.getBankTrnsShortId(),
+                master.getBankTrnsFullId());
+    }
+
+    /**
+     * Bucket the resolved detail lines into {@code [success, failed, inProgress]}
+     * counts for the Payment Result detail header tabs (All / Success / Failed /
+     * In Progress).
+     *
+     * <p>Classification mirrors the shared frontend classifier
+     * {@code components/payment/shared/deriveResultStatus.ts} and the legacy
+     * per-line rule {@code pymn_0006_002.js}, so the header counts always equal
+     * the per-line chip distribution the user sees:
+     * <ul>
+     *   <li>blank {@code proc_stat} AND blank {@code rs_cd} &rarr; in&nbsp;progress</li>
+     *   <li>{@code proc_stat="0"} AND {@code rs_cd="0000"} &rarr; success</li>
+     *   <li>{@code proc_stat} &isin; {{@code 9},{@code 1},{@code 6}} &rarr; in&nbsp;progress</li>
+     *   <li>everything else &rarr; failed</li>
+     * </ul>
+     *
+     * <p>Byte-identical classification to
+     * {@code VendorPaymentResultService.countByStatus} /
+     * {@code InternalTransferResultService.countByStatus} (kept private per the
+     * established per-service pattern — no shared helper exists yet).
+     * Invariant: {@code success + failed + inProgress == lines.size()}.
+     */
+    private static long[] countByStatus(List<TransferResultLine> lines) {
+        long success = 0, failed = 0, inProgress = 0;
+        for (TransferResultLine line : lines) {
+            String ps = line.procStat() == null ? "" : line.procStat().trim();
+            String rs = line.rsCd()     == null ? "" : line.rsCd().trim();
+            if (ps.isEmpty() && rs.isEmpty()) {
+                inProgress++;
+            } else if ("0".equals(ps) && "0000".equals(rs)) {
+                success++;
+            } else if ("9".equals(ps) || "1".equals(ps) || "6".equals(ps)) {
+                inProgress++;
+            } else {
+                failed++;
+            }
+        }
+        return new long[] { success, failed, inProgress };
     }
 
     /* ---------------------------------------------------------------- */
@@ -188,7 +313,7 @@ public class PayrollPaymentResultService {
                 r.rsCd(), r.rsMsg());
     }
 
-    private static TransferResultRow toResultRow(ScdulPymnSumr s, long[] counts) {
+    private static TransferResultRow toResultRow(ScdulPymnSumr s, long[] counts, String apprFundTp) {
         BigDecimal succ = counts != null ? BigDecimal.valueOf(counts[0]) : null;
         BigDecimal err  = counts != null ? BigDecimal.valueOf(counts[1]) : null;
         return new TransferResultRow(
@@ -204,7 +329,9 @@ public class PayrollPaymentResultService {
                 s.getTrnfYn(),
                 s.getRegDtm(),
                 s.getApprSeqNo(),
-                s.getErpFileNum());
+                s.getErpFileNum(),
+                // PR1: Payroll Type ("0"=Salary/"1"=Bonus/"9"/null=blank on FE).
+                apprFundTp);
     }
 
     private static List<CurrencyTotal> computeTotals(List<ScdulPymnSumr> rows) {
