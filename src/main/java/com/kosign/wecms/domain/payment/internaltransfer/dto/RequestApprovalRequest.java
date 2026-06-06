@@ -65,6 +65,18 @@ public record RequestApprovalRequest(
         @Size(max = 8)
         String payDate,
 
+        /**
+         * Optional Payroll Type (legacy {@code EXPT_RESOL_MSTR.APPR_FUND_TP}):
+         * {@code "0"}=Salary, {@code "1"}=Bonus, {@code "9"}=Other. Sent only by
+         * the Payroll Request Approval flow; the Vendor / Expense / Internal
+         * Transfer / Overseas siblings omit it (Jackson maps the missing wire
+         * key to null), so they remain unaffected. Persisted by
+         * {@code PayrollPaymentService.requestApproval}; read back by the Payroll
+         * Scheduled + Result lists.
+         */
+        @Size(max = 1)
+        String apprFundTp,
+
         @NotNull
         Long apprLineNo,
 

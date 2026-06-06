@@ -3,6 +3,8 @@ package com.kosign.wecms.domain.payment.vendorpayment.service;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.common.web.SortDirection;
+import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
+import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
 import com.kosign.wecms.domain.payment.common.TransferLineDetailMapper;
 import com.kosign.wecms.domain.payment.dispatch.DispatchCountRepository;
 import com.kosign.wecms.domain.payment.dispatch.DispatchCountRow;
@@ -63,6 +65,11 @@ public class VendorPaymentResultService {
      *  {@link com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferResultService}
      *  for the contract; shared across all 4 SCDUL_PYMN modules. */
     private final DispatchResultResolver      dispatchResultResolver;
+    /** Approval master — read-only here to surface the requester name
+     *  ({@code DRAFT_USER_NM}) on the result-detail header (legacy
+     *  {@code pymn_0002_002} Requestor field). Mirrors
+     *  {@link com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferResultService}. */
+    private final ExptResolMstrRepository     exptResolMstrRepository;
 
     @Transactional(readOnly = true)
     public TransferResultListResponse list(
@@ -157,9 +164,36 @@ public class VendorPaymentResultService {
                         d.getScdulPymnDetlNo(), DispatchResult.EMPTY)))
                 .toList();
 
+        // G1: header tab counts (All / Success / Failed / In Progress) —
+        // mirrors legacy pymn_0002_002_r001's TOT_CNT/SUC_CNT/ERR_CNT/PRC_CNT.
+        // Derived from the already-resolved per-line statuses so the header
+        // numbers equal the per-line chip distribution the user sees. Same
+        // pattern as InternalTransferResultService.detail() (G2 fix).
+        long[] counts = countByStatus(lines);
+
+        // G6: withdrawal bank display name (legacy OUT_BANK_NM) — same shared
+        // resolver the per-line Deposit Bank cell uses. null when unresolvable;
+        // the frontend falls back to the raw outBankCd.
+        String outBankNm = transferLineDetailMapper.resolveBankNm(master.getOutBankCd());
+
+        // G2: requester display name (legacy pymn_0002_002 EXPT_RESOL_MSTR.DRAFT_USER_NM),
+        // looked up by APPR_SEQ_NO. null when the batch has no approval request yet —
+        // the frontend falls back to regId. Mirrors InternalTransferResultService.
+        String apprSeqNo = master.getApprSeqNo();
+        String requestor = (apprSeqNo != null && !apprSeqNo.isBlank())
+                ? exptResolMstrRepository
+                        .findByBizKeyAndApprSeqNoIn(bizKey, List.of(apprSeqNo))
+                        .stream()
+                        .findFirst()
+                        .map(ExptResolMstr::getDraftUserNm)
+                        .filter(s -> s != null && !s.isBlank())
+                        .orElse(null)
+                : null;
+
         return new TransferResultDetailResponse(
                 master.getScdulPymnNo(),
                 master.getOutBankCd(),
+                outBankNm,
                 master.getWdrlActNo(),
                 master.getTitl(),
                 master.getTotalTranAmt(),
@@ -173,8 +207,55 @@ public class VendorPaymentResultService {
                 master.getOrgFileNm(),
                 master.getFileSize(),
                 master.getRegId(),
-                null, null, null,   // suc/err/prc — Phase B+ dispatch-tables join
+                requestor,
+                // suc/err/prc — derived from the resolved per-line statuses
+                // (countByStatus). Array order is [success, failed, inProgress].
+                BigDecimal.valueOf(counts[0]),
+                BigDecimal.valueOf(counts[1]),
+                BigDecimal.valueOf(counts[2]),
                 lines);
+    }
+
+    /**
+     * Bucket the resolved detail lines into {@code [success, failed, inProgress]}
+     * counts for the Payment Result detail header tabs (All / Success / Failed /
+     * In Progress).
+     *
+     * <p>Classification mirrors the shared frontend classifier
+     * {@code components/payment/shared/deriveResultStatus.ts} and the legacy
+     * per-line rule {@code pymn_0002_002.js}, so the header counts always equal
+     * the per-line chip distribution the user sees:
+     * <ul>
+     *   <li>blank {@code proc_stat} AND blank {@code rs_cd} &rarr; in&nbsp;progress
+     *       (dispatched batch whose bank-side result has not landed yet)</li>
+     *   <li>{@code proc_stat="0"} AND {@code rs_cd="0000"} &rarr; success</li>
+     *   <li>{@code proc_stat} &isin; {{@code 9},{@code 1},{@code 6}} &rarr; in&nbsp;progress</li>
+     *   <li>everything else ({@code proc_stat="3"}, or {@code "0"} with a
+     *       non-{@code "0000"} {@code rs_cd}, or a blank {@code proc_stat} with a
+     *       non-blank {@code rs_cd}, or a stray code) &rarr; failed</li>
+     * </ul>
+     *
+     * <p>Identical classification to
+     * {@code InternalTransferResultService.countByStatus} (kept private per the
+     * established per-service pattern — no shared helper exists yet).
+     * Invariant: {@code success + failed + inProgress == lines.size()}.
+     */
+    private static long[] countByStatus(List<TransferResultLine> lines) {
+        long success = 0, failed = 0, inProgress = 0;
+        for (TransferResultLine line : lines) {
+            String ps = line.procStat() == null ? "" : line.procStat().trim();
+            String rs = line.rsCd()     == null ? "" : line.rsCd().trim();
+            if (ps.isEmpty() && rs.isEmpty()) {
+                inProgress++;
+            } else if ("0".equals(ps) && "0000".equals(rs)) {
+                success++;
+            } else if ("9".equals(ps) || "1".equals(ps) || "6".equals(ps)) {
+                inProgress++;
+            } else {
+                failed++;
+            }
+        }
+        return new long[] { success, failed, inProgress };
     }
 
     /* ---------------------------------------------------------------- */
@@ -198,7 +279,9 @@ public class VendorPaymentResultService {
                 d.getChartAcctSeqNo(),
                 d.getBankTrnsShortId(),
                 r.procStat(), r.procStatKey(), r.procDttm(), r.rsltDttm(),
-                r.rsCd(), r.rsMsg());
+                r.rsCd(), r.rsMsg(),
+                // Banking-match read fields (Phase 1) — SCDUL_PYMN_SUMR_DETL.
+                d.getLinkMatchYn(), d.getAcctSeqNo(), d.getBankTrnsFullId());
     }
 
     private static TransferResultRow toResultRow(ScdulPymnSumr s, long[] counts) {

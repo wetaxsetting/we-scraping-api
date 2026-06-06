@@ -327,15 +327,27 @@ public class InternalTransferService {
         // the batch has no approval request yet, so the frontend falls back to
         // reg_id. Same pattern as the Transfer Result Detail requestor field.
         String apprSeqNo = master.getApprSeqNo();
-        String requestor = (apprSeqNo != null && !apprSeqNo.isBlank())
+        // Load the approval master once and reuse it for both the
+        // requester display name and the Approval Content (CONT) — saves
+        // a second round-trip and keeps the two reads consistent.
+        java.util.Optional<ExptResolMstr> apprMstr = (apprSeqNo != null && !apprSeqNo.isBlank())
                 ? exptResolMstrRepository
                         .findByBizKeyAndApprSeqNoIn(bizKey, java.util.List.of(apprSeqNo))
                         .stream()
                         .findFirst()
-                        .map(ExptResolMstr::getDraftUserNm)
-                        .filter(s -> s != null && !s.isBlank())
-                        .orElse(null)
-                : null;
+                : java.util.Optional.empty();
+        String requestor = apprMstr
+                .map(ExptResolMstr::getDraftUserNm)
+                .filter(s -> s != null && !s.isBlank())
+                .orElse(null);
+        // Approval Content — EXPT_RESOL_MSTR.CONT (legacy POST_CONT). Null
+        // when the batch has no approval request yet or was submitted with
+        // an empty note; the popup's "Approval Content" section renders
+        // the empty-state placeholder in that case.
+        String cont = apprMstr
+                .map(ExptResolMstr::getCont)
+                .filter(s -> s != null && !s.isBlank())
+                .orElse(null);
 
         // Approval-request attachments registered against this batch's
         // APPR_SEQ_NO. Empty when the batch has not been submitted for
@@ -387,7 +399,8 @@ public class InternalTransferService {
                 master.getOrgFileNm(),
                 master.getFileSize(),
                 lines,
-                attachments);
+                attachments,
+                cont);
     }
 
     /* ----------------------------------------------------------------
@@ -970,6 +983,13 @@ public class InternalTransferService {
         mstr.setCmpnLogoDispYn("Y");
         mstr.setRegDispYn("Y");
         mstr.setTitl(req.postTitle() != null ? req.postTitle().trim() : "");
+        // Persist the free-text Approval Content into EXPT_RESOL_MSTR.CONT
+        // (legacy BLTB_POST_INFM.POST_CONT parity). Without this the
+        // Approval Details popup's "Approval Content" section renders
+        // empty even though the requestor typed a note on submit.
+        mstr.setCont(req.postCont() != null && !req.postCont().isBlank()
+                ? req.postCont().trim()
+                : null);
         String docNo = docNoGenerator.nextDocNo(bizKey);
         mstr.setDocNo(docNo);
         mstr.setDocNm(master.getTitl() != null ? master.getTitl() : master.getScdulPymnNo());

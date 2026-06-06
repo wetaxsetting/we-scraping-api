@@ -57,7 +57,14 @@ public record ScheduledTransferDetailResponse(
          *  zero attachments. Driven by {@code EXPT_RESOL_FILE} via
          *  {@code ExptResolFileRepository}; the Approval Details popup
          *  renders one chip per row. */
-        List<ApprovalAttachmentRow> attachments) {
+        List<ApprovalAttachmentRow> attachments,
+        /** Free-text Approval Content — {@code EXPT_RESOL_MSTR.CONT}
+         *  (legacy {@code BLTB_POST_INFM.POST_CONT}). Null when the batch
+         *  has no approval request yet or the requestor submitted an empty
+         *  note. Only Internal Transfer populates this today; the sibling
+         *  Scheduled-detail services construct via the backward-compatible
+         *  constructor below and emit it as null. */
+        String                    cont) {
 
     /**
      * Backward-compatible constructor for the sibling Scheduled-detail callers
@@ -93,6 +100,44 @@ public record ScheduledTransferDetailResponse(
         this(scdulPymnNo, scdulPymnTypeCd, outBankCd, outBankNm, wdrlActNo, titl,
              totalTranAmt, totTrnsCnt, docNo, regId, null, regDtm, apprSeqNo,
              apprStts, apprSttsKey, modDtm, trnfYn, trnfDtm, ccyCd, wdrlCcyCd,
-             orgFileNm, fileSize, rows, attachments);
+             orgFileNm, fileSize, rows, attachments, null);
+    }
+
+    /**
+     * Pre-{@code cont} constructor (with {@code requestor}). The sibling
+     * Result/Scheduled-detail callers (Vendor / Expense / Payroll) build via
+     * this 24-arg shape; it delegates with {@code cont = null} so their
+     * {@code detail(...)} call sites compile unchanged. Only the Internal
+     * Transfer detail populates {@code cont} (via the canonical constructor).
+     */
+    public ScheduledTransferDetailResponse(
+            String                    scdulPymnNo,
+            String                    scdulPymnTypeCd,
+            String                    outBankCd,
+            String                    outBankNm,
+            String                    wdrlActNo,
+            String                    titl,
+            BigDecimal                totalTranAmt,
+            BigDecimal                totTrnsCnt,
+            String                    docNo,
+            String                    regId,
+            String                    requestor,
+            String                    regDtm,
+            String                    apprSeqNo,
+            String                    apprStts,
+            String                    apprSttsKey,
+            String                    modDtm,
+            String                    trnfYn,
+            String                    trnfDtm,
+            String                    ccyCd,
+            String                    wdrlCcyCd,
+            String                    orgFileNm,
+            BigDecimal                fileSize,
+            List<TransferLineDetail>  rows,
+            List<ApprovalAttachmentRow> attachments) {
+        this(scdulPymnNo, scdulPymnTypeCd, outBankCd, outBankNm, wdrlActNo, titl,
+             totalTranAmt, totTrnsCnt, docNo, regId, requestor, regDtm, apprSeqNo,
+             apprStts, apprSttsKey, modDtm, trnfYn, trnfDtm, ccyCd, wdrlCcyCd,
+             orgFileNm, fileSize, rows, attachments, null);
     }
 }
