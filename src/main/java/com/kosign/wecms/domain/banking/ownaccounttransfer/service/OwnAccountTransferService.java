@@ -427,15 +427,16 @@ public class OwnAccountTransferService {
                 napasBankCd,
                 row.getBankCd());
 
-        // short_name / long_name_en / long_name_vn are not mapped on
-        // the current refactor entity (composer-scope; see entity
-        // Javadoc). Ship them as null on the wire so the composer can
-        // fill them in once the wider projection lands.
+        // B9 (2026-06-04): the dictionary's display-name columns are now
+        // mapped on NapasBankInfo, so the lookup returns the recipient
+        // bank names instead of nulls — matching legacy
+        // trns_0001_001_r003 which returns SHORT_NAME / LONG_NAME_EN /
+        // LONG_NAME_VN.
         return new NapasBankInfoRow(
                 row.getNapasBankCd(),
-                null,
-                null,
-                null,
+                row.getShortName(),
+                row.getLongNameEn(),
+                row.getLongNameVn(),
                 row.getBankCd());
     }
 

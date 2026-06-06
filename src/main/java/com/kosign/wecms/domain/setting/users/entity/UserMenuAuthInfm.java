@@ -26,11 +26,11 @@ import lombok.Setter;
  * {@code banking.account_inquiry}, {@code payment.approval_box}). The
  * column is {@code VARCHAR(100)} to comfortably fit the longest slug.
  *
- * <p><b>Local-only schema source:</b> this table is auto-created on
- * the dev DB by Hibernate {@code ddl-auto=update} (see
- * {@code application-local.yml}). DEV / UAT / PROD profiles stay on
- * {@code ddl-auto=validate} and would need a Flyway migration before
- * deploy.
+ * <p><b>Schema source:</b> created by Flyway migration
+ * {@code V126__user_menu_auth_infm.sql}. All profiles keep
+ * {@code ddl-auto=validate}; Flyway is the only sanctioned schema
+ * channel (an earlier {@code ddl-auto=update} attempt was reverted —
+ * see the V126 header).
  */
 @Getter
 @Setter

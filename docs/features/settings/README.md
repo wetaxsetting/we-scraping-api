@@ -17,10 +17,10 @@ validation, error cases). This folder consolidates what previously lived across 
 | 6 | Login Credentials | [login-credentials.md](login-credentials.md) | Phase 3 — wired |
 | 7 | Bank Account | [bank-account.md](bank-account.md) | Implemented |
 | 8 | Preferences | [preferences.md](preferences.md) | Implemented |
-| 9 | Users | [users.md](users.md) | Plan |
+| 9 | Users | [user-management/](user-management/README.md) | ✅ Implemented (parity verified 2026-06-05) — supersedes the flat [users.md](users.md) plan |
 | 10 | Transaction History (ERP) | [transaction-history.md](transaction-history.md) | Phase 1 design |
 | 11 | Firm Banking Settings | [firm-banking-settings.md](firm-banking-settings.md) | Implemented |
-| 12 | Firm Banking History | [firm-banking-history.md](firm-banking-history.md) | Implemented |
+| 12 | Firm Banking History | [firm-banking-history/](firm-banking-history/README.md) (folder — primary home; deep spec preserved at [firm-banking-history.md](firm-banking-history.md)) | ✅ Implemented (parity verified 2026-06-05) |
 
 **ProfileMenu (not a Settings-menu item, kept here for proximity):**
 [change-password.md](change-password.md) — self-service password change reached from the header

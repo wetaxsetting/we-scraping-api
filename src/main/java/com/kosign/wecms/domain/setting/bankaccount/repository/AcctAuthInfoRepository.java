@@ -3,6 +3,7 @@ package com.kosign.wecms.domain.setting.bankaccount.repository;
 import com.kosign.wecms.domain.setting.bankaccount.entity.AcctAuthInfo;
 import com.kosign.wecms.domain.setting.bankaccount.entity.AcctAuthInfoId;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -89,4 +90,27 @@ public interface AcctAuthInfoRepository
      *  of per-account N+1 lookups. */
     List<AcctAuthInfo> findByBizKeyAndUserIdAndUseYn(
             String bizKey, String userId, String useYn);
+
+    /** Soft-revoke every active permission a user holds across all
+     *  accounts in the tenant. Called when Settings &gt; Users unlinks
+     *  the user so a removed member cannot retain account-level
+     *  authority that banking/payment authorization paths still read.
+     *  Mirrors legacy {@code comm_0190_003_d001} →
+     *  {@code AcctAuthInfoDAO.revokePermissionsByBizKeyAndUserId}
+     *  (IDO {@code AcctAuthInfo_U002}): set {@code USE_YN='N'} plus
+     *  {@code MOD_ID}/{@code MOD_DTM}, never a hard delete, so audit
+     *  history survives. Returns the number of rows revoked. */
+    @Modifying
+    @Query("""
+            UPDATE AcctAuthInfo a
+               SET a.useYn = 'N', a.modId = :modId, a.modDtm = :modDtm
+             WHERE a.bizKey = :bizKey
+               AND a.userId = :userId
+               AND a.useYn  = 'Y'
+            """)
+    int revokeAllByBizKeyAndUserId(
+            @Param("bizKey") String bizKey,
+            @Param("userId") String userId,
+            @Param("modId")  String modId,
+            @Param("modDtm") String modDtm);
 }

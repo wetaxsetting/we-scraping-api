@@ -1,3 +1,11 @@
+> ⚠️ **SUPERSEDED (2026-06-05).** This is the original 2026-05-14 implementation *plan*. The
+> feature shipped and now diverges from this document (no plan cap, `/api/v1/settings/users`
+> base path, Menu Entitlement + Avatar implemented, split read/write authorization). The
+> authoritative backend documentation is the folder
+> **[user-management/](user-management/README.md)**; the drift is itemized in
+> [user-management/refactor-gap-analysis.md §Plan-vs-shipped drift](user-management/refactor-gap-analysis.md#3-plan-vs-shipped-drift).
+> Kept here for historical traceability — do not treat as current.
+
 # User Management — Implementation Plan
 
 **Slug:** `user-management`

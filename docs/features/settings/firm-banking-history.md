@@ -1,5 +1,12 @@
 # Settings > Firm Banking History — Refactor Feature Spec
 
+> 📁 **The primary documentation home is now the folder
+> [firm-banking-history/](firm-banking-history/README.md).** This file is preserved as the
+> **detailed phase-by-phase implementation narrative** (Phases 2–3d: DICTIONARY_VAN port, scraping
+> result-code bundle, service-name resolver, EllipsisTooltip) and is cross-linked from the folder
+> README. For the consolidated, current-state docs (business flow, functional spec, DB mapping,
+> interface spec, source index, migration guide, test scenarios, gap analysis) start at the folder.
+
 **Module:** Settings
 **Menu:** Firm Banking History
 **Refactor screen ID / slug:** `firm-banking-history`

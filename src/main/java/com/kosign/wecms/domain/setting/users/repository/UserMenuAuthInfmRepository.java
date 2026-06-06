@@ -24,6 +24,13 @@ public interface UserMenuAuthInfmRepository
      *  path. */
     List<UserMenuAuthInfm> findAllByBizKeyAndUserId(String bizKey, String userId);
 
+    /** Targeted grant probe — true when the user holds a specific menu
+     *  slug with {@code USE_YN='Y'} in the tenant. Backs the
+     *  {@code settings-core-users} read-access check in
+     *  {@code UserManagementAccessPolicy}. */
+    boolean existsByBizKeyAndUserIdAndMenuAuthCdAndUseYn(
+            String bizKey, String userId, String menuAuthCd, String useYn);
+
     /** Delete every row for the (tenant, user) pair — first half of
      *  the delete-then-insert save flow. */
     @Modifying

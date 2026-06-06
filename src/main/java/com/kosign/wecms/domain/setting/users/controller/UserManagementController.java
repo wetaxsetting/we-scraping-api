@@ -16,6 +16,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
@@ -44,18 +45,17 @@ import java.time.Duration;
  *
  * <ul>
  *   <li>{@code GET    /api/v1/settings/users}              — list (active users +
- *       plan-cap metadata).</li>
+ *       count). No plan cap — neither legacy nor refactor enforces one.</li>
  *   <li>{@code GET    /api/v1/settings/users/check-id}     — login-id availability
  *       probe (drives the panel's "Check availability" button).</li>
  *   <li>{@code GET    /api/v1/settings/users/{user_id}}    — single-row read.</li>
- *   <li>{@code POST   /api/v1/settings/users}              — create (plan-cap
- *       enforced, throws {@code WBE_USERS_PLAN_LIMIT_REACHED} on the
- *       6th).</li>
+ *   <li>{@code POST   /api/v1/settings/users}              — create.</li>
  *   <li>{@code PUT    /api/v1/settings/users/{user_id}}    — update profile +
  *       optional password + admin toggle.</li>
  *   <li>{@code DELETE /api/v1/settings/users/{user_id}}    — per-tenant unlink
  *       (soft-delete {@code USER_BUSI_CONN_INFM} + remove
- *       {@code BUSI_ADMN_INFM}; {@code USER_INFM} master untouched).</li>
+ *       {@code BUSI_ADMN_INFM} + revoke {@code ACCT_AUTH_INFO};
+ *       {@code USER_INFM} master untouched).</li>
  * </ul>
  *
  * <p>Wire format is lowercase snake_case (global Jackson naming
@@ -63,9 +63,25 @@ import java.time.Duration;
  * {@code @PathVariable("user_id")} pins the segment to its snake_case
  * URI name.
  *
- * <p>{@code @PreAuthorize} admin-only gating is documented as OQ-1 on
- * the feature spec — pending PO confirmation. JWT authentication is
- * the current gate (configured in {@code SecurityConfig}).
+ * <p><b>Authorization (SEC-1, split by action).</b> User Management is
+ * <em>not</em> blanket admin-only. Authorization is split:
+ * <ul>
+ *   <li><b>Read</b> — {@code list} / {@code detail} / avatar GET — allowed
+ *       for ADMIN <em>or</em> a normal user granted the
+ *       {@code settings-core-users} menu permission, via
+ *       {@code @PreAuthorize("@userMgmtAccess.canViewUsers()")}. Lets a
+ *       granted viewer open the panel read-only.</li>
+ *   <li><b>Write / permission-management</b> — {@code create},
+ *       {@code update}, {@code delete}, {@code check-id}, both
+ *       menu-entitlement endpoints, and avatar upload/delete — stay
+ *       {@code @PreAuthorize("hasRole('ADMIN')")}. The services keep a
+ *       defense-in-depth admin guard ({@code TenantContext.currentIsAdmin()})
+ *       so a normal user can never create users or promote anyone — even
+ *       if the controller gate is bypassed.</li>
+ * </ul>
+ * A blocked caller gets HTTP 403 / {@code WBE1003} via the global handler.
+ * {@code settings-core-users} grants <b>read only</b>; it never grants
+ * management actions.
  */
 @RestController
 @RequestMapping("/api/v1/settings/users")
@@ -78,6 +94,7 @@ public class UserManagementController {
     private final UserImageService userImageService;
 
     @GetMapping
+    @PreAuthorize("@userMgmtAccess.canViewUsers()")
     public ApiResponse<UserListResponse> list() {
         return ApiResponse.ok(service.list());
     }
@@ -85,9 +102,11 @@ public class UserManagementController {
     /**
      * Availability probe — must be declared BEFORE {@link #detail(String)}
      * so Spring's path matcher doesn't route {@code /check-id} into the
-     * {@code {user_id}} placeholder.
+     * {@code {user_id}} placeholder. Admin-only: it only feeds the Add-user
+     * flow, which is itself admin-only.
      */
     @GetMapping("/check-id")
+    @PreAuthorize("hasRole('ADMIN')")
     public ApiResponse<CheckLoginIdResponse> checkLoginId(
             @RequestParam("login_id")
             @NotBlank @Size(max = 100)
@@ -96,17 +115,20 @@ public class UserManagementController {
     }
 
     @GetMapping("/{user_id}")
+    @PreAuthorize("@userMgmtAccess.canViewUsers()")
     public ApiResponse<UserRowResponse> detail(
             @PathVariable("user_id") @NotBlank @Size(max = 100) String userId) {
         return ApiResponse.ok(service.detail(userId));
     }
 
     @PostMapping
+    @PreAuthorize("hasRole('ADMIN')")
     public ApiResponse<UserRowResponse> create(@Valid @RequestBody UserCreateRequest req) {
         return ApiResponse.ok(service.create(req));
     }
 
     @PutMapping("/{user_id}")
+    @PreAuthorize("hasRole('ADMIN')")
     public ApiResponse<UserRowResponse> update(
             @PathVariable("user_id") @NotBlank @Size(max = 100) String userId,
             @Valid @RequestBody UserUpdateRequest req) {
@@ -114,6 +136,7 @@ public class UserManagementController {
     }
 
     @DeleteMapping("/{user_id}")
+    @PreAuthorize("hasRole('ADMIN')")
     public ApiResponse<Void> delete(
             @PathVariable("user_id") @NotBlank @Size(max = 100) String userId) {
         service.delete(userId);
@@ -123,12 +146,14 @@ public class UserManagementController {
     // ----------------------------------------------------- menu entitlement
 
     @GetMapping("/{user_id}/menu-entitlement")
+    @PreAuthorize("hasRole('ADMIN')")
     public ApiResponse<MenuEntitlementResponse> getMenuEntitlement(
             @PathVariable("user_id") @NotBlank @Size(max = 100) String userId) {
         return ApiResponse.ok(menuEntitlementService.load(userId));
     }
 
     @PutMapping("/{user_id}/menu-entitlement")
+    @PreAuthorize("hasRole('ADMIN')")
     public ApiResponse<MenuEntitlementResponse> updateMenuEntitlement(
             @PathVariable("user_id") @NotBlank @Size(max = 100) String userId,
             @Valid @RequestBody MenuEntitlementUpdateRequest req) {
@@ -147,6 +172,7 @@ public class UserManagementController {
      * refreshes the image without manual reload.
      */
     @PostMapping(value = "/{user_id}/image", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("hasRole('ADMIN')")
     public ApiResponse<UserRowResponse> uploadImage(
             @PathVariable("user_id") @NotBlank @Size(max = 100) String userId,
             @RequestPart("file") MultipartFile file) {
@@ -158,6 +184,7 @@ public class UserManagementController {
      * avatar set still gets a 200 and the unchanged row back.
      */
     @DeleteMapping("/{user_id}/image")
+    @PreAuthorize("hasRole('ADMIN')")
     public ApiResponse<UserRowResponse> deleteImage(
             @PathVariable("user_id") @NotBlank @Size(max = 100) String userId) {
         return ApiResponse.ok(userImageService.delete(userId));
@@ -168,8 +195,11 @@ public class UserManagementController {
      * {@code <img src>} (wrapped in a Blob fetch so the JWT
      * Authorization header travels). {@code WBE2113} when no avatar
      * is set; {@code WBE2114} when the row points at a missing file.
+     * Read endpoint — a granted viewer needs avatars to render the list,
+     * so it follows the read policy (ADMIN or {@code settings-core-users}).
      */
     @GetMapping("/{user_id}/image")
+    @PreAuthorize("@userMgmtAccess.canViewUsers()")
     public ResponseEntity<InputStreamResource> streamImage(
             @PathVariable("user_id") @NotBlank @Size(max = 100) String userId) throws IOException {
         ImageDownload image = userImageService.open(userId);

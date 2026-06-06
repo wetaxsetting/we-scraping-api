@@ -16,12 +16,17 @@ import com.kosign.wecms.domain.setting.users.dto.UserCreateRequest;
 import com.kosign.wecms.domain.setting.users.dto.UserListResponse;
 import com.kosign.wecms.domain.setting.users.dto.UserRowResponse;
 import com.kosign.wecms.domain.setting.users.dto.UserUpdateRequest;
+import com.kosign.wecms.domain.setting.bankaccount.repository.AcctAuthInfoRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -76,18 +81,25 @@ public class UserManagementService {
     private static final String FLAG_Y = "Y";
     private static final String FLAG_N = "N";
 
+    /** Legacy yyyyMMddHHmmss audit-stamp format — ACCT_AUTH_INFO keeps
+     *  VARCHAR(14) MOD_DTM strings (see {@code AcctAuthInfo} entity). */
+    private static final DateTimeFormatter DTM14 =
+            DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
+
     private final UserInfmRepository         userInfmRepo;
     private final UserBusiConnInfmRepository userBusiConnRepo;
     private final BusiAdmnInfmRepository     busiAdmnRepo;
+    private final AcctAuthInfoRepository     acctAuthInfoRepo;
     private final PasswordEncoder            passwordEncoder;
 
     // ---------------------------------------------------------------- list
 
     /**
      * Every active user linked to the current tenant, newest first.
-     * Returns the count + the plan-cap so the frontend can paint the
-     * "{used} / {max}" subtitle and disable the "Add a user"
-     * affordance when {@code totalCount >= planLimit}.
+     * Returns the rows + the active-user count for the panel subtitle.
+     * There is no plan cap — neither legacy JEX nor the refactor
+     * enforces one (see {@link #create(UserCreateRequest)}), so the
+     * response carries no {@code planLimit} field.
      */
     @Transactional(readOnly = true)
     public UserListResponse list() {
@@ -175,6 +187,7 @@ public class UserManagementService {
      */
     @Transactional
     public UserRowResponse create(UserCreateRequest req) {
+        requireAdmin();
         String bizKey  = TenantContext.currentBizKey();
         String actorId = TenantContext.currentUserId();
         String userId  = req.userId().trim();
@@ -231,6 +244,7 @@ public class UserManagementService {
      */
     @Transactional
     public UserRowResponse update(String userId, UserUpdateRequest req) {
+        requireAdmin();
         String bizKey  = TenantContext.currentBizKey();
         String actorId = TenantContext.currentUserId();
 
@@ -279,15 +293,24 @@ public class UserManagementService {
 
     /**
      * Per-tenant unlink. {@code USER_BUSI_CONN_INFM.DEL_YN='Y'} +
-     * delete the {@code BUSI_ADMN_INFM} row if present. The
+     * delete the {@code BUSI_ADMN_INFM} row if present + soft-revoke the
+     * user's {@code ACCT_AUTH_INFO} rows in the tenant. The
      * {@code USER_INFM} master is left intact so the user record
      * survives across tenants (multi-link fallback).
+     *
+     * <p>The {@code ACCT_AUTH_INFO} revoke ({@code USE_YN='N'}) closes a
+     * residual-permission hole: those rows are consumed by
+     * banking/payment authorization paths, so an unlinked user must not
+     * keep effective account access. Mirrors legacy
+     * {@code comm_0190_003_d001}. All writes share this method's
+     * {@code @Transactional} scope.
      *
      * <p>Guards: cannot delete yourself; cannot delete the only
      * remaining admin.
      */
     @Transactional
     public void delete(String userId) {
+        requireAdmin();
         String bizKey  = TenantContext.currentBizKey();
         String actorId = TenantContext.currentUserId();
 
@@ -307,14 +330,36 @@ public class UserManagementService {
 
         link.setDelYn(FLAG_Y);
         link.setModId(actorId);
+
+        // Revoke account-level permissions so a removed member cannot
+        // retain effective access via ACCT_AUTH_INFO (soft-revoke, audit
+        // history preserved).
+        acctAuthInfoRepo.revokeAllByBizKeyAndUserId(
+                bizKey, userId, actorId, LocalDateTime.now(ZoneOffset.UTC).format(DTM14));
     }
 
     // ----------------------------------------------------------- internals
 
+    /**
+     * Defense-in-depth admin guard (SEC-1). The controller is already
+     * gated with {@code @PreAuthorize("hasRole('ADMIN')")}; this second
+     * check ensures a non-admin caller can never mutate users / roles
+     * even if the method is reached outside the annotated controller.
+     * Rejects with {@link AccessDeniedException} → HTTP 403 /
+     * {@code WBE1003} via the global handler.
+     */
+    private static void requireAdmin() {
+        if (!TenantContext.currentIsAdmin()) {
+            throw new AccessDeniedException("WBE1003");
+        }
+    }
+
     private Set<String> adminIdSet(String bizKey) {
+        // Tenant-scoped query — never findAll() across every tenant's
+        // admin rows then filter in Java.
         Set<String> out = new HashSet<>();
-        for (BusiAdmnInfm row : busiAdmnRepo.findAll()) {
-            if (bizKey.equals(row.getBizKey())) out.add(row.getUserId());
+        for (BusiAdmnInfm row : busiAdmnRepo.findAllByBizKey(bizKey)) {
+            out.add(row.getUserId());
         }
         return out;
     }

@@ -27,6 +27,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -90,6 +95,17 @@ public class TransferHistoryQueryService {
      *  TRNS_STTS &lt;&gt; '00000000'} predicate at the DB layer per
      *  legacy {@code trns_0003_001_r001_act.jsp:73-81}. */
     static final String STATUS_FAILED_SENTINEL = "99999999";
+
+    /** Display timezone for the date/time columns. The {@code REG_DTM}
+     *  column is stored UTC ({@code yyyyMMddHHmmss}); legacy
+     *  {@code trns_0003_001_r001_act.jsp:101-105} normalizes it to the
+     *  operator's timezone (via {@code DateTimeUtils.normalizeResult})
+     *  before splitting into {@code TRNS_DT} / {@code TRNS_TM}. The
+     *  refactor pins the same project display zone the sibling Own
+     *  Account Transfer service uses ({@code Asia/Ho_Chi_Minh}, UTC+7). */
+    private static final ZoneId DISPLAY_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
+    private static final DateTimeFormatter REG_DTM_FMT =
+            DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
 
     private final TransferHistoryRepository repo;
     private final UserInfmRepository userRepo;
@@ -224,15 +240,29 @@ public class TransferHistoryQueryService {
             Map<String, String> userNmCache,
             String langForBankFn) {
 
-        String regDtm = r.getRegDtm() == null ? "" : r.getRegDtm();
+        // G1 parity: normalize the UTC-stored REG_DTM to the operator
+        // display zone BEFORE splitting, mirroring legacy
+        // trns_0003_001_r001_act.jsp:101-105 (TRNS_DT = local date,
+        // TRNS_TM = local HHmm). The date FILTER (buildSpec) deliberately
+        // stays on the raw UTC string — legacy filters raw, displays local.
+        String regDtm = toDisplayZone14(r.getRegDtm());
         String trnsDt = regDtm.length() >= 8  ? regDtm.substring(0, 8)  : "";
         String trnsTm = regDtm.length() >= 12 ? regDtm.substring(8, 12) : "";
 
         String outBankNm = outBankNmCache.computeIfAbsent(
                 nullSafe(r.getOutBankCode()),
                 code -> code.isEmpty() ? "" : bankCdResolver.resolveBankNm(code));
+        // G5/U2 fix: resolve in_bank_nm from the NAPAS code (IN_NAPAS_BANK_CODE),
+        // NOT the internal IN_BANK_CODE. The resolver reads tb_firm_bank_code,
+        // which is keyed by NAPAS codes (970xxx) — feeding it the internal
+        // 11704xxx code matched no row and rendered the To-Bank name blank for
+        // every row. The wire in_bank_code (below) also carries the NAPAS code
+        // (G4), so the resolved name and the emitted code stay on the same code
+        // space. Legacy resolved the name from its internal IN_BANK_CODE via a
+        // different table (napas_bank_info) — the refactor's chosen table forces
+        // the NAPAS code as the only key that yields a non-empty name.
         String inBankNm = inBankNmCache.computeIfAbsent(
-                nullSafe(r.getInBankCode()),
+                nullSafe(r.getInNapasBankCode()),
                 code -> code.isEmpty() ? "" : nullToEmpty(legacyFn.resolveNapasOrCitadBankName(code, langForBankFn)));
 
         String userNm = userNmCache.getOrDefault(nullSafe(r.getRegId()), "");
@@ -247,7 +277,12 @@ public class TransferHistoryQueryService {
                 nullSafe(r.getOutBankCode()),
                 outBankNm,
                 nullSafe(r.getOutAcctNo()),
-                nullSafe(r.getInBankCode()),
+                // G4 parity: the wire in_bank_code carries IN_NAPAS_BANK_CODE,
+                // matching the legacy IDO alias (IN_NAPAS_BANK_CODE AS
+                // IN_BANK_CODE — R003.xml:46). The name lookup above still
+                // uses the internal IN_BANK_CODE (R003.xml:43), exactly as
+                // legacy resolves wb_get_napas_bank_nm on the internal code.
+                nullSafe(r.getInNapasBankCode()),
                 inBankNm,
                 nullSafe(r.getInAcctNo()),
                 nullSafe(r.getOwacNm()),
@@ -278,6 +313,29 @@ public class TransferHistoryQueryService {
             }
         }
         return out;
+    }
+
+    /**
+     * Convert a UTC-stored {@code yyyyMMddHHmmss} string to the
+     * {@link #DISPLAY_ZONE} (UTC+7) for display. Mirrors the sibling
+     * Own Account Transfer service's {@code toDisplayZone14} and legacy
+     * {@code DateTimeUtils.normalizeResult(dtm, loginUser)}. Null / blank
+     * input returns {@code ""}; an input shorter than 14 chars or one
+     * that fails to parse is returned trimmed-and-unchanged so the
+     * downstream substring split degrades gracefully instead of throwing.
+     */
+    private static String toDisplayZone14(String utc14) {
+        if (utc14 == null || utc14.isBlank()) return "";
+        String trimmed = utc14.trim();
+        if (trimmed.length() < 14) return trimmed;
+        try {
+            return LocalDateTime.parse(trimmed.substring(0, 14), REG_DTM_FMT)
+                    .atZone(ZoneOffset.UTC)
+                    .withZoneSameInstant(DISPLAY_ZONE)
+                    .format(REG_DTM_FMT);
+        } catch (DateTimeParseException ex) {
+            return trimmed;
+        }
     }
 
     private static String nullSafe(String s) {

@@ -5,6 +5,7 @@ import com.kosign.wecms.common.security.JwtTokenProvider;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.auth.dto.LoginRequest;
 import com.kosign.wecms.domain.auth.dto.LoginResponse;
+import com.kosign.wecms.domain.auth.dto.MeResponse;
 import com.kosign.wecms.domain.auth.entity.BusiAdmnInfm;
 import com.kosign.wecms.domain.auth.entity.BusiInfm;
 import com.kosign.wecms.domain.auth.entity.UserBusiConnInfm;
@@ -44,6 +45,7 @@ class AuthServiceTest {
     @Mock PasswordEncoder passwordEncoder;
     @Mock JwtTokenProvider tokenProvider;
     @Mock LoginHistoryService history;
+    @Mock MenuAuthorizationService menuAuthService;
 
     AuthService authService;
 
@@ -65,7 +67,7 @@ class AuthServiceTest {
     void seed() {
         authService = new AuthService(
                 userRepo, userBusiRepo, busiRepo, busiAdmnRepo,
-                passwordEncoder, tokenProvider, history);
+                passwordEncoder, tokenProvider, history, menuAuthService);
 
         user = new UserInfm();
         user.setUserId(ID);
@@ -311,6 +313,55 @@ class AuthServiceTest {
             when(busiRepo.findById(BIZ_A)).thenReturn(Optional.of(company(BIZ_A, "WeCMS R&D Tenant", "F")));
 
             assertThat(authService.me().prdtType()).isEqualTo("H");
+        } finally {
+            TenantContext.clear();
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // /me — Menu Authorization (MENU-1).
+    // ---------------------------------------------------------------
+
+    @Test
+    void me_admin_bypassesMenuFiltering_allMenusTrue() {
+        TenantContext.set(ID, "Test User", BIZ_A,
+                com.kosign.wecms.common.enums.LangCd.EN,
+                TenantContext.AUTH_GR_ADMIN, "F");
+        try {
+            when(userRepo.findById(ID)).thenReturn(Optional.of(user));
+            when(userBusiRepo.findByUserIdAndBizKeyAndDelYn(ID, BIZ_A, "N"))
+                    .thenReturn(Optional.of(linkA));
+            when(busiRepo.findById(BIZ_A)).thenReturn(Optional.of(company(BIZ_A, "WeCMS R&D Tenant", "F")));
+
+            MeResponse me = authService.me();
+
+            assertThat(me.allMenus()).isTrue();
+            assertThat(me.allowedMenuCds()).isEmpty();
+            // Admins bypass the resolver entirely — no DB hit for grants.
+            verify(menuAuthService, never()).grantedMenuCds(anyString(), anyString());
+        } finally {
+            TenantContext.clear();
+        }
+    }
+
+    @Test
+    void me_normalUser_returnsOnlyGrantedMenus() {
+        TenantContext.set(ID, "Test User", BIZ_A,
+                com.kosign.wecms.common.enums.LangCd.EN,
+                TenantContext.AUTH_GR_USER, "F");
+        try {
+            when(userRepo.findById(ID)).thenReturn(Optional.of(user));
+            when(userBusiRepo.findByUserIdAndBizKeyAndDelYn(ID, BIZ_A, "N"))
+                    .thenReturn(Optional.of(linkA));
+            when(busiRepo.findById(BIZ_A)).thenReturn(Optional.of(company(BIZ_A, "WeCMS R&D Tenant", "F")));
+            when(menuAuthService.grantedMenuCds(BIZ_A, ID)).thenReturn(java.util.List.of(
+                    "addon-einvoices-sales", "addon-einvoices-expenses", "addon-operation-status-inquiry"));
+
+            MeResponse me = authService.me();
+
+            assertThat(me.allMenus()).isFalse();
+            assertThat(me.allowedMenuCds()).containsExactly(
+                    "addon-einvoices-sales", "addon-einvoices-expenses", "addon-operation-status-inquiry");
         } finally {
             TenantContext.clear();
         }

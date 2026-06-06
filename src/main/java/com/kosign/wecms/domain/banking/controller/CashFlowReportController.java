@@ -12,6 +12,7 @@ import com.kosign.wecms.domain.banking.service.CashFlowReportService;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -32,6 +33,10 @@ import java.util.Map;
  * <p>The legacy WSVC ships {@code login=N} (public); the refactor
  * requires authentication via the default JWT path. Documented
  * divergence — Sonny override, 2026-05-13.
+ *
+ * <p>F-3 Phase B-1: gated by {@code @menuAuthz.canAccess('banking-reports-cash-flow')}
+ * (Cash Flow is an F/M product-tree leaf — H is denied). The export endpoint
+ * shares the same cd as the report it serialises.
  */
 @RestController
 @RequestMapping("/api/v1/banking/reports/cash-flow-report")
@@ -44,6 +49,7 @@ public class CashFlowReportController {
     private final ObjectMapper objectMapper;
 
     @GetMapping
+    @PreAuthorize("@menuAuthz.canAccess('banking-reports-cash-flow')")
     public ApiResponse<CashFlowReportResponse> search(
             @RequestParam("year") int year,
             @RequestParam(value = "quarter", required = false) Integer quarter,
@@ -56,6 +62,7 @@ public class CashFlowReportController {
     }
 
     @PostMapping("/export")
+    @PreAuthorize("@menuAuthz.canAccess('banking-reports-cash-flow')")
     public void export(@Valid @RequestBody ExcelExportRequest request, HttpServletResponse response) {
         // Cash Flow uses a dedicated POI writer (not the generic
         // ExcelExportService) so the workbook can produce the legacy

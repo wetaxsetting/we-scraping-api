@@ -114,10 +114,23 @@ features were **documented in this pass** (no OQ needed): `common/audit-log.md`,
 - **Current state:** backend is a **STUB** (`ReportController#dailyFinancialHs` → `ReportService#dailyFinancialHs`, `/api/v1/banking/reports/daily-financial-hs`, `DailyFinancialHsReport` DTO) and a frontend page exists (`app/(dashboard)/banking/reports/daily-financial-hs/page.tsx`). No feature doc — parallels the Smart Organizer discovery-scaffold treatment (OQ-DOC-4).
 - **Action:** confirm scope before authoring a full doc; if approved, add `features/banking/reports/daily-financial-hs.md` (both trees) once the stub is implemented.
 
-### OQ-DOC-9 — Settings → Users doc accuracy (avatar + menu-entitlement + status)
+### OQ-DOC-9 — Settings → Users doc accuracy (avatar + menu-entitlement + status) — ✅ ANSWERED, pending confirmation (2026-06-05)
 - **Decision needed:** update [`../../features/settings/users.md`](../../features/settings/users.md) to match implementation, or split sub-features into their own docs?
 - **Current state:** `users.md` marks **user-image/avatar upload** and **menu-entitlement** as "deferred / out of scope" and the screen status as "Plan", but the code is implemented: `domain/setting/users/service/UserImageService.java` (+ `POST/DELETE/GET /{userId}/image`), `MenuEntitlementService.java` (+ `GET/PUT .../menu-entitlement`), and full `UserManagementController` CRUD.
-- **Action:** confirm whether avatar + menu-entitlement endpoints are functional or stubs; then update `users.md` status/sections (no separate `user-avatar.md` unless PO prefers a split). Not editing `users.md` content in this pass (out of "missing-doc" scope).
+- **Resolution (2026-06-05, pending PO confirmation):** rather than edit the stale plan, a full multi-file backend feature folder was authored at [`../../features/settings/user-management/`](../../features/settings/user-management/README.md) (README, business-flow, functional-specification, database-mapping, interface-specification, source-code-index, migration-guide, test-scenarios, refactor-gap-analysis) documenting the **shipped** behaviour. Avatar upload + menu-entitlement are confirmed **functional** (not stubs). The flat `users.md` was given a SUPERSEDED banner and kept for history; the settings README index now points at the folder. Status flipped Plan → ✅ Implemented (parity verified 2026-06-05). **Confirm and close.**
+
+### User Management — content open questions (raised 2026-06-05 with the user-management folder)
+
+Surfaced while documenting the shipped feature; referenced from
+[`../../features/settings/user-management/refactor-gap-analysis.md §4`](../../features/settings/user-management/refactor-gap-analysis.md). None block release.
+
+| ID | Question | Current behaviour / proposed default |
+|---|---|---|
+| OQ-DOC-UM-1 | Should user create/update/delete write `AUDIT_LOGS_INFM` rows (slug `user-management`), matching firm-banking-settings / contacts / chart-of-accounts? | No audit write today. Proposed: add for consistency. |
+| OQ-DOC-UM-2 | Is action-level (CRUD) entitlement (`USER_MENU_ACTION_AUTH_INFM`) in scope, or is menu-level sufficient? | Menu-level only. Proposed: defer until required. |
+| OQ-DOC-UM-3 | Should admins toggle `ACTV_YN` / `LOCK_YN` from this screen (activate/deactivate/unlock)? | Not editable here; DBA/auth-driven. (Overlaps the "status" leg of OQ-DOC-9.) |
+| OQ-DOC-UM-4 | Enforce password reuse history (`USER_PW_CHG_HIS`) + 5-failure auto-lock? | Deferred to the auth-stabilisation MR. |
+| OQ-DOC-UM-5 | Frontend hard-codes phone country code `"84"` — should the wire carry a real code? | Cosmetic; revisit with a proper phone picker. |
 
 ### OQ-DOC-10 — Exchange Rate: inquiry-only vs management
 - **Decision needed:** is exchange-rate **admin configuration/CRUD** a product requirement, or is inquiry-only the intended scope?

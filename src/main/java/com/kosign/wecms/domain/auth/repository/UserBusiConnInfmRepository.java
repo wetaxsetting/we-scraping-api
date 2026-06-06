@@ -52,12 +52,11 @@ public interface UserBusiConnInfmRepository extends JpaRepository<UserBusiConnIn
             Collection<String> userIds, String bizKey, String delYn);
 
     /**
-     * Active-user count for a tenant — backs the Settings &gt; Users
-     * plan-cap guard (5 active users per tenant per
-     * {@code UserManagementConstants.MAX_USERS_PER_TENANT}). Both the
-     * count read and the subsequent {@code USER_BUSI_CONN_INFM} insert
-     * run inside the same {@code @Transactional} method so a fast-double
-     * create cannot overshoot the cap.
+     * Active-user count for a tenant. Available for tenant-scoped
+     * aggregates / display counts. Note: there is <b>no</b> plan cap on
+     * user creation — neither legacy JEX nor the refactor enforces one
+     * (see {@code UserManagementService.create}), so this is not a
+     * creation gate.
      */
     long countByBizKeyAndDelYn(String bizKey, String delYn);
 

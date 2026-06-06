@@ -234,26 +234,26 @@ public class OwnAccountTransferController {
     }
 
     /**
-     * Refactor port of legacy {@code nxisas_decrypt}. Coocon SEED-CBC
-     * is not bundled; this is a structured pass-through so the bundle's
-     * response chain doesn't crash. See {@link OatNxisasService#passthrough}
-     * for the rationale.
+     * Refactor port of legacy {@code nxisas_decrypt}. Decrypts the engine
+     * {@code Output.Result} via the Coocon {@code ISASSeedCBC} cipher when
+     * {@code wecms.oat.seed-decrypt.enabled} is on (B1); otherwise returns
+     * {@code NXISAS_DATA} unchanged. See {@link OatNxisasService#decrypt}.
      */
     @PostMapping("/nxisas/decrypt")
     public ApiResponse<NxisasDecryptResponse> nxisasDecrypt(
             @RequestBody NxisasDecryptRequest req) {
-        return ApiResponse.ok(nxisasService.passthrough(req));
+        return ApiResponse.ok(nxisasService.decrypt(req));
     }
 
     /**
-     * Refactor port of legacy {@code nxisas_encrypt}. Same pass-through
-     * shape as {@code /nxisas/decrypt} — no Coocon SEED-CBC encrypt
-     * path bundled.
+     * Refactor port of legacy {@code nxisas_encrypt} — inverse of
+     * {@code /nxisas/decrypt}, used by the 2nd-factor re-send path. Same
+     * {@code wecms.oat.seed-decrypt.enabled} gate.
      */
     @PostMapping("/nxisas/encrypt")
     public ApiResponse<NxisasDecryptResponse> nxisasEncrypt(
             @RequestBody NxisasDecryptRequest req) {
-        return ApiResponse.ok(nxisasService.passthrough(req));
+        return ApiResponse.ok(nxisasService.encrypt(req));
     }
 
     /**

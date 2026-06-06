@@ -8,6 +8,7 @@ import com.kosign.wecms.domain.setting.firmbankinghistory.service.FirmBankingHis
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -25,10 +26,24 @@ import org.springframework.web.bind.annotation.RestController;
  * to its snake_case wire counterpart. Validation lives in the service —
  * the controller is a thin pass-through that wraps the result in
  * {@link ApiResponse}.
+ *
+ * <p><b>Authority (GAP-4 parity, 2026-06-05).</b> Legacy
+ * {@code WSVC.comm_0221_001_r001.xml:25-26} restricts the screen to
+ * normal company users ({@code NORM_USER_ONLY_YN=Y},
+ * {@code WTA_USER_ALLOW_YN=N}). The refactor has no WTA/agent users
+ * (the admin portal is a separate system), so the faithful mapping is
+ * "must be a provisioned normal company user" — i.e. an authenticated
+ * principal carrying {@code ROLE_ADMIN} or {@code ROLE_USER} (both are
+ * normal company roles, stamped from {@code authGrCd} by
+ * {@code JwtAuthenticationFilter}). {@code @PreAuthorize} is honoured
+ * because {@code SecurityConfig} enables {@code @EnableMethodSecurity}.
+ * Both list and export endpoints inherit the class-level gate. Admin
+ * access remains allowed by design.
  */
 @RestController
 @RequestMapping("/api/v1/settings/firm-banking-history")
 @RequiredArgsConstructor
+@PreAuthorize("hasAnyRole('ADMIN','USER')")
 public class FirmBankingHistoryController {
 
     private final FirmBankingHistoryService service;
