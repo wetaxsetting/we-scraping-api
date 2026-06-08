@@ -220,6 +220,40 @@ public class VasAccountService {
                 .toList();
     }
 
+    /**
+     * Load-all variant of {@link #list} — returns every live row for the
+     * current tenant matching the filter + sort, wrapped in the same
+     * {@link VasAccountListResponse} shape so the frontend contract is
+     * unchanged. Consumed by the VAS Account management panel.
+     *
+     * <p>Why load-all (not pagination): the panel renders a prefix-code
+     * hierarchy (3-char roots own longer-code children — mirrors legacy
+     * {@code comm_0217_001.ts buildHierarchy}). That tree is only correct
+     * over the FULL dataset; server-side pagination would split a parent
+     * from its children across pages. Legacy loaded every row in one shot
+     * ({@code comm_0217_001_r001} has no paging), and a VAS Account code
+     * book is tenant-small (≤ ~200 rows on DEV), so the
+     * {@link #list}'s {@link #MAX_PAGE_SIZE} = 100 clamp would otherwise
+     * truncate a real tenant. This method reuses the unpaged search path
+     * from {@link #listAllForExport} so list + export draw from one query.
+     *
+     * <p>{@code pageNumber}=0, {@code pageSize}={@code totalCount},
+     * {@code totalPages}=0 (empty) or 1 — the wire still carries the
+     * pagination envelope, it just describes a single full page.
+     */
+    @Transactional(readOnly = true)
+    public VasAccountListResponse listAll(
+            String searchWd,
+            List<String> statuses,
+            String sortField,
+            String sortDirection) {
+
+        List<VasAccountRow> rows =
+                listAllForExport(searchWd, statuses, sortField, sortDirection);
+        int count = rows.size();
+        return new VasAccountListResponse(rows, count, 0, count, count == 0 ? 0 : 1);
+    }
+
     /* =================================================================
      *  Lookup — active+live picker for the Edit Bank Account dialog.
      *  Mirrors legacy `comm_1002_001` (VAS Account TextBox / typeahead).

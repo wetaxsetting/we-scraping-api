@@ -76,8 +76,12 @@ import java.util.Optional;
  *
  * <p>OQ resolution status (as of 2026-05-13):
  * <ul>
- *   <li>OQ-1 (USER role gating): default — no {@code @PreAuthorize},
- *       matches legacy behaviour. Flip to admin-only later.</li>
+ *   <li>OQ-1 (USER vs ADMIN write gating): OPEN pending PO. NOTE the
+ *       controller IS gated by {@code @PreAuthorize(@menuAuthz
+ *       .canAccess('settings-core-chart-of-accounts'))} — the menu
+ *       grant is enforced at runtime; only the USER-vs-ADMIN write
+ *       distinction is undecided. Earlier "no @PreAuthorize" wording was
+ *       stale (corrected 2026-06-08).</li>
  *   <li>OQ-2 (cycle / depth / self-parent guards): YES — refactor
  *       additions enforced via {@link ChartOfAccountsValidator}.</li>
  *   <li>OQ-3 (legacy u001:237-256 cleanup branch): DROPPED. See

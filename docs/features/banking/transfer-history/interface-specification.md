@@ -138,19 +138,9 @@ Authorization: Bearer <jwt>
 }
 ```
 
-## 5. Deprecated interim endpoint (Sprint 1 holdover)
+## 5. Deprecated interim endpoint (Sprint 1 holdover) — REMOVED 2026-06-07
 
-| Property | Value |
-|---|---|
-| URL | `GET /api/v1/banking/transfers/history` (`@Deprecated`) |
-| Controller | `domain/banking/controller/TransferController` |
-| Service | `domain/banking/service/TransferHistoryService` |
-| Response | `domain/banking/dto/TransferHistoryResponse` — **UPPER_SNAKE** wire (`@JsonProperty("ROWS")`, `"TOTAL_COUNT"`, `"TOTALS"`, nested `CurrencyTotal` `"CCY_CD"`/`"COUNT"`/`"AMOUNT"`) |
-| Params | `from`, `to`, `status` (`ALL`/`SUCCESS`/`FAILED` string sentinels — not the `00000000`/`99999999` codes) |
-| Behaviour | no paging, no display-zone normalization; out+in bank names both via `BankCdResolver` (no NAPAS distinction) |
-| Status | **Deprecated** — to be removed once no consumer remains. The live frontend already calls the new spec-aligned path, so this is dead-on-arrival for the UI. |
-
-> The CLAUDE.md "Current API calls" table still lists the old `transfers/history` URL for the frontend fetcher — that is **stale**; `fetchTransferHistory()` actually calls the new `internal-transfer/transfer-history` path. Flagged in [refactor-gap-analysis.md](refactor-gap-analysis.md) §"Open questions".
+`GET /api/v1/banking/transfers/history` and its UPPER_SNAKE DTOs were **deleted 2026-06-07**. Removed: `TransferController.history()`, `TransferHistoryService.java`, `TransferHistoryResponse.java`, `TransferRow.java`. The frontend was always pointed at the new lowercase `/internal-transfer/transfer-history` path (`fetchTransferHistory()`), so there was no consumer to break. `NapasRemitTrnsHstrRepository` / `NapasRemitTrnsHstr` were kept (shared with `OwnAccountTransferService`). The CLAUDE.md "Current API calls" table was corrected to the new path in the same change.
 
 ## 6. Out of scope (no endpoint exists)
 

@@ -1,5 +1,9 @@
 # Banking > Account Inquiry (FCY) — Refactor Feature Spec
 
+> **Preserved single-file spec.** The **primary documentation home** for this feature is now the
+> 9-doc folder [account-inquiry-fcy/](../account-inquiry-fcy/README.md). This file is kept as a quick
+> reference and remains valid; new detail lands in the folder.
+
 **Module:** Banking
 **Menu:** Account Inquiry (FCY)
 **Route:** `/banking/account-inquiry-fcy`

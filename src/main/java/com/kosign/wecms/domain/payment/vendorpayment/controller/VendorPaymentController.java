@@ -53,6 +53,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.multipart.MultipartFile;
 
 /**
@@ -85,6 +86,7 @@ import org.springframework.web.multipart.MultipartFile;
 @RequestMapping("/api/v1/payment/vendor-payment")
 @RequiredArgsConstructor
 @Validated
+@PreAuthorize("@menuAuthz.canAccess('payment-vendor-scheduled')")
 public class VendorPaymentController {
 
     /** Path-segment guard for {@code scdul_pymn_no} values. Accepts both
@@ -147,6 +149,7 @@ public class VendorPaymentController {
      * {@code pymn_0002_001_r001}.
      */
     @GetMapping("/results")
+    @PreAuthorize("@menuAuthz.canAccess('payment-vendor-result')")
     public ApiResponse<TransferResultListResponse> listResults(
             @RequestParam("from_date")                                String fromDate,
             @RequestParam("to_date")                                  String toDate,
@@ -166,6 +169,7 @@ public class VendorPaymentController {
      * {@code pymn_0002_002_r001}.
      */
     @GetMapping("/results/{id}")
+    @PreAuthorize("@menuAuthz.canAccess('payment-vendor-result')")
     public ApiResponse<TransferResultDetailResponse> resultDetail(
             @PathVariable("id")
             @Size(max = 30)
@@ -177,6 +181,7 @@ public class VendorPaymentController {
     /** Excel export of the Vendor Payment Result list. Provider:
      *  {@code VendorPaymentResultExportProvider} (CLAUDE.md §13b). */
     @PostMapping("/results/export")
+    @PreAuthorize("@menuAuthz.canAccess('payment-vendor-result')")
     public void exportResults(
             @Valid @RequestBody ExcelExportRequest request,
             HttpServletResponse response) {

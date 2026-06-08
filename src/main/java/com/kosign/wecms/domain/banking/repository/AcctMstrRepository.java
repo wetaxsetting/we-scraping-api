@@ -73,6 +73,45 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
                                 @Param("bankCd") String bankCd);
 
     /**
+     * Stamp a failed scrape outcome onto one account. HR-2 legacy parity:
+     * {@code fnsh_0001_001_c001_act.jsp} records the bank/gateway error
+     * code + message into the per-job status columns so the Account
+     * Inquiry list shows "Failed" instead of the previous success.
+     *
+     * <p>Issued as a single UPDATE so it can run in a {@code REQUIRES_NEW}
+     * transaction ({@link com.kosign.wecms.domain.banking.nxisas.AcctMstrStatusUpdater})
+     * and survive the outer sync transaction's rollback when a
+     * TRANSACTION / BALANCE job throws. {@code ACCT_BAL_INQ_STTS} is the
+     * column the list badge reads ({@code AccountRow.acctBalInqStts} →
+     * frontend {@code isInquiryError}); all three legacy status columns
+     * are set to the same code so the row reads as failed regardless of
+     * which job failed. Timestamps are intentionally NOT advanced on
+     * failure (legacy only stamps {@code *_LST_INQ_DTM} on success).
+     */
+    @Modifying
+    @Query("""
+            UPDATE AcctMstr a
+               SET a.lstLgnStts     = :code,
+                   a.lstLgnSttsMsg  = :msg,
+                   a.acctBalInqStts = :code,
+                   a.acctBalInqMsg  = :msg,
+                   a.acctHisInqStts = :code,
+                   a.acctHisInqMsg  = :msg,
+                   a.modId          = :userId,
+                   a.modDtm         = :nowDb
+             WHERE a.bizKey = :bizKey
+               AND a.bankCd = :bankCd
+               AND a.acctNo = :acctNo
+            """)
+    int markScrapeFailure(@Param("bizKey") String bizKey,
+                          @Param("bankCd") String bankCd,
+                          @Param("acctNo") String acctNo,
+                          @Param("code")   String code,
+                          @Param("msg")    String msg,
+                          @Param("userId") String userId,
+                          @Param("nowDb")  String nowDb);
+
+    /**
      * All accounts for the tenant (active + inactive), ordered the way
      * Settings &gt; Bank Account renders them: print order first, then
      * bank then account no. Mirrors legacy {@code comm_0183_001_r001}
@@ -155,6 +194,14 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
                AND (:ccyNot IS NULL OR a.ccyCd <> :ccyNot)
                AND (:acctTypeCdIn IS NULL OR a.acctTypeCd IN :acctTypeCdIn)
                AND (:bankCd IS NULL OR a.bankCd = :bankCd)
+               AND (:authUserId IS NULL OR EXISTS (
+                        SELECT 1 FROM AcctAuthInfo aa
+                         WHERE aa.bizKey = a.bizKey
+                           AND aa.bankCd = a.bankCd
+                           AND aa.acctNo = a.acctNo
+                           AND aa.userId = :authUserId
+                           AND aa.useYn = 'Y'
+                           AND aa.authType = 'V'))
                AND (:keywordPattern IS NULL
                     OR LOWER(COALESCE(
                             function('wb_format_acct_nick_nm',
@@ -169,6 +216,7 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
             @Param("acctTypeCdIn")    List<String> acctTypeCdIn,
             @Param("bankCd")          String bankCd,
             @Param("keywordPattern")  String keywordPattern,
+            @Param("authUserId")      String authUserId,
             Pageable pageable);
 
     /**
@@ -197,6 +245,14 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
                AND (:ccyNot IS NULL OR a.ccyCd <> :ccyNot)
                AND (:acctTypeCdIn IS NULL OR a.acctTypeCd IN :acctTypeCdIn)
                AND (:bankCd IS NULL OR a.bankCd = :bankCd)
+               AND (:authUserId IS NULL OR EXISTS (
+                        SELECT 1 FROM AcctAuthInfo aa
+                         WHERE aa.bizKey = a.bizKey
+                           AND aa.bankCd = a.bankCd
+                           AND aa.acctNo = a.acctNo
+                           AND aa.userId = :authUserId
+                           AND aa.useYn = 'Y'
+                           AND aa.authType = 'V'))
                AND (:keywordPattern IS NULL
                     OR LOWER(COALESCE(
                             function('wb_format_acct_nick_nm',
@@ -212,7 +268,8 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
             @Param("ccyNot")          String ccyNot,
             @Param("acctTypeCdIn")    List<String> acctTypeCdIn,
             @Param("bankCd")          String bankCd,
-            @Param("keywordPattern")  String keywordPattern);
+            @Param("keywordPattern")  String keywordPattern,
+            @Param("authUserId")      String authUserId);
 
     /**
      * Distinct {@code BANK_CD} list for the current tenant + currency
@@ -232,13 +289,22 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
                AND (:ccyEq  IS NULL OR a.ccyCd = :ccyEq)
                AND (:ccyNot IS NULL OR a.ccyCd <> :ccyNot)
                AND (:acctTypeCdIn IS NULL OR a.acctTypeCd IN :acctTypeCdIn)
+               AND (:authUserId IS NULL OR EXISTS (
+                        SELECT 1 FROM AcctAuthInfo aa
+                         WHERE aa.bizKey = a.bizKey
+                           AND aa.bankCd = a.bankCd
+                           AND aa.acctNo = a.acctNo
+                           AND aa.userId = :authUserId
+                           AND aa.useYn = 'Y'
+                           AND aa.authType = 'V'))
              ORDER BY a.bankCd
             """)
     List<String> findDistinctBankCds(
             @Param("bizKey")       String bizKey,
             @Param("ccyEq")        String ccyEq,
             @Param("ccyNot")       String ccyNot,
-            @Param("acctTypeCdIn") List<String> acctTypeCdIn);
+            @Param("acctTypeCdIn") List<String> acctTypeCdIn,
+            @Param("authUserId")   String authUserId);
 
     /**
      * Withdrawal-account lookup for the Payment Internal Transfer
@@ -328,7 +394,7 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
      * Source-account list for {@code GET /api/v1/banking/own-account-transfer/source-accounts}.
      * Mirrors legacy {@code _r001_act.jsp:144-194} + {@code IDO.ACCT_MSTR_R015.xml}
      * minus the auth-pivot join (the service applies the USER-mode
-     * filter in Java against {@link AcctAuthInfoRepository} so the
+     * filter in Java against {@link com.kosign.wecms.domain.setting.bankaccount.repository.AcctAuthInfoRepository} so the
      * tenant-slice query stays a clean entity load and the test
      * harness doesn't need to seed the pivot table for every fixture).
      *

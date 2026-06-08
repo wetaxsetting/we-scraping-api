@@ -27,6 +27,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.access.prepost.PreAuthorize;
 
 /**
  * Add-on Service — Sales / Bill e-Invoice listing endpoint.
@@ -104,6 +105,7 @@ public class EInvoiceController {
     private final EInvoiceDetailExportService detailExportService;
 
     @GetMapping("/einvoices")
+    @PreAuthorize("@menuAuthz.canAccessEInvoice(#p0)")
     public ApiResponse<EInvoiceListResponse> list(
             @RequestParam("type")
             @NotBlank
@@ -144,6 +146,7 @@ public class EInvoiceController {
      * committable; once bytes are flushed the connection is just closed.
      */
     @PostMapping("/einvoices/export")
+    @PreAuthorize("@menuAuthz.canAccessAny('addon-einvoices-sales','addon-einvoices-expenses')")
     public void exportEInvoices(
             @Valid @RequestBody ExcelExportRequest request,
             HttpServletResponse response) {
@@ -164,6 +167,7 @@ public class EInvoiceController {
      * same query path as the list endpoint + the List export.
      */
     @PostMapping("/einvoices/export-details")
+    @PreAuthorize("@menuAuthz.canAccessAny('addon-einvoices-sales','addon-einvoices-expenses')")
     public void exportEInvoiceDetails(
             @Valid @RequestBody ExcelExportRequest request,
             HttpServletResponse response) {
@@ -185,6 +189,7 @@ public class EInvoiceController {
      * the body never carries {@code biz_key}.
      */
     @PostMapping("/einvoices/scrape-results")
+    @PreAuthorize("@menuAuthz.canAccessAny('addon-einvoices-sales','addon-einvoices-expenses')")
     public ApiResponse<EInvoiceScrapeResult> saveScrapeResults(
             @Valid @RequestBody EInvoiceScrapeRequest request) {
         return ApiResponse.ok(scrapeService.saveScrapedInvoices(request));
@@ -204,6 +209,7 @@ public class EInvoiceController {
      * <p>Tenant + user are read from the JWT via {@code TenantContext}.
      */
     @PostMapping("/einvoices/scrape-detail-results")
+    @PreAuthorize("@menuAuthz.canAccessAny('addon-einvoices-sales','addon-einvoices-expenses')")
     public ApiResponse<EInvoiceDetailScrapeResult> saveScrapeDetailResults(
             @Valid @RequestBody EInvoiceDetailScrapeRequest request) {
         return ApiResponse.ok(detailScrapeService.saveScrapedDetails(request));
@@ -225,6 +231,7 @@ public class EInvoiceController {
      * Tenant comes from the JWT via {@code TenantContext}.
      */
     @GetMapping("/einvoices/history")
+    @PreAuthorize("@menuAuthz.canAccessEInvoice(#p0)")
     public ApiResponse<EInvoiceHistoryResponse> history(
             @RequestParam(value = "type", required = false)
             String type,
@@ -261,6 +268,7 @@ public class EInvoiceController {
      * Tenant comes from the JWT via {@code TenantContext}.
      */
     @GetMapping("/einvoices/detail-history")
+    @PreAuthorize("@menuAuthz.canAccessEInvoice(#p0)")
     public ApiResponse<EInvoiceDetailHistoryResponse> detailHistory(
             @RequestParam("type")
             @NotBlank

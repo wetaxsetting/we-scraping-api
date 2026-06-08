@@ -30,14 +30,16 @@
 | User name lookup | `domain/auth/repository/UserInfmRepository.findAllById` |
 | Tenant context | `common/tenant/TenantContext.java` |
 
-## 2. Refactor backend — deprecated interim (Sprint 1)
+## 2. Refactor backend — deprecated interim (Sprint 1) — DELETED 2026-06-07
 
-| Layer | File |
-|---|---|
-| Controller | `domain/banking/controller/TransferController.java` (`GET /api/v1/banking/transfers/history`, `@Deprecated`) |
-| Service | `domain/banking/service/TransferHistoryService.java` |
-| DTO | `domain/banking/dto/TransferHistoryResponse.java` (UPPER_SNAKE) |
-| Repository | `domain/banking/repository/NapasRemitTrnsHstrRepository.java` (derived methods) |
+The interim UPPER_SNAKE endpoint and its files were removed once it was confirmed to have no consumer:
+
+| Layer | File | Status |
+|---|---|---|
+| Controller method | `TransferController.history()` (`GET /api/v1/banking/transfers/history`) | **removed** (the `/transfers/own-accounts` handler on `TransferController` stays) |
+| Service | `domain/banking/service/TransferHistoryService.java` | **deleted** |
+| DTO | `domain/banking/dto/TransferHistoryResponse.java`, `domain/banking/dto/TransferRow.java` | **deleted** (UPPER_SNAKE) |
+| Repository | `domain/banking/repository/NapasRemitTrnsHstrRepository.java` | **kept** — shared with `OwnAccountTransferService` |
 
 ## 3. Tests (wecms-api)
 

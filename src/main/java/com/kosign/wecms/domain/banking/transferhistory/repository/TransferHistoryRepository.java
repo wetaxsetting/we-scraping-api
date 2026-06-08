@@ -12,18 +12,17 @@ import org.springframework.data.repository.query.Param;
 /**
  * Read-only repository for the Transfer History list endpoint.
  *
- * <p>Distinct from the older {@code com.kosign.wecms.domain.banking.
- * repository.NapasRemitTrnsHstrRepository} which carries hand-rolled
- * derived methods for the Sprint 1 interim endpoint at
- * {@code /api/v1/banking/transfers/history}. This repository surfaces
+ * <p>Distinct from {@code com.kosign.wecms.domain.banking.repository.
+ * NapasRemitTrnsHstrRepository} (which is shared with
+ * {@code OwnAccountTransferService}). This repository surfaces
  * {@link JpaSpecificationExecutor} so the Transfer History service can
  * build {@code WHERE BIZ_KEY = ? AND substr(REG_DTM,1,8) BETWEEN ? AND
  * ? AND TRNS_STTS …} dynamically while keeping the sort + paging
  * contract.
  *
- * <p>The interim repository stays in place until the corresponding
- * frontend cutover MR flips the {@code /transfers/history} consumer to
- * the new endpoint.
+ * <p>The Sprint-1 interim {@code /transfers/history} endpoint that this
+ * replaced was deleted 2026-06-07; this is now the sole Transfer History
+ * read path.
  */
 public interface TransferHistoryRepository
         extends JpaRepository<NapasRemitTrnsHstr, NapasRemitTrnsHstrId>,

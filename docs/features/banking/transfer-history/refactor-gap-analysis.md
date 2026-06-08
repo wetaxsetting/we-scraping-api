@@ -69,7 +69,7 @@ Refactor Status (Transfer History feature): 100% Complete — legacy parity veri
 |---|---|---|
 | OQ-A | `WBE_TRANSFER_HISTORY_INVALID_PERIOD` is in `messages.properties` but **not** `messages_en.properties` (resolves via fallback, but violates the "add to both" convention). | Backend cleanup MR |
 | OQ-B | `V196__transfer_history_helper_index.sql` has a stale internal header reading `V181`. Harmless, but misleading. | Backend cleanup MR |
-| OQ-C | Deprecated interim endpoint `GET /api/v1/banking/transfers/history` (`TransferController`/`TransferHistoryService`/`TransferHistoryResponse` UPPER_SNAKE) can be removed — frontend already calls the new path. Confirm no consumer, then delete. | Backend cleanup MR |
-| OQ-D | CLAUDE.md "Current API calls" table lists the stale `/api/v1/banking/transfers/history` URL for the frontend fetcher; actual code calls `/api/v1/banking/internal-transfer/transfer-history`. Doc fix. | Doc maintenance |
+| OQ-C | ✅ **RESOLVED 2026-06-07** — deprecated interim endpoint `GET /api/v1/banking/transfers/history` + `TransferController.history()` + `TransferHistoryService` + `TransferHistoryResponse` / `TransferRow` (UPPER_SNAKE) **deleted** after confirming no consumer. | Done |
+| OQ-D | ✅ **RESOLVED 2026-06-07** — CLAUDE.md "Current API calls" table updated to `/api/v1/banking/internal-transfer/transfer-history`. | Done |
 | OQ-E | USD second-footer-row rendering deferred (business decision — is a USD totals row wanted on screen?). | PO (Mr. Jung) |
 | OQ-F | Max date-range cap — do we want one for performance? Legacy has none. | PO (Mr. Jung) |

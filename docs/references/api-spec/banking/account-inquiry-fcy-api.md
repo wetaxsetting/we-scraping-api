@@ -98,7 +98,17 @@ Pagination + aggregation semantics (identical to VND):
 
 ### `AccountRow` fields
 
-JSON keys are UPPER_SNAKE_CASE via `@JsonProperty` — match JEX 1:1. Same shape as VND.
+> **Casing corrected 2026-06-06 (source-verified).** JSON keys are **lowercase
+> `snake_case`**, emitted by the global Jackson `SNAKE_CASE` strategy
+> ([`JacksonConfig`](../../../../src/main/java/com/kosign/wecms/config/JacksonConfig.java)).
+> `AccountRow.java` carries **no** `@JsonProperty` — the earlier
+> "UPPER_SNAKE via `@JsonProperty`" claim was wrong. The wire field names mirror
+> the legacy DB columns **1:1 but lowercased** (`acct_seq_no`, `bank_cd`,
+> `acct_no`, `ccy_cd`, `bal`, `real_amt`, …). Same shape as the VND page
+> ([account-inquiry-vnd-api.md](account-inquiry-vnd-api.md)). The field names in
+> the table below are shown in their legacy UPPER form for traceability — read
+> each as its lowercase snake_case wire equivalent. See
+> [field-casing-parity-audit-2026-06-06.md](../../../audits/field-casing-parity-audit-2026-06-06.md).
 
 | Field | Type | Source | Notes |
 |---|---|---|---|

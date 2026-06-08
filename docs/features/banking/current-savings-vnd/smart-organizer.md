@@ -1,5 +1,11 @@
 # Banking > Smart Organizer (VND) — Refactor Feature Spec
 
+> **⚠️ Superseded — preserved for history.** The primary, current backend documentation home for
+> Smart Organizer is the 9-doc folder
+> **[../smart-organizer/](../smart-organizer/README.md)** (full-stack refactor complete, all six
+> R01/R03/R05/R06/R07/R11 blockers CLOSED). This single-file spec predates that folder and still carries
+> `Needs Confirmation` markers; read the folder instead. Content kept for traceability only.
+
 **Module:** Banking → Current & Savings (VND)
 **Menu:** Smart Organizer (VND)
 **Route (proposed):** `/banking/smart-organizer`

@@ -25,6 +25,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.access.prepost.PreAuthorize;
 
 /**
  * Settings &gt; Chart of Accounts — six REST endpoints under
@@ -52,10 +53,19 @@ import org.springframework.web.bind.annotation.RestController;
  * fields use camelCase in Java; {@code @PathVariable("chart_acct_seq_no")}
  * pins the segment to its snake_case URI name.
  *
- * <p>OQ-1 default (resolved by sprint-day-1 plan): no
- * {@code @PreAuthorize} — JWT authentication is the only gate, matches
- * live JEX behaviour. {@code @Validated} at the class level enables
- * the {@code @NotBlank}/{@code @Pattern} guards on the path id.
+ * <p>Authorization: the class IS gated by
+ * {@code @PreAuthorize("@menuAuthz.canAccess('settings-core-chart-of-accounts')")}
+ * — every endpoint requires the caller to hold the Chart of Accounts
+ * menu grant. The gate is enforced at runtime by Spring Security (part
+ * of the F-3 menuAuthz rollout) and is covered by
+ * {@code EndpointAuthorizationCoverageTest}. Legacy JEX has no role gate;
+ * the refactor adds this menu-access gate on top of JWT authentication.
+ * OQ-1 — whether the USER role should differ from ADMIN for write
+ * operations — is still OPEN pending PO; the menu-access gate above is
+ * live regardless. (Earlier "no {@code @PreAuthorize}" wording here was
+ * stale; corrected 2026-06-08 — the annotation has always been present.)
+ * {@code @Validated} at the class level enables the
+ * {@code @NotBlank}/{@code @Pattern} guards on the path id.
  *
  * <p>Audit-log: enabled (writes one event per Create / Update /
  * Delete to {@code AUDIT_LOGS_INFM} with {@code wsvc_id =
@@ -66,6 +76,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/settings/chart-of-accounts")
 @RequiredArgsConstructor
 @Validated
+@PreAuthorize("@menuAuthz.canAccess('settings-core-chart-of-accounts')")
 public class ChartOfAccountsController {
 
     private final ChartOfAccountsService service;

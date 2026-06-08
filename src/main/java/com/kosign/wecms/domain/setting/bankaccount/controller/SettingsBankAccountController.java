@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.access.prepost.PreAuthorize;
 
 /**
  * Settings &gt; Bank Account REST surface. Mirrors the legacy
@@ -36,6 +37,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/settings/bank-account")
 @RequiredArgsConstructor
+@PreAuthorize("@menuAuthz.canAccess('settings-core-bank-account')")
 public class SettingsBankAccountController {
 
     private final SettingsBankAccountService service;

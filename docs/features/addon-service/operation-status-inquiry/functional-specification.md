@@ -97,5 +97,8 @@ All business outcomes return HTTP 200 with `status.error = true` per the global 
 
 ## 8. Product-type & permissions
 
-- No `@PreAuthorize` gate on these endpoints today — any authenticated tenant user (matches live JEX, which has no role gate on `aosv_0001_*`).
-- No product-type (`PRDT_TYPE`) branching on this feature.
+> **Corrected 2026-06-06 (F-3 verification).** The "no `@PreAuthorize`" note is **stale** — the class-level gate is now live. Full matrix: [authorization-and-product-type.md](../authorization-and-product-type.md).
+
+- **`@PreAuthorize` is live (class-level).** `OperationStatusController` carries `@PreAuthorize("@menuAuthz.canAccess('addon-operation-status-inquiry')")`, so every endpoint (list, `/inquire`, `/update`, `/export`) is gated by the `addon-operation-status-inquiry` permission code.
+- **Product-type gate is live, via the navigation product tree.** `MenuAuthorizationGuard` step 2 denies any caller — admin included — whose tenant product tree lacks `addon-operation-status-inquiry`. Per the V243 seed: **F and M carry Operation Status; H does not.** There is no per-product *field-level* branching inside the feature, but the whole feature is product-gated by the Add-on Service tree membership.
+- **Per-user grant** applies on top for non-admins (`USE_YN='Y'` for `addon-operation-status-inquiry`); admins bypass the grant but never the product-tree gate.

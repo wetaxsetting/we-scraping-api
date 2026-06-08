@@ -1,3 +1,10 @@
+> **⚠️ Superseded — preserved for history (2026-06-06).** The primary documentation home for this
+> feature is now the 9-doc folder **[transaction-history-vnd/](../transaction-history-vnd/README.md)**.
+> This single-file spec predates the full-stack completion: its `Status: ~25% frontend` line and the
+> `banking-transaction-history-vnd` slug are **stale** — the feature is refactor-complete and the
+> actual View Setting screenId / export screenId is `banking-transaction-history` (one id shared by
+> VND + FCY). Read the new folder for current facts; this file is kept for traceability only.
+
 # Banking > Transaction History (VND) — Refactor Feature Spec
 
 **Module:** Banking → Current & Savings (VND)

@@ -41,6 +41,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
@@ -61,6 +62,7 @@ import java.util.Map;
 @RequestMapping("/api/v1/payment/overseas-payment")
 @RequiredArgsConstructor
 @Validated
+@PreAuthorize("@menuAuthz.canAccess('payment-overseas-request')")
 public class OverseasPaymentController {
 
     private final OverseasPaymentService        overseasPaymentService;
@@ -217,6 +219,7 @@ public class OverseasPaymentController {
      * {@code trnf_yn = "Y"} → completed; {@code "N"} → in progress.
      */
     @GetMapping("/result")
+    @PreAuthorize("@menuAuthz.canAccess('payment-overseas-result')")
     public ApiResponse<OverseasResultListResponse> listResult(
             @RequestParam("from_date")
             @Pattern(regexp = "^[0-9]{8}$", message = "from_date must be yyyyMMdd")
@@ -248,6 +251,7 @@ public class OverseasPaymentController {
      * Single overseas payment-result row by {@code OVRS_PYMN_NO}.
      */
     @GetMapping("/result/{id}")
+    @PreAuthorize("@menuAuthz.canAccess('payment-overseas-result')")
     public ApiResponse<OverseasResultRow> getResultById(@PathVariable("id") String id) {
         return ApiResponse.ok(overseasPaymentService.getResultById(id));
     }
@@ -258,6 +262,7 @@ public class OverseasPaymentController {
      * One Excel row per {@code OVRS_PYMN_DTLS} detail line.
      */
     @GetMapping("/result/export")
+    @PreAuthorize("@menuAuthz.canAccess('payment-overseas-result')")
     public void exportResult(
             @RequestParam("from_date")
             @Pattern(regexp = "^[0-9]{8}$", message = "from_date must be yyyyMMdd")
@@ -285,6 +290,7 @@ public class OverseasPaymentController {
      * Pass {@code rprt_acct_cd: null} to clear the assignment.
      */
     @PatchMapping("/{id}/details/{trnSeq}/reporting-account")
+    @PreAuthorize("@menuAuthz.canAccess('payment-overseas-result')")
     public ApiResponse<Void> saveReportingAccount(
             @PathVariable("id") String id,
             @PathVariable("trnSeq") int trnSeq,
@@ -321,6 +327,7 @@ public class OverseasPaymentController {
      * loads the detail via {@link OverseasPaymentService#getDetail}.
      */
     @PostMapping("/result/{id}/export")
+    @PreAuthorize("@menuAuthz.canAccess('payment-overseas-result')")
     public void exportResultDetail(
             @PathVariable("id") String id,
             @Valid @RequestBody ExcelExportRequest request,

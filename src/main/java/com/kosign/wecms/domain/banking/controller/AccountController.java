@@ -44,6 +44,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.access.prepost.PreAuthorize;
 
 @RestController
 @RequestMapping("/api/v1/banking")
@@ -89,6 +90,7 @@ public class AccountController {
      * the summary card stays stable across pagination.
      */
     @GetMapping("/accounts")
+    @PreAuthorize("@menuAuthz.canAccessAccountInquiry(#p0)")
     public ApiResponse<AccountListResponse> listAccounts(
             @RequestParam(value = "currency",      required = false) String currency,
             @RequestParam(value = "bankCd",        required = false) String bankCd,
@@ -117,6 +119,7 @@ public class AccountController {
      * query-string length limits.
      */
     @PostMapping("/accounts/export")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-account-inquiry','banking-fcy-update-inquire')")
     public void exportAccounts(
             @Valid @RequestBody ExcelExportRequest request,
             HttpServletResponse response) {
@@ -139,6 +142,7 @@ public class AccountController {
      * empty-payload guard ({@code WBE_BANK_ACCOUNT_REGISTER_EMPTY}).
      */
     @PostMapping("/accounts/register")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-account-inquiry','banking-fcy-update-inquire')")
     public ApiResponse<RegisterAccountsResponse> registerAccounts(
             @Valid @RequestBody RegisterAccountsRequest request) {
         return ApiResponse.ok(accountRegistrationService.register(request));
@@ -162,6 +166,7 @@ public class AccountController {
      * still out of scope.
      */
     @PostMapping("/accounts/transactions-sync")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-account-inquiry','banking-fcy-update-inquire')")
     public ApiResponse<TransactionsSyncResponse> syncTransactions(
             @Valid @RequestBody TransactionsSyncRequest request) {
         return ApiResponse.ok(accountService.syncTransactions(request));
@@ -172,6 +177,7 @@ public class AccountController {
      *  {@code QNA_REQUIRED} response carried plus the chosen
      *  question + user's answer. */
     @PostMapping("/accounts/transactions-sync/{sessionId}/qna")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-account-inquiry','banking-fcy-update-inquire')")
     public ApiResponse<TransactionsSyncResponse> submitSyncQna(
             @PathVariable java.util.UUID sessionId,
             @Valid @RequestBody SubmitQnaRequest request) {
@@ -180,6 +186,7 @@ public class AccountController {
 
     /** Resume a sync after an OTP submission. */
     @PostMapping("/accounts/transactions-sync/{sessionId}/otp")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-account-inquiry','banking-fcy-update-inquire')")
     public ApiResponse<TransactionsSyncResponse> submitSyncOtp(
             @PathVariable java.util.UUID sessionId,
             @Valid @RequestBody SubmitChallengeRequest request) {
@@ -188,6 +195,7 @@ public class AccountController {
 
     /** Resume a sync after a CAPTCHA submission. */
     @PostMapping("/accounts/transactions-sync/{sessionId}/captcha")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-account-inquiry','banking-fcy-update-inquire')")
     public ApiResponse<TransactionsSyncResponse> submitSyncCaptcha(
             @PathVariable java.util.UUID sessionId,
             @Valid @RequestBody SubmitChallengeRequest request) {
@@ -218,6 +226,7 @@ public class AccountController {
      * pagination, no debounce required.
      */
     @GetMapping("/accounts/by-bank")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-account-inquiry','banking-fcy-update-inquire')")
     public ApiResponse<AccountLookupListResponse> lookupAccountsByBank(
             @RequestParam("out_bank_cd")
             @Size(max = 15)
@@ -233,6 +242,7 @@ public class AccountController {
      * Mirrors legacy {@code fnsh_0002_001_r001} / {@code fnsh_0006_001_r001}.
      */
     @GetMapping("/accounts/{acctSeqNo}/transactions")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
     public ApiResponse<TransactionListResponse> listTransactions(
             @PathVariable("acctSeqNo") String acctSeqNo,
             @RequestParam(value = "from",     required = false) String fromDt,
@@ -249,6 +259,7 @@ public class AccountController {
      * totals. Mirrors legacy {@code trns_0001_001} summary strip.
      */
     @GetMapping("/accounts/{acctSeqNo}/transactions/summary")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
     public ApiResponse<TransactionSummaryResponse> transactionsSummary(
             @PathVariable("acctSeqNo") String acctSeqNo,
             @RequestParam(value = "from",     required = false) String fromDt,
@@ -265,6 +276,7 @@ public class AccountController {
      * {@code trnsSeqNo} is the {@code ACCT_SEQ_NO} surrogate from the list row.
      */
     @GetMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
     public ApiResponse<TransactionDetailResponse> transactionDetail(
             @PathVariable("acctSeqNo") String acctSeqNo,
             @PathVariable("trnsSeqNo") String trnsSeqNo) {
@@ -279,6 +291,7 @@ public class AccountController {
      * {@code trns_0001_001_u001}.
      */
     @PutMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/confirm")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
     public ApiResponse<TransactionDetailResponse> confirmTransaction(
             @PathVariable("acctSeqNo") String acctSeqNo,
             @PathVariable("trnsSeqNo") String trnsSeqNo,
@@ -288,6 +301,7 @@ public class AccountController {
 
     /** Undo a transaction confirmation — flips {@code CNFM_YN} back to {@code 'N'}. */
     @DeleteMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/confirm")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
     public ApiResponse<Void> undoConfirmTransaction(
             @PathVariable("acctSeqNo") String acctSeqNo,
             @PathVariable("trnsSeqNo") String trnsSeqNo) {
@@ -311,6 +325,7 @@ public class AccountController {
      * frontend can re-render the row in place without a follow-up GET.
      */
     @PatchMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/reporting-account")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
     public ApiResponse<TransactionDetailResponse> updateTransactionReportingAccount(
             @PathVariable("acctSeqNo") String acctSeqNo,
             @PathVariable("trnsSeqNo") String trnsSeqNo,
@@ -332,6 +347,7 @@ public class AccountController {
      * up GET.
      */
     @DeleteMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/reporting-account")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
     public ApiResponse<TransactionDetailResponse> clearTransactionReportingAccount(
             @PathVariable("acctSeqNo") String acctSeqNo,
             @PathVariable("trnsSeqNo") String trnsSeqNo) {
@@ -351,6 +367,7 @@ public class AccountController {
      * ({@code USE_YN='Y'}) before the write commits.
      */
     @PatchMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/purpose")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
     public ApiResponse<TransactionDetailResponse> updateTransactionPurpose(
             @PathVariable("acctSeqNo") String acctSeqNo,
             @PathVariable("trnsSeqNo") String trnsSeqNo,
@@ -366,6 +383,7 @@ public class AccountController {
      * no-op.
      */
     @DeleteMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/purpose")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
     public ApiResponse<TransactionDetailResponse> clearTransactionPurpose(
             @PathVariable("acctSeqNo") String acctSeqNo,
             @PathVariable("trnsSeqNo") String trnsSeqNo) {
@@ -382,6 +400,7 @@ public class AccountController {
      * current tenant and is active ({@code STTS='A'}, {@code DEL_YN='N'}).
      */
     @PatchMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/vas-account")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
     public ApiResponse<TransactionDetailResponse> updateTransactionVasAccount(
             @PathVariable("acctSeqNo") String acctSeqNo,
             @PathVariable("trnsSeqNo") String trnsSeqNo,
@@ -395,6 +414,7 @@ public class AccountController {
      * clearing an already-empty record is a no-op.
      */
     @DeleteMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/vas-account")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
     public ApiResponse<TransactionDetailResponse> clearTransactionVasAccount(
             @PathVariable("acctSeqNo") String acctSeqNo,
             @PathVariable("trnsSeqNo") String trnsSeqNo) {
@@ -412,6 +432,7 @@ public class AccountController {
      * tenant and is non-trashed ({@code TRCO_STTS != 'C'}).
      */
     @PatchMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/contact")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
     public ApiResponse<TransactionDetailResponse> updateTransactionContact(
             @PathVariable("acctSeqNo") String acctSeqNo,
             @PathVariable("trnsSeqNo") String trnsSeqNo,
@@ -425,6 +446,7 @@ public class AccountController {
      * an already-empty record is a no-op.
      */
     @DeleteMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/contact")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
     public ApiResponse<TransactionDetailResponse> clearTransactionContact(
             @PathVariable("acctSeqNo") String acctSeqNo,
             @PathVariable("trnsSeqNo") String trnsSeqNo) {
@@ -439,6 +461,7 @@ public class AccountController {
      * follow-up slice.
      */
     @GetMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/match-candidates")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
     public ApiResponse<MatchCandidateListResponse> listMatchCandidates(
             @PathVariable("acctSeqNo") String acctSeqNo,
             @PathVariable("trnsSeqNo") String trnsSeqNo,
@@ -456,6 +479,7 @@ public class AccountController {
      * {@code comm_0196_001_c001}.
      */
     @PostMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/match")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
     public ApiResponse<MatchResultResponse> createMatch(
             @PathVariable("acctSeqNo") String acctSeqNo,
             @PathVariable("trnsSeqNo") String trnsSeqNo,
@@ -469,6 +493,7 @@ public class AccountController {
      * {@code LOCKED_YN='N'} on the audit row (preserves history).
      */
     @DeleteMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/match")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
     public ApiResponse<MatchResultResponse> undoMatch(
             @PathVariable("acctSeqNo") String acctSeqNo,
             @PathVariable("trnsSeqNo") String trnsSeqNo) {
@@ -483,6 +508,7 @@ public class AccountController {
      * one account. Mirrors {@code POST /accounts/export}.
      */
     @PostMapping("/accounts/transactions/export")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
     public void exportTransactions(
             @Valid @RequestBody ExcelExportRequest request,
             HttpServletResponse response) {

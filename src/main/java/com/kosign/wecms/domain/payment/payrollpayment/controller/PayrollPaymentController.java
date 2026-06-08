@@ -51,6 +51,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.multipart.MultipartFile;
 
 /**
@@ -75,6 +76,7 @@ import org.springframework.web.multipart.MultipartFile;
 @RequestMapping("/api/v1/payment/payroll-payment")
 @RequiredArgsConstructor
 @Validated
+@PreAuthorize("@menuAuthz.canAccess('payment-payroll-scheduled')")
 public class PayrollPaymentController {
 
     /** Path-segment guard for {@code scdul_pymn_no} values. Accepts both
@@ -116,6 +118,7 @@ public class PayrollPaymentController {
     }
 
     @GetMapping("/results")
+    @PreAuthorize("@menuAuthz.canAccess('payment-payroll-result')")
     public ApiResponse<TransferResultListResponse> listResults(
             @RequestParam("from_date")                                String fromDate,
             @RequestParam("to_date")                                  String toDate,
@@ -131,6 +134,7 @@ public class PayrollPaymentController {
     }
 
     @GetMapping("/results/{id}")
+    @PreAuthorize("@menuAuthz.canAccess('payment-payroll-result')")
     public ApiResponse<TransferResultDetailResponse> resultDetail(
             @PathVariable("id")
             @Size(max = 30)
@@ -142,6 +146,7 @@ public class PayrollPaymentController {
     /** Excel export of the Payroll Payment Result list. Provider:
      *  {@code PayrollPaymentResultExportProvider} (CLAUDE.md §13b). */
     @PostMapping("/results/export")
+    @PreAuthorize("@menuAuthz.canAccess('payment-payroll-result')")
     public void exportResults(
             @Valid @RequestBody ExcelExportRequest request,
             HttpServletResponse response) {

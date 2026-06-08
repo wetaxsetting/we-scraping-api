@@ -28,6 +28,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
@@ -68,6 +69,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/v1/settings/vas-account")
 @RequiredArgsConstructor
+@PreAuthorize("@menuAuthz.canAccess('settings-core-vas-account')")
 public class VasAccountController {
 
     private final VasAccountService      service;
@@ -84,6 +86,14 @@ public class VasAccountController {
      * @param page          zero-based; default {@code 0}
      * @param size          rows per page; default {@link VasAccountService#DEFAULT_PAGE_SIZE},
      *                      clamped to {@link VasAccountService#MAX_PAGE_SIZE}
+     * @param all           when {@code true}, returns the entire filtered
+     *                      set (no pagination) — used by the VAS Account
+     *                      management panel so its prefix-code hierarchy is
+     *                      built over the full dataset (legacy parity with
+     *                      {@code comm_0217_001_r001}, which has no paging).
+     *                      Defaults {@code false} so existing paginated
+     *                      callers are unaffected. See
+     *                      {@link VasAccountService#listAll}.
      */
     @GetMapping
     public ApiResponse<VasAccountListResponse> list(
@@ -92,7 +102,11 @@ public class VasAccountController {
             @RequestParam(value = "sort_field",     required = false) String       sortField,
             @RequestParam(value = "sort_direction", required = false) String       sortDirection,
             @RequestParam(value = "page",           defaultValue = "0") int        page,
-            @RequestParam(value = "size",           defaultValue = "0") int        size) {
+            @RequestParam(value = "size",           defaultValue = "0") int        size,
+            @RequestParam(value = "all",            defaultValue = "false") boolean all) {
+        if (all) {
+            return ApiResponse.ok(service.listAll(searchWd, statuses, sortField, sortDirection));
+        }
         return ApiResponse.ok(service.list(
                 searchWd, statuses, sortField, sortDirection, page, size));
     }

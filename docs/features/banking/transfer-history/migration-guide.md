@@ -48,6 +48,6 @@
 - **In scope (refactored):** `NAPAS_REMIT_TRNS_HSTR` (read), plus reference reads of `USER_INFM`, `BANK_INFM`, `tb_firm_bank_code`.
 - **Out of scope:** `ACCT_TRNS_RCV_PAY_INFM`, `SCDUL_PYMN_SUMR(_DETL)`, `BUSI_MATCH_LOG`, `ACCT_TRNS_HSTR` — not referenced by `trns_0003_001`; they back the separate matching/scheduled-payment features.
 
-## 5. Removal plan for the interim endpoint
+## 5. Interim endpoint — REMOVED 2026-06-07
 
-`GET /api/v1/banking/transfers/history` (`TransferController` + `TransferHistoryService` + `TransferHistoryResponse`) is a Sprint-1 holdover. The frontend already calls the new spec-aligned path, so the interim endpoint can be deleted in a cleanup MR once a grep confirms no remaining consumer. Track in [refactor-gap-analysis.md](refactor-gap-analysis.md) §"Open questions".
+`GET /api/v1/banking/transfers/history` (`TransferController.history()` + `TransferHistoryService` + `TransferHistoryResponse` / `TransferRow`) was the Sprint-1 UPPER_SNAKE holdover. It was **deleted 2026-06-07** after a grep confirmed no consumer (the frontend `fetchTransferHistory()` calls the new `/internal-transfer/transfer-history` path). The 3 files + the controller method were removed; `NapasRemitTrnsHstrRepository` / `NapasRemitTrnsHstr` were kept (shared with `OwnAccountTransferService`). No UPPER_SNAKE surface remains.

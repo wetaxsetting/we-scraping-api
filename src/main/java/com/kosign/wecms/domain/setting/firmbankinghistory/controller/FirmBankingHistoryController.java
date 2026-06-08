@@ -43,7 +43,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/settings/firm-banking-history")
 @RequiredArgsConstructor
-@PreAuthorize("hasAnyRole('ADMIN','USER')")
+@PreAuthorize("hasAnyRole('ADMIN','USER') and @menuAuthz.canAccess('settings-firm-banking-history')")
 public class FirmBankingHistoryController {
 
     private final FirmBankingHistoryService service;

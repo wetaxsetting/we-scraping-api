@@ -7,6 +7,7 @@ import com.kosign.wecms.domain.banking.smartorganizer.dto.EligibleTransactionLis
 import com.kosign.wecms.domain.banking.smartorganizer.service.SmartOrganizerService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -38,7 +39,10 @@ public class SmartOrganizerController {
      * the default ORDER BY ({@code trsc_dt DESC}).
      */
     @GetMapping("/eligible")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
     public ApiResponse<EligibleTransactionListResponse> listEligible(
+            @RequestParam("bank_cd")  String bankCd,
+            @RequestParam("acct_no")  String acctNo,
             @RequestParam("from_dt")  String fromDt,
             @RequestParam("to_dt")    String toDt,
             @RequestParam(name = "q",          required = false) String q,
@@ -46,11 +50,14 @@ public class SmartOrganizerController {
             @RequestParam(name = "sort_dir",   required = false) String sortDir,
             @RequestParam(name = "page", defaultValue = "1")  int page,
             @RequestParam(name = "size", defaultValue = "15") int size) {
-        return ApiResponse.ok(service.listEligible(fromDt, toDt, q, sortField, sortDir, page, size));
+        return ApiResponse.ok(
+                service.listEligible(bankCd, acctNo, fromDt, toDt, q, sortField, sortDir, page, size));
     }
 
-    /** Bulk-confirm the rows the user has reviewed. */
+    /** Bulk-confirm the rows the user has reviewed (scoped to the
+     *  selected account — R11). */
     @PostMapping("/confirm")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
     public ApiResponse<ConfirmResponse> confirm(@Valid @RequestBody ConfirmRequest req) {
         return ApiResponse.ok(service.confirm(req));
     }

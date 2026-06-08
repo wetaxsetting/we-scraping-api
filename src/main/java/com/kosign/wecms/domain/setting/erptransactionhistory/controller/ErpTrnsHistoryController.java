@@ -23,6 +23,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.access.prepost.PreAuthorize;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -59,6 +60,7 @@ import java.nio.file.Files;
 @RestController
 @RequestMapping("/api/v1/settings/erp-transaction-history")
 @RequiredArgsConstructor
+@PreAuthorize("@menuAuthz.canAccess('settings-erp-transaction-history')")
 public class ErpTrnsHistoryController {
 
     private final ErpTrnsHistoryService service;

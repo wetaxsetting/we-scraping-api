@@ -11,6 +11,24 @@
 
 ---
 
+## 0. Follow-up — CA-G10: chart-account validation gap on reporting-account write
+
+> Filed 2026-06-08 from the Chart of Accounts final parity audit
+> ([../../audits/chart-of-accounts-final-parity-audit.md](../../audits/chart-of-accounts-final-parity-audit.md), gap **CA-G10**).
+> **This is a Payment / Internal-Transfer defect — it does NOT gate Chart of Accounts SIT.**
+
+| Field | Value |
+|---|---|
+| **Issue** | `InternalTransferService` persists a reporting account (`chart_acct_cd` + `chart_acct_seq_no`) onto `SCDUL_PYMN_SUMR_DETL` **without validating the chart account exists / is not soft-deleted**. |
+| **Legacy evidence** | `pymn_0009_002_u002_act.jsp:92-97` — builds a dynamic on `BIZ_KEY + CHART_ACCT_SEQ_NO + DEL_YN='N'`, reads `CHART_ACCT_INFM_R001`, and throws `WBE0404` when the row is missing. (Legacy checks existence + not-deleted; it does NOT check `STTS='A'`.) |
+| **Refactor evidence** | `InternalTransferService.java:572-577` (update path) skips the lookup behind a stale/false comment "CHART_ACCT_INFM entity not yet migrated"; create path `:503-504` sets the code/seq with no lookup. The entity **is** migrated and is validated by the sibling features `TransactionService.java:355-362` and `CardTransactionsService.java:1678-1690` (both check existence + `DEL_YN='N'` + `STTS='A'`). |
+| **Impact** | A deleted / non-existent `chart_acct_cd+seq` can be written onto a scheduled-transfer line; downstream chart-name/level joins resolve to blank. Bounded (no financial-amount corruption, no cascade). UI-constrained (the picker offers only valid active accounts) — fully open to a direct API caller or a delete-after-pick race. |
+| **Classification** | **MEDIUM** — confirmed parity **regression** (legacy validated; refactor does not), master-data referential integrity, with a false justifying comment. |
+| **Required fix** | In `InternalTransferService` create + update reporting-account paths, reject an unknown/soft-deleted chart account before persisting — reuse the sibling guard (`findByBizKeyAndChartAcctCdAndDelYn(..., "N")`, optionally also `"A".equals(stts)` which would exceed legacy). Delete the stale "not yet migrated" comment. Lands with Phase B (the Sprint state line already lists "CHART_ACCT guard" as outstanding). |
+| **Do NOT** | fix this inside the Chart of Accounts task/MR — it is a separate feature's defect. |
+
+---
+
 ## 1. Per-service parity matrix
 
 One row per JEX service id in scope. Columns: DTO field parity (every WSVC `<in>`/`<out>` field has a Java DTO mirror with the right name + length), Validation parity (every `ValidationHelper.*` call has a `@NotBlank` / `@Size` / `@Pattern` or service-layer cross-field check), Permission parity (R / U / D / T flag honoured), Audit-log parity (`AUDIT_LOGS_INFM` row written with `WSVC_ID='internal-transfer'`), UI parity (the matching Next.js page renders the right columns / fields), i18n parity (EN + KO + VI entries — KH explicitly skipped).
@@ -22,7 +40,7 @@ One row per JEX service id in scope. Columns: DTO field parity (every WSVC `<in>
 | `pymn_0009_001_d001` (delete) | `DELETE /api/v1/payment/internal-transfer/{id}` | [x] | [x] (approval-locked guard) | [x] D | [x] `op=delete` (Phase A: no ERP_TRNS_HSTR write — file storage deferred) | [ ] Phase B (page rewire) | [x] (`internal_transfer.error.appr_locked` key seeded) |
 | `pymn_0009_002_r001` (parse Excel) | `POST /api/v1/payment/internal-transfer/uploads/parse` | [x] | [x] (file, bank_cd) | [x] R | [ ] (n/a — read-only) | [ ] Phase B (upload dialog wire) | [ ] Phase B (upload dialog) |
 | `pymn_0009_002_c001` (save draft) | `POST /api/v1/payment/internal-transfer` | [x] | [x] (title, bank, account, currency, per-line FINC_MDA_NO via `@Valid`/`@NotBlank`/`@Pattern`) | [x] U | [x] `op=create` | [ ] Phase B (upload dialog wire) | [ ] Phase B (upload dialog) |
-| `pymn_0009_002_u002` (update reporting account) | `PATCH /api/v1/payment/internal-transfer/{id}/lines/{lineId}/reporting-account` | [x] | [x] (chart_acct_seq + chart_acct_cd; CHART_ACCT_INFM existence deferred until that entity is migrated) | [x] U | [x] `op=update` | [ ] Phase B (CHART_ACCT picker wire) | [ ] Phase B |
+| `pymn_0009_002_u002` (update reporting account) | `PATCH /api/v1/payment/internal-transfer/{id}/lines/{lineId}/reporting-account` | [x] | ⚠️ **CA-G10 regression** — CHART_ACCT existence guard MISSING (see Follow-up §0 below). The "deferred until that entity is migrated" comment is stale/false: `CHART_ACCT_INFM` IS migrated. Legacy validates it (`pymn_0009_002_u002_act.jsp:92-97` → `WBE0404`). | [x] U | [x] `op=update` | [ ] Phase B (CHART_ACCT picker wire) | [ ] Phase B |
 | `pymn_0009_003_r001` (detail) | `GET /api/v1/payment/internal-transfer/{id}` | [x] | [x] | [x] R | [ ] (n/a — read-only) | [ ] Phase B (page rewire) | [x] (shared keys seeded) |
 | `pymn_0009_003_r002` (legacy Excel template) | `POST /api/v1/payment/internal-transfer/{id}/export` (shared XLSX) | [ ] | [ ] (column allow-list) | [ ] R | [ ] (n/a) | [ ] (deferred to follow-up MR — shared XLSX provider) | [ ] |
 | `pymn_0010_001_r001` (result list) | `GET /api/v1/payment/internal-transfer/results` | [x] | [x] | [x] R | [ ] (n/a) | [ ] Phase B (page rewire) | [x] (`payment.proc_stat.*` keys seeded) |

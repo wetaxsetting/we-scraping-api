@@ -53,6 +53,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.multipart.MultipartFile;
 
 /**
@@ -85,6 +86,7 @@ import org.springframework.web.multipart.MultipartFile;
 @RequestMapping("/api/v1/payment/expense-payment")
 @RequiredArgsConstructor
 @Validated
+@PreAuthorize("@menuAuthz.canAccess('payment-expense-scheduled')")
 public class ExpensePaymentController {
 
     /** Path-segment guard for {@code scdul_pymn_no} values. Accepts both
@@ -147,6 +149,7 @@ public class ExpensePaymentController {
      * {@code pymn_0004_001_r001}.
      */
     @GetMapping("/results")
+    @PreAuthorize("@menuAuthz.canAccess('payment-expense-result')")
     public ApiResponse<TransferResultListResponse> listResults(
             @RequestParam("from_date")                                String fromDate,
             @RequestParam("to_date")                                  String toDate,
@@ -166,6 +169,7 @@ public class ExpensePaymentController {
      * {@code pymn_0004_002_r001}.
      */
     @GetMapping("/results/{id}")
+    @PreAuthorize("@menuAuthz.canAccess('payment-expense-result')")
     public ApiResponse<TransferResultDetailResponse> resultDetail(
             @PathVariable("id")
             @Size(max = 30)
@@ -177,6 +181,7 @@ public class ExpensePaymentController {
     /** Excel export of the Expense Payment Result list. Provider:
      *  {@code ExpensePaymentResultExportProvider} (CLAUDE.md §13b). */
     @PostMapping("/results/export")
+    @PreAuthorize("@menuAuthz.canAccess('payment-expense-result')")
     public void exportResults(
             @Valid @RequestBody ExcelExportRequest request,
             HttpServletResponse response) {

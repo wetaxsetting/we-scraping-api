@@ -34,7 +34,9 @@ Identical to Sales ([§4](../sales-e-invoices/functional-specification.md#4-invo
 
 ## 6. Error codes & permissions
 
-Same as [Sales §6 / §7](../sales-e-invoices/functional-specification.md#6-error-codes) — `WBE2002`, `WBE_VALIDATION`, `WBE2010/2011/2013`, `WBE9999`. No `@PreAuthorize` gate; product-type (`PRDT_TYPE='F'`) gate deferred.
+Same as [Sales §6 / §7](../sales-e-invoices/functional-specification.md#6-error-codes) — `WBE2002`, `WBE_VALIDATION`, `WBE2010/2011/2013`, `WBE9999`.
+
+> **Corrected 2026-06-06 (F-3 verification).** `@PreAuthorize` **is** live (the "no gate / deferred" note was stale). `type=EXPENSE` resolves to `addon-einvoices-expenses` via `@menuAuthz.canAccessEInvoice(#p0)`; export/scrape use `canAccessAny(...)`. Product-type gate is live via the navigation product tree: **F and M carry e-Invoice; H does not.** Full matrix: [authorization-and-product-type.md](../authorization-and-product-type.md).
 
 ## 7. Open question (seed naming)
 

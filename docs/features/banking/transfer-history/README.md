@@ -43,7 +43,7 @@ Those capabilities belong to a **different feature** — Banking › Transaction
 | Response | `ApiResponse<TransferHistoryListResponse>` (lowercase snake_case envelope) |
 | Wire shape | snake_case (global Jackson `SNAKE_CASE`) |
 
-A **deprecated** interim endpoint `GET /api/v1/banking/transfers/history` (`TransferController` + `TransferHistoryService` + UPPER_SNAKE `TransferHistoryResponse`) still exists from Sprint 1; it is slated for removal once no consumer remains. The live frontend already calls the new spec-aligned path. See [interface-specification.md](interface-specification.md) §5.
+The deprecated Sprint-1 interim endpoint `GET /api/v1/banking/transfers/history` (`TransferController.history()` + `TransferHistoryService` + UPPER_SNAKE `TransferHistoryResponse` / `TransferRow`) was **deleted 2026-06-07** — it had no frontend consumer (the live UI uses the new spec-aligned path). `TransferController` now exposes only `/transfers/own-accounts`. See [interface-specification.md](interface-specification.md) §5.
 
 ---
 

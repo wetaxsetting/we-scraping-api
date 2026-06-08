@@ -176,6 +176,17 @@ public class AccountService {
         final String bizKey = TenantContext.currentBizKey();
         final ResolvedFilter resolved = resolveFilter(filter == null ? AccountFilter.currencyOnly(null) : filter);
 
+        // HR-3: per-user account authority. Legacy fnsh_0001_001 restricts
+        // a non-admin to accounts granted in ACCT_AUTH_INFO
+        // (use_yn='Y', auth_type='V') via
+        // QueryHelper.getPermittedBankAccountDynamic; admins see every
+        // tenant account. Passing null disables the EXISTS predicate
+        // (admin path); passing the user id enforces it. Sourced from the
+        // signed JWT via TenantContext — never a request parameter.
+        final String authUserId = TenantContext.currentIsAdmin()
+                ? null
+                : TenantContext.currentUserId();
+
         // Apply DEFAULT_SORT only when the caller's Pageable carries no
         // sort of its own (export path passes Sort.unsorted()). When the
         // caller already built a Sort (controller's PageRequest above
@@ -192,6 +203,7 @@ public class AccountService {
                 resolved.acctTypeCdIn,
                 resolved.bankCd,
                 resolved.keywordPattern,
+                authUserId,
                 effective);
 
         // Cert-connection lookup is per-tenant and small (a handful of
@@ -208,7 +220,8 @@ public class AccountService {
                 resolved.ccyNot,
                 resolved.acctTypeCdIn,
                 resolved.bankCd,
-                resolved.keywordPattern);
+                resolved.keywordPattern,
+                authUserId);
 
         BigDecimal balTotal = BigDecimal.ZERO;
         BigDecimal availTotal = BigDecimal.ZERO;
@@ -230,7 +243,7 @@ public class AccountService {
         // must stay stable as the user filters: selecting one bank
         // should not remove the others from the option set.
         List<BankOption> banksAvailable = acctRepo
-                .findDistinctBankCds(bizKey, resolved.ccyEq, resolved.ccyNot, resolved.acctTypeCdIn)
+                .findDistinctBankCds(bizKey, resolved.ccyEq, resolved.ccyNot, resolved.acctTypeCdIn, authUserId)
                 .stream()
                 .map(cd -> new BankOption(cd, bankResolver.resolveBankNm(cd)))
                 .toList();
@@ -369,8 +382,10 @@ public class AccountService {
      * CLAUDE.md: <em>"no bank integration, no coexistence work"</em>),
      * so no {@code ACCT_TRNS_HSTR} rows are inserted, no balance change,
      * no audit-log entry. The frontend "Last Update" column visibly
-     * moves because it reads {@code acctBalLstInqDtm}; that's the
-     * single user-visible side-effect the stub guarantees.
+     * moves because the real sync also stamps {@code ACCT_HIS_LST_INQ_DT}
+     * (BankTransactionSyncService.processOneAccount:555) — the source the
+     * column now displays per FCY-A02; that's the single user-visible
+     * side-effect the scrape guarantees.
      *
      * <p>Fail-fast batch semantics — any {@code (bankCd, acctNo)} that
      * doesn't resolve inside the caller's tenant throws
@@ -576,10 +591,41 @@ public class AccountService {
                 AmountFormatter.wire(a.getBal()),
                 AmountFormatter.wire(a.getRealAmt()),
                 a.getAcctBalInqStts(),
-                a.getAcctBalUpdDtm(),
+                // FCY-A02 (PO decision 2026-06-06 — supersedes HR-1): the
+                // "Last Update" column on fnsh_0005_001 / fnsh_0001_001
+                // displays ACCT_HIS_LST_INQ_DT (the transaction-history
+                // last-inquiry date), falling back to ACCT_BAL_LST_INQ_DTM
+                // only for fixed-deposit-only banks — see resolveLastUpdate.
+                // The Bank Transaction Sync orchestrator
+                // (BankTransactionSyncService.processOneAccount:555) stamps
+                // ACCT_HIS_LST_INQ_DT on every successful scrape, so the
+                // displayed value still moves after an Update. The wire
+                // field name (acct_bal_upd_dtm) is intentionally unchanged
+                // so the frontend mapper + export provider contract stay
+                // intact (same convention HR-1 used) — only the value
+                // source changed.
+                resolveLastUpdate(a),
                 handRegYn,
                 certConnYn
         );
+    }
+
+    /**
+     * Legacy "Last Update" source resolution for Account Inquiry
+     * (fnsh_0005_001 / fnsh_0001_001). Online accounts display
+     * {@code ACCT_HIS_LST_INQ_DT} (the transaction-history last-inquiry
+     * date); fixed-deposit-only banks ({@code ACCT_TYPE_CD '02'} other
+     * than Sacombank {@code 11704004}) run no TRANSACTION job so the
+     * history date is never stamped — those fall back to
+     * {@code ACCT_BAL_LST_INQ_DTM}. Mirrors the legacy ViewSetting cell
+     * branch at {@code fnsh_0005_001_api_osmc.ts:956-969}
+     * ({@code (ACCT_TYPE_CD == "02" && BANK_CD != "11704004") ?
+     * ACCT_BAL_LST_INQ_DTM : ACCT_HIS_LST_INQ_DT}).
+     */
+    private static String resolveLastUpdate(AcctMstr a) {
+        boolean fixedDepositOnly = "02".equals(a.getAcctTypeCd())
+                && !"11704004".equals(a.getBankCd());
+        return fixedDepositOnly ? a.getAcctBalLstInqDtm() : a.getAcctHisLstInqDt();
     }
 
     private static BigDecimal sum(List<AcctMstr> rows, java.util.function.Function<AcctMstr, BigDecimal> pick) {

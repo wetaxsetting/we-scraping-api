@@ -238,6 +238,53 @@ public class ContactsService {
                 .toList();
     }
 
+    /**
+     * Unpaged projection of the tenant's active contacts for Excel
+     * export. Reuses the exact same query path as {@link #list}
+     * (tenant scope via {@code BIZ_KEY}, active-only
+     * {@code coalesce(trco_stts,'')<>'C'}, optional {@code TRCO_TYPE}
+     * filter, optional keyword) — only pagination is dropped so the
+     * spreadsheet contains every matching row regardless of the page
+     * the user is viewing. Mirrors legacy
+     * {@code comm_0184_001_r006_excel_view.jsp}, which streams every
+     * active contact of the chosen {@code TRCO_TYPE}.
+     *
+     * <p>Consumed by {@code ContactsExportProvider} (Local / Overseas)
+     * through the shared {@code ExcelExportService} pipeline.
+     */
+    @Transactional(readOnly = true)
+    public List<ContactRow> listForExport(String search, String trcoType) {
+        String bizKey = TenantContext.currentBizKey();
+        String keywordPattern = buildKeywordPattern(search);
+        String trcoTypeFilter = normaliseTrcoTypeFilter(trcoType);
+
+        Page<TrcoInfm> master = trcoInfmRepo.search(
+                bizKey, trcoTypeFilter, keywordPattern, Pageable.unpaged());
+        List<TrcoInfm> rows = master.getContent();
+        if (rows.isEmpty()) return List.of();
+        List<String> keys = rows.stream().map(TrcoInfm::getTrcoKey).toList();
+
+        Map<String, List<TrcoAddrInfm>> addrByKey = groupByTrcoKey(
+                trcoAddrRepo.findByBizKeyAndTrcoKeyIn(bizKey, keys), TrcoAddrInfm::getTrcoKey);
+        Map<String, List<TrcoAcctInfo>> acctByKey = groupByTrcoKey(
+                trcoAcctRepo.findByBizKeyAndTrcoKeyIn(bizKey, keys), TrcoAcctInfo::getTrcoKey);
+        Map<String, List<TrcoOvrsInfm>> ovrsByKey = groupByTrcoKey(
+                trcoOvrsRepo.findByBizKeyAndTrcoKeyIn(bizKey, keys), TrcoOvrsInfm::getTrcoKey);
+
+        String langCd = currentLangForBankFn();
+        Map<String, String> bankNameCache = resolveBankNamesForAccounts(acctByKey.values(), langCd);
+
+        List<ContactRow> out = new ArrayList<>(rows.size());
+        for (TrcoInfm m : rows) {
+            out.add(projectRow(m,
+                    addrByKey.getOrDefault(m.getTrcoKey(), List.of()),
+                    acctByKey.getOrDefault(m.getTrcoKey(), List.of()),
+                    ovrsByKey.getOrDefault(m.getTrcoKey(), List.of()),
+                    bankNameCache));
+        }
+        return out;
+    }
+
     /* =================================================================
      *  Create
      * ================================================================= */

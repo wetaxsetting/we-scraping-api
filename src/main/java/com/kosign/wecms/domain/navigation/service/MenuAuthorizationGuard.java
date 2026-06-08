@@ -104,4 +104,63 @@ public class MenuAuthorizationGuard {
         }
         return menuAuthService.isGranted(bizKey, userId, cd);
     }
+
+    /**
+     * Coarse / feature-level gate — allow when the caller may access <i>any</i>
+     * of the supplied codes. Used for endpoints that legitimately serve more
+     * than one screen and cannot resolve the exact screen pre-authorization
+     * (F-3 §4.1 fallback): export endpoints whose discriminator lives in the
+     * request body (not a bound argument), and account-keyed transaction
+     * sub-resources whose VND/FCY split is derived from the account, not a
+     * query parameter. Each code is still subject to the full per-code rule
+     * (product-tree gate + admin bypass + per-user grant), so an H caller is
+     * still denied F/M-only codes.
+     */
+    public boolean canAccessAny(String... permissionCds) {
+        if (permissionCds == null) {
+            return false;
+        }
+        for (String cd : permissionCds) {
+            if (canAccess(cd)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Param-aware gate for the multiplexed Account Inquiry list
+     * ({@code GET /api/v1/banking/accounts?currency=…}). VND (and the
+     * documented default when the param is absent/blank — the VND page omits
+     * or sends {@code "VND"}) resolves to {@code banking-vnd-account-inquiry};
+     * any foreign-currency scope ({@code "FCY"} or a specific foreign code)
+     * resolves to {@code banking-fcy-update-inquire}. So a user granted only
+     * VND cannot read the FCY list and vice-versa, matching the navigation
+     * split (F-3 §4.1, PO note Q-A → param-aware).
+     */
+    public boolean canAccessAccountInquiry(String currency) {
+        final String c = currency == null ? "" : currency.trim();
+        final boolean fcy = !c.isEmpty() && !c.equalsIgnoreCase("VND");
+        return canAccess(fcy ? "banking-fcy-update-inquire" : "banking-vnd-account-inquiry");
+    }
+
+    /**
+     * Param-aware gate for the multiplexed e-Invoice list
+     * ({@code GET /api/v1/addon/einvoices?type=SALES|EXPENSE}). {@code SALES}
+     * → {@code addon-einvoices-sales}; {@code EXPENSE}/{@code EXPENSES} →
+     * {@code addon-einvoices-expenses}. An unknown / missing discriminator
+     * <b>fails closed</b> (returns false) — there is no documented default for
+     * e-Invoice, so a request without a recognised {@code type} is denied
+     * (F-3 §4.1, PO note Q-A).
+     */
+    public boolean canAccessEInvoice(String type) {
+        final String t = type == null ? "" : type.trim();
+        if (t.equalsIgnoreCase("SALES")) {
+            return canAccess("addon-einvoices-sales");
+        }
+        if (t.equalsIgnoreCase("EXPENSE") || t.equalsIgnoreCase("EXPENSES")) {
+            return canAccess("addon-einvoices-expenses");
+        }
+        return false;
+    }
 }

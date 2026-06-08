@@ -95,5 +95,8 @@ All business outcomes return HTTP 200 with `status.error = true`; the frontend r
 
 ## 7. Product-type & permissions
 
-- No `@PreAuthorize` gate on these endpoints today — any authenticated tenant user (matches live JEX).
-- **Product-type gate deferred.** Legacy WeCMS gates e-Invoice behind `PRDT_TYPE='F'` (WeCMS Default). The refactor models `F`/`M`/`H` in `PrdtType` but the e-Invoice product gate is **not yet applied** — it lands with the e-Invoice product-gate MR (see [wecms-api/CLAUDE.md → Product-type rule](../../../../CLAUDE.md)).
+> **Corrected 2026-06-06 (F-3 verification).** The earlier "no `@PreAuthorize` / product gate deferred" note is **stale** — the gate is now live. Full matrix: [authorization-and-product-type.md](../authorization-and-product-type.md).
+
+- **`@PreAuthorize` is live.** `GET /einvoices` (list), `GET /einvoices/history`, and `GET /einvoices/detail-history` are gated by `@menuAuthz.canAccessEInvoice(#p0)` — `type=SALES` resolves to `addon-einvoices-sales`. Export / scrape endpoints use `@menuAuthz.canAccessAny('addon-einvoices-sales','addon-einvoices-expenses')`. An unknown / missing `type` **fails closed** (403 / `WBE1003`).
+- **Product-type gate is live, via the navigation product tree.** `MenuAuthorizationGuard` step 2 denies any caller — admin included — whose tenant product tree (`PRODUCT_MENU` for the JWT `prdtType`) does not contain `addon-einvoices-sales`. Per the V243 seed: **F and M carry e-Invoice; H does not** (HAENGSUNG sees Banking + Payment only). Unmodeled product letters (`W`, …) and `NULL` resolve to an empty product tree → denied. So legacy's `PRDT_TYPE='F'`-only intent is realised structurally for F **and** M; H is excluded.
+- **Per-user grant** still applies on top for non-admins: a normal F/M user must hold `USE_YN='Y'` for `addon-einvoices-sales` in `USER_MENU_AUTH_INFM`. Admins (`authGrCd=ADMIN`) bypass the grant but **never** the product-tree gate.

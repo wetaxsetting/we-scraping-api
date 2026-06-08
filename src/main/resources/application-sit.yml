@@ -39,6 +39,11 @@ spring:
     password: ${WECMS_DB_PASSWORD:P2CKJpDAnO#vUM146W$}
     driver-class-name: org.postgresql.Driver
   flyway:
+    # Flyway disabled for this profile (2026-06-07, per ops request to turn
+    # Flyway off across all environments). NOTE: ddl-auto stays `validate`, so
+    # the target DB must already be fully migrated or Hibernate boot validation
+    # will fail with "missing column ...".
+    enabled: false
     # The shared dev DB may have a flyway_schema_history entry with version > 86
     # from a prior branch or manual apply, causing V84-86 to appear "out of order".
     # outOfOrder=true lets Flyway apply them despite that. Local-only — never set

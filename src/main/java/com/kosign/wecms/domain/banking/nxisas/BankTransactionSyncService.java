@@ -116,6 +116,11 @@ public class BankTransactionSyncService {
     private final LegacyFunctionRepository legacyFn;
     private final NxisasSessionRegistry registry;
     private final com.kosign.wecms.domain.banking.synchistory.service.SyncHistoryWriter syncHistoryWriter;
+    /** HR-2: stamps a failed-scrape status onto ACCT_MSTR in a
+     *  REQUIRES_NEW transaction so the failure survives this service's
+     *  outer-transaction rollback (mirrors legacy c001 which commits the
+     *  failure status). */
+    private final AcctMstrStatusUpdater statusUpdater;
 
     // ─────────────────────────────────────────────────────────────────
     // Public entry points (called from AccountController)
@@ -348,6 +353,7 @@ public class BankTransactionSyncService {
                 session.setStatus(NxisasScrapeSession.Status.FAILED);
                 registry.discard(session.getSessionId());
                 logFailedAttempt(session, code, msg);
+                stampScrapeFailure(session, code, msg);
                 return TransactionsSyncResponse.error(session.getSessionId(), code, msg);
             }
         }
@@ -359,6 +365,7 @@ public class BankTransactionSyncService {
             session.setStatus(NxisasScrapeSession.Status.FAILED);
             registry.discard(session.getSessionId());
             logFailedAttempt(session, code, msg);
+            stampScrapeFailure(session, code, msg);
             return TransactionsSyncResponse.error(session.getSessionId(), code, msg);
         }
 
@@ -427,6 +434,67 @@ public class BankTransactionSyncService {
         }
     }
 
+    /**
+     * HR-2: stamp the failed-scrape status onto the queue-head account so
+     * the Account Inquiry list shows "Failed" after a LOGIN / gateway
+     * rejection (legacy {@code fnsh_0001_001_c001_act.jsp} commits the
+     * error code into the per-job status columns). Best-effort and
+     * REQUIRES_NEW — a stamping failure never masks the original sync
+     * error, and the write survives even when the outer transaction later
+     * rolls back. The head account is the one the bank-side LOGIN ran
+     * against; skipped when the queue is empty (defensive).
+     */
+    private void stampScrapeFailure(NxisasScrapeSession session, String code, String msg) {
+        TransactionsSyncRequest.AccountKey head = session.getAccountsQueue().peekFirst();
+        if (head == null) return;
+        String nowDb = OffsetDateTime.now(ZoneOffset.UTC).format(DTM_14);
+        try {
+            statusUpdater.markFailure(session.getBizKey(), head.bankCd(), head.acctNo(),
+                    code, msg, session.getUserId(), nowDb);
+        } catch (RuntimeException e) {
+            log.warn("Failed to stamp ACCT_MSTR failure status for sync failure", e);
+        }
+    }
+
+    /**
+     * Returns the offending bank / gateway error code if {@code out}
+     * represents a failed job, or {@code null} when it succeeded
+     * ({@code 00000000} / {@code 42110000} / gateway OK). Same decision
+     * logic as {@link #assertOk} but non-throwing, so the caller can
+     * stamp the failure status before raising the WBE2095 it would have
+     * thrown.
+     */
+    private String scrapeFailureCode(NxisasApiOut<?> out) {
+        NxisasOutput<?> bankOut = gateway.firstOutput(out);
+        if (bankOut != null) {
+            String code = bankOut.getErrorCode();
+            if (code != null && !code.isBlank()
+                    && !OK_CODE.equals(code) && !OK_CODE_NO_NEW.equals(code)) {
+                return code;
+            }
+        }
+        if (gatewayRejected(out)) {
+            return out.getCommon().getResultCd();
+        }
+        return null;
+    }
+
+    /** Companion to {@link #scrapeFailureCode} — the human-readable
+     *  message for the failed job (bank error message first, gateway
+     *  result message as fallback). */
+    private String scrapeFailureMsg(NxisasApiOut<?> out) {
+        NxisasOutput<?> bankOut = gateway.firstOutput(out);
+        if (bankOut != null) {
+            String msg = bankOut.getErrorMessage();
+            if (msg == null || msg.isBlank()) msg = bankOut.getDetailMessage();
+            if (msg != null && !msg.isBlank()) return msg;
+        }
+        if (out != null && out.getCommon() != null) {
+            return out.getCommon().getResultMsg();
+        }
+        return null;
+    }
+
     /** Per-account TRANSACTION + BALANCE + persistence step. Called
      *  once LOGIN has cleared for the HEAD account. */
     private void processOneAccount(NxisasScrapeSession session, AcctMstr acct) {
@@ -445,7 +513,19 @@ public class BankTransactionSyncService {
         String trSeq = gateway.newTrSeq();
         NxisasApiOut<NxisasTransactionJobResult> tOut = gateway.transaction(
                 cfg.module(), cfg.category(), trSeq, tIn, continuationOf(session));
-        assertOk(tOut, "TRANSACTION", acct.getBankCd());
+        // HR-2: on a TRANSACTION-job failure the outer @Transactional
+        // rolls back, so stamp the failure status in a REQUIRES_NEW
+        // transaction first (legacy c001 commits the failure code into
+        // ACCT_HIS_INQ_STTS) — then throw the existing WBE2095 so the
+        // caller's error contract is unchanged.
+        String txFailCode = scrapeFailureCode(tOut);
+        if (txFailCode != null) {
+            statusUpdater.markFailure(session.getBizKey(), acct.getBankCd(), acct.getAcctNo(),
+                    txFailCode, scrapeFailureMsg(tOut), userId, nowDb);
+            log.info("BankTransactionSync TRANSACTION rejected [bank={}, code={}]",
+                    acct.getBankCd(), txFailCode);
+            throw new BusinessException("WBE2095", acct.getBankCd(), txFailCode);
+        }
         NxisasTransactionJobResult tResult = gateway.firstTransactionResult(tOut);
         List<NxisasTransactionEntry> entries = tResult == null || tResult.getTransaction() == null
                 ? List.of() : tResult.getTransaction();
@@ -462,6 +542,17 @@ public class BankTransactionSyncService {
         // Audit stamps.
         acct.setLstLgnSucDtm(nowDb);
         acct.setAcctBalLstInqDtm(nowDb);
+        // HR-2: clean LOGIN + TRANSACTION outcome for this account. The
+        // managed entity commits with the outer transaction. BALANCE
+        // status is set inside refreshBalance() (success → 00000000,
+        // soft-fail → bank error code). Legacy c001 writes the same
+        // per-job status columns; ACCT_BAL_INQ_STTS is the one the
+        // Account Inquiry list badge reads.
+        acct.setLstLgnStts(OK_CODE);
+        acct.setLstLgnSttsMsg(null);
+        acct.setAcctHisInqStts(OK_CODE);
+        acct.setAcctHisInqMsg(null);
+        acct.setAcctHisLstInqDt(nowDb);
         acct.setModId(userId);
         acct.setModDtm(nowDb);
 
@@ -612,11 +703,27 @@ public class BankTransactionSyncService {
         if (bankOut == null
                 || (!OK_CODE.equals(bankOut.getErrorCode())
                     && !OK_CODE_NO_NEW.equals(bankOut.getErrorCode()))) {
+            String balCode = bankOut == null ? "ERROR" : bankOut.getErrorCode();
+            String balMsg  = bankOut == null ? null : bankOut.getErrorMessage();
             log.warn("BankTransactionSync BALANCE soft-failed [bank={}, acct={}, code={}]",
-                    acct.getBankCd(), acct.getAcctNo(),
-                    bankOut == null ? "null" : bankOut.getErrorCode());
+                    acct.getBankCd(), acct.getAcctNo(), balCode);
+            // HR-2: soft-fail still records the balance-inquiry status so
+            // the Account Inquiry list badge reflects the failed refresh
+            // (legacy c001 sets ACCT_BAL_INQ_STTS / _MSG on balance
+            // failure). The managed entity commits with the outer
+            // transaction; the transaction list + login status already
+            // succeeded, so this is a partial result, not a rollback.
+            acct.setAcctBalInqStts(balCode == null || balCode.isBlank() ? "ERROR" : balCode);
+            acct.setAcctBalInqMsg(balMsg);
             return;
         }
+        // HR-2: balance inquiry succeeded — clear any prior error status
+        // (legacy c001 stamps ACCT_BAL_INQ_STTS = 00000000 on success).
+        // Set before the empty-list early-return so a successful balance
+        // job with no rows still reads as success on the list badge.
+        acct.setAcctBalInqStts(OK_CODE);
+        acct.setAcctBalInqMsg(null);
+
         NxisasBalanceJobResult result = gateway.firstBalanceResult(out);
         List<NxisasBalanceEntry> list = result == null ? null
                 : (result.getBalance() != null && !result.getBalance().isEmpty()

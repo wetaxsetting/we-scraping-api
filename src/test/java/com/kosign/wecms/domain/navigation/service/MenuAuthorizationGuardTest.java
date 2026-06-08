@@ -148,4 +148,108 @@ class MenuAuthorizationGuardTest {
         assertThat(guard.canAccess(null)).isFalse();
         assertThat(guard.canAccess("   ")).isFalse();
     }
+
+    // ---- param-aware overloads (F-3 §4.1) -------------------------------
+
+    private static final String VND_INQ = "banking-vnd-account-inquiry";
+    private static final String FCY_INQ = "banking-fcy-update-inquire";
+    private static final String EINV_SALES = "addon-einvoices-sales";
+    private static final String EINV_EXP = "addon-einvoices-expenses";
+
+    @Test
+    void accountInquiry_vnd_resolvesVndCd() {
+        // Stub ONLY the VND cd — if the overload resolved the FCY cd instead,
+        // the unstubbed FCY lookups return false and the assertion would fail.
+        session("F", TenantContext.AUTH_GR_ADMIN);
+        when(menuItemRepo.existsByPermissionCd(VND_INQ)).thenReturn(true);
+        when(productMenuRepo.existsInProductTree("F", VND_INQ)).thenReturn(true);
+
+        assertThat(guard.canAccessAccountInquiry("VND")).isTrue();
+    }
+
+    @Test
+    void accountInquiry_missing_defaultsToVnd() {
+        // Documented default: absent/blank currency → VND cd.
+        session("F", TenantContext.AUTH_GR_ADMIN);
+        when(menuItemRepo.existsByPermissionCd(VND_INQ)).thenReturn(true);
+        when(productMenuRepo.existsInProductTree("F", VND_INQ)).thenReturn(true);
+
+        assertThat(guard.canAccessAccountInquiry(null)).isTrue();
+        assertThat(guard.canAccessAccountInquiry("  ")).isTrue();
+    }
+
+    @Test
+    void accountInquiry_fcy_resolvesFcyCd() {
+        session("F", TenantContext.AUTH_GR_ADMIN);
+        when(menuItemRepo.existsByPermissionCd(FCY_INQ)).thenReturn(true);
+        when(productMenuRepo.existsInProductTree("F", FCY_INQ)).thenReturn(true);
+
+        assertThat(guard.canAccessAccountInquiry("FCY")).isTrue();
+        // A specific foreign code is also treated as FCY.
+        assertThat(guard.canAccessAccountInquiry("USD")).isTrue();
+    }
+
+    @Test
+    void einvoice_sales_resolvesSalesCd() {
+        session("F", TenantContext.AUTH_GR_ADMIN);
+        when(menuItemRepo.existsByPermissionCd(EINV_SALES)).thenReturn(true);
+        when(productMenuRepo.existsInProductTree("F", EINV_SALES)).thenReturn(true);
+
+        assertThat(guard.canAccessEInvoice("SALES")).isTrue();
+    }
+
+    @Test
+    void einvoice_expense_resolvesExpensesCd() {
+        session("F", TenantContext.AUTH_GR_ADMIN);
+        when(menuItemRepo.existsByPermissionCd(EINV_EXP)).thenReturn(true);
+        when(productMenuRepo.existsInProductTree("F", EINV_EXP)).thenReturn(true);
+
+        assertThat(guard.canAccessEInvoice("EXPENSE")).isTrue();
+        assertThat(guard.canAccessEInvoice("EXPENSES")).isTrue();
+    }
+
+    @Test
+    void einvoice_unknownOrMissingType_failsClosed() {
+        // No repo interaction — unknown/missing discriminator denies before any lookup.
+        session("F", TenantContext.AUTH_GR_ADMIN);
+        assertThat(guard.canAccessEInvoice("BOGUS")).isFalse();
+        assertThat(guard.canAccessEInvoice(null)).isFalse();
+        assertThat(guard.canAccessEInvoice("")).isFalse();
+    }
+
+    @Test
+    void einvoice_hCaller_deniedByProductGate() {
+        // e-Invoice is F/M only — an H caller is denied even with a known type.
+        session("H", TenantContext.AUTH_GR_ADMIN);
+        when(menuItemRepo.existsByPermissionCd(EINV_SALES)).thenReturn(true);
+        when(productMenuRepo.existsInProductTree("H", EINV_SALES)).thenReturn(false);
+
+        assertThat(guard.canAccessEInvoice("SALES")).isFalse();
+    }
+
+    @Test
+    void canAccessAny_allowsWhenAnyCodeResolves() {
+        // Caller can access the FCY transactions cd but not VND — canAccessAny
+        // should still allow (coarse feature-level gate for account-keyed
+        // transaction sub-resources).
+        session("F", TenantContext.AUTH_GR_ADMIN);
+        when(menuItemRepo.existsByPermissionCd(VND_INQ)).thenReturn(true);
+        when(productMenuRepo.existsInProductTree("F", VND_INQ)).thenReturn(false);
+        when(menuItemRepo.existsByPermissionCd(FCY_INQ)).thenReturn(true);
+        when(productMenuRepo.existsInProductTree("F", FCY_INQ)).thenReturn(true);
+
+        assertThat(guard.canAccessAny(VND_INQ, FCY_INQ)).isTrue();
+    }
+
+    @Test
+    void canAccessAny_deniesWhenNoCodeResolves() {
+        session("H", TenantContext.AUTH_GR_ADMIN);
+        when(menuItemRepo.existsByPermissionCd(VND_INQ)).thenReturn(true);
+        when(productMenuRepo.existsInProductTree("H", VND_INQ)).thenReturn(false);
+        when(menuItemRepo.existsByPermissionCd(FCY_INQ)).thenReturn(true);
+        when(productMenuRepo.existsInProductTree("H", FCY_INQ)).thenReturn(false);
+
+        assertThat(guard.canAccessAny(VND_INQ, FCY_INQ)).isFalse();
+        assertThat(guard.canAccessAny((String[]) null)).isFalse();
+    }
 }

@@ -42,13 +42,10 @@ import java.util.Map;
  * service. Mirrors legacy {@code trns_0003_001_r001} in
  * {@code WECMS DEV/WECMS/web/WEB-INF/action/jex/wabooks/trns/trns_0003_001_r001_act.jsp:32-159}.
  *
- * <p>Distinct from the older
- * {@code com.kosign.wecms.domain.banking.service.TransferHistoryService}
- * which backs the Sprint 1 interim endpoint {@code
- * /api/v1/banking/transfers/history}. The interim service uses the legacy
- * UPPER_SNAKE wire envelope (a "holdover" called out in
- * {@code wecms-web/CLAUDE.md}) and will be removed in the frontend
- * cutover MR; this service backs the spec-aligned endpoint
+ * <p>The Sprint-1 interim {@code TransferHistoryService} +
+ * {@code /api/v1/banking/transfers/history} endpoint (UPPER_SNAKE wire)
+ * that this superseded was deleted 2026-06-07. This service is now the
+ * sole Transfer History query path, backing the spec-aligned endpoint
  * {@code /api/v1/banking/internal-transfer/transfer-history} with the
  * lowercase snake_case wire shape mandated by the 2026-05-08 CTO
  * directive.

@@ -27,4 +27,11 @@ public interface BusiMatchLogRepository extends JpaRepository<BusiMatchLog, Busi
     /** Used by the MAX+1 sequence generator to find the highest
      *  numeric `match_log_seq` for the tenant. */
     List<BusiMatchLog> findByBizKey(String bizKey);
+
+    /** Batch lookup of live matches for a set of bank transactions —
+     *  used by the Transaction History list to populate the Matched
+     *  date/by + File Name columns (audit finding BUG-2) in one query
+     *  instead of a per-row {@code findFirst...} N+1. Tenant-scoped. */
+    List<BusiMatchLog> findByBizKeyAndBankTrnsShortIdInAndLockedYn(
+            String bizKey, java.util.Collection<String> bankTrnsShortIds, String lockedYn);
 }

@@ -32,6 +32,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -142,6 +143,20 @@ class VasAccountControllerTest {
                 .andExpect(status().isOk());
 
         verify(service).list("Tien", List.of("A", "I"), "VAS_ACCT_CD", "DESC", 1, 50);
+    }
+
+    @Test
+    void list_allTrue_routesToListAll() throws Exception {
+        when(service.listAll(isNull(), isNull(), isNull(), isNull()))
+                .thenReturn(new VasAccountListResponse(List.of(), 0L, 0, 0, 0));
+
+        mvc.perform(get("/api/v1/settings/vas-account").param("all", "true"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status.error", is(false)));
+
+        verify(service).listAll(null, null, null, null);
+        // The paginated path must NOT be taken when all=true.
+        verify(service, never()).list(any(), any(), any(), any(), anyInt(), anyInt());
     }
 
     /* =================================================================

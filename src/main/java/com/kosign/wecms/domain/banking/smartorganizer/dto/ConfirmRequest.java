@@ -33,6 +33,10 @@ import java.util.List;
  * </ol>
  */
 public record ConfirmRequest(
+        /** Selected account scope (R11) — Smart Organizer confirm operates
+         *  only on the account currently selected in Transaction History. */
+        @NotBlank @Size(max = 20) String bankCd,
+        @NotBlank @Size(max = 100) String acctNo,
         @NotEmpty
         @Valid
         List<Row> rows

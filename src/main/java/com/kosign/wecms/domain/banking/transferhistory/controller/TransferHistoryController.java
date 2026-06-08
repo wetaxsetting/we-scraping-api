@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.access.prepost.PreAuthorize;
 
 /**
  * Banking &gt; Internal Transfer &gt; Transfer History — read endpoint.
@@ -22,11 +23,10 @@ import org.springframework.web.bind.annotation.RestController;
  * trns_0003_001_r001_act.jsp}) under the spec URI
  * {@code /api/v1/banking/internal-transfer/transfer-history}. Returns a
  * lowercase snake_case envelope per the global Jackson naming strategy
- * — no per-field {@code @JsonProperty} (the legacy interim DTOs at
- * {@code domain.banking.dto.TransferHistory*} carry UPPER_SNAKE
- * holdovers; that endpoint stays available at
- * {@code /api/v1/banking/transfers/history} until the frontend cutover
- * MR flips the consumer).
+ * — no per-field {@code @JsonProperty}. This is now the sole Transfer
+ * History endpoint: the Sprint-1 interim UPPER_SNAKE endpoint at
+ * {@code /api/v1/banking/transfers/history} (and its DTOs / service)
+ * was deleted 2026-06-07 once the frontend cutover was complete.
  *
  * <p>Per OQ-5 (resolved 2026-05-20) the controller carries no
  * {@code @PreAuthorize} — JWT authentication is the only gate,
@@ -51,6 +51,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/banking/internal-transfer/transfer-history")
 @RequiredArgsConstructor
 @Validated
+@PreAuthorize("@menuAuthz.canAccess('banking-internal-transfer-history')")
 public class TransferHistoryController {
 
     private final TransferHistoryQueryService service;

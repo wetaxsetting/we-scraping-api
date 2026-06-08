@@ -51,6 +51,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.access.prepost.PreAuthorize;
 
 import java.util.List;
 
@@ -99,6 +100,7 @@ import java.util.List;
 @RequestMapping("/api/v1/payment/card-transactions")
 @RequiredArgsConstructor
 @Validated
+@PreAuthorize("@menuAuthz.canAccess('payment-corporate-card-transactions')")
 public class CardTransactionsController {
 
     /** Pattern for the {@code cardSeqNo} path component — {@code

@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.access.prepost.PreAuthorize;
 
 /**
  * Settings &gt; Firm Banking Settings — read-only endpoints
@@ -62,6 +63,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/settings/firm-banking-settings")
 @RequiredArgsConstructor
 @Validated
+@PreAuthorize("@menuAuthz.canAccess('settings-firm-banking-settings')")
 public class FirmBankingSettingsController {
 
     /** Pattern shared by the two PK path components. {@code OUT_BANK_CD}

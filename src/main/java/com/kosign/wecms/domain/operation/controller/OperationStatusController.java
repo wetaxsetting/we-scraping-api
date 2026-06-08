@@ -21,12 +21,14 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.access.prepost.PreAuthorize;
 
 import java.util.List;
 
 @RestController
 @RequestMapping("/api/v1/addon")
 @RequiredArgsConstructor
+@PreAuthorize("@menuAuthz.canAccess('addon-operation-status-inquiry')")
 public class OperationStatusController {
 
     private final OperationStatusService service;

@@ -1,5 +1,11 @@
 # Banking > Smart Organizer (FCY) — Refactor Feature Spec
 
+> **⚠️ Superseded — preserved for history.** Smart Organizer is **one screen serving both VND and FCY**
+> (currency is data-driven, not a separate screen). The primary backend documentation home is the
+> 9-doc folder **[../smart-organizer/](../smart-organizer/README.md)** — see its R06 (FCY) coverage in
+> [refactor-gap-analysis.md](../smart-organizer/refactor-gap-analysis.md). This single-file FCY spec
+> predates that folder and is kept for traceability only.
+
 **Module:** Banking → Current & Savings (FCY)
 **Menu:** Smart Organizer (FCY)
 **Route (proposed):** `/banking/smart-organizer-fcy`

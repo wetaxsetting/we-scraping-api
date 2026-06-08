@@ -1,5 +1,14 @@
 # Daily Financial — Interface Specification
 
+> **Casing migrated 2026-06-07.** `DailyFinancialCmcReport`,
+> `DailyFinancialHsReport`, and `DailyFinancialTransactionsReport` no longer
+> carry UPPER_SNAKE `@JsonProperty` — wire JSON is now **lowercase snake_case**
+> via the global Jackson SNAKE_CASE strategy. A few fields follow the camelCase
+> Java field rather than the legacy token (`balance` not `bal`,
+> `acct_nickname` not `acct_nick_nm`, nested-tx `transaction_time` / `amount` /
+> `balance_after` / `in_out_div`). UPPER tokens below are historical. See
+> [field-casing-parity-audit-2026-06-06.md](../../../../audits/field-casing-parity-audit-2026-06-06.md).
+
 Contracts from `WSVC.rept_0015_001_r001.xml`, the action JSP, and the TS renderer. Refactor contract
 from `ReportController` / `DailyFinancialCmcReport` / `DailyFinancialTransactionsReport`.
 

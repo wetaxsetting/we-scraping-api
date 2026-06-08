@@ -30,6 +30,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.access.prepost.PreAuthorize;
 
 /**
  * Banking &gt; Own Account Transfer — REST surface under
@@ -67,6 +68,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/banking/own-account-transfer")
 @RequiredArgsConstructor
 @Validated
+@PreAuthorize("@menuAuthz.canAccess('banking-internal-transfer-own')")
 public class OwnAccountTransferController {
 
     private final OwnAccountTransferService service;

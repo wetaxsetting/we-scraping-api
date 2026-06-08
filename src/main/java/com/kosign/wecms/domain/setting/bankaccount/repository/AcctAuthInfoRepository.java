@@ -91,6 +91,13 @@ public interface AcctAuthInfoRepository
     List<AcctAuthInfo> findByBizKeyAndUserIdAndUseYn(
             String bizKey, String userId, String useYn);
 
+    /** Per-account authority existence check — used by the Transaction
+     *  History {@code AccountAccessGuard} (audit finding #29) to enforce
+     *  that a non-admin may only read/act on accounts they hold an active
+     *  grant for. Constrained on {@code BIZ_KEY} first (tenant scope). */
+    boolean existsByBizKeyAndUserIdAndBankCdAndAcctNoAndAuthTypeAndUseYn(
+            String bizKey, String userId, String bankCd, String acctNo, String authType, String useYn);
+
     /** Soft-revoke every active permission a user holds across all
      *  accounts in the tenant. Called when Settings &gt; Users unlinks
      *  the user so a removed member cannot retain account-level

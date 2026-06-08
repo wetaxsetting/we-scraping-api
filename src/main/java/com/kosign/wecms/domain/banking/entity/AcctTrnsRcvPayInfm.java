@@ -67,6 +67,16 @@ public class AcctTrnsRcvPayInfm {
     @Column(name = "VAS_ACCT_CD", length = 50)
     private String vasAcctCd;
 
+    // R05 remediation (2026-06-06): the legacy confirm (fnsh_0200_001_c001_act.jsp:186-189)
+    // writes the VAS surrogate AND the denormalized VAS name. Columns exist on DEV /
+    // local (V23:114-115); previously unmapped. NUMERIC(10,0) → BigDecimal so Hibernate
+    // `validate` accepts the column type (same precedent as the V35→V36 disp_ord saga).
+    @Column(name = "VAS_ACCT_SEQ_NO")
+    private BigDecimal vasAcctSeqNo;
+
+    @Column(name = "VAS_ACCT_NM", length = 50)
+    private String vasAcctNm;
+
     @Column(name = "RCV_PAY_AMT")
     private BigDecimal rcvPayAmt;
 

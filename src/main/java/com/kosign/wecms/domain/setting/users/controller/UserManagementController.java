@@ -69,12 +69,12 @@ import java.time.Duration;
  *   <li><b>Read</b> — {@code list} / {@code detail} / avatar GET — allowed
  *       for ADMIN <em>or</em> a normal user granted the
  *       {@code settings-core-users} menu permission, via
- *       {@code @PreAuthorize("@userMgmtAccess.canViewUsers()")}. Lets a
+ *       {@code @PreAuthorize("@userMgmtAccess.canViewUsers() and @menuAuthz.canAccess('settings-core-users')")}. Lets a
  *       granted viewer open the panel read-only.</li>
  *   <li><b>Write / permission-management</b> — {@code create},
  *       {@code update}, {@code delete}, {@code check-id}, both
  *       menu-entitlement endpoints, and avatar upload/delete — stay
- *       {@code @PreAuthorize("hasRole('ADMIN')")}. The services keep a
+ *       {@code @PreAuthorize("hasRole('ADMIN') and @menuAuthz.canAccess('settings-core-users')")}. The services keep a
  *       defense-in-depth admin guard ({@code TenantContext.currentIsAdmin()})
  *       so a normal user can never create users or promote anyone — even
  *       if the controller gate is bypassed.</li>
@@ -94,7 +94,7 @@ public class UserManagementController {
     private final UserImageService userImageService;
 
     @GetMapping
-    @PreAuthorize("@userMgmtAccess.canViewUsers()")
+    @PreAuthorize("@userMgmtAccess.canViewUsers() and @menuAuthz.canAccess('settings-core-users')")
     public ApiResponse<UserListResponse> list() {
         return ApiResponse.ok(service.list());
     }
@@ -106,7 +106,7 @@ public class UserManagementController {
      * flow, which is itself admin-only.
      */
     @GetMapping("/check-id")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN') and @menuAuthz.canAccess('settings-core-users')")
     public ApiResponse<CheckLoginIdResponse> checkLoginId(
             @RequestParam("login_id")
             @NotBlank @Size(max = 100)
@@ -115,20 +115,20 @@ public class UserManagementController {
     }
 
     @GetMapping("/{user_id}")
-    @PreAuthorize("@userMgmtAccess.canViewUsers()")
+    @PreAuthorize("@userMgmtAccess.canViewUsers() and @menuAuthz.canAccess('settings-core-users')")
     public ApiResponse<UserRowResponse> detail(
             @PathVariable("user_id") @NotBlank @Size(max = 100) String userId) {
         return ApiResponse.ok(service.detail(userId));
     }
 
     @PostMapping
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN') and @menuAuthz.canAccess('settings-core-users')")
     public ApiResponse<UserRowResponse> create(@Valid @RequestBody UserCreateRequest req) {
         return ApiResponse.ok(service.create(req));
     }
 
     @PutMapping("/{user_id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN') and @menuAuthz.canAccess('settings-core-users')")
     public ApiResponse<UserRowResponse> update(
             @PathVariable("user_id") @NotBlank @Size(max = 100) String userId,
             @Valid @RequestBody UserUpdateRequest req) {
@@ -136,7 +136,7 @@ public class UserManagementController {
     }
 
     @DeleteMapping("/{user_id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN') and @menuAuthz.canAccess('settings-core-users')")
     public ApiResponse<Void> delete(
             @PathVariable("user_id") @NotBlank @Size(max = 100) String userId) {
         service.delete(userId);
@@ -146,14 +146,14 @@ public class UserManagementController {
     // ----------------------------------------------------- menu entitlement
 
     @GetMapping("/{user_id}/menu-entitlement")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN') and @menuAuthz.canAccess('settings-core-users')")
     public ApiResponse<MenuEntitlementResponse> getMenuEntitlement(
             @PathVariable("user_id") @NotBlank @Size(max = 100) String userId) {
         return ApiResponse.ok(menuEntitlementService.load(userId));
     }
 
     @PutMapping("/{user_id}/menu-entitlement")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN') and @menuAuthz.canAccess('settings-core-users')")
     public ApiResponse<MenuEntitlementResponse> updateMenuEntitlement(
             @PathVariable("user_id") @NotBlank @Size(max = 100) String userId,
             @Valid @RequestBody MenuEntitlementUpdateRequest req) {
@@ -172,7 +172,7 @@ public class UserManagementController {
      * refreshes the image without manual reload.
      */
     @PostMapping(value = "/{user_id}/image", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN') and @menuAuthz.canAccess('settings-core-users')")
     public ApiResponse<UserRowResponse> uploadImage(
             @PathVariable("user_id") @NotBlank @Size(max = 100) String userId,
             @RequestPart("file") MultipartFile file) {
@@ -184,7 +184,7 @@ public class UserManagementController {
      * avatar set still gets a 200 and the unchanged row back.
      */
     @DeleteMapping("/{user_id}/image")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN') and @menuAuthz.canAccess('settings-core-users')")
     public ApiResponse<UserRowResponse> deleteImage(
             @PathVariable("user_id") @NotBlank @Size(max = 100) String userId) {
         return ApiResponse.ok(userImageService.delete(userId));
@@ -199,7 +199,7 @@ public class UserManagementController {
      * so it follows the read policy (ADMIN or {@code settings-core-users}).
      */
     @GetMapping("/{user_id}/image")
-    @PreAuthorize("@userMgmtAccess.canViewUsers()")
+    @PreAuthorize("@userMgmtAccess.canViewUsers() and @menuAuthz.canAccess('settings-core-users')")
     public ResponseEntity<InputStreamResource> streamImage(
             @PathVariable("user_id") @NotBlank @Size(max = 100) String userId) throws IOException {
         ImageDownload image = userImageService.open(userId);

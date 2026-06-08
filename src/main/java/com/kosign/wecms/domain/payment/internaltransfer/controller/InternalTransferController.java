@@ -33,6 +33,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
@@ -77,6 +78,7 @@ import java.nio.file.Files;
 @RequestMapping("/api/v1/payment/internal-transfer")
 @RequiredArgsConstructor
 @Validated
+@PreAuthorize("@menuAuthz.canAccess('payment-internal-transfer-scheduled')")
 public class InternalTransferController {
 
     /** Pattern for the {@code scdul_pymn_no} path component. Refactor
