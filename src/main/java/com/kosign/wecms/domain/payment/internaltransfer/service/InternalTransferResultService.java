@@ -308,7 +308,9 @@ public class InternalTransferResultService {
                 d.getChartAcctSeqNo(),
                 d.getBankTrnsShortId(),
                 r.procStat(), r.procStatKey(), r.procDttm(), r.rsltDttm(),
-                r.rsCd(), r.rsMsg());
+                r.rsCd(), r.rsMsg(),
+                // Banking-match read fields (G21b) — SCDUL_PYMN_SUMR_DETL.
+                d.getLinkMatchYn(), d.getAcctSeqNo(), d.getBankTrnsFullId());
     }
 
     private String requireTenant() {

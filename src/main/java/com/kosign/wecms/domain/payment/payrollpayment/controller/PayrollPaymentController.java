@@ -268,7 +268,9 @@ public class PayrollPaymentController {
      * ---------------------------------------------------------------- */
 
     /** Candidate bank transactions for a Payroll batch (legacy
-     *  {@code comm_0197_001_r001} batch path). */
+     *  {@code comm_0197_001_r001} batch path). Candidates are pinned to the
+     *  batch's exact pay date + total amount; the popup's date range is
+     *  non-filtering (legacy parity). */
     @GetMapping("/{id}/match/candidates")
     public ApiResponse<PayrollMatchCandidateListResponse> matchCandidates(
             @PathVariable("id")

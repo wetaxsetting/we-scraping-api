@@ -278,15 +278,33 @@ public class PayrollPaymentService {
         // to regId. Byte-identical wiring to VendorPaymentService / ExpensePaymentService
         // / InternalTransferService.
         String apprSeqNo = master.getApprSeqNo();
-        String requestor = (apprSeqNo != null && !apprSeqNo.isBlank())
+        // Load the approval master once and reuse it for both the requester
+        // display name and the scheduled/pay date (EXPT_RESOL_MSTR.PAY_DATE) —
+        // one round-trip, mirroring InternalTransferService.detail().
+        java.util.Optional<ExptResolMstr> apprMstr = (apprSeqNo != null && !apprSeqNo.isBlank())
                 ? exptResolMstrRepository
                         .findByBizKeyAndApprSeqNoIn(bizKey, java.util.List.of(apprSeqNo))
                         .stream()
                         .findFirst()
-                        .map(ExptResolMstr::getDraftUserNm)
-                        .filter(s -> s != null && !s.isBlank())
-                        .orElse(null)
-                : null;
+                : java.util.Optional.empty();
+        String requestor = apprMstr
+                .map(ExptResolMstr::getDraftUserNm)
+                .filter(s -> s != null && !s.isBlank())
+                .orElse(null);
+        // Scheduled / pay date — EXPT_RESOL_MSTR.PAY_DATE (yyyyMMdd), the same
+        // source the Approval Box entry surfaces; lets the Payroll detail popup
+        // show Scheduled Date consistently. Null → frontend hides the row.
+        String payDate = apprMstr
+                .map(ExptResolMstr::getPayDate)
+                .filter(s -> s != null && !s.isBlank())
+                .orElse(null);
+        // Payroll Type — EXPT_RESOL_MSTR.APPR_FUND_TP (0/1/9), null for
+        // non-payroll; the frontend resolves the label. Lets the Approval
+        // Details popup show Payroll Type consistently across entry points.
+        String apprFundTp = apprMstr
+                .map(ExptResolMstr::getApprFundTp)
+                .filter(s -> s != null && !s.isBlank())
+                .orElse(null);
 
         // G5 (Scheduled detail): approval-request attachments from EXPT_RESOL_FILE,
         // keyed by APPR_SEQ_NO (ordered by FILE_ID). Empty when the batch has no
@@ -333,7 +351,9 @@ public class PayrollPaymentService {
                 master.getOrgFileNm(),
                 master.getFileSize(),
                 lines,
-                attachments);
+                attachments,
+                payDate,
+                apprFundTp);
     }
 
     /* ----------------------------------------------------------------
@@ -1081,6 +1101,12 @@ public class PayrollPaymentService {
         // for pending/approved batches). Null until the batch has an approval
         // row with a scheduled date — legacy-correct blank.
         String payDate = erm != null ? erm.getPayDate() : null;
+        // Requestor = EXPT_RESOL_MSTR.DRAFT_USER_NM (발의자명, the requesting
+        // user's display NAME), joined on APPR_SEQ_NO. Legacy
+        // IDO.SCDUL_PYMN_SUMR_R002 selects ERM.DRAFT_USER_NM for this column —
+        // NOT SCDUL_PYMN_SUMR.REG_ID (the batch-creator login id). Null until
+        // the batch has an approval row; the frontend falls back to reg_id.
+        String draftUserNm = erm != null ? erm.getDraftUserNm() : null;
         // G4: Approver column — null pre-approval (no APPR_SEQ_NO / no chain),
         // so the shared shell leaves the cell blank exactly like legacy.
         ApproverSummary appr = s.getApprSeqNo() != null
@@ -1112,7 +1138,8 @@ public class PayrollPaymentService {
                 apprFundTp,
                 approver,
                 approverCount,
-                approvers);
+                approvers,
+                draftUserNm);
     }
 
     /** First approver name + total chain length + the full ordered chain

@@ -102,6 +102,7 @@ From [migration/internal-transfer-mapping.md § 3](../migration/internal-transfe
 | `wecms-web` Internal Transfer Result list omits totals footer (only Payment Result variant that does) | [ ] | OQ-8 |
 | Audit-history triggers (`_log_h`) NOT ported; refactor uses `AUDIT_LOGS_INFM` | [ ] | api CLAUDE.md V24 precedent |
 | `SCDUL_PYMN_SUMR_HIS` / `SCDUL_PYMN_SUMR_DETL_HIS` column-parity-only, not written by refactor | [ ] | database doc § 6 |
+| **Single transfer network per upload file** (no mixed CITAD / NAPAS in one Excel) — `UploadConsistencyValidator.assertSingleNetwork` → `WBE2121` | [x] **PO-confirmed 2026-06-08** | **Confirmed business rule:** one uploaded file must contain only one network type. The refactor's strict mixed-network rejection is **intended and correct — NOT a parity gap.** Resolves the "refactor stricter — verify legacy intent" item flagged in the Upload Internal Transfer audit (the amount / chart-account / network validation triad). Sibling rule `assertSingleCurrency` (`WBE2120`, one currency per file) carries the same confirmation. |
 
 ## 4. Open questions resolution (OQ-1 … OQ-8 from feature spec)
 
@@ -132,3 +133,5 @@ Reviewer:  ______________________   Date: ______________________
 ---
 
 Last verified: 2026-05-22
+
+**2026-06-08 addendum (status-only, no code change):** Upload Internal Transfer validation audit follow-ups recorded — (1) **amount must be > 0** and (2) **Reporting Account must be `DEL_YN='N' AND STTS='A'`** were both implemented in the payment Excel parsers (legacy-parity fixes, verified by `InternalTransferExcelParserTest` + backend build); (3) **mixed CITAD/NAPAS per file** is confirmed intended behaviour and approved (see § 3 single-network row) — not a gap.

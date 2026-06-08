@@ -465,12 +465,22 @@ public class OverseasPaymentExcelService {
         sumrRepository.save(sumr);
 
         // ── Detail rows ───────────────────────────────────────────────────────
+        // OVR-G1 Phase A: allocate the per-tenant numeric OVRS_PYMN_DETL_NO
+        // (legacy match identity) for every line up-front in one MAX+1 read,
+        // then assign sequentially. Generated at insert time (before approval),
+        // NOT derived from OVRS_PYMN_NO and NOT the per-batch TRN_SEQ. Unique
+        // per BIZ_KEY (index ux_ovrs_pymn_dtls_biz_detl_no). See
+        // overseas-detail-no-generation-audit.md.
+        List<String> detlNos = keyGenerator.nextOvrsPymnDetlNos(bizKey, req.rows().size());
         List<OvrsPymnDtls> dtlsList = new ArrayList<>();
+        int idx = 0;
         for (var src : req.rows()) {
             OvrsPymnDtls dtl = new OvrsPymnDtls();
             dtl.setBizKey(bizKey);
             dtl.setOvrsPymnNo(pymnNo);
             dtl.setTrnSeq(src.trn_seq());
+            dtl.setOvrsPymnDetlNo(detlNos.get(idx++));
+            dtl.setLinkMatchYn("N");
             dtl.setBnfcCode(src.bnfc_code());
             dtl.setCcyCd(src.ccy_cd());
             dtl.setTrnfAmt(src.trnf_amt());

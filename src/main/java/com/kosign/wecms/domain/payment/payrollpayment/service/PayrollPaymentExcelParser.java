@@ -313,7 +313,7 @@ public class PayrollPaymentExcelParser {
                         "Tenant context missing — please re-login"));
             } else {
                 Optional<ChartOfAccount> hit =
-                        chartAcctRepo.findByBizKeyAndChartAcctCdAndDelYn(bizKey, trimmed, "N");
+                        chartAcctRepo.findByBizKeyAndChartAcctCdAndDelYnAndStts(bizKey, trimmed, "N", "A");
                 if (hit.isPresent()) {
                     resolvedChartAcctCd    = hit.get().getChartAcctCd();
                     resolvedChartAcctSeqNo = hit.get().getChartAcctSeqNo();
@@ -324,7 +324,7 @@ public class PayrollPaymentExcelParser {
                     // pair drives the red highlight + tooltip on the wire.
                     resolvedChartAcctCd = trimmed;
                     errors.add(new FieldError(FLD_CHART_ACCT_CD,
-                            "Reporting Account is not registered: " + trimmed));
+                            "Reporting Account is not registered or inactive: " + trimmed));
                 }
             }
         }

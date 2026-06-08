@@ -360,9 +360,12 @@ public class InternalTransferExcelParser {
         } else {
             try {
                 BigDecimal parsed = new BigDecimal(tranAmtIn.trim().replace(",", ""));
-                if (parsed.signum() < 0) {
+                // Legacy parity: `ValidationHelper.validateAmountOnlyPositive`
+                // passes only when `amount.signum() == 1` (strictly > 0), so a
+                // zero amount is rejected just like a negative one.
+                if (parsed.signum() <= 0) {
                     errors.add(new FieldError(FLD_TRAN_AMT,
-                            "Transfer Amount must be non-negative"));
+                            "Transfer Amount must be greater than zero"));
                 }
                 tranAmt = parsed;
             } catch (NumberFormatException ex) {
@@ -456,7 +459,7 @@ public class InternalTransferExcelParser {
                         "Tenant context missing — please re-login"));
             } else {
                 Optional<ChartOfAccount> hit =
-                        chartAcctRepo.findByBizKeyAndChartAcctCdAndDelYn(bizKey, trimmedChart, "N");
+                        chartAcctRepo.findByBizKeyAndChartAcctCdAndDelYnAndStts(bizKey, trimmedChart, "N", "A");
                 if (hit.isPresent()) {
                     resolvedChartAcctCd    = hit.get().getChartAcctCd();
                     resolvedChartAcctSeqNo = hit.get().getChartAcctSeqNo();
@@ -466,7 +469,7 @@ public class InternalTransferExcelParser {
                     // bank-code branch above.
                     resolvedChartAcctCd = trimmedChart;
                     errors.add(new FieldError(FLD_CHART_ACCT_CD,
-                            "Reporting Account is not registered: " + trimmedChart));
+                            "Reporting Account is not registered or inactive: " + trimmedChart));
                 }
             }
         }

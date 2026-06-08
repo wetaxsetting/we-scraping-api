@@ -73,7 +73,7 @@ class InternalTransferExcelParserTest {
         // queried code back as a registered chart account so previously-
         // valid rows keep parsing cleanly. Tests exercising the "not
         // registered" branch use a blank reporting account instead.
-        when(chartAcctRepository.findByBizKeyAndChartAcctCdAndDelYn(eq(TEST_BIZ_KEY), any(), eq("N")))
+        when(chartAcctRepository.findByBizKeyAndChartAcctCdAndDelYnAndStts(eq(TEST_BIZ_KEY), any(), eq("N"), eq("A")))
                 .thenAnswer(inv -> Optional.of(stubChart(inv.getArgument(1))));
     }
 
@@ -116,6 +116,74 @@ class InternalTransferExcelParserTest {
         assertThat(line.docNo()).isEqualTo("1C24TPA-25861");
         assertThat(line.errFld()).isNull();
         assertThat(line.errFldCaus()).isNull();
+    }
+
+    @Test
+    void rejects_zero_transfer_amount() throws Exception {
+        // Legacy parity: `ValidationHelper.validateAmountOnlyPositive` passes
+        // only when `amount.signum() == 1` (strictly > 0), so a 0 amount is
+        // rejected. Same mocks as the valid-row test; only TRAN_AMT differs.
+        when(repo.findByAntDivCdAndBankCd(eq("NAPAS"), eq(NAPAS_SHINHAN)))
+                .thenReturn(Optional.of(napas(NAPAS_SHINHAN, NM_SHINHAN)));
+
+        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo, specialCharValidator, uploadConsistencyValidator, chartAcctRepository, acctMstrRepository);
+        byte[] xlsx = buildWorkbook(new String[][] {
+                { NAPAS_SHINHAN, "700071152854", "ShinhanBank", "0", "VND",
+                  "Internal payment 1", "2001001", "VEHICLE FEE", "1C24TPA-25861" },
+        });
+
+        ParseExcelResponse out = parser.parse(file(xlsx), MASTER_BANK_CD);
+
+        assertThat(out.errCnt()).isEqualByComparingTo(BigDecimal.ONE);
+        ParsedTransferLine line = out.rows().get(0);
+        assertThat(line.errFld()).isNotNull();
+        assertThat(line.errFld().split("\\|", -1)).contains("TRAN_AMT");
+    }
+
+    @Test
+    void rejects_negative_transfer_amount() throws Exception {
+        when(repo.findByAntDivCdAndBankCd(eq("NAPAS"), eq(NAPAS_SHINHAN)))
+                .thenReturn(Optional.of(napas(NAPAS_SHINHAN, NM_SHINHAN)));
+
+        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo, specialCharValidator, uploadConsistencyValidator, chartAcctRepository, acctMstrRepository);
+        byte[] xlsx = buildWorkbook(new String[][] {
+                { NAPAS_SHINHAN, "700071152854", "ShinhanBank", "-100", "VND",
+                  "Internal payment 1", "2001001", "VEHICLE FEE", "1C24TPA-25861" },
+        });
+
+        ParseExcelResponse out = parser.parse(file(xlsx), MASTER_BANK_CD);
+
+        assertThat(out.errCnt()).isEqualByComparingTo(BigDecimal.ONE);
+        ParsedTransferLine line = out.rows().get(0);
+        assertThat(line.errFld()).isNotNull();
+        assertThat(line.errFld().split("\\|", -1)).contains("TRAN_AMT");
+    }
+
+    @Test
+    void rejects_inactive_reporting_account() throws Exception {
+        // Legacy parity: PymnHelper.getChartAcctInfm requires
+        // DEL_YN='N' AND STTS='A'. An inactive (but not deleted) chart
+        // account misses the status-aware lookup and is rejected just
+        // like an unregistered code — modelled here by the active-status
+        // finder returning empty for the inactive code.
+        when(repo.findByAntDivCdAndBankCd(eq("NAPAS"), eq(NAPAS_SHINHAN)))
+                .thenReturn(Optional.of(napas(NAPAS_SHINHAN, NM_SHINHAN)));
+        when(chartAcctRepository.findByBizKeyAndChartAcctCdAndDelYnAndStts(
+                eq(TEST_BIZ_KEY), eq("INACTIVE1"), eq("N"), eq("A")))
+                .thenReturn(Optional.empty());
+
+        InternalTransferExcelParser parser = new InternalTransferExcelParser(repo, specialCharValidator, uploadConsistencyValidator, chartAcctRepository, acctMstrRepository);
+        byte[] xlsx = buildWorkbook(new String[][] {
+                { NAPAS_SHINHAN, "700071152854", "ShinhanBank", "100000", "VND",
+                  "Internal payment 1", "INACTIVE1", "VEHICLE FEE", "1C24TPA-25861" },
+        });
+
+        ParseExcelResponse out = parser.parse(file(xlsx), MASTER_BANK_CD);
+
+        assertThat(out.errCnt()).isEqualByComparingTo(BigDecimal.ONE);
+        ParsedTransferLine line = out.rows().get(0);
+        assertThat(line.errFld()).isNotNull();
+        assertThat(line.errFld().split("\\|", -1)).contains("CHART_ACCT_CD");
     }
 
     @Test
@@ -302,6 +370,7 @@ class InternalTransferExcelParserTest {
         ChartOfAccount c = new ChartOfAccount();
         c.setChartAcctCd(chartAcctCd);
         c.setChartAcctSeqNo("1");
+        c.setStts("A");
         return c;
     }
 

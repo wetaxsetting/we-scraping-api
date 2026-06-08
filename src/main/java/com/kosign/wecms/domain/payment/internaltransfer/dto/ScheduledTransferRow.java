@@ -65,7 +65,19 @@ public record ScheduledTransferRow(
          * populates it; the Vendor / Expense / Payroll siblings pass
          * {@code null} via the backward-compatible constructors below.
          */
-        List<ScheduledTransferApprover> approvers) {
+        List<ScheduledTransferApprover> approvers,
+        /**
+         * Requestor display name — legacy {@code EXPT_RESOL_MSTR.DRAFT_USER_NM}
+         * (발의자명), joined on {@code APPR_SEQ_NO}. This is the name the legacy
+         * {@code pymn_000X_001} Scheduled list renders in its "Requestor"
+         * column (legacy {@code IDO.SCDUL_PYMN_SUMR_R002} selects
+         * {@code ERM.DRAFT_USER_NM}) — NOT the {@code SCDUL_PYMN_SUMR.REG_ID}
+         * batch-creator login id. {@code null} when the batch has no approval
+         * request yet; the frontend then falls back to {@link #regId}. Populated
+         * by every Scheduled list (Internal Transfer / Vendor / Expense /
+         * Payroll); Overseas carries its own {@code OverseasScheduledRow}.
+         */
+        String     draftUserNm) {
 
     /**
      * Payroll-shaped constructor (carries {@code apprFundTp}, no
@@ -97,7 +109,7 @@ public record ScheduledTransferRow(
         this(scdulPymnNo, scdulPymnTypeCd, ccyCd, titl, apprSeqNo,
              totalTranAmt, totTrnsCnt, regDtm, regId, apprStts,
              apprSttsKey, trnfStts, trnfYn, outBankCd, wdrlActNo,
-             payDate, fileNm, docNo, wdrlCcyCd, apprFundTp, null, null, null);
+             payDate, fileNm, docNo, wdrlCcyCd, apprFundTp, null, null, null, null);
     }
 
     /**
@@ -129,6 +141,6 @@ public record ScheduledTransferRow(
         this(scdulPymnNo, scdulPymnTypeCd, ccyCd, titl, apprSeqNo,
              totalTranAmt, totTrnsCnt, regDtm, regId, apprStts,
              apprSttsKey, trnfStts, trnfYn, outBankCd, wdrlActNo,
-             payDate, fileNm, docNo, wdrlCcyCd, null, null, null, null);
+             payDate, fileNm, docNo, wdrlCcyCd, null, null, null, null, null);
     }
 }

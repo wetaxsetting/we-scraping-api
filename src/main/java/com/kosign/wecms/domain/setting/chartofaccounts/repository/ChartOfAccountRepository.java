@@ -57,6 +57,15 @@ public interface ChartOfAccountRepository
     Optional<ChartOfAccount> findByBizKeyAndChartAcctCdAndDelYn(
             String bizKey, String chartAcctCd, String delYn);
 
+    /** Status-aware lookup by code + soft-delete flag + status in the current
+     *  tenant. Used by the payment Excel-upload parsers (Internal Transfer /
+     *  Vendor / Expense / Payroll) to validate a Reporting Account, mirroring
+     *  the legacy {@code PymnHelper.getChartAcctInfm} query which requires
+     *  {@code DEL_YN='N' AND STTS='A'} — so an inactive (but not deleted)
+     *  account is rejected at upload, not silently accepted. */
+    Optional<ChartOfAccount> findByBizKeyAndChartAcctCdAndDelYnAndStts(
+            String bizKey, String chartAcctCd, String delYn, String stts);
+
     /** Same as above but with an explicit exclude on a known seq_no —
      *  used by the Update dup-on-rename check (so the row being edited
      *  doesn't trip the check against itself) and by the Delete

@@ -91,4 +91,41 @@ public class OvrsPymnDtls {
 
     @Column(name = "REG_ID", length = 100)
     private String regId;
+
+    // ── Banking-match identity + state (OVR-G1 Phase A, V248) ────────────────
+    // Legacy parity with OVRS_PYMN_SUMR_DETL (comm_0197_* isOversea branch).
+    // Additive only — the PK stays (BIZ_KEY, OVRS_PYMN_NO, TRN_SEQ).
+
+    /** Per-tenant numeric match identity (legacy {@code OVRS_PYMN_DETL_NO}).
+     *  Allocated at upload via {@code OverseasPaymentKeyGenerator}; unique per
+     *  BIZ_KEY (index {@code ux_ovrs_pymn_dtls_biz_detl_no}). Becomes the
+     *  {@code PAY_TRNS_ID} and the {@code ACCT_TRNS_HSTR} reverse stamp once
+     *  banking match (Phase B) lands. VARCHAR(15) mirrors JEX DEV. */
+    @Column(name = "OVRS_PYMN_DETL_NO", length = 15)
+    private String ovrsPymnDetlNo;
+
+    /** Match flag — {@code 'Y'} when this line is matched to a bank
+     *  transaction, else {@code 'N'}. Candidate guard + row-visibility driver. */
+    @Column(name = "LINK_MATCH_YN", length = 1, nullable = false)
+    private String linkMatchYn = "N";
+
+    /** Matched bank transaction's {@code ACCT_SEQ_NO} (reverse lookup on unmatch). */
+    @Column(name = "ACCT_SEQ_NO", length = 20)
+    private String acctSeqNo;
+
+    /** Matched bank transaction short id. */
+    @Column(name = "BANK_TRNS_SHORT_ID", length = 20)
+    private String bankTrnsShortId;
+
+    /** Matched bank transaction full id. */
+    @Column(name = "BANK_TRNS_FULL_ID", length = 100)
+    private String bankTrnsFullId;
+
+    /** Audit — set by the match/unmatch patch (Phase B). */
+    @Column(name = "MOD_ID", length = 100)
+    private String modId;
+
+    /** Audit — set by the match/unmatch patch (Phase B). yyyyMMddHHmmss. */
+    @Column(name = "MOD_DTM", length = 14)
+    private String modDtm;
 }

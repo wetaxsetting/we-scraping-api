@@ -397,7 +397,14 @@ public class OverseasPaymentService {
                             d.getBnfcAddr(),
                             d.getTrnfYn() != null ? d.getTrnfYn() : "N",
                             r.procStat(), r.procStatKey(), r.procDttm(), r.rsltDttm(),
-                            r.rsCd(), r.rsMsg());
+                            r.rsCd(), r.rsMsg(),
+                            // OVR-G1 Phase B — read-only per-line match state from OVRS_PYMN_DTLS (V248).
+                            d.getLinkMatchYn() != null ? d.getLinkMatchYn() : "N",
+                            d.getAcctSeqNo(),
+                            d.getBankTrnsShortId(),
+                            d.getBankTrnsFullId(),
+                            // OVR-G1 Phase D — match identity (line key the match endpoints consume).
+                            d.getOvrsPymnDetlNo());
                 })
                 .collect(Collectors.toList());
 

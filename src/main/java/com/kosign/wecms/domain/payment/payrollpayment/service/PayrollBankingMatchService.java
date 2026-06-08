@@ -90,6 +90,9 @@ public class PayrollBankingMatchService {
                 ? null
                 : "%" + srchWd.trim().toLowerCase() + "%";
 
+        // Legacy parity: candidates are pinned to the batch's exact PAY_TRAN_DT
+        // + total amount on the withdrawal account. The popup's date range is
+        // non-filtering (legacy comm_0197_001_r001 ignores FROM_DT/TO_DT).
         List<PayrollMatchCandidateRow> candidates = txnRepository
                 .findPayrollMatchCandidates(
                         bizKey,

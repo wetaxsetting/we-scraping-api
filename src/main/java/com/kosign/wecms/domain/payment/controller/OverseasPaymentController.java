@@ -4,6 +4,10 @@ import com.kosign.wecms.common.export.ExcelExportRequest;
 import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.response.ApiResponse;
 import com.kosign.wecms.domain.payment.dto.ChangeApprovalLineRequest;
+import com.kosign.wecms.domain.payment.dto.OverseasMatchCandidateListResponse;
+import com.kosign.wecms.domain.payment.dto.OverseasMatchRequest;
+import com.kosign.wecms.domain.payment.dto.OverseasMatchResultResponse;
+import com.kosign.wecms.domain.payment.dto.OverseasUnmatchAllResponse;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentDetailResponse;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentExcelPreview;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentExcelUploadRequest;
@@ -17,6 +21,7 @@ import com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalReque
 import com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.WithdrawalAccountRow;
 import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService;
+import com.kosign.wecms.domain.payment.overseas.service.OverseasBankingMatchService;
 import com.kosign.wecms.domain.payment.service.OverseasPaymentExcelService;
 import com.kosign.wecms.domain.payment.service.OverseasPaymentExcelService.DownloadResource;
 import com.kosign.wecms.domain.payment.service.OverseasPaymentService;
@@ -67,6 +72,7 @@ public class OverseasPaymentController {
 
     private final OverseasPaymentService        overseasPaymentService;
     private final OverseasPaymentExcelService   overseasExcelService;
+    private final OverseasBankingMatchService   overseasBankingMatchService;
     private final InternalTransferService       internalTransferService;
     private final ExcelExportService            excelExportService;
 
@@ -411,5 +417,65 @@ public class OverseasPaymentController {
                 .header("X-Content-Type-Options", "nosniff")
                 .header("Access-Control-Expose-Headers", HttpHeaders.CONTENT_DISPOSITION)
                 .body(new InputStreamResource(stream));
+    }
+
+    // ── Overseas banking match (OVR-G1) — per-line, post-dispatch reconciliation ──
+    // Result-detail action → gated by the result permission, mirroring the other
+    // result endpoints. Legacy comm_0197_* isOversea branch.
+
+    /**
+     * Candidate bank transactions for one overseas line (legacy
+     * {@code comm_0197_001_r001} {@code isOversea}). Keyed by the line's
+     * {@code OVRS_PYMN_DETL_NO}.
+     *
+     * @param matchRmrkYn {@code "N"} disables the MEMO remark filter (default on).
+     * @param srchWd      optional keyword over short-id / RMRK / RMRK2.
+     */
+    @GetMapping("/{ovrsPymnNo}/lines/{ovrsPymnDetlNo}/match/candidates")
+    @PreAuthorize("@menuAuthz.canAccess('payment-overseas-result')")
+    public ApiResponse<OverseasMatchCandidateListResponse> matchCandidates(
+            @PathVariable("ovrsPymnNo") String ovrsPymnNo,
+            @PathVariable("ovrsPymnDetlNo") String ovrsPymnDetlNo,
+            @RequestParam(value = "match_rmrk_yn", required = false) String matchRmrkYn,
+            @RequestParam(value = "srch_wd", required = false) String srchWd) {
+        return ApiResponse.ok(overseasBankingMatchService.listCandidates(
+                ovrsPymnNo, ovrsPymnDetlNo, matchRmrkYn, srchWd));
+    }
+
+    /**
+     * Match one overseas line to the selected bank transaction (legacy
+     * {@code comm_0197_001_c001} {@code isOversea}).
+     */
+    @PostMapping("/{ovrsPymnNo}/lines/{ovrsPymnDetlNo}/match")
+    @PreAuthorize("@menuAuthz.canAccess('payment-overseas-result')")
+    public ApiResponse<OverseasMatchResultResponse> match(
+            @PathVariable("ovrsPymnNo") String ovrsPymnNo,
+            @PathVariable("ovrsPymnDetlNo") String ovrsPymnDetlNo,
+            @Valid @RequestBody OverseasMatchRequest request) {
+        return ApiResponse.ok(overseasBankingMatchService.match(
+                ovrsPymnNo, ovrsPymnDetlNo, request));
+    }
+
+    /**
+     * Unmatch one overseas line (legacy {@code comm_0197_002_u001}
+     * {@code isOversea}). Unlocks the match log (kept); clears both sides.
+     */
+    @DeleteMapping("/{ovrsPymnNo}/lines/{ovrsPymnDetlNo}/match")
+    @PreAuthorize("@menuAuthz.canAccess('payment-overseas-result')")
+    public ApiResponse<OverseasMatchResultResponse> unmatch(
+            @PathVariable("ovrsPymnNo") String ovrsPymnNo,
+            @PathVariable("ovrsPymnDetlNo") String ovrsPymnDetlNo) {
+        return ApiResponse.ok(overseasBankingMatchService.unmatch(ovrsPymnNo, ovrsPymnDetlNo));
+    }
+
+    /**
+     * Unmatch every matched line under the batch (legacy
+     * {@code comm_0197_001_u001} {@code isOversea}).
+     */
+    @DeleteMapping("/{ovrsPymnNo}/matches")
+    @PreAuthorize("@menuAuthz.canAccess('payment-overseas-result')")
+    public ApiResponse<OverseasUnmatchAllResponse> unmatchAll(
+            @PathVariable("ovrsPymnNo") String ovrsPymnNo) {
+        return ApiResponse.ok(overseasBankingMatchService.unmatchAll(ovrsPymnNo));
     }
 }
