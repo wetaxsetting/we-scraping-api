@@ -408,13 +408,28 @@ public class OverseasPaymentService {
                 })
                 .collect(Collectors.toList());
 
+        // Approval-document metadata. The detail popup's footer "Requested by …
+        // on …" and its "Approval Content" section are properties of the
+        // approval posting, NOT of the uploaded batch — legacy comm_0195_001
+        // binds them to BLTB_POST_INFM.{REG_NM,REG_DTM,POST_CONT}, surfaced in
+        // the refactor through EXPT_RESOL_MSTR.{DRAFT_USER_NM,REG_DTM,CONT}.
+        // Reading them from OVRS_PYMN_SUMR.REG_DTM (the file-upload time) is the
+        // bug this block fixes — see docs bug report overseas-approval-details.
         String docNo = null;
+        String apprTitl = null;
+        String apprCont = null;
+        String apprRegDtm = null;
+        String draftUserNm = null;
         if (sumr.getApprSeqNo() != null) {
             ExptResolMstr mstr = exptResolMstrRepository.findById(
                     new com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId(bizKey, sumr.getApprSeqNo())
             ).orElse(null);
             if (mstr != null) {
                 docNo = mstr.getDocNo();
+                apprTitl = mstr.getTitl();
+                apprCont = mstr.getCont();
+                apprRegDtm = mstr.getRegDtm();
+                draftUserNm = mstr.getDraftUserNm();
             }
         }
 
@@ -436,6 +451,10 @@ public class OverseasPaymentService {
                 sumr.getOrgFileNm(),
                 null,                       // fileSize
                 sumr.getOrgFileNm(),
+                apprTitl,
+                apprCont,
+                apprRegDtm,
+                draftUserNm,
                 rows);
     }
 

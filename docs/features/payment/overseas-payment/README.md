@@ -42,6 +42,8 @@ List + create scheduled overseas payments (Excel upload, request-approval, trans
 ### 2. Scheduled Payment Details
 Drill-down detail of a scheduled overseas payment row (beneficiary, FX, amount, approver chain). Source: `OVRS_PYMN_DTLS`.
 
+> **Approval Details metadata (2026-06-09).** `GET /api/v1/payment/overseas-payment/scheduled/{id}/details` (`OverseasPaymentDetailResponse`) now surfaces the **approval-document** fields `appr_titl` / `appr_cont` / `appr_reg_dtm` / `draft_user_nm` from `EXPT_RESOL_MSTR` (alongside the existing `docNo` lookup), not just the `OVRS_PYMN_SUMR` batch row. The Approval Details popup's footer "Requested by … on …" and "Approval Content" section bind to these — mirroring legacy `comm_0195_001.ts:863,874,900-905` (`BLTB_POST_INFM.{POST_TITLE,POST_CONT,REG_NM,REG_DTM}` via `IDO.EXPT_RESOL_MSTR_R010.xml`). Reading `OVRS_PYMN_SUMR.REG_DTM` (the file-upload time) / `OVRS_PYMN_SUMR.TITL` (the batch file title) for these was a defect — see [overseas-approval-details-batch-datetime-and-missing-content.md](../../../../../docs/bug-reports/overseas-approval-details-batch-datetime-and-missing-content.md). Fields are `null` for an un-submitted batch (no `APPR_SEQ_NO`). No schema change — every column already exists on `EXPT_RESOL_MSTR`.
+
 ### 3. Payment Result (`pymn_0008_001`)
 Executed overseas-payment results with status (Incomplete / Processing / Success / Failed).
 
