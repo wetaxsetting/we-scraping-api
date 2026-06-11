@@ -1,7 +1,9 @@
 package com.kosign.wecms.domain.auth.entity;
 
 import com.kosign.wecms.common.entity.BaseEntity;
+import com.kosign.wecms.common.entity.LegacyDtmConverter;
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.IdClass;
@@ -37,10 +39,15 @@ public class UserBusiConnInfm extends BaseEntity {
     @Column(name = "USER_IMG", length = 500)
     private String userImg;
 
-    @Column(name = "LST_LGN_DATE")
+    /** JEX stores this as VARCHAR(14) yyyyMMddHHmmss — converted from
+     *  OffsetDateTime so validate passes against the live JEX column
+     *  (same LegacyDtmConverter as BaseEntity's REG_DTM/MOD_DTM). */
+    @Convert(converter = LegacyDtmConverter.class)
+    @Column(name = "LST_LGN_DATE", length = 14)
     private OffsetDateTime lstLgnDate;
 
-    @Column(name = "MOB_LST_LGN_DATE")
+    @Convert(converter = LegacyDtmConverter.class)
+    @Column(name = "MOB_LST_LGN_DATE", length = 14)
     private OffsetDateTime mobLstLgnDate;
 
     @Column(name = "DEL_YN", length = 1, nullable = false)

@@ -134,8 +134,7 @@ public class MenuEntitlementService {
             row.setUserId(userId);
             row.setMenuAuthCd(slug);
             row.setUseYn(FLAG_Y);
-            row.setRegId(actorId);
-            row.setRegDtm(now);
+            // JEX user_menu_auth_infm has no REG_* columns — mod-only audit.
             row.setModId(actorId);
             row.setModDtm(now);
             inserts.add(row);

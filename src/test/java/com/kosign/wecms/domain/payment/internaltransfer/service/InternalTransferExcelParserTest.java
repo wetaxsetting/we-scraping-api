@@ -9,7 +9,7 @@ import com.kosign.wecms.domain.payment.internaltransfer.dto.ParseExcelResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ParsedTransferLine;
 import com.kosign.wecms.domain.payment.common.UploadConsistencyValidator;
 import com.kosign.wecms.domain.payment.validation.SpecialCharValidator;
-import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount;
+import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartAcctInfm;
 import com.kosign.wecms.domain.setting.chartofaccounts.repository.ChartOfAccountRepository;
 import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmBankCode;
 import com.kosign.wecms.domain.setting.firmbankingsettings.repository.TbFirmBankCodeRepository;
@@ -298,8 +298,8 @@ class InternalTransferExcelParserTest {
         return a;
     }
 
-    private static ChartOfAccount stubChart(String chartAcctCd) {
-        ChartOfAccount c = new ChartOfAccount();
+    private static ChartAcctInfm stubChart(String chartAcctCd) {
+        ChartAcctInfm c = new ChartAcctInfm();
         c.setChartAcctCd(chartAcctCd);
         c.setChartAcctSeqNo("1");
         return c;

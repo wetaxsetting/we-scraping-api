@@ -1,6 +1,7 @@
 package com.kosign.wecms.domain.setting.firmbankingsettings.repository;
 
 import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmBankCode;
+import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmBankCodeId;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -25,7 +26,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
  * unmanaged. The fix is a real entity ({@link TbFirmBankCode},
  * minimal column projection) plus this {@link JpaRepository}.
  */
-public interface TbFirmBankCodeRepository extends JpaRepository<TbFirmBankCode, String> {
+public interface TbFirmBankCodeRepository extends JpaRepository<TbFirmBankCode, TbFirmBankCodeId> {
 
     /**
      * Returns {@code true} when a row exists in

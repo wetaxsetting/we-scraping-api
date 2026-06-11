@@ -289,13 +289,13 @@ public class OverseasPaymentController {
      * Assign or clear the reporting account for a single detail line.
      * Pass {@code rprt_acct_cd: null} to clear the assignment.
      */
-    @PatchMapping("/{id}/details/{trnSeq}/reporting-account")
+    @PatchMapping("/{id}/details/{ovrsPymnDetlNo}/reporting-account")
     @PreAuthorize("@menuAuthz.canAccess('payment-overseas-result')")
     public ApiResponse<Void> saveReportingAccount(
             @PathVariable("id") String id,
-            @PathVariable("trnSeq") int trnSeq,
+            @PathVariable("ovrsPymnDetlNo") String ovrsPymnDetlNo,
             @RequestBody Map<String, String> body) {
-        overseasPaymentService.saveReportingAccount(id, trnSeq, body.get("rprt_acct_cd"));
+        overseasPaymentService.saveReportingAccount(id, ovrsPymnDetlNo, body.get("rprt_acct_cd"));
         return ApiResponse.ok(null);
     }
 

@@ -22,6 +22,7 @@ Per-feature DB design and Flyway migration intent. The actual SQL files live in 
 ## Key reference docs
 
 - [db-function-classification.md](db-function-classification.md) — inventory & migration-priority classification of all ~168 legacy PL/pgSQL functions (companion to the policy doc [../../architecture/database/db-function-strategy.md](../../architecture/database/db-function-strategy.md)).
+- [legacy-table-inventory.md](legacy-table-inventory.md) — flat snapshot of all 141 tables physically present in the refactor DB (legacy-copied + refactor-owned infra), with the few non-legacy / out-of-scope tables flagged.
 - [database-coverage-matrix.md](database-coverage-matrix.md) · [table-ownership.md](table-ownership.md) · [manual-tenant-setup.md](manual-tenant-setup.md)
 
 ## What does NOT go here

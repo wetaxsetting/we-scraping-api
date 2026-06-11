@@ -13,6 +13,7 @@ import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumr;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrDetl;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -131,6 +132,7 @@ public class TransferDispatchExecutor {
     private final AcctMstrRepository     acctMstrRepository;
     private final DispatchKeyGenerator   keyGenerator;
     private final Clock                  clock;
+    private final LegacyFunctionRepository legacyFunctions;
 
     /**
      * Insert dispatch rows for one batch. Branch on the request
@@ -249,9 +251,12 @@ public class TransferDispatchExecutor {
         master.setPayTranDt(tranDt);
         master.setPayFileSeqNo(fileSeqNo);
 
-        // 2. Detail rows. SEQ starts at 1 and increments per line.
-        BigDecimal seq = BigDecimal.ONE;
+        // 2. Detail rows. SEQ seeded ONCE via the wb_get_next_val funnel (V140 #20,
+        //    per (biz_key, file_seq_no) MAX+1) then incremented per line — no per-row DB call.
+        //    fileSeqNo is freshly allocated per dispatch, so the seed is 1 → 1, 2, 3, ...
+        long seqCursor = Long.parseLong(legacyFunctions.nextTbPayFileDataSeq(bizKey, fileSeqNo)) - 1;
         for (ScdulPymnSumrDetl line : lines) {
+            BigDecimal seq = BigDecimal.valueOf(++seqCursor);
             TbPayFileData data = new TbPayFileData();
             data.setTranDt(tranDt);
             data.setBizKey(bizKey);
@@ -294,7 +299,6 @@ public class TransferDispatchExecutor {
             line.setPayFileSeqNo(null);
             line.setPaySeq(null);
 
-            seq = seq.add(BigDecimal.ONE);
         }
 
         log.info("feature=dispatch path=FILE bizKey={} scdulPymnNo={} lines={} tranDt={} fileSeqNo={}",

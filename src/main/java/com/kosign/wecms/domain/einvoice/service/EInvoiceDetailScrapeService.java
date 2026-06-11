@@ -180,7 +180,7 @@ public class EInvoiceDetailScrapeService {
             feeRepo.deleteByBizKeyAndDocId(bizKey, docId);
             taxRepo.deleteByBizKeyAndDocId(bizKey, docId);
 
-            lineItems += writeProducts(bizKey, docId, userId, regDtm, ccy, row.products());
+            lineItems += writeProducts(bizKey, docId, userId, regDtm, row.products());
             writeFees(bizKey, docId, userId, regDtm, row.fees());
             writeTaxes(bizKey, docId, userId, regDtm, row.taxes());
 
@@ -224,7 +224,7 @@ public class EInvoiceDetailScrapeService {
     }
 
     private int writeProducts(String bizKey, String docId, String userId, String regDtm,
-                              String ccy, List<ScrapedEInvoiceDetailRow.Product> products) {
+                              List<ScrapedEInvoiceDetailRow.Product> products) {
         if (products == null || products.isEmpty()) return 0;
         int n = 0;
         for (int i = 0; i < products.size(); i++) {
@@ -235,13 +235,12 @@ public class EInvoiceDetailScrapeService {
             d.setDispOrd(p.dispOrd() > 0 ? p.dispOrd() : i + 1);
             d.setUserId(userId);
             d.setItemCd(ITEM_CD_DEFAULT);
-            d.setItemNm(clip(p.product(), 500));
-            d.setItemSpec(clip(p.unit(), 4000));
+            d.setItemNm(clip(p.product(), 255));
+            d.setItemSpec(clip(p.unit(), 100));
             d.setItemQunt(EInvoiceScrapeService.parseAmount(p.quantity()));
             d.setItemUnitAmt(EInvoiceScrapeService.parseAmount(p.unitPrice()));
             d.setSplyAmt(EInvoiceScrapeService.parseAmount(p.supplyAmt()));
             d.setDcAmt(EInvoiceScrapeService.parseAmount(p.discount()));
-            d.setCcyCd(ccy);
             d.setEinvProductname(clip(p.productName(), 500));
             d.setEinvTaxrate(clip(p.taxRate(), 10));
             d.setRegId(userId);

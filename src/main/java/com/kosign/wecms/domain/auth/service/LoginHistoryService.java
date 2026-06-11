@@ -8,11 +8,16 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
 public class LoginHistoryService {
+
+    /** Legacy {@code WB_FORMATTER_DTM14} — UTC {@code yyyyMMddHHmmss}. */
+    private static final DateTimeFormatter DTM14 = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
 
     private final UserLoginHisRepository repository;
 
@@ -31,7 +36,9 @@ public class LoginHistoryService {
     public void record(String userId, String ipAddr, String rsltCd, String rsltCont) {
         UserLoginHis his = new UserLoginHis();
         his.setUserId(userId);
-        his.setRegDtm(OffsetDateTime.now());
+        // REG_DTM — UTC now formatted yyyyMMddHHmmss, exactly matching legacy
+        // UserLoginHisDAO.create → DateTimeUtils.utcNow().toString(WB_FORMATTER_DTM14).
+        his.setRegDtm(OffsetDateTime.now(ZoneOffset.UTC).format(DTM14));
         his.setRegUid(UUID.randomUUID().toString());
         his.setIpAddr(ipAddr);
         his.setLgnChnl(UserLoginHis.CHNL_PC);

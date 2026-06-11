@@ -45,6 +45,7 @@ class OperationStatusServiceTest {
     @Mock private ExtTranCallHisRepository         extTranCallHisRepo;
     @Mock private NxsiasModuleTranLogHisRepository nxisasLogRepo;
     @Mock private OsmcGdtClient                    osmcClient;
+    @Mock private com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
 
     @InjectMocks
     private OperationStatusService service;

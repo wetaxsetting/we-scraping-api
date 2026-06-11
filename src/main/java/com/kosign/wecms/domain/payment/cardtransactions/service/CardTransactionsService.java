@@ -38,9 +38,9 @@ import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxFanoutServ
 import com.kosign.wecms.domain.payment.cardtransactions.repository.CardMstrRepository;
 import com.kosign.wecms.domain.payment.cardtransactions.repository.CardTrnsHstrRepository;
 import com.kosign.wecms.domain.payment.cardtransactions.repository.CardTrnsHstrRepository.LedgerTotalsProjection;
-import com.kosign.wecms.domain.setting.approvalline.entity.ApprovalLineApprover;
+import com.kosign.wecms.domain.setting.approvalline.entity.ApprLineInfmDetl;
 import com.kosign.wecms.domain.setting.approvalline.repository.ApprovalLineApproverRepository;
-import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount;
+import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartAcctInfm;
 import com.kosign.wecms.domain.setting.chartofaccounts.repository.ChartOfAccountRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -165,9 +165,9 @@ public class CardTransactionsService {
     private final BankCertInfoRepository           bankCertInfoRepo;
     private final ChartOfAccountRepository         chartAcctRepo;
     private final AuditLogService                  auditLogService;
-    /** Per-tenant MAX(APPR_SEQ_NO::bigint) allocator — shared with
-     *  every other Payment module so the Approval Box id space is
-     *  globally contiguous (legacy parity). */
+    /** EXPT_RESOL_MSTR access (Approval Box master). APPR_SEQ_NO is
+     *  allocated through the wb_get_next_val funnel (see
+     *  {@link #allocateApprSeqNo}), NOT via a Java MAX+1 on this repo. */
     private final ExptResolMstrRepository          exptResolMstrRepo;
     /** Approver-chain repo — used by the change-approval-line and
      *  withdraw-approval paths to replace / delete the per-approver
@@ -194,6 +194,11 @@ public class CardTransactionsService {
     /** Resolves {@code USER_INFM.USER_NM} for memo author display
      *  names. JpaRepository keyed by {@code USER_ID}. */
     private final com.kosign.wecms.domain.auth.repository.UserInfmRepository userInfmRepo;
+
+    /** Single funnel for legacy wb_get_next_val key allocation (V140):
+     *  BUSA_DOC_RCV_PAY_HIS.rcv_pay_his_seq_no (#29) + the shared
+     *  EXPT_RESOL_MSTR.appr_seq_no global sequence (#1). */
+    private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
 
     /** Legacy {@code WEB_SVC_ID} value the side panel scopes memos by
      *  on the Card Transactions page. Slug-based per workspace
@@ -718,7 +723,7 @@ public class CardTransactionsService {
         // surfaces the "Approver (X/Y)" chip. Card's wire DTO carries
         // only `appr_line_no` (the other 5 Payment modules ship the
         // full chain on the wire); we resolve from DB instead.
-        List<ApprovalLineApprover> chainEntities = apprLineApproverRepo
+        List<ApprLineInfmDetl> chainEntities = apprLineApproverRepo
                 .findAllByBizKeyAndApprLineNoOrderByApprvrDispOrdAsc(bizKey, req.apprLineNo());
         if (chainEntities.isEmpty()) {
             throw new BusinessException("WBE_VALIDATION",
@@ -1155,22 +1160,21 @@ public class CardTransactionsService {
         master.setModDtm(now);
         cardTrnsRcvPayRepo.save(master);
 
-        // 6) Insert per-doc child rows. SEQ_NO is allocated per-doc via
-        //    MAX+1 — first link row for a given doc gets SEQ_NO=1.
-        int line = 1;
+        // 6) Insert per-doc child rows. RCV_PAY_HIS_SEQ_NO is the JEX
+        //    natural key, allocated per-doc via MAX+1 — first link row
+        //    for a given doc gets 1.
         for (BusaDocMstr doc : docs) {
             var item = itemByDoc.get(doc.getDocId());
-            BigDecimal maxSeq = busaDocRcvPayHisRepo
-                    .findMaxSeqNoByBizKeyAndDocId(bizKey, doc.getDocId());
-            BigDecimal nextSeq = (maxSeq == null ? BigDecimal.ZERO : maxSeq)
-                    .add(BigDecimal.ONE);
+            // RCV_PAY_HIS_SEQ_NO via the single wb_get_next_val funnel
+            // (V140 #29 — per (biz_key, doc_id) MAX+1).
+            BigDecimal nextSeq = new BigDecimal(
+                    legacyFunctions.nextBusaDocRcvPayHisSeqNo(bizKey, doc.getDocId()));
 
             BusaDocRcvPayHis row = new BusaDocRcvPayHis();
             row.setBizKey(bizKey);
             row.setDocId(doc.getDocId());
-            row.setSeqNo(nextSeq);
             row.setUserId(userId);
-            row.setRcvPayHisSeqNo(BigDecimal.valueOf(line));
+            row.setRcvPayHisSeqNo(nextSeq);
             row.setRcvPayWayCd("C"); // RcvPayWayCd.CARD
             row.setBankCd(safe(card.getBankCd()));
             row.setCardNo(safe(card.getCardNo()));
@@ -1180,7 +1184,6 @@ public class CardTransactionsService {
             row.setRegId(userId);
             row.setRegDtm(now);
             busaDocRcvPayHisRepo.save(row);
-            line++;
         }
 
         auditLogService.append(AuditLogContext.builder()
@@ -1527,18 +1530,18 @@ public class CardTransactionsService {
         return deletedChildren;
     }
 
-    /** Per-tenant MAX(APPR_SEQ_NO::bigint) + 1 from the shared
-     *  EXPT_RESOL_MSTR namespace. Mirrors the allocator used by every
-     *  other Payment module (Internal Transfer / Vendor / Expense /
-     *  Payroll / Overseas) so the Approval Box id space is contiguous
-     *  across all six modules — they read MAX from
-     *  {@code SCDUL_PYMN_SUMR}, we read from {@code EXPT_RESOL_MSTR}
-     *  because Card Transactions has no SCDUL parent table; both
-     *  paths feed into the same {@code EXPT_RESOL_MSTR} INSERT below. */
+    /** Allocate the shared {@code EXPT_RESOL_MSTR.APPR_SEQ_NO} via the single
+     *  {@code wb_get_next_val} funnel (V140 #1 — the GLOBAL {@code sq_appr_seq_no}
+     *  sequence shared across every Payment module), so the Approval Box id space
+     *  stays contiguous and never collides with the live JEX / WABOOKS systems.
+     *  Mirrors {@code LegacyFunctionRepository.nextApprSeqNo} used by the other
+     *  payment modules. */
     private String allocateApprSeqNo(String bizKey) {
-        Long max = exptResolMstrRepo.findMaxApprSeqNoByBizKey(bizKey);
-        long next = (max == null ? 0L : max) + 1L;
-        return Long.toString(next);
+        // APPR_SEQ_NO via the single wb_get_next_val funnel (V140 #1). JEX backs
+        // this with the GLOBAL sq_appr_seq_no sequence shared across every Payment
+        // module — so the id space stays contiguous and never collides with the
+        // live JEX / WABOOKS systems. (Replaces the per-tenant cross-table MAX+1.)
+        return legacyFunctions.nextApprSeqNo(bizKey);
     }
 
     /** Stamp + fan-out helper — separated from the caller so the
@@ -1675,7 +1678,7 @@ public class CardTransactionsService {
         // TransactionService.updateReportingAccount — the UK on
         // CHART_ACCT_INFM (BIZ_KEY, CHART_ACCT_CD, DEL_YN='N') makes the
         // lookup O(1).
-        ChartOfAccount chart = chartAcctRepo
+        ChartAcctInfm chart = chartAcctRepo
                 .findByBizKeyAndChartAcctCdAndDelYn(bizKey, req.chartAcctCd(), "N")
                 .orElseThrow(() -> new BusinessException("WBE_CARD_TRANSACTIONS_CHART_ACCT_INVALID"));
         if (!chart.getChartAcctSeqNo().equals(req.chartAcctSeqNo())) {

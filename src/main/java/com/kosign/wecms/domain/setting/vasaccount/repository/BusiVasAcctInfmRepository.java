@@ -79,17 +79,9 @@ public interface BusiVasAcctInfmRepository extends JpaRepository<BusiVasAcctInfm
             @Param("keywordPattern") String keywordPattern,
             Pageable pageable);
 
-    /**
-     * Per-tenant maximum {@code vas_acct_seq_no}. Used by
-     * {@code VasAcctSeqNoGenerator.next(bizKey)} as the base for
-     * {@code MAX + 1}. Returns {@code null} when the tenant has no rows
-     * — caller defaults to {@code 1}.
-     */
-    @Query("""
-           SELECT MAX(v.vasAcctSeqNo) FROM BusiVasAcctInfm v
-           WHERE v.bizKey = :bizKey
-           """)
-    Long findMaxSeqNoByBizKey(@Param("bizKey") String bizKey);
+    // vas_acct_seq_no allocation now routes through
+    // LegacyFunctionRepository.nextVasAcctSeqNo (V140 #25); the former
+    // MAX finder was removed so allocation goes through the one funnel.
 
     /**
      * All live {@code vas_acct_cd} values for the tenant. Consumed by

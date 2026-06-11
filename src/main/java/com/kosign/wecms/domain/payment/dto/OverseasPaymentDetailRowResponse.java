@@ -11,7 +11,7 @@ import java.math.BigDecimal;
  * <p>Returned inside {@link OverseasPaymentDetailResponse#rows()}.
  */
 public record OverseasPaymentDetailRowResponse(
-        Integer trnSeq,
+        String  ovrsPymnDetlNo,
         String  bnfcCode,
         String  ccyCd,
         BigDecimal trnfAmt,

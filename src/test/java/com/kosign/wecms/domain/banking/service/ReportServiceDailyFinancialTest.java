@@ -241,7 +241,7 @@ class ReportServiceDailyFinancialTest {
         AcctTrnsRcvPayInfm r = new AcctTrnsRcvPayInfm();
         r.setBizKey(BIZ);
         r.setAcctSeqNo(acctSeqNo);
-        r.setRcvPaySeqNo("1");
+        r.setRcvPaySeqNo(BigDecimal.ONE);
         r.setRcvPayUsagCd(usagCd);
         return r;
     }

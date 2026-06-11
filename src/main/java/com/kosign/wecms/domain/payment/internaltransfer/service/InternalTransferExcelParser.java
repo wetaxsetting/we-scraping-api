@@ -9,7 +9,7 @@ import com.kosign.wecms.domain.payment.internaltransfer.dto.ParsedTransferLine;
 import com.kosign.wecms.domain.payment.validation.FieldCd;
 import com.kosign.wecms.domain.payment.validation.PymnType;
 import com.kosign.wecms.domain.payment.validation.SpecialCharValidator;
-import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount;
+import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartAcctInfm;
 import com.kosign.wecms.domain.setting.chartofaccounts.repository.ChartOfAccountRepository;
 import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmBankCode;
 import com.kosign.wecms.domain.setting.firmbankingsettings.repository.TbFirmBankCodeRepository;
@@ -455,7 +455,7 @@ public class InternalTransferExcelParser {
                 errors.add(new FieldError(FLD_CHART_ACCT_CD,
                         "Tenant context missing — please re-login"));
             } else {
-                Optional<ChartOfAccount> hit =
+                Optional<ChartAcctInfm> hit =
                         chartAcctRepo.findByBizKeyAndChartAcctCdAndDelYn(bizKey, trimmedChart, "N");
                 if (hit.isPresent()) {
                     resolvedChartAcctCd    = hit.get().getChartAcctCd();

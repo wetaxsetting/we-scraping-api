@@ -52,7 +52,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -132,6 +131,7 @@ public class OwnAccountTransferService {
     private final BankCertInfoRepository       bankCertInfoRepo;
     private final BankCertCryptoService        bankCertCrypto;
     private final AuditLogService              auditLog;
+    private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
 
     /* =================================================================
      *  GET /api/v1/banking/own-account-transfer/source-accounts
@@ -528,7 +528,7 @@ public class OwnAccountTransferService {
      * NXiSAS) reported back. Mirrors legacy
      * {@code trns_0002_001_c001_act.jsp} — same canonical write to
      * {@code NAPAS_REMIT_TRNS_HSTR}, plus the refactor's additions
-     * (idempotency key, audit row, server-side ownership re-validation).
+     * (audit row, server-side ownership re-validation).
      *
      * <p><b>Spring is strictly post-scrape.</b> The engine runs on the
      * user's machine (the local {@code NXiSAS.exe} reached via the
@@ -538,10 +538,6 @@ public class OwnAccountTransferService {
      *
      * <p>Validation order (mirrors the legacy + Phase-1 spec §9.2):
      * <ol>
-     *   <li><b>Idempotency</b> — if the {@code idempotencyKey} matches
-     *       a prior row for the tenant, short-circuit. A mismatch on
-     *       the prior row's {@code bankTxId} is treated as a tampering
-     *       attempt and rejected.</li>
      *   <li><b>CCY</b> — must be {@code VND} (OQ-A).</li>
      *   <li><b>Transfer-type shape</b> — {@code SAME_BANK} requires
      *       {@code targetBankCd}; {@code NAPAS} requires
@@ -570,27 +566,19 @@ public class OwnAccountTransferService {
         final String  userId  = requireUserId();
         final boolean isAdmin = TenantContext.currentIsAdmin();
 
-        // -- 1. Idempotency replay short-circuit ----------------------
-        final Optional<NapasRemitTrnsHstr> prior = napasRemitTrnsHstrRepo
-                .findByBizKeyAndOatIdempotencyKey(bizKey, req.idempotencyKey());
-        if (prior.isPresent()) {
-            final NapasRemitTrnsHstr e = prior.get();
-            // Defensive: same key, different bank tx id => tampering.
-            if (req.bankTxId() != null && !req.bankTxId().isBlank()
-                    && e.getTrnsStlmId() != null
-                    && !req.bankTxId().equals(e.getTrnsStlmId())) {
-                rejectAndAudit(req, "WBE_OAT_IDEMPOTENCY_CONFLICT");
-            }
-            log.info("oat scraping-result replay bizKey={} idem={}", bizKey, req.idempotencyKey());
-            return toIntakeResponse(e, /*alreadyRecorded=*/ true);
-        }
-
-        // -- 2. CCY guard --------------------------------------------
+        // -- 1. CCY guard --------------------------------------------
+        // NOTE — idempotency/replay removed 2026-06-10: the legacy JEX
+        // NAPAS_REMIT_TRNS_HSTR table has no OAT_IDEMPOTENCY_KEY column,
+        // so the synthetic replay guard (lookup + tampering check) was
+        // dropped to keep the entity aligned with the live schema. Each
+        // intake now inserts a fresh row, matching legacy JEX behaviour
+        // (which deduped only on duplicate TRS_ID). idempotency_key still
+        // rides the wire and is recorded in the audit trail.
         if (!OwnAccountTransferConstants.CCY_VND.equals(req.ccyCd())) {
             rejectAndAudit(req, "WBE_OWN_ACCOUNT_TRANSFER_INVALID_CCY");
         }
 
-        // -- 3. Transfer-type / target-field shape -------------------
+        // -- 2. Transfer-type / target-field shape -------------------
         final String transferType = req.transferType();
         if (OwnAccountTransferConstants.TRANSFER_TYPE_NAPAS.equals(transferType)) {
             if (req.targetNapasBankCd() == null || req.targetNapasBankCd().isBlank()) {
@@ -605,14 +593,14 @@ public class OwnAccountTransferService {
             }
         }
 
-        // -- 4. Amount tolerance (VND: exact match) ------------------
+        // -- 3. Amount tolerance (VND: exact match) ------------------
         if (!Objects.equals(req.requestedAmt(), req.actualAmt())) {
             log.warn("oat scraping-result amount-mismatch bizKey={} idem={} requested={} actual={}",
                     bizKey, req.idempotencyKey(), req.requestedAmt(), req.actualAmt());
             rejectAndAudit(req, "WBE_OAT_AMOUNT_MISMATCH");
         }
 
-        // -- 5. Source ownership re-validation -----------------------
+        // -- 4. Source ownership re-validation -----------------------
         final AcctMstr source = acctMstrRepo
                 .findByBizKeyAndBankCdAndAcctNo(bizKey, req.sourceBankCd(), req.sourceAcctNo())
                 .orElse(null);
@@ -626,7 +614,7 @@ public class OwnAccountTransferService {
             rejectAndAudit(req, "WBE_OAT_SOURCE_FORBIDDEN");
         }
 
-        // -- 6. Target shape + ownership -----------------------------
+        // -- 5. Target shape + ownership -----------------------------
         String resolvedTargetBankCd = req.targetBankCd();
         if (OwnAccountTransferConstants.TRANSFER_TYPE_NAPAS.equals(transferType)) {
             final NapasBankInfo napas = napasBankInfoRepo
@@ -650,7 +638,7 @@ public class OwnAccountTransferService {
             rejectAndAudit(req, "WBE_OAT_TARGET_NOT_FOUND");
         }
 
-        // -- 7. Persist ----------------------------------------------
+        // -- 6. Persist ----------------------------------------------
         final NapasRemitTrnsHstr row = insertHistoryRow(req, bizKey, userId, resolvedTargetBankCd);
 
         final boolean engineSuccess = OwnAccountTransferConstants.ENGINE_SUCCESS_STTS
@@ -664,7 +652,7 @@ public class OwnAccountTransferService {
 
         log.info("oat scraping-result persisted bizKey={} seqNo={} idem={} stts={}",
                 bizKey, row.getSeqNo(), req.idempotencyKey(), req.trnsStts());
-        return toIntakeResponse(row, /*alreadyRecorded=*/ false);
+        return toIntakeResponse(row, req.idempotencyKey());
     }
 
     /* =================================================================
@@ -736,12 +724,14 @@ public class OwnAccountTransferService {
         row.setTrnsMsg(req.trnsMsg());
         row.setTrnsStlmId(req.bankTxId());
         row.setTrnsStlmYn(OwnAccountTransferConstants.NRTH_STLM_YN_NO);
-        row.setOatIdempotencyKey(req.idempotencyKey());
         row.setRegId(userId);
         row.setRegDtm(utcNow14());
 
         for (int attempt = 0; attempt < 2; attempt++) {
-            row.setSeqNo(napasRemitTrnsHstrRepo.allocateNextSeqNo(bizKey));
+            // SEQ_NO via the single wb_get_next_val funnel (V140 #22 — per-tenant
+            // MAX+1). Re-allocated each attempt so the one-shot retry below still
+            // picks a fresh slot after a PK race.
+            row.setSeqNo(new BigDecimal(legacyFunctions.nextNapasRemitSeqNo(bizKey)));
             try {
                 return napasRemitTrnsHstrRepo.saveAndFlush(row);
             } catch (DataIntegrityViolationException collision) {
@@ -770,20 +760,25 @@ public class OwnAccountTransferService {
         throw new BusinessException(code);
     }
 
-    /** Build the wire response from a persisted (or replayed) row. */
+    /** Build the wire response from the freshly persisted row. The
+     *  {@code idempotencyKey} is echoed back from the request (it is no
+     *  longer persisted — see the idempotency-removal note in
+     *  {@link #recordScrapingResult}). {@code alreadyRecorded} is always
+     *  {@code false} now that the replay short-circuit is gone; the wire
+     *  field is retained for frontend contract stability. */
     private static ScrapingResultResponse toIntakeResponse(
-            NapasRemitTrnsHstr row, boolean alreadyRecorded) {
+            NapasRemitTrnsHstr row, String idempotencyKey) {
         final boolean engineSuccess = OwnAccountTransferConstants.ENGINE_SUCCESS_STTS
                 .equals(row.getTrnsStts());
         return new ScrapingResultResponse(
                 row.getSeqNo() == null ? null : row.getSeqNo().toPlainString(),
-                row.getOatIdempotencyKey(),
+                idempotencyKey,
                 row.getTrnsStlmId(),
                 row.getTrscAmt(),
                 row.getTrnsStts(),
                 engineSuccess ? ScrapingResultResponse.STATUS_SUCCESS
                               : ScrapingResultResponse.STATUS_FAILED,
-                alreadyRecorded);
+                /*alreadyRecorded=*/ false);
     }
 
     /** Pre-load every active permission the user holds in this tenant.

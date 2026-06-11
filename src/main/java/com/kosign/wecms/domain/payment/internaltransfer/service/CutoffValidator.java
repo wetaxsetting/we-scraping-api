@@ -42,8 +42,10 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class CutoffValidator {
 
-    /** Vietnam zone — re-used from the key generator for consistency. */
-    static final ZoneId VIETNAM_ZONE = InternalTransferKeyGenerator.VIETNAM_ZONE;
+    /** Vietnam zone — cut-off times are evaluated in VN-local time (UTC+7).
+     *  Owned here since the key generator no longer derives dates locally
+     *  (MR-1 routed SCDUL_PYMN_NO to the wb_get_next_val funnel). */
+    static final ZoneId VIETNAM_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
 
     private final CutoffProperties properties;
     private final Clock clock;

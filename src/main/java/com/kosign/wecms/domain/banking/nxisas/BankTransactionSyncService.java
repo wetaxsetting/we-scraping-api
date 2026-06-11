@@ -661,8 +661,7 @@ public class BankTransactionSyncService {
 
             AcctTrnsHstr row = new AcctTrnsHstr();
             row.setBizKey(bizKey);
-            row.setAcctSeqNo(legacyFn.nextVal(
-                    "acct_trns_hstr", "acct_seq_no", bizKey, null, null, null, null, null));
+            row.setAcctSeqNo(legacyFn.nextAcctTrnsHstrAcctSeqNo(bizKey));
             row.setBankCd(acct.getBankCd());
             row.setAcctNo(acct.getAcctNo());
             row.setTrscDt(e.getDate());
@@ -677,7 +676,6 @@ public class BankTransactionSyncService {
             row.setBankTrnsFullId(fullId);
             row.setBankTrnsShortId(BankTrnsIdGenerator.shortId(e.getDate(), fullId));
             row.setLinkMatchYn("N");
-            row.setLockedYn("N");
             row.setRegId(userId);
             row.setRegDtm(nowDb);
             row.setModId(userId);

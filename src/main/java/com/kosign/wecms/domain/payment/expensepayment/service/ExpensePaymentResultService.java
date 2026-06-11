@@ -147,7 +147,7 @@ public class ExpensePaymentResultService {
                         bizKey, id, ScdulPymnTypeCd.EXPENSE.code())
                 .orElseThrow(() -> new BusinessException("WBE2060"));
 
-        Sort lineSort = Sort.by(Sort.Order.asc("scdulPymnDetlNo"));
+        Sort lineSort = ScdulPymnSumrDetlRepository.DETL_NO_NUMERIC_ASC;
         List<ScdulPymnSumrDetl> detailRows = detlRepository
                 .findByBizKeyAndScdulPymnNo(bizKey, id, lineSort);
         Map<String, DispatchResult> resultByDetlNo =
@@ -198,7 +198,7 @@ public class ExpensePaymentResultService {
                 master.getTrnfYn(),
                 master.getTrnfDtm(),
                 master.getOrgFileNm(),
-                master.getFileSize(),
+                master.getFileSize() == null || master.getFileSize().isBlank() ? null : new java.math.BigDecimal(master.getFileSize().trim()),
                 master.getRegId(),
                 requestor,
                 // suc/err/prc — derived from the resolved per-line statuses

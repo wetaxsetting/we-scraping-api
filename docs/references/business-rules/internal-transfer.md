@@ -781,8 +781,9 @@ Path: [`com.kosign.wecms.domain.payment.dispatch`](../../../src/main/java/com/ko
 | [`TbPayTarget`](../../../src/main/java/com/kosign/wecms/domain/payment/dispatch/entity/) + `Id` | `@Table("TB_PAY_TARGET")` PK `(tran_dt, biz_key, tran_seq)`. |
 | [`TbPayFileMst`](../../../src/main/java/com/kosign/wecms/domain/payment/dispatch/entity/) + `Id` | `@Table("TB_PAY_FILE_MST")` PK `(tran_dt, biz_key, file_seq_no)`. |
 | [`TbPayFileData`](../../../src/main/java/com/kosign/wecms/domain/payment/dispatch/entity/) + `Id` | `@Table("TB_PAY_FILE_DATA")` PK `(tran_dt, biz_key, file_seq_no, seq)`. |
-| [`ScduPymnSumrDetlPayTargetConn`](../../../src/main/java/com/kosign/wecms/domain/payment/dispatch/entity/) + `Id` | Conn-table entity (note `SCDU_` spelling, preserved from DEV). API-path linkage between detail line and TB_PAY_TARGET row. |
 | `Tb{Firm,…}` entities | Several other dispatch-related tables (`TbFirmBatApiTran`, `TbFirmFileMst`, `TbFirmFileData`, `TbFirmFileRslt`, `TbBatchScheduleInfo`, `TbBatchScheduleDtl`) supporting longer-running dispatch flows. |
+
+> The legacy API-path bridge entity `ScduPymnSumrDetlPayTargetConn` was **removed 2026-06-10** — the refactor never wrote `SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN`; API-path linkage is read from the detail row's stamped `PAY_TRAN_DT`/`PAY_TRAN_SEQ`.
 | [`TbPayTargetRepository`](../../../src/main/java/com/kosign/wecms/domain/payment/dispatch/repository/), `TbPayFileMstRepository`, `TbPayFileDataRepository` | Spring Data repositories. |
 | [`DispatchCountRepository`](../../../src/main/java/com/kosign/wecms/domain/payment/dispatch/DispatchCountRepository.java) + [`DispatchCountRow`](../../../src/main/java/com/kosign/wecms/domain/payment/dispatch/DispatchCountRow.java) | Projection-backed read of "how many lines per `proc_stat`" for the Result-list summary. Consumed by every sibling's Result service. |
 

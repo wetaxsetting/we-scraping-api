@@ -9,11 +9,11 @@ validation, error cases). This folder consolidates what previously lived across 
 
 | # | Settings item | Doc | Status |
 |---|---|---|---|
-| 1 | Purpose | [purpose.md](purpose.md) | Phase 1 design |
-| 2 | VAS Account | [vas-account.md](vas-account.md) | Implemented |
-| 3 | Contacts | [contacts.md](contacts.md) | Implemented |
-| 4 | Approval Line | [approval-line.md](approval-line.md) | Implemented |
-| 5 | Chart of Accounts | [chart-of-accounts.md](chart-of-accounts.md) | Implemented |
+| 1 | Purpose | [purpose/](purpose/README.md) (folder — primary home; deep spec preserved at [purpose.md](purpose.md)) | ✅ Implemented (full-stack, parity + audit + SIT/UAT verified) |
+| 2 | VAS Account | [vas-account/](vas-account/README.md) (folder — primary home; single-file spec preserved at [vas-account.md](vas-account.md)) | ✅ Implemented (full-stack; legacy `comm_0217_*` parity + SIT/UAT verified) |
+| 3 | Contacts | [contacts/](contacts/README.md) (folder — primary home; original spec preserved at [contacts.md](contacts.md)) | ✅ Implemented (full-stack, parity verified, **Export GAP-01 closed 2026-06-08**, SIT/UAT verified) |
+| 4 | Approval Line | [approval-line/](approval-line/README.md) (folder — primary home; deep spec preserved at [approval-line.md](approval-line.md)) | ✅ Implemented (full-stack; legacy parity + AL-GAP-01/02/03 resolved; SIT/UAT verified) |
+| 5 | Chart of Accounts | [chart-of-accounts/](chart-of-accounts/README.md) (folder — primary home; original design spec preserved at [chart-of-accounts.md](chart-of-accounts.md)) | ✅ Implemented (full-stack; legacy `comm_0223_*` parity + final audit + SIT/UAT verified) |
 | 6 | Login Credentials | [login-credentials.md](login-credentials.md) | Phase 3 — wired |
 | 7 | Bank Account | [bank-account.md](bank-account.md) | Implemented |
 | 8 | Preferences | [preferences.md](preferences.md) | Implemented |
@@ -34,7 +34,7 @@ profile dropdown (legacy `comm_0401_001` / `comm_0400_001_u001`).
 | VAS Account | [vas-account.md](../../references/business-rules/vas-account.md) | [vas-account.md](../../references/database/vas-account.md) | [vas-account.md](../../references/migration/vas-account.md) | [vas-account.md](../../references/audits/vas-account.md) |
 | Contacts | [contacts-design.md](../../references/business-rules/contacts-design.md) | [contacts-schema.md](../../references/database/contacts-schema.md) | [contacts-mapping.md](../../references/migration/contacts-mapping.md) | — |
 | Approval Line | [approval-line.md](../../references/business-rules/approval-line.md) | — | [approval-line.md](../../references/migration/approval-line.md) · [jex-analysis](../../references/migration/jex-analysis/approval-line-add-flow-analysis.md) | — |
-| Chart of Accounts | [chart-of-accounts.md](../../references/business-rules/chart-of-accounts.md) | [chart-of-accounts.md](../../references/database/chart-of-accounts.md) | [chart-of-accounts.md](../../references/migration/chart-of-accounts.md) | — |
+| Chart of Accounts | [chart-of-accounts.md](../../references/business-rules/chart-of-accounts.md) | [chart-of-accounts.md](../../references/database/chart-of-accounts.md) | [chart-of-accounts.md](../../references/migration/chart-of-accounts.md) | [final-parity-audit](../../audits/chart-of-accounts-final-parity-audit.md) |
 | Bank Account | — | — | — | — |
 | Transaction History (ERP) | [erp-transaction-history.md](../../references/business-rules/settings/erp-transaction-history.md) | [erp-transaction-history-schema.md](../../references/database/settings/erp-transaction-history-schema.md) | [erp-transaction-history-mapping.md](../../references/migration/erp-transaction-history-mapping.md) | [erp-transaction-history-audit.md](../../references/audits/erp-transaction-history-audit.md) |
 | Firm Banking Settings | — | [firm-banking-settings-schema.md](../../references/database/settings/firm-banking-settings-schema.md) | [firm-banking-settings-mapping.md](../../references/migration/firm-banking-settings-mapping.md) | [parity](../../references/audits/firm-banking-settings-parity-checklist.md) · [review](../../references/audits/firm-banking-settings-review-2026-05-09.md) |

@@ -35,7 +35,7 @@ import java.math.BigDecimal;
  * / {@code MOD_DTM}) follow the legacy {@code VARCHAR(14)} {@code
  * yyyyMMddHHmmss} timestamp shape rather than the refactor-wide
  * {@code BaseEntity} {@code OffsetDateTime} shape &mdash; same precedent
- * as {@code ApprovalLine}, {@code ChartOfAccount}, {@code ScdulPymnSumr},
+ * as {@code ApprovalLine}, {@code ChartAcctInfm}, {@code ScdulPymnSumr},
  * and {@code ErpTrnsHstr}. The service stamps {@code MOD_ID} /
  * {@code MOD_DTM} explicitly on every PATCH / PUT.
  *
@@ -43,7 +43,7 @@ import java.math.BigDecimal;
  * {@code CHAR(N)} on DEV. {@link JdbcTypeCode @JdbcTypeCode(SqlTypes.CHAR)}
  * tells Hibernate to map them via the JDBC {@code CHAR} type so the
  * schema validator accepts {@code bpchar} against a Java {@code String}
- * field &mdash; same precedent as {@code ChartOfAccount.stts}.
+ * field &mdash; same precedent as {@code ChartAcctInfm.stts}.
  *
  * <p>Tenant scoping: {@code BIZ_KEY} is part of the composite PK and
  * the first predicate of every repository query.

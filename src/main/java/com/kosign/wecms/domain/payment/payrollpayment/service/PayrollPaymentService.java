@@ -3,6 +3,8 @@ package com.kosign.wecms.domain.payment.payrollpayment.service;
 import com.kosign.wecms.common.auditlog.service.AuditLogContext;
 import com.kosign.wecms.common.auditlog.service.AuditLogService;
 import com.kosign.wecms.common.exception.BusinessException;
+import com.kosign.wecms.common.tx.TransactionalRetry;
+import org.springframework.dao.DataIntegrityViolationException;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.common.web.SortDirection;
 import com.kosign.wecms.domain.banking.entity.AcctMstr;
@@ -13,7 +15,6 @@ import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxActionResponse
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprDv;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxFanoutService;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxService;
-import com.kosign.wecms.domain.notification.service.NotificationService;
 import com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalActionRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.CreateScheduledTransferRequest;
@@ -130,19 +131,11 @@ public class PayrollPaymentService {
      *  entry ("Payroll Scheduled Payment"). */
     static final String ERP_TRNS_TYPE_PAYROLL_SCHEDULED_PAYMENT = "12";
 
-    /** APPR_STTS code stamped on Request Approval — initial Pending state. */
-    static final String APPR_STTS_PENDING  = "P";
-
-    /** Legacy {@code APPRVR_STTS} code stamped on the master when an
-     *  approver presses Approve. */
+    /** Approval-status codes returned by the legacy {@code wb_get_appr_stts(...)}
+     *  function, used by the approve/reject "already final" guard. {@code "C"} =
+     *  approved (Completed), {@code "R"} = rejected (legacy code — NOT "X"). */
     static final String APPR_STTS_APPROVED = "C";
-
-    /** APPR_STTS code stamped while approval is mid-chain. */
-    static final String APPR_STTS_IN_PROGRESS = "I";
-
-    /** Legacy {@code APPRVR_STTS} code stamped on the master when an
-     *  approver presses Reject. */
-    static final String APPR_STTS_REJECTED = "X";
+    static final String APPR_STTS_REJECTED = "R";
 
     private static final DateTimeFormatter DTM14 =
             DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
@@ -156,6 +149,7 @@ public class PayrollPaymentService {
     private final CutoffValidator               cutoffValidator;
     private final PayrollPaymentExcelParser     excelParser;
     private final InternalTransferKeyGenerator  keyGenerator;
+    private final TransactionalRetry            transactionalRetry;
     private final InternalTransferFileResolver  fileResolver;
     private final ErpTrnsHistoryWriter          erpHistoryWriter;
     private final AuditLogService               auditLogService;
@@ -188,9 +182,9 @@ public class PayrollPaymentService {
      *  {@code VendorPaymentService} / {@code ExpensePaymentService} /
      *  {@code InternalTransferService}. */
     private final ExptResolFileRepository       exptResolFileRepository;
-    private final NotificationService           notificationService;
     private final DocNoGenerator                docNoGenerator;
     private final BusiInfmRepository            busiInfmRepository;
+    private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
 
     @Transactional(readOnly = true)
     public ScheduledTransferListResponse list(
@@ -224,8 +218,11 @@ public class PayrollPaymentService {
         // full ordered chain (popup). Mirrors VendorPaymentService /
         // ExpensePaymentService / InternalTransferService.buildFirstApproverMap.
         Map<String, ApproverSummary> approverByApprSeqNo = buildFirstApproverMap(bizKey, rows.getContent());
+        // appr_stts via legacy wb_get_appr_stts(...) over EXPT_RESOL_MSTR (R002 binding).
+        Map<String, String> apprSttsByApprSeqNo = legacyFunctions.apprSttsByApprSeqNos(
+                bizKey, rows.getContent().stream().map(ScdulPymnSumr::getApprSeqNo).toList());
         List<ScheduledTransferRow> dtoRows = rows.getContent().stream()
-                .map(r -> toListRow(r, exptBySeqNo, approverByApprSeqNo))
+                .map(r -> toListRow(r, exptBySeqNo, approverByApprSeqNo, apprSttsByApprSeqNo))
                 .toList();
         List<CurrencyTotal> totals = computeCurrencyTotals(rows.getContent());
 
@@ -263,8 +260,8 @@ public class PayrollPaymentService {
                 .orElseThrow(() -> new BusinessException("WBE2060"));
 
         String resolvedId = master.getScdulPymnNo();
-        Sort lineSort = Sort.by(Sort.Order.asc("scdulPymnDetlNo"));
-        Map<String, com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount> chartByCode =
+        Sort lineSort = ScdulPymnSumrDetlRepository.DETL_NO_NUMERIC_ASC;
+        Map<String, com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartAcctInfm> chartByCode =
                 transferLineDetailMapper.buildChartIndex(bizKey);
         List<TransferLineDetail> lines = detlRepository
                 .findByBizKeyAndScdulPymnNo(bizKey, resolvedId, lineSort)
@@ -323,7 +320,9 @@ public class PayrollPaymentService {
                 requestor,
                 master.getRegDtm(),
                 master.getApprSeqNo(),
-                master.getApprStts(),
+                // appr_stts derived from EXPT_RESOL_MSTR (legacy JEX has no
+                // SCDUL_PYMN_SUMR.APPR_STTS column).
+                legacyFunctions.getApprStts(bizKey, master.getApprSeqNo()),
                 null,
                 master.getModDtm(),
                 master.getTrnfYn(),
@@ -331,7 +330,7 @@ public class PayrollPaymentService {
                 master.getCcyCd(),
                 master.getWdrlCcyCd(),
                 master.getOrgFileNm(),
-                master.getFileSize(),
+                master.getFileSize() == null || master.getFileSize().isBlank() ? null : new java.math.BigDecimal(master.getFileSize().trim()),
                 lines,
                 attachments);
     }
@@ -385,8 +384,29 @@ public class PayrollPaymentService {
         return excelParser.parse(file, bankCd);
     }
 
-    @Transactional
     public CreateScheduledTransferResponse createDraft(
+            CreateScheduledTransferRequest req,
+            MultipartFile file) {
+        // One-shot retry on the SCDUL_PYMN_NO MAX+1 race (wb_get_next_val has no
+        // row lock). Each attempt runs in its own transaction via
+        // TransactionalRetry.runOnce, so a failed attempt fully rolls back and the
+        // retry re-allocates the key in a fresh Hibernate session. The master is
+        // flushed before any side effect (see doCreateDraft), so a failed attempt
+        // never writes a file / ERP-history / detail / audit row to duplicate.
+        try {
+            return transactionalRetry.runOnce(() -> doCreateDraft(req, file));
+        } catch (DataIntegrityViolationException firstRace) {
+            log.warn("feature=payroll-payment scdul_pymn_no insert race — retrying once");
+            try {
+                return transactionalRetry.runOnce(() -> doCreateDraft(req, file));
+            } catch (DataIntegrityViolationException secondRace) {
+                log.warn("feature=payroll-payment scdul_pymn_no insert race retry failed", secondRace);
+                throw new BusinessException("WBE_SCHEDULED_PAYMENT_KEY_RACE");
+            }
+        }
+    }
+
+    private CreateScheduledTransferResponse doCreateDraft(
             CreateScheduledTransferRequest req,
             MultipartFile file) {
 
@@ -419,23 +439,44 @@ public class PayrollPaymentService {
         if (file != null && !file.isEmpty()) {
             String orgFileNm  = sanitiseOriginalFilename(file.getOriginalFilename());
             String saveFileNm = scdulPymnNo + "_" + orgFileNm;
-            persistUploadedFile(bizKey, saveFileNm, file);
             master.setOrgFileNm(orgFileNm);
             master.setSaveFileNm(saveFileNm);
-            master.setFileSize(BigDecimal.valueOf(file.getSize()));
+            master.setFileSize(Long.toString(file.getSize()));
         }
         master.setRegId(userId);
         master.setRegDtm(now);
         master.setModId(userId);
         master.setModDtm(now);
-        sumrRepository.save(master);
+        // Flush the master INSERT up front so a concurrent MAX+1 race on
+        // SCDUL_PYMN_NO (wb_get_next_val has no row lock) surfaces as a
+        // DataIntegrityViolationException HERE — before any file write, detail
+        // INSERT, ERP-history (REQUIRES_NEW) or audit row — so the one-shot retry
+        // in createDraft re-runs cleanly with no orphaned side effects.
+        sumrRepository.saveAndFlush(master);
 
-        int seq = 1;
+        // Disk write only AFTER the key is confirmed unique, so a failed attempt
+        // never leaves an orphan file under the storage root.
+        if (file != null && !file.isEmpty()) {
+            persistUploadedFile(bizKey, master.getSaveFileNm(), file);
+        }
+
+        // Detail numbering via the wb_get_next_val funnel (V140 #38, per-tenant MAX+1).
+        // Seed ONCE per document then increment in Java across the batch (same pattern as
+        // OverseasPaymentExcelService) — no per-line DB round-trip, no per-detail flush.
+        // Intra-document uniqueness is guaranteed by the increment; cross-document collision
+        // is impossible because SCDUL_PYMN_NO is part of the detail PK.
+        String detlSeedRaw = legacyFunctions.nextScdulPymnDetlNo(bizKey);
+        if (detlSeedRaw == null || detlSeedRaw.isBlank()) {
+            throw new IllegalStateException(
+                    "wb_get_next_val('scdul_pymn_sumr_detl','scdul_pymn_detl_no') "
+                  + "returned null/blank for bizKey=" + bizKey);
+        }
+        long detlNoCursor = Long.parseLong(detlSeedRaw.trim()) - 1;
         for (TransferLineInput line : req.lines()) {
             ScdulPymnSumrDetl detl = new ScdulPymnSumrDetl();
             detl.setBizKey(bizKey);
             detl.setScdulPymnNo(scdulPymnNo);
-            detl.setScdulPymnDetlNo(String.format("%06d", seq++));
+            detl.setScdulPymnDetlNo(Long.toString(++detlNoCursor));
             detl.setTranAmt(line.tranAmt());
             detl.setTrnfCcyCd(emptyToDefault(line.trnfCcyCd(), req.trnfCcyCd()));
             detl.setAntDivCd(emptyToNull(line.antDivCd()));
@@ -508,9 +549,9 @@ public class PayrollPaymentService {
         if (!Files.isReadable(path) || !Files.isRegularFile(path)) {
             throw new BusinessException("WBE2069");
         }
-        long fileSize = master.getFileSize() == null
+        long fileSize = master.getFileSize() == null || master.getFileSize().isBlank()
                 ? path.toFile().length()
-                : master.getFileSize().longValueExact();
+                : Long.parseLong(master.getFileSize().trim());
         String displayName = master.getOrgFileNm() == null || master.getOrgFileNm().isBlank()
                 ? saveFileNm
                 : master.getOrgFileNm();
@@ -725,12 +766,11 @@ public class PayrollPaymentService {
     /** Per-tenant MAX+1 across both EXPT_RESOL_MSTR and SCDUL_PYMN_SUMR so the
      *  newly issued APPR_SEQ_NO is above any existing rows in either table. */
     private String allocateApprSeqNo(String bizKey) {
-        Long fromMstr = exptResolMstrRepository.findMaxApprSeqNoByBizKey(bizKey);
-        Long fromSumr = sumrRepository.findMaxApprSeqNoByBizKey(bizKey);
-        long max = Math.max(
-                fromMstr == null ? 0L : fromMstr,
-                fromSumr == null ? 0L : fromSumr);
-        return Long.toString(max + 1L);
+        // APPR_SEQ_NO via the single wb_get_next_val funnel (V140 #1 — the GLOBAL
+        // sq_appr_seq_no sequence shared across every Payment module, so the id
+        // space stays contiguous and never collides with the live JEX / WABOOKS
+        // systems). Replaces the per-tenant cross-table MAX+1 ceiling.
+        return legacyFunctions.nextApprSeqNo(bizKey);
     }
 
     private String stampApproval(ScdulPymnSumr master, String apprSeqNo,
@@ -742,9 +782,9 @@ public class PayrollPaymentService {
         String draftDate = nowDtm.substring(0, 8);
         String draftTime = nowDtm.substring(8, 14);
 
-        // 1. Stamp SCDUL_PYMN_SUMR
+        // 1. Stamp SCDUL_PYMN_SUMR (status is NOT stored here — derived from
+        //    EXPT_RESOL_MSTR.APPR_TYPE_CD, set Pending on the master below).
         master.setApprSeqNo(apprSeqNo);
-        master.setApprStts("P");
         if (req.postTitle() != null && !req.postTitle().isBlank()) {
             master.setTitl(req.postTitle().trim());
         }
@@ -826,14 +866,6 @@ public class PayrollPaymentService {
             exptResolApprvrInfmRepository.save(row);
         }
 
-        // Phase-1 notification producer: fan an approval-request notification
-        // out to the approver chain. Best-effort + isolated (REQUIRES_NEW) so a
-        // notification failure never rolls back this approval submission.
-        notificationService.notifyApprovalRequested(
-                ApprDv.PAYROLL.slug(), apprSeqNo, docNo, req.postTitle(),
-                approvers.stream()
-                        .map(a -> new NotificationService.Recipient(a.apprvrId(), a.apprvrNm()))
-                        .toList());
         return docNo;
     }
 
@@ -853,23 +885,18 @@ public class PayrollPaymentService {
             throw new BusinessException("WBE2094");
         }
 
-        String current = master.getApprStts();
+        String current = legacyFunctions.getApprStts(bizKey, master.getApprSeqNo());
         if (APPR_STTS_APPROVED.equals(current) || APPR_STTS_REJECTED.equals(current)) {
             throw new BusinessException("WBE2095");
         }
 
         // Delegate approver-chain logic — multi-approver workflows stay
-        // "In Progress" until every approver has acted.
+        // "In Progress" until every approver has acted. The approval box owns
+        // the EXPT_RESOL_MSTR.APPR_TYPE_CD transition (source of truth); no
+        // write-back to SCDUL_PYMN_SUMR (no APPR_STTS column in legacy JEX).
         ApprovalBoxActionResponse result = req.isApprove()
                 ? approvalBoxService.approve(master.getApprSeqNo())
                 : approvalBoxService.reject(master.getApprSeqNo());
-
-        String next = mapApprStts(result.apprStts());
-        master.setApprStts(next);
-        master.setModDtm(OffsetDateTime.now(clock).format(DTM14));
-        String userId = TenantContext.currentUserId();
-        if (userId != null) master.setModId(userId);
-        sumrRepository.saveAndFlush(master);
 
         String auditKey = req.isApprove() ? AUDIT_APPROVE_KEY : AUDIT_REJECT_KEY;
         auditLogService.append(AuditLogContext.builder()
@@ -883,7 +910,7 @@ public class PayrollPaymentService {
 
         log.info(
                 "feature=payroll-payment approval-action bizKey={} scdulPymnNo={} apprSeqNo={} action={} apprStts={}",
-                bizKey, id, master.getApprSeqNo(), req.action(), next);
+                bizKey, id, master.getApprSeqNo(), req.action(), result.apprStts());
     }
 
     /**
@@ -904,7 +931,6 @@ public class PayrollPaymentService {
         approvalBoxFanoutService.withdrawApproval(apprSeqNo);
 
         master.setApprSeqNo(null);
-        master.setApprStts(null);
         master.setErpFileNum(null);
         master.setModDtm(OffsetDateTime.now(clock).format(DTM14));
         String userId = TenantContext.currentUserId();
@@ -942,11 +968,8 @@ public class PayrollPaymentService {
 
         approvalBoxFanoutService.changeApprovalLine(apprSeqNo, apprLineNo);
 
-        master.setApprStts(APPR_STTS_PENDING);
-        master.setModDtm(OffsetDateTime.now(clock).format(DTM14));
-        String userId = TenantContext.currentUserId();
-        if (userId != null) master.setModId(userId);
-        sumrRepository.saveAndFlush(master);
+        // No SCDUL_PYMN_SUMR write-back: status derives from EXPT_RESOL_MSTR
+        // (reset to Pending by the fanout). Legacy JEX has no APPR_STTS column.
 
         auditLogService.append(AuditLogContext.builder()
                 .wsvcId(WSVC_ID)
@@ -959,17 +982,6 @@ public class PayrollPaymentService {
 
         log.info("feature=payroll-payment change-approval-line bizKey={} scdulPymnNo={} apprSeqNo={} newApprLineNo={}",
                 bizKey, id, apprSeqNo, apprLineNo);
-    }
-
-    /** Map approval-box "P/I/C/R" → SCDUL_PYMN_SUMR "P/I/C/X". */
-    private static String mapApprStts(String raw) {
-        if (raw == null) return APPR_STTS_PENDING;
-        return switch (raw) {
-            case "C" -> APPR_STTS_APPROVED;
-            case "I" -> APPR_STTS_IN_PROGRESS;
-            case "R" -> APPR_STTS_REJECTED;
-            default  -> APPR_STTS_PENDING;
-        };
     }
 
     /* ----------------------------------------------------------------
@@ -992,7 +1004,7 @@ public class PayrollPaymentService {
         }
 
         List<ScdulPymnSumrDetl> lines = detlRepository.findByBizKeyAndScdulPymnNo(
-                bizKey, id, Sort.by(Sort.Order.asc("scdulPymnDetlNo")));
+                bizKey, id, ScdulPymnSumrDetlRepository.DETL_NO_NUMERIC_ASC);
         TransferNetwork network = lines.isEmpty()
                 ? TransferNetwork.CITAD
                 : TransferNetwork.fromAntDivCd(lines.get(0).getAntDivCd());
@@ -1065,7 +1077,8 @@ public class PayrollPaymentService {
 
     private static ScheduledTransferRow toListRow(ScdulPymnSumr s,
                                                    Map<String, ExptResolMstr> exptBySeqNo,
-                                                   Map<String, ApproverSummary> approverByApprSeqNo) {
+                                                   Map<String, ApproverSummary> approverByApprSeqNo,
+                                                   Map<String, String> apprSttsByApprSeqNo) {
         ExptResolMstr erm = s.getApprSeqNo() != null ? exptBySeqNo.get(s.getApprSeqNo()) : null;
         String docNo = (erm != null && erm.getDocNo() != null)
                 ? erm.getDocNo()
@@ -1099,7 +1112,12 @@ public class PayrollPaymentService {
                 s.getTotTrnsCnt(),
                 s.getRegDtm(),
                 s.getRegId(),
-                s.getApprStts(),
+                // appr_stts via legacy wb_get_appr_stts(...) over EXPT_RESOL_MSTR
+                // (R002 binding); SCDUL_PYMN_SUMR has no APPR_STTS column in
+                // legacy JEX. null for drafts (no approval master).
+                s.getApprSeqNo() != null && !s.getApprSeqNo().isBlank()
+                        ? apprSttsByApprSeqNo.get(s.getApprSeqNo())
+                        : null,
                 null,
                 null,
                 s.getTrnfYn(),

@@ -30,7 +30,7 @@ public class NatnInfm extends BaseEntity {
 
     /** ISO 3166-1 alpha-2 country code — primary key (e.g. {@code "VN"}). */
     @Id
-    @Column(name = "NTNL_CD", length = 5, nullable = false)
+    @Column(name = "NTNL_CD", length = 2, nullable = false)
     private String ntnlCd;
 
     /** Display name in English (e.g. {@code "Vietnam"}). */
@@ -42,7 +42,7 @@ public class NatnInfm extends BaseEntity {
     private String natnNum;
 
     /** Olson timezone id (e.g. {@code "Asia/Ho_Chi_Minh"}). */
-    @Column(name = "TIME_ZONE", length = 20)
+    @Column(name = "TIME_ZONE", length = 50)
     private String timeZone;
 
     @Column(name = "NOTE", length = 255)

@@ -103,15 +103,11 @@ public interface BankExchRateInfmRepository extends JpaRepository<BankExchRateIn
             @Param("bankCd") String bankCd,
             @Param("refDate") String refDate);
 
-    /**
-     * Returns the next EXCH_SEQ_NO for a tenant — MAX + 1 scoped to BIZ_KEY.
-     * Used by the exchange rate batch instead of wb_get_next_val so the seq
-     * is computed in Java without requiring a PL/pgSQL function branch.
-     */
-    @Query(nativeQuery = true,
-           value = "SELECT CAST(COALESCE(MAX(exch_seq_no::numeric), 0) + 1 AS varchar) " +
-                   "FROM bank_exch_rate_infm WHERE biz_key = :bizKey")
-    String findNextExchSeqNo(@Param("bizKey") String bizKey);
+    // EXCH_SEQ_NO allocation now routes through
+    // LegacyFunctionRepository.nextBankExchRateExchSeqNo (V140 #32 — per
+    // (biz_key, bank_cd, ref_date, ccy_cd) MAX+1, verbatim from the live JEX
+    // function, which scopes more granularly than the old per-biz_key form) so
+    // every wb_get_next_val call goes through the one funnel.
 
     /**
      * Returns the highest existing batch-round {@code SEQ_NO} (as the

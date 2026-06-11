@@ -1,0 +1,51 @@
+-- busi_mdph definition
+
+-- Drop table
+
+-- DROP TABLE busi_mdph;
+
+CREATE TABLE busi_mdph (
+	biz_key varchar(20) NOT NULL,
+	mod_dtm varchar(14) NOT NULL,
+	cmpn_nm varchar(200) NOT NULL,
+	cmpn_enm varchar(200) NOT NULL,
+	tax_id varchar(40) NOT NULL,
+	rppr_nm varchar(100) NOT NULL,
+	tel_no varchar(30) NULL,
+	fxno varchar(30) NULL,
+	eml varchar(100) NOT NULL,
+	rprs_bsun_post_adrs varchar(200) NOT NULL,
+	rprs_bsun_dtl_adrs varchar(200) NULL,
+	rprs_bsun_city varchar(200) NOT NULL,
+	rprs_bsun_st varchar(200) NOT NULL,
+	cmpn_logo varchar(500) NULL,
+	join_dt varchar(14) NULL,
+	fst_join_nm varchar(100) NULL,
+	fst_join_tel varchar(100) NOT NULL,
+	fst_use_date varchar(14) NULL,
+	lst_pay_date varchar(8) NULL,
+	use_date_from varchar(8) NULL,
+	use_date_to varchar(8) NULL,
+	busi_stts varchar(1) NULL,
+	ntnl_cd varchar(2) NOT NULL,
+	chnl_id varchar(10) NOT NULL,
+	mod_id varchar(100) NOT NULL,
+	stts varchar(1) NOT NULL,
+	mod_uid varchar(50) DEFAULT uuid_in(md5(random()::text || now()::text)::cstring) NOT NULL,
+	bank_cd varchar(20) NULL,
+	acct_no varchar(100) NULL,
+	free_use_date_from varchar(8) NULL,
+	free_use_date_to varchar(8) NULL,
+	canc_date varchar(8) NULL,
+	overdue_yn varchar(1) DEFAULT 'N'::character varying NULL,
+	cmpn_stamp varchar NULL,
+	busi_nick_nm varchar(200) NULL,
+	alli_cmpn_cd varchar(20) NULL,
+	alli_cmpn_nm varchar(200) NULL,
+	prdt_type varchar(1) DEFAULT 'W'::character varying NOT NULL,
+	owac_nm varchar(200) NULL,
+	cmpn_qr_cd_img varchar(500) NULL,
+	CONSTRAINT busi_mdph_chk01 CHECK (((stts)::text = ANY (ARRAY[('C'::character varying)::text, ('U'::character varying)::text, ('D'::character varying)::text]))),
+	CONSTRAINT busi_mdph_chk02 CHECK (((prdt_type)::bpchar = ANY (ARRAY['W'::bpchar, 'R'::bpchar, 'B'::bpchar, 'E'::bpchar, 'L'::bpchar, 'S'::bpchar, 'P'::bpchar, 'T'::bpchar, 'U'::bpchar, 'C'::bpchar, 'D'::bpchar, 'F'::bpchar, 'M'::bpchar, 'H'::bpchar]))),
+	CONSTRAINT busi_mdph_pk PRIMARY KEY (biz_key, mod_dtm, mod_uid)
+);

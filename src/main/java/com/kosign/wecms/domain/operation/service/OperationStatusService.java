@@ -74,6 +74,7 @@ public class OperationStatusService {
     private final ExtTranCallHisRepository extTranCallHisRepo;
     private final NxsiasModuleTranLogHisRepository nxisasLogRepo;
     private final OsmcGdtClient osmcClient;
+    private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
 
     /** Legacy {@code aosv_0001_002_r001} sentinels — pinned verbatim so
      *  the audit rows the refactor writes line up with the live JEX
@@ -301,8 +302,8 @@ public class OperationStatusService {
         final String refDate = today.format(REF_DATE_FMT);
 
         // 1. Pre-call audit row in EXT_TRAN_CALL_HIS.
-        BigDecimal seqNo = extTranCallHisRepo.findMaxSeqNoForDay(EXT_SVC_ID, refDate)
-                .add(BigDecimal.ONE);
+        BigDecimal seqNo = new BigDecimal(
+                legacyFunctions.nextExtTranCallHisSeqNo(EXT_SVC_ID, refDate));
         ExtTranCallHis audit = new ExtTranCallHis();
         audit.setSvcId(EXT_SVC_ID);
         audit.setRefDate(refDate);
@@ -460,8 +461,8 @@ public class OperationStatusService {
 
         // 1. EXT_TRAN_CALL_HIS pre-call row (batch — single SEQ_NO covers
         //    the whole multi-tax-code request).
-        BigDecimal seqNo = extTranCallHisRepo.findMaxSeqNoForDay(EXT_SVC_ID, refDate)
-                .add(BigDecimal.ONE);
+        BigDecimal seqNo = new BigDecimal(
+                legacyFunctions.nextExtTranCallHisSeqNo(EXT_SVC_ID, refDate));
         ExtTranCallHis audit = new ExtTranCallHis();
         audit.setSvcId(EXT_SVC_ID);
         audit.setRefDate(refDate);

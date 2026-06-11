@@ -9,6 +9,8 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /**
  * Per-user column-config override for a screen (legacy
@@ -57,7 +59,11 @@ public class UserScrOptionWecms extends BaseEntity {
     @Column(name = "FIELD_NM", length = 100, nullable = false)
     private String fieldNm;
 
-    @Column(name = "DISP_ORD", nullable = false)
+    /** JEX {@code NUMERIC(10,0)} — mapped via {@code @JdbcTypeCode(NUMERIC)}
+     *  for validate parity against the live JEX column (2026-06-09;
+     *  supersedes the earlier local-INTEGER convention from V36). */
+    @JdbcTypeCode(SqlTypes.NUMERIC)
+    @Column(name = "DISP_ORD", precision = 10, scale = 0, nullable = false)
     private Integer dispOrd;
 
     @Column(name = "DISP_YN", length = 1, nullable = false)
@@ -66,7 +72,7 @@ public class UserScrOptionWecms extends BaseEntity {
     @Column(name = "USE_YN", length = 1, nullable = false)
     private String useYn;
 
-    @Column(name = "SIZE", length = 20)
+    @Column(name = "SIZE", length = 10)
     private String size;
 
     @Column(name = "DYM_AREA_ID", length = 50, nullable = false)

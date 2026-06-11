@@ -1,7 +1,7 @@
 package com.kosign.wecms.domain.setting.approvalline.repository;
 
-import com.kosign.wecms.domain.setting.approvalline.entity.ApprovalLineApprover;
-import com.kosign.wecms.domain.setting.approvalline.entity.ApprovalLineApproverId;
+import com.kosign.wecms.domain.setting.approvalline.entity.ApprLineInfmDetl;
+import com.kosign.wecms.domain.setting.approvalline.entity.ApprLineInfmDetlId;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -11,7 +11,7 @@ import java.util.Collection;
 import java.util.List;
 
 /**
- * Repository for {@link ApprovalLineApprover} (legacy
+ * Repository for {@link ApprLineInfmDetl} (legacy
  * {@code APPR_LINE_INFM_DETL}). Tenant-scoped on every method.
  *
  * <p>List page batching: callers load all detail rows for a set of
@@ -19,16 +19,16 @@ import java.util.List;
  * Per-line detail loads use the single-line variant.
  */
 public interface ApprovalLineApproverRepository
-        extends JpaRepository<ApprovalLineApprover, ApprovalLineApproverId> {
+        extends JpaRepository<ApprLineInfmDetl, ApprLineInfmDetlId> {
 
     /** Detail rows for one approval line, in display order. */
-    List<ApprovalLineApprover> findAllByBizKeyAndApprLineNoOrderByApprvrDispOrdAsc(
+    List<ApprLineInfmDetl> findAllByBizKeyAndApprLineNoOrderByApprvrDispOrdAsc(
             String bizKey, Long apprLineNo);
 
     /** Batch fetch for the list endpoint &mdash; one IN-query covers
      *  every parent on the page. Ordered so the in-memory group-by
      *  produces correctly-ordered chains without a sort pass. */
-    List<ApprovalLineApprover> findAllByBizKeyAndApprLineNoInOrderByApprLineNoAscApprvrDispOrdAsc(
+    List<ApprLineInfmDetl> findAllByBizKeyAndApprLineNoInOrderByApprLineNoAscApprvrDispOrdAsc(
             String bizKey, Collection<Long> apprLineNos);
 
     /**
@@ -39,7 +39,7 @@ public interface ApprovalLineApproverRepository
      * on the inherited {@link JpaRepository}.
      */
     @Modifying
-    @Query("delete from ApprovalLineApprover a "
+    @Query("delete from ApprLineInfmDetl a "
             + "where a.bizKey = :bizKey and a.apprLineNo = :apprLineNo")
     void deleteAllByBizKeyAndApprLineNo(
             @Param("bizKey") String bizKey,

@@ -60,6 +60,7 @@ public class ErpTrnsHistoryWriter {
 
     private final ErpTrnsHstrRepository repository;
     private final ErpTrnsHistoryFileResolver fileResolver;
+    private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
 
     /**
      * Record a deleted payment-batch file under ERP Transaction History
@@ -234,7 +235,8 @@ public class ErpTrnsHistoryWriter {
             long fileSize,
             String regId,
             String regDtm) {
-        long nextSeqNo = repository.findMaxSeqNoByBizKey(bizKey) + 1L;
+        // SEQ_NO via the single wb_get_next_val funnel (V140 #28 — per-tenant MAX+1).
+        long nextSeqNo = Long.parseLong(legacyFunctions.nextErpTrnsSeqNo(bizKey));
         ErpTrnsHstr row = new ErpTrnsHstr();
         row.setBizKey(bizKey);
         row.setSeqNo(nextSeqNo);

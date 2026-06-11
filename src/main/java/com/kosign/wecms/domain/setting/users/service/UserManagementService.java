@@ -69,8 +69,10 @@ import java.util.regex.Pattern;
  * variable never carries {@code biz_key}.
  *
  * <p>Password writes go through {@link PasswordEncoder} (the
- * Spring-Security-bound {@code WecmsPasswordEncoder} — BCrypt strength
- * 10 on write, BCrypt + legacy SHA-256 base64 on read).
+ * Spring-Security-bound {@code WecmsPasswordEncoder}). Per the coexistence
+ * rule (2026-06-10), the write path emits the legacy {@code public.hash()}
+ * SHA-256 base64 value — NOT BCrypt — so a user created or password-reset
+ * here can still log into the live JEX system against the shared DB.
  */
 @Slf4j
 @Service

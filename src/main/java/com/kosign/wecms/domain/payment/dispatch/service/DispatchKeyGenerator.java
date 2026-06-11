@@ -28,6 +28,7 @@ public class DispatchKeyGenerator {
 
     private final TbPayTargetRepository  tbPayTargetRepository;
     private final TbPayFileMstRepository tbPayFileMstRepository;
+    private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
 
     /**
      * Allocate the next {@code TRAN_SEQ} for the API path
@@ -37,8 +38,11 @@ public class DispatchKeyGenerator {
      */
     @Transactional(propagation = Propagation.MANDATORY)
     public String nextTranSeq(String bizKey, String tranDt) {
-        long next = tbPayTargetRepository.maxTranSeq(bizKey, tranDt) + 1L;
-        return String.valueOf(next);
+        // TRAN_SEQ via the single wb_get_next_val funnel (V140 #2 — JEX backs
+        // this with the GLOBAL firm_seq_no sequence, not a per-tenant/date MAX+1,
+        // so the value can never collide with the live JEX / WABOOKS firm-banking
+        // dispatch that draws from the same sequence.
+        return legacyFunctions.nextTbPayTargetTranSeq();
     }
 
     /**
@@ -48,7 +52,9 @@ public class DispatchKeyGenerator {
      */
     @Transactional(propagation = Propagation.MANDATORY)
     public String nextFileSeqNo(String bizKey, String tranDt) {
-        long next = tbPayFileMstRepository.maxFileSeqNo(bizKey, tranDt) + 1L;
-        return String.valueOf(next);
+        // FILE_SEQ_NO via the single wb_get_next_val funnel (V140 #4 — JEX backs
+        // this with the GLOBAL firm_file_seq_no sequence, not a per-tenant/date
+        // MAX+1, matching the live JEX firm-banking file dispatch.
+        return legacyFunctions.nextTbPayFileMstFileSeqNo();
     }
 }

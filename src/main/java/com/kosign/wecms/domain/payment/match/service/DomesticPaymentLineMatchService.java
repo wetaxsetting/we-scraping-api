@@ -84,6 +84,7 @@ public class DomesticPaymentLineMatchService {
     private final BusiMatchLogRepository        matchLogRepo;
     private final ScdulPymnSumrRepository       sumrRepo;
     private final ScdulPymnSumrDetlRepository   detlRepo;
+    private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
 
     /* ----------------------------------------------------------- list ---- */
 
@@ -252,7 +253,7 @@ public class DomesticPaymentLineMatchService {
         int cleared = 0;
 
         List<ScdulPymnSumrDetl> lines = detlRepo.findByBizKeyAndScdulPymnNo(
-                bizKey, scdulPymnNo, Sort.by(Sort.Order.asc("scdulPymnDetlNo")));
+                bizKey, scdulPymnNo, ScdulPymnSumrDetlRepository.DETL_NO_NUMERIC_ASC);
         for (ScdulPymnSumrDetl line : lines) {
             if (!YES.equals(line.getLinkMatchYn())) continue;
 
@@ -289,17 +290,10 @@ public class DomesticPaymentLineMatchService {
         matchLogRepo.save(log);
     }
 
+    /** MATCH_LOG_SEQ via the single wb_get_next_val funnel (V140 #24 —
+     *  per-tenant MAX+1, verbatim from the live JEX function). */
     private String nextMatchLogSeq(String bizKey) {
-        long max = 0;
-        for (BusiMatchLog row : matchLogRepo.findByBizKey(bizKey)) {
-            try {
-                long v = Long.parseLong(row.getMatchLogSeq());
-                if (v > max) max = v;
-            } catch (NumberFormatException ignored) {
-                // Non-numeric legacy seq — skip.
-            }
-        }
-        return String.valueOf(max + 1);
+        return legacyFunctions.nextBusiMatchLogSeq(bizKey);
     }
 
     private static String payTrnsId(String scdulPymnNo, String scdulPymnDetlNo) {

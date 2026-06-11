@@ -1,7 +1,7 @@
 package com.kosign.wecms.common.firmbanking;
 
 import com.kosign.wecms.common.tenant.TenantContext;
-import com.kosign.wecms.domain.setting.firmbankingsettings.entity.FirmBankingSetting;
+import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConf;
 import com.kosign.wecms.domain.setting.firmbankingsettings.repository.FirmBankingSettingRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -132,7 +132,7 @@ public class FirmBankingInquiryService {
         // without firm-banking configured gets a clean empty Optional
         // instead of a synthetic stub answer (which would otherwise
         // mask the missing-config state when real integration lands).
-        Optional<FirmBankingSetting> firmConf = lookupFirmConfig();
+        Optional<TbFirmConf> firmConf = lookupFirmConfig();
         if (firmConf.isEmpty()) {
             log.debug("inquiryAccount: no active TB_FIRM_CONF row for tenant; skipping inquiry");
             return Optional.empty();
@@ -190,7 +190,7 @@ public class FirmBankingInquiryService {
      * / {@code wdrlActNo} fields are consumed to build the inquiry
      * message.
      */
-    private Optional<FirmBankingSetting> lookupFirmConfig() {
+    private Optional<TbFirmConf> lookupFirmConfig() {
         String bizKey = TenantContext.currentBizKey();
         if (bizKey == null || bizKey.isBlank()) return Optional.empty();
         return firmBankingSettingRepo

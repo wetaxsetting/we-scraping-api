@@ -18,9 +18,6 @@ import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolApprvrInfmRepository;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
-import com.kosign.wecms.domain.auth.entity.BusiAdmnInfm;
-import com.kosign.wecms.domain.auth.repository.BusiAdmnInfmRepository;
-import com.kosign.wecms.domain.notification.service.NotificationService;
 import com.kosign.wecms.domain.payment.internaltransfer.repository.ScdulPymnSumrRepository;
 import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnSumrRepository;
 import lombok.RequiredArgsConstructor;
@@ -41,7 +38,6 @@ import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -139,8 +135,6 @@ public class ApprovalBoxService {
     private final ScdulPymnSumrRepository        scdulPymnSumrRepository;
     private final AuditLogService                auditLogService;
     private final ApprovalBoxFanoutService       fanoutService;
-    private final NotificationService            notificationService;
-    private final BusiAdmnInfmRepository         busiAdmnInfmRepository;
 
     /* =================================================================
      *  List
@@ -338,13 +332,6 @@ public class ApprovalBoxService {
                 ctx.master.getBizKey(), ctx.master.getApprSeqNo(), ctx.userId,
                 ctx.master.getApprTypeCd());
 
-        // Phase-3 producer (best-effort, isolated): notify the legacy R008 set
-        // — other approvers on the line (P/A/R) + business admins, excluding
-        // the acting approver and the requester. Fires on every approve step.
-        notificationService.notifyApprovalDecision(
-                true, ApprDv.resolveSlug(ctx.master.getApprDv()), ctx.master.getApprSeqNo(),
-                ctx.master.getDocNo(), ctx.master.getTitl(), resolveDecisionRecipients(ctx));
-
         return new ApprovalBoxActionResponse(
                 ctx.master.getApprSeqNo(),
                 deriveApprStts(ctx.master.getApprTypeCd()),
@@ -383,13 +370,6 @@ public class ApprovalBoxService {
 
         log.info("approval-box rejected bizKey={} apprSeqNo={} approverId={}",
                 ctx.master.getBizKey(), ctx.master.getApprSeqNo(), ctx.userId);
-
-        // Phase-3 producer (best-effort, isolated): notify the legacy R008 set
-        // — other approvers on the line (P/A/R) + business admins, excluding
-        // the acting approver and the requester.
-        notificationService.notifyApprovalDecision(
-                false, ApprDv.resolveSlug(ctx.master.getApprDv()), ctx.master.getApprSeqNo(),
-                ctx.master.getDocNo(), ctx.master.getTitl(), resolveDecisionRecipients(ctx));
 
         return new ApprovalBoxActionResponse(
                 ctx.master.getApprSeqNo(),
@@ -469,8 +449,9 @@ public class ApprovalBoxService {
      * <p>Card ({@code APPR_DV = '33'}) keeps its dedicated
      * {@code /card-transactions/by-approval/{apprSeqNo}} endpoint; the
      * frontend never routes card rows here. The back-stamp routing below
-     * matches {@link #writeBackApprStts} exactly (OVERSEAS → OVRS, every
-     * other type → SCDUL).
+     * matches {@link #clearSourceApprStamp} exactly (OVERSEAS → OVRS, every
+     * other type → SCDUL) — clearing {@code APPR_SEQ_NO} only, since neither
+     * source table has an {@code APPR_STTS} column in legacy JEX.
      *
      * @throws BusinessException {@code WBE_NOT_FOUND} when the master is
      *         missing for the tenant; {@code WBE_VALIDATION} when the
@@ -528,10 +509,11 @@ public class ApprovalBoxService {
     }
 
     /** Clear the approval stamp on the source payment batch so a
-     *  withdrawn request returns to Draft. Routing matches
-     *  {@link #writeBackApprStts}: OVERSEAS ({@code '34'}) → OVRS_PYMN_SUMR,
-     *  every other non-card type → SCDUL_PYMN_SUMR. A zero-row update is a
-     *  harmless no-op (e.g. seed data with no source row). */
+     *  withdrawn request returns to Draft (nulls {@code APPR_SEQ_NO} only —
+     *  neither source table has an {@code APPR_STTS} column in legacy JEX).
+     *  OVERSEAS ({@code '34'}) → OVRS_PYMN_SUMR, every other non-card type →
+     *  SCDUL_PYMN_SUMR. A zero-row update is a harmless no-op (e.g. seed data
+     *  with no source row). */
     private void clearSourceApprStamp(String bizKey, String apprSeqNo, String apprDv,
                                       String userId, String nowDtm) {
         if (ApprDv.OVERSEAS.code().equals(apprDv)) {
@@ -617,10 +599,9 @@ public class ApprovalBoxService {
         ctx.master.setModDtm(nowDtm);
         masterRepository.save(ctx.master);
 
-        // Write APPR_STTS back to the payment source table so list pages reflect the new status.
-        String apprStts = ApprTypeCd.APPROVED.equals(ctx.master.getApprTypeCd()) ? "C" : "I";
-        writeBackApprStts(ctx.bizKey, ctx.master.getApprSeqNo(), ctx.master.getApprDv(),
-                apprStts, ctx.userId, nowDtm);
+        // No write-back to the payment source table: neither SCDUL_PYMN_SUMR nor
+        // OVRS_PYMN_SUMR has an APPR_STTS column in legacy JEX. The list/detail
+        // pages derive status on read from EXPT_RESOL_MSTR.APPR_TYPE_CD.
 
         ctx.totalCount    = approverRepository.findChain(
                 ctx.bizKey, ctx.master.getApprSeqNo()).size();
@@ -646,27 +627,13 @@ public class ApprovalBoxService {
         ctx.master.setModDtm(nowDtm);
         masterRepository.save(ctx.master);
 
-        // Write APPR_STTS = 'X' back to the payment source table.
-        writeBackApprStts(ctx.bizKey, ctx.master.getApprSeqNo(), ctx.master.getApprDv(),
-                "X", ctx.userId, nowDtm);
+        // No write-back: status derives on read from EXPT_RESOL_MSTR.APPR_TYPE_CD
+        // (legacy JEX has no APPR_STTS column on SCDUL_PYMN_SUMR / OVRS_PYMN_SUMR).
 
         ctx.totalCount    = approverRepository.findChain(
                 ctx.bizKey, ctx.master.getApprSeqNo()).size();
         ctx.approvedCount = approverRepository.countByStatus(
                 ctx.bizKey, ctx.master.getApprSeqNo(), ApprvrStts.APPROVED);
-    }
-
-    /** Routes the APPR_STTS write-back to the correct payment source table.
-     *  OVERSEAS (apprDv='34') lives in OVRS_PYMN_SUMR; every other
-     *  payment type (Internal Transfer/Vendor/Expense/Payroll) lives in
-     *  SCDUL_PYMN_SUMR. */
-    private void writeBackApprStts(String bizKey, String apprSeqNo, String apprDv,
-                                   String apprStts, String modId, String modDtm) {
-        if (ApprDv.OVERSEAS.code().equals(apprDv)) {
-            ovrsPymnSumrRepository.updateApprStts(bizKey, apprSeqNo, apprStts, modId, modDtm);
-        } else {
-            scdulPymnSumrRepository.updateApprStts(bizKey, apprSeqNo, apprStts, modId, modDtm);
-        }
     }
 
     private void promoteNextWaiting(ApproveContext ctx, String nowDtm) {
@@ -681,49 +648,6 @@ public class ApprovalBoxService {
                 return;
             }
         }
-    }
-
-    /**
-     * Resolve the approve / reject notification recipient set, mirroring legacy
-     * {@code EXPT_RESOL_APPRVR_INFM_R008} (PO decision — follow legacy
-     * recipients):
-     * <ul>
-     *   <li>other approvers on the line in status {@code P}/{@code A}/{@code R}
-     *       (excludes {@code W} waiting / {@code S} stopped — same as R008);</li>
-     *   <li>plus every business admin of the tenant ({@code BUSI_ADMN_INFM});</li>
-     *   <li>minus the acting approver and minus the requester / owner
-     *       (R008's {@code APPRVR_ID <> :USER_ID} + {@code APPRVR_LINE_NO <> 0}).</li>
-     * </ul>
-     * Resolved against the post-action chain state (statuses already mutated),
-     * which is exactly when legacy R008 runs. De-duplicated, order-stable.
-     * Notification recipient names are not persisted, so the id doubles as the
-     * {@code Recipient} name.
-     */
-    private List<NotificationService.Recipient> resolveDecisionRecipients(ApproveContext ctx) {
-        String actingUser = ctx.userId;
-        String requester  = ctx.master.getDraftUserId();
-        LinkedHashSet<String> ids = new LinkedHashSet<>();
-
-        for (ExptResolApprvrInfm a : approverRepository.findChain(
-                ctx.bizKey, ctx.master.getApprSeqNo())) {
-            String st = a.getApprvrStts();
-            if (ApprvrStts.PENDING.equals(st)
-                    || ApprvrStts.APPROVED.equals(st)
-                    || ApprvrStts.REJECTED.equals(st)) {
-                ids.add(a.getApprvrId());
-            }
-        }
-        for (BusiAdmnInfm adm : busiAdmnInfmRepository.findAllByBizKey(ctx.bizKey)) {
-            ids.add(adm.getUserId());
-        }
-
-        ids.remove(actingUser);
-        if (requester != null) ids.remove(requester);
-        ids.removeIf(id -> id == null || id.isBlank());
-
-        return ids.stream()
-                .map(id -> new NotificationService.Recipient(id, id))
-                .toList();
     }
 
     /* =================================================================

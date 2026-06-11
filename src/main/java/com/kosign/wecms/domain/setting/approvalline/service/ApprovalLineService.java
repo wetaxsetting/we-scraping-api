@@ -15,8 +15,8 @@ import com.kosign.wecms.domain.setting.approvalline.dto.ApprovalLineRow;
 import com.kosign.wecms.domain.setting.approvalline.dto.ApprovalLineSortField;
 import com.kosign.wecms.domain.setting.approvalline.dto.ApprovalLineUpdateRequest;
 import com.kosign.wecms.domain.setting.approvalline.entity.ApprovalLine;
-import com.kosign.wecms.domain.setting.approvalline.entity.ApprovalLineApprover;
-import com.kosign.wecms.domain.setting.approvalline.entity.ApprovalLineApproverId;
+import com.kosign.wecms.domain.setting.approvalline.entity.ApprLineInfmDetl;
+import com.kosign.wecms.domain.setting.approvalline.entity.ApprLineInfmDetlId;
 import com.kosign.wecms.domain.setting.approvalline.entity.ApprovalLineId;
 import com.kosign.wecms.domain.setting.approvalline.repository.ApprovalLineApproverRepository;
 import com.kosign.wecms.domain.setting.approvalline.repository.ApprovalLineRepository;
@@ -148,16 +148,16 @@ public class ApprovalLineService {
         }
 
         List<Long> lineNos = lines.stream().map(ApprovalLine::getApprLineNo).toList();
-        List<ApprovalLineApprover> approvers = approverRepo
+        List<ApprLineInfmDetl> approvers = approverRepo
                 .findAllByBizKeyAndApprLineNoInOrderByApprLineNoAscApprvrDispOrdAsc(bizKey, lineNos);
 
-        Map<Long, List<ApprovalLineApprover>> byLine = new LinkedHashMap<>();
-        for (ApprovalLineApprover a : approvers) {
+        Map<Long, List<ApprLineInfmDetl>> byLine = new LinkedHashMap<>();
+        for (ApprLineInfmDetl a : approvers) {
             byLine.computeIfAbsent(a.getApprLineNo(), k -> new java.util.ArrayList<>()).add(a);
         }
 
         Map<String, String> imgUrlByApprvrId =
-                resolveImageUrls(bizKey, approvers.stream().map(ApprovalLineApprover::getApprvrId).toList());
+                resolveImageUrls(bizKey, approvers.stream().map(ApprLineInfmDetl::getApprvrId).toList());
 
         List<ApprovalLineRow> rows = lines.stream()
                 .map(line -> toRow(line, byLine.getOrDefault(line.getApprLineNo(), List.of()), imgUrlByApprvrId))
@@ -185,10 +185,10 @@ public class ApprovalLineService {
                             bizKey, apprLineNo);
                     return new BusinessException("WBE_APPROVAL_LINE_NOT_FOUND");
                 });
-        List<ApprovalLineApprover> approvers = approverRepo
+        List<ApprLineInfmDetl> approvers = approverRepo
                 .findAllByBizKeyAndApprLineNoOrderByApprvrDispOrdAsc(bizKey, apprLineNo);
         Map<String, String> imgUrlByApprvrId =
-                resolveImageUrls(bizKey, approvers.stream().map(ApprovalLineApprover::getApprvrId).toList());
+                resolveImageUrls(bizKey, approvers.stream().map(ApprLineInfmDetl::getApprvrId).toList());
         return toRow(line, approvers, imgUrlByApprvrId);
     }
 
@@ -239,7 +239,7 @@ public class ApprovalLineService {
 
         for (int i = 0; i < req.approvers().size(); i++) {
             ApprovalLineApproverInput a = req.approvers().get(i);
-            ApprovalLineApprover row = new ApprovalLineApprover();
+            ApprLineInfmDetl row = new ApprLineInfmDetl();
             row.setBizKey(bizKey);
             row.setApprLineNo(apprLineNo);
             row.setApprvrId(a.apprvrId());
@@ -298,10 +298,10 @@ public class ApprovalLineService {
         line.setModId(userId);
         line.setModDtm(now);
 
-        List<ApprovalLineApprover> existing = approverRepo
+        List<ApprLineInfmDetl> existing = approverRepo
                 .findAllByBizKeyAndApprLineNoOrderByApprvrDispOrdAsc(bizKey, apprLineNo);
-        Map<String, ApprovalLineApprover> existingById = new HashMap<>(existing.size());
-        for (ApprovalLineApprover row : existing) {
+        Map<String, ApprLineInfmDetl> existingById = new HashMap<>(existing.size());
+        for (ApprLineInfmDetl row : existing) {
             existingById.put(row.getApprvrId(), row);
         }
         Set<String> incomingIds = new HashSet<>(req.approvers().size());
@@ -310,9 +310,9 @@ public class ApprovalLineService {
             ApprovalLineApproverInput a = req.approvers().get(i);
             int dispOrd = i + 1;
             incomingIds.add(a.apprvrId());
-            ApprovalLineApprover row = existingById.get(a.apprvrId());
+            ApprLineInfmDetl row = existingById.get(a.apprvrId());
             if (row == null) {
-                row = new ApprovalLineApprover();
+                row = new ApprLineInfmDetl();
                 row.setBizKey(bizKey);
                 row.setApprLineNo(apprLineNo);
                 row.setApprvrId(a.apprvrId());
@@ -328,9 +328,9 @@ public class ApprovalLineService {
             approverRepo.save(row);
         }
 
-        for (Map.Entry<String, ApprovalLineApprover> e : existingById.entrySet()) {
+        for (Map.Entry<String, ApprLineInfmDetl> e : existingById.entrySet()) {
             if (!incomingIds.contains(e.getKey())) {
-                approverRepo.deleteById(new ApprovalLineApproverId(
+                approverRepo.deleteById(new ApprLineInfmDetlId(
                         bizKey, apprLineNo, e.getKey()));
             }
         }
@@ -450,7 +450,7 @@ public class ApprovalLineService {
 
     private static ApprovalLineRow toRow(
             ApprovalLine line,
-            List<ApprovalLineApprover> approvers,
+            List<ApprLineInfmDetl> approvers,
             Map<String, String> imgUrlByApprvrId) {
         List<ApprovalLineApproverRow> approverRows = approvers.stream()
                 .map(a -> new ApprovalLineApproverRow(

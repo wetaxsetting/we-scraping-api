@@ -180,15 +180,32 @@ public class ExcelExportService {
         // (`BANK`, `ACCOUNT_NICKNAME`). Keeps Save/Reset round-trips on
         // the DB FIELD_IDs untouched — the alias only applies at this
         // export-side intersection step.
-        ScreenOptionListResponse view = screenOptionService.load(
-                request.screenId(), request.dymAreaId());
+        // Persisted View Setting visibility is enforced ONLY when the screen
+        // is actually configured for View Setting (i.e. seeded in
+        // SYS_SCR_OPTION_WECMS). "Export-only" screens — pages that pass a
+        // screenId to the export pipeline but do NOT render the View Setting
+        // popover and are intentionally NOT seeded (addon e-Invoices,
+        // operation-status, cash-flow, firm-banking-history, erp-transaction-
+        // history) — have no persisted view; for them the request columns ∩
+        // provider allow-list is authoritative. load() throws WBE2001 when the
+        // screen has no sys rows; treat that as "no persisted view" and skip
+        // the visibility intersection rather than failing the export.
+        ScreenOptionListResponse view = null;
+        try {
+            view = screenOptionService.load(request.screenId(), request.dymAreaId());
+        } catch (BusinessException e) {
+            if (!"WBE2001".equals(e.getCode())) throw e;
+        }
+        boolean enforceVisibility = view != null;
         Set<String> visibleFieldIds = new HashSet<>();
         Map<String, String> sizeByFieldId = new HashMap<>();
-        for (ScreenOptionItem item : view.items()) {
-            String canonical = FieldIdAlias.resolve(item.fieldId());
-            if ("Y".equals(item.useYn())) visibleFieldIds.add(canonical);
-            if (item.size() != null && !item.size().isBlank()) {
-                sizeByFieldId.put(canonical, item.size());
+        if (view != null) {
+            for (ScreenOptionItem item : view.items()) {
+                String canonical = FieldIdAlias.resolve(item.fieldId());
+                if ("Y".equals(item.useYn())) visibleFieldIds.add(canonical);
+                if (item.size() != null && !item.size().isBlank()) {
+                    sizeByFieldId.put(canonical, item.size());
+                }
             }
         }
 
@@ -200,7 +217,9 @@ public class ExcelExportService {
             if (!seen.add(fid)) continue; // dedupe
             if (ScreenOptionService.isSpecialFieldId(fid)) continue;
             if (allowed != null && !allowed.contains(fid)) continue;
-            if (!visibleFieldIds.contains(fid)) continue;
+            // Unseeded (export-only) screens have no persisted visibility to
+            // enforce — the provider allow-list above already bounds the set.
+            if (enforceVisibility && !visibleFieldIds.contains(fid)) continue;
             out.add(enrichWidth(col, sizeByFieldId.get(fid)));
         }
         return out;

@@ -1,5 +1,13 @@
 # Settings > Purpose — Refactor Feature Spec
 
+> **Primary documentation home moved to [purpose/](purpose/README.md)** (feature folder — README,
+> business-flow, functional-specification, database-mapping, interface-specification, source-code-index,
+> migration-guide, test-scenarios, refactor-gap-analysis). **This file is preserved as the deep
+> design narrative + OQ decision log** and remains authoritative for the Phase-1/2 design rationale.
+> Where this Phase-2 plan and the final implementation differ (e.g. authorization is now
+> `@menuAuthz.canAccess('settings-core-purpose')`, not the planned `hasRole('ADMIN')`), the feature
+> folder reflects the **as-built** state.
+
 **Module:** Settings
 **Menu:** Purpose
 **Refactor screen ID / slug:** `purpose-settings`

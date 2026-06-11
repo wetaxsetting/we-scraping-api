@@ -53,55 +53,21 @@ public interface ExptResolMstrRepository
     Optional<ExptResolMstr> findByBizKeyAndDocNoAndDelYn(
             String bizKey, String docNo, String delYn);
 
-    /** Per-tenant MAX(apprSeqNo::bigint) for cross-table allocation.
-     *  Used by the overseas-payment request-approval path to ensure the
-     *  newly issued APPR_SEQ_NO is above any existing master rows. */
-    @Query(value = "SELECT MAX(CAST(appr_seq_no AS BIGINT)) FROM expt_resol_mstr " +
-                   "WHERE biz_key = :bizKey AND appr_seq_no ~ '^[0-9]+$'",
-           nativeQuery = true)
-    Long findMaxApprSeqNoByBizKey(@Param("bizKey") String bizKey);
+    // Approval-status derivation now routes through the legacy DB function
+    // wb_get_appr_stts(...) via LegacyFunctionRepository.getApprStts /
+    // apprSttsByApprSeqNos (Option A, 2026-06-10) — the prior Java-side
+    // APPR_TYPE_CD finders (findApprTypeCd / findApprTypeCdByApprSeqNos) were
+    // removed in favour of the single legacy source of truth.
 
-    /**
-     * Returns the MAX trailing numeric sequence extracted from existing
-     * {@code DOC_NO} values that share the same tenant + date prefix
-     * (e.g. {@code "VO_260512_"}).
-     *
-     * <p>Used by {@code DocNoGenerator} to compute the next
-     * {@code VO_YYMMDD_NNN} value. The regex {@code '[0-9]+$'} strips the
-     * padded-zero suffix (e.g. {@code "001"} → {@code 1}); CAST to NUMERIC
-     * handles strings of any length. Returns 0 when no rows match so the
-     * caller always gets a concrete starting point.
-     */
-    @Query(value = """
-           SELECT COALESCE(MAX(
-               CAST(SUBSTRING(doc_no FROM '[0-9]+$') AS NUMERIC)
-           ), 0)
-           FROM expt_resol_mstr
-           WHERE biz_key   = :bizKey
-             AND del_yn    = 'N'
-             AND UPPER(doc_no) LIKE UPPER(:datePrefix) || '%'
-           """, nativeQuery = true)
-    Long findMaxDocNoSeqForDate(
-            @Param("bizKey")     String bizKey,
-            @Param("datePrefix") String datePrefix);
+    // APPR_SEQ_NO is now allocated through the single
+    // LegacyFunctionRepository.nextApprSeqNo funnel (V140 #1 — the GLOBAL
+    // sq_appr_seq_no sequence shared across all Payment modules), replacing the
+    // former cross-table MAX+1 finder.
 
-    /**
-     * Integer-typed convenience variant of {@link #findMaxDocNoSeqForDate}
-     * used by {@code ApprovalBoxFanoutService.nextDocNo} where the daily
-     * counter fits in an {@code int} (3-digit cap).
-     */
-    @Query(value = """
-           SELECT COALESCE(MAX(
-               CAST(SUBSTRING(doc_no FROM '[0-9]+$') AS INTEGER)
-           ), 0)
-           FROM expt_resol_mstr
-           WHERE biz_key   = :bizKey
-             AND del_yn    = 'N'
-             AND UPPER(doc_no) LIKE UPPER(:prefix) || '%'
-           """, nativeQuery = true)
-    Integer findMaxDocNoSeqByBizKeyAndPrefix(
-            @Param("bizKey") String bizKey,
-            @Param("prefix") String prefix);
+    // DOC_NO is now allocated through the single wb_get_next_val funnel
+    // (LegacyFunctionRepository.nextDocNo → V140 #39, env-set-driven). The former
+    // Java-side MAX-extraction finders (findMaxDocNoSeqForDate / findMaxDocNoSeqByBizKeyAndPrefix)
+    // were removed in the 2026-06-10 Phase-1 funnel migration — no caller remains.
 
     /**
      * Batch (APPR_SEQ_NO, DOC_NO) lookup as a tuple array. Used by

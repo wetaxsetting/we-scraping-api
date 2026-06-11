@@ -27,11 +27,12 @@ import java.math.BigDecimal;
 public record ScrapingResultIntakeRequest(
 
         /**
-         * Client-generated UUID (32–64 alphanumeric chars). Re-used
-         * verbatim if the engine call retries so the backend can
-         * deduplicate. The partial unique index on V179 enforces this
-         * server-side per tenant. A second POST with the same key
-         * returns the prior recorded row.
+         * Client-generated UUID (32–64 alphanumeric chars). Recorded in
+         * the audit trail and echoed back on the response for
+         * client-side correlation. NOTE: the legacy JEX
+         * {@code NAPAS_REMIT_TRNS_HSTR} table has no idempotency column,
+         * so this key is NOT persisted and there is no server-side
+         * replay/dedup — each POST records a fresh row.
          */
         @NotBlank
         @Pattern(regexp = "[A-Za-z0-9-]{32,64}",

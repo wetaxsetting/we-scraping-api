@@ -107,7 +107,7 @@ public class ScreenOptionService {
             row.setDymAreaId(dymAreaId);
             row.setDispYn(sys.getDispYn());
             row.setSize(sys.getSize());
-            row.setUseYn(isSpecial || "Y".equals(sys.getFixYn())
+            row.setUseYn(isSpecial
                     ? "Y"
                     : normaliseYn(incoming.useYn()));
             if (isSpecial) {
@@ -236,7 +236,6 @@ public class ScreenOptionService {
                         sys.getDispOrd(),
                         sys.getDispYn(),
                         sys.getUseYn(),
-                        sys.getFixYn(),
                         sys.getSize(),
                         sys.getSortYn(),
                         sys.getHtmlCont()));
@@ -246,8 +245,7 @@ public class ScreenOptionService {
                         sys.getFieldNm(),
                         user.getDispOrd(),
                         sys.getDispYn(),
-                        "Y".equals(sys.getFixYn()) ? "Y" : user.getUseYn(),
-                        sys.getFixYn(),
+                        user.getUseYn(),
                         sys.getSize(),
                         sys.getSortYn(),
                         sys.getHtmlCont()));

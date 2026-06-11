@@ -76,6 +76,7 @@ public class OatNxisasService {
     private final ObjectMapper                     objectMapper;
     private final SeedCbcDecryptService            seedCbc;
     private final OatSeedDecryptProperties         seedProps;
+    private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
 
     /* =================================================================
      *  POST /nxisas/cert-acct-list
@@ -284,7 +285,8 @@ public class OatNxisasService {
                                      String bankCdHint, String bizKey, String userId) {
         try {
             final String refDate = utcDate8();
-            final BigDecimal seqNo = extTranRepo.findMaxSeqNoForDay(svcId, refDate).add(BigDecimal.ONE);
+            final BigDecimal seqNo = new BigDecimal(
+                    legacyFunctions.nextExtTranCallHisSeqNo(svcId, refDate));
 
             final ExtTranCallHis call = new ExtTranCallHis();
             call.setSvcId(svcId);

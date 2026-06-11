@@ -1,7 +1,7 @@
 package com.kosign.wecms.common.auditlog.repository;
 
-import com.kosign.wecms.common.auditlog.entity.AuditLogEntry;
-import com.kosign.wecms.common.auditlog.entity.AuditLogEntryId;
+import com.kosign.wecms.common.auditlog.entity.AuditLogsInfm;
+import com.kosign.wecms.common.auditlog.entity.AuditLogsInfmId;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;
@@ -24,7 +24,7 @@ import java.util.List;
  * {@link com.kosign.wecms.common.tenant.TenantContext#currentBizKey()}.
  */
 public interface AuditLogEntryRepository
-        extends JpaRepository<AuditLogEntry, AuditLogEntryId> {
+        extends JpaRepository<AuditLogsInfm, AuditLogsInfmId> {
 
     /**
      * Audit history for a single referenced row in the caller's
@@ -35,7 +35,7 @@ public interface AuditLogEntryRepository
      * for firm-banking-settings; equality on a non-null PK component
      * never matches a null column).
      */
-    List<AuditLogEntry> findByBizKeyAndRefNoAndRefNo1AndRefNo2AndWsvcIdAndLangCdOrderByRegDtmDesc(
+    List<AuditLogsInfm> findByBizKeyAndRefNoAndRefNo1AndRefNo2AndWsvcIdAndLangCdOrderByRegDtmDesc(
             String bizKey,
             String refNo,
             String refNo1,
@@ -52,7 +52,7 @@ public interface AuditLogEntryRepository
      * {@code RefNo2IsNull} clause; equality against a {@code null}
      * argument would never match.
      */
-    List<AuditLogEntry> findByBizKeyAndRefNoAndRefNo1AndWsvcIdAndLangCdAndRefNo2IsNullOrderByRegDtmDesc(
+    List<AuditLogsInfm> findByBizKeyAndRefNoAndRefNo1AndWsvcIdAndLangCdAndRefNo2IsNullOrderByRegDtmDesc(
             String bizKey,
             String refNo,
             String refNo1,

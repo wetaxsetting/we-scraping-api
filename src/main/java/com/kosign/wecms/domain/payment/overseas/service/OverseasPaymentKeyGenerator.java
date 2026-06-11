@@ -1,58 +1,53 @@
 package com.kosign.wecms.domain.payment.overseas.service;
 
-import com.kosign.wecms.domain.payment.overseas.repository.OverseasPaymentKeySeqRepository;
+import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Clock;
-import java.time.LocalDate;
-import java.time.ZoneId;
-
 /**
- * Java-side generator for {@code OVRS_PYMN_SUMR.OVRS_PYMN_NO}.
- * Mirrors {@code InternalTransferKeyGenerator} exactly — same format,
- * same REQUIRES_NEW propagation, independent sequence table.
+ * Generator for {@code OVRS_PYMN_SUMR.OVRS_PYMN_NO}.
  *
- * <h2>Format</h2>
- * <pre>{@code OVRS_PYMN_NO = <YYYYMMDD><6-digit-tenant-day-seq>
- * e.g. 20260513000001 }</pre>
+ * <p>As of the MR-2C funnel migration (2026-06-10) this is a thin delegator to the single
+ * {@code wb_get_next_val} funnel: {@code Spring → LegacyFunctionRepository.nextOvrsPymnNo →
+ * nextVal → wb_get_next_val} (V140 #63 — per-tenant plain-int MAX+1 over
+ * {@code OVRS_PYMN_MSTR UNION OVRS_PYMN_SUMR}). This matches the live JEX behaviour and is the
+ * overseas equivalent of the MR-1 SCDUL_PYMN_NO reversal.
  *
- * <p>{@code YYYYMMDD} is Vietnam-local date (UTC+7).
+ * <h2>Format change</h2>
+ * <p>The former date-prefixed Java format ({@code <YYYYMMDD><6-digit-tenant-day-seq>}, e.g.
+ * {@code 20260513000001}, backed by the {@code OVERSEAS_PAYMENT_KEY_SEQ} table) is retired. The
+ * value is now plain legacy numeric text ({@code 1, 2, 3, …}) — identical to what the live JEX
+ * system mints. {@code OVRS_PYMN_NO} is an opaque key everywhere it is consumed (PK, detail FK,
+ * path-variable id, list/result join), so the format change is transparent to all readers.
+ *
+ * <p><b>Concurrency:</b> the funnel is a lock-free {@code MAX+1}, so two concurrent creates can
+ * read the same {@code MAX} and collide on the PK. The generator runs {@code MANDATORY} (the
+ * {@code MAX+1} read and the subsequent {@code OVRS_PYMN_SUMR} INSERT share one transactional
+ * view — same stance as {@code InternalTransferKeyGenerator}); the create site
+ * ({@code OverseasPaymentExcelService.submit}) owns the boundary-level one-shot retry on
+ * {@code DataIntegrityViolationException}.
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class OverseasPaymentKeyGenerator {
 
-    static final ZoneId VIETNAM_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
-
-    private final OverseasPaymentKeySeqRepository keySeqRepository;
-    private final Clock overseasPaymentClock;
+    private final LegacyFunctionRepository legacyFunctions;
 
     /**
-     * Allocate the next {@code OVRS_PYMN_NO} for the given tenant.
-     * Runs in its own transaction ({@code REQUIRES_NEW}) so the sequence
-     * advance commits even if the outer business transaction rolls back.
+     * Allocate the next {@code OVRS_PYMN_NO} for the given tenant via the
+     * {@code wb_get_next_val} funnel (V140 #63). Runs in the caller's transaction
+     * ({@code MANDATORY}) so the {@code MAX+1} read and the INSERT share one transactional view.
      */
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @Transactional(propagation = Propagation.MANDATORY)
     public String nextOvrsPymnNo(String bizKey) {
         if (bizKey == null || bizKey.isBlank()) throw new IllegalArgumentException("bizKey is required");
-        LocalDate keyDt = LocalDate.now(overseasPaymentClock.withZone(VIETNAM_ZONE));
-        int seq = keySeqRepository.allocateNext(bizKey, keyDt);
-        String key = format(keyDt, seq);
-        log.debug("feature=overseas-payment allocated ovrs_pymn_no={} bizKey={} keyDt={} seq={}",
-                key, bizKey, keyDt, seq);
+        String key = legacyFunctions.nextOvrsPymnNo(bizKey);
+        log.debug("feature=overseas-payment allocated ovrs_pymn_no={} bizKey={} (wb_get_next_val funnel)",
+                key, bizKey);
         return key;
-    }
-
-    static String format(LocalDate keyDt, int seq) {
-        if (seq < 1 || seq > 999_999) {
-            throw new IllegalStateException("overseas-payment key sequence out of range (1..999999): " + seq);
-        }
-        return String.format("%04d%02d%02d%06d",
-                keyDt.getYear(), keyDt.getMonthValue(), keyDt.getDayOfMonth(), seq);
     }
 }

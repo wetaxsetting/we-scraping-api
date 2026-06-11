@@ -10,7 +10,7 @@ import com.kosign.wecms.domain.banking.service.cashflow.CashFlowRowAssembler;
 import com.kosign.wecms.domain.banking.service.cashflow.FxConverter;
 import com.kosign.wecms.domain.banking.service.cashflow.PaymentDataAggregator;
 import com.kosign.wecms.domain.banking.service.cashflow.PaymentDataRow;
-import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount;
+import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartAcctInfm;
 import com.kosign.wecms.domain.setting.chartofaccounts.repository.ChartOfAccountRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -85,7 +85,7 @@ class CashFlowReportQuarterParityTest {
     @Test
     void quarter_doesNotChangeCalculation_year2026_vnd_allBanks() {
         // Chart: ACC-01/02/03 roots + one L2 + one L3 leaf under REVENUE and EXPENSES.
-        List<ChartOfAccount> chart = List.of(
+        List<ChartAcctInfm> chart = List.of(
                 coa("ACC-01", null, null),
                 coa("ACC-02", null, null),
                 coa("ACC-03", null, null),
@@ -170,8 +170,8 @@ class CashFlowReportQuarterParityTest {
         return rows;
     }
 
-    private static ChartOfAccount coa(String code, String parentCode, String calRule) {
-        ChartOfAccount c = new ChartOfAccount();
+    private static ChartAcctInfm coa(String code, String parentCode, String calRule) {
+        ChartAcctInfm c = new ChartAcctInfm();
         c.setBizKey(BIZ);
         c.setChartAcctSeqNo(code);
         c.setChartAcctCd(code);

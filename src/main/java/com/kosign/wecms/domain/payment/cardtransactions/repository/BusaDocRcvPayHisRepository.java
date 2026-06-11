@@ -17,14 +17,10 @@ import java.util.List;
 public interface BusaDocRcvPayHisRepository
         extends JpaRepository<BusaDocRcvPayHis, BusaDocRcvPayHisId> {
 
-    /** Per-doc MAX(SEQ_NO) — used to allocate the next link row's
-     *  surrogate sequence number. Returns {@code null} when this is
-     *  the first link row for the doc. */
-    @Query("SELECT COALESCE(MAX(h.seqNo), 0) FROM BusaDocRcvPayHis h " +
-           "WHERE h.bizKey = :bizKey AND h.docId = :docId")
-    BigDecimal findMaxSeqNoByBizKeyAndDocId(
-            @Param("bizKey") String bizKey,
-            @Param("docId")  String docId);
+    // RCV_PAY_HIS_SEQ_NO allocation now routes through
+    // LegacyFunctionRepository.nextBusaDocRcvPayHisSeqNo (V140 #29 — per
+    // (biz_key, doc_id) MAX+1, verbatim from the live JEX function) so every
+    // wb_get_next_val call goes through the one funnel.
 
     /**
      * Batch-resolve linked docs for a page of card transactions —
