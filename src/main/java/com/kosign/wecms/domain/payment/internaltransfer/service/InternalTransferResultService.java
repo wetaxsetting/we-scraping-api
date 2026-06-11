@@ -3,6 +3,8 @@ package com.kosign.wecms.domain.payment.internaltransfer.service;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.common.web.SortDirection;
+import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
+import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
 import com.kosign.wecms.domain.payment.common.TransferLineDetailMapper;
 import com.kosign.wecms.domain.payment.dispatch.DispatchCountRepository;
 import com.kosign.wecms.domain.payment.dispatch.service.DispatchResult;
@@ -71,6 +73,10 @@ public class InternalTransferResultService {
      *  TB_PAY_TARGET / TB_PAY_FILE_MST / TB_PAY_FILE_DATA / TB_FIRM_TRAN.
      *  Mirrors the legacy {@code SCDUL_PYMN_SUMR_R006} IDO query. */
     private final DispatchResultResolver       dispatchResultResolver;
+    /** Approval master — read-only here to surface the requester name
+     *  ({@code DRAFT_USER_NM}) on the result-detail header (legacy
+     *  {@code pymn_0010_002} Requestor field). */
+    private final ExptResolMstrRepository      exptResolMstrRepository;
 
     @Transactional(readOnly = true)
     public TransferResultListResponse list(
@@ -163,9 +169,37 @@ public class InternalTransferResultService {
                         d.getScdulPymnDetlNo(), DispatchResult.EMPTY)))
                 .toList();
 
+        // G2: header tab counts (All / Success / Failed / In Progress) —
+        // mirrors legacy pymn_0010_002_r001's TOT_CNT/SUC_CNT/ERR_CNT/PRC_CNT.
+        // Derived from the already-resolved per-line statuses so the header
+        // numbers equal the per-line chip distribution the user sees.
+        long[] counts = countByStatus(lines);
+
+        // Withdrawal bank name — same resolver the per-line Deposit Bank cell
+        // uses (BANK_INFM → NAPAS/CITAD function → CITAD canonical fallback).
+        // null when unresolvable; the frontend falls back to the raw code.
+        // Mirrors legacy pymn_0010_002 OUT_BANK_NM.
+        String outBankNm = transferLineDetailMapper.resolveBankNm(master.getOutBankCd());
+
+        // Requester name — legacy pymn_0010_002 shows EXPT_RESOL_MSTR.DRAFT_USER_NM.
+        // Looked up by APPR_SEQ_NO (single-element IN reuses the existing finder,
+        // no new repo method). null when the batch has no approval request yet;
+        // the frontend falls back to reg_id.
+        String apprSeqNo = master.getApprSeqNo();
+        String requestor = (apprSeqNo != null && !apprSeqNo.isBlank())
+                ? exptResolMstrRepository
+                        .findByBizKeyAndApprSeqNoIn(bizKey, java.util.List.of(apprSeqNo))
+                        .stream()
+                        .findFirst()
+                        .map(ExptResolMstr::getDraftUserNm)
+                        .filter(s -> s != null && !s.isBlank())
+                        .orElse(null)
+                : null;
+
         return new TransferResultDetailResponse(
                 master.getScdulPymnNo(),
                 master.getOutBankCd(),
+                outBankNm,
                 master.getWdrlActNo(),
                 master.getTitl(),
                 master.getTotalTranAmt(),
@@ -179,9 +213,59 @@ public class InternalTransferResultService {
                 master.getOrgFileNm(),
                 master.getFileSize(),
                 master.getRegId(),
-                // suc/err/prc — Phase A defers the dispatch-tables join.
-                null, null, null,
+                requestor,
+                // suc/err/prc — derived from the resolved per-line statuses
+                // (countByStatus). Array order is [success, failed, inProgress].
+                BigDecimal.valueOf(counts[0]),
+                BigDecimal.valueOf(counts[1]),
+                BigDecimal.valueOf(counts[2]),
                 lines);
+    }
+
+    /**
+     * Bucket the resolved detail lines into {@code [success, failed, inProgress]}
+     * counts for the Transfer Result detail header tabs (All / Success /
+     * Failed / In Progress).
+     *
+     * <p>Classification mirrors the shared frontend classifier
+     * {@code components/payment/shared/deriveResultStatus.ts:69-82} and the
+     * legacy per-line rule {@code pymn_0010_002.js:238-253}, so the header
+     * counts always equal the per-line chip distribution the user sees:
+     * <ul>
+     *   <li>{@code proc_stat="0"} AND {@code rs_cd="0000"} &rarr; success</li>
+     *   <li>{@code proc_stat} &isin; {{@code 9},{@code 1},{@code 6}} &rarr; in&nbsp;progress</li>
+     *   <li>blank {@code proc_stat} AND blank {@code rs_cd} &rarr; in&nbsp;progress
+     *       (dispatched batch whose bank-side result has not landed yet)</li>
+     *   <li>everything else ({@code proc_stat="3"}, or {@code "0"} with a
+     *       non-{@code "0000"} {@code rs_cd}, or a blank {@code proc_stat}
+     *       with a non-blank {@code rs_cd}, or a stray code) &rarr; failed</li>
+     * </ul>
+     *
+     * <p>Note: {@code ProcStatKey.forCode(String)} is intentionally NOT
+     * reused here — it keys off {@code proc_stat} alone and would mark the
+     * legacy {@code proc_stat="0"} + {@code rs_cd != "0000"} case as success,
+     * diverging from the chip. The combined {@code proc_stat} + {@code rs_cd}
+     * rule above is the chip-consistent classification.
+     *
+     * <p>Invariant: {@code success + failed + inProgress == lines.size()}
+     * (= {@code TOT_TRNS_CNT}).
+     */
+    private static long[] countByStatus(List<TransferResultLine> lines) {
+        long success = 0, failed = 0, inProgress = 0;
+        for (TransferResultLine line : lines) {
+            String ps = line.procStat() == null ? "" : line.procStat().trim();
+            String rs = line.rsCd()     == null ? "" : line.rsCd().trim();
+            if (ps.isEmpty() && rs.isEmpty()) {
+                inProgress++;
+            } else if ("0".equals(ps) && "0000".equals(rs)) {
+                success++;
+            } else if ("9".equals(ps) || "1".equals(ps) || "6".equals(ps)) {
+                inProgress++;
+            } else {
+                failed++;
+            }
+        }
+        return new long[] { success, failed, inProgress };
     }
 
     /* ---------------------------------------------------------------- */
@@ -224,7 +308,9 @@ public class InternalTransferResultService {
                 d.getChartAcctSeqNo(),
                 d.getBankTrnsShortId(),
                 r.procStat(), r.procStatKey(), r.procDttm(), r.rsltDttm(),
-                r.rsCd(), r.rsMsg());
+                r.rsCd(), r.rsMsg(),
+                // Banking-match read fields (G21b) — SCDUL_PYMN_SUMR_DETL.
+                d.getLinkMatchYn(), d.getAcctSeqNo(), d.getBankTrnsFullId());
     }
 
     private String requireTenant() {

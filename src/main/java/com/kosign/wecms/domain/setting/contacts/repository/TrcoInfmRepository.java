@@ -116,6 +116,29 @@ public interface TrcoInfmRepository extends JpaRepository<TrcoInfm, String> {
     boolean existsByBizKeyAndTrcoTaxId(String bizKey, String trcoTaxId);
 
     /**
+     * e-Invoice counterparty auto-registration lookup. Mirrors legacy
+     * {@code nxisas_einvoice_c002_act.jsp:340-346}: a contact is matched
+     * (and reused, never re-created) on the
+     * {@code (BIZ_KEY, TRCO_TAX_ID, TRSC_CCY_CD)} triple. {@code findFirst}
+     * because DEV does not constrain that triple unique; the first match
+     * wins, exactly as the legacy {@code findByDynamic} does.
+     */
+    Optional<TrcoInfm> findFirstByBizKeyAndTrcoTaxIdAndTrscCcyCd(
+            String bizKey, String trcoTaxId, String trscCcyCd);
+
+    /**
+     * Nickname-collision guard for the auto-registrar. The
+     * {@code trco_infm_uk01} UNIQUE({@code BIZ_KEY}, {@code TRCO_NICK_NM})
+     * constraint forbids a duplicate nickname within a tenant; the
+     * registrar appends a tax-id (or key) suffix until this returns
+     * {@code false}. Mirrors the intent of legacy
+     * {@code TrcoHelper.isDuplicatedTrcoNickNm} (the
+     * {@code SYS_TRCO_INFM_DIS_NM} system-display-name normalisation is
+     * out of refactor scope &mdash; that table is not in the PROD active list).
+     */
+    boolean existsByBizKeyAndTrcoNickNm(String bizKey, String trcoNickNm);
+
+    /**
      * Bulk-exists check for {@code HAND_TRCO_KEY} &mdash; returns the
      * subset of {@code keys} that already point to an <em>active</em>
      * (non-trashed) contact in the tenant. Mirrors legacy

@@ -44,9 +44,12 @@ import java.util.Map;
  *       {@link PaymentDataAggregator}. Both years use the same approval-status
  *       resolver (replaces {@code wb_get_appr_stts}) — only Completed
  *       rows survive.</li>
- *   <li>Apply quarter + bank filters + FX conversion (current year only).
- *       Prior year is FX-converted but never quarter / bank filtered
- *       (legacy parity — §3.6).</li>
+ *   <li>Apply the bank filter + FX conversion (current year only).
+ *       Prior year is FX-converted but never bank filtered
+ *       (legacy parity — §3.6). Quarter is NOT a calculation input on
+ *       either path: the full Jan–Dec year is always computed and the
+ *       frontend hides out-of-quarter columns (legacy parity, gap D-1 /
+ *       G5, PO decision 2026-06-04).</li>
  *   <li>Bucket per-L3-code monthly amounts via
  *       {@link MonthlyAmountAccumulator}.</li>
  *   <li>Compute {@code jan_opening_balance} from prior-year aggregates,
@@ -92,10 +95,14 @@ public class CashFlowReportService {
         List<ChartOfAccount> tenantChart = chartRepo.findByBizKeyAndDelYn(bizKey, "N", Sort.unsorted());
         ChartOfAccountsHierarchy hierarchy = new ChartOfAccountsHierarchy(tenantChart);
 
-        // 2a. Collect current-year source rows, then apply filters + FX.
+        // 2a. Collect current-year source rows, then apply the bank filter + FX.
+        // Quarter is deliberately NOT passed — the full Jan–Dec year is always
+        // computed (legacy parity; quarter is a frontend column-visibility
+        // concern only). PO decision 2026-06-04, gap D-1 / G5 — see
+        // docs/features/cash-flow/parity-audit/gap-report.md.
         List<PaymentDataRow> currentRaw = aggregator.collect(bizKey, year);
         List<PaymentDataRow> currentFiltered = aggregator.applyFilters(
-                currentRaw, quarter, bankFilters, baseCurrency, usdRate, krwRate, fx);
+                currentRaw, bankFilters, baseCurrency, usdRate, krwRate, fx);
         Map<String, MonthlyAmountAccumulator> currentL3Totals =
                 bucketByChartAcctCd(currentFiltered, hierarchy);
 

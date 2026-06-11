@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.access.prepost.PreAuthorize;
 
 /**
  * Settings &gt; Approval Line — five REST endpoints under
@@ -42,10 +43,22 @@ import org.springframework.web.bind.annotation.RestController;
  * parameters use camelCase in Java; {@code @PathVariable("appr_line_no")}
  * pins the segment to its snake_case URI name.
  *
- * <p>Per OQ-5 (resolved 2026-05-13) the controller carries no
- * {@code @PreAuthorize} — JWT authentication is the only gate, matching
- * live JEX behaviour. {@code @Validated} at the class level enables
- * the {@code @Positive} guard on the path id.
+ * <p>Authorization: gated by the F-3 menu-authorization guard
+ * {@code @PreAuthorize("@menuAuthz.canAccess('settings-core-approval-line')")}
+ * (rolled out 2026-06-06, superseding the earlier OQ-5 "JWT-only"
+ * stance). {@code settings-*} codes are product-invariant, so
+ * {@code MenuAuthorizationGuard} skips the product-tree gate: an ADMIN
+ * passes unconditionally, while a normal user must hold a
+ * {@code USE_YN='Y'} grant for {@code settings-core-approval-line} in
+ * {@code USER_MENU_AUTH_INFM} (Menu Entitlement universe — see
+ * {@code wecms-web/components/settings/users/entitlementTree.ts}). This
+ * is stricter than live JEX, which let any authenticated normal user in
+ * ({@code NORM_USER_ONLY_YN=Y}); the divergence is the intended uniform
+ * Settings-module hardening and is enforced at build time by
+ * {@code EndpointAuthorizationCoverageTest} (the picker
+ * {@code UserController} is the documented allow-list exception, not this
+ * controller). {@code @Validated} at the class level enables the
+ * {@code @Positive} guard on the path id.
  *
  * <p>Audit-log: NO writes for any mutation here. Feature § 14 OQ-6
  * resolved 2026-05-13 (legacy parity). The {@code AuditLogService}
@@ -55,6 +68,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/settings/approval-line")
 @RequiredArgsConstructor
 @Validated
+@PreAuthorize("@menuAuthz.canAccess('settings-core-approval-line')")
 public class ApprovalLineController {
 
     private final ApprovalLineService service;

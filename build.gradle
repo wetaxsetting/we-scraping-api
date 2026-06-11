@@ -34,6 +34,16 @@ dependencies {
     // ExcelWorkbookWriter so a 50k-row export stays bounded in heap.
     implementation 'org.apache.poi:poi-ooxml:5.2.5'
 
+    // Coocon iSAS SEED-CBC cipher (com.coocon.securty.util.ISASSeedCBC) —
+    // licensed Coocon asset, reused verbatim from the legacy JEX system
+    // (WECMS DEV/WECMS/lib/isas1.0.jar) under PO/Coocon approval (B1,
+    // 2026-06-05) to decrypt NXiSAS engine `Output.Result` for Own
+    // Account Transfer with byte-for-byte legacy parity. Self-contained
+    // (KISA SEED-128 CBC + iSASBase64, no transitive deps). Decrypt is
+    // gated by `wecms.oat.seed-decrypt.enabled` (default false). See
+    // docs/jex/features/own-account-transfer/b1-decrypt-implementation-plan.md.
+    implementation files('libs/isas1.0.jar')
+
     // ShedLock — distributed lock for @Scheduled tasks so multi-instance
     // deploys don't double-fire the Exchange Rate batches (or any future
     // scheduled job). Backing store: the existing PostgreSQL via

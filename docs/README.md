@@ -10,6 +10,8 @@ Backend documentation for the **Spring Boot 3.5.13** side of the WeCMS JEX → S
 > of deep cross-links to cross-system material (`docs/jex/`, `docs/_shared/`) and to not-yet-written
 > stubs are tracked in [planning/open-questions/documentation-follow-up.md](planning/open-questions/documentation-follow-up.md).
 
+> **Field-name casing (project-wide standard).** Legacy JEX APIs used UPPER_SNAKE field names. The Spring/Next.js refactor intentionally uses lowercase snake_case JSON field names via global Jackson SNAKE_CASE configuration. This is an approved modernization under CTO directive dated 2026-05-08 and is not a legacy parity gap. Source-verified inventory + status table: [audits/field-casing-parity-audit-2026-06-06.md](audits/field-casing-parity-audit-2026-06-06.md).
+
 ## Layout
 
 | Folder / file | Contents |

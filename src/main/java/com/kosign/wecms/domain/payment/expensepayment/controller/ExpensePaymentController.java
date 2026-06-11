@@ -16,6 +16,12 @@ import com.kosign.wecms.domain.payment.internaltransfer.dto.TransferResultDetail
 import com.kosign.wecms.domain.payment.internaltransfer.dto.TransferResultListResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.UpdateReportingAccountRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.WithdrawalAccountRow;
+import com.kosign.wecms.domain.payment.internaltransfer.service.ScdulPymnTypeCd;
+import com.kosign.wecms.domain.payment.match.dto.PaymentLineMatchCandidateListResponse;
+import com.kosign.wecms.domain.payment.match.dto.PaymentLineMatchRequest;
+import com.kosign.wecms.domain.payment.match.dto.PaymentLineMatchResultResponse;
+import com.kosign.wecms.domain.payment.match.dto.PaymentLineUnmatchAllResponse;
+import com.kosign.wecms.domain.payment.match.service.DomesticPaymentLineMatchService;
 import com.kosign.wecms.domain.payment.expensepayment.service.ExpensePaymentResultService;
 import com.kosign.wecms.domain.payment.expensepayment.service.ExpensePaymentService;
 import com.kosign.wecms.domain.payment.expensepayment.service.ExpensePaymentService.DownloadResource;
@@ -47,6 +53,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.multipart.MultipartFile;
 
 /**
@@ -79,6 +86,7 @@ import org.springframework.web.multipart.MultipartFile;
 @RequestMapping("/api/v1/payment/expense-payment")
 @RequiredArgsConstructor
 @Validated
+@PreAuthorize("@menuAuthz.canAccess('payment-expense-scheduled')")
 public class ExpensePaymentController {
 
     /** Path-segment guard for {@code scdul_pymn_no} values. Accepts both
@@ -91,9 +99,10 @@ public class ExpensePaymentController {
      *  — alphanumeric, 1-20 chars (mirrors Internal Transfer). */
     private static final String SCDUL_PYMN_DETL_NO_PATTERN = "^[A-Za-z0-9]{1,20}$";
 
-    private final ExpensePaymentService       service;
-    private final ExpensePaymentResultService resultService;
-    private final ExcelExportService          excelExportService;
+    private final ExpensePaymentService           service;
+    private final ExpensePaymentResultService     resultService;
+    private final ExcelExportService              excelExportService;
+    private final DomesticPaymentLineMatchService lineMatchService;
 
     /**
      * List Scheduled Expense Payment batches for the current tenant.
@@ -140,6 +149,7 @@ public class ExpensePaymentController {
      * {@code pymn_0004_001_r001}.
      */
     @GetMapping("/results")
+    @PreAuthorize("@menuAuthz.canAccess('payment-expense-result')")
     public ApiResponse<TransferResultListResponse> listResults(
             @RequestParam("from_date")                                String fromDate,
             @RequestParam("to_date")                                  String toDate,
@@ -159,6 +169,7 @@ public class ExpensePaymentController {
      * {@code pymn_0004_002_r001}.
      */
     @GetMapping("/results/{id}")
+    @PreAuthorize("@menuAuthz.canAccess('payment-expense-result')")
     public ApiResponse<TransferResultDetailResponse> resultDetail(
             @PathVariable("id")
             @Size(max = 30)
@@ -170,6 +181,7 @@ public class ExpensePaymentController {
     /** Excel export of the Expense Payment Result list. Provider:
      *  {@code ExpensePaymentResultExportProvider} (CLAUDE.md §13b). */
     @PostMapping("/results/export")
+    @PreAuthorize("@menuAuthz.canAccess('payment-expense-result')")
     public void exportResults(
             @Valid @RequestBody ExcelExportRequest request,
             HttpServletResponse response) {
@@ -365,5 +377,64 @@ public class ExpensePaymentController {
                 .header("X-Content-Type-Options", "nosniff")
                 .header("Access-Control-Expose-Headers", HttpHeaders.CONTENT_DISPOSITION)
                 .body(new InputStreamResource(stream));
+    }
+
+    /* ============================================================
+     * Banking Match (Phase 2) — per-line, legacy comm_0197_* domestic path.
+     * Expense batches carry SCDUL_PYMN_TYPE_CD = '02'.
+     * ============================================================ */
+
+    /**
+     * Candidate bank transactions for an Expense payment line
+     * (legacy {@code comm_0197_001_r001} domestic path).
+     */
+    @GetMapping("/{id}/lines/{lineId}/match/candidates")
+    public ApiResponse<PaymentLineMatchCandidateListResponse> matchCandidates(
+            @PathVariable("id")
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id,
+            @PathVariable("lineId")
+            @Pattern(regexp = SCDUL_PYMN_DETL_NO_PATTERN, message = "lineId: invalid scdul_pymn_detl_no format")
+            String lineId,
+            @RequestParam(value = "match_rmrk_yn", required = false) String matchRmrkYn,
+            @RequestParam(value = "srch_wd",       required = false) String srchWd) {
+        return ApiResponse.ok(lineMatchService.listCandidates(
+                ScdulPymnTypeCd.EXPENSE.code(), id, lineId, matchRmrkYn, srchWd));
+    }
+
+    /** Match an Expense payment line to a bank transaction (legacy {@code comm_0197_001_c001}). */
+    @PostMapping("/{id}/lines/{lineId}/match")
+    public ApiResponse<PaymentLineMatchResultResponse> match(
+            @PathVariable("id")
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id,
+            @PathVariable("lineId")
+            @Pattern(regexp = SCDUL_PYMN_DETL_NO_PATTERN, message = "lineId: invalid scdul_pymn_detl_no format")
+            String lineId,
+            @Valid @RequestBody PaymentLineMatchRequest req) {
+        return ApiResponse.ok(lineMatchService.match(
+                ScdulPymnTypeCd.EXPENSE.code(), id, lineId, req));
+    }
+
+    /** Unmatch a single Expense payment line (legacy {@code comm_0197_002_u001}). */
+    @DeleteMapping("/{id}/lines/{lineId}/match")
+    public ApiResponse<PaymentLineMatchResultResponse> unmatch(
+            @PathVariable("id")
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id,
+            @PathVariable("lineId")
+            @Pattern(regexp = SCDUL_PYMN_DETL_NO_PATTERN, message = "lineId: invalid scdul_pymn_detl_no format")
+            String lineId) {
+        return ApiResponse.ok(lineMatchService.unmatch(
+                ScdulPymnTypeCd.EXPENSE.code(), id, lineId));
+    }
+
+    /** Unmatch every matched line under an Expense batch (legacy {@code comm_0197_001_u001}). */
+    @DeleteMapping("/{id}/matches")
+    public ApiResponse<PaymentLineUnmatchAllResponse> unmatchAll(
+            @PathVariable("id")
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id) {
+        return ApiResponse.ok(lineMatchService.unmatchAll(ScdulPymnTypeCd.EXPENSE.code(), id));
     }
 }

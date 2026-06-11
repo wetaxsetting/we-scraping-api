@@ -15,21 +15,25 @@ import lombok.Setter;
  * the banking schema (e.g. {@code 11704088}). Mirrors legacy
  * {@code wabooks.entity.NapasBankInfo}.
  *
- * <p>Sole consumer today: the firm-banking-settings Create dialog's
+ * <p>Consumers: (1) the firm-banking-settings Create dialog's
  * Withdrawal Account autocomplete, which calls
  * {@code GET /api/v1/banking/accounts/by-bank?out_bank_cd=<NAPAS>}
- * and needs the internal code to filter {@code ACCT_MSTR}. JEX
- * does the same bridge in
- * {@code comm_1004_001_act.jsp:56-66} — refactor mirrors the
- * resolve-then-query shape exactly.
+ * and needs the internal code to filter {@code ACCT_MSTR} (JEX
+ * does the same bridge in {@code comm_1004_001_act.jsp:56-66});
+ * (2) Own Account Transfer's NAPAS lookup
+ * ({@code trns_0001_001_r003}), which returns the bank display
+ * names so the composer / recipient list / history can label the
+ * recipient bank.
  *
- * <p>Sprint scope: only the columns the lookup needs are mapped
- * ({@code NAPAS_BANK_CD} PK + {@code BANK_CD}); the dictionary's
- * other columns ({@code SHORT_NAME}, {@code LONG_NAME_EN},
- * {@code LONG_NAME_VN}) live in the table but are not surfaced as
- * entity fields until a feature actually consumes them. Hibernate
- * {@code ddl-auto = validate} only complains about declared columns
- * missing from the DB, never the reverse.
+ * <p>Mapped columns: {@code NAPAS_BANK_CD} (PK) + {@code BANK_CD}
+ * (internal code) + the three display-name columns
+ * ({@code SHORT_NAME}, {@code LONG_NAME_EN}, {@code LONG_NAME_VN}).
+ * The display names were added to the entity 2026-06-04 to close
+ * gap B9 (Own Account Transfer parity) — legacy
+ * {@code trns_0001_001_r003} returns them and the refactor was
+ * shipping them null. All five columns exist on both the refactor
+ * and JEX DEV tables (verified column-for-column), so Hibernate
+ * {@code ddl-auto = validate} accepts them.
  *
  * <p>The dictionary is global (NOT tenant-scoped — there is no
  * {@code BIZ_KEY} column on the table).
@@ -53,4 +57,19 @@ public class NapasBankInfo {
      *  of information the firm-banking lookup needs from this row. */
     @Column(name = "BANK_CD", length = 20)
     private String bankCd;
+
+    /** Short bank name (e.g. {@code Shinhan}). Returned by the OAT
+     *  NAPAS lookup ({@code trns_0001_001_r003}) so the recipient
+     *  bank can be labelled. */
+    @Column(name = "SHORT_NAME", length = 100)
+    private String shortName;
+
+    /** Full English bank name (e.g.
+     *  {@code Shinhan Bank Vietnam Limited}). */
+    @Column(name = "LONG_NAME_EN", length = 500)
+    private String longNameEn;
+
+    /** Full Vietnamese bank name. */
+    @Column(name = "LONG_NAME_VN", length = 500)
+    private String longNameVn;
 }

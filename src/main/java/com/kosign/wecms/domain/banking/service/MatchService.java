@@ -78,6 +78,7 @@ public class MatchService {
     private final BusiMatchLogRepository matchLogRepo;
     private final ScdulPymnSumrRepository sumrRepo;
     private final ScdulPymnSumrDetlRepository detlRepo;
+    private final AccountAccessGuard accountAccessGuard;
 
     /* ---------------------------------------------------------- list ---- */
 
@@ -268,8 +269,13 @@ public class MatchService {
         if (trnsSeqNo == null || trnsSeqNo.isBlank()) {
             throw new BusinessException(CODE_BAD_REQUEST);
         }
-        return txnRepo.findById(new AcctTrnsHstrId(bizKey, trnsSeqNo))
+        AcctTrnsHstr bank = txnRepo.findById(new AcctTrnsHstrId(bizKey, trnsSeqNo))
                 .orElseThrow(() -> new BusinessException(CODE_TRNS_NOT_FOUND));
+        // Audit #29 — per-account data scope on the match/unmatch/candidates
+        // paths (Smart Organizer). Non-admins may only act on accounts they
+        // hold an active View grant for; throws 403 otherwise.
+        accountAccessGuard.assertCanView(bizKey, bank.getBankCd(), bank.getAcctNo());
+        return bank;
     }
 
     private static java.util.Optional<String[]> parsePayTrnsId(String payTrnsId) {

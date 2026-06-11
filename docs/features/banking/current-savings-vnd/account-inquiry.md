@@ -1,5 +1,11 @@
 # Banking > Account Inquiry (VND) — Refactor Feature Spec
 
+> **📁 Primary documentation home moved.** The consolidated, current backend feature documentation now
+> lives in the dedicated folder [../account-inquiry-vnd/](../account-inquiry-vnd/README.md) (README ·
+> functional-specification · business-flow · database-mapping · interface-specification · source-code-index ·
+> migration-guide · test-scenarios · refactor-gap-analysis). This single-file spec is **preserved** as a
+> quick reference and remains valid; new detail is maintained in the folder.
+
 **Module:** Banking
 **Menu:** Account Inquiry (VND)
 **Route:** `/banking/account-inquiry`

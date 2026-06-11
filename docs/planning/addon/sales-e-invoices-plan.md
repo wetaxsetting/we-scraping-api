@@ -44,7 +44,7 @@
 
 - [`EInvoiceController#list`](../../../src/main/java/com/kosign/wecms/domain/einvoice/controller/EInvoiceController.java) — `GET /api/v1/addon/einvoices` accepts `type` (`SALES`/`EXPENSE`), `from` (`YYYYMMDD`), `to` (`YYYYMMDD`).
 - [`EInvoiceService#list`](../../../src/main/java/com/kosign/wecms/domain/einvoice/service/EInvoiceService.java) — reads `BUSA_DOC_MSTR` filtered by `BIZ_KEY` + `DOC_TYPE` (`'I'` for Sales — correct), optional `ISSU_DT` range, sort `ISSU_DT DESC, REG_DTM DESC`. **Bug:** the service maps `EXPENSE → 'E'` — should be `EXPENSE → 'B'` (`BusaDocType.BILL`) per the legacy. The Javadoc and `BusaDocMstr.docType` Javadoc both repeat the same wrong assumption.
-- DTOs `EInvoiceListResponse` + `EInvoiceRow` + `CurrencyTotal` — currently 12 columns wide; mismatched to the legacy `WSVC.einv_0001_001_r001.xml` `REC` (41 fields) and to the static UI's expected column set. Wire shape **is** UPPER_SNAKE via `@JsonProperty` (verified) — earlier doc claims that the wire used camelCase were wrong.
+- DTOs `EInvoiceListResponse` + `EInvoiceRow` + `CurrencyTotal` — mismatched to the legacy `WSVC.einv_0001_001_r001.xml` `REC` (41 fields) and to the static UI's expected column set. **Wire shape is lowercase `snake_case`** — these records carry **no** `@JsonProperty` and serialize via the global Jackson `SNAKE_CASE` strategy; the frontend in-memory shape is camelCase, translated once in `mapEInvoiceRow`. *(Corrected 2026-06-06: the earlier "wire is UPPER_SNAKE via `@JsonProperty` (verified)" line was wrong — `EInvoiceRow.java` / `EInvoiceListResponse.java` have no such annotations. See [field-casing-parity-audit-2026-06-06.md](../../audits/field-casing-parity-audit-2026-06-06.md).)*
 - JPA entity `BusaDocMstr` + composite key `BusaDocMstrId` + `BusaDocMstrRepository`.
 - Schema parity: V15 created the table; V23 brought it to DEV column-for-column (100 columns total).
 - **Missing legacy-parity behaviour:** the Spring service skips four behaviours the legacy `_act.jsp` enforces — see Phase 2 task list below.
@@ -126,8 +126,8 @@ GET /api/v1/addon/einvoices?type=SALES
 
 **Phase 4 deliverables (in roughly the order they unblock each other):**
 
-1. **Wire empty-row guard.** When `data.ROWS` is empty, render an empty-state placeholder (mirrors Approval Box). Today the table just shows zero rows with no message.
-2. **UPPER_SNAKE wire flip.** Backend ships UPPER_SNAKE; remove the lower→camel translation in [`mapEInvoiceRow`](../../../../wecms-web/lib/api/mappers.ts).
+1. **Wire empty-row guard.** When `data.rows` is empty, render an empty-state placeholder (mirrors Approval Box). Today the table just shows zero rows with no message.
+2. ~~**UPPER_SNAKE wire flip.**~~ **VOID (corrected 2026-06-06).** No flip exists or is needed — the backend already ships **lowercase `snake_case`** (`EInvoiceRow` has no `@JsonProperty`), and `mapEInvoiceRow` already does the standard wire-snake → camelCase translation at the boundary. This deliverable was based on the wrong "wire is UPPER_SNAKE" assumption. See [field-casing-parity-audit-2026-06-06.md](../../audits/field-casing-parity-audit-2026-06-06.md).
 3. **Adopt `usePagination()` per [§4](../../../../wecms-web/CLAUDE.md).** Wrapper sends `page` / `size` to the backend; remove the hardcoded `pageSize = 5`. Filter `onChange` calls `resetPage()`.
 4. **Adopt `useTableSort()` per [§13a](../../../../wecms-web/CLAUDE.md).** Wrapper passes `sortField` / `sortDirection` to the backend and `toggleSort` down to `<EInvoiceTable>`. Migrate headers to `<TableHeaderCell sortFieldId="DATE_TIME" …>`.
 5. **Wire the keyword search.** Replace the in-memory `useMemo` filter with a debounced (300 ms) `keyword` query param. Reset to `page=0` on change.

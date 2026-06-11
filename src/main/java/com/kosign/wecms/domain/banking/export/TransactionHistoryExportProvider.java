@@ -98,19 +98,25 @@ public class TransactionHistoryExportProvider implements ExportRowProvider {
 
     private static Map<String, Object> toFieldMap(TransactionRow r) {
         Map<String, Object> m = new HashMap<>();
-        m.put("TRSC_ID",      "");   // pending DTO extension
+        m.put("TRSC_ID",      nullToEmpty(r.bankTrnsShortId()));
         m.put("TRSC_DTM",     composeDtm(r.trscDt(), r.trscTm()));
         m.put("DEPOSIT_AMT",  r.depositAmt());
         m.put("WITHDRAW_AMT", r.withdrawAmt());
         m.put("BAL",          r.bal());
         m.put("RMRK",         nullToEmpty(r.rmrk()));
-        m.put("FILE_NM",      "");   // pending DTO extension
-        m.put("MTCH_DT",      "");   // pending DTO extension
-        m.put("MTCH_BY",      nullToEmpty(r.confirmedBy()));
-        m.put("PURPOSE",      "");   // pending DTO extension
-        m.put("CONTACT_NM",   "");   // pending DTO extension (ACCT_TRNS_RCV_PAY_INFM join)
+        m.put("FILE_NM",      nullToEmpty(r.payOrgFileNm()));
+        m.put("MTCH_DT",      datePart(r.matchedAt()));
+        m.put("MTCH_BY",      nullToEmpty(r.matchedBy()));
+        m.put("PURPOSE",      nullToEmpty(r.useUsagCd()));
+        m.put("CONTACT_NM",   nullToEmpty(r.rcvPayTrcoNm()));
         m.put("CONFIRMED_BY", nullToEmpty(r.confirmedBy()));
         return m;
+    }
+
+    /** {@code yyyyMMddHHmmss} (or {@code yyyyMMdd}) → {@code YYYY-MM-DD}; blank passes through. */
+    private static String datePart(String dtm) {
+        if (dtm == null || dtm.length() < 8) return nullToEmpty(dtm);
+        return dtm.substring(0, 4) + "-" + dtm.substring(4, 6) + "-" + dtm.substring(6, 8);
     }
 
     /** {@code YYYYMMDD} + {@code HHmmss} → {@code YYYY-MM-DD HH:mm:ss}. */

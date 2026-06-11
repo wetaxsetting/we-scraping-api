@@ -12,7 +12,7 @@
 
 ## 1. Source table (legacy DEV — schema captured 2026-05-11)
 
-Schema captured live from `wecmsvndev.erp_trns_hstr` via the read-only `postgres_dev` MCP. Refactor mirrors **column-for-column** per the [legacy schema parity rule](../../../../CLAUDE.md). No documented deviations.
+Schema captured live from `wecmsvndev.erp_trns_hstr` via the read-only `postgres_dev_server_jexframe` MCP. Refactor mirrors **column-for-column** per the [legacy schema parity rule](../../../../CLAUDE.md). No documented deviations.
 
 ### 1.1 `ERP_TRNS_HSTR` — ERP file-exchange audit ledger
 

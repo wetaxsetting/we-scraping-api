@@ -1,5 +1,7 @@
 package com.kosign.wecms.domain.auth.dto;
 
+import java.util.List;
+
 /**
  * Current-session snapshot returned by {@code GET /api/v1/auth/me}.
  * Carries the same user + tenant identity fields as
@@ -33,5 +35,18 @@ public record MeResponse(
          *  May be null when the row carries no value — never silently
          *  defaulted. The Lock Screen popup (Figma 83:12764) renders
          *  this in brackets beneath the company name. */
-        String taxId
+        String taxId,
+
+        /** Menu Authorization (sourced from {@code USER_MENU_AUTH_INFM},
+         *  not the JWT, so entitlement changes take effect on the next
+         *  {@code /me} without a token re-issue).
+         *
+         *  <p>{@code allMenus = true} for admins — they bypass menu
+         *  filtering and see every menu; {@code allowedMenuCds} is then
+         *  empty and the frontend ignores it. For a normal user
+         *  {@code allMenus = false} and {@code allowedMenuCds} carries the
+         *  granted leaf slugs (e.g. {@code addon-einvoices-sales}); an
+         *  empty list means "no menus granted". */
+        boolean allMenus,
+        List<String> allowedMenuCds
 ) { }

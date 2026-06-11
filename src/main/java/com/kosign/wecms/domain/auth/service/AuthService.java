@@ -80,7 +80,14 @@ import java.util.stream.Collectors;
  * {@link com.kosign.wecms.common.enums.PrdtType}.
  * <p>
  * Deferred: 5-failure auto-lock counter, password-change-history reset,
- * NTNL_CD/CHNL_TYPE/BUSI_STTS post-auth gates, post-login menu resolution.
+ * NTNL_CD/CHNL_TYPE/BUSI_STTS post-auth gates.
+ * <p>
+ * <b>Menu authorization.</b> {@code /me} now returns the caller's
+ * allowed-menu set (admins bypass; normal users get their
+ * {@code USE_YN='Y'} grants from {@code USER_MENU_AUTH_INFM} via
+ * {@link MenuAuthorizationService}) so the frontend can filter the top
+ * nav, sidebar, and routes. Sourced fresh per {@code /me}, never from a
+ * JWT claim.
  */
 @Slf4j
 @Service
@@ -100,6 +107,7 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider tokenProvider;
     private final LoginHistoryService history;
+    private final MenuAuthorizationService menuAuthService;
 
     @Transactional
     public LoginResponse login(LoginRequest req, String ipAddr, String langCd) {
@@ -284,6 +292,15 @@ public class AuthService {
         // for it. Null when the issuing tenant row had no PRDT_TYPE.
         String prdtType = principal.prdtType();
 
+        // Menu Authorization. Admins bypass filtering (allMenus=true);
+        // normal users get only their USE_YN='Y' grants from
+        // USER_MENU_AUTH_INFM. Resolved fresh per /me (no JWT menu claim)
+        // so entitlement edits apply on the next reload without re-login.
+        boolean allMenus = TenantContext.AUTH_GR_ADMIN.equals(authGrCd);
+        List<String> allowedMenuCds = allMenus
+                ? List.of()
+                : menuAuthService.grantedMenuCds(bizKey, userId);
+
         return new MeResponse(
                 user.getUserId(),
                 user.getUserNm(),
@@ -292,7 +309,9 @@ public class AuthService {
                 cmpnNm,
                 authGrCd,
                 prdtType,
-                taxId
+                taxId,
+                allMenus,
+                allowedMenuCds
         );
     }
 

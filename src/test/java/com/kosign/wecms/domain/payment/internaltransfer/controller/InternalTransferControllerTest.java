@@ -58,11 +58,13 @@ class InternalTransferControllerTest {
     private MockMvc mvc;
     private InternalTransferService         service;
     private InternalTransferDispatchService dispatchService;
+    private com.kosign.wecms.domain.payment.match.service.DomesticPaymentLineMatchService lineMatchService;
 
     @BeforeEach
     void setUp() {
         service         = mock(InternalTransferService.class);
         dispatchService = mock(InternalTransferDispatchService.class);
+        lineMatchService = mock(com.kosign.wecms.domain.payment.match.service.DomesticPaymentLineMatchService.class);
 
         ObjectMapper mapper = new ObjectMapper()
                 .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
@@ -76,7 +78,7 @@ class InternalTransferControllerTest {
         GlobalExceptionHandler advice = new GlobalExceptionHandler(messages);
 
         mvc = MockMvcBuilders
-                .standaloneSetup(new InternalTransferController(service, dispatchService))
+                .standaloneSetup(new InternalTransferController(service, dispatchService, lineMatchService))
                 .setMessageConverters(jsonConverter)
                 .setControllerAdvice(advice)
                 .build();

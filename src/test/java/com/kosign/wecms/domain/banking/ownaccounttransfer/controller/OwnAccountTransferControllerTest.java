@@ -53,10 +53,12 @@ class OwnAccountTransferControllerTest {
 
     private MockMvc mvc;
     private OwnAccountTransferService service;
+    private OatNxisasService nxisasService;
 
     @BeforeEach
     void setUp() {
         service = mock(OwnAccountTransferService.class);
+        nxisasService = mock(OatNxisasService.class);
 
         ObjectMapper mapper = new ObjectMapper()
                 .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
@@ -276,12 +278,15 @@ class OwnAccountTransferControllerTest {
     void napasLookup_happyPath() throws Exception {
         when(service.lookupNapasBankInfo("970424"))
                 .thenReturn(new NapasBankInfoRow(
-                        "970424", null, null, null, "11704088"));
+                        "970424", "SHINHAN BANK",
+                        "Shinhan Bank Vietnam Limited", "신한은행", "11704088"));
 
         mvc.perform(get("/api/v1/banking/own-account-transfer/napas-bank-info/{n}", "970424"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status.error",   is(false)))
                 .andExpect(jsonPath("$.data.napas_bank_cd", is("970424")))
+                .andExpect(jsonPath("$.data.short_name",    is("SHINHAN BANK")))
+                .andExpect(jsonPath("$.data.long_name_en",  is("Shinhan Bank Vietnam Limited")))
                 .andExpect(jsonPath("$.data.bank_cd",       is("11704088")));
     }
 

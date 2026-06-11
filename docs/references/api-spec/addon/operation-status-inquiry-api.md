@@ -1,5 +1,7 @@
 # Add-on Service > Operation Status Inquiry — Backend API Design
 
+> **Consolidated feature docs:** see [../../../features/addon-service/operation-status-inquiry/](../../../features/addon-service/operation-status-inquiry/) — especially [interface-specification.md](../../../features/addon-service/operation-status-inquiry/interface-specification.md) for the current (completed) REST contract. This file remains the deep API-design reference.
+
 **Module:** Add-on Service · `domain/operation/`
 **Refactor screen ID (proposed):** `addon-operation-status`
 **JEX counterpart:** `aosv_0001_001_r001` (read) — `aosv_0001_001_u001` (write, OUT of scope)
@@ -130,14 +132,23 @@ The four pagination fields land in the same MR as the server-side pagination wir
 
 ### Wire field naming — divergence vs legacy WSVC
 
-| Legacy WSVC `REC` field | Refactor `OperationStatusRow` field | Decision |
+> **Casing corrected 2026-06-06 (source-verified).** The refactor wire is
+> **lowercase `snake_case`**, not UPPER. `operation/dto/` carries **no**
+> `@JsonProperty` (global Jackson `SNAKE_CASE`), and the frontend
+> `ApiOperationStatusRow` (`lib/types/api.ts:1201-1208`) + mapper
+> (`lib/api/mappers.ts:736-740`, reads `api.taxcode` / `api.company_nm` /
+> `api.status_cd`) confirm lowercase. The "Refactor field" column below is shown
+> in legacy UPPER for traceability — read each as its lowercase wire form. See
+> [field-casing-parity-audit-2026-06-06.md](../../../audits/field-casing-parity-audit-2026-06-06.md).
+
+| Legacy WSVC `REC` field | Refactor wire field (lowercase) | Decision |
 |---|---|---|
-| `TAXCODE` | `TAXCODE` | ✅ aligned |
-| `COMPANYNAME` | `COMPANY_NM` | ⚠️ diverges — Phase 4 task #6 in planning doc decides whether to keep the refactor name or revert to legacy parity |
-| `COMPANYSTATUS` | `COMPANY_STATUS` | ⚠️ diverges (underscore inserted) — same Phase 4 decision |
-| (n/a — refactor-only) | `STATUS_CD` | Refactor addition — canonical 3-state enum, derived server-side |
-| `OFFICEADD` | `OFFICE_ADD` | ⚠️ diverges (underscore inserted) — same Phase 4 decision |
-| `SEARCHDATETIME` | `LAST_UPDATE` | ⚠️ diverges (renamed) — same Phase 4 decision |
+| `TAXCODE` | `taxcode` | ✅ aligned (semantic) |
+| `COMPANYNAME` | `company_nm` | ⚠️ diverges — Phase 4 task #6 in planning doc decides whether to keep the refactor name or revert to legacy parity |
+| `COMPANYSTATUS` | `company_status` | ⚠️ diverges (underscore inserted) — same Phase 4 decision |
+| (n/a — refactor-only) | `status_cd` | Refactor addition — canonical 3-state enum, derived server-side |
+| `OFFICEADD` | `office_add` | ⚠️ diverges (underscore inserted) — same Phase 4 decision |
+| `SEARCHDATETIME` | `last_update` | ⚠️ diverges (renamed) — same Phase 4 decision |
 | `REPRESENTATIVEFIRSTNAME` | (not surfaced today) | Phase 4 task #6 — register column with `USE_YN='N'` so opt-in is seed-only |
 
 **Sales e-Invoices precedent (IR-7):** keep legacy WSVC field names verbatim for traceability. If Phase 4 follows that precedent, the refactor flips to `COMPANYNAME` / `COMPANYSTATUS` / `OFFICEADD` / `SEARCHDATETIME` and the frontend mapper [`mapOperationCompanyRow`](../../../../../wecms-web/lib/api/mappers.ts) absorbs the rename in a single MR.

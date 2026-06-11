@@ -4,6 +4,7 @@ import com.kosign.wecms.common.export.ExcelExportRequest;
 import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.response.ApiResponse;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxActionResponse;
+import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxApprover;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxBulkApproveRequest;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxBulkApproveResponse;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxListResponse;
@@ -22,6 +23,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.access.prepost.PreAuthorize;
+
+import java.util.List;
 
 /**
  * Payment &gt; Approval Box — REST endpoints. Mirrors the legacy
@@ -51,6 +55,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/payment/approval-box")
 @RequiredArgsConstructor
+@PreAuthorize("@menuAuthz.canAccess('payment-approval-box')")
 public class ApprovalBoxController {
 
     private final ApprovalBoxService service;
@@ -83,6 +88,18 @@ public class ApprovalBoxController {
         return ApiResponse.ok(service.list(
                 fromDate, toDate, srchWd, apprTypeCd,
                 sortField, sortDirection, page, size));
+    }
+
+    /**
+     * Real approver chain for one approval document (ordered by line).
+     * Read-only; used by the payment Scheduled detail pages to render the
+     * true {@code APPRVR_STTS} chips and gate Approve/Reject on the current
+     * pending approver — legacy {@code comm_0195_001} / {@code APPR_YN}
+     * parity. Tenant + user scoping is enforced in the service.
+     */
+    @GetMapping("/{apprSeqNo}/approvers")
+    public ApiResponse<List<ApprovalBoxApprover>> approvers(@PathVariable String apprSeqNo) {
+        return ApiResponse.ok(service.approvers(apprSeqNo));
     }
 
     /**

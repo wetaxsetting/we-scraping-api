@@ -1,5 +1,22 @@
 # Internal Transfer — Refactor Feature Spec
 
+> ## Functional-flow docs (this folder) — source-code-verified 2026-06-08
+>
+> Internal Transfer is documented as **four distinct functional flows**, each traced from the actual controllers / services / repositories / DTOs / entities (backend) and pages / components / hooks / API clients / types (frontend). Source code is the authority — where this baseline spec's older "Phase A stub" language disagrees with current code, the flow docs win.
+>
+> | Doc | Flow |
+> |---|---|
+> | [upload-create-flow.md](upload-create-flow.md) | **Flow 1** — Upload / Create Internal Transfer (Excel parse → preview → save draft) |
+> | [scheduled-transfer-flow.md](scheduled-transfer-flow.md) | **Flow 2** — Scheduled Transfer (search / detail / edit / delete / dispatch) |
+> | [transfer-result-flow.md](transfer-result-flow.md) | **Flow 3** — Transfer Result (executed-result list + per-line detail + export) |
+> | [approval-flow.md](approval-flow.md) | **Flow 4** — Approval / Approval Box (request → status → approve / reject / withdraw / change-line) |
+> | [refactor-gap-analysis.md](refactor-gap-analysis.md) | Legacy-vs-refactor parity matrix + the "Re-submit after reject" verification (intentional match) |
+> | [source-code-index.md](source-code-index.md) | Complete Legacy → Backend → Frontend file map |
+>
+> **Status correction (verified against current code, supersedes the "Phase A stub" notes below):** the Excel parser is a **real Apache POI parser** (`InternalTransferExcelParser`), not a stub; dispatch **writes the real `TB_PAY_*` rows** via `InternalTransferDispatchExecutor`; request-approval performs the **real `EXPT_RESOL_MSTR` + `EXPT_RESOL_APPRVR_INFM` fan-out** and approve/reject delegate to `ApprovalBoxService` (advancing the approver chain). The frontend `lib/api/internalTransfer.ts` Javadoc still calls several of these "stub" — that comment is stale; the wire calls are live. The four flow docs reflect the live behaviour.
+>
+> The rich, source-cited reference content below (screen inventory, data model, validation, state machine, cut-off table) remains valid and is cross-linked from the flow docs.
+
 ## Screens (this feature)
 
 The four screens are sections of this hub (no separate per-screen files). Full per-screen detail is in

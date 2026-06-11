@@ -427,15 +427,16 @@ public class OwnAccountTransferService {
                 napasBankCd,
                 row.getBankCd());
 
-        // short_name / long_name_en / long_name_vn are not mapped on
-        // the current refactor entity (composer-scope; see entity
-        // Javadoc). Ship them as null on the wire so the composer can
-        // fill them in once the wider projection lands.
+        // B9 (2026-06-04): the dictionary's display-name columns are now
+        // mapped on NapasBankInfo, so the lookup returns the recipient
+        // bank names instead of nulls — matching legacy
+        // trns_0001_001_r003 which returns SHORT_NAME / LONG_NAME_EN /
+        // LONG_NAME_VN.
         return new NapasBankInfoRow(
                 row.getNapasBankCd(),
-                null,
-                null,
-                null,
+                row.getShortName(),
+                row.getLongNameEn(),
+                row.getLongNameVn(),
                 row.getBankCd());
     }
 
@@ -820,7 +821,13 @@ public class OwnAccountTransferService {
                 a.getBankCd(),
                 resolveBankName(a.getBankCd()),
                 a.getAcctNo(),
-                a.getAcctNickNm() != null ? a.getAcctNickNm() : a.getAcctNm(),
+                // Account Nickname column — legacy parity
+                // (`trns_0001_001_v001.ts:497` renders
+                // `null2void(ACCT_NICK_NM)`: the raw nickname, blank when
+                // null). Do NOT fall back to ACCT_NM (the product name,
+                // e.g. "E-Time Deposit (VND)") — legacy never shows it in
+                // this column.
+                a.getAcctNickNm(),
                 a.getAcctTypeCd(),
                 a.getBal(),
                 a.getRealAmt(),

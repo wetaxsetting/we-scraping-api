@@ -1,7 +1,5 @@
 package com.kosign.wecms.domain.banking.dto;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
-
 import java.util.List;
 
 /**
@@ -11,22 +9,26 @@ import java.util.List;
  * grouped by bank with sub-totals + TOTAL rows. Sprint 1 ships a fixed
  * seeded dataset (deterministic, sourced from V17 seed) until the real
  * ledger query lands in Sprint 2.
+ *
+ * <p>Wire is lowercase snake_case via the global Jackson SNAKE_CASE strategy.
+ * Note the {@code balance} component serialises as {@code balance} (not
+ * {@code bal}) since the wire name follows the camelCase field.
  */
 public record DailyFinancialHsReport(
-        @JsonProperty("AS_OF_DT") String asOfDt,
-        @JsonProperty("BANK_CD")  String bankCd,
-        @JsonProperty("ROWS")     List<LedgerRow> rows
+        String asOfDt,
+        String bankCd,
+        List<LedgerRow> rows
 ) {
     public record LedgerRow(
-            @JsonProperty("BANK_NM")        String bankNm,
-            @JsonProperty("ACCT_NO")        String acctNo,
-            @JsonProperty("CCY_CD")         String ccyCd,
-            @JsonProperty("RCV_PAY_CD")     String rcvPayCd,
-            @JsonProperty("DESCRIPTION_KO") String descriptionKo,
-            @JsonProperty("DESCRIPTION_EN") String descriptionEn,
-            @JsonProperty("DEBIT")          String debit,
-            @JsonProperty("CREDIT")         String credit,
-            @JsonProperty("BAL")            String balance,
-            @JsonProperty("ROW_TYPE")       String rowType  /* DETAIL | SUBTOTAL | TOTAL */
+            String bankNm,
+            String acctNo,
+            String ccyCd,
+            String rcvPayCd,
+            String descriptionKo,
+            String descriptionEn,
+            String debit,
+            String credit,
+            String balance,
+            String rowType  /* DETAIL | SUBTOTAL | TOTAL */
     ) { }
 }

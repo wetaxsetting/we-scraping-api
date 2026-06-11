@@ -1,5 +1,12 @@
 # Settings > Firm Banking History — Refactor Feature Spec
 
+> 📁 **The primary documentation home is now the folder
+> [firm-banking-history/](firm-banking-history/README.md).** This file is preserved as the
+> **detailed phase-by-phase implementation narrative** (Phases 2–3d: DICTIONARY_VAN port, scraping
+> result-code bundle, service-name resolver, EllipsisTooltip) and is cross-linked from the folder
+> README. For the consolidated, current-state docs (business flow, functional spec, DB mapping,
+> interface spec, source index, migration guide, test scenarios, gap analysis) start at the folder.
+
 **Module:** Settings
 **Menu:** Firm Banking History
 **Refactor screen ID / slug:** `firm-banking-history`
@@ -519,7 +526,7 @@ No new error codes are introduced. The existing framework codes (`WBE_VALIDATION
 
 ### 6.1 Source tables (DEV — read-only reference, mirror locally)
 
-Schema captured from `wecmsvndev` on 2026-05-08 via the read-only `postgres_dev` MCP. Full column lists in [../../database/settings/firm-banking-history-schema.md](../../references/database/settings/firm-banking-history-schema.md). High-level shape:
+Schema captured from `wecmsvndev` on 2026-05-08 via the read-only `postgres_dev_server_jexframe` MCP. Full column lists in [../../database/settings/firm-banking-history-schema.md](../../references/database/settings/firm-banking-history-schema.md). High-level shape:
 
 | Table | PK | Columns used by this screen | DEV row count (2026-05-08) | Local status |
 |---|---|---|---|---|

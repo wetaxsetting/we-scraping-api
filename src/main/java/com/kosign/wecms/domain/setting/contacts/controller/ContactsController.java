@@ -1,5 +1,7 @@
 package com.kosign.wecms.domain.setting.contacts.controller;
 
+import com.kosign.wecms.common.export.ExcelExportRequest;
+import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.response.ApiResponse;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactBankListResponse;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactBulkDeleteRequest;
@@ -22,6 +24,7 @@ import com.kosign.wecms.domain.setting.contacts.service.ContactsFileService;
 import com.kosign.wecms.domain.setting.contacts.service.ContactsFileService.DownloadResource;
 import com.kosign.wecms.domain.setting.contacts.service.ContactsImportService;
 import com.kosign.wecms.domain.setting.contacts.service.ContactsService;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import java.io.IOException;
@@ -46,6 +49,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.multipart.MultipartFile;
 
 /**
@@ -69,11 +73,13 @@ import org.springframework.web.multipart.MultipartFile;
 @RequestMapping("/api/v1/settings/contacts")
 @RequiredArgsConstructor
 @Validated
+@PreAuthorize("@menuAuthz.canAccess('settings-core-contacts')")
 public class ContactsController {
 
     private final ContactsService service;
     private final ContactsImportService importService;
     private final ContactsFileService fileService;
+    private final ExcelExportService excelExportService;
 
     /**
      * List managed (non-trashed) contacts for the current tenant.
@@ -160,6 +166,26 @@ public class ContactsController {
             @Valid @RequestBody ContactBulkDeleteRequest request) {
         service.bulkSoftDelete(request.trcoKeys());
         return ApiResponse.ok(null);
+    }
+
+    /**
+     * Excel export of the live contact list — shared common pipeline
+     * ({@link ExcelExportService}). Mirrors legacy
+     * {@code comm_0184_001_r006_excel} (the Download &rarr; Local /
+     * Overseas Contacts dropdown). The request body carries the
+     * provider-selecting {@code screenId}
+     * ({@code settings-contacts-local} / {@code settings-contacts-overseas}),
+     * the column set, and optional {@code filters.keyword}; the
+     * {@code ContactsExportProvider} re-runs {@link ContactsService#listForExport}
+     * so the export shares the list's tenant scope + active-only +
+     * type + keyword filtering. Streams XLSX bytes (not JSON), so it
+     * returns {@code void} and writes straight to the response.
+     */
+    @PostMapping("/export")
+    public void export(
+            @Valid @RequestBody ExcelExportRequest request,
+            HttpServletResponse response) {
+        excelExportService.exportTo(response, request);
     }
 
     /**

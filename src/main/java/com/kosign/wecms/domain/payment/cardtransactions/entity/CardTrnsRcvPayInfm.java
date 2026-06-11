@@ -16,7 +16,7 @@ import java.math.BigDecimal;
  * documents (expenses / receipts) live on
  * {@code BUSA_DOC_RCV_PAY_HIS}.
  *
- * <p>Schema landed in V200; DEV parity verified via {@code postgres_dev}
+ * <p>Schema landed in V200; DEV parity verified via {@code postgres_dev_server_jexframe}
  * MCP 2026-05-21.
  *
  * <p>Powers the legacy {@code card_0001_002_c001} create path; the

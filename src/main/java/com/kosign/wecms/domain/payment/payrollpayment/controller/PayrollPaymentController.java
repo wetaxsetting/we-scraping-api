@@ -16,6 +16,10 @@ import com.kosign.wecms.domain.payment.internaltransfer.dto.TransferResultDetail
 import com.kosign.wecms.domain.payment.internaltransfer.dto.TransferResultListResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.UpdateReportingAccountRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.WithdrawalAccountRow;
+import com.kosign.wecms.domain.payment.payrollpayment.dto.PayrollMatchCandidateListResponse;
+import com.kosign.wecms.domain.payment.payrollpayment.dto.PayrollMatchRequest;
+import com.kosign.wecms.domain.payment.payrollpayment.dto.PayrollMatchResultResponse;
+import com.kosign.wecms.domain.payment.payrollpayment.service.PayrollBankingMatchService;
 import com.kosign.wecms.domain.payment.payrollpayment.service.PayrollPaymentResultService;
 import com.kosign.wecms.domain.payment.payrollpayment.service.PayrollPaymentService;
 import com.kosign.wecms.domain.payment.payrollpayment.service.PayrollPaymentService.DownloadResource;
@@ -47,6 +51,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.multipart.MultipartFile;
 
 /**
@@ -71,6 +76,7 @@ import org.springframework.web.multipart.MultipartFile;
 @RequestMapping("/api/v1/payment/payroll-payment")
 @RequiredArgsConstructor
 @Validated
+@PreAuthorize("@menuAuthz.canAccess('payment-payroll-scheduled')")
 public class PayrollPaymentController {
 
     /** Path-segment guard for {@code scdul_pymn_no} values. Accepts both
@@ -85,6 +91,7 @@ public class PayrollPaymentController {
 
     private final PayrollPaymentService       service;
     private final PayrollPaymentResultService resultService;
+    private final PayrollBankingMatchService  matchService;
     private final ExcelExportService          excelExportService;
 
     @GetMapping
@@ -111,6 +118,7 @@ public class PayrollPaymentController {
     }
 
     @GetMapping("/results")
+    @PreAuthorize("@menuAuthz.canAccess('payment-payroll-result')")
     public ApiResponse<TransferResultListResponse> listResults(
             @RequestParam("from_date")                                String fromDate,
             @RequestParam("to_date")                                  String toDate,
@@ -126,6 +134,7 @@ public class PayrollPaymentController {
     }
 
     @GetMapping("/results/{id}")
+    @PreAuthorize("@menuAuthz.canAccess('payment-payroll-result')")
     public ApiResponse<TransferResultDetailResponse> resultDetail(
             @PathVariable("id")
             @Size(max = 30)
@@ -137,6 +146,7 @@ public class PayrollPaymentController {
     /** Excel export of the Payroll Payment Result list. Provider:
      *  {@code PayrollPaymentResultExportProvider} (CLAUDE.md §13b). */
     @PostMapping("/results/export")
+    @PreAuthorize("@menuAuthz.canAccess('payment-payroll-result')")
     public void exportResults(
             @Valid @RequestBody ExcelExportRequest request,
             HttpServletResponse response) {
@@ -249,6 +259,49 @@ public class PayrollPaymentController {
             @Valid @RequestBody DispatchRequest req) {
         service.dispatch(id, req);
         return ApiResponse.ok(null);
+    }
+
+    /* ----------------------------------------------------------------
+     *  Banking match — Result detail (legacy pymn_0006_002 + comm_0197_*)
+     *  Header-level / batch-level, 1:1. No Unmatch-All (Payroll). Phase 2:
+     *  backend only — no frontend UI yet.
+     * ---------------------------------------------------------------- */
+
+    /** Candidate bank transactions for a Payroll batch (legacy
+     *  {@code comm_0197_001_r001} batch path). Candidates are pinned to the
+     *  batch's exact pay date + total amount; the popup's date range is
+     *  non-filtering (legacy parity). */
+    @GetMapping("/{id}/match/candidates")
+    public ApiResponse<PayrollMatchCandidateListResponse> matchCandidates(
+            @PathVariable("id")
+            @Size(max = 30)
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id,
+            @RequestParam(value = "srch_wd", required = false) String srchWd) {
+        return ApiResponse.ok(matchService.listCandidates(id, srchWd));
+    }
+
+    /** Match a Payroll batch to a bank transaction (legacy
+     *  {@code comm_0197_001_c001} batch path). */
+    @PostMapping("/{id}/match")
+    public ApiResponse<PayrollMatchResultResponse> match(
+            @PathVariable("id")
+            @Size(max = 30)
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id,
+            @Valid @RequestBody PayrollMatchRequest req) {
+        return ApiResponse.ok(matchService.match(id, req));
+    }
+
+    /** Unmatch a Payroll batch (legacy {@code comm_0197_002_u001} batch path).
+     *  No Unmatch-All for Payroll. */
+    @DeleteMapping("/{id}/match")
+    public ApiResponse<PayrollMatchResultResponse> unmatch(
+            @PathVariable("id")
+            @Size(max = 30)
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id) {
+        return ApiResponse.ok(matchService.unmatch(id));
     }
 
     /* ----------------------------------------------------------------

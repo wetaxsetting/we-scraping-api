@@ -11,6 +11,12 @@ import com.kosign.wecms.domain.payment.internaltransfer.dto.UpdateReportingAccou
 import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferDispatchService;
 import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService;
 import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService.DownloadResource;
+import com.kosign.wecms.domain.payment.internaltransfer.service.ScdulPymnTypeCd;
+import com.kosign.wecms.domain.payment.match.dto.PaymentLineMatchCandidateListResponse;
+import com.kosign.wecms.domain.payment.match.dto.PaymentLineMatchRequest;
+import com.kosign.wecms.domain.payment.match.dto.PaymentLineMatchResultResponse;
+import com.kosign.wecms.domain.payment.match.dto.PaymentLineUnmatchAllResponse;
+import com.kosign.wecms.domain.payment.match.service.DomesticPaymentLineMatchService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -33,6 +39,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
@@ -77,6 +84,7 @@ import java.nio.file.Files;
 @RequestMapping("/api/v1/payment/internal-transfer")
 @RequiredArgsConstructor
 @Validated
+@PreAuthorize("@menuAuthz.canAccess('payment-internal-transfer-scheduled')")
 public class InternalTransferController {
 
     /** Pattern for the {@code scdul_pymn_no} path component. Refactor
@@ -94,6 +102,7 @@ public class InternalTransferController {
 
     private final InternalTransferService         service;
     private final InternalTransferDispatchService dispatchService;
+    private final DomesticPaymentLineMatchService lineMatchService;
 
     /* ----------------------------------------------------------------
      *  Read
@@ -511,5 +520,64 @@ public class InternalTransferController {
             com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalActionRequest req) {
         service.actOnApproval(id, req);
         return ApiResponse.ok(null);
+    }
+
+    /* ============================================================
+     * Banking Match (G21b) — per-line, legacy comm_0197_* domestic path.
+     * Internal Transfer batches carry SCDUL_PYMN_TYPE_CD = '03'.
+     * ============================================================ */
+
+    /**
+     * Candidate bank transactions for an Internal Transfer payment line
+     * (legacy {@code comm_0197_001_r001} domestic path).
+     */
+    @GetMapping("/{id}/lines/{lineId}/match/candidates")
+    public ApiResponse<PaymentLineMatchCandidateListResponse> matchCandidates(
+            @PathVariable("id")
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id,
+            @PathVariable("lineId")
+            @Pattern(regexp = SCDUL_PYMN_DETL_NO_PATTERN, message = "lineId: invalid scdul_pymn_detl_no format")
+            String lineId,
+            @RequestParam(value = "match_rmrk_yn", required = false) String matchRmrkYn,
+            @RequestParam(value = "srch_wd",       required = false) String srchWd) {
+        return ApiResponse.ok(lineMatchService.listCandidates(
+                ScdulPymnTypeCd.INTERNAL.code(), id, lineId, matchRmrkYn, srchWd));
+    }
+
+    /** Match an Internal Transfer payment line to a bank transaction (legacy {@code comm_0197_001_c001}). */
+    @PostMapping("/{id}/lines/{lineId}/match")
+    public ApiResponse<PaymentLineMatchResultResponse> match(
+            @PathVariable("id")
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id,
+            @PathVariable("lineId")
+            @Pattern(regexp = SCDUL_PYMN_DETL_NO_PATTERN, message = "lineId: invalid scdul_pymn_detl_no format")
+            String lineId,
+            @Valid @RequestBody PaymentLineMatchRequest req) {
+        return ApiResponse.ok(lineMatchService.match(
+                ScdulPymnTypeCd.INTERNAL.code(), id, lineId, req));
+    }
+
+    /** Unmatch a single Internal Transfer payment line (legacy {@code comm_0197_002_u001}). */
+    @DeleteMapping("/{id}/lines/{lineId}/match")
+    public ApiResponse<PaymentLineMatchResultResponse> unmatch(
+            @PathVariable("id")
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id,
+            @PathVariable("lineId")
+            @Pattern(regexp = SCDUL_PYMN_DETL_NO_PATTERN, message = "lineId: invalid scdul_pymn_detl_no format")
+            String lineId) {
+        return ApiResponse.ok(lineMatchService.unmatch(
+                ScdulPymnTypeCd.INTERNAL.code(), id, lineId));
+    }
+
+    /** Unmatch every matched line under an Internal Transfer batch (legacy {@code comm_0197_001_u001}). */
+    @DeleteMapping("/{id}/matches")
+    public ApiResponse<PaymentLineUnmatchAllResponse> unmatchAll(
+            @PathVariable("id")
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id) {
+        return ApiResponse.ok(lineMatchService.unmatchAll(ScdulPymnTypeCd.INTERNAL.code(), id));
     }
 }

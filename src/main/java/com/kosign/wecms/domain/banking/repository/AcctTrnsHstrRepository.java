@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 public interface AcctTrnsHstrRepository extends JpaRepository<AcctTrnsHstr, AcctTrnsHstrId> {
@@ -19,6 +20,32 @@ public interface AcctTrnsHstrRepository extends JpaRepository<AcctTrnsHstr, Acct
     /** Variant without a date range — used when the UI does not supply from/to. */
     List<AcctTrnsHstr> findByBizKeyAndBankCdAndAcctNoOrderByTrscDtDescTrscTmDesc(
             String bizKey, String bankCd, String acctNo);
+
+    /**
+     * All transactions for a tenant on a single {@code TRSC_DT}
+     * ({@code yyyyMMdd}). Powers the Daily Financial per-account daily
+     * debit/credit aggregates (legacy {@code DAILY_FINCL_REPT_DAILY_SUMR_DETL}
+     * SND/RCV/INTL columns, live-computed — see
+     * {@code docs/features/banking/reports/daily-financial/P0-fix-plan.md}).
+     * Grouping by {@code (bank_cd, acct_no)} happens in the service.
+     */
+    List<AcctTrnsHstr> findByBizKeyAndTrscDt(String bizKey, String trscDt);
+
+    /**
+     * As-of end-of-day balance source for Daily Financial — the most
+     * recent transaction row on or before {@code asOf} for one account.
+     * Its {@code BAL} is the running balance after that transaction, i.e.
+     * the account's end-of-day balance as of the selected date (legacy
+     * {@code DAILY_FINCL_REPT_DAILY_SUMR_DETL.BAL}, live-computed).
+     *
+     * <p>Ordered {@code TRSC_DT desc, TRSC_TM desc, ACCT_SEQ_NO desc} so
+     * the latest same-day transaction wins. Returns empty when the
+     * account has no history on or before {@code asOf}; the service then
+     * falls back to {@code ACCT_MSTR.BAL}.
+     */
+    java.util.Optional<AcctTrnsHstr>
+        findFirstByBizKeyAndBankCdAndAcctNoAndTrscDtLessThanEqualOrderByTrscDtDescTrscTmDescAcctSeqNoDesc(
+            String bizKey, String bankCd, String acctNo, String asOf);
 
     /**
      * Idempotency lookup for the Bank Transaction Sync orchestrator —
@@ -102,7 +129,111 @@ public interface AcctTrnsHstrRepository extends JpaRepository<AcctTrnsHstr, Acct
             @org.springframework.data.repository.query.Param("bizKey") String bizKey,
             @org.springframework.data.repository.query.Param("year") String year);
 
-    /** Smart Organizer — clear the bank-side match link (undo flow). */
+    /**
+     * Payroll banking-match candidate search — header / batch level
+     * (legacy {@code comm_0197_001_r001} batch path,
+     * {@code putBankingCandidateIdoInSumr}). Returns the tenant's
+     * <b>unmatched debit</b> bank transactions on the batch's withdrawal
+     * account whose date + amount equal the batch's pay date + total:
+     *
+     * <ul>
+     *   <li>{@code ACCT_NO = }batch {@code WDRL_ACT_NO}</li>
+     *   <li>{@code INOUT_DV = '2'} (debit / outbound only)</li>
+     *   <li>{@code LINK_MATCH_YN = 'N'} (unmatched only)</li>
+     *   <li>{@code TRSC_DT = }batch {@code PAY_TRAN_DT} (exact)</li>
+     *   <li>{@code TRSC_AMT = }batch {@code TOTAL_TRAN_AMT} (exact)</li>
+     *   <li>optional keyword over {@code BANK_TRNS_SHORT_ID} / {@code RMRK} / {@code RMRK2}</li>
+     * </ul>
+     *
+     * <p>No memo/remark auto-filter (legacy batch path omits it — only the
+     * detail/overseas paths apply it). The legacy optional
+     * {@code TRSC_TM >= transferTime} refinement is intentionally NOT applied
+     * here: it can only narrow an already date+amount+account-pinned set, so
+     * omitting it returns a safe superset (documented Phase-2 simplification).
+     * The popup's date-range picker is non-filtering (legacy parity — the
+     * batch path ignores {@code FROM_DT}/{@code TO_DT}).
+     *
+     * <p>{@code keyword} must be passed pre-lowercased and wrapped in
+     * {@code %…%}, or {@code null} to skip.
+     */
+    @Query("""
+            SELECT h FROM AcctTrnsHstr h
+             WHERE h.bizKey = :bizKey
+               AND h.acctNo = :acctNo
+               AND h.inoutDv = '2'
+               AND h.linkMatchYn = 'N'
+               AND h.trscDt = :trscDt
+               AND h.trscAmt = :trscAmt
+               AND (:keyword IS NULL
+                    OR LOWER(COALESCE(h.bankTrnsShortId, '')) LIKE :keyword
+                    OR LOWER(COALESCE(h.rmrk,  '')) LIKE :keyword
+                    OR LOWER(COALESCE(h.rmrk2, '')) LIKE :keyword)
+             ORDER BY h.trscDt ASC, h.trscTm ASC, h.acctSeqNo ASC
+            """)
+    List<AcctTrnsHstr> findPayrollMatchCandidates(
+            @Param("bizKey") String bizKey,
+            @Param("acctNo") String acctNo,
+            @Param("trscDt") String trscDt,
+            @Param("trscAmt") BigDecimal trscAmt,
+            @Param("keyword") String keyword);
+
+    /**
+     * Domestic payment-line banking-match candidate search — detail-line
+     * level (legacy {@code comm_0197_001_r001} {@code else} /
+     * {@code putBankingCandidateIdoIn} path; shared by Vendor + Expense).
+     * Returns the tenant's <b>unmatched debit</b> bank transactions on the
+     * batch's withdrawal account whose date + amount equal the <i>line's</i>
+     * pay date + amount:
+     *
+     * <ul>
+     *   <li>{@code ACCT_NO = }batch {@code WDRL_ACT_NO}</li>
+     *   <li>{@code INOUT_DV = '2'} (debit / outbound only)</li>
+     *   <li>{@code LINK_MATCH_YN = 'N'} (unmatched only)</li>
+     *   <li>{@code TRSC_DT = }line {@code PAY_TRAN_DT} (exact)</li>
+     *   <li>{@code TRSC_AMT = }line {@code TRAN_AMT} (exact)</li>
+     *   <li>optional remark filter (line {@code TRAN_USAG} ilike {@code RMRK}/{@code RMRK2})
+     *       — passed via {@code memo}; null skips it (legacy {@code MATCH_RMRK_YN='N'})</li>
+     *   <li>optional keyword over {@code BANK_TRNS_SHORT_ID} / {@code RMRK} / {@code RMRK2}</li>
+     * </ul>
+     *
+     * <p>Distinct from {@link #findPayrollMatchCandidates} (header/batch path,
+     * no remark filter) — this is the per-line domestic path that carries the
+     * {@code TRAN_USAG} remark predicate. No currency filter (legacy parity).
+     * The legacy optional {@code TRSC_TM >= transferTime} refinement is NOT
+     * applied (same documented Phase-2 simplification as the payroll path —
+     * it can only narrow an already date+amount+account-pinned set).
+     *
+     * <p>{@code memo} / {@code keyword} must be passed pre-lowercased and
+     * wrapped in {@code %…%}, or {@code null} to skip.
+     */
+    @Query("""
+            SELECT h FROM AcctTrnsHstr h
+             WHERE h.bizKey = :bizKey
+               AND h.acctNo = :acctNo
+               AND h.inoutDv = '2'
+               AND h.linkMatchYn = 'N'
+               AND h.trscDt = :trscDt
+               AND h.trscAmt = :trscAmt
+               AND (:memo IS NULL
+                    OR LOWER(COALESCE(h.rmrk,  '')) LIKE :memo
+                    OR LOWER(COALESCE(h.rmrk2, '')) LIKE :memo)
+               AND (:keyword IS NULL
+                    OR LOWER(COALESCE(h.bankTrnsShortId, '')) LIKE :keyword
+                    OR LOWER(COALESCE(h.rmrk,  '')) LIKE :keyword
+                    OR LOWER(COALESCE(h.rmrk2, '')) LIKE :keyword)
+             ORDER BY h.trscDt ASC, h.trscTm ASC, h.acctSeqNo ASC
+            """)
+    List<AcctTrnsHstr> findDomesticDetailMatchCandidates(
+            @Param("bizKey") String bizKey,
+            @Param("acctNo") String acctNo,
+            @Param("trscDt") String trscDt,
+            @Param("trscAmt") BigDecimal trscAmt,
+            @Param("memo") String memo,
+            @Param("keyword") String keyword);
+
+    /** Smart Organizer — clear the bank-side match link (undo flow). Nulls
+     *  BOTH the SCDUL and OVRS payment-FK pairs, so it is reused as-is by the
+     *  Overseas unmatch path (OVR-G1). */
     @Modifying
     @Transactional
     @Query(value = "UPDATE ACCT_TRNS_HSTR" +
@@ -119,6 +250,93 @@ public interface AcctTrnsHstrRepository extends JpaRepository<AcctTrnsHstr, Acct
     int clearBankRowMatch(
             @Param("bizKey") String bizKey,
             @Param("acctSeqNo") String acctSeqNo,
+            @Param("userId") String userId,
+            @Param("nowDtm") String nowDtm);
+
+    /**
+     * Overseas payment-line banking-match candidate search — per detail line
+     * (legacy {@code comm_0197_001_r001} {@code isOversea} /
+     * {@code putBankingCandidateIdoInOvrs} path). Predicates are identical to
+     * the domestic detail path — unmatched debits on the batch withdrawal
+     * account whose date + amount equal the <i>line's</i> {@code PAY_TRAN_DT}
+     * + {@code TRNF_AMT}, with the optional remark filter sourced from the
+     * overseas line {@code MEMO} (vs the domestic {@code TRAN_USAG}; the term
+     * itself is resolved in the service, so the SQL is shared-shape):
+     *
+     * <ul>
+     *   <li>{@code ACCT_NO = }batch {@code WDRL_ACT_NO}</li>
+     *   <li>{@code INOUT_DV = '2'} (debit / outbound only)</li>
+     *   <li>{@code LINK_MATCH_YN = 'N'} (unmatched only)</li>
+     *   <li>{@code TRSC_DT = }line {@code PAY_TRAN_DT} (exact)</li>
+     *   <li>{@code TRSC_AMT = }line {@code TRNF_AMT} (exact)</li>
+     *   <li>optional remark filter ({@code RMRK}/{@code RMRK2} ilike line {@code MEMO})
+     *       — via {@code memo}; null skips it ({@code match_rmrk_yn='N'})</li>
+     *   <li>optional keyword over {@code BANK_TRNS_SHORT_ID} / {@code RMRK} / {@code RMRK2}</li>
+     * </ul>
+     *
+     * <p>No currency filter (legacy parity). The legacy optional
+     * {@code TRSC_TM >= transferTime} refinement is intentionally NOT applied
+     * — same documented Phase-2 simplification as the domestic / payroll paths
+     * (it can only narrow an already date+amount+account-pinned set, so
+     * omitting it returns a safe superset).
+     *
+     * <p>{@code memo} / {@code keyword} must be passed pre-lowercased and
+     * wrapped in {@code %…%}, or {@code null} to skip. A dedicated method
+     * (rather than reusing {@code findDomesticDetailMatchCandidates}) keeps the
+     * overseas path independently evolvable (e.g. if the time floor is later
+     * required for overseas only).
+     */
+    @Query("""
+            SELECT h FROM AcctTrnsHstr h
+             WHERE h.bizKey = :bizKey
+               AND h.acctNo = :acctNo
+               AND h.inoutDv = '2'
+               AND h.linkMatchYn = 'N'
+               AND h.trscDt = :trscDt
+               AND h.trscAmt = :trscAmt
+               AND (:memo IS NULL
+                    OR LOWER(COALESCE(h.rmrk,  '')) LIKE :memo
+                    OR LOWER(COALESCE(h.rmrk2, '')) LIKE :memo)
+               AND (:keyword IS NULL
+                    OR LOWER(COALESCE(h.bankTrnsShortId, '')) LIKE :keyword
+                    OR LOWER(COALESCE(h.rmrk,  '')) LIKE :keyword
+                    OR LOWER(COALESCE(h.rmrk2, '')) LIKE :keyword)
+             ORDER BY h.trscDt ASC, h.trscTm ASC, h.acctSeqNo ASC
+            """)
+    List<AcctTrnsHstr> findOverseasMatchCandidates(
+            @Param("bizKey") String bizKey,
+            @Param("acctNo") String acctNo,
+            @Param("trscDt") String trscDt,
+            @Param("trscAmt") BigDecimal trscAmt,
+            @Param("memo") String memo,
+            @Param("keyword") String keyword);
+
+    /**
+     * Overseas banking-match — set the bank-side match link (legacy
+     * {@code comm_0197_001_c001} {@code isOversea}). Stamps the OVRS payment
+     * FK pair and explicitly nulls the SCDUL pair (a bank row links to exactly
+     * one payment side). Native UPDATE because the entity does not map the
+     * payment-FK columns. Returns rows updated; the service treats {@code 0}
+     * as "row not found / wrong tenant".
+     */
+    @Modifying
+    @Transactional
+    @Query(value = "UPDATE ACCT_TRNS_HSTR" +
+            "    SET LINK_MATCH_YN = 'Y'," +
+            "        OVRS_PYMN_NO = :ovrsPymnNo," +
+            "        OVRS_PYMN_DETL_NO = :ovrsPymnDetlNo," +
+            "        SCDUL_PYMN_NO = NULL," +
+            "        SCDUL_PYMN_DETL_NO = NULL," +
+            "        MOD_ID = :userId," +
+            "        MOD_DTM = :nowDtm" +
+            "  WHERE BIZ_KEY = :bizKey" +
+            "    AND ACCT_SEQ_NO = :acctSeqNo",
+            nativeQuery = true)
+    int markBankRowMatchedOverseas(
+            @Param("bizKey") String bizKey,
+            @Param("acctSeqNo") String acctSeqNo,
+            @Param("ovrsPymnNo") String ovrsPymnNo,
+            @Param("ovrsPymnDetlNo") String ovrsPymnDetlNo,
             @Param("userId") String userId,
             @Param("nowDtm") String nowDtm);
 }

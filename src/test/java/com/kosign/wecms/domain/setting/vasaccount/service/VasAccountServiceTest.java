@@ -201,6 +201,67 @@ class VasAccountServiceTest {
     }
 
     /* =================================================================
+     *  listAll — load-all (no pagination) for the management panel
+     *  (RISK-1 / RISK-2 fix). Reuses the unpaged search path.
+     * ================================================================= */
+
+    @Test
+    void listAll_returnsFullSet_unpaged() {
+        Page<BusiVasAcctInfm> page = new PageImpl<>(List.of(
+                seed(1L, "111", "Parent", "0", "A"),
+                seed(2L, "1111", "Child", "0", "A")));
+        when(repo.search(eq(BIZ), isNull(), isNull(), any(Pageable.class))).thenReturn(page);
+
+        VasAccountListResponse res = service.listAll(null, null, null, null);
+
+        assertThat(res.list()).hasSize(2);
+        assertThat(res.totalCount()).isEqualTo(2L);
+        assertThat(res.pageNumber()).isEqualTo(0);
+        assertThat(res.pageSize()).isEqualTo(2);
+        assertThat(res.totalPages()).isEqualTo(1);
+    }
+
+    @Test
+    void listAll_requestsUnpagedPageable() {
+        ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
+        when(repo.search(eq(BIZ), isNull(), isNull(), pageableCaptor.capture()))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        service.listAll(null, null, null, null);
+
+        // Single page wide enough to hold the entire tenant set — no
+        // MAX_PAGE_SIZE clamp on this path (that is the point of the fix).
+        assertThat(pageableCaptor.getValue().getPageNumber()).isEqualTo(0);
+        assertThat(pageableCaptor.getValue().getPageSize()).isEqualTo(Integer.MAX_VALUE);
+    }
+
+    @Test
+    void listAll_emptyTenant_zeroTotalPages() {
+        when(repo.search(eq(BIZ), isNull(), isNull(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        VasAccountListResponse res = service.listAll(null, null, null, null);
+
+        assertThat(res.list()).isEmpty();
+        assertThat(res.totalCount()).isZero();
+        assertThat(res.totalPages()).isZero();
+    }
+
+    @Test
+    void listAll_honoursStatusAndSort() {
+        ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
+        when(repo.search(eq(BIZ), eq("A"), isNull(), pageableCaptor.capture()))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        service.listAll(null, List.of("A"), "stts", "DESC");
+
+        verify(repo).search(eq(BIZ), eq("A"), isNull(), any(Pageable.class));
+        Sort.Order primary = pageableCaptor.getValue().getSort().iterator().next();
+        assertThat(primary.getProperty()).isEqualTo("stts");
+        assertThat(primary.getDirection()).isEqualTo(Sort.Direction.DESC);
+    }
+
+    /* =================================================================
      *  detail
      * ================================================================= */
 

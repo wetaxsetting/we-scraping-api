@@ -12,10 +12,19 @@ import com.kosign.wecms.domain.banking.dto.TransactionReportingAccountRequest;
 import com.kosign.wecms.domain.banking.dto.TransactionRow;
 import com.kosign.wecms.domain.banking.dto.TransactionSummaryResponse;
 import com.kosign.wecms.domain.banking.dto.TransactionVasAccountRequest;
+import com.kosign.wecms.domain.auth.entity.UserInfm;
+import com.kosign.wecms.domain.auth.repository.UserInfmRepository;
+import com.kosign.wecms.domain.banking.entity.AcctMstr;
 import com.kosign.wecms.domain.banking.entity.AcctTrnsHstr;
 import com.kosign.wecms.domain.banking.entity.AcctTrnsRcvPayInfm;
+import com.kosign.wecms.domain.banking.entity.BusiMatchLog;
+import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
 import com.kosign.wecms.domain.banking.repository.AcctTrnsHstrRepository;
 import com.kosign.wecms.domain.banking.repository.AcctTrnsRcvPayInfmRepository;
+import com.kosign.wecms.domain.banking.repository.BusiMatchLogRepository;
+import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumr;
+import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrId;
+import com.kosign.wecms.domain.payment.internaltransfer.repository.ScdulPymnSumrRepository;
 import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount;
 import com.kosign.wecms.domain.setting.chartofaccounts.repository.ChartOfAccountRepository;
 import com.kosign.wecms.domain.setting.contacts.entity.TrcoInfm;
@@ -32,6 +41,8 @@ import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -80,6 +91,11 @@ public class TransactionService {
     private final PurposeSettingsRepository purposeRepo;
     private final BusiVasAcctInfmRepository vasAcctRepo;
     private final TrcoInfmRepository contactRepo;
+    private final AcctMstrRepository acctRepo;
+    private final BusiMatchLogRepository matchLogRepo;
+    private final ScdulPymnSumrRepository scdulPymnSumrRepo;
+    private final UserInfmRepository userRepo;
+    private final AccountAccessGuard accountAccessGuard;
 
     @Transactional(readOnly = true)
     public TransactionListResponse list(String acctSeqNo, String fromDt, String toDt, String typeFilter) {
@@ -95,19 +111,23 @@ public class TransactionService {
     public TransactionListResponse list(String acctSeqNo, String fromDt, String toDt,
                                         String typeFilter, String cnfmFilter, String keyword) {
         Resolved r = resolve(acctSeqNo);
-        List<AcctTrnsHstr> rows = fetchRows(r, fromDt, toDt);
-
-        rows = rows.stream()
+        List<AcctTrnsHstr> rows = fetchRows(r, fromDt, toDt).stream()
                 .filter(row -> matchesTypeFilter(row.getInoutDv(), typeFilter))
-                .filter(row -> matchesKeyword(row, keyword))
                 .toList();
 
-        Set<String> confirmedSeqs = confirmedSeqs(r.bizKey, rows);
-        rows = rows.stream()
-                .filter(row -> matchesCnfmFilter(confirmedSeqs.contains(row.getAcctSeqNo()), cnfmFilter))
-                .toList();
-
+        // Classification must be resolved BEFORE the keyword filter so the
+        // keyword can match contact name / purpose / VAS (audit BUG-3 Option A).
         RcvPayClassification classification = rcvPayClassificationBySeq(r.bizKey, rows);
+        rows = rows.stream()
+                .filter(row -> matchesKeyword(row, classification, keyword))
+                .toList();
+
+        Map<String, AcctTrnsRcvPayInfm> confirmedRows = confirmedRowsBySeq(r.bizKey, rows);
+        rows = rows.stream()
+                .filter(row -> matchesCnfmFilter(confirmedRows.containsKey(row.getAcctSeqNo()), cnfmFilter))
+                .toList();
+
+        Map<String, MatchInfo> matchInfo = matchInfoBySeq(r.bizKey, rows);
 
         BigDecimal depositTotal = BigDecimal.ZERO;
         BigDecimal withdrawTotal = BigDecimal.ZERO;
@@ -122,11 +142,12 @@ public class TransactionService {
 
         List<TransactionRow> mapped = rows.stream()
                 .map(row -> toRow(row,
-                        confirmedSeqs.contains(row.getAcctSeqNo()),
+                        confirmedRows.get(row.getAcctSeqNo()),
                         classification.purposeByAcctSeqNo().get(row.getAcctSeqNo()),
                         classification.vasAcctCdByAcctSeqNo().get(row.getAcctSeqNo()),
                         classification.trcoKeyByAcctSeqNo().get(row.getAcctSeqNo()),
-                        classification.trcoNmByAcctSeqNo().get(row.getAcctSeqNo())))
+                        classification.trcoNmByAcctSeqNo().get(row.getAcctSeqNo()),
+                        matchInfo.get(row.getAcctSeqNo())))
                 .toList();
 
         return new TransactionListResponse(
@@ -145,14 +166,18 @@ public class TransactionService {
     public TransactionSummaryResponse summary(String acctSeqNo, String fromDt, String toDt,
                                               String typeFilter, String cnfmFilter, String keyword) {
         Resolved r = resolve(acctSeqNo);
-        List<AcctTrnsHstr> rows = fetchRows(r, fromDt, toDt).stream()
+        List<AcctTrnsHstr> typeFiltered = fetchRows(r, fromDt, toDt).stream()
                 .filter(row -> matchesTypeFilter(row.getInoutDv(), typeFilter))
-                .filter(row -> matchesKeyword(row, keyword))
                 .toList();
 
-        Set<String> confirmedSeqs = confirmedSeqs(r.bizKey, rows);
+        RcvPayClassification classification = rcvPayClassificationBySeq(r.bizKey, typeFiltered);
+        List<AcctTrnsHstr> rows = typeFiltered.stream()
+                .filter(row -> matchesKeyword(row, classification, keyword))
+                .toList();
+
+        Map<String, AcctTrnsRcvPayInfm> confirmedRows = confirmedRowsBySeq(r.bizKey, rows);
         rows = rows.stream()
-                .filter(row -> matchesCnfmFilter(confirmedSeqs.contains(row.getAcctSeqNo()), cnfmFilter))
+                .filter(row -> matchesCnfmFilter(confirmedRows.containsKey(row.getAcctSeqNo()), cnfmFilter))
                 .toList();
 
         BigDecimal depositTotal = BigDecimal.ZERO;
@@ -162,7 +187,7 @@ public class TransactionService {
             BigDecimal amt = row.getTrscAmt() != null ? row.getTrscAmt() : BigDecimal.ZERO;
             if (InoutDv.IN.code().equals(row.getInoutDv())) depositTotal = depositTotal.add(amt);
             else if (InoutDv.OUT.code().equals(row.getInoutDv())) withdrawTotal = withdrawTotal.add(amt);
-            if (confirmedSeqs.contains(row.getAcctSeqNo())) confirmed++;
+            if (confirmedRows.containsKey(row.getAcctSeqNo())) confirmed++;
         }
         return new TransactionSummaryResponse(
                 rows.size(),
@@ -652,16 +677,40 @@ public class TransactionService {
             throw new BusinessException(CODE_BAD_REQUEST);
         }
         int sep = acctSeqNo.indexOf('_');
-        return new Resolved(TenantContext.currentBizKey(),
-                acctSeqNo.substring(0, sep),
-                acctSeqNo.substring(sep + 1));
+        String bizKey = TenantContext.currentBizKey();
+        String bankCd = acctSeqNo.substring(0, sep);
+        String acctNo = acctSeqNo.substring(sep + 1);
+
+        // Audit #29 — per-account data scope. Non-admins may only read/act
+        // on accounts they hold an active View grant for. Runs on every
+        // path (list / summary / detail / confirm / undo / classify /
+        // reporting / export) because they all route through resolve().
+        accountAccessGuard.assertCanView(bizKey, bankCd, acctNo);
+
+        // Audit #5 — the FCY/VND route carries only bankCd_acctNo, so the
+        // currency dimension is recovered from the account master and used
+        // to scope the transaction rows (legacy filters ATH.ccy_cd = ?).
+        String ccyCd = acctRepo.findByBizKeyAndBankCdAndAcctNo(bizKey, bankCd, acctNo)
+                .map(AcctMstr::getCcyCd)
+                .orElse(null);
+
+        return new Resolved(bizKey, bankCd, acctNo, ccyCd);
     }
 
     private List<AcctTrnsHstr> fetchRows(Resolved r, String fromDt, String toDt) {
-        return (fromDt == null || fromDt.isBlank() || toDt == null || toDt.isBlank())
+        List<AcctTrnsHstr> rows = (fromDt == null || fromDt.isBlank() || toDt == null || toDt.isBlank())
                 ? txnRepo.findByBizKeyAndBankCdAndAcctNoOrderByTrscDtDescTrscTmDesc(r.bizKey, r.bankCd, r.acctNo)
                 : txnRepo.findByBizKeyAndBankCdAndAcctNoAndTrscDtBetweenOrderByTrscDtDescTrscTmDesc(
                         r.bizKey, r.bankCd, r.acctNo, fromDt, toDt);
+        // Audit #5 — keep only rows in the account's currency. Single-currency
+        // accounts (the normal case) are unaffected; this prevents FCY/VND
+        // cross-currency leakage when a bank_cd+acct_no holds more than one
+        // currency. When the account master has no row (ccyCd null) the filter
+        // is skipped so the screen still renders.
+        if (r.ccyCd != null && !r.ccyCd.isBlank()) {
+            rows = rows.stream().filter(h -> r.ccyCd.equals(h.getCcyCd())).toList();
+        }
+        return rows;
     }
 
     private static boolean matchesTypeFilter(String inoutDv, String typeFilter) {
@@ -678,27 +727,121 @@ public class TransactionService {
         return true;
     }
 
-    private static boolean matchesKeyword(AcctTrnsHstr row, String keyword) {
+    /**
+     * Keyword match (audit BUG-3 — Option A: backend search widened to match
+     * the on-screen placeholder "amount, contacts name, purpose"). ORs across
+     * remark / remark2 / bank ref no / transaction id (BANK_TRNS_SHORT_ID) /
+     * transaction amount / contact name / purpose code / VAS code — the latter
+     * three sourced from the per-row {@code ACCT_TRNS_RCV_PAY_INFM}
+     * classification. Mirrors the legacy {@code FnshHelper} OR-block
+     * (lines 669-707) within the refactor's data scope.
+     */
+    private static boolean matchesKeyword(AcctTrnsHstr row, RcvPayClassification cls, String keyword) {
         if (keyword == null || keyword.isBlank()) return true;
         String needle = keyword.trim().toLowerCase();
+        String acct = row.getAcctSeqNo();
         return containsLc(row.getRmrk(), needle)
                 || containsLc(row.getRmrk2(), needle)
-                || containsLc(row.getBankRefNo(), needle);
+                || containsLc(row.getBankRefNo(), needle)
+                || containsLc(row.getBankTrnsShortId(), needle)
+                || amountContains(row.getTrscAmt(), needle)
+                || containsLc(cls.trcoNmByAcctSeqNo().get(acct), needle)
+                || containsLc(cls.purposeByAcctSeqNo().get(acct), needle)
+                || containsLc(cls.vasAcctCdByAcctSeqNo().get(acct), needle);
+    }
+
+    private static boolean amountContains(BigDecimal amt, String lcNeedle) {
+        return amt != null && amt.toPlainString().contains(lcNeedle);
     }
 
     private static boolean containsLc(String haystack, String lcNeedle) {
         return haystack != null && haystack.toLowerCase().contains(lcNeedle);
     }
 
-    private Set<String> confirmedSeqs(String bizKey, List<AcctTrnsHstr> rows) {
-        if (rows.isEmpty()) return Set.of();
+    /**
+     * Map each {@code ACCT_SEQ_NO} → its confirmed {@code ACCT_TRNS_RCV_PAY_INFM}
+     * row (CNFM_YN='Y'), so the list/summary can both test confirmed-state and
+     * read the confirmer name + timestamp (audit BUG-1). One query for the
+     * whole page.
+     */
+    private Map<String, AcctTrnsRcvPayInfm> confirmedRowsBySeq(String bizKey, List<AcctTrnsHstr> rows) {
+        if (rows.isEmpty()) return Map.of();
         List<String> seqs = rows.stream().map(AcctTrnsHstr::getAcctSeqNo).toList();
-        Set<String> out = new HashSet<>();
+        Map<String, AcctTrnsRcvPayInfm> out = new HashMap<>();
         for (AcctTrnsRcvPayInfm rp : rcvPayRepo.findByBizKeyAndAcctSeqNoIn(bizKey, seqs)) {
-            if ("Y".equals(rp.getCnfmYn())) out.add(rp.getAcctSeqNo());
+            if ("Y".equals(rp.getCnfmYn())) out.put(rp.getAcctSeqNo(), rp);
         }
         return out;
     }
+
+    /**
+     * Map each matched {@code ACCT_SEQ_NO} → its match metadata (audit BUG-2):
+     * matched-at timestamp + matched-by display name (from {@code BUSI_MATCH_LOG}
+     * keyed by BANK_TRNS_SHORT_ID, with MATCHED_BY resolved to USER_NM via
+     * {@code USER_INFM}) + the payment file name (from {@code SCDUL_PYMN_SUMR}
+     * via the log's PAY_TRNS_ID). Batches every lookup — at most 4 queries for
+     * the whole page, regardless of row count, and short-circuits to empty when
+     * no row on the page is matched.
+     */
+    private Map<String, MatchInfo> matchInfoBySeq(String bizKey, List<AcctTrnsHstr> rows) {
+        Map<String, String> shortIdByAcct = new HashMap<>();
+        for (AcctTrnsHstr h : rows) {
+            if ("Y".equals(h.getLinkMatchYn())) {
+                String sid = h.getBankTrnsShortId();
+                if (sid != null && !sid.isBlank()) shortIdByAcct.put(h.getAcctSeqNo(), sid);
+            }
+        }
+        if (shortIdByAcct.isEmpty()) return Map.of();
+
+        Map<String, BusiMatchLog> logByShortId = new HashMap<>();
+        for (BusiMatchLog log : matchLogRepo.findByBizKeyAndBankTrnsShortIdInAndLockedYn(
+                bizKey, new HashSet<>(shortIdByAcct.values()), "Y")) {
+            logByShortId.put(log.getBankTrnsShortId(), log);
+        }
+        if (logByShortId.isEmpty()) return Map.of();
+
+        Set<String> userIds = new HashSet<>();
+        Set<String> scdulNos = new HashSet<>();
+        for (BusiMatchLog log : logByShortId.values()) {
+            if (log.getMatchedBy() != null && !log.getMatchedBy().isBlank()) userIds.add(log.getMatchedBy());
+            String[] parts = parsePayTrnsId(log.getPayTrnsId());
+            if (parts != null) scdulNos.add(parts[0]);
+        }
+
+        Map<String, String> userNmById = new HashMap<>();
+        if (!userIds.isEmpty()) {
+            for (UserInfm u : userRepo.findAllById(userIds)) userNmById.put(u.getUserId(), u.getUserNm());
+        }
+        Map<String, String> fileByScdul = new HashMap<>();
+        if (!scdulNos.isEmpty()) {
+            List<ScdulPymnSumrId> ids = scdulNos.stream().map(n -> new ScdulPymnSumrId(bizKey, n)).toList();
+            for (ScdulPymnSumr s : scdulPymnSumrRepo.findAllById(ids)) fileByScdul.put(s.getScdulPymnNo(), s.getOrgFileNm());
+        }
+
+        Map<String, MatchInfo> out = new HashMap<>();
+        for (Map.Entry<String, String> e : shortIdByAcct.entrySet()) {
+            BusiMatchLog log = logByShortId.get(e.getValue());
+            if (log == null) continue;
+            String matchedByNm = log.getMatchedBy() != null
+                    ? userNmById.getOrDefault(log.getMatchedBy(), log.getMatchedBy())
+                    : null;
+            String[] parts = parsePayTrnsId(log.getPayTrnsId());
+            String fileNm = parts != null ? fileByScdul.get(parts[0]) : null;
+            out.put(e.getKey(), new MatchInfo(log.getMatchedAt(), matchedByNm, fileNm));
+        }
+        return out;
+    }
+
+    /** {@code SCDUL_PYMN_NO + "_" + DETL_NO} → [{@code scdulPymnNo}, {@code detlNo}]. */
+    private static String[] parsePayTrnsId(String payTrnsId) {
+        if (payTrnsId == null) return null;
+        int sep = payTrnsId.indexOf('_');
+        if (sep <= 0 || sep == payTrnsId.length() - 1) return null;
+        return new String[]{payTrnsId.substring(0, sep), payTrnsId.substring(sep + 1)};
+    }
+
+    /** Match metadata for one bank transaction (audit BUG-2). */
+    private record MatchInfo(String matchedAt, String matchedBy, String fileName) { }
 
     /**
      * Map each {@code ACCT_SEQ_NO} → the picked Purpose
@@ -747,10 +890,12 @@ public class TransactionService {
             Map<String, String> trcoKeyByAcctSeqNo,
             Map<String, String> trcoNmByAcctSeqNo) { }
 
-    private TransactionRow toRow(AcctTrnsHstr r, boolean confirmed,
+    private TransactionRow toRow(AcctTrnsHstr r, AcctTrnsRcvPayInfm cnfm,
                                   String useUsagCd, String vasAcctCd,
-                                  String rcvPayTrcoKey, String rcvPayTrcoNm) {
+                                  String rcvPayTrcoKey, String rcvPayTrcoNm,
+                                  MatchInfo match) {
         boolean isDeposit = InoutDv.IN.code().equals(r.getInoutDv());
+        boolean confirmed = cnfm != null;
         BigDecimal amt = r.getTrscAmt();
         return new TransactionRow(
                 r.getAcctSeqNo(),
@@ -762,17 +907,24 @@ public class TransactionService {
                 AmountFormatter.wire(r.getBal()),
                 r.getRmrk() != null ? r.getRmrk() : "",
                 confirmed ? "Y" : "N",
-                null,
-                null,
+                // Audit BUG-1 — populate the confirmer name + timestamp the
+                // grid's "Confirmed by" column reads (previously hard-coded null).
+                confirmed ? cnfm.getCnfmByUserNm() : null,
+                confirmed ? cnfm.getCnfmDtm() : null,
                 "Y".equals(r.getLinkMatchYn()) ? "Y" : "N",
                 r.getChartAcctCd(),
                 r.getChartAcctSeqNo(),
                 useUsagCd,
                 vasAcctCd,
                 rcvPayTrcoKey,
-                rcvPayTrcoNm
+                rcvPayTrcoNm,
+                // Audit BUG-2 — Transaction ID + Matched file/date/by columns.
+                r.getBankTrnsShortId(),
+                match != null ? match.fileName() : null,
+                match != null ? match.matchedAt() : null,
+                match != null ? match.matchedBy() : null
         );
     }
 
-    private record Resolved(String bizKey, String bankCd, String acctNo) { }
+    private record Resolved(String bizKey, String bankCd, String acctNo, String ccyCd) { }
 }

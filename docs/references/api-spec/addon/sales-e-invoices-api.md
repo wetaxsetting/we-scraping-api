@@ -139,11 +139,11 @@ Request body: shared [`ExcelExportRequest`](../../../../src/main/java/com/kosign
 }
 ```
 
-Backed by:
+Backed by *(casing corrected 2026-06-06 — source-verified; the wire is **lowercase `snake_case`**, NOT `@JsonProperty("UPPER_SNAKE")`. `EInvoiceRow.java` / `EInvoiceListResponse.java` carry **no** `@JsonProperty` — they are camelCase Java records serialized by the global Jackson `SNAKE_CASE` strategy. See [field-casing-parity-audit-2026-06-06.md](../../../audits/field-casing-parity-audit-2026-06-06.md))*:
 
-- [`EInvoiceListResponse`](../../../../src/main/java/com/kosign/wecms/domain/einvoice/dto/EInvoiceListResponse.java) — `record(@JsonProperty("ROWS") rows, @JsonProperty("TOTAL_COUNT") totalCount, @JsonProperty("TOTALS") totals)`
-- [`EInvoiceRow`](../../../../src/main/java/com/kosign/wecms/domain/einvoice/dto/EInvoiceRow.java) — 12 fields, all `@JsonProperty("UPPER_SNAKE")`
-- `EInvoiceListResponse.CurrencyTotal` — `record(CCY_CD, COUNT, AMOUNT)`
+- [`EInvoiceListResponse`](../../../../src/main/java/com/kosign/wecms/domain/einvoice/dto/EInvoiceListResponse.java) — `record(rows, totalCount, totalPages, pageNumber, pageSize, totals)` → wire `rows`, `total_count`, `total_pages`, `page_number`, `page_size`, `totals`
+- [`EInvoiceRow`](../../../../src/main/java/com/kosign/wecms/domain/einvoice/dto/EInvoiceRow.java) — 16-field record → wire `doc_id`, `disp_doc_id`, `issu_dt`, `issu_tm`, `totl_amt`, `tax_amt_sum`, `trco_trsc_ccy_cd`, … (all lowercase snake_case)
+- `EInvoiceListResponse.CurrencyTotal` — `record(ccyCd, count, amount, taxAmount, pretaxAmount)` → wire `ccy_cd`, `count`, `amount`, `tax_amount`, `pretax_amount`
 
 ### Planned shape (extended)
 
@@ -365,8 +365,8 @@ The Expenses sibling registers a separate `screenId="addon-expenses-einvoices"` 
 
 - [`controller/EInvoiceController.java`](../../../../src/main/java/com/kosign/wecms/domain/einvoice/controller/EInvoiceController.java) — `@RestController @RequestMapping("/api/v1/addon")` with the single `@GetMapping("/einvoices")` handler
 - [`service/EInvoiceService.java`](../../../../src/main/java/com/kosign/wecms/domain/einvoice/service/EInvoiceService.java) — list + `resolveDocType` + `toRow` + per-currency `wireAmount` rounding (`HALF_UP`, 2 dp, trailing-zero strip)
-- [`dto/EInvoiceListResponse.java`](../../../../src/main/java/com/kosign/wecms/domain/einvoice/dto/EInvoiceListResponse.java) — `record(ROWS, TOTAL_COUNT, TOTALS)`
-- [`dto/EInvoiceRow.java`](../../../../src/main/java/com/kosign/wecms/domain/einvoice/dto/EInvoiceRow.java) — 12-field record, all `@JsonProperty("UPPER_SNAKE")`
+- [`dto/EInvoiceListResponse.java`](../../../../src/main/java/com/kosign/wecms/domain/einvoice/dto/EInvoiceListResponse.java) — camelCase record `record(rows, totalCount, totalPages, pageNumber, pageSize, totals)` → lowercase snake_case wire (no `@JsonProperty`)
+- [`dto/EInvoiceRow.java`](../../../../src/main/java/com/kosign/wecms/domain/einvoice/dto/EInvoiceRow.java) — 16-field camelCase record → lowercase snake_case wire (**no** `@JsonProperty`; corrected 2026-06-06)
 - [`entity/BusaDocMstr.java`](../../../../src/main/java/com/kosign/wecms/domain/einvoice/entity/BusaDocMstr.java) — JPA entity for `BUSA_DOC_MSTR` (Sprint 1 column subset; DB schema is full DEV parity per V23)
 - [`entity/BusaDocMstrId.java`](../../../../src/main/java/com/kosign/wecms/domain/einvoice/entity/BusaDocMstrId.java) — `@IdClass` composite PK
 - [`repository/BusaDocMstrRepository.java`](../../../../src/main/java/com/kosign/wecms/domain/einvoice/repository/BusaDocMstrRepository.java) — derived finders; date-range + non-range variants; sort via method name

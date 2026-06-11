@@ -7,6 +7,7 @@ import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolApprvrInfmRepository;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
+import com.kosign.wecms.domain.notification.service.NotificationService;
 import com.kosign.wecms.domain.setting.approvalline.entity.ApprovalLineApprover;
 import com.kosign.wecms.domain.setting.approvalline.repository.ApprovalLineApproverRepository;
 import lombok.RequiredArgsConstructor;
@@ -67,6 +68,7 @@ public class ApprovalBoxFanoutService {
     private final ExptResolApprvrInfmRepository approverRepository;
     private final ApprovalLineApproverRepository apprLineApproverRepository;
     private final Clock                         clock;
+    private final NotificationService           notificationService;
 
     /**
      * Persist the master + per-approver rows for one Request Approval
@@ -199,6 +201,16 @@ public class ApprovalBoxFanoutService {
 
         log.info("approval-box fanout bizKey={} apprSeqNo={} apprDv={} approvers={}",
                 bizKey, apprSeqNo, apprDv.code(), approvers.size());
+
+        // Phase-1 notification producer: fan an approval-request notification
+        // out to the approver chain. Card Transactions submits route through this
+        // shared writer. Best-effort + isolated (REQUIRES_NEW) so a notification
+        // failure never rolls back this approval submission.
+        notificationService.notifyApprovalRequested(
+                apprDv.slug(), apprSeqNo, mstr.getDocNo(), titl,
+                approvers.stream()
+                        .map(a -> new NotificationService.Recipient(a.apprvrId(), a.apprvrNm()))
+                        .toList());
     }
 
     /**

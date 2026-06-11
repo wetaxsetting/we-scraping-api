@@ -117,8 +117,10 @@ class TransferHistoryQueryServiceTest {
 
         TransferHistoryRow projected = resp.rows().get(0);
         assertThat(projected.seqNo()).isEqualTo(1L);
+        // G1: REG_DTM 20260515103045 is UTC; normalized to Asia/Ho_Chi_Minh
+        // (UTC+7) → 2026-05-15 17:30 local → trnsDt 20260515, trnsTm 1730.
         assertThat(projected.trnsDt()).isEqualTo("20260515");
-        assertThat(projected.trnsTm()).isEqualTo("1030");
+        assertThat(projected.trnsTm()).isEqualTo("1730");
         assertThat(projected.outBankCode()).isEqualTo("11704088");
         assertThat(projected.outBankNm()).isEqualTo("Shinhan Bank");
         assertThat(projected.inBankCode()).isEqualTo("970418");
@@ -129,6 +131,85 @@ class TransferHistoryQueryServiceTest {
         assertThat(projected.userNm()).isEqualTo("Alice Operator");
         assertThat(projected.owanNm()).isEqualTo("Bob");
         assertThat(projected.rmrk()).isEqualTo("salary");
+    }
+
+    @Test
+    void list_normalizesRegDtmUtcToDisplayZoneCrossingMidnight() {
+        // G1: 20260515200000 UTC + 7h = 2026-05-16 03:00 local — the
+        // display date must roll forward to the next calendar day.
+        NapasRemitTrnsHstr row = row(1L, "11704088", "970418", "VND",
+                BigDecimal.TEN, "00000000", null, "20260515200000",
+                "u1", "", "");
+        when(repo.findAll(any(Specification.class), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(row), Pageable.unpaged(), 1));
+        when(repo.aggregateTotals(anyString(), anyString(), anyString(), any(), any()))
+                .thenReturn(new TransferHistoryTotals(1L, BigDecimal.TEN, BigDecimal.ZERO, 1L, 0L));
+        when(bankCdResolver.resolveBankNm("11704088")).thenReturn("Shinhan");
+        when(legacyFn.resolveNapasOrCitadBankName("970418", "en")).thenReturn("BIDV");
+
+        TransferHistoryRow projected = service.list(
+                req("20260501", "20260520", null, null, null, null, null)).rows().get(0);
+
+        assertThat(projected.trnsDt()).isEqualTo("20260516");
+        assertThat(projected.trnsTm()).isEqualTo("0300");
+    }
+
+    @Test
+    void list_inBankNameResolvesViaNapasCodeAndWireCarriesNapasCode() {
+        // G5/U2 fix (+ G4): the in_bank_nm lookup is fed the NAPAS code
+        // (IN_NAPAS_BANK_CODE, 970xxx) — the key space of tb_firm_bank_code —
+        // NOT the internal IN_BANK_CODE (11704xxx). Feeding the internal code
+        // matched no row and left the To-Bank name blank for every row. The
+        // wire in_bank_code (G4) also carries the NAPAS code, so the resolved
+        // name and the emitted code stay on the same code space.
+        NapasRemitTrnsHstr row = row(1L, "11704088", "970424", "VND",
+                BigDecimal.TEN, "00000000", null, "20260515100000",
+                "u1", "", "");
+        row.setInBankCode("11704088");    // internal code — must NOT reach the resolver
+        row.setInNapasBankCode("970424"); // NAPAS code — keyed in tb_firm_bank_code
+
+        when(repo.findAll(any(Specification.class), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(row), Pageable.unpaged(), 1));
+        when(repo.aggregateTotals(anyString(), anyString(), anyString(), any(), any()))
+                .thenReturn(new TransferHistoryTotals(1L, BigDecimal.TEN, BigDecimal.ZERO, 1L, 0L));
+        when(bankCdResolver.resolveBankNm("11704088")).thenReturn("Shinhan");
+        when(legacyFn.resolveNapasOrCitadBankName("970424", "en")).thenReturn("Shinhan Bank");
+
+        TransferHistoryRow projected = service.list(
+                req("20260501", "20260520", null, null, null, null, null)).rows().get(0);
+
+        // Wire in_bank_code stays the NAPAS code (G4 unchanged).
+        assertThat(projected.inBankCode()).isEqualTo("970424");
+        // To-Bank name resolves via the NAPAS code and is NOT blank (G5/U2 fix).
+        assertThat(projected.inBankNm()).isEqualTo("Shinhan Bank");
+        verify(legacyFn).resolveNapasOrCitadBankName("970424", "en");
+        // The internal code must never reach the NAPAS-keyed resolver.
+        verify(legacyFn, never()).resolveNapasOrCitadBankName(eq("11704088"), anyString());
+    }
+
+    @Test
+    void list_inBankNameIsBlankWhenNapasCodeAbsent() {
+        // Defensive: when IN_NAPAS_BANK_CODE is null/blank the resolver is not
+        // called and in_bank_nm degrades to "" (never an exception, never the
+        // internal code). Mirrors the legacy empty-name fallback.
+        NapasRemitTrnsHstr row = row(1L, "11704088", "970424", "VND",
+                BigDecimal.TEN, "00000000", null, "20260515100000",
+                "u1", "", "");
+        row.setInBankCode("11704088");
+        row.setInNapasBankCode(null);     // no NAPAS code on the row
+
+        when(repo.findAll(any(Specification.class), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(row), Pageable.unpaged(), 1));
+        when(repo.aggregateTotals(anyString(), anyString(), anyString(), any(), any()))
+                .thenReturn(new TransferHistoryTotals(1L, BigDecimal.TEN, BigDecimal.ZERO, 1L, 0L));
+        when(bankCdResolver.resolveBankNm("11704088")).thenReturn("Shinhan");
+
+        TransferHistoryRow projected = service.list(
+                req("20260501", "20260520", null, null, null, null, null)).rows().get(0);
+
+        assertThat(projected.inBankCode()).isEqualTo("");          // no NAPAS code → empty wire code
+        assertThat(projected.inBankNm()).isEqualTo("");            // no resolver call
+        verify(legacyFn, never()).resolveNapasOrCitadBankName(anyString(), anyString());
     }
 
     /* =================================================================

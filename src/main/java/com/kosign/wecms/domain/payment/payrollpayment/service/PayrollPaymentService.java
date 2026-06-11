@@ -13,7 +13,7 @@ import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxActionResponse
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprDv;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxFanoutService;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxService;
-import com.kosign.wecms.domain.payment.dispatch.service.TransferDispatchExecutor;
+import com.kosign.wecms.domain.notification.service.NotificationService;
 import com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalActionRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.CreateScheduledTransferRequest;
@@ -23,6 +23,8 @@ import com.kosign.wecms.domain.payment.internaltransfer.dto.DispatchRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ParseExcelResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalResponse;
+import com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalAttachmentRow;
+import com.kosign.wecms.domain.payment.internaltransfer.dto.ScheduledTransferApprover;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ScheduledTransferDetailResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ScheduledTransferListResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ScheduledTransferRow;
@@ -41,6 +43,7 @@ import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolApprvrInfmRepository;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
+import com.kosign.wecms.domain.payment.internaltransfer.repository.ExptResolFileRepository;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprDv;
 import com.kosign.wecms.domain.payment.service.DocNoGenerator;
 import com.kosign.wecms.domain.payment.internaltransfer.service.CutoffValidator;
@@ -156,7 +159,11 @@ public class PayrollPaymentService {
     private final InternalTransferFileResolver  fileResolver;
     private final ErpTrnsHistoryWriter          erpHistoryWriter;
     private final AuditLogService               auditLogService;
-    private final TransferDispatchExecutor      dispatchExecutor;
+    /** PR2: Payroll-only dispatch executor — file-route only (legacy
+     *  pymn_0005_001_c001), never TB_PAY_TARGET. Replaces the shared
+     *  TransferDispatchExecutor (which routes VND→API, wrong for Payroll).
+     *  The shared executor is left untouched for Vendor/Expense. */
+    private final PayrollDispatchExecutor       payrollDispatchExecutor;
     /** Approver-chain authority — see InternalTransferService for the rationale. */
     private final ApprovalBoxService            approvalBoxService;
     /** Shared projector that resolves the per-line bank name +
@@ -175,6 +182,13 @@ public class PayrollPaymentService {
     private final Clock                         clock;
     private final ExptResolMstrRepository       exptResolMstrRepository;
     private final ExptResolApprvrInfmRepository exptResolApprvrInfmRepository;
+    /** G5: approval-request attachments ({@code EXPT_RESOL_FILE}) keyed by
+     *  {@code APPR_SEQ_NO} — surfaces the Scheduled-detail {@code attachments}
+     *  list (consumed by the shared Approval Details popup). Same wiring as
+     *  {@code VendorPaymentService} / {@code ExpensePaymentService} /
+     *  {@code InternalTransferService}. */
+    private final ExptResolFileRepository       exptResolFileRepository;
+    private final NotificationService           notificationService;
     private final DocNoGenerator                docNoGenerator;
     private final BusiInfmRepository            busiInfmRepository;
 
@@ -206,8 +220,12 @@ public class PayrollPaymentService {
         // and the Payroll Type (APPR_FUND_TP) columns — both join from
         // EXPT_RESOL_MSTR on APPR_SEQ_NO (legacy IDO.SCDUL_PYMN_SUMR_R002).
         Map<String, ExptResolMstr> exptBySeqNo = fetchExptResolByApprSeqNo(bizKey, rows.getContent());
+        // G4: Approver column — first approver name + chain length ([N] badge) +
+        // full ordered chain (popup). Mirrors VendorPaymentService /
+        // ExpensePaymentService / InternalTransferService.buildFirstApproverMap.
+        Map<String, ApproverSummary> approverByApprSeqNo = buildFirstApproverMap(bizKey, rows.getContent());
         List<ScheduledTransferRow> dtoRows = rows.getContent().stream()
-                .map(r -> toListRow(r, exptBySeqNo))
+                .map(r -> toListRow(r, exptBySeqNo, approverByApprSeqNo))
                 .toList();
         List<CurrencyTotal> totals = computeCurrencyTotals(rows.getContent());
 
@@ -254,6 +272,61 @@ public class PayrollPaymentService {
                 .map(d -> transferLineDetailMapper.toLineDetail(d, chartByCode))
                 .toList();
 
+        // G2 (Scheduled detail): requester display name (legacy pymn_0005_003
+        // Requestor cell = EXPT_RESOL_MSTR.DRAFT_USER_NM), looked up by APPR_SEQ_NO.
+        // null when the batch has no approval request yet — the frontend falls back
+        // to regId. Byte-identical wiring to VendorPaymentService / ExpensePaymentService
+        // / InternalTransferService.
+        String apprSeqNo = master.getApprSeqNo();
+        // Load the approval master once and reuse it for both the requester
+        // display name and the scheduled/pay date (EXPT_RESOL_MSTR.PAY_DATE) —
+        // one round-trip, mirroring InternalTransferService.detail().
+        java.util.Optional<ExptResolMstr> apprMstr = (apprSeqNo != null && !apprSeqNo.isBlank())
+                ? exptResolMstrRepository
+                        .findByBizKeyAndApprSeqNoIn(bizKey, java.util.List.of(apprSeqNo))
+                        .stream()
+                        .findFirst()
+                : java.util.Optional.empty();
+        String requestor = apprMstr
+                .map(ExptResolMstr::getDraftUserNm)
+                .filter(s -> s != null && !s.isBlank())
+                .orElse(null);
+        // Scheduled / pay date — EXPT_RESOL_MSTR.PAY_DATE (yyyyMMdd), the same
+        // source the Approval Box entry surfaces; lets the Payroll detail popup
+        // show Scheduled Date consistently. Null → frontend hides the row.
+        String payDate = apprMstr
+                .map(ExptResolMstr::getPayDate)
+                .filter(s -> s != null && !s.isBlank())
+                .orElse(null);
+        // Payroll Type — EXPT_RESOL_MSTR.APPR_FUND_TP (0/1/9), null for
+        // non-payroll; the frontend resolves the label. Lets the Approval
+        // Details popup show Payroll Type consistently across entry points.
+        String apprFundTp = apprMstr
+                .map(ExptResolMstr::getApprFundTp)
+                .filter(s -> s != null && !s.isBlank())
+                .orElse(null);
+
+        // G5 (Scheduled detail): approval-request attachments from EXPT_RESOL_FILE,
+        // keyed by APPR_SEQ_NO (ordered by FILE_ID). Empty when the batch has no
+        // approval request yet. Byte-identical to VendorPaymentService /
+        // ExpensePaymentService / InternalTransferService.detail(). The shared
+        // Approval Details popup consumes this list; the detail page's own file
+        // card stays the uploaded-Excel file (legacy parity — the legacy detail
+        // page never showed EXPT_RESOL_FILE attachments either).
+        List<ApprovalAttachmentRow> attachments =
+                (apprSeqNo == null || apprSeqNo.isBlank())
+                        ? List.of()
+                        : exptResolFileRepository
+                                .findByBizKeyAndApprSeqNoOrderByFileIdAsc(bizKey, apprSeqNo)
+                                .stream()
+                                .map(f -> new ApprovalAttachmentRow(
+                                        f.getFileId(),
+                                        f.getOrgFileNm(),
+                                        f.getFileSize(),
+                                        f.getRegNm(),
+                                        f.getRegDtm()))
+                                .toList();
+
         return new ScheduledTransferDetailResponse(
                 master.getScdulPymnNo(),
                 master.getScdulPymnTypeCd(),
@@ -265,6 +338,7 @@ public class PayrollPaymentService {
                 master.getTotTrnsCnt(),
                 master.getErpFileNum(),
                 master.getRegId(),
+                requestor,
                 master.getRegDtm(),
                 master.getApprSeqNo(),
                 master.getApprStts(),
@@ -277,10 +351,9 @@ public class PayrollPaymentService {
                 master.getOrgFileNm(),
                 master.getFileSize(),
                 lines,
-                // Approval-request attachments — wired only on Internal
-                // Transfer today; Payroll ports the same pattern in a
-                // follow-up MR.
-                java.util.List.of());
+                attachments,
+                payDate,
+                apprFundTp);
     }
 
     /* ----------------------------------------------------------------
@@ -731,6 +804,14 @@ public class PayrollPaymentService {
         mstr.setTotPayUsdAmt(isUsd ? amt : BigDecimal.ZERO);
         mstr.setTotPayVndAmt(isVnd ? amt : BigDecimal.ZERO);
         mstr.setPayDate(req.payDate() != null && !req.payDate().isBlank() ? req.payDate().trim() : null);
+        // PR7: Payroll Type — persist APPR_FUND_TP from the Request Approval
+        // popup ("0"=Salary / "1"=Bonus / "9"=Other; legacy comm_0192_001_c005,
+        // mandatory for APPR_DV=21). Read back by the Payroll Scheduled + Result
+        // lists. Null when the FE omits it (legacy-blank). Payroll-only —
+        // sibling modules never reach this code path.
+        mstr.setApprFundTp(req.apprFundTp() != null && !req.apprFundTp().isBlank()
+                ? req.apprFundTp().trim()
+                : null);
         mstr.setDelYn("N");
         mstr.setPayEndYn("N");
         mstr.setApprTypeCd("00");
@@ -764,6 +845,15 @@ public class PayrollPaymentService {
             row.setApprLineNo(BigDecimal.valueOf(req.apprLineNo()));
             exptResolApprvrInfmRepository.save(row);
         }
+
+        // Phase-1 notification producer: fan an approval-request notification
+        // out to the approver chain. Best-effort + isolated (REQUIRES_NEW) so a
+        // notification failure never rolls back this approval submission.
+        notificationService.notifyApprovalRequested(
+                ApprDv.PAYROLL.slug(), apprSeqNo, docNo, req.postTitle(),
+                approvers.stream()
+                        .map(a -> new NotificationService.Recipient(a.apprvrId(), a.apprvrNm()))
+                        .toList());
         return docNo;
     }
 
@@ -928,7 +1018,18 @@ public class PayrollPaymentService {
                 : TransferNetwork.fromAntDivCd(lines.get(0).getAntDivCd());
         cutoffValidator.validate(master.getOutBankCd(), network);
 
-        dispatchExecutor.execute(master, lines, req.trnfCcyCd());
+        // PR2: resolve Payroll Type (EXPT_RESOL_MSTR.APPR_FUND_TP by APPR_SEQ_NO)
+        // → TB_PAY_FILE_MST.FUND_TP, then dispatch via the Payroll-only
+        // file-route executor (legacy pymn_0005_001_c001 — never TB_PAY_TARGET).
+        String apprFundTp = (master.getApprSeqNo() != null && !master.getApprSeqNo().isBlank())
+                ? exptResolMstrRepository
+                        .findByBizKeyAndApprSeqNoIn(bizKey, java.util.List.of(master.getApprSeqNo()))
+                        .stream()
+                        .findFirst()
+                        .map(ExptResolMstr::getApprFundTp)
+                        .orElse(null)
+                : null;
+        payrollDispatchExecutor.execute(master, lines, req.trnfCcyCd(), apprFundTp);
 
         master.setTrnfYn(TrnfYn.TRANSFERRED.code());
         master.setTrnfDtm(now);
@@ -983,7 +1084,8 @@ public class PayrollPaymentService {
     }
 
     private static ScheduledTransferRow toListRow(ScdulPymnSumr s,
-                                                   Map<String, ExptResolMstr> exptBySeqNo) {
+                                                   Map<String, ExptResolMstr> exptBySeqNo,
+                                                   Map<String, ApproverSummary> approverByApprSeqNo) {
         ExptResolMstr erm = s.getApprSeqNo() != null ? exptBySeqNo.get(s.getApprSeqNo()) : null;
         String docNo = (erm != null && erm.getDocNo() != null)
                 ? erm.getDocNo()
@@ -992,6 +1094,27 @@ public class PayrollPaymentService {
         // ("0"=Salary, "1"=Bonus, else blank; resolved to a label
         // on the frontend). Null until the batch has an approval row.
         String apprFundTp = erm != null ? erm.getApprFundTp() : null;
+        // PR6: Schedule Date — legacy "지급예정일" comes from
+        // EXPT_RESOL_MSTR.PAY_DATE (written at Request Approval, legacy
+        // IDO.SCDUL_PYMN_SUMR_R002 `, ERM.PAY_DATE`), NOT
+        // SCDUL_PYMN_SUMR.PAY_TRAN_DT (which is dispatch-time and stays null
+        // for pending/approved batches). Null until the batch has an approval
+        // row with a scheduled date — legacy-correct blank.
+        String payDate = erm != null ? erm.getPayDate() : null;
+        // Requestor = EXPT_RESOL_MSTR.DRAFT_USER_NM (발의자명, the requesting
+        // user's display NAME), joined on APPR_SEQ_NO. Legacy
+        // IDO.SCDUL_PYMN_SUMR_R002 selects ERM.DRAFT_USER_NM for this column —
+        // NOT SCDUL_PYMN_SUMR.REG_ID (the batch-creator login id). Null until
+        // the batch has an approval row; the frontend falls back to reg_id.
+        String draftUserNm = erm != null ? erm.getDraftUserNm() : null;
+        // G4: Approver column — null pre-approval (no APPR_SEQ_NO / no chain),
+        // so the shared shell leaves the cell blank exactly like legacy.
+        ApproverSummary appr = s.getApprSeqNo() != null
+                ? approverByApprSeqNo.get(s.getApprSeqNo())
+                : null;
+        String  approver      = appr != null ? appr.firstName() : null;
+        Integer approverCount = appr != null ? appr.count()     : null;
+        List<ScheduledTransferApprover> approvers = appr != null ? appr.approvers() : null;
         return new ScheduledTransferRow(
                 s.getScdulPymnNo(),
                 s.getScdulPymnTypeCd(),
@@ -1008,11 +1131,56 @@ public class PayrollPaymentService {
                 s.getTrnfYn(),
                 s.getOutBankCd(),
                 s.getWdrlActNo(),
-                s.getPayTranDt(),
+                payDate,
                 s.getOrgFileNm(),
                 docNo,
                 s.getWdrlCcyCd(),
-                apprFundTp);
+                apprFundTp,
+                approver,
+                approverCount,
+                approvers,
+                draftUserNm);
+    }
+
+    /** First approver name + total chain length + the full ordered chain
+     *  (name/status/datetime) for one approval request — feeds the Scheduled
+     *  list "Approver" cell (name + "[N]" + click popup). Byte-identical to
+     *  {@code VendorPaymentService.ApproverSummary}. */
+    private record ApproverSummary(
+            String firstName,
+            int count,
+            List<ScheduledTransferApprover> approvers) {}
+
+    /**
+     * Map {@code APPR_SEQ_NO → {first approver name, chain length, chain}} from
+     * the {@code EXPT_RESOL_APPRVR_INFM} chain (ordered by {@code APPRVR_LINE_NO}).
+     * Drives the Scheduled Payment list's "Approver" cell — primary approver
+     * name + the legacy "{@code [N]}" count badge (= chain length) + the click
+     * popup. One {@code findChain} per distinct approval request on the page
+     * (≤ page size); empty when no row has been submitted for approval.
+     * Byte-identical to {@code VendorPaymentService.buildFirstApproverMap}.
+     */
+    private Map<String, ApproverSummary> buildFirstApproverMap(String bizKey, List<ScdulPymnSumr> rows) {
+        List<String> apprSeqNos = rows.stream()
+                .map(ScdulPymnSumr::getApprSeqNo)
+                .filter(seq -> seq != null && !seq.isBlank())
+                .distinct()
+                .toList();
+        if (apprSeqNos.isEmpty()) return Map.of();
+        Map<String, ApproverSummary> out = new java.util.HashMap<>(apprSeqNos.size());
+        for (String seq : apprSeqNos) {
+            var chain = exptResolApprvrInfmRepository.findChain(bizKey, seq);
+            if (!chain.isEmpty()) {
+                String nm = chain.get(0).getApprvrNm();
+                String firstName = (nm != null && !nm.isBlank()) ? nm.trim() : null;
+                List<ScheduledTransferApprover> list = chain.stream()
+                        .map(a -> new ScheduledTransferApprover(
+                                a.getApprvrNm(), a.getApprvrStts(), a.getApprDtm()))
+                        .toList();
+                out.put(seq, new ApproverSummary(firstName, chain.size(), list));
+            }
+        }
+        return out;
     }
 
     private static List<CurrencyTotal> computeCurrencyTotals(List<ScdulPymnSumr> rows) {

@@ -7,7 +7,7 @@ WeCMS menu: **Banking → Reports**. Tenant cash-position reporting derived from
 | Screen | Doc | Status |
 |---|---|---|
 | Daily Cash | [daily-cash.md](daily-cash.md) | Design / partial |
-| Daily Financial | [daily-financial.md](daily-financial.md) | Design / partial |
+| Daily Financial | [daily-financial.md](daily-financial.md) · **full package:** [daily-financial/](daily-financial/README.md) | **READY FOR SIT** (in-PROD scope; ~80% of in-scope surface, ~40% of full legacy — HS variant, server-side Excel, REC2_1 inline deferred) |
 | Cash Flow | [cash-flow.md](cash-flow.md) | Design / partial |
 
 ## Related reference docs

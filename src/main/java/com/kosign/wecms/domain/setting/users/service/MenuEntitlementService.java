@@ -9,6 +9,10 @@ import com.kosign.wecms.domain.setting.users.entity.UserMenuAuthInfm;
 import com.kosign.wecms.domain.setting.users.repository.UserMenuAuthInfmRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -46,6 +50,15 @@ public class MenuEntitlementService {
     private final UserBusiConnInfmRepository userBusiConnRepo;
     private final UserMenuAuthInfmRepository menuAuthRepo;
 
+    /** Self-reference so {@link #save} can re-enter the
+     *  {@code @Transactional} {@link #saveInTransaction} in a FRESH
+     *  transaction on a concurrency retry — a plain internal call would
+     *  reuse the already-rolled-back transaction. Same idiom as
+     *  {@code ChartOfAccountsService}. */
+    @Autowired
+    @Lazy
+    private MenuEntitlementService self;
+
     /** Read every {@code USE_YN='Y'} grant for the user. Order is
      *  insertion order so the round-trip after a Save is stable. */
     @Transactional(readOnly = true)
@@ -63,11 +76,45 @@ public class MenuEntitlementService {
         return new MenuEntitlementResponse(userId, grants);
     }
 
-    /** Replace every grant for the (tenant, user) pair with the
-     *  request's slug list. Delete-then-insert in a single
-     *  {@code @Transactional} so a failed insert rolls the delete back. */
-    @Transactional
+    /**
+     * Replace every grant for the (tenant, user) pair with the request's
+     * slug list (full-set replace — therefore <b>idempotent</b>).
+     *
+     * <p><b>Concurrency.</b> The replace is a delete-then-insert. Two
+     * concurrent PUTs for the same (tenant, user) can interleave so both
+     * delete (seeing no rows, e.g. a first-time grant) and then both
+     * insert the same {@code (BIZ_KEY, USER_ID, MENU_AUTH_CD)} PKs — the
+     * loser hits {@code user_menu_auth_infm_pkey} and surfaces
+     * {@code WBE_DB}. Because the operation is idempotent, this wrapper
+     * catches that race and retries once <b>in a fresh transaction</b>
+     * (via {@code self}); the retry now sees the winner's committed rows,
+     * deletes them, and re-inserts cleanly. Last-writer-wins, which is
+     * the correct semantic for a full-set replace. Not {@code @Transactional}
+     * itself so the failed inner transaction is fully rolled back before
+     * the retry opens a new one.
+     */
     public MenuEntitlementResponse save(String userId, MenuEntitlementUpdateRequest req) {
+        // Defense-in-depth admin guard (SEC-1) — the controller is already
+        // @PreAuthorize("hasRole('ADMIN')") gated; this blocks a non-admin
+        // caller from granting/revoking permissions even if reached outside
+        // the annotated controller. → HTTP 403 / WBE1003.
+        if (!TenantContext.currentIsAdmin()) {
+            throw new AccessDeniedException("WBE1003");
+        }
+        try {
+            return self.saveInTransaction(userId, req);
+        } catch (DataIntegrityViolationException race) {
+            log.warn("menu-entitlement save race for userId={} — retrying once in a fresh transaction",
+                    userId);
+            return self.saveInTransaction(userId, req);
+        }
+    }
+
+    /** Delete-then-insert in a single {@code @Transactional} so a failed
+     *  insert rolls the delete back. Invoked through {@code self} so the
+     *  proxy starts a real transaction (and a brand-new one on retry). */
+    @Transactional
+    public MenuEntitlementResponse saveInTransaction(String userId, MenuEntitlementUpdateRequest req) {
         String bizKey  = TenantContext.currentBizKey();
         String actorId = TenantContext.currentUserId();
         ensureTenantUser(bizKey, userId);

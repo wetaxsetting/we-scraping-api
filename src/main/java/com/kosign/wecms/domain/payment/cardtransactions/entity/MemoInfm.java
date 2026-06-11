@@ -27,7 +27,7 @@ import java.math.BigDecimal;
  * every value.
  *
  * <p>Schema landed in V202; DEV parity verified via
- * {@code postgres_dev} MCP 2026-05-22.
+ * {@code postgres_dev_server_jexframe} MCP 2026-05-22.
  */
 @Getter
 @Setter

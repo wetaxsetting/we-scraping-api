@@ -29,7 +29,7 @@ At the same time, the refactor is the place where business logic should live in 
 
 ## How to migrate a function
 
-1. **Pull the body verbatim** from JEX DEV `pg_proc` via the `postgres_dev` MCP. Include the `pg_get_functiondef(oid)` output unmodified.
+1. **Pull the body verbatim** from JEX DEV `pg_proc` via the `postgres_dev_server_jexframe` MCP. Include the `pg_get_functiondef(oid)` output unmodified.
 2. **Migrate dependencies first** — any tables the function reads (e.g. `BANK_INFM_DETL` for `wb_get_bank_nm`) and any other functions it calls. Seed data from DEV.
 3. **Single Flyway migration** combining table(s) + seed + function(s). Make it idempotent (`CREATE TABLE IF NOT EXISTS`, `INSERT ... ON CONFLICT DO NOTHING`, `CREATE OR REPLACE FUNCTION`).
 4. **Migration header** must cite the source (DEV `pg_proc`) and the date pulled — the function may evolve on DEV; the migration is a snapshot.

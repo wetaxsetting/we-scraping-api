@@ -1,7 +1,5 @@
 package com.kosign.wecms.domain.banking.dto;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
-
 import java.util.List;
 
 /**
@@ -9,47 +7,52 @@ import java.util.List;
  * static-UI types in {@code components/banking/reports/daily-cash/types.ts}.
  *
  * Sections:
- *   - {@code SUMMARY}  — one row per currency bucket (cash + current + savings + …).
- *   - {@code HOLDINGS} — physical cash holdings by type.
- *   - {@code ACCOUNTS} — per-bank-account ledger.
+ *   - {@code summary}  — one row per currency bucket (cash + current + savings + …).
+ *   - {@code holdings} — physical cash holdings by type.
+ *   - {@code accounts} — per-bank-account ledger.
+ *
+ * <p>Wire is lowercase snake_case via the global Jackson SNAKE_CASE strategy.
+ * Wire field names follow the camelCase record components
+ * (e.g. {@code openingBalance} → {@code opening_balance}, {@code balance}
+ * → {@code balance}).
  */
 public record DailyCashReport(
-        @JsonProperty("AS_OF_DT")    String asOfDt,
-        @JsonProperty("CURRENCY_SCOPE") String currencyScope,
-        @JsonProperty("SUMMARY")     List<SummaryRow> summary,
-        @JsonProperty("HOLDINGS")    List<HoldingRow> holdings,
-        @JsonProperty("ACCOUNTS")    List<AccountLedgerRow> accounts
+        String asOfDt,
+        String currencyScope,
+        List<SummaryRow> summary,
+        List<HoldingRow> holdings,
+        List<AccountLedgerRow> accounts
 ) {
     public record SummaryRow(
-            @JsonProperty("CCY_CD")        String ccyCd,
-            @JsonProperty("CASH")          String cash,
-            @JsonProperty("CURRENT")       String current,
-            @JsonProperty("SAVINGS")       String savings,
-            @JsonProperty("TIME_DEPOSIT")  String timeDeposit,
-            @JsonProperty("AVAILABLE")     String available
+            String ccyCd,
+            String cash,
+            String current,
+            String savings,
+            String timeDeposit,
+            String available
     ) { }
 
     public record HoldingRow(
-            @JsonProperty("ID")             String id,
-            @JsonProperty("TYPE")           String type,
-            @JsonProperty("CCY_CD")         String ccyCd,
-            @JsonProperty("OPENING_BAL")    String openingBalance,
-            @JsonProperty("NUM_DEBITS")     int numDebits,
-            @JsonProperty("DEBIT")          String debit,
-            @JsonProperty("NUM_CREDITS")    int numCredits,
-            @JsonProperty("CREDIT")         String credit,
-            @JsonProperty("BAL")            String balance
+            String id,
+            String type,
+            String ccyCd,
+            String openingBalance,
+            int numDebits,
+            String debit,
+            int numCredits,
+            String credit,
+            String balance
     ) { }
 
     public record AccountLedgerRow(
-            @JsonProperty("ID")             String id,
-            @JsonProperty("BANK")           String bank,
-            @JsonProperty("ACCT_NO")        String acctNo,
-            @JsonProperty("CCY_CD")         String ccyCd,
-            @JsonProperty("NUM_DEBITS")     int numDebits,
-            @JsonProperty("DEBIT")          String debit,
-            @JsonProperty("NUM_CREDITS")    int numCredits,
-            @JsonProperty("CREDIT")         String credit,
-            @JsonProperty("BAL")            String balance
+            String id,
+            String bank,
+            String acctNo,
+            String ccyCd,
+            int numDebits,
+            String debit,
+            int numCredits,
+            String credit,
+            String balance
     ) { }
 }

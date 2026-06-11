@@ -1,3 +1,11 @@
+> ⚠️ **SUPERSEDED (2026-06-05).** This is the original 2026-05-14 implementation *plan*. The
+> feature shipped and now diverges from this document (no plan cap, `/api/v1/settings/users`
+> base path, Menu Entitlement + Avatar implemented, split read/write authorization). The
+> authoritative backend documentation is the folder
+> **[user-management/](user-management/README.md)**; the drift is itemized in
+> [user-management/refactor-gap-analysis.md §Plan-vs-shipped drift](user-management/refactor-gap-analysis.md#3-plan-vs-shipped-drift).
+> Kept here for historical traceability — do not treat as current.
+
 # User Management — Implementation Plan
 
 **Slug:** `user-management`
@@ -79,7 +87,7 @@ All endpoints tenant-scoped via `TenantContext.currentBizKey()`. Admin gate via 
 
 The required JPA entities already exist: `UserInfm`, `UserBusiConnInfm` (+ `UserBusiConnInfmId`), `BusiInfm`. This MR adds **new repositories / services / controllers / DTOs**, not new entities.
 
-If a column the new service needs to write (e.g. `USER_INFM.POSI_NM`, `DEPT_NM`, `CLPH_NO`) is present on the DB but not yet mapped on the entity, extend the existing entity to add the `@Column` — no DDL required because the column is already there from the V7 legacy-shape alignment. Verify each column with the `postgres_dev` MCP before extending.
+If a column the new service needs to write (e.g. `USER_INFM.POSI_NM`, `DEPT_NM`, `CLPH_NO`) is present on the DB but not yet mapped on the entity, extend the existing entity to add the `@Column` — no DDL required because the column is already there from the V7 legacy-shape alignment. Verify each column with the `postgres_dev_server_jexframe` MCP before extending.
 
 ### 4.3 No `wb_get_next_val` change
 
@@ -371,7 +379,7 @@ CLAUDE.md updates (same MR):
 - [ ] **No new Flyway migration files** under `src/main/resources/db/migration/` in the diff
 - [ ] **No change to `spring.jpa.hibernate.ddl-auto`** in any `application*.yml` (stays `validate`)
 - [ ] `./gradlew bootRun` starts cleanly against the existing local DB — Hibernate `validate` passes against the new/extended entities
-- [ ] Any `@Column` additions to `UserInfm` reference columns that already exist in the DB (verified via `postgres_dev` MCP)
+- [ ] Any `@Column` additions to `UserInfm` reference columns that already exist in the DB (verified via `postgres_dev_server_jexframe` MCP)
 - [ ] All 7 new error codes added to `messages.properties` + `messages_en.properties`
 - [ ] All new i18n keys present in `en.json` / `ko.json` / `vi.json` (omit `vi.json` entries with no verified translation; never invent)
 - [ ] `@PreAuthorize("hasRole('ADMIN')")` on every write endpoint

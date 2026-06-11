@@ -11,6 +11,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -24,6 +25,10 @@ import org.springframework.web.bind.annotation.RestController;
  *
  * Replaces the legacy WSVC {@code rept_0009_001_r001}. See
  * {@code docs/refactor-wecms/features/daily-cash-report.md}.
+ *
+ * <p>F-3 Phase B-1: gated by {@code @menuAuthz.canAccess('banking-reports-daily-cash')}
+ * (Daily Cash is an F/M product-tree leaf — H is denied). The export endpoint
+ * shares the same cd as the report it serialises.
  */
 @RestController
 @RequestMapping("/api/v1/banking/reports/daily-cash-report")
@@ -35,6 +40,7 @@ public class DailyCashReportController {
     private final ExcelExportService excelExportService;
 
     @GetMapping
+    @PreAuthorize("@menuAuthz.canAccess('banking-reports-daily-cash')")
     public ApiResponse<DailyCashReportResponse> search(
             @RequestParam("asOfDate")
             @NotBlank
@@ -44,6 +50,7 @@ public class DailyCashReportController {
     }
 
     @PostMapping("/export")
+    @PreAuthorize("@menuAuthz.canAccess('banking-reports-daily-cash')")
     public void export(@Valid @RequestBody ExcelExportRequest request, HttpServletResponse response) {
         excelExportService.exportTo(response, request);
     }

@@ -23,6 +23,11 @@ spring:
     active: local
   jpa:
     open-in-view: false
+    hibernate:
+      # ddl-auto: validate — Hibernate only validates entity mappings against
+      # the existing schema; it never auto-creates or auto-updates tables.
+      # Added to the base 2026-06-07 so every profile inherits the safe default.
+      ddl-auto: validate
     properties:
       hibernate.dialect: org.hibernate.dialect.PostgreSQLDialect
       hibernate.jdbc.time_zone: UTC
@@ -37,7 +42,14 @@ spring:
     # without Flyway running, V163 never landed and Hibernate
     # validate failed with "missing column oat_idempotency_key in
     # table napas_remit_trns_hstr".
-    enabled: true
+    #
+    # Disabled 2026-06-07 (per ops request to turn Flyway off across all
+    # environments — base + every profile). The history above is retained as
+    # context: with Flyway off, `ddl-auto: validate` still runs, so the target
+    # DB must already be fully migrated or Hibernate boot validation will fail
+    # with "missing column ...". Re-enable before any run that relies on Flyway
+    # to apply pending migrations.
+    enabled: false
     locations: classpath:db/migration
     baseline-on-migrate: false
     # Local-R&D drift recovery — the developer DB is single-user and
@@ -173,7 +185,14 @@ wecms:
     # filename, not from per-tenant directory isolation. Per-developer
     # override via env var WECMS_USER_IMAGE_STORAGE_ROOT.
     storage-root: ${WECMS_USER_IMAGE_STORAGE_ROOT:./tmp/user-image}
- 
+  overseas-payment:
+    # Local-disk root for Overseas Payment Excel uploads
+    # (OVRS_PYMN_MSTR batches — flat layout: <storage-root>/<save_file_nm>).
+    # CI / unit-test / local default; profile-specific overrides live in
+    # application-{profile}.yml. Per-developer override via env var
+    # WECMS_OVERSEAS_PAYMENT_STORAGE_ROOT.
+    storage-root: ${WECMS_OVERSEAS_PAYMENT_STORAGE_ROOT:./tmp/overseas-payment}
+
   coocon:
     # Coocon DEV credentials — mirrors <coocon> in VI/jex.wabooks_new.user.xml.
     # Single source of truth for every Coocon smart-gateway call —

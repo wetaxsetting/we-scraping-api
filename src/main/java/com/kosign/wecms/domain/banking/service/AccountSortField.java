@@ -25,7 +25,14 @@ public enum AccountSortField implements SortableField {
     ACCOUNT_NICKNAME("acctNickNm"),
     BALANCE("bal"),
     AVAILABLE_BALANCE("realAmt"),
-    LAST_UPDATE("acctBalUpdDtm");
+    // FCY-A02 (PO decision 2026-06-06 — supersedes HR-1): sort the
+    // "Last Update" column by ACCT_HIS_LST_INQ_DT, the source the cell
+    // now displays for online accounts (AccountService.resolveLastUpdate
+    // / legacy fnsh_0005_001_api_osmc.ts:956-969). Fixed-deposit-only
+    // rows display ACCT_BAL_LST_INQ_DTM, but the column sort key is a
+    // single property — ACCT_HIS_LST_INQ_DT — matching legacy's
+    // server-side single-column ORDER BY.
+    LAST_UPDATE("acctHisLstInqDt");
 
     private final String entityProperty;
 

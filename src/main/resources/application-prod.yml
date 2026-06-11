@@ -12,7 +12,13 @@ spring:
     show-sql: false
     open-in-view: false
   flyway:
-    enabled: true
+    # Flyway disabled for this profile (2026-06-07, per ops request to turn
+    # Flyway off across all environments). NOTE: this contradicts the file
+    # header rule ("Schema changes ship via Flyway migrations only") and the
+    # ddl-auto: validate dependency above — PROD will only boot if the schema
+    # is already fully migrated out-of-band. Re-enable before any deploy that
+    # relies on Flyway to apply pending migrations.
+    enabled: false
     baseline-on-migrate: false
     # PROD must never tolerate checksum drift or out-of-order applies.
     # These flags pin the strict defaults so the relaxed local-R&D

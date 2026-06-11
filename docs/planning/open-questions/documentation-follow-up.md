@@ -73,8 +73,8 @@ Each was referenced by docs but no longer exists at the cited path; references h
 - **Resolution:** Smart Organizer **is** in scope and **is implemented**. Backend ships `SmartOrganizerController` + `OrganizerRuleController` + services with migrations V172 (`smart_organizer_rmrk_org_infm_schema`), V173 (`wb_get_next_val_rmrk_org_infm`), V174 (`smart_organizer_view_setting_seed`); the Next.js route `app/(dashboard)/banking/smart-organizer/` exists (VND; an FCY-specific page is not yet split out — the shared route serves it). The feature docs were corrected from their original "discovery scaffold" framing; residual `Needs Confirmation` detail in those docs reconciles against the shipped code in the next stabilisation pass. Not in the legacy `docs/jex/screen-flows/banking.md` 9-screen list (newer feature).
 - **References:**
   - JEX source: `fnsh_0200_001` (`WECMS DEV/WECMS_STATIC/ts-src/js/jex/wabooks/fnsh/fnsh_0200_001.ts`), `fnsh_0200_002`
-  - [`../../features/banking/smart-organizer-vnd.md`](../../features/banking/current-savings-vnd/smart-organizer.md) · [`../../features/banking/smart-organizer-fcy.md`](../../features/banking/current-savings-fcy/smart-organizer.md)
-  - [`../../../../wecms-web/docs/features/banking/smart-organizer-vnd.md`](../../../../wecms-web/docs/features/banking/current-savings-vnd/smart-organizer.md) · [`../../../../wecms-web/docs/features/banking/smart-organizer-fcy.md`](../../../../wecms-web/docs/features/banking/current-savings-fcy/smart-organizer.md)
+  - **Primary docs (2026-06-07):** backend feature hub [`../../features/banking/smart-organizer/`](../../features/banking/smart-organizer/README.md) (9-doc folder) · frontend hub [`../../../../wecms-web/docs/features/banking/smart-organizer/`](../../../../wecms-web/docs/features/banking/smart-organizer/README.md) (6-doc folder). One screen serves VND + FCY; all six R01/R03/R05/R06/R07/R11 blockers CLOSED.
+  - Superseded single-file specs (banner-marked, kept for history): [`current-savings-vnd/smart-organizer.md`](../../features/banking/current-savings-vnd/smart-organizer.md) · [`current-savings-fcy/smart-organizer.md`](../../features/banking/current-savings-fcy/smart-organizer.md) · web [`current-savings-vnd/smart-organizer.md`](../../../../wecms-web/docs/features/banking/current-savings-vnd/smart-organizer.md) · web [`current-savings-fcy/smart-organizer.md`](../../../../wecms-web/docs/features/banking/current-savings-fcy/smart-organizer.md)
 
 ### OQ-DOC-5 — Transaction History API/DB contract
 - **Decision needed:**
@@ -114,10 +114,23 @@ features were **documented in this pass** (no OQ needed): `common/audit-log.md`,
 - **Current state:** backend is a **STUB** (`ReportController#dailyFinancialHs` → `ReportService#dailyFinancialHs`, `/api/v1/banking/reports/daily-financial-hs`, `DailyFinancialHsReport` DTO) and a frontend page exists (`app/(dashboard)/banking/reports/daily-financial-hs/page.tsx`). No feature doc — parallels the Smart Organizer discovery-scaffold treatment (OQ-DOC-4).
 - **Action:** confirm scope before authoring a full doc; if approved, add `features/banking/reports/daily-financial-hs.md` (both trees) once the stub is implemented.
 
-### OQ-DOC-9 — Settings → Users doc accuracy (avatar + menu-entitlement + status)
+### OQ-DOC-9 — Settings → Users doc accuracy (avatar + menu-entitlement + status) — ✅ ANSWERED, pending confirmation (2026-06-05)
 - **Decision needed:** update [`../../features/settings/users.md`](../../features/settings/users.md) to match implementation, or split sub-features into their own docs?
 - **Current state:** `users.md` marks **user-image/avatar upload** and **menu-entitlement** as "deferred / out of scope" and the screen status as "Plan", but the code is implemented: `domain/setting/users/service/UserImageService.java` (+ `POST/DELETE/GET /{userId}/image`), `MenuEntitlementService.java` (+ `GET/PUT .../menu-entitlement`), and full `UserManagementController` CRUD.
-- **Action:** confirm whether avatar + menu-entitlement endpoints are functional or stubs; then update `users.md` status/sections (no separate `user-avatar.md` unless PO prefers a split). Not editing `users.md` content in this pass (out of "missing-doc" scope).
+- **Resolution (2026-06-05, pending PO confirmation):** rather than edit the stale plan, a full multi-file backend feature folder was authored at [`../../features/settings/user-management/`](../../features/settings/user-management/README.md) (README, business-flow, functional-specification, database-mapping, interface-specification, source-code-index, migration-guide, test-scenarios, refactor-gap-analysis) documenting the **shipped** behaviour. Avatar upload + menu-entitlement are confirmed **functional** (not stubs). The flat `users.md` was given a SUPERSEDED banner and kept for history; the settings README index now points at the folder. Status flipped Plan → ✅ Implemented (parity verified 2026-06-05). **Confirm and close.**
+
+### User Management — content open questions (raised 2026-06-05 with the user-management folder)
+
+Surfaced while documenting the shipped feature; referenced from
+[`../../features/settings/user-management/refactor-gap-analysis.md §4`](../../features/settings/user-management/refactor-gap-analysis.md). None block release.
+
+| ID | Question | Current behaviour / proposed default |
+|---|---|---|
+| OQ-DOC-UM-1 | Should user create/update/delete write `AUDIT_LOGS_INFM` rows (slug `user-management`), matching firm-banking-settings / contacts / chart-of-accounts? | No audit write today. Proposed: add for consistency. |
+| OQ-DOC-UM-2 | Is action-level (CRUD) entitlement (`USER_MENU_ACTION_AUTH_INFM`) in scope, or is menu-level sufficient? | Menu-level only. Proposed: defer until required. |
+| OQ-DOC-UM-3 | Should admins toggle `ACTV_YN` / `LOCK_YN` from this screen (activate/deactivate/unlock)? | Not editable here; DBA/auth-driven. (Overlaps the "status" leg of OQ-DOC-9.) |
+| OQ-DOC-UM-4 | Enforce password reuse history (`USER_PW_CHG_HIS`) + 5-failure auto-lock? | Deferred to the auth-stabilisation MR. |
+| OQ-DOC-UM-5 | Frontend hard-codes phone country code `"84"` — should the wire carry a real code? | Cosmetic; revisit with a proper phone picker. |
 
 ### OQ-DOC-10 — Exchange Rate: inquiry-only vs management
 - **Decision needed:** is exchange-rate **admin configuration/CRUD** a product requirement, or is inquiry-only the intended scope?

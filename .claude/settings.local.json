@@ -33,7 +33,9 @@
       "PowerShell(.\\\\gradlew build 2>&1 | Select-Object -Last 100)",
       "PowerShell(.\\\\gradlew build 2>&1 | Select-Object -Last 60)",
       "PowerShell(.\\\\gradlew.bat compileJava --rerun-tasks 2>&1 | Select-Object -Last 40)",
-      "PowerShell(Get-NetTCPConnection *)"
+      "PowerShell(Get-NetTCPConnection *)",
+      "PowerShell(.\\\\gradlew bootRun --args='--spring.profiles.active=local' 2>&1 | Select-Object -First 200)",
+      "PowerShell(\"WECMS_JWT_SECRET = [$env:WECMS_JWT_SECRET]\"; \"Length = $\\($env:WECMS_JWT_SECRET.Length\\)\")"
     ]
   },
   "enabledMcpjsonServers": [

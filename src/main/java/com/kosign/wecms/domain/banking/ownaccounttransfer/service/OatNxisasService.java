@@ -9,6 +9,9 @@ import com.kosign.wecms.domain.banking.bankcredentials.repository.BankCertInfoRe
 import com.kosign.wecms.domain.banking.bankcredentials.service.BankCertCryptoService;
 import com.kosign.wecms.domain.banking.nxisas.audit.NxsiasModuleTranLogHisRepository;
 import com.kosign.wecms.domain.banking.nxisas.audit.entity.NxsiasModuleTranLogHis;
+import com.kosign.wecms.domain.banking.synchistory.entity.ExtTranCallHis;
+import com.kosign.wecms.domain.banking.synchistory.repository.ExtTranCallHisRepository;
+import com.kosign.wecms.domain.banking.ownaccounttransfer.config.OatSeedDecryptProperties;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.request.NxisasCertAcctListRequest;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.request.NxisasDecryptRequest;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.request.NxisasLoggingRequest;
@@ -25,6 +28,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.Iterator;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -50,11 +54,28 @@ public class OatNxisasService {
 
     private static final DateTimeFormatter DTM_FORMAT =
             DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
+    private static final DateTimeFormatter DATE_FORMAT8 =
+            DateTimeFormatter.ofPattern("yyyyMMdd");
+
+    /** SVC_IDs that Settings &gt; Firm Banking History renders from
+     *  {@code EXT_TRAN_CALL_HIS} (V_FIRM_BANKING_HISTORY Leg-S EXT_TRAN →
+     *  "Scraping Balance" / "Scraping Transaction" / "Scraping Card
+     *  Transaction"). We write an {@code EXT_TRAN_CALL_HIS} row only for
+     *  these so the scrape shows up in Firm Banking History exactly like
+     *  legacy (B10). Transfers are NOT written here — they already appear
+     *  via the NAPAS_REMIT_TRNS_HSTR leg ("Funds Transfer (Scraping)"),
+     *  matching legacy {@code nxisas_logging_act.jsp} (no EXT_TRAN row for
+     *  a pure TRANSFER). */
+    private static final Set<String> FBH_EXT_TRAN_SVC_IDS =
+            Set.of("BALANCE_INQUIRY", "REAL_TIME_ONLINE_INQUIRY", "CARD_INQUIRY");
 
     private final BankCertInfoRepository           bankCertInfoRepo;
     private final BankCertCryptoService            bankCertCrypto;
     private final NxsiasModuleTranLogHisRepository nxsiasLogRepo;
+    private final ExtTranCallHisRepository         extTranRepo;
     private final ObjectMapper                     objectMapper;
+    private final SeedCbcDecryptService            seedCbc;
+    private final OatSeedDecryptProperties         seedProps;
 
     /* =================================================================
      *  POST /nxisas/cert-acct-list
@@ -99,21 +120,40 @@ public class OatNxisasService {
      * ================================================================= */
 
     /**
-     * Refactor port of legacy {@code nxisas_decrypt} / {@code nxisas_encrypt}.
-     * The legacy action runs Coocon SEED-CBC over the engine's output
-     * {@code Result} payloads; the refactor does not bundle the Coocon
-     * ISAS library and ships a structured pass-through that returns
-     * {@code NXISAS_DATA} unchanged. Most VND OAT paths (Vietin /
-     * Vietcom) emit plaintext JSON so the pass-through is functionally
-     * neutral.
+     * Refactor port of legacy {@code nxisas_decrypt}. Decrypts each engine
+     * {@code Output.Result} via the Coocon {@code ISASSeedCBC} cipher
+     * (B1, 2026-06-05 — Shinhan BALANCE proven encrypted), keyed by the
+     * session {@code NXISAS_UID}/{@code NXISAS_ACTION}, so the frontend
+     * sees the same parsed {@code Result.balance[]} / {@code Result.transfer[]}
+     * object legacy produced.
      *
-     * <p>If a future bank's payloads genuinely need server-side decrypt,
-     * port a JCE AES helper here and switch on {@code NXISAS_UID} /
-     * {@code NXISAS_ACTION} to select the cipher.
+     * <p>Gated by {@code wecms.oat.seed-decrypt.enabled} (default false).
+     * When the flag is OFF this returns {@code NXISAS_DATA} unchanged —
+     * the pre-B1 pass-through, i.e. no runtime behaviour change until the
+     * cipher path is verified per bank in a licensed environment.
      */
-    public NxisasDecryptResponse passthrough(NxisasDecryptRequest req) {
+    public NxisasDecryptResponse decrypt(NxisasDecryptRequest req) {
         requireBizKey();
-        return new NxisasDecryptResponse(req.NXISAS_DATA());
+        if (!seedProps.enabled()) {
+            return new NxisasDecryptResponse(req.NXISAS_DATA());        // pre-B1 pass-through
+        }
+        return new NxisasDecryptResponse(
+                seedCbc.decryptNxisasData(req.NXISAS_DATA(), req.NXISAS_UID(), req.NXISAS_ACTION()));
+    }
+
+    /**
+     * Refactor port of legacy {@code nxisas_encrypt} — the inverse of
+     * {@link #decrypt}, used by the 2nd-factor (OTP / QnA) re-send path
+     * during a TRANSFER. Same {@code wecms.oat.seed-decrypt.enabled} gate;
+     * OFF returns {@code NXISAS_DATA} unchanged.
+     */
+    public NxisasDecryptResponse encrypt(NxisasDecryptRequest req) {
+        requireBizKey();
+        if (!seedProps.enabled()) {
+            return new NxisasDecryptResponse(req.NXISAS_DATA());
+        }
+        return new NxisasDecryptResponse(
+                seedCbc.encryptNxisasData(req.NXISAS_DATA(), req.NXISAS_UID(), req.NXISAS_ACTION()));
     }
 
     /* =================================================================
@@ -214,13 +254,56 @@ public class OatNxisasService {
         row.setNxisasErrCont(errMsg);
         row.setReqData(input == null ? null : input.toString());
         row.setRegId(userId);
-        row.setNxisasType(truncate(svcIdFor(job), 40));
+        final String svcId = svcIdFor(job);
+        row.setNxisasType(truncate(svcId, 40));
 
         try {
             nxsiasLogRepo.save(row);
         } catch (Exception ex) {
             log.warn("oat nxisas/logging save failed bizKey={} job={} bankCd={}",
                     bizKey, job, bankCdHint, ex);
+        }
+
+        // Legacy parity (B10): also write EXT_TRAN_CALL_HIS for the scraping
+        // service categories Settings > Firm Banking History renders
+        // (V_FIRM_BANKING_HISTORY Leg-S EXT_TRAN). Without this row the
+        // "Scraping Balance" entry is missing after Update Balance. Mirrors
+        // legacy nxisas_logging_act.jsp → ExtTranCallHisDAO.create.
+        if (FBH_EXT_TRAN_SVC_IDS.contains(svcId)) {
+            writeExtTranCallHis(svcId, output, input, bankCdHint, bizKey, userId);
+        }
+    }
+
+    /** Insert one {@code EXT_TRAN_CALL_HIS} audit row (legacy
+     *  {@code buildExtTranCallHis} + {@code ExtTranCallHisDAO.create}).
+     *  {@code SEQ_NO} is a per-{@code (SVC_ID, REF_DATE)} MAX+1 in Java —
+     *  same pattern as the e-invoice scrape audit; no
+     *  {@code wb_get_next_val} branch. Best-effort: a failure is logged
+     *  and never breaks the logging response. */
+    private void writeExtTranCallHis(String svcId, JsonNode output, JsonNode input,
+                                     String bankCdHint, String bizKey, String userId) {
+        try {
+            final String refDate = utcDate8();
+            final BigDecimal seqNo = extTranRepo.findMaxSeqNoForDay(svcId, refDate).add(BigDecimal.ONE);
+
+            final ExtTranCallHis call = new ExtTranCallHis();
+            call.setSvcId(svcId);
+            call.setRefDate(refDate);
+            call.setSeqNo(seqNo);
+            call.setWebSvcId(svcId);                 // legacy sets web_svc_id = svc_id
+            call.setRegDtm(utcNow14());
+            call.setRsltCd(truncate(textOrEmpty(output, "ErrorCode"), 10));
+            call.setErrCont(truncate(textOrEmpty(output, "ErrorMessage"), 1000));
+            call.setBankCd(truncate(bankCdHint, 20));
+            call.setBizKey(bizKey);
+            call.setUserId(userId);
+            if (input != null) {
+                call.setAcctNo(truncate(textOrEmpty(input, "acctNum"), 100));
+            }
+            extTranRepo.save(call);
+        } catch (Exception ex) {
+            log.warn("oat ext-tran-call-his write failed bizKey={} svcId={} bankCd={}",
+                    bizKey, svcId, bankCdHint, ex);
         }
     }
 
@@ -262,6 +345,12 @@ public class OatNxisasService {
 
     private static String utcNow14() {
         return OffsetDateTime.now(ZoneOffset.UTC).format(DTM_FORMAT);
+    }
+
+    /** {@code yyyyMMdd} (UTC) — the {@code EXT_TRAN_CALL_HIS.REF_DATE}
+     *  partition the per-day SEQ_NO sequence resets on. */
+    private static String utcDate8() {
+        return OffsetDateTime.now(ZoneOffset.UTC).format(DATE_FORMAT8);
     }
 
     private static String requireBizKey() {

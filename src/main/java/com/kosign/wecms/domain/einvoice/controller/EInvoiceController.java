@@ -3,7 +3,17 @@ package com.kosign.wecms.domain.einvoice.controller;
 import com.kosign.wecms.common.export.ExcelExportRequest;
 import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.response.ApiResponse;
+import com.kosign.wecms.domain.einvoice.dto.EInvoiceDetailHistoryResponse;
+import com.kosign.wecms.domain.einvoice.dto.EInvoiceDetailScrapeRequest;
+import com.kosign.wecms.domain.einvoice.dto.EInvoiceDetailScrapeResult;
+import com.kosign.wecms.domain.einvoice.dto.EInvoiceHistoryResponse;
 import com.kosign.wecms.domain.einvoice.dto.EInvoiceListResponse;
+import com.kosign.wecms.domain.einvoice.dto.EInvoiceScrapeRequest;
+import com.kosign.wecms.domain.einvoice.dto.EInvoiceScrapeResult;
+import com.kosign.wecms.domain.einvoice.service.EInvoiceDetailExportService;
+import com.kosign.wecms.domain.einvoice.service.EInvoiceDetailScrapeService;
+import com.kosign.wecms.domain.einvoice.service.EInvoiceHistoryService;
+import com.kosign.wecms.domain.einvoice.service.EInvoiceScrapeService;
 import com.kosign.wecms.domain.einvoice.service.EInvoiceService;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
@@ -17,6 +27,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.access.prepost.PreAuthorize;
 
 /**
  * Add-on Service — Sales / Bill e-Invoice listing endpoint.
@@ -87,9 +98,14 @@ public class EInvoiceController {
     private static final String DATE_8 = "\\d{8}";
 
     private final EInvoiceService service;
+    private final EInvoiceScrapeService scrapeService;
+    private final EInvoiceDetailScrapeService detailScrapeService;
+    private final EInvoiceHistoryService historyService;
     private final ExcelExportService excelExportService;
+    private final EInvoiceDetailExportService detailExportService;
 
     @GetMapping("/einvoices")
+    @PreAuthorize("@menuAuthz.canAccessEInvoice(#p0)")
     public ApiResponse<EInvoiceListResponse> list(
             @RequestParam("type")
             @NotBlank
@@ -130,9 +146,150 @@ public class EInvoiceController {
      * committable; once bytes are flushed the connection is just closed.
      */
     @PostMapping("/einvoices/export")
+    @PreAuthorize("@menuAuthz.canAccessAny('addon-einvoices-sales','addon-einvoices-expenses')")
     public void exportEInvoices(
             @Valid @RequestBody ExcelExportRequest request,
             HttpServletResponse response) {
         excelExportService.exportTo(response, request);
+    }
+
+    /**
+     * "Download Excel with Details" — refactor port of the legacy
+     * {@code einv_0001_001_r002_excel} detail-expansion export.
+     *
+     * <p>Same {@link ExcelExportRequest} body as the List export, but
+     * routed to {@link EInvoiceDetailExportService}, which expands each
+     * invoice into its {@code BUSA_DOC_DETL} / {@code EINV_FEE_DETL} /
+     * {@code EINV_TAX_DETL} child rows (master columns repeated). The
+     * request's {@code columns} (View-Setting list columns) are ignored —
+     * the Details sheet uses its own fixed column set. Filters
+     * ({@code type}/{@code from}/{@code to}/{@code keyword}) drive the
+     * same query path as the list endpoint + the List export.
+     */
+    @PostMapping("/einvoices/export-details")
+    @PreAuthorize("@menuAuthz.canAccessAny('addon-einvoices-sales','addon-einvoices-expenses')")
+    public void exportEInvoiceDetails(
+            @Valid @RequestBody ExcelExportRequest request,
+            HttpServletResponse response) {
+        detailExportService.exportTo(response, request);
+    }
+
+    /**
+     * "Update" (scrape) save — refactor port of the legacy
+     * {@code nxisas_einvoice_c001} save action.
+     *
+     * <p>The browser drives the local NXiSAS engine
+     * ({@code LOGIN → INVOICE_LIST → INVOICE_DETAIL}), decrypts the
+     * result client-side (OQ-S2 — the refactor does not bundle Coocon
+     * {@code ISASSeedCBC}), and POSTs the structured invoice rows here.
+     * The service re-validates and persists the accepted rows to
+     * {@code BUSA_DOC_MSTR} plus one {@code EXT_TRAN_CALL_HIS} audit row.
+     *
+     * <p>Tenant + user are read from the JWT via {@code TenantContext};
+     * the body never carries {@code biz_key}.
+     */
+    @PostMapping("/einvoices/scrape-results")
+    @PreAuthorize("@menuAuthz.canAccessAny('addon-einvoices-sales','addon-einvoices-expenses')")
+    public ApiResponse<EInvoiceScrapeResult> saveScrapeResults(
+            @Valid @RequestBody EInvoiceScrapeRequest request) {
+        return ApiResponse.ok(scrapeService.saveScrapedInvoices(request));
+    }
+
+    /**
+     * "Update" phase 2 (INVOICE_DETAIL) save — refactor port of the
+     * legacy {@code nxisas_einvoice_c002} save action.
+     *
+     * <p>After phase 1 ({@link #saveScrapeResults}) persists the invoice
+     * list, the browser drives the engine's {@code INVOICE_DETAIL} job per
+     * listed invoice, decrypts the detail client-side (OQ-S2), and POSTs
+     * the structured line-item / fee / tax payloads here. The service
+     * enriches the existing {@code BUSA_DOC_MSTR} rows and (re)writes
+     * {@code BUSA_DOC_DETL} / {@code EINV_FEE_DETL} / {@code EINV_TAX_DETL}.
+     *
+     * <p>Tenant + user are read from the JWT via {@code TenantContext}.
+     */
+    @PostMapping("/einvoices/scrape-detail-results")
+    @PreAuthorize("@menuAuthz.canAccessAny('addon-einvoices-sales','addon-einvoices-expenses')")
+    public ApiResponse<EInvoiceDetailScrapeResult> saveScrapeDetailResults(
+            @Valid @RequestBody EInvoiceDetailScrapeRequest request) {
+        return ApiResponse.ok(detailScrapeService.saveScrapedDetails(request));
+    }
+
+    /**
+     * "Latest Inquiry History" — refactor port of legacy
+     * {@code nxisas_einvhis_r001}. Reads back the GDT scrape calls
+     * recorded in {@code EXT_TRAN_CALL_HIS} for the History popup.
+     *
+     * <ul>
+     *   <li>{@code type} — optional {@code SALES} / {@code EXPENSE};
+     *       omitted = both (legacy default {@code SVC_ID LIKE 'GDT_INQUIRY%'}).</li>
+     *   <li>{@code from} / {@code to} — required {@code YYYYMMDD} window on
+     *       the inquiry timestamp.</li>
+     *   <li>{@code status} — optional {@code success} / {@code fail}
+     *       (legacy {@code STTS} 0/1).</li>
+     * </ul>
+     * Tenant comes from the JWT via {@code TenantContext}.
+     */
+    @GetMapping("/einvoices/history")
+    @PreAuthorize("@menuAuthz.canAccessEInvoice(#p0)")
+    public ApiResponse<EInvoiceHistoryResponse> history(
+            @RequestParam(value = "type", required = false)
+            String type,
+            @RequestParam("from")
+            @NotBlank
+            @Pattern(regexp = DATE_8, message = "from must be YYYYMMDD")
+            String fromDt,
+            @RequestParam("to")
+            @NotBlank
+            @Pattern(regexp = DATE_8, message = "to must be YYYYMMDD")
+            String toDt,
+            @RequestParam(value = "status", required = false)
+            String status) {
+        return ApiResponse.ok(historyService.list(type, fromDt, toDt, status));
+    }
+
+    /**
+     * "Latest Inquiry — Detail" popup — refactor port of legacy
+     * {@code nxisas_einvhis_dt_r001}. Drills into one GDT inquiry batch
+     * (opened from the History popup's per-row "View" button) and lists
+     * the {@code BUSA_DOC_MSTR} invoices it produced.
+     *
+     * <ul>
+     *   <li>{@code type} — {@code SALES} only (legacy rejects Expense).</li>
+     *   <li>{@code from} / {@code to} — required {@code YYYYMMDD} issue-date
+     *       window (the parent batch's start / end dates).</li>
+     *   <li>{@code mod_dtm} — the batch timestamp (parent row's
+     *       {@code reg_dtm}); matched exactly against
+     *       {@code BUSA_DOC_MSTR.MOD_DTM}.</li>
+     *   <li>{@code sortField} / {@code sortDirection} — optional; default
+     *       {@code ISSU_DT DESC}. Whitelist: {@code DOC_ID}, {@code ISSU_DT},
+     *       {@code TRCO_CMNM}, {@code TOTL_AMT}, {@code einv_invoiceStatus}.</li>
+     * </ul>
+     * Tenant comes from the JWT via {@code TenantContext}.
+     */
+    @GetMapping("/einvoices/detail-history")
+    @PreAuthorize("@menuAuthz.canAccessEInvoice(#p0)")
+    public ApiResponse<EInvoiceDetailHistoryResponse> detailHistory(
+            @RequestParam("type")
+            @NotBlank
+            String type,
+            @RequestParam("from")
+            @NotBlank
+            @Pattern(regexp = DATE_8, message = "from must be YYYYMMDD")
+            String fromDt,
+            @RequestParam("to")
+            @NotBlank
+            @Pattern(regexp = DATE_8, message = "to must be YYYYMMDD")
+            String toDt,
+            @RequestParam("mod_dtm")
+            @NotBlank
+            @Pattern(regexp = "\\d{14}", message = "mod_dtm must be yyyyMMddHHmmss")
+            String modDtm,
+            @RequestParam(value = "sortField", required = false)
+            String sortField,
+            @RequestParam(value = "sortDirection", required = false)
+            String sortDirection) {
+        return ApiResponse.ok(historyService.detailHistory(
+                type, fromDt, toDt, modDtm, sortField, sortDirection));
     }
 }

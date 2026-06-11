@@ -128,6 +128,37 @@ public class AcctMstr {
     private String acctBalLstInqDtm;
 
     /**
+     * Login / history scrape-status columns. Legacy {@code fnsh_0001_001}
+     * tracks three independent per-job status codes and synthesises the
+     * displayed Success / Failed / Processing state from them via
+     * {@code wb_get_acct_result_stts(LST_LGN_STTS, ACCT_BAL_INQ_STTS,
+     * ACCT_HIS_INQ_STTS, ACCT_BAL_LST_INQ_DTM)}
+     * ({@code IDO.ACCT_MSTR_R004.xml:240}); the c001 sync writes them on
+     * every scrape ({@code fnsh_0001_001_c001_act.jsp}).
+     *
+     * <p>HR-2: the Bank Transaction Sync orchestrator now stamps these
+     * (login + history) alongside the already-mapped
+     * {@code ACCT_BAL_INQ_STTS} (balance) so a failed scrape leaves the
+     * row showing the failure instead of a stale success. Columns added
+     * in V23 ({@code VARCHAR(20)} / {@code VARCHAR(255)} /
+     * {@code VARCHAR(14)}, all nullable).
+     */
+    @Column(name = "LST_LGN_STTS", length = 20)
+    private String lstLgnStts;
+
+    @Column(name = "LST_LGN_STTS_MSG", length = 255)
+    private String lstLgnSttsMsg;
+
+    @Column(name = "ACCT_HIS_INQ_STTS", length = 20)
+    private String acctHisInqStts;
+
+    @Column(name = "ACCT_HIS_INQ_MSG", length = 255)
+    private String acctHisInqMsg;
+
+    @Column(name = "ACCT_HIS_LST_INQ_DT", length = 14)
+    private String acctHisLstInqDt;
+
+    /**
      * Stash of the previous {@code BAL} value at the moment the balance
      * was last corrected by a successful balance-refresh. Mirrors legacy
      * {@code _u001_act.jsp:117-122}: when the engine reports a new

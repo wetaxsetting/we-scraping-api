@@ -9,6 +9,7 @@ import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolApprvrInfmRepository;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprDv;
+import com.kosign.wecms.domain.notification.service.NotificationService;
 import com.kosign.wecms.domain.payment.dto.ChangeApprovalLineRequest;
 import com.kosign.wecms.domain.payment.dto.OverseasApprover;
 import com.kosign.wecms.domain.payment.dto.OverseasCurrencyTotal;
@@ -86,6 +87,7 @@ public class OverseasPaymentService {
     private final DispatchResultResolver         dispatchResultResolver;
     private final ExptResolMstrRepository        exptResolMstrRepository;
     private final ExptResolApprvrInfmRepository  exptResolApprvrInfmRepository;
+    private final NotificationService            notificationService;
     private final AuditLogService                auditLogService;
     private final BusiInfmRepository             busiInfmRepository;
     private final DocNoGenerator                 docNoGenerator;
@@ -395,7 +397,14 @@ public class OverseasPaymentService {
                             d.getBnfcAddr(),
                             d.getTrnfYn() != null ? d.getTrnfYn() : "N",
                             r.procStat(), r.procStatKey(), r.procDttm(), r.rsltDttm(),
-                            r.rsCd(), r.rsMsg());
+                            r.rsCd(), r.rsMsg(),
+                            // OVR-G1 Phase B — read-only per-line match state from OVRS_PYMN_DTLS (V248).
+                            d.getLinkMatchYn() != null ? d.getLinkMatchYn() : "N",
+                            d.getAcctSeqNo(),
+                            d.getBankTrnsShortId(),
+                            d.getBankTrnsFullId(),
+                            // OVR-G1 Phase D — match identity (line key the match endpoints consume).
+                            d.getOvrsPymnDetlNo());
                 })
                 .collect(Collectors.toList());
 
@@ -527,14 +536,20 @@ public class OverseasPaymentService {
         ExptResolApprvrInfm callerRow = exptResolApprvrInfmRepository
                 .findById(new com.kosign.wecms.domain.payment.approvalbox.entity
                         .ExptResolApprvrInfmId(bizKey, apprSeqNo, userId))
-                .orElse(null);
-        if (callerRow != null) {
-            callerRow.setApprvrStts(req.isApprove() ? "A" : "R");
-            callerRow.setApprDtm(nowDtm);
-            callerRow.setModId(userId);
-            callerRow.setModDtm(nowDtm);
-            exptResolApprvrInfmRepository.save(callerRow);
+                .orElseThrow(() -> new BusinessException("WBE2051"));
+        // Out-of-order guard — mirrors ApprovalBoxService.loadForAction so the
+        // Overseas path enforces the same legacy rule as the other modules:
+        // only the current PENDING approver may approve/reject. A WAITING
+        // ('W') or already-acted ('A'/'R'/'S') row is rejected, so a later
+        // approver can never act before the earlier approvers do.
+        if (!"P".equals(callerRow.getApprvrStts())) {
+            throw new BusinessException("WBE2052");
         }
+        callerRow.setApprvrStts(req.isApprove() ? "A" : "R");
+        callerRow.setApprDtm(nowDtm);
+        callerRow.setModId(userId);
+        callerRow.setModDtm(nowDtm);
+        exptResolApprvrInfmRepository.save(callerRow);
 
         // Decide the master's terminal status. Approve only finalises to
         // 'C' once no pending + waiting peers remain; otherwise the master
@@ -830,6 +845,15 @@ public class OverseasPaymentService {
             row.setApprLineNo(BigDecimal.valueOf(req.apprLineNo()));
             exptResolApprvrInfmRepository.save(row);
         }
+
+        // Phase-1 notification producer: fan an approval-request notification
+        // out to the approver chain. Best-effort + isolated (REQUIRES_NEW) so a
+        // notification failure never rolls back this approval submission.
+        notificationService.notifyApprovalRequested(
+                ApprDv.OVERSEAS.slug(), apprSeqNo, docNo, req.postTitle(),
+                approvers.stream()
+                        .map(a -> new NotificationService.Recipient(a.apprvrId(), a.apprvrNm()))
+                        .toList());
         return docNo;
     }
 

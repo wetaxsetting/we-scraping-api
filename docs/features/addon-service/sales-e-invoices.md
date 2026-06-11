@@ -1,3 +1,5 @@
+> ⚠️ **Design-history document — status claims are stale.** The consolidated, code-accurate backend docs now live in **[sales-e-invoices/](sales-e-invoices/README.md)** (README · business-flow · functional-specification · database-mapping · interface-specification · source-code-index · migration-guide · test-scenarios · refactor-gap-analysis). This file predates the wiring: the list/export/scrape paths **are** implemented, and `EInvoiceService.resolveDocType` correctly maps `EXPENSE → 'B'` (the "`EXPENSE → 'E'` bug" noted below no longer exists). Read this file for original design rationale (IR rules, JEX field analysis); read the folder for current behaviour.
+
 # Add-on Service > Sales e-Invoices — Refactor Feature Spec
 
 **Module:** Add-on Service
