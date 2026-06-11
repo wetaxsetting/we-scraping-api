@@ -1,5 +1,6 @@
 package com.kosign.wecms.domain.payment.internaltransfer.service;
 
+import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.banking.entity.AcctMstr;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
@@ -126,6 +127,7 @@ public class InternalTransferDispatchExecutor {
     private final AcctMstrRepository      acctMstrRepository;
     private final DispatchKeyGenerator    keyGenerator;
     private final Clock                   clock;
+    private final LegacyFunctionRepository legacyFunctions;
 
     /**
      * Insert dispatch rows for one Internal-Transfer batch, applying the
@@ -245,8 +247,12 @@ public class InternalTransferDispatchExecutor {
 
         boolean shinhan = eq(trimToNull(master.getOutBankCd()), shinhanBankCd);
 
-        BigDecimal seq = BigDecimal.ONE;
+        // SEQ seeded ONCE via the wb_get_next_val funnel (V140 #20, per
+        // (biz_key, file_seq_no) MAX+1) then incremented per line — no per-row
+        // DB call. fileSeqNo is freshly allocated here, so the seed is 1 → 1, 2, 3, ...
+        long seqCursor = Long.parseLong(legacyFunctions.nextTbPayFileDataSeq(bizKey, fileSeqNo)) - 1;
         for (ScdulPymnSumrDetl line : lines) {
+            BigDecimal seq = BigDecimal.valueOf(++seqCursor);
             TbPayFileData data = new TbPayFileData();
             data.setTranDt(tranDt);
             data.setBizKey(bizKey);
@@ -285,8 +291,6 @@ public class InternalTransferDispatchExecutor {
             line.setPayTranSeq(seq.toPlainString());
             line.setPayFileSeqNo(null);
             line.setPaySeq(null);
-
-            seq = seq.add(BigDecimal.ONE);
         }
 
         log.info("feature=internal-transfer dispatch path=FILE bizKey={} scdulPymnNo={} lines={} fileSeqNo={} shinhanUsdVnd={}",

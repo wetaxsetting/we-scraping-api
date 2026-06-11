@@ -3,6 +3,7 @@ package com.kosign.wecms.domain.payment.internaltransfer.repository;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrDetl;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrDetlId;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.JpaSort;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -18,6 +19,21 @@ import java.util.Optional;
  */
 public interface ScdulPymnSumrDetlRepository
         extends JpaRepository<ScdulPymnSumrDetl, ScdulPymnSumrDetlId> {
+
+    /**
+     * Numeric ascending order on {@code SCDUL_PYMN_DETL_NO} for the per-line
+     * grid. The column is {@code VARCHAR(20)} holding integer text; since MR-2
+     * stores JEX-style <em>unpadded</em> per-tenant numbers (e.g. {@code 9999},
+     * {@code 10000}) instead of the old zero-padded {@code 000001}, a plain
+     * string sort would mis-order across digit-count boundaries
+     * ({@code "10000" < "9999"}). Ordering by length first, then value, yields
+     * true numeric order for non-negative integer strings without a SQL
+     * {@code CAST} (portable + avoids {@code JpaSort.unsafe} cast quirks). If a
+     * future need requires an explicit cast, swap this for
+     * {@code JpaSort.unsafe(ASC, "cast(scdulPymnDetlNo as long)")}.
+     */
+    Sort DETL_NO_NUMERIC_ASC =
+            JpaSort.unsafe(Sort.Direction.ASC, "length(scdulPymnDetlNo)", "scdulPymnDetlNo");
 
     /** Detail-line lookup by composite PK + tenant. Used by the
      *  Reporting Account update endpoint. */

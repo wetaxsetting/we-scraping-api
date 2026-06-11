@@ -1,6 +1,6 @@
 package com.kosign.wecms.domain.setting.firmbankingsettings.repository;
 
-import com.kosign.wecms.domain.setting.firmbankingsettings.entity.FirmBankingSettingId;
+import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConfId;
 import com.kosign.wecms.domain.setting.firmbankingsettings.entity.FirmBankingSettingView;
 import org.springframework.data.jpa.repository.JpaRepository;
 
@@ -23,7 +23,7 @@ import java.util.List;
  * {@link com.kosign.wecms.common.tenant.TenantContext#currentBizKey()}.
  */
 public interface FirmBankingSettingViewRepository
-        extends JpaRepository<FirmBankingSettingView, FirmBankingSettingId> {
+        extends JpaRepository<FirmBankingSettingView, TbFirmConfId> {
 
     /**
      * All bindings for the given tenant, ordered for stable display.

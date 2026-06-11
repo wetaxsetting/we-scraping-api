@@ -2,7 +2,7 @@ package com.kosign.wecms.domain.setting.chartofaccounts.service;
 
 import com.kosign.wecms.domain.setting.chartofaccounts.dto.ChartOfAccountRow;
 import com.kosign.wecms.domain.setting.chartofaccounts.dto.ChartOfAccountTreeNode;
-import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount;
+import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartAcctInfm;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -13,7 +13,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Pure-logic coverage for {@link ChartOfAccountsTreeBuilder}. No
  * Mockito, no Spring — exercises the level / has_children / breadcrumb
- * projection against hand-built {@link ChartOfAccount} graphs.
+ * projection against hand-built {@link ChartAcctInfm} graphs.
  */
 class ChartOfAccountsTreeBuilderTest {
 
@@ -27,9 +27,9 @@ class ChartOfAccountsTreeBuilderTest {
 
     @Test
     void rows_resolvesLevelHasChildrenAndRestrictedFlags() {
-        ChartOfAccount root  = row("70",  "ACC-01",   "REVENUE",      null,    "A");
-        ChartOfAccount child = row("99",  "1007009",  "Collection 4", "ACC-01","A");
-        ChartOfAccount loose = row("90",  "10070090", "Collection 45",null,    "A");
+        ChartAcctInfm root  = row("70",  "ACC-01",   "REVENUE",      null,    "A");
+        ChartAcctInfm child = row("99",  "1007009",  "Collection 4", "ACC-01","A");
+        ChartAcctInfm loose = row("90",  "10070090", "Collection 45",null,    "A");
 
         List<ChartOfAccountRow> projected =
                 ChartOfAccountsTreeBuilder.buildRows(List.of(root, child, loose));
@@ -51,7 +51,7 @@ class ChartOfAccountsTreeBuilderTest {
     @Test
     void rows_orphanedParentChainResolvesToNullLevel() {
         // CDX-001 → Code009 (parent missing) → null level
-        ChartOfAccount orphan = row("112", "CDX-001", "asdfasd", "Code009", "A");
+        ChartAcctInfm orphan = row("112", "CDX-001", "asdfasd", "Code009", "A");
         List<ChartOfAccountRow> projected =
                 ChartOfAccountsTreeBuilder.buildRows(List.of(orphan));
         assertThat(projected.get(0).chartAcctLevel()).isNull();
@@ -63,7 +63,7 @@ class ChartOfAccountsTreeBuilderTest {
         // The tree builder treats this as a cycle and returns null
         // level so the frontend renders the row under the grandfathered
         // footnote.
-        ChartOfAccount self = row("104", "2001001", "Payment K1", "2001001", "A");
+        ChartAcctInfm self = row("104", "2001001", "Payment K1", "2001001", "A");
         List<ChartOfAccountRow> projected =
                 ChartOfAccountsTreeBuilder.buildRows(List.of(self));
         assertThat(projected.get(0).chartAcctLevel()).isNull();
@@ -77,10 +77,10 @@ class ChartOfAccountsTreeBuilderTest {
         // null so the frontend can footnote it as grandfathered data.
         //
         // Build a 4-deep chain: A → B → C → D. D must surface as null.
-        ChartOfAccount a = row("1", "A", "A", null, "A");
-        ChartOfAccount b = row("2", "B", "B", "A",  "A");
-        ChartOfAccount c = row("3", "C", "C", "B",  "A");
-        ChartOfAccount d = row("4", "D", "D", "C",  "A");
+        ChartAcctInfm a = row("1", "A", "A", null, "A");
+        ChartAcctInfm b = row("2", "B", "B", "A",  "A");
+        ChartAcctInfm c = row("3", "C", "C", "B",  "A");
+        ChartAcctInfm d = row("4", "D", "D", "C",  "A");
         List<ChartOfAccountRow> projected =
                 ChartOfAccountsTreeBuilder.buildRows(List.of(a, b, c, d));
         Map<String, ChartOfAccountRow> byCode = byCode(projected);
@@ -93,9 +93,9 @@ class ChartOfAccountsTreeBuilderTest {
 
     @Test
     void tree_filtersOrphansAndDeeperRows() {
-        ChartOfAccount root   = row("70", "ACC-01",  "REVENUE",      null,    "A");
-        ChartOfAccount child  = row("99", "1007009", "Collection 4", "ACC-01","A");
-        ChartOfAccount orphan = row("112","CDX-001", "asdfasd",      "Code009","A");
+        ChartAcctInfm root   = row("70", "ACC-01",  "REVENUE",      null,    "A");
+        ChartAcctInfm child  = row("99", "1007009", "Collection 4", "ACC-01","A");
+        ChartAcctInfm orphan = row("112","CDX-001", "asdfasd",      "Code009","A");
 
         List<ChartOfAccountTreeNode> nodes =
                 ChartOfAccountsTreeBuilder.buildTree(List.of(root, child, orphan));
@@ -118,9 +118,9 @@ class ChartOfAccountsTreeBuilderTest {
      *  Helpers
      * --------------------------------------------------------------- */
 
-    private static ChartOfAccount row(String seqNo, String code, String nameEn,
+    private static ChartAcctInfm row(String seqNo, String code, String nameEn,
                                        String parentCd, String stts) {
-        ChartOfAccount e = new ChartOfAccount();
+        ChartAcctInfm e = new ChartAcctInfm();
         e.setBizKey(TENANT);
         e.setChartAcctSeqNo(seqNo);
         e.setChartAcctCd(code);

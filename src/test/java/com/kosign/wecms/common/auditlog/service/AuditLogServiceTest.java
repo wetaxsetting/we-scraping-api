@@ -1,9 +1,9 @@
 package com.kosign.wecms.common.auditlog.service;
 
-import com.kosign.wecms.common.auditlog.entity.AuditLogEntry;
+import com.kosign.wecms.common.auditlog.entity.AuditLogsInfm;
 import com.kosign.wecms.common.auditlog.repository.AuditLogEntryRepository;
-import com.kosign.wecms.common.auditlog.repository.AuditLogSeqNoRepository;
 import com.kosign.wecms.common.enums.LangCd;
+import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.common.i18n.MessageResolver;
 import com.kosign.wecms.common.tenant.TenantContext;
 import org.junit.jupiter.api.AfterEach;
@@ -52,7 +52,7 @@ import static org.mockito.Mockito.when;
 class AuditLogServiceTest {
 
     @Mock AuditLogEntryRepository  entryRepository;
-    @Mock AuditLogSeqNoRepository  seqNoRepository;
+    @Mock LegacyFunctionRepository legacyFunctions;
     @Mock MessageResolver          messages;
 
     AuditLogService service;
@@ -63,7 +63,7 @@ class AuditLogServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new AuditLogService(entryRepository, seqNoRepository, messages);
+        service = new AuditLogService(entryRepository, legacyFunctions, messages);
         TenantContext.set(USER_ID, USER_NM, BIZ, LangCd.EN);
     }
 
@@ -78,8 +78,8 @@ class AuditLogServiceTest {
 
     @Test
     void append_writesOneRowPerSupportedLocale_allSharingOneSeqNo() {
-        when(seqNoRepository.allocateNextSeqNo(BIZ, "TB_FIRM_CONF", "970424"))
-                .thenReturn(BigDecimal.valueOf(344));
+        when(legacyFunctions.nextAuditLogsSeqNo(BIZ, "TB_FIRM_CONF", "970424"))
+                .thenReturn("344");
         // MessageResolver returns a deterministic per-locale string so
         // we can assert the row mapping. ANY_OBJECT_ARRAY tolerates
         // both null and empty msgArgs.
@@ -99,9 +99,9 @@ class AuditLogServiceTest {
                 .detailKey("audit.firm_banking_settings.update.detail")
                 .build());
 
-        ArgumentCaptor<AuditLogEntry> captor = ArgumentCaptor.forClass(AuditLogEntry.class);
+        ArgumentCaptor<AuditLogsInfm> captor = ArgumentCaptor.forClass(AuditLogsInfm.class);
         verify(entryRepository, times(4)).save(captor.capture());
-        List<AuditLogEntry> saved = captor.getAllValues();
+        List<AuditLogsInfm> saved = captor.getAllValues();
         assertThat(saved).hasSize(4);
 
         // Every row shares the SAME seq_no — one event, four rows.
@@ -109,12 +109,12 @@ class AuditLogServiceTest {
         // 2026-05-09 (audit_logs_seq_no=343 across KO/VI/EN for one
         // event). The refactor extends to KM but keeps the seq_no
         // sharing.
-        assertThat(saved).extracting(AuditLogEntry::getAuditLogsSeqNo)
+        assertThat(saved).extracting(AuditLogsInfm::getAuditLogsSeqNo)
                 .containsOnly(BigDecimal.valueOf(344));
 
         // Each row carries a distinct lang_cd. Order matches
         // SUPPORTED_LOCALES (EN, KO, VI, KM).
-        assertThat(saved).extracting(AuditLogEntry::getLangCd)
+        assertThat(saved).extracting(AuditLogsInfm::getLangCd)
                 .containsExactly("EN", "KO", "VI", "KM");
 
         // Activity / detail strings are locale-resolved per row.
@@ -138,8 +138,8 @@ class AuditLogServiceTest {
         });
 
         // Allocator called exactly once per append (not once per locale).
-        verify(seqNoRepository, times(1))
-                .allocateNextSeqNo(BIZ, "TB_FIRM_CONF", "970424");
+        verify(legacyFunctions, times(1))
+                .nextAuditLogsSeqNo(BIZ, "TB_FIRM_CONF", "970424");
     }
 
     @Test
@@ -148,8 +148,8 @@ class AuditLogServiceTest {
         // "Delete" event if OQ-2 ever flips). The activity column is
         // nullable — passing a blank/null activityKey skips the
         // resolution and leaves the column null.
-        when(seqNoRepository.allocateNextSeqNo(any(), any(), any()))
-                .thenReturn(BigDecimal.ONE);
+        when(legacyFunctions.nextAuditLogsSeqNo(any(), any(), any()))
+                .thenReturn("1");
         when(messages.resolve(eq("detail.key"), any(Locale.class), any(Object[].class)))
                 .thenReturn("only detail");
 
@@ -161,11 +161,11 @@ class AuditLogServiceTest {
                 .detailKey("detail.key")
                 .build());
 
-        ArgumentCaptor<AuditLogEntry> captor = ArgumentCaptor.forClass(AuditLogEntry.class);
+        ArgumentCaptor<AuditLogsInfm> captor = ArgumentCaptor.forClass(AuditLogsInfm.class);
         verify(entryRepository, times(4)).save(captor.capture());
-        assertThat(captor.getAllValues()).extracting(AuditLogEntry::getAuditLogsActv)
+        assertThat(captor.getAllValues()).extracting(AuditLogsInfm::getAuditLogsActv)
                 .containsOnlyNulls();
-        assertThat(captor.getAllValues()).extracting(AuditLogEntry::getAuditLogsActvDtl)
+        assertThat(captor.getAllValues()).extracting(AuditLogsInfm::getAuditLogsActvDtl)
                 .containsOnly("only detail");
     }
 
@@ -175,8 +175,8 @@ class AuditLogServiceTest {
 
     @Test
     void append_repositoryThrows_swallowed_noPropagation() {
-        when(seqNoRepository.allocateNextSeqNo(any(), any(), any()))
-                .thenReturn(BigDecimal.ONE);
+        when(legacyFunctions.nextAuditLogsSeqNo(any(), any(), any()))
+                .thenReturn("1");
         when(messages.resolve(any(), any(Locale.class), any(Object[].class)))
                 .thenReturn("any");
         // First save throws — the catch-block must absorb it without
@@ -202,7 +202,7 @@ class AuditLogServiceTest {
 
     @Test
     void append_seqNoAllocatorThrows_swallowed() {
-        when(seqNoRepository.allocateNextSeqNo(any(), any(), any()))
+        when(legacyFunctions.nextAuditLogsSeqNo(any(), any(), any()))
                 .thenThrow(new RuntimeException("seq_no race lost"));
 
         service.append(AuditLogContext.builder()
@@ -218,7 +218,7 @@ class AuditLogServiceTest {
 
     @Test
     void append_seqNoAllocatorReturnsNull_swallowed() {
-        when(seqNoRepository.allocateNextSeqNo(any(), any(), any()))
+        when(legacyFunctions.nextAuditLogsSeqNo(any(), any(), any()))
                 .thenReturn(null);
 
         service.append(AuditLogContext.builder()
@@ -238,7 +238,7 @@ class AuditLogServiceTest {
     @Test
     void append_nullContext_swallowed() {
         service.append(null);
-        verify(seqNoRepository, never()).allocateNextSeqNo(any(), any(), any());
+        verify(legacyFunctions, never()).nextAuditLogsSeqNo(any(), any(), any());
         verify(entryRepository, never()).save(any());
     }
 
@@ -250,7 +250,7 @@ class AuditLogServiceTest {
                 .refNo1("970424")
                 .detailKey("d")
                 .build());
-        verify(seqNoRepository, never()).allocateNextSeqNo(any(), any(), any());
+        verify(legacyFunctions, never()).nextAuditLogsSeqNo(any(), any(), any());
         verify(entryRepository, never()).save(any());
     }
 
@@ -262,7 +262,7 @@ class AuditLogServiceTest {
                 .refNo1("")
                 .detailKey("d")
                 .build());
-        verify(seqNoRepository, never()).allocateNextSeqNo(any(), any(), any());
+        verify(legacyFunctions, never()).nextAuditLogsSeqNo(any(), any(), any());
         verify(entryRepository, never()).save(any());
     }
 
@@ -276,7 +276,7 @@ class AuditLogServiceTest {
                 .refNo1("970424")
                 .detailKey("")
                 .build());
-        verify(seqNoRepository, never()).allocateNextSeqNo(any(), any(), any());
+        verify(legacyFunctions, never()).nextAuditLogsSeqNo(any(), any(), any());
         verify(entryRepository, never()).save(any());
     }
 
@@ -291,7 +291,7 @@ class AuditLogServiceTest {
                 .detailKey("d")
                 .build());
 
-        verify(seqNoRepository, never()).allocateNextSeqNo(any(), any(), any());
+        verify(legacyFunctions, never()).nextAuditLogsSeqNo(any(), any(), any());
         verify(entryRepository, never()).save(any());
     }
 }

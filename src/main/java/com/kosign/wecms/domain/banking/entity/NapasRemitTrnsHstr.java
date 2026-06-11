@@ -8,6 +8,8 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.math.BigDecimal;
 
@@ -37,6 +39,7 @@ public class NapasRemitTrnsHstr {
     @Column(name = "OUT_ACCT_NO", length = 100, nullable = false)
     private String outAcctNo;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "TRANS_TYPE", length = 1)
     private String transType;
 
@@ -52,6 +55,7 @@ public class NapasRemitTrnsHstr {
     @Column(name = "OWAC_NM", length = 200)
     private String owacNm;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "CCY_CD", length = 3, nullable = false)
     private String ccyCd;
 
@@ -61,6 +65,7 @@ public class NapasRemitTrnsHstr {
     @Column(name = "FEE")
     private BigDecimal fee;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "FEE_DFR_SBJ", length = 1)
     private String feeDfrSbj;
 
@@ -87,12 +92,4 @@ public class NapasRemitTrnsHstr {
 
     @Column(name = "REG_DTM", length = 14, nullable = false)
     private String regDtm;
-
-    /**
-     * Client-supplied idempotency key for the Own Account Transfer
-     * scraping-result intake. Added in V179. Unique per tenant when
-     * non-null; older rows from other transfer flows carry null.
-     */
-    @Column(name = "OAT_IDEMPOTENCY_KEY", length = 64)
-    private String oatIdempotencyKey;
 }

@@ -12,7 +12,7 @@ import com.kosign.wecms.domain.banking.service.cashflow.FxConverter;
 import com.kosign.wecms.domain.banking.service.cashflow.MonthlyAmountAccumulator;
 import com.kosign.wecms.domain.banking.service.cashflow.PaymentDataAggregator;
 import com.kosign.wecms.domain.banking.service.cashflow.PaymentDataRow;
-import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount;
+import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartAcctInfm;
 import com.kosign.wecms.domain.setting.chartofaccounts.repository.ChartOfAccountRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Sort;
@@ -92,7 +92,7 @@ public class CashFlowReportService {
         validate(year, quarter, baseCurrency, usdRate, krwRate);
 
         // 1. Chart-of-accounts hierarchy for the tenant.
-        List<ChartOfAccount> tenantChart = chartRepo.findByBizKeyAndDelYn(bizKey, "N", Sort.unsorted());
+        List<ChartAcctInfm> tenantChart = chartRepo.findByBizKeyAndDelYn(bizKey, "N", Sort.unsorted());
         ChartOfAccountsHierarchy hierarchy = new ChartOfAccountsHierarchy(tenantChart);
 
         // 2a. Collect current-year source rows, then apply the bank filter + FX.
@@ -165,7 +165,7 @@ public class CashFlowReportService {
             List<PaymentDataRow> rows, ChartOfAccountsHierarchy hierarchy) {
         // Pre-build the set of valid L3 codes so unrelated rows drop out fast.
         java.util.Set<String> validL3 = hierarchy.l3Rows().stream()
-                .map(ChartOfAccount::getChartAcctCd)
+                .map(ChartAcctInfm::getChartAcctCd)
                 .collect(java.util.stream.Collectors.toSet());
         Map<String, MonthlyAmountAccumulator> out = new HashMap<>();
         for (PaymentDataRow r : rows) {

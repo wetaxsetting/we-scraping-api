@@ -44,9 +44,11 @@ public class AcctMstr {
     @Column(name = "ACCT_NO", length = 100, nullable = false)
     private String acctNo;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "ACCT_TYPE_CD", length = 2, nullable = false)
     private String acctTypeCd;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "CCY_CD", length = 3, nullable = false)
     private String ccyCd;
 
@@ -205,6 +207,7 @@ public class AcctMstr {
     @Column(name = "PRN_SEQ", precision = 2, scale = 0)
     private Integer prnSeq;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "ACTV_YN", length = 1, nullable = false)
     private String actvYn;
 

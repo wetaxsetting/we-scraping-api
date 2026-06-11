@@ -3,6 +3,7 @@ package com.kosign.wecms.domain.setting.purposesettings.service;
 import com.kosign.wecms.common.auditlog.service.AuditLogContext;
 import com.kosign.wecms.common.auditlog.service.AuditLogService;
 import com.kosign.wecms.common.exception.BusinessException;
+import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeReorderItem;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeReorderRequest;
@@ -11,7 +12,7 @@ import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeSettingDetail;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeSettingListResponse;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeSettingRow;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeSettingUpdateRequest;
-import com.kosign.wecms.domain.setting.purposesettings.entity.BusiUsagSet;
+import com.kosign.wecms.domain.setting.purposesettings.entity.BusiUsagSetInfm;
 import com.kosign.wecms.domain.setting.purposesettings.repository.PurposeInUseRepository;
 import com.kosign.wecms.domain.setting.purposesettings.repository.PurposeSettingsRepository;
 import lombok.RequiredArgsConstructor;
@@ -118,6 +119,7 @@ public class PurposeSettingsService {
     private final PurposeSettingsRepository  repo;
     private final PurposeInUseRepository     inUseRepo;
     private final AuditLogService            auditLogService;
+    private final LegacyFunctionRepository   legacyFunctions;
 
     /* -----------------------------------------------------------------
      *  Read paths
@@ -133,7 +135,7 @@ public class PurposeSettingsService {
         // does not exist`. See repository method Javadoc.
         String norm = (keyword == null || keyword.isBlank()) ? "" : keyword.trim();
 
-        List<BusiUsagSet> rows = repo.findActiveForTenant(bizKey, RESERVED_SYSTEM_CODES, norm);
+        List<BusiUsagSetInfm> rows = repo.findActiveForTenant(bizKey, RESERVED_SYSTEM_CODES, norm);
         Set<String> inUse = resolveInUseCodes(bizKey, rows);
 
         List<PurposeSettingRow> tree = assembleTree(rows, inUse);
@@ -146,7 +148,7 @@ public class PurposeSettingsService {
     public PurposeSettingDetail detail(String useUsagCd) {
         String bizKey = requireBizKey();
         String safe = requireField("use_usag_cd", useUsagCd);
-        BusiUsagSet entity = repo.findByBizKeyAndUseUsagCd(bizKey, safe)
+        BusiUsagSetInfm entity = repo.findByBizKeyAndUseUsagCd(bizKey, safe)
                 .orElseThrow(() -> notFoundDetail(bizKey, safe));
         Set<String> inUse = resolveInUseCodes(bizKey, List.of(entity));
         return toDetail(entity, inUse.contains(entity.getUseUsagCd()));
@@ -178,7 +180,7 @@ public class PurposeSettingsService {
         validateParent(bizKey, parent, /* selfUseUsagCd */ null);
 
         int nextDispOrd = repo.findMaxDispOrd(bizKey).orElse(0) + 1;
-        BusiUsagSet saved = persistCreate(bizKey, userId, handCd, name, cont, parent, dispYn, nextDispOrd);
+        BusiUsagSetInfm saved = persistCreate(bizKey, userId, handCd, name, cont, parent, dispYn, nextDispOrd);
 
         auditLogService.append(AuditLogContext.builder()
                 .wsvcId(AUDIT_WSVC_ID)
@@ -200,20 +202,23 @@ public class PurposeSettingsService {
      *  function for PK generation. The function uses bare {@code MAX+1}
      *  with no lock; on the rare concurrent-create race the PK
      *  constraint catches the collision and we retry once. */
-    private BusiUsagSet persistCreate(
+    private BusiUsagSetInfm persistCreate(
             String bizKey, String userId,
             String handCd, String name, String cont, String parent,
             String dispYn, int dispOrd) {
         DataIntegrityViolationException lastDive = null;
         for (int attempt = 0; attempt < 2; attempt++) {
-            String useUsagCd = repo.nextUseUsagCd(bizKey);
+            // PK via the single LegacyFunctionRepository funnel (V140 #12b —
+            // empty usag_grp_cd → plain 0000000001.. sequence). Same args the
+            // removed PurposeSettingsRepository.nextUseUsagCd native @Query passed.
+            String useUsagCd = legacyFunctions.nextUseUsagCd(bizKey, "");
             if (useUsagCd == null || useUsagCd.isBlank()) {
-                // Defensive: V82 always returns a value when the
+                // Defensive: the branch always returns a value when the
                 // function's argument-presence checks pass. A null
                 // here indicates a function-shape regression.
                 throw new BusinessException("WBE9999");
             }
-            BusiUsagSet entity = new BusiUsagSet();
+            BusiUsagSetInfm entity = new BusiUsagSetInfm();
             entity.setBizKey(bizKey);
             entity.setUseUsagCd(useUsagCd);
             entity.setHandUseUsagCd(handCd);
@@ -253,7 +258,7 @@ public class PurposeSettingsService {
         String parent = trimToNull(req.parentUseUsagCd());
         String dispYn = (req.dispYn() == null) ? null : req.dispYn();
 
-        BusiUsagSet entity = repo.findByBizKeyAndUseUsagCd(bizKey, safe)
+        BusiUsagSetInfm entity = repo.findByBizKeyAndUseUsagCd(bizKey, safe)
                 .orElseThrow(() -> notFoundDetail(bizKey, safe));
 
         // Legacy parity (OQ-4): NO duplicate-handCd check on update.
@@ -272,7 +277,7 @@ public class PurposeSettingsService {
         entity.setModId(userId);
         entity.setModDtm(nowAsLegacyTs());
 
-        BusiUsagSet saved = repo.save(entity);
+        BusiUsagSetInfm saved = repo.save(entity);
 
         auditLogService.append(AuditLogContext.builder()
                 .wsvcId(AUDIT_WSVC_ID)
@@ -299,7 +304,7 @@ public class PurposeSettingsService {
         String userId = requireUserId();
         String safe   = requireField("use_usag_cd", useUsagCd);
 
-        BusiUsagSet entity = repo.findByBizKeyAndUseUsagCd(bizKey, safe)
+        BusiUsagSetInfm entity = repo.findByBizKeyAndUseUsagCd(bizKey, safe)
                 .orElseThrow(() -> notFoundDetail(bizKey, safe));
 
         // 1. Legacy parity — block delete when an active child references
@@ -359,7 +364,7 @@ public class PurposeSettingsService {
             }
         }
 
-        List<BusiUsagSet> rows = repo.findAllActiveForReorder(bizKey, nextOrdByCd.keySet());
+        List<BusiUsagSetInfm> rows = repo.findAllActiveForReorder(bizKey, nextOrdByCd.keySet());
         if (rows.size() != nextOrdByCd.size()) {
             // Either a stale row (since deleted) or a code from another
             // tenant. Either way the payload is invalid; reject the
@@ -369,7 +374,7 @@ public class PurposeSettingsService {
         }
 
         String modDtm = nowAsLegacyTs();
-        for (BusiUsagSet row : rows) {
+        for (BusiUsagSetInfm row : rows) {
             row.setDispOrd(nextOrdByCd.get(row.getUseUsagCd()));
             row.setModId(userId);
             row.setModDtm(modDtm);
@@ -402,10 +407,10 @@ public class PurposeSettingsService {
 
     /** Bulk-resolve {@code used_in_transactions} for a row set. One
      *  query against {@code v_purpose_in_use} covers every row. */
-    private Set<String> resolveInUseCodes(String bizKey, List<BusiUsagSet> rows) {
+    private Set<String> resolveInUseCodes(String bizKey, List<BusiUsagSetInfm> rows) {
         if (rows.isEmpty()) return Set.of();
         Set<String> codes = new HashSet<>(rows.size() * 2);
-        for (BusiUsagSet r : rows) codes.add(r.getUseUsagCd());
+        for (BusiUsagSetInfm r : rows) codes.add(r.getUseUsagCd());
         return inUseRepo.findInUseCodes(bizKey, codes);
     }
 
@@ -413,11 +418,11 @@ public class PurposeSettingsService {
      *  for the wire. Maintains {@code disp_ord} ordering at each
      *  level. Orphans (level-2 rows whose parent is missing) surface
      *  as top-level rows so they remain reachable. */
-    private List<PurposeSettingRow> assembleTree(List<BusiUsagSet> rows, Set<String> inUse) {
+    private List<PurposeSettingRow> assembleTree(List<BusiUsagSetInfm> rows, Set<String> inUse) {
         Map<String, PurposeSettingRow> byCode = new LinkedHashMap<>(rows.size() * 2);
         Map<String, List<PurposeSettingRow>> childrenByParent = new HashMap<>();
 
-        for (BusiUsagSet r : rows) {
+        for (BusiUsagSetInfm r : rows) {
             boolean used = inUse.contains(r.getUseUsagCd());
             PurposeSettingRow row = new PurposeSettingRow(
                     r.getUseUsagCd(),
@@ -435,7 +440,7 @@ public class PurposeSettingsService {
         }
 
         List<PurposeSettingRow> top = new ArrayList<>();
-        for (BusiUsagSet r : rows) {
+        for (BusiUsagSetInfm r : rows) {
             PurposeSettingRow row = byCode.get(r.getUseUsagCd());
             String parent = r.getParentUseUsagCd();
             if (parent != null && byCode.containsKey(parent)) {
@@ -475,7 +480,7 @@ public class PurposeSettingsService {
             throw new BusinessException("WBE_VALIDATION",
                     "parent_use_usag_cd: cannot equal use_usag_cd");
         }
-        BusiUsagSet candidate = repo.findByBizKeyAndUseUsagCd(bizKey, parent)
+        BusiUsagSetInfm candidate = repo.findByBizKeyAndUseUsagCd(bizKey, parent)
                 .orElseThrow(() -> new BusinessException("WBE_VALIDATION",
                         "parent_use_usag_cd: not found"));
         if (!"Y".equals(candidate.getUseYn())) {
@@ -500,7 +505,7 @@ public class PurposeSettingsService {
         }
     }
 
-    private static PurposeSettingDetail toDetail(BusiUsagSet e, boolean inUse) {
+    private static PurposeSettingDetail toDetail(BusiUsagSetInfm e, boolean inUse) {
         return new PurposeSettingDetail(
                 e.getUseUsagCd(),
                 e.getHandUseUsagCd(),

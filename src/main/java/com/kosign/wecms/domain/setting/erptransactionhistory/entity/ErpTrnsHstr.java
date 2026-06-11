@@ -42,16 +42,13 @@ public class ErpTrnsHstr {
     private String bizKey;
 
     /** Per-tenant monotonic sequence (legacy {@code wb_get_next_val}
-     *  output on the JEX side). DEV stores {@code NUMERIC(10,0)};
-     *  the refactor's local DB stores {@code BIGINT} (V75 hotfix —
-     *  same trade-off as the V35 → V36 fix for {@code disp_ord}).
-     *  Hibernate 6.6.45's validator binds a Java {@code Long} to
-     *  {@code BIGINT} regardless of {@code precision} / {@code scale}
-     *  hints, so this is a documented refactor-only deviation from
-     *  DEV. {@code precision} / {@code scale} are intentionally
-     *  omitted; the column shape is BIGINT. */
+     *  output on the JEX side). JEX stores {@code NUMERIC(10,0)};
+     *  {@code @JdbcTypeCode(SqlTypes.NUMERIC)} maps the Java {@code Long}
+     *  onto it so Hibernate {@code validate} accepts the numeric column
+     *  against the live JEX schema. */
     @Id
-    @Column(name = "SEQ_NO", nullable = false)
+    @JdbcTypeCode(SqlTypes.NUMERIC)
+    @Column(name = "SEQ_NO", precision = 10, scale = 0, nullable = false)
     private Long seqNo;
 
     /** Original filename as supplied by the user / batch writer. */
@@ -66,10 +63,11 @@ public class ErpTrnsHstr {
 
     /** File size in bytes. {@code 0} for batch rows with no physical
      *  file — the frontend hides the download link in that case.
-     *  DEV stores {@code NUMERIC(10,0)}; refactor local stores
-     *  {@code BIGINT} (V75 hotfix — refactor-only deviation from DEV,
-     *  same reason as {@link #seqNo} above). */
-    @Column(name = "FILE_SIZE", nullable = false)
+     *  JEX stores {@code NUMERIC(10,0)}; {@code @JdbcTypeCode(SqlTypes.NUMERIC)}
+     *  maps the Java {@code Long} onto it for validate parity (same as
+     *  {@link #seqNo}). */
+    @JdbcTypeCode(SqlTypes.NUMERIC)
+    @Column(name = "FILE_SIZE", precision = 10, scale = 0, nullable = false)
     private Long fileSize;
 
     /** Direction code:

@@ -1,22 +1,18 @@
 package com.kosign.wecms.domain.payment.overseas.service;
 
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-import java.time.Clock;
-
 /**
- * Overseas Payment feature wiring — provides the {@link Clock} the key
- * generator depends on and enables the {@link OverseasPaymentStorageProperties}
- * binding for the file upload / download flow.
+ * Overseas Payment feature wiring — enables the
+ * {@link OverseasPaymentStorageProperties} binding for the file upload /
+ * download flow.
+ *
+ * <p>The former {@code overseasPaymentClock} bean was removed with the MR-2C
+ * funnel migration (2026-06-10): {@code OverseasPaymentKeyGenerator} no longer
+ * mints a date-prefixed key, so it no longer needs a dedicated {@link java.time.Clock}.
  */
 @Configuration
 @EnableConfigurationProperties(OverseasPaymentStorageProperties.class)
 public class OverseasPaymentConfig {
-
-    @Bean
-    public Clock overseasPaymentClock() {
-        return Clock.systemUTC();
-    }
 }

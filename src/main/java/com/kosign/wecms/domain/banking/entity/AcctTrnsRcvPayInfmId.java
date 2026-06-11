@@ -7,6 +7,7 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 import java.io.Serializable;
+import java.math.BigDecimal;
 
 @Getter
 @Setter
@@ -16,5 +17,5 @@ import java.io.Serializable;
 public class AcctTrnsRcvPayInfmId implements Serializable {
     private String bizKey;
     private String acctSeqNo;
-    private String rcvPaySeqNo;
+    private BigDecimal rcvPaySeqNo;
 }

@@ -85,6 +85,7 @@ public class ExchangeRateBatchService {
     private final BusiInfmRepository busiInfmRepository;
     private final BankExchRateInfmRepository bankExchRateInfmRepository;
     private final NxisasGatewayClient gateway;
+    private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
 
     private static final String SYSTEM_USER = "SYSTEM_BATCH";
     private static final String VIETNAM_TZ_ID = "Asia/Ho_Chi_Minh";
@@ -370,8 +371,11 @@ public class ExchangeRateBatchService {
                             entity.setBankCd(bankCd);
                             entity.setRefDate(inqDate);
                             entity.setCcyCd(ccyCd);
-                            entity.setExchSeqNo(bankExchRateInfmRepository
-                                    .findNextExchSeqNo(tenant.getBizKey()));
+                            // EXCH_SEQ_NO via the single wb_get_next_val funnel
+                            // (V140 #32 — per (biz_key, bank_cd, ref_date, ccy_cd)
+                            // MAX+1, matching the live JEX function's scoping).
+                            entity.setExchSeqNo(legacyFunctions.nextBankExchRateExchSeqNo(
+                                    tenant.getBizKey(), bankCd, inqDate, ccyCd));
                             entity.setRegDtm(nowDtm);
                             entity.setRegUser(SYSTEM_USER);
                             applyRate(entity, rate, standPoint, inqDate, persistSeqNo,

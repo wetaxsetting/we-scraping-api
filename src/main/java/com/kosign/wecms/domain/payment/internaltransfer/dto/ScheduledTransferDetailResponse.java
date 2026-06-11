@@ -64,25 +64,7 @@ public record ScheduledTransferDetailResponse(
          *  note. Only Internal Transfer populates this today; the sibling
          *  Scheduled-detail services construct via the backward-compatible
          *  constructor below and emit it as null. */
-        String                    cont,
-        /** Scheduled / pay date — {@code yyyyMMdd} from
-         *  {@code EXPT_RESOL_MSTR.PAY_DATE}, the same source the Approval
-         *  Box list endpoint surfaces. Populated by every scheduled-detail
-         *  caller (Internal Transfer via the canonical constructor; Vendor /
-         *  Expense / Payroll via the requestor constructor below). Null when
-         *  the batch has no approval request yet or carries no pay date — the
-         *  frontend hides the Scheduled Date row then. */
-        String                    payDate,
-        /** Single-character legacy {@code APPR_FUND_TP} (Payroll Type) from
-         *  {@code EXPT_RESOL_MSTR} — {@code "0"}=Salary, {@code "1"}=Bonus,
-         *  {@code "9"}=Other; null for non-payroll batches. The frontend
-         *  resolves the display label (including the withdrawal-bank
-         *  {@code 11704088} → "Salary/Allowance/Bonus" override) so the
-         *  Approval Details popup renders Payroll Type identically from the
-         *  Approval Box and Scheduled entries. Populated by every
-         *  scheduled-detail caller from the already-loaded {@code EXPT_RESOL_MSTR}
-         *  (same source as {@code requestor} / {@code cont} / {@code payDate}). */
-        String                    apprFundTp) {
+        String                    cont) {
 
     /**
      * Backward-compatible constructor for the sibling Scheduled-detail callers
@@ -118,19 +100,15 @@ public record ScheduledTransferDetailResponse(
         this(scdulPymnNo, scdulPymnTypeCd, outBankCd, outBankNm, wdrlActNo, titl,
              totalTranAmt, totTrnsCnt, docNo, regId, null, regDtm, apprSeqNo,
              apprStts, apprSttsKey, modDtm, trnfYn, trnfDtm, ccyCd, wdrlCcyCd,
-             orgFileNm, fileSize, rows, attachments, null, null, null);
+             orgFileNm, fileSize, rows, attachments, null);
     }
 
     /**
-     * Constructor for the sibling Scheduled-detail callers (Vendor / Expense /
-     * Payroll) — carries {@code requestor} + {@code payDate} + {@code apprFundTp}
-     * but not {@code cont}; it delegates with {@code cont = null} so those
-     * services (which don't surface Approval Content) compile unchanged. Only
-     * the Internal Transfer detail populates {@code cont} (via the canonical
-     * constructor). {@code payDate} flows from {@code EXPT_RESOL_MSTR.PAY_DATE}
-     * and {@code apprFundTp} from {@code EXPT_RESOL_MSTR.APPR_FUND_TP} so the
-     * Vendor / Expense / Payroll detail popups show Scheduled Date + Payroll
-     * Type the same way the Approval Box and Internal Transfer entries do.
+     * Pre-{@code cont} constructor (with {@code requestor}). The sibling
+     * Result/Scheduled-detail callers (Vendor / Expense / Payroll) build via
+     * this 24-arg shape; it delegates with {@code cont = null} so their
+     * {@code detail(...)} call sites compile unchanged. Only the Internal
+     * Transfer detail populates {@code cont} (via the canonical constructor).
      */
     public ScheduledTransferDetailResponse(
             String                    scdulPymnNo,
@@ -156,12 +134,10 @@ public record ScheduledTransferDetailResponse(
             String                    orgFileNm,
             BigDecimal                fileSize,
             List<TransferLineDetail>  rows,
-            List<ApprovalAttachmentRow> attachments,
-            String                    payDate,
-            String                    apprFundTp) {
+            List<ApprovalAttachmentRow> attachments) {
         this(scdulPymnNo, scdulPymnTypeCd, outBankCd, outBankNm, wdrlActNo, titl,
              totalTranAmt, totTrnsCnt, docNo, regId, requestor, regDtm, apprSeqNo,
              apprStts, apprSttsKey, modDtm, trnfYn, trnfDtm, ccyCd, wdrlCcyCd,
-             orgFileNm, fileSize, rows, attachments, null, payDate, apprFundTp);
+             orgFileNm, fileSize, rows, attachments, null);
     }
 }

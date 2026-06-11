@@ -8,10 +8,18 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /**
  * Per-user-per-account permission row for Settings &gt; Bank Account.
- * Provisioned by V127. Legacy twin is {@code wabooks.entity.AcctAuthInfo}.
+ * Provisioned by V245. Legacy twin is {@code wabooks.entity.AcctAuthInfo}.
+ *
+ * <p>{@code USE_YN} and {@code AUTH_TYPE} are {@code bpchar(1)} on the live
+ * JEX schema (verified on JEX DEV 2026-06-09); both map with
+ * {@code @JdbcTypeCode(SqlTypes.CHAR)} so Hibernate {@code validate} accepts
+ * the {@code char(1)} columns instead of expecting {@code varchar} (V38
+ * {@code sort_yn} / V94 {@code chart_acct_infm} precedent).
  *
  * <p>PK is {@code (BIZ_KEY, USER_ID, BANK_CD, ACCT_NO, AUTH_TYPE)} — the
  * authority kind is part of the key so the same user can hold both a
@@ -49,9 +57,11 @@ public class AcctAuthInfo {
 
     @Id
     @Column(name = "AUTH_TYPE", length = 1, nullable = false)
+    @JdbcTypeCode(SqlTypes.CHAR)
     private String authType;
 
     @Column(name = "USE_YN", length = 1, nullable = false)
+    @JdbcTypeCode(SqlTypes.CHAR)
     private String useYn;
 
     @Column(name = "REG_ID", length = 100, nullable = false)

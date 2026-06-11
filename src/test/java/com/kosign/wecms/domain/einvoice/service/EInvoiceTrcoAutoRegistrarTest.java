@@ -80,11 +80,11 @@ class EInvoiceTrcoAutoRegistrarTest {
         when(pgroRepo.existsById(any(PgroBsacLnknInfmId.class))).thenReturn(false);
         when(trcoAcctRepo.findByBizKeyAndTrcoKeyAndAcctNo(eq(BIZ), eq("1000001"), anyString()))
                 .thenReturn(List.of());
-        when(trcoAcctRepo.findByBizKeyAndTrcoKey(BIZ, "1000001")).thenReturn(List.of());
+        when(legacyFn.nextTrcoAcctKey(BIZ, "1000001")).thenReturn("1");
         when(trcoAcctRepo.saveAndFlush(any(TrcoAcctInfo.class))).thenAnswer(i -> i.getArgument(0));
         when(actvHstrRepo.existsByBizKeyAndDvCdAndTaskCdAndApiApvKey(BIZ, "S", "S003", "1C25TAA-100"))
                 .thenReturn(false);
-        when(actvHstrRepo.nextActvSeq(BIZ)).thenReturn(1L);
+        when(legacyFn.nextTrcoActvSeq()).thenReturn("1");
         when(actvHstrRepo.saveAndFlush(any(TrcoActvHstr.class))).thenAnswer(i -> i.getArgument(0));
 
         String trcoKey = registrar.registerCounterparty(
@@ -131,7 +131,7 @@ class EInvoiceTrcoAutoRegistrarTest {
         when(pgroRepo.existsById(any(PgroBsacLnknInfmId.class))).thenReturn(true); // already linked
         when(actvHstrRepo.existsByBizKeyAndDvCdAndTaskCdAndApiApvKey(BIZ, "B", "B003", "1C25TAA-100"))
                 .thenReturn(false);
-        when(actvHstrRepo.nextActvSeq(BIZ)).thenReturn(7L);
+        when(legacyFn.nextTrcoActvSeq()).thenReturn("7");
         when(actvHstrRepo.saveAndFlush(any(TrcoActvHstr.class))).thenAnswer(i -> i.getArgument(0));
 
         String trcoKey = registrar.registerCounterparty(
@@ -154,7 +154,7 @@ class EInvoiceTrcoAutoRegistrarTest {
 
     @Test
     void noTaxId_resolvesToEtcWithoutCreatingContact() {
-        lenient().when(actvHstrRepo.nextActvSeq(BIZ)).thenReturn(1L);
+        lenient().when(legacyFn.nextTrcoActvSeq()).thenReturn("1");
         when(actvHstrRepo.existsByBizKeyAndDvCdAndTaskCdAndApiApvKey(BIZ, "S", "S003", "1C25TAA-100"))
                 .thenReturn(false);
         when(actvHstrRepo.saveAndFlush(any(TrcoActvHstr.class))).thenAnswer(i -> i.getArgument(0));
@@ -194,6 +194,6 @@ class EInvoiceTrcoAutoRegistrarTest {
                 new BigDecimal("900000"));
 
         verify(actvHstrRepo, never()).saveAndFlush(any());
-        verify(actvHstrRepo, never()).nextActvSeq(anyString());
+        verify(legacyFn, never()).nextTrcoActvSeq();
     }
 }

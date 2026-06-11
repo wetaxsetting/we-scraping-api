@@ -50,9 +50,11 @@ public class AcctTrnsHstr {
     @Column(name = "TRSC_TM", length = 6)
     private String trscTm;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "CCY_CD", length = 3)
     private String ccyCd;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "INOUT_DV", length = 1)
     private String inoutDv;
 
@@ -68,6 +70,7 @@ public class AcctTrnsHstr {
     @Column(name = "RMRK2", length = 500)
     private String rmrk2;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "LINK_MATCH_YN", length = 1, nullable = false)
     private String linkMatchYn;
 
@@ -92,23 +95,6 @@ public class AcctTrnsHstr {
      */
     @Column(name = "BANK_TRNS_SHORT_ID", length = 20)
     private String bankTrnsShortId;
-
-    /**
-     * {@code 'Y'} marks a row whose remarks have been edited by the user;
-     * the sync re-scrape MUST NOT overwrite {@code rmrk} / {@code rmrk2} /
-     * {@code link_match_yn} on locked rows. Default {@code 'N'} on insert
-     * (set by V156 column default at the DB level).
-     *
-     * <p>{@code @JdbcTypeCode(SqlTypes.CHAR)} — V156 declares the column
-     * as {@code CHAR(1)} ({@code bpchar(1)}) for legacy parity (legacy
-     * DEV ships {@code LOCKED_YN bpchar(1)}). Without this annotation
-     * Hibernate maps {@code String} → {@code VARCHAR(1)} and the
-     * schema-validate step fails. Same precedent as
-     * {@code SysScrOptionWecms.sortYn} (V38).
-     */
-    @Column(name = "LOCKED_YN", length = 1, nullable = false)
-    @JdbcTypeCode(SqlTypes.CHAR)
-    private String lockedYn;
 
     /**
      * Reporting Account (chart of accounts) assigned to the bank

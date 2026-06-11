@@ -1,6 +1,6 @@
 package com.kosign.wecms.domain.banking.service.cashflow;
 
-import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount;
+import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartAcctInfm;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -237,8 +237,8 @@ class BalanceCalculatorTest {
      * Fixture builders
      * ============================================================ */
 
-    private static ChartOfAccount row(String cd, String parent, String calRule) {
-        ChartOfAccount c = new ChartOfAccount();
+    private static ChartAcctInfm row(String cd, String parent, String calRule) {
+        ChartAcctInfm c = new ChartAcctInfm();
         c.setBizKey("TEST");
         c.setChartAcctSeqNo("seq-" + cd);
         c.setChartAcctCd(cd);
@@ -254,9 +254,9 @@ class BalanceCalculatorTest {
         return c;
     }
 
-    private static ChartOfAccount root(String cd)    { return row(cd, null, null); }
-    private static ChartOfAccount l2(String cd, String parent) { return row(cd, parent, null); }
-    private static ChartOfAccount l3(String cd, String parent, String calRule) {
+    private static ChartAcctInfm root(String cd)    { return row(cd, null, null); }
+    private static ChartAcctInfm l2(String cd, String parent) { return row(cd, parent, null); }
+    private static ChartAcctInfm l3(String cd, String parent, String calRule) {
         return row(cd, parent, calRule);
     }
 

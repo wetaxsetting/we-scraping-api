@@ -194,14 +194,16 @@ public class OverseasPaymentRepository {
                            WHEN erm.appr_type_cd = '02' THEN 'X'
                            WHEN erm.appr_type_cd = '03' THEN 'I'
                            WHEN erm.appr_type_cd = '00' THEN 'P'
-                           ELSE COALESCE(ops.appr_stts, erm.appr_sts)
+                           ELSE erm.appr_sts
                        END AS appr_sts,
                        erm.appr_type_cd,
                        ops.trnf_yn,
                        erm.appr_dv,
                        ops.out_bank_cd,
                        ops.wdrl_act_no,
-                       ops.out_bank_nm,
+                       (SELECT bi.rprs_bank_nm FROM bank_infm bi
+                         WHERE bi.bank_cd = ops.out_bank_cd
+                         ORDER BY bi.start_date DESC LIMIT 1) AS out_bank_nm,
                        NULL                     AS bnfc_nm,
                        erm.pay_date,
                        %s AS apprvr_tot_cnt,
@@ -420,7 +422,9 @@ public class OverseasPaymentRepository {
                        ops.reg_dtm,
                        erm.draft_user_nm,
                        ops.reg_id,
-                       ops.out_bank_nm,
+                       (SELECT bi.rprs_bank_nm FROM bank_infm bi
+                         WHERE bi.bank_cd = ops.out_bank_cd
+                         ORDER BY bi.start_date DESC LIMIT 1) AS out_bank_nm,
                        ops.wdrl_act_no,
                        ops.trnf_yn,
                        erm.doc_no,
@@ -481,7 +485,9 @@ public class OverseasPaymentRepository {
                        ops.reg_dtm,
                        erm.draft_user_nm,
                        ops.reg_id,
-                       ops.out_bank_nm,
+                       (SELECT bi.rprs_bank_nm FROM bank_infm bi
+                         WHERE bi.bank_cd = ops.out_bank_cd
+                         ORDER BY bi.start_date DESC LIMIT 1) AS out_bank_nm,
                        ops.out_bank_cd,
                        ops.wdrl_act_no,
                        ops.trnf_yn,

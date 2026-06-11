@@ -4,7 +4,7 @@ import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.domain.banking.service.BankCdResolver;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.TransferLineDetail;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrDetl;
-import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount;
+import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartAcctInfm;
 import com.kosign.wecms.domain.setting.chartofaccounts.repository.ChartOfAccountRepository;
 import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmBankCode;
 import com.kosign.wecms.domain.setting.firmbankingsettings.repository.TbFirmBankCodeRepository;
@@ -65,15 +65,15 @@ public class TransferLineDetailMapper {
      *  lives in the {@code CITAD_BANK_CD} column. */
     private final TbFirmBankCodeRepository tbFirmBankCodeRepository;
 
-    /** Build a per-tenant {@code code → ChartOfAccount} index used by
+    /** Build a per-tenant {@code code → ChartAcctInfm} index used by
      *  {@link #toLineDetail} to walk parent chains in-memory. Call once
      *  per detail() request — never inside a per-line loop. */
-    public Map<String, ChartOfAccount> buildChartIndex(String bizKey) {
+    public Map<String, ChartAcctInfm> buildChartIndex(String bizKey) {
         return chartOfAccountRepository
                 .findByBizKeyAndDelYn(bizKey, "N", Sort.unsorted())
                 .stream()
                 .collect(Collectors.toMap(
-                        ChartOfAccount::getChartAcctCd,
+                        ChartAcctInfm::getChartAcctCd,
                         Function.identity(),
                         (a, b) -> a));
     }
@@ -84,7 +84,7 @@ public class TransferLineDetailMapper {
      *  in {@code domain/payment/common/} rather than per-module. */
     public TransferLineDetail toLineDetail(
             ScdulPymnSumrDetl d,
-            Map<String, ChartOfAccount> chartByCode) {
+            Map<String, ChartAcctInfm> chartByCode) {
         String tarBankNm = resolveBankName(d.getTarBankCd());
         String breadcrumb = buildChartBreadcrumb(d.getChartAcctCd(), chartByCode);
         return new TransferLineDetail(
@@ -188,9 +188,9 @@ public class TransferLineDetailMapper {
      *  can't loop the request thread. */
     private static String buildChartBreadcrumb(
             String leafCode,
-            Map<String, ChartOfAccount> chartByCode) {
+            Map<String, ChartAcctInfm> chartByCode) {
         if (leafCode == null || leafCode.isBlank()) return null;
-        ChartOfAccount leaf = chartByCode.get(leafCode);
+        ChartAcctInfm leaf = chartByCode.get(leafCode);
         if (leaf == null) return null;
         List<String> ancestors = new ArrayList<>();
         Set<String> seen = new HashSet<>();
@@ -198,7 +198,7 @@ public class TransferLineDetailMapper {
         int hops = 0;
         while (parentCd != null && !parentCd.isBlank() && hops++ < MAX_BREADCRUMB_HOPS) {
             if (!seen.add(parentCd)) break;
-            ChartOfAccount parent = chartByCode.get(parentCd);
+            ChartAcctInfm parent = chartByCode.get(parentCd);
             if (parent == null) break;
             String nm = parent.getChartAcctNmEn();
             if (nm != null && !nm.isBlank()) ancestors.add(0, nm);

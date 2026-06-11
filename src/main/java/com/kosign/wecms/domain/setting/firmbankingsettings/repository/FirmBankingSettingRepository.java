@@ -1,7 +1,7 @@
 package com.kosign.wecms.domain.setting.firmbankingsettings.repository;
 
-import com.kosign.wecms.domain.setting.firmbankingsettings.entity.FirmBankingSetting;
-import com.kosign.wecms.domain.setting.firmbankingsettings.entity.FirmBankingSettingId;
+import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConf;
+import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConfId;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 
@@ -15,14 +15,14 @@ import org.springframework.data.jpa.repository.JpaRepository;
  * out of scope until OQ-8a + the shared audit-log writer service
  * (Phase 1 P-1) are resolved.
  *
- * <p>Tenant scoping: callers must construct {@link FirmBankingSettingId}
+ * <p>Tenant scoping: callers must construct {@link TbFirmConfId}
  * with {@code bizKey} from
  * {@link com.kosign.wecms.common.tenant.TenantContext#currentBizKey()}.
  * The PK shape guarantees a Detail lookup with someone else's
  * {@code bizKey} returns empty rather than leaking a row.
  */
 public interface FirmBankingSettingRepository
-        extends JpaRepository<FirmBankingSetting, FirmBankingSettingId> {
+        extends JpaRepository<TbFirmConf, TbFirmConfId> {
 
     /**
      * Resolve the active firm-banking config row for the tenant.
@@ -44,7 +44,7 @@ public interface FirmBankingSettingRepository
      * into the WB_00000100 message: {@code VAN_ORG_CD},
      * {@code OUT_BANK_CD}, {@code BANK_PRTN_ID}, {@code WDRL_ACT_NO}.
      */
-    Optional<FirmBankingSetting> findFirstByBizKeyAndOrgStatOrderByRegDttmAsc(
+    Optional<TbFirmConf> findFirstByBizKeyAndOrgStatOrderByRegDttmAsc(
             String bizKey, String orgStat);
 
     /**

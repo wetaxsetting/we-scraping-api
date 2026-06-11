@@ -41,13 +41,13 @@ public final class OwnAccountTransferAuditActions {
 
     /** Action written by {@code POST /scraping-result} when the engine
      *  reported success ({@code trns_stts = "00000000"}) AND the row was
-     *  persisted (fresh write) or matched (replay). */
+     *  persisted. */
     public static final String SCRAPING_RESULT_OK      = "SCRAPING_RESULT_OK";
 
     /** Action written by {@code POST /scraping-result} when the
      *  composer-side validation rejected the intake (amount mismatch,
-     *  source/target ownership fail, idempotency conflict, etc.) OR
-     *  the engine reported a non-success status. The audit row is the
-     *  forensic record either way. */
+     *  source/target ownership fail, etc.) OR the engine reported a
+     *  non-success status. The audit row is the forensic record either
+     *  way. */
     public static final String SCRAPING_RESULT_REJECT  = "SCRAPING_RESULT_REJECT";
 }

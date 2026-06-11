@@ -8,7 +8,7 @@ import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileDataReposito
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileMstRepository;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayTargetRepository;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayTarget;
-import com.kosign.wecms.domain.payment.entity.OvrsPymnDtls;
+import com.kosign.wecms.domain.payment.entity.OvrsPymnSumrDetl;
 import com.kosign.wecms.domain.payment.entity.OvrsPymnSumr;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumr;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrDetl;
@@ -196,14 +196,15 @@ public class DispatchResultResolver {
      * {@code TB_PAY_FILE_MST} / {@code TB_PAY_FILE_DATA} dispatch
      * tables as the SCDUL_PYMN File path but is always SWIFT
      * (no API/TB_PAY_TARGET branch). Result key is the line's
-     * {@code TRN_SEQ} (1-based integer matching the line PK on
-     * {@link OvrsPymnDtls}), serialized as {@code String} so the
-     * caller can lookup using the same map shape as SCDUL_PYMN.
+     * {@code OVRS_PYMN_DETL_NO} (the natural detail PK on
+     * {@link OvrsPymnSumrDetl}) so the caller can look up using the same
+     * map shape as SCDUL_PYMN. The RS_CD join itself still keys on
+     * {@code PAY_TRAN_SEQ} (the stamped TB_PAY_FILE_DATA.SEQ).
      */
     @Transactional(readOnly = true)
     public Map<String, DispatchResult> resolveOverseas(
             OvrsPymnSumr master,
-            List<OvrsPymnDtls> lines) {
+            List<OvrsPymnSumrDetl> lines) {
 
         if (lines == null || lines.isEmpty()) {
             return Collections.emptyMap();
@@ -236,11 +237,10 @@ public class DispatchResultResolver {
                         (a, b) -> a));
 
         Map<String, DispatchResult> out = new HashMap<>(lines.size());
-        for (OvrsPymnDtls line : lines) {
+        for (OvrsPymnSumrDetl line : lines) {
             String seq  = line.getPayTranSeq();
             String rsCd = seq == null ? null : trimToNull(rsCdBySeq.get(seq));
-            String resultKey = line.getTrnSeq() == null
-                    ? null : String.valueOf(line.getTrnSeq());
+            String resultKey = line.getOvrsPymnDetlNo();
             if (resultKey == null) continue;
             out.put(resultKey, new DispatchResult(
                     procStat,

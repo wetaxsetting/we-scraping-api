@@ -41,7 +41,7 @@ Tracks, per live table: which Flyway migration creates it, whether a JPA **entit
 | `SCDUL_PYMN_SUMR` | V131 | ✅ | ✅ ScdulPymnSumrRepository |
 | `SCDUL_PYMN_SUMR_DETL` | V131 | ✅ | ✅ ScdulPymnSumrDetlRepository |
 | `INTERNAL_TRANSFER_KEY_SEQ` | V131 | ✅ | ✅ InternalTransferKeySeqRepository |
-| `SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN` | V188 | ✅ | — (no dedicated repo; via DispatchCountRepository) |
+| `SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN` | — (archived V188) | ❌ removed 2026-06-10 | — (legacy API-path bridge; never used by Spring) |
 | `OVRS_PYMN_SUMR` | V156 | ✅ | ✅ OvrsPymnSumrRepository |
 | `OVRS_PYMN_MSTR` | V156 | ✅ | ✅ OvrsPymnMstrRepository (+ OverseasPaymentRepository) |
 | `OVRS_PYMN_DTLS` | V138 | ✅ | ✅ OvrsPymnDtlsRepository |
@@ -137,7 +137,7 @@ Tracks, per live table: which Flyway migration creates it, whether a JPA **entit
 ## Coverage gaps (snapshot)
 
 1. **Schema-only, no entity (5):** `EINV_FEE_DETL`, `EINV_TAX_DETL` (e-invoice detail, deferred), `USAG_INFM_LANG_DETL` (read via join), `BANK_INFM_DETL` (projection repo only), `shedlock` (library).
-2. **Entity but no repository (6 + 1):** `TB_BATCH_SCHEDULE_INFO`, `TB_BATCH_SCHEDULE_DTL`, `TB_FIRM_BAT_API_TRAN`, `TB_FIRM_FILE_MST`, `TB_FIRM_FILE_DATA`, `TB_FIRM_FILE_RSLT` (dispatch write-path not ported), and `SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN` (accessed via projection).
+2. **Entity but no repository (6):** `TB_BATCH_SCHEDULE_INFO`, `TB_BATCH_SCHEDULE_DTL`, `TB_FIRM_BAT_API_TRAN`, `TB_FIRM_FILE_MST`, `TB_FIRM_FILE_DATA`, `TB_FIRM_FILE_RSLT` (dispatch write-path not ported). (`SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN` was here previously but its entity was **removed 2026-06-10** — never used by Spring.)
 3. **PROD-active tables not yet migrated** (no schema/entity, absent from all ERDs) — the `*_HIS` history twins, `BUSA_DOC_DETL(_HIS)`, `EXPT_RESOL_APPR_LINE`, `EXPT_RESOL_DETL`, `EXPT_RESOL_PAY_EVID_FILE`, `DAILY_FINCL_REPT_*`, `CCY_INFM`, `CHNL_INFM`, `BASE_INFM`, `BLTB_*`, `PUSH_DEVICE_*`, `*_MDPH`/`*_MDTR`. Full list in [erd/full-project-erd.md § Missing FK/index documentation](erd/full-project-erd.md#missing-fk--index-documentation-gaps-to-note).
 4. **Removed in V31** (excluded everywhere): `BUSI_COND_DAILY_SUMR(_DETL)`, `SELL_HIS_DAILY_SUMR(_DETL)`, `BAT_CALL_HIS`, `ACCT_TRNS_RCV_PAY_EVID_FILE`.
 

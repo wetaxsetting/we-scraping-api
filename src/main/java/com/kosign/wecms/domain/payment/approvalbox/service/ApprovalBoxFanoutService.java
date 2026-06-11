@@ -1,14 +1,14 @@
 package com.kosign.wecms.domain.payment.approvalbox.service;
 
 import com.kosign.wecms.common.exception.BusinessException;
+import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolApprvrInfm;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolApprvrInfmRepository;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
-import com.kosign.wecms.domain.notification.service.NotificationService;
-import com.kosign.wecms.domain.setting.approvalline.entity.ApprovalLineApprover;
+import com.kosign.wecms.domain.setting.approvalline.entity.ApprLineInfmDetl;
 import com.kosign.wecms.domain.setting.approvalline.repository.ApprovalLineApproverRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,7 +18,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.OffsetDateTime;
-import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -57,18 +56,12 @@ public class ApprovalBoxFanoutService {
     private static final DateTimeFormatter DTM14 = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
     private static final DateTimeFormatter DATE8 = DateTimeFormatter.ofPattern("yyyyMMdd");
     private static final DateTimeFormatter TIME6 = DateTimeFormatter.ofPattern("HHmmss");
-    /** {@code yyMMdd} segment of the legacy {@code VO_YYMMDD_NNN} doc-no
-     *  format — Vietnam local timezone so the daily counter resets at
-     *  the WeCMS business-day boundary, not UTC midnight. */
-    private static final DateTimeFormatter YYMMDD = DateTimeFormatter.ofPattern("yyMMdd");
-    /** WeCMS operates in VN. */
-    private static final ZoneId VIETNAM_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
 
     private final ExptResolMstrRepository       mstrRepository;
     private final ExptResolApprvrInfmRepository approverRepository;
     private final ApprovalLineApproverRepository apprLineApproverRepository;
     private final Clock                         clock;
-    private final NotificationService           notificationService;
+    private final LegacyFunctionRepository      legacyFunctions;
 
     /**
      * Persist the master + per-approver rows for one Request Approval
@@ -201,40 +194,26 @@ public class ApprovalBoxFanoutService {
 
         log.info("approval-box fanout bizKey={} apprSeqNo={} apprDv={} approvers={}",
                 bizKey, apprSeqNo, apprDv.code(), approvers.size());
-
-        // Phase-1 notification producer: fan an approval-request notification
-        // out to the approver chain. Card Transactions submits route through this
-        // shared writer. Best-effort + isolated (REQUIRES_NEW) so a notification
-        // failure never rolls back this approval submission.
-        notificationService.notifyApprovalRequested(
-                apprDv.slug(), apprSeqNo, mstr.getDocNo(), titl,
-                approvers.stream()
-                        .map(a -> new NotificationService.Recipient(a.apprvrId(), a.apprvrNm()))
-                        .toList());
     }
 
     /**
-     * Allocate the next {@code VO_YYMMDD_NNN} doc-no for the given
-     * tenant. Per-tenant per-day counter starting at {@code 001}. Used
-     * by every Payment module's Request Approval path so the Approval
-     * Box "Document No." column reads uniformly across modules.
+     * Allocate the next {@code DOC_NO} for the tenant via the single
+     * {@code wb_get_next_val} funnel ({@link LegacyFunctionRepository#nextDocNo(String)} →
+     * V140 branch&nbsp;#39, env-set-driven).
      *
-     * <p>Date segment uses Vietnam-local time so the counter resets at
-     * the WeCMS business-day boundary. Pads to 3 digits.
+     * <p><strong>Funnel migration (Phase 1, 2026-06-10):</strong> this previously used a
+     * hardcoded {@code VO_yyMMdd_NNN} counter that ignored the tenant ENV settings. Routing
+     * through the funnel intentionally fixes that gap — Card Transactions now honours the
+     * same env-set prefix / date-format / seq-length (BUSI/SYS_ENV_SET_INFM 00070..00073) as
+     * every other Payment module and the live JEX/UAT/PROD DB. Identical output for default
+     * {@code VO}/{@code YYMMDD}/3 tenants; env-set-override tenants now get their configured
+     * format instead of the hardcoded one.
+     *
+     * <p>The {@code now} parameter is retained for call-site compatibility but is no longer
+     * used — the DB branch derives the date from {@code timezone('utc', now())}.
      */
     public String nextDocNo(String bizKey, OffsetDateTime now) {
-        String yymmdd = now.atZoneSameInstant(VIETNAM_ZONE).toLocalDate().format(YYMMDD);
-        String prefix = "VO_" + yymmdd + "_";
-        Integer max = mstrRepository.findMaxDocNoSeqByBizKeyAndPrefix(bizKey, prefix);
-        int next = (max == null ? 0 : max) + 1;
-        if (next > 999) {
-            // 3-digit cap is fine in practice — DEV's busiest day in 6
-            // years tops 5 submissions; growing the format requires a
-            // coordinated frontend + downstream-system change.
-            throw new IllegalStateException(
-                    "doc-no daily counter exhausted for " + bizKey + " on " + yymmdd);
-        }
-        return prefix + String.format("%03d", next);
+        return legacyFunctions.nextDocNo(bizKey);
     }
 
     /** Approver-row input — name + id pair from the request body. */
@@ -336,7 +315,7 @@ public class ApprovalBoxFanoutService {
                     "Only Pending or In Progress approvals can be edited");
         }
 
-        List<ApprovalLineApprover> chain = apprLineApproverRepository
+        List<ApprLineInfmDetl> chain = apprLineApproverRepository
                 .findAllByBizKeyAndApprLineNoOrderByApprvrDispOrdAsc(bizKey, apprLineNo);
         if (chain.isEmpty()) {
             throw new BusinessException("WBE_VALIDATION",
@@ -347,7 +326,7 @@ public class ApprovalBoxFanoutService {
         approverRepository.flush();
 
         int line = 1;
-        for (ApprovalLineApprover a : chain) {
+        for (ApprLineInfmDetl a : chain) {
             ExptResolApprvrInfm row = new ExptResolApprvrInfm();
             row.setBizKey(bizKey);
             row.setApprSeqNo(apprSeqNo.trim());

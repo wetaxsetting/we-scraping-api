@@ -1,6 +1,6 @@
 package com.kosign.wecms.domain.setting.purposesettings.repository;
 
-import com.kosign.wecms.domain.setting.purposesettings.entity.BusiUsagSet;
+import com.kosign.wecms.domain.setting.purposesettings.entity.BusiUsagSetInfm;
 import com.kosign.wecms.domain.setting.purposesettings.entity.BusiUsagSetId;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -25,7 +25,7 @@ import java.util.Set;
  * by the service.
  */
 public interface PurposeSettingsRepository
-        extends JpaRepository<BusiUsagSet, BusiUsagSetId> {
+        extends JpaRepository<BusiUsagSetInfm, BusiUsagSetId> {
 
     /** Full active refactor-scope list for the tenant, ordered for
      *  the UI table. Excludes the 9 reserved system codes from
@@ -44,7 +44,7 @@ public interface PurposeSettingsRepository
      *  skips the LIKE arm entirely. Service-layer {@code list(...)}
      *  enforces the empty-string contract before calling this method. */
     @Query("""
-        SELECT p FROM BusiUsagSet p
+        SELECT p FROM BusiUsagSetInfm p
         WHERE p.bizKey = :bizKey
           AND p.usagGrpCd IS NULL
           AND p.useYn = 'Y'
@@ -53,7 +53,7 @@ public interface PurposeSettingsRepository
                OR LOWER(p.useUsagNm) LIKE LOWER(CONCAT('%', :keyword, '%')))
         ORDER BY p.dispOrd ASC NULLS LAST, p.useUsagCd ASC
         """)
-    List<BusiUsagSet> findActiveForTenant(
+    List<BusiUsagSetInfm> findActiveForTenant(
             @Param("bizKey")        String       bizKey,
             @Param("reservedCodes") Set<String>  reservedCodes,
             @Param("keyword")       String       keyword);
@@ -61,20 +61,20 @@ public interface PurposeSettingsRepository
     /** Lookup by composite PK. The {@code (biz_key, use_usag_cd)}
      *  shape guarantees tenant safety — a cross-tenant lookup returns
      *  empty. Used by Detail / Update / Delete. */
-    Optional<BusiUsagSet> findByBizKeyAndUseUsagCd(String bizKey, String useUsagCd);
+    Optional<BusiUsagSetInfm> findByBizKeyAndUseUsagCd(String bizKey, String useUsagCd);
 
     /** Duplicate-{@code hand_use_usag_cd} guard for Create. Mirrors
      *  legacy {@code findActivePurposeByHandCd} at
      *  {@code comm_0187_001_c001_act.jsp:36-53}. Legacy parity:
      *  Update path does NOT call this guard (per OQ-4). */
     @Query("""
-        SELECT p FROM BusiUsagSet p
+        SELECT p FROM BusiUsagSetInfm p
         WHERE p.bizKey = :bizKey
           AND p.usagGrpCd IS NULL
           AND p.useYn = 'Y'
           AND p.handUseUsagCd = :handCd
         """)
-    Optional<BusiUsagSet> findActiveByHandCd(
+    Optional<BusiUsagSetInfm> findActiveByHandCd(
             @Param("bizKey") String bizKey,
             @Param("handCd") String handCd);
 
@@ -82,13 +82,13 @@ public interface PurposeSettingsRepository
      *  {@code findActivePurposeByName} at
      *  {@code comm_0187_001_c001_act.jsp:55-72}. */
     @Query("""
-        SELECT p FROM BusiUsagSet p
+        SELECT p FROM BusiUsagSetInfm p
         WHERE p.bizKey = :bizKey
           AND p.usagGrpCd IS NULL
           AND p.useYn = 'Y'
           AND p.useUsagNm = :name
         """)
-    Optional<BusiUsagSet> findActiveByName(
+    Optional<BusiUsagSetInfm> findActiveByName(
             @Param("bizKey") String bizKey,
             @Param("name")   String name);
 
@@ -96,14 +96,14 @@ public interface PurposeSettingsRepository
      *  updated. Mirrors legacy {@code findDuplicateNameForUpdate} at
      *  {@code comm_0187_001_u002_act.jsp:54-72}. */
     @Query("""
-        SELECT p FROM BusiUsagSet p
+        SELECT p FROM BusiUsagSetInfm p
         WHERE p.bizKey = :bizKey
           AND p.usagGrpCd IS NULL
           AND p.useYn = 'Y'
           AND p.useUsagNm = :name
           AND p.useUsagCd <> :selfUseUsagCd
         """)
-    Optional<BusiUsagSet> findDuplicateNameExcludingSelf(
+    Optional<BusiUsagSetInfm> findDuplicateNameExcludingSelf(
             @Param("bizKey")        String bizKey,
             @Param("name")          String name,
             @Param("selfUseUsagCd") String selfUseUsagCd);
@@ -112,7 +112,7 @@ public interface PurposeSettingsRepository
      *  {@code hasActiveChildren} at
      *  {@code comm_0187_001_u002_act.jsp:75-91}. */
     @Query("""
-        SELECT (count(p) > 0) FROM BusiUsagSet p
+        SELECT (count(p) > 0) FROM BusiUsagSetInfm p
         WHERE p.bizKey = :bizKey
           AND p.parentUseUsagCd = :parentUseUsagCd
           AND p.useYn = 'Y'
@@ -124,7 +124,7 @@ public interface PurposeSettingsRepository
     /** Returns every active child's {@code use_usag_cd} — fed into the
      *  recursive transaction-reference check on Delete (OQ-5). */
     @Query("""
-        SELECT p.useUsagCd FROM BusiUsagSet p
+        SELECT p.useUsagCd FROM BusiUsagSetInfm p
         WHERE p.bizKey = :bizKey
           AND p.parentUseUsagCd = :parentUseUsagCd
           AND p.useYn = 'Y'
@@ -138,7 +138,7 @@ public interface PurposeSettingsRepository
      *  computes disp_ord in-service since the legacy DB function's
      *  matching branch only fires when {@code usag_grp_cd} is non-empty. */
     @Query("""
-        SELECT MAX(p.dispOrd) FROM BusiUsagSet p
+        SELECT MAX(p.dispOrd) FROM BusiUsagSetInfm p
         WHERE p.bizKey = :bizKey
           AND p.usagGrpCd IS NULL
           AND p.useYn = 'Y'
@@ -148,29 +148,18 @@ public interface PurposeSettingsRepository
     /** Bulk-load by PK set — used by Reorder to fetch every row the
      *  payload touches in one query before applying disp_ord updates. */
     @Query("""
-        SELECT p FROM BusiUsagSet p
+        SELECT p FROM BusiUsagSetInfm p
         WHERE p.bizKey = :bizKey
           AND p.useYn = 'Y'
           AND p.usagGrpCd IS NULL
           AND p.useUsagCd IN :useUsagCds
         """)
-    List<BusiUsagSet> findAllActiveForReorder(
+    List<BusiUsagSetInfm> findAllActiveForReorder(
             @Param("bizKey")     String       bizKey,
             @Param("useUsagCds") Set<String>  useUsagCds);
 
-    /**
-     * PK generation — delegates to the legacy {@code wb_get_next_val}
-     * DB function (V82). Returns a 10-digit zero-padded string in the
-     * {@code 0000000001..0999999999} range, scoped to
-     * {@code (biz_key, usag_grp_cd IS NULL)}. OQ-3 decided 2026-05-12.
-     *
-     * <p>Concurrency: the function uses bare {@code MAX+1} (no advisory
-     * lock). Service wraps this call + the immediate {@code INSERT} in
-     * one {@code @Transactional} block; the PK constraint catches a
-     * concurrent-create collision and the service retries once.
-     */
-    @Query(value = "SELECT wb_get_next_val("
-                 + "'busi_usag_set_infm', 'use_usag_cd', :bizKey, '')",
-           nativeQuery = true)
-    String nextUseUsagCd(@Param("bizKey") String bizKey);
+    // PK generation (use_usag_cd) now routes through the single
+    // LegacyFunctionRepository.nextUseUsagCd funnel (V140 #12b) — the
+    // scattered native @Query that used to live here was removed so every
+    // wb_get_next_val call goes through the one funnel per CLAUDE.md.
 }

@@ -51,7 +51,8 @@ class OatNxisasServiceSeedFlagTest {
                 mock(ExtTranCallHisRepository.class),
                 mapper,
                 seedCbc,
-                new OatSeedDecryptProperties(enabled));
+                new OatSeedDecryptProperties(enabled),
+                mock(com.kosign.wecms.common.legacy.LegacyFunctionRepository.class));
     }
 
     private NxisasDecryptRequest balanceRequest() {

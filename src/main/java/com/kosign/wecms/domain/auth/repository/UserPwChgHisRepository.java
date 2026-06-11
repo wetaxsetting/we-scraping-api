@@ -3,8 +3,6 @@ package com.kosign.wecms.domain.auth.repository;
 import com.kosign.wecms.domain.auth.entity.UserPwChgHis;
 import com.kosign.wecms.domain.auth.entity.UserPwChgHisId;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 
@@ -21,12 +19,8 @@ public interface UserPwChgHisRepository
      */
     List<UserPwChgHis> findTop3ByUserIdOrderByRegDtmDescRegSeqNoDesc(String userId);
 
-    /**
-     * Current MAX(REG_SEQ_NO) for the user, or 0 when the user has no
-     * history rows yet. The service adds 1 to allocate the next sequence —
-     * a Java-side per-user generator (no legacy {@code wb_get_next_val}
-     * branch) per the DB Function / Legacy Function Policy.
-     */
-    @Query("select coalesce(max(h.regSeqNo), 0) from UserPwChgHis h where h.userId = :userId")
-    long findMaxRegSeqNo(@Param("userId") String userId);
+    // REG_SEQ_NO allocation now routes through
+    // LegacyFunctionRepository.nextUserPwChgRegSeqNo (V140 #27 — per-user MAX+1,
+    // verbatim from the live JEX function) so every wb_get_next_val call goes
+    // through the one funnel.
 }

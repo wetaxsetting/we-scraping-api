@@ -94,7 +94,7 @@ public class InternalTransferController {
      *  accept legacy DEV-imported values during seed work. Tighter
      *  validation lives in the service layer's
      *  {@code findByBizKeyAndScdulPymnNoAndScdulPymnTypeCd} miss-path. */
-    private static final String SCDUL_PYMN_NO_PATTERN = "^([0-9]{5,30}|VO_[0-9]{6}_[0-9]{1,9})$";
+    private static final String SCDUL_PYMN_NO_PATTERN = "^([0-9]{1,30}|VO_[0-9]{6}_[0-9]{1,9})$";
 
     /** Pattern for {@code scdul_pymn_detl_no} — 1..20 chars per legacy
      *  column length, alphanumeric to permit legacy seed data. */

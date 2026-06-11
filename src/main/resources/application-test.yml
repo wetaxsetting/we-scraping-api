@@ -1,9 +1,9 @@
-# Test profile. Used by integration tests (JUnit 5 + Testcontainers).
-# ddl-auto set to `validate` 2026-06-07 (per ops request to prevent any
-# automatic schema changes in every profile). WARNING: with Flyway disabled
-# AND ddl-auto: validate, the test profile no longer builds a schema — any
-# integration test that relied on create-drop to materialize an ephemeral
-# schema will fail validation unless the test DB is pre-migrated.
+# Test profile. Used by integration tests (JUnit 5).
+# Flyway removed 2026-06-10 — there is no automatic migration. ddl-auto stays
+# `validate`, so the test profile does not build a schema: any integration test
+# that needs tables must run against a pre-migrated DB (apply
+# src/main/resources/db/migration/ SQL by hand). Pure-Mockito unit tests are
+# unaffected.
 
 spring:
   jpa:
@@ -12,8 +12,6 @@ spring:
     show-sql: true
     properties:
       hibernate.format_sql: true
-  flyway:
-    enabled: false
 
 logging:
   level:

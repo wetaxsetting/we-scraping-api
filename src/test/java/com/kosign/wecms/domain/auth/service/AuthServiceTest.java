@@ -209,6 +209,33 @@ class AuthServiceTest {
         verify(userBusiRepo, never()).save(any());
     }
 
+    @Test
+    void successfulLogin_isVerifyOnly_neverWritesUserPw() {
+        // Coexistence rule (2026-06-10): login must NOT re-encode or save
+        // USER_INFM.USER_PW. The legacy SHA-256 (public.hash()) value stays
+        // intact so the live JEX system keeps authenticating the same row.
+        // The former transparent SHA-256 → BCrypt upgrade was removed.
+        final String legacyHash = "vm/e2euhU9d0JFSQ+PQSDOviptOlRnYD7KM0PekNYnU=";
+        user.setUserPw(legacyHash);
+
+        when(userRepo.findById(ID)).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches(PW, legacyHash)).thenReturn(true);
+        when(userBusiRepo.findAllByUserIdAndDelYn(ID, "N")).thenReturn(List.of(linkA));
+        when(busiRepo.findById(BIZ_A)).thenReturn(Optional.of(company(BIZ_A, "WeCMS R&D Tenant", "F")));
+        when(busiAdmnRepo.existsByBizKeyAndUserId(BIZ_A, ID)).thenReturn(false);
+        when(tokenProvider.issue(ID, "Test User", BIZ_A, LANG, TenantContext.AUTH_GR_USER, "F"))
+                .thenReturn("jwt-token");
+
+        authService.login(new LoginRequest(ID, PW, null), IP, LANG);
+
+        // The credential is never re-encoded and the user row is never saved.
+        verify(passwordEncoder, never()).encode(anyString());
+        verify(passwordEncoder, never()).upgradeEncoding(anyString());
+        verify(userRepo, never()).save(any());
+        // Sanity: the stored hash is still the original legacy SHA-256 value.
+        assertThat(user.getUserPw()).isEqualTo(legacyHash);
+    }
+
     // ---------------------------------------------------------------
     // Multi-link users — chooser per-option product type, then finalize.
     // ---------------------------------------------------------------

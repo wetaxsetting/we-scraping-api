@@ -1,6 +1,7 @@
 package com.kosign.wecms.common.entity;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.MappedSuperclass;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
@@ -21,13 +22,15 @@ public abstract class BaseEntity {
     @Column(name = "REG_ID", length = 100, updatable = false)
     private String regId;
 
-    @Column(name = "REG_DTM", updatable = false)
+    @Convert(converter = LegacyDtmConverter.class)
+    @Column(name = "REG_DTM", length = 14, updatable = false)
     private OffsetDateTime regDtm;
 
     @Column(name = "MOD_ID", length = 100)
     private String modId;
 
-    @Column(name = "MOD_DTM")
+    @Convert(converter = LegacyDtmConverter.class)
+    @Column(name = "MOD_DTM", length = 14)
     private OffsetDateTime modDtm;
 
     @PrePersist

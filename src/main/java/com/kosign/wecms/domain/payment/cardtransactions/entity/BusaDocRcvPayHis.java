@@ -24,11 +24,10 @@ import java.math.BigDecimal;
  * (USER_ID / RCV_PAY_HIS_SEQ_NO / RCV_PAY_WAY_CD / BANK_CD / ACCT_NO /
  * TRSC_DT / REF_NO / BAL / DEDU_AMT / CARD_NO).
  *
- * <p>The composite PK is {@code (BIZ_KEY, DOC_ID, SEQ_NO)} from V13;
- * card-link rows allocate {@code SEQ_NO} via per-doc MAX+1 at write
- * time (mirrors the legacy {@code wb_get_next_val} pattern; one Java
- * call per row keeps the scope narrow versus introducing a new
- * {@code wb_get_next_val} branch).
+ * <p>JEX has no PK on this table and no {@code SEQ_NO} column; the
+ * entity keys on {@code (BIZ_KEY, DOC_ID, RCV_PAY_HIS_SEQ_NO)} — a
+ * natural key proven unique on JEX (1022/1022 rows). Card-link rows
+ * allocate {@code RCV_PAY_HIS_SEQ_NO} via per-doc MAX+1 at write time.
  */
 @Getter
 @Setter
@@ -46,17 +45,15 @@ public class BusaDocRcvPayHis {
     @Column(name = "DOC_ID", length = 50, nullable = false)
     private String docId;
 
+    /** Per-doc sequence — the JEX natural key for this PK-less table
+     *  (JEX has no {@code SEQ_NO} column). Allocated per-doc via MAX+1
+     *  at write time. */
     @Id
-    @Column(name = "SEQ_NO", precision = 20, scale = 0, nullable = false)
-    private BigDecimal seqNo;
+    @Column(name = "RCV_PAY_HIS_SEQ_NO", precision = 5, scale = 0, nullable = false)
+    private BigDecimal rcvPayHisSeqNo;
 
     @Column(name = "USER_ID", length = 100)
     private String userId;
-
-    /** Per-doc surrogate sequence for the card-link sub-row — used by
-     *  legacy queries that group by {@code RCV_PAY_HIS_SEQ_NO}. */
-    @Column(name = "RCV_PAY_HIS_SEQ_NO", precision = 5, scale = 0)
-    private BigDecimal rcvPayHisSeqNo;
 
     /** Payment method code — {@code 'C'} for Card link writes
      *  ({@code wabooks.enums.RcvPayWayCd.CARD}). Legacy {@code char(1)}. */

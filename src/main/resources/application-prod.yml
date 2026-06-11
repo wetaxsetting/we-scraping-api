@@ -3,7 +3,9 @@
 #   - ddl-auto MUST be 'validate'. Never 'update', never 'create', never 'create-drop'.
 #   - SQL logging OFF. No show-sql, no format_sql.
 #   - No secrets in this file. All sensitive values come from env vars.
-#   - Schema changes ship via Flyway migrations only.
+#   - Schema changes are applied manually in the DB (Flyway removed 2026-06-10).
+#     PROD will only boot if the schema is already fully migrated out-of-band;
+#     run the SQL under src/main/resources/db/migration/ by hand against the DB.
 
 spring:
   jpa:
@@ -11,20 +13,6 @@ spring:
       ddl-auto: validate
     show-sql: false
     open-in-view: false
-  flyway:
-    # Flyway disabled for this profile (2026-06-07, per ops request to turn
-    # Flyway off across all environments). NOTE: this contradicts the file
-    # header rule ("Schema changes ship via Flyway migrations only") and the
-    # ddl-auto: validate dependency above — PROD will only boot if the schema
-    # is already fully migrated out-of-band. Re-enable before any deploy that
-    # relies on Flyway to apply pending migrations.
-    enabled: false
-    baseline-on-migrate: false
-    # PROD must never tolerate checksum drift or out-of-order applies.
-    # These flags pin the strict defaults so the relaxed local-R&D
-    # values in `application.yml` cannot accidentally leak through.
-    out-of-order: false
-    validate-on-migrate: true
 
 server:
   error:

@@ -4,13 +4,14 @@ import com.kosign.wecms.common.auditlog.service.AuditLogContext;
 import com.kosign.wecms.common.auditlog.service.AuditLogService;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.i18n.MessageResolver;
+import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeExcelFieldError;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeExcelImportRequest;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeExcelImportResult;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeExcelPreview;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeExcelPreviewRow;
-import com.kosign.wecms.domain.setting.purposesettings.entity.BusiUsagSet;
+import com.kosign.wecms.domain.setting.purposesettings.entity.BusiUsagSetInfm;
 import com.kosign.wecms.domain.setting.purposesettings.repository.PurposeSettingsRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -178,6 +179,7 @@ public class PurposeExcelService {
     private final PurposeSettingsRepository repo;
     private final AuditLogService           auditLogService;
     private final MessageResolver           messages;
+    private final LegacyFunctionRepository  legacyFunctions;
 
     /* =================================================================
      *  Preview
@@ -225,13 +227,13 @@ public class PurposeExcelService {
             // row would hammer the connection. Two views needed:
             // (1) UPPER-cased hand codes for the dup-against-DB check;
             // (2) the live row map so parent lookups can verify level-1.
-            List<BusiUsagSet> live = repo.findActiveForTenant(
+            List<BusiUsagSetInfm> live = repo.findActiveForTenant(
                     bizKey,
                     PurposeSettingsService.RESERVED_SYSTEM_CODES,
                     "");
             Set<String> liveCodes = new HashSet<>();
             Set<String> liveRootCodes = new HashSet<>();
-            for (BusiUsagSet r : live) {
+            for (BusiUsagSetInfm r : live) {
                 String hc = r.getHandUseUsagCd();
                 if (hc == null) continue;
                 String up = hc.trim().toUpperCase(Locale.ROOT);
@@ -278,8 +280,8 @@ public class PurposeExcelService {
             // Otherwise the row gets `parent_not_found`. When the
             // parent matches a DB row that is itself a level-2 child,
             // we flag `parent_not_root` (the legacy 2-level cap).
-            Map<String, BusiUsagSet> liveByHandCd = new HashMap<>();
-            for (BusiUsagSet r : live) {
+            Map<String, BusiUsagSetInfm> liveByHandCd = new HashMap<>();
+            for (BusiUsagSetInfm r : live) {
                 if (r.getHandUseUsagCd() != null) {
                     liveByHandCd.put(
                             r.getHandUseUsagCd().trim().toUpperCase(Locale.ROOT),
@@ -295,7 +297,7 @@ public class PurposeExcelService {
                     boolean parentIsInFileRoot = inFileRoots.contains(s.upParent);
                     boolean parentIsDbRoot = liveRootCodes.contains(s.upParent);
                     if (!parentIsInFileRoot && !parentIsDbRoot) {
-                        BusiUsagSet dbCandidate = liveByHandCd.get(s.upParent);
+                        BusiUsagSetInfm dbCandidate = liveByHandCd.get(s.upParent);
                         if (dbCandidate == null) {
                             s.errors.add(new PurposeExcelFieldError(
                                     FIELD_PARENT, ERR_PARENT_NOT_FOUND,
@@ -372,12 +374,12 @@ public class PurposeExcelService {
         String nowDtm = OffsetDateTime.now(ZoneOffset.UTC).format(MOD_DTM_FORMAT);
 
         // Re-run validation against the LIVE state.
-        List<BusiUsagSet> live = repo.findActiveForTenant(
+        List<BusiUsagSetInfm> live = repo.findActiveForTenant(
                 bizKey, PurposeSettingsService.RESERVED_SYSTEM_CODES, "");
         Set<String> liveCodes = new HashSet<>();
         Set<String> liveRootCodes = new HashSet<>();
-        Map<String, BusiUsagSet> liveByHandCd = new HashMap<>();
-        for (BusiUsagSet r : live) {
+        Map<String, BusiUsagSetInfm> liveByHandCd = new HashMap<>();
+        for (BusiUsagSetInfm r : live) {
             String hc = r.getHandUseUsagCd();
             if (hc == null) continue;
             String up = hc.trim().toUpperCase(Locale.ROOT);
@@ -417,7 +419,7 @@ public class PurposeExcelService {
                 boolean parentIsInFileRoot = inFileRoots.contains(upParent);
                 boolean parentIsDbRoot = liveRootCodes.contains(upParent);
                 if (!parentIsInFileRoot && !parentIsDbRoot) {
-                    BusiUsagSet dbCandidate = liveByHandCd.get(upParent);
+                    BusiUsagSetInfm dbCandidate = liveByHandCd.get(upParent);
                     if (dbCandidate == null) {
                         errors.add(new PurposeExcelFieldError(
                                 FIELD_PARENT, ERR_PARENT_NOT_FOUND,
@@ -447,7 +449,7 @@ public class PurposeExcelService {
         for (PurposeExcelImportRequest.Row row : req.rows()) {
             String parent = row.parentUseUsagCd();
             if (parent != null && !parent.trim().isEmpty()) continue;
-            BusiUsagSet saved = persistRow(
+            BusiUsagSetInfm saved = persistRow(
                     bizKey, userId, nowDtm,
                     row.handUseUsagCd(), row.useUsagNm(), row.useUsagCont(),
                     /* parentSystemCd */ null,
@@ -467,7 +469,7 @@ public class PurposeExcelService {
             String upParent = parent.trim().toUpperCase(Locale.ROOT);
             String parentSystemCd = systemCdByHandCdUpper.get(upParent);
             if (parentSystemCd == null) {
-                BusiUsagSet existing = liveByHandCd.get(upParent);
+                BusiUsagSetInfm existing = liveByHandCd.get(upParent);
                 if (existing != null) {
                     parentSystemCd = existing.getUseUsagCd();
                 }
@@ -605,17 +607,17 @@ public class PurposeExcelService {
      *  {@code wb_get_next_val} DB function. One-shot retry on
      *  {@link DataIntegrityViolationException} for PK collisions (rare
      *  under the function's bare MAX+1 — see V82 migration). */
-    private BusiUsagSet persistRow(
+    private BusiUsagSetInfm persistRow(
             String bizKey, String userId, String modDtm,
             String handCd, String name, String description,
             String parentSystemCd, int dispOrd) {
         DataIntegrityViolationException lastDive = null;
         for (int attempt = 0; attempt < 2; attempt++) {
-            String useUsagCd = repo.nextUseUsagCd(bizKey);
+            String useUsagCd = legacyFunctions.nextUseUsagCd(bizKey, "");
             if (useUsagCd == null || useUsagCd.isBlank()) {
                 throw new BusinessException("WBE9999");
             }
-            BusiUsagSet entity = new BusiUsagSet();
+            BusiUsagSetInfm entity = new BusiUsagSetInfm();
             entity.setBizKey(bizKey);
             entity.setUseUsagCd(useUsagCd);
             entity.setHandUseUsagCd(handCd.trim());

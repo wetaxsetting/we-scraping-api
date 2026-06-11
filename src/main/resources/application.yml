@@ -31,44 +31,13 @@ spring:
     properties:
       hibernate.dialect: org.hibernate.dialect.PostgreSQLDialect
       hibernate.jdbc.time_zone: UTC
-  flyway:
-    # Re-enabled 2026-05-14 after the parallel-branch migration
-    # collisions were resolved in commit `fcd1be8`. Hibernate
-    # `ddl-auto: validate` depends on Flyway applying every entity-
-    # mapped table (e.g. APPR_LINE_INFM from V90, CHART_ACCT_INFM from
-    # V94, OVRS_PYMN_* from V112, NAPAS_REMIT_TRNS_HSTR.OAT_IDEMPOTENCY_KEY
-    # from V163) — keep enabled at all times. Re-enabled again
-    # 2026-05-18 after a debugging session left this at `false`;
-    # without Flyway running, V163 never landed and Hibernate
-    # validate failed with "missing column oat_idempotency_key in
-    # table napas_remit_trns_hstr".
-    #
-    # Disabled 2026-06-07 (per ops request to turn Flyway off across all
-    # environments — base + every profile). The history above is retained as
-    # context: with Flyway off, `ddl-auto: validate` still runs, so the target
-    # DB must already be fully migrated or Hibernate boot validation will fail
-    # with "missing column ...". Re-enable before any run that relies on Flyway
-    # to apply pending migrations.
-    enabled: false
-    locations: classpath:db/migration
-    baseline-on-migrate: false
-    # Local-R&D drift recovery — the developer DB is single-user and
-    # often runs against migration files that have been edited after
-    # first apply (e.g. a hotfix re-uses the same V-number while the
-    # local row is still in `flyway_schema_history`). Two flags keep
-    # the dev loop unblocked without compromising prod safety:
-    #
-    # `out-of-order: true` — lets a newly-added lower-version migration
-    #   run even when higher versions are already applied. Required for
-    #   normal R&D where V87 lands after V88-V89 already ran.
-    #
-    # `validate-on-migrate: false` — tolerates checksum drift on
-    #   already-applied migrations so the app boots even when the file
-    #   text changed. UAT/PROD profiles deliberately leave this at the
-    #   default `true` (strict) so production never starts with a
-    #   silently-modified migration history.
-    out-of-order: true
-    validate-on-migrate: false
+  # Flyway removed 2026-06-10. The application no longer auto-migrates any
+  # database. The schema SQL is kept in its original location
+  # (src/main/resources/db/migration/) for reference / version history, but
+  # nothing runs it automatically — apply required SQL manually in the DB.
+  # `ddl-auto: validate` above only validates entity mappings against the
+  # existing schema — the target DB must already be fully migrated or boot
+  # validation fails with "missing column ...".
   messages:
     basename: messages
     encoding: UTF-8

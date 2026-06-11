@@ -8,6 +8,8 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.math.BigDecimal;
 
@@ -40,8 +42,8 @@ public class AcctTrnsRcvPayInfm {
     private String acctSeqNo;
 
     @Id
-    @Column(name = "RCV_PAY_SEQ_NO", length = 20, nullable = false)
-    private String rcvPaySeqNo;
+    @Column(name = "RCV_PAY_SEQ_NO", precision = 5, scale = 0, nullable = false)
+    private BigDecimal rcvPaySeqNo;
 
     @Column(name = "BANK_CD", length = 20)
     private String bankCd;
@@ -80,10 +82,11 @@ public class AcctTrnsRcvPayInfm {
     @Column(name = "RCV_PAY_AMT")
     private BigDecimal rcvPayAmt;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "CNFM_YN", length = 1)
     private String cnfmYn;
 
-    @Column(name = "CNFM_BY_USER_ID", length = 100)
+    @Column(name = "CNFM_BY_USER_ID", length = 20)
     private String cnfmByUserId;
 
     @Column(name = "CNFM_BY_USER_NM", length = 50)

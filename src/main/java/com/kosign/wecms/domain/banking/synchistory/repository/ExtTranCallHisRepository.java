@@ -6,24 +6,14 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-import java.math.BigDecimal;
 import java.util.List;
 
 public interface ExtTranCallHisRepository extends JpaRepository<ExtTranCallHis, ExtTranCallHisId> {
 
-    /**
-     * Allocate the next {@code SEQ_NO} for the per-day audit-log
-     * sequence. Legacy {@code wb_get_next_val('ext_tran_call_his',
-     * 'seq_no', ref_date)} returns {@code MAX(SEQ_NO) + 1} scoped to
-     * {@code (SVC_ID, REF_DATE)}. The PK is
-     * {@code (SVC_ID, REF_DATE, SEQ_NO)} so the sequence naturally
-     * resets each day. Returns {@code 0} when no rows exist for the
-     * given day; caller bumps to {@code 1}.
-     */
-    @Query("SELECT COALESCE(MAX(h.seqNo), 0) FROM ExtTranCallHis h " +
-           "WHERE h.svcId = :svcId AND h.refDate = :refDate")
-    BigDecimal findMaxSeqNoForDay(@Param("svcId") String svcId,
-                                  @Param("refDate") String refDate);
+    // SEQ_NO allocation (per SVC_ID+REF_DATE) now routes through the single
+    // LegacyFunctionRepository.nextExtTranCallHisSeqNo funnel (V140 #21). The
+    // former findMaxSeqNoForDay native MAX+1 finder was removed so every
+    // wb_get_next_val call goes through the one funnel per CLAUDE.md.
 
     /**
      * Sync-history list query. Mirrors legacy

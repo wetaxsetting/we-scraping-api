@@ -175,17 +175,16 @@ public class OwnAccountTransferController {
      * Post-scrape intake. The browser bundle (local NXiSAS engine)
      * runs the bank scrape, captures the engine's output, and POSTs
      * the structured result here. Spring re-validates ownership,
-     * amount tolerance (exact match for VND), bank tx id format,
-     * and idempotency, then persists the canonical row to
+     * amount tolerance (exact match for VND), and bank tx id format,
+     * then persists the canonical row to
      * {@code NAPAS_REMIT_TRNS_HSTR} — the same legacy contract
      * {@code trns_0002_001_c001_act.jsp} writes.
      *
-     * <p>A second POST with the same {@code idempotency_key} returns
-     * the previously recorded row with {@code already_recorded=true};
-     * clients should treat that as success.
+     * <p>Each POST records a fresh row. The legacy JEX table has no
+     * dedicated idempotency column, so there is no server-side replay
+     * short-circuit; {@code already_recorded} is always {@code false}.
      *
      * <p>Errors:
-     * {@code WBE_OAT_IDEMPOTENCY_CONFLICT},
      * {@code WBE_OWN_ACCOUNT_TRANSFER_INVALID_CCY},
      * {@code WBE_OAT_TARGET_NAPAS_REQUIRED},
      * {@code WBE_OAT_TARGET_BANK_REQUIRED},

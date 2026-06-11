@@ -34,9 +34,9 @@ public interface BusiAdmnInfmRepository extends JpaRepository<BusiAdmnInfm, Busi
     long countByBizKey(String bizKey);
 
     /**
-     * Every BUSI_ADMN_INFM row for a tenant. Used by the Approval Box
-     * approve/reject notification producer to resolve the business-admin
-     * recipients (legacy {@code EXPT_RESOL_APPRVR_INFM_R008} admin branch).
+     * Every BUSI_ADMN_INFM row for a tenant. Used by Settings &gt; Users
+     * ({@code UserManagementService.adminIdSet}) to resolve the set of
+     * business-admin user ids for the tenant.
      */
     List<BusiAdmnInfm> findAllByBizKey(String bizKey);
 }

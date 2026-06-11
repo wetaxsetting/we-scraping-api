@@ -156,7 +156,7 @@ public class InternalTransferResultService {
                         bizKey, id, ScdulPymnTypeCd.INTERNAL.code())
                 .orElseThrow(() -> new BusinessException("WBE2060"));
 
-        Sort lineSort = Sort.by(Sort.Order.asc("scdulPymnDetlNo"));
+        Sort lineSort = ScdulPymnSumrDetlRepository.DETL_NO_NUMERIC_ASC;
         List<ScdulPymnSumrDetl> detailRows = detlRepository
                 .findByBizKeyAndScdulPymnNo(bizKey, id, lineSort);
         // Phase 2: one bulk lookup per detail() call against TB_PAY_* +
@@ -211,7 +211,7 @@ public class InternalTransferResultService {
                 master.getTrnfYn(),
                 master.getTrnfDtm(),
                 master.getOrgFileNm(),
-                master.getFileSize(),
+                master.getFileSize() == null || master.getFileSize().isBlank() ? null : new java.math.BigDecimal(master.getFileSize().trim()),
                 master.getRegId(),
                 requestor,
                 // suc/err/prc — derived from the resolved per-line statuses
