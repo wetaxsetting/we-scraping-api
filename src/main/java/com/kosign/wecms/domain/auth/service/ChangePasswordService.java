@@ -37,15 +37,17 @@ import java.util.List;
  *       {@code WBE_CHANGE_PASSWORD_REUSED} (legacy WBE1017,
  *       {@code IDO.USER_PW_CHG_HIS_R003.xml}).</li>
  * </ol>
- * On success: {@code USER_INFM.USER_PW} is rewritten with a fresh BCrypt
- * hash and a {@code USER_PW_CHG_HIS} row is inserted (mirrors legacy
+ * On success: {@code USER_INFM.USER_PW} is rewritten and a
+ * {@code USER_PW_CHG_HIS} row is inserted (mirrors legacy
  * {@code UserInfmDAO.patch} + {@code UserPwChgHisDAO.create}).
  * <p>
- * Hashing reuses the shared {@code PasswordEncoder}
- * ({@code WecmsPasswordEncoder}) — identical to the login write path, so a
- * password changed here authenticates against {@code AuthService.login}
- * with no special handling, and history rows imported from legacy DEV
- * (SHA-256 base64) still match in the reuse check.
+ * <b>Coexistence rule (2026-06-10):</b> hashing goes through the shared
+ * {@code PasswordEncoder} ({@code WecmsPasswordEncoder}), whose write path
+ * emits the legacy {@code public.hash()} SHA-256 base64 value — NOT BCrypt.
+ * A password changed here therefore authenticates against both
+ * {@code AuthService.login} and the live JEX system, and (because the legacy
+ * hash is deterministic) the reuse check compares cleanly against history
+ * rows imported from legacy DEV.
  */
 @Slf4j
 @Service
@@ -63,6 +65,7 @@ public class ChangePasswordService {
     private final UserInfmRepository userRepo;
     private final UserPwChgHisRepository historyRepo;
     private final PasswordEncoder passwordEncoder;
+    private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
 
     @Transactional
     public void changePassword(ChangePasswordRequest req, String ipAddr) {
@@ -107,7 +110,8 @@ public class ChangePasswordService {
         // Append the history row (per-user MAX+1 — Java-side generator).
         UserPwChgHis row = new UserPwChgHis();
         row.setUserId(userId);
-        row.setRegSeqNo(historyRepo.findMaxRegSeqNo(userId) + 1);
+        // REG_SEQ_NO via the single wb_get_next_val funnel (V140 #27 — per-user MAX+1).
+        row.setRegSeqNo(Long.parseLong(legacyFunctions.nextUserPwChgRegSeqNo(userId)));
         row.setUserPw(encoded);
         row.setIpAddr(ipAddr);
         row.setRegDtm(now);

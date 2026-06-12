@@ -23,7 +23,7 @@ import com.kosign.wecms.domain.payment.cardtransactions.repository.CardMstrRepos
 import com.kosign.wecms.domain.payment.cardtransactions.repository.CardTrnsHstrRepository;
 import com.kosign.wecms.domain.payment.cardtransactions.repository.CardTrnsHstrRepository.LedgerTotalsProjection;
 import com.kosign.wecms.domain.setting.approvalline.repository.ApprovalLineApproverRepository;
-import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount;
+import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartAcctInfm;
 import com.kosign.wecms.domain.setting.chartofaccounts.repository.ChartOfAccountRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -392,8 +392,8 @@ class CardTransactionsServiceTest {
         };
     }
 
-    private static ChartOfAccount chartAcct(String seqNo, String code, String stts) {
-        ChartOfAccount c = new ChartOfAccount();
+    private static ChartAcctInfm chartAcct(String seqNo, String code, String stts) {
+        ChartAcctInfm c = new ChartAcctInfm();
         c.setBizKey(TENANT);
         c.setChartAcctSeqNo(seqNo);
         c.setChartAcctCd(code);

@@ -40,21 +40,21 @@ public class NxsiasModuleTranLogHis {
     @Column(name = "NXISAS_MODULE", length = 100, nullable = false)
     private String nxisasModule;
 
-    @Column(name = "NXISAS_JOB", length = 40, nullable = false)
+    @Column(name = "NXISAS_JOB", length = 100, nullable = false)
     private String nxisasJob;
 
-    @Column(name = "NXISAS_ERR_CODE", length = 40, nullable = false)
+    @Column(name = "NXISAS_ERR_CODE", length = 8, nullable = false)
     private String nxisasErrCode;
 
-    @Column(name = "NXISAS_ERR_CONT", columnDefinition = "TEXT")
+    @Column(name = "NXISAS_ERR_CONT", length = 1000)
     private String nxisasErrCont;
 
-    @Column(name = "REQ_DATA", columnDefinition = "TEXT")
+    @Column(name = "REQ_DATA", length = 1000)
     private String reqData;
 
     @Column(name = "REG_ID", length = 100)
     private String regId;
 
-    @Column(name = "NXISAS_TYPE", length = 40)
+    @Column(name = "NXISAS_TYPE", length = 100)
     private String nxisasType;
 }

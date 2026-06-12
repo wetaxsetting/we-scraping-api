@@ -7,6 +7,8 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /**
  * Purpose dictionary master. Powers the Purpose picker on the
@@ -38,6 +40,7 @@ public class UsagInfm {
     @Column(name = "DEL_YN", length = 1)
     private String delYn;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "USAG_TYPE", length = 2)
     private String usagType;
 

@@ -13,11 +13,11 @@ import com.kosign.wecms.domain.banking.entity.AcctMstr;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
 import com.kosign.wecms.domain.banking.service.AccountAccessGuard;
 import com.kosign.wecms.domain.banking.service.BankCdResolver;
-import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount;
+import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartAcctInfm;
 import com.kosign.wecms.domain.setting.chartofaccounts.repository.ChartOfAccountRepository;
 import com.kosign.wecms.domain.setting.contacts.entity.TrcoInfm;
 import com.kosign.wecms.domain.setting.contacts.repository.TrcoInfmRepository;
-import com.kosign.wecms.domain.setting.purposesettings.entity.BusiUsagSet;
+import com.kosign.wecms.domain.setting.purposesettings.entity.BusiUsagSetInfm;
 import com.kosign.wecms.domain.setting.purposesettings.repository.PurposeSettingsRepository;
 import com.kosign.wecms.domain.setting.vasaccount.entity.BusiVasAcctInfm;
 import com.kosign.wecms.domain.setting.vasaccount.repository.BusiVasAcctInfmRepository;
@@ -267,7 +267,7 @@ public class SmartOrganizerService {
             String chartNm = chartCd == null ? null
                     : chartNmCache.computeIfAbsent(chartCd, k ->
                         chartRepo.findByBizKeyAndChartAcctCdAndDelYn(bizKey, k, "N")
-                                .map(ChartOfAccount::getChartAcctNmEn).orElse(null));
+                                .map(ChartAcctInfm::getChartAcctNmEn).orElse(null));
             String dispUsagNm = useUsagCd == null ? null
                     : usagNmCache.computeIfAbsent(useUsagCd, k ->
                         purposeRepo.findByBizKeyAndUseUsagCd(bizKey, k)
@@ -292,7 +292,7 @@ public class SmartOrganizerService {
         return rows;
     }
 
-    private static String usagLabel(BusiUsagSet u) {
+    private static String usagLabel(BusiUsagSetInfm u) {
         return joinLabel(u.getHandUseUsagCd(), u.getUseUsagNm());
     }
 
@@ -394,7 +394,7 @@ public class SmartOrganizerService {
             AcctTrnsRcvPayInfm c = new AcctTrnsRcvPayInfm();
             c.setBizKey(bizKey);
             c.setAcctSeqNo(acctSeqNo);
-            c.setRcvPaySeqNo(seqNoRaw.trim());
+            c.setRcvPaySeqNo(new BigDecimal(seqNoRaw.trim()));
             c.setBankCd(bank.getBankCd());
             c.setAcctNo(bank.getAcctNo());
             c.setTrscDt(bank.getTrscDt());

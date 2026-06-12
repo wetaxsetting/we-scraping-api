@@ -46,6 +46,7 @@ class EInvoiceScrapeServiceTest {
     @Mock BusaDocMstrRepository    busaRepo;
     @Mock ExtTranCallHisRepository auditRepo;
     @Mock BusiInfmRepository       busiRepo;
+    @Mock com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
 
     private EInvoiceScrapeService service;
 
@@ -57,10 +58,10 @@ class EInvoiceScrapeServiceTest {
 
     @BeforeEach
     void seed() {
-        service = new EInvoiceScrapeService(busaRepo, auditRepo, busiRepo);
+        service = new EInvoiceScrapeService(busaRepo, auditRepo, busiRepo, legacyFunctions);
         TenantContext.set(USER, BIZ, LangCd.EN);
         lenient().when(busaRepo.findById(any(BusaDocMstrId.class))).thenReturn(Optional.empty());
-        lenient().when(auditRepo.findMaxSeqNoForDay(anyString(), anyString())).thenReturn(BigDecimal.ZERO);
+        lenient().when(legacyFunctions.nextExtTranCallHisSeqNo(anyString(), anyString())).thenReturn("1");
         BusiInfm busi = org.mockito.Mockito.mock(BusiInfm.class);
         lenient().when(busi.getTaxId()).thenReturn(COMPANY_TAX);
         lenient().when(busiRepo.findById(BIZ)).thenReturn(Optional.of(busi));
@@ -199,7 +200,7 @@ class EInvoiceScrapeServiceTest {
 
     @Test
     void audit_salesSvcId_andSeqNoMaxPlusOne() {
-        when(auditRepo.findMaxSeqNoForDay(eq("GDT_INQUIRY_SALES"), anyString())).thenReturn(new BigDecimal("7"));
+        when(legacyFunctions.nextExtTranCallHisSeqNo(eq("GDT_INQUIRY_SALES"), anyString())).thenReturn("8");
 
         service.saveScrapedInvoices(req("SALES"));
 

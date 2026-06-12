@@ -1,0 +1,53 @@
+-- empl_mdph definition
+
+-- Drop table
+
+-- DROP TABLE empl_mdph;
+
+CREATE TABLE empl_mdph (
+	biz_key varchar(20) NOT NULL,
+	empl_no varchar(20) NOT NULL,
+	mod_dtm varchar(14) NOT NULL,
+	"_empl_nm" varchar(100) NULL,
+	jbcl_nm varchar(100) NULL,
+	dept_nm varchar(100) NULL,
+	clph_no varchar(100) NULL,
+	eml varchar(100) NULL,
+	cmpn_join_date varchar(8) NULL,
+	cmpn_fire_date varchar(8) NULL,
+	empl_resi_st varchar(200) NULL,
+	empl_resi_city varchar(200) NULL,
+	empl_resi_dtl_adrs varchar(200) NULL,
+	empl_resi_post_adrs varchar(200) NULL,
+	natn_id varchar(20) NULL,
+	bank_cd varchar(20) NULL,
+	acct_no varchar(100) NULL,
+	user_img varchar(500) NULL,
+	mapp_seup_yn varchar(1) NULL,
+	mapp_noti_yn varchar(1) NULL,
+	payroll_page_reg_yn varchar(1) NULL,
+	wabooks_emp_mng_reg_yn varchar(1) NULL,
+	mod_id varchar(100) NOT NULL,
+	stts varchar(1) NOT NULL,
+	mod_uid varchar(50) DEFAULT uuid_in(md5(random()::text || now()::text)::cstring) NOT NULL,
+	tel_no varchar(100) NULL,
+	r_empl_no varchar(50) NULL,
+	resi_yn bpchar(1) NULL,
+	mari_yn bpchar(1) NULL,
+	child_dep numeric NULL,
+	efil_dept_nm varchar(100) NULL,
+	eng_fst_nm varchar(100) NULL,
+	eng_lst_nm varchar(100) NULL,
+	nat_fst_nm varchar(100) NULL,
+	nat_lst_nm varchar(100) NULL,
+	birth_date varchar(8) NULL,
+	citizen_natn_num_cd varchar(5) NULL,
+	emer_clph varchar(100) NULL,
+	empl_iden_type bpchar(1) NULL,
+	empl_no_auto_gen_yn bpchar(1) NULL,
+	gender_cd bpchar(1) NULL,
+	natn_num_cd varchar(5) NULL,
+	actv_yn bpchar(1) NULL,
+	CONSTRAINT empl_mdph_chk01 CHECK (((stts)::text = ANY (ARRAY[('C'::character varying)::text, ('U'::character varying)::text, ('D'::character varying)::text]))),
+	CONSTRAINT empl_mdph_pk PRIMARY KEY (mod_uid, empl_no, biz_key, mod_dtm)
+);

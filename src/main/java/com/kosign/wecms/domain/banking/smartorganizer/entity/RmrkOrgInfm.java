@@ -50,7 +50,8 @@ public class RmrkOrgInfm {
     private String bizKey;
 
     @Id
-    @Column(name = "RMRK_SEQ_NO", nullable = false)
+    @JdbcTypeCode(SqlTypes.NUMERIC)
+    @Column(name = "RMRK_SEQ_NO", precision = 10, scale = 0, nullable = false)
     private Long rmrkSeqNo;
 
     /** {@code RCV} or {@code PAY} — derived at write-time from
@@ -74,9 +75,12 @@ public class RmrkOrgInfm {
     private String matchType;
 
     /** Per-tenant display order — drives the Organizer Settings list
-     *  ORDER BY ASC. INTEGER locally (refactor convention — same
-     *  precedent as V36 / V89 / V92), NUMERIC(10,0) on DEV. */
-    @Column(name = "DISP_ORD", nullable = false)
+     *  ORDER BY ASC. JEX {@code NUMERIC(10,0)} — mapped via
+     *  {@code @JdbcTypeCode(NUMERIC)} so Hibernate validate passes against
+     *  the live JEX column (2026-06-09 JEX-parity alignment; supersedes the
+     *  earlier local-INTEGER convention). */
+    @JdbcTypeCode(SqlTypes.NUMERIC)
+    @Column(name = "DISP_ORD", precision = 10, scale = 0, nullable = false)
     private Integer dispOrd;
 
     @Column(name = "TRCO_KEY", length = 20)
@@ -85,7 +89,8 @@ public class RmrkOrgInfm {
     @Column(name = "USE_USAG_CD", length = 20)
     private String useUsagCd;
 
-    @Column(name = "VAS_ACCT_SEQ_NO")
+    @JdbcTypeCode(SqlTypes.NUMERIC)
+    @Column(name = "VAS_ACCT_SEQ_NO", precision = 10, scale = 0)
     private Long vasAcctSeqNo;
 
     @Column(name = "REG_ID", length = 100)

@@ -9,8 +9,6 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-import java.time.OffsetDateTime;
-
 @Getter
 @Setter
 @NoArgsConstructor
@@ -23,12 +21,18 @@ public class UserLoginHis {
     @Column(name = "USER_ID", length = 100, nullable = false)
     private String userId;
 
+    /** Legacy JEX {@code USER_LOGIN_HIS.REG_DTM} is {@code varchar(14)}
+     *  {@code yyyyMMddHHmmss} (UTC) — part of the composite PK. Mapped as a
+     *  plain {@code String} to match the live DDL column-for-column (the value
+     *  is generated UTC-now in {@code LoginHistoryService}, mirroring legacy
+     *  {@code UserLoginHisDAO.create} → {@code DateTimeUtils.utcNow()} +
+     *  {@code WB_FORMATTER_DTM14}). */
     @Id
-    @Column(name = "REG_DTM", nullable = false)
-    private OffsetDateTime regDtm;
+    @Column(name = "REG_DTM", length = 14, nullable = false)
+    private String regDtm;
 
     @Id
-    @Column(name = "REG_UID", length = 100, nullable = false)
+    @Column(name = "REG_UID", length = 50, nullable = false)
     private String regUid;
 
     @Column(name = "IP_ADDR", length = 100)

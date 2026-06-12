@@ -57,9 +57,11 @@ public class BankCertInfo {
 
     /** Discriminator: bank vs personal vs corporate (legacy
      *  {@code BankCertInfoDv}). Refactor only writes the bank value
-     *  ("01") — personal-banking is being removed from JEX per
+     *  ({@code "1"}) — JEX {@code cert_info_dv} is {@code varchar(1)} and
+     *  all live rows carry {@code '1'} (verified on JEX 2026-06-09);
+     *  personal-banking is being removed from JEX per
      *  {@code docs/jex/features/remove-vas-column-and-personal-banking.md}. */
-    @Column(name = "CERT_INFO_DV", length = 20)
+    @Column(name = "CERT_INFO_DV", length = 1)
     private String certInfoDv;
 
     /** Plain-text username (legacy stores plain). */

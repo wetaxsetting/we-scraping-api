@@ -70,7 +70,10 @@ public enum InternalTransferSortField implements SortableField {
     TOT_TRNS_CNT  ("totTrnsCnt"),
     TOTAL_TRAN_AMT("totalTranAmt"),
     PAY_DATE      ("payTranDt"),
-    APPR_STTS     ("apprStts"),
+    // APPR_STTS removed 2026-06-10: SCDUL_PYMN_SUMR has no APPR_STTS column in
+    // legacy JEX — approval status is derived from EXPT_RESOL_MSTR on read and
+    // is not a single-table sort key. Sorting by it falls back to default ORDER BY
+    // (the same graceful-degradation contract used for APPRVR_NM below).
     DRAFT_USER_NM ("regId"),
     APPR_DOC_NO   ("erpFileNum"),
     TITL          ("titl");

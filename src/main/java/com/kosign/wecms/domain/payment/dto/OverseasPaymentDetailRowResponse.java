@@ -11,7 +11,7 @@ import java.math.BigDecimal;
  * <p>Returned inside {@link OverseasPaymentDetailResponse#rows()}.
  */
 public record OverseasPaymentDetailRowResponse(
-        Integer trnSeq,
+        String  ovrsPymnDetlNo,
         String  bnfcCode,
         String  ccyCd,
         BigDecimal trnfAmt,
@@ -36,20 +36,5 @@ public record OverseasPaymentDetailRowResponse(
         String  procDttm,
         String  rsltDttm,
         String  rsCd,
-        String  rsMsg,
-        /** OVR-G1 Phase B — per-line banking-match read state, sourced from
-         *  {@code OVRS_PYMN_DTLS} (V248 columns). Additive + backward compatible:
-         *  appended after the dispatch-result fields so older positional callers
-         *  are unaffected. {@code linkMatchYn} is {@code "N"} until a match
-         *  lands (Phase C+ write path); the other three are null when unmatched.
-         *  Read-only — no match/unmatch logic is performed here. */
-        String  linkMatchYn,
-        String  acctSeqNo,
-        String  bankTrnsShortId,
-        String  bankTrnsFullId,
-        /** OVR-G1 Phase D — per-line match IDENTITY (legacy
-         *  {@code OVRS_PYMN_DETL_NO}). The Phase-C match endpoints are keyed on
-         *  this, so the Result-Detail read path must expose it for the frontend
-         *  to call match / unmatch. Additive + backward compatible (appended). */
-        String  ovrsPymnDetlNo
+        String  rsMsg
 ) {}

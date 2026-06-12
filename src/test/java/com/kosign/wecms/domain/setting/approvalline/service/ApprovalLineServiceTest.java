@@ -11,8 +11,8 @@ import com.kosign.wecms.domain.setting.approvalline.dto.ApprovalLineCreateReques
 import com.kosign.wecms.domain.setting.approvalline.dto.ApprovalLineRow;
 import com.kosign.wecms.domain.setting.approvalline.dto.ApprovalLineUpdateRequest;
 import com.kosign.wecms.domain.setting.approvalline.entity.ApprovalLine;
-import com.kosign.wecms.domain.setting.approvalline.entity.ApprovalLineApprover;
-import com.kosign.wecms.domain.setting.approvalline.entity.ApprovalLineApproverId;
+import com.kosign.wecms.domain.setting.approvalline.entity.ApprLineInfmDetl;
+import com.kosign.wecms.domain.setting.approvalline.entity.ApprLineInfmDetlId;
 import com.kosign.wecms.domain.setting.approvalline.entity.ApprovalLineId;
 import com.kosign.wecms.domain.setting.approvalline.repository.ApprovalLineApproverRepository;
 import com.kosign.wecms.domain.setting.approvalline.repository.ApprovalLineRepository;
@@ -104,12 +104,12 @@ class ApprovalLineServiceTest {
 
         // Details: disp_ord assigned 1..N from array position; tenant +
         // parent + audit stamped from the JWT-bound user, never the wire.
-        ArgumentCaptor<ApprovalLineApprover> rows = ArgumentCaptor.forClass(ApprovalLineApprover.class);
+        ArgumentCaptor<ApprLineInfmDetl> rows = ArgumentCaptor.forClass(ApprLineInfmDetl.class);
         verify(approverRepo, times(2)).save(rows.capture());
         assertThat(rows.getAllValues())
-                .extracting(ApprovalLineApprover::getApprvrId).containsExactly("u1", "u2");
+                .extracting(ApprLineInfmDetl::getApprvrId).containsExactly("u1", "u2");
         assertThat(rows.getAllValues())
-                .extracting(ApprovalLineApprover::getApprvrDispOrd).containsExactly(1, 2);
+                .extracting(ApprLineInfmDetl::getApprvrDispOrd).containsExactly(1, 2);
         assertThat(rows.getAllValues()).allSatisfy(r -> {
             assertThat(r.getBizKey()).isEqualTo(TENANT);
             assertThat(r.getApprLineNo()).isEqualTo(10L);
@@ -133,7 +133,7 @@ class ApprovalLineServiceTest {
         // posi / dept omitted (null) on the wire.
         service.create(new ApprovalLineCreateRequest("L", List.of(input("u1", "U1"))));
 
-        ArgumentCaptor<ApprovalLineApprover> rows = ArgumentCaptor.forClass(ApprovalLineApprover.class);
+        ArgumentCaptor<ApprLineInfmDetl> rows = ArgumentCaptor.forClass(ApprLineInfmDetl.class);
         verify(approverRepo).save(rows.capture());
         // Legacy parity (comm_0222_003_u001_act.jsp:144-148): empty string, not null.
         assertThat(rows.getValue().getApprvrPosi()).isEqualTo("");
@@ -226,10 +226,10 @@ class ApprovalLineServiceTest {
         assertThat(master.getModId()).isEqualTo(USER);
 
         // Two saves: C inserted at disp_ord 1, A updated to disp_ord 2.
-        ArgumentCaptor<ApprovalLineApprover> saved = ArgumentCaptor.forClass(ApprovalLineApprover.class);
+        ArgumentCaptor<ApprLineInfmDetl> saved = ArgumentCaptor.forClass(ApprLineInfmDetl.class);
         verify(approverRepo, times(2)).save(saved.capture());
-        ApprovalLineApprover c = byId(saved.getAllValues(), "c");
-        ApprovalLineApprover a = byId(saved.getAllValues(), "a");
+        ApprLineInfmDetl c = byId(saved.getAllValues(), "c");
+        ApprLineInfmDetl a = byId(saved.getAllValues(), "a");
         assertThat(c.getApprvrDispOrd()).isEqualTo(1);
         assertThat(c.getApprvrNm()).isEqualTo("C");
         assertThat(c.getRegId()).isEqualTo(USER);   // new row → REG stamped
@@ -237,7 +237,7 @@ class ApprovalLineServiceTest {
         assertThat(a.getModId()).isEqualTo(USER);
 
         // B removed by PK.
-        verify(approverRepo).deleteById(new ApprovalLineApproverId(TENANT, 5L, "b"));
+        verify(approverRepo).deleteById(new ApprLineInfmDetlId(TENANT, 5L, "b"));
     }
 
     @Test
@@ -314,8 +314,8 @@ class ApprovalLineServiceTest {
         return l;
     }
 
-    private static ApprovalLineApprover detail(long no, int ord, String id, String nm) {
-        ApprovalLineApprover a = new ApprovalLineApprover();
+    private static ApprLineInfmDetl detail(long no, int ord, String id, String nm) {
+        ApprLineInfmDetl a = new ApprLineInfmDetl();
         a.setBizKey(TENANT);
         a.setApprLineNo(no);
         a.setApprvrDispOrd(ord);
@@ -326,7 +326,7 @@ class ApprovalLineServiceTest {
         return a;
     }
 
-    private static ApprovalLineApprover byId(List<ApprovalLineApprover> rows, String id) {
+    private static ApprLineInfmDetl byId(List<ApprLineInfmDetl> rows, String id) {
         return rows.stream().filter(r -> id.equals(r.getApprvrId())).findFirst().orElseThrow();
     }
 

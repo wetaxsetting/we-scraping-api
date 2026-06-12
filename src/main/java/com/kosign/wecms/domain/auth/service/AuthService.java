@@ -140,15 +140,12 @@ public class AuthService {
             throw new BusinessException(CODE_BAD_CREDENTIALS);
         }
 
-        // Transparent legacy SHA-256 → BCrypt upgrade on a successful
-        // password match (legacy hashes survive direct copies from
-        // wecmsvndev).
-        if (passwordEncoder.upgradeEncoding(user.getUserPw())) {
-            user.setUserPw(passwordEncoder.encode(req.userPw()));
-            user.setModId(userId);
-            userRepo.save(user);
-            log.info("Upgraded stored password for user {} from legacy hash to BCrypt", userId);
-        }
+        // Coexistence rule (2026-06-10): login is VERIFY-ONLY. USER_PW is
+        // never re-encoded or written here. The legacy public.hash()
+        // SHA-256 value stays intact so the live JEX system can keep
+        // authenticating the same credential. (The former transparent
+        // SHA-256 → BCrypt upgrade was removed — it mutated live data and
+        // broke JEX login.)
 
         // Multi-company resolution: every active link the user has.
         List<UserBusiConnInfm> links = userBusiRepo.findAllByUserIdAndDelYn(userId, "N");

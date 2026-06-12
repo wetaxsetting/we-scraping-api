@@ -38,21 +38,13 @@ spring:
     username: wecmsdev_owner
     password: ${WECMS_DB_PASSWORD:P2CKJpDAnO#vUM146W$}
     driver-class-name: org.postgresql.Driver
-  flyway:
-    # Flyway disabled for this profile (2026-06-07, per ops request to turn
-    # Flyway off across all environments). NOTE: ddl-auto stays `validate`, so
-    # the target DB must already be fully migrated or Hibernate boot validation
-    # will fail with "missing column ...".
-    enabled: false
-    # The shared dev DB may have a flyway_schema_history entry with version > 86
-    # from a prior branch or manual apply, causing V84-86 to appear "out of order".
-    # outOfOrder=true lets Flyway apply them despite that. Local-only — never set
-    # this in prod profiles.
-    out-of-order: true
+  # Flyway removed 2026-06-10 — no automatic migration. The shared dev DB is
+  # expected to be already migrated (apply src/main/resources/db/migration/ SQL
+  # by hand). ddl-auto stays `validate` so Hibernate only checks mappings
+  # against the existing schema.
   jpa:
     hibernate:
       ddl-auto: validate
-      ## ddl-auto: update
     # Inherited from the former dev profile — log every SQL statement
     # with formatted output to aid query debugging. Override to false
     # in `.env` (spring.jpa.show-sql=false) if the noise bothers you.
@@ -72,6 +64,21 @@ wecms:
     # NEVER use this value outside a developer laptop / SIT.
     # Generate a real one with: openssl rand -hex 64
     secret: ${WECMS_JWT_SECRET:local-rnd-dev-only-insecure-jwt-signing-secret-override-in-prod-abcdef123456}
+  # EFS / VAN gateway (firm-banking dispatch). DEV gateway per REST API guide
+  # ver 1.2.2 §1.2 (DEV host) + §6 timeouts (connect 3s / read 20s). Endpoint
+  # paths are vendor-fixed and default in EfsProperties; only enabled + base-url
+  # + partner-id are env-specific. NO API_KEY here — it is a per-VAN secret
+  # provisioned out-of-band into TB_VAN_API_INFO (B2), read via VanApiKeyService.
+  # `enabled` defaults false (mock active) until the partner instance +
+  # IP-whitelist are confirmed (B1 / OQ-PDF-2). WGVN_EFS_204 is NOT configured —
+  # absent from guide ver 1.2.2 (OQ-PDF-1).
+  dispatch:
+    efs:
+      enabled: ${WECMS_EFS_ENABLED:false}
+      base-url: ${WECMS_EFS_BASE_URL:https://dev-van-gw.webcashvietnam.com}
+      partner-id: ${WECMS_EFS_PARTNER_ID:}
+      connect-timeout-ms: 3000
+      read-timeout-ms: 20000
   # ERP Transaction History (refactor slug: erp-transaction-history).
   # Windows local-dev default (OQ-3 resolved 2026-05-11). Override via
   # env var WECMS_ERP_TRANSACTION_HISTORY_STORAGE_ROOT on the SIT host.

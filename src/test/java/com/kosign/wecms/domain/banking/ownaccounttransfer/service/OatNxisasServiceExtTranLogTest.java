@@ -44,7 +44,9 @@ class OatNxisasServiceExtTranLogTest {
     void setUp() {
         extTranRepo = mock(ExtTranCallHisRepository.class);
         nxsiasRepo  = mock(NxsiasModuleTranLogHisRepository.class);
-        when(extTranRepo.findMaxSeqNoForDay(anyString(), anyString())).thenReturn(BigDecimal.ZERO);
+        var legacyFunctions =
+                mock(com.kosign.wecms.common.legacy.LegacyFunctionRepository.class);
+        when(legacyFunctions.nextExtTranCallHisSeqNo(anyString(), anyString())).thenReturn("1");
         service = new OatNxisasService(
                 mock(BankCertInfoRepository.class),
                 mock(BankCertCryptoService.class),
@@ -52,7 +54,8 @@ class OatNxisasServiceExtTranLogTest {
                 extTranRepo,
                 mapper,
                 seedCbc,
-                new OatSeedDecryptProperties(false));
+                new OatSeedDecryptProperties(false),
+                legacyFunctions);
         TenantContext.set("tester", "VN_VNM0004_000001", LangCd.EN);
     }
 

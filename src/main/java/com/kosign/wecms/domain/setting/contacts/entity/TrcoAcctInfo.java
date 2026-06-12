@@ -8,6 +8,8 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /**
  * Settings &gt; Contacts &mdash; bank account row (Local contact only).
@@ -43,14 +45,13 @@ public class TrcoAcctInfo {
     @Column(name = "ACCT_NO", length = 100, nullable = false)
     private String acctNo;
 
-    /** Display order &mdash; legacy default {@code 1}. DEV stores this
-     *  as {@code NUMERIC(10,0)}; the local column was converted to
-     *  {@code INTEGER} by V89 because Hibernate 6's
-     *  {@code ddl-auto: validate} rejects NUMERIC against a Java
-     *  {@code Integer} mapping. Same precedent as
-     *  {@code SysScrOptionWecms.dispOrd} (V35 &rarr; V36 hotfix).
-     *  Documented refactor-only deviation from DEV. */
-    @Column(name = "DISP_ORD", nullable = false)
+    /** Display order &mdash; legacy default {@code 1}. JEX
+     *  {@code NUMERIC(10,0)} &mdash; mapped via {@code @JdbcTypeCode(NUMERIC)}
+     *  so Hibernate validate passes against the live JEX column (2026-06-09
+     *  JEX-parity alignment; supersedes the earlier V89 local-INTEGER
+     *  deviation). */
+    @JdbcTypeCode(SqlTypes.NUMERIC)
+    @Column(name = "DISP_ORD", precision = 10, scale = 0, nullable = false)
     private Integer dispOrd;
 
     /** Bank display name (legacy stores the resolved name verbatim). */

@@ -1,5 +1,17 @@
 # VAS Account — Refactor Feature Spec
 
+> **⚠️ Superseded — preserved for traceability.** The primary, as-built documentation home for this
+> feature is now the folder **[vas-account/](vas-account/README.md)** (9 docs). This single file
+> predates the folder and describes the *planned* surface — it references a retired
+> `POST …/excel/cell/validate` endpoint, the legacy `tot_cnt`/`suc_cnt`/`rec` Excel-preview wire shape,
+> and `WBE0404`/`WBE2014` codes. The as-built reality (no cell-validate endpoint; preview ships
+> `rows`/`total_count`/`completed_count`/`error_count`; not-found `WBE2040`; duplicate `WBE0003`) is in
+> [vas-account/interface-specification.md](vas-account/interface-specification.md) and
+> [vas-account/refactor-gap-analysis.md](vas-account/refactor-gap-analysis.md). Read the folder first;
+> this file is kept only for migration history. **Note:** the legacy WSVC family is `comm_0217_*`
+> (not `comm_0223`, which is Chart of Accounts), and there is **no parent-child hierarchy** in the DB
+> or backend (the table is flat; the tree view is a client-side display-only prefix grouping).
+
 | Field | Value |
 |---|---|
 | Slug | `vas-account` |

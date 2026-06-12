@@ -1,6 +1,6 @@
 package com.kosign.wecms.domain.setting.firmbankingsettings.service;
 
-import com.kosign.wecms.common.auditlog.entity.AuditLogEntry;
+import com.kosign.wecms.common.auditlog.entity.AuditLogsInfm;
 import com.kosign.wecms.common.auditlog.repository.AuditLogEntryRepository;
 import com.kosign.wecms.common.auditlog.service.AuditLogContext;
 import com.kosign.wecms.common.auditlog.service.AuditLogService;
@@ -12,8 +12,8 @@ import com.kosign.wecms.domain.setting.firmbankingsettings.dto.FirmBankingSettin
 import com.kosign.wecms.domain.setting.firmbankingsettings.dto.FirmBankingSettingDetail;
 import com.kosign.wecms.domain.setting.firmbankingsettings.dto.FirmBankingSettingListResponse;
 import com.kosign.wecms.domain.setting.firmbankingsettings.dto.FirmBankingSettingUpdateRequest;
-import com.kosign.wecms.domain.setting.firmbankingsettings.entity.FirmBankingSetting;
-import com.kosign.wecms.domain.setting.firmbankingsettings.entity.FirmBankingSettingId;
+import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConf;
+import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConfId;
 import com.kosign.wecms.domain.setting.firmbankingsettings.entity.FirmBankingSettingView;
 import com.kosign.wecms.domain.setting.firmbankingsettings.repository.FirmBankingSettingRepository;
 import com.kosign.wecms.domain.setting.firmbankingsettings.repository.FirmBankingSettingViewRepository;
@@ -139,8 +139,8 @@ class FirmBankingSettingsServiceTest {
 
     @Test
     void detail_returnsCleartextWdrlActNo_forEditDialogRoundTrip() {
-        FirmBankingSetting entity = newEntity();
-        when(settingRepo.findById(new FirmBankingSettingId(BIZ, OUT_BANK, WDRL_ACT)))
+        TbFirmConf entity = newEntity();
+        when(settingRepo.findById(new TbFirmConfId(BIZ, OUT_BANK, WDRL_ACT)))
                 .thenReturn(Optional.of(entity));
 
         FirmBankingSettingDetail detail = service.detail(OUT_BANK, WDRL_ACT);
@@ -156,7 +156,7 @@ class FirmBankingSettingsServiceTest {
 
     @Test
     void detail_rowNotFound_throwsWBE2020() {
-        when(settingRepo.findById(new FirmBankingSettingId(BIZ, OUT_BANK, "missing-acct")))
+        when(settingRepo.findById(new TbFirmConfId(BIZ, OUT_BANK, "missing-acct")))
                 .thenReturn(Optional.empty());
 
         assertBusinessCode("WBE2020", () -> service.detail(OUT_BANK, "missing-acct"));
@@ -187,7 +187,7 @@ class FirmBankingSettingsServiceTest {
 
     @Test
     void auditLog_appliesLegacyFilterShape() {
-        AuditLogEntry e = newAuditEntry();
+        AuditLogsInfm e = newAuditEntry();
         when(auditRepo.findByBizKeyAndRefNoAndRefNo1AndRefNo2AndWsvcIdAndLangCdOrderByRegDtmDesc(
                 BIZ,
                 "TB_FIRM_CONF",
@@ -229,9 +229,9 @@ class FirmBankingSettingsServiceTest {
     @Test
     void create_happyPath_persistsEntity_setsServerDefaults_andAppendsCreateAudit() {
         when(firmBankCodeRepo.existsByAntDivCdAndBankCd("NAPAS", OUT_BANK)).thenReturn(true);
-        when(settingRepo.existsById(new FirmBankingSettingId(BIZ, OUT_BANK, WDRL_ACT)))
+        when(settingRepo.existsById(new TbFirmConfId(BIZ, OUT_BANK, WDRL_ACT)))
                 .thenReturn(false);
-        when(settingRepo.save(any(FirmBankingSetting.class)))
+        when(settingRepo.save(any(TbFirmConf.class)))
                 .thenAnswer(inv -> inv.getArgument(0));
 
         FirmBankingSettingCreateRequest req = new FirmBankingSettingCreateRequest(
@@ -271,7 +271,7 @@ class FirmBankingSettingsServiceTest {
     void create_vietcombank_derivesVcbFileType() {
         when(firmBankCodeRepo.existsByAntDivCdAndBankCd("NAPAS", "970436")).thenReturn(true);
         when(settingRepo.existsById(any())).thenReturn(false);
-        when(settingRepo.save(any(FirmBankingSetting.class)))
+        when(settingRepo.save(any(TbFirmConf.class)))
                 .thenAnswer(inv -> inv.getArgument(0));
 
         FirmBankingSettingDetail detail = service.create(new FirmBankingSettingCreateRequest(
@@ -284,7 +284,7 @@ class FirmBankingSettingsServiceTest {
     void create_woori_derivesWrbFileType() {
         when(firmBankCodeRepo.existsByAntDivCdAndBankCd("NAPAS", "970457")).thenReturn(true);
         when(settingRepo.existsById(any())).thenReturn(false);
-        when(settingRepo.save(any(FirmBankingSetting.class)))
+        when(settingRepo.save(any(TbFirmConf.class)))
                 .thenAnswer(inv -> inv.getArgument(0));
 
         FirmBankingSettingDetail detail = service.create(new FirmBankingSettingCreateRequest(
@@ -326,7 +326,7 @@ class FirmBankingSettingsServiceTest {
     @Test
     void create_duplicatePk_throwsWBE2021_andDoesNotSaveOrAudit() {
         when(firmBankCodeRepo.existsByAntDivCdAndBankCd("NAPAS", OUT_BANK)).thenReturn(true);
-        when(settingRepo.existsById(new FirmBankingSettingId(BIZ, OUT_BANK, WDRL_ACT)))
+        when(settingRepo.existsById(new TbFirmConfId(BIZ, OUT_BANK, WDRL_ACT)))
                 .thenReturn(true);
         FirmBankingSettingCreateRequest req = new FirmBankingSettingCreateRequest(
                 OUT_BANK, WDRL_ACT, "WEBC1", "GV00000001", "1");
@@ -371,12 +371,12 @@ class FirmBankingSettingsServiceTest {
 
     @Test
     void update_existingRow_persistsEditableFields_setsModDttmAndLastEdtr_andAppendsAudit() {
-        FirmBankingSetting existing = newEntity();
-        when(settingRepo.findById(new FirmBankingSettingId(BIZ, OUT_BANK, WDRL_ACT)))
+        TbFirmConf existing = newEntity();
+        when(settingRepo.findById(new TbFirmConfId(BIZ, OUT_BANK, WDRL_ACT)))
                 .thenReturn(Optional.of(existing));
         // Hibernate would mutate the entity in place and return it from
         // save() — Mockito mirrors that with thenAnswer.
-        when(settingRepo.save(any(FirmBankingSetting.class)))
+        when(settingRepo.save(any(TbFirmConf.class)))
                 .thenAnswer(inv -> inv.getArgument(0));
 
         FirmBankingSettingUpdateRequest req = new FirmBankingSettingUpdateRequest(
@@ -414,7 +414,7 @@ class FirmBankingSettingsServiceTest {
 
     @Test
     void update_missingRow_throwsWBE2020_andDoesNotSaveOrAudit() {
-        when(settingRepo.findById(new FirmBankingSettingId(BIZ, OUT_BANK, "9".repeat(12))))
+        when(settingRepo.findById(new TbFirmConfId(BIZ, OUT_BANK, "9".repeat(12))))
                 .thenReturn(Optional.empty());
         FirmBankingSettingUpdateRequest req = new FirmBankingSettingUpdateRequest(
                 "WEBC2", "GV0", "1");
@@ -456,13 +456,13 @@ class FirmBankingSettingsServiceTest {
         // never touched on Update. PK columns are never mutable.
         // Pass a request with values that would be wrong for the
         // current row's file_type and verify it stays put.
-        FirmBankingSetting existing = newEntity();
+        TbFirmConf existing = newEntity();
         existing.setFileType("SHB");                        // current
         existing.setOutBankCd(OUT_BANK);
         existing.setWdrlActNo(WDRL_ACT);
-        when(settingRepo.findById(new FirmBankingSettingId(BIZ, OUT_BANK, WDRL_ACT)))
+        when(settingRepo.findById(new TbFirmConfId(BIZ, OUT_BANK, WDRL_ACT)))
                 .thenReturn(Optional.of(existing));
-        when(settingRepo.save(any(FirmBankingSetting.class)))
+        when(settingRepo.save(any(TbFirmConf.class)))
                 .thenAnswer(inv -> inv.getArgument(0));
 
         FirmBankingSettingUpdateRequest req = new FirmBankingSettingUpdateRequest(
@@ -481,7 +481,7 @@ class FirmBankingSettingsServiceTest {
 
     @Test
     void delete_existingRow_invokesDeleteByIdWithTenantScopedPk() {
-        FirmBankingSettingId id = new FirmBankingSettingId(BIZ, OUT_BANK, WDRL_ACT);
+        TbFirmConfId id = new TbFirmConfId(BIZ, OUT_BANK, WDRL_ACT);
         when(settingRepo.existsById(id)).thenReturn(true);
 
         service.delete(OUT_BANK, WDRL_ACT);
@@ -491,7 +491,7 @@ class FirmBankingSettingsServiceTest {
 
     @Test
     void delete_missingRow_throwsWBE2020_andDoesNotInvokeDelete() {
-        FirmBankingSettingId id = new FirmBankingSettingId(BIZ, OUT_BANK, "9".repeat(12));
+        TbFirmConfId id = new TbFirmConfId(BIZ, OUT_BANK, "9".repeat(12));
         when(settingRepo.existsById(id)).thenReturn(false);
 
         assertBusinessCode("WBE2020", () -> service.delete(OUT_BANK, "9".repeat(12)));
@@ -505,7 +505,7 @@ class FirmBankingSettingsServiceTest {
         // is not present yet (P-1 hasn't shipped), but even after it
         // does, this test pins the contract: delete() must not invoke
         // any audit repository.
-        FirmBankingSettingId id = new FirmBankingSettingId(BIZ, OUT_BANK, WDRL_ACT);
+        TbFirmConfId id = new TbFirmConfId(BIZ, OUT_BANK, WDRL_ACT);
         when(settingRepo.existsById(id)).thenReturn(true);
 
         service.delete(OUT_BANK, WDRL_ACT);
@@ -585,8 +585,8 @@ class FirmBankingSettingsServiceTest {
         return v;
     }
 
-    private static FirmBankingSetting newEntity() {
-        FirmBankingSetting e = new FirmBankingSetting();
+    private static TbFirmConf newEntity() {
+        TbFirmConf e = new TbFirmConf();
         e.setBizKey(BIZ);
         e.setOutBankCd(OUT_BANK);
         e.setWdrlActNo(WDRL_ACT);
@@ -604,8 +604,8 @@ class FirmBankingSettingsServiceTest {
         return e;
     }
 
-    private static AuditLogEntry newAuditEntry() {
-        AuditLogEntry a = new AuditLogEntry();
+    private static AuditLogsInfm newAuditEntry() {
+        AuditLogsInfm a = new AuditLogsInfm();
         a.setBizKey(BIZ);
         a.setAuditLogsSeqNo(BigDecimal.valueOf(3));
         a.setWsvcId("firm-banking-settings");

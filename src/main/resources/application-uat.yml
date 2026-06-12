@@ -1,11 +1,12 @@
 # UAT profile. RESERVED — not used in the 8-day R&D sprint (no UAT deploy).
 # Created 2026-06-07 so a SPRING_PROFILES_ACTIVE=uat run does not fall through
-# to base application.yml (where Flyway is enabled). Mirrors the PROD profile's
-# hard rules.
+# to base application.yml. Mirrors the PROD profile's hard rules.
 # Hard rules for this file:
 #   - ddl-auto MUST be 'validate'. Never 'update', never 'create', never 'create-drop'.
 #   - SQL logging OFF. No show-sql, no format_sql.
 #   - No secrets in this file. All sensitive values come from env vars.
+#   - Schema changes are applied manually in the DB (Flyway removed 2026-06-10);
+#     the target DB must be fully migrated out-of-band before the app boots.
 
 spring:
   jpa:
@@ -13,17 +14,6 @@ spring:
       ddl-auto: validate
     show-sql: false
     open-in-view: false
-  flyway:
-    # Flyway disabled for this profile (2026-06-07, per ops request to turn
-    # Flyway off across all environments). NOTE: ddl-auto stays `validate`, so
-    # the target DB must already be fully migrated out-of-band or Hibernate boot
-    # validation will fail with "missing column ...". Re-enable before any deploy
-    # that relies on Flyway to apply pending migrations.
-    enabled: false
-    baseline-on-migrate: false
-    # UAT must never tolerate checksum drift or out-of-order applies.
-    out-of-order: false
-    validate-on-migrate: true
 
 logging:
   level:

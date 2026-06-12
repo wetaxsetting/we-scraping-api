@@ -79,6 +79,7 @@ public class MatchService {
     private final ScdulPymnSumrRepository sumrRepo;
     private final ScdulPymnSumrDetlRepository detlRepo;
     private final AccountAccessGuard accountAccessGuard;
+    private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
 
     /* ---------------------------------------------------------- list ---- */
 
@@ -288,17 +289,10 @@ public class MatchService {
         });
     }
 
+    /** MATCH_LOG_SEQ via the single wb_get_next_val funnel (V140 #24 —
+     *  per-tenant MAX+1, verbatim from the live JEX function). */
     private String nextMatchLogSeq(String bizKey) {
-        long max = 0;
-        for (BusiMatchLog row : matchLogRepo.findByBizKey(bizKey)) {
-            try {
-                long v = Long.parseLong(row.getMatchLogSeq());
-                if (v > max) max = v;
-            } catch (NumberFormatException ignored) {
-                // Non-numeric legacy seq — skip.
-            }
-        }
-        return String.valueOf(max + 1);
+        return legacyFunctions.nextBusiMatchLogSeq(bizKey);
     }
 
     /** {@code yyyyMMddHHmmss} → {@code yyyyMMdd} for filter matching;

@@ -4,6 +4,7 @@ import com.kosign.wecms.common.auditlog.service.AuditLogContext;
 import com.kosign.wecms.common.auditlog.service.AuditLogService;
 import com.kosign.wecms.common.enums.LangCd;
 import com.kosign.wecms.common.exception.BusinessException;
+import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeReorderItem;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeReorderRequest;
@@ -12,7 +13,7 @@ import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeSettingDetail;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeSettingListResponse;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeSettingRow;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeSettingUpdateRequest;
-import com.kosign.wecms.domain.setting.purposesettings.entity.BusiUsagSet;
+import com.kosign.wecms.domain.setting.purposesettings.entity.BusiUsagSetInfm;
 import com.kosign.wecms.domain.setting.purposesettings.repository.PurposeInUseRepository;
 import com.kosign.wecms.domain.setting.purposesettings.repository.PurposeSettingsRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -69,6 +70,7 @@ class PurposeSettingsServiceTest {
     @Mock PurposeSettingsRepository repo;
     @Mock PurposeInUseRepository    inUseRepo;
     @Mock AuditLogService           auditLogService;
+    @Mock LegacyFunctionRepository  legacyFunctions;
 
     PurposeSettingsService service;
 
@@ -81,7 +83,7 @@ class PurposeSettingsServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new PurposeSettingsService(repo, inUseRepo, auditLogService);
+        service = new PurposeSettingsService(repo, inUseRepo, auditLogService, legacyFunctions);
         TenantContext.set(USER, USER, BIZ, LangCd.EN);
     }
 
@@ -96,8 +98,8 @@ class PurposeSettingsServiceTest {
 
     @Test
     void list_assemblesLevel2RowsUnderParents() {
-        BusiUsagSet parent = level1(CODE_A, "BD01", "Business Dev");
-        BusiUsagSet child  = level2(CODE_B, "BD01-01", "Sales", CODE_A);
+        BusiUsagSetInfm parent = level1(CODE_A, "BD01", "Business Dev");
+        BusiUsagSetInfm child  = level2(CODE_B, "BD01-01", "Sales", CODE_A);
         when(repo.findActiveForTenant(BIZ, PurposeSettingsService.RESERVED_SYSTEM_CODES, ""))
                 .thenReturn(List.of(parent, child));
         when(inUseRepo.findInUseCodes(eq(BIZ), any())).thenReturn(Set.of(CODE_A));
@@ -138,7 +140,7 @@ class PurposeSettingsServiceTest {
 
     @Test
     void detail_returnsRow_withUsedInTransactionsFromView() {
-        BusiUsagSet entity = level1(CODE_A, HAND_A, NAME_A);
+        BusiUsagSetInfm entity = level1(CODE_A, HAND_A, NAME_A);
         when(repo.findByBizKeyAndUseUsagCd(BIZ, CODE_A)).thenReturn(Optional.of(entity));
         when(inUseRepo.findInUseCodes(eq(BIZ), any())).thenReturn(Set.of(CODE_A));
 
@@ -174,8 +176,8 @@ class PurposeSettingsServiceTest {
         when(repo.findActiveByHandCd(BIZ, "BD02")).thenReturn(Optional.empty());
         when(repo.findActiveByName(BIZ, "Operating Expenses")).thenReturn(Optional.empty());
         when(repo.findMaxDispOrd(BIZ)).thenReturn(Optional.of(192));
-        when(repo.nextUseUsagCd(BIZ)).thenReturn("0000000010");
-        when(repo.saveAndFlush(any(BusiUsagSet.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(legacyFunctions.nextUseUsagCd(BIZ, "")).thenReturn("0000000010");
+        when(repo.saveAndFlush(any(BusiUsagSetInfm.class))).thenAnswer(inv -> inv.getArgument(0));
         // Create's post-write echo passes `false` directly for
         // usedInTransactions — no inUseRepo call.
 
@@ -185,9 +187,9 @@ class PurposeSettingsServiceTest {
         assertThat(out.dispOrd()).isEqualTo(193);
         assertThat(out.usedInTransactions()).isFalse();
 
-        ArgumentCaptor<BusiUsagSet> persisted = ArgumentCaptor.forClass(BusiUsagSet.class);
+        ArgumentCaptor<BusiUsagSetInfm> persisted = ArgumentCaptor.forClass(BusiUsagSetInfm.class);
         verify(repo).saveAndFlush(persisted.capture());
-        BusiUsagSet e = persisted.getValue();
+        BusiUsagSetInfm e = persisted.getValue();
         assertThat(e.getBizKey()).isEqualTo(BIZ);
         assertThat(e.getHandUseUsagCd()).isEqualTo("BD02");
         assertThat(e.getUseUsagNm()).isEqualTo("Operating Expenses");
@@ -259,16 +261,16 @@ class PurposeSettingsServiceTest {
         when(repo.findActiveByHandCd(BIZ, "BD02")).thenReturn(Optional.empty());
         when(repo.findActiveByName(BIZ, "Operating Expenses")).thenReturn(Optional.empty());
         when(repo.findMaxDispOrd(BIZ)).thenReturn(Optional.of(0));
-        when(repo.nextUseUsagCd(BIZ)).thenReturn("0000000001", "0000000002");
-        when(repo.saveAndFlush(any(BusiUsagSet.class)))
+        when(legacyFunctions.nextUseUsagCd(BIZ, "")).thenReturn("0000000001", "0000000002");
+        when(repo.saveAndFlush(any(BusiUsagSetInfm.class)))
                 .thenThrow(new DataIntegrityViolationException("pk collision"))
                 .thenAnswer(inv -> inv.getArgument(0));
 
         PurposeSettingDetail out = service.create(req);
 
         assertThat(out.useUsagCd()).isEqualTo("0000000002");
-        verify(repo, times(2)).saveAndFlush(any(BusiUsagSet.class));
-        verify(repo, times(2)).nextUseUsagCd(BIZ);
+        verify(repo, times(2)).saveAndFlush(any(BusiUsagSetInfm.class));
+        verify(legacyFunctions, times(2)).nextUseUsagCd(BIZ, "");
     }
 
     @Test
@@ -278,12 +280,12 @@ class PurposeSettingsServiceTest {
         when(repo.findActiveByHandCd(BIZ, "BD02")).thenReturn(Optional.empty());
         when(repo.findActiveByName(BIZ, "Operating Expenses")).thenReturn(Optional.empty());
         when(repo.findMaxDispOrd(BIZ)).thenReturn(Optional.of(0));
-        when(repo.nextUseUsagCd(BIZ)).thenReturn("0000000001", "0000000002");
-        when(repo.saveAndFlush(any(BusiUsagSet.class)))
+        when(legacyFunctions.nextUseUsagCd(BIZ, "")).thenReturn("0000000001", "0000000002");
+        when(repo.saveAndFlush(any(BusiUsagSetInfm.class)))
                 .thenThrow(new DataIntegrityViolationException("pk collision"));
 
         assertBusinessCode("WBE9999", () -> service.create(req));
-        verify(repo, times(2)).saveAndFlush(any(BusiUsagSet.class));
+        verify(repo, times(2)).saveAndFlush(any(BusiUsagSetInfm.class));
     }
 
     // ------------------------------------------------------------------
@@ -292,7 +294,7 @@ class PurposeSettingsServiceTest {
 
     @Test
     void update_persistsChanges_andDoesNotCheckHandCdDup_legacyParity() {
-        BusiUsagSet existing = level1(CODE_A, HAND_A, NAME_A);
+        BusiUsagSetInfm existing = level1(CODE_A, HAND_A, NAME_A);
         PurposeSettingUpdateRequest req = new PurposeSettingUpdateRequest(
                 "P01-RENAMED", "Deposit (renamed)", "New cont", null, "N");
 
@@ -314,7 +316,7 @@ class PurposeSettingsServiceTest {
 
     @Test
     void update_duplicateName_throwsWBW1138() {
-        BusiUsagSet existing = level1(CODE_A, HAND_A, NAME_A);
+        BusiUsagSetInfm existing = level1(CODE_A, HAND_A, NAME_A);
         PurposeSettingUpdateRequest req = new PurposeSettingUpdateRequest(
                 HAND_A, "Sales", null, null, null);
 
@@ -328,7 +330,7 @@ class PurposeSettingsServiceTest {
 
     @Test
     void update_demoteWithChildren_throwsWBE_VALIDATION() {
-        BusiUsagSet existing = level1(CODE_A, HAND_A, NAME_A);
+        BusiUsagSetInfm existing = level1(CODE_A, HAND_A, NAME_A);
         PurposeSettingUpdateRequest req = new PurposeSettingUpdateRequest(
                 HAND_A, NAME_A, null, CODE_B, null);
 
@@ -344,7 +346,7 @@ class PurposeSettingsServiceTest {
 
     @Test
     void update_selfParent_throwsWBE_VALIDATION() {
-        BusiUsagSet existing = level1(CODE_A, HAND_A, NAME_A);
+        BusiUsagSetInfm existing = level1(CODE_A, HAND_A, NAME_A);
         PurposeSettingUpdateRequest req = new PurposeSettingUpdateRequest(
                 HAND_A, NAME_A, null, CODE_A, null);
 
@@ -360,7 +362,7 @@ class PurposeSettingsServiceTest {
 
     @Test
     void delete_blockedByActiveChildren_throwsWBE1199() {
-        BusiUsagSet existing = level1(CODE_A, HAND_A, NAME_A);
+        BusiUsagSetInfm existing = level1(CODE_A, HAND_A, NAME_A);
         when(repo.findByBizKeyAndUseUsagCd(BIZ, CODE_A)).thenReturn(Optional.of(existing));
         when(repo.hasActiveChildren(BIZ, CODE_A)).thenReturn(true);
 
@@ -372,7 +374,7 @@ class PurposeSettingsServiceTest {
 
     @Test
     void delete_blockedByOwnTransactionReference_throwsWBE1199() {
-        BusiUsagSet existing = level1(CODE_A, HAND_A, NAME_A);
+        BusiUsagSetInfm existing = level1(CODE_A, HAND_A, NAME_A);
         when(repo.findByBizKeyAndUseUsagCd(BIZ, CODE_A)).thenReturn(Optional.of(existing));
         when(repo.hasActiveChildren(BIZ, CODE_A)).thenReturn(false);
         when(repo.findActiveChildCodes(BIZ, CODE_A)).thenReturn(List.of());
@@ -384,7 +386,7 @@ class PurposeSettingsServiceTest {
 
     @Test
     void delete_blockedByChildTransactionReference_recursive_throwsWBE1199() {
-        BusiUsagSet existing = level1(CODE_A, HAND_A, NAME_A);
+        BusiUsagSetInfm existing = level1(CODE_A, HAND_A, NAME_A);
         when(repo.findByBizKeyAndUseUsagCd(BIZ, CODE_A)).thenReturn(Optional.of(existing));
         when(repo.hasActiveChildren(BIZ, CODE_A)).thenReturn(false);
         when(repo.findActiveChildCodes(BIZ, CODE_A)).thenReturn(List.of(CODE_B));
@@ -397,7 +399,7 @@ class PurposeSettingsServiceTest {
 
     @Test
     void delete_softDeletesAndAuditsWhenAllowed() {
-        BusiUsagSet existing = level1(CODE_A, HAND_A, NAME_A);
+        BusiUsagSetInfm existing = level1(CODE_A, HAND_A, NAME_A);
         when(repo.findByBizKeyAndUseUsagCd(BIZ, CODE_A)).thenReturn(Optional.of(existing));
         when(repo.hasActiveChildren(BIZ, CODE_A)).thenReturn(false);
         when(repo.findActiveChildCodes(BIZ, CODE_A)).thenReturn(List.of());
@@ -459,8 +461,8 @@ class PurposeSettingsServiceTest {
     // Helpers
     // ------------------------------------------------------------------
 
-    private static BusiUsagSet level1(String useUsagCd, String handCd, String name) {
-        BusiUsagSet e = new BusiUsagSet();
+    private static BusiUsagSetInfm level1(String useUsagCd, String handCd, String name) {
+        BusiUsagSetInfm e = new BusiUsagSetInfm();
         e.setBizKey(BIZ);
         e.setUseUsagCd(useUsagCd);
         e.setHandUseUsagCd(handCd);
@@ -472,8 +474,8 @@ class PurposeSettingsServiceTest {
         return e;
     }
 
-    private static BusiUsagSet level2(String useUsagCd, String handCd, String name, String parent) {
-        BusiUsagSet e = level1(useUsagCd, handCd, name);
+    private static BusiUsagSetInfm level2(String useUsagCd, String handCd, String name, String parent) {
+        BusiUsagSetInfm e = level1(useUsagCd, handCd, name);
         e.setParentUseUsagCd(parent);
         return e;
     }

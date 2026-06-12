@@ -118,27 +118,8 @@ public interface ErpTrnsHstrRepository extends JpaRepository<ErpTrnsHstr, ErpTrn
             @Param("trnsTypeCd")     String trnsTypeCd,
             @Param("keywordPattern") String keywordPattern);
 
-    /**
-     * Per-tenant MAX({@code seq_no}). Caller adds {@code 1} to derive the
-     * next allocation — same Java-side generator pattern as
-     * {@code APPR_LINE_INFM.APPR_LINE_NO} (V91) and
-     * {@code CHART_ACCT_INFM.CHART_ACCT_SEQ_NO} (V95). Avoids
-     * {@code wb_get_next_val('audit_logs_infm', ...)} for the seq_no
-     * allocation path so audit-row writes don't depend on the legacy
-     * function being current on every DB the api connects to.
-     *
-     * <p>Returns {@code 0} for the empty-tenant case so the caller
-     * can unconditionally do {@code max + 1} without a null check.
-     *
-     * <p>Concurrency caveat: two parallel writers may read the same
-     * MAX and both attempt {@code seq+1}. The composite-PK constraint
-     * rejects the second insert; the caller retries once. Matches the
-     * Approval Line / Chart of Accounts precedent.
-     */
-    @Query("""
-           SELECT COALESCE(MAX(e.seqNo), 0L)
-             FROM ErpTrnsHstr e
-            WHERE e.bizKey = :bizKey
-           """)
-    long findMaxSeqNoByBizKey(@Param("bizKey") String bizKey);
+    // seq_no allocation now routes through
+    // LegacyFunctionRepository.nextErpTrnsSeqNo (V140 #28 — per-tenant MAX+1,
+    // verbatim from the live JEX function) so every wb_get_next_val call goes
+    // through the one funnel and lines up with the live DB's allocation.
 }

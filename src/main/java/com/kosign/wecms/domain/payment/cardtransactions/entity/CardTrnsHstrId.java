@@ -13,7 +13,7 @@ import java.io.Serializable;
  * PK on {@code CARD_TRNS_HSTR}: {@code (BIZ_KEY, CARD_SEQ_NO)}.
  *
  * <p>Both components are {@code String} — same precedent as
- * {@code ChartOfAccountId}. Tenant scoping is part of the PK
+ * {@code ChartAcctInfmId}. Tenant scoping is part of the PK
  * ({@code bizKey} component) — every repository lookup that builds an
  * {@code Id} reads {@code bizKey} from
  * {@link com.kosign.wecms.common.tenant.TenantContext#currentBizKey()},

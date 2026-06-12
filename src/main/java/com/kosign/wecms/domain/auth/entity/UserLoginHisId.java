@@ -7,7 +7,6 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 import java.io.Serializable;
-import java.time.OffsetDateTime;
 
 @Getter
 @Setter
@@ -16,6 +15,7 @@ import java.time.OffsetDateTime;
 @EqualsAndHashCode
 public class UserLoginHisId implements Serializable {
     private String userId;
-    private OffsetDateTime regDtm;
+    /** {@code varchar(14)} {@code yyyyMMddHHmmss} (UTC) — matches the live JEX PK column. */
+    private String regDtm;
     private String regUid;
 }

@@ -55,13 +55,14 @@ public class BlockedCharsRule {
     @Column(name = "BLOCKED_CHARS", length = 100, nullable = false)
     private String blockedChars;
 
-    /** Inclusive activation date, {@code YYYYMMDD}. Null = always
-     *  active. */
-    @Column(name = "EFF_FR_DT", length = 8)
+    /** Inclusive activation date/time. JEX column is {@code varchar(14)}
+     *  ({@code yyyyMMddHHmmss}); null = always active. */
+    @Column(name = "EFF_FR_DT", length = 14)
     private String effFrDt;
 
-    /** Inclusive retirement date, {@code YYYYMMDD}. Null = no end. */
-    @Column(name = "EFF_TO_DT", length = 8)
+    /** Inclusive retirement date/time. JEX column is {@code varchar(14)};
+     *  null = no end. */
+    @Column(name = "EFF_TO_DT", length = 14)
     private String effToDt;
 
     @Column(name = "VERSION", length = 2, nullable = false)

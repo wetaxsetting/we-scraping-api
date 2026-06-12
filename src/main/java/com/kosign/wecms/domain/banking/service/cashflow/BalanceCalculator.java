@@ -1,6 +1,6 @@
 package com.kosign.wecms.domain.banking.service.cashflow;
 
-import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount;
+import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartAcctInfm;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -143,8 +143,8 @@ public class BalanceCalculator {
                                          int month,
                                          boolean applyCalRule) {
         BigDecimal sum = BigDecimal.ZERO;
-        for (ChartOfAccount l2 : hierarchy.l2sUnderRoot(rootCd)) {
-            for (ChartOfAccount l3 : hierarchy.l3sUnderL2(l2.getChartAcctCd())) {
+        for (ChartAcctInfm l2 : hierarchy.l2sUnderRoot(rootCd)) {
+            for (ChartAcctInfm l3 : hierarchy.l3sUnderL2(l2.getChartAcctCd())) {
                 MonthlyAmountAccumulator acc = l3Totals.get(l3.getChartAcctCd());
                 if (acc == null) continue;
                 BigDecimal v = acc.monthly(month);
@@ -163,8 +163,8 @@ public class BalanceCalculator {
                                            String rootCd,
                                            boolean applyCalRule) {
         BigDecimal sum = BigDecimal.ZERO;
-        for (ChartOfAccount l2 : hierarchy.l2sUnderRoot(rootCd)) {
-            for (ChartOfAccount l3 : hierarchy.l3sUnderL2(l2.getChartAcctCd())) {
+        for (ChartAcctInfm l2 : hierarchy.l2sUnderRoot(rootCd)) {
+            for (ChartAcctInfm l3 : hierarchy.l3sUnderL2(l2.getChartAcctCd())) {
                 MonthlyAmountAccumulator acc = l3Totals.get(l3.getChartAcctCd());
                 if (acc == null) continue;
                 BigDecimal v = acc.totalAmount();
@@ -186,8 +186,8 @@ public class BalanceCalculator {
                                                          Map<String, MonthlyAmountAccumulator> l3Totals,
                                                          int month) {
         BigDecimal sum = BigDecimal.ZERO;
-        for (ChartOfAccount l2 : hierarchy.l2sUnderRoot("ACC-03")) {
-            for (ChartOfAccount l3 : hierarchy.l3sUnderL2(l2.getChartAcctCd())) {
+        for (ChartAcctInfm l2 : hierarchy.l2sUnderRoot("ACC-03")) {
+            for (ChartAcctInfm l3 : hierarchy.l3sUnderL2(l2.getChartAcctCd())) {
                 if (!INVESTMENT_BALANCE_CONTRIBUTING_CODES.contains(l3.getChartAcctCd())) continue;
                 MonthlyAmountAccumulator acc = l3Totals.get(l3.getChartAcctCd());
                 if (acc == null) continue;

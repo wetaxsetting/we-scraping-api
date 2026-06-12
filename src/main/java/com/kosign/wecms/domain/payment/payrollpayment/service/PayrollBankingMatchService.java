@@ -72,6 +72,7 @@ public class PayrollBankingMatchService {
     private final ScdulPymnSumrRepository  sumrRepository;
     private final AcctTrnsHstrRepository   txnRepository;
     private final BusiMatchLogRepository   matchLogRepository;
+    private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
 
     /* ----------------------------------------------------------------
      *  Candidate search — legacy comm_0197_001_r001 (batch path)
@@ -268,19 +269,10 @@ public class PayrollBankingMatchService {
                 h.getRmrk2());
     }
 
-    /** MAX(numeric match_log_seq)+1 for the tenant — same generator pattern as
-     *  {@code MatchService.nextMatchLogSeq}. */
+    /** MATCH_LOG_SEQ via the single wb_get_next_val funnel (V140 #24 —
+     *  per-tenant MAX+1, verbatim from the live JEX function). */
     private String nextMatchLogSeq(String bizKey) {
-        long max = 0;
-        for (BusiMatchLog row : matchLogRepository.findByBizKey(bizKey)) {
-            try {
-                long v = Long.parseLong(row.getMatchLogSeq());
-                if (v > max) max = v;
-            } catch (NumberFormatException ignored) {
-                // non-numeric legacy seq — skip
-            }
-        }
-        return String.valueOf(max + 1);
+        return legacyFunctions.nextBusiMatchLogSeq(bizKey);
     }
 
     private static String requireTenant() {

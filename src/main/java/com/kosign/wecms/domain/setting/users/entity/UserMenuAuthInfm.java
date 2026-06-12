@@ -1,7 +1,8 @@
 package com.kosign.wecms.domain.setting.users.entity;
 
-import com.kosign.wecms.common.entity.BaseEntity;
+import com.kosign.wecms.common.entity.LegacyDtmConverter;
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.IdClass;
@@ -10,27 +11,30 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+import java.time.OffsetDateTime;
+
 /**
  * Mirrors the legacy {@code USER_MENU_AUTH_INFM} table — one row per
  * (tenant, user, menu) triple recording the user's per-menu access
  * grant inside that tenant.
  *
- * <p>Composite PK on {@code (BIZ_KEY, USER_ID, MENU_AUTH_CD)}. Frontend
- * delete-then-insert pattern in {@code MenuEntitlementService.save(...)}
+ * <p>Composite PK on {@code (BIZ_KEY, USER_ID, WEB_SVC_ID)} — JEX parity.
+ * Frontend delete-then-insert pattern in {@code MenuEntitlementService.save(...)}
  * means we only ever store {@code USE_YN='Y'} rows; the absence of a
- * row implies denial. The Y-only convention keeps the table sparse and
- * lets the panel render every menu as "off" by default.
+ * row implies denial.
  *
- * <p>{@code MENU_AUTH_CD} values are kebab-case slugs that mirror the
- * frontend's static `ENTITLEMENT_SECTIONS` tree (e.g.
- * {@code banking.account_inquiry}, {@code payment.approval_box}). The
- * column is {@code VARCHAR(100)} to comfortably fit the longest slug.
+ * <p>The grant code (kebab slug mirroring the frontend
+ * {@code ENTITLEMENT_SECTIONS} tree, e.g. {@code banking.account_inquiry})
+ * is stored in the legacy JEX {@code WEB_SVC_ID} column ({@code VARCHAR(50)}) —
+ * the refactor repurposes that column to hold slug-based permission codes
+ * (per the identifier-naming rule). The Java field stays {@code menuAuthCd}
+ * to keep the slug semantics in code.
  *
- * <p><b>Schema source:</b> created by Flyway migration
- * {@code V126__user_menu_auth_infm.sql}. All profiles keep
- * {@code ddl-auto=validate}; Flyway is the only sanctioned schema
- * channel (an earlier {@code ddl-auto=update} attempt was reverted —
- * see the V126 header).
+ * <p><b>Audit:</b> JEX {@code user_menu_auth_infm} carries only
+ * {@code MOD_ID}/{@code MOD_DTM} (both nullable) — NO {@code REG_*}
+ * columns — so this entity does NOT extend {@code BaseEntity} (which
+ * would map phantom {@code REG_ID}/{@code REG_DTM}). 2026-06-09 JEX-parity
+ * alignment.
  */
 @Getter
 @Setter
@@ -38,7 +42,7 @@ import lombok.Setter;
 @Entity
 @Table(name = "USER_MENU_AUTH_INFM")
 @IdClass(UserMenuAuthInfmId.class)
-public class UserMenuAuthInfm extends BaseEntity {
+public class UserMenuAuthInfm {
 
     @Id
     @Column(name = "BIZ_KEY", length = 20, nullable = false)
@@ -48,10 +52,21 @@ public class UserMenuAuthInfm extends BaseEntity {
     @Column(name = "USER_ID", length = 100, nullable = false)
     private String userId;
 
+    /** Kebab-slug grant code, stored in the legacy {@code WEB_SVC_ID}
+     *  column (JEX {@code VARCHAR(50)}). */
     @Id
-    @Column(name = "MENU_AUTH_CD", length = 100, nullable = false)
+    @Column(name = "WEB_SVC_ID", length = 50, nullable = false)
     private String menuAuthCd;
 
     @Column(name = "USE_YN", length = 1, nullable = false)
     private String useYn;
+
+    /** JEX audit — nullable; mod-only (no REG_* on this table). */
+    @Column(name = "MOD_ID", length = 100)
+    private String modId;
+
+    /** JEX VARCHAR(14) yyyyMMddHHmmss — converted from OffsetDateTime. */
+    @Convert(converter = LegacyDtmConverter.class)
+    @Column(name = "MOD_DTM", length = 14)
+    private OffsetDateTime modDtm;
 }

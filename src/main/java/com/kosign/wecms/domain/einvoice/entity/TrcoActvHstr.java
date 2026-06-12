@@ -3,11 +3,12 @@ package com.kosign.wecms.domain.einvoice.entity;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
-import jakarta.persistence.IdClass;
 import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.math.BigDecimal;
 
@@ -21,12 +22,12 @@ import java.math.BigDecimal;
  * consumer, so the entity lives in the {@code einvoice} domain per the
  * "port when the consumer lands" package rule.
  *
- * <p><b>Primary key</b>: composite {@code (BIZ_KEY, ACTV_SEQ)} &mdash;
- * {@code ACTV_SEQ} is generated per-tenant (MAX+1) in
- * {@code EInvoiceTrcoAutoRegistrar}. The legacy JEX {@code TrcoActvHstrPk}
- * carries {@code ACTV_SEQ} alone; the refactor adds {@code BIZ_KEY} to the
- * PK for tenant safety (see the V239 migration header &mdash; DEV PK shape
- * to be confirmed when the {@code postgres} MCP is reachable).
+ * <p><b>Primary key</b>: {@code ACTV_SEQ} alone &mdash; matches the legacy
+ * JEX PK (confirmed 2026-06-09 against the UAT DDL). {@code ACTV_SEQ} is a
+ * GLOBAL sequence (MAX+1 across all tenants) generated in
+ * {@code EInvoiceTrcoAutoRegistrar}; a per-tenant sequence would collide
+ * with JEX's global-unique {@code ACTV_SEQ} PK. {@code BIZ_KEY} is a plain
+ * tenant column, NOT part of the PK.
  *
  * <p><b>Sprint subset</b>: maps only the columns the auto-registrar
  * writes. The V239 schema carries the full DEV-parity column set;
@@ -45,16 +46,15 @@ import java.math.BigDecimal;
 @NoArgsConstructor
 @Entity
 @Table(name = "TRCO_ACTV_HSTR")
-@IdClass(TrcoActvHstrId.class)
 public class TrcoActvHstr {
 
-    @Id
+    /** Tenant key &mdash; NOT part of the PK (JEX PK is ACTV_SEQ alone). */
     @Column(name = "BIZ_KEY", length = 20, nullable = false)
     private String bizKey;
 
-    /** Per-tenant activity sequence (MAX+1, generated in the service). */
+    /** Global activity sequence (MAX+1) &mdash; the sole PK column. */
     @Id
-    @Column(name = "ACTV_SEQ", length = 40, nullable = false)
+    @Column(name = "ACTV_SEQ", length = 20, nullable = false)
     private String actvSeq;
 
     @Column(name = "USER_ID", length = 100, nullable = false)
@@ -75,21 +75,24 @@ public class TrcoActvHstr {
 
     /** Activity division: {@code 'S'} (sale) for SALES, {@code 'B'} (buy)
      *  for EXPENSE &mdash; legacy {@code TrcoActvDvCd}. */
-    @Column(name = "DV_CD", length = 10)
+    @JdbcTypeCode(SqlTypes.CHAR)
+    @Column(name = "DV_CD", length = 1)
     private String dvCd;
 
     /** Task code: {@code 'S003'} for SALES, {@code 'B003'} for EXPENSE
      *  &mdash; legacy {@code TrcoActvTaskCd}. */
-    @Column(name = "TASK_CD", length = 10)
+    @Column(name = "TASK_CD", length = 100)
     private String taskCd;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "CCY_CD", length = 3)
     private String ccyCd;
 
-    @Column(name = "ACTV_AMT")
+    @Column(name = "ACTV_AMT", precision = 20, scale = 6)
     private BigDecimal actvAmt;
 
     /** Processing status &mdash; legacy DAO defaults to {@code 'U'} (updated). */
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "PCSN_STTS", length = 1)
     private String pcsnStts;
 
@@ -97,7 +100,7 @@ public class TrcoActvHstr {
     private String regDtm;
 
     /** Result status &mdash; legacy DAO defaults to {@code 'C'} (created). */
-    @Column(name = "RSLT_CD", length = 1)
+    @Column(name = "RSLT_CD", length = 10)
     private String rsltCd;
 
     @Column(name = "MOD_ID", length = 100)

@@ -20,11 +20,6 @@ import com.fasterxml.jackson.annotation.JsonInclude;
  *                   Always sourced from the system row. Refactor-only DEV
  *                   parity addition (V35).
  * @param useYn      {@code "Y"} = visible, {@code "N"} = hidden.
- * @param fixYn      {@code "Y"} = locked from being hidden / reordered
- *                   in the View Setting popup. Always sourced from the
- *                   system row — user overrides cannot relax it.
- *                   Refactor-only column (not in DEV); see
- *                   docs/features/view-setting.md §1.8.
  * @param size       column width hint, e.g. {@code "250px"}. Sourced from
  *                   the system row; users do not set this from the
  *                   popover. Always rendered by the frontend
@@ -41,7 +36,6 @@ public record ScreenOptionItem(
         Integer dispOrd,
         String  dispYn,
         String  useYn,
-        String  fixYn,
         String  size,
         String  sortYn,
         String  htmlCont

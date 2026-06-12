@@ -32,7 +32,8 @@ DEV (read-only via the `postgres` MCP) — none is a broken link. All detail fro
 
 ## OQ-DB-3 — `SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN.SCDUL_PYMN_NO` width mismatch
 
-- **Decision needed:** should the bridge table's `SCDUL_PYMN_NO` widen to match its logical parent?
+- **RESOLVED / MOOT (2026-06-10):** the bridge table was **removed from the refactor** (unused by Spring; entity deleted; dropped via `docs/database/manual-cleanup/drop_pay_target_conn_bridge_20260610.sql`). The width question no longer applies on the refactor side. (DEV still owns the table; no refactor action.)
+- **Decision needed:** ~~should the bridge table's `SCDUL_PYMN_NO` widen to match its logical parent?~~ (superseded by removal)
 - **Detail:** `SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN` (V188) declares `SCDUL_PYMN_NO VARCHAR(10)`, but the parent `SCDUL_PYMN_SUMR.SCDUL_PYMN_NO` (V131) is `VARCHAR(20)`. The schema-parity note flags this — the bridge should normally inherit the parent width. A 10-char column truncates a 20-char key.
 - **Action:** confirm whether V188's narrower width is intentional DEV parity (the DEV column may be `VARCHAR(10)`) or a refactor bug; if a bug, ship a corrective widen. The relationship is **logical — no FK**, so there is no constraint-level guard today.
 - **References:** [erd/payment-erd.md](../../references/database/erd/payment-erd.md) · [payment/firm-banking-dispatch-relationships.md](../../references/database/payment/firm-banking-dispatch-relationships.md) · migrations `V131`, `V188`.

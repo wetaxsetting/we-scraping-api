@@ -25,11 +25,11 @@ import com.kosign.wecms.domain.banking.repository.BusiMatchLogRepository;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumr;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrId;
 import com.kosign.wecms.domain.payment.internaltransfer.repository.ScdulPymnSumrRepository;
-import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount;
+import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartAcctInfm;
 import com.kosign.wecms.domain.setting.chartofaccounts.repository.ChartOfAccountRepository;
 import com.kosign.wecms.domain.setting.contacts.entity.TrcoInfm;
 import com.kosign.wecms.domain.setting.contacts.repository.TrcoInfmRepository;
-import com.kosign.wecms.domain.setting.purposesettings.entity.BusiUsagSet;
+import com.kosign.wecms.domain.setting.purposesettings.entity.BusiUsagSetInfm;
 import com.kosign.wecms.domain.setting.purposesettings.repository.PurposeSettingsRepository;
 import com.kosign.wecms.domain.setting.vasaccount.entity.BusiVasAcctInfm;
 import com.kosign.wecms.domain.setting.vasaccount.repository.BusiVasAcctInfmRepository;
@@ -96,6 +96,7 @@ public class TransactionService {
     private final ScdulPymnSumrRepository scdulPymnSumrRepo;
     private final UserInfmRepository userRepo;
     private final AccountAccessGuard accountAccessGuard;
+    private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
 
     @Transactional(readOnly = true)
     public TransactionListResponse list(String acctSeqNo, String fromDt, String toDt, String typeFilter) {
@@ -352,7 +353,7 @@ public class TransactionService {
         // Validate the picked chart-of-accounts row exists, is active,
         // and the (seq_no, code) pair matches a single row. The
         // UK(BIZ_KEY, CHART_ACCT_CD, DEL_YN='N') makes the lookup O(1).
-        ChartOfAccount chart = chartAcctRepo
+        ChartAcctInfm chart = chartAcctRepo
                 .findByBizKeyAndChartAcctCdAndDelYn(r.bizKey, request.chartAcctCd(), "N")
                 .orElseThrow(() -> new BusinessException(CODE_CHART_ACCT_NOT_FOUND));
         if (!chart.getChartAcctSeqNo().equals(request.chartAcctSeqNo())) {
@@ -428,7 +429,7 @@ public class TransactionService {
                 .findFirst()
                 .orElseThrow(() -> new BusinessException(CODE_NOT_FOUND));
 
-        BusiUsagSet purpose = purposeRepo
+        BusiUsagSetInfm purpose = purposeRepo
                 .findByBizKeyAndUseUsagCd(r.bizKey, request.useUsagCd())
                 .orElseThrow(() -> new BusinessException(CODE_PURPOSE_NOT_FOUND));
         if (!"Y".equals(purpose.getUseYn())) {
@@ -654,22 +655,13 @@ public class TransactionService {
     /* ------------------------------------------------------------------ */
 
     /**
-     * Per-(BIZ_KEY,ACCT_SEQ_NO) MAX+1 in Java. No new wb_get_next_val branch — Sprint 2+
-     * writes use service-side generators per CLAUDE.md "Key-generation rule for migrated
-     * legacy tables".
+     * RCV_PAY_SEQ_NO via the single wb_get_next_val funnel (V140 #14 — per
+     * (biz_key, acct_seq_no) MAX+1, verbatim from the live JEX function). Same
+     * branch SmartOrganizerService draws from, so the two writers share one
+     * allocation path and never collide with the live JEX / WABOOKS systems.
      */
-    private String nextRcvPaySeqNo(String bizKey, String acctSeqNo) {
-        List<AcctTrnsRcvPayInfm> existing = rcvPayRepo.findByBizKeyAndAcctSeqNo(bizKey, acctSeqNo);
-        long max = 0;
-        for (AcctTrnsRcvPayInfm rp : existing) {
-            try {
-                long v = Long.parseLong(rp.getRcvPaySeqNo());
-                if (v > max) max = v;
-            } catch (NumberFormatException ignored) {
-                // non-numeric legacy seq — skip
-            }
-        }
-        return String.valueOf(max + 1);
+    private BigDecimal nextRcvPaySeqNo(String bizKey, String acctSeqNo) {
+        return new BigDecimal(legacyFunctions.nextAcctTrnsRcvPaySeqNo(bizKey, acctSeqNo));
     }
 
     private Resolved resolve(String acctSeqNo) {

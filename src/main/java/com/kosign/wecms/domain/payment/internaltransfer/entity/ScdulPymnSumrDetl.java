@@ -8,6 +8,8 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.math.BigDecimal;
 
@@ -42,7 +44,7 @@ public class ScdulPymnSumrDetl {
     private String bizKey;
 
     @Id
-    @Column(name = "SCDUL_PYMN_NO", length = 20, nullable = false)
+    @Column(name = "SCDUL_PYMN_NO", length = 10, nullable = false)
     private String scdulPymnNo;
 
     @Id
@@ -58,6 +60,7 @@ public class ScdulPymnSumrDetl {
     /** Transfer-network discriminator — {@code N}/{@code NAPAS}/{@code INTER}
      *  for NAPAS, {@code C}/{@code CITAD} for CITAD, {@code S}/{@code SWIFT}
      *  for SWIFT. See {@code CutoffValidator}. */
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "ANT_DIV_CD", length = 5)
     private String antDivCd;
 
@@ -73,22 +76,22 @@ public class ScdulPymnSumrDetl {
     @Column(name = "TRAN_USAG", length = 200)
     private String tranUsag;
 
-    @Column(name = "TAR_ACCT_RMRK", length = 255)
+    @Column(name = "TAR_ACCT_RMRK", length = 150)
     private String tarAcctRmrk;
 
-    @Column(name = "WDRL_ACT_RMRK", length = 255)
+    @Column(name = "WDRL_ACCT_RMRK", length = 150)
     private String wdrlActRmrk;
 
     @Column(name = "PAY_TRAN_DT", length = 8)
     private String payTranDt;
 
-    @Column(name = "PAY_TRAN_SEQ", length = 20)
+    @Column(name = "PAY_TRAN_SEQ", length = 10)
     private String payTranSeq;
 
-    @Column(name = "PAY_FILE_SEQ_NO", length = 20)
+    @Column(name = "PAY_FILE_SEQ_NO", length = 7)
     private String payFileSeqNo;
 
-    @Column(name = "PAY_SEQ", precision = 15, scale = 0)
+    @Column(name = "PAY_SEQ", precision = 4, scale = 0)
     private BigDecimal paySeq;
 
     @Column(name = "TRCO_KEY", length = 20)
@@ -100,10 +103,10 @@ public class ScdulPymnSumrDetl {
     @Column(name = "DOC_NO", length = 50)
     private String docNo;
 
-    @Column(name = "NOTE", length = 255)
+    @Column(name = "NOTE", length = 200)
     private String note;
 
-    @Column(name = "CITAD_BANK_CD", length = 200)
+    @Column(name = "CITAD_BANK_CD", length = 50)
     private String citadBankCd;
 
     @Column(name = "TRCO_CMNM", length = 200)
@@ -115,19 +118,19 @@ public class ScdulPymnSumrDetl {
     @Column(name = "CHART_ACCT_CD", length = 20)
     private String chartAcctCd;
 
-    @Column(name = "CHART_ACCT_SEQ_NO", length = 10)
+    @Column(name = "CHART_ACCT_SEQ_NO", length = 20)
     private String chartAcctSeqNo;
 
     @Column(name = "ERP_FILE_DATE", length = 8)
     private String erpFileDate;
 
-    @Column(name = "ERP_FILE_NUM", length = 50)
+    @Column(name = "ERP_FILE_NUM", length = 8)
     private String erpFileNum;
 
-    @Column(name = "ERP_FILE_SEQ", precision = 15, scale = 0)
+    @Column(name = "ERP_FILE_SEQ", precision = 10, scale = 0)
     private BigDecimal erpFileSeq;
 
-    @Column(name = "ERP_ATTRIBUTE2", length = 100)
+    @Column(name = "ERP_ATTRIBUTE2", length = 150)
     private String erpAttribute2;
 
     @Column(name = "DEPO_CCY_CD", length = 3)
@@ -142,6 +145,7 @@ public class ScdulPymnSumrDetl {
     @Column(name = "BANK_TRNS_FULL_ID", length = 100)
     private String bankTrnsFullId;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "LINK_MATCH_YN", length = 1)
     private String linkMatchYn;
 

@@ -1,6 +1,6 @@
 package com.kosign.wecms.domain.setting.logincredentials.service;
 
-import com.kosign.wecms.common.auditlog.entity.AuditLogEntry;
+import com.kosign.wecms.common.auditlog.entity.AuditLogsInfm;
 import com.kosign.wecms.common.auditlog.repository.AuditLogEntryRepository;
 import com.kosign.wecms.common.auditlog.service.AuditLogContext;
 import com.kosign.wecms.common.auditlog.service.AuditLogService;
@@ -93,14 +93,17 @@ public class LoginCredentialsService {
     /** Display name for the single GDT row. */
     private static final String GDT_INSTITUTION_LABEL = "GDT";
 
-    /** {@code CERT_INFO_DV} discriminator for bank rows (legacy "01" =
-     *  bank). Mirrors {@code BankCredentialService.CERT_INFO_DV_BANK}
-     *  so the two services produce identical row shapes. */
-    private static final String CERT_INFO_DV_BANK = "01";
+    /** {@code CERT_INFO_DV} discriminator for bank rows. JEX
+     *  {@code BANK_CERT_INFO.cert_info_dv} is {@code varchar(1)} and all
+     *  live rows carry {@code '1'} (verified 2026-06-09). Mirrors
+     *  {@code BankCredentialService.CERT_INFO_DV_BANK} so the two
+     *  services produce identical row shapes. */
+    private static final String CERT_INFO_DV_BANK = "1";
 
-    /** Same discriminator for GDT rows — legacy {@code GdtCertInfoDv}
-     *  uses "01" for the standard tax-portal login. */
-    private static final String CERT_INFO_DV_GDT = "01";
+    /** Same discriminator for GDT rows. JEX {@code GDT_CERT_INFO.cert_info_dv}
+     *  is {@code varchar(1)} and all live rows carry {@code '1'} (verified
+     *  2026-06-09). */
+    private static final String CERT_INFO_DV_GDT = "1";
 
     /** Legacy {@code yyyyMMddHHmmss} audit-column shape — used for
      *  REG_DTM / MOD_DTM. */
@@ -117,6 +120,7 @@ public class LoginCredentialsService {
     private final AuditLogService           auditLogService;
     private final AuditLogEntryRepository   auditLogReadRepo;
     private final BankScrapingService       bankScrapingService;
+    private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
 
     /* -----------------------------------------------------------------
      *  LIST — banking groups + single GDT row
@@ -344,7 +348,8 @@ public class LoginCredentialsService {
      *  rather than deferring it to commit. */
     private BankCertInfo insertBankCredential(String bizKey, String userId,
                                               BigDecimal gbSeq, BankCredentialCreateRequest req) {
-        BigDecimal nextSeq = bankRepo.findMaxSeqNo(bizKey).add(BigDecimal.ONE);
+        // SEQ_NO via the single wb_get_next_val funnel (V140 #23 — per-tenant MAX+1).
+        BigDecimal nextSeq = new BigDecimal(legacyFunctions.nextBankCertSeqNo(bizKey));
         String now = nowDtm14();
         BankCertInfo entity = new BankCertInfo();
         entity.setBizKey(bizKey);
@@ -476,7 +481,8 @@ public class LoginCredentialsService {
         if (!gdtRepo.findByBizKeyOrderBySeqNoAsc(bizKey).isEmpty()) {
             throw new BusinessException("WBE_LOGIN_CREDENTIAL_GDT_EXISTS");
         }
-        BigDecimal nextSeq = gdtRepo.findMaxSeqNo(bizKey).add(BigDecimal.ONE);
+        // SEQ_NO via the single wb_get_next_val funnel (V140 #26 — per-tenant MAX+1).
+        BigDecimal nextSeq = new BigDecimal(legacyFunctions.nextGdtCertSeqNo(bizKey));
         String now = nowDtm14();
 
         GdtCertInfo entity = new GdtCertInfo();
@@ -579,7 +585,7 @@ public class LoginCredentialsService {
         // The Login Credentials audit rows always carry REF_NO2 = NULL
         // (single-column SEQ_NO PK). Use the dedicated finder so we
         // match rows with NULL REF_NO2 instead of equality on null.
-        List<AuditLogEntry> rows = auditLogReadRepo
+        List<AuditLogsInfm> rows = auditLogReadRepo
                 .findByBizKeyAndRefNoAndRefNo1AndWsvcIdAndLangCdAndRefNo2IsNullOrderByRegDtmDesc(
                         bizKey, refNo, seqNo.toPlainString(), WSVC_ID, lang.name());
 

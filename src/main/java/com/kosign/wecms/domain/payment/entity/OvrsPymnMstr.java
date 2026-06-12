@@ -8,6 +8,8 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.math.BigDecimal;
 
@@ -31,37 +33,39 @@ public class OvrsPymnMstr {
     private String bizKey;
 
     @Id
-    @Column(name = "OVRS_PYMN_NO", length = 20, nullable = false)
+    @Column(name = "OVRS_PYMN_NO", length = 14, nullable = false)
     private String ovrsPymnNo;
 
     @Column(name = "DBT_ACCT_NO", length = 100)
     private String dbtAcctNo;
 
-    @Column(name = "DBT_ACCT_CD", length = 20)
+    @Column(name = "DBT_ACCT_CD", length = 15)
     private String dbtAcctCd;
 
-    @Column(name = "DBT_CCY_CD", length = 10)
+    @Column(name = "DBT_CCY_CD", length = 3)
     private String dbtCcyCd;
 
-    @Column(name = "TRNF_CCY_CD", length = 10)
+    @Column(name = "TRNF_CCY_CD", length = 3)
     private String trnfCcyCd;
 
-    @Column(name = "TRNF_AMT", precision = 20, scale = 2)
+    @Column(name = "TRNF_AMT", precision = 20, scale = 6)
     private BigDecimal trnfAmt;
 
-    @Column(name = "TOTAL_TRAN_AMT", precision = 20, scale = 2)
+    @Column(name = "TOTAL_TRAN_AMT", precision = 20, scale = 6)
     private BigDecimal totalTranAmt;
 
-    @Column(name = "TOT_TRNS_CNT")
+    @JdbcTypeCode(SqlTypes.NUMERIC)
+    @Column(name = "TOT_TRNS_CNT", precision = 10, scale = 0)
     private Integer totTrnsCnt;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "FEE_PAYER_CD", length = 1)
     private String feePayerCd;
 
-    @Column(name = "BNFC_NM", length = 200)
+    @Column(name = "BNFC_NM", length = 100)
     private String bnfcNm;
 
-    @Column(name = "BNFC_BANK_CD", length = 20)
+    @Column(name = "BNFC_BANK_CD", length = 15)
     private String bnfcBankCd;
 
     @Column(name = "BNFC_ACCT_NO", length = 100)
@@ -70,7 +74,7 @@ public class OvrsPymnMstr {
     @Column(name = "BNFC_BANK_NAME", length = 200)
     private String bnfcBankName;
 
-    @Column(name = "BNFC_BANK_BIC", length = 20)
+    @Column(name = "BNFC_BANK_BIC", length = 15)
     private String bnfcBankBic;
 
     @Column(name = "BNFC_ADDR", length = 500)
@@ -79,7 +83,7 @@ public class OvrsPymnMstr {
     @Column(name = "MEMO", length = 500)
     private String memo;
 
-    @Column(name = "APPR_SEQ_NO", length = 20)
+    @Column(name = "APPR_SEQ_NO", length = 15)
     private String apprSeqNo;
 
     /**
@@ -96,6 +100,7 @@ public class OvrsPymnMstr {
     @Column(name = "CHART_ACCT_SEQ_NO", length = 10)
     private String chartAcctSeqNo;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "TRNF_YN", length = 1, nullable = false)
     private String trnfYn;
 

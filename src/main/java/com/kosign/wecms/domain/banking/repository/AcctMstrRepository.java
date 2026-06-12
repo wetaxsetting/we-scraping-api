@@ -366,7 +366,7 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
                AND (
                     EXISTS (
                          SELECT 1
-                           FROM FirmBankingSetting tfc, NapasBankInfo nbi
+                           FROM TbFirmConf tfc, NapasBankInfo nbi
                           WHERE tfc.bizKey      = a.bizKey
                             AND tfc.wdrlActNo   = a.acctNo
                             AND tfc.outBankCd   = nbi.napasBankCd
@@ -375,7 +375,7 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
                         )
                     OR NOT EXISTS (
                          SELECT 1
-                           FROM FirmBankingSetting tfc2
+                           FROM TbFirmConf tfc2
                           WHERE tfc2.bizKey  = a.bizKey
                             AND tfc2.orgStat = '1'
                         )

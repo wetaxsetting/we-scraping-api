@@ -1,5 +1,6 @@
 package com.kosign.wecms.domain.banking.synchistory.service;
 
+import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.domain.banking.synchistory.entity.ExtTranCallHis;
 import com.kosign.wecms.domain.banking.synchistory.repository.ExtTranCallHisRepository;
 import lombok.RequiredArgsConstructor;
@@ -55,6 +56,7 @@ public class SyncHistoryWriter {
     private static final DateTimeFormatter DTM_14 = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
 
     private final ExtTranCallHisRepository repo;
+    private final LegacyFunctionRepository legacyFunctions;
 
     /**
      * Persist one audit row.
@@ -105,9 +107,11 @@ public class SyncHistoryWriter {
         String refDate = LocalDate.now(ZoneOffset.UTC).format(DT_8);
         String regDtm = now.format(DTM_14);
 
-        BigDecimal nextSeq = repo
-                .findMaxSeqNoForDay(SVC_ID_REAL_TIME_ONLINE_INQUIRY, refDate)
-                .add(BigDecimal.ONE);
+        // SEQ_NO via the single wb_get_next_val funnel (V140 #21 — per
+        // svc_id+ref_date MAX+1). Re-read on each insert() so the one-shot
+        // retry above still picks a fresh slot after a collision.
+        BigDecimal nextSeq = new BigDecimal(
+                legacyFunctions.nextExtTranCallHisSeqNo(SVC_ID_REAL_TIME_ONLINE_INQUIRY, refDate));
 
         ExtTranCallHis row = new ExtTranCallHis();
         row.setSvcId(SVC_ID_REAL_TIME_ONLINE_INQUIRY);

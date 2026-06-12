@@ -1,92 +1,64 @@
 package com.kosign.wecms.domain.payment.internaltransfer.service;
 
-import com.kosign.wecms.domain.payment.internaltransfer.repository.InternalTransferKeySeqRepository;
+import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.time.Clock;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.ZoneOffset;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
- * Unit tests for {@link InternalTransferKeyGenerator}. Verifies the
- * format contract — {@code YYYYMMDD<seq:6>} in Vietnam-local timezone
- * — and the tenant-scope guard.
+ * Unit tests for {@link InternalTransferKeyGenerator} after the OD-2 reversal
+ * (MR-1, 2026-06-09): the generator now delegates {@code SCDUL_PYMN_NO}
+ * allocation to the {@link LegacyFunctionRepository} funnel
+ * ({@code wb_get_next_val('scdul_pymn_sumr','scdul_pymn_no', biz_key)}, V140
+ * branch&nbsp;#36 — per-tenant plain-int {@code MAX+1}). The former
+ * date-prefixed {@code YYYYMMDD<seq:6>} contract and its refactor-only counter
+ * table are gone, so this test asserts delegation + the tenant-scope guard, not a format.
  */
 class InternalTransferKeyGeneratorTest {
 
-    private InternalTransferKeySeqRepository repo;
-    private Clock fixedClock;
+    private LegacyFunctionRepository legacyFunctions;
     private InternalTransferKeyGenerator generator;
 
     @BeforeEach
     void setUp() {
-        repo = mock(InternalTransferKeySeqRepository.class);
-        // 2026-05-13 00:00 UTC == 2026-05-13 07:00 Asia/Ho_Chi_Minh.
-        fixedClock = Clock.fixed(Instant.parse("2026-05-13T00:00:00Z"), ZoneOffset.UTC);
-        generator = new InternalTransferKeyGenerator(repo, fixedClock);
+        legacyFunctions = mock(LegacyFunctionRepository.class);
+        generator = new InternalTransferKeyGenerator(legacyFunctions);
     }
 
     @Test
-    void should_return_14_char_key_when_first_call_of_the_day() {
-        when(repo.allocateNext(eq("VN_VNM0004_000001"), eq(LocalDate.of(2026, 5, 13))))
-                .thenReturn(1);
+    void should_return_funnel_value_and_delegate_to_wb_get_next_val() {
+        when(legacyFunctions.nextScdulPymnNo("VN_VNM0004_000001")).thenReturn("1001");
 
         String key = generator.nextScdulPymnNo("VN_VNM0004_000001");
 
-        assertThat(key).hasSize(14);
-        assertThat(key).isEqualTo("20260513000001");
-        verify(repo).allocateNext("VN_VNM0004_000001", LocalDate.of(2026, 5, 13));
+        assertThat(key).isEqualTo("1001");
+        verify(legacyFunctions).nextScdulPymnNo("VN_VNM0004_000001");
     }
 
     @Test
-    void should_zero_pad_seq_when_seq_under_six_digits() {
-        when(repo.allocateNext(eq("VN_VNM0004_000001"), eq(LocalDate.of(2026, 5, 13))))
-                .thenReturn(42);
+    void should_pass_through_short_plain_int_keys() {
+        // JEX MAX+1 can return a sub-5-digit key on a low-count tenant; the
+        // generator must not reshape it (the controller @Pattern now accepts
+        // {1,30} digits).
+        when(legacyFunctions.nextScdulPymnNo("VN_VNM0004_000001")).thenReturn("7");
 
-        String key = generator.nextScdulPymnNo("VN_VNM0004_000001");
-
-        assertThat(key).isEqualTo("20260513000042");
+        assertThat(generator.nextScdulPymnNo("VN_VNM0004_000001")).isEqualTo("7");
     }
 
     @Test
-    void should_use_vietnam_local_date_when_utc_is_previous_day() {
-        // 2026-05-12 23:00 UTC == 2026-05-13 06:00 Vietnam — key uses 2026-05-13.
-        Clock late = Clock.fixed(Instant.parse("2026-05-12T23:00:00Z"), ZoneOffset.UTC);
-        InternalTransferKeyGenerator localGen = new InternalTransferKeyGenerator(repo, late);
-        when(repo.allocateNext(eq("VN_VNM0004_000001"), eq(LocalDate.of(2026, 5, 13))))
-                .thenReturn(1);
-
-        String key = localGen.nextScdulPymnNo("VN_VNM0004_000001");
-
-        assertThat(key).startsWith("20260513");
-    }
-
-    @Test
-    void should_throw_when_bizKey_blank() {
+    void should_throw_and_not_hit_the_funnel_when_bizKey_blank() {
         assertThatThrownBy(() -> generator.nextScdulPymnNo(""))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("bizKey");
         assertThatThrownBy(() -> generator.nextScdulPymnNo(null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("bizKey");
-    }
-
-    @Test
-    void should_throw_when_seq_overflows_six_digit_cap() {
-        // Static format(...) is the seam — exercise it directly.
-        assertThatThrownBy(() -> InternalTransferKeyGenerator.format(LocalDate.of(2026, 5, 13), 1_000_000))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("out of range");
-        assertThatThrownBy(() -> InternalTransferKeyGenerator.format(LocalDate.of(2026, 5, 13), 0))
-                .isInstanceOf(IllegalStateException.class);
+        verifyNoInteractions(legacyFunctions);
     }
 }

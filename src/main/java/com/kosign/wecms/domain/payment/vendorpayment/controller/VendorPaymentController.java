@@ -93,7 +93,7 @@ public class VendorPaymentController {
      *  the internal numeric key (5–30 digits) and the user-visible DOC_NO
      *  (VO_YYMMDD_NNN format, e.g. VO_260521_001) so the frontend can
      *  navigate to the detail page using either identifier. */
-    private static final String SCDUL_PYMN_NO_PATTERN = "^([0-9]{5,30}|VO_[0-9]{6}_[0-9]{1,9})$";
+    private static final String SCDUL_PYMN_NO_PATTERN = "^([0-9]{1,30}|VO_[0-9]{6}_[0-9]{1,9})$";
 
     /** Line-id format on {@code SCDUL_PYMN_SUMR_DETL.SCDUL_PYMN_DETL_NO}
      *  — alphanumeric, 1-20 chars (mirrors Internal Transfer). */

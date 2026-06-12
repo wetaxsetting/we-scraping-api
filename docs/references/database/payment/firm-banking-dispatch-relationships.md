@@ -227,7 +227,7 @@ For the dispatch service to function end-to-end:
 
 - The 6 new entities under `domain/payment/dispatch/entity/` cover the gateway-side tables.
 - `TbPayTarget`, `TbPayFileMst`, `TbPayFileData` (already present) cover the refactor-side dispatch tables.
-- The bridge table `SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN` is now scripted (DDL appended to `firm_banking_dispatch_remaining_tables_20260518.sql` (Needs Confirmation — source file not found) §7) and entity'd as [`ScduPymnSumrDetlPayTargetConn`](../../../../src/main/java/com/kosign/wecms/domain/payment/dispatch/entity/ScduPymnSumrDetlPayTargetConn.java) under `domain/payment/dispatch/entity/`. DEV has a formal PK on `(BIZ_KEY, SCDUL_PYMN_NO, SCDUL_PYMN_DETL_NO)` (verified 2026-05-18).
+- The bridge table `SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN` and its entity `ScduPymnSumrDetlPayTargetConn` were **removed from the refactor (2026-06-10)** — Spring never wrote the bridge (the dispatch executors stamp `PAY_TRAN_DT`/`PAY_TRAN_SEQ` on the detail row instead), and the legacy API-path write was never ported. DEV had a formal PK on `(BIZ_KEY, SCDUL_PYMN_NO, SCDUL_PYMN_DETL_NO)` (verified 2026-05-18); the table is dropped from the refactor DB via `docs/database/manual-cleanup/drop_pay_target_conn_bridge_20260610.sql`.
 - `TbFirmBankCode`, `TbFirmConf`, `TbFirmTran` (already present) handle the lookups.
 - `TbBatchScheduleInfo` / `_Dtl` (new) handle the schedule-window guard.
 
@@ -292,7 +292,7 @@ The complete dispatch slice — payment master → refactor-side dispatch → ga
 | `TB_FIRM_BAT_API_TRAN` | **`TbFirmBatApiTran`** ← new | `domain/payment/dispatch/entity/` |
 | `TB_BATCH_SCHEDULE_INFO` | **`TbBatchScheduleInfo`** ← new | `domain/payment/dispatch/entity/` |
 | `TB_BATCH_SCHEDULE_DTL` | **`TbBatchScheduleDtl`** ← new | `domain/payment/dispatch/entity/` |
-| `SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN` | **`ScduPymnSumrDetlPayTargetConn`** ← new | `domain/payment/dispatch/entity/` |
+| `SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN` | ~~`ScduPymnSumrDetlPayTargetConn`~~ — **removed 2026-06-10** (unused by Spring) | — |
 
 Each new entity carries `@IdClass(<Entity>Id.class)` matching the DEV PK column order; `CHAR(N)` columns get `@JdbcTypeCode(SqlTypes.CHAR)` so Hibernate's `validate` accepts the `bpchar` columns (precedent: `SysScrOptionWecms.sortYn`).
 

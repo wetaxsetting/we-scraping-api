@@ -1,6 +1,6 @@
 package com.kosign.wecms.domain.setting.firmbankingsettings.service;
 
-import com.kosign.wecms.common.auditlog.entity.AuditLogEntry;
+import com.kosign.wecms.common.auditlog.entity.AuditLogsInfm;
 import com.kosign.wecms.common.auditlog.repository.AuditLogEntryRepository;
 import com.kosign.wecms.common.auditlog.service.AuditLogContext;
 import com.kosign.wecms.common.auditlog.service.AuditLogService;
@@ -15,8 +15,8 @@ import com.kosign.wecms.domain.setting.firmbankingsettings.dto.FirmBankingSettin
 import com.kosign.wecms.domain.setting.firmbankingsettings.dto.FirmBankingSettingListResponse;
 import com.kosign.wecms.domain.setting.firmbankingsettings.dto.FirmBankingSettingRow;
 import com.kosign.wecms.domain.setting.firmbankingsettings.dto.FirmBankingSettingUpdateRequest;
-import com.kosign.wecms.domain.setting.firmbankingsettings.entity.FirmBankingSetting;
-import com.kosign.wecms.domain.setting.firmbankingsettings.entity.FirmBankingSettingId;
+import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConf;
+import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConfId;
 import com.kosign.wecms.domain.setting.firmbankingsettings.entity.FirmBankingSettingView;
 import com.kosign.wecms.domain.setting.firmbankingsettings.repository.FirmBankingSettingRepository;
 import com.kosign.wecms.domain.setting.firmbankingsettings.repository.FirmBankingSettingViewRepository;
@@ -215,8 +215,8 @@ public class FirmBankingSettingsService {
         String safeWdrlActNo = requireField("wdrl_act_no", wdrlActNo);
         String bizKey        = requireBizKey();
 
-        FirmBankingSetting entity = settingRepository
-                .findById(new FirmBankingSettingId(bizKey, safeOutBankCd, safeWdrlActNo))
+        TbFirmConf entity = settingRepository
+                .findById(new TbFirmConfId(bizKey, safeOutBankCd, safeWdrlActNo))
                 .orElseThrow(() -> {
                     // Logged at warn — a missing row is a request-shape problem
                     // worth tracing, not a server fault.
@@ -309,7 +309,7 @@ public class FirmBankingSettingsService {
 
         // V12 — PK uniqueness. Tenant scoping is implicit because
         // bizKey is the first PK component.
-        FirmBankingSettingId id = new FirmBankingSettingId(bizKey, safeOutBankCd, safeWdrlActNo);
+        TbFirmConfId id = new TbFirmConfId(bizKey, safeOutBankCd, safeWdrlActNo);
         if (settingRepository.existsById(id)) {
             log.warn("firm-banking-settings create duplicate bizKey={} outBankCd={} wdrlActNo={}",
                     bizKey, safeOutBankCd, LogMask.acct(safeWdrlActNo));
@@ -318,7 +318,7 @@ public class FirmBankingSettingsService {
 
         String nowDttm = OffsetDateTime.now(ZoneOffset.UTC).format(MOD_DTTM_FORMAT);
 
-        FirmBankingSetting entity = new FirmBankingSetting();
+        TbFirmConf entity = new TbFirmConf();
         entity.setBizKey(bizKey);
         entity.setOutBankCd(safeOutBankCd);
         entity.setWdrlActNo(safeWdrlActNo);
@@ -334,7 +334,7 @@ public class FirmBankingSettingsService {
         entity.setModDttm(nowDttm);                            // V18
         entity.setLastEdtr(TenantContext.currentUserNm());     // V19
 
-        FirmBankingSetting saved = settingRepository.save(entity);
+        TbFirmConf saved = settingRepository.save(entity);
 
         // Append one audit event — fans out to 4 locale rows under one
         // seq_no inside a REQUIRES_NEW transaction. Mirrors the Update
@@ -396,8 +396,8 @@ public class FirmBankingSettingsService {
         String safeWdrlActNo = requireField("wdrl_act_no", wdrlActNo);
         String bizKey        = requireBizKey();
 
-        FirmBankingSettingId id = new FirmBankingSettingId(bizKey, safeOutBankCd, safeWdrlActNo);
-        FirmBankingSetting entity = settingRepository.findById(id)
+        TbFirmConfId id = new TbFirmConfId(bizKey, safeOutBankCd, safeWdrlActNo);
+        TbFirmConf entity = settingRepository.findById(id)
                 .orElseThrow(() -> {
                     log.warn("firm-banking-settings update missing-row bizKey={} outBankCd={} wdrlActNo={}",
                             bizKey, safeOutBankCd, LogMask.acct(safeWdrlActNo));
@@ -410,7 +410,7 @@ public class FirmBankingSettingsService {
         entity.setModDttm(OffsetDateTime.now(ZoneOffset.UTC).format(MOD_DTTM_FORMAT));
         entity.setLastEdtr(TenantContext.currentUserNm());
 
-        FirmBankingSetting saved = settingRepository.save(entity);
+        TbFirmConf saved = settingRepository.save(entity);
 
         // Append one audit event — fans out to 4 locale rows under one
         // seq_no inside a REQUIRES_NEW transaction. The shared writer
@@ -470,7 +470,7 @@ public class FirmBankingSettingsService {
         String safeWdrlActNo = requireField("wdrl_act_no", wdrlActNo);
         String bizKey        = requireBizKey();
 
-        FirmBankingSettingId id = new FirmBankingSettingId(bizKey, safeOutBankCd, safeWdrlActNo);
+        TbFirmConfId id = new TbFirmConfId(bizKey, safeOutBankCd, safeWdrlActNo);
         if (!settingRepository.existsById(id)) {
             // Logged at warn — a delete against a non-existent row is a
             // request-shape problem worth tracing. Mask the account
@@ -517,7 +517,7 @@ public class FirmBankingSettingsService {
         String bizKey        = requireBizKey();
         String langCd        = currentLangCdValue();
 
-        List<AuditLogEntry> rows = auditLogRepository
+        List<AuditLogsInfm> rows = auditLogRepository
                 .findByBizKeyAndRefNoAndRefNo1AndRefNo2AndWsvcIdAndLangCdOrderByRegDtmDesc(
                         bizKey,
                         REF_NO_TB_FIRM_CONF,
@@ -601,7 +601,7 @@ public class FirmBankingSettingsService {
 
     /** Detail returns cleartext {@code wdrl_act_no} — the edit dialog
      *  needs the round-trip value. */
-    private static FirmBankingSettingDetail toDetail(FirmBankingSetting e) {
+    private static FirmBankingSettingDetail toDetail(TbFirmConf e) {
         return new FirmBankingSettingDetail(
                 e.getBizKey(),
                 e.getOutBankCd(),
@@ -619,7 +619,7 @@ public class FirmBankingSettingsService {
                 e.getLastEdtr());
     }
 
-    private static FirmBankingAuditEntry toAuditEntry(AuditLogEntry e) {
+    private static FirmBankingAuditEntry toAuditEntry(AuditLogsInfm e) {
         return new FirmBankingAuditEntry(
                 e.getAuditLogsActv(),
                 e.getAuditLogsActvDtl(),

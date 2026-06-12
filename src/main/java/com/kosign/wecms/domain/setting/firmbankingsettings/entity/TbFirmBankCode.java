@@ -3,10 +3,13 @@ package com.kosign.wecms.domain.setting.firmbankingsettings.entity;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
+import jakarta.persistence.IdClass;
 import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /**
  * Projection of {@code TB_FIRM_BANK_CODE} (V59) — the Korean
@@ -43,12 +46,13 @@ import lombok.Setter;
 @NoArgsConstructor
 @Entity
 @Table(name = "TB_FIRM_BANK_CODE")
+@IdClass(TbFirmBankCodeId.class)
 public class TbFirmBankCode {
 
     /** NAPAS bank code (e.g. {@code 970424} Shinhan / {@code 970436}
      *  Vietcombank / {@code 970457} Woori) for {@code ANT_DIV_CD='NAPAS'}
-     *  rows; CITAD code for {@code ANT_DIV_CD='CITAD'} rows. PK on the
-     *  legacy table. */
+     *  rows; CITAD code for {@code ANT_DIV_CD='CITAD'} rows. Part of the
+     *  composite legacy PK {@code (ANT_DIV_CD, BANK_CD)}. */
     @Id
     @Column(name = "BANK_CD", length = 15, nullable = false)
     private String bankCd;
@@ -57,12 +61,15 @@ public class TbFirmBankCode {
      *  Discriminator the contacts bank picker uses to route the
      *  selected code back as either {@code napas_bank_cd} or
      *  {@code citad_bank_cd} on the Save payload. */
+    @Id
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "ANT_DIV_CD", length = 5, nullable = false)
     private String antDivCd;
 
     /** Companion CITAD code on a NAPAS row (rarely populated); the
      *  primary CITAD code lives in {@link #bankCd} for
      *  {@code ANT_DIV_CD='CITAD'} rows. */
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "CITAD_BANK_CD", length = 3)
     private String citadBankCd;
 
@@ -86,6 +93,7 @@ public class TbFirmBankCode {
      *  recipient flow: status `'N'` → manual Recipient Name input
      *  (Lookup hidden); status `'Y'` (or null) → Lookup Recipient
      *  button visible. */
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "BANK_STAS", length = 1)
     private String bankStas;
 }

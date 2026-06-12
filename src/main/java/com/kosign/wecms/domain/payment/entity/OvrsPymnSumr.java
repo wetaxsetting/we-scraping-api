@@ -8,6 +8,8 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.math.BigDecimal;
 
@@ -32,40 +34,37 @@ public class OvrsPymnSumr {
     private String bizKey;
 
     @Id
-    @Column(name = "OVRS_PYMN_NO", length = 20, nullable = false)
+    @Column(name = "OVRS_PYMN_NO", length = 14, nullable = false)
     private String ovrsPymnNo;
 
-    @Column(name = "OVRS_PYMN_TYPE_CD", length = 10)
+    @JdbcTypeCode(SqlTypes.CHAR)
+    @Column(name = "OVRS_PYMN_TYPE_CD", length = 2)
     private String ovrsPymnTypeCd;
 
     /** Title / original filename of the Excel batch. */
-    @Column(name = "TITL", length = 200)
+    @Column(name = "TITL", length = 100)
     private String titl;
 
-    @Column(name = "CCY_CD", length = 10)
+    @Column(name = "CCY_CD", length = 3)
     private String ccyCd;
 
-    @Column(name = "TOTAL_TRAN_AMT", precision = 20, scale = 2)
+    @Column(name = "TOTAL_TRAN_AMT", precision = 20, scale = 6)
     private BigDecimal totalTranAmt;
 
-    @Column(name = "TOT_TRNS_CNT")
+    @JdbcTypeCode(SqlTypes.NUMERIC)
+    @Column(name = "TOT_TRNS_CNT", precision = 10, scale = 0)
     private Integer totTrnsCnt;
 
-    @Column(name = "APPR_SEQ_NO", length = 20)
+    @Column(name = "APPR_SEQ_NO", length = 15)
     private String apprSeqNo;
 
-    /** Phase-A bridge: approval status stamped by the approval-action endpoint.
-     *  DEV stores this in EXPT_RESOL_MSTR; this local column fills the gap
-     *  until EXPT_RESOL_MSTR writes are ported. C=approved, X=rejected, P=pending. */
-    @Column(name = "APPR_STTS", length = 1)
-    private String apprStts;
-
-    @Column(name = "OUT_BANK_CD", length = 20)
+    @Column(name = "OUT_BANK_CD", length = 15)
     private String outBankCd;
 
     @Column(name = "WDRL_ACT_NO", length = 100)
     private String wdrlActNo;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "TRNF_YN", length = 1, nullable = false)
     private String trnfYn;
 
@@ -91,20 +90,14 @@ public class OvrsPymnSumr {
     @Column(name = "PAY_FILE_SEQ_NO", length = 7)
     private String payFileSeqNo;
 
-    @Column(name = "OUT_BANK_NM", length = 100)
-    private String outBankNm;
-
-    @Column(name = "ORG_FILE_NM", length = 300)
+    @Column(name = "ORG_FILE_NM", length = 500)
     private String orgFileNm;
 
-    @Column(name = "SAVE_FILE_NM", length = 300)
+    @Column(name = "SAVE_FILE_NM", length = 500)
     private String saveFileNm;
 
-    @Column(name = "FILE_URL", length = 500)
-    private String fileUrl;
-
-    @Column(name = "FILE_SIZE", precision = 20, scale = 0)
-    private BigDecimal fileSize;
+    @Column(name = "FILE_SIZE", length = 100)
+    private String fileSize;
 
     @Column(name = "REG_DTM", length = 14, nullable = false)
     private String regDtm;

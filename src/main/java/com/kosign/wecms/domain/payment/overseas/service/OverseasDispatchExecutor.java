@@ -1,5 +1,6 @@
 package com.kosign.wecms.domain.payment.overseas.service;
 
+import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.domain.banking.entity.AcctMstr;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileData;
@@ -7,10 +8,10 @@ import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileMst;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileDataRepository;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileMstRepository;
 import com.kosign.wecms.domain.payment.dispatch.service.DispatchKeyGenerator;
-import com.kosign.wecms.domain.payment.entity.OvrsPymnDtls;
+import com.kosign.wecms.domain.payment.entity.OvrsPymnSumrDetl;
 import com.kosign.wecms.domain.payment.entity.OvrsPymnSumr;
-import com.kosign.wecms.domain.setting.firmbankingsettings.entity.FirmBankingSetting;
-import com.kosign.wecms.domain.setting.firmbankingsettings.entity.FirmBankingSettingId;
+import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConf;
+import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConfId;
 import com.kosign.wecms.domain.setting.firmbankingsettings.repository.FirmBankingSettingRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -39,7 +40,7 @@ import java.util.Optional;
  *   <li>Insert one {@link TbPayFileMst} header (PROC_STAT='9' pending,
  *       FUND_TP='9' overseas remittance, TRAN_TP='1', BANK_PRTN_ID placeholder).</li>
  *   <li>Insert one {@link TbPayFileData} per detail line. Beneficiary
- *       fields are mapped from {@link OvrsPymnDtls}: {@code BIC_CD} →
+ *       fields are mapped from {@link OvrsPymnSumrDetl}: {@code BIC_CD} →
  *       {@code TAR_BANK_CD}, {@code BNFC_ACCT_NO} → {@code FINC_MDA_NO},
  *       {@code BNFC_NM} → {@code FINC_MDA_OWNER_NM}, {@code TRNF_AMT} →
  *       {@code TRAN_AMT}, {@code CCY_CD} → {@code TRSC_CCY_CD}.</li>
@@ -144,6 +145,7 @@ public class OverseasDispatchExecutor {
     private final TbPayFileDataRepository      tbPayFileDataRepository;
     private final DispatchKeyGenerator         keyGenerator;
     private final Clock                        clock;
+    private final LegacyFunctionRepository     legacyFunctions;
     /** Resolves {@code TB_FIRM_CONF.BANK_PRTN_ID} for the master's
      *  withdrawal account. Required for legacy parity — without it the
      *  bank daemon routes against the wrong partner id. */
@@ -160,7 +162,7 @@ public class OverseasDispatchExecutor {
      * roll back together).
      */
     @Transactional(propagation = Propagation.MANDATORY)
-    public void execute(OvrsPymnSumr master, List<OvrsPymnDtls> lines) {
+    public void execute(OvrsPymnSumr master, List<OvrsPymnSumrDetl> lines) {
         String bizKey = master.getBizKey();
         LocalDateTime nowVn = LocalDateTime.now(clock.withZone(VN_TZ));
         String tranDt = nowVn.format(DT8);
@@ -206,8 +208,12 @@ public class OverseasDispatchExecutor {
         // (legacy looks it up per-line but the inputs don't change).
         // Mirrors pymn_0007_001_c001_act.jsp:375-384.
         String senderNm = resolveSenderNm(bizKey, outBankCd, master.getWdrlActNo());
-        BigDecimal seq = BigDecimal.ONE;
-        for (OvrsPymnDtls line : lines) {
+        // SEQ seeded ONCE via the wb_get_next_val funnel (V140 #20, per
+        // (biz_key, file_seq_no) MAX+1) then incremented per line — no per-row
+        // DB call. fileSeqNo is freshly allocated above, so the seed is 1 → 1, 2, 3, ...
+        long seqCursor = Long.parseLong(legacyFunctions.nextTbPayFileDataSeq(bizKey, fileSeqNo)) - 1;
+        for (OvrsPymnSumrDetl line : lines) {
+            BigDecimal seq = BigDecimal.valueOf(++seqCursor);
             TbPayFileData data = new TbPayFileData();
             data.setTranDt(tranDt);
             data.setBizKey(bizKey);
@@ -271,7 +277,7 @@ public class OverseasDispatchExecutor {
             data.setRcptBankCntryCd(countryCd);
 
             // REMIT_CCY_CD always comes from the line's own TRNF_CCY_CD
-            // (= ccy_cd on the refactor's OvrsPymnDtls — overseas batches
+            // (= ccy_cd on the refactor's OvrsPymnSumrDetl — overseas batches
             // carry a single transfer currency per line, no master-level
             // override). Legacy line 399.
             data.setRemitCcyCd(line.getCcyCd());
@@ -286,8 +292,6 @@ public class OverseasDispatchExecutor {
             // join can compare it to a string column.
             line.setPayTranDt(tranDt);
             line.setPayTranSeq(seq.toPlainString());
-
-            seq = seq.add(BigDecimal.ONE);
         }
 
         log.info("feature=overseas-payment dispatch path=FILE bizKey={} ovrsPymnNo={} lines={} tranDt={} fileSeqNo={}",
@@ -336,7 +340,7 @@ public class OverseasDispatchExecutor {
      * detail line; falls back to the beneficiary account number when the
      * Excel parser produced no name (defensive — keeps the insert alive).
      */
-    private static String resolveOwnerNm(OvrsPymnDtls line) {
+    private static String resolveOwnerNm(OvrsPymnSumrDetl line) {
         String bnfcNm = line.getBnfcNm();
         if (bnfcNm != null && !bnfcNm.isBlank()) {
             return bnfcNm;
@@ -364,8 +368,8 @@ public class OverseasDispatchExecutor {
                     BANK_PRTN_ID_FALLBACK);
             return BANK_PRTN_ID_FALLBACK;
         }
-        FirmBankingSettingId id = new FirmBankingSettingId(bizKey, outBankCd, wdrlActNo);
-        Optional<FirmBankingSetting> conf = firmBankingSettingRepository.findById(id);
+        TbFirmConfId id = new TbFirmConfId(bizKey, outBankCd, wdrlActNo);
+        Optional<TbFirmConf> conf = firmBankingSettingRepository.findById(id);
         if (conf.isEmpty()) {
             log.warn("feature=overseas-payment dispatch: TB_FIRM_CONF row missing for bizKey={} outBankCd={} wdrlActNo={}; bankPrtnId falls back to '{}'",
                     bizKey, outBankCd, wdrlActNo, BANK_PRTN_ID_FALLBACK);

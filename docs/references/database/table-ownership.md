@@ -28,7 +28,7 @@ Ownership rule: a table has exactly **one** owning module. Shared reference/infr
 | `SCDUL_PYMN_SUMR` | `payment/internaltransfer` | [internal-transfer](../../features/payment/internal-transfer/README.md) | Vendor/Expense/Payroll (shared) |
 | `SCDUL_PYMN_SUMR_DETL` | `payment/internaltransfer` | [internal-transfer](../../features/payment/internal-transfer/README.md) | — |
 | `INTERNAL_TRANSFER_KEY_SEQ` | `payment/internaltransfer` | [internal-transfer](../../features/payment/internal-transfer/README.md) | — (refactor helper) |
-| `SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN` | `payment/dispatch` | [internal-transfer](../../features/payment/internal-transfer/README.md) | — |
+| ~~`SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN`~~ | — | — | **Removed from refactor 2026-06-10** — legacy API-path bridge, never used by Spring (entity deleted; dropped via manual cleanup script). Still exists in JEX DEV. |
 | `OVRS_PYMN_SUMR` | `payment/overseas` | [overseas-payment](../../features/payment/overseas-payment/README.md) | — |
 | `OVRS_PYMN_MSTR` | `payment/overseas` | [overseas-payment](../../features/payment/overseas-payment/README.md) | — |
 | `OVRS_PYMN_DTLS` | `payment/overseas` | [overseas-payment](../../features/payment/overseas-payment/README.md) | — |
@@ -81,7 +81,7 @@ Ownership rule: a table has exactly **one** owning module. Shared reference/infr
 | `TB_FIRM_BANK_CODE` | `setting/firmbankinghistory` | [firm-banking-history](../../features/settings/firm-banking-history.md) | Contacts (bank-name resolve), Payment |
 | `NXSIAS_MODULE_TRAN_LOG_HIS` | `setting/firmbankinghistory` (+ `banking/nxisas/audit`) | [firm-banking-history](../../features/settings/firm-banking-history.md) | Banking scraping |
 | `ERP_TRNS_HSTR` | `setting/erptransactionhistory` | [transaction-history](../../features/settings/transaction-history.md) | — |
-| `BUSI_VAS_ACCT_INFM` | `setting/vasaccount` | [vas-account](../../features/settings/vas-account.md) | Banking (rcv/pay), organizer |
+| `BUSI_VAS_ACCT_INFM` | `setting/vasaccount` | [vas-account](../../features/settings/vas-account/README.md) | Banking (rcv/pay), organizer |
 | `USAG_INFM` | `setting/purposesettings` | [purpose](../../features/settings/purpose.md) | Banking (rcv/pay usage) |
 | `USAG_INFM_LANG_DETL` | `setting/purposesettings` | [purpose](../../features/settings/purpose.md) | — |
 | `BUSI_USAG_SET_INFM` | `setting/purposesettings` | [purpose](../../features/settings/purpose.md) | — |

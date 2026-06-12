@@ -9,7 +9,7 @@ import lombok.Setter;
 import java.io.Serializable;
 
 /**
- * Composite identity for {@link BusiUsagSet}. Mirrors the legacy JEX PK
+ * Composite identity for {@link BusiUsagSetInfm}. Mirrors the legacy JEX PK
  * on {@code BUSI_USAG_SET_INFM}: {@code (BIZ_KEY, USE_USAG_CD)}.
  *
  * <p>{@code bizKey} is part of the PK so tenant scoping is implicit on

@@ -1,6 +1,6 @@
 package com.kosign.wecms.domain.banking.service.cashflow;
 
-import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount;
+import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartAcctInfm;
 
 import java.util.HashMap;
 import java.util.List;
@@ -48,14 +48,14 @@ public class ChartOfAccountsHierarchy {
     /** The three restricted Level-1 roots seeded by V96 for every tenant. */
     public static final Set<String> LEVEL1_ROOTS = Set.of("ACC-01", "ACC-02", "ACC-03");
 
-    private final Map<String, ChartOfAccount> byCode;
-    private final List<ChartOfAccount> l3Active;
-    private final Map<String, ChartOfAccount> l2ByCode;
+    private final Map<String, ChartAcctInfm> byCode;
+    private final List<ChartAcctInfm> l3Active;
+    private final Map<String, ChartAcctInfm> l2ByCode;
 
     /** Build from a tenant's full chart_of_accounts row set (active only). */
-    public ChartOfAccountsHierarchy(List<ChartOfAccount> tenantRows) {
+    public ChartOfAccountsHierarchy(List<ChartAcctInfm> tenantRows) {
         this.byCode = new HashMap<>();
-        for (ChartOfAccount r : tenantRows) {
+        for (ChartAcctInfm r : tenantRows) {
             if (!"N".equals(r.getDelYn())) continue;
             byCode.put(r.getChartAcctCd(), r);
         }
@@ -64,7 +64,7 @@ public class ChartOfAccountsHierarchy {
         // `LEVEL1_ROOTS` is a `Set.of(...)` immutable set which throws
         // NPE on `.contains(null)` — guard the parent code first.
         this.l2ByCode = new HashMap<>();
-        for (ChartOfAccount r : byCode.values()) {
+        for (ChartAcctInfm r : byCode.values()) {
             String parentCd = r.getParentChartAcctCd();
             if (parentCd != null && LEVEL1_ROOTS.contains(parentCd)) {
                 l2ByCode.put(r.getChartAcctCd(), r);
@@ -76,15 +76,15 @@ public class ChartOfAccountsHierarchy {
         // ancestors are also Active. Self-referencing or orphan rows
         // are excluded.
         this.l3Active = new java.util.ArrayList<>();
-        for (ChartOfAccount r : byCode.values()) {
+        for (ChartAcctInfm r : byCode.values()) {
             if (!"A".equals(r.getStts())) continue;
-            ChartOfAccount l2 = l2ByCode.get(r.getParentChartAcctCd());
+            ChartAcctInfm l2 = l2ByCode.get(r.getParentChartAcctCd());
             if (l2 == null) continue;
             if (!"A".equals(l2.getStts())) continue;
             // Self-reference guard: a row where parent == self is the
             // legacy DEV quirk (seq 104) — treat as not-L3.
             if (r.getChartAcctCd().equals(r.getParentChartAcctCd())) continue;
-            ChartOfAccount l1 = byCode.get(l2.getParentChartAcctCd());
+            ChartAcctInfm l1 = byCode.get(l2.getParentChartAcctCd());
             if (l1 == null) continue;
             if (!"A".equals(l1.getStts())) continue;
             String l1Cd = l1.getChartAcctCd();
@@ -94,24 +94,24 @@ public class ChartOfAccountsHierarchy {
     }
 
     /** All Level-3 rows that contribute to the report's aggregation. */
-    public List<ChartOfAccount> l3Rows() {
+    public List<ChartAcctInfm> l3Rows() {
         return l3Active;
     }
 
     /** Lookup by {@code chart_acct_cd}. Returns {@code null} if unknown. */
-    public ChartOfAccount byCode(String chartAcctCd) {
+    public ChartAcctInfm byCode(String chartAcctCd) {
         if (chartAcctCd == null) return null;
         return byCode.get(chartAcctCd);
     }
 
     /** Direct L2 parent of an L3 row. */
-    public ChartOfAccount l2Of(ChartOfAccount l3Row) {
+    public ChartAcctInfm l2Of(ChartAcctInfm l3Row) {
         return byCode.get(l3Row.getParentChartAcctCd());
     }
 
     /** L1 ancestor of an L3 row (the {@code ACC-*} root). */
-    public ChartOfAccount l1Of(ChartOfAccount l3Row) {
-        ChartOfAccount l2 = l2Of(l3Row);
+    public ChartAcctInfm l1Of(ChartAcctInfm l3Row) {
+        ChartAcctInfm l2 = l2Of(l3Row);
         if (l2 == null) return null;
         return byCode.get(l2.getParentChartAcctCd());
     }
@@ -120,19 +120,19 @@ public class ChartOfAccountsHierarchy {
      * All Level-2 rows belonging to a Level-1 root. Sorted by
      * {@code chart_acct_cd} for deterministic emission order.
      */
-    public List<ChartOfAccount> l2sUnderRoot(String rootCode) {
+    public List<ChartAcctInfm> l2sUnderRoot(String rootCode) {
         return l2ByCode.values().stream()
                 .filter(l2 -> rootCode.equals(l2.getParentChartAcctCd()))
                 .filter(l2 -> "A".equals(l2.getStts()))
-                .sorted(java.util.Comparator.comparing(ChartOfAccount::getChartAcctCd))
+                .sorted(java.util.Comparator.comparing(ChartAcctInfm::getChartAcctCd))
                 .toList();
     }
 
     /** All Level-3 rows whose direct parent is the supplied L2 code. */
-    public List<ChartOfAccount> l3sUnderL2(String l2Code) {
+    public List<ChartAcctInfm> l3sUnderL2(String l2Code) {
         return l3Active.stream()
                 .filter(r -> l2Code.equals(r.getParentChartAcctCd()))
-                .sorted(java.util.Comparator.comparing(ChartOfAccount::getChartAcctCd))
+                .sorted(java.util.Comparator.comparing(ChartAcctInfm::getChartAcctCd))
                 .toList();
     }
 }
