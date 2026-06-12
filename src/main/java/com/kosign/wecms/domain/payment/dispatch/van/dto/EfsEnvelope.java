@@ -29,11 +29,10 @@ import com.fasterxml.jackson.annotation.JsonProperty;
  * this record is a pure carrier — no crypto, no HTTP. The real {@code RestClient}
  * adapter that assembles/sends it is a later phase (B1/B2).
  *
- * <p><b>TODO(OQ-PDF-1):</b> the service DTOs in this package cover only the
- * services confirmed in guide ver 1.2.2 — {@code WGVN_EFS_201/202/203/301/302}.
- * {@code WGVN_EFS_204} (legacy FX exchange-transfer inquiry) is <b>not present</b>
- * in this guide and is deliberately NOT modelled; confirm whether it exists in
- * another document/version or is retired before adding a 204 DTO.
+ * <p>The service DTOs in this package cover the six services documented in guide
+ * ver 1.2.6 — {@code WGVN_EFS_201/202/203/204/301/302}. {@code WGVN_EFS_204}
+ * (Woori FX exchange-transfer inquiry, §5.6) was added in v1.2.6 and is modelled
+ * by {@link Efs204Request} / {@link Efs204Response}.
  *
  * @param id      {@code ID}        partner identifier
  * @param rqDtime {@code RQ_DTIME}  request datetime {@code yyyyMMddHHmmss} (request only)

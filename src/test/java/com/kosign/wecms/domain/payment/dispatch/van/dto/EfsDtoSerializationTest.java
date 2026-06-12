@@ -79,14 +79,39 @@ class EfsDtoSerializationTest {
 
     @Test
     void efs202Request_serializes_snake_case() throws Exception {
+        // v1.2.6 §5.4: base fields + FX block (withd_curren_cd … dep_amt_dcm).
         Efs202Request req = new Efs202Request(
                 "970424", "ORG000001", "VND", "1000000", "0", "A", "111", "970457",
-                "222", "WEBCASH", "salary", "NAPAS");
+                "222", "WEBCASH", "salary", "NAPAS",
+                "USD", "VND", "24500", "0", "100", "0", "2450000", "0");
         JsonNode node = mapper.readTree(mapper.writeValueAsString(req));
         assertThat(iterable(node.fieldNames())).contains(
                 "bank_cd", "prtn_id", "curren_cd", "amt", "dcm_amt", "tar_finc_mda_div",
-                "macct_no", "tar_bank_cd", "tar_finc_mda_no", "finc_mda_owner_nm", "tran_use", "ant_div_cd");
+                "macct_no", "tar_bank_cd", "tar_finc_mda_no", "finc_mda_owner_nm", "tran_use", "ant_div_cd",
+                "withd_curren_cd", "dep_curren_cd", "apl_exc_rate_itg", "apl_exc_rate_dcm",
+                "withd_amt_itg", "withd_amt_dcm", "dep_amt_itg", "dep_amt_dcm");
+        // tar_bank_nm is intentionally NOT modelled (legacy omits it; gateway auto-matches).
+        assertThat(node.has("tar_bank_nm")).isFalse();
         assertThat(mapper.readValue(mapper.writeValueAsString(req), Efs202Request.class)).isEqualTo(req);
+    }
+
+    @Test
+    void efs204Request_and_response_serialize_snake_case() throws Exception {
+        // v1.2.6 §5.6 request: bank_cd, prtn_id, withd_acct_no, withd_curren_cd,
+        // dep_acct_no, tran_amt_itg, tran_amt_dcm, tran_curren_cd.
+        Efs204Request req = new Efs204Request(
+                "970457", "ORG000001", "111", "USD", "222", "100", "0", "VND");
+        assertThat(iterable(mapper.readTree(mapper.writeValueAsString(req)).fieldNames()))
+                .containsExactlyInAnyOrder("bank_cd", "prtn_id", "withd_acct_no", "withd_curren_cd",
+                        "dep_acct_no", "tran_amt_itg", "tran_amt_dcm", "tran_curren_cd");
+        assertThat(mapper.readValue(mapper.writeValueAsString(req), Efs204Request.class)).isEqualTo(req);
+
+        // v1.2.6 §5.6 response: apl_exc_rate_itg/dcm, withd_amt_itg/dcm, dep_curren_cd, dep_amt_itg/dcm.
+        Efs204Response resp = new Efs204Response("24500", "0", "100", "0", "VND", "2450000", "0");
+        assertThat(iterable(mapper.readTree(mapper.writeValueAsString(resp)).fieldNames()))
+                .containsExactlyInAnyOrder("apl_exc_rate_itg", "apl_exc_rate_dcm", "withd_amt_itg",
+                        "withd_amt_dcm", "dep_curren_cd", "dep_amt_itg", "dep_amt_dcm");
+        assertThat(mapper.readValue(mapper.writeValueAsString(resp), Efs204Response.class)).isEqualTo(resp);
     }
 
     @Test

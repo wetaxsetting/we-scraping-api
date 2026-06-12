@@ -34,6 +34,12 @@ dependencies {
     // ExcelWorkbookWriter so a 50k-row export stays bounded in heap.
     implementation 'org.apache.poi:poi-ooxml:5.2.5'
 
+    // JSch (maintained mwiede fork, drop-in com.jcraft.jsch package) — SFTP
+    // client for the firm-banking bulk dispatch (port of legacy util.SftpUtil).
+    // Backs JschSftpClient, activated only when wecms.dispatch.sftp.enabled=true
+    // (MockSftpClient is the default in local/test/R&D). B4.
+    implementation 'com.github.mwiede:jsch:0.2.21'
+
     // Coocon iSAS SEED-CBC cipher (com.coocon.securty.util.ISASSeedCBC) —
     // licensed Coocon asset, reused verbatim from the legacy JEX system
     // (WECMS DEV/WECMS/lib/isas1.0.jar) under PO/Coocon approval (B1,

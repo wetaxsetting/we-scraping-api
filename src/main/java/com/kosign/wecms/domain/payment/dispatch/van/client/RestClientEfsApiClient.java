@@ -70,7 +70,7 @@ public class RestClientEfsApiClient implements EfsApiClient {
         String path = props.getEndpoints() == null ? null : props.getEndpoints().get(endpointKey);
         if (!StringUtils.hasText(path)) {
             throw new IllegalArgumentException("Unmapped EFS endpoint key: " + endpointKey
-                    + " (configure wecms.dispatch.efs.endpoints; note WGVN_EFS_204 is intentionally absent).");
+                    + " (configure wecms.dispatch.efs.endpoints).");
         }
         return path;
     }

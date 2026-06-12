@@ -80,12 +80,48 @@ wecms:
   # (B1 / OQ-PDF-2). WGVN_EFS_204 is NOT configured — absent from guide
   # ver 1.2.2 (OQ-PDF-1).
   dispatch:
+    # Hand off a committed non-VND File-path dispatch to the 00301 reception flow
+    # (TransferDispatchExecutor → BulkReceptionService.receive, post-commit). Default
+    # false → File-path batches stay PROC_STAT='9' (legacy behaviour) until SFTP (B4)
+    # + EFS (B1/B2) are provisioned. Turn on only with the gateway fully configured.
+    auto-receive: ${WECMS_DISPATCH_AUTO_RECEIVE:false}
+    # Result-check poll (port of PROCESSING_RESULT_CHECK_BATCH). Cron defaults to "-"
+    # (never fire) so the refactor never co-processes live 202 rows on the shared dev
+    # DB; set a cron only in the env that owns the real-time traffic. Runs every minute
+    # when enabled.
+    result-check:
+      cron: ${WECMS_DISPATCH_RESULT_CHECK_CRON:-}
+    # Inbound EFS callbacks (01301/01302). Permitted in the security chain (no JWT);
+    # authenticated by the per-VAN VV/EV crypto check + this source-IP allow-list.
+    # allowed-ips empty → no IP restriction (rely on VV crypto) until the gateway IPs
+    # are known (B7). Comma-separated env value, e.g. "42.96.55.18,42.96.55.163".
+    callback:
+      trust-forwarded-for: true
+      allowed-ips: ${WECMS_CALLBACK_ALLOWED_IPS:}
     efs:
       enabled: ${WECMS_EFS_ENABLED:false}
       base-url: ${WECMS_EFS_BASE_URL:https://dev-van-gw.webcashvietnam.com}
       partner-id: ${WECMS_EFS_PARTNER_ID:}
       connect-timeout-ms: 3000
       read-timeout-ms: 20000
+    # SFTP file channel for the bulk dispatch (00301 upload / 01302 result download).
+    # `enabled` defaults false → MockSftpClient is active (no network I/O) until the
+    # host/key/source-IP-whitelist are provisioned (B4). The private key path points
+    # at a file; the key material itself is NEVER committed (supply via env). Legacy
+    # paths: send=sdata, receive=rdata, move=rdata/success; port 3300.
+    sftp:
+      enabled: ${WECMS_SFTP_ENABLED:false}
+      host: ${WECMS_SFTP_HOST:}
+      port: ${WECMS_SFTP_PORT:3300}
+      username: ${WECMS_SFTP_USERNAME:}
+      private-key-path: ${WECMS_SFTP_KEY_PATH:}
+      password: ${WECMS_SFTP_PASSWORD:}
+      connect-timeout-ms: 60000
+      local-upload-path: ${WECMS_SFTP_LOCAL_UPLOAD:}
+      remote-upload-path: ${WECMS_SFTP_REMOTE_UPLOAD:sdata}
+      local-download-path: ${WECMS_SFTP_LOCAL_DOWNLOAD:}
+      remote-download-path: ${WECMS_SFTP_REMOTE_DOWNLOAD:rdata}
+      remote-move-path: ${WECMS_SFTP_REMOTE_MOVE:rdata/success}
   # =============================================================================
   # File storage
   # =============================================================================
@@ -114,12 +150,12 @@ wecms:
   # Most roots default to "C:/WECMS PROJECT/File Data"; internal-transfer and
   # overseas-payment still default to different roots (flagged inline below).
   overseas-payment:
-    # storage-root — NON-STANDARD: defaults to "D:/KOSIGN/WeCMS/File Data",
-    # differs from the "C:/WECMS PROJECT/File Data" used by the other modules.
-    # Leftover per-box path from the 2026-05-26 server-config merge
-    # (commit a55344a); flagged for normalization (see the SIT-divergence
-    # analysis). Override via WECMS_OVERSEAS_PAYMENT_STORAGE_ROOT.
-    storage-root: ${WECMS_OVERSEAS_PAYMENT_STORAGE_ROOT:D:/KOSIGN/WeCMS/File Data}
+    # storage-root — NON-STANDARD: defaults to "c:/WeCMS/File Data" (aligned
+    # 2026-06-12 with internal-transfer / vendor-payment / expense-payment /
+    # payroll), differs from the "C:/WECMS PROJECT/File Data" used by the
+    # contacts / preferences / user-image / erp-transaction-history modules.
+    # Override via WECMS_OVERSEAS_PAYMENT_STORAGE_ROOT.
+    storage-root: ${WECMS_OVERSEAS_PAYMENT_STORAGE_ROOT:c:/WeCMS/File Data}
   # vendor-payment / expense-payment / payroll — own roots; defaults mirror the
   # (non-standard) internal-transfer root "c:/WeCMS/File Data" so today's layout
   # is unchanged. Flagged for normalization alongside internal-transfer.

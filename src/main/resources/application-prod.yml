@@ -20,19 +20,68 @@ server:
     include-stacktrace: never
     include-binding-errors: never
 
-# Coocon: ALL five variables MUST be set as environment variables in PROD.
-# There are no defaults here — the app will refuse to start with a missing
-# value. The smart-api-url + smart-api-key pair drives BOTH the FX-rate batch
-# AND the bank-scraping flow (NXISAS reuses the same smart-gateway with the
-# same credentials — there is no separate WECMS_NXISAS_* set). PROD/UAT host
+# Firm-banking payment dispatch (EFS / VAN gateway). Every environment-specific
+# value comes from an env var — NO secrets, URLs, IPs, or keys in this file. All
+# switches default OFF so the app boots inert until ops provisions the gateway.
+# (Merged on top of the base application.yml `wecms:` tree.)
+# Required PROD env vars when activating the bulk flow:
+#   WECMS_EFS_ENABLED=true · WECMS_EFS_BASE_URL=<van-gw> · WECMS_EFS_PARTNER_ID
+#   WECMS_SFTP_ENABLED=true · WECMS_SFTP_HOST · WECMS_SFTP_USERNAME · WECMS_SFTP_KEY_PATH
+#   WECMS_DISPATCH_AUTO_RECEIVE=true · WECMS_CALLBACK_ALLOWED_IPS=<gateway IPs>
+#   (the per-VAN API_KEY is NOT an env var — it lives in TB_VAN_API_INFO, B2)
+wecms:
+  dispatch:
+    auto-receive: ${WECMS_DISPATCH_AUTO_RECEIVE:false}
+    result-check:
+      cron: ${WECMS_DISPATCH_RESULT_CHECK_CRON:-}
+    callback:
+      trust-forwarded-for: ${WECMS_CALLBACK_TRUST_XFF:true}
+      allowed-ips: ${WECMS_CALLBACK_ALLOWED_IPS:}
+    efs:
+      enabled: ${WECMS_EFS_ENABLED:false}
+      base-url: ${WECMS_EFS_BASE_URL:}
+      partner-id: ${WECMS_EFS_PARTNER_ID:}
+      connect-timeout-ms: ${WECMS_EFS_CONNECT_TIMEOUT_MS:3000}
+      read-timeout-ms: ${WECMS_EFS_READ_TIMEOUT_MS:20000}
+    sftp:
+      enabled: ${WECMS_SFTP_ENABLED:false}
+      host: ${WECMS_SFTP_HOST:}
+      port: ${WECMS_SFTP_PORT:3300}
+      username: ${WECMS_SFTP_USERNAME:}
+      private-key-path: ${WECMS_SFTP_KEY_PATH:}
+      password: ${WECMS_SFTP_PASSWORD:}
+      connect-timeout-ms: ${WECMS_SFTP_CONNECT_TIMEOUT_MS:60000}
+      local-upload-path: ${WECMS_SFTP_LOCAL_UPLOAD:}
+      remote-upload-path: ${WECMS_SFTP_REMOTE_UPLOAD:sdata}
+      local-download-path: ${WECMS_SFTP_LOCAL_DOWNLOAD:}
+      remote-download-path: ${WECMS_SFTP_REMOTE_DOWNLOAD:rdata}
+      remote-move-path: ${WECMS_SFTP_REMOTE_MOVE:rdata/success}
+
+# Coocon + OSMC: ALL variables MUST be set as environment variables in PROD.
+# These keys are re-declared here WITHOUT a default specifically to OVERRIDE the
+# DEV defaults in the base application.yml — otherwise a missing env var would
+# silently fall through to the DEV gateway/credentials. With no default the
+# `${VAR}` placeholder fails fast at startup, so PROD never boots against DEV.
+# The smart-api-url + smart-api-key pair drives BOTH the FX-rate batch AND the
+# bank-scraping flow (NXISAS reuses the same smart-gateway with the same
+# credentials — there is no separate WECMS_NXISAS_* set). PROD/UAT host
 # (Sonny, 2026-05-28):
 #   https://sgw.webcashvietnam.com/domestic/finance/scrap/smart_gateway.jsp
 # Required env vars:
-#   WECMS_COOCON_API_KEY
-#   WECMS_COOCON_API_URL
-#   WECMS_COOCON_SMART_API_KEY
-#   WECMS_COOCON_SMART_API_URL
-#   WECMS_COOCON_UNIQUE_KEY
+#   WECMS_COOCON_API_KEY · WECMS_COOCON_API_URL · WECMS_COOCON_SMART_API_KEY
+#   WECMS_COOCON_SMART_API_URL · WECMS_COOCON_UNIQUE_KEY
+#   WECMS_OSMC_URL · WECMS_OSMC_API_KEY · WECMS_OSMC_API_ID · WECMS_OSMC_UNIQUE_KEY
+  coocon:
+    api-key:       ${WECMS_COOCON_API_KEY}
+    api-url:       ${WECMS_COOCON_API_URL}
+    smart-api-key: ${WECMS_COOCON_SMART_API_KEY}
+    smart-api-url: ${WECMS_COOCON_SMART_API_URL}
+    unique-key:    ${WECMS_COOCON_UNIQUE_KEY}
+  osmc:
+    url:        ${WECMS_OSMC_URL}
+    api-key:    ${WECMS_OSMC_API_KEY}
+    api-id:     ${WECMS_OSMC_API_ID}
+    unique-key: ${WECMS_OSMC_UNIQUE_KEY}
 
 logging:
   level:

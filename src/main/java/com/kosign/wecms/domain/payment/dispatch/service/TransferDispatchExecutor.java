@@ -134,6 +134,10 @@ public class TransferDispatchExecutor {
     private final Clock                  clock;
     private final LegacyFunctionRepository legacyFunctions;
 
+    /** Post-commit 00301 hand-off (port of BATCH1), gated by
+     *  {@code wecms.dispatch.auto-receive}. Shared by every File-path executor. */
+    private final DispatchAutoReceiveRegistrar autoReceiveRegistrar;
+
     /**
      * Insert dispatch rows for one batch. Branch on the request
      * currency: VND → {@link TbPayTarget} (API), else → {@link TbPayFileMst}
@@ -303,6 +307,9 @@ public class TransferDispatchExecutor {
 
         log.info("feature=dispatch path=FILE bizKey={} scdulPymnNo={} lines={} tranDt={} fileSeqNo={}",
                 bizKey, master.getScdulPymnNo(), lines.size(), tranDt, fileSeqNo);
+
+        // 3. Hand off to the 00301 reception flow AFTER this transaction commits.
+        autoReceiveRegistrar.registerAfterCommit(tranDt, bizKey, fileSeqNo);
     }
 
     /* ───────────────── Helpers ───────────────── */

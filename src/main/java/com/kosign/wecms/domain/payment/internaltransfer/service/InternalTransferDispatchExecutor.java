@@ -10,6 +10,7 @@ import com.kosign.wecms.domain.payment.dispatch.entity.TbPayTarget;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileDataRepository;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileMstRepository;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayTargetRepository;
+import com.kosign.wecms.domain.payment.dispatch.service.DispatchAutoReceiveRegistrar;
 import com.kosign.wecms.domain.payment.dispatch.service.DispatchKeyGenerator;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumr;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrDetl;
@@ -128,6 +129,7 @@ public class InternalTransferDispatchExecutor {
     private final DispatchKeyGenerator    keyGenerator;
     private final Clock                   clock;
     private final LegacyFunctionRepository legacyFunctions;
+    private final DispatchAutoReceiveRegistrar autoReceiveRegistrar;
 
     /**
      * Insert dispatch rows for one Internal-Transfer batch, applying the
@@ -295,6 +297,9 @@ public class InternalTransferDispatchExecutor {
 
         log.info("feature=internal-transfer dispatch path=FILE bizKey={} scdulPymnNo={} lines={} fileSeqNo={} shinhanUsdVnd={}",
                 bizKey, master.getScdulPymnNo(), lines.size(), fileSeqNo, isShinhanUsdToVnd);
+
+        // Hand off to the 00301 reception flow AFTER this transaction commits (gated).
+        autoReceiveRegistrar.registerAfterCommit(tranDt, bizKey, fileSeqNo);
     }
 
     /* ───────────────── Helpers ───────────────── */

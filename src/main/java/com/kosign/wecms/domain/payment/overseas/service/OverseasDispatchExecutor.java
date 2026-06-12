@@ -7,6 +7,7 @@ import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileData;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileMst;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileDataRepository;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileMstRepository;
+import com.kosign.wecms.domain.payment.dispatch.service.DispatchAutoReceiveRegistrar;
 import com.kosign.wecms.domain.payment.dispatch.service.DispatchKeyGenerator;
 import com.kosign.wecms.domain.payment.entity.OvrsPymnSumrDetl;
 import com.kosign.wecms.domain.payment.entity.OvrsPymnSumr;
@@ -153,6 +154,7 @@ public class OverseasDispatchExecutor {
     /** Resolves the originator's name from {@code ACCT_MSTR.ACCT_NM}.
      *  Surfaces on the SWIFT MT103 field 50K (Ordering Customer). */
     private final AcctMstrRepository           acctMstrRepository;
+    private final DispatchAutoReceiveRegistrar autoReceiveRegistrar;
 
     /**
      * Insert TB_PAY_FILE_MST + TB_PAY_FILE_DATA rows for one Overseas
@@ -296,6 +298,9 @@ public class OverseasDispatchExecutor {
 
         log.info("feature=overseas-payment dispatch path=FILE bizKey={} ovrsPymnNo={} lines={} tranDt={} fileSeqNo={}",
                 bizKey, master.getOvrsPymnNo(), lines.size(), tranDt, fileSeqNo);
+
+        // Hand off to the 00301 reception flow AFTER this transaction commits (gated).
+        autoReceiveRegistrar.registerAfterCommit(tranDt, bizKey, fileSeqNo);
     }
 
     /**

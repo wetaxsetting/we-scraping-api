@@ -7,6 +7,9 @@ import com.kosign.wecms.domain.payment.dispatch.van.client.EfsApiClient;
 import com.kosign.wecms.domain.payment.dispatch.van.client.EfsProperties;
 import com.kosign.wecms.domain.payment.dispatch.van.client.VanApiKeyService;
 import com.kosign.wecms.domain.payment.dispatch.van.crypto.EfsCryptoService;
+import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmTran;
+import com.kosign.wecms.domain.payment.dispatch.enums.ProcStat;
+import com.kosign.wecms.domain.payment.dispatch.repository.TbFirmTranRepository;
 import com.kosign.wecms.domain.payment.dispatch.van.dto.Efs203Request;
 import com.kosign.wecms.domain.payment.dispatch.van.dto.Efs203Response;
 import com.kosign.wecms.domain.payment.dispatch.van.dto.EfsEnvelope;
@@ -18,6 +21,7 @@ import org.springframework.util.StringUtils;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -53,14 +57,22 @@ import java.util.UUID;
 public class ResultCheckService {
 
     private static final DateTimeFormatter RQ_DTIME_FMT = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
+    private static final DateTimeFormatter DT8 = DateTimeFormatter.ofPattern("yyyyMMdd");
+    private static final DateTimeFormatter TM6 = DateTimeFormatter.ofPattern("HHmmss");
     private static final ZoneId ICT = ZoneId.of("Asia/Ho_Chi_Minh");
     private static final int TNO_MAX = 50;
+
+    /** Real-time transfer leg ({@code TB_FIRM_TRAN.TRAN_TP}) the poll re-checks. */
+    private static final String TRAN_TP_TRANSFER = "202";
+    /** Legacy re-check window: only transfers older than 2 minutes are inquired. */
+    private static final int RESULT_CHECK_DELAY_MINUTES = 2;
 
     private final EfsApiClient efsApiClient;
     private final EfsCryptoService efsCryptoService;
     private final VanApiKeyService vanApiKeyService;
     private final EfsProperties efsProperties;
     private final ObjectMapper objectMapper;
+    private final TbFirmTranRepository tbFirmTranRepository;
 
     /**
      * Confirm the true outcome of an original transaction via {@code WGVN_EFS_203}.
@@ -112,15 +124,73 @@ public class ResultCheckService {
     }
 
     /**
-     * One scheduled result-check pass. <b>SKELETON — guarded no-op</b> so the
-     * scheduler wiring (lock + cadence) can be proven without touching live rows.
-     * Enabling the cron + the {@code TB_FIRM_TRAN} row selection that drives
-     * {@link #inquire} is gated on D4/B7.
+     * One scheduled result-check pass — refactor of legacy
+     * {@code PROCESSING_RESULT_CHECK_BATCH}. Selects no-response real-time transfers
+     * ({@code TRAN_TP='202' / PROC_STAT='6'}) older than {@value #RESULT_CHECK_DELAY_MINUTES}
+     * minutes, issues a {@code WGVN_EFS_203} inquiry for each, and reflects the
+     * confirmed outcome onto the {@code TB_FIRM_TRAN} row ({@code PROC_STAT 6→0/3}).
+     *
+     * <p>Each row is processed independently: a gateway error or no-response on one
+     * row is logged and the row is left at {@code PROC_STAT='6'} for the next pass
+     * (legacy parity — never abandons a transfer on a single failed inquiry, never
+     * blocks the rest of the batch).
+     *
+     * <p><b>Operational gating (D4/B7):</b> the {@link ResultCheckJob} cron defaults
+     * to "never fire" — this body only runs when an environment that owns the 202
+     * traffic explicitly sets {@code wecms.dispatch.result-check.cron}, so the
+     * refactor never co-processes live rows on the shared dev DB by accident.
+     *
+     * <p><b>Scope note:</b> the {@code TB_PAY_TARGET} status propagation (the
+     * originating API-path row) is NOT done here — the {@code TB_FIRM_TRAN ↔
+     * TB_PAY_TARGET} link is owned by the real-time 202 write seam (D2/D3), which is
+     * not yet wired; this pass settles the firm-transaction ledger only.
      */
     public void runOnce() {
-        // TODO(D4/B7): select aged TRAN_TP='202'/PROC_STAT='6' rows and call inquire(...).
-        // Intentionally a no-op in this phase: enabling against the shared dev DB is gated on D4/B7.
-        log.debug("[skeleton] ResultCheckService.runOnce — no-op (poll wiring gated on D4/B7).");
+        LocalDateTime now = LocalDateTime.now(ICT);
+        String today = now.format(DT8);
+        String cutoffTm = now.minusMinutes(RESULT_CHECK_DELAY_MINUTES).format(TM6);
+
+        List<TbFirmTran> aged = tbFirmTranRepository
+                .findByTranTpAndProcStat(TRAN_TP_TRANSFER, ProcStat.REQ.code()).stream()
+                .filter(t -> today.equals(t.getTranDt()))
+                .filter(t -> StringUtils.hasText(t.getTranTm()) && t.getTranTm().trim().compareTo(cutoffTm) <= 0)
+                .toList();
+
+        if (aged.isEmpty()) {
+            log.debug("result-check: no aged 202/PROC_STAT=6 transfers");
+            return;
+        }
+        log.info("result-check: {} aged 202 transfer(s) to inquire", aged.size());
+        for (TbFirmTran row : aged) {
+            try {
+                reflectOutcome(row);
+            } catch (Exception e) {
+                // No-response / gateway error: leave at PROC_STAT='6' for the next pass.
+                log.warn("result-check: 203 inquiry deferred for tranSeq={} ({}) — left pending",
+                        row.getTranSeq(), e.getMessage());
+            }
+        }
+    }
+
+    /** Issue the 203 inquiry for one aged 202 row and persist the confirmed outcome.
+     *  The single {@code save()} (a detached-entity merge) is atomic on its own. */
+    private void reflectOutcome(TbFirmTran row) {
+        ResultCheckInquiryResult res = inquire(new ResultCheckInquiryCommand(
+                row.getVanOrgCd(), row.getOutBankCd(), row.getBankPrtnId(),
+                row.getTranDt(), row.getTranSeq(), row.getWdrlActNo()));
+
+        boolean success = FirmBankingResultCd.isSuccess(res.orgRespCd());
+        row.setOrgRespCd(res.orgRespCd());
+        row.setOrgRespMsg(res.orgRespMsg());
+        row.setProcStat(success ? ProcStat.SUCC.code() : ProcStat.FAIL.code());
+        row.setRsDttm(LocalDateTime.now(ICT).format(RQ_DTIME_FMT));
+        if (!success) {
+            row.setRsCd(res.orgRespCd());
+            row.setRsMsg(res.orgRespMsg());
+        }
+        tbFirmTranRepository.save(row);
+        log.info("result-check: tranSeq={} confirmed orgRespCd={} -> PROC_STAT={}",
+                row.getTranSeq(), res.orgRespCd(), row.getProcStat());
     }
 
     private void validate(ResultCheckInquiryCommand cmd) {

@@ -37,4 +37,21 @@ public interface TbFirmFileMstRepository
 
     /** All files for a tenant/date — generic detail/list support. */
     List<TbFirmFileMst> findByTranDtAndBizKey(String tranDt, String bizKey);
+
+    /**
+     * All sibling files of one bulk request (same {@code TRAN_DT, BIZ_KEY, FILE_SEQ_NO}).
+     * Mirrors the legacy split-file gate (BATCH2 {@code TB_FIRM_FILE_MST_R003}): a single
+     * requested file may be split into several bank files, and 00302 execution must not be
+     * issued for the group until every sibling has been received. Used by the inline 01301
+     * handler to (a) count siblings still at {@code PROC_STEP='0'} and (b) collect the
+     * reception-success siblings ({@code PROC_STEP='1' / PROC_STAT='6'}) ready to execute.
+     */
+    List<TbFirmFileMst> findByTranDtAndBizKeyAndFileSeqNo(String tranDt, String bizKey, String fileSeqNo);
+
+    /**
+     * All files for a {@code (TRAN_DT, OUT_BANK_CD, BANK_PRTN_ID)} group — used by
+     * the 00301 reception flow to compute the next file round ({@code FILE_SEQ}),
+     * mirroring legacy {@code TB_FIRM_FILE_MST_R002} ({@code MAX(FILE_SEQ)+1}).
+     */
+    List<TbFirmFileMst> findByTranDtAndOutBankCdAndBankPrtnId(String tranDt, String outBankCd, String bankPrtnId);
 }

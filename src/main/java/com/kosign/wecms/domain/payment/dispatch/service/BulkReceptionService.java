@@ -3,6 +3,29 @@ package com.kosign.wecms.domain.payment.dispatch.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.domain.payment.dispatch.constant.FirmBankingResultCd;
+import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmBatApiTran;
+import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConf;
+import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConfId;
+import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmFileData;
+import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmFileMst;
+import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileData;
+import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileMst;
+import com.kosign.wecms.domain.payment.dispatch.enums.ApiTranTp;
+import com.kosign.wecms.domain.payment.dispatch.enums.ProcStat;
+import com.kosign.wecms.domain.payment.dispatch.enums.ProcStep;
+import com.kosign.wecms.domain.payment.dispatch.file.DepositData;
+import com.kosign.wecms.domain.payment.dispatch.file.DepositHeader;
+import com.kosign.wecms.domain.payment.dispatch.file.DepositTrailer;
+import com.kosign.wecms.domain.payment.dispatch.file.FixedLengthCodec;
+import com.kosign.wecms.domain.payment.dispatch.file.VietnameseText;
+import com.kosign.wecms.domain.payment.dispatch.repository.TbFirmBatApiTranRepository;
+import com.kosign.wecms.domain.payment.dispatch.repository.TbFirmConfRepository;
+import com.kosign.wecms.domain.payment.dispatch.repository.TbFirmFileDataRepository;
+import com.kosign.wecms.domain.payment.dispatch.repository.TbFirmFileMstRepository;
+import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileDataRepository;
+import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileMstRepository;
+import com.kosign.wecms.domain.payment.dispatch.sftp.SftpClient;
+import com.kosign.wecms.domain.payment.dispatch.sftp.SftpProperties;
 import com.kosign.wecms.domain.payment.dispatch.van.client.EfsApiClient;
 import com.kosign.wecms.domain.payment.dispatch.van.client.EfsProperties;
 import com.kosign.wecms.domain.payment.dispatch.van.client.VanApiKeyService;
@@ -13,39 +36,76 @@ import com.kosign.wecms.domain.payment.dispatch.van.dto.EfsEnvelope;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.io.IOException;
+import java.math.BigDecimal;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 /**
  * Bulk reception — refactor of legacy {@code FILE_DEPOSIT_TRANSFER_BATCH1}.
  *
- * <p>Confirmed TOBE (Mr. Kang 2026-06-06): BATCH1 is <b>removed as a scheduled
- * job</b> and becomes a <b>request-time</b> flow — on a bulk-request insert:
- * validate channels/currency (TB_PAY_FILE_DATA channel counts) → resolve config
- * (TB_FIRM_CONF: VAN_ORG_CD, FILE_TYPE, batch-division) → check operating hours
- * (TB_BATCH_SCHEDULE_INFO/_DTL) → build the fixed-length file → SFTP upload →
- * 00301 reception request → write {@code TB_FIRM_FILE_MST} (PROC_STEP=0/PROC_STAT=6),
- * {@code TB_FIRM_FILE_DATA}, and a {@code TB_FIRM_BAT_API_TRAN} (API_TRAN_TP=00301)
- * audit row.
+ * <p>Confirmed TOBE (Mr. Kang 2026-06-06): BATCH1 becomes a <b>request-time</b>
+ * flow. {@link #receive} reproduces the BATCH1 core: validate the pay-file
+ * target → resolve {@code TB_FIRM_CONF} → build the fixed-length file
+ * ({@link FixedLengthCodec}) → insert {@code TB_FIRM_FILE_MST}
+ * ({@code PROC_STEP=0/PROC_STAT=6}) + {@code TB_FIRM_FILE_DATA} → SFTP-upload →
+ * audit {@code 00301} (before the call) → {@link #issueReception} (EFS 00301).
  *
- * <p><b>D4 scope = the 00301 EFS API request leg only</b> ({@link #issueReception}).
- * That method builds → encrypts → posts → parses the 301 envelope and is fully
- * offline/mock-testable. It is deliberately <b>isolated</b>: {@link #receive} (the
- * orchestrator) does NOT call it yet — the file-gen / SFTP / DB-state steps that
- * must precede it are still blocked.
+ * <h2>Legacy-fidelity guarantees</h2>
+ * <ul>
+ *   <li><b>Audit before the external call</b> — the {@code TB_FIRM_BAT_API_TRAN}
+ *       row is written before {@code issueReception}, then updated with the result.</li>
+ *   <li><b>No unsafe state advance</b> — {@code TB_FIRM_FILE_MST} is created at
+ *       {@code PROC_STEP=0} and is NEVER advanced here (the {@code 0→1} advance
+ *       belongs to the 01301 callback). On any SFTP/API failure the file and the
+ *       pay-file row are set to {@code PROC_STAT='3'} (fail); nothing moves
+ *       forward.</li>
+ *   <li><b>Idempotency / duplicate protection</b> — the pay-file target is
+ *       processed only from {@code PROC_STAT='9'} (WAIT); a row already in
+ *       {@code '6'}/{@code '0'}/{@code '3'} is a safe no-op (mirrors legacy
+ *       {@code R001} selecting only WAIT + the {@code R004} fail skip).</li>
+ * </ul>
+ *
+ * <h2>Transaction model</h2>
+ * One {@code @Transactional} unit. The happy path commits the file-header/detail
+ * inserts and leaves the pay row at {@code '6'}. An EFS/SFTP {@link BusinessException}
+ * is caught, recorded as a committed FAIL state, and <b>not</b> rethrown — so the
+ * failure persists (legacy parity) instead of rolling back to WAIT. (Minor
+ * deviation from legacy, documented: legacy ran SFTP/API outside the DB tx; here
+ * they run inside it — acceptable for low-volume R&D.)
+ *
+ * <h2>Deferred (NOT in this phase — documented blockers)</h2>
+ * The full BATCH1 pre-flight is intentionally out of scope: channel-mix validation
+ * (EBANK/VCB/CITAD/NAPAS rules), the operating-hours gate
+ * ({@code TB_BATCH_SCHEDULE_*}), <b>branch-split into multiple files</b>
+ * ({@code BAT_TRAN_BRANCH_DIV}/{@code _LIMIT} — a request that would split throws
+ * and the whole unit rolls back, never producing a partial/oversized file), and
+ * Slack alerting ({@code MsgSendUtil}). These port in a later phase.
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class BulkReceptionService {
 
-    private static final DateTimeFormatter RQ_DTIME_FMT = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
+    private static final DateTimeFormatter DTTM14_FMT = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
+    private static final DateTimeFormatter TRAN_TM_FMT = DateTimeFormatter.ofPattern("HHmmss");
     private static final ZoneId ICT = ZoneId.of("Asia/Ho_Chi_Minh");
     private static final int TNO_MAX = 50;
+
+    /** Legacy {@code Deposit_Data} address field is 180 bytes (post-2025.10.29 layout). */
+    private static final int RCPT_USE_ADDR_MAX_BYTES = 180;
+
+    /** Legacy {@code WCConst.NON_PROCESSING} — detail rows start un-processed. */
+    private static final String NON_PROCESSING = "N";
 
     private final EfsApiClient efsApiClient;
     private final EfsCryptoService efsCryptoService;
@@ -53,34 +113,319 @@ public class BulkReceptionService {
     private final EfsProperties efsProperties;
     private final ObjectMapper objectMapper;
 
+    private final TbPayFileMstRepository payFileMstRepository;
+    private final TbPayFileDataRepository payFileDataRepository;
+    private final TbFirmConfRepository firmConfRepository;
+    private final TbFirmFileMstRepository firmFileMstRepository;
+    private final TbFirmFileDataRepository firmFileDataRepository;
+    private final TbFirmBatApiTranRepository firmBatApiTranRepository;
+    private final DispatchKeyGenerator dispatchKeyGenerator;
+    private final FixedLengthCodec fixedLengthCodec;
+    private final SftpClient sftpClient;
+    private final SftpProperties sftpProperties;
+
     /**
-     * Entry point for request-time bulk reception of a single bulk-request file.
-     * SKELETON — validates nothing and sends nothing yet.
+     * Request-time bulk reception of one pay-file target: build + upload the
+     * fixed-length file and issue 00301.
      *
-     * @param tranDt   transaction date (YYYYMMDD)
-     * @param bizKey   tenant business key
+     * @param tranDt    transaction date (YYYYMMDD) — pay-file key
+     * @param bizKey    tenant business key
      * @param fileSeqNo bulk file sequence within the tenant/date
      */
+    @Transactional
     public void receive(String tranDt, String bizKey, String fileSeqNo) {
-        // TODO(K3): build fixed-length file via FixedLengthCodec.
-        // TODO(B4): SFTP upload the generated file.
-        // TODO: after K3 + B4, call issueReception(...) with the file name + header totals,
-        //       then write TB_FIRM_FILE_MST (PROC_STEP=0/PROC_STAT=6) + TB_FIRM_BAT_API_TRAN.
-        //       The 00301 API leg itself (issueReception) is implemented (D4); the orchestration
-        //       around it is intentionally NOT wired here.
-        log.info("[skeleton] BulkReceptionService.receive tranDt={} bizKey={} fileSeqNo={} — orchestration not implemented (TODO K3 file-gen, B4 SFTP)",
-                tranDt, bizKey, fileSeqNo);
-        throw new UnsupportedOperationException(
-                "BulkReceptionService.receive not implemented — foundation skeleton (TODO K3 file-gen, B4 SFTP). The 00301 API leg is issueReception(...).");
+        // 1. Load + validate the pay-file target (legacy R001 selects PROC_STAT='9').
+        TbPayFileMst pay = payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(tranDt, bizKey, fileSeqNo)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "pay-file target not found: tranDt=" + tranDt + " bizKey=" + bizKey + " fileSeqNo=" + fileSeqNo));
+
+        // Duplicate / re-run guard: only a WAIT target is dispatchable.
+        if (!ProcStat.WAIT.code().equals(pay.getProcStat())) {
+            log.info("receive() no-op — pay-file not WAIT (procStat={}) tranDt={} bizKey={} fileSeqNo={}",
+                    pay.getProcStat(), tranDt, bizKey, fileSeqNo);
+            return;
+        }
+
+        // 2. Resolve dispatch config (VAN_ORG_CD / FILE_TYPE / branch split) — legacy TB_FIRM_CONF_R001.
+        TbFirmConf conf = firmConfRepository
+                .findById(new TbFirmConfId(bizKey, pay.getOutBankCd(), pay.getWdrlActNo()))
+                .orElseThrow(() -> new IllegalStateException(
+                        "TB_FIRM_CONF missing for bizKey=" + bizKey + " outBankCd=" + pay.getOutBankCd()
+                                + " wdrlActNo=" + pay.getWdrlActNo()));
+
+        // 3. Load detail rows.
+        List<TbPayFileData> details = payFileDataRepository.findByBizKeyAndTranDtAndFileSeqNo(bizKey, tranDt, fileSeqNo);
+        if (details.isEmpty()) {
+            throw new IllegalStateException("pay-file has no detail rows: fileSeqNo=" + fileSeqNo);
+        }
+
+        int reqCnt = details.size();
+        // Branch-split deferred: a request that legacy would split into several files is not
+        // handled in this phase. Throwing rolls back the whole unit — no partial/oversized file.
+        if ("Y".equals(trim(conf.getBatTranBranchDiv())) && conf.getBatTranBranchLimit() != null
+                && BigDecimal.valueOf(reqCnt).compareTo(conf.getBatTranBranchLimit()) > 0) {
+            throw new UnsupportedOperationException(
+                    "branch-split not implemented (reqCnt=" + reqCnt + " > limit="
+                            + conf.getBatTranBranchLimit().toBigInteger() + ") — deferred to a later phase");
+        }
+        BigDecimal reqAmt = details.stream()
+                .map(TbPayFileData::getTranAmt)
+                .filter(a -> a != null)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        LocalDateTime now = LocalDateTime.now(ICT);
+        String dttm14 = now.format(DTTM14_FMT);
+        String tranTm = now.format(TRAN_TM_FMT);
+
+        // 4. File round + name (legacy R002 MAX+1; filename S_{VAN}_{TYPE}_{round}_{date}).
+        String fileSeq = nextFileRound(tranDt, pay.getOutBankCd(), pay.getBankPrtnId());
+        String fileName = "S_" + conf.getVanOrgCd() + "_" + trim(conf.getFileType()) + "_" + fileSeq + "_" + tranDt;
+
+        // 5. Mark the pay-file in-process (legacy U001 → PROC_STAT='6').
+        pay.setProcStat(ProcStat.REQ.code());
+        pay.setProcDttm(dttm14);
+        payFileMstRepository.save(pay);
+
+        // 6. Insert TB_FIRM_FILE_MST at PROC_STEP=0 / PROC_STAT=6.
+        TbFirmFileMst mst = new TbFirmFileMst();
+        mst.setTranDt(tranDt);
+        mst.setBizKey(bizKey);
+        mst.setFileSeqNo(fileSeqNo);
+        mst.setFirmFileNm(fileName);
+        mst.setOutBankCd(pay.getOutBankCd());
+        mst.setBankPrtnId(conf.getBankPrtnId());
+        mst.setVanOrgCd(conf.getVanOrgCd());
+        mst.setFileType(trim(conf.getFileType()));
+        mst.setWdrlActNo(pay.getWdrlActNo());
+        mst.setFundTp(pay.getFundTp());
+        mst.setTranTp(pay.getTranTp());
+        mst.setFileSeq(fileSeq);
+        mst.setProcStep(ProcStep.REQ.code());
+        mst.setProcStat(ProcStat.REQ.code());
+        mst.setReqCnt(BigDecimal.valueOf(reqCnt));
+        mst.setReqAmt(reqAmt);
+        mst.setRegDttm(dttm14);
+        firmFileMstRepository.save(mst);
+
+        // 7. Insert TB_FIRM_FILE_DATA rows + build the fixed-length D records.
+        List<DepositData> dataLines = new ArrayList<>(reqCnt);
+        int seq = 0;
+        for (TbPayFileData d : details) {
+            seq++;
+            BigDecimal lineSeq = BigDecimal.valueOf(seq);
+
+            TbFirmFileData fd = new TbFirmFileData();
+            fd.setTranDt(tranDt);
+            fd.setFileSeqNo(fileSeqNo);
+            fd.setFirmFileNm(fileName);
+            fd.setSeq(lineSeq);
+            fd.setBizKey(bizKey);
+            fd.setFileSeq(fileSeq);
+            fd.setOrgSeq(d.getSeq());
+            fd.setTarBankCd(d.getTarBankCd());
+            fd.setFincMdaDiv(d.getFincMdaDiv());
+            fd.setFincMdaNo(d.getFincMdaNo());
+            fd.setTrscCcyCd(d.getTrscCcyCd());
+            fd.setTranAmt(d.getTranAmt());
+            fd.setBankChnlDiv(d.getBankChnlDiv());
+            fd.setAntDivCd(d.getAntDivCd());
+            fd.setSenderNm(VietnameseText.replaceTone(d.getSenderNm()));
+            fd.setFincMdaOwnerNm(VietnameseText.replaceTone(d.getFincMdaOwnerNm()));
+            fd.setTarAcctRmrk(VietnameseText.replaceTone(d.getTarAcctRmrk()));
+            fd.setWdrlAcctRmrk(VietnameseText.replaceTone(d.getWdrlActRmrk()));
+            fd.setProcRsltDiv(NON_PROCESSING);
+            fd.setRcptBankCntryCd(d.getRcptBankCntryCd());
+            fd.setRemitCcyCd(d.getRemitCcyCd());
+            fd.setRcptUseAddr(byteTruncate(VietnameseText.replaceTone(d.getRcptUseAddr()), RCPT_USE_ADDR_MAX_BYTES));
+            fd.setFeeBrdnClsCd(d.getFeeBrdnClsCd());
+            firmFileDataRepository.save(fd);
+
+            dataLines.add(new DepositData(
+                    String.valueOf(seq),                                  // seq
+                    d.getFincMdaNo(),                                     // depositAccountNumber
+                    d.getTrscCcyCd(),                                     // currencyCode
+                    plain(d.getTranAmt()),                                // transferAmount (verbatim)
+                    d.getBankChnlDiv(),                                   // sameBankFlag
+                    d.getAntDivCd(),                                      // otherBankNetworkCode
+                    "C".equals(trim(d.getFincMdaDiv())) ? "N" : "Y",      // cardAccountType (legacy mapping)
+                    d.getTarBankCd(),                                     // depositBankCode
+                    VietnameseText.replaceTone(d.getSenderNm()),          // senderName
+                    VietnameseText.replaceTone(d.getFincMdaOwnerNm()),    // receiverName
+                    VietnameseText.replaceTone(d.getTarAcctRmrk()),       // depositAccountMemo
+                    VietnameseText.replaceTone(d.getWdrlActRmrk()),       // withdrawalAccountMemo
+                    "",                                                   // processingResult (send file: blank)
+                    "",                                                   // responseCode (send file: blank)
+                    d.getRcptBankCntryCd(),                               // receiptBankCountryCode
+                    d.getRemitCcyCd(),                                    // remittanceCurrencyCode
+                    d.getFeeBrdnClsCd(),                                  // feeBrdnClsCd
+                    byteTruncate(VietnameseText.replaceTone(d.getRcptUseAddr()), RCPT_USE_ADDR_MAX_BYTES) // rcptUseAddr
+            ));
+        }
+
+        DepositHeader header = new DepositHeader(
+                pay.getOutBankCd(), conf.getBankPrtnId(), tranDt, pay.getWdrlActNo(),
+                pay.getFundTp(), pay.getTranTp(), fileSeq);
+        DepositTrailer trailer = new DepositTrailer(
+                String.valueOf(reqCnt), plain(reqAmt), "0", "0", "0", "0");
+
+        byte[] fileBytes = fixedLengthCodec.encode(header, dataLines, trailer);
+
+        // 8. Write the local staging file.
+        String localPath = writeLocalFile(fileName, fileBytes);
+
+        // 9. SFTP upload — on failure mark FAIL (no advance) and stop.
+        String remotePath = joinPath(sftpProperties.getRemoteUploadPath(), fileName);
+        try {
+            sftpClient.upload(localPath, remotePath);
+        } catch (RuntimeException e) {
+            log.error("00301 SFTP upload failed fileNm={} — marking FAIL", fileName, e);
+            failBoth(pay, mst, FirmBankingResultCd.ETC_ERR, "SFTP upload failed", dttm14);
+            return;
+        }
+
+        // 10. Audit the 00301 leg BEFORE the call.
+        String[] amt = splitAmount(reqAmt);
+        TbFirmBatApiTran audit = writeApiTran(mst, tranDt, tranTm, ApiTranTp.BULK_RECEPTION.code(),
+                mst.getReqCnt(), mst.getReqAmt());
+
+        // 11. Issue EFS 00301.
+        try {
+            issueReception(new BulkReceptionApiCommand(
+                    conf.getVanOrgCd(), pay.getOutBankCd(), conf.getBankPrtnId(),
+                    fileName, String.valueOf(reqCnt), amt[0], amt[1]));
+
+            audit.setRsCd(FirmBankingResultCd.SUCC);
+            audit.setRsMsg(FirmBankingResultCd.MSG_SUCC);
+            audit.setRsDttm(dttm14);
+            firmBatApiTranRepository.save(audit);
+            // Success: TB_FIRM_FILE_MST stays at PROC_STEP=0/PROC_STAT=6 — the 0→1 advance
+            // is the 01301 callback's job. No unsafe advance here.
+            log.info("00301 reception requested fileNm={} bizKey={} cnt={}", fileName, bizKey, reqCnt);
+        } catch (BusinessException e) {
+            String rc = e.getArgs() != null && e.getArgs().length > 0 && e.getArgs()[0] != null
+                    ? e.getArgs()[0].toString() : FirmBankingResultCd.ETC_ERR;
+            audit.setRsCd(rc);
+            audit.setRsMsg(e.getCode());
+            audit.setRsDttm(dttm14);
+            firmBatApiTranRepository.save(audit);
+            failBoth(pay, mst, rc, "EFS 00301 failed: " + e.getCode(), dttm14);
+            log.warn("00301 reception failed (rc={}) fileNm={} — FAIL recorded, no advance", rc, fileName);
+            // Do NOT rethrow — commit the FAIL state (legacy parity).
+        }
     }
+
+    /** Mark both the firm file ({@code PROC_STEP=0/PROC_STAT=3}) and the pay file ({@code '3'}) failed. */
+    private void failBoth(TbPayFileMst pay, TbFirmFileMst mst, String rsltCd, String msg, String dttm14) {
+        mst.setProcStep(ProcStep.REQ.code());
+        mst.setProcStat(ProcStat.FAIL.code());
+        mst.setRegRsltCd(rsltCd);
+        mst.setRegRsltMsg(msg);
+        mst.setProcDttm(dttm14);
+        firmFileMstRepository.save(mst);
+
+        pay.setProcStat(ProcStat.FAIL.code());
+        pay.setRsMsg(msg);
+        pay.setProcDttm(dttm14);
+        payFileMstRepository.save(pay);
+    }
+
+    /** Insert a {@code TB_FIRM_BAT_API_TRAN} audit row (00301), result columns left null. */
+    private TbFirmBatApiTran writeApiTran(TbFirmFileMst file, String tranDt, String tranTm,
+                                          String apiTranTp, BigDecimal batCnt, BigDecimal batAmt) {
+        TbFirmBatApiTran row = new TbFirmBatApiTran();
+        row.setTranDt(tranDt);
+        row.setBizKey(file.getBizKey());
+        row.setTranSeq(dispatchKeyGenerator.nextTranSeq(file.getBizKey(), tranDt));
+        row.setApiTranTp(apiTranTp);
+        row.setOutBankCd(file.getOutBankCd());
+        row.setBankPrtnId(file.getBankPrtnId());
+        row.setTranTm(tranTm);
+        row.setFirmFileNm(file.getFirmFileNm());
+        row.setBatCnt(batCnt == null ? BigDecimal.ZERO : batCnt);
+        row.setBatAmt(batAmt == null ? BigDecimal.ZERO : batAmt);
+        return firmBatApiTranRepository.save(row);
+    }
+
+    /** Next file round for the bank/partner group, zero-padded to 3 (legacy R002 MAX+1). */
+    private String nextFileRound(String tranDt, String outBankCd, String bankPrtnId) {
+        int max = firmFileMstRepository.findByTranDtAndOutBankCdAndBankPrtnId(tranDt, outBankCd, bankPrtnId).stream()
+                .map(TbFirmFileMst::getFileSeq)
+                .filter(StringUtils::hasText)
+                .mapToInt(s -> {
+                    try {
+                        return Integer.parseInt(s.trim());
+                    } catch (NumberFormatException nfe) {
+                        return 0;
+                    }
+                })
+                .max().orElse(0);
+        return String.format("%03d", max + 1);
+    }
+
+    /** Write the generated file to the local staging dir (or the JVM temp dir if unset). */
+    private String writeLocalFile(String fileName, byte[] bytes) {
+        try {
+            String dir = StringUtils.hasText(sftpProperties.getLocalUploadPath())
+                    ? sftpProperties.getLocalUploadPath()
+                    : System.getProperty("java.io.tmpdir");
+            Path target = Path.of(dir, fileName);
+            if (target.getParent() != null) {
+                Files.createDirectories(target.getParent());
+            }
+            Files.write(target, bytes);
+            return target.toString();
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to write local dispatch file " + fileName, e);
+        }
+    }
+
+    private static String joinPath(String dir, String name) {
+        if (!StringUtils.hasText(dir)) {
+            return name;
+        }
+        return dir.endsWith("/") ? dir + name : dir + "/" + name;
+    }
+
+    /** Truncate to {@code maxBytes} UTF-8 bytes without splitting a character (legacy {@code getStrByteMaxLen}). */
+    private static String byteTruncate(String value, int maxBytes) {
+        if (value == null || value.isEmpty()) {
+            return "";
+        }
+        int total = 0;
+        int cut = 0;
+        for (int i = 0; i < value.length(); i++) {
+            int len = String.valueOf(value.charAt(i)).getBytes(FixedLengthCodec.CHARSET).length;
+            if (total + len > maxBytes) {
+                break;
+            }
+            total += len;
+            cut = i + 1;
+        }
+        return value.substring(0, cut);
+    }
+
+    /** Split a scale-2 amount into [integer, decimal-portion] strings for the 00301 request. */
+    private static String[] splitAmount(BigDecimal amt) {
+        BigDecimal a = amt == null ? BigDecimal.ZERO : amt;
+        String itg = a.toBigInteger().toString();
+        String dcm = a.subtract(new BigDecimal(a.toBigInteger())).movePointRight(2).abs().toBigInteger().toString();
+        return new String[] {itg, dcm};
+    }
+
+    private static String plain(BigDecimal v) {
+        return v == null ? "0" : v.toPlainString();
+    }
+
+    private static String trim(String v) {
+        return v == null ? "" : v.trim();
+    }
+
+    // ------------------------------------------------------------------ 00301 API leg (unchanged)
 
     /**
      * The {@code WGVN_EFS_301} bulk-reception <b>API request leg</b> — build →
-     * encrypt → POST {@code EFS_301} → parse. <b>Isolated:</b> not called from
-     * {@link #receive} yet (its K3 file-gen + B4 SFTP prerequisites are unmet).
-     *
-     * <p>The caller must have already generated (K3) and uploaded (B4) the file
-     * named by {@code cmd.fileNm()} — this leg only transmits the header totals.
+     * encrypt → POST {@code EFS_301} → parse. Called from {@link #receive} after
+     * the file is built + uploaded; also directly callable for the leg in isolation.
      *
      * @return the echoed header totals on {@code RC=0000}
      * @throws IllegalArgumentException on missing required input
@@ -100,7 +445,7 @@ public class BulkReceptionService {
                 cmd.bankCd(), cmd.prtnId(), cmd.fileNm(), cmd.dataCnt(), cmd.dataAmt(), cmd.dataDcmAmt());
         String businessJson = serialize(request, "301");
 
-        String rqDtime = LocalDateTime.now(ICT).format(RQ_DTIME_FMT);
+        String rqDtime = LocalDateTime.now(ICT).format(DTTM14_FMT);
         String tno = newTno(rqDtime);
         String ev = efsCryptoService.encryptEv(businessJson, apiKey, rqDtime);
         String vv = efsCryptoService.buildVv(businessJson, apiKey);

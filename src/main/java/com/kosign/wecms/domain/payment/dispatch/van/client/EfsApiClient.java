@@ -27,19 +27,22 @@ import com.kosign.wecms.domain.payment.dispatch.van.dto.EfsEnvelope;
  *   EFS_201 → /WGVN_EFS_201.jct   (depositor inquiry)
  *   EFS_202 → /WGVN_EFS_202.jct   (real-time transfer)
  *   EFS_203 → /WGVN_EFS_203.jct   (result inquiry)
+ *   EFS_204 → /WGVN_EFS_204.jct   (Woori FX-rate inquiry, v1.2.6 §5.6)
  *   EFS_301 → /WGVN_EFS_301.jct   (bulk reception request)
  *   EFS_302 → /WGVN_EFS_302.jct   (bulk execution request)
  * </pre>
  *
- * <p><b>TODO(OQ-PDF-1):</b> {@code WGVN_EFS_204} is not present in REST API guide
- * ver 1.2.2 and is intentionally NOT mapped here. Confirm whether it exists in
- * another document/version or is retired before adding an {@code EFS_204} key.
+ * <p>{@code WGVN_EFS_204} is the Woori-only pre-FX-transfer applied-rate inquiry,
+ * formally documented in REST API guide ver 1.2.6 §5.6 (it was undocumented in
+ * v1.2.2). It is mapped below and consumed by
+ * {@link com.kosign.wecms.domain.payment.dispatch.service.RealtimeTransferService}.
  */
 public interface EfsApiClient {
 
     String EFS_201 = "EFS_201";
     String EFS_202 = "EFS_202";
     String EFS_203 = "EFS_203";
+    String EFS_204 = "EFS_204";
     String EFS_301 = "EFS_301";
     String EFS_302 = "EFS_302";
 
