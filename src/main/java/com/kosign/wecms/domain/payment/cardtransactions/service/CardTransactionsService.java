@@ -179,6 +179,8 @@ public class CardTransactionsService {
     /** Writes EXPT_RESOL_MSTR + EXPT_RESOL_APPRVR_INFM rows so the
      *  approval surfaces in {@code /payment/approval-box}. */
     private final ApprovalBoxFanoutService         approvalBoxFanoutService;
+    /** Shared request-approval bulletin / notification writer (BLTB_* tables). */
+    private final com.kosign.wecms.domain.payment.notification.service.ApprovalNotificationService approvalNotificationService;
     /** Reads e-Invoice rows for the Link Card Payments popup's
      *  Expenses tab (legacy {@code card_0001_002_r001}). */
     private final BusaDocMstrRepository            busaDocMstrRepo;
@@ -696,16 +698,17 @@ public class CardTransactionsService {
         // Legacy disables the Request Approval button when any selected
         // row already has an APPR_SEQ_NO (`card_0001_001.ts:650`);
         // re-assert that here for stale tabs.
-        List<CardTrnsHstr> stampable = new java.util.ArrayList<>();
+        List<StampTarget> stampable = new java.util.ArrayList<>();
         int skipped = 0;
-        for (String cardSeqNo : req.cardSeqNos()) {
-            if (cardSeqNo == null || cardSeqNo.isBlank()) {
+        for (com.kosign.wecms.domain.payment.cardtransactions.dto.RequestApprovalRequest.CardApprovalItem item
+                : req.cards()) {
+            if (item == null || item.cardSeqNo() == null || item.cardSeqNo().isBlank()) {
                 skipped++;
                 continue;
             }
             var ent = cardTrnsRepo.findById(
                     new com.kosign.wecms.domain.payment.cardtransactions.entity.CardTrnsHstrId(
-                            bizKey, cardSeqNo.trim()))
+                            bizKey, item.cardSeqNo().trim()))
                     .orElse(null);
             if (ent == null) {
                 skipped++;
@@ -715,7 +718,7 @@ public class CardTransactionsService {
                 skipped++;
                 continue;
             }
-            stampable.add(ent);
+            stampable.add(new StampTarget(ent, item));
         }
 
         // Load the picked approval line's approver chain — fans out
@@ -742,20 +745,20 @@ public class CardTransactionsService {
         }
 
         BigDecimal totalVndAmt = stampable.stream()
-                .map(CardTrnsHstr::getTrscAmt)
+                .map(t -> t.ent().getTrscAmt())
                 .filter(java.util.Objects::nonNull)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        // Synthesise the APPR_SEQ_NO via per-tenant MAX+1 (Java-side,
-        // no wb_get_next_val). One retry handles the rare race —
-        // mirrors Internal Transfer / Expense / Vendor / Payroll.
+        // Synthesise the APPR_SEQ_NO via the wb_get_next_val funnel.
+        // One retry handles the rare race — mirrors Internal Transfer /
+        // Expense / Vendor / Payroll.
         String apprSeqNo = allocateApprSeqNo(bizKey);
         try {
-            stampApproval(stampable, apprSeqNo, totalVndAmt, req.postTitle(), req.postCont(), req.payDate(), chain);
+            stampApproval(stampable, apprSeqNo, totalVndAmt, req.postTitle(), req.postCont(), req.payDate(), chain, req.apprLineNo());
         } catch (org.springframework.dao.DataIntegrityViolationException race) {
             log.info("feature=card-transactions apprSeqNo race retrying once bizKey={}", bizKey);
             apprSeqNo = allocateApprSeqNo(bizKey);
-            stampApproval(stampable, apprSeqNo, totalVndAmt, req.postTitle(), req.postCont(), req.payDate(), chain);
+            stampApproval(stampable, apprSeqNo, totalVndAmt, req.postTitle(), req.postCont(), req.payDate(), chain, req.apprLineNo());
         }
 
         auditLogService.append(AuditLogContext.builder()
@@ -819,6 +822,10 @@ public class CardTransactionsService {
             ent.setModDtm(now);
             cardTrnsRepo.save(ent);
         }
+
+        // Bulletin / attachment cleanup (legacy comm_0192_004_d001) — before
+        // the master delete (EXPT_RESOL_FILE FK).
+        approvalNotificationService.cleanupApprovalArtifacts(apprSeqNo.trim());
 
         // Delete approver rows + master.
         exptResolApprvrRepo.deleteByBizKeyAndApprSeqNo(bizKey, apprSeqNo.trim());
@@ -1548,18 +1555,19 @@ public class CardTransactionsService {
      *  retry path doesn't duplicate the writes. Mirrors the
      *  {@code stampApproval} private on every other Payment module. */
     private void stampApproval(
-            List<CardTrnsHstr> stampable,
+            List<StampTarget> stampable,
             String apprSeqNo,
             BigDecimal totalVndAmt,
             String postTitle,
             String postCont,
             String payDate,
-            List<ApprovalBoxFanoutService.Approver> chain) {
+            List<ApprovalBoxFanoutService.Approver> chain,
+            Long apprLineNo) {
 
         String userId = requireUserId();
         String now    = nowDtm14();
 
-        // Fan out FIRST so the EXPT_RESOL_MSTR INSERT races (PK
+        // 1. Fan out FIRST so the EXPT_RESOL_MSTR INSERT races (PK
         // collision) before any CARD_TRNS_HSTR rows are mutated.
         // Card-transaction-specific notes:
         //   - title = user-entered post_title from the Request Approval
@@ -1571,6 +1579,9 @@ public class CardTransactionsService {
         //   - payDate = user-picked Scheduled Date from the Request
         //     Approval popup ({@code yyyyMMdd}). Optional; fanout skips
         //     the column when blank.
+        //   - apprLineNo is now passed through so each
+        //     EXPT_RESOL_APPRVR_INFM row carries APPR_LINE_NO (legacy
+        //     parity C2 — Card previously left it null).
         String titl = postTitle != null && !postTitle.isBlank()
                 ? postTitle.trim()
                 : "Card Approval";
@@ -1583,18 +1594,74 @@ public class CardTransactionsService {
                 "VND",
                 payDate,
                 postCont,
-                chain);
+                chain,
+                apprLineNo);
 
-        // Stamp APPR_SEQ_NO on every selected card row. After this the
-        // row's status flips from APPROVAL NOT REQUESTED to APPROVAL
-        // REQUESTED in the summary tiles.
-        for (CardTrnsHstr ent : stampable) {
+        // 2. EXPT_RESOL_APPR_LINE print-header snapshot (env-gated).
+        // Legacy card_0001_005_c001_act.jsp:523 createApprovalLines (H3).
+        approvalBoxFanoutService.writeApprovalLineSnapshot(apprSeqNo);
+
+        for (StampTarget t : stampable) {
+            CardTrnsHstr ent = t.ent();
+            com.kosign.wecms.domain.payment.cardtransactions.dto.RequestApprovalRequest.CardApprovalItem item = t.item();
+
+            // 3. EXPT_RESOL_DETL — one row per card transaction (legacy
+            // card_0001_005_c001_act.jsp:280 createExptResolDetl, loops
+            // REC3). CCY_CD='VND' + DOC_TYPE='B' are legacy REC3 constants
+            // (comm_0194_001.ts:1868/1881); AMT comes from the card row;
+            // BUSA_USAG_CD / MEMO from the per-card wire item; legacy REC3
+            // carries no DOC_ID and sends TRSC_DT="" (C1).
+            approvalBoxFanoutService.writeResolutionDetail(
+                    apprSeqNo,
+                    null,
+                    ent.getTrscAmt(),
+                    "VND",
+                    item.busaUsagCd(),
+                    item.memo(),
+                    "B",
+                    null);
+
+            // 4. Patch CARD_TRNS_HSTR — APPR_SEQ_NO + per-card chart-acct /
+            // usage / memo (legacy card_0001_005_c001_act.jsp:295
+            // updateCardTrnsHisData, H1). Reporting account guarded by
+            // non-blank (legacy guards CHART_ACCT_CD with isNotBlank);
+            // usage / memo set when the wire provides them (null = key
+            // absent → leave existing value).
+            //   NOTE: legacy has a bug at line 308-310 that overwrites
+            //   CHART_ACCT_CD with CHART_ACCT_SEQ_NO; the refactor writes
+            //   each value to its own column (deliberate correction, not
+            //   a parity divergence — copying the bug would corrupt the
+            //   reporting-account code).
             ent.setApprSeqNo(apprSeqNo);
+            if (item.chartAcctCd() != null && !item.chartAcctCd().isBlank()) {
+                ent.setChartAcctCd(item.chartAcctCd().trim());
+            }
+            if (item.chartAcctSeqNo() != null && !item.chartAcctSeqNo().isBlank()) {
+                ent.setChartAcctSeqNo(item.chartAcctSeqNo().trim());
+            }
+            if (item.busaUsagCd() != null) {
+                ent.setCardTrnsUsageCode(item.busaUsagCd());
+            }
+            if (item.memo() != null) {
+                ent.setCont(item.memo());
+            }
             ent.setModId(userId);
             ent.setModDtm(now);
             cardTrnsRepo.save(ent);
         }
+
+        // 5. Bulletin / notification fan-out (legacy createBulletinPost +
+        // createUserNewPostNotifications + BltbHelper.createNotificationToApprvr).
+        // POST_APPR_DV='10' for card (legacy comm_0194_001.ts:1827).
+        approvalNotificationService.notifyRequestApproval(
+                apprSeqNo, titl, postCont, "10", "Corporate Card Payment");
     }
+
+    /** Pairs a resolved {@link CardTrnsHstr} row with its per-card
+     *  approval fields (legacy REC3 equivalent) for the stamp loop. */
+    private record StampTarget(
+            CardTrnsHstr ent,
+            com.kosign.wecms.domain.payment.cardtransactions.dto.RequestApprovalRequest.CardApprovalItem item) {}
 
     /** Build the {@code Sort} for the management list — primary order
      *  from the whitelist, default tiebreakers always appended. */

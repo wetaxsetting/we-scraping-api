@@ -143,8 +143,7 @@ public class PayrollPaymentService {
 
     private final ScdulPymnSumrRepository       sumrRepository;
     private final ScdulPymnSumrDetlRepository   detlRepository;
-    private final AcctMstrRepository            acctMstrRepository;
-    private final BankInfmRepository            bankInfmRepository;
+    private final com.kosign.wecms.domain.payment.common.WithdrawalAccountListService withdrawalAccountListService;
     private final CutoffValidator               cutoffValidator;
     private final PayrollPaymentExcelParser     excelParser;
     private final InternalTransferKeyGenerator  keyGenerator;
@@ -172,6 +171,8 @@ public class PayrollPaymentService {
     private final com.kosign.wecms.domain.payment.dispatch.service.DispatchResultResolver dispatchResultResolver;
     /** Approval-Box fan-out — see InternalTransferService for rationale. */
     private final ApprovalBoxFanoutService      approvalBoxFanoutService;
+    /** Shared request-approval bulletin / notification writer (BLTB_* tables). */
+    private final com.kosign.wecms.domain.payment.notification.service.ApprovalNotificationService approvalNotificationService;
     private final Clock                         clock;
     private final ExptResolMstrRepository       exptResolMstrRepository;
     private final ExptResolApprvrInfmRepository exptResolApprvrInfmRepository;
@@ -338,27 +339,17 @@ public class PayrollPaymentService {
      *  Withdrawal-account picker (legacy comm_1001_001)
      * ---------------------------------------------------------------- */
 
+    /**
+     * List firm-banking-capable withdrawal accounts the current tenant +
+     * user may pick as the source of a Payroll Payment batch. Delegates
+     * to the shared
+     * {@link com.kosign.wecms.domain.payment.common.WithdrawalAccountListService}
+     * — the lookup is module-agnostic (legacy {@code comm_1001_001} is
+     * shared across every payment type) and strict (G1/G2/G3).
+     */
     @Transactional(readOnly = true)
     public List<WithdrawalAccountRow> listWithdrawalAccounts(String ccyCd) {
-        String bizKey = requireTenant();
-        String filter = (ccyCd == null || ccyCd.isBlank())
-                ? null : ccyCd.trim().toUpperCase();
-        return acctMstrRepository.findWithdrawalAccounts(bizKey, filter).stream()
-                .map(this::toWithdrawalAccountRow)
-                .toList();
-    }
-
-    private WithdrawalAccountRow toWithdrawalAccountRow(AcctMstr a) {
-        String bankNm = bankInfmRepository.findById(a.getBankCd())
-                .map(BankInfm::getRprsBankNm)
-                .orElse(a.getBankCd());
-        return new WithdrawalAccountRow(
-                a.getBankCd(),
-                bankNm,
-                a.getAcctNo(),
-                a.getAcctTypeCd(),
-                a.getCcyCd(),
-                a.getAcctNickNm());
+        return withdrawalAccountListService.list(ccyCd);
     }
 
     /* ----------------------------------------------------------------
@@ -796,7 +787,9 @@ public class PayrollPaymentService {
         mstr.setBizKey(bizKey);
         mstr.setApprSeqNo(apprSeqNo);
         mstr.setApprDv(ApprDv.PAYROLL.code());
-        mstr.setApprSts("0");
+        // F-4 (legacy parity): legacy comm_0192_001_c005 sets ApprSts.STS_2
+        // ("2" = In Progress) at request time, not "0" (temp save).
+        mstr.setApprSts("2");
         mstr.setDraftDate(draftDate);
         mstr.setDraftTime(draftTime);
         mstr.setDraftUserId(userId != null ? userId : "");
@@ -864,6 +857,20 @@ public class PayrollPaymentService {
             row.setApprLineNo(BigDecimal.valueOf(req.apprLineNo()));
             exptResolApprvrInfmRepository.save(row);
         }
+
+        // F-1 (legacy parity): EXPT_RESOL_DETL row — DOC_ID = batch id,
+        // AMT = batch total, CCY_CD = batch currency. Mirrors legacy
+        // comm_0192_001_c005_act.jsp:340 createExptResolDetl.
+        approvalBoxFanoutService.writeResolutionDetail(
+                apprSeqNo, master.getScdulPymnNo(), master.getTotalTranAmt(), master.getCcyCd());
+        // F-2 (legacy parity): EXPT_RESOL_APPR_LINE print-header snapshot
+        // (env-gated). Mirrors comm_0192_001_c005_act.jsp:489 createApprovalLines.
+        approvalBoxFanoutService.writeApprovalLineSnapshot(apprSeqNo);
+
+        // Bulletin / notification fan-out (legacy createBulletinPost +
+        // createUserNewPostNotifications + BltbHelper.createNotificationToApprvr).
+        approvalNotificationService.notifyRequestApproval(
+                apprSeqNo, req.postTitle(), req.postCont(), "21", "Payroll Payment");
 
         return docNo;
     }

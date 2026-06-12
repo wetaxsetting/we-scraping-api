@@ -1,5 +1,7 @@
 package com.kosign.wecms.domain.payment.cardtransactions.dto;
 
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
@@ -14,25 +16,43 @@ import java.util.List;
  * + {@code APPR_DV='33'} (card-transaction approval type) to
  * {@code comm_0194_001.act}.
  *
- * <p>Wire shape:
+ * <p>Wire shape (REC3 equivalent — one entry per selected card
+ * transaction, carrying the per-card purpose / reporting-account / memo
+ * the legacy approval popup posts):
  * <pre>{@code
  *   {
- *     "card_seq_nos":  ["1234", "1235", "1236"],
- *     "appr_line_no":  4321
+ *     "cards": [
+ *       { "card_seq_no": "1234", "chart_acct_cd": "5001", "chart_acct_seq_no": "12",
+ *         "busa_usag_cd": "6001", "memo": "Team lunch" },
+ *       { "card_seq_no": "1235" }
+ *     ],
+ *     "appr_line_no": 4321,
+ *     "post_title":   "Card expenses Apr",
+ *     "post_cont":    "..."
  *   }
  * }</pre>
  *
  * <p>Validation:
  * <ul>
- *   <li>{@code cardSeqNos} &mdash; at least one entry.</li>
+ *   <li>{@code cards} &mdash; at least one entry; each carries a
+ *       {@code cardSeqNo}.</li>
  *   <li>{@code apprLineNo} &mdash; the {@code APPR_LINE_INFM.APPR_LINE_NO}
  *       primary key the user picked. Must resolve to an active
  *       approval line in the caller's tenant.</li>
  * </ul>
+ *
+ * <p>Legacy parity: mirrors {@code card_0001_005_c001} REC3 (per-card
+ * {@code CCY_CD}/{@code AMT}/{@code TRSC_DT} come from the
+ * {@code CARD_TRNS_HSTR} row server-side, not the wire — the legacy
+ * popup re-sent the row's own values). The {@code per-card chart-acct /
+ * usage / memo} are patched onto {@code CARD_TRNS_HSTR} and copied into
+ * each {@code EXPT_RESOL_DETL} row at submit time (legacy
+ * {@code updateCardTrnsHisData} + {@code createExptResolDetl}).
  */
 public record RequestApprovalRequest(
         @NotEmpty
-        List<String> cardSeqNos,
+        @Valid
+        List<CardApprovalItem> cards,
         @NotNull
         @Positive
         Long apprLineNo,
@@ -55,4 +75,27 @@ public record RequestApprovalRequest(
          *  module. */
         @Size(max = 8)
         String payDate) {
+
+    /**
+     * One selected card transaction + its per-card approval fields.
+     * Mirrors a legacy REC3 row: {@code CARD_SEQ_NO} (which card),
+     * {@code CHART_ACCT_CD}/{@code CHART_ACCT_SEQ_NO} (reporting
+     * account), {@code BUSA_USAG_CD} (purpose), {@code MEMO}.
+     */
+    public record CardApprovalItem(
+            @NotBlank
+            @Size(max = 20)
+            String cardSeqNo,
+
+            @Size(max = 20)
+            String chartAcctCd,
+
+            @Size(max = 10)
+            String chartAcctSeqNo,
+
+            @Size(max = 20)
+            String busaUsagCd,
+
+            @Size(max = 1000)
+            String memo) {}
 }

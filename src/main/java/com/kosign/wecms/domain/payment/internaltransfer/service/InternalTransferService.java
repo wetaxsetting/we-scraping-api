@@ -166,8 +166,7 @@ public class InternalTransferService {
 
     private final ScdulPymnSumrRepository      sumrRepository;
     private final ScdulPymnSumrDetlRepository  detlRepository;
-    private final com.kosign.wecms.domain.banking.repository.AcctMstrRepository acctMstrRepository;
-    private final com.kosign.wecms.domain.banking.repository.BankInfmRepository bankInfmRepository;
+    private final com.kosign.wecms.domain.payment.common.WithdrawalAccountListService withdrawalAccountListService;
     private final InternalTransferKeyGenerator keyGenerator;
     private final TransactionalRetry           transactionalRetry;
     private final InternalTransferExcelParser  excelParser;
@@ -180,6 +179,8 @@ public class InternalTransferService {
      *  rows into {@code EXPT_RESOL_MSTR} + {@code EXPT_RESOL_APPRVR_INFM}
      *  so the legacy Approval Box list query sees the request. */
     private final ApprovalBoxFanoutService     approvalBoxFanoutService;
+    /** Shared request-approval bulletin / notification writer (BLTB_* tables). */
+    private final com.kosign.wecms.domain.payment.notification.service.ApprovalNotificationService approvalNotificationService;
     private final InternalTransferFileResolver fileResolver;
     private final AuditLogService              auditLogService;
     private final com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter erpHistoryWriter;
@@ -1011,7 +1012,9 @@ public class InternalTransferService {
         mstr.setBizKey(bizKey);
         mstr.setApprSeqNo(apprSeqNo);
         mstr.setApprDv(ApprDv.INTERNAL_TRANSFER.code());
-        mstr.setApprSts("0");
+        // F-4 (legacy parity): legacy comm_0192_001_c005 sets ApprSts.STS_2
+        // ("2" = In Progress) at request time, not "0" (temp save).
+        mstr.setApprSts("2");
         mstr.setDraftDate(draftDate);
         mstr.setDraftTime(draftTime);
         mstr.setDraftUserId(userId != null ? userId : "");
@@ -1082,6 +1085,20 @@ public class InternalTransferService {
             row.setApprLineNo(BigDecimal.valueOf(req.apprLineNo()));
             exptResolApprvrInfmRepository.save(row);
         }
+
+        // F-1 (legacy parity): EXPT_RESOL_DETL row — DOC_ID = batch id,
+        // AMT = batch total, CCY_CD = batch currency. Mirrors legacy
+        // comm_0192_001_c005_act.jsp:340 createExptResolDetl.
+        approvalBoxFanoutService.writeResolutionDetail(
+                apprSeqNo, master.getScdulPymnNo(), master.getTotalTranAmt(), master.getCcyCd());
+        // F-2 (legacy parity): EXPT_RESOL_APPR_LINE print-header snapshot
+        // (env-gated). Mirrors comm_0192_001_c005_act.jsp:489 createApprovalLines.
+        approvalBoxFanoutService.writeApprovalLineSnapshot(apprSeqNo);
+
+        // Bulletin / notification fan-out (legacy createBulletinPost +
+        // createUserNewPostNotifications + BltbHelper.createNotificationToApprvr).
+        approvalNotificationService.notifyRequestApproval(
+                apprSeqNo, req.postTitle(), req.postCont(), "35", "Internal Transfer");
 
         return docNo;
     }
@@ -1294,10 +1311,10 @@ public class InternalTransferService {
      * Step-3 picker in the legacy {@code pymn_0009_002} popup (Figma
      * 1:9972 — "Withdrawal Bank/Account No.").
      *
-     * <p>Mirrors legacy {@code comm_1001_001_act.jsp:23-65} — see the
-     * filter list on {@link com.kosign.wecms.domain.banking.repository.AcctMstrRepository#findWithdrawalAccounts}.
-     * The legacy per-user {@code ACCT_AUTH_INFO} authority filter is
-     * deferred until that table is migrated.
+     * <p>Delegates to the shared
+     * {@link com.kosign.wecms.domain.payment.common.WithdrawalAccountListService}
+     * — legacy {@code comm_1001_001} is module-agnostic, so all five
+     * payment consumers share one strict (G1/G2/G3) implementation.
      *
      * @param ccyCd optional currency filter (matches legacy
      *              {@code CCY_CD} input; {@code null} skips).
@@ -1305,26 +1322,7 @@ public class InternalTransferService {
     @Transactional(readOnly = true)
     public java.util.List<com.kosign.wecms.domain.payment.internaltransfer.dto.WithdrawalAccountRow>
             listWithdrawalAccounts(String ccyCd) {
-        String bizKey = requireTenant();
-        String filter = (ccyCd == null || ccyCd.isBlank()) ? null : ccyCd.trim().toUpperCase();
-        return acctMstrRepository.findWithdrawalAccounts(bizKey, filter).stream()
-                .map(this::toWithdrawalAccountRow)
-                .toList();
-    }
-
-    private com.kosign.wecms.domain.payment.internaltransfer.dto.WithdrawalAccountRow
-            toWithdrawalAccountRow(
-                    com.kosign.wecms.domain.banking.entity.AcctMstr a) {
-        String bankNm = bankInfmRepository.findById(a.getBankCd())
-                .map(com.kosign.wecms.domain.banking.entity.BankInfm::getRprsBankNm)
-                .orElse(a.getBankCd());
-        return new com.kosign.wecms.domain.payment.internaltransfer.dto.WithdrawalAccountRow(
-                a.getBankCd(),
-                bankNm,
-                a.getAcctNo(),
-                a.getAcctTypeCd(),
-                a.getCcyCd(),
-                a.getAcctNickNm());
+        return withdrawalAccountListService.list(ccyCd);
     }
 
     /**

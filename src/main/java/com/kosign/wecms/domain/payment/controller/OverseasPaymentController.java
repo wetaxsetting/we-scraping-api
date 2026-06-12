@@ -4,6 +4,7 @@ import com.kosign.wecms.common.export.ExcelExportRequest;
 import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.response.ApiResponse;
 import com.kosign.wecms.domain.payment.dto.ChangeApprovalLineRequest;
+import com.kosign.wecms.domain.payment.dto.OverseasMultiApprovalRequest;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentDetailResponse;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentExcelPreview;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentExcelUploadRequest;
@@ -16,7 +17,7 @@ import com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalActionReques
 import com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.WithdrawalAccountRow;
-import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService;
+import com.kosign.wecms.domain.payment.common.WithdrawalAccountListService;
 import com.kosign.wecms.domain.payment.service.OverseasPaymentExcelService;
 import com.kosign.wecms.domain.payment.service.OverseasPaymentExcelService.DownloadResource;
 import com.kosign.wecms.domain.payment.service.OverseasPaymentService;
@@ -67,7 +68,7 @@ public class OverseasPaymentController {
 
     private final OverseasPaymentService        overseasPaymentService;
     private final OverseasPaymentExcelService   overseasExcelService;
-    private final InternalTransferService       internalTransferService;
+    private final WithdrawalAccountListService  withdrawalAccountListService;
     private final ExcelExportService            excelExportService;
 
     /**
@@ -145,6 +146,19 @@ public class OverseasPaymentController {
             @PathVariable("id") String id,
             @Valid @RequestBody RequestApprovalRequest request) {
         return ApiResponse.ok(overseasPaymentService.requestApproval(id, request));
+    }
+
+    /**
+     * Submit a multi-payment ("M" type) overseas approval — approves a
+     * list of {@code OVRS_PYMN_MSTR} rows under one {@code EXPT_RESOL_MSTR}.
+     * Mirrors the legacy {@code comm_0192_001_c005} {@code OVRS_PYMN_TYPE='M'}
+     * branch (one {@code EXPT_RESOL_DETL} per payment +
+     * {@code APPR_SEQ_NO} stamped on every master row).
+     */
+    @PostMapping("/request-approval-multi")
+    public ApiResponse<RequestApprovalResponse> requestApprovalMulti(
+            @Valid @RequestBody OverseasMultiApprovalRequest request) {
+        return ApiResponse.ok(overseasPaymentService.requestApprovalMulti(request));
     }
 
     /**
@@ -303,9 +317,10 @@ public class OverseasPaymentController {
      * Firm-banking-capable withdrawal accounts for the overseas payment
      * Excel upload dialog Step 3 ("Withdrawal Bank/Account No." picker).
      *
-     * <p>Mirrors legacy {@code comm_1001_001} — same query as internal
-     * transfer; the upstream service is shared because both features
-     * draw from the same {@code ACCT_MSTR} + {@code TB_FIRM_CONF} join.
+     * <p>Mirrors legacy {@code comm_1001_001} — module-agnostic, so it
+     * delegates to the shared {@link WithdrawalAccountListService} (the
+     * same strict G1/G2/G3 path every payment consumer uses). Overseas no
+     * longer couples to {@code InternalTransferService} for this lookup.
      *
      * @param ccyCd optional currency filter (e.g. {@code "USD"}); omit
      *              for all firm-banking accounts regardless of currency.
@@ -313,7 +328,7 @@ public class OverseasPaymentController {
     @GetMapping("/withdrawal-accounts")
     public ApiResponse<List<WithdrawalAccountRow>> listWithdrawalAccounts(
             @RequestParam(value = "ccy_cd", required = false) String ccyCd) {
-        return ApiResponse.ok(internalTransferService.listWithdrawalAccounts(ccyCd));
+        return ApiResponse.ok(withdrawalAccountListService.list(ccyCd));
     }
 
     /**

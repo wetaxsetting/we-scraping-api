@@ -135,6 +135,10 @@ public class ApprovalBoxService {
     private final ScdulPymnSumrRepository        scdulPymnSumrRepository;
     private final AuditLogService                auditLogService;
     private final ApprovalBoxFanoutService       fanoutService;
+    /** Lifecycle bulletin/notification writer — approve/reject remark +
+     *  notification (legacy parity). */
+    private final com.kosign.wecms.domain.payment.notification.service.ApprovalNotificationService
+                                                 approvalNotificationService;
 
     /* =================================================================
      *  List
@@ -587,12 +591,20 @@ public class ApprovalBoxService {
         long waitingRemaining = approverRepository.countByStatus(
                 ctx.bizKey, ctx.master.getApprSeqNo(), ApprvrStts.WAITING);
 
+        String comntTaskCd;
         if (pendingRemaining == 0 && waitingRemaining == 0) {
             ctx.master.setApprTypeCd(ApprTypeCd.APPROVED);
+            // Legacy parity (comm_0192_010_u001:156-160): stamp PAY_END_*
+            // once every approver has voted.
+            ctx.master.setPayEndYn("Y");
+            ctx.master.setPayEndDtm(nowDtm);
+            ctx.master.setPayEndNm(TenantContext.currentUserNm());
+            comntTaskCd = "R003"; // ComntTaskCd.COMPLETE
         } else {
             ctx.master.setApprTypeCd(ApprTypeCd.IN_PROGRESS);
             // Promote the next waiting approver (by line_no) to PENDING.
             promoteNextWaiting(ctx, nowDtm);
+            comntTaskCd = "R004"; // ComntTaskCd.APPROVED
         }
 
         ctx.master.setModId(ctx.userId);
@@ -602,6 +614,11 @@ public class ApprovalBoxService {
         // No write-back to the payment source table: neither SCDUL_PYMN_SUMR nor
         // OVRS_PYMN_SUMR has an APPR_STTS column in legacy JEX. The list/detail
         // pages derive status on read from EXPT_RESOL_MSTR.APPR_TYPE_CD.
+
+        // Lifecycle parity: BLTB_COMNT_INFM remark + BLTB_NOTI_INFM/CONT to
+        // admins + acted approvers (legacy createNotificationToApprvrAfterRequest).
+        approvalNotificationService.notifyApprovalAction(
+                ctx.master.getApprSeqNo(), ctx.master.getApprDv(), comntTaskCd);
 
         ctx.totalCount    = approverRepository.findChain(
                 ctx.bizKey, ctx.master.getApprSeqNo()).size();
@@ -618,17 +635,35 @@ public class ApprovalBoxService {
         ctx.approverRow.setModDtm(nowDtm);
         approverRepository.save(ctx.approverRow);
 
+        // Legacy parity (comm_0192_010_u002:129-133): PAY_END_* is stamped only
+        // when every approver has now voted. Measured BEFORE the refactor's
+        // W→S cascade (legacy has no cascade, so this matches its
+        // totCnt == totApprCnt + totRjtCnt condition).
+        long pendingRemaining = approverRepository.countByStatus(
+                ctx.bizKey, ctx.master.getApprSeqNo(), ApprvrStts.PENDING);
+        long waitingRemaining = approverRepository.countByStatus(
+                ctx.bizKey, ctx.master.getApprSeqNo(), ApprvrStts.WAITING);
+
         // Downstream cascade: every waiting peer → stopped.
         approverRepository.stopDownstream(
                 ctx.bizKey, ctx.master.getApprSeqNo(), ctx.userId, nowDtm);
 
         ctx.master.setApprTypeCd(ApprTypeCd.REJECTED);
+        if (pendingRemaining == 0 && waitingRemaining == 0) {
+            ctx.master.setPayEndYn("Y");
+            ctx.master.setPayEndDtm(nowDtm);
+            ctx.master.setPayEndNm(TenantContext.currentUserNm());
+        }
         ctx.master.setModId(ctx.userId);
         ctx.master.setModDtm(nowDtm);
         masterRepository.save(ctx.master);
 
         // No write-back: status derives on read from EXPT_RESOL_MSTR.APPR_TYPE_CD
         // (legacy JEX has no APPR_STTS column on SCDUL_PYMN_SUMR / OVRS_PYMN_SUMR).
+
+        // Lifecycle parity: BLTB_COMNT_INFM remark (REJECT) + BLTB_NOTI_INFM/CONT.
+        approvalNotificationService.notifyApprovalAction(
+                ctx.master.getApprSeqNo(), ctx.master.getApprDv(), "R002"); // ComntTaskCd.REJECT
 
         ctx.totalCount    = approverRepository.findChain(
                 ctx.bizKey, ctx.master.getApprSeqNo()).size();
