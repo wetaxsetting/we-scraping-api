@@ -33,7 +33,7 @@ public interface ScdulPymnSumrDetlRepository
      * {@code JpaSort.unsafe(ASC, "cast(scdulPymnDetlNo as long)")}.
      */
     Sort DETL_NO_NUMERIC_ASC =
-            JpaSort.unsafe(Sort.Direction.ASC, "length(scdulPymnDetlNo)", "scdulPymnDetlNo");
+            JpaSort.unsafe(Sort.Direction.ASC, "length(d.scdulPymnDetlNo)", "d.scdulPymnDetlNo");
 
     /** Detail-line lookup by composite PK + tenant. Used by the
      *  Reporting Account update endpoint. */
@@ -41,9 +41,22 @@ public interface ScdulPymnSumrDetlRepository
             String bizKey, String scdulPymnNo, String scdulPymnDetlNo);
 
     /** Lines for one batch, sorted by the caller-supplied {@code Sort}.
-     *  Used by the detail endpoint to render the per-line table. */
+     *  Used by the detail endpoint to render the per-line table.
+     *
+     *  <p>Declared as an explicit {@code @Query} (not a derived finder) so the
+     *  {@link #DETL_NO_NUMERIC_ASC} {@link JpaSort#unsafe} {@code length(...)}
+     *  ordering is appended to the ORDER BY verbatim. A derived (PartTree)
+     *  finder validates every {@code Sort} token as a property path and would
+     *  reject {@code length(scdulPymnDetlNo)} with a
+     *  {@code PropertyReferenceException}. The unqualified attribute names in
+     *  the unsafe order resolve against this query's single root. */
+    @Query("SELECT d FROM ScdulPymnSumrDetl d" +
+            "  WHERE d.bizKey = :bizKey" +
+            "    AND d.scdulPymnNo = :scdulPymnNo")
     List<ScdulPymnSumrDetl> findByBizKeyAndScdulPymnNo(
-            String bizKey, String scdulPymnNo, Sort sort);
+            @Param("bizKey") String bizKey,
+            @Param("scdulPymnNo") String scdulPymnNo,
+            Sort sort);
 
     /** Bulk delete by batch — used when deleting a draft batch. The
      *  parent SCDUL_PYMN_SUMR row must be deleted in the same

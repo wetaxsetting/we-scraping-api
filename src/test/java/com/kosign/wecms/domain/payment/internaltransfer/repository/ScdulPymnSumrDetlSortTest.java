@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * sort would place {@code "10000"} before {@code "9999"}.
  *
  * <p>{@link ScdulPymnSumrDetlRepository#DETL_NO_NUMERIC_ASC} encodes that as
- * {@code ORDER BY length(scdulPymnDetlNo), scdulPymnDetlNo}. These tests pin the
+ * {@code ORDER BY length(d.scdulPymnDetlNo), d.scdulPymnDetlNo}. These tests pin the
  * constant's shape and the ordering rule it generates. (The end-to-end SQL
  * ordering is exercised by the DB-backed integration test recommended in the
  * MR — this project has no H2/Testcontainers harness for a unit-level DB test.)
@@ -28,9 +28,9 @@ class ScdulPymnSumrDetlSortTest {
     void detlNoNumericAsc_isLengthThenValueAscending() {
         List<Sort.Order> orders = ScdulPymnSumrDetlRepository.DETL_NO_NUMERIC_ASC.stream().toList();
         assertThat(orders).hasSize(2);
-        assertThat(orders.get(0).getProperty()).isEqualTo("length(scdulPymnDetlNo)");
+        assertThat(orders.get(0).getProperty()).isEqualTo("length(d.scdulPymnDetlNo)");
         assertThat(orders.get(0).getDirection()).isEqualTo(Sort.Direction.ASC);
-        assertThat(orders.get(1).getProperty()).isEqualTo("scdulPymnDetlNo");
+        assertThat(orders.get(1).getProperty()).isEqualTo("d.scdulPymnDetlNo");
         assertThat(orders.get(1).getDirection()).isEqualTo(Sort.Direction.ASC);
     }
 

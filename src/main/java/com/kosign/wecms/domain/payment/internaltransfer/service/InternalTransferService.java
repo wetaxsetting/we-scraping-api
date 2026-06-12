@@ -372,7 +372,10 @@ public class InternalTransferService {
                 master.getTitl(),
                 master.getTotalTranAmt(),
                 master.getTotTrnsCnt(),
-                master.getErpFileNum(),
+                // doc_no resolved from EXPT_RESOL_MSTR.DOC_NO (its canonical
+                // home), NOT SCDUL_PYMN_SUMR.ERP_FILE_NUM (legacy 8-digit ERP
+                // file sequence). null until the batch is submitted for approval.
+                apprMstr.map(ExptResolMstr::getDocNo).orElse(null),
                 master.getRegId(),
                 requestor,
                 master.getRegDtm(),
@@ -1051,9 +1054,13 @@ public class InternalTransferService {
         mstr.setModDtm(nowDtm);
         exptResolMstrRepository.save(mstr);
 
-        // Write doc_no back to SCDUL_PYMN_SUMR so the list query can surface it
-        master.setErpFileNum(docNo);
-        sumrRepository.save(master);
+        // DOC_NO is NOT back-stamped onto SCDUL_PYMN_SUMR — its canonical
+        // home is EXPT_RESOL_MSTR.DOC_NO (written above). The list and both
+        // detail views resolve doc_no from EXPT_RESOL_MSTR by APPR_SEQ_NO.
+        // SCDUL_PYMN_SUMR.ERP_FILE_NUM is legacy varchar(8) holding the
+        // 8-digit ERP file sequence number — overloading it with the
+        // {prefix}_{YYMMDD}_{NNN} doc_no overflowed the column (WBE_DB 500)
+        // and drifted from the legacy schema. Left untouched here.
 
         // 3. Write EXPT_RESOL_APPRVR_INFM rows — first approver "P" (active), rest "W" (waiting)
         List<com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalRequest.ApproverInput> approvers = req.approvers();
@@ -1208,7 +1215,10 @@ public class InternalTransferService {
         // (the Request Approval popup re-opens, Delete row icon shows
         // again, list status badge flips back to Draft).
         master.setApprSeqNo(null);
-        master.setErpFileNum(null);
+        // ERP_FILE_NUM intentionally NOT cleared — doc_no is no longer
+        // back-stamped here (it lives in EXPT_RESOL_MSTR.DOC_NO), and
+        // ERP_FILE_NUM is the legacy ERP file sequence number, unrelated
+        // to the approval lifecycle.
         master.setModDtm(OffsetDateTime.now(clock).format(DTM14));
         String userId = TenantContext.currentUserId();
         if (userId != null) master.setModId(userId);
@@ -1549,9 +1559,11 @@ public class InternalTransferService {
             Map<String, String> apprSttsByApprSeqNo) {
         String apprSeqNo = s.getApprSeqNo();
         boolean hasAppr = apprSeqNo != null && !apprSeqNo.isBlank();
-        String docNo = hasAppr
-                ? docNoByApprSeqNo.getOrDefault(apprSeqNo, s.getErpFileNum())
-                : s.getErpFileNum();
+        // doc_no comes from EXPT_RESOL_MSTR.DOC_NO (docNoByApprSeqNo map);
+        // null when unresolved. ERP_FILE_NUM is NOT a doc_no source — it is
+        // the legacy 8-digit ERP file sequence number and is never the
+        // approval doc_no.
+        String docNo = hasAppr ? docNoByApprSeqNo.get(apprSeqNo) : null;
         // Schedule Date = EXPT_RESOL_MSTR.PAY_DATE (the requested payment
         // date set at Request Approval), NOT SCDUL_PYMN_SUMR.PAY_TRAN_DT
         // (the dispatch date, which is null until the batch is transferred).
