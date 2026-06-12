@@ -48,7 +48,6 @@ import com.kosign.wecms.domain.payment.internaltransfer.repository.ExptResolFile
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprDv;
 import com.kosign.wecms.domain.payment.service.DocNoGenerator;
 import com.kosign.wecms.domain.payment.internaltransfer.service.CutoffValidator;
-import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferFileResolver;
 import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferKeyGenerator;
 import com.kosign.wecms.domain.payment.internaltransfer.service.ScdulPymnTypeCd;
 import com.kosign.wecms.domain.payment.internaltransfer.service.TransferNetwork;
@@ -150,7 +149,7 @@ public class PayrollPaymentService {
     private final PayrollPaymentExcelParser     excelParser;
     private final InternalTransferKeyGenerator  keyGenerator;
     private final TransactionalRetry            transactionalRetry;
-    private final InternalTransferFileResolver  fileResolver;
+    private final PayrollPaymentFileResolver    fileResolver;
     private final ErpTrnsHistoryWriter          erpHistoryWriter;
     private final AuditLogService               auditLogService;
     /** PR2: Payroll-only dispatch executor — file-route only (legacy
@@ -545,7 +544,7 @@ public class PayrollPaymentService {
             throw new BusinessException("WBE2069");
         }
 
-        java.nio.file.Path path = fileResolver.resolve(bizKey, saveFileNm);
+        java.nio.file.Path path = fileResolver.resolveForRead(bizKey, saveFileNm);
         if (!Files.isReadable(path) || !Files.isRegularFile(path)) {
             throw new BusinessException("WBE2069");
         }
@@ -694,7 +693,7 @@ public class PayrollPaymentService {
 
         if (saveFileNm != null && !saveFileNm.isBlank()) {
             try {
-                java.nio.file.Path source = fileResolver.resolve(bizKey, saveFileNm);
+                java.nio.file.Path source = fileResolver.resolveForRead(bizKey, saveFileNm);
                 erpHistoryWriter.recordDeletedFile(
                         ERP_TRNS_TYPE_PAYROLL_SCHEDULED_PAYMENT,
                         source,

@@ -1,24 +1,27 @@
 package com.kosign.wecms.domain.setting.preferences.service;
 
+import org.springframework.stereotype.Component;
+
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import org.springframework.stereotype.Component;
 
 /**
  * Resolves the physical path for the Settings &gt; Preferences company
- * logo. Layout is intentionally <b>flat</b> — every tenant's files live
- * directly under the storage root:
+ * logo. Per-tenant + per-module subtree:
  *
  * <pre>
- * &lt;storage-root&gt;/&lt;save_file_nm&gt;
+ * &lt;storage-root&gt;/&lt;biz_key&gt;/preferences/&lt;save_file_nm&gt;
  * </pre>
  *
- * <p>Cross-tenant safety comes from the opaque save filename
- * ({@link PreferencesService} derives it from an HMAC of {@code bizKey}
- * + timestamp + secure random), not from per-tenant directory
- * isolation. {@code saveFileNm} is therefore the only knob; the
- * resolver still asserts the resolved path stays under the root as
- * defence-in-depth.
+ * <p>Historically logos were written <b>flat</b> directly under the
+ * storage root, with cross-tenant safety resting solely on the opaque
+ * HMAC save filename. They now live in a per-tenant subtree; the opaque
+ * filename is retained as defence-in-depth. {@link #resolveForRead} falls
+ * back to the legacy flat root so logos written before the per-tenant
+ * split stay viewable / deletable (read-fallback, 2026-06-12) — no manual
+ * move required. Writes always go to the per-tenant path via
+ * {@link #resolve}.
  */
 @Component
 public class PreferencesLogoResolver {
@@ -29,8 +32,60 @@ public class PreferencesLogoResolver {
         this.storageRoot = Paths.get(properties.storageRoot()).toAbsolutePath().normalize();
     }
 
-    /** Compose {@code <storage-root>/<saveFileNm>}. */
-    public Path resolve(String saveFileNm) {
+    /** Primary write / read path:
+     *  {@code <storage-root>/<bizKey>/preferences/<saveFileNm>}. */
+    public Path resolve(String bizKey, String saveFileNm) {
+        return composeTenant(bizKey, saveFileNm);
+    }
+
+    /** Per-tenant + per-module directory the service creates before the
+     *  first write. */
+    public Path tenantDirectory(String bizKey) {
+        if (bizKey == null || bizKey.isBlank()) {
+            throw new IllegalArgumentException("bizKey is required");
+        }
+        return storageRoot.resolve(bizKey).resolve(PreferencesLogoStorageProperties.SLUG_FOLDER)
+                .toAbsolutePath().normalize();
+    }
+
+    /**
+     * Read / delete path with backward-compatible fallback: returns the
+     * per-tenant path when the file exists there; otherwise falls back to
+     * the legacy flat {@code <storage-root>/<saveFileNm>} for logos written
+     * before the per-tenant split. When the file is in neither place the
+     * primary path is returned so the caller's existence check surfaces the
+     * usual not-found error.
+     */
+    public Path resolveForRead(String bizKey, String saveFileNm) {
+        Path primary = composeTenant(bizKey, saveFileNm);
+        if (Files.isReadable(primary)) {
+            return primary;
+        }
+        Path legacyFlat = composeFlat(saveFileNm);
+        if (Files.isReadable(legacyFlat)) {
+            return legacyFlat;
+        }
+        return primary;
+    }
+
+    private Path composeTenant(String bizKey, String saveFileNm) {
+        if (bizKey == null || bizKey.isBlank()) {
+            throw new IllegalArgumentException("bizKey is required");
+        }
+        if (saveFileNm == null || saveFileNm.isBlank()) {
+            throw new IllegalArgumentException("saveFileNm is required");
+        }
+        Path subtree  = storageRoot.resolve(bizKey).resolve(PreferencesLogoStorageProperties.SLUG_FOLDER)
+                .toAbsolutePath().normalize();
+        Path resolved = subtree.resolve(saveFileNm).toAbsolutePath().normalize();
+        if (!resolved.startsWith(subtree)) {
+            throw new IllegalArgumentException(
+                    "Resolved path escapes the tenant subtree: " + resolved);
+        }
+        return resolved;
+    }
+
+    private Path composeFlat(String saveFileNm) {
         if (saveFileNm == null || saveFileNm.isBlank()) {
             throw new IllegalArgumentException("saveFileNm is required");
         }
@@ -40,11 +95,5 @@ public class PreferencesLogoResolver {
                     "Resolved path escapes the storage root: " + resolved);
         }
         return resolved;
-    }
-
-    /** The storage root — used by the service to create the directory
-     *  before the first write. */
-    public Path root() {
-        return storageRoot;
     }
 }

@@ -48,7 +48,6 @@ import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepos
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprDv;
 import com.kosign.wecms.domain.payment.service.DocNoGenerator;
 import com.kosign.wecms.domain.payment.internaltransfer.service.CutoffValidator;
-import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferFileResolver;
 import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferKeyGenerator;
 import com.kosign.wecms.domain.payment.internaltransfer.service.ScdulPymnTypeCd;
 import com.kosign.wecms.domain.payment.internaltransfer.service.TransferNetwork;
@@ -165,7 +164,7 @@ public class VendorPaymentService {
     private final VendorPaymentExcelParser      excelParser;
     private final InternalTransferKeyGenerator  keyGenerator;
     private final TransactionalRetry            transactionalRetry;
-    private final InternalTransferFileResolver  fileResolver;
+    private final VendorPaymentFileResolver     fileResolver;
     private final ErpTrnsHistoryWriter          erpHistoryWriter;
     private final AuditLogService               auditLogService;
     private final TransferDispatchExecutor      dispatchExecutor;
@@ -426,10 +425,10 @@ public class VendorPaymentService {
      * reused verbatim.
      *
      * <p>The original Excel file is persisted to
-     * {@code <storage-root>/<biz_key>/internal-transfer/<save_file_nm>}
-     * via the same {@link InternalTransferFileResolver} — keeping the
-     * single storage tree per tenant keeps the download path module-
-     * agnostic.
+     * {@code <storage-root>/<biz_key>/vendor-payment/<save_file_nm>}
+     * via {@link VendorPaymentFileResolver}. The storage <em>root</em> is
+     * still shared with the other payment modules (one upload tree per
+     * tenant); only the module subfolder is now Vendor-specific.
      */
     public CreateScheduledTransferResponse createDraft(
             CreateScheduledTransferRequest req,
@@ -590,11 +589,12 @@ public class VendorPaymentService {
     /**
      * Resolve the physical file behind a Vendor batch's original Excel.
      * Mirrors {@link com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService#resolveDownload}
-     * — the storage tree is shared (the create path persists every
-     * payment-module upload under
-     * {@code <storage-root>/<biz_key>/internal-transfer/<save_file_nm>}),
-     * so the same {@link InternalTransferFileResolver} resolves Vendor
-     * files too.
+     * — the create path persists Vendor uploads under
+     * {@code <storage-root>/<biz_key>/vendor-payment/<save_file_nm>} via
+     * {@link VendorPaymentFileResolver}. The read uses
+     * {@code resolveForRead} so batches whose file predates the
+     * per-module folder split (still under {@code internal-transfer/})
+     * stay downloadable.
      *
      * <ul>
      *   <li>Row not found / wrong tenant → {@code WBE2060}.</li>
@@ -612,7 +612,7 @@ public class VendorPaymentService {
             throw new BusinessException("WBE2069");
         }
 
-        java.nio.file.Path path = fileResolver.resolve(bizKey, saveFileNm);
+        java.nio.file.Path path = fileResolver.resolveForRead(bizKey, saveFileNm);
         if (!Files.isReadable(path) || !Files.isRegularFile(path)) {
             throw new BusinessException("WBE2069");
         }
@@ -782,7 +782,7 @@ public class VendorPaymentService {
         // tab. No-op when the batch has no uploaded file.
         if (saveFileNm != null && !saveFileNm.isBlank()) {
             try {
-                java.nio.file.Path source = fileResolver.resolve(bizKey, saveFileNm);
+                java.nio.file.Path source = fileResolver.resolveForRead(bizKey, saveFileNm);
                 erpHistoryWriter.recordDeletedFile(
                         ERP_TRNS_TYPE_VENDOR_SCHEDULED_PAYMENT,
                         source,
@@ -1336,10 +1336,10 @@ public class VendorPaymentService {
         return leaf.isBlank() ? "upload.xlsx" : leaf;
     }
 
-    /** Stream the uploaded multipart bytes through the shared
-     *  {@link InternalTransferFileResolver}. The storage root is keyed
-     *  by tenant + the resolver's fixed sub-directory; sharing it across
-     *  payment modules keeps the download path module-agnostic. */
+    /** Stream the uploaded multipart bytes through
+     *  {@link VendorPaymentFileResolver}. The storage root is keyed by
+     *  tenant + the resolver's {@code vendor-payment} sub-directory; the
+     *  root is shared across payment modules, the subfolder is not. */
     private void persistUploadedFile(String bizKey, String saveFileNm, MultipartFile file) {
         Path target = fileResolver.resolve(bizKey, saveFileNm);
         try {

@@ -76,19 +76,10 @@ server:
     include-message: always
     include-stacktrace: never
 
-# Surface the per-request traceId (set by TraceIdFilter into MDC under key
-# `traceId`) in every log line. The `--` placeholder shows when the
-# logger fires outside a request scope (startup, scheduled jobs).
-logging:
-  pattern:
-    level: "%5p [traceId=%X{traceId:--}]"
-  level:
-    org.hibernate: info
-    org.hibernate.SQL: debug
-    org.springframework.jdbc.core: trace
-    org.hibernate.orm.jdbc.bind: trace
-
 wecms:
+  # =============================================================================
+  # Security (CORS / JWT)
+  # =============================================================================
   jwt:
     # Required. Fail-fast validated by JwtTokenProvider:
     #   >= 32 bytes  -> HS256
@@ -121,47 +112,81 @@ wecms:
     # comparison target if anyone ever calls bootstrap programmatically
     # from a unit test or a future admin API.
     biz-key: VN_VNM0004_000001
-  erp-transaction-history:
-    # Local-disk root for downloadable ERP transaction history files.
-    # Resolved path pattern: <storage-root>/<biz_key>/erp-transaction-history/<save_file_nm>
-    # OQ-3 resolved 2026-05-11 — defaults to the developer's standard
-    # workspace; per-developer override via env var
-    # WECMS_ERP_TRANSACTION_HISTORY_STORAGE_ROOT (Windows / POSIX both
-    # honour Java Paths.get(...)). Profile-specific overrides live in
-    # application-{profile}.yml.
-    storage-root: ${WECMS_ERP_TRANSACTION_HISTORY_STORAGE_ROOT:./tmp/erp-trns-hstr}
+  # =============================================================================
+  # EFS / Van Center
+  # =============================================================================
+  # Firm-banking payment dispatch via the EFS / VAN gateway. The Van Center API
+  # key is NOT held in config — it is a per-VAN secret in TB_VAN_API_INFO, read
+  # via VanApiKeyService. No dispatch.efs keys are set in this base file: the
+  # endpoint paths default in EfsProperties and the env-specific values
+  # (enabled / base-url / partner-id) are configured per-environment — see
+  # application-sit.yml.
+  # =============================================================================
+  # File storage
+  # =============================================================================
+  # All upload modules use:
+  #   <storage-root>/<bizKey>/<module-slug>/<file>
+  # Each module overrides its root via its WECMS_*_STORAGE_ROOT env var.
+  #
+  # Payment modules:
+  #   Vendor Payment    -> <storage-root>/<bizKey>/vendor-payment/<file>
+  #   Expense Payment   -> <storage-root>/<bizKey>/expense-payment/<file>
+  #   Payroll           -> <storage-root>/<bizKey>/payroll/<file>
+  #   Overseas Payment  -> <storage-root>/<bizKey>/overseas-payment/<file>
+  #   Internal Transfer -> <storage-root>/<bizKey>/internal-transfer/<file>
+  #
+  # Business files:
+  #   Contacts                -> <storage-root>/<bizKey>/contacts/<file>
+  #   Preferences             -> <storage-root>/<bizKey>/preferences/<file>
+  #   User Image              -> <storage-root>/<bizKey>/user-image/<file>
+  #   ERP Transaction History -> <storage-root>/<bizKey>/erp-transaction-history/<file>
+  #
+  # Vendor Payment / Expense Payment / Payroll now have their own storage-root
+  # keys (added 2026-06-12); each default mirrors the internal-transfer root so
+  # today's layout is unchanged until a key is pointed elsewhere.
+  # overseas-payment, preferences and user-image also fall back to a legacy flat
+  # root for files written before the multi-tenant split.
+  # This file holds the CI / unit-test defaults; each profile overrides the roots.
+  overseas-payment:
+    storage-root: ${WECMS_OVERSEAS_PAYMENT_STORAGE_ROOT:./tmp/overseas-payment}
+  # vendor-payment / expense-payment / payroll — own roots; defaults mirror the
+  # internal-transfer root so the physical layout is unchanged.
+  vendor-payment:
+    storage-root: ${WECMS_VENDOR_PAYMENT_STORAGE_ROOT:./tmp/internal-transfer}
+  expense-payment:
+    storage-root: ${WECMS_EXPENSE_PAYMENT_STORAGE_ROOT:./tmp/internal-transfer}
+  payroll:
+    storage-root: ${WECMS_PAYROLL_STORAGE_ROOT:./tmp/internal-transfer}
   contacts:
-    # Local-disk root for Settings > Contacts attachments
-    # (TRCO_INFO_FILE — V98). Resolved path pattern:
-    #   <storage-root>/<biz_key>/contacts/<save_file_nm>
-    # Per-developer override via env var WECMS_CONTACTS_STORAGE_ROOT.
-    # Default mirrors the ERP Transaction History neighbour so all file
-    # storage stays under one tree on a developer laptop.
     storage-root: ${WECMS_CONTACTS_STORAGE_ROOT:./tmp/contacts}
   preferences:
-    # Local-disk root for Settings > Preferences company logos
-    # (BUSI_INFM.CMPN_LOGO). Resolved path pattern:
-    #   <storage-root>/<biz_key>/preferences/<save_file_nm>
-    # Per-developer override via env var WECMS_PREFERENCES_STORAGE_ROOT.
-    # The default points at the same shared tree as ERP Transaction
-    # History / Contacts so a developer laptop only needs one folder.
     storage-root: ${WECMS_PREFERENCES_STORAGE_ROOT:./tmp/preferences}
   user-image:
-    # Local-disk root for Settings > Users avatar files
-    # (USER_BUSI_CONN_INFM.USER_IMG). Flat layout:
-    #   <storage-root>/<save_file_nm>
-    # Cross-tenant safety comes from the opaque HMAC-derived save
-    # filename, not from per-tenant directory isolation. Per-developer
-    # override via env var WECMS_USER_IMAGE_STORAGE_ROOT.
+    # Save filename is an opaque HMAC token (defence-in-depth on top of
+    # tenant isolation).
     storage-root: ${WECMS_USER_IMAGE_STORAGE_ROOT:./tmp/user-image}
-  overseas-payment:
-    # Local-disk root for Overseas Payment Excel uploads
-    # (OVRS_PYMN_MSTR batches — flat layout: <storage-root>/<save_file_nm>).
-    # CI / unit-test / local default; profile-specific overrides live in
-    # application-{profile}.yml. Per-developer override via env var
-    # WECMS_OVERSEAS_PAYMENT_STORAGE_ROOT.
-    storage-root: ${WECMS_OVERSEAS_PAYMENT_STORAGE_ROOT:./tmp/overseas-payment}
+  erp-transaction-history:
+    storage-root: ${WECMS_ERP_TRANSACTION_HISTORY_STORAGE_ROOT:./tmp/erp-trns-hstr}
+  # internal-transfer is listed last in this section because its YAML key also
+  # carries the Banking Cut-off Configuration (next section): Spring binds that
+  # under wecms.internal-transfer.cutoff, so it must stay nested under this key.
+  internal-transfer:
+    storage-root: ${WECMS_INTERNAL_TRANSFER_STORAGE_ROOT:./tmp/internal-transfer}
 
+    # ===========================================================================
+    # Banking cut-off configuration
+    # ===========================================================================
+    # Bound under wecms.internal-transfer.cutoff (CutoffProperties prefix), so it
+    # stays nested under internal-transfer — but it is a distinct concern from
+    # file storage. Bank codes for the past-cut-off rule; the full Woori +
+    # Shinhan time table lives in application-local.yml / -sit.yml.
+    cutoff:
+      shinhan-bank-cd: ${WECMS_SHINHAN_BANK_CD:88886000}
+      woori-bank-cd:   ${WECMS_WOORI_BANK_CD:11704000}
+
+  # =============================================================================
+  # Coocon
+  # =============================================================================
   coocon:
     # Coocon DEV credentials — mirrors <coocon> in VI/jex.wabooks_new.user.xml.
     # Single source of truth for every Coocon smart-gateway call —
@@ -181,6 +206,8 @@ wecms:
     smart-api-key: ${WECMS_COOCON_SMART_API_KEY:fxAeocJbuweNTgv5FBns}
     smart-api-url: ${WECMS_COOCON_SMART_API_URL:https://dev-sgw.webcashvietnam.com:8443/domestic/finance/scrap/smart_gateway.jsp}
     unique-key: ${WECMS_COOCON_UNIQUE_KEY:0000099}
+  #
+  # --- GDT lookup (OSMC) ---
   osmc:
     # GDT (Tổng cục Thuế) business-registration lookup — Coocon bigdata
     # API (BI09). Legacy call site:
@@ -196,19 +223,18 @@ wecms:
     api-key: ${WECMS_OSMC_API_KEY:r2L7U6KnB4T51VokPlkg}
     api-id: ${WECMS_OSMC_API_ID:BI09}
     unique-key: ${WECMS_OSMC_UNIQUE_KEY:0000099}
-  # Internal Transfer feature config — cut-off-time defaults +
-  # local-disk root for the Excel upload / download flow.
-  # See application-local.yml for the full Woori + Shinhan table.
-  internal-transfer:
-    # Local-disk root for the Excel files attached to each draft batch.
-    # Resolved path pattern:
-    #   <storage-root>/<biz_key>/internal-transfer/<save_file_nm>
-    # Defaults to a CI-friendly scratch path; the local-developer
-    # profile in application-local.yml points at the workspace-shared
-    # "C:/WECMS PROJECT/File Data" folder so uploads land next to the
-    # existing erp-transaction-history files. Per-developer override
-    # via env var WECMS_INTERNAL_TRANSFER_STORAGE_ROOT.
-    storage-root: ${WECMS_INTERNAL_TRANSFER_STORAGE_ROOT:./tmp/internal-transfer}
-    cutoff:
-      shinhan-bank-cd: ${WECMS_SHINHAN_BANK_CD:88886000}
-      woori-bank-cd:   ${WECMS_WOORI_BANK_CD:11704000}
+
+# =============================================================================
+# Logging
+# =============================================================================
+# Surface the per-request traceId (set by TraceIdFilter into MDC under key
+# `traceId`) in every log line. The `--` placeholder shows when the
+# logger fires outside a request scope (startup, scheduled jobs).
+logging:
+  pattern:
+    level: "%5p [traceId=%X{traceId:--}]"
+  level:
+    org.hibernate: info
+    org.hibernate.SQL: debug
+    org.springframework.jdbc.core: trace
+    org.hibernate.orm.jdbc.bind: trace

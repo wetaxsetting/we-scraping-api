@@ -154,6 +154,15 @@ public class OverseasPaymentExcelService {
                 }
                 validateAmount(amount,                               errors);
                 validateRequired(feePayer,         "feePayer",        errors);
+                // Legacy parity (pymn_0007_002_r001 validateFeePayer): the Fee
+                // Payer must resolve to a known FEE_PAYER_CD code (B/O/S). Reject
+                // unknown values here so the user sees a preview field error
+                // instead of a CHAR(1) overflow 500 at submit.
+                if (feePayer != null && !feePayer.isBlank()
+                        && normalizeFeePayerCd(feePayer) == null) {
+                    errors.add(new OverseasPaymentExcelFieldError(
+                            "feePayer", "Invalid Fee Payer: " + feePayer));
+                }
                 validateRequired(beneficiaryCode,  "beneficiaryCode", errors);
                 validateRequired(memo,             "memo",            errors);
                 // Legacy parity: memo capped at 200 chars
@@ -483,6 +492,12 @@ public class OverseasPaymentExcelService {
         sumr.setTrnfYn("N");
         sumr.setRegDtm(nowDtm);
         sumr.setRegId(userId);
+        // Legacy OVRS_PYMN_SUMR has MOD_ID + MOD_DTM NOT NULL; the JEX create
+        // stamps mod_* = reg_* on insert. Mirror that (same as the internal-transfer
+        // ScdulPymnSumr create) — without it the INSERT trips the MOD_ID NOT NULL
+        // constraint, which the key-race retry then misreports as a doc-number race.
+        sumr.setModDtm(nowDtm);
+        sumr.setModId(userId);
 
         // Record the uploaded-file metadata on the summary BEFORE the flush; the
         // physical bytes are written only after the key is proven unique (below) so
@@ -524,7 +539,17 @@ public class OverseasPaymentExcelService {
             dtl.setOvrsPymnDetlNo(Long.toString(++detlNoCursor));
             dtl.setCcyCd(src.ccy_cd());
             dtl.setTrnfAmt(src.trnf_amt());
-            dtl.setFeePayerCd(src.fee_payer_cd());
+            // Map the upload value to the legacy CHAR(1) FEE_PAYER_CD code
+            // (B/O/S). The preview pass already rejected unrecognised values;
+            // a null here means a stale/bypassed client — fail with a clean
+            // validation error rather than overflow the CHAR(1) column (which
+            // the broad key-race catch would otherwise misreport as a race).
+            String feePayerCd = normalizeFeePayerCd(src.fee_payer_cd());
+            if (feePayerCd == null) {
+                throw new BusinessException("WBE_VALIDATION",
+                        "Invalid Fee Payer: " + src.fee_payer_cd());
+            }
+            dtl.setFeePayerCd(feePayerCd);
             dtl.setMemo(nullToEmpty(src.memo()));
             dtl.setRprtAcctCd(nullIfBlank(src.rprt_acct_cd()));
             dtl.setBnfcNm(nullToEmpty(src.bnfc_nm()));
@@ -554,6 +579,32 @@ public class OverseasPaymentExcelService {
 
     private static String nullIfBlank(String s) {
         return (s == null || s.isBlank()) ? null : s;
+    }
+
+    /**
+     * Normalise the upload Fee Payer value to the legacy {@code FEE_PAYER_CD}
+     * single-char code ({@code B}/{@code O}/{@code S}) that
+     * {@code OVRS_PYMN_SUMR_DETL.FEE_PAYER_CD} ({@code CHAR(1)}) stores and that
+     * the dispatch / result paths expect ({@code OverseasDispatchExecutor.mapFeeBurden}
+     * {@code B/O/S → BEN/OUR/SHA}; legacy {@code pymn_0007_002_r001} {@code validateFeePayer}
+     * {@code "Beneficiary Charge"/"Ordering Charge"/"Shared" → B/O/S}).
+     *
+     * <p>Accepts every representation present across the codebase / templates:
+     * the 1-char code, the 3-char SWIFT charge code ({@code BEN}/{@code OUR}/{@code SHA}),
+     * and the full English label. Case-insensitive, whitespace-trimmed. Returns
+     * {@code null} for an unrecognised value so callers raise the validation error
+     * rather than overflow the {@code CHAR(1)} column.
+     */
+    private static String normalizeFeePayerCd(String raw) {
+        if (raw == null) return null;
+        String v = raw.trim();
+        if (v.isEmpty()) return null;
+        return switch (v.toUpperCase()) {
+            case "B", "BEN", "BENEFICIARY CHARGE", "BENEFICIARY CHARGED", "BENEFICIARY" -> "B";
+            case "O", "OUR", "ORDERING CHARGE", "ORDERING" -> "O";
+            case "S", "SHA", "SHARED" -> "S";
+            default -> null;
+        };
     }
 
     /** Coalesce null → "" for JEX NOT-NULL detail columns (the Excel upload
@@ -631,7 +682,7 @@ public class OverseasPaymentExcelService {
             throw new BusinessException("WBE2069");
         }
 
-        Path path = fileResolver.resolve(bizKey, saveFileNm);
+        Path path = fileResolver.resolveForRead(bizKey, saveFileNm);
         if (!Files.isReadable(path) || !Files.isRegularFile(path)) {
             throw new BusinessException("WBE2069");
         }
