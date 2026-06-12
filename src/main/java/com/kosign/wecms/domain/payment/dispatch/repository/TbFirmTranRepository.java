@@ -21,4 +21,12 @@ public interface TbFirmTranRepository
      */
     List<TbFirmTran> findByBizKeyAndTranDtAndTranSeqIn(
             String bizKey, String tranDt, Collection<String> tranSeqs);
+
+    /**
+     * No-response real-time transfers awaiting a result check — legacy
+     * {@code PROCESSING_RESULT_CHECK_BATCH} / {@code TB_FIRM_TRAN_R001}
+     * ({@code TRAN_TP='202' AND PROC_STAT='6'}). The caller further filters by
+     * date + the 2-minute age window before issuing the 203 inquiry.
+     */
+    List<TbFirmTran> findByTranTpAndProcStat(String tranTp, String procStat);
 }

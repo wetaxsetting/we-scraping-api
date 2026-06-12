@@ -24,9 +24,9 @@ import java.util.Map;
  * {@code TB_VAN_API_INFO} and read via
  * {@link com.kosign.wecms.domain.payment.dispatch.van.client.VanApiKeyService} (B2).
  *
- * <p><b>TODO(OQ-PDF-1):</b> only the five services confirmed in REST API guide
- * ver 1.2.2 are mapped ({@code EFS_201/202/203/301/302}). {@code WGVN_EFS_204} is
- * absent from that guide and intentionally not seeded.
+ * <p>The six services documented in REST API guide ver 1.2.6 are mapped
+ * ({@code EFS_201/202/203/204/301/302}). {@code WGVN_EFS_204} (Woori FX-rate
+ * inquiry, §5.6) was added in v1.2.6 and is now seeded below.
  */
 @Component
 @ConfigurationProperties(prefix = "wecms.dispatch.efs")
@@ -68,9 +68,9 @@ public class EfsProperties {
         m.put(EfsApiClient.EFS_201, "/WGVN_EFS_201.jct");
         m.put(EfsApiClient.EFS_202, "/WGVN_EFS_202.jct");
         m.put(EfsApiClient.EFS_203, "/WGVN_EFS_203.jct");
+        m.put(EfsApiClient.EFS_204, "/WGVN_EFS_204.jct"); // Woori FX-rate inquiry (guide v1.2.6 §5.6)
         m.put(EfsApiClient.EFS_301, "/WGVN_EFS_301.jct");
         m.put(EfsApiClient.EFS_302, "/WGVN_EFS_302.jct");
-        // NOTE: no EFS_204 — WGVN_EFS_204 is not in guide ver 1.2.2 (TODO(OQ-PDF-1)).
         return m;
     }
 }

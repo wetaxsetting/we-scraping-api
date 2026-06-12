@@ -34,7 +34,7 @@ class RestClientEfsApiClientTest {
     private final ObjectMapper mapper = new ObjectMapper()
             .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
 
-    /** Defaults seed the five endpoint paths + 3s/20s timeouts. */
+    /** Defaults seed the six endpoint paths + 3s/20s timeouts. */
     private final EfsProperties props = new EfsProperties();
 
     private static final String RESPONSE_JSON = """
@@ -54,6 +54,7 @@ class RestClientEfsApiClientTest {
             "EFS_201, /WGVN_EFS_201.jct",
             "EFS_202, /WGVN_EFS_202.jct",
             "EFS_203, /WGVN_EFS_203.jct",
+            "EFS_204, /WGVN_EFS_204.jct",
             "EFS_301, /WGVN_EFS_301.jct",
             "EFS_302, /WGVN_EFS_302.jct",
     })
@@ -110,10 +111,11 @@ class RestClientEfsApiClientTest {
         RestClient restClient = builder.build();
         RestClientEfsApiClient adapter = new RestClientEfsApiClient(restClient, props, mapper);
 
-        // no expectations set — must throw before touching the transport
-        assertThatThrownBy(() -> adapter.send("EFS_204", requestEnvelope()))
+        // no expectations set — must throw before touching the transport.
+        // (EFS_204 is now a mapped key as of v1.2.6; use a key that is genuinely unmapped.)
+        assertThatThrownBy(() -> adapter.send("EFS_999", requestEnvelope()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("EFS_204");
+                .hasMessageContaining("EFS_999");
         server.verify(); // zero requests made
     }
 }

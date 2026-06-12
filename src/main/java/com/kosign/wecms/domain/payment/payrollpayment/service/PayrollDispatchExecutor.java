@@ -8,6 +8,7 @@ import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileData;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileMst;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileDataRepository;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileMstRepository;
+import com.kosign.wecms.domain.payment.dispatch.service.DispatchAutoReceiveRegistrar;
 import com.kosign.wecms.domain.payment.dispatch.service.DispatchKeyGenerator;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumr;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrDetl;
@@ -100,6 +101,7 @@ public class PayrollDispatchExecutor {
     private final DispatchKeyGenerator    keyGenerator;
     private final Clock                   clock;
     private final LegacyFunctionRepository legacyFunctions;
+    private final DispatchAutoReceiveRegistrar autoReceiveRegistrar;
 
     /**
      * Insert the file-route dispatch rows for one Payroll batch — always
@@ -191,6 +193,9 @@ public class PayrollDispatchExecutor {
 
         log.info("feature=payroll-payment dispatch path=FILE bizKey={} scdulPymnNo={} lines={} tranDt={} fileSeqNo={} fundTp={}",
                 bizKey, master.getScdulPymnNo(), lines.size(), tranDt, fileSeqNo, resolveFundTp(apprFundTp));
+
+        // Hand off to the 00301 reception flow AFTER this transaction commits (gated).
+        autoReceiveRegistrar.registerAfterCommit(tranDt, bizKey, fileSeqNo);
     }
 
     /* ───────────────── Helpers ───────────────── */

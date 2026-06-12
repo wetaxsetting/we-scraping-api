@@ -22,6 +22,9 @@ package com.kosign.wecms.domain.payment.dispatch.service;
  * @param fincMdaOwnerNm target owner name (optional; {@code finc_mda_owner_nm})
  * @param tranUse        transfer purpose/memo (optional; {@code tran_use})
  * @param antDivCd       network ({@code ant_div_cd}) — {@code INTER} / {@code CITAD} / {@code NAPAS}
+ * @param withdCurrenCd  withdrawal currency ({@code withd_curren_cd}; legacy {@code WITHD_CCY_CD}).
+ *                       Drives the Woori {@code WGVN_EFS_204} FX pre-inquiry (USD on that path) and
+ *                       is echoed into the 202 FX block. May be null/blank on the domestic-VND path.
  */
 public record RealtimeTransferCommand(
         String vanOrgCd,
@@ -36,6 +39,7 @@ public record RealtimeTransferCommand(
         String tarFincMdaNo,
         String fincMdaOwnerNm,
         String tranUse,
-        String antDivCd
+        String antDivCd,
+        String withdCurrenCd
 ) {
 }
