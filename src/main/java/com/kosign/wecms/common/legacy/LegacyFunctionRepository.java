@@ -336,6 +336,29 @@ public class LegacyFunctionRepository {
         return nextVal("tb_pay_target", "tran_seq", null, null, null, null, null, null);
     }
 
+    /**
+     * Payment &gt; Dispatch: {@code TB_FIRM_TRAN.TRAN_SEQ} for the standalone
+     * depositor-inquiry (201) leg (C1). Funnels the pre-existing
+     * {@code wb_get_next_val('tb_firm_tran','tran_seq')} branch (V140 #3), which
+     * draws the SAME global {@code firm_seq_no} sequence as
+     * {@link #nextTbPayTargetTranSeq()} — byte-for-byte identical to legacy
+     * {@code comm.Sequence.getSeq()} ({@code FIRM_SEQ_NO_R001 → nextval('firm_seq_no')},
+     * {@code Sequence.java:21-34}). Unlike the 202 path (which reuses the originating
+     * pay-target {@code TRAN_SEQ} for dedup), the inquiry mints a fresh sequence per
+     * call (legacy WB_00000100 allocates a new {@code inq_seq} every invocation), so no
+     * idempotency dedup is intended for inquiries.
+     *
+     * <p>Returns a numeric text token; the caller stores it verbatim as the
+     * {@code TB_FIRM_TRAN} PK component (10-char varchar).
+     *
+     * <p>Retire plan: same window as the other {@code firm_seq_no} funnel methods —
+     * drop once the legacy WeCMS / WABOOKS systems no longer call
+     * {@code wb_get_next_val} for the firm-transaction sequence.
+     */
+    public String nextTbFirmTranSeq() {
+        return nextVal("tb_firm_tran", "tran_seq", null, null, null, null, null, null);
+    }
+
     /** Payment &gt; Dispatch: TB_PAY_FILE_MST.FILE_SEQ_NO — global {@code firm_file_seq_no} sequence (V140 #4). */
     public String nextTbPayFileMstFileSeqNo() {
         return nextVal("tb_pay_file_mst", "file_seq_no", null, null, null, null, null, null);

@@ -5,8 +5,12 @@ import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConf;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmFileMst;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileData;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileMst;
+import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmFileData;
 import com.kosign.wecms.domain.payment.dispatch.enums.ProcStat;
 import com.kosign.wecms.domain.payment.dispatch.enums.ProcStep;
+import com.kosign.wecms.domain.payment.dispatch.file.DepositData;
+import com.kosign.wecms.domain.payment.dispatch.file.DepositHeader;
+import com.kosign.wecms.domain.payment.dispatch.file.DepositTrailer;
 import com.kosign.wecms.domain.payment.dispatch.file.FixedLengthCodec;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbFirmBatApiTranRepository;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbFirmConfRepository;
@@ -30,18 +34,21 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.RETURNS_SMART_NULLS;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -76,7 +83,9 @@ class BulkReceptionReceiveTest {
     @Mock SftpClient sftpClient;
 
     private final EfsCryptoService crypto = new EfsCryptoService();
-    private final FixedLengthCodec codec = new FixedLengthCodec();
+    // Spy so split tests can capture the per-file encode(header, lines, trailer) calls
+    // (real method still runs and produces the actual bytes).
+    private final FixedLengthCodec codec = spy(new FixedLengthCodec());
     private final SftpProperties sftpProperties = new SftpProperties();
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -222,18 +231,182 @@ class BulkReceptionReceiveTest {
         verify(spy, never()).issueReception(any());
     }
 
+    // ------------------------------------------------------------------ C5 branch-split
+
+    private List<TbPayFileData> details(int n) {
+        List<TbPayFileData> list = new ArrayList<>(n);
+        for (int i = 1; i <= n; i++) {
+            list.add(detail(i, String.valueOf(i * 1000) + ".00"));
+        }
+        return list;
+    }
+
+    /** All MST rows persisted, in save order. */
+    private List<TbFirmFileMst> capturedMst(int expectedSaves) {
+        ArgumentCaptor<TbFirmFileMst> cap = ArgumentCaptor.forClass(TbFirmFileMst.class);
+        verify(firmFileMstRepository, times(expectedSaves)).save(cap.capture());
+        return cap.getAllValues();
+    }
+
+    /** Group every persisted TB_FIRM_FILE_DATA row by its FIRM_FILE_NM (insertion order). */
+    private Map<String, List<TbFirmFileData>> capturedDataByFile() {
+        ArgumentCaptor<TbFirmFileData> cap = ArgumentCaptor.forClass(TbFirmFileData.class);
+        verify(firmFileDataRepository, org.mockito.Mockito.atLeastOnce()).save(cap.capture());
+        Map<String, List<TbFirmFileData>> byFile = new LinkedHashMap<>();
+        for (TbFirmFileData d : cap.getAllValues()) {
+            byFile.computeIfAbsent(d.getFirmFileNm(), k -> new ArrayList<>()).add(d);
+        }
+        return byFile;
+    }
+
+    /** 1. Split DISABLED (BAT_TRAN_BRANCH_DIV='N') → single file, current behavior unchanged. */
     @Test
-    void branchSplitRequired_throws_andPersistsNothing() {
+    void splitDisabled_singleFile_currentBehaviorUnchanged() {
         when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
                 .thenReturn(Optional.of(payRow(ProcStat.WAIT.code())));
-        when(firmConfRepository.findById(any())).thenReturn(Optional.of(conf("Y", 1))); // limit 1
+        when(firmConfRepository.findById(any())).thenReturn(Optional.of(conf("N", 2)));
         when(payFileDataRepository.findByBizKeyAndTranDtAndFileSeqNo(BIZ_KEY, TRAN_DT, FILE_SEQ_NO))
-                .thenReturn(List.of(detail(1, "1000.00"), detail(2, "2000.00"))); // 2 > 1
+                .thenReturn(details(5)); // 5 rows, but split off
 
-        assertThrows(UnsupportedOperationException.class,
-                () -> service.receive(TRAN_DT, BIZ_KEY, FILE_SEQ_NO));
+        BulkReceptionService spy = spy(service);
+        doReturn(null).when(spy).issueReception(any());
+        spy.receive(TRAN_DT, BIZ_KEY, FILE_SEQ_NO);
 
-        verify(firmFileMstRepository, never()).save(any());
-        verify(payFileMstRepository, never()).save(any());
+        List<TbFirmFileMst> mst = capturedMst(1);
+        assertEquals("S_" + VAN + "_WRB_001_" + TRAN_DT, mst.get(0).getFirmFileNm());
+        assertEquals(new BigDecimal("5"), mst.get(0).getReqCnt());
+        verify(firmFileDataRepository, times(5)).save(any());
+        verify(spy, times(1)).issueReception(any());
+    }
+
+    /** 2. Split ENABLED but count <= limit → single file, current behavior unchanged. */
+    @Test
+    void splitEnabled_countAtOrBelowLimit_singleFile() {
+        when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
+                .thenReturn(Optional.of(payRow(ProcStat.WAIT.code())));
+        when(firmConfRepository.findById(any())).thenReturn(Optional.of(conf("Y", 5)));
+        when(payFileDataRepository.findByBizKeyAndTranDtAndFileSeqNo(BIZ_KEY, TRAN_DT, FILE_SEQ_NO))
+                .thenReturn(details(3)); // 3 <= 5 → no split
+
+        BulkReceptionService spy = spy(service);
+        doReturn(null).when(spy).issueReception(any());
+        spy.receive(TRAN_DT, BIZ_KEY, FILE_SEQ_NO);
+
+        List<TbFirmFileMst> mst = capturedMst(1);
+        assertEquals("S_" + VAN + "_WRB_001_" + TRAN_DT, mst.get(0).getFirmFileNm());
+        assertEquals(new BigDecimal("3"), mst.get(0).getReqCnt());
+        verify(firmFileDataRepository, times(3)).save(any());
+        verify(spy, times(1)).issueReception(any());
+    }
+
+    /** 3. Split ENABLED and count > limit → multiple files created (ceil(5/2)=3). */
+    @Test
+    void splitEnabled_countAboveLimit_multipleFiles() {
+        when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
+                .thenReturn(Optional.of(payRow(ProcStat.WAIT.code())));
+        when(firmConfRepository.findById(any())).thenReturn(Optional.of(conf("Y", 2)));
+        when(payFileDataRepository.findByBizKeyAndTranDtAndFileSeqNo(BIZ_KEY, TRAN_DT, FILE_SEQ_NO))
+                .thenReturn(details(5)); // ceil(5/2) = 3 files
+
+        BulkReceptionService spy = spy(service);
+        doReturn(null).when(spy).issueReception(any());
+        spy.receive(TRAN_DT, BIZ_KEY, FILE_SEQ_NO);
+
+        List<TbFirmFileMst> mst = capturedMst(3);
+        // Consecutive rounds 001 / 002 / 003, all sharing the one FILE_SEQ_NO.
+        assertEquals("S_" + VAN + "_WRB_001_" + TRAN_DT, mst.get(0).getFirmFileNm());
+        assertEquals("S_" + VAN + "_WRB_002_" + TRAN_DT, mst.get(1).getFirmFileNm());
+        assertEquals("S_" + VAN + "_WRB_003_" + TRAN_DT, mst.get(2).getFirmFileNm());
+        // Pay-file marked '6' once (before the loop), never failed.
+        ArgumentCaptor<TbPayFileMst> payCap = ArgumentCaptor.forClass(TbPayFileMst.class);
+        verify(payFileMstRepository, times(1)).save(payCap.capture());
+        assertEquals(ProcStat.REQ.code(), payCap.getValue().getProcStat());
+    }
+
+    /** 4. Each split file has the correct header / data / trailer counts (2, 2, 1 for ceil(5/2)). */
+    @Test
+    void eachSplitFile_hasCorrectHeaderDataTrailerCount() {
+        when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
+                .thenReturn(Optional.of(payRow(ProcStat.WAIT.code())));
+        when(firmConfRepository.findById(any())).thenReturn(Optional.of(conf("Y", 2)));
+        when(payFileDataRepository.findByBizKeyAndTranDtAndFileSeqNo(BIZ_KEY, TRAN_DT, FILE_SEQ_NO))
+                .thenReturn(details(5));
+
+        BulkReceptionService spy = spy(service);
+        doReturn(null).when(spy).issueReception(any());
+        spy.receive(TRAN_DT, BIZ_KEY, FILE_SEQ_NO);
+
+        // Capture every encode(header, lines, trailer) — one per file.
+        ArgumentCaptor<DepositHeader> headerCap = ArgumentCaptor.forClass(DepositHeader.class);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<DepositData>> linesCap = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<DepositTrailer> trailerCap = ArgumentCaptor.forClass(DepositTrailer.class);
+        verify(codec, times(3)).encode(headerCap.capture(), linesCap.capture(), trailerCap.capture());
+
+        int[] expectedCounts = {2, 2, 1};
+        String[] expectedRounds = {"001", "002", "003"};
+        for (int i = 0; i < 3; i++) {
+            // Header carries this file's round in iterationInfo.
+            assertEquals(expectedRounds[i], headerCap.getAllValues().get(i).iterationInfo());
+            // Data record count matches the window size.
+            assertEquals(expectedCounts[i], linesCap.getAllValues().get(i).size());
+            // Trailer requestCnt matches the same window size (header/data/trailer agree).
+            assertEquals(String.valueOf(expectedCounts[i]), trailerCap.getAllValues().get(i).requestCnt());
+            // Per-file line sequence restarts at 1.
+            assertEquals("1", linesCap.getAllValues().get(i).get(0).seq());
+        }
+
+        // MST REQ_CNT mirrors the per-file counts.
+        List<TbFirmFileMst> mst = capturedMst(3);
+        for (int i = 0; i < 3; i++) {
+            assertEquals(BigDecimal.valueOf(expectedCounts[i]), mst.get(i).getReqCnt());
+        }
+    }
+
+    /** 5. Each split file creates its own TB_FIRM_FILE_MST + TB_FIRM_FILE_DATA rows. */
+    @Test
+    void eachSplitFile_createsOwnMstAndDataRows() {
+        when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
+                .thenReturn(Optional.of(payRow(ProcStat.WAIT.code())));
+        when(firmConfRepository.findById(any())).thenReturn(Optional.of(conf("Y", 2)));
+        when(payFileDataRepository.findByBizKeyAndTranDtAndFileSeqNo(BIZ_KEY, TRAN_DT, FILE_SEQ_NO))
+                .thenReturn(details(5));
+
+        BulkReceptionService spy = spy(service);
+        doReturn(null).when(spy).issueReception(any());
+        spy.receive(TRAN_DT, BIZ_KEY, FILE_SEQ_NO);
+
+        // 3 distinct MST rows (one per file).
+        List<TbFirmFileMst> mst = capturedMst(3);
+        assertEquals(3, mst.stream().map(TbFirmFileMst::getFirmFileNm).distinct().count());
+
+        // DATA rows grouped per file: 3 files with 2, 2, 1 rows; FILE_SEQ_NO shared, FILE_SEQ per-file.
+        Map<String, List<TbFirmFileData>> byFile = capturedDataByFile();
+        assertEquals(3, byFile.size());
+        assertEquals(5, byFile.values().stream().mapToInt(List::size).sum());
+        for (List<TbFirmFileData> rows : byFile.values()) {
+            assertTrue(rows.stream().allMatch(r -> FILE_SEQ_NO.equals(r.getFileSeqNo())));
+            // Each row's FILE_SEQ matches the round embedded in its file name.
+            String fileNm = rows.get(0).getFirmFileNm();
+            assertTrue(rows.stream().allMatch(r -> fileNm.contains("_" + r.getFileSeq() + "_")));
+        }
+    }
+
+    /** 6. Each split file issues its own EFS 301 (one issueReception call per file). */
+    @Test
+    void eachSplitFile_issuesEfs301() {
+        when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
+                .thenReturn(Optional.of(payRow(ProcStat.WAIT.code())));
+        when(firmConfRepository.findById(any())).thenReturn(Optional.of(conf("Y", 2)));
+        when(payFileDataRepository.findByBizKeyAndTranDtAndFileSeqNo(BIZ_KEY, TRAN_DT, FILE_SEQ_NO))
+                .thenReturn(details(5));
+
+        BulkReceptionService spy = spy(service);
+        doReturn(null).when(spy).issueReception(any());
+        spy.receive(TRAN_DT, BIZ_KEY, FILE_SEQ_NO);
+
+        // 3 files → 3 EFS 301 calls; each file also SFTP-uploaded.
+        verify(spy, times(3)).issueReception(any());
+        verify(sftpClient, times(3)).upload(anyString(), anyString());
     }
 }

@@ -48,6 +48,26 @@ public interface TbFirmBankCodeRepository extends JpaRepository<TbFirmBankCode, 
     List<TbFirmBankCode> findByAntDivCdInOrderByEngAbrvatNmAscBankCdAsc(Collection<String> antDivCds);
 
     /**
+     * All active rows for one ancillary division. Used by the contacts
+     * bank picker for the NAPAS leg (legacy {@code R002} {@code NAPAS_BKCD}
+     * CTE: {@code BANK_STAS='1' AND ANT_DIV_CD='NAPAS'}). NAPAS rows carry
+     * no branch division, so no {@code BANK_BRANCH_DIV} predicate.
+     */
+    List<TbFirmBankCode> findByAntDivCdAndBankStas(String antDivCd, String bankStas);
+
+    /**
+     * Active headquarters rows for one ancillary division. Used by the
+     * contacts bank picker for the CITAD leg (legacy {@code R002}
+     * {@code CITAD_BKCD} CTE:
+     * {@code BANK_STAS='1' AND BANK_BRANCH_DIV='1' AND ANT_DIV_CD='CITAD'}).
+     * The {@code BANK_BRANCH_DIV='1'} predicate collapses the ~3,000 CITAD
+     * branch rows to one headquarters row per bank — without it the dialog
+     * dropdown repeated each bank once per branch.
+     */
+    List<TbFirmBankCode> findByAntDivCdAndBankBranchDivAndBankStas(
+            String antDivCd, String bankBranchDiv, String bankStas);
+
+    /**
      * Resolve a NAPAS bank code (6-char input) to its registry row.
      * Mirrors legacy {@code PymnHelper#getListTbFirmBankCode} for the
      * NAPAS branch — used by the Internal Transfer Excel parser to

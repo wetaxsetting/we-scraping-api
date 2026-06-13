@@ -1,10 +1,13 @@
 package com.kosign.wecms.common.firmbanking;
 
 import com.kosign.wecms.common.tenant.TenantContext;
+import com.kosign.wecms.domain.payment.dispatch.recipient.DepositorInquiryService;
+import com.kosign.wecms.domain.payment.dispatch.recipient.RecipientLookupCommand;
 import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConf;
 import com.kosign.wecms.domain.setting.firmbankingsettings.repository.FirmBankingSettingRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.Optional;
@@ -59,26 +62,32 @@ import java.util.Optional;
  *       name as {@code WBE1143} "Recipient Name not found".</li>
  * </ol>
  *
- * <p><b>Status today:</b> the {@code TB_FIRM_CONF} gate (step 1) IS
- * implemented &mdash; absence of an active row makes this method return
- * {@code Optional.empty()} just like legacy. The socket call (steps
- * 2-5) is <b>NOT IMPLEMENTED</b>: when a firm-config row exists, the
- * method currently logs a warning and returns {@code Optional.empty()}
- * so callers (Excel upload parsers, popup lookup) silently skip name
- * verification &mdash; the same behaviour as legacy's
+ * <p><b>Status today (C1, wired):</b> the {@code TB_FIRM_CONF} gate
+ * (step 1) IS implemented &mdash; absence of an active row makes this
+ * method return {@code Optional.empty()} just like legacy. The bank
+ * call (steps 2-5) is now wired via the <b>REST</b> path: when a
+ * firm-config row exists and {@code wecms.dispatch.recipient-inquiry=true},
+ * this method builds a {@link RecipientLookupCommand} and delegates to
+ * {@link DepositorInquiryService}, which runs WGVN_EFS_201 (the REST
+ * refactor of the legacy {@code WB_00000100} socket call) plus the
+ * {@code TB_FIRM_TRAN} C001/U002 audit lifecycle. The legacy fixed-width
+ * <i>socket</i> protocol is deliberately not ported &mdash; the gateway
+ * is REST.
+ *
+ * <p><b>Master gate:</b> {@code wecms.dispatch.recipient-inquiry}
+ * defaults {@code false}, so until VAN keys (B2) + EFS (B1) are
+ * provisioned this method stays the no-op skip (returns empty, writes
+ * nothing) &mdash; the same behaviour as legacy's
  * &quot;{@code contactInfo == null}&quot; branch
- * ({@code PymnHelper.ckRecName} line 1037).
+ * ({@code PymnHelper.ckRecName} line 1037) and the established
+ * {@code wecms.dispatch.realtime-dispatch} gating pattern. Any gateway
+ * or infrastructure error is recorded as a FAIL audit row and degrades
+ * to {@code Optional.empty()} &mdash; callers never error out.
  *
- * <p><b>Production work required:</b> replace the
- * &quot;Production socket call&quot; block below with the real
- * {@code WB_00000100} implementation. The public signature, the
- * firm-config gate, and every caller stay untouched &mdash; once the
- * socket lands, recipient-name verification activates automatically
- * across every wired upload parser.
- *
- * <p><b>Workspace memory:</b> {@code project_refactoring_scope.md}
- * states the refactor is local-only R&amp;D with no bank integration;
- * that is why steps 2-5 above stay stubbed today.
+ * <p><b>Deferred:</b> the legacy UAT Shinhan/Woori product-type
+ * override on {@code outBankCd} / {@code bankPrtnId}
+ * ({@code PymnHelper.java:916-946}) is not implemented &mdash;
+ * local-only R&amp;D has no UAT environment.
  */
 @Service
 @RequiredArgsConstructor
@@ -86,6 +95,17 @@ import java.util.Optional;
 public class FirmBankingInquiryService {
 
     private final FirmBankingSettingRepository firmBankingSettingRepo;
+    private final DepositorInquiryService depositorInquiryService;
+
+    /**
+     * Master gate for the live WGVN_EFS_201 path (C1). Default {@code false} →
+     * {@code inquiryAccount} stays the no-op stub (returns empty, writes nothing)
+     * so the refactor never co-writes {@code TB_FIRM_TRAN} rows on a shared live DB
+     * until VAN keys (B2) + EFS (B1) are provisioned. Mirrors the
+     * {@code wecms.dispatch.realtime-dispatch} gating pattern.
+     */
+    @Value("${wecms.dispatch.recipient-inquiry:false}")
+    private boolean recipientInquiryEnabled;
 
     /**
      * Returns {@code true} when the current tenant has an active
@@ -126,59 +146,45 @@ public class FirmBankingInquiryService {
         String trimmed = acctNo.trim();
         if (trimmed.isEmpty()) return Optional.empty();
 
+        // Master gate (C1): until recipient-inquiry is switched on the method
+        // stays the legacy no-op skip — callers get a clean empty Optional and
+        // nothing is written to TB_FIRM_TRAN.
+        if (!recipientInquiryEnabled) {
+            log.debug("inquiryAccount: recipient-inquiry disabled "
+                    + "(wecms.dispatch.recipient-inquiry=false); skipping");
+            return Optional.empty();
+        }
+
         // Per-tenant firm-config gate — legacy comm_1003_001_act.jsp
         // queries TB_FIRM_CONF first; when contactInfo is null it
         // silently skips the inquiry. We mirror that here so a tenant
-        // without firm-banking configured gets a clean empty Optional
-        // instead of a synthetic stub answer (which would otherwise
-        // mask the missing-config state when real integration lands).
+        // without firm-banking configured gets a clean empty Optional.
         Optional<TbFirmConf> firmConf = lookupFirmConfig();
         if (firmConf.isEmpty()) {
             log.debug("inquiryAccount: no active TB_FIRM_CONF row for tenant; skipping inquiry");
             return Optional.empty();
         }
+        TbFirmConf conf = firmConf.get();
 
-        // ============================================================
-        // Production socket call — REPLACE THIS BLOCK with the real
-        // implementation. Returns Optional.empty() until the team wires
-        // the WB_00000100 socket protocol; meanwhile every caller (Excel
-        // upload parsers, popup lookup) silently skips name verification,
-        // which matches the legacy "no firm-banking config" branch
-        // (PymnHelper.ckRecName line 1037 "contactInfo == null").
+        // Build the WGVN_EFS_201 inquiry context from the active firm-config row,
+        // then delegate to the depositor-inquiry orchestrator (EFS 201 + the
+        // TB_FIRM_TRAN C001/U002 audit lifecycle). The REST WGVN_EFS_201 variant
+        // replaces the legacy WB_00000100 socket call.
         //
-        // What this method MUST do per legacy FIRM_PROC.inquiryAccount:
-        //   1. Apply UAT product-type override on outBankCd / bankPrtnId
-        //      (Shinhan 970424 → WEBC1/HASU1; Woori 970457 →
-        //       000001008/000001020). See PymnHelper.java:916-946.
-        //   2. Build WB_00000100 fixed-width payload using:
-        //        ID         = firmConf.get().getVanOrgCd()
-        //        BANK_CD    = outBankCd  (post-UAT-override)
-        //        PRTN_ID    = bankPrtnId (post-UAT-override)
-        //        TAR_BANK_CD       = napasBankCd
-        //        TAR_FINC_MDA_DIV  = 'A'
-        //        TAR_FINC_MDA_NO   = trimmed (acctNo)
-        //        WITHD_ACCT_NO     = firmConf.get().getWdrlActNo()
-        //        BIZ_KEY           = TenantContext.currentBizKey()
-        //        TNO               = yyyyMMddHHmmss + UUID
-        //        TR_DV_CD / TK_DV_CD = "0000" / "0100"
-        //   3. Send via socket (legacy: 127.0.0.1:11000, resource
-        //      socket/wecms_batch), receive 700-byte response
-        //      (TK_DV_CD echoes back as "0110").
-        //   4. Parse FINC_MDA_OWNER_NM. Return Optional.of(name) when
-        //      RC == "0000" AND name is non-blank; Optional.empty()
-        //      otherwise.
-        //
-        // See `docs/refactor-wecms/features/payment/recipient-name-inquiry.md`
-        // (when written) for the full handoff brief.
-        // ============================================================
-        log.warn(
-                "feature=firm-banking inquiry-account not-implemented: "
-                + "TB_FIRM_CONF row found for tenant but WB_00000100 socket "
-                + "call has not been wired yet. Returning Optional.empty() "
-                + "so callers skip recipient-name verification — production "
-                + "must implement the socket call. napasBankCd={} acctNo=(masked)",
-                napasBankCd);
-        return Optional.empty();
+        // NOTE: the legacy UAT Shinhan/Woori product-type override on
+        // outBankCd / bankPrtnId (PymnHelper.java:916-946) is intentionally NOT
+        // implemented — local-only R&D has no UAT environment. The firm-config
+        // values are used verbatim.
+        RecipientLookupCommand cmd = new RecipientLookupCommand(
+                conf.getVanOrgCd(),    // ID (VAN_ORG_CD)
+                conf.getOutBankCd(),   // BANK_CD (OUT_BANK_CD)
+                conf.getBankPrtnId(),  // PRTN_ID (BANK_PRTN_ID)
+                napasBankCd,           // TAR_BANK_CD
+                "A",                   // TAR_FINC_MDA_DIV — account (CITAD rejected upstream)
+                trimmed,               // TAR_FINC_MDA_NO
+                conf.getWdrlActNo());  // WITHD_ACCT_NO
+
+        return depositorInquiryService.inquire(TenantContext.currentBizKey(), cmd);
     }
 
     /**

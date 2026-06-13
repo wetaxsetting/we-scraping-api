@@ -105,6 +105,15 @@ public class RecipientLookupService {
             throw new BusinessException("WBE_EFS_GATEWAY_ERROR", rc);
         }
 
+        // Verify the response MAC before trusting / decrypting the EV — legacy
+        // SecurityUtil.VerifyMac in WB_00000100:152 (throws "검증 오류" on mismatch).
+        // G003 = 암복호화 검증오류 (encryption verification error).
+        if (!efsCryptoService.verifyVv(response.ev(), response.vv(), apiKey)) {
+            log.warn("EFS 201 VV verification failed vanOrgCd={} tarBankCd={} acct={}",
+                    cmd.vanOrgCd(), cmd.tarBankCd(), mask(cmd.tarFincMdaNo()));
+            throw new BusinessException("WBE_EFS_GATEWAY_ERROR", FirmBankingResultCd.ENC_VRFY_ERR);
+        }
+
         String responseJson = efsCryptoService.decryptEv(response.ev(), apiKey);
         Efs201Response parsed = deserialize(responseJson, Efs201Response.class);
 

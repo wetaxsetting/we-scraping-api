@@ -820,43 +820,76 @@ public class ContactsService {
      * ================================================================= */
 
     /**
-     * Lists every NAPAS + CITAD row in {@code TB_FIRM_BANK_CODE} for
-     * the contacts Add/Edit dialog bank-picker autocomplete. Mirrors
-     * legacy {@code comm_0109_001_r002}. The dictionary is global —
-     * not tenant-scoped — so the read does not consult
-     * {@link TenantContext}.
+     * Bank-picker autocomplete for the contacts Add/Edit dialog —
+     * <b>one selectable row per distinct bank</b>, mirroring legacy
+     * {@code comm_0109_001_r002} / {@code IDO.TB_FIRM_BANK_CODE_R002}.
+     * The dictionary is global — not tenant-scoped — so the read does
+     * not consult {@link TenantContext}.
+     *
+     * <p><b>Why this is not a plain {@code WHERE ANT_DIV_CD IN
+     * ('NAPAS','CITAD')} read.</b> {@code TB_FIRM_BANK_CODE} stores one
+     * CITAD row per <em>branch</em> (~3,000 rows), so a flat read
+     * repeated each bank once per branch — e.g. "ABBank" appeared ~29
+     * times in the dropdown. Legacy {@code R002} avoids this by:
+     * <ol>
+     *   <li>filtering CITAD to headquarters rows only
+     *       ({@code BANK_BRANCH_DIV='1'} — its {@code CITAD_BKCD} CTE);</li>
+     *   <li>deduping by {@code ENG_ABRVAT_NM} across NAPAS + CITAD, with
+     *       NAPAS preferred for display + routing (its three-way UNION:
+     *       both / CITAD-only / NAPAS-only).</li>
+     * </ol>
+     *
+     * <p>In the flat {@link ContactBankRow} wire shape (one bank code +
+     * one division per row) that collapses to: every active NAPAS row
+     * ({@code status='Y'} — the recipient Lookup flow is available, per
+     * legacy {@code CASE WHEN NAPAS_CD IS NOT NULL THEN 'Y'}) plus every
+     * active CITAD headquarters row whose abbreviation is <em>not</em>
+     * already covered by NAPAS ({@code status='N'} — manual Recipient
+     * Name entry). NAPAS abbreviations are unique, so each NAPAS bank is
+     * a single entry. {@code status} therefore encodes NAPAS
+     * availability (legacy {@code R002.STATUS}), not the {@code BANK_STAS}
+     * active flag — {@code BANK_STAS='1'} is applied as a filter here,
+     * matching legacy.
      */
     @Transactional(readOnly = true)
     public ContactBankListResponse listBanks() {
-        List<TbFirmBankCode> rows = bankCodeRepo
-                .findByAntDivCdInOrderByEngAbrvatNmAscBankCdAsc(List.of("NAPAS", "CITAD"));
-        List<ContactBankRow> out = new ArrayList<>(rows.size());
-        for (TbFirmBankCode r : rows) {
-            out.add(new ContactBankRow(
-                    r.getBankCd(),
-                    r.getAntDivCd(),
-                    r.getBankNm(),
-                    r.getBankEngNm(),
-                    r.getEngAbrvatNm(),
-                    normaliseBankStatus(r.getBankStas())));
-        }
-        return new ContactBankListResponse(out);
-    }
+        List<TbFirmBankCode> napasRows =
+                bankCodeRepo.findByAntDivCdAndBankStas("NAPAS", "1");
+        List<TbFirmBankCode> citadHqRows =
+                bankCodeRepo.findByAntDivCdAndBankBranchDivAndBankStas("CITAD", "1", "1");
 
-    /**
-     * Map DB {@code BANK_STAS} (legacy stores {@code '1'}/{@code '0'},
-     * some rows {@code 'Y'}/{@code 'N'}, others null) to the
-     * {@code 'Y'}/{@code 'N'} vocabulary the legacy popup at
-     * {@code comm_0184_002.ts:84} checks against — drives the
-     * verified-vs-manual recipient toggle.
-     */
-    private static String normaliseBankStatus(String raw) {
-        if (raw == null) return null;
-        String trimmed = raw.trim();
-        if (trimmed.isEmpty()) return null;
-        if ("1".equals(trimmed) || "Y".equalsIgnoreCase(trimmed)) return "Y";
-        if ("0".equals(trimmed) || "N".equalsIgnoreCase(trimmed)) return "N";
-        return trimmed;
+        Set<String> napasAbbrevs = new HashSet<>();
+        for (TbFirmBankCode r : napasRows) {
+            if (r.getEngAbrvatNm() != null) {
+                napasAbbrevs.add(r.getEngAbrvatNm());
+            }
+        }
+
+        List<ContactBankRow> out =
+                new ArrayList<>(napasRows.size() + citadHqRows.size());
+        for (TbFirmBankCode r : napasRows) {
+            out.add(new ContactBankRow(
+                    r.getBankCd(), "NAPAS",
+                    r.getBankNm(), r.getBankEngNm(), r.getEngAbrvatNm(), "Y"));
+        }
+        for (TbFirmBankCode r : citadHqRows) {
+            // A bank reachable via NAPAS is presented as its NAPAS entry
+            // (legacy prioritises NAPAS for display + the saved code) — so
+            // skip the CITAD duplicate. Only CITAD-exclusive banks remain.
+            if (r.getEngAbrvatNm() != null && napasAbbrevs.contains(r.getEngAbrvatNm())) {
+                continue;
+            }
+            out.add(new ContactBankRow(
+                    r.getBankCd(), "CITAD",
+                    r.getBankNm(), r.getBankEngNm(), r.getEngAbrvatNm(), "N"));
+        }
+
+        // Legacy R002 ORDER BY ENG_ABRVAT_NM ASC, COALESCE(CITAD_CD, NAPAS_CD).
+        out.sort(Comparator
+                .comparing((ContactBankRow b) -> b.engAbrvatNm() == null ? "" : b.engAbrvatNm(),
+                        String.CASE_INSENSITIVE_ORDER)
+                .thenComparing(b -> b.bankCd() == null ? "" : b.bankCd()));
+        return new ContactBankListResponse(out);
     }
 
     /**

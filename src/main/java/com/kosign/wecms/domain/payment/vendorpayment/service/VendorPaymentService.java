@@ -914,9 +914,14 @@ public class VendorPaymentService {
         mstr.setModDtm(nowDtm);
         exptResolMstrRepository.save(mstr);
 
-        // Write doc_no back to SCDUL_PYMN_SUMR so the list query can surface it
-        master.setErpFileNum(docNo);
-        sumrRepository.save(master);
+        // DOC_NO is NOT back-stamped onto SCDUL_PYMN_SUMR — its canonical
+        // home is EXPT_RESOL_MSTR.DOC_NO (written above). The list and detail
+        // views resolve doc_no from EXPT_RESOL_MSTR by APPR_SEQ_NO.
+        // SCDUL_PYMN_SUMR.ERP_FILE_NUM is legacy varchar(8) holding the
+        // 8-digit ERP file sequence number — overloading it with the
+        // {prefix}_{YYMMDD}_{NNN} doc_no overflowed the column (WBE_DB 500)
+        // and drifted from the legacy schema. Left untouched here, matching
+        // InternalTransferService#stampApproval.
 
         // 3. Write EXPT_RESOL_APPRVR_INFM rows — first approver "P" (active), rest "W" (waiting)
         List<RequestApprovalRequest.ApproverInput> approvers = req.approvers();
@@ -1029,7 +1034,8 @@ public class VendorPaymentService {
         approvalBoxFanoutService.withdrawApproval(apprSeqNo);
 
         master.setApprSeqNo(null);
-        master.setErpFileNum(null);
+        // ERP_FILE_NUM is no longer used to carry doc_no (see stampApproval);
+        // nothing to clear here — its legacy ERP file sequence stays intact.
         master.setModDtm(OffsetDateTime.now(clock).format(DTM14));
         String userId = TenantContext.currentUserId();
         if (userId != null) master.setModId(userId);

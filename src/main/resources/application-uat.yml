@@ -24,6 +24,11 @@ wecms:
     # 00301 hand-off after a committed File-path dispatch (TransferDispatchExecutor
     # → BulkReceptionService.receive). Keep false until SFTP+EFS are live.
     auto-receive: ${WECMS_DISPATCH_AUTO_RECEIVE:false}
+    # Real-time 202 dispatch (NAPAS_REAL_TIME_BATCH; VND/API path). Default false. Enable
+    # ONLY in the env that owns the real-time 202 write path, once VAN keys (B2) exist.
+    realtime-dispatch: ${WECMS_DISPATCH_REALTIME_DISPATCH:false}
+    # Depositor-name inquiry (WGVN_EFS_201; port of WB_00000100). Default false.
+    recipient-inquiry: ${WECMS_DISPATCH_RECIPIENT_INQUIRY:false}
     # Result-check poll (PROCESSING_RESULT_CHECK_BATCH). "-" = never fire. Enable
     # ONLY in the env that owns the real-time 202 write path (see Part B).
     result-check:

@@ -110,6 +110,23 @@ class RecipientLookupServiceTest {
     }
 
     @Test
+    void invalid_vv_throws_business_exception_before_mapping() throws Exception {
+        when(vanApiKeyService.getApiKey("ORG000001")).thenReturn(TEST_KEY);
+        // RC=0000 but the response VV does not match the EV — verifyVv must reject
+        // before the EV is decrypted/mapped (legacy SecurityUtil.VerifyMac, G003).
+        String respJson = mapper.writeValueAsString(new Efs201Response("NGUYEN VAN A", "NAPAS"));
+        String ev = crypto.encryptEv(respJson, TEST_KEY, "20240101000000");
+        String mismatchedVv = crypto.buildVv("a-completely-different-payload", TEST_KEY);
+        EfsEnvelope resp = new EfsEnvelope("ORG000001", null, "20240101000000", "TNO-RESP",
+                ev, mismatchedVv, "AES", "HmacSHA256", "0000", "OK");
+        when(efsApiClient.send(eq(EfsApiClient.EFS_201), any())).thenReturn(resp);
+
+        assertThatThrownBy(() -> service().lookup(cmd()))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo("WBE_EFS_GATEWAY_ERROR");
+    }
+
+    @Test
     void missing_api_key_propagates_b2_failure_without_calling_gateway() {
         // VanApiKeyService throws (B2 — TB_VAN_API_INFO.API_KEY not provisioned).
         when(vanApiKeyService.getApiKey("ORG000001"))

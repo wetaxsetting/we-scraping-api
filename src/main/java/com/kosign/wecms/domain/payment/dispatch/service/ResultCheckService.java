@@ -8,8 +8,10 @@ import com.kosign.wecms.domain.payment.dispatch.van.client.EfsProperties;
 import com.kosign.wecms.domain.payment.dispatch.van.client.VanApiKeyService;
 import com.kosign.wecms.domain.payment.dispatch.van.crypto.EfsCryptoService;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmTran;
+import com.kosign.wecms.domain.payment.dispatch.entity.TbPayTarget;
 import com.kosign.wecms.domain.payment.dispatch.enums.ProcStat;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbFirmTranRepository;
+import com.kosign.wecms.domain.payment.dispatch.repository.TbPayTargetRepository;
 import com.kosign.wecms.domain.payment.dispatch.van.dto.Efs203Request;
 import com.kosign.wecms.domain.payment.dispatch.van.dto.Efs203Response;
 import com.kosign.wecms.domain.payment.dispatch.van.dto.EfsEnvelope;
@@ -73,6 +75,7 @@ public class ResultCheckService {
     private final EfsProperties efsProperties;
     private final ObjectMapper objectMapper;
     private final TbFirmTranRepository tbFirmTranRepository;
+    private final TbPayTargetRepository tbPayTargetRepository;
 
     /**
      * Confirm the true outcome of an original transaction via {@code WGVN_EFS_203}.
@@ -140,10 +143,11 @@ public class ResultCheckService {
      * traffic explicitly sets {@code wecms.dispatch.result-check.cron}, so the
      * refactor never co-processes live rows on the shared dev DB by accident.
      *
-     * <p><b>Scope note:</b> the {@code TB_PAY_TARGET} status propagation (the
-     * originating API-path row) is NOT done here — the {@code TB_FIRM_TRAN ↔
-     * TB_PAY_TARGET} link is owned by the real-time 202 write seam (D2/D3), which is
-     * not yet wired; this pass settles the firm-transaction ledger only.
+     * <p><b>Scope note (C4, 2026-06-13):</b> the 203-confirmed status is now
+     * propagated to the originating {@code TB_PAY_TARGET} row as well as the
+     * {@code TB_FIRM_TRAN} ledger — see {@link #propagateToPayTarget}. The link is
+     * the shared {@code (BIZ_KEY, TRAN_DT, TRAN_SEQ)} triple the C2 write seam
+     * established (the 202 firm-tran row reuses the pay-target {@code TRAN_SEQ}).
      */
     public void runOnce() {
         LocalDateTime now = LocalDateTime.now(ICT);
@@ -172,25 +176,70 @@ public class ResultCheckService {
         }
     }
 
-    /** Issue the 203 inquiry for one aged 202 row and persist the confirmed outcome.
-     *  The single {@code save()} (a detached-entity merge) is atomic on its own. */
+    /**
+     * Issue the 203 inquiry for one aged 202 row, persist the confirmed outcome on
+     * the original {@code TB_FIRM_TRAN} row, and propagate it to the originating
+     * {@code TB_PAY_TARGET} row (C4).
+     *
+     * <p>The 203 transport failure path is handled by {@link #inquire} throwing
+     * before any write — so neither table is touched and the row is retried next
+     * pass (requirement 3). The {@code TB_FIRM_TRAN} and {@code TB_PAY_TARGET}
+     * writes are separate {@code save()} merges (matching the existing non-tx poll
+     * design); a missing pay-target row is logged and skipped, never failing the
+     * firm-tran update or the rest of the batch (requirement 4).
+     */
     private void reflectOutcome(TbFirmTran row) {
         ResultCheckInquiryResult res = inquire(new ResultCheckInquiryCommand(
                 row.getVanOrgCd(), row.getOutBankCd(), row.getBankPrtnId(),
                 row.getTranDt(), row.getTranSeq(), row.getWdrlActNo()));
 
         boolean success = FirmBankingResultCd.isSuccess(res.orgRespCd());
+        String procStat = success ? ProcStat.SUCC.code() : ProcStat.FAIL.code();
+        String dttm14 = LocalDateTime.now(ICT).format(RQ_DTIME_FMT);
+
+        // 1. Original 202 firm-tran row (legacy TB_FIRM_TRAN_U004).
         row.setOrgRespCd(res.orgRespCd());
         row.setOrgRespMsg(res.orgRespMsg());
-        row.setProcStat(success ? ProcStat.SUCC.code() : ProcStat.FAIL.code());
-        row.setRsDttm(LocalDateTime.now(ICT).format(RQ_DTIME_FMT));
+        row.setProcStat(procStat);
+        row.setRsDttm(dttm14);
         if (!success) {
             row.setRsCd(res.orgRespCd());
             row.setRsMsg(res.orgRespMsg());
         }
         tbFirmTranRepository.save(row);
+
+        // 2. C4 — propagate to the originating TB_PAY_TARGET (legacy TB_PAY_TARGET_U001).
+        //    The C2 write seam reuses the pay-target TRAN_SEQ as the 202 firm-tran PK,
+        //    so the link is the shared (BIZ_KEY, TRAN_DT, TRAN_SEQ) triple.
+        propagateToPayTarget(row, procStat, dttm14, res.fincMdaOwnerNm());
+
         log.info("result-check: tranSeq={} confirmed orgRespCd={} -> PROC_STAT={}",
-                row.getTranSeq(), res.orgRespCd(), row.getProcStat());
+                row.getTranSeq(), res.orgRespCd(), procStat);
+    }
+
+    /**
+     * Reflect the 203-confirmed status onto the originating {@code TB_PAY_TARGET}
+     * row (legacy {@code TB_PAY_TARGET_U001}, keyed by the original transaction's
+     * {@code (BIZ_KEY, TRAN_DT, TRAN_SEQ)}). A missing row is logged and skipped —
+     * the firm-tran ledger update already stands and the batch continues.
+     */
+    private void propagateToPayTarget(TbFirmTran row, String procStat, String dttm14, String ownerNm) {
+        TbPayTarget pay = tbPayTargetRepository
+                .findByBizKeyAndTranDtAndTranSeq(row.getBizKey(), row.getTranDt(), row.getTranSeq())
+                .orElse(null);
+        if (pay == null) {
+            log.warn("result-check: no TB_PAY_TARGET for bizKey={} tranDt={} tranSeq={} — "
+                            + "firm-tran updated, pay-target propagation skipped",
+                    row.getBizKey(), row.getTranDt(), row.getTranSeq());
+            return;
+        }
+        pay.setProcStat(procStat);
+        pay.setProcDttm(dttm14);
+        if (StringUtils.hasText(ownerNm)) {
+            pay.setFincMdaOwnerNm(ownerNm); // legacy U001 coalesce — only overwrite when present
+        }
+        tbPayTargetRepository.save(pay);
+        log.info("result-check: TB_PAY_TARGET propagated tranSeq={} -> PROC_STAT={}", row.getTranSeq(), procStat);
     }
 
     private void validate(ResultCheckInquiryCommand cmd) {

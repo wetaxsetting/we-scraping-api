@@ -32,6 +32,8 @@ server:
 wecms:
   dispatch:
     auto-receive: ${WECMS_DISPATCH_AUTO_RECEIVE:false}
+    realtime-dispatch: ${WECMS_DISPATCH_REALTIME_DISPATCH:false}
+    recipient-inquiry: ${WECMS_DISPATCH_RECIPIENT_INQUIRY:false}
     result-check:
       cron: ${WECMS_DISPATCH_RESULT_CHECK_CRON:-}
     callback:

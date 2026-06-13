@@ -85,6 +85,11 @@ wecms:
     # false → File-path batches stay PROC_STAT='9' (legacy behaviour) until SFTP (B4)
     # + EFS (B1/B2) are provisioned. Turn on only with the gateway fully configured.
     auto-receive: ${WECMS_DISPATCH_AUTO_RECEIVE:false}
+    # Real-time 202 dispatch (port of NAPAS_REAL_TIME_BATCH; VND/API path). Default false
+    # → pay-target rows stay PROC_STAT='9' until VAN keys (B2) + EFS (B1) are provisioned.
+    realtime-dispatch: ${WECMS_DISPATCH_REALTIME_DISPATCH:false}
+    # Depositor-name inquiry (WGVN_EFS_201; port of WB_00000100). Default false.
+    recipient-inquiry: ${WECMS_DISPATCH_RECIPIENT_INQUIRY:false}
     # Result-check poll (port of PROCESSING_RESULT_CHECK_BATCH). Cron defaults to "-"
     # (never fire) so the refactor never co-processes live 202 rows on the shared dev
     # DB; set a cron only in the env that owns the real-time traffic. Runs every minute

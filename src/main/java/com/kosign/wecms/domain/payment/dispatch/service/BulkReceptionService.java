@@ -47,6 +47,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 
@@ -83,13 +84,26 @@ import java.util.UUID;
  * deviation from legacy, documented: legacy ran SFTP/API outside the DB tx; here
  * they run inside it — acceptable for low-volume R&D.)
  *
+ * <h2>Branch-split into multiple files (C5, ported 2026-06-13)</h2>
+ * When {@code TB_FIRM_CONF.BAT_TRAN_BRANCH_DIV='Y'} and the detail count exceeds
+ * {@code BAT_TRAN_BRANCH_LIMIT}, the request is split into
+ * {@code ceil(reqCnt / limit)} files of at most {@code limit} rows each — the
+ * refactor of legacy {@code calculateBatchDivision} + the per-file dispatch loop in
+ * {@code FILE_DEPOSIT_TRANSFER_BATCH1}. Each split file is fully independent: its own
+ * consecutive file round, {@code FIRM_FILE_NM}, {@code TB_FIRM_FILE_MST} /
+ * {@code TB_FIRM_FILE_DATA} rows (line sequence restarts at 1 per file), fixed-length
+ * file, SFTP upload, 00301 audit, and EFS 301 call. The non-split path is the special
+ * case {@code loopCnt=1} and is byte-for-byte unchanged. A per-file failure marks the
+ * shared pay-file FAIL and stops the batch (legacy {@code R004} skip parity — once the
+ * pay-file is FAIL, every remaining sibling is skipped). The whole {@code receive()}
+ * is one transaction, so a build that throws before the EFS leg rolls back entirely —
+ * no partial/oversized files.
+ *
  * <h2>Deferred (NOT in this phase — documented blockers)</h2>
  * The full BATCH1 pre-flight is intentionally out of scope: channel-mix validation
  * (EBANK/VCB/CITAD/NAPAS rules), the operating-hours gate
- * ({@code TB_BATCH_SCHEDULE_*}), <b>branch-split into multiple files</b>
- * ({@code BAT_TRAN_BRANCH_DIV}/{@code _LIMIT} — a request that would split throws
- * and the whole unit rolls back, never producing a partial/oversized file), and
- * Slack alerting ({@code MsgSendUtil}). These port in a later phase.
+ * ({@code TB_BATCH_SCHEDULE_*}), and Slack alerting ({@code MsgSendUtil}). These port
+ * in a later phase.
  */
 @Slf4j
 @Service
@@ -153,40 +167,88 @@ public class BulkReceptionService {
                         "TB_FIRM_CONF missing for bizKey=" + bizKey + " outBankCd=" + pay.getOutBankCd()
                                 + " wdrlActNo=" + pay.getWdrlActNo()));
 
-        // 3. Load detail rows.
-        List<TbPayFileData> details = payFileDataRepository.findByBizKeyAndTranDtAndFileSeqNo(bizKey, tranDt, fileSeqNo);
+        // 3. Load detail rows (legacy R001 orders by SEQ; sort so split windows are deterministic).
+        List<TbPayFileData> details = new ArrayList<>(
+                payFileDataRepository.findByBizKeyAndTranDtAndFileSeqNo(bizKey, tranDt, fileSeqNo));
         if (details.isEmpty()) {
             throw new IllegalStateException("pay-file has no detail rows: fileSeqNo=" + fileSeqNo);
         }
+        details.sort(Comparator.comparing(TbPayFileData::getSeq));
 
         int reqCnt = details.size();
-        // Branch-split deferred: a request that legacy would split into several files is not
-        // handled in this phase. Throwing rolls back the whole unit — no partial/oversized file.
-        if ("Y".equals(trim(conf.getBatTranBranchDiv())) && conf.getBatTranBranchLimit() != null
-                && BigDecimal.valueOf(reqCnt).compareTo(conf.getBatTranBranchLimit()) > 0) {
-            throw new UnsupportedOperationException(
-                    "branch-split not implemented (reqCnt=" + reqCnt + " > limit="
-                            + conf.getBatTranBranchLimit().toBigInteger() + ") — deferred to a later phase");
-        }
-        BigDecimal reqAmt = details.stream()
-                .map(TbPayFileData::getTranAmt)
-                .filter(a -> a != null)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        // 4. Branch-split division (legacy calculateBatchDivision): split into
+        //    ceil(reqCnt/limit) files of `chunkSize` rows when BAT_TRAN_BRANCH_DIV='Y'
+        //    and reqCnt > limit; otherwise one file of all rows.
+        int[] division = calculateBatchDivision(conf.getBatTranBranchDiv(), reqCnt, conf.getBatTranBranchLimit());
+        int loopCnt = division[0];
+        int chunkSize = division[1];
 
         LocalDateTime now = LocalDateTime.now(ICT);
         String dttm14 = now.format(DTTM14_FMT);
         String tranTm = now.format(TRAN_TM_FMT);
 
-        // 4. File round + name (legacy R002 MAX+1; filename S_{VAN}_{TYPE}_{round}_{date}).
-        String fileSeq = nextFileRound(tranDt, pay.getOutBankCd(), pay.getBankPrtnId());
-        String fileName = "S_" + conf.getVanOrgCd() + "_" + trim(conf.getFileType()) + "_" + fileSeq + "_" + tranDt;
-
-        // 5. Mark the pay-file in-process (legacy U001 → PROC_STAT='6').
+        // 5. Mark the pay-file in-process once (legacy U001 → PROC_STAT='6', before the loop).
         pay.setProcStat(ProcStat.REQ.code());
         pay.setProcDttm(dttm14);
         payFileMstRepository.save(pay);
 
-        // 6. Insert TB_FIRM_FILE_MST at PROC_STEP=0 / PROC_STAT=6.
+        // 6. Base file round (legacy R002 MAX+1). Computed once; split file i uses base+i so the
+        //    rounds stay consecutive without depending on intra-transaction flush visibility.
+        int baseRound = nextFileRound(tranDt, pay.getOutBankCd(), pay.getBankPrtnId());
+
+        if (loopCnt > 1) {
+            log.info("00301 branch-split bizKey={} fileSeqNo={} reqCnt={} -> {} files of <= {} rows",
+                    bizKey, fileSeqNo, reqCnt, loopCnt, chunkSize);
+        }
+
+        // 7. Build + dispatch each split file independently (legacy per-file loop).
+        for (int i = 0; i < loopCnt; i++) {
+            int from = i * chunkSize;
+            int to = Math.min(from + chunkSize, reqCnt);
+            List<TbPayFileData> window = details.subList(from, to);
+            String fileSeq = String.format("%03d", baseRound + i);
+
+            boolean ok = buildAndDispatchFile(pay, conf, tranDt, bizKey, fileSeqNo, window, fileSeq, dttm14, tranTm);
+            if (!ok) {
+                // Legacy parity (R004 skip, added 2025.09.10): once a split file fails the shared
+                // pay-file is FAIL, so every remaining sibling would be skipped — stop the batch.
+                log.warn("00301 branch-split aborted after a failed file — pay-file FAIL bizKey={} fileSeqNo={}",
+                        bizKey, fileSeqNo);
+                break;
+            }
+        }
+    }
+
+    /**
+     * Build, persist, upload, audit and 00301-dispatch ONE firm-banking file for the
+     * given detail {@code window}. Shared by the single-file and branch-split paths
+     * (the single-file path is just {@code window == all details}).
+     *
+     * <p>Inserts {@code TB_FIRM_FILE_MST} (PROC_STEP=0/PROC_STAT=6) + one
+     * {@code TB_FIRM_FILE_DATA} per window row (line sequence restarts at 1), encodes
+     * the fixed-length file, SFTP-uploads it, audits 00301 before the call, then issues
+     * EFS 301. On SFTP or EFS failure both the firm file and the pay-file are marked
+     * FAIL (no advance) and {@code false} is returned; the EFS error is NOT rethrown
+     * (legacy parity — the FAIL state commits).
+     *
+     * @return {@code true} when the file was uploaded and 00301 accepted; {@code false}
+     *         on an SFTP/EFS failure (caller stops the batch).
+     */
+    private boolean buildAndDispatchFile(TbPayFileMst pay, TbFirmConf conf, String tranDt, String bizKey,
+                                         String fileSeqNo, List<TbPayFileData> window, String fileSeq,
+                                         String dttm14, String tranTm) {
+        int reqCnt = window.size();
+        BigDecimal reqAmt = window.stream()
+                .map(TbPayFileData::getTranAmt)
+                .filter(a -> a != null)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        // Filename S_{VAN}_{TYPE}_{round}_{date} — the per-file round makes each split file's
+        // FIRM_FILE_NM (and therefore its MST/DATA primary keys) unique.
+        String fileName = "S_" + conf.getVanOrgCd() + "_" + trim(conf.getFileType()) + "_" + fileSeq + "_" + tranDt;
+
+        // Insert TB_FIRM_FILE_MST at PROC_STEP=0 / PROC_STAT=6.
         TbFirmFileMst mst = new TbFirmFileMst();
         mst.setTranDt(tranDt);
         mst.setBizKey(bizKey);
@@ -207,10 +269,10 @@ public class BulkReceptionService {
         mst.setRegDttm(dttm14);
         firmFileMstRepository.save(mst);
 
-        // 7. Insert TB_FIRM_FILE_DATA rows + build the fixed-length D records.
+        // Insert TB_FIRM_FILE_DATA rows + build the fixed-length D records (line seq restarts at 1).
         List<DepositData> dataLines = new ArrayList<>(reqCnt);
         int seq = 0;
-        for (TbPayFileData d : details) {
+        for (TbPayFileData d : window) {
             seq++;
             BigDecimal lineSeq = BigDecimal.valueOf(seq);
 
@@ -270,25 +332,25 @@ public class BulkReceptionService {
 
         byte[] fileBytes = fixedLengthCodec.encode(header, dataLines, trailer);
 
-        // 8. Write the local staging file.
+        // Write the local staging file.
         String localPath = writeLocalFile(fileName, fileBytes);
 
-        // 9. SFTP upload — on failure mark FAIL (no advance) and stop.
+        // SFTP upload — on failure mark FAIL (no advance) and stop the batch.
         String remotePath = joinPath(sftpProperties.getRemoteUploadPath(), fileName);
         try {
             sftpClient.upload(localPath, remotePath);
         } catch (RuntimeException e) {
             log.error("00301 SFTP upload failed fileNm={} — marking FAIL", fileName, e);
             failBoth(pay, mst, FirmBankingResultCd.ETC_ERR, "SFTP upload failed", dttm14);
-            return;
+            return false;
         }
 
-        // 10. Audit the 00301 leg BEFORE the call.
+        // Audit the 00301 leg BEFORE the call.
         String[] amt = splitAmount(reqAmt);
         TbFirmBatApiTran audit = writeApiTran(mst, tranDt, tranTm, ApiTranTp.BULK_RECEPTION.code(),
                 mst.getReqCnt(), mst.getReqAmt());
 
-        // 11. Issue EFS 00301.
+        // Issue EFS 00301.
         try {
             issueReception(new BulkReceptionApiCommand(
                     conf.getVanOrgCd(), pay.getOutBankCd(), conf.getBankPrtnId(),
@@ -301,6 +363,7 @@ public class BulkReceptionService {
             // Success: TB_FIRM_FILE_MST stays at PROC_STEP=0/PROC_STAT=6 — the 0→1 advance
             // is the 01301 callback's job. No unsafe advance here.
             log.info("00301 reception requested fileNm={} bizKey={} cnt={}", fileName, bizKey, reqCnt);
+            return true;
         } catch (BusinessException e) {
             String rc = e.getArgs() != null && e.getArgs().length > 0 && e.getArgs()[0] != null
                     ? e.getArgs()[0].toString() : FirmBankingResultCd.ETC_ERR;
@@ -311,7 +374,34 @@ public class BulkReceptionService {
             failBoth(pay, mst, rc, "EFS 00301 failed: " + e.getCode(), dttm14);
             log.warn("00301 reception failed (rc={}) fileNm={} — FAIL recorded, no advance", rc, fileName);
             // Do NOT rethrow — commit the FAIL state (legacy parity).
+            return false;
         }
+    }
+
+    /**
+     * Branch-split division — refactor of legacy
+     * {@code FILE_DEPOSIT_TRANSFER_BATCH1.calculateBatchDivision}.
+     *
+     * <p>Returns {@code [loopCnt, chunkSize]}. When {@code BAT_TRAN_BRANCH_DIV='Y'} and
+     * {@code reqCnt > limit}, the request splits into {@code ceil(reqCnt / limit)} files
+     * of at most {@code limit} rows each. Otherwise a single file of all {@code reqCnt}
+     * rows.
+     *
+     * <p><b>Defensive deviation from legacy:</b> a null or non-positive limit is treated
+     * as "no split" rather than reaching {@code ceil(reqCnt / 0)} (legacy
+     * {@code Math.ceil(reqCnt / 0.0)} would overflow to a huge {@code int}). A
+     * misconfigured limit therefore degrades to the safe single-file path instead of
+     * producing an absurd file count.
+     */
+    private int[] calculateBatchDivision(String branchDiv, int reqCnt, BigDecimal branchLimit) {
+        if ("Y".equals(trim(branchDiv)) && branchLimit != null) {
+            int limit = branchLimit.intValue();
+            if (limit > 0 && reqCnt > limit) {
+                int loopCnt = (int) Math.ceil((double) reqCnt / limit);
+                return new int[] {loopCnt, limit};
+            }
+        }
+        return new int[] {1, reqCnt};
     }
 
     /** Mark both the firm file ({@code PROC_STEP=0/PROC_STAT=3}) and the pay file ({@code '3'}) failed. */
@@ -346,8 +436,8 @@ public class BulkReceptionService {
         return firmBatApiTranRepository.save(row);
     }
 
-    /** Next file round for the bank/partner group, zero-padded to 3 (legacy R002 MAX+1). */
-    private String nextFileRound(String tranDt, String outBankCd, String bankPrtnId) {
+    /** Next file round (MAX existing + 1) for the bank/partner group (legacy R002 MAX+1). */
+    private int nextFileRound(String tranDt, String outBankCd, String bankPrtnId) {
         int max = firmFileMstRepository.findByTranDtAndOutBankCdAndBankPrtnId(tranDt, outBankCd, bankPrtnId).stream()
                 .map(TbFirmFileMst::getFileSeq)
                 .filter(StringUtils::hasText)
@@ -359,7 +449,7 @@ public class BulkReceptionService {
                     }
                 })
                 .max().orElse(0);
-        return String.format("%03d", max + 1);
+        return max + 1;
     }
 
     /** Write the generated file to the local staging dir (or the JVM temp dir if unset). */

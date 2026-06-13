@@ -111,6 +111,26 @@ public class RealtimeTransferService {
         // path the FX fields stay empty strings (legacy NAPAS_REAL_TIME_BATCH.java:329-413
         // initialises them to "" and always includes them in param_202:553-565).
         Efs204Response fx = isWooriFxTransfer(cmd) ? inquireFxRate(cmd, apiKey, id) : null;
+        return transfer(cmd, fx);
+    }
+
+    /**
+     * Execute a real-time single transfer with a <b>pre-fetched</b> {@code WGVN_EFS_204}
+     * FX result (or {@code null} for the ordinary domestic-VND path).
+     *
+     * <p>Used by {@link RealtimeDispatchService} on the Woori / non-VND path, where the
+     * 204 inquiry has already run (and been persisted as a {@code TRAN_TP='204'}
+     * {@code TB_FIRM_TRAN} audit row) <i>before</i> the 202 row is created — so the 204
+     * is never fired twice. The 202 logic here is identical to the single-arg
+     * {@link #transfer(RealtimeTransferCommand)}; only the source of the FX block
+     * differs (caller-supplied vs fetched inline).
+     */
+    public RealtimeTransferResult transfer(RealtimeTransferCommand cmd, Efs204Response fx) {
+        validate(cmd);
+
+        String apiKey = vanApiKeyService.getApiKey(cmd.vanOrgCd());
+        String id = StringUtils.hasText(efsProperties.getPartnerId())
+                ? efsProperties.getPartnerId() : cmd.vanOrgCd();
 
         Efs202Request request = new Efs202Request(
                 cmd.bankCd(), cmd.prtnId(), cmd.currenCd(), cmd.amt(), cmd.dcmAmt(),
@@ -194,9 +214,29 @@ public class RealtimeTransferService {
      * ({@code BANK_CD_WOORI.equals(OUT_BANK_CD) && !"VND".equals(ccy)}), including
      * the legacy default of treating a blank transfer currency as {@code VND}.
      */
-    private boolean isWooriFxTransfer(RealtimeTransferCommand cmd) {
+    public boolean isWooriFxTransfer(RealtimeTransferCommand cmd) {
         String ccy = StringUtils.hasText(cmd.currenCd()) ? cmd.currenCd() : CURRENCY_VND;
         return BANK_CD_WOORI.equals(cmd.bankCd()) && !CURRENCY_VND.equals(ccy);
+    }
+
+    /**
+     * Run the {@code WGVN_EFS_204} applied-rate inquiry as a standalone, persistable
+     * step (resolving the per-VAN key + envelope id internally). Used by
+     * {@link RealtimeDispatchService} so the 204 audit row ({@code TRAN_TP='204'}) +
+     * {@code TB_PAY_TARGET} FX columns can be written before the 202 — exactly the
+     * legacy {@code NAPAS_REAL_TIME_BATCH} order. Delegates to the same inquiry body
+     * the inline 202 path uses, so the 204 EFS logic is unchanged.
+     *
+     * @return the FX response on {@code RC=0000}
+     * @throws BusinessException ({@code WBE_EFS_GATEWAY_ERROR}) on a non-{@code 0000}
+     *                           / no-response 204 (carries the gateway RC as arg[0])
+     */
+    public Efs204Response inquireFxRate(RealtimeTransferCommand cmd) {
+        validate(cmd);
+        String apiKey = vanApiKeyService.getApiKey(cmd.vanOrgCd());
+        String id = StringUtils.hasText(efsProperties.getPartnerId())
+                ? efsProperties.getPartnerId() : cmd.vanOrgCd();
+        return inquireFxRate(cmd, apiKey, id);
     }
 
     /**

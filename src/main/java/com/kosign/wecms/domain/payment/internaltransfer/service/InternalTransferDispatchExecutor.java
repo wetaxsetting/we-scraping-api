@@ -12,6 +12,7 @@ import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileMstRepositor
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayTargetRepository;
 import com.kosign.wecms.domain.payment.dispatch.service.DispatchAutoReceiveRegistrar;
 import com.kosign.wecms.domain.payment.dispatch.service.DispatchKeyGenerator;
+import com.kosign.wecms.domain.payment.dispatch.service.RealtimeDispatchRegistrar;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumr;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrDetl;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +27,7 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -130,6 +132,9 @@ public class InternalTransferDispatchExecutor {
     private final Clock                   clock;
     private final LegacyFunctionRepository legacyFunctions;
     private final DispatchAutoReceiveRegistrar autoReceiveRegistrar;
+    /** Post-commit real-time 202 hand-off (port of NAPAS_REAL_TIME_BATCH), gated by
+     *  {@code wecms.dispatch.realtime-dispatch}. Used by the VND/API path. */
+    private final RealtimeDispatchRegistrar realtimeDispatchRegistrar;
 
     /**
      * Insert dispatch rows for one Internal-Transfer batch, applying the
@@ -184,8 +189,10 @@ public class InternalTransferDispatchExecutor {
         // G19 (API side): Woori-USD→VND carries USD, everything else VND.
         String trscCcyCd = isWooriUsdToVnd ? CCY_USD : CCY_VND;
 
+        List<String> tranSeqs = new ArrayList<>(lines.size());
         for (ScdulPymnSumrDetl line : lines) {
             String tranSeq = keyGenerator.nextTranSeq(bizKey, tranDt);
+            tranSeqs.add(tranSeq);
 
             TbPayTarget row = new TbPayTarget();
             row.setTranDt(tranDt);
@@ -217,6 +224,10 @@ public class InternalTransferDispatchExecutor {
 
         log.info("feature=internal-transfer dispatch path=API bizKey={} scdulPymnNo={} lines={} trscCcyCd={} wooriUsdVnd={}",
                 bizKey, master.getScdulPymnNo(), lines.size(), trscCcyCd, isWooriUsdToVnd);
+
+        // Hand off to the real-time 202 flow AFTER this transaction commits
+        // (port of NAPAS_REAL_TIME_BATCH; gated, default-off; per-target isolated).
+        realtimeDispatchRegistrar.registerAfterCommit(bizKey, tranDt, tranSeqs);
     }
 
     /* ───────────────── File path (TB_PAY_FILE_MST + DATA) ───────────────── */

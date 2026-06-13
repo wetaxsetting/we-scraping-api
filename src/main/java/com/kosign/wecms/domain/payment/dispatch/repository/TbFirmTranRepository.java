@@ -29,4 +29,14 @@ public interface TbFirmTranRepository
      * date + the 2-minute age window before issuing the 203 inquiry.
      */
     List<TbFirmTran> findByTranTpAndProcStat(String tranTp, String procStat);
+
+    /**
+     * Idempotency guard for the real-time 202 write seam (C2): a firm-tran row
+     * already keyed by {@code (TRAN_DT, BIZ_KEY, TRAN_SEQ)} means the transfer was
+     * already dispatched (the 202 row reuses the originating {@code TB_PAY_TARGET}
+     * {@code TRAN_SEQ} as its own — the legacy {@code dep_seq} link). The PK has no
+     * {@code TRAN_TP} component, and the 204 leg allocates a distinct sequence, so
+     * this triple uniquely identifies the 202 row.
+     */
+    boolean existsByTranDtAndBizKeyAndTranSeq(String tranDt, String bizKey, String tranSeq);
 }
