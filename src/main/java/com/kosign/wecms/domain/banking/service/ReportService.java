@@ -7,10 +7,12 @@ import com.kosign.wecms.domain.banking.dto.DailyFinancialHsReport;
 import com.kosign.wecms.domain.banking.dto.DailyFinancialTransactionsReport;
 import com.kosign.wecms.domain.banking.entity.AcctMstr;
 import com.kosign.wecms.domain.banking.entity.AcctTrnsHstr;
-import com.kosign.wecms.domain.banking.entity.AcctTrnsRcvPayInfm;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
 import com.kosign.wecms.domain.banking.repository.AcctTrnsHstrRepository;
-import com.kosign.wecms.domain.banking.repository.AcctTrnsRcvPayInfmRepository;
+import com.kosign.wecms.domain.banking.repository.DailyFinancialCmcFunctionRepository;
+import com.kosign.wecms.domain.banking.repository.DailyFinancialCmcRec1Row;
+import com.kosign.wecms.domain.banking.repository.DailyFinancialHsReportRepository;
+import com.kosign.wecms.domain.banking.repository.DailyFinancialHsRow;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,30 +22,31 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * Banking Reports service.
  *
- * Real reads — Daily Financial CMC pulls account balances from ACCT_MSTR.
+ * <p><b>Daily Financial CMC</b> — DB-function backed (2026-06-14): reads the
+ * legacy read-only function {@code rept_0015_001_r001_rec1} through
+ * {@link DailyFinancialCmcFunctionRepository} (the function is the source the
+ * legacy {@code DAILY_FINCL_REPT_DAILY_SUMR_DETL} summary table is materialised
+ * from). The prior Java live-recompute (per-account aggregation from
+ * {@code ACCT_TRNS_HSTR} + {@code ACCT_TRNS_RCV_PAY_INFM} + as-of-balance walk)
+ * is removed. No write-on-read, no summary-table read.
  *
- * Stubs — Daily Cash, Daily Financial HS, Cash Flow. All return
- * deterministic Sprint-1 datasets (account ledger from ACCT_MSTR where
- * applicable). The original BUSI_COND_DAILY_SUMR-backed summary path
- * was removed when the table was dropped (V31) for being out of the PROD
- * Active Table Scope; the real source for Sprint 2 is
- * DAILY_CASH_REPT_DAILY_SUMR_DETL / DAILY_FINCL_REPT_DAILY_SUMR_DETL.
+ * <p><b>Daily Financial HS</b> — real DB-backed (DF-2): calls
+ * {@code fn_get_haengsung_daily_financial_report} through
+ * {@link DailyFinancialHsReportRepository}.
  *
- * TODO: Sprint 2 — wire daily-cash summary to DAILY_CASH_REPT_DAILY_SUMR_DETL.
- * TODO: Sprint 2 — replace daily-financial-hs with real
- *       {@code rept_0017_001} ledger query.
- * TODO: Sprint 2 — replace cash-flow with real BCS batch port.
+ * <p><b>Daily Cash</b> — this method is a Sprint-1 stub for the per-currency
+ * summary (account ledger is a real {@code ACCT_MSTR} read). The dedicated
+ * {@code DailyCashReportService} is the real, DB-function-backed Daily Cash
+ * path; this {@code dailyCash(...)} helper is legacy scaffolding.
  */
 @Service
 @RequiredArgsConstructor
@@ -51,26 +54,14 @@ public class ReportService {
 
     private final AcctMstrRepository acctRepo;
     private final AcctTrnsHstrRepository trnsRepo;
-    private final AcctTrnsRcvPayInfmRepository rcvPayRepo;
     private final BankCdResolver bankResolver;
+    private final DailyFinancialHsReportRepository hsReportRepo;
+    private final DailyFinancialCmcFunctionRepository cmcFnRepo;
 
     private static final DateTimeFormatter YMD = DateTimeFormatter.ofPattern("yyyyMMdd");
 
-    /**
-     * Legacy internal-transfer receipt/payment usage codes — verbatim
-     * from {@code rept_0015_001_r001_act.jsp:264-267}
-     * ({@code getDynamic0ForRec2}). A day transaction whose
-     * {@code ACCT_TRNS_RCV_PAY_INFM.RCV_PAY_USAG_CD} is one of these is
-     * an internal transfer; it lands in the INTL_SND / INTL_RCV buckets
-     * instead of the plain SND / RCV buckets (which are disjoint —
-     * legacy footer math {@code INTL_SND_CNT + SND_CNT}).
-     */
-    private static final List<String> INTERNAL_TRANSFER_USAGE_CODES =
-            List.of("4000000008", "6000000062", "4000000104", "6000000061");
-
-    /** Legacy {@code INOUT_DV}: {@code 2} = debit/out, {@code 1} = credit/in. */
-    private static final String INOUT_DEBIT = "2";
-    private static final String INOUT_CREDIT = "1";
+    /** Tenant local currency (VND today). FCY scope excludes it. */
+    private static final String LOCAL_CCY = "VND";
 
     /**
      * ACCT_TYPE_CD partition for the Daily Financial Status header row.
@@ -81,6 +72,10 @@ public class ReportService {
      * Time Deposit) and 01 (Loan) are intentionally excluded — neither
      * the legacy Financial Status block nor the live old-project
      * screenshot surfaces them.
+     *
+     * <p>07/08 are kept by product direction (2026-06-14): the source
+     * function {@code rept_0015_001_r001_rec1} returns KRW current/savings
+     * rows, and they are folded into the current/savings totals here.
      */
     private static final Set<String> CURRENT_ACCOUNT_TYPE_CODES = Set.of("03", "04", "07");
     private static final Set<String> SAVING_ACCOUNT_TYPE_CODES = Set.of("05", "06", "08");
@@ -115,44 +110,39 @@ public class ReportService {
         return new DailyCashReport(asOfDt, currencyScope == null ? "ALL" : currencyScope, summary, List.of(), accountLedger);
     }
 
-    /* ----- Daily Financial (CMC) (real read against seed data) ----- */
+    /* ----- Daily Financial (CMC) — legacy DB function source of truth ----- */
 
     /**
-     * Daily Financial CMC report — date-aware, live-computed (Strategy B,
-     * see {@code docs/features/banking/reports/daily-financial/P0-fix-plan.md}).
+     * Daily Financial CMC report — reads the legacy read-only function
+     * {@code rept_0015_001_r001_rec1(biz_key, req_date, req_date2)} (via
+     * {@link DailyFinancialCmcFunctionRepository}) and projects its rows onto
+     * the wire shape. The function performs the per-account computation legacy
+     * relies on (as-of balance = latest {@code BAL ≤ req_date} else
+     * {@code ACCT_MSTR.BAL}; same-day SND/RCV non-internal counts/amounts;
+     * disjoint INTL_SND/INTL_RCV from {@code ACCT_TRNS_RCV_PAY_INFM}; bank name
+     * via {@code wb_get_bank_nm}; amounts via {@code wb_get_amt}).
      *
-     * <p>The legacy report reads the batch-materialised
-     * {@code DAILY_FINCL_REPT_DAILY_SUMR_DETL}; that table is not in the
-     * refactor DB and the recompute functions are not ported, so the
-     * refactor live-computes the same figures from the in-scope
-     * operational tables:
      * <ul>
-     *   <li><b>Per-account daily aggregates</b> (SND/RCV count+amount and
-     *       the internal variants) — grouped from {@code ACCT_TRNS_HSTR}
-     *       for {@code TRSC_DT = asOf}, with internal classification from
-     *       {@code ACCT_TRNS_RCV_PAY_INFM.RCV_PAY_USAG_CD}.</li>
-     *   <li><b>As-of end-of-day balance</b> — the last {@code BAL} on or
-     *       before {@code asOf} (falls back to {@code ACCT_MSTR.BAL} when
-     *       the account has no history that early).</li>
-     *   <li><b>Financial Status</b> — per-currency current + savings
-     *       totals of those as-of balances; {@code total = current + saving}
+     *   <li><b>Per-account ledger</b> — current + savings accounts
+     *       ({@code 03/04/07} + {@code 05/06/08}); 07/08 KRW kept by product
+     *       direction.</li>
+     *   <li><b>Financial Status</b> — per-currency current + savings totals of
+     *       the function's as-of balances; {@code total = current + saving}
      *       (in-scope: no cash / time-deposit / loan).</li>
      * </ul>
      *
-     * <p>Per-account {@code transactions[]} ({@code REC2_1}) stays empty
-     * (the inline grid is P1/G-3; the transaction-history popup serves the
-     * drill-down). The {@code REC3} currency-flow / cash rollup is
-     * intentionally absent (out of PROD scope).
-     *
-     * @param activeAccountsOnly       maps to legacy {@code ACTV_ACCT_ONLY_YN}.
-     *                                 The active-only finder is always used
-     *                                 today — widening to inactive accounts
-     *                                 when {@code false} is P1/G-6.
+     * @param activeAccountsOnly maps to legacy {@code ACTV_ACCT_ONLY_YN}. The
+     *                           function returns all accounts (active + inactive);
+     *                           when {@code true} the repository filters to
+     *                           {@code ACTV_YN='Y'} (DF-3); when {@code false}
+     *                           inactive accounts are included.
      * @param includeInternalTransfers maps to legacy {@code INCL_INTL_TRNS_YN}.
-     *                                 The internal columns are now populated;
-     *                                 the toggle's exclusion-from-totals
-     *                                 semantics are P1/G-4 (frontend uses the
-     *                                 flag for column visibility only).
+     *                           When {@code false} the internal-transfer columns
+     *                           are emitted as zero so they neither display nor
+     *                           count (DF-4), mirroring legacy's exclusion of
+     *                           internal rows when the toggle is off. The
+     *                           Financial Status is balance-based and unaffected
+     *                           on both sides.
      */
     @Transactional(readOnly = true)
     public DailyFinancialCmcReport dailyFinancial(
@@ -161,56 +151,55 @@ public class ReportService {
             boolean activeAccountsOnly,
             boolean includeInternalTransfers) {
         final String bizKey = TenantContext.currentBizKey();
-        final String asOf = normaliseAsOf(asOfDt);
+        final String reqDate = normaliseAsOf(asOfDt);
+        final String ccyExact = ccyExact(currencyScope);
+        final String ccyExclude = ccyExclude(currencyScope);
+        final String actvFilter = activeAccountsOnly ? "Y" : null; // DF-3
 
-        // Active current/savings accounts (legacy panel scope). G-6
-        // (widen to inactive when activeAccountsOnly=false) is P1.
-        List<AcctMstr> accts = acctRepo.findByBizKeyAndActvYnOrderByBankCdAscAcctNoAsc(bizKey, "Y");
-
-        // Per-account daily debit/credit aggregates for the as-of date.
-        Map<String, DailyAggregate> aggByAccount = computeDailyAggregates(bizKey, asOf);
+        List<DailyFinancialCmcRec1Row> rows =
+                cmcFnRepo.rec1(bizKey, reqDate, reqDate, ccyExact, ccyExclude, actvFilter);
 
         Map<String, BigDecimal> currentByCcy = new LinkedHashMap<>();
         Map<String, BigDecimal> savingByCcy = new LinkedHashMap<>();
         List<DailyFinancialCmcReport.CurrentAccountRow> ledger = new ArrayList<>();
 
-        for (AcctMstr a : accts) {
-            String type = a.getAcctTypeCd() == null ? "" : a.getAcctTypeCd().trim();
+        for (DailyFinancialCmcRec1Row r : rows) {
+            String type = trim(r.getAcctTypeCd());
             boolean isCurrent = CURRENT_ACCOUNT_TYPE_CODES.contains(type);
             boolean isSaving = SAVING_ACCOUNT_TYPE_CODES.contains(type);
-            if (!isCurrent && !isSaving) continue; // in-scope: current + saving only
+            if (!isCurrent && !isSaving) continue; // in-scope: current + saving only (07/08 kept)
 
-            String ccy = a.getCcyCd().trim();
-            if (!matchesScope(currencyScope, ccy)) continue;
+            String ccy = trim(r.getCcyCd());
+            BigDecimal bal = nz(r.getBal());
+            if (isCurrent) currentByCcy.merge(ccy, bal, BigDecimal::add);
+            else           savingByCcy.merge(ccy, bal, BigDecimal::add);
 
-            BigDecimal asOfBal = asOfBalance(bizKey, a, asOf);
-            if (isCurrent) currentByCcy.merge(ccy, asOfBal, BigDecimal::add);
-            else           savingByCcy.merge(ccy, asOfBal, BigDecimal::add);
-
-            DailyAggregate agg = aggByAccount.getOrDefault(
-                    accountKey(a.getBankCd(), a.getAcctNo()), DailyAggregate.EMPTY);
+            // DF-4: when internal transfers are excluded, zero the internal columns
+            // so they neither render nor contribute (legacy parity for the OFF branch).
+            int    intlSndCnt = includeInternalTransfers ? nz(r.getIntlSndCnt()).intValue() : 0;
+            String intlSndAmt = includeInternalTransfers ? AmountFormatter.wire(nz(r.getIntlSndAmt())) : "0";
+            int    intlRcvCnt = includeInternalTransfers ? nz(r.getIntlRcvCnt()).intValue() : 0;
+            String intlRcvAmt = includeInternalTransfers ? AmountFormatter.wire(nz(r.getIntlRcvAmt())) : "0";
 
             ledger.add(new DailyFinancialCmcReport.CurrentAccountRow(
-                    a.getBankCd() + "_" + a.getAcctNo(),
-                    bankResolver.resolveBankNm(a.getBankCd()),
-                    a.getBankCd(),
-                    a.getAcctNo(),
-                    a.getAcctNickNm() != null ? a.getAcctNickNm() : a.getAcctNm(),
+                    r.getBankCd() + "_" + r.getAcctNo(),
+                    r.getBankNm(),
+                    r.getBankCd(),
+                    r.getAcctNo(),
+                    r.getAcctNickNm(),
                     ccy,
                     type,
-                    a.getActvYn(),
-                    agg.sndCnt, AmountFormatter.wire(agg.sndAmt),
-                    agg.intlSndCnt, AmountFormatter.wire(agg.intlSndAmt),
-                    agg.rcvCnt, AmountFormatter.wire(agg.rcvAmt),
-                    agg.intlRcvCnt, AmountFormatter.wire(agg.intlRcvAmt),
-                    AmountFormatter.wire(asOfBal),
+                    r.getActvYn(),
+                    nz(r.getSndCnt()).intValue(), AmountFormatter.wire(nz(r.getSndAmt())),
+                    intlSndCnt, intlSndAmt,
+                    nz(r.getRcvCnt()).intValue(), AmountFormatter.wire(nz(r.getRcvAmt())),
+                    intlRcvCnt, intlRcvAmt,
+                    AmountFormatter.wire(bal),
                     List.of()
             ));
         }
 
-        // Financial Status — per currency, total = current + saving
-        // (in-scope). Iterate the union of currencies that carry a
-        // current or saving account so the order is deterministic.
+        // Financial Status — per currency, total = current + saving (in-scope).
         Set<String> currencies = new LinkedHashSet<>();
         currencies.addAll(currentByCcy.keySet());
         currencies.addAll(savingByCcy.keySet());
@@ -227,7 +216,7 @@ public class ReportService {
         }
 
         return new DailyFinancialCmcReport(
-                asOf,
+                reqDate,
                 currencyScope == null ? "ALL" : currencyScope,
                 activeAccountsOnly,
                 includeInternalTransfers,
@@ -235,7 +224,7 @@ public class ReportService {
                 ledger);
     }
 
-    /* ---- Daily Financial helpers (Strategy B live-compute) ---- */
+    /* ---- Daily Financial CMC helpers ---- */
 
     /** Blank / null {@code asOf} defaults to today (legacy requires REF_DATE). */
     private static String normaliseAsOf(String asOfDt) {
@@ -243,96 +232,20 @@ public class ReportService {
         return asOfDt.trim();
     }
 
-    /** Currency-scope predicate — {@code ALL}/null = any, {@code VND} =
-     *  local only, {@code FCY} = everything except VND. */
-    private static boolean matchesScope(String currencyScope, String ccy) {
-        if (currencyScope == null) return true;
-        if ("VND".equalsIgnoreCase(currencyScope)) return "VND".equals(ccy);
-        if ("FCY".equalsIgnoreCase(currencyScope)) return !"VND".equals(ccy);
-        return true; // ALL or unknown → no narrowing
+    /** Exact-currency pin: {@code VND} → "VND"; ALL / FCY / null → null
+     *  (legacy CMC scope is ALL / FCY / VND). */
+    private static String ccyExact(String currencyScope) {
+        return "VND".equalsIgnoreCase(currencyScope) ? "VND" : null;
     }
 
-    private static String accountKey(String bankCd, String acctNo) {
-        return (bankCd == null ? "" : bankCd) + ' ' + (acctNo == null ? "" : acctNo);
+    /** Currency to exclude: {@code FCY} → local currency; otherwise null. */
+    private static String ccyExclude(String currencyScope) {
+        return "FCY".equalsIgnoreCase(currencyScope) ? LOCAL_CCY : null;
     }
 
-    /**
-     * Group the day's {@code ACCT_TRNS_HSTR} rows into per-account
-     * SND/RCV (+ internal) counts and amounts. A transaction is internal
-     * when its {@code ACCT_SEQ_NO} appears in {@code ACCT_TRNS_RCV_PAY_INFM}
-     * with an internal-transfer usage code. SND/RCV and INTL_SND/INTL_RCV
-     * are disjoint (legacy parity).
-     */
-    private Map<String, DailyAggregate> computeDailyAggregates(String bizKey, String asOf) {
-        List<AcctTrnsHstr> dayRows = trnsRepo.findByBizKeyAndTrscDt(bizKey, asOf);
-        if (dayRows.isEmpty()) return Map.of();
+    private static String trim(String s) { return s == null ? "" : s.trim(); }
 
-        List<String> acctSeqNos = dayRows.stream()
-                .map(AcctTrnsHstr::getAcctSeqNo)
-                .filter(s -> s != null && !s.isBlank())
-                .distinct()
-                .collect(Collectors.toList());
-
-        Set<String> internalSeqNos = acctSeqNos.isEmpty()
-                ? Set.of()
-                : rcvPayRepo.findByBizKeyAndAcctSeqNoInAndRcvPayUsagCdIn(
-                                bizKey, acctSeqNos, INTERNAL_TRANSFER_USAGE_CODES)
-                        .stream()
-                        .map(AcctTrnsRcvPayInfm::getAcctSeqNo)
-                        .collect(Collectors.toSet());
-
-        Map<String, DailyAggregate> byAccount = new HashMap<>();
-        for (AcctTrnsHstr t : dayRows) {
-            DailyAggregate agg = byAccount.computeIfAbsent(
-                    accountKey(t.getBankCd(), t.getAcctNo()), k -> new DailyAggregate());
-            boolean internal = internalSeqNos.contains(t.getAcctSeqNo());
-            agg.add(t.getInoutDv(), t.getTrscAmt(), internal);
-        }
-        return byAccount;
-    }
-
-    /**
-     * End-of-day balance for {@code account} as of {@code asOf}: the
-     * {@code BAL} of the latest {@code ACCT_TRNS_HSTR} row on or before
-     * {@code asOf}. Falls back to the account's current {@code ACCT_MSTR.BAL}
-     * when there is no transaction history that early (no in-scope opening
-     * balance source — documented limitation).
-     */
-    private BigDecimal asOfBalance(String bizKey, AcctMstr account, String asOf) {
-        BigDecimal histBal = trnsRepo
-                .findFirstByBizKeyAndBankCdAndAcctNoAndTrscDtLessThanEqualOrderByTrscDtDescTrscTmDescAcctSeqNoDesc(
-                        bizKey, account.getBankCd(), account.getAcctNo(), asOf)
-                .map(AcctTrnsHstr::getBal)
-                .orElse(null);
-        if (histBal != null) return histBal;
-        return account.getBal() != null ? account.getBal() : BigDecimal.ZERO;
-    }
-
-    /**
-     * Mutable per-account accumulator for one day's debit/credit activity.
-     * SND = non-internal debit, INTL_SND = internal debit; RCV =
-     * non-internal credit, INTL_RCV = internal credit (disjoint).
-     */
-    private static final class DailyAggregate {
-        static final DailyAggregate EMPTY = new DailyAggregate();
-
-        int sndCnt, rcvCnt, intlSndCnt, intlRcvCnt;
-        BigDecimal sndAmt = BigDecimal.ZERO, rcvAmt = BigDecimal.ZERO,
-                   intlSndAmt = BigDecimal.ZERO, intlRcvAmt = BigDecimal.ZERO;
-
-        void add(String inoutDv, BigDecimal amt, boolean internal) {
-            String dv = inoutDv == null ? "" : inoutDv.trim();
-            BigDecimal a = amt == null ? BigDecimal.ZERO : amt;
-            if (INOUT_DEBIT.equals(dv)) {
-                if (internal) { intlSndCnt++; intlSndAmt = intlSndAmt.add(a); }
-                else          { sndCnt++;     sndAmt = sndAmt.add(a); }
-            } else if (INOUT_CREDIT.equals(dv)) {
-                if (internal) { intlRcvCnt++; intlRcvAmt = intlRcvAmt.add(a); }
-                else          { rcvCnt++;     rcvAmt = rcvAmt.add(a); }
-            }
-            // Other INOUT_DV values (e.g. '0' ETC) contribute to no bucket.
-        }
-    }
+    private static BigDecimal nz(BigDecimal v) { return v == null ? BigDecimal.ZERO : v; }
 
     /* -------------- Daily Financial — Transaction History popup -------------- */
 
@@ -433,27 +346,78 @@ public class ReportService {
                 rec);
     }
 
-    /* -------------------- Daily Financial HS (STUB) -------------------- */
+    /* -------------------- Daily Financial HS (real DB function) -------------------- */
 
+    /** Account filter sentinel meaning "every active account" (legacy
+     *  {@code ACCT_NO='ALL'} contract from {@code rept_0017_001.js}). */
+    private static final String HS_ACCOUNT_FILTER_ALL = "ALL";
+
+    /**
+     * HAENGSUNG Daily Financial report — mirrors legacy {@code rept_0017_001}
+     * (IDO {@code DAILY_FINCL_REPT_R001}). Delegates the whole computation to
+     * the legacy DB function
+     * {@code fn_get_haengsung_daily_financial_report(biz_key, as_of_date,
+     * account_filter)} via {@link DailyFinancialHsReportRepository}; rows are
+     * returned in the function's own row-type + order (HEADER →
+     * BEFORE_BALANCE → TRANSACTION → ACCOUNT_TOTAL → CURRENCY_TOTAL,
+     * VND → USD → KRW). No data is computed in Java — the function is the
+     * single source of truth, so the refactor stays byte-aligned with the
+     * legacy ledger.
+     *
+     * @param asOfDt        period date; {@code yyyyMMdd} (blank → today). The
+     *                      function validates {@code ^\d{8}$} and raises on a
+     *                      bad format.
+     * @param accountFilter {@code ALL} (default) or a JSON array of
+     *                      {@code {"BANK_CD":..,"ACCT_NO":..}} (legacy bank
+     *                      multi-select contract). Blank → {@code ALL}.
+     */
     @Transactional(readOnly = true)
-    public DailyFinancialHsReport dailyFinancialHs(String asOfDt, String bankCd) {
-        // Sprint 1 STUB: return a deterministic fixed dataset that mirrors
-        // the static-UI shape. See §12 of the Sprint 1 plan.
-        // TODO: Sprint 2 — replace with the real rept_0017_001 ledger query
-        //       grouped by bank + currency with sub-totals + TOTAL rows.
+    public DailyFinancialHsReport dailyFinancialHs(String asOfDt, String accountFilter) {
         final String bizKey = TenantContext.currentBizKey();
-        // Touch the tenant context so a missing JWT trips Sprint 0 auth.
         if (bizKey == null) throw new IllegalStateException("missing tenant context");
 
-        List<DailyFinancialHsReport.LedgerRow> rows = List.of(
-                new DailyFinancialHsReport.LedgerRow("BIDV", "0001-00000569-14", "VND", "RCV", "수입금",       "Receipts",    "0",       "5000000",  "25000000", "DETAIL"),
-                new DailyFinancialHsReport.LedgerRow("BIDV", "0001-00000569-14", "VND", "PAY", "지급금",       "Payments",    "1500000", "0",        "23500000", "DETAIL"),
-                new DailyFinancialHsReport.LedgerRow("BIDV", "",                  "VND", "",    "은행 합계",   "Bank Total",  "1500000", "5000000",  "23500000", "SUBTOTAL"),
-                new DailyFinancialHsReport.LedgerRow("WOORI","0001-00000523-06", "VND", "RCV", "수입금",       "Receipts",    "0",       "0",        "20000000", "DETAIL"),
-                new DailyFinancialHsReport.LedgerRow("WOORI","",                  "VND", "",    "은행 합계",   "Bank Total",  "0",       "0",        "20000000", "SUBTOTAL"),
-                new DailyFinancialHsReport.LedgerRow("",     "",                  "VND", "",    "총계",         "TOTAL",       "1500000", "5000000",  "43500000", "TOTAL")
-        );
-        return new DailyFinancialHsReport(asOfDt, bankCd, rows);
+        final String periodDate = normaliseAsOf(asOfDt);
+        final String filter = (accountFilter == null || accountFilter.isBlank())
+                ? HS_ACCOUNT_FILTER_ALL
+                : accountFilter.trim();
+
+        List<DailyFinancialHsRow> raw = hsReportRepo.fetchReport(bizKey, periodDate, filter);
+
+        List<DailyFinancialHsReport.LedgerRow> rows = new ArrayList<>(raw.size());
+        for (DailyFinancialHsRow r : raw) {
+            rows.add(new DailyFinancialHsReport.LedgerRow(
+                    r.getRowType(),
+                    r.getBankAccount(),
+                    r.getCurrency(),
+                    r.getReptCd(),
+                    r.getPymnCd(),
+                    r.getDescriptionEnglish(),
+                    r.getDescriptionKorean(),
+                    r.getCustomerSupplier(),
+                    nullableWire(r.getBeforeBalance()),
+                    nullableWire(r.getReceipt()),
+                    nullableWire(r.getPayment()),
+                    nullableWire(r.getBalance()),
+                    nullableWire(r.getBalanceCompanyActual()),
+                    r.getAccountNumber(),
+                    r.getAccountTypeOrder(),
+                    r.getAcctSeqNo(),
+                    r.getTransactionDate(),
+                    r.getTransactionTime(),
+                    r.getTransactionSeq(),
+                    r.getMemo(),
+                    r.getBankCdOut(),
+                    r.getBankNameSort()
+            ));
+        }
+        return new DailyFinancialHsReport(periodDate, filter, rows);
+    }
+
+    /** Wire-format an amount, preserving {@code null} (the function leaves
+     *  amount cells empty on rows that don't carry that figure — render
+     *  blank, never {@code "0"}). */
+    private static String nullableWire(java.math.BigDecimal v) {
+        return v == null ? null : AmountFormatter.wire(v);
     }
 
 }

@@ -300,4 +300,26 @@ public interface CardTrnsHstrRepository extends JpaRepository<CardTrnsHstr, Card
     java.util.List<CardTrnsHstr> findByBizKeyAndApprSeqNo(
             @Param("bizKey")    String bizKey,
             @Param("apprSeqNo") String apprSeqNo);
+
+    /**
+     * Batch (APPR_SEQ_NO &rarr; CCY_CD) lookup for the Approval Box list
+     * currency enrichment. One representative currency per approval —
+     * legacy {@code EXPT_RESOL_MSTR_R008} reads the first card row's
+     * {@code CCY_CD} ({@code LIMIT 1}); we use {@code MIN(CCY_CD)} so the
+     * result is deterministic. A mixed-currency batch (rare) resolves to
+     * the alphabetically-first code; the header amount column then follows
+     * the same currency (see {@code ApprovalBoxService.toRow}). The
+     * {@code "VND"} fallback in {@code toRow} still covers an approval with
+     * no card rows.
+     */
+    @Query("""
+            SELECT c.apprSeqNo, MIN(c.ccyCd)
+              FROM CardTrnsHstr c
+             WHERE c.bizKey = :bizKey
+               AND c.apprSeqNo IN :apprSeqNos
+             GROUP BY c.apprSeqNo
+            """)
+    java.util.List<Object[]> findCcyCdByBizKeyAndApprSeqNos(
+            @Param("bizKey")     String bizKey,
+            @Param("apprSeqNos") java.util.List<String> apprSeqNos);
 }

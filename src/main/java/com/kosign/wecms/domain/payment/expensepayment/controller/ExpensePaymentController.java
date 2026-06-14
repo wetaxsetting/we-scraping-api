@@ -207,15 +207,19 @@ public class ExpensePaymentController {
         return ApiResponse.ok(null);
     }
 
-    /** Submit one batch for approval. Legacy {@code comm_0192_001_c005}. */
-    @PostMapping("/{id}/request-approval")
+    /** Submit one batch for approval. Legacy {@code comm_0192_001_c005}.
+     *  M-1: multipart so attachments ride along (JSON in `request`, files in
+     *  `attachments`); a no-file submit omits the `attachments` parts. */
+    @PostMapping(path = "/{id}/request-approval", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResponse<RequestApprovalResponse> requestApproval(
             @PathVariable("id")
             @Size(max = 30)
             @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
             String id,
-            @Valid @RequestBody RequestApprovalRequest req) {
-        return ApiResponse.ok(service.requestApproval(id, req));
+            @Valid @RequestPart("request") RequestApprovalRequest req,
+            @RequestPart(value = "attachments", required = false)
+            java.util.List<org.springframework.web.multipart.MultipartFile> attachments) {
+        return ApiResponse.ok(service.requestApproval(id, req, attachments));
     }
 
     /** Approve / reject the active approval request. Legacy {@code bltb_0001_003_u001}. */

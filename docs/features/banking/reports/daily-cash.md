@@ -6,18 +6,22 @@
 > refactor-gap-analysis, refactor-parity-verification, fix-plan. Read the package for anything beyond
 > the identity + status snapshot below.
 >
-> **Updated 2026-06-04.** The earlier draft of this file described an unimplemented design
-> (persisted-snapshot read, `accountTypeCd: "11"`, `internalSend*` fields, View Setting seed V123).
-> That draft is superseded — the implemented backend does a **live recompute** over `ACCT_MSTR` +
-> `ACCT_TRNS_HSTR`, has no internal-transfer fields, and adopts no View Setting. See
-> [`daily-cash/database-mapping.md`](daily-cash/database-mapping.md) §5 and
-> [`daily-cash/interface-specification.md`](daily-cash/interface-specification.md) for the real contract.
+> **Updated 2026-06-14.** The backend now calls the **legacy DB functions `rept_0900_001_rec1..4` directly**
+> (the Java live-recompute path — `DailyCashRecomputeRepository` + `CurrencyAccumulator` — is **bypassed**,
+> retained only as cleanup candidates). `rec1` → account details and `rec2` → currency summary are active;
+> `rec3` → currency flow / opening balance and `rec4` → total cash read `CASH_REPY_MSTR`, which is empty in
+> the R&D DB, so cash stays 0 until that data lands. The currency filter is applied **outside** the functions
+> (`ALL` / exact `ccy_cd=?` / `FCY` = `ccy_cd<>'VND'`); `req_date2 = req_date`. See
+> [daily-cash-db-function-alignment-decision.md](../../../../../docs/audits/daily-cash-db-function-alignment-decision.md).
+>
+> **Prior note (2026-06-04, superseded):** the implemented backend was a **live recompute** over `ACCT_MSTR` +
+> `ACCT_TRNS_HSTR`. That was correct before the 2026-06-14 switch to the DB functions.
 
 | Field | Value |
 |---|---|
 | Slug | `daily-cash-report` (runtime id; file renamed to `daily-cash.md` to match the menu) |
 | Module | Banking → Reports |
-| Status | **Functionally complete (in-scope surface)** — residual technical debt tracked in [`daily-cash/refactor-gap-analysis.md`](daily-cash/refactor-gap-analysis.md) |
+| Status | **Calls `rept_0900_001_rec1..4` directly (2026-06-14).** rec1/rec2 active; rec3/rec4 need `CASH_REPY_MSTR` data. Live HTTP/JPA smoke recommended. Residual technical debt (export rule, dead snapshot repo) in [`daily-cash/refactor-gap-analysis.md`](daily-cash/refactor-gap-analysis.md). |
 | JEX twin | `rept_0009_001` (view) + `rept_0009_001_r001` (read API) |
 | Refactor route | `/banking/reports/daily-cash` (Next.js, `(dashboard)` group) |
 | Refactor base URI | `/api/v1/banking/reports/daily-cash-report` (Spring Boot) |
@@ -37,14 +41,14 @@ three-tier response — per-currency summary, per-account detail (split Current 
 ### In scope (implemented)
 
 - Search `GET /api/v1/banking/reports/daily-cash-report?asOfDate=&currency=`.
-- Three-tier response: `currency_summary` (REC) → `accounts` (REC1) → `currency_flow` (REC2).
-- Live recompute over `ACCT_MSTR` + `ACCT_TRNS_HSTR` (no snapshot dependency).
-- DB-verified account-type bucketing (`03/04`=demand, `05/06`=savings, `02`=term, `01`=loan, cash=0).
+- Three-tier response: `currency_summary` (rec2) → `accounts` (rec1) → `currency_flow` (rec3).
+- **Direct calls to `rept_0900_001_rec1..4`** via `DailyCashReportFunctionRepository` (DB functions are the source of truth; no Java recompute).
+- Account-type bucketing is performed inside `rec2` (`03/04`=demand, `05/06`=savings, `02`=term, `01`=loan); `total_cash` from `rec4`.
 - Audit log on search and export (`WSVC_ID = "daily-cash-report"`).
 
 ### Out of scope / deferred
 
-- Physical cash (`rec3/rec4` from `CASH_REPY_MSTR`) — not in PROD active list → `total_cash = 0`.
+- Physical cash (`rec3/rec4` from `CASH_REPY_MSTR`) — the calls are **wired**, but `CASH_REPY_MSTR` is empty in the R&D DB (and off the PROD active list) → `total_cash = 0` and empty currency flow until the data/scope lands.
 - Per-tenant local currency — hardcoded `VND` today (OQ-3).
 - Last-collection datetime — `last_collected_date` null on the live path (`BAT_CALL_HIS` dropped V31).
 - Per-transaction drilldown — lives in [`daily-financial.md`](daily-financial.md).

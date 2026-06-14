@@ -15,7 +15,13 @@ import java.math.BigDecimal;
  * legacy {@code wb_get_bank_nm(bank_cd,'s')} call inside {@code rec1}.
  * Currency scaling that legacy applied via {@code wb_get_amt(amt, ccy)} is
  * inlined in the query as {@code ROUND(amt, ccy='VND' ? 0 : 2)}.
+ *
+ * @deprecated <b>Bypassed 2026-06-13.</b> Only consumed by the deprecated
+ * {@link DailyCashRecomputeRepository}; superseded by {@link DailyCashRec1Row}
+ * (sourced from the legacy {@code rept_0900_001_rec1} function). Cleanup
+ * candidate.
  */
+@Deprecated(forRemoval = true)
 public interface DailyCashAccountProjection {
     String getCcyCd();
     String getAcctTypeCd();

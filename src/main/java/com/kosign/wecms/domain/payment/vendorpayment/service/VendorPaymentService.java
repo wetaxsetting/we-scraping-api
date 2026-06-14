@@ -43,7 +43,7 @@ import com.kosign.wecms.domain.auth.repository.BusiInfmRepository;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolApprvrInfm;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolApprvrInfmRepository;
-import com.kosign.wecms.domain.payment.internaltransfer.repository.ExptResolFileRepository;
+import com.kosign.wecms.domain.payment.internaltransfer.service.ApprovalAttachmentLoader;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprDv;
 import com.kosign.wecms.domain.payment.service.DocNoGenerator;
@@ -176,6 +176,10 @@ public class VendorPaymentService {
      *  before it lands on {@code SCDUL_PYMN_SUMR.OUT_BANK_CD}. Mirrors
      *  legacy {@code PymnHelper.uploadPaymentExcel:1315-1317}. */
     private final com.kosign.wecms.domain.payment.common.OutBankCdNormalizer outBankCdNormalizer;
+    /** M-2/M-3 (legacy parity): EXPT_RESOL_MSTR display flags from BUSI_ENV_SET_INFM. */
+    private final com.kosign.wecms.domain.payment.approvalbox.service.ApprovalDisplayFlagsResolver displayFlagsResolver;
+    /** M-1 (legacy parity): shared Request Approval attachment writer (EXPT_RESOL_FILE). */
+    private final com.kosign.wecms.domain.payment.approvalbox.service.ApprovalAttachmentWriter approvalAttachmentWriter;
     /** Dispatch-table writes for the per-line Re-run action. */
     private final com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileDataRepository tbPayFileDataRepository;
     /** Per-line dispatch-result lookup (shared resolver). */
@@ -191,7 +195,7 @@ public class VendorPaymentService {
      *  {@code APPR_SEQ_NO} — surfaces the Scheduled-detail {@code attachments}
      *  list (consumed by the shared Approval Details popup). Shared
      *  repository; same wiring as {@code InternalTransferService}. */
-    private final ExptResolFileRepository       exptResolFileRepository;
+    private final ApprovalAttachmentLoader      approvalAttachmentLoader;
     private final DocNoGenerator                docNoGenerator;
     private final BusiInfmRepository            busiInfmRepository;
     private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
@@ -303,25 +307,13 @@ public class VendorPaymentService {
                         .orElse(null)
                 : null;
 
-        // G5 (Scheduled detail): approval-request attachments from EXPT_RESOL_FILE,
-        // keyed by APPR_SEQ_NO (ordered by FILE_ID). Empty when the batch has no
-        // approval request yet. Byte-identical to InternalTransferService.detail().
-        // The shared Approval Details popup consumes this list; the detail page's
-        // own file card stays the uploaded-Excel file (legacy parity — the legacy
-        // detail page never showed EXPT_RESOL_FILE attachments either).
+        // G5 (Scheduled detail): approval attachments — UNION of EXPT_RESOL_FILE
+        // + EXPT_RESOL_PAY_EVID_FILE (mirrors legacy IDO.EXPT_RESOL_FILE_R002;
+        // GAP-ATT-1), keyed by APPR_SEQ_NO. Empty when the batch has no approval
+        // request yet. The shared Approval Details popup consumes this list; the
+        // detail page's own file card stays the uploaded-Excel file (legacy parity).
         List<ApprovalAttachmentRow> attachments =
-                (apprSeqNo == null || apprSeqNo.isBlank())
-                        ? List.of()
-                        : exptResolFileRepository
-                                .findByBizKeyAndApprSeqNoOrderByFileIdAsc(bizKey, apprSeqNo)
-                                .stream()
-                                .map(f -> new ApprovalAttachmentRow(
-                                        f.getFileId(),
-                                        f.getOrgFileNm(),
-                                        f.getFileSize(),
-                                        f.getRegNm(),
-                                        f.getRegDtm()))
-                                .toList();
+                approvalAttachmentLoader.load(bizKey, apprSeqNo);
 
         return new ScheduledTransferDetailResponse(
                 master.getScdulPymnNo(),
@@ -802,7 +794,8 @@ public class VendorPaymentService {
      * with the EXPT_RESOL_* port.
      */
     @Transactional
-    public RequestApprovalResponse requestApproval(String id, RequestApprovalRequest req) {
+    public RequestApprovalResponse requestApproval(String id, RequestApprovalRequest req,
+            java.util.List<org.springframework.web.multipart.MultipartFile> attachments) {
         String bizKey = requireTenant();
         ScdulPymnSumr master = loadMaster(bizKey, id);
 
@@ -825,6 +818,10 @@ public class VendorPaymentService {
             apprSeqNo = allocateApprSeqNo(bizKey);
             docNo = stampApproval(master, apprSeqNo, req);
         }
+
+        // M-1 (legacy parity): persist Request Approval attachments into
+        // EXPT_RESOL_FILE (legacy processFileAttachments / REC1).
+        approvalAttachmentWriter.persist(bizKey, apprSeqNo, attachments);
 
         auditLogService.append(AuditLogContext.builder()
                 .wsvcId(WSVC_ID)
@@ -867,6 +864,20 @@ public class VendorPaymentService {
         if (req.postTitle() != null && !req.postTitle().isBlank()) {
             master.setTitl(req.postTitle().trim());
         }
+        // H-1 (legacy parity, comm_0192_001_c005_act.jsp:362-371
+        // updateScheduledPaymentSummary): persist the withdrawal account the
+        // user selected in the Request Approval popup. OUT_BANK_CD is the
+        // NAPAS-converted code — OutBankCdNormalizer reproduces the legacy
+        // NapasBankInfoDAO "bank_cd = ? OR napas_bank_cd = ?" lookup.
+        if (req.bankCd() != null && !req.bankCd().isBlank()) {
+            master.setOutBankCd(outBankCdNormalizer.normalize(req.bankCd()));
+        }
+        if (req.acctNo() != null && !req.acctNo().isBlank()) {
+            master.setWdrlActNo(req.acctNo().trim());
+        }
+        if (req.ccyCd() != null && !req.ccyCd().isBlank()) {
+            master.setWdrlCcyCd(req.ccyCd().trim());
+        }
         master.setModDtm(nowDtm);
         if (userId != null) master.setModId(userId);
         sumrRepository.saveAndFlush(master);
@@ -889,14 +900,17 @@ public class VendorPaymentService {
                 .orElse(bizKey);
         mstr.setDraftUserSiteNm(cmpnNm);
         mstr.setHandRegYn("Y");
-        mstr.setApprBoxUseYn("Y");
-        mstr.setApprDatDispYn("N");
-        mstr.setCmpnLogoDispYn("Y");
-        mstr.setRegDispYn("Y");
+        // M-2 (legacy parity): display flags from BUSI_ENV_SET_INFM (00014/16/17/18),
+        // not hardcoded. Mirrors comm_0192_001_c005_act.jsp:316-320.
+        var flags = displayFlagsResolver.resolve(bizKey);
+        mstr.setApprBoxUseYn(flags.apprBoxUseYn());
+        mstr.setApprDatDispYn(flags.apprDatDispYn());
+        mstr.setCmpnLogoDispYn(flags.cmpnLogoDispYn());
+        mstr.setRegDispYn(flags.regDispYn());
         mstr.setTitl(req.postTitle() != null ? req.postTitle().trim() : "");
         String docNo = docNoGenerator.nextDocNo(bizKey);
         mstr.setDocNo(docNo);
-        mstr.setDocNm(master.getTitl() != null ? master.getTitl() : master.getScdulPymnNo());
+        mstr.setDocNm(ApprDv.VENDOR.docNm());   // L-1 (legacy parity): legacy DOC_NM = apprDv.getLabel()
         BigDecimal amt = master.getTotalTranAmt() != null ? master.getTotalTranAmt() : BigDecimal.ZERO;
         String ccy = master.getCcyCd() != null ? master.getCcyCd().toUpperCase() : "VND";
         boolean isUsd = "USD".equals(ccy);

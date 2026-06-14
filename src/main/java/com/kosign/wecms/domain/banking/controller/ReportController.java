@@ -77,13 +77,20 @@ public class ReportController {
                 asOfDt, bankCd, acctNo, includeInternalTransfers, page, size));
     }
 
-    /** STUB — see ReportService#dailyFinancialHs. */
+    /**
+     * HAENGSUNG Daily Financial report (legacy {@code rept_0017_001}) — real
+     * DB-backed via {@code fn_get_haengsung_daily_financial_report}.
+     *
+     * @param asOfDt        {@code yyyyMMdd} period date (blank → today)
+     * @param accountFilter {@code ALL} (default) or a JSON array of
+     *                      {@code {"BANK_CD":..,"ACCT_NO":..}} bank selections
+     */
     @GetMapping("/daily-financial-hs")
     @PreAuthorize("@menuAuthz.canAccess('banking-reports-daily-financial-hs')")
     public ApiResponse<DailyFinancialHsReport> dailyFinancialHs(
             @RequestParam(value = "asOf", required = false) String asOfDt,
-            @RequestParam(value = "bankCd", required = false) String bankCd) {
-        return ApiResponse.ok(reportService.dailyFinancialHs(asOfDt, bankCd));
+            @RequestParam(value = "accountFilter", required = false, defaultValue = "ALL") String accountFilter) {
+        return ApiResponse.ok(reportService.dailyFinancialHs(asOfDt, accountFilter));
     }
 
 }

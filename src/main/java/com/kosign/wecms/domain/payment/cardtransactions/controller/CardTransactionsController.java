@@ -476,10 +476,15 @@ public class CardTransactionsController {
      * {@code CardTransactionsService#requestApproval} for the
      * EXPT_RESOL_MSTR follow-up note.
      */
-    @PostMapping("/request-approval")
+    // M-1 (legacy parity): multipart so Request Approval attachments ride along
+    // (JSON in `request`, files in `attachments`); a no-file submit omits them.
+    @PostMapping(path = "/request-approval",
+                 consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResponse<RequestApprovalResponse> requestApproval(
-            @Valid @RequestBody RequestApprovalRequest req) {
-        return ApiResponse.ok(service.requestApproval(req));
+            @Valid @org.springframework.web.bind.annotation.RequestPart("request") RequestApprovalRequest req,
+            @org.springframework.web.bind.annotation.RequestPart(value = "attachments", required = false)
+            java.util.List<org.springframework.web.multipart.MultipartFile> attachments) {
+        return ApiResponse.ok(service.requestApproval(req, attachments));
     }
 
     /**

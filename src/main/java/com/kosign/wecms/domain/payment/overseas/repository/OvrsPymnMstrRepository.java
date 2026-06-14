@@ -7,13 +7,27 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Repository for {@link OvrsPymnMstr}. Read-only access from the Cash
- * Flow report aggregator. Other consumers (Overseas Payment screens)
- * add their methods as those features land.
+ * Flow report aggregator + the Approval Details legacy-M-mode fallback
+ * (GAP-OVS-MODE). Other consumers (Overseas Payment screens) add their
+ * methods as those features land.
  */
 public interface OvrsPymnMstrRepository extends JpaRepository<OvrsPymnMstr, OvrsPymnMstrId> {
+
+    /** GAP-OVS-MODE: all legacy "M-mode" remittance rows attached to one
+     *  approval (one approval can fan out to several beneficiary rows).
+     *  Used by the Approval Details popup to detect + gracefully render an
+     *  approval that lives in {@code OVRS_PYMN_MSTR} but not
+     *  {@code OVRS_PYMN_SUMR}. Tenant-scoped on {@code BIZ_KEY}. */
+    List<OvrsPymnMstr> findByBizKeyAndApprSeqNo(String bizKey, String apprSeqNo);
+
+    /** Direct {@code OVRS_PYMN_NO} lookup against the M-mode master, for the
+     *  fallback where the popup id is an {@code OVRS_PYMN_NO} that only
+     *  exists in {@code OVRS_PYMN_MSTR}. Tenant-scoped on {@code BIZ_KEY}. */
+    Optional<OvrsPymnMstr> findByBizKeyAndOvrsPymnNo(String bizKey, String ovrsPymnNo);
 
     /**
      * Cash Flow report — overseas-payment source rows.

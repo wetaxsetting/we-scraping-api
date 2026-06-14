@@ -57,5 +57,18 @@ public record CardTransactionRow(
         String           regId,
         String           regDtm,
         String           modId,
-        String           modDtm) {
+        String           modDtm,
+        /* ---- legacy CARD_TRNS_HSTR_R002 detail fields (GAP-CARD-FIELDS) ----
+         * Surfaced for the Approval Details popup card grid so the refactor
+         * reaches legacy parity. All read straight off the entity (the
+         * columns were already mapped); none are new schema. CARD_TRNS_USAGE_NM
+         * (the resolved usage label) is intentionally NOT included — it needs
+         * the legacy wb_get_usag_nm resolver / a USAG_INFM join; deferred as a
+         * PO decision. The raw cardTrnsUsageCode above is shipped meanwhile. */
+        String           usingType,
+        String           authCode,
+        String           city,
+        /** {@code CARD_TRNS_HSTR.NOTE} — distinct from {@code CONT}
+         *  (the free-form description). Both ship on the wire. */
+        String           note) {
 }

@@ -133,6 +133,10 @@ public class ApprovalBoxService {
     private final ExptResolApprvrInfmRepository  approverRepository;
     private final OvrsPymnSumrRepository         ovrsPymnSumrRepository;
     private final ScdulPymnSumrRepository        scdulPymnSumrRepository;
+    /** Corporate Card (APPR_DV='33') currency enrichment — the card
+     *  approval has no SCDUL / OVRS row, so its display currency comes
+     *  from CARD_TRNS_HSTR.CCY_CD (GAP — was an unconditional "VND"). */
+    private final com.kosign.wecms.domain.payment.cardtransactions.repository.CardTrnsHstrRepository cardTrnsHstrRepository;
     private final AuditLogService                auditLogService;
     private final ApprovalBoxFanoutService       fanoutService;
     /** Lifecycle bulletin/notification writer — approve/reject remark +
@@ -284,6 +288,50 @@ public class ApprovalBoxService {
         return approverRepository.findChain(bizKey, apprSeqNo).stream()
                 .map(ApprovalBoxService::toApprover)
                 .toList();
+    }
+
+    /**
+     * Single Approval Box master row by {@code APPR_SEQ_NO} — a reliable
+     * detail lookup (direct {@code EXPT_RESOL_MSTR} PK read), NOT the
+     * keyword {@code srch_wd} list search (which matches {@code DOC_NM} /
+     * {@code DOC_NO} / title and would never match a raw sequence number).
+     * Returns the same {@link ApprovalBoxRow} shape the list emits — built
+     * through {@link #mapProjections} so currency / file-name / approver-chain
+     * resolution stay identical to the list path. Used by
+     * {@code ApprovalDetailService} to back the common Approval Details popup
+     * (notification entry point, etc.). Tenant-scoped; {@code null} when the
+     * approval is missing or belongs to another tenant.
+     */
+    @Transactional(readOnly = true)
+    public ApprovalBoxRow findOne(String apprSeqNo) {
+        if (apprSeqNo == null || apprSeqNo.isBlank()) {
+            return null;
+        }
+        String bizKey = TenantContext.currentBizKey();
+        ExptResolMstr m = masterRepository
+                .findByBizKeyAndApprSeqNoIn(bizKey, List.of(apprSeqNo))
+                .stream()
+                .findFirst()
+                .orElse(null);
+        if (m == null) {
+            return null;
+        }
+
+        // Approver-chain counts mirror the list query's apprvr_tot_cnt /
+        // apprvr_appr_tot_cnt (cosmetic "Approver (n/total)" label); the full
+        // chain itself is re-resolved inside toRow.
+        long total = approverRepository.findChain(bizKey, apprSeqNo).size();
+        long approved = approverRepository.findChain(bizKey, apprSeqNo).stream()
+                .filter(a -> "A".equals(a.getApprvrStts()))
+                .count();
+
+        ApprovalBoxProjection p = new ApprovalBoxProjection(
+                m.getApprSeqNo(), m.getDocNo(), m.getTitl(), m.getApprDv(), m.getDocNm(), m.getCont(),
+                m.getTotPayKhrAmt(), m.getTotPayUsdAmt(), m.getTotPayVndAmt(), m.getPayDate(),
+                m.getDraftUserId(), m.getDraftUserNm(), m.getRegDtm(), m.getApprTypeCd(), m.getPayEndYn(),
+                total, approved);
+
+        return mapProjections(bizKey, List.of(p)).stream().findFirst().orElse(null);
     }
 
     /* =================================================================
@@ -797,6 +845,12 @@ public class ApprovalBoxService {
             // putIfAbsent keeps the OVRS value when both tables happen to
             // carry the same apprSeqNo (shouldn't occur, but defensive).
             scdulPymnSumrRepository.findCcyCdByBizKeyAndApprSeqNos(bizKey, apprSeqNos)
+                    .forEach(row -> ccyByApprSeqNo.putIfAbsent((String) row[0], (String) row[1]));
+            // Corporate Card (APPR_DV='33') has neither a SCDUL nor an OVRS
+            // row — resolve its currency from CARD_TRNS_HSTR (mirrors legacy
+            // EXPT_RESOL_MSTR_R008). putIfAbsent: card apprSeqNos never appear
+            // in the SCDUL/OVRS maps, so this fills only the card gaps.
+            cardTrnsHstrRepository.findCcyCdByBizKeyAndApprSeqNos(bizKey, apprSeqNos)
                     .forEach(row -> ccyByApprSeqNo.putIfAbsent((String) row[0], (String) row[1]));
 
             // File Name — uploaded batch file name. Legacy reads

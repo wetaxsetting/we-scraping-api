@@ -80,6 +80,8 @@ class EndpointAuthorizationCoverageTest {
             "NavigationController",
             // --- View Setting preference store (PO note Q-B — authenticated-only, no business data) ---
             "ScreenOptionController",
+            // --- notifications bell (global header surface for every authenticated user; no per-screen menu cd) ---
+            "NotificationController",
             // --- cross-screen reference data / utilities (gating to one cd would break reuse) ---
             "CountryController",         // reference data
             "BlockedCharsRuleController",// payment-compose validation helper

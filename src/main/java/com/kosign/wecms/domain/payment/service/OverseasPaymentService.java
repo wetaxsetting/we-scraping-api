@@ -25,6 +25,8 @@ import com.kosign.wecms.domain.payment.entity.OvrsPymnSumrDetl;
 import com.kosign.wecms.domain.payment.entity.OvrsPymnSumr;
 import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnMstrRepository;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalActionRequest;
+import com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalAttachmentRow;
+import com.kosign.wecms.domain.payment.internaltransfer.service.ApprovalAttachmentLoader;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalResponse;
 import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnDtlsRepository;
@@ -83,8 +85,12 @@ public class OverseasPaymentService {
     private final OverseasApproverRepository     approverRepo;
     private final OvrsPymnSumrRepository         sumrRepository;
     /** OVRS_PYMN_MSTR access for the multi-payment ("M" type) Request
-     *  Approval path (legacy {@code OVRS_PYMN_TYPE='M'}). */
+     *  Approval path (legacy {@code OVRS_PYMN_TYPE='M'}) + the Approval
+     *  Details legacy-M-mode detail fallback (GAP-OVS-MODE). */
     private final OvrsPymnMstrRepository         ovrsPymnMstrRepository;
+    /** Combined approval-attachment loader — UNION of EXPT_RESOL_FILE +
+     *  EXPT_RESOL_PAY_EVID_FILE (GAP-ATT-1 / GAP-OVS-ATT). */
+    private final ApprovalAttachmentLoader       approvalAttachmentLoader;
     private final OvrsPymnDtlsRepository         dtlsRepository;
     private final OverseasDispatchExecutor       dispatchExecutor;
     /** Phase 2 dispatch-result resolver — surfaces PROC_STAT / RS_CD /
@@ -107,6 +113,13 @@ public class OverseasPaymentService {
     private final com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxFanoutService approvalBoxFanoutService;
     /** Shared request-approval bulletin / notification writer (BLTB_* tables). */
     private final com.kosign.wecms.domain.payment.notification.service.ApprovalNotificationService approvalNotificationService;
+    /** H-1: NAPAS bank-code conversion for the OUT_BANK_CD back-stamp
+     *  (legacy comm_0192_001_c005_act.jsp:404-410 updateOverseasPaymentSummary). */
+    private final com.kosign.wecms.domain.payment.common.OutBankCdNormalizer outBankCdNormalizer;
+    /** M-2/M-3 (legacy parity): EXPT_RESOL_MSTR display flags from BUSI_ENV_SET_INFM. */
+    private final com.kosign.wecms.domain.payment.approvalbox.service.ApprovalDisplayFlagsResolver displayFlagsResolver;
+    /** M-1 (legacy parity): shared Request Approval attachment writer (EXPT_RESOL_FILE). */
+    private final com.kosign.wecms.domain.payment.approvalbox.service.ApprovalAttachmentWriter approvalAttachmentWriter;
 
     /**
      * Overseas scheduled-payment list.
@@ -364,17 +377,32 @@ public class OverseasPaymentService {
         String bizKey = TenantContext.currentBizKey();
 
         // Primary lookup: treat the id as OVRS_PYMN_NO (internal key).
-        OvrsPymnSumr sumr = sumrRepository.findByBizKeyAndOvrsPymnNo(bizKey, id)
-                .or(() ->
-                    // Fallback: treat the id as DOC_NO (VO_YYMMDD_NNN user-visible key).
-                    // Resolves DOC_NO → APPR_SEQ_NO → OVRS_PYMN_SUMR.
-                    exptResolMstrRepository.findByBizKeyAndDocNoAndDelYn(bizKey, id, "N")
-                            .filter(m -> m.getApprSeqNo() != null)
-                            .flatMap(m -> sumrRepository.findByBizKeyAndApprSeqNo(
-                                    bizKey, m.getApprSeqNo()))
-                )
-                .orElseThrow(() -> new BusinessException("WBE2045",
-                        "overseas payment not found: " + id));
+        java.util.Optional<OvrsPymnSumr> sumrOpt = sumrRepository.findByBizKeyAndOvrsPymnNo(bizKey, id);
+
+        // Fallback: treat the id as DOC_NO (VO_YYMMDD_NNN user-visible key).
+        // Resolves DOC_NO → APPR_SEQ_NO → OVRS_PYMN_SUMR. We keep the resolved
+        // APPR_SEQ_NO so the legacy M-mode fallback (GAP-OVS-MODE) can reuse it.
+        String docFallbackApprSeqNo = null;
+        if (sumrOpt.isEmpty()) {
+            java.util.Optional<ExptResolMstr> mstrByDoc = exptResolMstrRepository
+                    .findByBizKeyAndDocNoAndDelYn(bizKey, id, "N")
+                    .filter(m -> m.getApprSeqNo() != null && !m.getApprSeqNo().isBlank());
+            if (mstrByDoc.isPresent()) {
+                docFallbackApprSeqNo = mstrByDoc.get().getApprSeqNo();
+                sumrOpt = sumrRepository.findByBizKeyAndApprSeqNo(bizKey, docFallbackApprSeqNo);
+            }
+        }
+
+        // GAP-OVS-MODE: the approval may be a legacy "M-mode" record that
+        // lives only in OVRS_PYMN_MSTR (not OVRS_PYMN_SUMR). Instead of
+        // throwing WBE2045 — which crashed the popup for 57% of overseas
+        // approvals in DEV — return a graceful header-only response. Throws
+        // WBE2045 only when the id resolves to nothing in either table.
+        if (sumrOpt.isEmpty()) {
+            return resolveLegacyMmodeOrThrow(bizKey, id, docFallbackApprSeqNo);
+        }
+
+        OvrsPymnSumr sumr = sumrOpt.get();
 
         String ovrsPymnNo = sumr.getOvrsPymnNo();
         List<OvrsPymnSumrDetl> dtlList =
@@ -421,6 +449,12 @@ public class OverseasPaymentService {
             apprStts = mstr != null ? mapApprTypeCd(mstr.getApprTypeCd()) : "P";
         }
 
+        // GAP-OVS-ATT: approval attachments (UNION of EXPT_RESOL_FILE +
+        // EXPT_RESOL_PAY_EVID_FILE) keyed by APPR_SEQ_NO. Previously never
+        // loaded for overseas — the popup showed no attachments.
+        List<ApprovalAttachmentRow> attachments =
+                approvalAttachmentLoader.load(bizKey, sumr.getApprSeqNo());
+
         return new OverseasPaymentDetailResponse(
                 sumr.getOvrsPymnNo(),
                 sumr.getTitl(),
@@ -439,7 +473,107 @@ public class OverseasPaymentService {
                 sumr.getOrgFileNm(),
                 null,                       // fileSize
                 sumr.getOrgFileNm(),
-                rows);
+                rows,
+                attachments);
+    }
+
+    /**
+     * GAP-OVS-MODE: graceful fallback for a legacy "M-mode" overseas
+     * approval — a record that lives in {@code OVRS_PYMN_MSTR} but has no
+     * {@code OVRS_PYMN_SUMR} row. The previous code threw {@code WBE2045}
+     * here, which crashed the Approval Details popup for these (historical,
+     * pre-cutover) records even though they are still listed in the approval
+     * box. We now return a header-only response: real header fields (title /
+     * status / doc-no / withdrawal account / summed amount) + approval
+     * attachments, an empty {@code rows} list, and {@code legacyMmode=true}
+     * with a notice. Full per-line M-mode detail (reading the individual
+     * {@code OVRS_PYMN_MSTR} beneficiary rows onto the line table) is a
+     * follow-up — see the remediation plan §3.7 Option A.
+     *
+     * <p>Throws {@code WBE2045} only when the id resolves to nothing in
+     * {@code OVRS_PYMN_MSTR} either (genuinely not found / wrong tenant).
+     */
+    private OverseasPaymentDetailResponse resolveLegacyMmodeOrThrow(
+            String bizKey, String id, String docFallbackApprSeqNo) {
+
+        List<OvrsPymnMstr> mmode;
+        String apprSeqNo = docFallbackApprSeqNo;
+        if (apprSeqNo != null) {
+            // DOC_NO fallback already resolved an APPR_SEQ_NO — gather all
+            // its M-mode remittance rows.
+            mmode = ovrsPymnMstrRepository.findByBizKeyAndApprSeqNo(bizKey, apprSeqNo);
+        } else {
+            // id might be an OVRS_PYMN_NO that exists only in the M-mode master.
+            mmode = ovrsPymnMstrRepository.findByBizKeyAndOvrsPymnNo(bizKey, id)
+                    .map(List::of)
+                    .orElseGet(List::of);
+            if (!mmode.isEmpty()) {
+                String resolved = mmode.get(0).getApprSeqNo();
+                if (resolved != null && !resolved.isBlank()) {
+                    apprSeqNo = resolved;
+                    // Re-gather sibling remittances sharing the same approval.
+                    mmode = ovrsPymnMstrRepository.findByBizKeyAndApprSeqNo(bizKey, apprSeqNo);
+                }
+            }
+        }
+
+        if (mmode.isEmpty()) {
+            throw new BusinessException("WBE2045", "overseas payment not found: " + id);
+        }
+
+        OvrsPymnMstr first = mmode.get(0);
+        if (apprSeqNo == null || apprSeqNo.isBlank()) {
+            apprSeqNo = first.getApprSeqNo();
+        }
+
+        ExptResolMstr mstr = (apprSeqNo != null && !apprSeqNo.isBlank())
+                ? exptResolMstrRepository.findById(
+                        new com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId(bizKey, apprSeqNo))
+                        .orElse(null)
+                : null;
+        String docNo    = mstr != null ? mstr.getDocNo() : null;
+        String apprStts = mstr != null ? mapApprTypeCd(mstr.getApprTypeCd()) : "P";
+        String titl     = mstr != null ? mstr.getTitl() : null;
+
+        // Sum the per-remittance amounts for a meaningful header total.
+        BigDecimal total = mmode.stream()
+                .map(OvrsPymnMstr::getTrnfAmt)
+                .filter(java.util.Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        List<ApprovalAttachmentRow> attachments =
+                approvalAttachmentLoader.load(bizKey, apprSeqNo);
+
+        log.warn("feature=overseas-payment approval-details legacy M-mode (OVRS_PYMN_MSTR) "
+                + "bizKey={} apprSeqNo={} ovrsPymnNo={} remittanceRows={} — "
+                + "detail lines not fully supported yet (GAP-OVS-MODE)",
+                bizKey, apprSeqNo, first.getOvrsPymnNo(), mmode.size());
+
+        return new OverseasPaymentDetailResponse(
+                first.getOvrsPymnNo(),
+                titl,
+                apprStts,
+                total,
+                first.getTrnfCcyCd(),
+                mmode.size(),
+                mstr != null ? mstr.getRegId() : first.getRegId(),
+                mstr != null ? mstr.getRegDtm() : first.getRegDtm(),
+                first.getModDtm(),
+                // M-mode has no OUT_BANK_CD — surface the debit (withdrawal)
+                // account fields instead so the header isn't blank.
+                first.getDbtAcctCd(),
+                first.getDbtAcctNo(),
+                first.getDbtCcyCd(),
+                docNo,
+                apprSeqNo,
+                null,                       // fileNm
+                null,                       // fileSize
+                null,                       // orgFileNm
+                List.of(),                  // rows — legacy M-mode lines not supported yet
+                attachments,
+                true,                       // legacyMmode
+                "Legacy M-mode overseas approval (OVRS_PYMN_MSTR). "
+                        + "Detail lines are not fully supported yet.");
     }
 
     /**
@@ -452,7 +586,8 @@ public class OverseasPaymentService {
      * (same precedent as expense-payment / vendor-payment Phase A).
      */
     @Transactional
-    public RequestApprovalResponse requestApproval(String ovrsPymnNo, RequestApprovalRequest req) {
+    public RequestApprovalResponse requestApproval(String ovrsPymnNo, RequestApprovalRequest req,
+            java.util.List<org.springframework.web.multipart.MultipartFile> attachments) {
         String bizKey = TenantContext.currentBizKey();
         OvrsPymnSumr sumr = resolveSumr(bizKey, ovrsPymnNo);
 
@@ -489,6 +624,10 @@ public class OverseasPaymentService {
             apprSeqNo = allocateApprSeqNo(bizKey);
             docNo = stampApproval(sumr, apprSeqNo, req);
         }
+
+        // M-1 (legacy parity): persist Request Approval attachments into
+        // EXPT_RESOL_FILE (legacy processFileAttachments / REC1).
+        approvalAttachmentWriter.persist(bizKey, apprSeqNo, attachments);
 
         auditLogService.append(AuditLogContext.builder()
                 .wsvcId(WSVC_ID)
@@ -609,15 +748,18 @@ public class OverseasPaymentService {
                 .orElse(bizKey);
         mstr.setDraftUserSiteNm(cmpnNm);
         mstr.setHandRegYn("Y");
-        mstr.setApprBoxUseYn("Y");
-        mstr.setApprDatDispYn("N");
-        mstr.setCmpnLogoDispYn("Y");
-        mstr.setRegDispYn("Y");
+        // M-2 (legacy parity): display flags from BUSI_ENV_SET_INFM (00014/16/17/18),
+        // not hardcoded. Mirrors comm_0192_001_c005_act.jsp:316-320.
+        var flags = displayFlagsResolver.resolve(bizKey);
+        mstr.setApprBoxUseYn(flags.apprBoxUseYn());
+        mstr.setApprDatDispYn(flags.apprDatDispYn());
+        mstr.setCmpnLogoDispYn(flags.cmpnLogoDispYn());
+        mstr.setRegDispYn(flags.regDispYn());
         String titl = req.postTitle() != null ? req.postTitle().trim() : "";
         mstr.setTitl(titl);
         String docNo = docNoGenerator.nextDocNo(bizKey);
         mstr.setDocNo(docNo);
-        mstr.setDocNm(!titl.isBlank() ? titl : masters.get(0).getOvrsPymnNo());
+        mstr.setDocNm(ApprDv.OVERSEAS.docNm());   // L-1 (legacy parity): legacy DOC_NM = apprDv.getLabel()
         boolean isUsd = "USD".equals(ccy);
         boolean isVnd = "VND".equals(ccy);
         mstr.setTotPayKhrAmt(isUsd ? BigDecimal.ZERO : total);
@@ -988,6 +1130,20 @@ public class OverseasPaymentService {
         if (req.postTitle() != null && !req.postTitle().isBlank()) {
             sumr.setTitl(req.postTitle().trim());
         }
+        // H-1 (legacy parity, comm_0192_001_c005_act.jsp:404-410
+        // updateOverseasPaymentSummary): persist the withdrawal account the user
+        // selected in the Request Approval popup. OUT_BANK_CD is the
+        // NAPAS-converted code — OutBankCdNormalizer reproduces the legacy
+        // NapasBankInfoDAO "bank_cd = ? OR napas_bank_cd = ?" lookup.
+        if (req.bankCd() != null && !req.bankCd().isBlank()) {
+            sumr.setOutBankCd(outBankCdNormalizer.normalize(req.bankCd()));
+        }
+        if (req.acctNo() != null && !req.acctNo().isBlank()) {
+            sumr.setWdrlActNo(req.acctNo().trim());
+        }
+        if (req.ccyCd() != null && !req.ccyCd().isBlank()) {
+            sumr.setWdrlCcyCd(req.ccyCd().trim());
+        }
         sumr.setModDtm(nowDtm);
         sumr.setModId(userId);
         sumrRepository.save(sumr);
@@ -1011,16 +1167,19 @@ public class OverseasPaymentService {
                 .orElse(bizKey);
         mstr.setDraftUserSiteNm(cmpnNm);
         mstr.setHandRegYn("Y");
-        mstr.setApprBoxUseYn("Y");
-        mstr.setApprDatDispYn("N");
-        mstr.setCmpnLogoDispYn("Y");
-        mstr.setRegDispYn("Y");
+        // M-2 (legacy parity): display flags from BUSI_ENV_SET_INFM (00014/16/17/18),
+        // not hardcoded. Mirrors comm_0192_001_c005_act.jsp:316-320.
+        var flags = displayFlagsResolver.resolve(bizKey);
+        mstr.setApprBoxUseYn(flags.apprBoxUseYn());
+        mstr.setApprDatDispYn(flags.apprDatDispYn());
+        mstr.setCmpnLogoDispYn(flags.cmpnLogoDispYn());
+        mstr.setRegDispYn(flags.regDispYn());
         mstr.setTitl(req.postTitle() != null ? req.postTitle().trim() : "");
         // DOC_NO follows the VO_YYMMDD_NNN pattern (mirrors ReslHelper.getDocNo /
         // wb_get_next_val('expt_resol_mstr','doc_no',bizKey) in V25 migration).
         String docNo = docNoGenerator.nextDocNo(bizKey);
         mstr.setDocNo(docNo);
-        mstr.setDocNm(sumr.getTitl() != null ? sumr.getTitl() : sumr.getOvrsPymnNo());
+        mstr.setDocNm(ApprDv.OVERSEAS.docNm());   // L-1 (legacy parity): legacy DOC_NM = apprDv.getLabel()
         // Store amount in the column that matches the payment currency.
         // Column convention (3 currencies supported):
         //   VND → TOT_PAY_KHR_AMT (VN-tenant legacy alias) + TOT_PAY_VND_AMT

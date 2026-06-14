@@ -158,7 +158,10 @@ public class ApprovalBoxFanoutService {
         // per-tenant per-day sequence so the Approval Box's Document
         // No. column reads uniformly across all submissions.
         mstr.setDocNo(nextDocNo(bizKey, now));
-        mstr.setDocNm(apprDv.slug());
+        // L-1 (legacy parity): DOC_NM = legacy apprDv.getLabel(), not the slug.
+        // Matches the scheduled-module inline writers + legacy
+        // card_0001_005_c001_act.jsp:237 (exptResolMstr.setDocNm(apprDv.getLabel())).
+        mstr.setDocNm(apprDv.docNm());
         // Surface the user's "Approval Content" textarea on the
         // read-only Approval Details popup. Blank input stays null
         // on the row so the popup hides the section.
@@ -179,15 +182,17 @@ public class ApprovalBoxFanoutService {
         mstr.setPayDate(payDate != null && !payDate.isBlank() ? payDate : null);
         mstr.setDelYn("N");
         mstr.setPayEndYn("N");
-        // Legacy print-form flags — all NOT NULL with no DB DEFAULT. The
-        // refactor doesn't render the legacy print form, but the columns
-        // must be populated so the INSERT doesn't violate the constraint.
-        // Values mirror the legacy DEV defaults ('Y'/'N' from V109 schema).
+        // M-2 (legacy parity): print-form display flags from BUSI_ENV_SET_INFM
+        // (00014/16/17/18) via the shared yn() normaliser, not hardcoded —
+        // matches the scheduled-module inline writers + legacy
+        // comm_0192_001_c005_act.jsp:316-320 / card_0001_005_c001_act.jsp:256-260.
+        // HAND_REG_YN stays 'Y' (legacy setHandRegYn(YesOrNo.YES), unconditional).
+        // An unseeded tenant resolves every flag to 'N' (legacy YesOrNo.fromValue("")).
         mstr.setHandRegYn("Y");
-        mstr.setApprBoxUseYn("N");
-        mstr.setApprDatDispYn("N");
-        mstr.setCmpnLogoDispYn("N");
-        mstr.setRegDispYn("N");
+        mstr.setApprBoxUseYn(ynEnv(bizKey, "00014"));
+        mstr.setApprDatDispYn(ynEnv(bizKey, "00016"));
+        mstr.setCmpnLogoDispYn(ynEnv(bizKey, "00017"));
+        mstr.setRegDispYn(ynEnv(bizKey, "00018"));
         mstr.setApprTypeCd(APPR_TYPE_CD_PENDING);
         mstr.setRegId(userId);
         mstr.setRegDtm(nowDtm);
@@ -363,6 +368,14 @@ public class ApprovalBoxFanoutService {
         return busiEnvSetInfmRepository.findById(new BusiEnvSetInfmId(bizKey, key))
                 .map(BusiEnvSetInfm::getEnvSetCont)
                 .orElse(null);
+    }
+
+    /** M-2: legacy {@code YesOrNo.fromValue} normalisation of an env flag —
+     *  {@code "Y"} when the env row holds {@code "Y"}, else {@code "N"}
+     *  (including an unseeded / absent row). */
+    private String ynEnv(String bizKey, String key) {
+        String raw = readEnv(bizKey, key);
+        return raw != null && "Y".equalsIgnoreCase(raw.trim()) ? "Y" : "N";
     }
 
     private static int parseCount(String s) {

@@ -99,26 +99,28 @@ running-balance subqueries, and two set-returning PL/pgSQL functions).
 | Surface | In-scope target | State | Evidence |
 |---|---|---|---|
 | Search filters (date, currency, active-only, incl-internal) | yes | **Done** | `ReportController.dailyFinancial` (params `asOf`, `currencyScope`, `activeAccountsOnly`, `includeInternalTransfers`) |
-| Financial Status totals (REC) | yes | **Done** — date-aware per-currency current + saving totals (VND/USD/KRW), `total = current + saving`; live-computed (Strategy B) | `ReportService.dailyFinancial` (P0 fix 2026-06-04) |
-| Current / Savings account rows (REC1) | yes | **Done** — balances (as-of) + per-day debit/credit + internal counts/amounts live-computed from `ACCT_TRNS_HSTR` (+`ACCT_TRNS_RCV_PAY_INFM` for internal split) | `ReportService.dailyFinancial` (P0 fix 2026-06-04) |
+| Financial Status totals (REC) | yes | **Done — DB-side source (2026-06-14)** — per-currency current + saving totals (VND/USD/KRW), `total = current + saving`, aggregated from the read-only function `rept_0015_001_r001_rec1`; **07/08 (KRW current/savings) kept** by PO direction | `ReportService.dailyFinancial` + `DailyFinancialCmcFunctionRepository.rec1` |
+| Current / Savings account rows (REC1) | yes | **Done — DB-side source (2026-06-14)** — balances (as-of) + per-day debit/credit + internal counts/amounts read straight from `rept_0015_001_r001_rec1` (bank name via `wb_get_bank_nm`, amounts via `wb_get_amt`); prior Java live-compute removed. **DF-3** (`activeAccountsOnly` → `ACTV_YN` filter) and **DF-4** (`includeInternalTransfers` → internal columns zeroed when off) fixed | `ReportService.dailyFinancial` + `DailyFinancialCmcFunctionRepository.rec1` |
 | Inline per-account transactions (REC2_1) | yes | **Deferred (P1, non-blocker)** — inline grid empty; the Transaction History Details popup serves the per-account drilldown | `ReportService.dailyFinancial` |
 | Transaction-history popup (`rept_0015_002`) | yes | **Done — READY FOR SIT** — reads `ACCT_TRNS_HSTR`, paginated + totals; UI aligned to the e-Invoice Latest Inquiry History popup (2026-06) | `ReportService.dailyFinancialTransactions`; `wecms-web/.../daily-financial/TransactionHistoryDialog.tsx` |
 | Cash book (REC3) | **out of scope** | **Dropped** — `DAILY_FINCL_REPT_DAILY_CASH_SUMR*` + `CASH_REPY_MSTR` not in PROD Active Table List | CLAUDE.md PROD scope list |
 | Receipt/Payment & cash-book detail popups (`rept_0015_003/004`) | **out of scope** | **Not ported** — depend on out-of-scope tables | CLAUDE.md PROD scope list |
-| Summary recompute (`wb_insert_*`, C002/D002) | deferred | **Not ported** — batch owns the writes | CLAUDE.md §"Legacy report DB functions" |
+| Summary recompute (`wb_insert_*`, C002/D002) | **not needed** | **Not ported — and not required.** CMC reads the underlying read-only `rept_0015_001_r001_rec1` directly (the summary tables are just its materialised cache), so there is **no write-on-read** and the `DAILY_FINCL_REPT_*` summary tables are **not read as the primary source** | CLAUDE.md §"Legacy report DB functions" |
 | Excel export | yes | **Deferred (P1, non-blocker)** — frontend client-side export present; backend `DailyFinancialExportProvider` not yet added | `common/export/` scan |
 | Frontend page + popup dialog | yes | **Done** — real API data (env config fixed 2026-06); popup restyled to e-Invoice pattern; `tsc`/`build` pass | `wecms-web/components/banking/reports/daily-financial/` |
 | KRW Financial Status coverage | yes | **Done** — KRW current/saving accounts surface a KRW section; `₩` formatting | `ReportService.dailyFinancial`; `lib/currency.ts` |
-| HAENGSUNG variant (`daily-financial-hs`, `rept_0017_001`) | deferred | **Stub** — fixed seed dataset (separate feature) | `ReportService.dailyFinancialHs` lines 300-317 |
+| HAENGSUNG variant (`daily-financial-hs`, `rept_0017_001`) | in scope | **Real (2026-06-14)** — hardcoded stub removed; now calls **`fn_get_haengsung_daily_financial_report`** via a native-query repository; `REPT_TRNS_HSTR` + the function **added to the refactor DB baseline** (PO-approved). Remaining: bank/account multi-select UI, seed `REPT_TRNS_HSTR` rows, live HTTP smoke. | `ReportService.dailyFinancialHs` + `DailyFinancialHsReportRepository` |
 
 **Completion estimate (evidence-based, updated 2026-06):**
 
 - **The in-PROD-scope read surface is functionally complete and SIT-ready** (filters + date-aware
   balances + per-currency Financial Status incl. KRW + per-account debit/credit/internal aggregates +
   a fully-working, e-Invoice-aligned transaction popup), verified against real data
-  (`GET /api/v1/banking/reports/daily-financial` → HTTP 200, real VND/USD/KRW). The remaining items
-  (server-side Excel provider, inline REC2 grid, internal-transfer toggle exclusion, active-account
-  widening) are **P1 / out-of-scope — not SIT blockers** (see [§5](#5-sit-readiness-2026-06)).
+  (`GET /api/v1/banking/reports/daily-financial` → HTTP 200, real VND/USD/KRW). **DF-3 (active-account
+  widening) and DF-4 (internal-transfer toggle exclusion) are now fixed (2026-06-14)** on the
+  `rept_0015_001_r001_rec1` path. The remaining items (server-side Excel provider, inline REC2 grid)
+  are **P1 / out-of-scope — not SIT blockers** (see [§5](#5-sit-readiness-2026-06)). Numeric live
+  verification is **data-blocked in R&D** (`acct_trns_hstr` empty for the tenant).
 - **≈ 40 % of the *full legacy* feature surface**, because the cash book, time-deposit, loan, and
   receipt/payment-purpose drilldowns are deliberately **excluded from refactor scope** (their tables
   are not in the PROD Active Table List) and the nightly recompute is owned by a not-yet-ported batch.
@@ -128,12 +130,11 @@ running-balance subqueries, and two set-returning PL/pgSQL functions).
 - **Lowering factors:** scope reduction removes the three hardest tables (cash + rcv/pay summaries);
   the read path can lean on already-built `AcctMstr` / `AcctTrnsHstr` entities and the proven
   Daily Cash / transaction-popup patterns.
-- **Raising factors:** the legacy summary tables are produced by `wb_insert_daily_fincl_*` batch
-  functions and `rept_0015_001_r001_rec1/rec3` set-returning functions with `EXCEPT`/`UNION` drift
-  detection and correlated running-balance math; faithfully reproducing per-account daily
-  debit/credit aggregates and the running balance in Java (instead of reading the materialized
-  summary) is the real work. The `json_agg` nested-transaction shape (`REC2_1`) must be rebuilt as a
-  typed nested DTO.
+- **Raising factors (now largely retired):** the original concern — reproducing the per-account daily
+  debit/credit aggregates and running-balance math in Java — is **moot as of 2026-06-14**: CMC reads
+  the legacy `rept_0015_001_r001_rec1` function directly instead of recomputing, so there is no Java
+  parity surface to maintain. The `json_agg` nested-transaction shape (`REC2_1`) remains out of scope
+  (served by the transaction-history popup, not an inline grid).
 
 **Recommended next steps (prioritized):** see [refactor-gap-analysis.md §Recommended actions](refactor-gap-analysis.md#recommended-actions).
 

@@ -179,6 +179,8 @@ public class CardTransactionsService {
     /** Writes EXPT_RESOL_MSTR + EXPT_RESOL_APPRVR_INFM rows so the
      *  approval surfaces in {@code /payment/approval-box}. */
     private final ApprovalBoxFanoutService         approvalBoxFanoutService;
+    /** M-1 (legacy parity): shared Request Approval attachment writer (EXPT_RESOL_FILE). */
+    private final com.kosign.wecms.domain.payment.approvalbox.service.ApprovalAttachmentWriter approvalAttachmentWriter;
     /** Shared request-approval bulletin / notification writer (BLTB_* tables). */
     private final com.kosign.wecms.domain.payment.notification.service.ApprovalNotificationService approvalNotificationService;
     /** Reads e-Invoice rows for the Link Card Payments popup's
@@ -687,7 +689,8 @@ public class CardTransactionsService {
      */
     @Transactional
     public com.kosign.wecms.domain.payment.cardtransactions.dto.RequestApprovalResponse requestApproval(
-            com.kosign.wecms.domain.payment.cardtransactions.dto.RequestApprovalRequest req) {
+            com.kosign.wecms.domain.payment.cardtransactions.dto.RequestApprovalRequest req,
+            java.util.List<org.springframework.web.multipart.MultipartFile> attachments) {
         if (req == null) {
             throw new BusinessException("WBE_VALIDATION", "request body is required");
         }
@@ -760,6 +763,10 @@ public class CardTransactionsService {
             apprSeqNo = allocateApprSeqNo(bizKey);
             stampApproval(stampable, apprSeqNo, totalVndAmt, req.postTitle(), req.postCont(), req.payDate(), chain, req.apprLineNo());
         }
+
+        // M-1 (legacy parity): persist Request Approval attachments into
+        // EXPT_RESOL_FILE (legacy card_0001_005_c001 processFileAttachments / REC1).
+        approvalAttachmentWriter.persist(bizKey, apprSeqNo, attachments);
 
         auditLogService.append(AuditLogContext.builder()
                 .wsvcId(WSVC_ID)
@@ -1891,7 +1898,12 @@ public class CardTransactionsService {
                 e.getRegId(),
                 e.getRegDtm(),
                 e.getModId(),
-                e.getModDtm());
+                e.getModDtm(),
+                // GAP-CARD-FIELDS: legacy CARD_TRNS_HSTR_R002 detail fields.
+                e.getUsingType(),
+                e.getAuthCode(),
+                e.getCity(),
+                e.getNote());
     }
 
     /** Batch (APPR_SEQ_NO → DOC_NO) lookup against EXPT_RESOL_MSTR for

@@ -141,11 +141,15 @@ public class OverseasPaymentController {
      * list row transitions to "pending" status. Full {@code EXPT_RESOL_MSTR}
      * write is deferred.
      */
-    @PostMapping("/{id}/request-approval")
+    // M-1 (legacy parity): multipart so Request Approval attachments ride along
+    // (JSON in `request`, files in `attachments`); a no-file submit omits them.
+    @PostMapping(path = "/{id}/request-approval", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResponse<RequestApprovalResponse> requestApproval(
             @PathVariable("id") String id,
-            @Valid @RequestBody RequestApprovalRequest request) {
-        return ApiResponse.ok(overseasPaymentService.requestApproval(id, request));
+            @Valid @RequestPart("request") RequestApprovalRequest request,
+            @RequestPart(value = "attachments", required = false)
+            java.util.List<org.springframework.web.multipart.MultipartFile> attachments) {
+        return ApiResponse.ok(overseasPaymentService.requestApproval(id, request, attachments));
     }
 
     /**
