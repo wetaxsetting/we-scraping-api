@@ -102,6 +102,72 @@ Legacy DEV/UAT/PROD store some fields as **reversible symmetric ciphertext** via
 
 ---
 
+## 5a. Default tenant-data initialization — `wb_init_busi_data()` is the source of truth
+
+Creating the rows in §2 (`BUSI_INFM` → `EMPL_INFM` → `USER_INFM` → `BUSI_ADMN_INFM` → `USER_BUSI_CONN_INFM`) makes a tenant **able to log in**, but it does **not** initialize the tenant's default settings. In legacy JEX that initialization was automatic, and **the refactor keeps the same mechanism: the DB function `wb_init_busi_data()`.**
+
+> **Decision (authoritative):** tenant/company initialization is performed by the database function **`wb_init_busi_data(p_biz_key, p_reg_id, p_reg_dtm)`**, exactly as in legacy. This logic is **not** reimplemented or duplicated in Spring/Java, and there is no Spring bootstrap service wired into any flow. The function — already created in the refactor DB — is the single source of truth.
+
+### What the function does (verified against legacy)
+
+Legacy ran `wb_init_busi_data` during company/business **registration** (invoked from `BusiInfm.initData(...)` at the `SzonHelper` registration call sites). The refactor DB function performs the same copies, each guarded by `WHERE NOT EXISTS` (idempotent, no duplicate-key risk):
+
+1. `SYS_ENV_SET_INFM`  → `BUSI_ENV_SET_INFM`  (environment settings — Preferences toggles `00074`/`00077`, firm-banking automation `00078`/`00079`, the `wb_get_next_val` DOC_NO/doc-id env codes, etc.) — **identical to legacy.**
+2. `SYS_USAG_SET_INFM` → `BUSI_USAG_SET_INFM` (payment purpose/usage defaults; refactor also joins `USAG_INFM` for the extended columns, filters `use_yn='Y'`, and additionally seeds `BUSI_USAG_SET_INFM_LANG_DETL`) — **equivalent core copy, newer/extended form.**
+3. `TRCO_GRP_BSC_SYS`  → `TRCO_GRP_BSC_CSTM`  (default trading-company groups; `tax_id` from `BUSI_INFM`, `grp_stts='Y'`) — **identical to legacy.**
+
+The refactor function additionally seeds `PGRO_BSAC_LNKN_INFM` (partner default links, Redmine #38478) — a newer legacy leg not present in the `WECMS DEV/WECMS_DOC/database/ddl/functions.sql:5899-5977` snapshot. No leg is missing or reduced versus legacy; the refactor function is a superset/newer version. (The DDL-doc snapshot is older — treat the live/refactor function body as authoritative.)
+
+### Required provisioning sequence
+
+Company/tenant provisioning **must** run in this order (FK-safe), with the function as the final initialization step:
+
+1. Create `BUSI_INFM` (company)
+2. Create `USER_INFM` (user)
+3. Create `USER_BUSI_CONN_INFM` (user ↔ company link)
+4. Create `BUSI_ADMN_INFM` (if the user is an admin)
+5. **Execute `wb_init_busi_data(biz_key, reg_id, reg_dtm)`** — initializes the default tenant data (env-set / usag-set / trco-grp / partner links)
+6. Continue with any optional setup (e.g. `EMPL_INFM`, feature-specific seeds)
+
+> `EMPL_INFM` (§2 Step 3/4) is not required for login and may be created before or after the function call; the FK-critical ordering is `BUSI_INFM` first, then the function after the company row exists (it reads `BUSI_INFM.tax_id`).
+
+```sql
+-- Step 5: initialize default tenant data (DBA executes; do NOT auto-run from Spring).
+--   Idempotent (WHERE NOT EXISTS) — safe to re-run for an existing tenant.
+SELECT wb_init_busi_data(
+    '<BIZ_KEY>',                                              -- p_biz_key (existing BUSI_INFM row)
+    'SYSTEM',                                                 -- p_reg_id  (or the acting admin user id)
+    to_char(now() AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISS')     -- p_reg_dtm (legacy varchar(14) yyyyMMddHHmmss)
+);
+
+-- verify env-set leg
+SELECT count(*) AS busi_env_rows FROM busi_env_set_infm WHERE biz_key = '<BIZ_KEY>';
+```
+
+> **Prerequisite:** the `SYS_*` parent tables must already be seeded. `SYS_ENV_SET_INFM` is the FK parent of `BUSI_ENV_SET_INFM` (`busi_env_set_infm_fk02`); the function copies whatever is in SYS, so if `SELECT count(*) FROM sys_env_set_infm` is 0 (currently true on the LOCAL refactor DB), seed the SYS defaults **before** calling the function or the env-set leg copies nothing. Legs that read empty source tables (e.g. `PGRO_BSAC_LNKN_INFM` for a brand-new tenant with no `TRCO_INFM` rows) are simply no-ops.
+
+### Failure to run `wb_init_busi_data()` — consequences
+
+If the function is **not** executed after creating a company, the tenant is left without its default rows. This causes:
+
+- Missing `BUSI_ENV_SET_INFM` rows for the tenant.
+- Missing `BUSI_USAG_SET_INFM` (+ `BUSI_USAG_SET_INFM_LANG_DETL`) rows.
+- Missing `TRCO_GRP_BSC_CSTM` (default trading-company groups) and `PGRO_BSAC_LNKN_INFM` rows.
+- **`WBE2031` ("Environment setting is not initialized for this tenant (…)")** the moment a user updates any environment setting (e.g. Preferences "Use Purpose" `00077` / "Use VAS" `00074`, firm-banking automation `00078`/`00079`) — the update path requires the per-tenant `BUSI_ENV_SET_INFM` row to exist.
+- Generally missing tenant initialization data — settings screens fall back to SYS defaults on read but cannot be saved per-tenant.
+
+`busi_env_set_infm` (and the other per-tenant tables) **must exist immediately after tenant creation** via this function — not lazily on first settings access.
+
+### Optional: automatic execution (legacy-like) via a DB trigger
+
+Because the refactor has no company-creation flow to host an application-level call, automatic legacy-like execution is available as a **DBA-installed `AFTER INSERT ON busi_infm` trigger** that forwards each new company row to `wb_init_busi_data(NEW.biz_key, COALESCE(NEW.reg_id,'SYSTEM'), COALESCE(NEW.reg_dtm, …))`. The trigger holds **no copy logic** — `wb_init_busi_data()` stays the single source of truth; it only auto-invokes the function in the same transaction as the insert.
+
+- Prepared (NOT executed) at [`Claude Code (AI)/sql/wb_init_busi_data_autotrigger_20260611.sql`](../../../../Claude%20Code%20%28AI%29/sql/wb_init_busi_data_autotrigger_20260611.sql) — DBA-run, idempotent, with verification + rollback SQL and caveats.
+- With the trigger installed, **Step 5 / Step 8 happen automatically** — DBAs only insert `BUSI_INFM` and the tenant data is initialized.
+- It is **not** a Flyway migration (Flyway disabled; `ddl-auto=validate`) and is **not** auto-run. Caveats (fires on every insert incl. seeds, empty-SYS = no-op, shared/live-JEX-DB double-fire is harmless-but-redundant) are documented in the script header.
+
+---
+
 ## 6. Script A — Legacy UAT / PROD DB
 
 Run against `https://test.wecms.vn` (UAT) or `https://www.wecms.vn` (PROD). The legacy schema has `hash()` / `encrypt()` installed and audit columns are `varchar(14)`.
@@ -228,6 +294,14 @@ INSERT INTO USER_BUSI_CONN_INFM (
 -- → Login credentials produced:
 --      USER_ID  = NuApartment_UAT@gmail.com
 --      PASSWORD = WeCMS@7777
+
+-- Step 8 (REQUIRED): initialize default tenant data via the DB function (§5a).
+--   Legacy ran this automatically at registration; the refactor keeps the same function.
+SELECT wb_init_busi_data(
+    'VN_VNM0004_000018', 'SYSTEM',
+    to_char(timezone('Asia/Ho_Chi_Minh', now()), 'YYYYMMDDHH24MISS'));
+--   Skipping this leaves the tenant without env-set/usag-set/trco-grp rows → WBE2031
+--   on first settings toggle.
 ```
 
 ### Switching to `PRDT_TYPE = 'H'` (HAENGSUNG-tier customer)
@@ -380,6 +454,14 @@ COMMIT;
 
 -- → If Option 1: restart Spring (./gradlew bootRun) so DataSeeder patches the sentinel.
 -- → If Option 2: log in immediately with the password that hashed to the literal you pasted.
+
+-- Step 8 (REQUIRED): initialize default tenant data via the DB function (§5a).
+--   Legacy ran this automatically at registration; the refactor keeps the same function.
+SELECT wb_init_busi_data(
+    'VN_VNM0004_000018', 'SYSTEM',
+    to_char(now() AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISS'));
+--   On LOCAL, SYS_ENV_SET_INFM may itself be empty — seed the SYS defaults first,
+--   otherwise the env-set leg copies nothing and the tenant hits WBE2031.
 ```
 
 ### Switching to `PRDT_TYPE = 'H'`

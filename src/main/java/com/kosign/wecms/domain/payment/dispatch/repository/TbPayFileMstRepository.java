@@ -3,21 +3,17 @@ package com.kosign.wecms.domain.payment.dispatch.repository;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileMst;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileMstId;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.query.Param;
+
+import java.util.Optional;
 
 public interface TbPayFileMstRepository
         extends JpaRepository<TbPayFileMst, TbPayFileMstId> {
 
-    /**
-     * Highest existing {@code FILE_SEQ_NO} for a given tenant + date.
-     * Returns 0 when no row exists yet.
-     */
-    @Query("""
-            SELECT COALESCE(MAX(CAST(m.fileSeqNo AS long)), 0)
-              FROM TbPayFileMst m
-             WHERE m.bizKey = :bizKey
-               AND m.tranDt = :tranDt
-            """)
-    long maxFileSeqNo(@Param("bizKey") String bizKey, @Param("tranDt") String tranDt);
+    // FILE_SEQ_NO allocation now routes through
+    // LegacyFunctionRepository.nextTbPayFileMstFileSeqNo (V140 #4 — the GLOBAL
+    // firm_file_seq_no sequence) so every wb_get_next_val call goes through the
+    // one funnel and lines up with the live JEX firm-banking file dispatch.
+
+    /** The bulk pay-file target row (00301 reception flow + 01302 final-status aggregation). */
+    Optional<TbPayFileMst> findByTranDtAndBizKeyAndFileSeqNo(String tranDt, String bizKey, String fileSeqNo);
 }

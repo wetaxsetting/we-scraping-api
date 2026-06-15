@@ -81,18 +81,24 @@ public interface ScdulPymnSumrRepository extends JpaRepository<ScdulPymnSumr, Sc
      * {@code comm_0195_001} and the frontend's
      * {@code deriveStatus} helper:
      *
+     * <p>Approval status is derived by calling the legacy DB function
+     * {@code wb_get_appr_stts(...)} on the {@code (BIZ_KEY, APPR_SEQ_NO)}-joined
+     * {@code EXPT_RESOL_MSTR} row, mirroring {@code IDO.SCDUL_PYMN_SUMR_R002.xml:68}
+     * (binding {@code (ERM.BIZ_KEY, ERM.REG_ID, ERM.REG_ID, SPS.APPR_SEQ_NO,
+     * ERM.APPR_TYPE_CD)}). {@code SCDUL_PYMN_SUMR} has no {@code APPR_STTS} column
+     * in the legacy JEX schema, so the function — not a stored column — is the
+     * source of truth. The function maps {@code '00'→P, '01'→C, '02'→R, '03'→I}
+     * (admin/registrant branch; per-approver ELSE branch is unreachable for the
+     * {@code _apprvr_id = _reg_id} binding). The tabs filter on that result:
+     *
      * <ul>
      *   <li>{@code null} / blank → All (no filter).</li>
-     *   <li>{@code "00"} Draft — never submitted for approval
-     *       ({@code APPR_SEQ_NO} null or blank).</li>
-     *   <li>{@code "01"} Approved — {@code APPR_STTS = 'C'} OR
-     *       {@code TRNF_YN = 'Y'} (dispatched batches are
-     *       implicitly approved).</li>
-     *   <li>{@code "02"} Rejected — {@code APPR_STTS = 'X'}.</li>
-     *   <li>{@code "03"} In Progress — {@code APPR_SEQ_NO} set,
-     *       {@code APPR_STTS} null / {@code 'P'} / {@code 'I'},
-     *       and {@code TRNF_YN} ≠ {@code 'Y'} (not yet dispatched).</li>
-     *   <li>{@code "04"} Pending — {@code APPR_STTS = 'P'}.</li>
+     *   <li>{@code "00"} Draft — never submitted ({@code APPR_SEQ_NO} null/blank).</li>
+     *   <li>{@code "01"} Approved — status {@code 'C'} OR {@code TRNF_YN = 'Y'}
+     *       (dispatched batches are implicitly approved).</li>
+     *   <li>{@code "02"} Rejected — status {@code 'R'}.</li>
+     *   <li>{@code "03"} In Progress — status {@code 'I'}.</li>
+     *   <li>{@code "04"} Pending — status {@code 'P'}.</li>
      * </ul>
      *
      * <p>Other / unknown codes pass-through as no-op (the OR
@@ -102,6 +108,8 @@ public interface ScdulPymnSumrRepository extends JpaRepository<ScdulPymnSumr, Sc
      */
     @Query("""
             SELECT s FROM ScdulPymnSumr s
+            LEFT JOIN ExptResolMstr erm
+                   ON erm.bizKey = s.bizKey AND erm.apprSeqNo = s.apprSeqNo
             WHERE s.bizKey             = :bizKey
               AND s.scdulPymnTypeCd    = :scdulPymnTypeCd
               AND s.regDtm BETWEEN :fromDtm AND :toDtm
@@ -113,14 +121,18 @@ public interface ScdulPymnSumrRepository extends JpaRepository<ScdulPymnSumr, Sc
                     :apprType IS NULL
                  OR :apprType = ''
                  OR (:apprType = '00' AND (s.apprSeqNo IS NULL OR s.apprSeqNo = ''))
-                 OR (:apprType = '01' AND (s.apprStts = 'C' OR s.trnfYn = 'Y'))
-                 OR (:apprType = '02' AND s.apprStts = 'X')
-                 OR (:apprType = '03' AND s.apprSeqNo IS NOT NULL
-                                       AND s.apprSeqNo <> ''
-                                       AND (s.apprStts IS NULL
-                                            OR s.apprStts IN ('P','I'))
-                                       AND (s.trnfYn IS NULL OR s.trnfYn <> 'Y'))
-                 OR (:apprType = '04' AND s.apprStts = 'P')
+                 OR (:apprType = '01' AND (s.trnfYn = 'Y'
+                        OR FUNCTION('wb_get_appr_stts', erm.bizKey, erm.regId, erm.regId,
+                                    s.apprSeqNo, erm.apprTypeCd) = 'C'))
+                 OR (:apprType = '02'
+                        AND FUNCTION('wb_get_appr_stts', erm.bizKey, erm.regId, erm.regId,
+                                     s.apprSeqNo, erm.apprTypeCd) = 'R')
+                 OR (:apprType = '03'
+                        AND FUNCTION('wb_get_appr_stts', erm.bizKey, erm.regId, erm.regId,
+                                     s.apprSeqNo, erm.apprTypeCd) = 'I')
+                 OR (:apprType = '04'
+                        AND FUNCTION('wb_get_appr_stts', erm.bizKey, erm.regId, erm.regId,
+                                     s.apprSeqNo, erm.apprTypeCd) = 'P')
                  OR :apprType NOT IN ('00','01','02','03','04')
               )
             """)
@@ -170,34 +182,10 @@ public interface ScdulPymnSumrRepository extends JpaRepository<ScdulPymnSumr, Sc
             @Param("trnfYn")           String trnfYn,
             Pageable pageable);
 
-    /**
-     * Per-tenant MAX(apprSeqNo::numeric) for the synthesised
-     * approval-sequence-number generator used by
-     * {@code InternalTransferService.requestApproval}. Mirrors the
-     * Approval Line / Chart of Accounts MAX+1 pattern documented in
-     * the workspace CLAUDE.md ("Key-generation rule for migrated
-     * legacy tables") — no {@code wb_get_next_val} dependency.
-     *
-     * <p>The legacy {@code APPR_SEQ_NO} on
-     * {@code SCDUL_PYMN_SUMR} is a VARCHAR carrying the
-     * {@code EXPT_RESOL_MSTR} surrogate; until that table is ported,
-     * the refactor synthesises a value via MAX+1 over the same column
-     * (cast to numeric for the comparison; non-numeric legacy values
-     * fall outside the cast and produce NULL → COALESCE'd to 0). The
-     * result is monotonic within one tenant.
-     *
-     * <p>Returns {@code 0} for the empty-tenant case so the caller
-     * can unconditionally do {@code max + 1}. Concurrency: two
-     * parallel callers may read the same MAX; the second INSERT then
-     * conflicts on the next downstream write — service retries once.
-     */
-    @Query(value = """
-            SELECT COALESCE(MAX(CAST(s.appr_seq_no AS NUMERIC)), 0)
-              FROM scdul_pymn_sumr s
-             WHERE s.biz_key = :bizKey
-               AND s.appr_seq_no ~ '^[0-9]+$'
-            """, nativeQuery = true)
-    Long findMaxApprSeqNoByBizKey(@Param("bizKey") String bizKey);
+    // APPR_SEQ_NO is now allocated through the single
+    // LegacyFunctionRepository.nextApprSeqNo funnel (V140 #1 — the GLOBAL
+    // sq_appr_seq_no sequence shared across all Payment modules), replacing the
+    // former per-tenant cross-table MAX+1 finder.
 
     /** Batch-fetch (apprSeqNo → ccyCd) pairs for the Approval Box list.
      *  Mirrors the equivalent query on {@code OvrsPymnSumrRepository} — both
@@ -227,35 +215,21 @@ public interface ScdulPymnSumrRepository extends JpaRepository<ScdulPymnSumr, Sc
             @Param("bizKey")      String bizKey,
             @Param("apprSeqNos") Collection<String> apprSeqNos);
 
-    /** Write back the approval status from the Approval Box to the payment
-     *  batch row. Called by {@code ApprovalBoxService} after approve / reject
-     *  so the Scheduled Payment list pages reflect the updated status. */
-    @Modifying
-    @Query("""
-            UPDATE ScdulPymnSumr s
-               SET s.apprStts = :apprStts,
-                   s.modId    = :modId,
-                   s.modDtm   = :modDtm
-             WHERE s.bizKey      = :bizKey
-               AND s.apprSeqNo   = :apprSeqNo
-            """)
-    int updateApprStts(@Param("bizKey")    String bizKey,
-                       @Param("apprSeqNo") String apprSeqNo,
-                       @Param("apprStts")  String apprStts,
-                       @Param("modId")     String modId,
-                       @Param("modDtm")    String modDtm);
+    // updateApprStts removed 2026-06-10: SCDUL_PYMN_SUMR has no APPR_STTS column
+    // in the legacy JEX schema. The Approval Box no longer mirrors status onto the
+    // payment batch — status is derived on read via the legacy wb_get_appr_stts(...)
+    // function (LegacyFunctionRepository.getApprStts / apprSttsByApprSeqNos).
 
     /** Clear the approval stamp on the payment batch when its Approval Box
-     *  request is withdrawn — nulls {@code APPR_SEQ_NO} + {@code APPR_STTS}
-     *  so the row returns to Draft ({@code apprSeqNo IS NULL} → tab '00' in
-     *  {@link #search}). Called by {@code ApprovalBoxService.withdraw} after
+     *  request is withdrawn — nulls {@code APPR_SEQ_NO} so the row returns to
+     *  Draft ({@code apprSeqNo IS NULL} → tab '00' in {@link #search}). Called
+     *  by {@code ApprovalBoxService.withdraw} after
      *  {@code ApprovalBoxFanoutService.withdrawApproval} deletes the master.
-     *  Locator is (bizKey, apprSeqNo) — same key the write-back uses. */
+     *  Locator is (bizKey, apprSeqNo). */
     @Modifying
     @Query("""
             UPDATE ScdulPymnSumr s
                SET s.apprSeqNo = null,
-                   s.apprStts  = null,
                    s.modId     = :modId,
                    s.modDtm    = :modDtm
              WHERE s.bizKey      = :bizKey

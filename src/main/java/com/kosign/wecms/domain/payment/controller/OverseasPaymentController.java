@@ -4,10 +4,7 @@ import com.kosign.wecms.common.export.ExcelExportRequest;
 import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.response.ApiResponse;
 import com.kosign.wecms.domain.payment.dto.ChangeApprovalLineRequest;
-import com.kosign.wecms.domain.payment.dto.OverseasMatchCandidateListResponse;
-import com.kosign.wecms.domain.payment.dto.OverseasMatchRequest;
-import com.kosign.wecms.domain.payment.dto.OverseasMatchResultResponse;
-import com.kosign.wecms.domain.payment.dto.OverseasUnmatchAllResponse;
+import com.kosign.wecms.domain.payment.dto.OverseasMultiApprovalRequest;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentDetailResponse;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentExcelPreview;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentExcelUploadRequest;
@@ -20,8 +17,7 @@ import com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalActionReques
 import com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.WithdrawalAccountRow;
-import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService;
-import com.kosign.wecms.domain.payment.overseas.service.OverseasBankingMatchService;
+import com.kosign.wecms.domain.payment.common.WithdrawalAccountListService;
 import com.kosign.wecms.domain.payment.service.OverseasPaymentExcelService;
 import com.kosign.wecms.domain.payment.service.OverseasPaymentExcelService.DownloadResource;
 import com.kosign.wecms.domain.payment.service.OverseasPaymentService;
@@ -72,8 +68,7 @@ public class OverseasPaymentController {
 
     private final OverseasPaymentService        overseasPaymentService;
     private final OverseasPaymentExcelService   overseasExcelService;
-    private final OverseasBankingMatchService   overseasBankingMatchService;
-    private final InternalTransferService       internalTransferService;
+    private final WithdrawalAccountListService  withdrawalAccountListService;
     private final ExcelExportService            excelExportService;
 
     /**
@@ -146,11 +141,28 @@ public class OverseasPaymentController {
      * list row transitions to "pending" status. Full {@code EXPT_RESOL_MSTR}
      * write is deferred.
      */
-    @PostMapping("/{id}/request-approval")
+    // M-1 (legacy parity): multipart so Request Approval attachments ride along
+    // (JSON in `request`, files in `attachments`); a no-file submit omits them.
+    @PostMapping(path = "/{id}/request-approval", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResponse<RequestApprovalResponse> requestApproval(
             @PathVariable("id") String id,
-            @Valid @RequestBody RequestApprovalRequest request) {
-        return ApiResponse.ok(overseasPaymentService.requestApproval(id, request));
+            @Valid @RequestPart("request") RequestApprovalRequest request,
+            @RequestPart(value = "attachments", required = false)
+            java.util.List<org.springframework.web.multipart.MultipartFile> attachments) {
+        return ApiResponse.ok(overseasPaymentService.requestApproval(id, request, attachments));
+    }
+
+    /**
+     * Submit a multi-payment ("M" type) overseas approval — approves a
+     * list of {@code OVRS_PYMN_MSTR} rows under one {@code EXPT_RESOL_MSTR}.
+     * Mirrors the legacy {@code comm_0192_001_c005} {@code OVRS_PYMN_TYPE='M'}
+     * branch (one {@code EXPT_RESOL_DETL} per payment +
+     * {@code APPR_SEQ_NO} stamped on every master row).
+     */
+    @PostMapping("/request-approval-multi")
+    public ApiResponse<RequestApprovalResponse> requestApprovalMulti(
+            @Valid @RequestBody OverseasMultiApprovalRequest request) {
+        return ApiResponse.ok(overseasPaymentService.requestApprovalMulti(request));
     }
 
     /**
@@ -295,13 +307,13 @@ public class OverseasPaymentController {
      * Assign or clear the reporting account for a single detail line.
      * Pass {@code rprt_acct_cd: null} to clear the assignment.
      */
-    @PatchMapping("/{id}/details/{trnSeq}/reporting-account")
+    @PatchMapping("/{id}/details/{ovrsPymnDetlNo}/reporting-account")
     @PreAuthorize("@menuAuthz.canAccess('payment-overseas-result')")
     public ApiResponse<Void> saveReportingAccount(
             @PathVariable("id") String id,
-            @PathVariable("trnSeq") int trnSeq,
+            @PathVariable("ovrsPymnDetlNo") String ovrsPymnDetlNo,
             @RequestBody Map<String, String> body) {
-        overseasPaymentService.saveReportingAccount(id, trnSeq, body.get("rprt_acct_cd"));
+        overseasPaymentService.saveReportingAccount(id, ovrsPymnDetlNo, body.get("rprt_acct_cd"));
         return ApiResponse.ok(null);
     }
 
@@ -309,9 +321,10 @@ public class OverseasPaymentController {
      * Firm-banking-capable withdrawal accounts for the overseas payment
      * Excel upload dialog Step 3 ("Withdrawal Bank/Account No." picker).
      *
-     * <p>Mirrors legacy {@code comm_1001_001} — same query as internal
-     * transfer; the upstream service is shared because both features
-     * draw from the same {@code ACCT_MSTR} + {@code TB_FIRM_CONF} join.
+     * <p>Mirrors legacy {@code comm_1001_001} — module-agnostic, so it
+     * delegates to the shared {@link WithdrawalAccountListService} (the
+     * same strict G1/G2/G3 path every payment consumer uses). Overseas no
+     * longer couples to {@code InternalTransferService} for this lookup.
      *
      * @param ccyCd optional currency filter (e.g. {@code "USD"}); omit
      *              for all firm-banking accounts regardless of currency.
@@ -319,7 +332,7 @@ public class OverseasPaymentController {
     @GetMapping("/withdrawal-accounts")
     public ApiResponse<List<WithdrawalAccountRow>> listWithdrawalAccounts(
             @RequestParam(value = "ccy_cd", required = false) String ccyCd) {
-        return ApiResponse.ok(internalTransferService.listWithdrawalAccounts(ccyCd));
+        return ApiResponse.ok(withdrawalAccountListService.list(ccyCd));
     }
 
     /**
@@ -417,65 +430,5 @@ public class OverseasPaymentController {
                 .header("X-Content-Type-Options", "nosniff")
                 .header("Access-Control-Expose-Headers", HttpHeaders.CONTENT_DISPOSITION)
                 .body(new InputStreamResource(stream));
-    }
-
-    // ── Overseas banking match (OVR-G1) — per-line, post-dispatch reconciliation ──
-    // Result-detail action → gated by the result permission, mirroring the other
-    // result endpoints. Legacy comm_0197_* isOversea branch.
-
-    /**
-     * Candidate bank transactions for one overseas line (legacy
-     * {@code comm_0197_001_r001} {@code isOversea}). Keyed by the line's
-     * {@code OVRS_PYMN_DETL_NO}.
-     *
-     * @param matchRmrkYn {@code "N"} disables the MEMO remark filter (default on).
-     * @param srchWd      optional keyword over short-id / RMRK / RMRK2.
-     */
-    @GetMapping("/{ovrsPymnNo}/lines/{ovrsPymnDetlNo}/match/candidates")
-    @PreAuthorize("@menuAuthz.canAccess('payment-overseas-result')")
-    public ApiResponse<OverseasMatchCandidateListResponse> matchCandidates(
-            @PathVariable("ovrsPymnNo") String ovrsPymnNo,
-            @PathVariable("ovrsPymnDetlNo") String ovrsPymnDetlNo,
-            @RequestParam(value = "match_rmrk_yn", required = false) String matchRmrkYn,
-            @RequestParam(value = "srch_wd", required = false) String srchWd) {
-        return ApiResponse.ok(overseasBankingMatchService.listCandidates(
-                ovrsPymnNo, ovrsPymnDetlNo, matchRmrkYn, srchWd));
-    }
-
-    /**
-     * Match one overseas line to the selected bank transaction (legacy
-     * {@code comm_0197_001_c001} {@code isOversea}).
-     */
-    @PostMapping("/{ovrsPymnNo}/lines/{ovrsPymnDetlNo}/match")
-    @PreAuthorize("@menuAuthz.canAccess('payment-overseas-result')")
-    public ApiResponse<OverseasMatchResultResponse> match(
-            @PathVariable("ovrsPymnNo") String ovrsPymnNo,
-            @PathVariable("ovrsPymnDetlNo") String ovrsPymnDetlNo,
-            @Valid @RequestBody OverseasMatchRequest request) {
-        return ApiResponse.ok(overseasBankingMatchService.match(
-                ovrsPymnNo, ovrsPymnDetlNo, request));
-    }
-
-    /**
-     * Unmatch one overseas line (legacy {@code comm_0197_002_u001}
-     * {@code isOversea}). Unlocks the match log (kept); clears both sides.
-     */
-    @DeleteMapping("/{ovrsPymnNo}/lines/{ovrsPymnDetlNo}/match")
-    @PreAuthorize("@menuAuthz.canAccess('payment-overseas-result')")
-    public ApiResponse<OverseasMatchResultResponse> unmatch(
-            @PathVariable("ovrsPymnNo") String ovrsPymnNo,
-            @PathVariable("ovrsPymnDetlNo") String ovrsPymnDetlNo) {
-        return ApiResponse.ok(overseasBankingMatchService.unmatch(ovrsPymnNo, ovrsPymnDetlNo));
-    }
-
-    /**
-     * Unmatch every matched line under the batch (legacy
-     * {@code comm_0197_001_u001} {@code isOversea}).
-     */
-    @DeleteMapping("/{ovrsPymnNo}/matches")
-    @PreAuthorize("@menuAuthz.canAccess('payment-overseas-result')")
-    public ApiResponse<OverseasUnmatchAllResponse> unmatchAll(
-            @PathVariable("ovrsPymnNo") String ovrsPymnNo) {
-        return ApiResponse.ok(overseasBankingMatchService.unmatchAll(ovrsPymnNo));
     }
 }

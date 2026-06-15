@@ -1,98 +1,72 @@
 package com.kosign.wecms.domain.payment.internaltransfer.service;
 
-import com.kosign.wecms.domain.payment.internaltransfer.repository.InternalTransferKeySeqRepository;
+import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Clock;
-import java.time.LocalDate;
-import java.time.ZoneId;
-
 /**
- * Java-side generator for {@code SCDUL_PYMN_SUMR.SCDUL_PYMN_NO}.
- * Replaces the legacy
- * {@code wb_get_next_val('scdul_pymn_sumr', 'scdul_pymn_no', BIZ_KEY)}
- * branch — the refactor does NOT add new {@code wb_*} function
- * dependencies per
- * {@code wecms-api/CLAUDE.md} §"DB Function / Legacy Function Policy".
+ * Generator for {@code SCDUL_PYMN_SUMR.SCDUL_PYMN_NO}, shared by every
+ * scheduled-payment module (Vendor / Expense / Payroll / Internal Transfer).
  *
- * <h2>Format</h2>
+ * <h2>OD-2 reversal (2026-06-09 — MR-1)</h2>
  *
- * <pre>{@code
- * SCDUL_PYMN_NO = <YYYYMMDD><6-digit-tenant-day-seq>
+ * <p>This generator now routes key allocation through the single
+ * {@link LegacyFunctionRepository} funnel
+ * ({@code wb_get_next_val('scdul_pymn_sumr', 'scdul_pymn_no', biz_key)},
+ * V140 branch&nbsp;#36 — per-tenant plain-int {@code MAX+1}). It previously minted
+ * a date-prefixed {@code <YYYYMMDD><6-digit-seq>} key from a refactor-only
+ * counter table (removed); that approach diverged from the live JEX DB, which
+ * owns this key via {@code wb_get_next_val}. Routing through the funnel makes the
+ * refactor mint the same value the JEX system would for the tenant. See
+ * {@code wecms-api/CLAUDE.md} §"DB Function / Legacy Function Policy" and the V140 header.
  *
- * e.g.  20260513000001
- *       20260513000002
- *       ...
- * }</pre>
+ * <h2>Detail keys are out of scope (MR-2)</h2>
  *
- * <p>{@code YYYYMMDD} is Vietnam-local date (UTC+7) — same time zone the
- * cut-off-time validator uses — so batches saved on the same Vietnam
- * day share a date prefix regardless of UTC offset.
+ * <p>{@code SCDUL_PYMN_SUMR_DETL.SCDUL_PYMN_NO} is still copied verbatim from the
+ * master (FK), and {@code SCDUL_PYMN_DETL_NO} is still a Java per-document line
+ * ordinal — those are deliberately unchanged here pending separate PO
+ * confirmation (JEX scopes {@code scdul_pymn_detl_no} per tenant; the refactor
+ * scopes it per document). V140 branches&nbsp;#37/#38 exist but stay dormant.
  *
  * <h2>Concurrency</h2>
  *
- * <p>{@code REQUIRES_NEW} propagation: the sequence advance runs in its
- * own transaction so it commits even if the outer business-write
- * transaction rolls back. Two concurrent saves on the same
- * {@code (tenant, day)} are serialised by PostgreSQL's row-level lock
- * that {@code ON CONFLICT … DO UPDATE} acquires — see
- * {@link InternalTransferKeySeqRepository#allocateNext}. Format
- * divergence from legacy DEV is OQ-3 in
- * {@code docs/refactor-wecms/features/internal-transfer.md}; the
- * refactor is local-only R&amp;D so cross-system traceability does not
- * apply.
- *
- * <h2>Clock</h2>
- *
- * <p>The {@link Clock} is injected so tests can pin the "today" date
- * deterministically. Production wiring binds {@code Clock.systemUTC()}
- * via a {@code @Bean} in
- * {@link com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferConfig}.
+ * <p>The funnel {@code MAX+1} has no row lock (unlike the retired
+ * {@code ON CONFLICT} counter), so two concurrent saves on the same tenant can
+ * read the same {@code MAX} and collide on the {@code SCDUL_PYMN_SUMR} PK at
+ * INSERT. This matches every other {@code MAX+1} funnel branch; the documented
+ * mitigation is a one-shot retry on {@code DataIntegrityViolationException} at
+ * the INSERT site. Adding that retry touches the four create services and is
+ * intentionally deferred (single-tenant R&amp;D traffic does not hit the race in
+ * practice — same stance the legacy counter's Javadoc recorded).
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class InternalTransferKeyGenerator {
 
-    /** Vietnam timezone — UTC+7. Matches
-     *  {@code DateTimeUtils.gmtNowVanCenter()} on the JEX side. */
-    static final ZoneId VIETNAM_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
-
-    private final InternalTransferKeySeqRepository keySeqRepository;
-    private final Clock clock;
+    private final LegacyFunctionRepository legacyFunctions;
 
     /**
-     * Allocate the next {@code SCDUL_PYMN_NO} for the given tenant. The
-     * caller is responsible for tenant scope — pass
-     * {@link com.kosign.wecms.common.tenant.TenantContext#currentBizKey()}.
+     * Allocate the next {@code SCDUL_PYMN_NO} for the given tenant via the
+     * {@code wb_get_next_val} funnel. Runs in the caller's transaction
+     * ({@code MANDATORY}) so the {@code MAX+1} read and the subsequent
+     * {@code SCDUL_PYMN_SUMR} INSERT share one transactional view.
      *
-     * @return a new 14-character SCDUL_PYMN_NO that is unique per tenant
-     *         (collision-free even under concurrent calls).
+     * @param bizKey tenant scope — pass
+     *               {@link com.kosign.wecms.common.tenant.TenantContext#currentBizKey()}.
+     * @return the new per-tenant {@code SCDUL_PYMN_NO} (plain numeric text).
      */
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @Transactional(propagation = Propagation.MANDATORY)
     public String nextScdulPymnNo(String bizKey) {
         if (bizKey == null || bizKey.isBlank()) {
             throw new IllegalArgumentException("bizKey is required");
         }
-        LocalDate keyDt = LocalDate.now(clock.withZone(VIETNAM_ZONE));
-        int seq = keySeqRepository.allocateNext(bizKey, keyDt);
-        String key = format(keyDt, seq);
-        log.debug("feature=internal-transfer allocated scdul_pymn_no={} bizKey={} keyDt={} seq={}",
-                key, bizKey, keyDt, seq);
+        String key = legacyFunctions.nextScdulPymnNo(bizKey);
+        log.debug("feature=scheduled-payment allocated scdul_pymn_no={} bizKey={} (wb_get_next_val funnel)",
+                key, bizKey);
         return key;
-    }
-
-    /** Visible for testing. */
-    static String format(LocalDate keyDt, int seq) {
-        if (seq < 1 || seq > 999_999) {
-            throw new IllegalStateException(
-                "internal-transfer key sequence out of range (1..999999): " + seq);
-        }
-        return String.format("%04d%02d%02d%06d",
-                keyDt.getYear(), keyDt.getMonthValue(), keyDt.getDayOfMonth(), seq);
     }
 }

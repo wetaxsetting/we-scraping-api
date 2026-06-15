@@ -1,15 +1,22 @@
 package com.kosign.wecms.domain.payment.approvalbox.service;
 
 import com.kosign.wecms.common.exception.BusinessException;
+import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.common.tenant.TenantContext;
+import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolApprLine;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolApprvrInfm;
+import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolDetl;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId;
+import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolApprLineRepository;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolApprvrInfmRepository;
+import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolDetlRepository;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
-import com.kosign.wecms.domain.notification.service.NotificationService;
-import com.kosign.wecms.domain.setting.approvalline.entity.ApprovalLineApprover;
+import com.kosign.wecms.domain.setting.approvalline.entity.ApprLineInfmDetl;
 import com.kosign.wecms.domain.setting.approvalline.repository.ApprovalLineApproverRepository;
+import com.kosign.wecms.domain.setting.environmentsettings.entity.BusiEnvSetInfm;
+import com.kosign.wecms.domain.setting.environmentsettings.entity.BusiEnvSetInfmId;
+import com.kosign.wecms.domain.setting.environmentsettings.repository.BusiEnvSetInfmRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -18,7 +25,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.OffsetDateTime;
-import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -57,18 +63,18 @@ public class ApprovalBoxFanoutService {
     private static final DateTimeFormatter DTM14 = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
     private static final DateTimeFormatter DATE8 = DateTimeFormatter.ofPattern("yyyyMMdd");
     private static final DateTimeFormatter TIME6 = DateTimeFormatter.ofPattern("HHmmss");
-    /** {@code yyMMdd} segment of the legacy {@code VO_YYMMDD_NNN} doc-no
-     *  format — Vietnam local timezone so the daily counter resets at
-     *  the WeCMS business-day boundary, not UTC midnight. */
-    private static final DateTimeFormatter YYMMDD = DateTimeFormatter.ofPattern("yyMMdd");
-    /** WeCMS operates in VN. */
-    private static final ZoneId VIETNAM_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
 
     private final ExptResolMstrRepository       mstrRepository;
     private final ExptResolApprvrInfmRepository approverRepository;
     private final ApprovalLineApproverRepository apprLineApproverRepository;
+    private final ExptResolDetlRepository       detlRepository;
+    private final ExptResolApprLineRepository   apprLineRepository;
+    private final BusiEnvSetInfmRepository      busiEnvSetInfmRepository;
     private final Clock                         clock;
-    private final NotificationService           notificationService;
+    private final LegacyFunctionRepository      legacyFunctions;
+    /** Withdraw-time bulletin/file cleanup (legacy comm_0192_004_d001 parity). */
+    private final com.kosign.wecms.domain.payment.notification.service.ApprovalNotificationService
+                                                approvalNotificationService;
 
     /**
      * Persist the master + per-approver rows for one Request Approval
@@ -102,6 +108,11 @@ public class ApprovalBoxFanoutService {
      * @param approvers   Ordered approver chain. First entry is the active
      *                    approver (status {@code 'P'}); the rest start as
      *                    {@code 'W'} (waiting).
+     * @param apprLineNo  The picked {@code APPR_LINE_INFM.APPR_LINE_NO}
+     *                    stamped onto every {@code EXPT_RESOL_APPRVR_INFM.APPR_LINE_NO}
+     *                    row (legacy parity — Card previously left this
+     *                    null; the other five Payment modules set it
+     *                    inline). Null leaves the column unset.
      */
     @Transactional
     public void fanout(
@@ -113,7 +124,8 @@ public class ApprovalBoxFanoutService {
             String ccyCd,
             String payDate,
             String cont,
-            List<Approver> approvers) {
+            List<Approver> approvers,
+            Long apprLineNo) {
 
         OffsetDateTime now = OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC);
         String nowDtm = now.format(DTM14);
@@ -129,7 +141,9 @@ public class ApprovalBoxFanoutService {
         mstr.setBizKey(bizKey);
         mstr.setApprSeqNo(apprSeqNo);
         mstr.setApprDv(apprDv.code());
-        mstr.setApprSts("0");
+        // F-4 (legacy parity): legacy comm_0192_001_c005 sets ApprSts.STS_2
+        // ("2" = In Progress) at request time, not "0" (temp save).
+        mstr.setApprSts("2");
         mstr.setDraftDate(today);
         mstr.setDraftTime(time);
         mstr.setDraftUserId(userId);
@@ -144,7 +158,10 @@ public class ApprovalBoxFanoutService {
         // per-tenant per-day sequence so the Approval Box's Document
         // No. column reads uniformly across all submissions.
         mstr.setDocNo(nextDocNo(bizKey, now));
-        mstr.setDocNm(apprDv.slug());
+        // L-1 (legacy parity): DOC_NM = legacy apprDv.getLabel(), not the slug.
+        // Matches the scheduled-module inline writers + legacy
+        // card_0001_005_c001_act.jsp:237 (exptResolMstr.setDocNm(apprDv.getLabel())).
+        mstr.setDocNm(apprDv.docNm());
         // Surface the user's "Approval Content" textarea on the
         // read-only Approval Details popup. Blank input stays null
         // on the row so the popup hides the section.
@@ -165,15 +182,17 @@ public class ApprovalBoxFanoutService {
         mstr.setPayDate(payDate != null && !payDate.isBlank() ? payDate : null);
         mstr.setDelYn("N");
         mstr.setPayEndYn("N");
-        // Legacy print-form flags — all NOT NULL with no DB DEFAULT. The
-        // refactor doesn't render the legacy print form, but the columns
-        // must be populated so the INSERT doesn't violate the constraint.
-        // Values mirror the legacy DEV defaults ('Y'/'N' from V109 schema).
+        // M-2 (legacy parity): print-form display flags from BUSI_ENV_SET_INFM
+        // (00014/16/17/18) via the shared yn() normaliser, not hardcoded —
+        // matches the scheduled-module inline writers + legacy
+        // comm_0192_001_c005_act.jsp:316-320 / card_0001_005_c001_act.jsp:256-260.
+        // HAND_REG_YN stays 'Y' (legacy setHandRegYn(YesOrNo.YES), unconditional).
+        // An unseeded tenant resolves every flag to 'N' (legacy YesOrNo.fromValue("")).
         mstr.setHandRegYn("Y");
-        mstr.setApprBoxUseYn("N");
-        mstr.setApprDatDispYn("N");
-        mstr.setCmpnLogoDispYn("N");
-        mstr.setRegDispYn("N");
+        mstr.setApprBoxUseYn(ynEnv(bizKey, "00014"));
+        mstr.setApprDatDispYn(ynEnv(bizKey, "00016"));
+        mstr.setCmpnLogoDispYn(ynEnv(bizKey, "00017"));
+        mstr.setRegDispYn(ynEnv(bizKey, "00018"));
         mstr.setApprTypeCd(APPR_TYPE_CD_PENDING);
         mstr.setRegId(userId);
         mstr.setRegDtm(nowDtm);
@@ -190,6 +209,12 @@ public class ApprovalBoxFanoutService {
             row.setApprvrNm(a.apprvrNm() != null ? a.apprvrNm() : a.apprvrId());
             row.setApprvrStts(line == 1 ? APPRVR_STTS_PENDING : APPRVR_STTS_WAITING);
             row.setApprvrLineNo(BigDecimal.valueOf(line));
+            // APPR_LINE_NO — the picked approval-line id (legacy parity:
+            // EXPT_RESOL_APPRVR_INFM.APPR_LINE_NO). Card previously left
+            // this null; now set it like the other five modules.
+            if (apprLineNo != null) {
+                row.setApprLineNo(BigDecimal.valueOf(apprLineNo));
+            }
             row.setReadYn("N");
             row.setRegId(userId);
             row.setRegDtm(nowDtm);
@@ -201,40 +226,167 @@ public class ApprovalBoxFanoutService {
 
         log.info("approval-box fanout bizKey={} apprSeqNo={} apprDv={} approvers={}",
                 bizKey, apprSeqNo, apprDv.code(), approvers.size());
-
-        // Phase-1 notification producer: fan an approval-request notification
-        // out to the approver chain. Card Transactions submits route through this
-        // shared writer. Best-effort + isolated (REQUIRES_NEW) so a notification
-        // failure never rolls back this approval submission.
-        notificationService.notifyApprovalRequested(
-                apprDv.slug(), apprSeqNo, mstr.getDocNo(), titl,
-                approvers.stream()
-                        .map(a -> new NotificationService.Recipient(a.apprvrId(), a.apprvrNm()))
-                        .toList());
     }
 
     /**
-     * Allocate the next {@code VO_YYMMDD_NNN} doc-no for the given
-     * tenant. Per-tenant per-day counter starting at {@code 001}. Used
-     * by every Payment module's Request Approval path so the Approval
-     * Box "Document No." column reads uniformly across modules.
+     * Allocate the next {@code DOC_NO} for the tenant via the single
+     * {@code wb_get_next_val} funnel ({@link LegacyFunctionRepository#nextDocNo(String)} →
+     * V140 branch&nbsp;#39, env-set-driven).
      *
-     * <p>Date segment uses Vietnam-local time so the counter resets at
-     * the WeCMS business-day boundary. Pads to 3 digits.
+     * <p><strong>Funnel migration (Phase 1, 2026-06-10):</strong> this previously used a
+     * hardcoded {@code VO_yyMMdd_NNN} counter that ignored the tenant ENV settings. Routing
+     * through the funnel intentionally fixes that gap — Card Transactions now honours the
+     * same env-set prefix / date-format / seq-length (BUSI/SYS_ENV_SET_INFM 00070..00073) as
+     * every other Payment module and the live JEX/UAT/PROD DB. Identical output for default
+     * {@code VO}/{@code YYMMDD}/3 tenants; env-set-override tenants now get their configured
+     * format instead of the hardcoded one.
+     *
+     * <p>The {@code now} parameter is retained for call-site compatibility but is no longer
+     * used — the DB branch derives the date from {@code timezone('utc', now())}.
      */
     public String nextDocNo(String bizKey, OffsetDateTime now) {
-        String yymmdd = now.atZoneSameInstant(VIETNAM_ZONE).toLocalDate().format(YYMMDD);
-        String prefix = "VO_" + yymmdd + "_";
-        Integer max = mstrRepository.findMaxDocNoSeqByBizKeyAndPrefix(bizKey, prefix);
-        int next = (max == null ? 0 : max) + 1;
-        if (next > 999) {
-            // 3-digit cap is fine in practice — DEV's busiest day in 6
-            // years tops 5 submissions; growing the format requires a
-            // coordinated frontend + downstream-system change.
-            throw new IllegalStateException(
-                    "doc-no daily counter exhausted for " + bizKey + " on " + yymmdd);
+        return legacyFunctions.nextDocNo(bizKey);
+    }
+
+    /**
+     * F-1 — insert the single {@code EXPT_RESOL_DETL} row the legacy
+     * Request Approval flow creates (legacy
+     * {@code comm_0192_001_c005_act.jsp:340 createExptResolDetl}).
+     *
+     * <p>For the scheduled payment types {@code DOC_ID} = the payment
+     * batch business key, {@code AMT} = the batch total, {@code CCY_CD}
+     * = the batch currency (legacy {@code TOT_PAY_KHR_AMT} /
+     * {@code input.CCY_CD}). {@code APPR_DETL_SEQ_NO} is allocated via
+     * the existing {@code wb_get_next_val('expt_resol_detl',
+     * 'appr_detl_seq_no', biz_key)} funnel branch — no new branch, no
+     * schema change.
+     *
+     * <p>Runs in the caller's transaction (no {@code @Transactional}
+     * here — the per-module {@code requestApproval} owns the boundary).
+     * The funnel native query auto-flushes the pending
+     * {@code EXPT_RESOL_MSTR} insert first, so the detail row's
+     * {@code expt_resol_detl_fk01} FK to the master is satisfied.
+     *
+     * @param apprSeqNo the master sequence (same value on the summary).
+     * @param docId     the payment batch id (legacy {@code SCDUL_PYMN_NO}
+     *                  / {@code OVRS_PYMN_NO}).
+     * @param amt       the batch total amount.
+     * @param ccyCd     the batch currency — must be one of
+     *                  {@code VND}/{@code USD}/{@code KRW} (legacy
+     *                  {@code expt_resol_detl_chk01}); blank defaults to
+     *                  {@code VND}.
+     */
+    public void writeResolutionDetail(String apprSeqNo, String docId, BigDecimal amt, String ccyCd) {
+        writeResolutionDetail(apprSeqNo, docId, amt, ccyCd, null, null, null, null);
+    }
+
+    /**
+     * Card overload — one {@code EXPT_RESOL_DETL} row per card transaction
+     * (legacy {@code card_0001_005_c001_act.jsp:280 createExptResolDetl},
+     * which loops REC3). Adds the per-card columns the scheduled / overseas
+     * paths leave null: {@code BUSA_USAG_CD}, {@code MEMO}, {@code DOC_TYPE}
+     * ({@code 'B'} for card), {@code TRSC_DT}.
+     *
+     * @param busaUsagCd purpose code (legacy {@code REC3.BUSA_USAG_CD}); nullable.
+     * @param memo       per-card memo (legacy {@code REC3.MEMO}); nullable.
+     * @param docType    {@code 'B'}/{@code 'E'}/{@code ''} (CHECK-constrained); nullable.
+     * @param trscDt     {@code yyyyMMdd}; nullable (legacy card REC3 sends blank).
+     */
+    public void writeResolutionDetail(String apprSeqNo, String docId, BigDecimal amt, String ccyCd,
+                                      String busaUsagCd, String memo, String docType, String trscDt) {
+        String bizKey = TenantContext.currentBizKey();
+        String userId = TenantContext.currentUserId();
+        String nowDtm = OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC).format(DTM14);
+
+        String seq = legacyFunctions.nextVal(
+                "expt_resol_detl", "appr_detl_seq_no", bizKey, null, null, null, null, null);
+
+        ExptResolDetl d = new ExptResolDetl();
+        d.setBizKey(bizKey);
+        d.setApprSeqNo(apprSeqNo);
+        d.setApprDetlSeqNo(new BigDecimal(seq));
+        d.setCcyCd(ccyCd != null && !ccyCd.isBlank() ? ccyCd.toUpperCase() : "VND");
+        d.setAmt(amt != null ? amt : BigDecimal.ZERO);
+        d.setDocId(docId);
+        d.setBusaUsagCd(busaUsagCd);
+        d.setMemo(memo);
+        // DOC_TYPE CHECK allows only 'B'/'E'/'' — blank-out anything else.
+        d.setDocType(docType != null && (docType.equals("B") || docType.equals("E")) ? docType : null);
+        d.setTrscDt(trscDt != null && !trscDt.isBlank() ? trscDt : null);
+        d.setRegId(userId != null ? userId : "");
+        d.setRegDtm(nowDtm);
+        detlRepository.save(d);
+    }
+
+    /**
+     * F-2 — insert the {@code EXPT_RESOL_APPR_LINE} print-header snapshot
+     * the legacy Request Approval flow creates (legacy
+     * {@code comm_0192_001_c005_act.jsp:489 createApprovalLines}).
+     *
+     * <p>This is the standing approval-line display snapshot (job-class +
+     * employee names), <b>distinct</b> from the live routing chain in
+     * {@code EXPT_RESOL_APPRVR_INFM}. Legacy gates the write on env-set
+     * {@code 00014} ({@code APPR_BOX_USE_YN='Y'}); the row count comes
+     * from env-set {@code 00015} ({@code APPR_BOX_DISP_CNT}); names from
+     * env-set {@code 00029+i} ({@code JBCL_NM}) / {@code 00034+i}
+     * ({@code EMPL_NM}). When the tenant has the print form disabled
+     * (no {@code 00014='Y'}) this is a no-op — exactly legacy behaviour.
+     *
+     * <p>{@code APPR_LINE_NO} is the legacy {@code varchar(1)} loop
+     * counter {@code "1".."N"}; capped at 9 to respect the column width.
+     * Runs in the caller's transaction.
+     */
+    public void writeApprovalLineSnapshot(String apprSeqNo) {
+        String bizKey = TenantContext.currentBizKey();
+        if (!"Y".equalsIgnoreCase(readEnv(bizKey, "00014"))) {
+            return; // legacy: APPR_BOX_USE_YN != 'Y' → no snapshot rows
         }
-        return prefix + String.format("%03d", next);
+        int cnt = parseCount(readEnv(bizKey, "00015"));
+        if (cnt <= 0) {
+            return;
+        }
+        String userId = TenantContext.currentUserId();
+        String nowDtm = OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC).format(DTM14);
+
+        int max = Math.min(cnt, 9); // APPR_LINE_NO is varchar(1)
+        for (int i = 0; i < max; i++) {
+            ExptResolApprLine row = new ExptResolApprLine();
+            row.setBizKey(bizKey);
+            row.setApprSeqNo(apprSeqNo);
+            row.setApprLineNo(String.valueOf(i + 1));
+            row.setJbclNm(readEnv(bizKey, String.format("%05d", 29 + i)));   // 00029..
+            row.setEmplNm(readEnv(bizKey, String.format("%05d", 34 + i)));   // 00034..
+            row.setRegId(userId);
+            row.setRegDtm(nowDtm);
+            apprLineRepository.save(row);
+        }
+    }
+
+    /** Read one tenant environment-setting value (legacy
+     *  {@code SzonHelper.getEnvSetCont}); null when the key is unseeded. */
+    private String readEnv(String bizKey, String key) {
+        return busiEnvSetInfmRepository.findById(new BusiEnvSetInfmId(bizKey, key))
+                .map(BusiEnvSetInfm::getEnvSetCont)
+                .orElse(null);
+    }
+
+    /** M-2: legacy {@code YesOrNo.fromValue} normalisation of an env flag —
+     *  {@code "Y"} when the env row holds {@code "Y"}, else {@code "N"}
+     *  (including an unseeded / absent row). */
+    private String ynEnv(String bizKey, String key) {
+        String raw = readEnv(bizKey, key);
+        return raw != null && "Y".equalsIgnoreCase(raw.trim()) ? "Y" : "N";
+    }
+
+    private static int parseCount(String s) {
+        if (s == null || s.isBlank()) {
+            return 0;
+        }
+        try {
+            return Integer.parseInt(s.trim());
+        } catch (NumberFormatException e) {
+            return 0;
+        }
     }
 
     /** Approver-row input — name + id pair from the request body. */
@@ -294,6 +446,11 @@ public class ApprovalBoxFanoutService {
                     "Only Pending or In Progress approvals can be withdrawn");
         }
 
+        // Bulletin / attachment cleanup (legacy comm_0192_004_d001) — runs
+        // BEFORE the master delete so EXPT_RESOL_FILE's FK to EXPT_RESOL_MSTR
+        // is honoured.
+        approvalNotificationService.cleanupApprovalArtifacts(apprSeqNo.trim());
+
         approverRepository.deleteByBizKeyAndApprSeqNo(bizKey, apprSeqNo.trim());
         mstrRepository.delete(mstr);
         return mstr;
@@ -336,7 +493,7 @@ public class ApprovalBoxFanoutService {
                     "Only Pending or In Progress approvals can be edited");
         }
 
-        List<ApprovalLineApprover> chain = apprLineApproverRepository
+        List<ApprLineInfmDetl> chain = apprLineApproverRepository
                 .findAllByBizKeyAndApprLineNoOrderByApprvrDispOrdAsc(bizKey, apprLineNo);
         if (chain.isEmpty()) {
             throw new BusinessException("WBE_VALIDATION",
@@ -347,7 +504,7 @@ public class ApprovalBoxFanoutService {
         approverRepository.flush();
 
         int line = 1;
-        for (ApprovalLineApprover a : chain) {
+        for (ApprLineInfmDetl a : chain) {
             ExptResolApprvrInfm row = new ExptResolApprvrInfm();
             row.setBizKey(bizKey);
             row.setApprSeqNo(apprSeqNo.trim());

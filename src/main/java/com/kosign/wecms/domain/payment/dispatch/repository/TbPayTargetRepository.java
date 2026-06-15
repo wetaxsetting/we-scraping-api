@@ -4,25 +4,16 @@ import com.kosign.wecms.domain.payment.dispatch.entity.TbPayTarget;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayTargetId;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.query.Param;
 
 public interface TbPayTargetRepository
         extends JpaRepository<TbPayTarget, TbPayTargetId> {
 
-    /**
-     * Highest existing {@code TRAN_SEQ} for a given tenant + Vietnam-local
-     * date. Returns 0 when no row exists yet (the dispatcher then writes
-     * sequence 1).
-     */
-    @Query("""
-            SELECT COALESCE(MAX(CAST(t.tranSeq AS long)), 0)
-              FROM TbPayTarget t
-             WHERE t.bizKey = :bizKey
-               AND t.tranDt = :tranDt
-            """)
-    long maxTranSeq(@Param("bizKey") String bizKey, @Param("tranDt") String tranDt);
+    // TRAN_SEQ allocation now routes through
+    // LegacyFunctionRepository.nextTbPayTargetTranSeq (V140 #2 — the GLOBAL
+    // firm_seq_no sequence) so every wb_get_next_val call goes through the one
+    // funnel and lines up with the live JEX firm-banking dispatch.
 
     /**
      * Bulk-fetch dispatch rows for the API path. One query per Result-detail
@@ -35,4 +26,14 @@ public interface TbPayTargetRepository
      */
     List<TbPayTarget> findByBizKeyAndTranDtAndTranSeqIn(
             String bizKey, String tranDt, Collection<String> tranSeqs);
+
+    /**
+     * Re-read a single committed dispatch row for the after-commit real-time
+     * dispatch (C2). The {@link com.kosign.wecms.domain.payment.dispatch.service.RealtimeDispatchService}
+     * gates on {@code PROC_STAT='9'} so a row already advanced (or absent) is a
+     * safe no-op — mirrors the legacy {@code TB_PAY_TARGET_R001}
+     * {@code WHERE ... PROC_STAT='9'} pickup.
+     */
+    Optional<TbPayTarget> findByBizKeyAndTranDtAndTranSeq(
+            String bizKey, String tranDt, String tranSeq);
 }

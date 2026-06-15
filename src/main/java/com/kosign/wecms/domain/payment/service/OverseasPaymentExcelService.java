@@ -2,12 +2,14 @@ package com.kosign.wecms.domain.payment.service;
 
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
+import com.kosign.wecms.common.tx.TransactionalRetry;
+import org.springframework.dao.DataIntegrityViolationException;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentExcelFieldError;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentExcelPreview;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentExcelPreviewRow;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentExcelUploadRequest;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentExcelUploadResult;
-import com.kosign.wecms.domain.payment.entity.OvrsPymnDtls;
+import com.kosign.wecms.domain.payment.entity.OvrsPymnSumrDetl;
 import com.kosign.wecms.domain.payment.entity.OvrsPymnSumr;
 import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnDtlsRepository;
 import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnSumrRepository;
@@ -79,6 +81,8 @@ public class OverseasPaymentExcelService {
     private final TrcoInfmRepository           contactRepo;
     private final TrcoOvrsInfmRepository       overseasContactRepo;
     private final SpecialCharValidator         specialCharValidator;
+    private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
+    private final TransactionalRetry           transactionalRetry;
 
     /** Header row index (0-based POI index; row 3 in Excel = index 2). */
     private static final int HEADER_ROW_INDEX   = 2;
@@ -150,6 +154,15 @@ public class OverseasPaymentExcelService {
                 }
                 validateAmount(amount,                               errors);
                 validateRequired(feePayer,         "feePayer",        errors);
+                // Legacy parity (pymn_0007_002_r001 validateFeePayer): the Fee
+                // Payer must resolve to a known FEE_PAYER_CD code (B/O/S). Reject
+                // unknown values here so the user sees a preview field error
+                // instead of a CHAR(1) overflow 500 at submit.
+                if (feePayer != null && !feePayer.isBlank()
+                        && normalizeFeePayerCd(feePayer) == null) {
+                    errors.add(new OverseasPaymentExcelFieldError(
+                            "feePayer", "Invalid Fee Payer: " + feePayer));
+                }
                 validateRequired(beneficiaryCode,  "beneficiaryCode", errors);
                 validateRequired(memo,             "memo",            errors);
                 // Legacy parity: memo capped at 200 chars
@@ -403,9 +416,36 @@ public class OverseasPaymentExcelService {
      *             for legacy callers that do not supply the physical file)
      * @return the new batch key wrapped in {@link OverseasPaymentExcelUploadResult}
      */
-    @Transactional
     public OverseasPaymentExcelUploadResult submit(OverseasPaymentExcelUploadRequest req,
                                                     MultipartFile file) {
+        // One-shot retry on the OVRS_PYMN_NO MAX+1 race (wb_get_next_val has no
+        // row lock — V140 #63). Each attempt runs in its own transaction via
+        // TransactionalRetry.runOnce, so a failed attempt fully rolls back and the
+        // retry re-allocates the key in a fresh Hibernate session. The summary row is
+        // flushed before the physical file write and the detail INSERTs (see doSubmit),
+        // so a failed attempt never writes a file or detail row to duplicate. Same
+        // stance as the four SCDUL_PYMN create services.
+        try {
+            return transactionalRetry.runOnce(() -> doSubmit(req, file));
+        } catch (DataIntegrityViolationException firstRace) {
+            log.warn("feature=overseas-payment ovrs_pymn_no insert race — retrying once");
+            try {
+                return transactionalRetry.runOnce(() -> doSubmit(req, file));
+            } catch (DataIntegrityViolationException secondRace) {
+                log.warn("feature=overseas-payment ovrs_pymn_no insert race retry failed", secondRace);
+                throw new BusinessException("WBE_SCHEDULED_PAYMENT_KEY_RACE");
+            }
+        }
+    }
+
+    /**
+     * Transactional body for {@link #submit}. Not separately {@code @Transactional} —
+     * it executes inside the {@code REQUIRES_NEW} transaction that
+     * {@link TransactionalRetry#runOnce} opens, so the one-shot retry can cross a
+     * clean transaction boundary on a key-allocation race.
+     */
+    OverseasPaymentExcelUploadResult doSubmit(OverseasPaymentExcelUploadRequest req,
+                                              MultipartFile file) {
         String bizKey    = TenantContext.currentBizKey();
         String userId    = TenantContext.currentUserId();
         ZonedDateTime now = ZonedDateTime.now(VIETNAM_ZONE);
@@ -442,7 +482,8 @@ public class OverseasPaymentExcelService {
         sumr.setTotalTranAmt(serverTotalAmt);
         sumr.setTotTrnsCnt(serverTotTrnsCnt);
         sumr.setOutBankCd(req.wdrl_bank_cd());
-        sumr.setOutBankNm(req.wdrl_bank_nm());
+        // OUT_BANK_NM is not stored on OVRS_PYMN_SUMR in JEX — the withdrawal
+        // bank name is derived from OUT_BANK_CD via BANK_INFM in the list/result queries.
         sumr.setWdrlActNo(req.wdrl_acct_no());
         sumr.setOrgFileNm(req.file_nm());
         // Legacy parity (pymn_0007_002_c001_act.jsp:148): stamp upload
@@ -451,50 +492,82 @@ public class OverseasPaymentExcelService {
         sumr.setTrnfYn("N");
         sumr.setRegDtm(nowDtm);
         sumr.setRegId(userId);
+        // Legacy OVRS_PYMN_SUMR has MOD_ID + MOD_DTM NOT NULL; the JEX create
+        // stamps mod_* = reg_* on insert. Mirror that (same as the internal-transfer
+        // ScdulPymnSumr create) — without it the INSERT trips the MOD_ID NOT NULL
+        // constraint, which the key-race retry then misreports as a doc-number race.
+        sumr.setModDtm(nowDtm);
+        sumr.setModId(userId);
 
-        // Persist the uploaded Excel to the configured storage root so the
-        // Scheduled Payment detail page can stream it back via the download endpoint.
+        // Record the uploaded-file metadata on the summary BEFORE the flush; the
+        // physical bytes are written only after the key is proven unique (below) so
+        // a failed key-race attempt leaves no orphaned file on disk.
+        String saveFileNm = null;
         if (file != null && !file.isEmpty()) {
-            String orgFileNm  = sanitiseOriginalFilename(file.getOriginalFilename());
-            String saveFileNm = pymnNo + "_" + orgFileNm;
-            persistUploadedFile(bizKey, saveFileNm, file);
+            String orgFileNm = sanitiseOriginalFilename(file.getOriginalFilename());
+            saveFileNm = pymnNo + "_" + orgFileNm;
             sumr.setSaveFileNm(saveFileNm);
-            sumr.setFileSize(BigDecimal.valueOf(file.getSize()));
+            // JEX OVRS_PYMN_SUMR.FILE_SIZE is VARCHAR(100) — store the byte count as text.
+            sumr.setFileSize(String.valueOf(file.getSize()));
         }
 
-        sumrRepository.save(sumr);
+        // Flush the summary INSERT up front so a concurrent MAX+1 race on
+        // OVRS_PYMN_NO (wb_get_next_val has no row lock) surfaces as a
+        // DataIntegrityViolationException HERE — before the physical file write and
+        // the detail INSERTs — so the one-shot retry in submit() re-runs cleanly with
+        // no orphaned file or detail rows.
+        sumrRepository.saveAndFlush(sumr);
+
+        // Physical file write happens only after the key is proven unique.
+        if (saveFileNm != null) {
+            persistUploadedFile(bizKey, saveFileNm, file);
+        }
 
         // ── Detail rows ───────────────────────────────────────────────────────
-        // OVR-G1 Phase A: allocate the per-tenant numeric OVRS_PYMN_DETL_NO
-        // (legacy match identity) for every line up-front in one MAX+1 read,
-        // then assign sequentially. Generated at insert time (before approval),
-        // NOT derived from OVRS_PYMN_NO and NOT the per-batch TRN_SEQ. Unique
-        // per BIZ_KEY (index ux_ovrs_pymn_dtls_biz_detl_no). See
-        // overseas-detail-no-generation-audit.md.
-        List<String> detlNos = keyGenerator.nextOvrsPymnDetlNos(bizKey, req.rows().size());
-        List<OvrsPymnDtls> dtlsList = new ArrayList<>();
-        int idx = 0;
+        // OVRS_PYMN_DETL_NO is a per-tenant numeric sequence (legacy parity);
+        // allocate a contiguous block above the current tenant max.
+        // OVRS_PYMN_DETL_NO base via the single wb_get_next_val funnel (V140 #30 —
+        // per-tenant MAX+1 over (mstr UNION detl)). The funnel returns the next
+        // value; subtract 1 so the loop's leading ++ yields that value for the
+        // first row and a contiguous block thereafter.
+        long detlNoCursor = Long.parseLong(legacyFunctions.nextOvrsPymnDetlNo(bizKey)) - 1;
+        List<OvrsPymnSumrDetl> dtlsList = new ArrayList<>();
         for (var src : req.rows()) {
-            OvrsPymnDtls dtl = new OvrsPymnDtls();
+            OvrsPymnSumrDetl dtl = new OvrsPymnSumrDetl();
             dtl.setBizKey(bizKey);
             dtl.setOvrsPymnNo(pymnNo);
-            dtl.setTrnSeq(src.trn_seq());
-            dtl.setOvrsPymnDetlNo(detlNos.get(idx++));
-            dtl.setLinkMatchYn("N");
-            dtl.setBnfcCode(src.bnfc_code());
+            dtl.setOvrsPymnDetlNo(Long.toString(++detlNoCursor));
             dtl.setCcyCd(src.ccy_cd());
             dtl.setTrnfAmt(src.trnf_amt());
-            dtl.setFeePayerCd(src.fee_payer_cd());
-            dtl.setMemo(src.memo());
+            // Map the upload value to the legacy CHAR(1) FEE_PAYER_CD code
+            // (B/O/S). The preview pass already rejected unrecognised values;
+            // a null here means a stale/bypassed client — fail with a clean
+            // validation error rather than overflow the CHAR(1) column (which
+            // the broad key-race catch would otherwise misreport as a race).
+            String feePayerCd = normalizeFeePayerCd(src.fee_payer_cd());
+            if (feePayerCd == null) {
+                throw new BusinessException("WBE_VALIDATION",
+                        "Invalid Fee Payer: " + src.fee_payer_cd());
+            }
+            dtl.setFeePayerCd(feePayerCd);
+            dtl.setMemo(nullToEmpty(src.memo()));
             dtl.setRprtAcctCd(nullIfBlank(src.rprt_acct_cd()));
-            dtl.setBnfcNm(src.bnfc_nm());
-            dtl.setBnfcBankNm(src.bnfc_bank_nm());
-            dtl.setBicCd(src.bic_cd());
-            dtl.setBnfcAcctNo(src.bnfc_acct_no());
-            dtl.setBnfcAddr(src.bnfc_addr());
-            dtl.setTrnfYn("N");
+            dtl.setBnfcNm(nullToEmpty(src.bnfc_nm()));
+            dtl.setBnfcBankNm(nullToEmpty(src.bnfc_bank_nm()));
+            dtl.setBicCd(nullToEmpty(src.bic_cd()));
+            // JEX OVRS_PYMN_SUMR_DETL.BNFC_BANK_CD is NOT NULL and carries the
+            // beneficiary bank SWIFT/BIC (same value the BIC column holds).
+            dtl.setBnfcBankCd(nullToEmpty(src.bic_cd()));
+            dtl.setBnfcAcctNo(nullToEmpty(src.bnfc_acct_no()));
+            dtl.setBnfcAddr(nullToEmpty(src.bnfc_addr()));
+            // Contact-less Excel upload: no resolved internal TRCO_KEY.
+            // HAND_TRCO_KEY carries the user-facing beneficiary code.
+            dtl.setTrcoKey("");
+            dtl.setHandTrcoKey(nullToEmpty(src.bnfc_code()));
             dtl.setRegDtm(nowDtm);
             dtl.setRegId(userId);
+            dtl.setModDtm(nowDtm);
+            dtl.setModId(userId);
             dtlsList.add(dtl);
         }
         dtlsRepository.saveAll(dtlsList);
@@ -506,6 +579,38 @@ public class OverseasPaymentExcelService {
 
     private static String nullIfBlank(String s) {
         return (s == null || s.isBlank()) ? null : s;
+    }
+
+    /**
+     * Normalise the upload Fee Payer value to the legacy {@code FEE_PAYER_CD}
+     * single-char code ({@code B}/{@code O}/{@code S}) that
+     * {@code OVRS_PYMN_SUMR_DETL.FEE_PAYER_CD} ({@code CHAR(1)}) stores and that
+     * the dispatch / result paths expect ({@code OverseasDispatchExecutor.mapFeeBurden}
+     * {@code B/O/S → BEN/OUR/SHA}; legacy {@code pymn_0007_002_r001} {@code validateFeePayer}
+     * {@code "Beneficiary Charge"/"Ordering Charge"/"Shared" → B/O/S}).
+     *
+     * <p>Accepts every representation present across the codebase / templates:
+     * the 1-char code, the 3-char SWIFT charge code ({@code BEN}/{@code OUR}/{@code SHA}),
+     * and the full English label. Case-insensitive, whitespace-trimmed. Returns
+     * {@code null} for an unrecognised value so callers raise the validation error
+     * rather than overflow the {@code CHAR(1)} column.
+     */
+    private static String normalizeFeePayerCd(String raw) {
+        if (raw == null) return null;
+        String v = raw.trim();
+        if (v.isEmpty()) return null;
+        return switch (v.toUpperCase()) {
+            case "B", "BEN", "BENEFICIARY CHARGE", "BENEFICIARY CHARGED", "BENEFICIARY" -> "B";
+            case "O", "OUR", "ORDERING CHARGE", "ORDERING" -> "O";
+            case "S", "SHA", "SHARED" -> "S";
+            default -> null;
+        };
+    }
+
+    /** Coalesce null → "" for JEX NOT-NULL detail columns (the Excel upload
+     *  validation allows these optional, but OVRS_PYMN_SUMR_DETL requires them). */
+    private static String nullToEmpty(String s) {
+        return s == null ? "" : s;
     }
 
     /** Returns {@code true} when every cell in the row is blank/null. */
@@ -577,14 +682,14 @@ public class OverseasPaymentExcelService {
             throw new BusinessException("WBE2069");
         }
 
-        Path path = fileResolver.resolve(bizKey, saveFileNm);
+        Path path = fileResolver.resolveForRead(bizKey, saveFileNm);
         if (!Files.isReadable(path) || !Files.isRegularFile(path)) {
             throw new BusinessException("WBE2069");
         }
 
-        long fileSize = sumr.getFileSize() == null
+        long fileSize = (sumr.getFileSize() == null || sumr.getFileSize().isBlank())
                 ? path.toFile().length()
-                : sumr.getFileSize().longValueExact();
+                : Long.parseLong(sumr.getFileSize().trim());
         String displayName = (sumr.getOrgFileNm() == null || sumr.getOrgFileNm().isBlank())
                 ? saveFileNm
                 : sumr.getOrgFileNm();

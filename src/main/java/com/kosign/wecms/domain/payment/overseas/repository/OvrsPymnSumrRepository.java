@@ -20,11 +20,10 @@ public interface OvrsPymnSumrRepository extends JpaRepository<OvrsPymnSumr, Ovrs
 
     Optional<OvrsPymnSumr> findByBizKeyAndOvrsPymnNo(String bizKey, String ovrsPymnNo);
 
-    /** Per-tenant MAX(apprSeqNo::bigint) for the request-approval sequence. */
-    @Query(value = "SELECT MAX(CAST(appr_seq_no AS BIGINT)) FROM ovrs_pymn_sumr " +
-                   "WHERE biz_key = :bizKey AND appr_seq_no IS NOT NULL AND appr_seq_no ~ '^[0-9]+$'",
-           nativeQuery = true)
-    Long findMaxApprSeqNoByBizKey(@Param("bizKey") String bizKey);
+    // APPR_SEQ_NO is now allocated through the single
+    // LegacyFunctionRepository.nextApprSeqNo funnel (V140 #1 — the GLOBAL
+    // sq_appr_seq_no sequence shared across all Payment modules), replacing the
+    // former per-tenant MAX+1 finder.
 
     /** Look up the batch row that owns the given approval sequence number.
      *  Used as a fallback when the caller supplies a DOC_NO instead of
@@ -55,35 +54,21 @@ public interface OvrsPymnSumrRepository extends JpaRepository<OvrsPymnSumr, Ovrs
             @Param("bizKey")      String bizKey,
             @Param("apprSeqNos") Collection<String> apprSeqNos);
 
-    /** Write back the approval status from the Approval Box to the overseas
-     *  payment batch row. Called by {@code ApprovalBoxService} after approve /
-     *  reject so the Overseas Payment list page reflects the updated status. */
-    @Modifying
-    @Query("""
-            UPDATE OvrsPymnSumr s
-               SET s.apprStts = :apprStts,
-                   s.modId    = :modId,
-                   s.modDtm   = :modDtm
-             WHERE s.bizKey      = :bizKey
-               AND s.apprSeqNo   = :apprSeqNo
-            """)
-    int updateApprStts(@Param("bizKey")    String bizKey,
-                       @Param("apprSeqNo") String apprSeqNo,
-                       @Param("apprStts")  String apprStts,
-                       @Param("modId")     String modId,
-                       @Param("modDtm")    String modDtm);
+    // updateApprStts removed 2026-06-10: OVRS_PYMN_SUMR has no APPR_STTS column
+    // in the legacy JEX schema (same as SCDUL_PYMN_SUMR). The Approval Box no
+    // longer mirrors status onto the payment batch — the Overseas list/detail
+    // derives it on read from EXPT_RESOL_MSTR.APPR_TYPE_CD
+    // (OverseasPaymentService.mapApprTypeCd over the joined approval master).
 
     /** Clear the approval stamp on the overseas payment batch when its
-     *  Approval Box request is withdrawn — nulls {@code APPR_SEQ_NO} +
-     *  {@code APPR_STTS} so the row returns to Draft. Called by
-     *  {@code ApprovalBoxService.withdraw} after
+     *  Approval Box request is withdrawn — nulls {@code APPR_SEQ_NO} so the row
+     *  returns to Draft. Called by {@code ApprovalBoxService} after
      *  {@code ApprovalBoxFanoutService.withdrawApproval} deletes the master.
-     *  Locator is (bizKey, apprSeqNo) — same key the write-back uses. */
+     *  Locator is (bizKey, apprSeqNo). */
     @Modifying
     @Query("""
             UPDATE OvrsPymnSumr s
                SET s.apprSeqNo = null,
-                   s.apprStts  = null,
                    s.modId     = :modId,
                    s.modDtm    = :modDtm
              WHERE s.bizKey      = :bizKey

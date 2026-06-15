@@ -1,81 +1,77 @@
 package com.kosign.wecms.domain.banking.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.banking.dto.BankFilter;
 import com.kosign.wecms.domain.banking.dto.CashFlowReportResponse;
 import com.kosign.wecms.domain.banking.dto.CashFlowReportResponse.CashFlowRow;
-import com.kosign.wecms.domain.banking.service.cashflow.BalanceCalculator;
-import com.kosign.wecms.domain.banking.service.cashflow.CashFlowRowAssembler;
-import com.kosign.wecms.domain.banking.service.cashflow.ChartOfAccountsHierarchy;
-import com.kosign.wecms.domain.banking.service.cashflow.FxConverter;
-import com.kosign.wecms.domain.banking.service.cashflow.MonthlyAmountAccumulator;
-import com.kosign.wecms.domain.banking.service.cashflow.PaymentDataAggregator;
-import com.kosign.wecms.domain.banking.service.cashflow.PaymentDataRow;
-import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount;
-import com.kosign.wecms.domain.setting.chartofaccounts.repository.ChartOfAccountRepository;
+import com.kosign.wecms.domain.banking.dto.CashFlowReportResponse.MonthlyAmounts;
+import com.kosign.wecms.domain.banking.repository.CashFlowReportRepository;
+import com.kosign.wecms.domain.banking.repository.CashFlowReportRow;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
  * Cash Flow report service — refactor of legacy {@code cash_0001_001_r001}.
  *
- * <p>Phase 2 replaces the deterministic stub with a real aggregation
- * over the four legacy source tables ({@code ACCT_TRNS_HSTR},
- * {@code CARD_TRNS_HSTR}, {@code OVRS_PYMN_MSTR}, {@code SCDUL_PYMN_SUMR}
- * + {@code SCDUL_PYMN_SUMR_DETL}), grouped by {@code CHART_ACCT_INFM}
- * hierarchy. Mirrors the legacy {@code get_cashflow_report()} PL/pgSQL
- * function CTE-by-CTE — see docs/refactor-wecms/features/cash-flow-report.md
- * §3 for the verified algorithm.
+ * <p><b>Architecture decision (2026-06-13, DB-function source of truth):</b>
+ * Cash Flow calls the legacy PL/pgSQL function
+ * {@code get_cashflow_report(...)} directly through
+ * {@link CashFlowReportRepository} instead of recomputing in Java. The
+ * earlier Java pipeline (PaymentDataAggregator / BalanceCalculator /
+ * FxConverter / ChartOfAccountsHierarchy / CashFlowRowAssembler) is
+ * <b>off the active path</b> — those classes are retained (not deleted)
+ * but no longer wired here. This removes the parity-drift surface: the
+ * approval gate ({@code wb_get_appr_stts}), the investment-code carve-out,
+ * FX, hierarchy levels, and all balance math now live exclusively in the
+ * DB function, exactly as legacy.
  *
- * <p>Pipeline:
+ * <p>This service does NOT recompute anything. Its only jobs are:
  * <ol>
- *   <li>Load the tenant's CHART_ACCT_INFM rows once. Build a
- *       {@link ChartOfAccountsHierarchy} view (replaces the legacy
- *       {@code wb_get_chart_acct_level_text} helper).</li>
- *   <li>Collect current-year + prior-year source rows via
- *       {@link PaymentDataAggregator}. Both years use the same approval-status
- *       resolver (replaces {@code wb_get_appr_stts}) — only Completed
- *       rows survive.</li>
- *   <li>Apply the bank filter + FX conversion (current year only).
- *       Prior year is FX-converted but never bank filtered
- *       (legacy parity — §3.6). Quarter is NOT a calculation input on
- *       either path: the full Jan–Dec year is always computed and the
- *       frontend hides out-of-quarter columns (legacy parity, gap D-1 /
- *       G5, PO decision 2026-06-04).</li>
- *   <li>Bucket per-L3-code monthly amounts via
- *       {@link MonthlyAmountAccumulator}.</li>
- *   <li>Compute {@code jan_opening_balance} from prior-year aggregates,
- *       then Opening Balance / End Balance / Sales Profit accumulators
- *       via {@link BalanceCalculator}.</li>
- *   <li>Assemble the final ordered row list via
- *       {@link CashFlowRowAssembler}.</li>
+ *   <li>Validate the request (mirrors {@code cash_0001_001_r001_act.jsp}).</li>
+ *   <li>Serialise the bank filter to the function's JSON contract.</li>
+ *   <li>Call the function with {@code p_quarter = null} — production parity
+ *       ({@code YEAR_QUAT=null} is always sent by the live UI; quarter is a
+ *       frontend column-visibility concern only — gap D-1/G5). The requested
+ *       {@code quarter} is echoed back in the response so the frontend hides
+ *       the out-of-quarter columns.</li>
+ *   <li>Re-assemble the function's row-type-major output into the
+ *       frontend's root-major order (Opening → ACC-01 block → ACC-02 block →
+ *       ACC-03 block → Sales Profit → End Balance) and map to
+ *       {@link CashFlowReportResponse}. Ordering only — no figures change.</li>
  * </ol>
  *
- * <p>Validation mirrors {@code cash_0001_001_r001_act.jsp:19-36}:
- * {@code year} / {@code baseCurrency} required; rates required ONLY
- * when the base currency differs (conditional check is documented as
- * deliberate divergence D2 in §6 of the design doc).
- *
- * <p>The legacy {@code login=N} flag is intentionally overridden — the
+ * <p>The wire/API response contract ({@link CashFlowReportResponse}) is
+ * unchanged. The legacy {@code login=N} flag stays overridden — the
  * controller requires authentication (Sonny override 2026-05-13).
  */
 @Service
 @RequiredArgsConstructor
 public class CashFlowReportService {
 
-    private final ChartOfAccountRepository chartRepo;
-    private final PaymentDataAggregator aggregator;
-    private final FxConverter fx;
-    private final BalanceCalculator balanceCalc;
-    private final CashFlowRowAssembler assembler;
+    private final CashFlowReportRepository reportRepo;
+    private final ObjectMapper objectMapper;
+
+    /** Fixed Level-1 roots in display order — mirrors the legacy
+     *  {@code fixed_level1_categories} ordering (ACC-01, ACC-02, ACC-03). */
+    private static final List<String> ROOT_ORDER = List.of("ACC-01", "ACC-02", "ACC-03");
+
+    private static final String RT_OPENING = "Opening Balance";
+    private static final String RT_LEVEL1 = "Level 1";
+    private static final String RT_LEVEL2 = "Level 2";
+    private static final String RT_LEVEL3 = "Level 3";
+    private static final String RT_SUBTOTAL = "Level 1 Subtotal";
+    private static final String RT_SALES_PROFIT = "Sales Profit";
+    private static final String RT_END = "End Balance";
 
     @Transactional(readOnly = true)
     public CashFlowReportResponse search(
@@ -91,42 +87,15 @@ public class CashFlowReportService {
 
         validate(year, quarter, baseCurrency, usdRate, krwRate);
 
-        // 1. Chart-of-accounts hierarchy for the tenant.
-        List<ChartOfAccount> tenantChart = chartRepo.findByBizKeyAndDelYn(bizKey, "N", Sort.unsorted());
-        ChartOfAccountsHierarchy hierarchy = new ChartOfAccountsHierarchy(tenantChart);
+        final String bankFiltersJson = toBankFiltersJson(bankFilters);
 
-        // 2a. Collect current-year source rows, then apply the bank filter + FX.
-        // Quarter is deliberately NOT passed — the full Jan–Dec year is always
-        // computed (legacy parity; quarter is a frontend column-visibility
-        // concern only). PO decision 2026-06-04, gap D-1 / G5 — see
-        // docs/features/cash-flow/parity-audit/gap-report.md.
-        List<PaymentDataRow> currentRaw = aggregator.collect(bizKey, year);
-        List<PaymentDataRow> currentFiltered = aggregator.applyFilters(
-                currentRaw, bankFilters, baseCurrency, usdRate, krwRate, fx);
-        Map<String, MonthlyAmountAccumulator> currentL3Totals =
-                bucketByChartAcctCd(currentFiltered, hierarchy);
+        // p_quarter = null always (production parity — see class javadoc).
+        List<CashFlowReportRow> raw = reportRepo.fetchReport(
+                bizKey, year, null, baseCurrency, usdRate, krwRate, bankFiltersJson);
 
-        // 2b. Collect prior-year rows for the opening-balance carry-forward.
-        // No quarter / bank filter (legacy parity — §3.6). Same FX rates.
-        List<PaymentDataRow> prevRaw = aggregator.collect(bizKey, year - 1);
-        List<PaymentDataRow> prevConverted = aggregator.applyFxOnly(
-                prevRaw, baseCurrency, usdRate, krwRate, fx);
-        Map<String, MonthlyAmountAccumulator> prevL3Totals =
-                bucketByChartAcctCd(prevConverted, hierarchy);
+        List<CashFlowRow> rows = reassemble(raw);
 
-        // 3. Balance calculator: jan_opening_balance → Opening → End → Sales Profit.
-        BigDecimal janOpen = balanceCalc.janOpeningBalance(hierarchy, prevL3Totals);
-        MonthlyAmountAccumulator opening = balanceCalc.openingBalance(
-                hierarchy, currentL3Totals, janOpen);
-        MonthlyAmountAccumulator end = balanceCalc.endBalance(
-                hierarchy, currentL3Totals, opening);
-        MonthlyAmountAccumulator profit = balanceCalc.salesProfit(
-                hierarchy, currentL3Totals);
-
-        // 4. Assemble the ordered row list.
-        List<CashFlowRow> rows = assembler.assemble(
-                hierarchy, currentL3Totals, opening, end, profit, baseCurrency);
-
+        // Echo the REQUESTED quarter so the frontend hides out-of-quarter columns.
         return new CashFlowReportResponse(year, quarter, baseCurrency, usdRate, krwRate, rows);
     }
 
@@ -154,26 +123,131 @@ public class CashFlowReportService {
     }
 
     /**
-     * Bucket converted source rows by {@code chart_acct_cd} → 12-month
-     * accumulator. Only rows whose {@code chart_acct_cd} maps to a
-     * known L3 in the hierarchy contribute — rows whose code isn't in
-     * the chart (or sits outside the ACC-* trees) are silently dropped,
-     * matching the legacy {@code level3_with_hierarchy} CTE's INNER
-     * JOIN behaviour.
+     * Serialise the bank filter to the legacy function's JSON contract —
+     * a JSON array of {@code {"BANK_CD":..,"ACCT_NO":..}} objects (verbatim
+     * keys from {@code filtered_payment_data}). Empty / null → {@code null}
+     * (the function treats null / '' / 'null' as "no filter").
      */
-    private static Map<String, MonthlyAmountAccumulator> bucketByChartAcctCd(
-            List<PaymentDataRow> rows, ChartOfAccountsHierarchy hierarchy) {
-        // Pre-build the set of valid L3 codes so unrelated rows drop out fast.
-        java.util.Set<String> validL3 = hierarchy.l3Rows().stream()
-                .map(ChartOfAccount::getChartAcctCd)
-                .collect(java.util.stream.Collectors.toSet());
-        Map<String, MonthlyAmountAccumulator> out = new HashMap<>();
-        for (PaymentDataRow r : rows) {
-            if (r.chartAcctCd() == null) continue;
-            if (!validL3.contains(r.chartAcctCd())) continue;
-            out.computeIfAbsent(r.chartAcctCd(), k -> new MonthlyAmountAccumulator())
-                    .add(r.paymentMonth(), r.originalAmount());
+    private String toBankFiltersJson(List<BankFilter> bankFilters) {
+        if (bankFilters == null || bankFilters.isEmpty()) return null;
+        List<Map<String, String>> payload = new ArrayList<>(bankFilters.size());
+        for (BankFilter f : bankFilters) {
+            Map<String, String> entry = new LinkedHashMap<>();
+            entry.put("BANK_CD", f.bankCd());
+            entry.put("ACCT_NO", f.accountNo());
+            payload.add(entry);
         }
+        try {
+            return objectMapper.writeValueAsString(payload);
+        } catch (Exception e) {
+            throw new BusinessException("WBE_VALIDATION", "bankFilters: serialization failed");
+        }
+    }
+
+    /**
+     * Re-order the function's row-type-major output into the frontend's
+     * root-major order and map each projection to a {@link CashFlowRow}.
+     *
+     * <p>Frontend {@code CashFlowPage.groupReport} walks the rows linearly
+     * and expects, for each root: the Level-1 row, then each Level-2 row
+     * immediately followed by its Level-3 children, then the Level-1
+     * Subtotal. The function instead groups by row type (all Level-1, then
+     * all Level-2, …), so we bucket by {@code group_key} (root) +
+     * {@code parent_l2_code} and re-emit. No amounts are touched.
+     */
+    private List<CashFlowRow> reassemble(List<CashFlowReportRow> raw) {
+        CashFlowReportRow opening = null;
+        CashFlowReportRow salesProfit = null;
+        CashFlowReportRow endBalance = null;
+
+        // Per-root buckets, preserving discovery order for any unexpected root.
+        Map<String, CashFlowReportRow> l1ByRoot = new LinkedHashMap<>();
+        Map<String, CashFlowReportRow> subtotalByRoot = new LinkedHashMap<>();
+        Map<String, List<CashFlowReportRow>> l2ByRoot = new LinkedHashMap<>();
+        Map<String, List<CashFlowReportRow>> l3ByL2 = new LinkedHashMap<>();
+        List<CashFlowReportRow> leftovers = new ArrayList<>();
+
+        for (CashFlowReportRow r : raw) {
+            String type = r.getRowType() == null ? "" : r.getRowType();
+            switch (type) {
+                case RT_OPENING -> opening = r;
+                case RT_SALES_PROFIT -> salesProfit = r;
+                case RT_END -> endBalance = r;
+                case RT_LEVEL1 -> l1ByRoot.put(nz(r.getGroupKey()), r);
+                case RT_SUBTOTAL -> subtotalByRoot.put(nz(r.getGroupKey()), r);
+                case RT_LEVEL2 -> l2ByRoot
+                        .computeIfAbsent(nz(r.getGroupKey()), k -> new ArrayList<>())
+                        .add(r);
+                case RT_LEVEL3 -> l3ByL2
+                        .computeIfAbsent(nz(r.getParentL2Code()), k -> new ArrayList<>())
+                        .add(r);
+                default -> leftovers.add(r);
+            }
+        }
+
+        // Root order: the three fixed roots first, then any other root seen
+        // (defensive — legacy only emits ACC-01/02/03).
+        List<String> roots = new ArrayList<>(ROOT_ORDER);
+        for (String root : l1ByRoot.keySet()) {
+            if (!roots.contains(root)) roots.add(root);
+        }
+
+        Comparator<CashFlowReportRow> byDisplayCode =
+                Comparator.comparing(row -> nz(row.getDisplayCode()));
+
+        List<CashFlowRow> out = new ArrayList<>();
+        int[] seq = {0};
+
+        if (opening != null) out.add(map(opening, seq));
+
+        for (String root : roots) {
+            CashFlowReportRow l1 = l1ByRoot.get(root);
+            if (l1 == null) continue; // root not present in this tenant
+            out.add(map(l1, seq));
+
+            List<CashFlowReportRow> l2s = l2ByRoot.getOrDefault(root, List.of());
+            l2s.stream().sorted(byDisplayCode).forEach(l2 -> {
+                out.add(map(l2, seq));
+                List<CashFlowReportRow> l3s = l3ByL2.getOrDefault(nz(l2.getDisplayCode()), List.of());
+                l3s.stream().sorted(byDisplayCode).forEach(l3 -> out.add(map(l3, seq)));
+            });
+
+            CashFlowReportRow subtotal = subtotalByRoot.get(root);
+            if (subtotal != null) out.add(map(subtotal, seq));
+        }
+
+        if (salesProfit != null) out.add(map(salesProfit, seq));
+        if (endBalance != null) out.add(map(endBalance, seq));
+
+        // Defensive: never silently drop a row the function emitted.
+        for (CashFlowReportRow r : leftovers) out.add(map(r, seq));
+
         return out;
+    }
+
+    private CashFlowRow map(CashFlowReportRow r, int[] seq) {
+        return new CashFlowRow(
+                pad(seq[0]++),
+                r.getDisplayCode(),
+                r.getDisplayName(),
+                r.getItemCode(),
+                r.getItemName(),
+                r.getRowType(),
+                r.getGroupKey(),
+                r.getParentL2Code(),
+                r.getDisplayCurrency(),
+                new MonthlyAmounts(
+                        r.getJanAmount(), r.getFebAmount(), r.getMarAmount(), r.getAprAmount(),
+                        r.getMayAmount(), r.getJunAmount(), r.getJulAmount(), r.getAugAmount(),
+                        r.getSepAmount(), r.getOctAmount(), r.getNovAmount(), r.getDecAmount()),
+                r.getTotalAmount());
+    }
+
+    private static String nz(String s) {
+        return s == null ? "" : s;
+    }
+
+    private static String pad(int n) {
+        return String.format("%05d", n);
     }
 }

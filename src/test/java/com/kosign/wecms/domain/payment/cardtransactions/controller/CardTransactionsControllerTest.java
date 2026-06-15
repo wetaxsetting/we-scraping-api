@@ -112,7 +112,9 @@ class CardTransactionsControllerTest {
                 "1", "payment.card_transactions.status.1",
                 List.of(), List.of(),
                 "lamine@gmail.com", "20251023073754",
-                "lamine@gmail.com", "20251216043342");
+                "lamine@gmail.com", "20251216043342",
+                // GAP-CARD-FIELDS — usingType / authCode / city / note
+                "ONLINE", "AUTH123", "HANOI", "client dinner");
 
         CardTransactionListResponse payload = new CardTransactionListResponse(
                 0, 15, 1L,

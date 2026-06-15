@@ -34,6 +34,12 @@ dependencies {
     // ExcelWorkbookWriter so a 50k-row export stays bounded in heap.
     implementation 'org.apache.poi:poi-ooxml:5.2.5'
 
+    // JSch (maintained mwiede fork, drop-in com.jcraft.jsch package) — SFTP
+    // client for the firm-banking bulk dispatch (port of legacy util.SftpUtil).
+    // Backs JschSftpClient, activated only when wecms.dispatch.sftp.enabled=true
+    // (MockSftpClient is the default in local/test/R&D). B4.
+    implementation 'com.github.mwiede:jsch:0.2.21'
+
     // Coocon iSAS SEED-CBC cipher (com.coocon.securty.util.ISASSeedCBC) —
     // licensed Coocon asset, reused verbatim from the legacy JEX system
     // (WECMS DEV/WECMS/lib/isas1.0.jar) under PO/Coocon approval (B1,
@@ -48,12 +54,10 @@ dependencies {
     // deploys don't double-fire the Exchange Rate batches (or any future
     // scheduled job). Backing store: the existing PostgreSQL via
     // JdbcTemplateLockProvider — no Redis / Zookeeper / etc. needed.
-    // Lock table is created by Flyway V210.
+    // The `shedlock` lock table is created by running the schema SQL manually
+    // (src/main/resources/db/migration/ — formerly Flyway V210), not at runtime.
     implementation 'net.javacrumbs.shedlock:shedlock-spring:5.16.0'
     implementation 'net.javacrumbs.shedlock:shedlock-provider-jdbc-template:5.16.0'
-
-    implementation 'org.flywaydb:flyway-core'
-    runtimeOnly    'org.flywaydb:flyway-database-postgresql'
 
     compileOnly 'org.projectlombok:lombok'
     developmentOnly 'org.springframework.boot:spring-boot-devtools'
@@ -71,18 +75,5 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
-}
-
-// One-time helper: repair V86/V87 checksum mismatch on the shared dev DB.
-// Run with:  ./gradlew repairFlywayChecksums
-// Safe to run multiple times (WHERE clause matches only the old value or
-// the correct value is already stored — the UPDATE is a no-op in both cases).
-tasks.register('repairFlywayChecksums', JavaExec) {
-    group = 'flyway'
-    description = 'Repair V86/V87 checksum mismatch in flyway_schema_history on the shared dev DB'
-    dependsOn compileJava
-
-    classpath = sourceSets.main.runtimeClasspath
-    mainClass = 'com.kosign.wecms.tool.FlywayChecksumRepair'
 }
 

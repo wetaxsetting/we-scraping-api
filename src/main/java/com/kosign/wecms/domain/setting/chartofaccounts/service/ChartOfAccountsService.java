@@ -17,8 +17,8 @@ import com.kosign.wecms.domain.setting.chartofaccounts.dto.ChartOfAccountRow;
 import com.kosign.wecms.domain.setting.chartofaccounts.dto.ChartOfAccountTreeResponse;
 import com.kosign.wecms.domain.setting.chartofaccounts.dto.ChartOfAccountUpdateRequest;
 import com.kosign.wecms.domain.setting.chartofaccounts.dto.ChartOfAccountsSortField;
-import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount;
-import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccountId;
+import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartAcctInfm;
+import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartAcctInfmId;
 import com.kosign.wecms.domain.setting.chartofaccounts.repository.ChartOfAccountRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -140,7 +140,7 @@ public class ChartOfAccountsService {
                 ChartOfAccountsSortField.parse(sortField).orElse(null),
                 SortDirection.parse(sortDirection));
 
-        List<ChartOfAccount> rows = (search == null || search.isBlank())
+        List<ChartAcctInfm> rows = (search == null || search.isBlank())
                 ? repo.findByBizKeyAndDelYn(bizKey, ChartOfAccountsConstants.DEL_YN_ACTIVE, sort)
                 : repo.searchByBizKey(bizKey, ChartOfAccountsConstants.DEL_YN_ACTIVE, search.trim(), sort);
 
@@ -160,7 +160,7 @@ public class ChartOfAccountsService {
     @Transactional(readOnly = true)
     public ChartOfAccountTreeResponse tree() {
         String bizKey = requireBizKey();
-        List<ChartOfAccount> rows = repo.findByBizKeyAndDelYn(
+        List<ChartAcctInfm> rows = repo.findByBizKeyAndDelYn(
                 bizKey, ChartOfAccountsConstants.DEL_YN_ACTIVE, DEFAULT_SORT);
         return new ChartOfAccountTreeResponse(ChartOfAccountsTreeBuilder.buildTree(rows));
     }
@@ -175,7 +175,7 @@ public class ChartOfAccountsService {
     @Transactional(readOnly = true)
     public ChartOfAccountRow detail(String chartAcctSeqNo) {
         String bizKey = requireBizKey();
-        ChartOfAccount row = repo.findById(new ChartOfAccountId(bizKey, chartAcctSeqNo))
+        ChartAcctInfm row = repo.findById(new ChartAcctInfmId(bizKey, chartAcctSeqNo))
                 .filter(c -> ChartOfAccountsConstants.DEL_YN_ACTIVE.equals(c.getDelYn()))
                 .orElseThrow(() -> {
                     log.warn("chart-of-accounts detail not found bizKey={} seqNo={}",
@@ -185,7 +185,7 @@ public class ChartOfAccountsService {
         // Build via the tree builder so the row carries computed
         // chart_acct_level / has_children / restricted alongside the
         // raw entity columns (one re-fetch of the slice is cheap).
-        List<ChartOfAccount> slice = repo.findByBizKeyAndDelYn(
+        List<ChartAcctInfm> slice = repo.findByBizKeyAndDelYn(
                 bizKey, ChartOfAccountsConstants.DEL_YN_ACTIVE, DEFAULT_SORT);
         return ChartOfAccountsTreeBuilder.buildRows(slice).stream()
                 .filter(r -> r.chartAcctSeqNo().equals(row.getChartAcctSeqNo()))
@@ -223,9 +223,9 @@ public class ChartOfAccountsService {
         String parentCode = blankToNull(req.parentChartAcctCd());
 
         // Load tenant slice ONCE for the validator and pass through.
-        List<ChartOfAccount> tenantSlice = repo.findByBizKeyAndDelYn(
+        List<ChartAcctInfm> tenantSlice = repo.findByBizKeyAndDelYn(
                 bizKey, ChartOfAccountsConstants.DEL_YN_ACTIVE, DEFAULT_SORT);
-        Map<String, ChartOfAccount> activeByCode =
+        Map<String, ChartAcctInfm> activeByCode =
                 ChartOfAccountsValidator.indexActiveByCode(tenantSlice);
 
         // Parent code is required on every user-driven create. PO
@@ -249,7 +249,7 @@ public class ChartOfAccountsService {
             for (int i = 0; i <= ChartOfAccountsConstants.MAX_HIERARCHY_DEPTH; i++) {
                 if (cursor == null) break;
                 depth++;
-                ChartOfAccount n = activeByCode.get(cursor);
+                ChartAcctInfm n = activeByCode.get(cursor);
                 if (n == null) break;
                 cursor = n.getParentChartAcctCd();
             }
@@ -258,15 +258,15 @@ public class ChartOfAccountsService {
             }
         }
 
-        Optional<ChartOfAccount> active = repo.findByBizKeyAndChartAcctCdAndDelYn(
+        Optional<ChartAcctInfm> active = repo.findByBizKeyAndChartAcctCdAndDelYn(
                 bizKey, code, ChartOfAccountsConstants.DEL_YN_ACTIVE);
         if (active.isPresent()) {
             throw new BusinessException("WBE_CHART_OF_ACCOUNTS_DUPLICATE_CODE", code);
         }
 
-        Optional<ChartOfAccount> deleted = repo.findByBizKeyAndChartAcctCdAndDelYn(
+        Optional<ChartAcctInfm> deleted = repo.findByBizKeyAndChartAcctCdAndDelYn(
                 bizKey, code, ChartOfAccountsConstants.DEL_YN_DELETED);
-        ChartOfAccount entity;
+        ChartAcctInfm entity;
         if (deleted.isPresent()) {
             // Revive — same seq_no, refresh every field, flip DEL_YN.
             entity = deleted.get();
@@ -278,7 +278,7 @@ public class ChartOfAccountsService {
             log.info("chart-of-accounts revived bizKey={} seqNo={} code={}",
                     bizKey, entity.getChartAcctSeqNo(), code);
         } else {
-            entity = new ChartOfAccount();
+            entity = new ChartAcctInfm();
             entity.setBizKey(bizKey);
             entity.setChartAcctSeqNo(allocSeqNo(bizKey));
             applyRequest(entity, code, req, parentCode);
@@ -329,7 +329,7 @@ public class ChartOfAccountsService {
         String userId = requireUserId();
         String now    = utcNow14();
 
-        ChartOfAccount existing = repo.findById(new ChartOfAccountId(bizKey, chartAcctSeqNo))
+        ChartAcctInfm existing = repo.findById(new ChartAcctInfmId(bizKey, chartAcctSeqNo))
                 .filter(c -> ChartOfAccountsConstants.DEL_YN_ACTIVE.equals(c.getDelYn()))
                 .orElseThrow(() -> {
                     log.warn("chart-of-accounts update missing-row bizKey={} seqNo={}",
@@ -350,16 +350,16 @@ public class ChartOfAccountsService {
         ChartOfAccountsValidator.assertNotSelfParent(newCode, newParentCode);
 
         if (!newCode.equals(existing.getChartAcctCd())) {
-            Optional<ChartOfAccount> dup = repo.findByBizKeyAndChartAcctCdAndDelYnAndChartAcctSeqNoNot(
+            Optional<ChartAcctInfm> dup = repo.findByBizKeyAndChartAcctCdAndDelYnAndChartAcctSeqNoNot(
                     bizKey, newCode, ChartOfAccountsConstants.DEL_YN_ACTIVE, chartAcctSeqNo);
             if (dup.isPresent()) {
                 throw new BusinessException("WBE_CHART_OF_ACCOUNTS_DUPLICATE_CODE", newCode);
             }
         }
 
-        List<ChartOfAccount> tenantSlice = repo.findByBizKeyAndDelYn(
+        List<ChartAcctInfm> tenantSlice = repo.findByBizKeyAndDelYn(
                 bizKey, ChartOfAccountsConstants.DEL_YN_ACTIVE, DEFAULT_SORT);
-        Map<String, ChartOfAccount> activeByCode =
+        Map<String, ChartAcctInfm> activeByCode =
                 ChartOfAccountsValidator.indexActiveByCode(tenantSlice);
 
         ChartOfAccountsValidator.assertParentExists(newParentCode, activeByCode);
@@ -418,7 +418,7 @@ public class ChartOfAccountsService {
         String userId = requireUserId();
         String now    = utcNow14();
 
-        ChartOfAccount existing = repo.findById(new ChartOfAccountId(bizKey, chartAcctSeqNo))
+        ChartAcctInfm existing = repo.findById(new ChartAcctInfmId(bizKey, chartAcctSeqNo))
                 .filter(c -> ChartOfAccountsConstants.DEL_YN_ACTIVE.equals(c.getDelYn()))
                 .orElseThrow(() -> {
                     log.warn("chart-of-accounts delete missing-row bizKey={} seqNo={}",
@@ -447,7 +447,7 @@ public class ChartOfAccountsService {
         // already exists in the tenant (would collide on the UK on
         // DEL_YN='Y' after we flip). Mirrors legacy d001:120-126.
         String archiveCode = existing.getChartAcctCd();
-        Optional<ChartOfAccount> deletedDup =
+        Optional<ChartAcctInfm> deletedDup =
                 repo.findByBizKeyAndChartAcctCdAndDelYnAndChartAcctSeqNoNot(
                         bizKey,
                         existing.getChartAcctCd(),
@@ -493,7 +493,7 @@ public class ChartOfAccountsService {
         String userId = requireUserId();
         String now    = utcNow14();
 
-        ChartOfAccount existing = repo.findById(new ChartOfAccountId(bizKey, chartAcctSeqNo))
+        ChartAcctInfm existing = repo.findById(new ChartAcctInfmId(bizKey, chartAcctSeqNo))
                 .filter(c -> ChartOfAccountsConstants.DEL_YN_ACTIVE.equals(c.getDelYn()))
                 .orElseThrow(() -> {
                     log.warn("chart-of-accounts deactivate missing-row bizKey={} seqNo={}",
@@ -610,8 +610,8 @@ public class ChartOfAccountsService {
      *  post-write row build — keeps create / update symmetric and
      *  avoids the redundant {@code findById} that delegating to
      *  {@link #detail(String)} would trigger). */
-    private ChartOfAccountRow projectSavedRow(String bizKey, ChartOfAccount entity) {
-        List<ChartOfAccount> slice = repo.findByBizKeyAndDelYn(
+    private ChartOfAccountRow projectSavedRow(String bizKey, ChartAcctInfm entity) {
+        List<ChartAcctInfm> slice = repo.findByBizKeyAndDelYn(
                 bizKey, ChartOfAccountsConstants.DEL_YN_ACTIVE, DEFAULT_SORT);
         Optional<ChartOfAccountRow> match = ChartOfAccountsTreeBuilder.buildRows(slice).stream()
                 .filter(r -> r.chartAcctSeqNo().equals(entity.getChartAcctSeqNo()))
@@ -638,7 +638,7 @@ public class ChartOfAccountsService {
     /** Apply the wire request to a managed entity. Used by both
      *  Create (new row + revive) and Update. {@code code} and
      *  {@code parentCode} are pre-normalised by the caller. */
-    private static void applyRequest(ChartOfAccount entity, String code,
+    private static void applyRequest(ChartAcctInfm entity, String code,
                                       Object req, String parentCode) {
         // Cast at the call site keeps the helper signature generic
         // (Create and Update records share the same shape but no

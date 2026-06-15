@@ -69,6 +69,7 @@ class OwnAccountTransferServiceTest {
     @Mock private NapasBankInfoRepository      napasBankInfoRepo;
     @Mock private com.kosign.wecms.domain.banking.repository.NapasRemitTrnsHstrRepository napasRemitTrnsHstrRepo;
     @Mock private AuditLogService              auditLog;
+    @Mock private com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
 
     @InjectMocks
     private OwnAccountTransferService service;
@@ -465,32 +466,8 @@ class OwnAccountTransferServiceTest {
      * ================================================================= */
 
     @Test
-    void scraping_replay_returnsAlreadyRecorded() {
-        setUpAdmin();
-        var existing = new com.kosign.wecms.domain.banking.entity.NapasRemitTrnsHstr();
-        existing.setBizKey(TENANT);
-        existing.setSeqNo(new BigDecimal("42"));
-        existing.setOatIdempotencyKey("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
-        existing.setTrnsStlmId("BANKTX001");
-        existing.setTrnsStts("00000000");
-        existing.setTrscAmt(new BigDecimal("1000"));
-        when(napasRemitTrnsHstrRepo.findByBizKeyAndOatIdempotencyKey(TENANT, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
-                .thenReturn(java.util.Optional.of(existing));
-
-        var resp = service.recordScrapingResult(req("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-                "SAME_BANK", SHINHAN, "0001", SHINHAN, null, "0002",
-                "1000", "1000", "BANKTX001", "00000000"));
-
-        assertThat(resp.alreadyRecorded()).isTrue();
-        assertThat(resp.seqNo()).isEqualTo("42");
-        verify(napasRemitTrnsHstrRepo, never()).saveAndFlush(any());
-    }
-
-    @Test
     void scraping_amountMismatch_throws() {
         setUpAdmin();
-        when(napasRemitTrnsHstrRepo.findByBizKeyAndOatIdempotencyKey(any(), any()))
-                .thenReturn(java.util.Optional.empty());
 
         var bad = req("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
                 "SAME_BANK", SHINHAN, "0001", SHINHAN, null, "0002",
@@ -504,8 +481,6 @@ class OwnAccountTransferServiceTest {
     @Test
     void scraping_nonVnd_throwsInvalidCcy() {
         setUpAdmin();
-        when(napasRemitTrnsHstrRepo.findByBizKeyAndOatIdempotencyKey(any(), any()))
-                .thenReturn(java.util.Optional.empty());
 
         var bad = new com.kosign.wecms.domain.banking.ownaccounttransfer.dto.request.ScrapingResultIntakeRequest(
                 "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
@@ -521,8 +496,6 @@ class OwnAccountTransferServiceTest {
     @Test
     void scraping_sameBankMismatch_throws() {
         setUpAdmin();
-        when(napasRemitTrnsHstrRepo.findByBizKeyAndOatIdempotencyKey(any(), any()))
-                .thenReturn(java.util.Optional.empty());
 
         var bad = req("cccccccc-cccc-cccc-cccc-cccccccccccc",
                 "SAME_BANK", SHINHAN, "0001", VIETIN, null, "0002",
@@ -536,8 +509,6 @@ class OwnAccountTransferServiceTest {
     @Test
     void scraping_sourceNotFound_throws() {
         setUpAdmin();
-        when(napasRemitTrnsHstrRepo.findByBizKeyAndOatIdempotencyKey(any(), any()))
-                .thenReturn(java.util.Optional.empty());
         when(acctMstrRepo.findByBizKeyAndBankCdAndAcctNo(TENANT, SHINHAN, "0001"))
                 .thenReturn(java.util.Optional.empty());
 
@@ -553,8 +524,6 @@ class OwnAccountTransferServiceTest {
     @Test
     void scraping_user_withoutWithdrawAuth_throwsForbidden() {
         setUpUser();
-        when(napasRemitTrnsHstrRepo.findByBizKeyAndOatIdempotencyKey(any(), any()))
-                .thenReturn(java.util.Optional.empty());
         var src = acct(SHINHAN, "0001", new BigDecimal("100"), new BigDecimal("90"));
         when(acctMstrRepo.findByBizKeyAndBankCdAndAcctNo(TENANT, SHINHAN, "0001"))
                 .thenReturn(java.util.Optional.of(src));
@@ -573,15 +542,13 @@ class OwnAccountTransferServiceTest {
     @Test
     void scraping_happyPath_persistsAndAudits() {
         setUpAdmin();
-        when(napasRemitTrnsHstrRepo.findByBizKeyAndOatIdempotencyKey(any(), any()))
-                .thenReturn(java.util.Optional.empty());
         var src = acct(SHINHAN, "0001", new BigDecimal("100"), new BigDecimal("90"));
         var tgt = acct(SHINHAN, "0002", new BigDecimal("50"),  new BigDecimal("50"));
         when(acctMstrRepo.findByBizKeyAndBankCdAndAcctNo(TENANT, SHINHAN, "0001"))
                 .thenReturn(java.util.Optional.of(src));
         when(acctMstrRepo.findByBizKeyAndBankCdAndAcctNo(TENANT, SHINHAN, "0002"))
                 .thenReturn(java.util.Optional.of(tgt));
-        when(napasRemitTrnsHstrRepo.allocateNextSeqNo(TENANT)).thenReturn(new BigDecimal("123"));
+        when(legacyFunctions.nextNapasRemitSeqNo(TENANT)).thenReturn("123");
         when(napasRemitTrnsHstrRepo.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
 
         var resp = service.recordScrapingResult(req("ffffffff-ffff-ffff-ffff-ffffffffffff",

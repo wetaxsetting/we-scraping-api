@@ -49,7 +49,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * authentication/session, the navigation resolver (it <i>computes</i> the menu),
  * the generic View Setting preference store (PO note Q-B — authenticated-only,
  * no business data), cross-screen reference data + lookups (countries,
- * notifications, blocked-chars, the NXiSAS scraping utility), and refactor-new
+ * blocked-chars, the NXiSAS scraping utility), and refactor-new
  * features not yet in the menu universe (bank-credentials, smart-organizer,
  * sync-history, environment-settings — route-migration-audit X-1/X-2 + open
  * items). Each is enumerated explicitly so the gap is visible, not implicit.
@@ -80,9 +80,10 @@ class EndpointAuthorizationCoverageTest {
             "NavigationController",
             // --- View Setting preference store (PO note Q-B — authenticated-only, no business data) ---
             "ScreenOptionController",
+            // --- notifications bell (global header surface for every authenticated user; no per-screen menu cd) ---
+            "NotificationController",
             // --- cross-screen reference data / utilities (gating to one cd would break reuse) ---
             "CountryController",         // reference data
-            "NotificationController",    // cross-cutting notifications
             "BlockedCharsRuleController",// payment-compose validation helper
             "BankScrapingController",    // NXiSAS scraping utility — consumed by multiple flows (flagged for PO)
             // --- refactor-new features with no menu permission_cd yet (route-migration-audit X-1/X-2 + open items) ---
@@ -90,7 +91,10 @@ class EndpointAuthorizationCoverageTest {
             "SmartOrganizerController",      // /banking/smart-organizer — new feature (X-2)
             "OrganizerRuleController",       // /banking/smart-organizer/rules — new feature (X-2)
             "SyncHistoryController",         // /banking/sync-history — new feature, no cd
-            "EnvironmentSettingsController"  // /settings/environment-settings — no cd in the entitlement universe
+            "EnvironmentSettingsController", // /settings/environment-settings — no cd in the entitlement universe
+            // --- inbound EFS machine-to-machine callbacks (no menu permission_cd; gated by IP-whitelist, TODO(B7)) ---
+            "BulkReceptionResultController", // /payment/dispatch/callbacks/bulk-reception-result — 01301 EFS→WeCMS callback
+            "BulkExecutionResultController"  // /payment/dispatch/callbacks/bulk-execution-result — 01302 EFS→WeCMS callback
     );
 
     @Test

@@ -1,6 +1,7 @@
 package com.kosign.wecms.domain.setting.firmbankingsettings.repository;
 
 import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmBankCode;
+import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmBankCodeId;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -25,7 +26,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
  * unmanaged. The fix is a real entity ({@link TbFirmBankCode},
  * minimal column projection) plus this {@link JpaRepository}.
  */
-public interface TbFirmBankCodeRepository extends JpaRepository<TbFirmBankCode, String> {
+public interface TbFirmBankCodeRepository extends JpaRepository<TbFirmBankCode, TbFirmBankCodeId> {
 
     /**
      * Returns {@code true} when a row exists in
@@ -45,6 +46,26 @@ public interface TbFirmBankCodeRepository extends JpaRepository<TbFirmBankCode, 
      * sequence. The caller (contacts service) is read-only.
      */
     List<TbFirmBankCode> findByAntDivCdInOrderByEngAbrvatNmAscBankCdAsc(Collection<String> antDivCds);
+
+    /**
+     * All active rows for one ancillary division. Used by the contacts
+     * bank picker for the NAPAS leg (legacy {@code R002} {@code NAPAS_BKCD}
+     * CTE: {@code BANK_STAS='1' AND ANT_DIV_CD='NAPAS'}). NAPAS rows carry
+     * no branch division, so no {@code BANK_BRANCH_DIV} predicate.
+     */
+    List<TbFirmBankCode> findByAntDivCdAndBankStas(String antDivCd, String bankStas);
+
+    /**
+     * Active headquarters rows for one ancillary division. Used by the
+     * contacts bank picker for the CITAD leg (legacy {@code R002}
+     * {@code CITAD_BKCD} CTE:
+     * {@code BANK_STAS='1' AND BANK_BRANCH_DIV='1' AND ANT_DIV_CD='CITAD'}).
+     * The {@code BANK_BRANCH_DIV='1'} predicate collapses the ~3,000 CITAD
+     * branch rows to one headquarters row per bank — without it the dialog
+     * dropdown repeated each bank once per branch.
+     */
+    List<TbFirmBankCode> findByAntDivCdAndBankBranchDivAndBankStas(
+            String antDivCd, String bankBranchDiv, String bankStas);
 
     /**
      * Resolve a NAPAS bank code (6-char input) to its registry row.

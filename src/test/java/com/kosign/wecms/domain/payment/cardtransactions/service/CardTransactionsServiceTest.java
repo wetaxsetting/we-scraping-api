@@ -23,7 +23,7 @@ import com.kosign.wecms.domain.payment.cardtransactions.repository.CardMstrRepos
 import com.kosign.wecms.domain.payment.cardtransactions.repository.CardTrnsHstrRepository;
 import com.kosign.wecms.domain.payment.cardtransactions.repository.CardTrnsHstrRepository.LedgerTotalsProjection;
 import com.kosign.wecms.domain.setting.approvalline.repository.ApprovalLineApproverRepository;
-import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount;
+import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartAcctInfm;
 import com.kosign.wecms.domain.setting.chartofaccounts.repository.ChartOfAccountRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -151,6 +151,39 @@ class CardTransactionsServiceTest {
         assertThat(res.rows()).isEmpty();
         assertThat(res.totals().totalCount()).isZero();
         assertThat(res.totals().totlAmt()).isEqualByComparingTo(BigDecimal.ZERO);
+    }
+
+    @Test
+    void listByApprSeqNo_surfacesLegacyCardDetailFields() {
+        // GAP-CARD-FIELDS — the Approval Details card grid must expose the
+        // legacy CARD_TRNS_HSTR_R002 detail fields (using type / auth code /
+        // city / note) alongside the existing merchant / amount / currency.
+        CardTrnsHstr row = entityRow("156", "11704020", "407465******5559",
+                "20251019", "114140", "GOLDEN LOTUS - TVL",
+                new BigDecimal("799200.000000"), "USD", "1", "1390");
+        row.setUsingType("ONLINE");
+        row.setAuthCode("AUTH123");
+        row.setCity("HANOI");
+        row.setNote("client dinner");
+        when(cardTrnsRepo.findByBizKeyAndApprSeqNo(TENANT, "1390"))
+                .thenReturn(List.of(row));
+        when(bankInfmRepo.findById("11704020"))
+                .thenReturn(Optional.of(bankInfm("11704020", "VietinBank")));
+        when(cardMstrRepo.findById(any(CardMstrId.class)))
+                .thenReturn(Optional.empty());
+
+        List<CardTransactionRow> rows = service.listByApprSeqNo("1390");
+
+        assertThat(rows).hasSize(1);
+        CardTransactionRow r = rows.get(0);
+        assertThat(r.usingType()).isEqualTo("ONLINE");
+        assertThat(r.authCode()).isEqualTo("AUTH123");
+        assertThat(r.city()).isEqualTo("HANOI");
+        assertThat(r.note()).isEqualTo("client dinner");
+        // Existing fields still flow through (currency drives the popup
+        // header currency for Corporate Card per the GAP-CARD-CCY fix).
+        assertThat(r.ccyCd()).isEqualTo("USD");
+        assertThat(r.merchNm()).isEqualTo("GOLDEN LOTUS - TVL");
     }
 
     @Test
@@ -392,8 +425,8 @@ class CardTransactionsServiceTest {
         };
     }
 
-    private static ChartOfAccount chartAcct(String seqNo, String code, String stts) {
-        ChartOfAccount c = new ChartOfAccount();
+    private static ChartAcctInfm chartAcct(String seqNo, String code, String stts) {
+        ChartAcctInfm c = new ChartAcctInfm();
         c.setBizKey(TENANT);
         c.setChartAcctSeqNo(seqNo);
         c.setChartAcctCd(code);

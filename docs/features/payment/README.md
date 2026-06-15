@@ -82,8 +82,9 @@ Mirrors `PymnHelper.pymn_0009_001_c001` routing — TB_PAY_TARGET (API path) vs 
 | `TbPayTarget` + `Id` | [`payment/dispatch/entity/`](../../../src/main/java/com/kosign/wecms/domain/payment/dispatch/entity/) | `@Table("TB_PAY_TARGET")` PK `(tran_dt, biz_key, tran_seq)`. |
 | `TbPayFileMst` + `Id` | [`payment/dispatch/entity/`](../../../src/main/java/com/kosign/wecms/domain/payment/dispatch/entity/) | `@Table("TB_PAY_FILE_MST")` PK `(tran_dt, biz_key, file_seq_no)`. |
 | `TbPayFileData` + `Id` | [`payment/dispatch/entity/`](../../../src/main/java/com/kosign/wecms/domain/payment/dispatch/entity/) | `@Table("TB_PAY_FILE_DATA")` PK `(tran_dt, biz_key, file_seq_no, seq)`. |
-| `ScduPymnSumrDetlPayTargetConn` + `Id` | [`payment/dispatch/entity/`](../../../src/main/java/com/kosign/wecms/domain/payment/dispatch/entity/) | API-path conn table (note `SCDU_` spelling, preserved from DEV). |
 | `TbFirmBatApiTran`, `TbFirmFileMst`, `TbFirmFileData`, `TbFirmFileRslt`, `TbBatchScheduleInfo`, `TbBatchScheduleDtl` | [`payment/dispatch/entity/`](../../../src/main/java/com/kosign/wecms/domain/payment/dispatch/entity/) | Longer-running firm-banking dispatch entities. |
+
+> The legacy API-path bridge `SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN` and its entity `ScduPymnSumrDetlPayTargetConn` were **removed from the refactor (2026-06-10)** — Spring never wrote it; the dispatch executors stamp `PAY_TRAN_DT`/`PAY_TRAN_SEQ` on the detail row instead.
 | `TbPayTargetRepository`, `TbPayFileMstRepository`, `TbPayFileDataRepository` | [`payment/dispatch/repository/`](../../../src/main/java/com/kosign/wecms/domain/payment/dispatch/repository/) | Spring Data repositories. |
 | `DispatchCountRepository` + `DispatchCountRow` | [`payment/dispatch/`](../../../src/main/java/com/kosign/wecms/domain/payment/dispatch/) | Projection-backed read of "how many lines per `proc_stat`". |
 
@@ -166,7 +167,7 @@ Legacy `pymn_xxxx_xxx` ids appear **only** in: (1) JEX file:line citations in Ja
 - All four siblings share `SCDUL_PYMN_SUMR` + `SCDUL_PYMN_SUMR_DETL`, discriminated by `SCDUL_PYMN_TYPE_CD`. CHECK constraint `scdul_pymn_sumr_chk01` allows all four codes (`'00'`, `'01'`, `'02'`, `'03'`) — relaxation landed in [V146__scdul_pymn_sumr_chk01_allow_payroll.sql](../../../src/main/resources/db/migration/V146__scdul_pymn_sumr_chk01_allow_payroll.sql).
 - `SCDUL_PYMN_NO` is `VARCHAR(20)` in the refactor (DEV is 10) — refactor-only widening to fit the 14-char `YYYYMMDD<seq:6>` Java generator. Documented in [database/payment/internal-transfer-schema.md §7](../../references/database/payment/internal-transfer-schema.md).
 - Each sibling has its **own** per-(tenant, day) key-sequence helper table (e.g. `INTERNAL_TRANSFER_KEY_SEQ`) so day-rolls and seq exhaustion are independent.
-- Dispatch tables (`TB_PAY_TARGET`, `TB_PAY_FILE_MST`, `TB_PAY_FILE_DATA`, `SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN`) are shared infrastructure — written via `TransferDispatchExecutor` in `payment/dispatch/`.
+- Dispatch tables (`TB_PAY_TARGET`, `TB_PAY_FILE_MST`, `TB_PAY_FILE_DATA`) are shared infrastructure — written via `TransferDispatchExecutor` in `payment/dispatch/`. (The legacy `SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN` API-path bridge is **not** written by the refactor — removed 2026-06-10.)
 
 ### 4.3 Error code allocation
 

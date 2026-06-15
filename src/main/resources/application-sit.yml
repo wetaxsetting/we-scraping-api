@@ -38,21 +38,13 @@ spring:
     username: wecmsdev_owner
     password: ${WECMS_DB_PASSWORD:P2CKJpDAnO#vUM146W$}
     driver-class-name: org.postgresql.Driver
-  flyway:
-    # Flyway disabled for this profile (2026-06-07, per ops request to turn
-    # Flyway off across all environments). NOTE: ddl-auto stays `validate`, so
-    # the target DB must already be fully migrated or Hibernate boot validation
-    # will fail with "missing column ...".
-    enabled: false
-    # The shared dev DB may have a flyway_schema_history entry with version > 86
-    # from a prior branch or manual apply, causing V84-86 to appear "out of order".
-    # outOfOrder=true lets Flyway apply them despite that. Local-only — never set
-    # this in prod profiles.
-    out-of-order: true
+  # Flyway removed 2026-06-10 — no automatic migration. The shared dev DB is
+  # expected to be already migrated (apply src/main/resources/db/migration/ SQL
+  # by hand). ddl-auto stays `validate` so Hibernate only checks mappings
+  # against the existing schema.
   jpa:
     hibernate:
       ddl-auto: validate
-      ## ddl-auto: update
     # Inherited from the former dev profile — log every SQL statement
     # with formatted output to aid query debugging. Override to false
     # in `.env` (spring.jpa.show-sql=false) if the noise bothers you.
@@ -61,6 +53,9 @@ spring:
       hibernate.format_sql: true
 
 wecms:
+  # =============================================================================
+  # Security (CORS / JWT)
+  # =============================================================================
   cors:
     # Allowed cross-origin frontends. Includes localhost:3000 (Next.js dev
     # server) plus the SIT frontend at https://wecms.kosign.dev. Add more
@@ -72,23 +67,136 @@ wecms:
     # NEVER use this value outside a developer laptop / SIT.
     # Generate a real one with: openssl rand -hex 64
     secret: ${WECMS_JWT_SECRET:local-rnd-dev-only-insecure-jwt-signing-secret-override-in-prod-abcdef123456}
-  # ERP Transaction History (refactor slug: erp-transaction-history).
-  # Windows local-dev default (OQ-3 resolved 2026-05-11). Override via
-  # env var WECMS_ERP_TRANSACTION_HISTORY_STORAGE_ROOT on the SIT host.
+  # =============================================================================
+  # EFS / Van Center
+  # =============================================================================
+  # Firm-banking payment dispatch via the EFS / VAN gateway. DEV gateway per
+  # REST API guide ver 1.2.2 §1.2 (DEV host) + §6 timeouts (connect 3s /
+  # read 20s). Endpoint paths are vendor-fixed and default in EfsProperties;
+  # only enabled + base-url + partner-id are env-specific. The Van Center API
+  # key is NOT held here — it is a per-VAN secret provisioned out-of-band into
+  # TB_VAN_API_INFO (B2) and read via VanApiKeyService. `enabled` defaults
+  # false (mock active) until the partner instance + IP-whitelist are confirmed
+  # (B1 / OQ-PDF-2). WGVN_EFS_204 is NOT configured — absent from guide
+  # ver 1.2.2 (OQ-PDF-1).
+  dispatch:
+    # Hand off a committed non-VND File-path dispatch to the 00301 reception flow
+    # (TransferDispatchExecutor → BulkReceptionService.receive, post-commit). Default
+    # false → File-path batches stay PROC_STAT='9' (legacy behaviour) until SFTP (B4)
+    # + EFS (B1/B2) are provisioned. Turn on only with the gateway fully configured.
+    auto-receive: ${WECMS_DISPATCH_AUTO_RECEIVE:false}
+    # Real-time 202 dispatch (port of NAPAS_REAL_TIME_BATCH; VND/API path). Default false
+    # → pay-target rows stay PROC_STAT='9' until VAN keys (B2) + EFS (B1) are provisioned.
+    realtime-dispatch: ${WECMS_DISPATCH_REALTIME_DISPATCH:false}
+    # Depositor-name inquiry (WGVN_EFS_201; port of WB_00000100). Default false.
+    recipient-inquiry: ${WECMS_DISPATCH_RECIPIENT_INQUIRY:false}
+    # Result-check poll (port of PROCESSING_RESULT_CHECK_BATCH). Cron defaults to "-"
+    # (never fire) so the refactor never co-processes live 202 rows on the shared dev
+    # DB; set a cron only in the env that owns the real-time traffic. Runs every minute
+    # when enabled.
+    result-check:
+      cron: ${WECMS_DISPATCH_RESULT_CHECK_CRON:-}
+    # Inbound EFS callbacks (01301/01302). Permitted in the security chain (no JWT);
+    # authenticated by the per-VAN VV/EV crypto check + this source-IP allow-list.
+    # allowed-ips empty → no IP restriction (rely on VV crypto) until the gateway IPs
+    # are known (B7). Comma-separated env value, e.g. "42.96.55.18,42.96.55.163".
+    callback:
+      trust-forwarded-for: true
+      allowed-ips: ${WECMS_CALLBACK_ALLOWED_IPS:}
+    efs:
+      enabled: ${WECMS_EFS_ENABLED:false}
+      base-url: ${WECMS_EFS_BASE_URL:https://dev-van-gw.webcashvietnam.com}
+      partner-id: ${WECMS_EFS_PARTNER_ID:}
+      connect-timeout-ms: 3000
+      read-timeout-ms: 20000
+    # SFTP file channel for the bulk dispatch (00301 upload / 01302 result download).
+    # `enabled` defaults false → MockSftpClient is active (no network I/O) until the
+    # host/key/source-IP-whitelist are provisioned (B4). The private key path points
+    # at a file; the key material itself is NEVER committed (supply via env). Legacy
+    # paths: send=sdata, receive=rdata, move=rdata/success; port 3300.
+    sftp:
+      enabled: ${WECMS_SFTP_ENABLED:false}
+      host: ${WECMS_SFTP_HOST:}
+      port: ${WECMS_SFTP_PORT:3300}
+      username: ${WECMS_SFTP_USERNAME:}
+      private-key-path: ${WECMS_SFTP_KEY_PATH:}
+      password: ${WECMS_SFTP_PASSWORD:}
+      connect-timeout-ms: 60000
+      local-upload-path: ${WECMS_SFTP_LOCAL_UPLOAD:}
+      remote-upload-path: ${WECMS_SFTP_REMOTE_UPLOAD:sdata}
+      local-download-path: ${WECMS_SFTP_LOCAL_DOWNLOAD:}
+      remote-download-path: ${WECMS_SFTP_REMOTE_DOWNLOAD:rdata}
+      remote-move-path: ${WECMS_SFTP_REMOTE_MOVE:rdata/success}
+  # =============================================================================
+  # File storage
+  # =============================================================================
+  # All upload modules use:
+  #   <storage-root>/<bizKey>/<module-slug>/<file>
+  # Each module overrides its root via its WECMS_*_STORAGE_ROOT env var.
+  #
+  # Payment modules:
+  #   Vendor Payment    -> <storage-root>/<bizKey>/vendor-payment/<file>
+  #   Expense Payment   -> <storage-root>/<bizKey>/expense-payment/<file>
+  #   Payroll           -> <storage-root>/<bizKey>/payroll/<file>
+  #   Overseas Payment  -> <storage-root>/<bizKey>/overseas-payment/<file>
+  #   Internal Transfer -> <storage-root>/<bizKey>/internal-transfer/<file>
+  #
+  # Business files:
+  #   Contacts                -> <storage-root>/<bizKey>/contacts/<file>
+  #   Preferences             -> <storage-root>/<bizKey>/preferences/<file>
+  #   User Image              -> <storage-root>/<bizKey>/user-image/<file>
+  #   ERP Transaction History -> <storage-root>/<bizKey>/erp-transaction-history/<file>
+  #
+  # Vendor Payment / Expense Payment / Payroll now have their own storage-root
+  # keys (added 2026-06-12); each default mirrors the internal-transfer root so
+  # today's layout is unchanged until a key is pointed elsewhere.
+  # overseas-payment, preferences and user-image also fall back to a legacy flat
+  # root for files written before the multi-tenant split.
+  # Most roots default to "C:/WECMS PROJECT/File Data"; internal-transfer and
+  # overseas-payment still default to different roots (flagged inline below).
+  overseas-payment:
+    # storage-root — NON-STANDARD: defaults to "c:/WeCMS/File Data" (aligned
+    # 2026-06-12 with internal-transfer / vendor-payment / expense-payment /
+    # payroll), differs from the "C:/WECMS PROJECT/File Data" used by the
+    # contacts / preferences / user-image / erp-transaction-history modules.
+    # Override via WECMS_OVERSEAS_PAYMENT_STORAGE_ROOT.
+    storage-root: ${WECMS_OVERSEAS_PAYMENT_STORAGE_ROOT:c:/WeCMS/File Data}
+  # vendor-payment / expense-payment / payroll — own roots; defaults mirror the
+  # (non-standard) internal-transfer root "c:/WeCMS/File Data" so today's layout
+  # is unchanged. Flagged for normalization alongside internal-transfer.
+  vendor-payment:
+    storage-root: ${WECMS_VENDOR_PAYMENT_STORAGE_ROOT:c:/WeCMS/File Data}
+  expense-payment:
+    storage-root: ${WECMS_EXPENSE_PAYMENT_STORAGE_ROOT:c:/WeCMS/File Data}
+  payroll:
+    storage-root: ${WECMS_PAYROLL_STORAGE_ROOT:c:/WeCMS/File Data}
+  contacts:
+    storage-root: ${WECMS_CONTACTS_STORAGE_ROOT:C:/WECMS PROJECT/File Data}
+  preferences:
+    storage-root: ${WECMS_PREFERENCES_STORAGE_ROOT:C:/WECMS PROJECT/File Data}
+  user-image:
+    # Save filename is an opaque HMAC token (defence-in-depth on top of
+    # tenant isolation).
+    storage-root: ${WECMS_USER_IMAGE_STORAGE_ROOT:C:/WECMS PROJECT/File Data}
   erp-transaction-history:
     storage-root: ${WECMS_ERP_TRANSACTION_HISTORY_STORAGE_ROOT:C:/WECMS PROJECT/File Data}
-  # Internal Transfer (refactor slug: internal-transfer).
-  # Cut-off-time table (Vietnam-local hours) — sourced from legacy
-  # PymnHelper.getCutoffConfig. Shinhan past-cut-off is logged-only
-  # (non-blocking) per the validator's special-case.
+  # internal-transfer is listed last in this section because its YAML key also
+  # carries the Banking Cut-off Configuration (next section): Spring binds that
+  # under wecms.internal-transfer.cutoff, so it must stay nested under this key.
   internal-transfer:
-    # Local-developer override — points at the workspace-internal
-    # "File Data" folder (under c:/WeCMS/) so uploads land inside
-    # the VS Code Explorer tree alongside `Publishing (AI)` etc.
-    # Per-developer override via env var
-    # WECMS_INTERNAL_TRANSFER_STORAGE_ROOT (use forward slashes — Java
-    # Paths.get accepts both on Windows).
+    # storage-root — NON-STANDARD: defaults to "c:/WeCMS/File Data", differs from
+    # the "C:/WECMS PROJECT/File Data" used by the other modules. Leftover
+    # per-box path from the 2026-05-26 server-config merge (commit a55344a);
+    # flagged for normalization. Override via WECMS_INTERNAL_TRANSFER_STORAGE_ROOT.
     storage-root: ${WECMS_INTERNAL_TRANSFER_STORAGE_ROOT:c:/WeCMS/File Data}
+
+    # ===========================================================================
+    # Banking cut-off configuration
+    # ===========================================================================
+    # Bound under wecms.internal-transfer.cutoff (CutoffProperties prefix), so it
+    # stays nested under internal-transfer — but it is a distinct concern from
+    # file storage. Vietnam-local cut-off windows from legacy
+    # PymnHelper.getCutoffConfig; Shinhan past-cut-off is logged-only (non-blocking).
     cutoff:
       shinhan-bank-cd: ${WECMS_SHINHAN_BANK_CD:88886000}
       woori-bank-cd:   ${WECMS_WOORI_BANK_CD:11704000}
@@ -100,19 +208,10 @@ wecms:
         napas: { start: "00:15", end: "23:55" }
         citad: { start: "08:30", end: "17:40" }
         swift: { start: "08:30", end: "19:10" }
-  overseas-payment:
-    storage-root: ${WECMS_OVERSEAS_PAYMENT_STORAGE_ROOT:D:/KOSIGN/WeCMS/File Data}
-  contacts:
-    storage-root: ${WECMS_CONTACTS_STORAGE_ROOT:C:/WECMS PROJECT/File Data}
-  preferences:
-    storage-root: ${WECMS_PREFERENCES_STORAGE_ROOT:C:/WECMS PROJECT/File Data}
-  user-image:
-    # Settings > Users avatar files (USER_BUSI_CONN_INFM.USER_IMG).
-    # Flat layout: <storage-root>/<save_file_nm>. Override via env var
-    # WECMS_USER_IMAGE_STORAGE_ROOT. Mirrors the other 5 storage roots
-    # so one folder serves the whole laptop.
-    storage-root: ${WECMS_USER_IMAGE_STORAGE_ROOT:C:/WECMS PROJECT/File Data}
 
+  # =============================================================================
+  # Coocon
+  # =============================================================================
   coocon:
     # Coocon DEV credentials — mirrors <coocon> in VI/jex.wabooks_new.user.xml.
     # Single source of truth for BOTH the FX-rate batch AND the bank-
@@ -125,6 +224,9 @@ wecms:
     smart-api-url: ${WECMS_COOCON_SMART_API_URL:https://dev-sgw.webcashvietnam.com:8443/domestic/finance/scrap/smart_gateway.jsp}
     unique-key: ${WECMS_COOCON_UNIQUE_KEY:0000099}
 
+# =============================================================================
+# Logging
+# =============================================================================
 logging:
   level:
     com.kosign.wecms: DEBUG

@@ -54,6 +54,7 @@ public class BusaDocMstr {
     @Column(name = "DOC_ID", length = 50, nullable = false)
     private String docId;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "DOC_TYPE", length = 1, nullable = false)
     private String docType;
 
@@ -78,6 +79,7 @@ public class BusaDocMstr {
     @Column(name = "TRCO_CMENM", length = 200)
     private String trcoCmenm;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "TRCO_TRSC_CCY_CD", length = 3)
     private String trcoTrscCcyCd;
 

@@ -112,7 +112,7 @@ public class InternalTransferDispatchService {
 
         // Cut-off-time validation — read network from the first detail line.
         List<ScdulPymnSumrDetl> lines = detlRepository.findByBizKeyAndScdulPymnNo(
-                bizKey, id, Sort.by(Sort.Order.asc("scdulPymnDetlNo")));
+                bizKey, id, ScdulPymnSumrDetlRepository.DETL_NO_NUMERIC_ASC);
         TransferNetwork network = lines.isEmpty()
                 ? TransferNetwork.CITAD
                 : TransferNetwork.fromAntDivCd(lines.get(0).getAntDivCd());

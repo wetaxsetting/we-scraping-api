@@ -1,5 +1,6 @@
 package com.kosign.wecms.domain.payment.internaltransfer.service;
 
+import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.banking.entity.AcctMstr;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
@@ -9,7 +10,9 @@ import com.kosign.wecms.domain.payment.dispatch.entity.TbPayTarget;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileDataRepository;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileMstRepository;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayTargetRepository;
+import com.kosign.wecms.domain.payment.dispatch.service.DispatchAutoReceiveRegistrar;
 import com.kosign.wecms.domain.payment.dispatch.service.DispatchKeyGenerator;
+import com.kosign.wecms.domain.payment.dispatch.service.RealtimeDispatchRegistrar;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumr;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrDetl;
 import lombok.RequiredArgsConstructor;
@@ -24,6 +27,7 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -126,6 +130,11 @@ public class InternalTransferDispatchExecutor {
     private final AcctMstrRepository      acctMstrRepository;
     private final DispatchKeyGenerator    keyGenerator;
     private final Clock                   clock;
+    private final LegacyFunctionRepository legacyFunctions;
+    private final DispatchAutoReceiveRegistrar autoReceiveRegistrar;
+    /** Post-commit real-time 202 hand-off (port of NAPAS_REAL_TIME_BATCH), gated by
+     *  {@code wecms.dispatch.realtime-dispatch}. Used by the VND/API path. */
+    private final RealtimeDispatchRegistrar realtimeDispatchRegistrar;
 
     /**
      * Insert dispatch rows for one Internal-Transfer batch, applying the
@@ -180,8 +189,10 @@ public class InternalTransferDispatchExecutor {
         // G19 (API side): Woori-USD→VND carries USD, everything else VND.
         String trscCcyCd = isWooriUsdToVnd ? CCY_USD : CCY_VND;
 
+        List<String> tranSeqs = new ArrayList<>(lines.size());
         for (ScdulPymnSumrDetl line : lines) {
             String tranSeq = keyGenerator.nextTranSeq(bizKey, tranDt);
+            tranSeqs.add(tranSeq);
 
             TbPayTarget row = new TbPayTarget();
             row.setTranDt(tranDt);
@@ -213,6 +224,10 @@ public class InternalTransferDispatchExecutor {
 
         log.info("feature=internal-transfer dispatch path=API bizKey={} scdulPymnNo={} lines={} trscCcyCd={} wooriUsdVnd={}",
                 bizKey, master.getScdulPymnNo(), lines.size(), trscCcyCd, isWooriUsdToVnd);
+
+        // Hand off to the real-time 202 flow AFTER this transaction commits
+        // (port of NAPAS_REAL_TIME_BATCH; gated, default-off; per-target isolated).
+        realtimeDispatchRegistrar.registerAfterCommit(bizKey, tranDt, tranSeqs);
     }
 
     /* ───────────────── File path (TB_PAY_FILE_MST + DATA) ───────────────── */
@@ -245,8 +260,12 @@ public class InternalTransferDispatchExecutor {
 
         boolean shinhan = eq(trimToNull(master.getOutBankCd()), shinhanBankCd);
 
-        BigDecimal seq = BigDecimal.ONE;
+        // SEQ seeded ONCE via the wb_get_next_val funnel (V140 #20, per
+        // (biz_key, file_seq_no) MAX+1) then incremented per line — no per-row
+        // DB call. fileSeqNo is freshly allocated here, so the seed is 1 → 1, 2, 3, ...
+        long seqCursor = Long.parseLong(legacyFunctions.nextTbPayFileDataSeq(bizKey, fileSeqNo)) - 1;
         for (ScdulPymnSumrDetl line : lines) {
+            BigDecimal seq = BigDecimal.valueOf(++seqCursor);
             TbPayFileData data = new TbPayFileData();
             data.setTranDt(tranDt);
             data.setBizKey(bizKey);
@@ -285,12 +304,13 @@ public class InternalTransferDispatchExecutor {
             line.setPayTranSeq(seq.toPlainString());
             line.setPayFileSeqNo(null);
             line.setPaySeq(null);
-
-            seq = seq.add(BigDecimal.ONE);
         }
 
         log.info("feature=internal-transfer dispatch path=FILE bizKey={} scdulPymnNo={} lines={} fileSeqNo={} shinhanUsdVnd={}",
                 bizKey, master.getScdulPymnNo(), lines.size(), fileSeqNo, isShinhanUsdToVnd);
+
+        // Hand off to the 00301 reception flow AFTER this transaction commits (gated).
+        autoReceiveRegistrar.registerAfterCommit(tranDt, bizKey, fileSeqNo);
     }
 
     /* ───────────────── Helpers ───────────────── */

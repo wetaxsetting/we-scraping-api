@@ -105,6 +105,7 @@ public class EInvoiceScrapeService {
     private final BusaDocMstrRepository    busaRepo;
     private final ExtTranCallHisRepository auditRepo;
     private final BusiInfmRepository       busiRepo;
+    private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
 
     @Transactional
     public EInvoiceScrapeResult saveScrapedInvoices(EInvoiceScrapeRequest req) {
@@ -210,14 +211,15 @@ public class EInvoiceScrapeService {
         return fallback != null && !fallback.isBlank() ? fallback : "";
     }
 
-    /** Write the per-call audit row. {@code SEQ_NO} is allocated as a
-     *  per-{@code (SVC_ID, REF_DATE)} MAX+1 in Java (no
-     *  {@code wb_get_next_val} branch). */
+    /** Write the per-call audit row. {@code SEQ_NO} is allocated per
+     *  {@code (SVC_ID, REF_DATE)} through the single {@code wb_get_next_val}
+     *  funnel (V140 #21). */
     private void writeAudit(boolean isSales, EInvoiceScrapeRequest req,
                             String bizKey, String userId, String regDtm) {
         final String svcId = isSales ? "GDT_INQUIRY_SALES" : "GDT_INQUIRY_EXPENSES";
         final String refDate = OffsetDateTime.now(ZoneOffset.UTC).format(DATE_8);
-        final BigDecimal nextSeq = auditRepo.findMaxSeqNoForDay(svcId, refDate).add(BigDecimal.ONE);
+        final BigDecimal nextSeq = new BigDecimal(
+                legacyFunctions.nextExtTranCallHisSeqNo(svcId, refDate));
 
         final ExtTranCallHis h = new ExtTranCallHis();
         h.setSvcId(svcId);

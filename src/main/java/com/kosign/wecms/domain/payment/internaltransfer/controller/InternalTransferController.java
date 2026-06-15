@@ -94,7 +94,7 @@ public class InternalTransferController {
      *  accept legacy DEV-imported values during seed work. Tighter
      *  validation lives in the service layer's
      *  {@code findByBizKeyAndScdulPymnNoAndScdulPymnTypeCd} miss-path. */
-    private static final String SCDUL_PYMN_NO_PATTERN = "^([0-9]{5,30}|VO_[0-9]{6}_[0-9]{1,9})$";
+    private static final String SCDUL_PYMN_NO_PATTERN = "^([0-9]{1,30}|VO_[0-9]{6}_[0-9]{1,9})$";
 
     /** Pattern for {@code scdul_pymn_detl_no} — 1..20 chars per legacy
      *  column length, alphanumeric to permit legacy seed data. */
@@ -231,9 +231,16 @@ public class InternalTransferController {
             @PathVariable("fileId")
             @Size(max = 100)
             @Pattern(regexp = "^[A-Za-z0-9_-]+$", message = "fileId: invalid format")
-            String fileId) throws IOException {
+            String fileId,
+            // GAP-ATT-1: which legacy table the attachment row came from
+            // (EXPT_RESOL_FILE vs EXPT_RESOL_PAY_EVID_FILE). Optional —
+            // defaults to EXPT_RESOL_FILE so the legacy URL keeps working.
+            @RequestParam(value = "fileType", required = false)
+            @Pattern(regexp = "^(EXPT_RESOL_FILE|EXPT_RESOL_PAY_EVID_FILE)$",
+                     message = "fileType: invalid value")
+            String fileType) throws IOException {
         DownloadResource resolved = service.resolveApprovalAttachmentDownload(
-                id, apprSeqNo, fileId);
+                id, apprSeqNo, fileId, fileType);
         InputStream stream = Files.newInputStream(resolved.path());
 
         ContentDisposition cd = ContentDisposition.builder("attachment")

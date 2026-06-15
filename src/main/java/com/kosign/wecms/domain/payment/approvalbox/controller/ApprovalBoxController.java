@@ -1,19 +1,33 @@
 package com.kosign.wecms.domain.payment.approvalbox.controller;
 
+import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.export.ExcelExportRequest;
 import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.response.ApiResponse;
+import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxActionResponse;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxApprover;
+import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxRow;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxBulkApproveRequest;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxBulkApproveResponse;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxListResponse;
+import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalTransactionRow;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ChangeApprovalLineRequest;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxService;
+import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalDetailService;
+import com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalAttachmentRow;
+import com.kosign.wecms.domain.payment.internaltransfer.service.ApprovalAttachmentDownloadService;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.core.io.InputStreamResource;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -25,6 +39,10 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.security.access.prepost.PreAuthorize;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.List;
 
 /**
@@ -59,7 +77,9 @@ import java.util.List;
 public class ApprovalBoxController {
 
     private final ApprovalBoxService service;
+    private final ApprovalDetailService approvalDetailService;
     private final ExcelExportService excelExportService;
+    private final ApprovalAttachmentDownloadService approvalAttachmentDownloadService;
     /*Deploy v3*/
     /**
      * List Approval Box rows for the current tenant.
@@ -100,6 +120,116 @@ public class ApprovalBoxController {
     @GetMapping("/{apprSeqNo}/approvers")
     public ApiResponse<List<ApprovalBoxApprover>> approvers(@PathVariable String apprSeqNo) {
         return ApiResponse.ok(service.approvers(apprSeqNo));
+    }
+
+    /**
+     * Common Approval Details master row — resolvable by either
+     * {@code appr_seq_no} (direct) OR the legacy-safe {@code post_seq_no}
+     * (+ optional {@code bltb_cd}) identity that header notifications carry.
+     * Mirrors legacy {@code comm_0195_001} loading by {@code POST_SEQ_NO}
+     * (resolved → {@code APPR_SEQ_NO} via {@code BLTB_POST_INFM}). This is a
+     * fixed-path GET (not {@code /{apprSeqNo}/…}) so it never collides with
+     * the per-approval sub-resource routes below.
+     *
+     * <p>Returns the same {@link ApprovalBoxRow} shape the list emits, so the
+     * common popup renders header / status / approvers / content identically
+     * from every entry point. {@code WBE_APPROVAL_DETAIL_NOT_FOUND} when the
+     * approval is missing, withdrawn, or in another tenant.
+     */
+    @GetMapping("/detail")
+    public ApiResponse<ApprovalBoxRow> detail(
+            @RequestParam(value = "appr_seq_no", required = false) String apprSeqNo,
+            @RequestParam(value = "post_seq_no", required = false) String postSeqNo,
+            @RequestParam(value = "bltb_cd",     required = false) String bltbCd) {
+        ApprovalBoxRow row = approvalDetailService.master(apprSeqNo, postSeqNo, bltbCd);
+        if (row == null) {
+            throw new BusinessException("WBE_APPROVAL_DETAIL_NOT_FOUND");
+        }
+        return ApiResponse.ok(row);
+    }
+
+    /**
+     * Read-only per-line transactions for one approval — populates the
+     * Transaction Details section of the Approval Details popup when it is
+     * opened from a header notification (which carries only the
+     * {@code APPR_SEQ_NO}). Mirrors the inline transaction rows legacy
+     * {@code comm_0193_001_r001} returned.
+     *
+     * <p>Covers the four scheduled kinds (Internal Transfer / Vendor /
+     * Expense / Payroll). Card lines are loaded by the frontend via the
+     * existing card-by-approval path; Overseas line loading is deferred —
+     * both return an empty list here (the popup still renders header /
+     * approvers / content / attachments). A missing / wrong-tenant approval
+     * also yields an empty list. See {@link ApprovalDetailService}.
+     */
+    @GetMapping("/{apprSeqNo}/transactions")
+    public ApiResponse<List<ApprovalTransactionRow>> transactions(@PathVariable String apprSeqNo) {
+        return ApiResponse.ok(approvalDetailService.transactions(apprSeqNo));
+    }
+
+    /**
+     * Read-only attachment list for one approval (UNION of
+     * {@code EXPT_RESOL_FILE} + {@code EXPT_RESOL_PAY_EVID_FILE}), so the
+     * notification-opened popup can render the attachment chips. Each row's
+     * {@code fileId} + {@code fileType} drive the existing
+     * {@code GET …/{apprSeqNo}/attachments/{fileId}?fileType=} download.
+     */
+    @GetMapping("/{apprSeqNo}/attachments")
+    public ApiResponse<List<ApprovalAttachmentRow>> attachments(@PathVariable String apprSeqNo) {
+        return ApiResponse.ok(approvalDetailService.attachments(apprSeqNo));
+    }
+
+    /**
+     * Stream one Approval Details attachment back to the caller. Shared by
+     * every payment type the Approval Box popup can open (Internal Transfer
+     * / Vendor / Expense / Payroll / Overseas) because the row is keyed by
+     * {@code APPR_SEQ_NO} — the {@code EXPT_RESOL_MSTR} PK — not by the
+     * per-type payment batch id.
+     *
+     * <p>The {@code fileType} query param routes to the correct legacy
+     * table (GAP-ATT-1): {@code EXPT_RESOL_FILE} (requester uploads, id
+     * column {@code FILE_ID}) vs {@code EXPT_RESOL_PAY_EVID_FILE} (payment
+     * evidence, id column {@code EVID_FILE_ID}). It is optional and defaults
+     * to {@code EXPT_RESOL_FILE}, so a caller that omits it keeps the legacy
+     * behaviour. The two tables can share a short {@code fileId} for the
+     * same approval, so {@code (apprSeqNo, fileId, fileType)} are validated
+     * together by the resolver to avoid streaming the wrong file.
+     *
+     * <p>Tenant scope ({@code BIZ_KEY}) comes from {@code TenantContext} —
+     * never a client value — so a caller cannot reach another tenant's
+     * attachment. {@code WBE2069} when the row is missing in the resolved
+     * table or the on-disk binary is unavailable.
+     */
+    @GetMapping("/{apprSeqNo}/attachments/{fileId}")
+    public ResponseEntity<InputStreamResource> downloadAttachment(
+            @PathVariable
+            @Size(max = 15)
+            @Pattern(regexp = "^[0-9]+$", message = "apprSeqNo: digits only")
+            String apprSeqNo,
+            @PathVariable
+            @Size(max = 100)
+            @Pattern(regexp = "^[A-Za-z0-9_-]+$", message = "fileId: invalid format")
+            String fileId,
+            @RequestParam(value = "fileType", required = false)
+            @Pattern(regexp = "^(EXPT_RESOL_FILE|EXPT_RESOL_PAY_EVID_FILE)$",
+                     message = "fileType: invalid value")
+            String fileType) throws IOException {
+        String bizKey = TenantContext.currentBizKey();
+        ApprovalAttachmentDownloadService.DownloadFile resolved =
+                approvalAttachmentDownloadService.resolve(bizKey, apprSeqNo, fileId, fileType);
+        InputStream stream = Files.newInputStream(resolved.path());
+
+        ContentDisposition cd = ContentDisposition.builder("attachment")
+                .filename(resolved.orgFileNm(), StandardCharsets.UTF_8)
+                .build();
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .contentLength(resolved.fileSize())
+                .header(HttpHeaders.CONTENT_DISPOSITION, cd.toString())
+                .header("X-Content-Type-Options", "nosniff")
+                .header("Access-Control-Expose-Headers", HttpHeaders.CONTENT_DISPOSITION)
+                .body(new InputStreamResource(stream));
     }
 
     /**

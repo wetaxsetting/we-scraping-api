@@ -8,9 +8,8 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
-
-import java.time.LocalDate;
-import java.time.OffsetDateTime;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /**
  * Mirrors legacy wecmsvndevdb.BUSI_INFM column-for-column.
@@ -64,8 +63,8 @@ public class BusiInfm extends BaseEntity {
     @Column(name = "CMPN_LOGO", length = 500)
     private String cmpnLogo;
 
-    @Column(name = "JOIN_DT")
-    private OffsetDateTime joinDt;
+    @Column(name = "JOIN_DT", length = 14)
+    private String joinDt;
 
     @Column(name = "FST_JOIN_NM", length = 100)
     private String fstJoinNm;
@@ -73,29 +72,29 @@ public class BusiInfm extends BaseEntity {
     @Column(name = "FST_JOIN_TEL", length = 100)
     private String fstJoinTel;
 
-    @Column(name = "FST_USE_DATE")
-    private OffsetDateTime fstUseDate;
+    @Column(name = "FST_USE_DATE", length = 14)
+    private String fstUseDate;
 
-    @Column(name = "LST_PAY_DATE")
-    private LocalDate lstPayDate;
+    @Column(name = "LST_PAY_DATE", length = 8)
+    private String lstPayDate;
 
-    @Column(name = "USE_DATE_FROM")
-    private LocalDate useDateFrom;
+    @Column(name = "USE_DATE_FROM", length = 8)
+    private String useDateFrom;
 
-    @Column(name = "USE_DATE_TO")
-    private LocalDate useDateTo;
+    @Column(name = "USE_DATE_TO", length = 8)
+    private String useDateTo;
 
-    @Column(name = "BUSI_STTS", length = 2)
+    @Column(name = "BUSI_STTS", length = 1)
     private String busiStts;
 
     @Column(name = "NTNL_CD", length = 2, nullable = false)
     private String ntnlCd;
 
-    @Column(name = "FREE_USE_DATE_FROM")
-    private LocalDate freeUseDateFrom;
+    @Column(name = "FREE_USE_DATE_FROM", length = 8)
+    private String freeUseDateFrom;
 
-    @Column(name = "FREE_USE_DATE_TO")
-    private LocalDate freeUseDateTo;
+    @Column(name = "FREE_USE_DATE_TO", length = 8)
+    private String freeUseDateTo;
 
     @Column(name = "BANK_CD", length = 20)
     private String bankCd;
@@ -109,13 +108,14 @@ public class BusiInfm extends BaseEntity {
     @Column(name = "OVERDUE_YN", length = 1)
     private String overdueYn;
 
-    @Column(name = "CANC_DATE")
-    private LocalDate cancDate;
+    @Column(name = "CANC_DATE", length = 8)
+    private String cancDate;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "WIZ_RUN_YN", length = 1)
     private String wizRunYn;
 
-    @Column(name = "CMPN_STAMP", columnDefinition = "TEXT")
+    @Column(name = "CMPN_STAMP")
     private String cmpnStamp;
 
     @Column(name = "DEL_YN", length = 1)
@@ -139,12 +139,13 @@ public class BusiInfm extends BaseEntity {
     @Column(name = "MEMO", length = 200)
     private String memo;
 
-    @Column(name = "PAID_START_DATE")
-    private LocalDate paidStartDate;
+    @Column(name = "PAID_START_DATE", length = 8)
+    private String paidStartDate;
 
     @Column(name = "CMPN_QR_CD_IMG", length = 500)
     private String cmpnQrCdImg;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "ERP_CD", length = 1)
     private String erpCd;
 }

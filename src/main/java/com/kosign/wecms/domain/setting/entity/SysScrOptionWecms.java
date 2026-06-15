@@ -1,6 +1,5 @@
 package com.kosign.wecms.domain.setting.entity;
 
-import com.kosign.wecms.common.entity.BaseEntity;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
@@ -15,15 +14,24 @@ import org.hibernate.type.SqlTypes;
 /**
  * System default column config for a screen / page (legacy
  * {@code SYS_SCR_OPTION_WECMS}). Each row is one column inside one
- * dynamic area of one page; the {@code FIX_YN='Y'} flag locks a column
- * from being hidden / reordered by users (Bank cell on Account Inquiry,
- * etc.).
+ * dynamic area of one page.
  *
- * <p>Schema is column-for-column aligned with DEV (`wecmsvndev`,
- * sampled 2026-05-02) — see V35 migration. The only refactor-only
- * additions are {@code FIX_YN} (column-locking feature, see
- * docs/features/view-setting.md §1.8) and the BaseEntity audit columns
- * (REG_ID/REG_DTM/MOD_ID/MOD_DTM); both kept by explicit approval.
+ * <p>Schema is column-for-column aligned with live JEX — the exact
+ * 10 columns ({@code V93}): WEB_SVC_ID, FIELD_ID, FIELD_NM, DISP_ORD,
+ * DISP_YN, USE_YN, SIZE, DYM_AREA_ID, SORT_YN, HTML_CONT. The entity maps
+ * exactly those columns so {@code ddl-auto=validate} passes against the
+ * unmodified live JEX table. It deliberately does NOT extend
+ * {@code BaseEntity}: JEX's {@code SYS_SCR_OPTION_WECMS} is a
+ * Flyway-seeded config table with NO audit columns (REG/MOD), so mapping
+ * them would fail validate. SYS rows are read-only at runtime.
+ *
+ * <p>Column-locking (a column the user cannot hide / reorder, e.g. the
+ * Bank cell on Account Inquiry) is NOT a DB concern: the live JEX
+ * {@code SYS_SCR_OPTION_WECMS} carries no such flag. Fixed columns are
+ * declared statically in the frontend View Setting registry. The
+ * structural CHECKBOX / ETC columns are still locked server-side via
+ * {@code ScreenOptionService.SPECIAL_FIELD_IDS}, independent of any DB
+ * column.
  *
  * <p>{@code DYM_AREA_ID} groups columns into logical sub-tables of the
  * same screen. Legacy area names are short tokens like {@code "table1"},
@@ -39,7 +47,7 @@ import org.hibernate.type.SqlTypes;
 @Entity
 @Table(name = "SYS_SCR_OPTION_WECMS")
 @IdClass(SysScrOptionWecmsId.class)
-public class SysScrOptionWecms extends BaseEntity {
+public class SysScrOptionWecms {
 
     @Id
     @Column(name = "WEB_SVC_ID", length = 50, nullable = false)
@@ -53,12 +61,13 @@ public class SysScrOptionWecms extends BaseEntity {
     private String fieldNm;
 
     /**
-     * 1-based display order. INTEGER on local — refactor-only deviation
-     * from DEV's NUMERIC(10,0) (V36 reverted V35's NUMERIC alter that
-     * tripped Hibernate's BIGINT/NUMERIC schema validator). Functionally
-     * equivalent: the 0..99 DISP_ORD domain is well within INTEGER.
+     * 1-based display order. JEX {@code NUMERIC(10,0)} — mapped via
+     * {@code @JdbcTypeCode(NUMERIC)} so Hibernate validate passes against
+     * the live JEX column (2026-06-09 JEX-parity alignment; supersedes the
+     * earlier local-INTEGER convention from V36).
      */
-    @Column(name = "DISP_ORD", nullable = false)
+    @JdbcTypeCode(SqlTypes.NUMERIC)
+    @Column(name = "DISP_ORD", precision = 10, scale = 0, nullable = false)
     private Integer dispOrd;
 
     @Column(name = "DISP_YN", length = 1, nullable = false)
@@ -67,10 +76,7 @@ public class SysScrOptionWecms extends BaseEntity {
     @Column(name = "USE_YN", length = 1, nullable = false)
     private String useYn;
 
-    @Column(name = "FIX_YN", length = 1, nullable = false)
-    private String fixYn;
-
-    @Column(name = "SIZE", length = 20, nullable = false)
+    @Column(name = "SIZE", length = 10, nullable = false)
     private String size;
 
     @Column(name = "DYM_AREA_ID", length = 50, nullable = false)

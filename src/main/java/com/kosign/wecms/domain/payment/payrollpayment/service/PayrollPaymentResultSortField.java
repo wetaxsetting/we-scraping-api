@@ -45,7 +45,10 @@ public enum PayrollPaymentResultSortField implements SortableField {
     FILE_NM           ("orgFileNm"),
     SCDUL_PYMN_DETL_NO("totTrnsCnt"),
     TRAN_AMT          ("totalTranAmt"),
-    APPR_FUND_TP      ("apprStts"),
+    // APPR_FUND_TP previously mapped to the SCDUL_PYMN_SUMR.APPR_STTS column as
+    // a "closest" single-table key; that column was removed 2026-06-10 (no such
+    // column in legacy JEX). APPR_FUND_TP lives on EXPT_RESOL_MSTR, so it is not
+    // a SCDUL single-table sort key — falls back to default ORDER BY.
     PROC_STAT         ("trnfYn"),
     APPR_DOC_NO       ("erpFileNum"),
     TITL              ("titl");

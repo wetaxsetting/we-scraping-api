@@ -1,5 +1,6 @@
 package com.kosign.wecms.domain.payment.payrollpayment.service;
 
+import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.banking.entity.AcctMstr;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
@@ -7,6 +8,7 @@ import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileData;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileMst;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileDataRepository;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileMstRepository;
+import com.kosign.wecms.domain.payment.dispatch.service.DispatchAutoReceiveRegistrar;
 import com.kosign.wecms.domain.payment.dispatch.service.DispatchKeyGenerator;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumr;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrDetl;
@@ -98,6 +100,8 @@ public class PayrollDispatchExecutor {
     private final AcctMstrRepository      acctMstrRepository;
     private final DispatchKeyGenerator    keyGenerator;
     private final Clock                   clock;
+    private final LegacyFunctionRepository legacyFunctions;
+    private final DispatchAutoReceiveRegistrar autoReceiveRegistrar;
 
     /**
      * Insert the file-route dispatch rows for one Payroll batch — always
@@ -145,9 +149,13 @@ public class PayrollDispatchExecutor {
         master.setPayTranDt(tranDt);
         master.setPayFileSeqNo(fileSeqNo);
 
-        // 2. Detail rows (TB_PAY_FILE_DATA). SEQ starts at 1.
-        BigDecimal seq = BigDecimal.ONE;
+        // 2. Detail rows (TB_PAY_FILE_DATA). SEQ seeded ONCE via the
+        //    wb_get_next_val funnel (V140 #20, per (biz_key, file_seq_no) MAX+1)
+        //    then incremented per line — no per-row DB call. fileSeqNo is freshly
+        //    allocated above, so the seed is 1 → 1, 2, 3, ...
+        long seqCursor = Long.parseLong(legacyFunctions.nextTbPayFileDataSeq(bizKey, fileSeqNo)) - 1;
         for (ScdulPymnSumrDetl line : lines) {
+            BigDecimal seq = BigDecimal.valueOf(++seqCursor);
             TbPayFileData data = new TbPayFileData();
             data.setTranDt(tranDt);
             data.setBizKey(bizKey);
@@ -181,12 +189,13 @@ public class PayrollDispatchExecutor {
             line.setPayTranSeq(seq.toPlainString());
             line.setPayFileSeqNo(null);
             line.setPaySeq(null);
-
-            seq = seq.add(BigDecimal.ONE);
         }
 
         log.info("feature=payroll-payment dispatch path=FILE bizKey={} scdulPymnNo={} lines={} tranDt={} fileSeqNo={} fundTp={}",
                 bizKey, master.getScdulPymnNo(), lines.size(), tranDt, fileSeqNo, resolveFundTp(apprFundTp));
+
+        // Hand off to the 00301 reception flow AFTER this transaction commits (gated).
+        autoReceiveRegistrar.registerAfterCommit(tranDt, bizKey, fileSeqNo);
     }
 
     /* ───────────────── Helpers ───────────────── */

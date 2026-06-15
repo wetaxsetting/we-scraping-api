@@ -4,7 +4,7 @@
 |---|---|
 | Slug | `cash-flow-report` (runtime id; this file named `cash-flow.md` to match the menu) |
 | Module | Banking → Reports |
-| Status | **Complete** — Java reimplementation of `get_cashflow_report`, FE/BE aligned, legacy parity verified (READY FOR SIT/UAT, 2026-06-04) |
+| Status | **Calls `get_cashflow_report` directly (2026-06-14).** The earlier Java reimplementation is **bypassed**; the service now invokes the legacy DB function (helpers `wb_get_chart_acct_level` + `wb_get_chart_acct_level_text` added to the refactor DB). Remaining: numeric live verification, **blocked by missing `chart_acct_infm` / classified payment data** in the R&D DB. |
 | JEX twin | `cash_0001_001` (view) + `cash_0001_001_r001` (read API) + fn `get_cashflow_report` |
 | Refactor backend | `GET /api/v1/banking/reports/cash-flow-report` + `POST .../export` |
 | Refactor frontend | `/banking/reports/cash-flow` |

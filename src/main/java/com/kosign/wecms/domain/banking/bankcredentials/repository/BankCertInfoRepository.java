@@ -31,11 +31,10 @@ public interface BankCertInfoRepository extends JpaRepository<BankCertInfo, Bank
     Optional<BankCertInfo> findFirstByBizKeyAndBankCdAndCertInfoConAndNxisasGbSeqNoOrderBySeqNoAsc(
             String bizKey, String bankCd, String certInfoCon, BigDecimal nxisasGbSeqNo);
 
-    /** Next SEQ_NO for the tenant. Returns 0 if no rows exist, so the
-     *  caller increments to 1. Bound to {@code BIZ_KEY} — the tenant's
-     *  own seq space. */
-    @Query("SELECT COALESCE(MAX(b.seqNo), 0) FROM BankCertInfo b WHERE b.bizKey = :bizKey")
-    BigDecimal findMaxSeqNo(String bizKey);
+    // SEQ_NO allocation now routes through
+    // LegacyFunctionRepository.nextBankCertSeqNo (V140 #23 — per-tenant MAX+1,
+    // verbatim from the live JEX function) so every wb_get_next_val call goes
+    // through the one funnel.
 
     /** Count credentials at one bank within the tenant. Used by the
      *  Disconnect-credential path to decide whether to cascade-delete

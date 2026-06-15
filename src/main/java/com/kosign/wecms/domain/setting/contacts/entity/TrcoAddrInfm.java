@@ -8,6 +8,8 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /**
  * Settings &gt; Contacts &mdash; address row. Each {@link TrcoInfm}
@@ -47,14 +49,12 @@ public class TrcoAddrInfm {
     private String trcoBsunPostAdrs;
 
     /** Address discriminator. {@code 1} = current, {@code 2} = previous
-     *  (OQ-8 resolved 2026-05-12). DEV stores this as
-     *  {@code NUMERIC(10,0)}; the local column was converted to
-     *  {@code INTEGER} by V89 because Hibernate 6's
-     *  {@code ddl-auto: validate} rejects NUMERIC against a Java
-     *  {@code Integer} mapping. Same precedent as
-     *  {@code SysScrOptionWecms.dispOrd} (V35 &rarr; V36 hotfix).
-     *  Documented refactor-only deviation from DEV. */
-    @Column(name = "DISP_ORD", nullable = false)
+     *  (OQ-8 resolved 2026-05-12). JEX {@code NUMERIC(10,0)} — mapped via
+     *  {@code @JdbcTypeCode(NUMERIC)} so Hibernate validate passes against
+     *  the live JEX column (2026-06-09 JEX-parity alignment; supersedes the
+     *  earlier V89 local-INTEGER deviation). */
+    @JdbcTypeCode(SqlTypes.NUMERIC)
+    @Column(name = "DISP_ORD", precision = 10, scale = 0, nullable = false)
     private Integer dispOrd;
 
     /** Issue date as {@code yyyyMMdd}. */

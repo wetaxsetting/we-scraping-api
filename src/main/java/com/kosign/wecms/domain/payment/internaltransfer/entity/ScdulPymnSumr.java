@@ -8,6 +8,8 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.math.BigDecimal;
 
@@ -57,7 +59,7 @@ public class ScdulPymnSumr {
     private String bizKey;
 
     @Id
-    @Column(name = "SCDUL_PYMN_NO", length = 20, nullable = false)
+    @Column(name = "SCDUL_PYMN_NO", length = 10, nullable = false)
     private String scdulPymnNo;
 
     /** Payment-type discriminator. Always {@code "03"} for Internal Transfer
@@ -66,7 +68,7 @@ public class ScdulPymnSumr {
     @Column(name = "SCDUL_PYMN_TYPE_CD", length = 2, nullable = false)
     private String scdulPymnTypeCd;
 
-    @Column(name = "OUT_BANK_CD", length = 20, nullable = false)
+    @Column(name = "OUT_BANK_CD", length = 15, nullable = false)
     private String outBankCd;
 
     @Column(name = "WDRL_ACT_NO", length = 100, nullable = false)
@@ -81,7 +83,7 @@ public class ScdulPymnSumr {
     @Column(name = "TOTAL_TRAN_AMT", precision = 20, scale = 6, nullable = false)
     private BigDecimal totalTranAmt;
 
-    @Column(name = "TOT_TRNS_CNT", precision = 15, scale = 0, nullable = false)
+    @Column(name = "TOT_TRNS_CNT", precision = 10, scale = 0, nullable = false)
     private BigDecimal totTrnsCnt;
 
     /** Linked approval-resolution sequence number (FK to EXPT_RESOL_MSTR).
@@ -91,29 +93,16 @@ public class ScdulPymnSumr {
     @Column(name = "APPR_SEQ_NO", length = 15)
     private String apprSeqNo;
 
-    /** Per-batch approval outcome — stamped by the {@code POST
-     *  /{id}/approval-action} endpoint when an approver acts on the
-     *  batch. Legacy {@code APPRVR_STTS} vocabulary applied at the
-     *  master level:
-     *
-     *  <ul>
-     *    <li>{@code null} — initial state after Request Approval was
-     *        submitted but before any approver has acted.</li>
-     *    <li>{@code "P"} — pending (current approver awaiting action).</li>
-     *    <li>{@code "I"} — in progress (multi-approver chain mid-flight).</li>
-     *    <li>{@code "C"} — approved (final approver accepted).</li>
-     *    <li>{@code "X"} — rejected (any approver rejected).</li>
-     *  </ul>
-     *
-     *  Phase A: only {@code "C"} / {@code "X"} are written (single-step
-     *  approve / reject mirroring legacy {@code comm_0193_001}). The
-     *  per-approver chain that produces {@code "P"} / {@code "I"} arrives
-     *  with the EXPT_RESOL_APPRVR_INFM port.
-     */
-    @Column(name = "APPR_STTS", length = 1)
-    private String apprStts;
+    // NOTE — APPR_STTS removed 2026-06-10: the legacy JEX SCDUL_PYMN_SUMR
+    // table has no APPR_STTS column. The refactor had denormalized a mirror
+    // of EXPT_RESOL_MSTR.APPR_TYPE_CD here; that column does not exist in
+    // legacy DEV/UAT/PROD, so Hibernate `validate` failed at startup. Per-batch
+    // approval status is now derived on read by calling the legacy DB function
+    // wb_get_appr_stts(...) over EXPT_RESOL_MSTR (joined by (BIZ_KEY, APPR_SEQ_NO))
+    // via LegacyFunctionRepository. Do NOT re-add this column.
 
     /** {@code 'N'} (draft / pre-dispatch) or {@code 'Y'} (dispatched). */
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "TRNF_YN", length = 1, nullable = false)
     private String trnfYn;
 
@@ -123,15 +112,16 @@ public class ScdulPymnSumr {
     @Column(name = "PAY_TRAN_DT", length = 8)
     private String payTranDt;
 
-    @Column(name = "PAY_FILE_SEQ_NO", length = 20)
+    @Column(name = "PAY_FILE_SEQ_NO", length = 7)
     private String payFileSeqNo;
 
     @Column(name = "ERP_FILE_DATE", length = 8)
     private String erpFileDate;
 
-    @Column(name = "ERP_FILE_NUM", length = 50)
+    @Column(name = "ERP_FILE_NUM", length = 8)
     private String erpFileNum;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "ERP_PROC_CMPL_YN", length = 1, nullable = false)
     private String erpProcCmplYn;
 
@@ -147,13 +137,17 @@ public class ScdulPymnSumr {
     @Column(name = "BANK_TRNS_FULL_ID", length = 100)
     private String bankTrnsFullId;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "LINK_MATCH_YN", length = 1)
     private String linkMatchYn;
 
-    /** Uploaded Excel file size in bytes. Flattened from legacy
-     *  {@code FileInfo} bean. */
-    @Column(name = "FILE_SIZE", precision = 20, scale = 0)
-    private BigDecimal fileSize;
+    /** Uploaded Excel file size in bytes (digit string). Legacy JEX
+     *  {@code SCDUL_PYMN_SUMR.FILE_SIZE} is {@code varchar(100)} — mapped
+     *  as {@code String} (NOT numeric) to match the live DDL exactly; the
+     *  overseas sibling {@code OvrsPymnSumr.fileSize} uses the same shape.
+     *  Consumers parse to a number at the boundary. */
+    @Column(name = "FILE_SIZE", length = 100)
+    private String fileSize;
 
     /** Original Excel file name supplied by the user. */
     @Column(name = "ORG_FILE_NM", length = 500)
@@ -162,11 +156,6 @@ public class ScdulPymnSumr {
     /** Server-rewritten file name on the configured storage root. */
     @Column(name = "SAVE_FILE_NM", length = 500)
     private String saveFileNm;
-
-    /** Absolute path on disk (under
-     *  {@code wecms.internal-transfer.storage-root}). */
-    @Column(name = "FULL_PATH", length = 1000)
-    private String fullPath;
 
     @Column(name = "REG_ID", length = 100, nullable = false)
     private String regId;

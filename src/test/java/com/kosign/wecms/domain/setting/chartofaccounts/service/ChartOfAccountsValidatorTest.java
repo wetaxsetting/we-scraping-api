@@ -1,7 +1,7 @@
 package com.kosign.wecms.domain.setting.chartofaccounts.service;
 
 import com.kosign.wecms.common.exception.BusinessException;
-import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount;
+import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartAcctInfm;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
@@ -58,7 +58,7 @@ class ChartOfAccountsValidatorTest {
 
     @Test
     void assertParentExists_blocksMissingParent() {
-        Map<String, ChartOfAccount> byCode = new HashMap<>();
+        Map<String, ChartAcctInfm> byCode = new HashMap<>();
         byCode.put("ROOT", entity("1", "ROOT", null));
         assertThatThrownBy(() ->
                 ChartOfAccountsValidator.assertParentExists("UNKNOWN", byCode))
@@ -82,7 +82,7 @@ class ChartOfAccountsValidatorTest {
         // A → B → A (loop) — moving X under B and trying to set X as
         // an ancestor would loop. Validator catches when rowCode is in
         // the ancestor chain of the proposed new parent.
-        Map<String, ChartOfAccount> byCode = new HashMap<>();
+        Map<String, ChartAcctInfm> byCode = new HashMap<>();
         byCode.put("A", entity("1", "A", null));
         byCode.put("B", entity("2", "B", "A"));
         byCode.put("X", entity("3", "X", null));
@@ -111,7 +111,7 @@ class ChartOfAccountsValidatorTest {
         // Tree:        ROOT (1) → L2 (2) → L3 (3)
         // Re-parent NEW under L3 — new depth = 4 → rejected.
         // Re-parent NEW under L2 — new depth = 3 → permitted.
-        Map<String, ChartOfAccount> byCode = new HashMap<>();
+        Map<String, ChartAcctInfm> byCode = new HashMap<>();
         byCode.put("ROOT",  entity("1", "ROOT",  null));
         byCode.put("L2",    entity("2", "L2",    "ROOT"));
         byCode.put("L3",    entity("3", "L3",    "L2"));
@@ -132,11 +132,11 @@ class ChartOfAccountsValidatorTest {
 
     @Test
     void indexActiveByCode_dropsSoftDeletedRows() {
-        ChartOfAccount active  = entity("1", "ACTIVE",  null);
-        ChartOfAccount deleted = entity("2", "DELETED", null);
+        ChartAcctInfm active  = entity("1", "ACTIVE",  null);
+        ChartAcctInfm deleted = entity("2", "DELETED", null);
         deleted.setDelYn("Y");
 
-        Map<String, ChartOfAccount> byCode =
+        Map<String, ChartAcctInfm> byCode =
                 ChartOfAccountsValidator.indexActiveByCode(List.of(active, deleted));
 
         org.assertj.core.api.Assertions.assertThat(byCode).containsOnlyKeys("ACTIVE");
@@ -146,8 +146,8 @@ class ChartOfAccountsValidatorTest {
      *  Helpers
      * --------------------------------------------------------------- */
 
-    private static ChartOfAccount entity(String seqNo, String code, String parentCd) {
-        ChartOfAccount e = new ChartOfAccount();
+    private static ChartAcctInfm entity(String seqNo, String code, String parentCd) {
+        ChartAcctInfm e = new ChartAcctInfm();
         e.setBizKey("VN_VNM0004_000001");
         e.setChartAcctSeqNo(seqNo);
         e.setChartAcctCd(code);

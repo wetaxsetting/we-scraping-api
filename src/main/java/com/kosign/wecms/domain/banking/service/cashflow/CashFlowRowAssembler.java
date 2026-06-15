@@ -1,7 +1,7 @@
 package com.kosign.wecms.domain.banking.service.cashflow;
 
 import com.kosign.wecms.domain.banking.dto.CashFlowReportResponse.CashFlowRow;
-import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount;
+import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartAcctInfm;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -97,7 +97,7 @@ public class CashFlowRowAssembler {
 
         // 2. For each ACC-* root: L1 → L2s → L3s under each L2 → L1 Subtotal.
         for (String rootCd : ACC_ROOTS_IN_ORDER) {
-            ChartOfAccount l1 = hierarchy.byCode(rootCd);
+            ChartAcctInfm l1 = hierarchy.byCode(rootCd);
             if (l1 == null) continue; // tenant missing this root — surface gracefully
 
             // Aggregate L1 amounts: sum of all L3 amounts under the root,
@@ -117,7 +117,7 @@ public class CashFlowRowAssembler {
                     l1Acc.totalAmount()));
 
             // L2 rows under this root.
-            for (ChartOfAccount l2 : hierarchy.l2sUnderRoot(rootCd)) {
+            for (ChartAcctInfm l2 : hierarchy.l2sUnderRoot(rootCd)) {
                 MonthlyAmountAccumulator l2Acc = aggregateL2(hierarchy, l3Totals, l2.getChartAcctCd());
 
                 rows.add(new CashFlowRow(
@@ -133,7 +133,7 @@ public class CashFlowRowAssembler {
                         l2Acc.totalAmount()));
 
                 // L3 rows under this L2.
-                for (ChartOfAccount l3 : hierarchy.l3sUnderL2(l2.getChartAcctCd())) {
+                for (ChartAcctInfm l3 : hierarchy.l3sUnderL2(l2.getChartAcctCd())) {
                     MonthlyAmountAccumulator l3Acc = l3Totals.getOrDefault(
                             l3.getChartAcctCd(), new MonthlyAmountAccumulator());
 
@@ -203,8 +203,8 @@ public class CashFlowRowAssembler {
                                                   String rootCd) {
         boolean isAcc03 = "ACC-03".equals(rootCd);
         MonthlyAmountAccumulator acc = new MonthlyAmountAccumulator();
-        for (ChartOfAccount l2 : hierarchy.l2sUnderRoot(rootCd)) {
-            for (ChartOfAccount l3 : hierarchy.l3sUnderL2(l2.getChartAcctCd())) {
+        for (ChartAcctInfm l2 : hierarchy.l2sUnderRoot(rootCd)) {
+            for (ChartAcctInfm l3 : hierarchy.l3sUnderL2(l2.getChartAcctCd())) {
                 MonthlyAmountAccumulator l3Acc = l3Totals.get(l3.getChartAcctCd());
                 if (l3Acc == null) continue;
                 if (isAcc03) {
@@ -226,7 +226,7 @@ public class CashFlowRowAssembler {
                                                   Map<String, MonthlyAmountAccumulator> l3Totals,
                                                   String l2Cd) {
         MonthlyAmountAccumulator acc = new MonthlyAmountAccumulator();
-        for (ChartOfAccount l3 : hierarchy.l3sUnderL2(l2Cd)) {
+        for (ChartAcctInfm l3 : hierarchy.l3sUnderL2(l2Cd)) {
             MonthlyAmountAccumulator l3Acc = l3Totals.get(l3.getChartAcctCd());
             if (l3Acc != null) acc.addAll(l3Acc);
         }

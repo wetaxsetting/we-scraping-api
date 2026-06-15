@@ -45,8 +45,9 @@ public class GdtCertInfo {
     @Column(name = "SEQ_NO", nullable = false, precision = 10, scale = 0)
     private BigDecimal seqNo;
 
-    /** Legacy {@code GdtCertInfoDv} discriminator code (e.g. "01"). */
-    @Column(name = "CERT_INFO_DV", length = 20)
+    /** Legacy {@code GdtCertInfoDv} discriminator. JEX is {@code varchar(1)}
+     *  with all live rows {@code '1'} (verified on JEX 2026-06-09). */
+    @Column(name = "CERT_INFO_DV", length = 1)
     private String certInfoDv;
 
     /** Plain-text login id (legacy stores plain). */

@@ -9,6 +9,8 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /**
  * Mirrors legacy wabooksdev.EMPL_INFM column-for-column. Phase 1 only writes
@@ -32,7 +34,9 @@ public class EmplInfm extends BaseEntity {
     @Column(name = "EMPL_NO", length = 20, nullable = false)
     private String emplNo;
 
-    @Column(name = "EMPL_NM", length = 100, nullable = false)
+    /** JEX column is the quoted leading-underscore {@code "_empl_nm"}
+     *  (varchar(100), nullable); Java field kept as {@code emplNm}. */
+    @Column(name = "`_empl_nm`", length = 100)
     private String emplNm;
 
     @Column(name = "JBCL_NM", length = 100)
@@ -59,7 +63,7 @@ public class EmplInfm extends BaseEntity {
     @Column(name = "EMPL_RESI_CITY", length = 200)
     private String emplResiCity;
 
-    @Column(name = "EMPL_RESI_DTL_ADRS", length = 30)
+    @Column(name = "EMPL_RESI_DTL_ADRS", length = 200)
     private String emplResiDtlAdrs;
 
     @Column(name = "EMPL_RESI_POST_ADRS", length = 200)
@@ -68,7 +72,7 @@ public class EmplInfm extends BaseEntity {
     @Column(name = "USER_IMG", length = 500)
     private String userImg;
 
-    @Column(name = "NATN_ID", length = 15)
+    @Column(name = "NATN_ID", length = 20)
     private String natnId;
 
     @Column(name = "BANK_CD", length = 20)
@@ -92,6 +96,7 @@ public class EmplInfm extends BaseEntity {
     @Column(name = "TEL_NO", length = 100)
     private String telNo;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "EMPL_NO_AUTO_GEN_YN", length = 1, nullable = false)
     private String emplNoAutoGenYn;
 

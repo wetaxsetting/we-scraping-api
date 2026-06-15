@@ -1,5 +1,7 @@
 package com.kosign.wecms.domain.payment.dto;
 
+import com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalAttachmentRow;
+
 import java.math.BigDecimal;
 import java.util.List;
 // rows element was changed from OverseasPaymentExcelDetailRow to OverseasPaymentDetailRowResponse
@@ -9,18 +11,6 @@ import java.util.List;
  * Detail view for a single overseas-payment batch (OVRS_PYMN_SUMR + OVRS_PYMN_DTLS).
  * Returned by {@code GET /api/v1/payment/overseas-payment/scheduled/{id}/details}.
  * Mirrors legacy {@code pymn_0007_001} approval-request dialog data.
- *
- * <p>The batch-level fields ({@code titl}, {@code regId}, {@code regDtm},
- * {@code modDtm}) describe the uploaded {@code OVRS_PYMN_SUMR} row — the
- * file's upload identity. The <b>approval-document</b> fields
- * ({@code apprTitl}, {@code apprCont}, {@code apprRegDtm}, {@code draftUserNm})
- * are sourced from {@code EXPT_RESOL_MSTR} when the batch has been submitted
- * for approval ({@code APPR_SEQ_NO} present) and are {@code null} otherwise.
- * The read-only Approval Details popup must bind its footer "Requested by …
- * on …" and "Approval Content" section to the <b>approval-document</b> fields,
- * never the batch upload datetime — legacy {@code comm_0195_001.ts:863,874,900}
- * reads {@code BLTB_POST_INFM.POST_CONT / REG_NM / REG_DTM}, surfaced in the
- * refactor through {@code EXPT_RESOL_MSTR.CONT / DRAFT_USER_NM / REG_DTM}.
  */
 public record OverseasPaymentDetailResponse(
         String ovrsPymnNo,
@@ -40,10 +30,36 @@ public record OverseasPaymentDetailResponse(
         String fileNm,
         String fileSize,
         String orgFileNm,
-        // Approval-document metadata from EXPT_RESOL_MSTR (null until submitted).
-        String apprTitl,
-        String apprCont,
-        String apprRegDtm,
-        String draftUserNm,
-        List<OverseasPaymentDetailRowResponse> rows
-) {}
+        List<OverseasPaymentDetailRowResponse> rows,
+        /** GAP-OVS-ATT: approval attachments — UNION of EXPT_RESOL_FILE +
+         *  EXPT_RESOL_PAY_EVID_FILE keyed by APPR_SEQ_NO (mirrors legacy
+         *  IDO.EXPT_RESOL_FILE_R002). Empty when the batch has no approval
+         *  request yet. Previously never loaded for overseas. */
+        List<ApprovalAttachmentRow> attachments,
+        /** GAP-OVS-MODE: {@code true} when this approval is a legacy
+         *  "M-mode" record living only in {@code OVRS_PYMN_MSTR} (not
+         *  {@code OVRS_PYMN_SUMR}). Detail line rendering for M-mode is not
+         *  fully supported yet — the popup shows header + attachments and an
+         *  empty {@code rows} list instead of throwing {@code WBE2045}. */
+        boolean legacyMmode,
+        /** Human-readable notice when {@link #legacyMmode} is true; null
+         *  otherwise. Lets the popup explain why the line table is empty. */
+        String legacyMmodeNotice
+) {
+    /**
+     * Backward-compatible constructor for the S-mode (OVRS_PYMN_SUMR) path
+     * — supplies the attachments list and defaults the legacy-M-mode flags
+     * to {@code (false, null)}.
+     */
+    public OverseasPaymentDetailResponse(
+            String ovrsPymnNo, String titl, String apprStts, BigDecimal totalTranAmt,
+            String ccyCd, Integer totTrnsCnt, String regId, String regDtm, String modDtm,
+            String outBankCd, String wdrlActNo, String wdrlCcyCd, String docNo,
+            String apprSeqNo, String fileNm, String fileSize, String orgFileNm,
+            List<OverseasPaymentDetailRowResponse> rows,
+            List<ApprovalAttachmentRow> attachments) {
+        this(ovrsPymnNo, titl, apprStts, totalTranAmt, ccyCd, totTrnsCnt, regId, regDtm,
+             modDtm, outBankCd, wdrlActNo, wdrlCcyCd, docNo, apprSeqNo, fileNm, fileSize,
+             orgFileNm, rows, attachments, false, null);
+    }
+}

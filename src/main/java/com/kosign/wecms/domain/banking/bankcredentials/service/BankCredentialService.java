@@ -25,10 +25,11 @@ public class BankCredentialService {
     /** Legacy {@code yyyyMMddHHmmss} audit-column shape. */
     private static final DateTimeFormatter DTM14 = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
 
-    private static final String CERT_INFO_DV_BANK = "01";
+    private static final String CERT_INFO_DV_BANK = "1";
 
     private final BankCertInfoRepository repository;
     private final BankCertCryptoService crypto;
+    private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
 
     @Transactional(readOnly = true)
     public BankCredentialListResponse list() {
@@ -43,7 +44,8 @@ public class BankCredentialService {
     public BankCredentialRow create(BankCredentialCreateRequest req) {
         String bizKey = TenantContext.currentBizKey();
         String userId = TenantContext.currentUserId();
-        BigDecimal nextSeq = repository.findMaxSeqNo(bizKey).add(BigDecimal.ONE);
+        // SEQ_NO via the single wb_get_next_val funnel (V140 #23 — per-tenant MAX+1).
+        BigDecimal nextSeq = new BigDecimal(legacyFunctions.nextBankCertSeqNo(bizKey));
         String now = nowDtm14();
 
         BankCertInfo entity = new BankCertInfo();

@@ -34,7 +34,9 @@ public enum PayrollPaymentSortField implements SortableField {
     TOT_TRNS_CNT  ("totTrnsCnt"),
     TOTAL_TRAN_AMT("totalTranAmt"),
     PAY_DATE      ("payTranDt"),
-    APPR_STTS     ("apprStts"),
+    // APPR_STTS removed 2026-06-10: derived from EXPT_RESOL_MSTR (no
+    // SCDUL_PYMN_SUMR.APPR_STTS column in legacy JEX) — not a single-table
+    // sort key; falls back to default ORDER BY.
     DRAFT_USER_NM ("regId"),
     APPR_DOC_NO   ("erpFileNum"),
     TITL          ("titl");

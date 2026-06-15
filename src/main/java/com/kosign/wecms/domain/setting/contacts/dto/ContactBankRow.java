@@ -10,10 +10,15 @@ package com.kosign.wecms.domain.setting.contacts.dto;
  * routes the selected code back into the Save payload as either
  * {@code napas_bank_cd} or {@code citad_bank_cd} based on it.
  *
- * <p>{@code status} comes from {@code TB_FIRM_BANK_CODE.BANK_STAS}
- * — drives the dialog's recipient-flow toggle (status {@code 'N'} →
- * manual Recipient Name input; status {@code 'Y'} or null → Lookup
- * Recipient button).
+ * <p>{@code status} encodes <b>NAPAS availability</b> (legacy
+ * {@code comm_0109_001_r002.STATUS} = {@code CASE WHEN NAPAS_CD IS NOT
+ * NULL THEN 'Y' ELSE 'N'}), NOT the raw {@code BANK_STAS} active flag.
+ * {@code ContactsService.listBanks()} emits {@code 'Y'} for NAPAS banks
+ * and {@code 'N'} for CITAD-only banks — drives the dialog's
+ * recipient-flow toggle (status {@code 'N'} → manual Recipient Name
+ * input; status {@code 'Y'} → Lookup Recipient button). The frontend
+ * actually gates the Lookup button on {@code antDivCd === "NAPAS"},
+ * which is equivalent here since every {@code 'Y'} row is NAPAS.
  *
  * @param bankCd       Raw {@code BANK_CD} — equals the NAPAS code on
  *                     {@code ANT_DIV_CD='NAPAS'} rows, the CITAD code

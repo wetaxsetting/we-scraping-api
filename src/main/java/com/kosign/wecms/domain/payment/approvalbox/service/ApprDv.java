@@ -23,12 +23,19 @@ import java.util.Optional;
  */
 public enum ApprDv {
 
-    PAYROLL("21",           "payroll",           "payment.approval_box.type.payroll"),
-    EXPENSE("31",           "expense",           "payment.approval_box.type.expense"),
-    VENDOR("32",            "vendor",            "payment.approval_box.type.vendor"),
-    CORPORATE_CARD("33",    "corporate_card",    "payment.approval_box.type.corporate_card"),
-    OVERSEAS("34",          "overseas",          "payment.approval_box.type.overseas"),
-    INTERNAL_TRANSFER("35", "internal_transfer", "payment.approval_box.type.internal_transfer");
+    // L-1 (legacy parity): the 4th arg is the verbatim legacy
+    // ApprDv.getLabel() string, persisted to EXPT_RESOL_MSTR.DOC_NM exactly
+    // as legacy comm_0192_001_c005_act.jsp:308 / card_0001_005_c001_act.jsp:237
+    // ({@code exptResolMstr.setDocNm(apprDv.getLabel())}). The casing
+    // inconsistency ("WeCMs" vs "WeCMS") and the legacy "Ventor" typo are
+    // reproduced ON PURPOSE so refactor-written DOC_NM values match the live
+    // JEX rows byte-for-byte (data-migration parity). Do NOT "correct" them.
+    PAYROLL("21",           "payroll",           "payment.approval_box.type.payroll",           "Payroll Payment (WeCMs)"),
+    EXPENSE("31",           "expense",           "payment.approval_box.type.expense",           "Expense Payment (WeCMs)"),
+    VENDOR("32",            "vendor",            "payment.approval_box.type.vendor",            "Ventor Payment (WeCMs)"),
+    CORPORATE_CARD("33",    "corporate_card",    "payment.approval_box.type.corporate_card",    "Corporate Card Payment (WeCMs)"),
+    OVERSEAS("34",          "overseas",          "payment.approval_box.type.overseas",          "Overseas Payment (WeCMs)"),
+    INTERNAL_TRANSFER("35", "internal_transfer", "payment.approval_box.type.internal_transfer", "Internal Transfer (WeCMS)");
 
     /** Six-element array used as the {@code APPR_DV IN (...)} filter
      *  predicate on every Approval Box query. */
@@ -38,16 +45,22 @@ public enum ApprDv {
     private final String code;
     private final String slug;
     private final String i18nKey;
+    private final String docNm;
 
-    ApprDv(String code, String slug, String i18nKey) {
+    ApprDv(String code, String slug, String i18nKey, String docNm) {
         this.code    = code;
         this.slug    = slug;
         this.i18nKey = i18nKey;
+        this.docNm   = docNm;
     }
 
     public String code()    { return code;    }
     public String slug()    { return slug;    }
     public String i18nKey() { return i18nKey; }
+
+    /** L-1: verbatim legacy {@code getLabel()} string written to
+     *  {@code EXPT_RESOL_MSTR.DOC_NM} (data-migration parity). */
+    public String docNm()   { return docNm;   }
 
     /** Returns the slug for a legacy code, or {@code null} if the code is
      *  outside the six Approval Box-supported types. The wire passes

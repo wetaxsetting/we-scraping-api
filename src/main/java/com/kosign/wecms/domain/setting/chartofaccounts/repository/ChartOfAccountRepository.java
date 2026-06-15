@@ -1,7 +1,7 @@
 package com.kosign.wecms.domain.setting.chartofaccounts.repository;
 
-import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount;
-import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccountId;
+import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartAcctInfm;
+import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartAcctInfmId;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Repository for {@link ChartOfAccount}. Every method that returns rows is
+ * Repository for {@link ChartAcctInfm}. Every method that returns rows is
  * tenant-scoped — callers supply {@code bizKey} from
  * {@link com.kosign.wecms.common.tenant.TenantContext#currentBizKey()}.
  *
@@ -26,11 +26,11 @@ import java.util.Optional;
  * deleted-archive lookup used by the Create-revive path.
  */
 public interface ChartOfAccountRepository
-        extends JpaRepository<ChartOfAccount, ChartOfAccountId> {
+        extends JpaRepository<ChartAcctInfm, ChartAcctInfmId> {
 
     /** All rows for the current tenant matching the soft-delete flag.
      *  Used by the no-filter list query. */
-    List<ChartOfAccount> findByBizKeyAndDelYn(String bizKey, String delYn, Sort sort);
+    List<ChartAcctInfm> findByBizKeyAndDelYn(String bizKey, String delYn, Sort sort);
 
     /** Combined code/name search for the current tenant. Mirrors the
      *  legacy ILIKE clause on {@code CHART_ACCT_CD} OR
@@ -39,13 +39,13 @@ public interface ChartOfAccountRepository
      *  applies the search arg to a single field — using
      *  {@link Query} keeps the SQL legible. */
     @Query("""
-            SELECT c FROM ChartOfAccount c
+            SELECT c FROM ChartAcctInfm c
              WHERE c.bizKey = :bizKey
                AND c.delYn  = :delYn
                AND (LOWER(c.chartAcctCd)     LIKE LOWER(CONCAT('%', :search, '%'))
                  OR LOWER(c.chartAcctNmEn)   LIKE LOWER(CONCAT('%', :search, '%')))
            """)
-    List<ChartOfAccount> searchByBizKey(@Param("bizKey") String bizKey,
+    List<ChartAcctInfm> searchByBizKey(@Param("bizKey") String bizKey,
                                         @Param("delYn") String delYn,
                                         @Param("search") String search,
                                         Sort sort);
@@ -54,24 +54,15 @@ public interface ChartOfAccountRepository
      *  Create dup-check (delYn='N'), Create revive lookup (delYn='Y'),
      *  Update dup-on-rename, Delete archive-collision check. The UK
      *  {@code (BIZ_KEY, CHART_ACCT_CD, DEL_YN)} indexes this exactly. */
-    Optional<ChartOfAccount> findByBizKeyAndChartAcctCdAndDelYn(
+    Optional<ChartAcctInfm> findByBizKeyAndChartAcctCdAndDelYn(
             String bizKey, String chartAcctCd, String delYn);
-
-    /** Status-aware lookup by code + soft-delete flag + status in the current
-     *  tenant. Used by the payment Excel-upload parsers (Internal Transfer /
-     *  Vendor / Expense / Payroll) to validate a Reporting Account, mirroring
-     *  the legacy {@code PymnHelper.getChartAcctInfm} query which requires
-     *  {@code DEL_YN='N' AND STTS='A'} — so an inactive (but not deleted)
-     *  account is rejected at upload, not silently accepted. */
-    Optional<ChartOfAccount> findByBizKeyAndChartAcctCdAndDelYnAndStts(
-            String bizKey, String chartAcctCd, String delYn, String stts);
 
     /** Same as above but with an explicit exclude on a known seq_no —
      *  used by the Update dup-on-rename check (so the row being edited
      *  doesn't trip the check against itself) and by the Delete
      *  archive-collision check (so the row being deleted is not the
      *  collision target). */
-    Optional<ChartOfAccount> findByBizKeyAndChartAcctCdAndDelYnAndChartAcctSeqNoNot(
+    Optional<ChartAcctInfm> findByBizKeyAndChartAcctCdAndDelYnAndChartAcctSeqNoNot(
             String bizKey, String chartAcctCd, String delYn, String chartAcctSeqNo);
 
     /** Active rows whose {@code PARENT_CHART_ACCT_CD} matches the
@@ -79,7 +70,7 @@ public interface ChartOfAccountRepository
      *  re-parent step (children become the deleting node's parent)
      *  and the {@code has_children} projection in the list / tree
      *  responses. */
-    List<ChartOfAccount> findByBizKeyAndParentChartAcctCdAndDelYn(
+    List<ChartAcctInfm> findByBizKeyAndParentChartAcctCdAndDelYn(
             String bizKey, String parentChartAcctCd, String delYn);
 
     /** Bulk re-parent every active child of {@code oldParentCd} to
@@ -88,7 +79,7 @@ public interface ChartOfAccountRepository
      *  Delete transaction lean even for a node with many children. */
     @Modifying
     @Query("""
-            UPDATE ChartOfAccount c
+            UPDATE ChartAcctInfm c
                SET c.parentChartAcctCd = :newParentCd,
                    c.modId  = :modId,
                    c.modDtm = :modDtm

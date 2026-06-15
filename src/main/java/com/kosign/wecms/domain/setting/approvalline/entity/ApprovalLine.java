@@ -8,6 +8,8 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /**
  * Settings &gt; Approval Line &mdash; approval-line master row. Mirrors
@@ -47,12 +49,13 @@ public class ApprovalLine {
 
     /** Per-tenant surrogate. PK component. Generated server-side via
      *  the legacy {@code wb_get_next_val('appr_line_infm','appr_line_no',
-     *  biz_key)} branch (V91 / OQ-7). Stored as {@code BIGINT} locally
-     *  after the V92 hotfix &mdash; DEV's {@code NUMERIC(15,0)} fits
-     *  comfortably (max ≈ 9.2&times;10<sup>18</sup>). See V35→V36 / V89
-     *  precedent for the {@code NUMERIC → integer} convention. */
+     *  biz_key)} branch. JEX column is {@code NUMERIC(15,0)};
+     *  {@code @JdbcTypeCode(SqlTypes.NUMERIC)} maps the Java {@code Long}
+     *  onto it so Hibernate {@code validate} accepts the numeric column
+     *  against the live JEX schema (Long covers 15 digits). */
     @Id
-    @Column(name = "APPR_LINE_NO", nullable = false)
+    @JdbcTypeCode(SqlTypes.NUMERIC)
+    @Column(name = "APPR_LINE_NO", precision = 15, scale = 0, nullable = false)
     private Long apprLineNo;
 
     /** User-facing approval-line name. NOT NULL. Bean-validation cap

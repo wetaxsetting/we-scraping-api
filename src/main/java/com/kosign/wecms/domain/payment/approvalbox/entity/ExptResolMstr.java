@@ -139,6 +139,16 @@ public class ExptResolMstr {
     @Column(name = "PAY_END_YN", length = 1, nullable = false)
     private String payEndYn;
 
+    /** Set on approval completion (legacy {@code comm_0192_010_u001/u002}
+     *  when all approvers have voted): {@code yyyyMMddHHmmss}. */
+    @Column(name = "PAY_END_DTM", length = 14)
+    private String payEndDtm;
+
+    /** Name of the user who cast the final vote (legacy
+     *  {@code loginUser.getName()}). */
+    @Column(name = "PAY_END_NM", length = 100)
+    private String payEndNm;
+
     /** Approval Box tab discriminator. {@code '00'} Pending /
      *  {@code '01'} Approved / {@code '02'} Rejected /
      *  {@code '03'} In Progress. Approve / Reject mutate this column

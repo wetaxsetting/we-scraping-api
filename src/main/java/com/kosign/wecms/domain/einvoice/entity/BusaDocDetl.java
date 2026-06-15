@@ -8,6 +8,8 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.math.BigDecimal;
 
@@ -40,19 +42,20 @@ public class BusaDocDetl {
     private String docId;
 
     @Id
-    @Column(name = "DISP_ORD", nullable = false)
+    @JdbcTypeCode(SqlTypes.NUMERIC)
+    @Column(name = "DISP_ORD", precision = 10, scale = 0, nullable = false)
     private Integer dispOrd;
 
     @Column(name = "USER_ID", length = 100)
     private String userId;
 
-    @Column(name = "ITEM_CD", length = 50)
+    @Column(name = "ITEM_CD", length = 10)
     private String itemCd;
 
-    @Column(name = "ITEM_NM", length = 500)
+    @Column(name = "ITEM_NM", length = 255)
     private String itemNm;
 
-    @Column(name = "ITEM_SPEC", length = 4000)
+    @Column(name = "ITEM_SPEC", length = 100)
     private String itemSpec;
 
     @Column(name = "ITEM_QUNT")
@@ -67,13 +70,10 @@ public class BusaDocDetl {
     @Column(name = "DC_AMT")
     private BigDecimal dcAmt;
 
-    @Column(name = "CCY_CD", length = 3)
-    private String ccyCd;
-
     @Column(name = "EINV_PRODUCTNAME", length = 500)
     private String einvProductname;
 
-    @Column(name = "EINV_TAXRATE", length = 10)
+    @Column(name = "EINV_TAXRATE", length = 50)
     private String einvTaxrate;
 
     @Column(name = "REG_ID", length = 100)

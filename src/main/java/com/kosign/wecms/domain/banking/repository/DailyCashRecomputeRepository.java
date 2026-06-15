@@ -38,7 +38,15 @@ import java.util.List;
  * <p>Cash ({@code rept_0900_001_rec3/rec4}) is NOT ported — its source
  * {@code CASH_REPY_MSTR} is out of the refactor PROD active-table scope —
  * so {@code total_cash} stays 0 (handled in the service accumulator).
+ *
+ * @deprecated <b>Bypassed 2026-06-13.</b> Daily Cash now reads the legacy DB
+ * functions {@code rept_0900_001_rec1..rec4} directly via
+ * {@link DailyCashReportFunctionRepository} (DB functions are the source of
+ * truth, same as Cash Flow / Daily Financial HS). This Java live-recompute is
+ * no longer wired into {@code DailyCashReportService} — retained as a cleanup
+ * candidate; safe to delete once no doc/Javadoc references remain.
  */
+@Deprecated(forRemoval = true)
 public interface DailyCashRecomputeRepository extends Repository<AcctMstr, AcctMstrId> {
 
     @Query(value = """

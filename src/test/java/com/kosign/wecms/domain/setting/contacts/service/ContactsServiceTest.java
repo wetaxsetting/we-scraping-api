@@ -7,6 +7,8 @@ import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.banking.repository.AcctTrnsRcvPayInfmRepository;
 import com.kosign.wecms.domain.setting.contacts.dto.AccountOp;
 import com.kosign.wecms.domain.setting.contacts.dto.AddressOp;
+import com.kosign.wecms.domain.setting.contacts.dto.ContactBankListResponse;
+import com.kosign.wecms.domain.setting.contacts.dto.ContactBankRow;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactCreateRequest;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactListResponse;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactRow;
@@ -17,6 +19,7 @@ import com.kosign.wecms.domain.setting.contacts.repository.TrcoAcctInfoRepositor
 import com.kosign.wecms.domain.setting.contacts.repository.TrcoAddrInfmRepository;
 import com.kosign.wecms.domain.setting.contacts.repository.TrcoInfmRepository;
 import com.kosign.wecms.domain.setting.contacts.repository.TrcoOvrsInfmRepository;
+import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmBankCode;
 import com.kosign.wecms.domain.setting.firmbankingsettings.repository.TbFirmBankCodeRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -81,6 +84,7 @@ class ContactsServiceTest {
     @Mock AcctTrnsRcvPayInfmRepository acctTrnsRcvPayRepo;
     @Mock LegacyFunctionRepository legacyFn;
     @Mock com.kosign.wecms.domain.setting.firmbankingsettings.repository.FirmBankingSettingRepository firmBankingSettingRepo;
+    @Mock com.kosign.wecms.domain.payment.dispatch.recipient.DepositorInquiryService depositorInquiryService;
 
     private ContactsService service;
     private ContactsValidator validator;
@@ -91,7 +95,8 @@ class ContactsServiceTest {
         service = new ContactsService(
                 trcoInfmRepo, addrRepo, acctRepo, ovrsRepo, bankCodeRepo,
                 pgroRepo, acctTrnsRcvPayRepo, legacyFn, validator,
-                new com.kosign.wecms.common.firmbanking.FirmBankingInquiryService(firmBankingSettingRepo));
+                new com.kosign.wecms.common.firmbanking.FirmBankingInquiryService(
+                        firmBankingSettingRepo, depositorInquiryService));
         TenantContext.set(USER, BIZ, LangCd.EN);
     }
 
@@ -348,8 +353,59 @@ class ContactsServiceTest {
     }
 
     /* =================================================================
+     *  Bank picker (listBanks dedup — legacy comm_0109_001_r002 parity)
+     * ================================================================= */
+
+    @Test
+    void listBanks_collapsesCitadBranchesAndPrefersNapas() {
+        // ABBank: one NAPAS row + (in the CITAD HQ leg) its HQ row. The
+        // flat read used to repeat ABBank once per CITAD branch (~29x);
+        // the deduped read must surface ABBank exactly once, routed as
+        // NAPAS with status 'Y' (Lookup-eligible).
+        when(bankCodeRepo.findByAntDivCdAndBankStas("NAPAS", "1")).thenReturn(List.of(
+                bank("NAPAS", "970425", " ", "ABBank", "An Binh Commercial Joint Stock Bank")));
+        // CITAD HQ leg: ABBank HQ (also NAPAS → skipped as a duplicate)
+        // + a CITAD-exclusive bank (kept, status 'N' → manual recipient).
+        when(bankCodeRepo.findByAntDivCdAndBankBranchDivAndBankStas("CITAD", "1", "1"))
+                .thenReturn(List.of(
+                        bank("CITAD", "01323002", "1", "ABBank", "An Binh Commercial Joint Stock Bank"),
+                        bank("CITAD", "01616001", "1", "CoopBank", "Co-operative Bank")));
+
+        ContactBankListResponse resp = service.listBanks();
+
+        assertThat(resp.rows()).hasSize(2);
+        assertThat(resp.rows().stream().filter(r -> "ABBank".equals(r.engAbrvatNm())).count())
+                .isEqualTo(1);
+
+        ContactBankRow ab = resp.rows().stream()
+                .filter(r -> "ABBank".equals(r.engAbrvatNm())).findFirst().orElseThrow();
+        assertThat(ab.antDivCd()).isEqualTo("NAPAS");
+        assertThat(ab.bankCd()).isEqualTo("970425");
+        assertThat(ab.status()).isEqualTo("Y");
+
+        ContactBankRow coop = resp.rows().stream()
+                .filter(r -> "CoopBank".equals(r.engAbrvatNm())).findFirst().orElseThrow();
+        assertThat(coop.antDivCd()).isEqualTo("CITAD");
+        assertThat(coop.bankCd()).isEqualTo("01616001");
+        assertThat(coop.status()).isEqualTo("N");
+    }
+
+    /* =================================================================
      *  Helpers
      * ================================================================= */
+
+    private static TbFirmBankCode bank(String antDiv, String bankCd, String branchDiv,
+                                       String abbrev, String engNm) {
+        TbFirmBankCode b = new TbFirmBankCode();
+        b.setAntDivCd(antDiv);
+        b.setBankCd(bankCd);
+        b.setBankBranchDiv(branchDiv);
+        b.setEngAbrvatNm(abbrev);
+        b.setBankEngNm(engNm);
+        b.setBankNm(engNm);
+        b.setBankStas("1");
+        return b;
+    }
 
     private static TrcoInfm stubMaster(String trcoKey, String handTrcoKey, String trcoType) {
         TrcoInfm m = new TrcoInfm();

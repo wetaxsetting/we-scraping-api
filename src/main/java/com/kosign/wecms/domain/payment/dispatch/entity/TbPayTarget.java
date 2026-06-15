@@ -99,7 +99,7 @@ public class TbPayTarget {
     @Column(name = "DEP_CCY_CD", length = 3)
     private String depCcyCd;
 
-    @Column(name = "APL_EXC_RATE", precision = 23, scale = 6)
+    @Column(name = "APL_EXC_RATE", precision = 23, scale = 2)
     private BigDecimal aplExcRate;
 
     @Column(name = "WITHD_AMT", precision = 23, scale = 2)

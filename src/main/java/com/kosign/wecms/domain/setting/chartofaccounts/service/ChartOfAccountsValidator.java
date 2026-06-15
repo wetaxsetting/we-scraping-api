@@ -2,7 +2,7 @@ package com.kosign.wecms.domain.setting.chartofaccounts.service;
 
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.domain.setting.chartofaccounts.ChartOfAccountsConstants;
-import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount;
+import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartAcctInfm;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -96,7 +96,7 @@ public final class ChartOfAccountsValidator {
      * enforces the user-facing rule that every user-created row needs
      * a parent.
      */
-    public static void assertParentExists(String newParentCd, Map<String, ChartOfAccount> activeByCode) {
+    public static void assertParentExists(String newParentCd, Map<String, ChartAcctInfm> activeByCode) {
         if (newParentCd == null || newParentCd.isBlank()) return;
         if (!activeByCode.containsKey(newParentCd)) {
             throw new BusinessException("WBE_CHART_OF_ACCOUNTS_PARENT_NOT_FOUND", newParentCd);
@@ -147,7 +147,7 @@ public final class ChartOfAccountsValidator {
      * user-facing rules ride together on every write.
      */
     public static void assertCalRuleLevel3Only(String parentCd, String calRule,
-                                               Map<String, ChartOfAccount> activeByCode) {
+                                               Map<String, ChartAcctInfm> activeByCode) {
         if (calRule == null || calRule.isBlank()) return;
         int level = computeNewDepth(parentCd, activeByCode);
         if (level != 3) {
@@ -163,7 +163,7 @@ public final class ChartOfAccountsValidator {
      * in seeded data) cannot loop the validator forever.
      */
     public static void assertNoCycle(String rowCode, String newParentCd,
-                                     Map<String, ChartOfAccount> activeByCode) {
+                                     Map<String, ChartAcctInfm> activeByCode) {
         if (rowCode == null || newParentCd == null || newParentCd.isBlank()) return;
         String cursor = newParentCd;
         int hops = 0;
@@ -177,7 +177,7 @@ public final class ChartOfAccountsValidator {
                 // error so the user sees an actionable message.
                 throw new BusinessException("WBE_CHART_OF_ACCOUNTS_CYCLE");
             }
-            ChartOfAccount node = activeByCode.get(cursor);
+            ChartAcctInfm node = activeByCode.get(cursor);
             if (node == null) return; // orphan — no further ancestry
             cursor = node.getParentChartAcctCd();
         }
@@ -200,7 +200,7 @@ public final class ChartOfAccountsValidator {
      * throw.
      */
     public static void assertDepthCap(String rowCode, String newParentCd,
-                                      Map<String, ChartOfAccount> activeByCode) {
+                                      Map<String, ChartAcctInfm> activeByCode) {
         int newDepth = computeNewDepth(newParentCd, activeByCode);
         int subtreeHeight = computeSubtreeHeight(rowCode, activeByCode);
         int deepestLeaf = newDepth + subtreeHeight - 1;
@@ -216,9 +216,9 @@ public final class ChartOfAccountsValidator {
      * contains duplicate codes (DB UK violation), the later row wins;
      * this should be impossible given the UK but is defensive.
      */
-    public static Map<String, ChartOfAccount> indexActiveByCode(List<ChartOfAccount> tenantSlice) {
-        Map<String, ChartOfAccount> out = new HashMap<>(tenantSlice.size());
-        for (ChartOfAccount row : tenantSlice) {
+    public static Map<String, ChartAcctInfm> indexActiveByCode(List<ChartAcctInfm> tenantSlice) {
+        Map<String, ChartAcctInfm> out = new HashMap<>(tenantSlice.size());
+        for (ChartAcctInfm row : tenantSlice) {
             if (!ChartOfAccountsConstants.DEL_YN_ACTIVE.equals(row.getDelYn())) continue;
             out.put(row.getChartAcctCd(), row);
         }
@@ -231,7 +231,7 @@ public final class ChartOfAccountsValidator {
 
     /** Depth of a row whose parent is {@code parentCd}. A row with
      *  {@code parentCd == null} is depth 1. */
-    private static int computeNewDepth(String parentCd, Map<String, ChartOfAccount> byCode) {
+    private static int computeNewDepth(String parentCd, Map<String, ChartAcctInfm> byCode) {
         int depth = 1;
         String cursor = parentCd;
         int hops = 0;
@@ -240,7 +240,7 @@ public final class ChartOfAccountsValidator {
             if (!seen.add(cursor)) break; // pre-existing cycle — cap walk
             depth++;
             if (++hops > ChartOfAccountsConstants.MAX_HIERARCHY_DEPTH + 2) break;
-            ChartOfAccount node = byCode.get(cursor);
+            ChartAcctInfm node = byCode.get(cursor);
             if (node == null) break; // orphan
             cursor = node.getParentChartAcctCd();
         }
@@ -250,10 +250,10 @@ public final class ChartOfAccountsValidator {
     /** Height (longest descendant chain + 1) of the subtree rooted at
      *  {@code rowCode}. A leaf row has height 1. Capped at
      *  {@code MAX_HIERARCHY_DEPTH + 1} to bound corrupt-data walks. */
-    private static int computeSubtreeHeight(String rowCode, Map<String, ChartOfAccount> byCode) {
+    private static int computeSubtreeHeight(String rowCode, Map<String, ChartAcctInfm> byCode) {
         if (rowCode == null) return 1;
         int maxHeight = 1;
-        for (ChartOfAccount candidate : byCode.values()) {
+        for (ChartAcctInfm candidate : byCode.values()) {
             if (Objects.equals(candidate.getParentChartAcctCd(), rowCode)
                     && !Objects.equals(candidate.getChartAcctCd(), rowCode)) {
                 int childHeight = 1 + computeSubtreeHeight(candidate.getChartAcctCd(), byCode);

@@ -107,9 +107,13 @@ public class InternalTransferResultService {
                 pageable);
 
         Map<String, long[]> counts = loadDispatchCounts(bizKey, rows.getContent());
+        // doc_no per batch from EXPT_RESOL_MSTR.DOC_NO (its canonical home),
+        // keyed by APPR_SEQ_NO — NOT SCDUL_PYMN_SUMR.ERP_FILE_NUM (legacy
+        // 8-digit ERP file sequence number).
+        Map<String, String> docNoByApprSeqNo = buildDocNoMap(bizKey, rows.getContent());
 
         List<TransferResultRow> dtoRows = rows.getContent().stream()
-                .map(s -> toResultRow(s, counts.get(s.getScdulPymnNo())))
+                .map(s -> toResultRow(s, counts.get(s.getScdulPymnNo()), docNoByApprSeqNo))
                 .toList();
         List<CurrencyTotal> totals = computeTotals(rows.getContent());
 
@@ -118,6 +122,27 @@ public class InternalTransferResultService {
         return new TransferResultListResponse(
                 rows.getTotalElements(), page, pageable.getPageSize(),
                 totals, dtoRows);
+    }
+
+    /**
+     * Resolve {@code doc_no} per batch from {@code EXPT_RESOL_MSTR.DOC_NO}
+     * (its canonical home), keyed by {@code APPR_SEQ_NO}. One bulk query for
+     * the page. Mirrors the scheduled-list {@code buildDocNoMap}.
+     */
+    private Map<String, String> buildDocNoMap(String bizKey, List<ScdulPymnSumr> rows) {
+        List<String> apprSeqNos = rows.stream()
+                .map(ScdulPymnSumr::getApprSeqNo)
+                .filter(seq -> seq != null && !seq.isBlank())
+                .distinct()
+                .toList();
+        if (apprSeqNos.isEmpty()) return Map.of();
+        return exptResolMstrRepository.findByBizKeyAndApprSeqNoIn(bizKey, apprSeqNos)
+                .stream()
+                .filter(m -> m.getDocNo() != null)
+                .collect(java.util.stream.Collectors.toMap(
+                        ExptResolMstr::getApprSeqNo,
+                        ExptResolMstr::getDocNo,
+                        (a, b) -> a));
     }
 
     /**
@@ -156,7 +181,7 @@ public class InternalTransferResultService {
                         bizKey, id, ScdulPymnTypeCd.INTERNAL.code())
                 .orElseThrow(() -> new BusinessException("WBE2060"));
 
-        Sort lineSort = Sort.by(Sort.Order.asc("scdulPymnDetlNo"));
+        Sort lineSort = ScdulPymnSumrDetlRepository.DETL_NO_NUMERIC_ASC;
         List<ScdulPymnSumrDetl> detailRows = detlRepository
                 .findByBizKeyAndScdulPymnNo(bizKey, id, lineSort);
         // Phase 2: one bulk lookup per detail() call against TB_PAY_* +
@@ -186,15 +211,20 @@ public class InternalTransferResultService {
         // no new repo method). null when the batch has no approval request yet;
         // the frontend falls back to reg_id.
         String apprSeqNo = master.getApprSeqNo();
-        String requestor = (apprSeqNo != null && !apprSeqNo.isBlank())
+        // Load the approval master once and reuse it for both the requester
+        // display name and the doc_no — doc_no's canonical home is
+        // EXPT_RESOL_MSTR.DOC_NO, NOT SCDUL_PYMN_SUMR.ERP_FILE_NUM (legacy
+        // 8-digit ERP file sequence). Empty until the batch is submitted.
+        java.util.Optional<ExptResolMstr> apprMstr = (apprSeqNo != null && !apprSeqNo.isBlank())
                 ? exptResolMstrRepository
                         .findByBizKeyAndApprSeqNoIn(bizKey, java.util.List.of(apprSeqNo))
                         .stream()
                         .findFirst()
-                        .map(ExptResolMstr::getDraftUserNm)
-                        .filter(s -> s != null && !s.isBlank())
-                        .orElse(null)
-                : null;
+                : java.util.Optional.empty();
+        String requestor = apprMstr
+                .map(ExptResolMstr::getDraftUserNm)
+                .filter(s -> s != null && !s.isBlank())
+                .orElse(null);
 
         return new TransferResultDetailResponse(
                 master.getScdulPymnNo(),
@@ -205,13 +235,13 @@ public class InternalTransferResultService {
                 master.getTotalTranAmt(),
                 master.getTotTrnsCnt(),
                 master.getApprSeqNo(),
-                master.getErpFileNum(),
+                apprMstr.map(ExptResolMstr::getDocNo).orElse(null),
                 master.getCcyCd(),
                 master.getWdrlCcyCd(),
                 master.getTrnfYn(),
                 master.getTrnfDtm(),
                 master.getOrgFileNm(),
-                master.getFileSize(),
+                master.getFileSize() == null || master.getFileSize().isBlank() ? null : new java.math.BigDecimal(master.getFileSize().trim()),
                 master.getRegId(),
                 requestor,
                 // suc/err/prc — derived from the resolved per-line statuses
@@ -270,9 +300,14 @@ public class InternalTransferResultService {
 
     /* ---------------------------------------------------------------- */
 
-    private static TransferResultRow toResultRow(ScdulPymnSumr s, long[] counts) {
+    private static TransferResultRow toResultRow(
+            ScdulPymnSumr s, long[] counts, Map<String, String> docNoByApprSeqNo) {
         BigDecimal succ = counts != null ? BigDecimal.valueOf(counts[0]) : null;
         BigDecimal err  = counts != null ? BigDecimal.valueOf(counts[1]) : null;
+        String apprSeqNo = s.getApprSeqNo();
+        String docNo = apprSeqNo != null && !apprSeqNo.isBlank()
+                ? docNoByApprSeqNo.get(apprSeqNo)
+                : null;
         return new TransferResultRow(
                 s.getScdulPymnNo(),
                 s.getScdulPymnTypeCd(),
@@ -286,7 +321,7 @@ public class InternalTransferResultService {
                 s.getTrnfYn(),
                 s.getRegDtm(),
                 s.getApprSeqNo(),
-                s.getErpFileNum());
+                docNo);
     }
 
     private TransferResultLine toResultLine(ScdulPymnSumrDetl d, DispatchResult r) {

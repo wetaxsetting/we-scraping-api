@@ -1,9 +1,9 @@
 package com.kosign.wecms.common.auditlog.service;
 
-import com.kosign.wecms.common.auditlog.entity.AuditLogEntry;
+import com.kosign.wecms.common.auditlog.entity.AuditLogsInfm;
 import com.kosign.wecms.common.auditlog.repository.AuditLogEntryRepository;
-import com.kosign.wecms.common.auditlog.repository.AuditLogSeqNoRepository;
 import com.kosign.wecms.common.enums.LangCd;
+import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.common.i18n.MessageResolver;
 import com.kosign.wecms.common.tenant.TenantContext;
 import lombok.RequiredArgsConstructor;
@@ -57,7 +57,7 @@ import java.util.Locale;
  * {@link AuditLogContext#activityKey()} and
  * {@link AuditLogContext#detailKey()} via
  * {@link MessageResolver#resolve(String, Locale, Object...)} and
- * inserts one {@link AuditLogEntry} row. The legacy JEX detail-audit
+ * inserts one {@link AuditLogsInfm} row. The legacy JEX detail-audit
  * query at {@code comm_0220_003_r001_act.jsp:74-86} filters by
  * {@code lang_cd}, so each user sees pre-localized strings without
  * server-side re-translation. KM is included even though DEV's
@@ -66,9 +66,9 @@ import java.util.Locale;
  *
  * <h2>Seq_no allocation</h2>
  *
- * Allocated <b>once</b> per call via {@link AuditLogSeqNoRepository},
- * which delegates to the legacy {@code wb_get_next_val} PL/pgSQL
- * function (V66 extends it with the {@code audit_logs_infm} branch).
+ * Allocated <b>once</b> per call via {@link LegacyFunctionRepository#nextAuditLogsSeqNo},
+ * the single funnel to the legacy {@code wb_get_next_val} PL/pgSQL
+ * function (V140 #17 carries the {@code audit_logs_infm} branch).
  * The legacy function uses {@code MAX(seq_no::numeric) + 1} — race-
  * prone under high concurrency (two parallel callers read the same
  * MAX, both insert seq+1, the second insert fails the PK). The
@@ -103,7 +103,7 @@ public class AuditLogService {
             DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
 
     private final AuditLogEntryRepository  entryRepository;
-    private final AuditLogSeqNoRepository  seqNoRepository;
+    private final LegacyFunctionRepository legacyFunctions;
     private final MessageResolver          messages;
 
     /**
@@ -170,14 +170,18 @@ public class AuditLogService {
         // satisfied without a noisy NPE.
         if (regNm == null) regNm = regId;
 
-        BigDecimal seqNo = seqNoRepository.allocateNextSeqNo(
+        // Allocate via the single LegacyFunctionRepository funnel (V140 #17) —
+        // no scattered native @Query. Positional args map to $3/$4/$5 exactly as
+        // the previous AuditLogSeqNoRepository call did, preserving behaviour.
+        String seqNoRaw = legacyFunctions.nextAuditLogsSeqNo(
                 bizKey, ctx.refNo(), ctx.refNo1());
-        if (seqNo == null) {
-            // Should never happen — the V66 branch always returns a
+        if (seqNoRaw == null) {
+            // Should never happen — the V140 #17 branch always returns a
             // value when its presence-checks pass. Defensive guard.
             throw new IllegalStateException(
                     "wb_get_next_val returned null for audit_logs_infm seq_no");
         }
+        BigDecimal seqNo = new BigDecimal(seqNoRaw);
         String regDtm = OffsetDateTime.now(ZoneOffset.UTC).format(REG_DTM_FORMAT);
         Object[] args = ctx.msgArgs() == null ? EMPTY_ARGS : ctx.msgArgs();
 
@@ -188,7 +192,7 @@ public class AuditLogService {
                     : messages.resolve(ctx.activityKey(), locale, args);
             String detail = messages.resolve(ctx.detailKey(), locale, args);
 
-            AuditLogEntry entry = new AuditLogEntry();
+            AuditLogsInfm entry = new AuditLogsInfm();
             entry.setBizKey(bizKey);
             entry.setAuditLogsSeqNo(seqNo);
             entry.setWsvcId(ctx.wsvcId());

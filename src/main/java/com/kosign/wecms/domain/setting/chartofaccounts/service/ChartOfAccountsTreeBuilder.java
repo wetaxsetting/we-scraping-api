@@ -3,7 +3,7 @@ package com.kosign.wecms.domain.setting.chartofaccounts.service;
 import com.kosign.wecms.domain.setting.chartofaccounts.ChartOfAccountsConstants;
 import com.kosign.wecms.domain.setting.chartofaccounts.dto.ChartOfAccountRow;
 import com.kosign.wecms.domain.setting.chartofaccounts.dto.ChartOfAccountTreeNode;
-import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount;
+import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartAcctInfm;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -15,7 +15,7 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * Pure projection helper: given a flat list of {@link ChartOfAccount}
+ * Pure projection helper: given a flat list of {@link ChartAcctInfm}
  * rows for one tenant, compute the {@code chart_acct_level},
  * {@code has_children}, and {@code breadcrumb} fields that the wire
  * surfaces alongside the raw columns.
@@ -66,7 +66,7 @@ public final class ChartOfAccountsTreeBuilder {
      * they still appear in the list (grandfathered DEV data) but don't
      * confuse the tree shape.
      */
-    public static List<ChartOfAccountRow> buildRows(List<ChartOfAccount> tenantSlice) {
+    public static List<ChartOfAccountRow> buildRows(List<ChartAcctInfm> tenantSlice) {
         if (tenantSlice.isEmpty()) return List.of();
         Index ix = index(tenantSlice);
 
@@ -74,10 +74,10 @@ public final class ChartOfAccountsTreeBuilder {
         // by chartAcctCd ASC so siblings appear alphabetically. Rows
         // whose chartAcctLevel is null (orphan / cycle) are excluded
         // here and appended at the end of the output.
-        Map<String, List<ChartOfAccount>> childrenByParent = new HashMap<>();
-        List<ChartOfAccount> roots = new ArrayList<>();
-        List<ChartOfAccount> orphans = new ArrayList<>();
-        for (ChartOfAccount row : tenantSlice) {
+        Map<String, List<ChartAcctInfm>> childrenByParent = new HashMap<>();
+        List<ChartAcctInfm> roots = new ArrayList<>();
+        List<ChartAcctInfm> orphans = new ArrayList<>();
+        for (ChartAcctInfm row : tenantSlice) {
             Integer level = ix.levelByCode.get(row.getChartAcctCd());
             if (level == null) {
                 orphans.add(row);
@@ -92,23 +92,23 @@ public final class ChartOfAccountsTreeBuilder {
                         .add(row);
             }
         }
-        Comparator<ChartOfAccount> byCodeAsc =
-                Comparator.comparing(ChartOfAccount::getChartAcctCd);
+        Comparator<ChartAcctInfm> byCodeAsc =
+                Comparator.comparing(ChartAcctInfm::getChartAcctCd);
         roots.sort(byCodeAsc);
         orphans.sort(byCodeAsc);
-        for (List<ChartOfAccount> siblings : childrenByParent.values()) {
+        for (List<ChartAcctInfm> siblings : childrenByParent.values()) {
             siblings.sort(byCodeAsc);
         }
 
         List<ChartOfAccountRow> out = new ArrayList<>(tenantSlice.size());
         Set<String> visited = new HashSet<>();
-        for (ChartOfAccount root : roots) {
+        for (ChartAcctInfm root : roots) {
             emitSubtree(root, childrenByParent, ix, visited, out);
         }
         // Append orphans / cycle rows after the well-formed tree so
         // they still surface in the UI but don't break the visual
         // grouping users expect.
-        for (ChartOfAccount o : orphans) out.add(toRow(o, ix));
+        for (ChartAcctInfm o : orphans) out.add(toRow(o, ix));
         return out;
     }
 
@@ -120,16 +120,16 @@ public final class ChartOfAccountsTreeBuilder {
      * {@code chartAcctLevel == null} and land in the orphan tail, but
      * the {@code visited} check is the structural safety net.
      */
-    private static void emitSubtree(ChartOfAccount node,
-                                    Map<String, List<ChartOfAccount>> childrenByParent,
+    private static void emitSubtree(ChartAcctInfm node,
+                                    Map<String, List<ChartAcctInfm>> childrenByParent,
                                     Index ix,
                                     Set<String> visited,
                                     List<ChartOfAccountRow> out) {
         if (!visited.add(node.getChartAcctCd())) return;
         out.add(toRow(node, ix));
-        List<ChartOfAccount> children = childrenByParent.get(node.getChartAcctCd());
+        List<ChartAcctInfm> children = childrenByParent.get(node.getChartAcctCd());
         if (children == null) return;
-        for (ChartOfAccount child : children) {
+        for (ChartAcctInfm child : children) {
             emitSubtree(child, childrenByParent, ix, visited, out);
         }
     }
@@ -141,11 +141,11 @@ public final class ChartOfAccountsTreeBuilder {
      * rows whose level resolves to 1..4 (matches the legacy outer
      * {@code WHERE T.CHART_ACCT_LEVEL IS NOT NULL}).
      */
-    public static List<ChartOfAccountTreeNode> buildTree(List<ChartOfAccount> tenantSlice) {
+    public static List<ChartOfAccountTreeNode> buildTree(List<ChartAcctInfm> tenantSlice) {
         if (tenantSlice.isEmpty()) return List.of();
         Index ix = index(tenantSlice);
         List<ChartOfAccountTreeNode> out = new ArrayList<>(tenantSlice.size());
-        for (ChartOfAccount row : tenantSlice) {
+        for (ChartAcctInfm row : tenantSlice) {
             Integer level = ix.levelByCode.get(row.getChartAcctCd());
             if (level == null) continue; // skip orphans / depth>cap
             out.add(new ChartOfAccountTreeNode(
@@ -166,7 +166,7 @@ public final class ChartOfAccountsTreeBuilder {
      *  Internal — index pass + per-row projection
      * --------------------------------------------------------------- */
 
-    private static ChartOfAccountRow toRow(ChartOfAccount row, Index ix) {
+    private static ChartOfAccountRow toRow(ChartAcctInfm row, Index ix) {
         return new ChartOfAccountRow(
                 row.getChartAcctSeqNo(),
                 row.getChartAcctCd(),
@@ -191,9 +191,9 @@ public final class ChartOfAccountsTreeBuilder {
      * <currentNm>"} chain. Mirrors legacy R002's
      * {@code CHART_ACCT_DIPS_NAME}.
      */
-    private static String buildBreadcrumb(ChartOfAccount row, Index ix) {
-        List<ChartOfAccount> chain = new ArrayList<>();
-        ChartOfAccount cursor = row;
+    private static String buildBreadcrumb(ChartAcctInfm row, Index ix) {
+        List<ChartAcctInfm> chain = new ArrayList<>();
+        ChartAcctInfm cursor = row;
         Set<String> seen = new HashSet<>();
         int hops = 0;
         while (cursor != null) {
@@ -207,7 +207,7 @@ public final class ChartOfAccountsTreeBuilder {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < chain.size(); i++) {
             if (i > 0) sb.append(" / ");
-            ChartOfAccount c = chain.get(i);
+            ChartAcctInfm c = chain.get(i);
             sb.append(c.getChartAcctCd()).append(" - ").append(c.getChartAcctNmEn());
         }
         return sb.toString();
@@ -218,14 +218,14 @@ public final class ChartOfAccountsTreeBuilder {
      * code → entity, code → level (or null), set of codes that have
      * at least one active child.
      */
-    private static Index index(List<ChartOfAccount> tenantSlice) {
-        Map<String, ChartOfAccount> byCode = new HashMap<>(tenantSlice.size());
-        for (ChartOfAccount row : tenantSlice) {
+    private static Index index(List<ChartAcctInfm> tenantSlice) {
+        Map<String, ChartAcctInfm> byCode = new HashMap<>(tenantSlice.size());
+        for (ChartAcctInfm row : tenantSlice) {
             byCode.put(row.getChartAcctCd(), row);
         }
 
         Set<String> parentCodesSeen = new HashSet<>();
-        for (ChartOfAccount row : tenantSlice) {
+        for (ChartAcctInfm row : tenantSlice) {
             String parentCd = row.getParentChartAcctCd();
             if (parentCd != null && !parentCd.isBlank()
                     && !Objects.equals(parentCd, row.getChartAcctCd())) {
@@ -234,7 +234,7 @@ public final class ChartOfAccountsTreeBuilder {
         }
 
         Map<String, Integer> levelByCode = new HashMap<>(tenantSlice.size());
-        for (ChartOfAccount row : tenantSlice) {
+        for (ChartAcctInfm row : tenantSlice) {
             levelByCode.put(row.getChartAcctCd(), resolveLevel(row, byCode));
         }
 
@@ -250,7 +250,7 @@ public final class ChartOfAccountsTreeBuilder {
      * terminates nor extends — return null so the frontend renders it
      * under the grandfathered footnote.
      */
-    private static Integer resolveLevel(ChartOfAccount row, Map<String, ChartOfAccount> byCode) {
+    private static Integer resolveLevel(ChartAcctInfm row, Map<String, ChartAcctInfm> byCode) {
         int level = 1;
         String parentCd = row.getParentChartAcctCd();
         Set<String> seen = new HashSet<>();
@@ -259,14 +259,14 @@ public final class ChartOfAccountsTreeBuilder {
             if (!seen.add(parentCd)) return null; // cycle
             level++;
             if (level > ChartOfAccountsConstants.MAX_HIERARCHY_DEPTH) return null;
-            ChartOfAccount parent = byCode.get(parentCd);
+            ChartAcctInfm parent = byCode.get(parentCd);
             if (parent == null) return null; // orphan
             parentCd = parent.getParentChartAcctCd();
         }
         return level;
     }
 
-    private record Index(Map<String, ChartOfAccount> byCode,
+    private record Index(Map<String, ChartAcctInfm> byCode,
                           Map<String, Integer> levelByCode,
                           Set<String> hasChildren) { }
 }

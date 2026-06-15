@@ -4,11 +4,11 @@ WeCMS menu: **Banking → Reports**. Tenant cash-position reporting derived from
 
 ## Screens in this group
 
-| Screen | Doc | Status |
+| Screen | Doc | Status (updated 2026-06-14) |
 |---|---|---|
-| Daily Cash | [daily-cash.md](daily-cash.md) | Design / partial |
-| Daily Financial | [daily-financial.md](daily-financial.md) · **full package:** [daily-financial/](daily-financial/README.md) | **READY FOR SIT** (in-PROD scope; ~80% of in-scope surface, ~40% of full legacy — HS variant, server-side Excel, REC2_1 inline deferred) |
-| Cash Flow | [cash-flow.md](cash-flow.md) | Design / partial |
+| Daily Cash | [daily-cash.md](daily-cash.md) | **Calls `rept_0900_001_rec1..4` directly** — rec1/rec2 (accounts + currency summary) active; rec3/rec4 (cash flow + total cash) need `CASH_REPY_MSTR` data. Live HTTP/JPA smoke recommended. |
+| Daily Financial | [daily-financial.md](daily-financial.md) · **full package:** [daily-financial/](daily-financial/README.md) | **CMC: now reads `rept_0015_001_r001_rec1` directly** (2026-06-14 — DB-side source of truth; old Java live-compute bypassed; 07/08 kept; DF-3 + DF-4 fixed; no `WB_INSERT_*`, no summary-table read). **HS: now calls `fn_get_haengsung_daily_financial_report`** (stub removed; `REPT_TRNS_HSTR` + fn added to baseline). Remaining (both): live verification data-blocked in R&D; HS filter UI + seed rows; CMC `rec3`/cash + inline transactions out of scope. |
+| Cash Flow | [cash-flow.md](cash-flow.md) | **Calls `get_cashflow_report` directly** (Java reimpl bypassed; `wb_get_chart_acct_level[_text]` added). Remaining: numeric live verification blocked by missing `chart_acct_infm` / classified payment data. |
 
 ## Related reference docs
 

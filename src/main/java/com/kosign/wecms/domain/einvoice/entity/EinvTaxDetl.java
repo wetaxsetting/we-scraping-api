@@ -8,6 +8,8 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.math.BigDecimal;
 
@@ -33,7 +35,8 @@ public class EinvTaxDetl {
     private String docId;
 
     @Id
-    @Column(name = "DISP_ORD", nullable = false)
+    @JdbcTypeCode(SqlTypes.NUMERIC)
+    @Column(name = "DISP_ORD", precision = 10, scale = 0, nullable = false)
     private Integer dispOrd;
 
     @Column(name = "EINV_TAXRATE", length = 50)

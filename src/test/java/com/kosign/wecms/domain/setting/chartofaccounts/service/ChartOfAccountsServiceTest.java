@@ -9,8 +9,8 @@ import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.setting.chartofaccounts.dto.ChartOfAccountCreateRequest;
 import com.kosign.wecms.domain.setting.chartofaccounts.dto.ChartOfAccountListResponse;
 import com.kosign.wecms.domain.setting.chartofaccounts.dto.ChartOfAccountUpdateRequest;
-import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount;
-import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccountId;
+import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartAcctInfm;
+import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartAcctInfmId;
 import com.kosign.wecms.domain.setting.chartofaccounts.repository.ChartOfAccountRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -74,8 +74,8 @@ class ChartOfAccountsServiceTest {
 
     @Test
     void list_returnsProjectedRowsWithRestrictedFlag() {
-        ChartOfAccount root  = entity("70", "ACC-01",  "REVENUE",      null,    "A");
-        ChartOfAccount child = entity("99", "1007009", "Collection 4", "ACC-01","A");
+        ChartAcctInfm root  = entity("70", "ACC-01",  "REVENUE",      null,    "A");
+        ChartAcctInfm child = entity("99", "1007009", "Collection 4", "ACC-01","A");
         when(repo.findByBizKeyAndDelYn(eq(TENANT), eq("N"), any(Sort.class)))
                 .thenReturn(List.of(root, child));
 
@@ -109,7 +109,7 @@ class ChartOfAccountsServiceTest {
 
     @Test
     void detail_notFoundThrowsBusinessException() {
-        when(repo.findById(new ChartOfAccountId(TENANT, "99"))).thenReturn(Optional.empty());
+        when(repo.findById(new ChartAcctInfmId(TENANT, "99"))).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.detail("99"))
                 .isInstanceOf(BusinessException.class)
@@ -124,7 +124,7 @@ class ChartOfAccountsServiceTest {
     @Test
     void create_happyPathAllocatesSeqAndWritesAudit() {
         // Tenant slice for validator: just the parent.
-        ChartOfAccount parent = entity("70", "ACC-01", "REVENUE", null, "A");
+        ChartAcctInfm parent = entity("70", "ACC-01", "REVENUE", null, "A");
         when(repo.findByBizKeyAndDelYn(eq(TENANT), eq("N"), any(Sort.class)))
                 .thenReturn(List.of(parent));
         when(repo.findByBizKeyAndChartAcctCdAndDelYn(TENANT, "1007009", "N"))
@@ -132,7 +132,7 @@ class ChartOfAccountsServiceTest {
         when(repo.findByBizKeyAndChartAcctCdAndDelYn(TENANT, "1007009", "Y"))
                 .thenReturn(Optional.empty());
         when(legacyFnRepo.nextChartAcctSeqNo(TENANT)).thenReturn("113");
-        when(repo.save(any(ChartOfAccount.class)))
+        when(repo.save(any(ChartAcctInfm.class)))
                 .thenAnswer(inv -> inv.getArgument(0));
 
         ChartOfAccountCreateRequest req = new ChartOfAccountCreateRequest(
@@ -141,9 +141,9 @@ class ChartOfAccountsServiceTest {
 
         service.create(req);
 
-        ArgumentCaptor<ChartOfAccount> saved = ArgumentCaptor.forClass(ChartOfAccount.class);
+        ArgumentCaptor<ChartAcctInfm> saved = ArgumentCaptor.forClass(ChartAcctInfm.class);
         verify(repo, times(1)).save(saved.capture());
-        ChartOfAccount inserted = saved.getValue();
+        ChartAcctInfm inserted = saved.getValue();
         assertThat(inserted.getBizKey()).isEqualTo(TENANT);
         assertThat(inserted.getChartAcctSeqNo()).isEqualTo("113");
         assertThat(inserted.getChartAcctCd()).isEqualTo("1007009");
@@ -159,8 +159,8 @@ class ChartOfAccountsServiceTest {
 
     @Test
     void create_duplicateActiveCodeRejected() {
-        ChartOfAccount parent = entity("70", "ACC-01", "REVENUE", null, "A");
-        ChartOfAccount dupActive = entity("99", "1007009", "Collection 4", "ACC-01", "A");
+        ChartAcctInfm parent = entity("70", "ACC-01", "REVENUE", null, "A");
+        ChartAcctInfm dupActive = entity("99", "1007009", "Collection 4", "ACC-01", "A");
         when(repo.findByBizKeyAndDelYn(eq(TENANT), eq("N"), any(Sort.class)))
                 .thenReturn(List.of(parent, dupActive));
         when(repo.findByBizKeyAndChartAcctCdAndDelYn(TENANT, "1007009", "N"))
@@ -179,8 +179,8 @@ class ChartOfAccountsServiceTest {
 
     @Test
     void create_revivesSoftDeletedRow() {
-        ChartOfAccount parent = entity("70", "ACC-01", "REVENUE", null, "A");
-        ChartOfAccount deleted = entity("88", "1007009", "Collection 4 (old)", "ACC-01", "I");
+        ChartAcctInfm parent = entity("70", "ACC-01", "REVENUE", null, "A");
+        ChartAcctInfm deleted = entity("88", "1007009", "Collection 4 (old)", "ACC-01", "I");
         deleted.setDelYn("Y");
         when(repo.findByBizKeyAndDelYn(eq(TENANT), eq("N"), any(Sort.class)))
                 .thenReturn(List.of(parent));
@@ -188,7 +188,7 @@ class ChartOfAccountsServiceTest {
                 .thenReturn(Optional.empty());
         when(repo.findByBizKeyAndChartAcctCdAndDelYn(TENANT, "1007009", "Y"))
                 .thenReturn(Optional.of(deleted));
-        when(repo.save(any(ChartOfAccount.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(repo.save(any(ChartAcctInfm.class))).thenAnswer(inv -> inv.getArgument(0));
 
         ChartOfAccountCreateRequest req = new ChartOfAccountCreateRequest(
                 "1007009", "Collection 4 (revived)", null, null, null, "ACC-01", null, "A");
@@ -197,9 +197,9 @@ class ChartOfAccountsServiceTest {
 
         // legacy seq-no allocator never called — we revived the existing row.
         verify(legacyFnRepo, never()).nextChartAcctSeqNo(any());
-        ArgumentCaptor<ChartOfAccount> saved = ArgumentCaptor.forClass(ChartOfAccount.class);
+        ArgumentCaptor<ChartAcctInfm> saved = ArgumentCaptor.forClass(ChartAcctInfm.class);
         verify(repo).save(saved.capture());
-        ChartOfAccount revived = saved.getValue();
+        ChartAcctInfm revived = saved.getValue();
         assertThat(revived.getChartAcctSeqNo()).isEqualTo("88"); // preserved
         assertThat(revived.getDelYn()).isEqualTo("N");           // un-deleted
         assertThat(revived.getChartAcctNmEn()).isEqualTo("Collection 4 (revived)");
@@ -207,7 +207,7 @@ class ChartOfAccountsServiceTest {
 
     @Test
     void create_pkRaceRetriesOnceThenFailsOnDuplicate() {
-        ChartOfAccount parent = entity("70", "ACC-01", "REVENUE", null, "A");
+        ChartAcctInfm parent = entity("70", "ACC-01", "REVENUE", null, "A");
         when(repo.findByBizKeyAndDelYn(eq(TENANT), eq("N"), any(Sort.class)))
                 .thenReturn(List.of(parent));
         when(repo.findByBizKeyAndChartAcctCdAndDelYn(TENANT, "1007009", "N"))
@@ -217,7 +217,7 @@ class ChartOfAccountsServiceTest {
         when(legacyFnRepo.nextChartAcctSeqNo(TENANT))
                 .thenReturn("113")
                 .thenReturn("114");
-        when(repo.save(any(ChartOfAccount.class)))
+        when(repo.save(any(ChartAcctInfm.class)))
                 .thenThrow(new DataIntegrityViolationException("race"))
                 .thenThrow(new DataIntegrityViolationException("still racing"));
 
@@ -237,8 +237,8 @@ class ChartOfAccountsServiceTest {
 
     @Test
     void update_restrictedRowRejected() {
-        ChartOfAccount root = entity("70", "ACC-01", "REVENUE", null, "A");
-        when(repo.findById(new ChartOfAccountId(TENANT, "70"))).thenReturn(Optional.of(root));
+        ChartAcctInfm root = entity("70", "ACC-01", "REVENUE", null, "A");
+        when(repo.findById(new ChartAcctInfmId(TENANT, "70"))).thenReturn(Optional.of(root));
 
         ChartOfAccountUpdateRequest req = new ChartOfAccountUpdateRequest(
                 "ACC-01-RENAMED", "Revenue Renamed", null, null, null, null, null, "A");
@@ -253,21 +253,21 @@ class ChartOfAccountsServiceTest {
 
     @Test
     void update_happyPathSavesAndAudits() {
-        ChartOfAccount existing = entity("99", "1007009", "Collection 4", "ACC-01", "A");
-        ChartOfAccount root = entity("70", "ACC-01", "REVENUE", null, "A");
-        when(repo.findById(new ChartOfAccountId(TENANT, "99"))).thenReturn(Optional.of(existing));
+        ChartAcctInfm existing = entity("99", "1007009", "Collection 4", "ACC-01", "A");
+        ChartAcctInfm root = entity("70", "ACC-01", "REVENUE", null, "A");
+        when(repo.findById(new ChartAcctInfmId(TENANT, "99"))).thenReturn(Optional.of(existing));
         // Request keeps the same code → the dup-on-rename check is
         // skipped, so no stub for findByBizKeyAndChartAcctCdAndDelYnAndChartAcctSeqNoNot.
         when(repo.findByBizKeyAndDelYn(eq(TENANT), eq("N"), any(Sort.class)))
                 .thenReturn(List.of(root, existing));
-        when(repo.save(any(ChartOfAccount.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(repo.save(any(ChartAcctInfm.class))).thenAnswer(inv -> inv.getArgument(0));
 
         ChartOfAccountUpdateRequest req = new ChartOfAccountUpdateRequest(
                 "1007009", "Collection 4 (updated)", null, null, null, "ACC-01", null, "A");
 
         service.update("99", req);
 
-        ArgumentCaptor<ChartOfAccount> saved = ArgumentCaptor.forClass(ChartOfAccount.class);
+        ArgumentCaptor<ChartAcctInfm> saved = ArgumentCaptor.forClass(ChartAcctInfm.class);
         verify(repo).save(saved.capture());
         assertThat(saved.getValue().getChartAcctNmEn()).isEqualTo("Collection 4 (updated)");
         assertThat(saved.getValue().getModId()).isEqualTo(USER);
@@ -283,8 +283,8 @@ class ChartOfAccountsServiceTest {
 
     @Test
     void delete_restrictedRowRejected() {
-        ChartOfAccount root = entity("70", "ACC-01", "REVENUE", null, "A");
-        when(repo.findById(new ChartOfAccountId(TENANT, "70"))).thenReturn(Optional.of(root));
+        ChartAcctInfm root = entity("70", "ACC-01", "REVENUE", null, "A");
+        when(repo.findById(new ChartAcctInfmId(TENANT, "70"))).thenReturn(Optional.of(root));
 
         assertThatThrownBy(() -> service.delete("70"))
                 .isInstanceOf(BusinessException.class)
@@ -296,19 +296,19 @@ class ChartOfAccountsServiceTest {
 
     @Test
     void delete_reparentsChildrenAndFlipsDelYn() {
-        ChartOfAccount existing = entity("99", "1007009", "Collection 4", "ACC-01", "A");
-        when(repo.findById(new ChartOfAccountId(TENANT, "99"))).thenReturn(Optional.of(existing));
+        ChartAcctInfm existing = entity("99", "1007009", "Collection 4", "ACC-01", "A");
+        when(repo.findById(new ChartAcctInfmId(TENANT, "99"))).thenReturn(Optional.of(existing));
         when(repo.reparentActiveChildren(eq(TENANT), eq("1007009"), eq("ACC-01"), eq(USER), any()))
                 .thenReturn(2);
         when(repo.findByBizKeyAndChartAcctCdAndDelYnAndChartAcctSeqNoNot(
                 TENANT, "1007009", "Y", "99")).thenReturn(Optional.empty());
-        when(repo.save(any(ChartOfAccount.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(repo.save(any(ChartAcctInfm.class))).thenAnswer(inv -> inv.getArgument(0));
 
         service.delete("99");
 
         verify(repo).reparentActiveChildren(eq(TENANT), eq("1007009"), eq("ACC-01"), eq(USER), any());
 
-        ArgumentCaptor<ChartOfAccount> saved = ArgumentCaptor.forClass(ChartOfAccount.class);
+        ArgumentCaptor<ChartAcctInfm> saved = ArgumentCaptor.forClass(ChartAcctInfm.class);
         verify(repo).save(saved.capture());
         assertThat(saved.getValue().getDelYn()).isEqualTo("Y");
         assertThat(saved.getValue().getChartAcctCd()).isEqualTo("1007009"); // no archive rename
@@ -320,18 +320,18 @@ class ChartOfAccountsServiceTest {
 
     @Test
     void delete_archiveRenamesWhenSoftDeletedDupExists() {
-        ChartOfAccount existing = entity("12345", "DUP-CODE", "Some dup", null, "A");
-        ChartOfAccount otherDeleted = entity("999", "DUP-CODE", "Older dup", null, "I");
+        ChartAcctInfm existing = entity("12345", "DUP-CODE", "Some dup", null, "A");
+        ChartAcctInfm otherDeleted = entity("999", "DUP-CODE", "Older dup", null, "I");
         otherDeleted.setDelYn("Y");
-        when(repo.findById(new ChartOfAccountId(TENANT, "12345"))).thenReturn(Optional.of(existing));
+        when(repo.findById(new ChartAcctInfmId(TENANT, "12345"))).thenReturn(Optional.of(existing));
         when(repo.reparentActiveChildren(any(), any(), any(), any(), any())).thenReturn(0);
         when(repo.findByBizKeyAndChartAcctCdAndDelYnAndChartAcctSeqNoNot(
                 TENANT, "DUP-CODE", "Y", "12345")).thenReturn(Optional.of(otherDeleted));
-        when(repo.save(any(ChartOfAccount.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(repo.save(any(ChartAcctInfm.class))).thenAnswer(inv -> inv.getArgument(0));
 
         service.delete("12345");
 
-        ArgumentCaptor<ChartOfAccount> saved = ArgumentCaptor.forClass(ChartOfAccount.class);
+        ArgumentCaptor<ChartAcctInfm> saved = ArgumentCaptor.forClass(ChartAcctInfm.class);
         verify(repo).save(saved.capture());
         // prefix(0..4) of "DUP-CODE" = "DUP-", last5 of "12345" = "12345"
         // + 'D' suffix → "DUP-12345D".
@@ -343,9 +343,9 @@ class ChartOfAccountsServiceTest {
      *  Helpers
      * --------------------------------------------------------------- */
 
-    private static ChartOfAccount entity(String seqNo, String code, String nameEn,
+    private static ChartAcctInfm entity(String seqNo, String code, String nameEn,
                                           String parentCd, String stts) {
-        ChartOfAccount e = new ChartOfAccount();
+        ChartAcctInfm e = new ChartAcctInfm();
         e.setBizKey(TENANT);
         e.setChartAcctSeqNo(seqNo);
         e.setChartAcctCd(code);

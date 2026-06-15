@@ -1,0 +1,178 @@
+-- =============================================================================
+-- V157 — MENU_AUTH_ADMN_SYS  legacy WEB_SVC_ID  →  refactor route-slug mapping
+-- =============================================================================
+--
+-- PURPOSE
+--   Documentation / migration-reference ONLY. Records the verified mapping
+--   between the legacy JEX MENU_AUTH_ADMN_SYS.WEB_SVC_ID values and the
+--   refactor Spring/Next.js route-slug identifiers (View Setting screenIds and
+--   navigation permission_cd slugs).
+--
+-- THIS FILE INTENTIONALLY CONTAINS NO EXECUTABLE SQL.
+--   * It does NOT create, alter, drop, INSERT, UPDATE, or DELETE anything.
+--   * It does NOT seed MENU_AUTH_ADMN_SYS into the refactor DB.
+--   * Running it (Flyway or psql) is a guaranteed no-op — every line is a comment.
+--
+-- WHY NO DATA CHANGE (read before "fixing" this file)
+--   1. The refactor runtime does NOT read MENU_AUTH_ADMN_SYS. The legacy
+--      "master menu catalogue per product type" role was replaced by the
+--      refactor-owned tables MENU_ITEM (V138) + PRODUCT_MENU (V137) +
+--      MENU_ITEM_TRANSLATION (V139), consumed by domain/navigation
+--      (GET /api/v1/navigation). MENU_AUTH_ADMN_SYS has no entity, repository,
+--      service, controller, or security path in wecms-api. (V63 creates the
+--      table empty for legacy schema parity only; nothing ever seeds it.)
+--   2. On the shared/live JEX DB, MENU_AUTH_ADMN_SYS is OWNED BY THE LIVE JEX
+--      system (the szon_0014_001 "per-user menu authorization" admin screen
+--      reads it with legacy WEB_SVC_ID values, filtered by PRDT_TYPE). Writing
+--      refactor route-slug rows into it would pollute the live JEX menu
+--      catalogue. => Keep this table LEGACY-ONLY. Never seed route slugs here.
+--   3. The per-user grant table USER_MENU_AUTH_INFM (V131) IS used by the
+--      refactor — its WEB_SVC_ID column is repurposed to hold kebab
+--      permission codes that intersect with MENU_ITEM.PERMISSION_CD. That table
+--      must keep being migrated/maintained. MENU_AUTH_ADMN_SYS must not.
+--
+-- SOURCES VERIFIED (2026-06-11)
+--   * Complete MENU_AUTH_ADMN_SYS dump supplied by the team (73 rows: F=26,
+--     M=26, H=21) — authoritative for menu name + per-product membership.
+--     Cross-checked against the live JEX DEV DB (read-only MCP).
+--   * wecms-web/lib/viewSettingScreens.ts — SCREEN_IDS + SCREEN_ID_TO_ROUTE
+--     (View Setting screenIds).
+--   * wecms-web/lib/menuAuth.ts + components/settings/users/entitlementTree.ts —
+--     navigation permission_cd slugs for the report pages.
+--   * V156__sys_scr_option_wecms.sql — the 28 seeded View Setting popover screens.
+--   * wecms-web app router — confirmed routes for every slug below.
+--
+-- =============================================================================
+-- MAPPING TABLE  (legacy WEB_SVC_ID → refactor slug) — 27 distinct ids
+-- =============================================================================
+-- Legend:
+--   Prod  = product types carrying the menu in the legacy dump (F / M / H)
+--   V156  = Y if the slug is one of the 28 View Setting popover screens seeded
+--           in V156; N if export-only / report / non-popover / not seeded
+--   Kind  = VS  (View Setting screenId, from SCREEN_IDS)
+--           NAV (navigation permission_cd slug, no View Setting popover)
+--           --  (no canonical refactor identifier)
+--
+-- | #  | Legacy WEB_SVC_ID | Refactor route slug                          | Menu name (legacy dump)      | Prod  | V156 | Kind | Notes
+-- |----|-------------------|----------------------------------------------|------------------------------|-------|------|------|-----------------------------------------------------------
+-- |  1 | fnsh_0001_001     | banking-account-inquiry-vnd                  | Account Inquiry              | F M H | Y    | VS   | ACCOUNT_INQUIRY_VND. VND scope.
+-- |  2 | fnsh_0005_001     | banking-account-inquiry-fcy                  | Account Inquiry              | F M H | Y    | VS   | ACCOUNT_INQUIRY_FCY. FCY twin — same legacy mnu_nm, distinct slug.
+-- |  3 | fnsh_0002_001     | banking-transaction-history-vnd              | Transaction History          | F M H | Y    | VS   | BANKING_TRANSACTION_HISTORY_VND.
+-- |  4 | fnsh_0006_001     | banking-transaction-history-fcy              | Transaction History          | F M H | Y    | VS   | BANKING_TRANSACTION_HISTORY_FCY. FCY twin.
+-- |  5 | trns_0001_001     | own-account-transfer                         | Transfer Own Accounts        | F M H | Y    | VS   | OWN_ACCOUNT_TRANSFER.
+-- |  6 | trns_0003_001     | transfer-history                             | Transfer History             | F M H | N    | VS   | TRANSFER_HISTORY. No popover (no SYS seed by design).
+-- |  7 | rept_0009_001     | banking-reports-daily-cash                   | Daily Cash                   | F M   | N    | NAV  | Report page, no View Setting. H OMITS. permission_cd in menuAuth.ts.
+-- |  8 | rept_0015_001     | banking-reports-daily-financial              | Daily Financial              | F M   | N    | NAV  | CMC variant. Report page, no View Setting. H OMITS (uses HS variant).
+-- |  9 | rept_0017_001     | banking-reports-daily-financial-hs           | Daily Financial              | H     | N    | NAV  | HAENGSUNG (HS) variant — H ONLY. Report page, no View Setting.
+-- | 10 | cash_0001_001     | cash-flow-report                             | Cash Flow                    | F M   | N    | VS   | CASH_FLOW_REPORT (screenId reserved for export gate). Report, no popover. H OMITS.
+-- | 11 | resl_0001_001     | approval-box                                 | Approval Box                 | F M H | Y    | VS   | PAYMENT_APPROVAL_BOX (slug "approval-box", not "payment-approval-box").
+-- | 12 | pymn_0009_001     | payment-internal-transfer-scheduled          | Internal Scheduled Transfer  | F M H | Y    | VS   | PAYMENT_INTERNAL_TRANSFER_SCHEDULED. pymn_0009 = Internal, NOT Vendor.
+-- | 13 | pymn_0010_001     | payment-internal-transfer-result             | Internal Transfer Result     | F M H | Y    | VS   | PAYMENT_INTERNAL_TRANSFER_RESULT.
+-- | 14 | pymn_0001_001     | payment-vendor-payment-scheduled             | Vendor Scheduled Payment     | F M H | Y    | VS   | PAYMENT_VENDOR_PAYMENT_SCHEDULED.
+-- | 15 | pymn_0002_001     | payment-vendor-payment-result                | Vendor Payment Result        | F M H | Y    | VS   | PAYMENT_VENDOR_PAYMENT_RESULT.
+-- | 16 | pymn_0003_001     | payment-expense-payment-scheduled            | Expenses Scheduled Payment   | F M H | Y    | VS   | PAYMENT_EXPENSE_PAYMENT_SCHEDULED.
+-- | 17 | pymn_0004_001     | payment-expense-payment-result               | Expenses Payment Result      | F M H | Y    | VS   | PAYMENT_EXPENSE_PAYMENT_RESULT.
+-- | 18 | pymn_0005_001     | payment-payroll-payment-scheduled            | Payroll Scheduled Payment    | F M H | Y    | VS   | PAYMENT_PAYROLL_PAYMENT_SCHEDULED.
+-- | 19 | pymn_0006_001     | payment-payroll-payment-result               | Payroll Payment Result       | F M H | Y    | VS   | PAYMENT_PAYROLL_PAYMENT_RESULT.
+-- | 20 | pymn_0007_001     | payment-overseas-payment-scheduled           | Overseas Payment Request     | F M H | Y    | VS   | PAYMENT_OVERSEAS_PAYMENT_SCHEDULED.
+-- | 21 | pymn_0008_001     | payment-overseas-payment-result              | Overseas Request Result      | F M H | Y    | VS   | PAYMENT_OVERSEAS_PAYMENT_RESULT.
+-- | 22 | card_0001_001     | card-transactions                            | Card Transactions            | F M H | Y    | VS   | PAYMENT_CARD_TRANSACTIONS (route /payment/corporate-card/card-transactions).
+-- | 23 | sale_einv_001     | addon-sales-einvoices                        | Sales e-Invoices             | F M   | N    | VS   | ADDON_SALES_EINVOICES. Export-only (no popover). H OMITS (no Add-on).
+-- | 24 | prch_einv_001     | addon-expenses-einvoices                     | Expense e-Invoices           | F M   | N    | VS   | ADDON_EXPENSES_EINVOICES. Export-only. H OMITS.
+-- | 25 | aosv_0001_001     | addon-operation-status                       | Operation Status Inquiry     | F M   | N    | VS   | ADDON_OPERATION_STATUS. Export-only. H OMITS.
+-- |----|-------------------|----------------------------------------------|------------------------------|-------|------|------|-----------------------------------------------------------
+-- | 26 | exch_0001_001     | (no canonical screenId)                      | Exchange Rate Inquiry        | F M H | N    | --   | Route /payment/overseas-payment/exchange-rate-inquiry exists.
+-- |    |                   | route-derived: payment-overseas-payment-     |                              |       |      |      | Read-only rate matrix, no popover, no SCREEN_ID. Add a
+-- |    |                   |                exchange-rate-inquiry         |                              |       |      |      | SCREEN_IDS constant first if ever wired to View Setting.
+-- | 27 | comm_0180_001     | (no route slug)                              | Settings                     | F M H | N    | --   | Not a page/route — Settings top-nav opens <SettingsModal>
+-- |    |                   |                                              |                              |       |      |      | (useSettingsModal). No Next.js route, no screenId.
+--
+-- =============================================================================
+-- SUMMARY
+-- =============================================================================
+--   Legacy dump total rows ............................. 73   (F=26, M=26, H=21)
+--   Distinct legacy WEB_SVC_ID ......................... 27
+--
+--   Mapped to a canonical refactor identifier .......... 25
+--       View Setting screenId (Kind=VS) ................ 22   (#1–6, 10–25)
+--       Navigation permission_cd slug (Kind=NAV) ....... 3    (#7 daily-cash, #8 daily-financial, #9 daily-financial-hs)
+--   No canonical refactor identifier ................... 2    (#26 exch_0001_001 route-only, #27 comm_0180_001 modal)
+--
+--   Of the 27, seeded as View Setting popover in V156 .. 17   (the Y rows above)
+--       (V156 also seeds bank-account + 12 payment *-detail screens that have
+--        NO legacy MENU_AUTH_ADMN_SYS row, which is why the V156 count is 28.)
+--
+-- ROUTE-SLUG CONFLICTS .......................................... NONE
+--   Every legacy WEB_SVC_ID maps to a DISTINCT refactor slug.
+--   * VND/FCY twins share identical legacy mnu_nm (Account Inquiry:
+--     fnsh_0001_001 + fnsh_0005_001; Transaction History: fnsh_0002_001 +
+--     fnsh_0006_001) → distinct -vnd / -fcy slugs. No collision.
+--   * Daily Financial appears under two legacy ids with the same mnu_nm —
+--     rept_0015_001 (F/M, CMC) and rept_0017_001 (H, HS) → distinct
+--     -daily-financial / -daily-financial-hs slugs. No collision.
+--
+-- UNMAPPED legacy WEB_SVC_ID (2)
+--   * exch_0001_001  — page route exists but there is no View Setting
+--     screenId / canonical screen identifier; route-derived slug only.
+--   * comm_0180_001  — the Settings modal container; no route, no screenId.
+--
+-- PRODUCT-TYPE NOTES (F = WeCMS Default · M = WeCMS Lumens · H = HAENGSUNG)
+--   * M is structurally identical to F (same 26 menus).
+--   * H carries 21 menus. H OMITS 6 (vs F/M):
+--       rept_0009_001 (Daily Cash), rept_0015_001 (Daily Financial CMC),
+--       cash_0001_001 (Cash Flow), sale_einv_001 (Sales e-Invoices),
+--       prch_einv_001 (Expense e-Invoices), aosv_0001_001 (Operation Status).
+--     H UNIQUELY carries rept_0017_001 (Daily Financial — HS variant), which
+--     F/M do not. => the F/M Daily Financial (rept_0015_001) and the H Daily
+--     Financial (rept_0017_001) are different screens with the same mnu_nm.
+--   * The refactor encodes this F/M/H difference in PRODUCT_MENU (per-product
+--     membership), NOT in MENU_AUTH_ADMN_SYS.
+--
+-- NAME NOTES (descriptive only — slug mapping is unaffected)
+--   * The supplied dump labels pymn_0009_001 / pymn_0010_001 as "Internal
+--     Scheduled Transfer" / "Internal Transfer Result"; the live JEX DEV DB
+--     returns "Scheduled Transfer" / "Transfer Result" for the same ids.
+--   * Frontend label registry sidebarNav.ts uses "banking-report-daily-cash"
+--     (singular) for a presentation key; the authoritative permission_cd is
+--     "banking-reports-daily-cash" (plural, per lib/menuAuth.ts +
+--     entitlementTree.ts) — the plural form is the one that matches
+--     USER_MENU_AUTH_INFM / MENU_ITEM.PERMISSION_CD.
+--
+-- =============================================================================
+-- REFERENCE-ONLY transform (DO NOT EXECUTE — kept inside a block comment so it
+-- can never run). Documents what a legacy→slug rewrite WOULD look like IF the
+-- refactor ever owned this table. The refactor does NOT — executing these
+-- against the shared JEX DB would corrupt the live JEX menu catalogue.
+-- =============================================================================
+/*
+    -- !!! DO NOT RUN — illustration only !!!
+    -- UPDATE MENU_AUTH_ADMN_SYS SET WEB_SVC_ID = 'banking-account-inquiry-vnd'        WHERE WEB_SVC_ID = 'fnsh_0001_001';
+    -- UPDATE MENU_AUTH_ADMN_SYS SET WEB_SVC_ID = 'banking-account-inquiry-fcy'        WHERE WEB_SVC_ID = 'fnsh_0005_001';
+    -- UPDATE MENU_AUTH_ADMN_SYS SET WEB_SVC_ID = 'banking-transaction-history-vnd'    WHERE WEB_SVC_ID = 'fnsh_0002_001';
+    -- UPDATE MENU_AUTH_ADMN_SYS SET WEB_SVC_ID = 'banking-transaction-history-fcy'    WHERE WEB_SVC_ID = 'fnsh_0006_001';
+    -- UPDATE MENU_AUTH_ADMN_SYS SET WEB_SVC_ID = 'own-account-transfer'               WHERE WEB_SVC_ID = 'trns_0001_001';
+    -- UPDATE MENU_AUTH_ADMN_SYS SET WEB_SVC_ID = 'transfer-history'                   WHERE WEB_SVC_ID = 'trns_0003_001';
+    -- UPDATE MENU_AUTH_ADMN_SYS SET WEB_SVC_ID = 'banking-reports-daily-cash'         WHERE WEB_SVC_ID = 'rept_0009_001';
+    -- UPDATE MENU_AUTH_ADMN_SYS SET WEB_SVC_ID = 'banking-reports-daily-financial'    WHERE WEB_SVC_ID = 'rept_0015_001';
+    -- UPDATE MENU_AUTH_ADMN_SYS SET WEB_SVC_ID = 'banking-reports-daily-financial-hs' WHERE WEB_SVC_ID = 'rept_0017_001';  -- H only
+    -- UPDATE MENU_AUTH_ADMN_SYS SET WEB_SVC_ID = 'cash-flow-report'                   WHERE WEB_SVC_ID = 'cash_0001_001';
+    -- UPDATE MENU_AUTH_ADMN_SYS SET WEB_SVC_ID = 'approval-box'                       WHERE WEB_SVC_ID = 'resl_0001_001';
+    -- UPDATE MENU_AUTH_ADMN_SYS SET WEB_SVC_ID = 'payment-internal-transfer-scheduled'WHERE WEB_SVC_ID = 'pymn_0009_001';
+    -- UPDATE MENU_AUTH_ADMN_SYS SET WEB_SVC_ID = 'payment-internal-transfer-result'   WHERE WEB_SVC_ID = 'pymn_0010_001';
+    -- UPDATE MENU_AUTH_ADMN_SYS SET WEB_SVC_ID = 'payment-vendor-payment-scheduled'   WHERE WEB_SVC_ID = 'pymn_0001_001';
+    -- UPDATE MENU_AUTH_ADMN_SYS SET WEB_SVC_ID = 'payment-vendor-payment-result'      WHERE WEB_SVC_ID = 'pymn_0002_001';
+    -- UPDATE MENU_AUTH_ADMN_SYS SET WEB_SVC_ID = 'payment-expense-payment-scheduled'  WHERE WEB_SVC_ID = 'pymn_0003_001';
+    -- UPDATE MENU_AUTH_ADMN_SYS SET WEB_SVC_ID = 'payment-expense-payment-result'     WHERE WEB_SVC_ID = 'pymn_0004_001';
+    -- UPDATE MENU_AUTH_ADMN_SYS SET WEB_SVC_ID = 'payment-payroll-payment-scheduled'  WHERE WEB_SVC_ID = 'pymn_0005_001';
+    -- UPDATE MENU_AUTH_ADMN_SYS SET WEB_SVC_ID = 'payment-payroll-payment-result'     WHERE WEB_SVC_ID = 'pymn_0006_001';
+    -- UPDATE MENU_AUTH_ADMN_SYS SET WEB_SVC_ID = 'payment-overseas-payment-scheduled' WHERE WEB_SVC_ID = 'pymn_0007_001';
+    -- UPDATE MENU_AUTH_ADMN_SYS SET WEB_SVC_ID = 'payment-overseas-payment-result'    WHERE WEB_SVC_ID = 'pymn_0008_001';
+    -- UPDATE MENU_AUTH_ADMN_SYS SET WEB_SVC_ID = 'card-transactions'                  WHERE WEB_SVC_ID = 'card_0001_001';
+    -- UPDATE MENU_AUTH_ADMN_SYS SET WEB_SVC_ID = 'addon-sales-einvoices'              WHERE WEB_SVC_ID = 'sale_einv_001';
+    -- UPDATE MENU_AUTH_ADMN_SYS SET WEB_SVC_ID = 'addon-expenses-einvoices'           WHERE WEB_SVC_ID = 'prch_einv_001';
+    -- UPDATE MENU_AUTH_ADMN_SYS SET WEB_SVC_ID = 'addon-operation-status'             WHERE WEB_SVC_ID = 'aosv_0001_001';
+    -- exch_0001_001 / comm_0180_001 : intentionally NOT transformed (no canonical refactor slug).
+*/
+-- =============================================================================
+-- END V157 — documentation/reference only. No schema or data side effects.
+-- =============================================================================

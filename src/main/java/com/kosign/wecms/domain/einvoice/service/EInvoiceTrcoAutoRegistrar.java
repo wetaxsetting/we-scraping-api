@@ -233,15 +233,12 @@ public class EInvoiceTrcoAutoRegistrar {
         }
     }
 
-    /** Per-{@code (BIZ_KEY, TRCO_KEY)} next {@code TRCO_ACCT_KEY} (MAX+1). */
+    /** Per-{@code (BIZ_KEY, TRCO_KEY)} next {@code TRCO_ACCT_KEY} via the single
+     *  wb_get_next_val funnel (V140 #31 — per (biz_key, trco_key) MAX+1, verbatim
+     *  from the live JEX function) so it never collides with the live JEX /
+     *  WABOOKS systems that draw the same key from the same function. */
     private String nextAcctKey(String bizKey, String trcoKey) {
-        long max = trcoAcctRepo.findByBizKeyAndTrcoKey(bizKey, trcoKey).stream()
-                .map(TrcoAcctInfo::getTrcoAcctKey)
-                .filter(k -> k != null && k.matches("\\d+"))
-                .mapToLong(Long::parseLong)
-                .max()
-                .orElse(0L);
-        return String.valueOf(max + 1);
+        return legacyFn.nextTrcoAcctKey(bizKey, trcoKey);
     }
 
     /** Write the activity-history row, deduped per legacy {@code c002:895-907}. */
@@ -257,7 +254,9 @@ public class EInvoiceTrcoAutoRegistrar {
         }
         TrcoActvHstr h = new TrcoActvHstr();
         h.setBizKey(bizKey);
-        h.setActvSeq(String.valueOf(actvHstrRepo.nextActvSeq(bizKey)));
+        // ACTV_SEQ via the single wb_get_next_val funnel (V140 #6 — JEX backs
+        // this with the GLOBAL sq_actv_seq sequence).
+        h.setActvSeq(legacyFn.nextTrcoActvSeq());
         h.setUserId(userId);
         h.setTrcoKey(trcoKey);
         // TRCO_CMNM is NOT NULL — fall back to the key for tax-id-less ETC.

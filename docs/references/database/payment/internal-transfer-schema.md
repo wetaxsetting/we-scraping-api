@@ -29,7 +29,7 @@ All PKs / data types / NOT NULL / DEFAULT below are read from DEV `wecmsvndev.in
 | `SCDUL_PYMN_SUMR_DETL` | `(biz_key, scdul_pymn_no, scdul_pymn_detl_no)` | **Local migration needed** — see § 3.2 column list |
 | `SCDUL_PYMN_SUMR_HIS` | `(biz_key, scdul_pymn_no, hist_mod_dtm)` | **Local migration needed** — schema-only (refactor uses `AUDIT_LOGS_INFM`, not `_HIS` trigger writes) |
 | `SCDUL_PYMN_SUMR_DETL_HIS` | full detail PK + `hist_mod_dtm` | Same — schema-only |
-| `SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN` | `(biz_key, scdul_pymn_no, scdul_pymn_detl_no)` | **Local migration needed** — written on dispatch (API path). NOTE: spelt `SCDU_` not `SCDUL_` in DEV — preserve verbatim. |
+| `SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN` | `(biz_key, scdul_pymn_no, scdul_pymn_detl_no)` | **Removed from refactor 2026-06-10** — not used by Spring (see §3.3). Exists in JEX DEV (`SCDU_` spelling, verbatim) for legacy reference only. |
 
 ### 2.2 Read + write — dispatch tables
 
@@ -149,6 +149,8 @@ COMMENT ON TABLE INTERNAL_TRANSFER_KEY_SEQ IS
 | `acct_seq_no`, `bank_trns_short_id`, `bank_trns_full_id`, `link_match_yn` | reconciliation cols | YES | |
 
 ### 3.3 `SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN`
+
+> **REMOVED from the refactor (2026-06-10).** This legacy API-path bridge is **not used by Spring** — no entity/repository/service, and the dispatch executors stamp `PAY_TRAN_DT`/`PAY_TRAN_SEQ` directly on the detail row rather than writing this bridge. The entity was deleted and the table is dropped from the refactor DB via `docs/database/manual-cleanup/drop_pay_target_conn_bridge_20260610.sql`. The schema below is retained for **legacy/JEX reference only** (it still exists in JEX DEV).
 
 | Column | Type | Nullable | Notes |
 |---|---|---|---|
@@ -373,7 +375,7 @@ The schema in §3.1 + §3.2 is the **single** master/detail table shape used by 
 
 V146 ("scdul_pymn_sumr_chk01_allow_payroll") **relaxes the CHECK constraint** on `scdul_pymn_sumr` to admit Payroll's `'00'` discriminator value. Don't tighten the CHECK without re-allowing all four discriminators.
 
-The dispatch tables in §2.2 (`TB_PAY_TARGET`, `TB_PAY_FILE_MST`, `TB_PAY_FILE_DATA`, `SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN`) are likewise shared infrastructure — single set of tables, all four siblings write into them via `TransferDispatchExecutor` (see [backend/internal-transfer.md §16.1](../../business-rules/internal-transfer.md)).
+The dispatch tables in §2.2 (`TB_PAY_TARGET`, `TB_PAY_FILE_MST`, `TB_PAY_FILE_DATA`) are likewise shared infrastructure — single set of tables, all four siblings write into them via `TransferDispatchExecutor` (see [backend/internal-transfer.md §16.1](../../business-rules/internal-transfer.md)). (The legacy `SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN` bridge is **not** written by the refactor — removed 2026-06-10; see §3.3.)
 
 `INTERNAL_TRANSFER_KEY_SEQ` (§2.4) is **Internal-Transfer-specific** — Vendor / Expense / Payroll each maintain their own per-sibling key generators (separate helper tables) so day-rolls and seq exhaustion are independent. The naming convention is `{SIBLING}_KEY_SEQ` / `{Sibling}KeyGenerator`.
 

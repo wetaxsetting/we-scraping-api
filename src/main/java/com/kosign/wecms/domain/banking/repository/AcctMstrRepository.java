@@ -307,84 +307,81 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
             @Param("authUserId")   String authUserId);
 
     /**
-     * Withdrawal-account lookup for the Payment Internal Transfer
-     * upload dialog (legacy `comm_1001_001`). Returns active
-     * current/savings accounts the current tenant has enrolled in
-     * firm-banking (EXISTS in {@code TB_FIRM_CONF} with {@code
-     * ORG_STAT='1'}).
+     * Firm-banking withdrawal-account lookup for the payment Excel-Upload
+     * dialog (legacy `comm_1001_001`). Returns active current/savings
+     * accounts at the firm-banking banks that the current tenant has
+     * enrolled in firm-banking (EXISTS in {@code TB_FIRM_CONF} with
+     * {@code ORG_STAT='1'}). Module-agnostic — shared by all five payment
+     * consumers via {@code WithdrawalAccountListService}.
      *
      * <p>Mirrors the legacy IDO {@code ACCT_MSTR_R011} via
-     * {@code comm_1001_001_act.jsp:23-65}. The five legacy filters
-     * are:
+     * {@code comm_1001_001_act.jsp:23-65}. The legacy filters applied
+     * here are:
      * <ol>
      *   <li>tenant scope ({@code biz_key})</li>
-     *   <li>firm-banking-capable banks (legacy hardcoded
-     *       {@code bank_cd IN ('11704088', '11704020')}; the
-     *       refactor relaxes this — any bank with a matching
-     *       {@code TB_FIRM_CONF} row qualifies, since the firm-banking
-     *       enrolment table is itself the authoritative "capable"
-     *       indicator)</li>
+     *   <li><b>G1</b> — firm-banking banks
+     *       ({@code bank_cd IN :bankCds}; legacy hardcoded
+     *       {@code ('11704088','11704020')} —
+     *       {@code WithdrawalAccountConstants.WITHDRAWAL_BANK_CDS})</li>
      *   <li>current/savings only ({@code acct_type_cd IN ('03'..'08')})</li>
      *   <li>{@code ACTV_YN = 'Y'}</li>
-     *   <li>EXISTS in {@code TB_FIRM_CONF} with {@code ORG_STAT='1'}
-     *       joined via the {@code NAPAS_BANK_INFO} dictionary</li>
+     *   <li><b>G3</b> — EXISTS in {@code TB_FIRM_CONF} with
+     *       {@code ORG_STAT='1'} joined via the {@code NAPAS_BANK_INFO}
+     *       dictionary</li>
      * </ol>
      *
-     * <p><b>Deferred filter:</b> the legacy also requires EXISTS in
-     * {@code ACCT_AUTH_INFO} with {@code AUTH_TYPE IN ('V','W')} so
-     * only accounts the user has View/Withdraw authority on appear.
-     * That table is not yet migrated in the refactor (workspace
-     * `CLAUDE.md` PROD active list); the filter ports together with
-     * the {@code ACCT_AUTH_INFO} entity in a follow-up. R&D safe:
-     * with a single test tenant the per-user check is a no-op.
+     * <p>The legacy per-user {@code ACCT_AUTH_INFO} {@code AUTH_TYPE IN
+     * ('V','W')} authorization filter (<b>G2</b>) is applied in the
+     * service layer ({@code WithdrawalAccountListService}), not here.
      *
      * <p>Optional {@code ccyCd} filter — legacy carries the parameter
      * but the SQL has it commented out. Honored here when the caller
      * supplies a non-null value so future per-upload-currency
      * narrowing is one-prop change away.
      *
-     * <p><b>R&D fallback (2026-05-14):</b> the strict EXISTS clause is
-     * gated by a "tenant has any firm-banking enrolment at all" check.
-     * When {@code TB_FIRM_CONF} has at least one {@code ORG_STAT='1'}
-     * row for the tenant, the legacy filter applies verbatim. When the
-     * tenant has NO firm-banking enrolment rows yet (the case on the
-     * shared dev DB at 172.168.5.172/wecmsdevdb where seeding requires
-     * write access we don't have), the EXISTS clause is bypassed so the
-     * dropdown still surfaces active current/savings accounts and the
-     * Excel-upload demo can run end-to-end. Once firm-banking is
-     * provisioned for the tenant, strict parity resumes automatically —
-     * no code change needed. Production parity is preserved because any
-     * real WeCMS tenant has firm-banking enrolled before reaching this
-     * screen; the fallback only kicks in for un-provisioned R&D tenants.
+     * <p><b>G3 fallback (2026-05-14):</b> when {@code
+     * allowNoFirmConfigFallback} is {@code true}, the mandatory firm-
+     * banking EXISTS is relaxed by an {@code OR NOT EXISTS (any
+     * ORG_STAT='1' row for the tenant)} escape so an un-provisioned
+     * tenant still surfaces active current/savings accounts (LOCAL R&D
+     * only — the shared dev DB at 172.168.5.172/wecmsdevdb has no
+     * firm-banking enrolment and we lack write access to seed it). The
+     * flag defaults to {@code false} (strict legacy parity) in
+     * SIT/UAT/PROD; it is turned on only in {@code application-local.yml}.
+     * On a provisioned tenant the fallback branch is a no-op, so behavior
+     * is identical regardless of the flag.
      */
     @Query("""
             SELECT a FROM AcctMstr a
              WHERE a.bizKey = :bizKey
                AND a.actvYn = 'Y'
                AND a.acctTypeCd IN ('03','04','05','06','07','08')
+               AND a.bankCd IN :bankCds
                AND (:ccyCd IS NULL OR a.ccyCd = :ccyCd)
                AND (
                     EXISTS (
                          SELECT 1
-                           FROM FirmBankingSetting tfc, NapasBankInfo nbi
+                           FROM TbFirmConf tfc, NapasBankInfo nbi
                           WHERE tfc.bizKey      = a.bizKey
                             AND tfc.wdrlActNo   = a.acctNo
                             AND tfc.outBankCd   = nbi.napasBankCd
                             AND nbi.bankCd      = a.bankCd
                             AND tfc.orgStat     = '1'
                         )
-                    OR NOT EXISTS (
+                    OR (:allowNoFirmConfigFallback = TRUE AND NOT EXISTS (
                          SELECT 1
-                           FROM FirmBankingSetting tfc2
+                           FROM TbFirmConf tfc2
                           WHERE tfc2.bizKey  = a.bizKey
                             AND tfc2.orgStat = '1'
-                        )
+                        ))
                    )
              ORDER BY a.bankCd, a.acctNo
             """)
-    List<AcctMstr> findWithdrawalAccounts(
-            @Param("bizKey") String bizKey,
-            @Param("ccyCd")  String ccyCd);
+    List<AcctMstr> findFirmBankingWithdrawalAccounts(
+            @Param("bizKey")                   String bizKey,
+            @Param("ccyCd")                    String ccyCd,
+            @Param("bankCds")                  java.util.Collection<String> bankCds,
+            @Param("allowNoFirmConfigFallback") boolean allowNoFirmConfigFallback);
 
     /* =================================================================
      *  Own Account Transfer (refactor slug: own-account-transfer)

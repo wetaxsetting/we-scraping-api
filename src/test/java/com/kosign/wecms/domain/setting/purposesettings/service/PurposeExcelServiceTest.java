@@ -4,12 +4,13 @@ import com.kosign.wecms.common.auditlog.service.AuditLogService;
 import com.kosign.wecms.common.enums.LangCd;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.i18n.MessageResolver;
+import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeExcelImportRequest;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeExcelImportResult;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeExcelPreview;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeExcelPreviewRow;
-import com.kosign.wecms.domain.setting.purposesettings.entity.BusiUsagSet;
+import com.kosign.wecms.domain.setting.purposesettings.entity.BusiUsagSetInfm;
 import com.kosign.wecms.domain.setting.purposesettings.repository.PurposeSettingsRepository;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
@@ -63,6 +64,7 @@ class PurposeExcelServiceTest {
     @Mock PurposeSettingsRepository repo;
     @Mock AuditLogService           auditLogService;
     @Mock MessageResolver           messages;
+    @Mock LegacyFunctionRepository  legacyFunctions;
 
     PurposeExcelService service;
 
@@ -71,7 +73,7 @@ class PurposeExcelServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new PurposeExcelService(repo, auditLogService, messages);
+        service = new PurposeExcelService(repo, auditLogService, messages, legacyFunctions);
         TenantContext.set(USER, USER, BIZ, LangCd.EN);
         // Resolve any message key to a deterministic placeholder so
         // assertions can match without locking to the bundle's text.
@@ -167,7 +169,7 @@ class PurposeExcelServiceTest {
                 new String[]{"P01", "Already exists", "", ""}));
         MultipartFile file = mockXlsx(bytes);
 
-        BusiUsagSet existing = entity("0000000007", "P01", "Deposit", /* parent */ null);
+        BusiUsagSetInfm existing = entity("0000000007", "P01", "Deposit", /* parent */ null);
         when(repo.findActiveForTenant(BIZ, PurposeSettingsService.RESERVED_SYSTEM_CODES, ""))
                 .thenReturn(List.of(existing));
 
@@ -201,7 +203,7 @@ class PurposeExcelServiceTest {
                 new String[]{"BD01-1", "Child", "", "P01"}));
         MultipartFile file = mockXlsx(bytes);
 
-        BusiUsagSet parent = entity("0000000007", "P01", "Deposit", null);
+        BusiUsagSetInfm parent = entity("0000000007", "P01", "Deposit", null);
         when(repo.findActiveForTenant(BIZ, PurposeSettingsService.RESERVED_SYSTEM_CODES, ""))
                 .thenReturn(List.of(parent));
 
@@ -237,8 +239,8 @@ class PurposeExcelServiceTest {
 
         // P1.1 is a level-2 row (its own parent_use_usag_cd is set) — would
         // form level 3 if accepted as parent.
-        BusiUsagSet level1 = entity("0000000007", "P01", "Deposit", null);
-        BusiUsagSet level2 = entity("0000000008", "P1.1", "Sale", "0000000007");
+        BusiUsagSetInfm level1 = entity("0000000007", "P01", "Deposit", null);
+        BusiUsagSetInfm level2 = entity("0000000008", "P1.1", "Sale", "0000000007");
         when(repo.findActiveForTenant(BIZ, PurposeSettingsService.RESERVED_SYSTEM_CODES, ""))
                 .thenReturn(List.of(level1, level2));
 
@@ -290,10 +292,10 @@ class PurposeExcelServiceTest {
         when(repo.findActiveForTenant(BIZ, PurposeSettingsService.RESERVED_SYSTEM_CODES, ""))
                 .thenReturn(List.of());
         when(repo.findMaxDispOrd(BIZ)).thenReturn(Optional.of(0));
-        when(repo.nextUseUsagCd(BIZ))
+        when(legacyFunctions.nextUseUsagCd(BIZ, ""))
                 .thenReturn("0000000010")   // root
                 .thenReturn("0000000011");  // child
-        when(repo.saveAndFlush(any(BusiUsagSet.class)))
+        when(repo.saveAndFlush(any(BusiUsagSetInfm.class)))
                 .thenAnswer(inv -> inv.getArgument(0));
 
         PurposeExcelImportResult out = service.import_(req);
@@ -330,8 +332,8 @@ class PurposeExcelServiceTest {
     // Helpers
     // ------------------------------------------------------------------
 
-    private static BusiUsagSet entity(String useUsagCd, String handCd, String name, String parent) {
-        BusiUsagSet e = new BusiUsagSet();
+    private static BusiUsagSetInfm entity(String useUsagCd, String handCd, String name, String parent) {
+        BusiUsagSetInfm e = new BusiUsagSetInfm();
         e.setBizKey(BIZ);
         e.setUseUsagCd(useUsagCd);
         e.setHandUseUsagCd(handCd);

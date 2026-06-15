@@ -13,7 +13,7 @@ import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumr;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrDetl;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
+import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,6 +23,7 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -100,11 +101,9 @@ public class TransferDispatchExecutor {
      *  PymnHelper:2259 uses {@code FincMdaDiv.ACCOUNT}. */
     private static final String FINC_MDA_DIV_ACCOUNT = "A";
 
-    /** Same-bank file-path flag. Legacy {@code PymnHelper:2303-2330} uses
-     *  {@code BankChnlDiv.CURRENT_BANK_TRANSFER = "T"} — NOT "C". Fixed
-     *  2026-06-08 (G10/IT-G20 parity); matches the value the
-     *  {@code InternalTransferDispatchExecutor} already writes. */
-    private static final String BANK_CHNL_DIV_CURRENT_BANK = "T";
+    /** Same-bank routing flag. Legacy PymnHelper:2280 uses
+     *  {@code BankChnlDiv.CURRENT_BANK_TRANSFER}. */
+    private static final String BANK_CHNL_DIV_CURRENT_BANK = "C";
 
     /** Cross-bank routing flag. Legacy PymnHelper:2281 uses
      *  {@code BankChnlDiv.OTHER_BANK_TRANSFER}. */
@@ -134,16 +133,15 @@ public class TransferDispatchExecutor {
     private final AcctMstrRepository     acctMstrRepository;
     private final DispatchKeyGenerator   keyGenerator;
     private final Clock                  clock;
+    private final LegacyFunctionRepository legacyFunctions;
 
-    /** Shinhan withdrawal-bank code — drives the file-path {@code TRSC_CCY_CD}
-     *  per-bank rule (Shinhan → {@code WDRL_CCY_CD}, else line {@code TRNF_CCY_CD};
-     *  legacy {@code PymnHelper:2266-2276}). Non-final so Spring field-injects it
-     *  after the {@code @RequiredArgsConstructor} build. Default mirrors the
-     *  {@code InternalTransferDispatchExecutor} config default (`970424`). This is
-     *  a field-value lookup only — it does NOT introduce the Internal-Transfer
-     *  Woori/Shinhan USD→VND routing special cases. */
-    @Value("${wecms.payment.dispatch.shinhan-bank-cd:970424}")
-    private String shinhanBankCd;
+    /** Post-commit 00301 hand-off (port of BATCH1), gated by
+     *  {@code wecms.dispatch.auto-receive}. Shared by every File-path executor. */
+    private final DispatchAutoReceiveRegistrar autoReceiveRegistrar;
+
+    /** Post-commit real-time 202 hand-off (port of NAPAS_REAL_TIME_BATCH), gated by
+     *  {@code wecms.dispatch.realtime-dispatch}. Used by the VND/API path. */
+    private final RealtimeDispatchRegistrar realtimeDispatchRegistrar;
 
     /**
      * Insert dispatch rows for one batch. Branch on the request
@@ -186,8 +184,10 @@ public class TransferDispatchExecutor {
             String dttm14,
             String trnfCcyCd) {
 
+        List<String> tranSeqs = new ArrayList<>(lines.size());
         for (ScdulPymnSumrDetl line : lines) {
             String tranSeq = keyGenerator.nextTranSeq(bizKey, tranDt);
+            tranSeqs.add(tranSeq);
 
             TbPayTarget row = new TbPayTarget();
             row.setTranDt(tranDt);
@@ -223,6 +223,10 @@ public class TransferDispatchExecutor {
 
         log.info("feature=dispatch path=API bizKey={} scdulPymnNo={} lines={} tranDt={}",
                 bizKey, master.getScdulPymnNo(), lines.size(), tranDt);
+
+        // Hand off to the real-time 202 flow AFTER this transaction commits
+        // (port of NAPAS_REAL_TIME_BATCH; gated, default-off; per-target isolated).
+        realtimeDispatchRegistrar.registerAfterCommit(bizKey, tranDt, tranSeqs);
     }
 
     /* ───────────────── Non-VND / File path ───────────────── */
@@ -262,17 +266,12 @@ public class TransferDispatchExecutor {
         master.setPayTranDt(tranDt);
         master.setPayFileSeqNo(fileSeqNo);
 
-        // Per-bank file-path TRSC_CCY_CD discriminator (legacy
-        // PymnHelper:2266-2276). Resolved once for the batch: Shinhan →
-        // withdrawal currency, every other bank (incl. Woori) → the line's
-        // own transfer currency. NOTE: this is a field-value rule only — it
-        // does NOT touch routing (still pure VND→API / else→File).
-        boolean shinhan = isShinhan(master.getOutBankCd());
-        String wdrlCcyCd = resolveWdrlCcyCd(bizKey, master);
-
-        // 2. Detail rows. SEQ starts at 1 and increments per line.
-        BigDecimal seq = BigDecimal.ONE;
+        // 2. Detail rows. SEQ seeded ONCE via the wb_get_next_val funnel (V140 #20,
+        //    per (biz_key, file_seq_no) MAX+1) then incremented per line — no per-row DB call.
+        //    fileSeqNo is freshly allocated per dispatch, so the seed is 1 → 1, 2, 3, ...
+        long seqCursor = Long.parseLong(legacyFunctions.nextTbPayFileDataSeq(bizKey, fileSeqNo)) - 1;
         for (ScdulPymnSumrDetl line : lines) {
+            BigDecimal seq = BigDecimal.valueOf(++seqCursor);
             TbPayFileData data = new TbPayFileData();
             data.setTranDt(tranDt);
             data.setBizKey(bizKey);
@@ -281,12 +280,11 @@ public class TransferDispatchExecutor {
             data.setTarBankCd(line.getTarBankCd());
             data.setFincMdaDiv(FINC_MDA_DIV_ACCOUNT);
             data.setFincMdaNo(line.getFincMdaNo());
-            // TRSC_CCY_CD (G9/IT-G19 parity, fixed 2026-06-08): legacy
-            // PymnHelper:2266-2276 picks WDRL_CCY_CD for Shinhan, the line's
-            // TRNF_CCY_CD otherwise (covers Woori + generic banks). Mirrors
-            // the InternalTransferDispatchExecutor field rule — without its
-            // routing special cases.
-            data.setTrscCcyCd(shinhan ? wdrlCcyCd : line.getTrnfCcyCd());
+            // TRSC_CCY_CD: legacy (PymnHelper:2266-2276) picks WDRL_CCY_CD for
+            // Shinhan, TRNF_CCY_CD for Woori. Refactor uses the request's
+            // trnfCcyCd as the unified source — the bank-specific override
+            // can be added when the bank dictionary lands.
+            data.setTrscCcyCd(trnfCcyCd);
             data.setTranAmt(line.getTranAmt());
             data.setBankChnlDiv(
                     sameBank(master.getOutBankCd(), line.getTarBankCd())
@@ -316,11 +314,13 @@ public class TransferDispatchExecutor {
             line.setPayFileSeqNo(null);
             line.setPaySeq(null);
 
-            seq = seq.add(BigDecimal.ONE);
         }
 
         log.info("feature=dispatch path=FILE bizKey={} scdulPymnNo={} lines={} tranDt={} fileSeqNo={}",
                 bizKey, master.getScdulPymnNo(), lines.size(), tranDt, fileSeqNo);
+
+        // 3. Hand off to the 00301 reception flow AFTER this transaction commits.
+        autoReceiveRegistrar.registerAfterCommit(tranDt, bizKey, fileSeqNo);
     }
 
     /* ───────────────── Helpers ───────────────── */
@@ -390,33 +390,5 @@ public class TransferDispatchExecutor {
 
     private static boolean sameBank(String outBankCd, String tarBankCd) {
         return outBankCd != null && outBankCd.equals(tarBankCd);
-    }
-
-    /** True when the batch's withdrawal bank is Shinhan — drives the
-     *  file-path {@code TRSC_CCY_CD} per-bank rule. Raw bank-code equality
-     *  (no cross-code-space match); trims both sides. */
-    private boolean isShinhan(String outBankCd) {
-        if (outBankCd == null || shinhanBankCd == null) return false;
-        return outBankCd.trim().equals(shinhanBankCd.trim());
-    }
-
-    /**
-     * Resolve the withdrawal currency for the file-path {@code TRSC_CCY_CD}
-     * (Shinhan branch): master {@code WDRL_CCY_CD}, falling back to
-     * {@code ACCT_MSTR.CCY_CD} by {@code (BIZ_KEY, OUT_BANK_CD, WDRL_ACT_NO)}
-     * for legacy rows that left it null. Mirrors
-     * {@code InternalTransferDispatchExecutor.resolveWdrlCcyCd}.
-     */
-    private String resolveWdrlCcyCd(String bizKey, ScdulPymnSumr master) {
-        String fromMaster = master.getWdrlCcyCd();
-        if (fromMaster != null && !fromMaster.isBlank()) {
-            return fromMaster.trim();
-        }
-        return acctMstrRepository
-                .findByBizKeyAndBankCdAndAcctNo(bizKey, master.getOutBankCd(), master.getWdrlActNo())
-                .map(AcctMstr::getCcyCd)
-                .filter(s -> s != null && !s.isBlank())
-                .map(String::trim)
-                .orElse(null);
     }
 }

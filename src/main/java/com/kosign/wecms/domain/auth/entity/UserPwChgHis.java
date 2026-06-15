@@ -1,6 +1,8 @@
 package com.kosign.wecms.domain.auth.entity;
 
+import com.kosign.wecms.common.entity.LegacyDtmConverter;
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.IdClass;
@@ -8,6 +10,8 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
 
@@ -44,18 +48,22 @@ public class UserPwChgHis {
     private String userId;
 
     @Id
-    @Column(name = "REG_SEQ_NO", nullable = false)
+    @JdbcTypeCode(SqlTypes.NUMERIC)
+    @Column(name = "REG_SEQ_NO", precision = 20, scale = 0, nullable = false)
     private Long regSeqNo;
 
     @Column(name = "USER_PW", length = 100, nullable = false)
     private String userPw;
 
-    @Column(name = "MOD_DTM")
+    /** JEX VARCHAR(14) yyyyMMddHHmmss — converted from OffsetDateTime. */
+    @Convert(converter = LegacyDtmConverter.class)
+    @Column(name = "MOD_DTM", length = 14)
     private OffsetDateTime modDtm;
 
     @Column(name = "IP_ADDR", length = 100)
     private String ipAddr;
 
-    @Column(name = "REG_DTM", nullable = false)
+    @Convert(converter = LegacyDtmConverter.class)
+    @Column(name = "REG_DTM", length = 14, nullable = false)
     private OffsetDateTime regDtm;
 }

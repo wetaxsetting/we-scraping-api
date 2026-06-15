@@ -93,7 +93,7 @@ public class VendorPaymentController {
      *  the internal numeric key (5–30 digits) and the user-visible DOC_NO
      *  (VO_YYMMDD_NNN format, e.g. VO_260521_001) so the frontend can
      *  navigate to the detail page using either identifier. */
-    private static final String SCDUL_PYMN_NO_PATTERN = "^([0-9]{5,30}|VO_[0-9]{6}_[0-9]{1,9})$";
+    private static final String SCDUL_PYMN_NO_PATTERN = "^([0-9]{1,30}|VO_[0-9]{6}_[0-9]{1,9})$";
 
     /** Line-id format on {@code SCDUL_PYMN_SUMR_DETL.SCDUL_PYMN_DETL_NO}
      *  — alphanumeric, 1-20 chars (mirrors Internal Transfer). */
@@ -207,15 +207,19 @@ public class VendorPaymentController {
         return ApiResponse.ok(null);
     }
 
-    /** Submit one batch for approval. Legacy {@code comm_0192_001_c005}. */
-    @PostMapping("/{id}/request-approval")
+    /** Submit one batch for approval. Legacy {@code comm_0192_001_c005}.
+     *  M-1: multipart so attachments ride along (JSON in `request`, files in
+     *  `attachments`); a no-file submit omits the `attachments` parts. */
+    @PostMapping(path = "/{id}/request-approval", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResponse<RequestApprovalResponse> requestApproval(
             @PathVariable("id")
             @Size(max = 30)
             @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
             String id,
-            @Valid @RequestBody RequestApprovalRequest req) {
-        return ApiResponse.ok(service.requestApproval(id, req));
+            @Valid @RequestPart("request") RequestApprovalRequest req,
+            @RequestPart(value = "attachments", required = false)
+            java.util.List<org.springframework.web.multipart.MultipartFile> attachments) {
+        return ApiResponse.ok(service.requestApproval(id, req, attachments));
     }
 
     /** Approve / reject the active approval request. Legacy {@code bltb_0001_003_u001}. */
