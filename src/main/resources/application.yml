@@ -93,6 +93,39 @@ wecms:
     # is local dev only — each profile (application-local.yml etc.)
     # adds its own environment origins on top.
     allowed-origins: ${WECMS_CORS_ALLOWED_ORIGINS:http://localhost:3000}
+  # =============================================================================
+  # Credential cipher (legacy pgcrypto-compatible)
+  # =============================================================================
+  crypto:
+    # Seed for the AES-256-CBC (zero-IV, PKCS#5) cipher applied to the
+    # BANK_CERT_INFO / GDT_CERT_INFO password column. SHA-256(seed) is the
+    # AES key — byte-identical to the legacy JEX DB functions
+    #   public.encrypt(txt) = encode(encrypt(txt::bytea,
+    #                               digest('wabooksvn','sha256'),'aes'),'base64')
+    # MUST equal the legacy seed for cross-system data compatibility on a
+    # shared JEX DB. Do NOT change unless the legacy DB function changes.
+    # (Replaces the retired AES-GCM `wecms.crypto.cert-key`.)
+    legacy-cert-seed: ${WECMS_CRYPTO_LEGACY_CERT_SEED:wabooksvn}
+  # =============================================================================
+  # Login Credentials
+  # =============================================================================
+  login-credentials:
+    # When true, GDT (tax-portal) create/update verifies the credential
+    # through the Coocon smart-gateway (pseudo-bank VIETNAM_GDT) BEFORE
+    # persisting — legacy parity (the save action is the login test). Only
+    # a COMPLETED login persists; ERROR or an unsatisfied challenge blocks
+    # the save. Default FALSE: the GDT portal requires an interactive
+    # captcha, so full enablement depends on the GDT challenge-chain
+    # (frontend dialog + resume endpoints) follow-up; until that lands,
+    # turning this on will reject any GDT login that hits a captcha. Local
+    # R&D also has no reachable gateway. See
+    # docs/audits/login-credentials-legacy-vs-refactor-audit.md (G2).
+    gdt-verify-enabled: ${WECMS_LOGIN_CREDENTIALS_GDT_VERIFY_ENABLED:false}
+  # NXiSAS local-engine (client-side) GDT module config moved out of YAML
+  # 2026-06-16 — the single fixed GDT triple now lives as code constants in
+  # GdtNxisasConfig (mirroring NxisasBankConfig). Served via
+  # GET /api/v1/login-credentials/gdt/engine-config. See
+  # docs/audits/login-credentials-jexadmin-removal-audit.md.
   tenant:
     # Dormant config slot. Spring no longer auto-creates company/admin
     # data at startup — the BootstrapRunner that previously consumed

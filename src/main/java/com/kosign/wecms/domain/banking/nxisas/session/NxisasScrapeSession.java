@@ -41,6 +41,11 @@ public class NxisasScrapeSession {
     private final String userId;
     private final BigDecimal credentialSeqNo;
     private final String bankModule;
+    /** Numeric bank code (e.g. {@code "11704088"}) captured at session
+     *  start — needed for the {@code NXISAS_ACCT_TYPE_MAPPING} lookup in
+     *  {@code runAcctList} (the gateway {@link #bankModule} is the adapter
+     *  path, not the numeric code the mapping table is keyed by). */
+    private final String bankCd;
 
     @Setter(AccessLevel.PUBLIC) private Status status = Status.AWAITING_CHALLENGE;
     @Setter(AccessLevel.PUBLIC) private ScrapeChallengeKind challengeKind;
@@ -88,10 +93,21 @@ public class NxisasScrapeSession {
 
     /** {@code yyyyMMdd} sync window start — captured on the initial
      *  start() call so resumed steps after a QNA / OTP challenge use
-     *  the same window. */
+     *  the same window. Under {@link #autoWindow} this holds only a
+     *  batch-level fallback; each account's real TRANSACTION start is
+     *  computed per-account from its own last-success. */
     @Setter(AccessLevel.PUBLIC) private String fromDt;
     /** {@code yyyyMMdd} sync window end — see {@link #fromDt}. */
     @Setter(AccessLevel.PUBLIC) private String toDt;
+
+    /** True when the popup ran in Auto mode (no explicit date range).
+     *  In that case the TRANSACTION start is computed <em>per account</em>
+     *  from its own last-success date (legacy {@code fnsh_0001_001.ts}
+     *  {@code #acct_Reg} parity) instead of using a single batch window —
+     *  so a re-sync only pulls new transactions since each account last
+     *  synced, never the whole window again. False when the user picked
+     *  an explicit from/to range (that window applies to every account). */
+    @Setter(AccessLevel.PUBLIC) private boolean autoWindow = false;
 
     /** FIFO queue of accounts still to scrape after the current
      *  LOGIN succeeds. Drained by the orchestrator inside
@@ -127,6 +143,52 @@ public class NxisasScrapeSession {
      *  TRANSACTION + BALANCE all succeeded + audit stamps written). */
     @Setter(AccessLevel.PUBLIC) private int accountsSynced = 0;
 
+    /** Per-currency roll-up of the batch — keyed by {@code CCY_CD}
+     *  ("USD" / "KRW" / "VND" / …), insertion-ordered so the
+     *  {@code COMPLETED} response lists currencies in first-seen order.
+     *  Each account's persist result is folded into its currency bucket
+     *  in {@code BankTransactionSyncService.processOneAccount}; the
+     *  buckets feed the {@code currency_summaries} wire field so the
+     *  popup's per-currency groups show their own numbers instead of the
+     *  batch aggregate. */
+    @Getter private final java.util.LinkedHashMap<String, CurrencyTally> currencyTallies =
+            new java.util.LinkedHashMap<>();
+
+    /** Fetch (creating if absent) the running tally for one currency. */
+    public CurrencyTally currencyTally(String ccyCd) {
+        return currencyTallies.computeIfAbsent(ccyCd == null ? "" : ccyCd, k -> new CurrencyTally());
+    }
+
+    /**
+     * Mutable per-currency accumulator. {@code successCount} counts
+     * accounts of this currency that fully synced; {@code creditCount} /
+     * {@code debitCount} count Coocon-returned transaction rows;
+     * {@code creditTotal} / {@code debitTotal} sum {@code TRSC_AMT}
+     * (sign-normalised positive by the caller). One {@link #addAccount}
+     * call per fully-processed account.
+     */
+    public static final class CurrencyTally {
+        private int successCount = 0;
+        private int creditCount = 0;
+        private int debitCount = 0;
+        private BigDecimal creditTotal = BigDecimal.ZERO;
+        private BigDecimal debitTotal = BigDecimal.ZERO;
+
+        public void addAccount(int credit, int debit, BigDecimal creditAmt, BigDecimal debitAmt) {
+            this.successCount++;
+            this.creditCount += credit;
+            this.debitCount  += debit;
+            if (creditAmt != null) this.creditTotal = this.creditTotal.add(creditAmt);
+            if (debitAmt  != null) this.debitTotal  = this.debitTotal.add(debitAmt);
+        }
+
+        public int successCount()        { return successCount; }
+        public int creditCount()         { return creditCount; }
+        public int debitCount()          { return debitCount; }
+        public BigDecimal creditTotal()  { return creditTotal; }
+        public BigDecimal debitTotal()   { return debitTotal; }
+    }
+
     /** Bank credential username for the account currently being scraped.
      *  Captured each time {@link com.kosign.wecms.domain.banking.bankcredentials.service.BankCredentialService}
      *  resolves a credential at the head of {@link #accountsQueue}, so a
@@ -134,6 +196,16 @@ public class NxisasScrapeSession {
      *  follow) can echo it back to the frontend's Security Question
      *  popup. Never sent to Coocon — display-only. */
     @Setter(AccessLevel.PUBLIC) private String loginId;
+
+    /** Bank/login-group key whose LOGIN currently owns the live
+     *  {@link #sasSessionID} on this session. This is the refactor analogue
+     *  of legacy {@code nxisas_api.js}'s {@code _nxisas_auth[bankCd]} cache
+     *  (nxisas_api.js:2428) that lets every account under one bank reuse a
+     *  single login instead of re-authenticating per account. {@code null}
+     *  until the first clean LOGIN; updated each time a different group's
+     *  LOGIN clears. SYNC mode only — the SETUP flow scrapes one bank per
+     *  session and never sets it. */
+    @Setter(AccessLevel.PUBLIC) private String activeLoginGroupKey;
 
     public void touch() {
         lastTouched = Instant.now();

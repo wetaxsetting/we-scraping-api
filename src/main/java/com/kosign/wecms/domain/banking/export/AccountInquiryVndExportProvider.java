@@ -1,5 +1,6 @@
 package com.kosign.wecms.domain.banking.export;
 
+import com.kosign.wecms.common.i18n.RelativeTimeFormatter;
 import com.kosign.wecms.domain.banking.service.AccountService;
 import org.springframework.stereotype.Component;
 
@@ -14,8 +15,9 @@ import org.springframework.stereotype.Component;
 @Component
 public class AccountInquiryVndExportProvider extends AccountInquiryExportProvider {
 
-    public AccountInquiryVndExportProvider(AccountService accountService) {
-        super(accountService);
+    public AccountInquiryVndExportProvider(AccountService accountService,
+                                           RelativeTimeFormatter relativeTimeFormatter) {
+        super(accountService, relativeTimeFormatter);
     }
 
     @Override

@@ -7,7 +7,6 @@ import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.common.web.SortDirection;
 import com.kosign.wecms.domain.banking.entity.AcctMstr;
-import com.kosign.wecms.domain.banking.entity.BankInfm;
 import com.kosign.wecms.domain.banking.entity.NapasBankInfo;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.OwnAccountTransferAuditActions;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.OwnAccountTransferConstants;
@@ -26,7 +25,7 @@ import com.kosign.wecms.domain.banking.bankcredentials.entity.BankCertInfo;
 import com.kosign.wecms.domain.banking.bankcredentials.repository.BankCertInfoRepository;
 import com.kosign.wecms.domain.banking.bankcredentials.service.BankCertCryptoService;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
-import com.kosign.wecms.domain.banking.repository.BankInfmRepository;
+import com.kosign.wecms.domain.banking.service.BankCdResolver;
 import com.kosign.wecms.domain.banking.repository.NapasBankInfoRepository;
 import com.kosign.wecms.domain.banking.repository.NapasRemitTrnsHstrRepository;
 import com.kosign.wecms.domain.setting.bankaccount.entity.AcctAuthInfo;
@@ -125,7 +124,7 @@ public class OwnAccountTransferService {
 
     private final AcctMstrRepository           acctMstrRepo;
     private final AcctAuthInfoRepository       acctAuthRepo;
-    private final BankInfmRepository           bankInfmRepo;
+    private final BankCdResolver               bankCdResolver;
     private final NapasBankInfoRepository      napasBankInfoRepo;
     private final NapasRemitTrnsHstrRepository napasRemitTrnsHstrRepo;
     private final BankCertInfoRepository       bankCertInfoRepo;
@@ -807,7 +806,13 @@ public class OwnAccountTransferService {
      *  warning. */
     private SourceAccountRow toSourceRow(AcctMstr a, boolean canTransfer, BankCertInfo cert) {
         final String certInfoCon       = cert == null ? null : cert.getCertInfoCon();
-        final String certInfoDetlCon   = cert == null ? null : decryptOrNull(cert.getCertInfoDetlCon());
+        // Login password → STRICT decrypt: this value becomes loginPWD and
+        // is forwarded to the NXiSAS engine (and on to the bank). A value
+        // that doesn't decrypt under the legacy key (corrupt / foreign
+        // cipher, e.g. a retired-AES-GCM blob) MUST project as null so the
+        // composer's hasSavedBankCert pre-flight blocks the call — never be
+        // echoed to the bank (which rejects it with an opaque 8000FFFF).
+        final String certInfoDetlCon   = cert == null ? null : decryptPasswordOrNull(cert.getCertInfoDetlCon());
         final String certInfoDetlCon2  = cert == null ? null : decryptOrNull(cert.getCertInfoDetlCon2());
         final String nxisasGbSeqNo     = cert == null || cert.getNxisasGbSeqNo() == null
                 ? null
@@ -886,9 +891,37 @@ public class OwnAccountTransferService {
         }
     }
 
+    /** Strict decrypt for the login password column ({@code CERT_INFO_DETL_CON}).
+     *  Unlike {@link #decryptOrNull(String)} this never echoes an
+     *  undecryptable value — a blob that doesn't decrypt under the legacy
+     *  key (corrupt row, or one written by the retired AES-GCM cipher)
+     *  projects as null so {@code loginPWD} is empty and the composer's
+     *  {@code hasSavedBankCert} pre-flight blocks the engine call. Without
+     *  this, the ciphertext was forwarded to the bank as the password,
+     *  surfacing as an opaque institution error (Shinhan {@code 8000FFFF}).
+     *  Cure for a logged failure: re-save the credential via
+     *  Settings &gt; Login Credentials. */
+    private String decryptPasswordOrNull(String ciphertext) {
+        if (ciphertext == null || ciphertext.isEmpty()) return null;
+        String plain = bankCertCrypto.decryptStrict(ciphertext);
+        if (plain == null) {
+            log.warn("oat source-row login password failed strict decrypt — credential is not "
+                    + "legacy-cipher ciphertext (re-save via Settings > Login Credentials). "
+                    + "Projecting loginPWD as null so the engine is never sent an undecryptable value.");
+        }
+        return plain;
+    }
+
     private String resolveBankName(String bankCd) {
         if (bankCd == null || bankCd.isBlank()) return null;
-        return bankInfmRepo.findById(bankCd).map(BankInfm::getRprsBankNm).orElse(bankCd);
+        // UI display change (REQUESTED — not a parity fix): show the legacy
+        // SHORT bank name wb_get_bank_nm(BANK_CD,'s') (e.g. "Shinhan VN",
+        // "VIETIN") instead of the full RPRS_BANK_NM ("Shinhan(Vietnam)").
+        // BankCdResolver.resolveBankNm wraps wb_get_bank_nm(bank_cd,'s') via
+        // LegacyFunctionRepository and already falls back to the bank code
+        // when no name resolves. Display-only; no transfer/payment logic uses
+        // this value.
+        return bankCdResolver.resolveBankNm(bankCd);
     }
 
     private void appendAudit(String action, String refNo, String refNo1, String refNo2) {

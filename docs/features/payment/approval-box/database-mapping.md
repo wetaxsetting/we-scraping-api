@@ -6,16 +6,20 @@ Tables, columns, keys, indexes, Flyway migrations, and domain code values for `a
 
 ## 1. Tables
 
-| Table | Role | Owned by Approval Box? |
+| Table | Role | Used by Approval Box list/action path |
 |---|---|---|
-| `EXPT_RESOL_MSTR` | Approval document master (one per submitted batch) | Yes (read + write) |
-| `EXPT_RESOL_APPRVR_INFM` | Approver chain (one row per approver) | Yes (read + write) |
-| `SCDUL_PYMN_SUMR` | Scheduled-payment summary (Internal/Vendor/Expense/Payroll) | Read (currency, file name) + write-back (`APPR_STTS`, clear `APPR_SEQ_NO`) |
-| `OVRS_PYMN_SUMR` | Overseas-payment summary | Read + write-back (same) |
-| `APPR_LINE_INFM_DETL` | Approval-line template approvers | Read (change-approval-line rebuild) |
-| `AUDIT_LOGS_INFM` | Audit ledger | Write (`WSVC_ID = "approval-box"`) |
+| `EXPT_RESOL_MSTR` | Approval document master (one per submitted batch) | **Read + write** — list base, status, type, doc no/title, amount columns; `APPR_TYPE_CD` + mod cols written on approve/reject; full row on fan-out; deleted on withdraw |
+| `EXPT_RESOL_APPRVR_INFM` | Approver chain (one row per approver) | **Read + write** — chain read + per-row approver counts; `APPRVR_STTS`/`APPR_DTM` written on approve/reject; `W→S` cascade; inserted on fan-out; deleted/rebuilt on withdraw/change-line |
+| `SCDUL_PYMN_SUMR` | Scheduled-payment summary (Internal/Vendor/Expense/Payroll) | **Read** — currency (`CCY_CD`), file name (`ORG_FILE_NM`), uploader visibility (`REG_ID`, G3); **write** = `clearApprSeqNo` on withdraw only. No `APPR_STTS` write-back (column absent in legacy). |
+| `OVRS_PYMN_SUMR` | Overseas-payment summary (`APPR_DV='34'`) | **Read** — currency, file name, uploader visibility; **write** = `clearApprSeqNo` on withdraw only (same as SCDUL). |
+| `CARD_TRNS_HSTR` | Corporate-card transaction ledger (`APPR_DV='33'`) | **Read only** — currency (`CCY_CD`), **card amount** (`SUM(TRSC_AMT)`, G5), uploader visibility (`REG_ID`, G3). The Approval Box never writes it (Card module owns it). |
+| `APPR_LINE_INFM_DETL` | Approval-line template approvers | **Read** (change-approval-line rebuild) |
+| `AUDIT_LOGS_INFM` | Audit ledger | **Write** (`WSVC_ID = "approval-box"`, one row per locale) |
 
-`EXPT_RESOL_FILE` / `EXPT_RESOL_PAY_EVID_FILE` exist in the legacy file model but are **not** read by the refactor list path; the displayed file name comes from `ORG_FILE_NM` on the summary tables (parity fix — legacy read it from `TITL`).
+Other legacy `EXPT_RESOL_*` family tables — **not read by the refactor list path**:
+
+- `EXPT_RESOL_DETL` (per-line transaction detail), `EXPT_RESOL_APPR_LINE` (display snapshot of the line at submission), `EXPT_RESOL_FILE` (requester uploads), `EXPT_RESOL_PAY_EVID_FILE` (payment-evidence uploads): mapped as entities for the fan-out / detail-popup paths but the **main list** does not join them. The displayed file-name column comes from `ORG_FILE_NM` on the summary tables (parity fix — legacy `IDO.EXPT_RESOL_MSTR_R003.xml:146` read `COALESCE(SCDUL.TITL, OVRS.TITL)`, but the refactor moved the file name to `ORG_FILE_NM`; `TITL` now holds the typed title).
+- `BLTB_POST_INFM` (bulletin post): legacy `IDO.EXPT_RESOL_MSTR_R003.xml` LEFT-JOINs it for the Title column (`POST_TITLE`) and a `ref_bltb_cd`/`ref_post_seq_no` filter. The refactor **drops both** — it renders `EXPT_RESOL_MSTR.TITL` directly for the Title column (the WeCMS payment kinds carry no bulletin post; the on-screen values match `TITL`). Out-of-scope table for this feature.
 
 ---
 
@@ -81,13 +85,14 @@ Constraints (DEV): PK `pk_expt_resol_apprvr` only — **no FK to the master** (l
 | Repository method | Query | Used by |
 |---|---|---|
 | `ExptResolMstrRepository.search(...)` | JPQL constructor projection → `ApprovalBoxProjection`; filters bizKey/delYn/apprDv-IN/draftDate-BETWEEN/apprTypeCd/keyword + visibility; two correlated COUNT subqueries | list |
-| `ExptResolMstrRepository.countTabs(...)` | JPQL constructor projection → `ApprovalBoxTabCounts`; same scope minus apprTypeCd; four `SUM(CASE…)` | tab counts |
-| `ExptResolMstrRepository.findMaxDocNoSeqByBizKeyAndPrefix(...)` | native MAX(seq) for `VO_YYMMDD_` | fan-out `nextDocNo` |
+| `ExptResolMstrRepository.countTabs(...)` | JPQL constructor projection → `ApprovalBoxTabCounts`; same scope minus apprTypeCd (identical 5-branch visibility); four `SUM(CASE…)` | tab counts |
+| `ExptResolMstrRepository.findAmountBasisForTotals(...)` | JPQL `Object[]` `(apprSeqNo, apprDv, totPayKhrAmt, totPayUsdAmt, totPayVndAmt)`; same WHERE as `countTabs` (tab-unfiltered, full visibility), unpaged | footer per-currency totals (G1) |
 | `ExptResolApprvrInfmRepository.findChain(bizKey, apprSeqNo)` | JPQL ORDER BY `apprvrLineNo ASC` | approvers + row mapping |
 | `ExptResolApprvrInfmRepository.countByStatus(...)` | JPQL COUNT by status | approve/reject recount |
 | `ExptResolApprvrInfmRepository.stopDownstream(...)` | `@Modifying` UPDATE `W→S` | reject |
 | `ExptResolApprvrInfmRepository.deleteByBizKeyAndApprSeqNo(...)` | `@Modifying` DELETE chain | withdraw / change-line |
-| `ScdulPymnSumrRepository` / `OvrsPymnSumrRepository` `findCcyCdBy…`, `findOrgFileNmBy…`, `updateApprStts`, `clearApprSeqNo` | currency/file batch reads + write-back | list mapping + approve/reject/withdraw |
+| `ScdulPymnSumrRepository` / `OvrsPymnSumrRepository` `findCcyCdBy…`, `findOrgFileNmBy…`, `clearApprSeqNo` | currency/file batch reads + withdraw clear (no `APPR_STTS` write-back — column absent) | list mapping + withdraw |
+| `CardTrnsHstrRepository.findCcyCdByBizKeyAndApprSeqNos(...)` / `sumTrscAmtByBizKeyAndApprSeqNos(...)` | card currency + `SUM(TRSC_AMT)` batch reads (`APPR_DV='33'`) | list mapping + footer (G5) |
 
 ---
 

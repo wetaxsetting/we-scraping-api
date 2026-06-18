@@ -322,4 +322,28 @@ public interface CardTrnsHstrRepository extends JpaRepository<CardTrnsHstr, Card
     java.util.List<Object[]> findCcyCdByBizKeyAndApprSeqNos(
             @Param("bizKey")     String bizKey,
             @Param("apprSeqNos") java.util.List<String> apprSeqNos);
+
+    /**
+     * Batch (APPR_SEQ_NO &rarr; SUM(TRSC_AMT)) lookup for the Approval Box
+     * list / footer amount of Corporate Card approvals (APPR_DV='33').
+     *
+     * <p>Legacy parity: {@code IDO.EXPT_RESOL_MSTR_R003.xml:62-65} and
+     * {@code IDO.EXPT_RESOL_MSTR_R003_CNT.xml:49-52} render a card row's
+     * amount as {@code (SELECT sum(TRSC_AMT) FROM CARD_TRNS_HSTR WHERE
+     * biz_key = ? AND appr_seq_no = ?)} — the {@code EXPT_RESOL_MSTR}
+     * amount columns are not reliably populated for card approvals (the
+     * newest DEV card rows carry {@code TOT_PAY_KHR_AMT = 0}), so the
+     * card transaction sum is the source of truth. One sum per approval;
+     * batched by {@code apprSeqNo IN} so the list / totals avoid an N+1.
+     */
+    @Query("""
+            SELECT c.apprSeqNo, COALESCE(SUM(c.trscAmt), 0)
+              FROM CardTrnsHstr c
+             WHERE c.bizKey = :bizKey
+               AND c.apprSeqNo IN :apprSeqNos
+             GROUP BY c.apprSeqNo
+            """)
+    java.util.List<Object[]> sumTrscAmtByBizKeyAndApprSeqNos(
+            @Param("bizKey")     String bizKey,
+            @Param("apprSeqNos") java.util.List<String> apprSeqNos);
 }

@@ -305,6 +305,33 @@ public class LegacyFunctionRepository {
         return nextVal("acct_trns_hstr", "acct_seq_no", bizKey, null, null, null, null, null);
     }
 
+    /**
+     * Settings &gt; Bank Account (registration): {@code ACCT_MSTR.PRN_SEQ} —
+     * per-tenant {@code MAX(prn_seq)+1} print/display order. Funnels the V140
+     * branch (#47) that was copied VERBATIM from the legacy JEX
+     * {@code wb_get_next_val} body; it mirrors
+     * {@code SeqHelper.getNextVal(util, idoCon, AcctMstr.class, "prn_seq", bizKey)}
+     * invoked by the legacy {@code AcctMstrDAO.create()} (the
+     * {@code fnsh_0101_001_c001} scrape-registration path).
+     *
+     * <p>The V140 branch was previously DORMANT (Option B, 2026-06-10) — wired
+     * here so newly-registered accounts receive a {@code PRN_SEQ} instead of
+     * {@code NULL}, restoring legacy parity and a deterministic Account-Inquiry
+     * / Bank-Account default sort ({@code PRN_SEQ ASC}). No schema change: the
+     * branch already exists in the refactor function.
+     *
+     * <p>Concurrency / batch: this is a lock-free {@code MAX+1} read, so callers
+     * registering several accounts in one transaction seed ONCE and increment in
+     * Java across the batch (the not-yet-flushed rows are invisible to the
+     * function) — the same seed-once pattern used by the file/detail helpers.
+     *
+     * <p>Returns a numeric text token (e.g. {@code "1"}); the caller parses to
+     * {@link Integer}. Retire with the rest of the funnel.
+     */
+    public String nextAcctMstrPrnSeq(String bizKey) {
+        return nextVal("acct_mstr", "prn_seq", bizKey, null, null, null, null, null);
+    }
+
     /** Settings &gt; Contacts / e-Invoice auto-register: TRCO_ACCT_INFO.TRCO_ACCT_KEY — per (biz_key, trco_key) MAX+1 (V140 #31). */
     public String nextTrcoAcctKey(String bizKey, String trcoKey) {
         return nextVal("trco_acct_info", "trco_acct_key", bizKey, trcoKey, null, null, null, null);
@@ -473,6 +500,89 @@ public class LegacyFunctionRepository {
                         "CAST(?1 AS varchar), CAST(?2 AS varchar))");
         q.setParameter(1, code);
         q.setParameter(2, langCd);
+        Object result = q.getSingleResult();
+        return result != null ? result.toString() : null;
+    }
+
+    /**
+     * Banking &mdash; resolve the SHORT display bank name for a {@code BANK_CD}
+     * by delegating to the legacy {@code wb_get_bank_nm(bank_cd, 's')} function,
+     * with the legacy {@code wb_get_bank_nm(bank_cd)} formal name as the
+     * COALESCE fallback. Returns {@code null} only when neither resolves
+     * (unknown / blank code) so the caller can fall back to the raw code.
+     *
+     * <p>Mirrors the Account Inquiry / Transaction History grid binding:
+     * legacy {@code IDO.ACCT_MSTR_R004.xml:77} ({@code BANK_NM}) and
+     * {@code IDO.ACCT_TRNS_HSTR_R016.xml:31} render {@code wb_get_bank_nm(_,'s')}
+     * in the visible cell (formal {@code wb_get_bank_nm(_)} is the tooltip).
+     * The {@code 's'} branch reads the date-effective short name from
+     * {@code BANK_INFM_DETL} ({@code BANK_DETL_INFO_CD='10'}); the formal
+     * branch reads {@code BANK_INFM.RPRS_BANK_NM}. No new DB object — both
+     * function overloads and {@code BANK_INFM_DETL} already exist in the
+     * refactor DB.
+     *
+     * <p>Retire plan: drop this method (and switch the resolver to a pure
+     * {@code BANK_INFM} read) once the short-name registry is reconciled into
+     * {@code BANK_INFM} &mdash; same window as the other surviving legacy
+     * functions (see {@code wecms-api/CLAUDE.md}).
+     */
+    public String resolveBankNmShort(String bankCd) {
+        if (bankCd == null || bankCd.isBlank()) {
+            return null;
+        }
+        Query q = em.createNativeQuery(
+                "SELECT COALESCE(" +
+                        "NULLIF(wb_get_bank_nm(CAST(:cd AS varchar), 's'), ''), " +
+                        "NULLIF(wb_get_bank_nm(CAST(:cd AS varchar)), ''))");
+        q.setParameter("cd", bankCd);
+        Object result = q.getSingleResult();
+        return result != null ? result.toString() : null;
+    }
+
+    /**
+     * Batch variant of {@link #resolveBankNmShort(String)} for cache warming:
+     * one query resolves the short name (formal fallback) for every
+     * {@code BANK_CD} in {@code BANK_INFM}, returning {@code bankCd → name}.
+     * Avoids an N+1 of per-code function calls at startup.
+     */
+    @SuppressWarnings("unchecked")
+    public java.util.Map<String, String> resolveBankNmShortAll() {
+        Query q = em.createNativeQuery(
+                "SELECT bank_cd, COALESCE(" +
+                        "NULLIF(wb_get_bank_nm(bank_cd, 's'), ''), " +
+                        "NULLIF(wb_get_bank_nm(bank_cd), '')) " +
+                        "FROM bank_infm");
+        java.util.Map<String, String> out = new java.util.HashMap<>();
+        for (Object[] row : (java.util.List<Object[]>) q.getResultList()) {
+            if (row[0] != null && row[1] != null) {
+                out.put(row[0].toString(), row[1].toString());
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Banking &mdash; resolve the display bank name for ANY bank code
+     * (internal / NAPAS / CITAD) via the legacy {@code wb_get_bank_name_any_code}
+     * function. This is the resolver legacy
+     * {@code IDO.SCDUL_PYMN_SUMR_R002.xml:97} uses for the Scheduled Payment
+     * withdrawal-bank name ({@code OUT_BANK_NM}); the Vendor Payment detail page
+     * routes the master withdrawal bank through here so its "Withdrawal Bank"
+     * matches legacy verbatim (C-2 fix 2026-06-16). Returns {@code null} for an
+     * unknown / blank code so the caller can fall back to the raw code.
+     *
+     * <p>Distinct from {@link #resolveBankNmShort} (Account Inquiry short name)
+     * and {@link #resolveNapasOrCitadBankName} (per-line deposit-bank name) —
+     * those resolvers are unchanged; only the withdrawal-bank master field on
+     * the Vendor Scheduled-Payment detail uses this overload.
+     */
+    public String resolveBankNameAnyCode(String bankCd) {
+        if (bankCd == null || bankCd.isBlank()) {
+            return null;
+        }
+        Query q = em.createNativeQuery(
+                "SELECT wb_get_bank_name_any_code(CAST(?1 AS varchar))");
+        q.setParameter(1, bankCd);
         Object result = q.getSingleResult();
         return result != null ? result.toString() : null;
     }

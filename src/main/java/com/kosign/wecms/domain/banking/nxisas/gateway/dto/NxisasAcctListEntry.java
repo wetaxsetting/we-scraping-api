@@ -21,4 +21,10 @@ public class NxisasAcctListEntry {
     @JsonProperty("availableBal") private String availableBal;
     @JsonProperty("branchName")   private String branchName;
     @JsonProperty("openDate")     private String openDate;
+    // Maturity date for term/fixed-deposit accounts. Documented as a
+    // required field of the Coocon smart-gateway account-list response
+    // (글로벌은행 API 1.0.6: "maturityDate String (필수) 만기일"). Was
+    // previously unmodelled, so Jackson silently dropped it; the legacy
+    // popup showed it from the local engine's acct.getMaturityDate().
+    @JsonProperty("maturityDate") private String maturityDate;
 }

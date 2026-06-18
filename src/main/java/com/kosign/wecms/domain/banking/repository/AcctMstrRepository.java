@@ -231,6 +231,15 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
      * <p>The keyword predicate matches the same formatted nickname as
      * {@link #findFiltered} so the summary tile counts/totals stay in
      * sync with the table rows when a search is in effect.
+     *
+     * <p>AI-06: PrdtType H summary-card exclusion (legacy
+     * {@code fnsh_0001_001_r001_tot_dynamic0} :505-509, redmine #42633).
+     * For an H tenant, savings/term-deposit accounts (05/06/08) are
+     * excluded from the per-currency summary-card total UNLESS they are
+     * not-yet-matured AND carry a positive balance. Applies ONLY to this
+     * aggregate (the summary cards) — the row list ({@link #findFiltered})
+     * is intentionally left untouched, mirroring legacy where the same
+     * clause is commented out of dynamic0.
      */
     @Query("""
             SELECT new com.kosign.wecms.domain.banking.repository.CcyAggregate(
@@ -259,6 +268,11 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
                                      a.acctNickNm, a.bankCd, a.acctNo, a.handRegYn),
                             ''
                         )) LIKE :keywordPattern ESCAPE '!')
+               AND (:excludeMaturedHSavings = FALSE
+                    OR a.acctTypeCd NOT IN ('05', '06', '08')
+                    OR ((a.expiDt IS NULL
+                         OR FUNCTION('to_date', a.expiDt, 'YYYYMMDD') >= CURRENT_DATE)
+                        AND a.bal > 0))
              GROUP BY a.ccyCd
              ORDER BY a.ccyCd
             """)
@@ -269,7 +283,107 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
             @Param("acctTypeCdIn")    List<String> acctTypeCdIn,
             @Param("bankCd")          String bankCd,
             @Param("keywordPattern")  String keywordPattern,
-            @Param("authUserId")      String authUserId);
+            @Param("authUserId")      String authUserId,
+            @Param("excludeMaturedHSavings") boolean excludeMaturedHSavings);
+
+    /**
+     * AI-01 — as-of-date historical balance per account, a faithful port of
+     * legacy IDO {@code ACCT_MSTR_R004} (the {@code fnsh_0001_001} read list).
+     * Returns {@code (BANK_CD, ACCT_NO, asof_bal, asof_real_amt)} for every
+     * account of the tenant.
+     *
+     * <p>Per {@code ACCT_MSTR_R004.xml:91-217}:
+     * <ul>
+     *   <li>When {@code :asOf} is blank / today / future → the current
+     *       {@code ACCT_MSTR.BAL} / {@code REAL_AMT} (snapshot).</li>
+     *   <li>Otherwise (historical) — Vietcombank {@code 11704004}:
+     *       {@code ACCT_MSTR.BAL − Σ(signed txns after :asOf)} (deposit +,
+     *       withdraw −); other banks: the last {@code ACCT_TRNS_HSTR.BAL}
+     *       with {@code TRSC_DT <= :asOf} (ordered {@code TRSC_DT} desc, then
+     *       numeric {@code ACCT_SEQ_NO} desc), else 0.</li>
+     *   <li>Available balance ({@code REAL_AMT}) mirrors the BAL logic when the
+     *       current {@code REAL_AMT = 0}; otherwise uses {@code REAL_AMT} as the
+     *       VCB base / current value, with the same other-bank ledger fallback.</li>
+     * </ul>
+     *
+     * <p>The date comparison runs in SQL against {@code CURRENT_DATE} exactly as
+     * legacy, so callers may pass today's date and still receive current values.
+     * The service invokes this ONLY when an {@code asOfDate} is supplied; the
+     * default (no date) list path never calls it and is byte-for-byte unchanged.
+     * This drives the per-ROW balance only — legacy summary-card totals
+     * ({@code ACCT_MSTR_R004_CNT}) sum current balances with no date logic, so
+     * the refactor's {@link #aggregateByCcy} is intentionally NOT date-scoped.
+     */
+    @Query(value = """
+            SELECT amr.bank_cd, amr.acct_no,
+              CASE
+                WHEN :asOf IS NULL OR :asOf = '' OR :asOf >= to_char(CURRENT_DATE, 'YYYYMMDD')
+                  THEN COALESCE(amr.bal, 0)
+                ELSE
+                  CASE WHEN amr.bank_cd = '11704004' THEN
+                         COALESCE(amr.bal, 0) - COALESCE((
+                             SELECT SUM(CASE WHEN ath.inout_dv = '1' THEN ath.trsc_amt ELSE -ath.trsc_amt END)
+                               FROM acct_trns_hstr ath
+                              WHERE ath.biz_key = amr.biz_key AND ath.bank_cd = amr.bank_cd
+                                AND ath.acct_no = amr.acct_no AND ath.ccy_cd = amr.ccy_cd
+                                AND ath.trsc_dt > :asOf), 0)
+                       ELSE COALESCE((
+                             SELECT ath.bal FROM acct_trns_hstr ath
+                              WHERE ath.biz_key = amr.biz_key AND ath.bank_cd = amr.bank_cd
+                                AND ath.acct_no = amr.acct_no AND ath.ccy_cd = amr.ccy_cd
+                                AND ath.trsc_dt <= :asOf
+                              ORDER BY ath.trsc_dt DESC, cast(ath.acct_seq_no AS NUMERIC) DESC
+                              LIMIT 1), 0)
+                  END
+              END AS asof_bal,
+              CASE
+                WHEN COALESCE(amr.real_amt, 0) = 0 THEN
+                  CASE
+                    WHEN :asOf IS NULL OR :asOf = '' OR :asOf >= to_char(CURRENT_DATE, 'YYYYMMDD')
+                      THEN COALESCE(amr.bal, 0)
+                    ELSE
+                      CASE WHEN amr.bank_cd = '11704004' THEN
+                             COALESCE(amr.bal, 0) - COALESCE((
+                                 SELECT SUM(CASE WHEN ath.inout_dv = '1' THEN ath.trsc_amt ELSE -ath.trsc_amt END)
+                                   FROM acct_trns_hstr ath
+                                  WHERE ath.biz_key = amr.biz_key AND ath.bank_cd = amr.bank_cd
+                                    AND ath.acct_no = amr.acct_no AND ath.ccy_cd = amr.ccy_cd
+                                    AND ath.trsc_dt > :asOf), 0)
+                           ELSE COALESCE((
+                                 SELECT ath.bal FROM acct_trns_hstr ath
+                                  WHERE ath.biz_key = amr.biz_key AND ath.bank_cd = amr.bank_cd
+                                    AND ath.acct_no = amr.acct_no AND ath.ccy_cd = amr.ccy_cd
+                                    AND ath.trsc_dt <= :asOf
+                                  ORDER BY ath.trsc_dt DESC, cast(ath.acct_seq_no AS NUMERIC) DESC
+                                  LIMIT 1), 0)
+                      END
+                  END
+                ELSE
+                  CASE
+                    WHEN :asOf IS NULL OR :asOf = '' OR :asOf >= to_char(CURRENT_DATE, 'YYYYMMDD')
+                      THEN COALESCE(amr.real_amt, 0)
+                    ELSE
+                      CASE WHEN amr.bank_cd = '11704004' THEN
+                             COALESCE(amr.real_amt, 0) - COALESCE((
+                                 SELECT SUM(CASE WHEN ath.inout_dv = '1' THEN ath.trsc_amt ELSE -ath.trsc_amt END)
+                                   FROM acct_trns_hstr ath
+                                  WHERE ath.biz_key = amr.biz_key AND ath.bank_cd = amr.bank_cd
+                                    AND ath.acct_no = amr.acct_no AND ath.ccy_cd = amr.ccy_cd
+                                    AND ath.trsc_dt > :asOf), 0)
+                           ELSE COALESCE((
+                                 SELECT ath.bal FROM acct_trns_hstr ath
+                                  WHERE ath.biz_key = amr.biz_key AND ath.bank_cd = amr.bank_cd
+                                    AND ath.acct_no = amr.acct_no AND ath.ccy_cd = amr.ccy_cd
+                                    AND ath.trsc_dt <= :asOf
+                                  ORDER BY ath.trsc_dt DESC, cast(ath.acct_seq_no AS NUMERIC) DESC
+                                  LIMIT 1), 0)
+                      END
+                  END
+              END AS asof_real_amt
+              FROM acct_mstr amr
+             WHERE amr.biz_key = :bizKey
+            """, nativeQuery = true)
+    List<Object[]> findAsOfBalances(@Param("bizKey") String bizKey, @Param("asOf") String asOf);
 
     /**
      * Distinct {@code BANK_CD} list for the current tenant + currency

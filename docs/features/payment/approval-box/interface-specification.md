@@ -62,6 +62,12 @@ Wire JSON is lowercase snake_case (global Jackson `SNAKE_CASE`). Every endpoint 
   ],
   "total_count": 42,
   "tab_counts": { "pending": 12, "in_progress": 8, "approved": 18, "rejected": 4 },
+  "footer_totals": {
+    "total_document_count": 42,
+    "total_usd_amount": 20.00,
+    "total_vnd_amount": 3600000,
+    "total_krw_amount": 0
+  },
   "page_number": 0,
   "page_size": 15,
   "total_pages": 3
@@ -72,6 +78,9 @@ Wire JSON is lowercase snake_case (global Jackson `SNAKE_CASE`). Every endpoint 
 - `appr_stts` ∈ `P`/`I`/`C`/`R` (derived from `APPR_TYPE_CD`).
 - `apprvr_stts` per approver ∈ `P`/`A`/`R`/`W`/`S`.
 - `tab_counts` ignore the selected `appr_type_cd` (all four chips reflect the same date/keyword/visibility scope).
+- `footer_totals` (`ApprovalBoxFooterTotals`) — the on-screen footer bar. **TAB-UNFILTERED, full result set** (legacy `resl_0001_001` parity), distinct from `total_count` (tab-filtered, drives pagination):
+  - `total_document_count` — tab-unfiltered row count (= sum of the four `tab_counts`).
+  - `total_usd_amount` / `total_vnd_amount` / `total_krw_amount` — per-currency amount sums (JSON numbers; Jackson `BigDecimal`). Each row's amount is bucketed by its resolved `CCY_CD`; card rows (`appr_dv='33'`) use `SUM(CARD_TRNS_HSTR.TRSC_AMT)`. Only USD / VND / KRW are surfaced (the three the footer renders); other currencies are not in the buckets, matching legacy.
 
 ---
 

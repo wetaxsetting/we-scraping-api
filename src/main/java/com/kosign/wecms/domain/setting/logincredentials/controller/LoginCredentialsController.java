@@ -4,9 +4,11 @@ import com.kosign.wecms.common.response.ApiResponse;
 import com.kosign.wecms.domain.setting.logincredentials.dto.BankFormInfoResponse;
 import com.kosign.wecms.domain.setting.logincredentials.dto.BankPickerResponse;
 import com.kosign.wecms.domain.setting.logincredentials.dto.BankCredentialCreateRequest;
+import com.kosign.wecms.domain.setting.logincredentials.dto.BankCredentialRegisterRequest;
 import com.kosign.wecms.domain.setting.logincredentials.dto.BankCredentialUpdateRequest;
 import com.kosign.wecms.domain.setting.logincredentials.dto.CredentialCreateResponse;
 import com.kosign.wecms.domain.setting.logincredentials.dto.GdtCredentialRequest;
+import com.kosign.wecms.domain.setting.logincredentials.dto.GdtEngineConfigResponse;
 import com.kosign.wecms.domain.setting.logincredentials.dto.GdtCredentialUpdateRequest;
 import com.kosign.wecms.domain.setting.logincredentials.dto.LoginCredentialAuditResponse;
 import com.kosign.wecms.domain.setting.logincredentials.dto.LoginCredentialListResponse;
@@ -95,6 +97,20 @@ public class LoginCredentialsController {
         return ApiResponse.ok(service.createBank(req));
     }
 
+    /** Atomic Save — the Select Bank Accounts "Save" action. Creates the
+     *  bank credential AND registers the picked accounts
+     *  ({@code BANK_CERT_INFO} + {@code ACCT_MSTR} + {@code ACCT_AUTH_INFO})
+     *  in ONE transaction (legacy {@code fnsh_0101_001_c001} parity). An
+     *  empty account list is rejected before any row is written, so a
+     *  no-account save leaves no {@code BANK_CERT_INFO} behind. The
+     *  frontend verifies the login inline first (no pre-created
+     *  credential), then calls this once. */
+    @PostMapping("/bank/register")
+    public ApiResponse<CredentialCreateResponse> createBankWithAccounts(
+            @Valid @RequestBody BankCredentialRegisterRequest req) {
+        return ApiResponse.ok(service.createBankWithAccounts(req));
+    }
+
     /** Update one existing BANK_CERT_INFO row by SEQ_NO. {@code loginId}
      *  / {@code password} / {@code extra} are individually optional —
      *  null means "leave unchanged"; the service rejects the all-null
@@ -120,6 +136,16 @@ public class LoginCredentialsController {
             @PathVariable BigDecimal seqNo,
             @Valid @RequestBody VerifyBankPasswordRequest req) {
         return ApiResponse.ok(service.verifyUpdate(seqNo, req.password()));
+    }
+
+    /** GDT local NXiSAS engine module config (api_id / scrapping_module /
+     *  scrapping_class / bank_cd) for the client-side GDT login test.
+     *  Replaces the legacy JexAdmin/OSMC {@code nxisas_getModuleInfo}
+     *  round-trip — values come from {@code wecms.nxisas.gdt.*}. Bank
+     *  credentials don't use this (server-side Coocon gateway). */
+    @GetMapping("/gdt/engine-config")
+    public ApiResponse<GdtEngineConfigResponse> gdtEngineConfig() {
+        return ApiResponse.ok(service.gdtEngineConfig());
     }
 
     /** Create the GDT credential row for the current tenant. The

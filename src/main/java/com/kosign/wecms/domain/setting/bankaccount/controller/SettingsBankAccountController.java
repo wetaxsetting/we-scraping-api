@@ -1,6 +1,7 @@
 package com.kosign.wecms.domain.setting.bankaccount.controller;
 
 import com.kosign.wecms.common.response.ApiResponse;
+import com.kosign.wecms.domain.setting.bankaccount.dto.BankAccountAuditResponse;
 import com.kosign.wecms.domain.setting.bankaccount.dto.BankAccountListResponse;
 import com.kosign.wecms.domain.setting.bankaccount.dto.BankAccountPermissionResponse;
 import com.kosign.wecms.domain.setting.bankaccount.dto.BankAccountPermissionUpdateRequest;
@@ -103,5 +104,22 @@ public class SettingsBankAccountController {
             @Valid @RequestBody BankAccountPermissionUpdateRequest req) {
         permissionService.replace(bankCd, acctNo, req);
         return ApiResponse.ok(null);
+    }
+
+    /* -----------------------------------------------------------------
+     *  Audit logs sub-resource — Settings > Bank Account > Audit Logs
+     *  popup (legacy comm_0183_004_r001).
+     * ----------------------------------------------------------------- */
+
+    /** Per-account audit history, latest-first. Mirrors legacy
+     *  {@code comm_0183_004_r001} — reads {@code AUDIT_LOGS_INFM} for the
+     *  metadata-edit ({@code ACCT_MSTR}) + permission ({@code ACCT_AUTH_INFO})
+     *  rows of one bank account, in the caller's locale. Empty history returns
+     *  an empty list, never an error. */
+    @GetMapping("/{bankCd}/{acctNo}/audit-logs")
+    public ApiResponse<BankAccountAuditResponse> auditLogs(
+            @PathVariable String bankCd,
+            @PathVariable String acctNo) {
+        return ApiResponse.ok(service.auditLogs(bankCd, acctNo));
     }
 }

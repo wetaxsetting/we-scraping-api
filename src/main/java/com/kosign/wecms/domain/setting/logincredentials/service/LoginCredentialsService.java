@@ -17,6 +17,7 @@ import com.kosign.wecms.domain.banking.entity.AcctMstr;
 import com.kosign.wecms.domain.banking.entity.BankInfm;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
 import com.kosign.wecms.domain.banking.repository.BankInfmRepository;
+import com.kosign.wecms.domain.setting.logincredentials.dto.BankCredentialRegisterRequest;
 import com.kosign.wecms.domain.setting.logincredentials.dto.BankFormInfoResponse;
 import com.kosign.wecms.domain.setting.logincredentials.dto.BankFormInfoSubType;
 import com.kosign.wecms.domain.setting.logincredentials.dto.BankPickerResponse;
@@ -27,6 +28,7 @@ import com.kosign.wecms.domain.setting.logincredentials.dto.BankCredentialCreate
 import com.kosign.wecms.domain.setting.logincredentials.dto.BankCredentialUpdateRequest;
 import com.kosign.wecms.domain.setting.logincredentials.dto.CredentialCreateResponse;
 import com.kosign.wecms.domain.setting.logincredentials.dto.GdtCredentialRequest;
+import com.kosign.wecms.domain.setting.logincredentials.dto.GdtEngineConfigResponse;
 import com.kosign.wecms.domain.setting.logincredentials.dto.GdtCredentialUpdateRequest;
 import com.kosign.wecms.domain.setting.logincredentials.dto.LoginCredentialAccount;
 import com.kosign.wecms.domain.setting.logincredentials.dto.LoginCredentialBankAccount;
@@ -38,6 +40,7 @@ import com.kosign.wecms.domain.setting.logincredentials.dto.RevealResponse;
 import com.kosign.wecms.domain.setting.logincredentials.entity.GdtCertInfo;
 import com.kosign.wecms.domain.setting.logincredentials.repository.GdtCertInfoRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -93,6 +96,21 @@ public class LoginCredentialsService {
     /** Display name for the single GDT row. */
     private static final String GDT_INSTITUTION_LABEL = "GDT";
 
+    /** Pseudo bank code the Coocon/NXISAS gateway uses to drive a GDT
+     *  (tax-portal) login. Mirrors legacy {@code comm_0218_007.js:45}
+     *  ({@code bankCd: "VIETNAM_GDT"}). */
+    private static final String GDT_PSEUDO_BANK_CD = "VIETNAM_GDT";
+
+    /** WSVC_IDs read by the audit-history popup. The refactor WRITES the
+     *  slug {@link #WSVC_ID} (CLAUDE.md identifier rule), but READS the
+     *  legacy page ids too so coexistence on the shared JEX DB surfaces
+     *  rows written by the live JEX system — add/update under
+     *  {@code comm_0218_001} and delete under {@code comm_0218_004}
+     *  ({@code comm_0218_007_c001_act.jsp:58}, {@code comm_0218_001_d001_act.jsp}).
+     *  Read-only inclusion authorized by the lead 2026-06-16. */
+    private static final List<String> AUDIT_WSVC_IDS =
+            List.of(WSVC_ID, "comm_0218_001", "comm_0218_004");
+
     /** {@code CERT_INFO_DV} discriminator for bank rows. JEX
      *  {@code BANK_CERT_INFO.cert_info_dv} is {@code varchar(1)} and all
      *  live rows carry {@code '1'} (verified 2026-06-09). Mirrors
@@ -121,6 +139,16 @@ public class LoginCredentialsService {
     private final AuditLogEntryRepository   auditLogReadRepo;
     private final BankScrapingService       bankScrapingService;
     private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
+    private final com.kosign.wecms.domain.banking.service.AccountRegistrationService accountRegistrationService;
+
+    /** When true, GDT create/update verifies the credential through the
+     *  Coocon gateway (pseudo-bank {@code VIETNAM_GDT}) before persisting
+     *  — legacy parity (the save action is the login test). Field-injected
+     *  (non-final) so it stays out of the {@code @RequiredArgsConstructor}.
+     *  Default false; see {@code wecms.login-credentials.gdt-verify-enabled}
+     *  in application.yml. */
+    @Value("${wecms.login-credentials.gdt-verify-enabled:false}")
+    private boolean gdtVerifyEnabled;
 
     /* -----------------------------------------------------------------
      *  LIST — banking groups + single GDT row
@@ -340,6 +368,36 @@ public class LoginCredentialsService {
         return new CredentialCreateResponse(saved.getSeqNo());
     }
 
+    /**
+     * Atomic "Save selected accounts" — legacy {@code fnsh_0101_001_c001}
+     * parity. Persists the bank credential AND the picked accounts in ONE
+     * transaction so the observable rule holds: <b>no saved account ⇒ no
+     * {@code BANK_CERT_INFO}</b>. The frontend verifies the login inline
+     * (no credential row is created during the scrape), then calls this
+     * once on Save.
+     *
+     * <p>Order: reject an empty account list up-front (so the credential
+     * is never written for a no-account save) → insert
+     * {@code BANK_CERT_INFO} (find-or-create + audit, via {@link #createBank})
+     * → register the accounts into {@code ACCT_MSTR} + fan out
+     * {@code ACCT_AUTH_INFO}. {@code createBank} is invoked in-class so its
+     * own {@code @Transactional} joins this one; a failure in account
+     * registration rolls the whole transaction back, credential included.
+     */
+    @Transactional
+    public CredentialCreateResponse createBankWithAccounts(BankCredentialRegisterRequest req) {
+        if (req.accounts() == null || req.accounts().isEmpty()) {
+            // Reject BEFORE creating the credential — guarantees no orphan
+            // BANK_CERT_INFO for a save with zero accounts.
+            throw new BusinessException("WBE_BANK_ACCOUNT_REGISTER_EMPTY");
+        }
+        CredentialCreateResponse created = createBank(req.toCreateRequest());
+        accountRegistrationService.register(
+                new com.kosign.wecms.domain.banking.dto.RegisterAccountsRequest(
+                        created.seqNo(), req.accounts()));
+        return created;
+    }
+
     /** Insert a brand-new {@code BANK_CERT_INFO} row with a fresh
      *  per-tenant {@code SEQ_NO}. Split out of {@link #createBank} so the
      *  find-or-create dedup can retry it on a concurrent-insert race.
@@ -401,7 +459,11 @@ public class LoginCredentialsService {
         // Refactor surfaces the same outcome explicitly with WBE2091
         // (the same code the reveal endpoint uses for a bad re-auth).
         if (req.oldPassword() != null) {
-            String storedPlain = crypto.decrypt(entity.getCertInfoDetlCon());
+            // Strict decrypt — legacy `decrypt(cert_info_detl_con) = ?`
+            // never matches an undecryptable blob (the legacy DB function
+            // errors on it). A null here → guaranteed mismatch → WBE2091,
+            // never an accidental match against echoed ciphertext.
+            String storedPlain = crypto.decryptStrict(entity.getCertInfoDetlCon());
             if (!req.oldPassword().equals(storedPlain)) {
                 throw new BusinessException("WBE2091");
             }
@@ -481,6 +543,11 @@ public class LoginCredentialsService {
         if (!gdtRepo.findByBizKeyOrderBySeqNoAsc(bizKey).isEmpty()) {
             throw new BusinessException("WBE_LOGIN_CREDENTIAL_GDT_EXISTS");
         }
+        // Legacy parity (comm_0218_007.js:43-51): the GDT save action IS
+        // the login test — the row persists only after a successful
+        // VIETNAM_GDT login. Bad credentials never reach the DB. Flag-gated
+        // (off in local R&D / until the GDT captcha challenge-chain lands).
+        verifyGdtCredentials(req.loginId(), req.password());
         // SEQ_NO via the single wb_get_next_val funnel (V140 #26 — per-tenant MAX+1).
         BigDecimal nextSeq = new BigDecimal(legacyFunctions.nextGdtCertSeqNo(bizKey));
         String now = nowDtm14();
@@ -517,6 +584,20 @@ public class LoginCredentialsService {
         String bizKey = TenantContext.currentBizKey();
         GdtCertInfo entity = gdtRepo.findByBizKeyAndSeqNo(bizKey, seqNo)
                 .orElseThrow(() -> new BusinessException("WBE2090"));
+        // Re-verify whenever the credential itself changes (login id or
+        // password). Use the effective values: a field left null keeps the
+        // stored one. Legacy parity — the save action is the login test.
+        // An `extra`-only edit changes no credential and is not re-verified.
+        if (req.loginId() != null || req.password() != null) {
+            String effLoginId  = req.loginId()  != null ? req.loginId()
+                                                        : entity.getCertInfoCon();
+            // Strict decrypt — when no new password is supplied we verify
+            // with the stored one; an undecryptable blob must fail
+            // verification, not be forwarded to GDT as the password.
+            String effPassword = req.password() != null ? req.password()
+                                                        : crypto.decryptStrict(entity.getCertInfoDetlCon());
+            verifyGdtCredentials(effLoginId, effPassword);
+        }
         if (req.loginId() != null) entity.setCertInfoCon(req.loginId());
         if (req.password() != null) entity.setCertInfoDetlCon(crypto.encrypt(req.password()));
         if (req.extra() != null)    entity.setCertInfoDetlCon2(req.extra());
@@ -531,6 +612,26 @@ public class LoginCredentialsService {
                 .activityKey("audit.login_credentials.activity")
                 .detailKey("audit.login_credentials.update.detail")
                 .build());
+    }
+
+    /* -----------------------------------------------------------------
+     *  GDT local-engine config — JexAdmin/OSMC replacement
+     * ----------------------------------------------------------------- */
+
+    /**
+     * GDT local NXiSAS engine module config for the frontend. Replaces the
+     * legacy JexAdmin/OSMC {@code nxisas_getModuleInfo} round-trip — the
+     * values are fixed code constants in
+     * {@link com.kosign.wecms.domain.setting.logincredentials.config.GdtNxisasConfig}
+     * (mirroring {@code NxisasBankConfig}), with no JexAdmin/OSMC and no YAML
+     * dependency. Read-only, no DB access.
+     */
+    public GdtEngineConfigResponse gdtEngineConfig() {
+        return new GdtEngineConfigResponse(
+                com.kosign.wecms.domain.setting.logincredentials.config.GdtNxisasConfig.API_ID,
+                com.kosign.wecms.domain.setting.logincredentials.config.GdtNxisasConfig.MODULE,
+                com.kosign.wecms.domain.setting.logincredentials.config.GdtNxisasConfig.CLASS_NAME,
+                GDT_PSEUDO_BANK_CD);
     }
 
     /* -----------------------------------------------------------------
@@ -550,12 +651,12 @@ public class LoginCredentialsService {
             BankCertInfo row = bankRepo.findByBizKeyAndSeqNo(bizKey, seqNo)
                     .orElseThrow(() -> new BusinessException("WBE2090"));
             loginId = row.getCertInfoCon();
-            storedPassword = crypto.decrypt(row.getCertInfoDetlCon());
+            storedPassword = crypto.decryptStrict(row.getCertInfoDetlCon());
         } else {
             GdtCertInfo row = gdtRepo.findByBizKeyAndSeqNo(bizKey, seqNo)
                     .orElseThrow(() -> new BusinessException("WBE2090"));
             loginId = row.getCertInfoCon();
-            storedPassword = crypto.decrypt(row.getCertInfoDetlCon());
+            storedPassword = crypto.decryptStrict(row.getCertInfoDetlCon());
         }
 
         // Legacy comm_0218_008_r001 parity: the Confirmation popup
@@ -585,9 +686,14 @@ public class LoginCredentialsService {
         // The Login Credentials audit rows always carry REF_NO2 = NULL
         // (single-column SEQ_NO PK). Use the dedicated finder so we
         // match rows with NULL REF_NO2 instead of equality on null.
+        //
+        // Read the refactor slug AND the legacy page ids ({@link #AUDIT_WSVC_IDS})
+        // so the history popup shows rows written by the live JEX system on a
+        // shared DB (legacy add/update = comm_0218_001, delete = comm_0218_004).
+        // Writes still use the slug only (CLAUDE.md identifier rule).
         List<AuditLogsInfm> rows = auditLogReadRepo
-                .findByBizKeyAndRefNoAndRefNo1AndWsvcIdAndLangCdAndRefNo2IsNullOrderByRegDtmDesc(
-                        bizKey, refNo, seqNo.toPlainString(), WSVC_ID, lang.name());
+                .findByBizKeyAndRefNoAndRefNo1AndWsvcIdInAndLangCdAndRefNo2IsNullOrderByRegDtmDesc(
+                        bizKey, refNo, seqNo.toPlainString(), AUDIT_WSVC_IDS, lang.name());
 
         List<LoginCredentialAuditRow> items = rows.stream()
                 .map(r -> new LoginCredentialAuditRow(
@@ -609,6 +715,41 @@ public class LoginCredentialsService {
      *  shape. Used for every REG_DTM / MOD_DTM write on this slice. */
     private static String nowDtm14() {
         return LocalDateTime.now(ZoneOffset.UTC).format(DTM14);
+    }
+
+    /**
+     * Verify a GDT credential through the Coocon gateway before it is
+     * persisted — legacy parity with {@code comm_0218_007.js:43-51}, which
+     * runs {@code _v2nxisas.callNxisas([{bankCd:"VIETNAM_GDT",…}])} and only
+     * saves on {@code isSuccess}. Reuses the same {@link BankScrapingService}
+     * the bank flow uses (the gateway already special-cases
+     * {@code VIETNAM_GDT}); no GDT-specific scraping infrastructure is added.
+     *
+     * <p>No-op when {@link #gdtVerifyEnabled} is false (local R&D has no
+     * reachable gateway; full enablement also awaits the GDT captcha
+     * challenge-chain — see application.yml). When enabled, only a
+     * {@code COMPLETED} login persists; an {@code ERROR} (bad credentials)
+     * or an unsatisfied challenge ({@code CAPTCHA/OTP/QNA_REQUIRED}) throws
+     * {@code WBE_LOGIN_CREDENTIAL_GDT_VERIFY_FAILED} so the row is NOT saved.
+     *
+     * <p>Never persists anything itself — the caller persists only after
+     * this returns normally.
+     */
+    private void verifyGdtCredentials(String loginId, String password) {
+        if (!gdtVerifyEnabled) return;
+        VerifyCredentialsRequest req = new VerifyCredentialsRequest(
+                GDT_PSEUDO_BANK_CD,
+                loginId,
+                password,
+                BigDecimal.ZERO,   // nxisasGbSeqNo — GDT has no sub-type
+                null,              // extra
+                null,              // loginType
+                null               // scrapeKind → ACCT_LIST (login test only)
+        );
+        ScrapeSessionResponse res = bankScrapingService.verify(req);
+        if (res == null || res.status() != ScrapeSessionResponse.Status.COMPLETED) {
+            throw new BusinessException("WBE_LOGIN_CREDENTIAL_GDT_VERIFY_FAILED");
+        }
     }
 
     private void appendAudit(String refNo, String refNo1) {

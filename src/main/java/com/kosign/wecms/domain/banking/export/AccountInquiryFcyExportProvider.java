@@ -1,5 +1,6 @@
 package com.kosign.wecms.domain.banking.export;
 
+import com.kosign.wecms.common.i18n.RelativeTimeFormatter;
 import com.kosign.wecms.domain.banking.dto.AccountListResponse;
 import com.kosign.wecms.domain.banking.dto.CurrencyTotal;
 import com.kosign.wecms.domain.banking.service.AccountService;
@@ -37,8 +38,9 @@ import java.util.Locale;
 @Component
 public class AccountInquiryFcyExportProvider extends AccountInquiryExportProvider {
 
-    public AccountInquiryFcyExportProvider(AccountService accountService) {
-        super(accountService);
+    public AccountInquiryFcyExportProvider(AccountService accountService,
+                                           RelativeTimeFormatter relativeTimeFormatter) {
+        super(accountService, relativeTimeFormatter);
     }
 
     @Override

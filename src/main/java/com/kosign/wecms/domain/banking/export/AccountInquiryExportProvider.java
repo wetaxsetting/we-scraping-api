@@ -4,6 +4,7 @@ import com.kosign.wecms.common.export.ExcelExportRequest;
 import com.kosign.wecms.common.export.ExcelSortSpec;
 import com.kosign.wecms.common.export.ExportFetch;
 import com.kosign.wecms.common.export.ExportRowProvider;
+import com.kosign.wecms.common.i18n.RelativeTimeFormatter;
 import com.kosign.wecms.domain.banking.dto.AccountListResponse;
 import com.kosign.wecms.domain.banking.dto.AccountRow;
 import com.kosign.wecms.domain.banking.service.AccountFilter;
@@ -70,6 +71,11 @@ public abstract class AccountInquiryExportProvider implements ExportRowProvider 
     );
 
     protected final AccountService accountService;
+    /** Renders the LAST_UPDATE cell as a localised "X ago" string —
+     *  legacy `fnsh_0001_001.formatExcel` parity (its Excel showed the
+     *  humanized value, not the raw timestamp). Server-side mirror of
+     *  the frontend `humanizeDatetime`. */
+    protected final RelativeTimeFormatter relativeTimeFormatter;
 
     /** Subclass binds the concrete screenId — must match a row set in
      *  {@code SYS_SCR_OPTION_WECMS} or the registry rejects the export
@@ -117,7 +123,7 @@ public abstract class AccountInquiryExportProvider implements ExportRowProvider 
         List<AccountRow> rows = data.accounts() != null ? data.accounts() : List.of();
         List<Map<String, Object>> mapped = new ArrayList<>(rows.size());
         for (AccountRow r : rows) {
-            mapped.add(toFieldMap(r));
+            mapped.add(toFieldMap(r));   // instance method — uses relativeTimeFormatter
         }
 
         String subHeader = composeSubHeader(mapped.size(), data, currency);
@@ -160,14 +166,17 @@ public abstract class AccountInquiryExportProvider implements ExportRowProvider 
      * legacy DTO doesn't carry directly (e.g. {@code VAS_ACCOUNT}) emit
      * an empty string so the cell renders blank rather than missing.
      */
-    private static Map<String, Object> toFieldMap(AccountRow r) {
+    private Map<String, Object> toFieldMap(AccountRow r) {
         Map<String, Object> m = new HashMap<>();
         m.put("BANK", composeBankCell(r));
         m.put("ACCOUNT_NICKNAME", nullToEmpty(r.acctNickNm()));
         m.put("BALANCE", r.bal()); // raw wire decimal — writer formats #,##0.##
         m.put("AVAILABLE_BALANCE", r.realAmt());
         m.put("VAS_ACCOUNT", "");
-        m.put("LAST_UPDATE", r.acctBalUpdDtm()); // legacy YYYYMMDDHHmmss
+        // Humanized "X ago" (UTC-aware, localised) — matches the on-screen
+        // cell + legacy formatExcel, not the raw YYYYMMDDHHmmss. Blank when
+        // the account has never synced (mirrors the empty screen cell).
+        m.put("LAST_UPDATE", relativeTimeFormatter.humanize(r.acctBalUpdDtm()));
         return m;
     }
 

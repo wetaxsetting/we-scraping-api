@@ -43,6 +43,7 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -81,6 +82,15 @@ public class TransactionService {
             "WBE_TRANSACTION_VAS_ACCOUNT_NOT_FOUND";
     private static final String CODE_CONTACT_NOT_FOUND =
             "WBE_TRANSACTION_CONTACT_NOT_FOUND";
+
+    /**
+     * Vietcombank. Its scrape feed does not populate the per-transaction
+     * running balance ({@code ACCT_TRNS_HSTR.BAL} is NULL on ~99% of VCB
+     * rows on DEV), so the displayed running balance must be reconstructed
+     * from {@code ACCT_MSTR.BAL} — see {@link #reconstructVcbBalances} and
+     * TH-01 (legacy {@code IDO.ACCT_TRNS_HSTR_R016.xml:42-73}, issue #42771).
+     */
+    private static final String VCB_BANK_CD = "11704004";
 
     private static final DateTimeFormatter DTM_FMT =
             DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
@@ -130,6 +140,10 @@ public class TransactionService {
 
         Map<String, MatchInfo> matchInfo = matchInfoBySeq(r.bizKey, rows);
 
+        // TH-01 — Vietcombank running-balance reconstruction. Empty map for
+        // every other bank, so the toRow fallback keeps the stored ATH.BAL.
+        Map<String, BigDecimal> reconstructedBal = vcbReconstructedBalances(r);
+
         BigDecimal depositTotal = BigDecimal.ZERO;
         BigDecimal withdrawTotal = BigDecimal.ZERO;
         for (AcctTrnsHstr row : rows) {
@@ -148,7 +162,8 @@ public class TransactionService {
                         classification.vasAcctCdByAcctSeqNo().get(row.getAcctSeqNo()),
                         classification.trcoKeyByAcctSeqNo().get(row.getAcctSeqNo()),
                         classification.trcoNmByAcctSeqNo().get(row.getAcctSeqNo()),
-                        matchInfo.get(row.getAcctSeqNo())))
+                        matchInfo.get(row.getAcctSeqNo()),
+                        reconstructedBal.getOrDefault(row.getAcctSeqNo(), row.getBal())))
                 .toList();
 
         return new TransactionListResponse(
@@ -217,6 +232,10 @@ public class TransactionService {
 
         boolean confirmed = rcvOpt.isPresent();
         boolean isDeposit = InoutDv.IN.code().equals(row.getInoutDv());
+        // TH-01 — reconstruct the VCB running balance for this row; non-VCB
+        // accounts return an empty map and fall back to the stored ATH.BAL.
+        BigDecimal effectiveBal = vcbReconstructedBalances(r)
+                .getOrDefault(row.getAcctSeqNo(), row.getBal());
         return new TransactionDetailResponse(
                 row.getAcctSeqNo(),
                 row.getTrscDt(),
@@ -224,7 +243,7 @@ public class TransactionService {
                 row.getInoutDv(),
                 isDeposit ? AmountFormatter.wire(row.getTrscAmt()) : null,
                 !isDeposit ? AmountFormatter.wire(row.getTrscAmt()) : null,
-                AmountFormatter.wire(row.getBal()),
+                AmountFormatter.wire(effectiveBal),
                 row.getRmrk() != null ? row.getRmrk() : "",
                 row.getRmrk2() != null ? row.getRmrk2() : "",
                 row.getBankRefNo(),
@@ -705,6 +724,95 @@ public class TransactionService {
         return rows;
     }
 
+    /* ---- TH-01: Vietcombank running-balance reconstruction ------------- */
+
+    /**
+     * Reconstructs the per-row running balance for Vietcombank accounts and
+     * returns a {@code ACCT_SEQ_NO → BAL} map; returns an empty map for every
+     * other bank so the caller falls back to the stored {@code ACCT_TRNS_HSTR.BAL}
+     * (non-VCB behaviour is unchanged).
+     *
+     * <p>Faithful port of legacy {@code IDO.ACCT_TRNS_HSTR_R016.xml:42-73}
+     * (issue #42771). Vietcombank's scrape feed leaves {@code ACCT_TRNS_HSTR.BAL}
+     * NULL on ~99% of rows, so the displayed balance is derived from
+     * {@code ACCT_MSTR.BAL} minus every transaction that posted after the row.
+     *
+     * <p>The reconstruction reads the <b>full</b> account ledger (not the
+     * displayed date window), because the legacy subquery sums later
+     * transactions across the whole account regardless of the list's date
+     * filter. The ledger is scoped to the account's currency to mirror the
+     * legacy {@code ATH2.CCY_CD = ATH.CCY_CD} correlation.
+     */
+    private Map<String, BigDecimal> vcbReconstructedBalances(Resolved r) {
+        if (!VCB_BANK_CD.equals(r.bankCd)) {
+            return Map.of();
+        }
+        List<AcctTrnsHstr> ledger =
+                txnRepo.findByBizKeyAndBankCdAndAcctNoOrderByTrscDtDescTrscTmDesc(
+                        r.bizKey, r.bankCd, r.acctNo);
+        if (r.ccyCd != null && !r.ccyCd.isBlank()) {
+            ledger = ledger.stream().filter(h -> r.ccyCd.equals(h.getCcyCd())).toList();
+        }
+        BigDecimal acctMstrBal = acctRepo
+                .findByBizKeyAndBankCdAndAcctNo(r.bizKey, r.bankCd, r.acctNo)
+                .map(AcctMstr::getBal)
+                .orElse(null);
+        return reconstructVcbBalances(ledger, acctMstrBal);
+    }
+
+    /**
+     * Pure reconstruction kernel (package-private for unit testing). For each
+     * row: {@code COALESCE(ATH.BAL, ACCT_MSTR.BAL − Σ signed later txns)}.
+     *
+     * <ul>
+     *   <li>A row keeps its stored {@code BAL} when present (legacy COALESCE).</li>
+     *   <li>"Later" = {@code TRSC_DT >} row's date, or same date and
+     *       {@code numeric(ACCT_SEQ_NO) >} row's — numeric, never string,
+     *       comparison (legacy {@code CAST(... AS NUMERIC)}).</li>
+     *   <li>signed amount = {@code +TRSC_AMT} when {@code INOUT_DV='1'}, else
+     *       {@code −TRSC_AMT} — and the running sum always uses {@code TRSC_AMT},
+     *       independent of any stored {@code BAL}.</li>
+     * </ul>
+     *
+     * @param ledgerSameCcy the account's full ledger in one currency (any order)
+     * @param acctMstrBal   {@code ACCT_MSTR.BAL}; null treated as zero
+     */
+    static Map<String, BigDecimal> reconstructVcbBalances(
+            List<AcctTrnsHstr> ledgerSameCcy, BigDecimal acctMstrBal) {
+        BigDecimal base = acctMstrBal != null ? acctMstrBal : BigDecimal.ZERO;
+        List<AcctTrnsHstr> sorted = new ArrayList<>(ledgerSameCcy);
+        sorted.sort(VCB_LEDGER_LATEST_FIRST);
+        Map<String, BigDecimal> out = new HashMap<>();
+        BigDecimal laterSum = BigDecimal.ZERO;
+        for (AcctTrnsHstr row : sorted) {
+            BigDecimal reconstructed = base.subtract(laterSum);
+            out.put(row.getAcctSeqNo(),
+                    row.getBal() != null ? row.getBal() : reconstructed);
+            laterSum = laterSum.add(signedAmt(row));
+        }
+        return out;
+    }
+
+    /** Latest-first order: TRSC_DT desc, then numeric(ACCT_SEQ_NO) desc. */
+    private static final Comparator<AcctTrnsHstr> VCB_LEDGER_LATEST_FIRST =
+            Comparator.comparing((AcctTrnsHstr h) -> h.getTrscDt() == null ? "" : h.getTrscDt())
+                    .thenComparing(h -> numericSeq(h.getAcctSeqNo()))
+                    .reversed();
+
+    private static BigDecimal numericSeq(String acctSeqNo) {
+        if (acctSeqNo == null || acctSeqNo.isBlank()) return BigDecimal.ZERO;
+        try {
+            return new BigDecimal(acctSeqNo.trim());
+        } catch (NumberFormatException ex) {
+            return BigDecimal.ZERO;
+        }
+    }
+
+    private static BigDecimal signedAmt(AcctTrnsHstr row) {
+        BigDecimal amt = row.getTrscAmt() != null ? row.getTrscAmt() : BigDecimal.ZERO;
+        return InoutDv.IN.code().equals(row.getInoutDv()) ? amt : amt.negate();
+    }
+
     private static boolean matchesTypeFilter(String inoutDv, String typeFilter) {
         if (typeFilter == null || typeFilter.isBlank() || "ALL".equalsIgnoreCase(typeFilter)) return true;
         if ("DEPOSIT".equalsIgnoreCase(typeFilter))  return InoutDv.IN.code().equals(inoutDv);
@@ -720,26 +828,74 @@ public class TransactionService {
     }
 
     /**
-     * Keyword match (audit BUG-3 — Option A: backend search widened to match
-     * the on-screen placeholder "amount, contacts name, purpose"). ORs across
-     * remark / remark2 / bank ref no / transaction id (BANK_TRNS_SHORT_ID) /
-     * transaction amount / contact name / purpose code / VAS code — the latter
-     * three sourced from the per-row {@code ACCT_TRNS_RCV_PAY_INFM}
-     * classification. Mirrors the legacy {@code FnshHelper} OR-block
-     * (lines 669-707) within the refactor's data scope.
+     * Keyword match — legacy parity with the {@code FnshHelper}
+     * transaction-history OR-block ({@code FnshHelper.java:669-707}),
+     * within the refactor's PROD-active-table scope.
+     *
+     * <p>Legs ORed together (a row matches if ANY hits):
+     * <ul>
+     *   <li>{@code RMRK} (legacy :686) and its accent-stripped form via
+     *       {@link #translateText} — a faithful in-Java replica of the
+     *       legacy {@code wb_get_translate_text(RMRK)} leg (:682), so an
+     *       un-accented keyword (e.g. {@code "nguyen"}) matches an
+     *       accented remark ({@code "Nguyễn"}); the legacy gate is VN-only
+     *       and WeCMS is a Vietnam deployment, so it always applies here;</li>
+     *   <li>{@code ACCT_NO} (legacy :678);</li>
+     *   <li>{@code VAS_ACCT_CD} (legacy :689) and {@code VAS_ACCT_NM}
+     *       (legacy :692) — both from the per-row
+     *       {@code ACCT_TRNS_RCV_PAY_INFM} classification;</li>
+     *   <li>contact name {@code RCV_PAY_TRCO_NM} (legacy :695);</li>
+     *   <li>transaction amount (legacy :674-675 matches the deposit
+     *       amount only; the refactor matches any amount — wider);</li>
+     *   <li>{@code BANK_TRNS_SHORT_ID} (legacy :698).</li>
+     * </ul>
+     *
+     * <p>Refactor-only extra legs kept (wider than legacy, harmless):
+     * {@code RMRK2}, {@code BANK_REF_NO}, purpose code (audit BUG-3).
+     *
+     * <p><b>Not ported — memo leg (legacy :703-705).</b> The legacy
+     * {@code exists(... memo_infm ...)} leg cannot be reproduced:
+     * {@code MEMO_INFM} is excluded from the PROD Active Table List
+     * (wecms-api/CLAUDE.md), so the refactor has no entity / repository
+     * for it. Adding it requires a PO/lead decision to widen the
+     * active-table scope first.
      */
     private static boolean matchesKeyword(AcctTrnsHstr row, RcvPayClassification cls, String keyword) {
         if (keyword == null || keyword.isBlank()) return true;
         String needle = keyword.trim().toLowerCase();
         String acct = row.getAcctSeqNo();
         return containsLc(row.getRmrk(), needle)
+                || containsLc(translateText(row.getRmrk()), needle)   // legacy wb_get_translate_text(RMRK)
+                || containsLc(row.getAcctNo(), needle)                // legacy ATH.acct_no
                 || containsLc(row.getRmrk2(), needle)
                 || containsLc(row.getBankRefNo(), needle)
                 || containsLc(row.getBankTrnsShortId(), needle)
                 || amountContains(row.getTrscAmt(), needle)
                 || containsLc(cls.trcoNmByAcctSeqNo().get(acct), needle)
                 || containsLc(cls.purposeByAcctSeqNo().get(acct), needle)
-                || containsLc(cls.vasAcctCdByAcctSeqNo().get(acct), needle);
+                || containsLc(cls.vasAcctCdByAcctSeqNo().get(acct), needle)
+                || containsLc(cls.vasAcctNmByAcctSeqNo().get(acct), needle); // legacy ATRPI.VAS_ACCT_NM
+    }
+
+    private static final java.util.regex.Pattern COMBINING_MARKS =
+            java.util.regex.Pattern.compile("\\p{M}+");
+
+    /**
+     * Pure-Java replica of the legacy {@code wb_get_translate_text(RMRK)}
+     * DB function — strips Vietnamese diacritics so accent-insensitive
+     * keyword search matches the legacy behaviour without a per-row DB
+     * call. The legacy function is a PostgreSQL {@code translate(...)} that
+     * folds the accented Vietnamese letter set to ASCII; Unicode NFD
+     * decomposition + combining-mark removal yields the same fold for
+     * Vietnamese text (and harmlessly widens it to other Latin accents).
+     * {@code đ}/{@code Đ} do not decompose under NFD, so they are folded
+     * explicitly to match the legacy map.
+     */
+    static String translateText(String s) {
+        if (s == null) return null;
+        String pre = s.replace('đ', 'd').replace('Đ', 'D');
+        String nfd = java.text.Normalizer.normalize(pre, java.text.Normalizer.Form.NFD);
+        return COMBINING_MARKS.matcher(nfd).replaceAll("");
     }
 
     private static boolean amountContains(BigDecimal amt, String lcNeedle) {
@@ -846,11 +1002,12 @@ public class TransactionService {
     private RcvPayClassification rcvPayClassificationBySeq(
             String bizKey, List<AcctTrnsHstr> rows) {
         if (rows.isEmpty()) {
-            return new RcvPayClassification(Map.of(), Map.of(), Map.of(), Map.of());
+            return new RcvPayClassification(Map.of(), Map.of(), Map.of(), Map.of(), Map.of());
         }
         List<String> seqs = rows.stream().map(AcctTrnsHstr::getAcctSeqNo).toList();
         Map<String, String> purposes = new HashMap<>();
         Map<String, String> vas = new HashMap<>();
+        Map<String, String> vasNms = new HashMap<>();
         Map<String, String> trcoKeys = new HashMap<>();
         Map<String, String> trcoNms = new HashMap<>();
         Map<String, String> modDtmByAcct = new HashMap<>();
@@ -866,6 +1023,9 @@ public class TransactionService {
             String vasCd = rp.getVasAcctCd();
             if (vasCd != null && !vasCd.isBlank()) vas.put(key, vasCd);
             else vas.remove(key);
+            String vasNm = rp.getVasAcctNm();
+            if (vasNm != null && !vasNm.isBlank()) vasNms.put(key, vasNm);
+            else vasNms.remove(key);
             String trcoKey = rp.getRcvPayTrcoKey();
             if (trcoKey != null && !trcoKey.isBlank()) trcoKeys.put(key, trcoKey);
             else trcoKeys.remove(key);
@@ -873,19 +1033,20 @@ public class TransactionService {
             if (trcoNm != null && !trcoNm.isBlank()) trcoNms.put(key, trcoNm);
             else trcoNms.remove(key);
         }
-        return new RcvPayClassification(purposes, vas, trcoKeys, trcoNms);
+        return new RcvPayClassification(purposes, vas, vasNms, trcoKeys, trcoNms);
     }
 
     private record RcvPayClassification(
             Map<String, String> purposeByAcctSeqNo,
             Map<String, String> vasAcctCdByAcctSeqNo,
+            Map<String, String> vasAcctNmByAcctSeqNo,
             Map<String, String> trcoKeyByAcctSeqNo,
             Map<String, String> trcoNmByAcctSeqNo) { }
 
     private TransactionRow toRow(AcctTrnsHstr r, AcctTrnsRcvPayInfm cnfm,
                                   String useUsagCd, String vasAcctCd,
                                   String rcvPayTrcoKey, String rcvPayTrcoNm,
-                                  MatchInfo match) {
+                                  MatchInfo match, BigDecimal effectiveBal) {
         boolean isDeposit = InoutDv.IN.code().equals(r.getInoutDv());
         boolean confirmed = cnfm != null;
         BigDecimal amt = r.getTrscAmt();
@@ -896,7 +1057,9 @@ public class TransactionService {
                 r.getInoutDv(),
                 isDeposit ? AmountFormatter.wire(amt) : null,
                 !isDeposit ? AmountFormatter.wire(amt) : null,
-                AmountFormatter.wire(r.getBal()),
+                // TH-01 — effectiveBal is the VCB-reconstructed balance for
+                // Vietcombank, or the stored ATH.BAL for every other bank.
+                AmountFormatter.wire(effectiveBal),
                 r.getRmrk() != null ? r.getRmrk() : "",
                 confirmed ? "Y" : "N",
                 // Audit BUG-1 — populate the confirmer name + timestamp the

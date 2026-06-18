@@ -7,6 +7,8 @@ import com.kosign.wecms.common.export.ExportRowProvider;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.CurrencyTotal;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.TransferResultListResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.TransferResultRow;
+import com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -59,11 +61,45 @@ public abstract class PaymentResultExportProvider implements ExportRowProvider {
             "DOC_NO"
     );
 
+    /**
+     * Shared ERP_TRNS_HSTR writer for the export 'W' audit. Field-injected
+     * (not constructor) so the four subclasses keep their lean
+     * {@code @RequiredArgsConstructor} (own ResultService only) without each
+     * threading a {@code super(...)} call. Spring injects it into the concrete
+     * provider bean after construction.
+     */
+    @Autowired
+    private ErpTrnsHistoryWriter erpHistoryWriter;
+
     @Override
     public abstract String screenId();
 
     /** Singular noun for the subheader count, e.g. "transfer batch". */
     protected abstract String titleLabel();
+
+    /**
+     * The 2-char {@code ERP_TRNS_HSTR.TRNS_TYPE_CD} for this module's Payment
+     * Result export ({@code "04"} Vendor / {@code "05"} Expense / {@code "06"}
+     * Payroll / {@code "17"} Internal Transfer — legacy
+     * {@code ErpTypeCd.*_PAYMENT_RESULT} / {@code INTERNAL_TRANSFER_RESULT}).
+     */
+    protected abstract String erpResultTrnsTypeCd();
+
+    /** F2 — these four Result exports write a WeCMS→ERP 'W' audit row (legacy
+     *  {@code pymn_0002_002_r003} / {@code pymn_0006_002_r003} /
+     *  {@code pymn_0009_003_r002}). */
+    @Override
+    public boolean auditsErpExport() {
+        return true;
+    }
+
+    /** Persist the WeCMS→ERP 'W' row by copying the generated workbook into the
+     *  ERP-history tenant subtree. Non-blocking — the writer is
+     *  {@code REQUIRES_NEW} + swallow-and-log, matching legacy. */
+    @Override
+    public void recordErpExport(java.nio.file.Path workbookFile, String orgFileNm) {
+        erpHistoryWriter.recordExportedFile(erpResultTrnsTypeCd(), workbookFile, orgFileNm);
+    }
 
     /** Subclass hook — call the module's matching ResultService.list. */
     protected abstract TransferResultListResponse loadList(

@@ -65,7 +65,56 @@ public record ScheduledTransferRow(
          * populates it; the Vendor / Expense / Payroll siblings pass
          * {@code null} via the backward-compatible constructors below.
          */
-        List<ScheduledTransferApprover> approvers) {
+        List<ScheduledTransferApprover> approvers,
+        /**
+         * Requestor display name — legacy {@code EXPT_RESOL_MSTR.DRAFT_USER_NM},
+         * joined by {@code APPR_SEQ_NO}. Mirrors legacy
+         * {@code IDO.SCDUL_PYMN_SUMR_R002.xml:36/66} which selects
+         * {@code ERM.DRAFT_USER_NM} for the list "Requestor" column. {@code null}
+         * for drafts with no approval request. Only the Vendor Scheduled list
+         * populates it today (C-3 fix 2026-06-16); the Internal Transfer /
+         * Expense / Payroll siblings pass {@code null} via the 23-arg
+         * backward-compatible constructor below.
+         */
+        String draftUserNm) {
+
+    /**
+     * Backward-compatible 23-arg constructor (the pre-{@code draftUserNm}
+     * canonical shape) — delegates with {@code draftUserNm = null} so the
+     * Internal Transfer {@code toListRow(...)} call site (which passes the full
+     * approver-carrying argument list) compiles unchanged. Vendor passes
+     * {@code draftUserNm} through the 24-arg canonical constructor directly.
+     */
+    public ScheduledTransferRow(
+            String     scdulPymnNo,
+            String     scdulPymnTypeCd,
+            String     ccyCd,
+            String     titl,
+            String     apprSeqNo,
+            BigDecimal totalTranAmt,
+            BigDecimal totTrnsCnt,
+            String     regDtm,
+            String     regId,
+            String     apprStts,
+            String     apprSttsKey,
+            String     trnfStts,
+            String     trnfYn,
+            String     outBankCd,
+            String     wdrlActNo,
+            String     payDate,
+            String     fileNm,
+            String     docNo,
+            String     wdrlCcyCd,
+            String     apprFundTp,
+            String     approver,
+            Integer    approverCount,
+            List<ScheduledTransferApprover> approvers) {
+        this(scdulPymnNo, scdulPymnTypeCd, ccyCd, titl, apprSeqNo,
+             totalTranAmt, totTrnsCnt, regDtm, regId, apprStts,
+             apprSttsKey, trnfStts, trnfYn, outBankCd, wdrlActNo,
+             payDate, fileNm, docNo, wdrlCcyCd, apprFundTp, approver,
+             approverCount, approvers, null);
+    }
 
     /**
      * Payroll-shaped constructor (carries {@code apprFundTp}, no

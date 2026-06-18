@@ -86,5 +86,23 @@ public record RegisterAccountsRequest(
             /** Opening balance from the scrape (legacy {@code BAL}).
              *  Used to seed the inquiry view; nightly batches refresh
              *  it. */
-            BigDecimal bal) { }
+            BigDecimal bal,
+
+            /** Maturity date for term / fixed-deposit accounts (legacy
+             *  {@code EXPI_DT}). Free-form from the gateway; the service
+             *  normalizes to {@code yyyyMMdd} and stores it, or skips it
+             *  when the value isn't a valid date (never saved silently). */
+            @Size(max = 20)
+            String maturityDate,
+
+            /** VAS Code (legacy {@code VAS_ACCT_CD}). Hidden for product
+             *  type {@code H}; null/blank otherwise when the user leaves
+             *  it empty. */
+            @Size(max = 50)
+            String vasAcctCd,
+
+            /** VAS Account Name (legacy {@code VAS_ACCT_NM}). Hidden for
+             *  product type {@code H}; null/blank otherwise. */
+            @Size(max = 50)
+            String vasAcctNm) { }
 }

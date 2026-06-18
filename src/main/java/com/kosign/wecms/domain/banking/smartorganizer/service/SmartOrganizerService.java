@@ -62,6 +62,10 @@ import java.util.Map;
  *       (1 → RCV, 2 → PAY) AND ({@code MATCH_TYPE = 'E'} AND
  *       {@code RMRK = ATH.RMRK}) OR ({@code MATCH_TYPE != 'E'} AND
  *       {@code ATH.RMRK ILIKE '%' || RMRK || '%'});</li>
+ *   <li>usage-group direction filter (legacy {@code getDynamic1}):
+ *       when the winning rule has a {@code USE_USAG_CD}, that usage's
+ *       {@code USAG_GRP_CD} must match the direction (1 → '4', 2 → '6');
+ *       VAS-only / chart-only rules skip it (Option B);</li>
  *   <li>optional keyword filter on {@code ATH.RMRK} (ILIKE).</li>
  * </ul>
  *
@@ -148,6 +152,25 @@ public class SmartOrganizerService {
         if (search != null && !search.isBlank()) {
             where.append("   AND h.rmrk ILIKE '%' || :search || '%' ");
         }
+
+        // R02 — usage-group eligibility filter (legacy getDynamic1,
+        // fnsh_0200_001_r001_act.jsp:100-112). When the winning rule classifies
+        // via a usage (USE_USAG_CD present), that usage's group must agree with
+        // the bank row direction: INOUT_DV '1' (deposit) → USAG_GRP_CD '4',
+        // '2' (withdrawal) → '6'. USAG_GRP_CD is populated in JEX DEV (99.99%)
+        // and the refactor/SIT DB, so this is restorable (the prior "unpopulated"
+        // rationale was invalid).
+        // OPTION B (implemented): the filter is gated on `r.use_usag_cd IS NOT
+        // NULL`, so VAS-only / chart-only rules (a deliberate refactor extension,
+        // OrganizerRuleSaveRequest) remain eligible and skip the group check.
+        // Full legacy parity (Option A) would instead exclude every rule without
+        // a USE_USAG_CD — not chosen, to preserve existing refactor behavior.
+        where.append("   AND ( r.use_usag_cd IS NULL OR EXISTS ( ");
+        where.append("       SELECT 1 FROM busi_usag_set_infm u ");
+        where.append("        WHERE u.biz_key = h.biz_key ");
+        where.append("          AND u.use_usag_cd = r.use_usag_cd ");
+        where.append("          AND u.usag_grp_cd = CASE WHEN h.inout_dv = '1' THEN '4' ELSE '6' END ");
+        where.append("   ) ) ");
 
         // R01 — reproduce the LEGACY matching precedence (ACCT_TRNS_HSTR_R028.xml:86-93).
         // By SQL precedence the legacy `... AND (Exact) OR (Contains)` leaves the Contains
@@ -363,14 +386,24 @@ public class SmartOrganizerService {
                 throw new BusinessException("WBE_SMART_ORGANIZER_ALREADY_CONFIRMED");
             }
 
-            // R03 — validate the classification targets exist in the tenant (legacy parity,
-            // c001_act.jsp:96-145). The legacy USAG_GRP_CD↔INOUT_DV direction check degrades
-            // to a presence check here because BUSI_USAG_SET_INFM.USAG_GRP_CD is unpopulated
-            // in the refactor; the rule's stored RCV_PAY_DV carries the direction (plan R03).
+            // R03 — validate the classification targets exist in the tenant AND
+            // enforce the legacy USAG_GRP_CD↔INOUT_DV direction rule
+            // (c001_act.jsp:96-116): a deposit (INOUT_DV '1') requires a group-'4'
+            // (income / RCV) usage, a withdrawal ('2') requires a group-'6'
+            // (expense / PAY) usage; a mismatch rolls the whole confirm back.
+            // USAG_GRP_CD is populated in both JEX DEV (99.99%) and the
+            // refactor/SIT DB, so the prior presence-only degradation is removed.
+            // Directions other than '1'/'2' (e.g. ETC '0') are not validated,
+            // matching legacy which only branches on IN / OUT.
             String useUsagCd = blankToNull(r.useUsagCd());
             if (useUsagCd != null) {
-                purposeRepo.findByBizKeyAndUseUsagCd(bizKey, useUsagCd)
+                BusiUsagSetInfm usage = purposeRepo.findByBizKeyAndUseUsagCd(bizKey, useUsagCd)
                         .orElseThrow(() -> new BusinessException("WBE_SMART_ORGANIZER_USAGE_NOT_FOUND"));
+                String expectedGrp = "1".equals(bank.getInoutDv()) ? "4"
+                        : "2".equals(bank.getInoutDv()) ? "6" : null;
+                if (expectedGrp != null && !expectedGrp.equals(usage.getUsagGrpCd())) {
+                    throw new BusinessException("WBE_SMART_ORGANIZER_USAGE_DIRECTION_MISMATCH");
+                }
             }
             BusiVasAcctInfm vas = null;
             if (r.vasAcctSeqNo() != null) {

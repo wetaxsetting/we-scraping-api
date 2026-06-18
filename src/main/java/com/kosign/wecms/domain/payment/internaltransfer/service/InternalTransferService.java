@@ -132,16 +132,6 @@ public class InternalTransferService {
             "audit.internal_transfer.reject.detail";
     static final String AUDIT_WITHDRAW_APPROVAL_KEY =
             "audit.internal_transfer.withdraw_approval.detail";
-    /** Audit detail key for per-line Re-run action — mirrors legacy
-     *  {@code pymn_0010_002.ts:441-472} (ETC column Re-run button that
-     *  re-fires the dispatch on a transient-failure row). */
-    static final String AUDIT_RERUN_KEY = "audit.internal_transfer.rerun.detail";
-
-    /** Transient bank-side response codes that the legacy live system
-     *  considers retryable. Mirror of
-     *  {@code pymn_0010_002.ts:441} {@code validResponseCode}. */
-    static final java.util.Set<String> RERUN_VALID_RS_CDS =
-            java.util.Set.of("0001", "0002", "0003", "0004", "0005");
 
     static final String AUDIT_CHANGE_APPROVAL_LINE_KEY =
             "audit.internal_transfer.change_approval_line.detail";
@@ -157,6 +147,9 @@ public class InternalTransferService {
      *  {@code settings.erp_transaction_history.type.16} locale entry
      *  ("Internal Scheduled Transfer"). */
     static final String ERP_TRNS_TYPE_INTERNAL_SCHEDULED_TRANSFER = "16";
+    /** WeCMS&rarr;ERP ('W') audit code for the Internal Transfer RESULT download
+     *  (legacy {@code ErpTypeCd.INTERNAL_TRANSFER_RESULT}). */
+    static final String ERP_TRNS_TYPE_INTERNAL_TRANSFER_RESULT = "17";
 
     /** {@code yyyyMMddHHmmss} formatter shared with the audit writer. */
     private static final DateTimeFormatter DTM14 =
@@ -211,14 +204,6 @@ public class InternalTransferService {
     private final com.kosign.wecms.domain.payment.common.OutBankCdNormalizer outBankCdNormalizer;
     /** M-2/M-3 (legacy parity): EXPT_RESOL_MSTR display flags from BUSI_ENV_SET_INFM. */
     private final com.kosign.wecms.domain.payment.approvalbox.service.ApprovalDisplayFlagsResolver displayFlagsResolver;
-    /** Dispatch-table writes for the per-line Re-run action — clears
-     *  {@code RS_CD} so the bank-side daemon re-picks up the row.
-     *  Mirrors the legacy {@code pymn_0010_002.ts:441-472} Re-run popup. */
-    private final com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileDataRepository tbPayFileDataRepository;
-    /** Per-line dispatch-result lookup — shared resolver that hides the
-     *  API vs File path branching. Used here to verify Re-run
-     *  eligibility ({@code RS_CD} ∈ transient set + {@code PROC_DTTM} today). */
-    private final com.kosign.wecms.domain.payment.dispatch.service.DispatchResultResolver dispatchResultResolver;
     private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
 
     /* ----------------------------------------------------------------
@@ -278,7 +263,17 @@ public class InternalTransferService {
         List<ScheduledTransferRow> dtoRows = rows.getContent().stream()
                 .map(s -> toListRow(s, docNoByApprSeqNo, payDateByApprSeqNo, approverByApprSeqNo, apprSttsByApprSeqNo))
                 .toList();
-        List<CurrencyTotal> totals = computeCurrencyTotals(rows.getContent());
+        // F-1: footer totals must aggregate the ENTIRE filtered result set
+        // (legacy SCDUL_PYMN_SUMR_R003), not the current page slice. The
+        // aggregate query reuses search()'s exact predicate (incl. the F-2
+        // Not-Requested orphan leg) and ignores pagination.
+        List<CurrencyTotal> totals = mapCurrencyTotals(
+                sumrRepository.searchCurrencyTotals(
+                        bizKey, ScdulPymnTypeCd.INTERNAL.code(),
+                        fromDtm, toDtm,
+                        srchWdPattern,
+                        null,
+                        apprTypeArg));
 
         log.info("feature=internal-transfer list bizKey={} total={} page={} size={}",
                 bizKey, rows.getTotalElements(), page, pageable.getPageSize());
@@ -667,104 +662,6 @@ public class InternalTransferService {
                 bizKey, id, lineId, req.chartAcctCd());
     }
 
-    /* ----------------------------------------------------------------
-     *  Re-run one detail line (legacy pymn_0010_002.ts:441-472)
-     *
-     *  Fires when the user clicks the ETC-column "Re-run" button on a
-     *  dispatched line whose bank-side response is a transient failure
-     *  (RS_CD ∈ {"0001"…"0005"}) AND whose PROC_DTTM is today. Resets
-     *  PROC_STAT='9' + clears the result fields on the matching
-     *  TB_PAY_FILE_DATA row so the bank-side daemon re-picks it up
-     *  on its next sweep.
-     *
-     *  Refactor R&D scope: the actual bank daemon doesn't run locally,
-     *  so a successful Re-run leaves the dispatch row in "pending"
-     *  state until manual intervention. Production parity is in the
-     *  endpoint behaviour, not in the downstream effect.
-     * ---------------------------------------------------------------- */
-
-    @Transactional
-    public void rerun(String scdulPymnNo, String scdulPymnDetlNo) {
-        String bizKey = requireTenant();
-
-        // 1. Master + detail existence + tenant scope.
-        ScdulPymnSumr master = loadMaster(bizKey, scdulPymnNo);
-        ScdulPymnSumrDetl detl = detlRepository
-                .findByBizKeyAndScdulPymnNoAndScdulPymnDetlNo(bizKey, scdulPymnNo, scdulPymnDetlNo)
-                .orElseThrow(() -> new BusinessException("WBE2061"));
-
-        // 2. Both shadow keys + master PAY_FILE_SEQ_NO must be stamped
-        //    — i.e. the line has been through dispatch.
-        String tranDt    = detl.getPayTranDt();
-        String tranSeq   = detl.getPayTranSeq();
-        String fileSeqNo = master.getPayFileSeqNo();
-        if (tranDt == null || tranDt.isBlank()
-                || tranSeq == null || tranSeq.isBlank()
-                || fileSeqNo == null || fileSeqNo.isBlank()) {
-            // WBE2080 — line has no dispatch row yet.
-            throw new BusinessException("WBE2122");
-        }
-
-        // 3. Eligibility via the shared resolver — surfaces the same
-        //    (PROC_STAT / RS_CD / PROC_DTTM / RSLT_DTTM) tuple the
-        //    Result-detail read endpoint serves. Avoids duplicating the
-        //    API/File-path branching here. Mirrors legacy
-        //    pymn_0010_002.ts:441-449 (validResponseCode + executedToday).
-        java.util.Map<String,
-                com.kosign.wecms.domain.payment.dispatch.service.DispatchResult> results =
-                dispatchResultResolver.resolve(master, java.util.List.of(detl));
-        com.kosign.wecms.domain.payment.dispatch.service.DispatchResult result =
-                results.get(scdulPymnDetlNo);
-        if (result == null || result.rsCd() == null
-                || !RERUN_VALID_RS_CDS.contains(result.rsCd())) {
-            // WBE2123 — RS_CD not in transient set (or no result yet).
-            throw new BusinessException("WBE2123");
-        }
-        String procDttm = result.procDttm();
-        if (procDttm == null || procDttm.length() < 8) {
-            throw new BusinessException("WBE2124");
-        }
-        String todayYmd = OffsetDateTime.now(clock)
-                .withOffsetSameInstant(ZoneOffset.UTC)
-                .format(DateTimeFormatter.ofPattern("yyyyMMdd"));
-        if (!todayYmd.equals(procDttm.substring(0, 8))) {
-            // WBE2124 — line was not executed today; can't be re-run.
-            throw new BusinessException("WBE2124");
-        }
-
-        // 4. Clear RS_CD on TB_PAY_FILE_DATA so the bank-side daemon
-        //    re-picks up the row on its next sweep. Other result fields
-        //    (PROC_STAT / PROC_DTTM / RSLT_DTTM / RS_MSG) live on
-        //    TB_PAY_FILE_MST or aren't mapped on the per-line entity —
-        //    R&D scope limits the reset to the per-line RS_CD column
-        //    that the entity exposes.
-        java.math.BigDecimal seq;
-        try {
-            seq = new java.math.BigDecimal(tranSeq);
-        } catch (NumberFormatException ex) {
-            throw new BusinessException("WBE2122");
-        }
-        com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileDataId dataId =
-                new com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileDataId(
-                        tranDt, bizKey, fileSeqNo, seq);
-        tbPayFileDataRepository.findById(dataId).ifPresent(data -> {
-            data.setRsCd(null);
-            tbPayFileDataRepository.save(data);
-        });
-
-        // 5. Audit log.
-        auditLogService.append(AuditLogContext.builder()
-                .wsvcId(WSVC_ID)
-                .refNo(REF_NO)
-                .refNo1(scdulPymnNo)
-                .refNo2(scdulPymnDetlNo)
-                .activityKey(AUDIT_ACTIVITY_KEY)
-                .detailKey(AUDIT_RERUN_KEY)
-                .build());
-
-        log.info("feature=internal-transfer rerun bizKey={} scdulPymnNo={} lineId={} tranDt={} seq={}",
-                bizKey, scdulPymnNo, scdulPymnDetlNo, tranDt, seq);
-    }
 
     /* ----------------------------------------------------------------
      *  Delete draft batch (legacy pymn_0009_001_d001)
@@ -1170,11 +1067,11 @@ public class InternalTransferService {
      * <ul>
      *   <li>requires the batch to carry an {@code APPR_SEQ_NO}
      *       (i.e. the user previously hit Request Approval) — else
-     *       {@code WBE2094}.</li>
+     *       {@code WBE2126}.</li>
      *   <li>requires the batch to be still actionable — the current
      *       {@code APPR_STTS} must be null / {@code "P"} / {@code "I"};
      *       any final state ({@code "C"} / {@code "X"}) returns
-     *       {@code WBE2095}.</li>
+     *       {@code WBE2127}.</li>
      *   <li>stamps {@code APPR_STTS = "C"} on Approve, {@code "X"}
      *       on Reject.</li>
      *   <li>writes one audit row keyed by the action (Approve /
@@ -1209,7 +1106,7 @@ public class InternalTransferService {
         // but the inverse condition — Delete rejects rows WITH a seq,
         // approve/reject rejects rows WITHOUT one.
         if (master.getApprSeqNo() == null || master.getApprSeqNo().isBlank()) {
-            throw new BusinessException("WBE2094");
+            throw new BusinessException("WBE2126");
         }
 
         // Guard 2: the batch must still be actionable. Once approved /
@@ -1217,7 +1114,7 @@ public class InternalTransferService {
         // overwrite history. Status derives from EXPT_RESOL_MSTR.APPR_TYPE_CD.
         String current = legacyFunctions.getApprStts(bizKey, master.getApprSeqNo());
         if (APPR_STTS_APPROVED.equals(current) || APPR_STTS_REJECTED.equals(current)) {
-            throw new BusinessException("WBE2095");
+            throw new BusinessException("WBE2127");
         }
 
         // Delegate the approver-chain logic to the approval-box service —
@@ -1272,7 +1169,7 @@ public class InternalTransferService {
             // approval to act on" — so the frontend can surface a
             // single error envelope for every "operates on a request"
             // call.
-            throw new BusinessException("WBE2094");
+            throw new BusinessException("WBE2126");
         }
 
         // Shared cleanup — deletes master + approver rows, enforces the
@@ -1326,7 +1223,7 @@ public class InternalTransferService {
 
         String apprSeqNo = master.getApprSeqNo();
         if (apprSeqNo == null || apprSeqNo.isBlank()) {
-            throw new BusinessException("WBE2094");
+            throw new BusinessException("WBE2126");
         }
 
         approvalBoxFanoutService.changeApprovalLine(apprSeqNo, apprLineNo);
@@ -1504,6 +1401,13 @@ public class InternalTransferService {
         String displayName = master.getOrgFileNm() == null || master.getOrgFileNm().isBlank()
                 ? saveFileNm
                 : master.getOrgFileNm();
+        // F2 — legacy pymn_0010_002_r002 writes an ERP_TRNS_HSTR 'W' audit row
+        // on the Result-page original-file download. Scoped to dispatched batches
+        // (trnf_yn='Y'); non-blocking (REQUIRES_NEW + swallow). See VendorPaymentService.
+        if ("Y".equals(master.getTrnfYn())) {
+            erpHistoryWriter.recordExportedFile(
+                    ERP_TRNS_TYPE_INTERNAL_TRANSFER_RESULT, path, displayName);
+        }
         return new DownloadResource(path, displayName, saveFileNm, fileSize);
     }
 
@@ -1738,23 +1642,22 @@ public class InternalTransferService {
 
     /** Compute per-currency totals on the **page slice** (matches the
      *  visible rows the frontend will paint in the totals footer). */
-    private static List<CurrencyTotal> computeCurrencyTotals(List<ScdulPymnSumr> rows) {
-        Map<String, BigDecimal> amountByCcy = new TreeMap<>();
-        Map<String, BigDecimal> countByCcy  = new TreeMap<>();
-        Map<String, BigDecimal> trnsByCcy   = new TreeMap<>();
-        for (ScdulPymnSumr r : rows) {
-            String ccy = Objects.requireNonNullElse(r.getCcyCd(), "");
-            amountByCcy.merge(ccy, Objects.requireNonNullElse(r.getTotalTranAmt(), BigDecimal.ZERO), BigDecimal::add);
-            countByCcy.merge(ccy, BigDecimal.ONE, BigDecimal::add);
-            trnsByCcy.merge(ccy, Objects.requireNonNullElse(r.getTotTrnsCnt(), BigDecimal.ZERO), BigDecimal::add);
-        }
-        return amountByCcy.entrySet().stream()
-                .sorted(Comparator.comparing(Map.Entry::getKey))
-                .map(e -> new CurrencyTotal(
-                        e.getValue(),
-                        countByCcy.get(e.getKey()),
-                        e.getKey(),
-                        trnsByCcy.get(e.getKey())))
+    /**
+     * Map the {@code [ccyCd, sumAmount, docCount, sumTransactionCount]} rows
+     * from {@link ScdulPymnSumrRepository#searchCurrencyTotals} into the
+     * {@link CurrencyTotal} wire records. The DB aggregate has already summed
+     * across the full filtered set and grouped by currency (F-1); this method
+     * only does the {@code COUNT}-Long → {@code BigDecimal} projection and
+     * null-safety. {@code COALESCE} in the query guarantees non-null amount /
+     * count / ccy, so the defaults here are belt-and-braces.
+     */
+    private static List<CurrencyTotal> mapCurrencyTotals(List<Object[]> aggregated) {
+        return aggregated.stream()
+                .map(r -> new CurrencyTotal(
+                        r[1] == null ? BigDecimal.ZERO : (BigDecimal) r[1],
+                        r[2] == null ? BigDecimal.ZERO : BigDecimal.valueOf(((Number) r[2]).longValue()),
+                        r[0] == null ? "" : (String) r[0],
+                        r[3] == null ? BigDecimal.ZERO : (BigDecimal) r[3]))
                 .toList();
     }
 

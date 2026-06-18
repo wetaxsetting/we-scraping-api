@@ -15,7 +15,6 @@ import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxActionResponse
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprDv;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxFanoutService;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxService;
-import com.kosign.wecms.domain.payment.dispatch.service.TransferDispatchExecutor;
 import com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalActionRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.CreateScheduledTransferRequest;
@@ -128,21 +127,15 @@ public class ExpensePaymentService {
     static final String AUDIT_CHANGE_APPROVAL_LINE_KEY =
             "audit.expense_payment.change_approval_line.detail";
     static final String AUDIT_CREATE_KEY           = "audit.expense_payment.create.detail";
-    /** Audit detail key for per-line Re-run action (legacy
-     *  `pymn_0004_002.ts` ETC-column Re-run button). */
-    static final String AUDIT_RERUN_KEY = "audit.expense_payment.rerun.detail";
-
-    /** Transient bank-side response codes that the legacy live system
-     *  considers retryable. Same set as Internal Transfer. */
-    static final java.util.Set<String> RERUN_VALID_RS_CDS =
-            java.util.Set.of("0001", "0002", "0003", "0004", "0005");
-
     /** ERP Transaction History {@code TRNS_TYPE_CD} for Expense Scheduled
      *  Payment rows. Pairs with the
      *  {@code settings.erp_transaction_history.type.02} locale entry
      *  ("Expense Scheduled Payment") — legacy parity with
      *  {@code wabooks.enums.ErpTypeCd.VENDOR_SCHEDULED_PAYMENT}. */
     static final String ERP_TRNS_TYPE_EXPENSE_SCHEDULED_PAYMENT = "03";
+    /** WeCMS&rarr;ERP ('W') audit code for the Expense Payment RESULT download
+     *  (legacy {@code ErpTypeCd.EXPENSE_PAYMENT_RESULT}). */
+    static final String ERP_TRNS_TYPE_EXPENSE_PAYMENT_RESULT = "05";
 
     /** Approval-status codes returned by the legacy {@code wb_get_appr_stts(...)}
      *  function, used by the approve/reject "already final" guard. {@code "C"} =
@@ -165,7 +158,7 @@ public class ExpensePaymentService {
     private final ExpensePaymentFileResolver    fileResolver;
     private final ErpTrnsHistoryWriter          erpHistoryWriter;
     private final AuditLogService               auditLogService;
-    private final TransferDispatchExecutor      dispatchExecutor;
+    private final ExpenseDispatchExecutor       dispatchExecutor;
     /** Approver-chain authority — see InternalTransferService for the rationale. */
     private final ApprovalBoxService            approvalBoxService;
     /** Shared projector that resolves the per-line bank name +
@@ -179,10 +172,6 @@ public class ExpensePaymentService {
     private final com.kosign.wecms.domain.payment.approvalbox.service.ApprovalDisplayFlagsResolver displayFlagsResolver;
     /** M-1 (legacy parity): shared Request Approval attachment writer (EXPT_RESOL_FILE). */
     private final com.kosign.wecms.domain.payment.approvalbox.service.ApprovalAttachmentWriter approvalAttachmentWriter;
-    /** Dispatch-table writes for the per-line Re-run action. */
-    private final com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileDataRepository tbPayFileDataRepository;
-    /** Per-line dispatch-result lookup (shared resolver). */
-    private final com.kosign.wecms.domain.payment.dispatch.service.DispatchResultResolver dispatchResultResolver;
     /** Approval-Box fan-out — see InternalTransferService for rationale. */
     private final ApprovalBoxFanoutService      approvalBoxFanoutService;
     /** Shared request-approval bulletin / notification writer (BLTB_* tables). */
@@ -598,6 +587,14 @@ public class ExpensePaymentService {
         String displayName = master.getOrgFileNm() == null || master.getOrgFileNm().isBlank()
                 ? saveFileNm
                 : master.getOrgFileNm();
+        // F2 — legacy pymn_0002_002_r002 (Expense reuses the Vendor view via
+        // SVC_ID) writes an ERP_TRNS_HSTR 'W' audit row on the Result-page
+        // original-file download. Scoped to dispatched batches (trnf_yn='Y');
+        // non-blocking (REQUIRES_NEW + swallow). See VendorPaymentService.
+        if ("Y".equals(master.getTrnfYn())) {
+            erpHistoryWriter.recordExportedFile(
+                    ERP_TRNS_TYPE_EXPENSE_PAYMENT_RESULT, path, displayName);
+        }
         return new DownloadResource(path, displayName, saveFileNm, fileSize);
     }
 
@@ -652,74 +649,6 @@ public class ExpensePaymentService {
                 bizKey, id, lineId, req.chartAcctCd());
     }
 
-    /**
-     * Re-run one detail line — legacy parity with
-     * `pymn_0004_002.ts:441-472`. Same shape as
-     * {@link com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService#rerun}.
-     */
-    @Transactional
-    public void rerun(String scdulPymnNo, String scdulPymnDetlNo) {
-        String bizKey = requireTenant();
-        ScdulPymnSumr master = loadMaster(bizKey, scdulPymnNo);
-        ScdulPymnSumrDetl detl = detlRepository
-                .findByBizKeyAndScdulPymnNoAndScdulPymnDetlNo(bizKey, scdulPymnNo, scdulPymnDetlNo)
-                .orElseThrow(() -> new BusinessException("WBE2061"));
-
-        String tranDt    = detl.getPayTranDt();
-        String tranSeq   = detl.getPayTranSeq();
-        String fileSeqNo = master.getPayFileSeqNo();
-        if (tranDt == null || tranDt.isBlank()
-                || tranSeq == null || tranSeq.isBlank()
-                || fileSeqNo == null || fileSeqNo.isBlank()) {
-            throw new BusinessException("WBE2122");
-        }
-
-        java.util.Map<String,
-                com.kosign.wecms.domain.payment.dispatch.service.DispatchResult> results =
-                dispatchResultResolver.resolve(master, java.util.List.of(detl));
-        com.kosign.wecms.domain.payment.dispatch.service.DispatchResult result =
-                results.get(scdulPymnDetlNo);
-        if (result == null || result.rsCd() == null
-                || !RERUN_VALID_RS_CDS.contains(result.rsCd())) {
-            throw new BusinessException("WBE2123");
-        }
-        String procDttm = result.procDttm();
-        if (procDttm == null || procDttm.length() < 8) {
-            throw new BusinessException("WBE2124");
-        }
-        String todayYmd = java.time.OffsetDateTime.now(clock)
-                .withOffsetSameInstant(java.time.ZoneOffset.UTC)
-                .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd"));
-        if (!todayYmd.equals(procDttm.substring(0, 8))) {
-            throw new BusinessException("WBE2124");
-        }
-
-        java.math.BigDecimal seq;
-        try {
-            seq = new java.math.BigDecimal(tranSeq);
-        } catch (NumberFormatException ex) {
-            throw new BusinessException("WBE2122");
-        }
-        com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileDataId dataId =
-                new com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileDataId(
-                        tranDt, bizKey, fileSeqNo, seq);
-        tbPayFileDataRepository.findById(dataId).ifPresent(data -> {
-            data.setRsCd(null);
-            tbPayFileDataRepository.save(data);
-        });
-
-        auditLogService.append(AuditLogContext.builder()
-                .wsvcId(WSVC_ID)
-                .refNo(REF_NO)
-                .refNo1(scdulPymnNo)
-                .refNo2(scdulPymnDetlNo)
-                .activityKey(AUDIT_ACTIVITY_KEY)
-                .detailKey(AUDIT_RERUN_KEY)
-                .build());
-
-        log.info("feature=expense-payment rerun bizKey={} scdulPymnNo={} lineId={} tranDt={} seq={}",
-                bizKey, scdulPymnNo, scdulPymnDetlNo, tranDt, seq);
-    }
 
     /**
      * Delete a draft Expense Payment batch. Mirrors
@@ -997,12 +926,12 @@ public class ExpensePaymentService {
         ScdulPymnSumr master = loadMaster(bizKey, id);
 
         if (master.getApprSeqNo() == null || master.getApprSeqNo().isBlank()) {
-            throw new BusinessException("WBE2094");
+            throw new BusinessException("WBE2126");
         }
 
         String current = legacyFunctions.getApprStts(bizKey, master.getApprSeqNo());
         if (APPR_STTS_APPROVED.equals(current) || APPR_STTS_REJECTED.equals(current)) {
-            throw new BusinessException("WBE2095");
+            throw new BusinessException("WBE2127");
         }
 
         // Delegate approver-chain logic — multi-approver workflows stay
@@ -1040,7 +969,7 @@ public class ExpensePaymentService {
 
         String apprSeqNo = master.getApprSeqNo();
         if (apprSeqNo == null || apprSeqNo.isBlank()) {
-            throw new BusinessException("WBE2094");
+            throw new BusinessException("WBE2126");
         }
 
         approvalBoxFanoutService.withdrawApproval(apprSeqNo);
@@ -1079,7 +1008,7 @@ public class ExpensePaymentService {
 
         String apprSeqNo = master.getApprSeqNo();
         if (apprSeqNo == null || apprSeqNo.isBlank()) {
-            throw new BusinessException("WBE2094");
+            throw new BusinessException("WBE2126");
         }
 
         approvalBoxFanoutService.changeApprovalLine(apprSeqNo, apprLineNo);
@@ -1124,7 +1053,22 @@ public class ExpensePaymentService {
         if (TrnfYn.TRANSFERRED.code().equals(master.getTrnfYn())) {
             throw new BusinessException("WBE2064");
         }
-        if (master.getApprSeqNo() == null || master.getApprSeqNo().isBlank()) {
+        String apprSeqNo = master.getApprSeqNo();
+        if (apprSeqNo == null || apprSeqNo.isBlank()) {
+            throw new BusinessException("WBE2063");
+        }
+        // G1 (legacy parity — PymnHelper.pymn_0001_001_c001:2146): a batch may be
+        // dispatched ONLY when its approval is fully approved, i.e.
+        // EXPT_RESOL_MSTR.APPR_TYPE_CD = '01'. Pending ('00'), rejected ('02'),
+        // and in-progress ('03') batches all carry an APPR_SEQ_NO but are NOT
+        // approved — checking APPR_SEQ_NO presence alone (the prior behaviour)
+        // let an unapproved/rejected batch reach the bank-dispatch tables.
+        String apprTypeCd = exptResolMstrRepository
+                .findByBizKeyAndApprSeqNoIn(bizKey, java.util.List.of(apprSeqNo))
+                .stream().findFirst()
+                .map(ExptResolMstr::getApprTypeCd)
+                .orElse(null);
+        if (!"01".equals(apprTypeCd)) {
             throw new BusinessException("WBE2063");
         }
 

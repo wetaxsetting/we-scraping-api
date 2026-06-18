@@ -9,6 +9,8 @@ import com.kosign.wecms.domain.banking.smartorganizer.dto.OrganizerRuleRow;
 import com.kosign.wecms.domain.banking.smartorganizer.dto.OrganizerRuleSaveRequest;
 import com.kosign.wecms.domain.banking.smartorganizer.entity.RmrkOrgInfm;
 import com.kosign.wecms.domain.banking.smartorganizer.repository.RmrkOrgInfmRepository;
+import com.kosign.wecms.domain.setting.purposesettings.entity.BusiUsagSetInfm;
+import com.kosign.wecms.domain.setting.purposesettings.repository.PurposeSettingsRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,6 +36,7 @@ public class OrganizerRuleService {
 
     private final RmrkOrgInfmRepository repo;
     private final LegacyFunctionRepository legacy;
+    private final PurposeSettingsRepository purposeRepo;
 
     /** List every rule for the current tenant, ordered by DISP_ORD ASC. */
     @Transactional(readOnly = true)
@@ -56,15 +59,16 @@ public class OrganizerRuleService {
 
         long nextSeqNo = parseSeqNo(legacy.nextRmrkSeqNo(bizKey));
 
+        String useUsagCd = blankToNull(req.useUsagCd());
         RmrkOrgInfm e = new RmrkOrgInfm();
         e.setBizKey(bizKey);
         e.setRmrkSeqNo(nextSeqNo);
         e.setRmrk(req.rmrk().trim());
         e.setMatchType(req.matchType());
-        e.setRcvPayDv(req.rcvPayDv());
+        e.setUseUsagCd(useUsagCd);
+        e.setRcvPayDv(resolveRcvPayDv(bizKey, useUsagCd, req.rcvPayDv()));
         e.setDispOrd(req.dispOrd() != null ? req.dispOrd() : nextDispOrd(bizKey));
         e.setTrcoKey(blankToNull(req.trcoKey()));
-        e.setUseUsagCd(blankToNull(req.useUsagCd()));
         e.setVasAcctSeqNo(req.vasAcctSeqNo());
         e.setChartAcctSeqNo(blankToNull(req.chartAcctSeqNo()));
         e.setChartAcctCd(blankToNull(req.chartAcctCd()));
@@ -86,12 +90,13 @@ public class OrganizerRuleService {
         RmrkOrgInfm e = repo.findByBizKeyAndRmrkSeqNo(bizKey, rmrkSeqNo)
                 .orElseThrow(() -> new BusinessException("WBE_SMART_ORGANIZER_RULE_NOT_FOUND"));
 
+        String useUsagCd = blankToNull(req.useUsagCd());
         e.setRmrk(req.rmrk().trim());
         e.setMatchType(req.matchType());
-        e.setRcvPayDv(req.rcvPayDv());
+        e.setUseUsagCd(useUsagCd);
+        e.setRcvPayDv(resolveRcvPayDv(bizKey, useUsagCd, req.rcvPayDv()));
         if (req.dispOrd() != null) e.setDispOrd(req.dispOrd());
         e.setTrcoKey(blankToNull(req.trcoKey()));
-        e.setUseUsagCd(blankToNull(req.useUsagCd()));
         e.setVasAcctSeqNo(req.vasAcctSeqNo());
         e.setChartAcctSeqNo(blankToNull(req.chartAcctSeqNo()));
         e.setChartAcctCd(blankToNull(req.chartAcctCd()));
@@ -128,6 +133,31 @@ public class OrganizerRuleService {
     }
 
     // ---- helpers ----------------------------------------------------
+
+    /**
+     * Derive {@code RCV_PAY_DV} from the chosen usage's
+     * {@code USAG_GRP_CD} — legacy {@code fnsh_0200_002_c001_act.jsp:103-110}:
+     * group {@code '4'} → {@code RCV}, group {@code '6'} → {@code PAY}.
+     *
+     * <p>The client-supplied {@code rcvPayDv} is NOT trusted for grouped-usage
+     * rules — the usage group is authoritative (a usage rule whose direction
+     * contradicts its group would otherwise match the wrong transaction
+     * direction). VAS-only / chart-only rules (no {@code useUsagCd}) keep the
+     * client value, as do usages with a non-4/6 group (e.g. a refactor
+     * group-{@code NULL} purpose) — mirroring legacy, where the CD_4/CD_6 map
+     * returns null for any other group.
+     */
+    private String resolveRcvPayDv(String bizKey, String useUsagCd, String clientRcvPayDv) {
+        if (useUsagCd == null) {
+            return clientRcvPayDv; // VAS-only / chart-only rule — no usage to derive from
+        }
+        BusiUsagSetInfm usage = purposeRepo.findByBizKeyAndUseUsagCd(bizKey, useUsagCd)
+                .orElseThrow(() -> new BusinessException("WBE_SMART_ORGANIZER_USAGE_NOT_FOUND"));
+        String grp = usage.getUsagGrpCd();
+        if ("4".equals(grp)) return "RCV";
+        if ("6".equals(grp)) return "PAY";
+        return clientRcvPayDv; // ungrouped usage — fall back to the supplied value
+    }
 
     private int nextDispOrd(String bizKey) {
         List<RmrkOrgInfm> existing = repo.findByBizKeyOrderByDispOrdAscRmrkSeqNoAsc(bizKey);

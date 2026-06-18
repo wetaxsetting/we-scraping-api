@@ -1,15 +1,21 @@
 package com.kosign.wecms.domain.setting.bankaccount.service;
 
+import com.kosign.wecms.common.auditlog.entity.AuditLogsInfm;
+import com.kosign.wecms.common.auditlog.repository.AuditLogEntryRepository;
 import com.kosign.wecms.common.auditlog.service.AuditLogContext;
 import com.kosign.wecms.common.auditlog.service.AuditLogService;
 import com.kosign.wecms.common.enums.AcctTypeCd;
+import com.kosign.wecms.common.enums.LangCd;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.common.web.SortDirection;
+import com.kosign.wecms.domain.auth.entity.UserInfm;
+import com.kosign.wecms.domain.auth.repository.UserInfmRepository;
 import com.kosign.wecms.domain.banking.entity.AcctMstr;
-import com.kosign.wecms.domain.banking.entity.BankInfm;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
-import com.kosign.wecms.domain.banking.repository.BankInfmRepository;
+import com.kosign.wecms.domain.banking.service.BankCdResolver;
+import com.kosign.wecms.domain.setting.bankaccount.dto.BankAccountAuditResponse;
+import com.kosign.wecms.domain.setting.bankaccount.dto.BankAccountAuditRow;
 import com.kosign.wecms.domain.setting.bankaccount.dto.BankAccountListResponse;
 import com.kosign.wecms.domain.setting.bankaccount.dto.BankAccountRegisterRequest;
 import com.kosign.wecms.domain.setting.bankaccount.dto.BankAccountRegisterResponse;
@@ -73,11 +79,26 @@ public class SettingsBankAccountService {
      *  static-UI dropdown's "Current" default. */
     private static final String DEFAULT_ACCT_TYPE_CD = "02";
 
+    /** Legacy {@code comm_0183_004_r001} page id — read alongside the
+     *  refactor slug so the audit popup surfaces rows written by the live
+     *  JEX system on a shared DB. */
+    private static final String LEGACY_WSVC_ID = "comm_0183_001";
+
+    /** {@code WSVC_ID} set the audit popup reads (refactor slug + legacy id). */
+    private static final List<String> AUDIT_WSVC_IDS = List.of(WSVC_ID, LEGACY_WSVC_ID);
+
+    /** {@code REF_NO} set the audit popup reads — metadata edits
+     *  ({@code ACCT_MSTR}) + permission grants ({@code ACCT_AUTH_INFO}),
+     *  mirroring legacy {@code comm_0183_004_r001_act.jsp:getDynamic}. */
+    private static final List<String> AUDIT_REF_NOS = List.of("ACCT_MSTR", "ACCT_AUTH_INFO");
+
     private final AcctMstrRepository acctRepo;
-    private final BankInfmRepository bankInfmRepo;
+    private final BankCdResolver bankCdResolver;
     private final BusiVasAcctInfmRepository vasAcctRepo;
     private final AcctAuthInfoRepository acctAuthRepo;
     private final AuditLogService auditLogService;
+    private final AuditLogEntryRepository auditLogReadRepo;
+    private final UserInfmRepository userInfmRepo;
 
     /* -----------------------------------------------------------------
      *  LIST — every account for the tenant
@@ -106,20 +127,50 @@ public class SettingsBankAccountService {
     @Transactional(readOnly = true)
     public BankAccountListResponse list(String sortField, String sortDirection) {
         String bizKey = TenantContext.currentBizKey();
-        // Pull every account (active + inactive — legacy
-        // comm_0183_001_r001 doesn't filter by ACTV_YN; users can see
-        // disabled rows so they can re-enable later).
+        // Active accounts only — legacy comm_0183_001_r001 filters
+        // `am.actv_yn = 'Y'` (IDO.ACCT_MSTR_R012). Inactive / de-registered
+        // accounts are hidden from this management screen (G11, business
+        // decision 2026-06-16 = follow legacy). The rows are not modified —
+        // only the read is scoped.
         Sort sort = buildSort(
                 BankAccountSortField.parse(sortField),
                 SortDirection.parse(sortDirection));
-        List<AcctMstr> rows = acctRepo.findByBizKey(bizKey, sort);
+        List<AcctMstr> rows = acctRepo.findByBizKeyAndActvYn(bizKey, "Y", sort);
 
         Map<String, String> bankNames = resolveBankNames(rows);
+        Map<String, String> modifierNames = resolveModifierNames(rows);
 
         List<BankAccountRow> items = rows.stream()
-                .map(r -> toRow(r, bankNames, resolvePermissionLabels(bizKey, r)))
+                .map(r -> toRow(r, bankNames, modifierNames, resolvePermissionLabels(bizKey, r)))
                 .toList();
         return new BankAccountListResponse(items);
+    }
+
+    /**
+     * Resolve {@code MOD_ID → USER_NM} for the "Audit Logs" column actor —
+     * mirrors legacy {@code WB_GET_USER_NM(MOD_ID)} in
+     * {@code IDO.ACCT_MSTR_R012.xml:41}. The cell must show the user's display
+     * name, never the raw {@code MOD_ID} (which is the login id / e-mail).
+     * Reads {@code USER_INFM} by PK ({@code USER_ID}) — global, matching the
+     * legacy function (not tenant-scoped). Returns {@code id → name}; ids
+     * absent from {@code USER_INFM} simply don't appear (caller falls back to
+     * the raw id).
+     */
+    private Map<String, String> resolveModifierNames(List<AcctMstr> rows) {
+        java.util.Set<String> ids = new java.util.HashSet<>();
+        for (AcctMstr r : rows) {
+            if (r.getModId() != null && !r.getModId().isBlank()) {
+                ids.add(r.getModId());
+            }
+        }
+        Map<String, String> out = new HashMap<>();
+        if (ids.isEmpty()) return out;
+        for (UserInfm u : userInfmRepo.findAllById(ids)) {
+            if (u.getUserNm() != null && !u.getUserNm().isBlank()) {
+                out.put(u.getUserId(), u.getUserNm());
+            }
+        }
+        return out;
     }
 
     /** Resolve the (viewLabel, withdrawalLabel) pair for one bank-account
@@ -315,20 +366,65 @@ public class SettingsBankAccountService {
     }
 
     /* -----------------------------------------------------------------
+     *  AUDIT LOGS — per-account history popup
+     * ----------------------------------------------------------------- */
+
+    /**
+     * Audit history for one bank account, latest-first. Mirrors legacy
+     * {@code comm_0183_004_r001_act.jsp} — reads {@code AUDIT_LOGS_INFM}
+     * filtered by {@code (BIZ_KEY, REF_NO IN ('ACCT_MSTR','ACCT_AUTH_INFO'),
+     * REF_NO1=bankCd, REF_NO2=acctNo, WSVC_ID, LANG_CD)}. The refactor reads
+     * the slug ({@code bank-account}) AND the legacy page id
+     * ({@code comm_0183_001}) so the popup surfaces rows written by the live
+     * JEX system on a shared DB; writes still use the slug only.
+     *
+     * <p>{@code REG_NM} (display name) is populated at write time by
+     * {@link AuditLogService} from {@link TenantContext}, matching the legacy
+     * {@code REG_NM} the action JSP returns — no {@code USER_INFM} join needed.
+     */
+    @Transactional(readOnly = true)
+    public BankAccountAuditResponse auditLogs(String bankCd, String acctNo) {
+        String bizKey = TenantContext.currentBizKey();
+        LangCd lang = TenantContext.currentLangCd();
+        if (lang == null) lang = LangCd.EN;
+
+        List<AuditLogsInfm> rows = auditLogReadRepo
+                .findByBizKeyAndRefNoInAndRefNo1AndRefNo2AndWsvcIdInAndLangCdOrderByRegDtmDesc(
+                        bizKey, AUDIT_REF_NOS, bankCd, acctNo, AUDIT_WSVC_IDS, lang.name());
+
+        List<BankAccountAuditRow> items = rows.stream()
+                .map(r -> new BankAccountAuditRow(
+                        r.getAuditLogsSeqNo(),
+                        r.getAuditLogsActv(),
+                        r.getAuditLogsActvDtl(),
+                        r.getRegId(),
+                        r.getRegNm(),
+                        r.getRegDtm()))
+                .toList();
+        return new BankAccountAuditResponse(items);
+    }
+
+    /* -----------------------------------------------------------------
      *  Helpers
      * ----------------------------------------------------------------- */
 
+    /**
+     * Resolve {@code BANK_CD → displayed bank name} for the listed rows.
+     *
+     * <p>Routes through {@link BankCdResolver#resolveBankNm(String)} — the
+     * single source of truth for bank-name display across the refactor — so
+     * this screen shows the legacy SHORT name ({@code wb_get_bank_nm(_,'s')},
+     * e.g. {@code "Shinhan VN"}), matching the legacy {@code comm_0183_001}
+     * grid and every other refactor banking screen. The resolver falls back
+     * short → formal ({@code RPRS_BANK_NM}) → raw code internally; it never
+     * returns null.
+     */
     private Map<String, String> resolveBankNames(List<AcctMstr> rows) {
         Map<String, String> out = new HashMap<>();
         for (AcctMstr row : rows) {
-            if (row.getBankCd() != null) {
-                out.putIfAbsent(row.getBankCd(), row.getBankCd());
-            }
-        }
-        if (out.isEmpty()) return out;
-        for (BankInfm bi : bankInfmRepo.findAll()) {
-            if (out.containsKey(bi.getBankCd())) {
-                out.put(bi.getBankCd(), bi.getRprsBankNm());
+            String cd = row.getBankCd();
+            if (cd != null) {
+                out.computeIfAbsent(cd, bankCdResolver::resolveBankNm);
             }
         }
         return out;
@@ -337,6 +433,7 @@ public class SettingsBankAccountService {
     private static BankAccountRow toRow(
             AcctMstr e,
             Map<String, String> bankNames,
+            Map<String, String> modifierNames,
             String[] permissionLabels) {
         // Legacy `EXPI_DT` is yyyyMMdd; surface ISO yyyy-MM-dd on the
         // wire so the frontend can render via the shared date pipeline.
@@ -366,7 +463,12 @@ public class SettingsBankAccountService {
                 e.getPrnSeq(),
                 e.getBal(),
                 e.getRealAmt(),
-                e.getModId(),
+                // Audit-log actor: resolve MOD_ID → USER_NM (legacy
+                // WB_GET_USER_NM(MOD_ID)); fall back to the raw id only when
+                // the user is absent from USER_INFM — never show the e-mail
+                // when a display name exists.
+                e.getModId() == null ? null
+                        : modifierNames.getOrDefault(e.getModId(), e.getModId()),
                 e.getModDtm(),
                 permissionLabels[0],   // viewPermissionLabel
                 permissionLabels[1]    // withdrawalPermissionLabel

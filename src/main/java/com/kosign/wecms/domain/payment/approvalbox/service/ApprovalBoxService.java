@@ -8,6 +8,7 @@ import com.kosign.wecms.common.web.SortDirection;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxActionResponse;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxApprover;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxBulkApproveResponse;
+import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxFooterTotals;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxListResponse;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxProjection;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxRow;
@@ -124,6 +125,12 @@ public class ApprovalBoxService {
     private static final Sort DEFAULT_SORT =
             Sort.by(Sort.Order.desc("regDtm"), Sort.Order.desc("apprSeqNo"));
 
+    /** Corporate Card {@code APPR_DV}. Card approvals take their amount
+     *  from {@code SUM(CARD_TRNS_HSTR.TRSC_AMT)} (legacy
+     *  {@code IDO.EXPT_RESOL_MSTR_R003.xml:62-65}), not the
+     *  {@code EXPT_RESOL_MSTR} amount columns. */
+    private static final String CARD_APPR_DV = "33";
+
     private static final DateTimeFormatter YYYYMMDD =
             DateTimeFormatter.ofPattern("yyyyMMdd");
     private static final DateTimeFormatter DTM14 =
@@ -203,10 +210,22 @@ public class ApprovalBoxService {
 
         List<ApprovalBoxRow> rows = mapProjections(bizKey, result.getContent());
 
+        // Footer totals are TAB-UNFILTERED (legacy resl_0001_001 footer bar):
+        // the document count is the tab-unfiltered row count — equal to the sum
+        // of the four tab counts because APPR_TYPE_CD is NOT NULL ∈ {00,01,02,03}
+        // — and the per-currency amount sums span the same full scope, NOT the
+        // tab-filtered page. result.getTotalElements() (tab-filtered) still
+        // drives pagination below.
+        long footerDocumentCount = tabCounts.pending() + tabCounts.inProgress()
+                + tabCounts.approved() + tabCounts.rejected();
+        ApprovalBoxFooterTotals footerTotals = computeFooterTotals(
+                bizKey, userId, isAdmin, fromDt, toDt, keywordPattern, footerDocumentCount);
+
         return new ApprovalBoxListResponse(
                 rows,
                 result.getTotalElements(),
                 tabCounts,
+                footerTotals,
                 result.getNumber(),
                 result.getSize(),
                 result.getTotalPages());
@@ -839,6 +858,11 @@ public class ApprovalBoxService {
                 .collect(Collectors.toList());
         Map<String, String> ccyByApprSeqNo = new HashMap<>();
         Map<String, String> fileNameByApprSeqNo = new HashMap<>();
+        // Corporate Card (APPR_DV='33') amount basis — SUM(CARD_TRNS_HSTR.TRSC_AMT)
+        // per approval. Legacy resl_0001_001 sources the card row amount from
+        // this sum, NOT the EXPT_RESOL_MSTR amount columns (which are 0 for the
+        // current card-creation flow). See toRow / resolveAmount.
+        Map<String, BigDecimal> cardAmtByApprSeqNo = new HashMap<>();
         if (!apprSeqNos.isEmpty()) {
             ovrsPymnSumrRepository.findCcyCdByBizKeyAndApprSeqNos(bizKey, apprSeqNos)
                     .forEach(row -> ccyByApprSeqNo.put((String) row[0], (String) row[1]));
@@ -852,6 +876,12 @@ public class ApprovalBoxService {
             // in the SCDUL/OVRS maps, so this fills only the card gaps.
             cardTrnsHstrRepository.findCcyCdByBizKeyAndApprSeqNos(bizKey, apprSeqNos)
                     .forEach(row -> ccyByApprSeqNo.putIfAbsent((String) row[0], (String) row[1]));
+
+            // Card amount basis (APPR_DV='33') — keyed by apprSeqNo; non-card
+            // approvals never appear in CARD_TRNS_HSTR so the map only carries
+            // card sums (resolveAmount reads it only for APPR_DV='33').
+            cardTrnsHstrRepository.sumTrscAmtByBizKeyAndApprSeqNos(bizKey, apprSeqNos)
+                    .forEach(row -> cardAmtByApprSeqNo.put((String) row[0], toBigDecimal(row[1])));
 
             // File Name — uploaded batch file name. Legacy reads
             // COALESCE(SCDUL.TITL, OVRS.TITL) because it stored the file
@@ -873,13 +903,14 @@ public class ApprovalBoxService {
                     });
         }
         return projections.stream()
-                .map(p -> toRow(bizKey, p, ccyByApprSeqNo, fileNameByApprSeqNo))
+                .map(p -> toRow(bizKey, p, ccyByApprSeqNo, fileNameByApprSeqNo, cardAmtByApprSeqNo))
                 .toList();
     }
 
     private ApprovalBoxRow toRow(String bizKey, ApprovalBoxProjection p,
                                   Map<String, String> ccyByApprSeqNo,
-                                  Map<String, String> fileNameByApprSeqNo) {
+                                  Map<String, String> fileNameByApprSeqNo,
+                                  Map<String, BigDecimal> cardAmtByApprSeqNo) {
         List<ApprovalBoxApprover> approvers = approverRepository
                 .findChain(bizKey, p.apprSeqNo())
                 .stream()
@@ -888,26 +919,11 @@ public class ApprovalBoxService {
                 .map(ApprovalBoxService::toApprover)
                 .toList();
 
-        // Prefer the actual CCY_CD from OVRS_PYMN_SUMR; fall back to "VND" for
-        // payment types whose sibling table hasn't been joined yet.
-        String currency = ccyByApprSeqNo.getOrDefault(p.apprSeqNo(), "VND");
-        if (currency == null || currency.isBlank()) currency = "VND";
-
-        // Pick the amount column that matches the currency, with TOT_PAY_KHR_AMT
-        // as a fallback for legacy records written before the three-column split.
-        // Old code always wrote to KHR regardless of currency; new code writes
-        // to the correct column and sets KHR = 0 for USD rows.
-        BigDecimal khr = p.totPayKhrAmt() != null ? p.totPayKhrAmt() : BigDecimal.ZERO;
-        BigDecimal amt;
-        if ("USD".equalsIgnoreCase(currency)) {
-            BigDecimal usd = p.totPayUsdAmt();
-            amt = (usd != null && usd.compareTo(BigDecimal.ZERO) != 0) ? usd : khr;
-        } else if ("VND".equalsIgnoreCase(currency)) {
-            BigDecimal vnd = p.totPayVndAmt();
-            amt = (vnd != null && vnd.compareTo(BigDecimal.ZERO) != 0) ? vnd : khr;
-        } else {
-            amt = khr;
-        }
+        String currency = resolveCurrency(ccyByApprSeqNo, p.apprSeqNo());
+        BigDecimal amt = resolveAmount(
+                p.apprDv(), p.apprSeqNo(), currency,
+                p.totPayKhrAmt(), p.totPayUsdAmt(), p.totPayVndAmt(),
+                cardAmtByApprSeqNo);
 
         return new ApprovalBoxRow(
                 p.apprSeqNo(),
@@ -937,6 +953,125 @@ public class ApprovalBoxService {
                 a.getApprvrNm(),
                 a.getApprvrStts(),
                 a.getApprDtm());
+    }
+
+    /* =================================================================
+     *  Currency + amount resolution — shared by per-row mapping
+     *  ({@link #toRow}) and the footer totals ({@link #computeFooterTotals})
+     *  so the two never drift.
+     * ================================================================= */
+
+    /** Resolve the display currency for an approval: prefer the sibling
+     *  table's {@code CCY_CD} (OVRS / SCDUL / CARD), default {@code "VND"}
+     *  when none is known or it is blank. */
+    private static String resolveCurrency(Map<String, String> ccyByApprSeqNo, String apprSeqNo) {
+        String currency = ccyByApprSeqNo.getOrDefault(apprSeqNo, "VND");
+        return (currency == null || currency.isBlank()) ? "VND" : currency;
+    }
+
+    /**
+     * Resolve the row amount, matching legacy {@code resl_0001_001}.
+     *
+     * <ul>
+     *   <li><b>Card (APPR_DV='33')</b> → {@code SUM(CARD_TRNS_HSTR.TRSC_AMT)}
+     *       from {@code cardAmtByApprSeqNo} (legacy IDO R003:62-65); falls
+     *       back to {@code TOT_PAY_KHR_AMT} only when no card rows exist.</li>
+     *   <li><b>Other types</b> → the currency-matched master column with
+     *       {@code TOT_PAY_KHR_AMT} as the zero-aware fallback (legacy rows
+     *       wrote the amount to KHR regardless of currency; the per-currency
+     *       columns are 0 there).</li>
+     * </ul>
+     */
+    private static BigDecimal resolveAmount(
+            String apprDv, String apprSeqNo, String currency,
+            BigDecimal khrAmt, BigDecimal usdAmt, BigDecimal vndAmt,
+            Map<String, BigDecimal> cardAmtByApprSeqNo) {
+        BigDecimal khr = khrAmt != null ? khrAmt : BigDecimal.ZERO;
+        if (CARD_APPR_DV.equals(apprDv)) {
+            BigDecimal cardSum = cardAmtByApprSeqNo.get(apprSeqNo);
+            return cardSum != null ? cardSum : khr;
+        }
+        if ("USD".equalsIgnoreCase(currency)) {
+            return (usdAmt != null && usdAmt.compareTo(BigDecimal.ZERO) != 0) ? usdAmt : khr;
+        }
+        if ("VND".equalsIgnoreCase(currency)) {
+            return (vndAmt != null && vndAmt.compareTo(BigDecimal.ZERO) != 0) ? vndAmt : khr;
+        }
+        return khr;
+    }
+
+    /** Null-safe numeric coercion for {@code Object[]} JPQL tuple columns
+     *  (a {@code SUM(...)} / {@code COALESCE(...)} may arrive as
+     *  {@code BigDecimal}, {@code Long}, or another {@link Number}). */
+    private static BigDecimal toBigDecimal(Object value) {
+        if (value == null) return BigDecimal.ZERO;
+        if (value instanceof BigDecimal b) return b;
+        if (value instanceof Number n) return new BigDecimal(n.toString());
+        return new BigDecimal(value.toString());
+    }
+
+    /**
+     * Footer totals — document count + per-currency amount sums over the
+     * tab-unfiltered result set (legacy {@code resl_0001_001} footer bar,
+     * {@code IDO.EXPT_RESOL_MSTR_R003_CNT.xml:36-39}). The document count
+     * is supplied by the caller (sum of the four {@code apprTypeCd} tab
+     * counts — {@code apprTypeCd} is NOT NULL ∈ {00,01,02,03}, so it equals
+     * the tab-unfiltered row count without a second count query). Per-row
+     * currency + amount resolution reuses {@link #resolveCurrency} /
+     * {@link #resolveAmount} so the footer matches the on-screen rows
+     * exactly (including the card-amount rule). Only USD / VND / KRW are
+     * surfaced — the three buckets the footer renders.
+     */
+    private ApprovalBoxFooterTotals computeFooterTotals(
+            String bizKey, String userId, boolean isAdmin,
+            String fromDt, String toDt, String keywordPattern,
+            long totalDocumentCount) {
+
+        List<Object[]> basis = masterRepository.findAmountBasisForTotals(
+                bizKey, userId, isAdmin, fromDt, toDt, keywordPattern, keywordPattern);
+        if (basis.isEmpty()) {
+            return new ApprovalBoxFooterTotals(
+                    totalDocumentCount, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
+        }
+
+        List<String> apprSeqNos = basis.stream()
+                .map(r -> (String) r[0])
+                .filter(s -> s != null && !s.isBlank())
+                .distinct()
+                .collect(Collectors.toList());
+
+        Map<String, String> ccyByApprSeqNo = new HashMap<>();
+        Map<String, BigDecimal> cardAmtByApprSeqNo = new HashMap<>();
+        if (!apprSeqNos.isEmpty()) {
+            ovrsPymnSumrRepository.findCcyCdByBizKeyAndApprSeqNos(bizKey, apprSeqNos)
+                    .forEach(row -> ccyByApprSeqNo.put((String) row[0], (String) row[1]));
+            scdulPymnSumrRepository.findCcyCdByBizKeyAndApprSeqNos(bizKey, apprSeqNos)
+                    .forEach(row -> ccyByApprSeqNo.putIfAbsent((String) row[0], (String) row[1]));
+            cardTrnsHstrRepository.findCcyCdByBizKeyAndApprSeqNos(bizKey, apprSeqNos)
+                    .forEach(row -> ccyByApprSeqNo.putIfAbsent((String) row[0], (String) row[1]));
+            cardTrnsHstrRepository.sumTrscAmtByBizKeyAndApprSeqNos(bizKey, apprSeqNos)
+                    .forEach(row -> cardAmtByApprSeqNo.put((String) row[0], toBigDecimal(row[1])));
+        }
+
+        BigDecimal usd = BigDecimal.ZERO;
+        BigDecimal vnd = BigDecimal.ZERO;
+        BigDecimal krw = BigDecimal.ZERO;
+        for (Object[] r : basis) {
+            String apprSeqNo = (String) r[0];
+            String apprDv    = (String) r[1];
+            String currency  = resolveCurrency(ccyByApprSeqNo, apprSeqNo);
+            BigDecimal amt   = resolveAmount(
+                    apprDv, apprSeqNo, currency,
+                    toBigDecimal(r[2]), toBigDecimal(r[3]), toBigDecimal(r[4]),
+                    cardAmtByApprSeqNo);
+            switch (currency.toUpperCase(Locale.ROOT)) {
+                case "USD" -> usd = usd.add(amt);
+                case "VND" -> vnd = vnd.add(amt);
+                case "KRW" -> krw = krw.add(amt);
+                default    -> { /* other currencies not in the 3-bucket footer (legacy parity) */ }
+            }
+        }
+        return new ApprovalBoxFooterTotals(totalDocumentCount, usd, vnd, krw);
     }
 
     /** Plain context holder shared across the approve / reject load +

@@ -39,7 +39,8 @@ Covers existing automated tests plus the manual / integration / SIT-UAT matrix. 
 | V1 | Admin lists | sees every tenant row |
 | V2 | Non-admin who drafted a doc | sees own drafted rows |
 | V3 | Non-admin who is an assigned approver | sees rows they approve |
-| V4 | Non-admin unrelated to a doc | row not visible (and tab counts exclude it) |
+| V4 | Non-admin unrelated to a doc | row not visible (and tab counts + footer totals exclude it) |
+| V7 | Non-admin who uploaded the batch but isn't requester/approver (G3) | row visible via `SCDUL`/`OVRS`/`CARD` uploader EXISTS branch |
 | V5 | No JWT | 401 / `WBE1009` |
 | V6 | Authenticated but no `payment-approval-box` grant | 403 / `WBE1003` |
 
@@ -47,8 +48,8 @@ Covers existing automated tests plus the manual / integration / SIT-UAT matrix. 
 
 | # | Scenario | Expected |
 |---|---|---|
-| A1 | First of 3 approvers approves | caller `P→A`; master `03` In Progress; next `W→P`; source `APPR_STTS='I'`; response `appr_stts="I"`, counts 1/3 |
-| A2 | Last approver approves | master `01` Approved; source `APPR_STTS='C'`; response `appr_stts="C"`, counts 3/3 |
+| A1 | First of 3 approvers approves | caller `P→A`; master `03` In Progress; next `W→P`; no source write-back (SCDUL/OVRS have no `APPR_STTS` column); response `appr_stts="I"`, counts 1/3 |
+| A2 | Last approver approves | master `01` Approved; no source write-back; response `appr_stts="C"`, counts 3/3 |
 | A3 | Approve when not your turn (`W`) | `WBE2052` |
 | A4 | Approve a doc you're not on | `WBE2051` |
 | A5 | Approve an already-approved/rejected doc | `WBE2053` |
@@ -112,8 +113,24 @@ Covers existing automated tests plus the manual / integration / SIT-UAT matrix. 
 | P2 | Tab counts ignore selected tab | matches legacy `_R003_CNT` suppressing `APPR_TYPE_CD` |
 | P3 | Date filter on `DRAFT_DATE` | matches legacy `draft_date between` |
 | P4 | Approver chain order | `APPRVR_LINE_NO ASC` |
-| P5 | Status derivation | `deriveApprStts` matches `wb_get_appr_stts` (`01→C`,`02→R`,`03→I`,else `P`) |
+| P5 | Status derivation | `deriveApprStts` matches `wb_get_appr_stts` (`01→C`,`02→R`,`03→I`,else `P`). G2-verified: the IDO calls the function with `apprvr_id = reg_id`, so its ELSE-branch is unreachable — Java parity is exact for every persona. |
 | P6 | Overseas backfill | V213 confirms `APPRVR_STTS` consistent with master `01`/`02` |
+
+## 10a. SIT-readiness gaps (G1–G5) — verification scenarios
+
+Scenarios that exercise the 2026-06-16 fixes. Evidence: [refactor-gap-analysis.md §G1–G5](refactor-gap-analysis.md#post-sit-verification--g1g5-findings-2026-06-16), [docs/audits/approval-box-followup-verification.md](../../../../../docs/audits/approval-box-followup-verification.md).
+
+| # | Gap | Scenario | Expected |
+|---|---|---|---|
+| G1-1 | Footer totals | List with >1 page of results | `footer_totals.total_*_amount` reflect the **full** result set, not the page slice |
+| G1-2 | Footer totals | Switch to a non-All tab | `footer_totals` unchanged (tab-unfiltered); `total_count` changes (tab-filtered) |
+| G1-3 | Footer totals | Controller contract test | `data.footer_totals.{total_document_count,total_usd_amount,total_vnd_amount,total_krw_amount}` present (`ApprovalBoxControllerTest`) |
+| G4-1 | Footer doc count | `footer_totals.total_document_count` | equals `pending+inProgress+approved+rejected`; tab-unfiltered |
+| G3-1 | Visibility | Non-admin uploader (`SCDUL`/`OVRS`/`CARD` `reg_id`) who is not requester/approver | document visible in list AND counted in tab chips AND included in footer totals |
+| G3-2 | Visibility | `search` / `countTabs` / `findAmountBasisForTotals` | identical 5-branch visibility predicate (rows, counts, totals agree) |
+| G5-1 | Card amount | `APPR_DV='33'` row with `TOT_PAY_KHR_AMT=0` + card transactions | row amount = `SUM(CARD_TRNS_HSTR.TRSC_AMT)` (e.g. `VO_260206_002` → 289,850), not 0 |
+| G5-2 | Card amount | Footer + Excel export for a card row | both use the same `SUM(TRSC_AMT)` via shared `resolveAmount` |
+| G2-1 | Approver status | Approver views the list | status label + counts identical to admin/requester (document-level `APPR_TYPE_CD`) — confirmed parity, no per-approver divergence |
 
 ## 11. SIT / UAT
 

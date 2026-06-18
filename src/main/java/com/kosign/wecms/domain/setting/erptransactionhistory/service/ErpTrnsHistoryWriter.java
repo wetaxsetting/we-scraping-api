@@ -143,6 +143,35 @@ public class ErpTrnsHistoryWriter {
         recordFile("E", trnsTypeCd, sourceFile, orgFileNm);
     }
 
+    /**
+     * Record a WeCMS&rarr;ERP file the user pulled out of WeCMS — an original-file
+     * download or an Excel export off a Payment Result screen. Writes
+     * {@code ERP_TYPE = 'W'} (WeCMS&rarr;ERP) so the row lands in the "WeCMS" tab,
+     * mirroring legacy {@code pymn_0002_002_r002}/{@code _r003}'s
+     * {@code ErpTrnsHstrDAO.create(... ErpType.WECMS ...)}.
+     *
+     * <p>Same contract + failure stance as {@link #recordUploadedFile} /
+     * {@link #recordDeletedFile}: {@code REQUIRES_NEW} so it never enlists in
+     * the caller's (read-only) download transaction, and every failure is
+     * caught + WARN-logged, never rethrown — matching legacy, where the whole
+     * {@code saveExcelFile(...)} audit step is wrapped in a swallow-and-log
+     * try/catch and the download/export proceeds regardless.
+     *
+     * @param trnsTypeCd  ERP transaction-type code (2-digit). The Payment
+     *                    Result codes are {@code "04"} Vendor, {@code "05"}
+     *                    Expense, {@code "06"} Payroll, {@code "14"} Overseas,
+     *                    {@code "17"} Internal Transfer (legacy
+     *                    {@code ErpTypeCd.*_RESULT}; see
+     *                    {@code settings.erp_transaction_history.type.*}).
+     * @param sourceFile  absolute path to the file the user is pulling. Copied
+     *                    verbatim into the ERP-history tenant subtree.
+     * @param orgFileNm   original filename to preserve in {@code ORG_FILE_NM}.
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    public void recordExportedFile(String trnsTypeCd, Path sourceFile, String orgFileNm) {
+        recordFile("W", trnsTypeCd, sourceFile, orgFileNm);
+    }
+
     /** Shared body for {@link #recordDeletedFile} / {@link #recordUploadedFile}.
      *  The only per-caller variant is the {@code erpType} bucket. */
     private void recordFile(String erpType, String trnsTypeCd, Path sourceFile, String orgFileNm) {

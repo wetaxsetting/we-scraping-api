@@ -26,6 +26,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -67,7 +68,7 @@ class AccountServiceAuthorityTest {
         // Common stubs — a single VND account flows through toRow.
         when(acctRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
                 .thenReturn(oneAccountPage());
-        when(acctRepo.aggregateByCcy(any(), any(), any(), any(), any(), any(), any()))
+        when(acctRepo.aggregateByCcy(any(), any(), any(), any(), any(), any(), any(), anyBoolean()))
                 .thenReturn(List.of());
         when(acctRepo.findDistinctBankCds(any(), any(), any(), any(), any()))
                 .thenReturn(List.of());
@@ -140,6 +141,152 @@ class AccountServiceAuthorityTest {
         assertThat(res.accounts().get(0).acctBalUpdDtm()).isEqualTo("20250101000000");
     }
 
+    // ── FCY type-code scope (Transaction History / Account Inquiry FCY) ──
+
+    /**
+     * Regression for the FCY-empty bug: currency="FCY" must resolve to
+     * {@code CCY_CD <> 'VND'} plus a type-code whitelist that admits the
+     * generic current/savings codes (03/05) as well as the
+     * currency-specific ones (04/06/07/08). The refactor DB codes every
+     * non-VND current account as the generic CURRENT_KHR (03); a
+     * 04/06/07/08-only whitelist matched zero rows and the FCY page
+     * rendered empty. Loans (01) stay excluded.
+     */
+    @Test
+    void fcyScope_excludesVnd_andAdmitsGenericCurrentSavingsTypeCodes() {
+        TenantContext.set(USER, USER, BIZ, LangCd.EN, TenantContext.AUTH_GR_ADMIN);
+
+        service.list("FCY");
+
+        ArgumentCaptor<String> ccyNot = ArgumentCaptor.forClass(String.class);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<String>> types =
+                ArgumentCaptor.forClass((Class<List<String>>) (Class<?>) List.class);
+        verify(acctRepo).findFiltered(
+                any(), any(), ccyNot.capture(), types.capture(), any(), any(), any(), any(Pageable.class));
+
+        assertThat(ccyNot.getValue()).isEqualTo("VND");
+        assertThat(types.getValue())
+                .contains("02", "03", "04", "05", "06", "07", "08")
+                .doesNotContain("01");
+    }
+
+    /**
+     * Regression for the "selecting KRW returns Not Found" bug: a concrete
+     * non-VND currency must resolve to {@code CCY_CD = 'KRW'} with the SAME
+     * generic non-loan type set FCY uses (admits 03/05). The old per-currency
+     * whitelist {@code KRW = {02,07,08}} excluded the generic CURRENT_KHR (03)
+     * that the live JEX DB assigns to every foreign current account, so a real
+     * type-03 KRW account matched zero rows.
+     */
+    @Test
+    void fcySelectedKrw_filtersByKrw_withGenericNonLoanTypeCodes() {
+        TenantContext.set(USER, USER, BIZ, LangCd.EN, TenantContext.AUTH_GR_ADMIN);
+
+        service.list("KRW");
+
+        ArgumentCaptor<String> ccyEq = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> ccyNot = ArgumentCaptor.forClass(String.class);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<String>> types =
+                ArgumentCaptor.forClass((Class<List<String>>) (Class<?>) List.class);
+        verify(acctRepo).findFiltered(
+                any(), ccyEq.capture(), ccyNot.capture(), types.capture(), any(), any(), any(), any(Pageable.class));
+
+        assertThat(ccyEq.getValue()).isEqualTo("KRW");
+        assertThat(ccyNot.getValue()).isNull();
+        assertThat(types.getValue())
+                .contains("02", "03", "04", "05", "06", "07", "08")
+                .doesNotContain("01");
+    }
+
+    /** Same fix on the USD narrow — USD foreign accounts are also type-03 in
+     *  the live JEX DB; the old {@code USD = {02,04,06}} whitelist dropped them. */
+    @Test
+    void fcySelectedUsd_filtersByUsd_withGenericNonLoanTypeCodes() {
+        TenantContext.set(USER, USER, BIZ, LangCd.EN, TenantContext.AUTH_GR_ADMIN);
+
+        service.list("USD");
+
+        ArgumentCaptor<String> ccyEq = ArgumentCaptor.forClass(String.class);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<String>> types =
+                ArgumentCaptor.forClass((Class<List<String>>) (Class<?>) List.class);
+        verify(acctRepo).findFiltered(
+                any(), ccyEq.capture(), any(), types.capture(), any(), any(), any(), any(Pageable.class));
+
+        assertThat(ccyEq.getValue()).isEqualTo("USD");
+        assertThat(types.getValue())
+                .contains("02", "03", "04", "05", "06", "07", "08")
+                .doesNotContain("01");
+    }
+
+    /** VND keeps its own legacy type set (02/03/05) — the concrete-CCY fix
+     *  must not bleed into the VND scope. */
+    @Test
+    void vndScope_keepsLegacyVndTypeCodes() {
+        TenantContext.set(USER, USER, BIZ, LangCd.EN, TenantContext.AUTH_GR_ADMIN);
+
+        service.list("VND");
+
+        ArgumentCaptor<String> ccyEq = ArgumentCaptor.forClass(String.class);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<String>> types =
+                ArgumentCaptor.forClass((Class<List<String>>) (Class<?>) List.class);
+        verify(acctRepo).findFiltered(
+                any(), ccyEq.capture(), any(), types.capture(), any(), any(), any(), any(Pageable.class));
+
+        assertThat(ccyEq.getValue()).isEqualTo("VND");
+        assertThat(types.getValue())
+                .containsExactlyInAnyOrder("02", "03", "05");
+    }
+
+    // ── FCY-A04 (Product Type H summary-card maturity / balance exclusion) ──
+
+    /**
+     * An H tenant must pass {@code excludeMaturedHSavings = true} so the
+     * per-currency summary aggregate drops matured / zero-balance savings
+     * accounts (legacy {@code FnshHelper.fnsh_0001_001_r001_tot_dynamic0}
+     * :506-509, Redmine #42633). Product type is read from the signed JWT
+     * via {@code TenantContext.currentPrdtType()}.
+     */
+    @Test
+    void hTenant_passesExcludeMaturedHSavingsTrue() {
+        TenantContext.set(USER, USER, BIZ, LangCd.EN, TenantContext.AUTH_GR_ADMIN, "H");
+
+        service.list("VND");
+
+        assertThat(capturedAggregateExcludeFlag()).isTrue();
+    }
+
+    /**
+     * A non-H tenant ({@code F}) must pass {@code excludeMaturedHSavings =
+     * false} — the aggregate runs the unchanged WHERE chain and counts
+     * every account, so non-HAENGSUNG tenants see no behaviour change.
+     */
+    @Test
+    void nonHTenant_passesExcludeMaturedHSavingsFalse() {
+        TenantContext.set(USER, USER, BIZ, LangCd.EN, TenantContext.AUTH_GR_ADMIN, "F");
+
+        service.list("VND");
+
+        assertThat(capturedAggregateExcludeFlag()).isFalse();
+    }
+
+    /**
+     * FCY-A04 still applies when a concrete currency is selected on the FCY
+     * page — narrowing to KRW must not drop the H maturity/zero-balance
+     * exclusion on the per-currency summary aggregate.
+     */
+    @Test
+    void hTenant_withSelectedCurrency_stillExcludesMaturedHSavings() {
+        TenantContext.set(USER, USER, BIZ, LangCd.EN, TenantContext.AUTH_GR_ADMIN, "H");
+
+        service.list("KRW");
+
+        assertThat(capturedAggregateExcludeFlag()).isTrue();
+    }
+
     /* ------------------------------------------------------------------ */
 
     private String capturedFindFilteredAuthUserId() {
@@ -150,7 +297,13 @@ class AccountServiceAuthorityTest {
 
     private String capturedAggregateAuthUserId() {
         ArgumentCaptor<String> c = ArgumentCaptor.forClass(String.class);
-        verify(acctRepo).aggregateByCcy(any(), any(), any(), any(), any(), any(), c.capture());
+        verify(acctRepo).aggregateByCcy(any(), any(), any(), any(), any(), any(), c.capture(), anyBoolean());
+        return c.getValue();
+    }
+
+    private boolean capturedAggregateExcludeFlag() {
+        ArgumentCaptor<Boolean> c = ArgumentCaptor.forClass(Boolean.class);
+        verify(acctRepo).aggregateByCcy(any(), any(), any(), any(), any(), any(), any(), c.capture());
         return c.getValue();
     }
 

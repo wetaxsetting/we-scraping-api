@@ -112,6 +112,16 @@ public class ExcelExportService {
 
         configureResponseHeaders(response, fileName);
 
+        // Result-export audit path (provider opt-in only) — tee the workbook
+        // through a temp file so the provider can persist a WeCMS→ERP 'W'
+        // ERP_TRNS_HSTR row before the bytes are served (legacy pymn_*_r003).
+        // Every non-opting exporter keeps the byte-identical direct stream.
+        if (provider.auditsErpExport()) {
+            writeWithErpAudit(response, provider, request, fileName,
+                    title, subHeader, subHeaderRight, columns, rows);
+            return;
+        }
+
         try (OutputStream out = response.getOutputStream()) {
             writer.write(out, title, subHeader, subHeaderRight, columns, rows);
         } catch (IOException e) {
@@ -130,6 +140,54 @@ public class ExcelExportService {
                 throw new BusinessException(EXPORT_FAILED, request.screenId());
             }
             throw e;
+        }
+    }
+
+    /**
+     * Result-export variant ({@link ExportRowProvider#auditsErpExport()} =
+     * {@code true}): write the workbook to a temp file, persist the WeCMS→ERP
+     * {@code ERP_TYPE='W'} audit row via {@link ExportRowProvider#recordErpExport},
+     * then stream the temp file to the response. Mirrors legacy {@code pymn_*_r003}
+     * (a server file copy + {@code ERP_TRNS_HSTR} insert, then the file is served).
+     *
+     * <p>The audit runs BEFORE the response stream and is non-blocking by
+     * contract (the provider's writer swallows failures), so a failed audit
+     * never aborts the download — matching the legacy swallow-and-log. The temp
+     * file is always deleted. No {@code domain/} dependency leaks into
+     * {@code common/export}: the provider owns the writer.
+     */
+    private void writeWithErpAudit(
+            HttpServletResponse response, ExportRowProvider provider,
+            ExcelExportRequest request, String fileName,
+            String title, String subHeader, String subHeaderRight,
+            List<ExcelColumnSpec> columns, List<Map<String, Object>> rows) {
+        java.nio.file.Path temp = null;
+        try {
+            temp = java.nio.file.Files.createTempFile("wecms-result-export-", ".xlsx");
+            try (OutputStream fileOut = java.nio.file.Files.newOutputStream(temp)) {
+                writer.write(fileOut, title, subHeader, subHeaderRight, columns, rows);
+            }
+            provider.recordErpExport(temp, fileName + ".xlsx");
+            try (OutputStream out = response.getOutputStream();
+                 java.io.InputStream in = java.nio.file.Files.newInputStream(temp)) {
+                in.transferTo(out);
+            }
+        } catch (IOException e) {
+            log.error("Excel result-export write failed for screen {}", request.screenId(), e);
+            throw new UncheckedIOException(e);
+        } catch (RuntimeException e) {
+            if (!response.isCommitted()) {
+                throw new BusinessException(EXPORT_FAILED, request.screenId());
+            }
+            throw e;
+        } finally {
+            if (temp != null) {
+                try {
+                    java.nio.file.Files.deleteIfExists(temp);
+                } catch (IOException ignore) {
+                    /* temp cleanup is best-effort */
+                }
+            }
         }
     }
 

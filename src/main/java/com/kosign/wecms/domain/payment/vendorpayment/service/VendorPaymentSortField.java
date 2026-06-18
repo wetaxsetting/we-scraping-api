@@ -16,18 +16,34 @@ import java.util.Optional;
  * Internal Transfer) differs — so the same entity property names apply
  * (one-for-one with {@link com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferSortField}).
  *
- * <p>Coverage:
+ * <p>Coverage (entity-property targets resolved by the {@code search}
+ * query — root {@code ScdulPymnSumr} unless prefixed with the
+ * {@code erm} join alias):
  * <ul>
  *   <li>{@code REG_DTM} → {@code regDtm} — Date/Time</li>
  *   <li>{@code FILE_NM} → {@code orgFileNm} — File Name</li>
  *   <li>{@code TOT_TRNS_CNT} → {@code totTrnsCnt} — No. of Transactions</li>
  *   <li>{@code TOTAL_TRAN_AMT} → {@code totalTranAmt} — Total Transfer Amount</li>
- *   <li>{@code PAY_DATE} → {@code payTranDt} — Scheduled Date</li>
+ *   <li>{@code PAY_DATE} → {@code erm.payDate} ({@code EXPT_RESOL_MSTR.PAY_DATE}) — Scheduled Date</li>
  *   <li>{@code APPR_STTS} → {@code apprStts} — Approval Status</li>
- *   <li>{@code DRAFT_USER_NM} → {@code regId} — Requestor</li>
- *   <li>{@code APPR_DOC_NO} → {@code erpFileNum} — Approval Ref.</li>
+ *   <li>{@code DRAFT_USER_NM} → {@code erm.draftUserNm} ({@code EXPT_RESOL_MSTR.DRAFT_USER_NM}) — Requestor</li>
+ *   <li>{@code APPR_DOC_NO} → {@code erm.docNo} ({@code EXPT_RESOL_MSTR.DOC_NO}) — Approval Ref.</li>
  *   <li>{@code TITL} → {@code titl} — Approval Title</li>
  * </ul>
+ *
+ * <p><b>Sort/display alignment (2026-06-16).</b> Schedule Date, Requestor,
+ * and Approval Ref are <em>displayed</em> from the LEFT-joined
+ * {@code EXPT_RESOL_MSTR} (see {@code VendorPaymentService.toListRow} — C-3 /
+ * C-4 + {@code DOC_NO}). Their sort keys therefore target the {@code erm}
+ * join-alias properties ({@code erm.payDate} / {@code erm.draftUserNm} /
+ * {@code erm.docNo}) — NOT the former {@code SCDUL_PYMN_SUMR} columns
+ * ({@code payTranDt} / {@code regId} / {@code erpFileNum}) — so a header click
+ * orders rows by the value the user sees. The {@code erm} alias is declared by
+ * the {@code ScdulPymnSumrRepository.search} {@code LEFT JOIN ExptResolMstr erm}
+ * query; Spring Data leaves an already-dot-qualified sort property un-prefixed
+ * and Hibernate resolves it against that join. Root-entity columns stay
+ * unqualified ({@code regDtm}, etc.) so Spring Data prefixes them with the
+ * root alias as before.
  *
  * <p>Intentional gap (same blocker as Internal Transfer Scheduled):
  * {@code APPRVR_NM} requires a join to {@code EXPT_RESOL_APPRVR_INFM};
@@ -44,12 +60,18 @@ public enum VendorPaymentSortField implements SortableField {
     FILE_NM       ("orgFileNm"),
     TOT_TRNS_CNT  ("totTrnsCnt"),
     TOTAL_TRAN_AMT("totalTranAmt"),
-    PAY_DATE      ("payTranDt"),
+    // Schedule Date is displayed from EXPT_RESOL_MSTR.PAY_DATE (C-4), so it must
+    // sort by the same column — the erm join alias, not SCDUL_PYMN_SUMR.PAY_TRAN_DT.
+    PAY_DATE      ("erm.payDate"),
     // APPR_STTS removed 2026-06-10: derived from EXPT_RESOL_MSTR (no
     // SCDUL_PYMN_SUMR.APPR_STTS column in legacy JEX) — not a single-table
     // sort key; falls back to default ORDER BY.
-    DRAFT_USER_NM ("regId"),
-    APPR_DOC_NO   ("erpFileNum"),
+    // Requestor is displayed from EXPT_RESOL_MSTR.DRAFT_USER_NM (C-3) — sort by
+    // the same column via the erm alias, not SCDUL_PYMN_SUMR.REG_ID (login id).
+    DRAFT_USER_NM ("erm.draftUserNm"),
+    // Approval Ref. is displayed from EXPT_RESOL_MSTR.DOC_NO — sort by the same
+    // column via the erm alias, not SCDUL_PYMN_SUMR.ERP_FILE_NUM.
+    APPR_DOC_NO   ("erm.docNo"),
     TITL          ("titl");
 
     private final String entityProperty;

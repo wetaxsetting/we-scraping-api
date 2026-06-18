@@ -118,4 +118,15 @@ public interface TbFirmBankCodeRepository extends JpaRepository<TbFirmBankCode, 
      * service side.
      */
     List<TbFirmBankCode> findByEngAbrvatNmIn(Collection<String> engAbrvatNms);
+
+    /**
+     * Resolve one active registry row by bank code, for the dispatch
+     * File-path same-banking-group check (legacy
+     * {@code PymnHelper.pymn_0001_001_c001:2331-2347}, which reads
+     * {@code TB_FIRM_BANK_CODE} by {@code (bank_cd = ?, bank_stas = '1')} and
+     * compares {@code ENG_ABRVAT_NM} across the out-bank vs. target-bank code
+     * spaces). {@code findFirst} mirrors the legacy {@code getRow} (single
+     * row); read-only, not tenant-scoped (the dictionary is global).
+     */
+    Optional<TbFirmBankCode> findFirstByBankCdAndBankStas(String bankCd, String bankStas);
 }

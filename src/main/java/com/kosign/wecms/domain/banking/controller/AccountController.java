@@ -97,10 +97,13 @@ public class AccountController {
             @RequestParam(value = "keyword",       required = false) String keyword,
             @RequestParam(value = "sortField",     required = false) String sortField,
             @RequestParam(value = "sortDirection", required = false) String sortDirection,
+            // AI-01 — legacy as-of-date historical balance (ACCT_MSTR_R004).
+            // yyyyMMdd; blank / today / future → current balances (legacy parity).
+            @RequestParam(value = "asOfDate",      required = false) String asOfDate,
             @RequestParam(value = "page", defaultValue = "0")  int page,
             @RequestParam(value = "size", defaultValue = "0")  int size) {
         AccountFilter filter = new AccountFilter(currency, bankCd, keyword);
-        return ApiResponse.ok(accountService.list(filter, sortField, sortDirection, page, size));
+        return ApiResponse.ok(accountService.list(filter, sortField, sortDirection, asOfDate, page, size));
     }
 
     /**

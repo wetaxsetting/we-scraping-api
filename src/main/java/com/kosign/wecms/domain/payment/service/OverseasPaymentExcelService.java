@@ -83,6 +83,12 @@ public class OverseasPaymentExcelService {
     private final SpecialCharValidator         specialCharValidator;
     private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
     private final TransactionalRetry           transactionalRetry;
+    /** F2 — shared ERP_TRNS_HSTR writer for the Overseas Result download 'W' row. */
+    private final com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter erpHistoryWriter;
+
+    /** WeCMS&rarr;ERP ('W') audit code for the Overseas Payment RESULT download
+     *  (legacy {@code ErpTypeCd.OVERSEAS_REQUEST_RESULT}). */
+    static final String ERP_TRNS_TYPE_OVERSEAS_RESULT = "14";
 
     /** Header row index (0-based POI index; row 3 in Excel = index 2). */
     private static final int HEADER_ROW_INDEX   = 2;
@@ -693,6 +699,14 @@ public class OverseasPaymentExcelService {
         String displayName = (sumr.getOrgFileNm() == null || sumr.getOrgFileNm().isBlank())
                 ? saveFileNm
                 : sumr.getOrgFileNm();
+        // F2 — legacy pymn_0008_002_r002 writes an ERP_TRNS_HSTR 'W' audit row on
+        // the Overseas Result-page original-file download. The /scheduled/{id}/file
+        // endpoint is shared with the Scheduled detail; scope the RESULT code to
+        // dispatched batches (trnf_yn='Y'). Non-blocking (REQUIRES_NEW + swallow).
+        if ("Y".equals(sumr.getTrnfYn())) {
+            erpHistoryWriter.recordExportedFile(
+                    ERP_TRNS_TYPE_OVERSEAS_RESULT, path, displayName);
+        }
         return new DownloadResource(path, displayName, saveFileNm, fileSize);
     }
 

@@ -48,7 +48,12 @@ public interface AcctAuthInfoRepository
             @Param("acctNo")   String acctNo,
             @Param("authType") String authType);
 
-    /** Active-only count for the bank-account list's per-row aggregate. */
+    /** Active-only count for the bank-account list's per-row aggregate.
+     *
+     *  <p>Excludes admins — mirrors legacy {@code IDO.ACCT_MSTR_R012.xml}
+     *  {@code REC_1}/{@code REC_2} ({@code NOT EXISTS BUSI_ADMN_INFM}). Admins
+     *  are implicitly authorized and never counted as explicit grantees in the
+     *  grid summary, consistent with the permission popup roster. */
     @Query("""
             SELECT COUNT(a) FROM AcctAuthInfo a
              WHERE a.bizKey   = :bizKey
@@ -56,6 +61,9 @@ public interface AcctAuthInfoRepository
                AND a.acctNo   = :acctNo
                AND a.authType = :authType
                AND a.useYn    = 'Y'
+               AND NOT EXISTS (
+                   SELECT 1 FROM com.kosign.wecms.domain.auth.entity.BusiAdmnInfm b
+                    WHERE b.bizKey = a.bizKey AND b.userId = a.userId)
             """)
     long countActiveByAccount(
             @Param("bizKey")   String bizKey,
@@ -66,7 +74,11 @@ public interface AcctAuthInfoRepository
     /** Display name of the first active grantee for the row label
      *  ("<name> 외 N명" / "<name> + N more"). Ordered by REG_DTM
      *  (the earliest grantee) so the label is stable across requests.
-     *  Returns {@code null} when no active permission exists. */
+     *  Returns {@code null} when no active permission exists.
+     *
+     *  <p>Excludes admins — same {@code NOT EXISTS BUSI_ADMN_INFM} clause as
+     *  {@link #countActiveByAccount} so an admin-only account falls back to the
+     *  placeholder text (legacy {@code REC_1}/{@code REC_2} parity). */
     @Query("""
             SELECT u.userNm
               FROM AcctAuthInfo a, com.kosign.wecms.domain.auth.entity.UserInfm u
@@ -76,6 +88,9 @@ public interface AcctAuthInfoRepository
                AND a.authType = :authType
                AND a.useYn    = 'Y'
                AND u.userId   = a.userId
+               AND NOT EXISTS (
+                   SELECT 1 FROM com.kosign.wecms.domain.auth.entity.BusiAdmnInfm b
+                    WHERE b.bizKey = a.bizKey AND b.userId = a.userId)
              ORDER BY a.regDtm ASC
             """)
     List<String> findFirstActiveUserName(

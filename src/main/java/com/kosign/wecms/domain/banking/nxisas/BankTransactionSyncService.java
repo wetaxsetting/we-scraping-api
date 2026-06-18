@@ -89,16 +89,13 @@ public class BankTransactionSyncService {
 
     private static final Logger log = LoggerFactory.getLogger(BankTransactionSyncService.class);
 
-    /** Coocon gateway success — same convention used everywhere else in
-     *  the NXISAS layer ({@code BankScrapingService.isGatewayError}). */
-    private static final String OK_CODE = "00000000";
-
-    /** Coocon "no new transactions in window" — terminal success with
-     *  zero rows, NOT an error. Legacy WeCMS parity:
-     *  {@code fnsh_0001_001_c001_act.jsp} treats this code identically
-     *  to {@code 00000000} when deciding whether to surface a failure
-     *  dialog. Refactor decision 6 (2026-05-28). */
-    private static final String OK_CODE_NO_NEW = "42110000";
+    /** Coocon gateway success ({@code 00000000}) — used for the status
+     *  columns this service stamps on ACCT_MSTR after a clean job. The
+     *  success/failure *decisions* now route through the shared
+     *  {@link NxisasResultCodes} policy (whitelist: {@code 00000000},
+     *  {@code 42110000}, {@code 42120011}, {@code 42120111}), matching
+     *  legacy {@code nxisas_api.js isSuccess()}. */
+    private static final String OK_CODE = NxisasResultCodes.OK;
 
     /** Legacy {@code yyyyMMddHHmmss} compact audit-column format. */
     private static final DateTimeFormatter DTM_14 = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
@@ -135,10 +132,18 @@ public class BankTransactionSyncService {
     @Transactional
     public TransactionsSyncResponse start(TransactionsSyncRequest req) {
         final OffsetDateTime startedAt = OffsetDateTime.now(ZoneOffset.UTC);
-        final String fromDt = req.fromDt() == null
-                ? startedAt.minusDays(30).format(DT_8)
+        // Auto window (no explicit range from the popup) → start is
+        // computed PER ACCOUNT from its own last-success inside
+        // processOneAccount (legacy fnsh_0001_001.ts #acct_Reg parity).
+        // `fromDt` here is only a batch-level fallback for accounts that
+        // never synced and for the audit-history window on a LOGIN-stage
+        // failure (before the per-account start is known) — legacy's
+        // never-synced fallback is today − 3 months.
+        final boolean autoWindow = req.fromDt() == null || req.toDt() == null;
+        final String fromDt = autoWindow
+                ? startedAt.minusMonths(3).format(DT_8)
                 : req.fromDt().replace("-", "");
-        final String toDt = req.toDt() == null
+        final String toDt = autoWindow
                 ? startedAt.format(DT_8)
                 : req.toDt().replace("-", "");
 
@@ -187,8 +192,24 @@ public class BankTransactionSyncService {
             throw new BusinessException("WBE2096");
         }
 
-        Deque<TransactionsSyncRequest.AccountKey> queue = new ArrayDeque<>(filtered);
-        NxisasScrapeSession session = newSyncSession(queue, fromDt, toDt);
+        // Order the queue so accounts of the same bank/login group are
+        // contiguous — this is what lets advance() reuse one LOGIN per
+        // group (legacy nxisas_api.js login-once-per-bank). Groups keep
+        // first-seen order, and within a group accounts keep their selection
+        // order, so the processing order stays deterministic. A LinkedHashMap
+        // preserves both orderings.
+        java.util.LinkedHashMap<String, java.util.List<TransactionsSyncRequest.AccountKey>> grouped =
+                new java.util.LinkedHashMap<>();
+        for (TransactionsSyncRequest.AccountKey key : filtered) {
+            grouped.computeIfAbsent(loginGroupKey(key), k -> new java.util.ArrayList<>()).add(key);
+        }
+        Deque<TransactionsSyncRequest.AccountKey> queue = new ArrayDeque<>(filtered.size());
+        for (java.util.List<TransactionsSyncRequest.AccountKey> group : grouped.values()) {
+            queue.addAll(group);
+        }
+        NxisasScrapeSession session = newSyncSession(queue, fromDt, toDt, autoWindow);
+        NxisasApiLog.event(tid(session), NxisasApiLog.FLOW_BANK_SYNC, "START",
+                "accounts", filtered.size(), "groups", grouped.size());
         return advance(session);
     }
 
@@ -197,6 +218,7 @@ public class BankTransactionSyncService {
     public TransactionsSyncResponse submitQna(UUID sessionId, SubmitQnaRequest req) {
         NxisasScrapeSession session = requireSession(sessionId);
         assertChallenge(session, ScrapeChallengeKind.QNA);
+        NxisasApiLog.event(tid(session), NxisasApiLog.FLOW_BANK_SYNC, "CHALLENGE_SUBMIT", "type", "QNA");
 
         NxisasQnaJobInput.QnaResponse res = new NxisasQnaJobInput.QnaResponse();
         res.setQuestion(req.question());
@@ -219,6 +241,7 @@ public class BankTransactionSyncService {
     public TransactionsSyncResponse submitOtp(UUID sessionId, SubmitChallengeRequest req) {
         NxisasScrapeSession session = requireSession(sessionId);
         assertChallenge(session, ScrapeChallengeKind.OTP);
+        NxisasApiLog.event(tid(session), NxisasApiLog.FLOW_BANK_SYNC, "CHALLENGE_SUBMIT", "type", "OTP");
 
         NxisasOTPJobInput input = new NxisasOTPJobInput();
         input.setRes(req.value());
@@ -242,6 +265,7 @@ public class BankTransactionSyncService {
     public TransactionsSyncResponse submitCaptcha(UUID sessionId, SubmitChallengeRequest req) {
         NxisasScrapeSession session = requireSession(sessionId);
         assertChallenge(session, ScrapeChallengeKind.CAPTCHA);
+        NxisasApiLog.event(tid(session), NxisasApiLog.FLOW_BANK_SYNC, "CHALLENGE_SUBMIT", "type", "CAPTCHA");
 
         NxisasCaptchaJobInput input = new NxisasCaptchaJobInput();
         input.setRes(req.value());
@@ -272,6 +296,28 @@ public class BankTransactionSyncService {
                             session.getBizKey(), key.bankCd(), key.acctNo())
                     .orElseThrow(() -> new BusinessException("WBE_BANK_ACCOUNT_NOT_FOUND"));
 
+            // ── Legacy login-once-per-bank parity (nxisas_api.js:2428) ──
+            // When the HEAD account belongs to the bank/login group whose
+            // LOGIN already cleared on this session (activeLoginGroupKey) AND
+            // the gateway continuation is still live, REUSE the existing
+            // SAS_SessionID: skip LOGIN and go straight to this account's
+            // TRANSACTION + BALANCE. This is the refactor analogue of the
+            // legacy _nxisas_auth[bankCd] session cache — N accounts under
+            // one bank cost exactly one LOGIN (and one OTP/QNA/CAPTCHA),
+            // not N. The session's bank-routing fields (bankModule,
+            // bankCategory, nxisasGbSeqNo) were set when this group's LOGIN
+            // ran and stay valid because every account in the group shares
+            // one per-bank credential.
+            if (loginGroupKey(key).equals(session.getActiveLoginGroupKey())
+                    && hasLiveContinuation(session)) {
+                NxisasApiLog.event(tid(session), NxisasApiLog.FLOW_BANK_SYNC, "SESSION_REUSE",
+                        "bankCd", key.bankCd(), "acctNo", NxisasMask.acct(key.acctNo()));
+                processOneAccount(session, acct);
+                session.getAccountsQueue().pollFirst();
+                continue;
+            }
+
+            // ── New bank/login group (or no live session yet) → LOGIN ──
             // Configure the session for the HEAD account's bank.
             DecryptedCredential cred = credentialService.loadForScrapingByBank(acct.getBankCd());
             // Capture the credential username on the session so a
@@ -285,18 +331,35 @@ public class BankTransactionSyncService {
             NxisasBankConfig.Entry cfg = bankConfig.find(acct.getBankCd(), subTypeSeqNo)
                     .orElseThrow(() -> new BusinessException("WBE2093", acct.getBankCd()));
             session.setBankCategory(cfg.category());
+            // Capture the sub-type seqNo on the session so the per-account
+            // TRANSACTION + BALANCE steps resolve the SAME Module/Class the
+            // LOGIN used. Without this the follow-on steps fell back to the
+            // SEQ_NO=0 default, which diverged from a sub-typed LOGIN (VP
+            // Bank: LOGIN CORPORATE, TX/BAL PERSONAL). The session field is
+            // a primitive int; a null credential seqNo maps to 0, which now
+            // resolves identically to the default for every bank (no bank
+            // carries a SEQ_NO=0 override). See
+            // docs/audits/bank-profile-enterprise-audit.md §13.
+            session.setNxisasGbSeqNo(subTypeSeqNo == null ? 0 : subTypeSeqNo);
 
             // POST LOGIN.
             NxisasLoginJobInput in = new NxisasLoginJobInput();
             in.setLoginId(cred.username());
             in.setLoginPwd(cred.password());
             in.setCountryCode("VNM");
-            in.setLoginType((cred.loginType() == null || cred.loginType().isBlank())
-                    ? "ID" : cred.loginType());
+            // loginType default centralised in NxisasBankConfig — explicit
+            // value wins; blank → "" for ABBANK, "ID" otherwise (legacy
+            // nxisas_fnsh_r001_act.jsp:148-157).
+            in.setLoginType(NxisasBankConfig.defaultLoginType(cfg.module(), cred.loginType()));
             if (cred.corporateId() != null && !cred.corporateId().isBlank()) {
                 in.setCorporateId(cred.corporateId());
                 in.setLoginPwd1(cred.corporateId());
             }
+
+            NxisasApiLog.event(tid(session), NxisasApiLog.FLOW_BANK_SYNC, "GROUP_START",
+                    "bankCd", acct.getBankCd(), "acctNo", NxisasMask.acct(acct.getAcctNo()));
+            NxisasApiLog.event(tid(session), NxisasApiLog.FLOW_BANK_SYNC, "LOGIN_START",
+                    "bankCd", acct.getBankCd(), "module", cfg.module(), "class", cfg.category());
 
             String trSeq = gateway.newTrSeq();
             NxisasApiOut<NxisasLoginJobResult> out =
@@ -344,12 +407,13 @@ public class BankTransactionSyncService {
         NxisasOutput<?> bankOut = gateway.firstOutput(out);
         if (bankOut != null) {
             String code = bankOut.getErrorCode();
-            if (code != null && !code.isBlank()
-                    && !OK_CODE.equals(code) && !OK_CODE_NO_NEW.equals(code)) {
+            if (!NxisasResultCodes.isBankAdapterSuccess(code)) {
                 String msg = bankOut.getErrorMessage();
                 if (msg == null || msg.isBlank()) msg = bankOut.getDetailMessage();
                 log.info("BankTransactionSync {} bank-rejected [bank={}, code={}, msg={}]",
                         stage, session.getBankModule(), code, msg);
+                NxisasApiLog.event(tid(session), NxisasApiLog.FLOW_BANK_SYNC, "ERROR",
+                        "stage", stage, "scope", "BANK", "errorCode", code);
                 session.setStatus(NxisasScrapeSession.Status.FAILED);
                 registry.discard(session.getSessionId());
                 logFailedAttempt(session, code, msg);
@@ -362,6 +426,8 @@ public class BankTransactionSyncService {
             String msg = out.getCommon().getResultMsg();
             log.info("BankTransactionSync {} gateway-rejected [bank={}, code={}]",
                     stage, session.getBankModule(), code);
+            NxisasApiLog.event(tid(session), NxisasApiLog.FLOW_BANK_SYNC, "ERROR",
+                    "stage", stage, "scope", "GATEWAY", "resultCode", code);
             session.setStatus(NxisasScrapeSession.Status.FAILED);
             registry.discard(session.getSessionId());
             logFailedAttempt(session, code, msg);
@@ -376,6 +442,9 @@ public class BankTransactionSyncService {
             session.setChallengeKind(kind);
             session.setChallengePrompt(result == null ? null : result.challengePrompt());
             registry.register(session);
+            TransactionsSyncRequest.AccountKey head = session.getAccountsQueue().peekFirst();
+            NxisasApiLog.event(tid(session), NxisasApiLog.FLOW_BANK_SYNC, "CHALLENGE_REQUIRED",
+                    "type", kind, "bankCd", head == null ? "-" : head.bankCd());
 
             if (kind == ScrapeChallengeKind.QNA) {
                 return TransactionsSyncResponse.qnaChallenge(
@@ -401,6 +470,16 @@ public class BankTransactionSyncService {
         AcctMstr acct = acctRepo.findByBizKeyAndBankCdAndAcctNo(
                         session.getBizKey(), key.bankCd(), key.acctNo())
                 .orElseThrow(() -> new BusinessException("WBE_BANK_ACCOUNT_NOT_FOUND"));
+        // This group's LOGIN cleared — its SAS_SessionID now owns the
+        // session. Stamp the group so subsequent same-bank accounts reuse
+        // it in advance() instead of re-logging in. Reached both from the
+        // initial LOGIN and from a challenge resume (submitOtp/Qna/Captcha
+        // → handleLoginContinuation), so a post-challenge clean login also
+        // unlocks session reuse for the rest of the group.
+        session.setActiveLoginGroupKey(loginGroupKey(key));
+        NxisasApiLog.event(tid(session), NxisasApiLog.FLOW_BANK_SYNC, "LOGIN_SUCCESS",
+                "stage", stage, "bankCd", key.bankCd(),
+                "sasSessionId", NxisasMask.token(session.getSasSessionID()));
         processOneAccount(session, acct);
         session.getAccountsQueue().pollFirst();
         return advance(session);
@@ -468,8 +547,7 @@ public class BankTransactionSyncService {
         NxisasOutput<?> bankOut = gateway.firstOutput(out);
         if (bankOut != null) {
             String code = bankOut.getErrorCode();
-            if (code != null && !code.isBlank()
-                    && !OK_CODE.equals(code) && !OK_CODE_NO_NEW.equals(code)) {
+            if (!NxisasResultCodes.isBankAdapterSuccess(code)) {
                 return code;
             }
         }
@@ -502,14 +580,24 @@ public class BankTransactionSyncService {
         String userId = session.getUserId();
 
         // TRANSACTION.
+        // Auto mode → start from THIS account's own last-success so a
+        // re-sync only pulls new rows since it last synced (legacy
+        // fnsh_0001_001.ts:336-344 #acct_Reg). Explicit-range mode → the
+        // single user-picked window applies to every account.
+        final String startDate = session.isAutoWindow()
+                ? perAccountStartDt(acct)
+                : session.getFromDt();
         NxisasTransactionJobInput tIn = new NxisasTransactionJobInput();
         tIn.setAcctNum(acct.getAcctNo());
         tIn.setCurrency(acct.getCcyCd());
-        tIn.setStartDate(session.getFromDt());
+        tIn.setStartDate(startDate);
         tIn.setEndDate(session.getToDt());
-        NxisasBankConfig.Entry cfg = bankConfig.find(acct.getBankCd(), null)
+        NxisasBankConfig.Entry cfg = bankConfig.find(acct.getBankCd(), session.getNxisasGbSeqNo())
                 .orElseThrow(() -> new BusinessException("WBE2093", acct.getBankCd()));
 
+        NxisasApiLog.event(tid(session), NxisasApiLog.FLOW_BANK_SYNC, "TRANSACTION_START",
+                "bankCd", acct.getBankCd(), "acctNo", NxisasMask.acct(acct.getAcctNo()),
+                "from", session.getFromDt(), "to", session.getToDt());
         String trSeq = gateway.newTrSeq();
         NxisasApiOut<NxisasTransactionJobResult> tOut = gateway.transaction(
                 cfg.module(), cfg.category(), trSeq, tIn, continuationOf(session));
@@ -524,6 +612,10 @@ public class BankTransactionSyncService {
                     txFailCode, scrapeFailureMsg(tOut), userId, nowDb);
             log.info("BankTransactionSync TRANSACTION rejected [bank={}, code={}]",
                     acct.getBankCd(), txFailCode);
+            NxisasApiLog.event(tid(session), NxisasApiLog.FLOW_BANK_SYNC, "ERROR",
+                    "stage", "TRANSACTION", "scope", "BANK",
+                    "bankCd", acct.getBankCd(), "acctNo", NxisasMask.acct(acct.getAcctNo()),
+                    "errorCode", txFailCode);
             throw new BusinessException("WBE2095", acct.getBankCd(), txFailCode);
         }
         NxisasTransactionJobResult tResult = gateway.firstTransactionResult(tOut);
@@ -535,6 +627,12 @@ public class BankTransactionSyncService {
         session.setTotalCreditInserted(session.getTotalCreditInserted() + pr.creditCount);
         session.setTotalDebitAmount(session.getTotalDebitAmount().add(pr.debitTotal));
         session.setTotalCreditAmount(session.getTotalCreditAmount().add(pr.creditTotal));
+        // Fold this account's result into its currency bucket so the
+        // COMPLETED response can report per-currency groups (USD / KRW /
+        // …) with their own account tally + Credit / Debit numbers rather
+        // than the batch aggregate restated under every currency.
+        session.currencyTally(acct.getCcyCd())
+                .addAccount(pr.creditCount, pr.debitCount, pr.creditTotal, pr.debitTotal);
 
         // BALANCE (soft-fail).
         refreshBalance(session, acct);
@@ -557,6 +655,9 @@ public class BankTransactionSyncService {
         acct.setModDtm(nowDb);
 
         session.setAccountsSynced(session.getAccountsSynced() + 1);
+        NxisasApiLog.event(tid(session), NxisasApiLog.FLOW_BANK_SYNC, "ACCOUNT_DONE",
+                "bankCd", acct.getBankCd(), "acctNo", NxisasMask.acct(acct.getAcctNo()),
+                "txCount", entries.size());
 
         // Audit-log this per-account success — one row in
         // EXT_TRAN_CALL_HIS so the Bank Transaction Sync > History
@@ -569,7 +670,7 @@ public class BankTransactionSyncService {
                 userId,
                 acct.getBankCd(),
                 acct.getAcctNo(),
-                session.getFromDt(),
+                startDate,
                 session.getToDt(),
                 com.kosign.wecms.domain.banking.synchistory.service.SyncHistoryWriter.RSLT_CD_SUCCESS,
                 ""
@@ -585,6 +686,10 @@ public class BankTransactionSyncService {
         log.info("BankTransactionSync completed [bizKey={}, accounts={}, debit={}, credit={}]",
                 session.getBizKey(), session.getAccountsSynced(),
                 session.getTotalDebitInserted(), session.getTotalCreditInserted());
+        NxisasApiLog.event(tid(session), NxisasApiLog.FLOW_BANK_SYNC, "COMPLETE",
+                "success", session.getAccountsSynced(),
+                "debit", session.getTotalDebitInserted(),
+                "credit", session.getTotalCreditInserted());
         return TransactionsSyncResponse.completed(
                 session.getSessionId(),
                 session.getAccountsSynced(),
@@ -592,7 +697,33 @@ public class BankTransactionSyncService {
                 session.getTotalCreditInserted(),
                 session.getTotalDebitAmount(),
                 session.getTotalCreditAmount(),
-                now);
+                now,
+                currencySummariesOf(session));
+    }
+
+    /** Project the session's per-currency tallies into the wire DTO list,
+     *  preserving first-seen currency order. {@code failedCount} is 0:
+     *  {@link #finalize} only runs when the queue fully drains, and any
+     *  account-level failure returns {@code ERROR} from
+     *  {@link #handleLoginContinuation} / {@link #processOneAccount}
+     *  before the batch can finalize — so a COMPLETED batch means every
+     *  account of every currency synced. */
+    private static List<com.kosign.wecms.domain.banking.dto.CurrencySummary> currencySummariesOf(
+            NxisasScrapeSession session) {
+        List<com.kosign.wecms.domain.banking.dto.CurrencySummary> out =
+                new ArrayList<>(session.getCurrencyTallies().size());
+        for (var e : session.getCurrencyTallies().entrySet()) {
+            NxisasScrapeSession.CurrencyTally t = e.getValue();
+            out.add(new com.kosign.wecms.domain.banking.dto.CurrencySummary(
+                    e.getKey(),
+                    t.successCount(),
+                    0,
+                    t.creditCount(),
+                    t.creditTotal().toPlainString(),
+                    t.debitCount(),
+                    t.debitTotal().toPlainString()));
+        }
+        return out;
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -687,20 +818,28 @@ public class BankTransactionSyncService {
     }
 
     private void refreshBalance(NxisasScrapeSession session, AcctMstr acct) {
-        NxisasBankConfig.Entry cfg = bankConfig.find(acct.getBankCd(), null)
+        NxisasBankConfig.Entry cfg = bankConfig.find(acct.getBankCd(), session.getNxisasGbSeqNo())
                 .orElseThrow(() -> new BusinessException("WBE2093", acct.getBankCd()));
         NxisasBalanceJobInput in = new NxisasBalanceJobInput();
         in.setAcctNum(acct.getAcctNo());
         in.setCurrency(acct.getCcyCd());
 
+        NxisasApiLog.event(tid(session), NxisasApiLog.FLOW_BANK_SYNC, "BALANCE_START",
+                "bankCd", acct.getBankCd(), "acctNo", NxisasMask.acct(acct.getAcctNo()));
         String trSeq = gateway.newTrSeq();
         NxisasApiOut<NxisasBalanceJobResult> out = gateway.balance(
                 cfg.module(), cfg.category(), trSeq, in, continuationOf(session));
 
         NxisasOutput<NxisasBalanceJobResult> bankOut = gateway.firstOutput(out);
-        if (bankOut == null
-                || (!OK_CODE.equals(bankOut.getErrorCode())
-                    && !OK_CODE_NO_NEW.equals(bankOut.getErrorCode()))) {
+        // BALANCE is stricter than LOGIN/TRANSACTION: a null/blank adapter
+        // code counts as a soft-fail here (legacy c001 stamps an error
+        // status when balance returns nothing usable), so we require an
+        // explicit whitelisted code — unlike isBankAdapterSuccess which
+        // treats null/blank as success for the routed-but-silent LOGIN case.
+        String balErr = bankOut == null ? null : bankOut.getErrorCode();
+        boolean balanceOk = balErr != null && !balErr.isBlank()
+                && NxisasResultCodes.isBankAdapterSuccess(balErr);
+        if (!balanceOk) {
             String balCode = bankOut == null ? "ERROR" : bankOut.getErrorCode();
             String balMsg  = bankOut == null ? null : bankOut.getErrorMessage();
             log.warn("BankTransactionSync BALANCE soft-failed [bank={}, acct={}, code={}]",
@@ -740,18 +879,23 @@ public class BankTransactionSyncService {
     // ─────────────────────────────────────────────────────────────────
 
     private NxisasScrapeSession newSyncSession(
-            Deque<TransactionsSyncRequest.AccountKey> queue, String fromDt, String toDt) {
+            Deque<TransactionsSyncRequest.AccountKey> queue, String fromDt, String toDt,
+            boolean autoWindow) {
         String bizKey = requireBizKey();
         String userId = TenantContext.currentUserId();
         // bankModule is per-account (set inside advance()) — start
         // empty; the first iteration writes the correct value.
         String trSeq = gateway.newTrSeq();
+        // bankCd is null here — the SYNC flow scrapes per-account
+        // transactions/balance, not the acct-list, so the
+        // NXISAS_ACCT_TYPE_MAPPING lookup (SETUP only) does not apply.
         NxisasScrapeSession session = new NxisasScrapeSession(
-                trSeq, bizKey, userId, null, "");
+                trSeq, bizKey, userId, null, "", null);
         session.setMode(NxisasScrapeSession.Mode.SYNC);
         session.setAccountsQueue(queue);
         session.setFromDt(fromDt);
         session.setToDt(toDt);
+        session.setAutoWindow(autoWindow);
         return session;
     }
 
@@ -773,6 +917,64 @@ public class BankTransactionSyncService {
         if (session.getChallengeKind() != expected) {
             throw new BusinessException("WBE9001");
         }
+    }
+
+    /**
+     * Bank/login-group key for an account. Accounts that share a key are
+     * scraped under a single LOGIN (legacy {@code _nxisas_auth[bankCd]}
+     * parity). The key is the {@code bankCd}: the refactor loads exactly
+     * one credential per bank ({@code loadForScrapingByBank(bankCd)}), so
+     * the credential's sub-type ({@code nxisasGbSeqNo}) is constant within a
+     * bank and {@code bankCd} alone is the faithful login-group identity.
+     * If a future requirement allows two credentials for one bank, widen
+     * this to {@code bankCd + ":" + nxisasGbSeqNo}.
+     */
+    private static String loginGroupKey(TransactionsSyncRequest.AccountKey key) {
+        return key.bankCd();
+    }
+
+    /**
+     * Per-account TRANSACTION window start for Auto mode — the account's
+     * own last-success date so a re-sync only fetches new rows. Mirrors
+     * legacy {@code fnsh_0001_001.ts:336-344} (live {@code #acct_Reg}
+     * handler): last transaction-history inquiry → last balance inquiry
+     * → last successful login → today − 3 months (legacy never-synced
+     * fallback). Returns {@code yyyyMMdd} (the Coocon TRANSACTION job
+     * format); the stored markers are {@code yyyyMMddHHmmss} so the
+     * leading 8 chars are the date.
+     */
+    private static String perAccountStartDt(AcctMstr acct) {
+        String marker = firstNonBlank(
+                acct.getAcctHisLstInqDt(),
+                acct.getAcctBalLstInqDtm(),
+                acct.getLstLgnSucDtm());
+        if (marker != null && marker.length() >= 8) {
+            return marker.substring(0, 8);
+        }
+        return OffsetDateTime.now(ZoneOffset.UTC).minusMonths(3).format(DT_8);
+    }
+
+    private static String firstNonBlank(String... vals) {
+        for (String v : vals) {
+            if (v != null && !v.isBlank()) return v;
+        }
+        return null;
+    }
+
+    /** Flow trace id for the NXISAS debug log — the scrape session id, the
+     *  one value shared across start / challenge / submit / final and
+     *  echoed to the frontend as {@code session_id}. See {@link NxisasApiLog}. */
+    private static String tid(NxisasScrapeSession session) {
+        return session.getSessionId().toString();
+    }
+
+    /** True when the session carries a usable gateway continuation — a
+     *  non-blank {@code SAS_SessionID} from a prior clean LOGIN. Guards the
+     *  login-reuse branch in {@link #advance} so a session that lost its
+     *  continuation (defensive) re-logs in rather than firing a follow-on
+     *  job against an empty session. */
+    private static boolean hasLiveContinuation(NxisasScrapeSession s) {
+        return s.getSasSessionID() != null && !s.getSasSessionID().isBlank();
     }
 
     private static GatewayContinuation continuationOf(NxisasScrapeSession s) {
@@ -815,8 +1017,7 @@ public class BankTransactionSyncService {
         NxisasOutput<?> bankOut = gateway.firstOutput(out);
         if (bankOut != null) {
             String code = bankOut.getErrorCode();
-            if (code != null && !code.isBlank()
-                    && !OK_CODE.equals(code) && !OK_CODE_NO_NEW.equals(code)) {
+            if (!NxisasResultCodes.isBankAdapterSuccess(code)) {
                 log.info("BankTransactionSync {} rejected [bank={}, code={}, msg={}]",
                         stage, bankCd, code, bankOut.getErrorMessage());
                 throw new BusinessException("WBE2095", bankCd, code);
@@ -832,9 +1033,7 @@ public class BankTransactionSyncService {
 
     private static boolean gatewayRejected(NxisasApiOut<?> out) {
         if (out == null || out.getCommon() == null) return false;
-        String code = out.getCommon().getResultCd();
-        if (code == null || code.isBlank()) return false;
-        return !OK_CODE.equals(code) && !"0000".equalsIgnoreCase(code) && !"OK".equalsIgnoreCase(code);
+        return NxisasResultCodes.isGatewayError(out.getCommon().getResultCd());
     }
 
     private static ScrapeChallengeKind challengeKindFrom(NxisasLoginJobResult result) {

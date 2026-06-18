@@ -30,12 +30,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
-import java.util.TreeMap;
 
 /**
  * Payment &gt; Internal Transfer — Transfer Result read-only service.
@@ -96,26 +93,39 @@ public class InternalTransferResultService {
         String trnfYnFilter = emptyToNull(trnfStts);
 
         // Use `searchDispatched` (not `search`) so only batches the user
-        // has actually clicked Transfer on appear here — `trnf_dtm IS NOT
-        // NULL` is the canonical marker. Without that filter, every
+        // has actually clicked Transfer on appear here — `trnf_yn = 'Y'` is
+        // the canonical dispatched marker. Without that filter, every
         // freshly-uploaded batch that's still in the approval flow leaks
         // into Transfer Result reading as "In Progress" even though no
-        // dispatch has been attempted.
+        // dispatch has been attempted. The date window (fromDtm/toDtm) is
+        // applied to TRNF_DTM (dispatch datetime) inside searchDispatched —
+        // legacy `pymn_0010_001` parity (F-1), not REG_DTM.
         Page<ScdulPymnSumr> rows = sumrRepository.searchDispatched(
                 bizKey, ScdulPymnTypeCd.INTERNAL.code(),
                 fromDtm, toDtm, emptyToNull(srchWd), trnfYnFilter,
                 pageable);
 
         Map<String, long[]> counts = loadDispatchCounts(bizKey, rows.getContent());
-        // doc_no per batch from EXPT_RESOL_MSTR.DOC_NO (its canonical home),
-        // keyed by APPR_SEQ_NO — NOT SCDUL_PYMN_SUMR.ERP_FILE_NUM (legacy
-        // 8-digit ERP file sequence number).
-        Map<String, String> docNoByApprSeqNo = buildDocNoMap(bizKey, rows.getContent());
+        // EXPT_RESOL_MSTR row per batch, keyed by APPR_SEQ_NO. One bulk
+        // query for the page; supplies BOTH the Approval Ref (DOC_NO — its
+        // canonical home, NOT SCDUL_PYMN_SUMR.ERP_FILE_NUM) and the Approval
+        // Title (TITL). F-3 fix: legacy SCDUL_PYMN_SUMR_R007 sources the
+        // "Approval Title" column from ERM.TITL, not SCDUL_PYMN_SUMR.TITL.
+        Map<String, ExptResolMstr> apprByApprSeqNo = buildApprovalMstrMap(bizKey, rows.getContent());
 
         List<TransferResultRow> dtoRows = rows.getContent().stream()
-                .map(s -> toResultRow(s, counts.get(s.getScdulPymnNo()), docNoByApprSeqNo))
+                .map(s -> toResultRow(s, counts.get(s.getScdulPymnNo()), apprByApprSeqNo))
                 .toList();
-        List<CurrencyTotal> totals = computeTotals(rows.getContent());
+        // Footer currency totals — aggregated across the FULL filtered,
+        // dispatched result set and grouped by CCY_CD (legacy IDO
+        // SCDUL_PYMN_SUMR_R008). Reuses searchDispatched's exact predicate via
+        // searchDispatchedCurrencyTotals — same search arg (emptyToNull(srchWd))
+        // and trnfYn filter as the paged query above — so the footer never
+        // reflects only the current page (F-1).
+        List<CurrencyTotal> totals = mapCurrencyTotals(
+                sumrRepository.searchDispatchedCurrencyTotals(
+                        bizKey, ScdulPymnTypeCd.INTERNAL.code(),
+                        fromDtm, toDtm, emptyToNull(srchWd), trnfYnFilter));
 
         log.info("feature=internal-transfer result-list bizKey={} total={} page={} size={}",
                 bizKey, rows.getTotalElements(), page, pageable.getPageSize());
@@ -125,11 +135,23 @@ public class InternalTransferResultService {
     }
 
     /**
-     * Resolve {@code doc_no} per batch from {@code EXPT_RESOL_MSTR.DOC_NO}
-     * (its canonical home), keyed by {@code APPR_SEQ_NO}. One bulk query for
-     * the page. Mirrors the scheduled-list {@code buildDocNoMap}.
+     * Resolve the {@link ExptResolMstr} approval-master row per batch,
+     * keyed by {@code APPR_SEQ_NO}. One bulk query for the page. The
+     * row supplies two list columns whose canonical home is
+     * {@code EXPT_RESOL_MSTR}, never {@code SCDUL_PYMN_SUMR}:
+     * <ul>
+     *   <li>Approval Ref. &rarr; {@code DOC_NO}</li>
+     *   <li>Approval Title &rarr; {@code TITL} (F-3 — legacy
+     *       {@code SCDUL_PYMN_SUMR_R007} joins {@code ERM.TITL}; the
+     *       {@code SCDUL_PYMN_SUMR.TITL} column holds the upload subject
+     *       and is the source of the separate File Name behaviour only).</li>
+     * </ul>
+     * The whole entity is mapped (rather than a {@code DOC_NO}-only map) so
+     * both columns share the single lookup. {@code DOC_NO} extraction is
+     * unchanged — a null {@code DOC_NO} on a row still surfaces as a null
+     * Approval Ref. exactly as before.
      */
-    private Map<String, String> buildDocNoMap(String bizKey, List<ScdulPymnSumr> rows) {
+    private Map<String, ExptResolMstr> buildApprovalMstrMap(String bizKey, List<ScdulPymnSumr> rows) {
         List<String> apprSeqNos = rows.stream()
                 .map(ScdulPymnSumr::getApprSeqNo)
                 .filter(seq -> seq != null && !seq.isBlank())
@@ -138,10 +160,9 @@ public class InternalTransferResultService {
         if (apprSeqNos.isEmpty()) return Map.of();
         return exptResolMstrRepository.findByBizKeyAndApprSeqNoIn(bizKey, apprSeqNos)
                 .stream()
-                .filter(m -> m.getDocNo() != null)
                 .collect(java.util.stream.Collectors.toMap(
                         ExptResolMstr::getApprSeqNo,
-                        ExptResolMstr::getDocNo,
+                        m -> m,
                         (a, b) -> a));
     }
 
@@ -301,25 +322,48 @@ public class InternalTransferResultService {
     /* ---------------------------------------------------------------- */
 
     private static TransferResultRow toResultRow(
-            ScdulPymnSumr s, long[] counts, Map<String, String> docNoByApprSeqNo) {
+            ScdulPymnSumr s, long[] counts, Map<String, ExptResolMstr> apprByApprSeqNo) {
         BigDecimal succ = counts != null ? BigDecimal.valueOf(counts[0]) : null;
         BigDecimal err  = counts != null ? BigDecimal.valueOf(counts[1]) : null;
         String apprSeqNo = s.getApprSeqNo();
-        String docNo = apprSeqNo != null && !apprSeqNo.isBlank()
-                ? docNoByApprSeqNo.get(apprSeqNo)
+        ExptResolMstr appr = apprSeqNo != null && !apprSeqNo.isBlank()
+                ? apprByApprSeqNo.get(apprSeqNo)
                 : null;
+        String docNo = appr != null ? appr.getDocNo() : null;
+        // Approval Title — legacy SCDUL_PYMN_SUMR_R007 sources this LIST column
+        // from EXPT_RESOL_MSTR.TITL (the approval-request title joined by
+        // APPR_SEQ_NO), NOT SCDUL_PYMN_SUMR.TITL (the upload subject ≈ file
+        // base). F-3 fix — was s.getTitl().
+        //
+        // COALESCE(ERM.TITL, SPS.TITL): legacy rows carry the real title in
+        // ERM.TITL; for refactor-created rows the approval flow writes the
+        // post title to BOTH ERM.TITL and SPS.TITL (stampApproval) and sets
+        // ERM.TITL = "" (empty, never NULL) when no post title was given — so
+        // the fallback is blank-aware (null OR blank → SPS.TITL) and also
+        // covers a batch with no approval row at all.
+        String ermTitl = appr != null ? appr.getTitl() : null;
+        String approvalTitle = (ermTitl != null && !ermTitl.isBlank())
+                ? ermTitl
+                : s.getTitl();
         return new TransferResultRow(
                 s.getScdulPymnNo(),
                 s.getScdulPymnTypeCd(),
                 s.getCcyCd(),
-                s.getTitl(),
+                approvalTitle,
+                // File Name — ORG_FILE_NM (the genuine uploaded file name),
+                // unchanged by the F-3 fix.
                 s.getOrgFileNm(),
                 s.getTotalTranAmt(),
                 s.getTotTrnsCnt(),
                 succ,
                 err,
                 s.getTrnfYn(),
-                s.getRegDtm(),
+                // Date/Time column — TRNF_DTM (dispatch datetime), NOT REG_DTM.
+                // Legacy IDO SCDUL_PYMN_SUMR_R007 emits `T.TRNF_DTM AS REG_DTM`,
+                // so the wire field stays `reg_dtm` (TransferResultRow.regDtm /
+                // API contract unchanged) but its value is the transfer datetime.
+                // F-1 fix — was s.getRegDtm().
+                s.getTrnfDtm(),
                 s.getApprSeqNo(),
                 docNo);
     }
@@ -370,36 +414,38 @@ public class InternalTransferResultService {
                                       String sortField, String sortDirection) {
         int safePage = Math.max(0, page);
         int safeSize = size <= 0 ? 10 : Math.min(size, 200);
+        // Default + tie-break sort uses TRNF_DTM (dispatch datetime), matching
+        // the legacy Transfer Result list order and the displayed Date/Time
+        // column. F-1 fix — was regDtm.
         Sort sort = InternalTransferResultSortField.parse(sortField)
                 .map(sf -> {
                     SortDirection dir = SortDirection.parse(sortDirection);
                     Sort.Direction d = dir == SortDirection.DESC
                             ? Sort.Direction.DESC : Sort.Direction.ASC;
                     return Sort.by(d, sf.entityProperty())
-                            .and(Sort.by(Sort.Order.desc("regDtm")));
+                            .and(Sort.by(Sort.Order.desc("trnfDtm")));
                 })
-                .orElseGet(() -> Sort.by(Sort.Order.desc("regDtm"),
+                .orElseGet(() -> Sort.by(Sort.Order.desc("trnfDtm"),
                                           Sort.Order.desc("scdulPymnNo")));
         return PageRequest.of(safePage, safeSize, sort);
     }
 
-    private static List<CurrencyTotal> computeTotals(List<ScdulPymnSumr> rows) {
-        Map<String, BigDecimal> amountByCcy = new TreeMap<>();
-        Map<String, BigDecimal> countByCcy  = new TreeMap<>();
-        Map<String, BigDecimal> trnsByCcy   = new TreeMap<>();
-        for (ScdulPymnSumr r : rows) {
-            String ccy = Objects.requireNonNullElse(r.getCcyCd(), "");
-            amountByCcy.merge(ccy, Objects.requireNonNullElse(r.getTotalTranAmt(), BigDecimal.ZERO), BigDecimal::add);
-            countByCcy.merge(ccy, BigDecimal.ONE, BigDecimal::add);
-            trnsByCcy.merge(ccy, Objects.requireNonNullElse(r.getTotTrnsCnt(), BigDecimal.ZERO), BigDecimal::add);
-        }
-        return amountByCcy.entrySet().stream()
-                .sorted(Comparator.comparing(Map.Entry::getKey))
-                .map(e -> new CurrencyTotal(
-                        e.getValue(),
-                        countByCcy.get(e.getKey()),
-                        e.getKey(),
-                        trnsByCcy.get(e.getKey())))
+    /**
+     * Project the full-dataset currency aggregate
+     * ({@link ScdulPymnSumrRepository#searchDispatchedCurrencyTotals}) into the
+     * wire {@link CurrencyTotal} list. The DB has already summed across the
+     * entire filtered+dispatched set and grouped by currency (legacy
+     * SCDUL_PYMN_SUMR_R008, F-1); this only does the COUNT-Long → BigDecimal
+     * projection and null-safety. Mirrors the proven Scheduled-list projection
+     * {@code InternalTransferService#mapCurrencyTotals}.
+     */
+    private static List<CurrencyTotal> mapCurrencyTotals(List<Object[]> aggregated) {
+        return aggregated.stream()
+                .map(r -> new CurrencyTotal(
+                        r[1] == null ? BigDecimal.ZERO : (BigDecimal) r[1],
+                        r[2] == null ? BigDecimal.ZERO : BigDecimal.valueOf(((Number) r[2]).longValue()),
+                        r[0] == null ? "" : (String) r[0],
+                        r[3] == null ? BigDecimal.ZERO : (BigDecimal) r[3]))
                 .toList();
     }
 

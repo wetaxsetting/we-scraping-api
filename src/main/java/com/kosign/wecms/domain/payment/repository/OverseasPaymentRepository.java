@@ -463,6 +463,7 @@ public class OverseasPaymentRepository {
      * 14  pay_date    (EXPT_RESOL_MSTR.PAY_DATE)
      * 15  appr_stts   (EXPT_RESOL_MSTR.APPR_TYPE_CD)
      * 16  apprvr_nm   (NULL — complex join deferred)
+     * 17  appr_seq_no (OVRS_PYMN_SUMR.APPR_SEQ_NO — F4b approval-doc key)
      * </pre>
      */
     private String buildResultSql(String keyword, String trnfYn) {
@@ -495,7 +496,8 @@ public class OverseasPaymentRepository {
                        erm.titl          AS appr_titl,
                        erm.pay_date,
                        erm.appr_type_cd  AS appr_stts,
-                       NULL              AS apprvr_nm
+                       NULL              AS apprvr_nm,
+                       ops.appr_seq_no   AS appr_seq_no
                   FROM ovrs_pymn_sumr ops
                   LEFT JOIN expt_resol_mstr erm
                     ON ops.biz_key = erm.biz_key AND ops.appr_seq_no = erm.appr_seq_no

@@ -80,6 +80,9 @@ public class OverseasPaymentService {
     private static final ZoneId            VIETNAM_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
     private static final DateTimeFormatter DTM_FMT      = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
     private static final String            WSVC_ID      = "overseas-payment";
+    /** F2 — WeCMS→ERP ('W') audit code for the Overseas Payment RESULT export
+     *  (legacy {@code ErpTypeCd.OVERSEAS_REQUEST_RESULT}). */
+    private static final String            ERP_TRNS_TYPE_OVERSEAS_RESULT = "14";
 
     private final OverseasPaymentRepository      paymentRepo;
     private final OverseasApproverRepository     approverRepo;
@@ -100,6 +103,8 @@ public class OverseasPaymentService {
     private final ExptResolMstrRepository        exptResolMstrRepository;
     private final ExptResolApprvrInfmRepository  exptResolApprvrInfmRepository;
     private final AuditLogService                auditLogService;
+    /** F2 — shared ERP_TRNS_HSTR writer for the Overseas Result export 'W' row. */
+    private final com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter erpHistoryWriter;
     private final BusiInfmRepository             busiInfmRepository;
     private final DocNoGenerator                 docNoGenerator;
     /** Pre-dispatch cut-off window guard. Mirrors legacy
@@ -353,7 +358,28 @@ public class OverseasPaymentService {
         response.setHeader("Content-Disposition", "attachment; filename*=UTF-8''" + encoded);
         response.setHeader("Access-Control-Expose-Headers", "Content-Disposition");
 
-        OverseasPaymentResultExcelWriter.write(currencyTotals, exportRows, response.getOutputStream());
+        // F2 — legacy pymn_0008_002_r003 writes an ERP_TRNS_HSTR 'W' (code 14)
+        // audit row on the Overseas Result export, then serves the file. Tee the
+        // workbook through a temp file so the 'W' row (saved copy) is persisted
+        // before streaming. Non-blocking: recordExportedFile is REQUIRES_NEW +
+        // swallow-and-log, so a failed audit never aborts the download. Response
+        // headers + bytes are unchanged from the prior direct-stream version.
+        java.nio.file.Path temp = java.nio.file.Files.createTempFile("wecms-ovrs-result-export-", ".xlsx");
+        try {
+            try (java.io.OutputStream fileOut = java.nio.file.Files.newOutputStream(temp)) {
+                OverseasPaymentResultExcelWriter.write(currencyTotals, exportRows, fileOut);
+            }
+            erpHistoryWriter.recordExportedFile(ERP_TRNS_TYPE_OVERSEAS_RESULT, temp, fileName);
+            try (java.io.InputStream in = java.nio.file.Files.newInputStream(temp)) {
+                in.transferTo(response.getOutputStream());
+            }
+        } finally {
+            try {
+                java.nio.file.Files.deleteIfExists(temp);
+            } catch (java.io.IOException ignore) {
+                /* temp cleanup is best-effort */
+            }
+        }
     }
 
     // ─── detail + request approval ───────────────────────────────────────────
@@ -592,7 +618,7 @@ public class OverseasPaymentService {
         OvrsPymnSumr sumr = resolveSumr(bizKey, ovrsPymnNo);
 
         if ("Y".equals(sumr.getTrnfYn())) {
-            throw new BusinessException("WBE2095");
+            throw new BusinessException("WBE2127");
         }
 
         String existingStts = deriveApprStts(sumr);
@@ -678,7 +704,7 @@ public class OverseasPaymentService {
             OvrsPymnMstr m = ovrsPymnMstrRepository.findById(new OvrsPymnMstrId(bizKey, no.trim()))
                     .orElseThrow(() -> new BusinessException("WBE_NOT_FOUND", "ovrs_pymn_no: " + no));
             if ("Y".equals(m.getTrnfYn())) {
-                throw new BusinessException("WBE2095");
+                throw new BusinessException("WBE2127");
             }
             if (m.getApprSeqNo() != null && !m.getApprSeqNo().isBlank()) {
                 throw new BusinessException("WBE2046");
@@ -830,8 +856,8 @@ public class OverseasPaymentService {
      * Flips {@code APPR_STTS} on {@code OVRS_PYMN_SUMR} to {@code "C"} (approved)
      * or {@code "X"} (rejected).
      *
-     * <p>Guards: {@code WBE2094} when no approval request exists yet;
-     * {@code WBE2095} when the batch is already in a final state.
+     * <p>Guards: {@code WBE2126} when no approval request exists yet;
+     * {@code WBE2127} when the batch is already in a final state.
      */
     @Transactional
     public void actOnApproval(String ovrsPymnNo, ApprovalActionRequest req) {
@@ -839,12 +865,12 @@ public class OverseasPaymentService {
         OvrsPymnSumr sumr = resolveSumr(bizKey, ovrsPymnNo);
 
         if (sumr.getApprSeqNo() == null || sumr.getApprSeqNo().isBlank()) {
-            throw new BusinessException("WBE2094");
+            throw new BusinessException("WBE2126");
         }
 
         if ("Y".equals(sumr.getTrnfYn())) {
             // Batch has already been transferred — approval decision is final
-            throw new BusinessException("WBE2095");
+            throw new BusinessException("WBE2127");
         }
 
         String userId = TenantContext.currentUserId();
@@ -1252,7 +1278,7 @@ public class OverseasPaymentService {
      * {@code APPR_STTS = 'P'} (pending — first approver has not yet acted).
      *
      * @throws BusinessException {@code WBE2045} — batch not found
-     * @throws BusinessException {@code WBE2097} — batch is not in pending state
+     * @throws BusinessException {@code WBE2128} — batch is not in pending state
      */
     @Transactional
     public void changeApprovalLine(String ovrsPymnNo, ChangeApprovalLineRequest req) {
@@ -1260,10 +1286,10 @@ public class OverseasPaymentService {
         OvrsPymnSumr sumr = resolveSumr(bizKey, ovrsPymnNo);
 
         if (!"P".equals(deriveApprStts(sumr))) {
-            throw new BusinessException("WBE2097");
+            throw new BusinessException("WBE2128");
         }
         if ("Y".equals(sumr.getTrnfYn())) {
-            throw new BusinessException("WBE2095");
+            throw new BusinessException("WBE2127");
         }
 
         String apprSeqNo = sumr.getApprSeqNo();
@@ -1332,7 +1358,7 @@ public class OverseasPaymentService {
             throw new BusinessException("WBE2098");
         }
         if ("Y".equals(sumr.getTrnfYn())) {
-            throw new BusinessException("WBE2095");
+            throw new BusinessException("WBE2127");
         }
 
         String apprSeqNo = sumr.getApprSeqNo();
@@ -1395,7 +1421,7 @@ public class OverseasPaymentService {
             throw new BusinessException("WBE2099");
         }
         if ("Y".equals(sumr.getTrnfYn())) {
-            throw new BusinessException("WBE2095");
+            throw new BusinessException("WBE2127");
         }
 
         dtlsRepository.deleteByBizKeyAndOvrsPymnNo(bizKey, ovrsPymnNo);
@@ -1492,7 +1518,8 @@ public class OverseasPaymentService {
                 0,                   // failedCount  — not yet tracked at batch level
                 toStr(r[14]),        // payDate
                 toStr(r[15]),        // apprStts (appr_type_cd)
-                toStr(r[16])         // apprvrNm (NULL — complex join deferred)
+                toStr(r[16]),        // apprvrNm (NULL — complex join deferred)
+                toStr(r[17])         // apprSeqNo (F4b — OVRS_PYMN_SUMR.APPR_SEQ_NO)
         );
     }
 

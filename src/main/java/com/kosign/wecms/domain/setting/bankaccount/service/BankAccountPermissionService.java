@@ -103,15 +103,17 @@ public class BankAccountPermissionService {
 
         List<BankAccountPermissionMember> members = new ArrayList<>(users.size());
         for (TenantUserManagementProjection u : users) {
-            boolean isAdmin    = adminUserIds.contains(u.getUserId());
+            // Legacy comm_0183_002_r001 (IDO.ACCT_AUTH_INFO_R004:80) filters
+            // `AND T.ADMIN_YN != 'Y'` — admins are implicitly authorized and
+            // never appear as selectable grantees in the permission popup.
+            if (adminUserIds.contains(u.getUserId())) {
+                continue;
+            }
             boolean isSelf     = u.getUserId().equals(callerId);
-            boolean isSelected = isAdmin || activeUserIds.contains(u.getUserId());
+            boolean isSelected = activeUserIds.contains(u.getUserId());
             String  lockReason = null;
             boolean isLocked   = false;
-            if (isAdmin) {
-                isLocked = true;
-                lockReason = "ADMIN";
-            } else if (isSelf && isSelected && !TenantContext.currentIsAdmin()) {
+            if (isSelf && isSelected && !TenantContext.currentIsAdmin()) {
                 // Self-row stays disabled when the caller is the
                 // selected row and isn't admin — defence in depth so
                 // the dialog can't even attempt the WBE_CANNOT_REVOKE_SELF
@@ -122,7 +124,7 @@ public class BankAccountPermissionService {
             members.add(new BankAccountPermissionMember(
                     u.getUserId(),
                     u.getUserNm(),
-                    isAdmin ? "ADMIN" : "USER",
+                    "USER",
                     maskPhone(u.getClphNo()),
                     isSelected,
                     isLocked,
@@ -163,6 +165,17 @@ public class BankAccountPermissionService {
                 ? Set.of()
                 : new HashSet<>(req.userIds());
 
+        // Withdraw permission may only be granted on the 5 withdrawal-capable
+        // banks (legacy comm_0183_002_u001_act.jsp:182/192 → WBE0452; business
+        // decision 2026-06-16 = keep). Block any grant on a non-whitelisted bank;
+        // a pure revoke-all (empty want set) is still allowed so stale rows can be
+        // cleared.
+        if (kind == BankAccountAuthType.WITHDRAWAL
+                && !WithdrawalBankPolicy.isWithdrawalAllowed(bankCd)
+                && !wantIds.isEmpty()) {
+            throw new BusinessException("WBE0452");
+        }
+
         // Validate every want_id belongs to the tenant.
         if (!wantIds.isEmpty()) {
             long matched = userBusiRepo
@@ -172,18 +185,17 @@ public class BankAccountPermissionService {
             }
         }
 
-        // Admin must always be selected.
+        // Admin set — used only by the self-revoke guard below. Admins are
+        // NOT part of the grantee roster (legacy comm_0183_002_r001 excludes
+        // them via ADMIN_YN != 'Y'), so there is no "admin must remain
+        // selected" guard: the popup never lists admins and the FE never
+        // sends admin ids in the want set.
         Set<String> adminIds = new HashSet<>();
         busiAdmnRepo.findAll().forEach(row -> {
             if (bizKey.equals(row.getBizKey())) {
                 adminIds.add(row.getUserId());
             }
         });
-        for (String adminId : adminIds) {
-            if (!wantIds.contains(adminId)) {
-                throw new BusinessException("WBE_ADMIN_REQUIRED");
-            }
-        }
 
         // Self-revoke guard for non-admin callers.
         if (!TenantContext.currentIsAdmin()

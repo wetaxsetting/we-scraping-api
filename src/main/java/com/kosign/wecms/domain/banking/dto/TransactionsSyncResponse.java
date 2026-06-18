@@ -65,6 +65,15 @@ public record TransactionsSyncResponse(
         String debitTotal,
         String lastUpdate,
 
+        /** Per-currency roll-up of the completed batch — one entry per
+         *  distinct {@code CCY_CD} scraped. The popup's per-currency
+         *  result groups ("Bank Accounts (USD)" / "(KRW)") render their
+         *  own account tally + Credit / Debit counts and totals from the
+         *  matching entry instead of repeating the batch aggregate. Null
+         *  for every non-COMPLETED status (dropped from the wire by
+         *  {@code @JsonInclude(NON_NULL)}). */
+        List<CurrencySummary> currencySummaries,
+
         /** ──── *_REQUIRED-only ──── */
         String challengePrompt,
         List<QnaQuestion> qnaQuestions,
@@ -97,13 +106,15 @@ public record TransactionsSyncResponse(
     /** Terminal success — every selected account synced. */
     public static TransactionsSyncResponse completed(
             UUID sessionId, int accountsSynced, int debitCount, int creditCount,
-            BigDecimal debitTotal, BigDecimal creditTotal, String lastUpdate) {
+            BigDecimal debitTotal, BigDecimal creditTotal, String lastUpdate,
+            List<CurrencySummary> currencySummaries) {
         return new TransactionsSyncResponse(
                 sessionId, Status.COMPLETED,
                 accountsSynced, debitCount, creditCount,
                 creditTotal == null ? "0" : creditTotal.toPlainString(),
                 debitTotal  == null ? "0" : debitTotal.toPlainString(),
                 lastUpdate,
+                currencySummaries,
                 null, null, null, null, null,
                 null, null);
     }
@@ -113,6 +124,7 @@ public record TransactionsSyncResponse(
         return new TransactionsSyncResponse(
                 sessionId, Status.OTP_REQUIRED,
                 null, null, null, null, null, null,
+                null,
                 prompt, null, null, null, null,
                 null, null);
     }
@@ -126,6 +138,7 @@ public record TransactionsSyncResponse(
         return new TransactionsSyncResponse(
                 sessionId, Status.QNA_REQUIRED,
                 null, null, null, null, null, null,
+                null,
                 prompt, questions, null, null, loginId,
                 null, null);
     }
@@ -136,6 +149,7 @@ public record TransactionsSyncResponse(
         return new TransactionsSyncResponse(
                 sessionId, Status.CAPTCHA_REQUIRED,
                 null, null, null, null, null, null,
+                null,
                 prompt, null, image, format, null,
                 null, null);
     }
@@ -145,6 +159,7 @@ public record TransactionsSyncResponse(
         return new TransactionsSyncResponse(
                 sessionId, Status.ERROR,
                 null, null, null, null, null, null,
+                null,
                 null, null, null, null, null,
                 code, message);
     }

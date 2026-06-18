@@ -126,15 +126,6 @@ public class VendorPaymentService {
     static final String AUDIT_CREATE_KEY           = "audit.vendor_payment.create.detail";
     static final String AUDIT_WITHDRAW_APPROVAL_KEY =
             "audit.vendor_payment.withdraw_approval.detail";
-    /** Audit detail key for per-line Re-run action (legacy
-     *  `pymn_0002_002.ts` ETC-column Re-run button). */
-    static final String AUDIT_RERUN_KEY = "audit.vendor_payment.rerun.detail";
-
-    /** Transient bank-side response codes that the legacy live system
-     *  considers retryable. Same set as Internal Transfer. */
-    static final java.util.Set<String> RERUN_VALID_RS_CDS =
-            java.util.Set.of("0001", "0002", "0003", "0004", "0005");
-
     static final String AUDIT_CHANGE_APPROVAL_LINE_KEY =
             "audit.vendor_payment.change_approval_line.detail";
 
@@ -144,6 +135,9 @@ public class VendorPaymentService {
      *  ("Vendor Scheduled Payment") — legacy parity with
      *  {@code wabooks.enums.ErpTypeCd.VENDOR_SCHEDULED_PAYMENT}. */
     static final String ERP_TRNS_TYPE_VENDOR_SCHEDULED_PAYMENT = "02";
+    /** WeCMS&rarr;ERP ('W') audit code for the Vendor Payment RESULT download
+     *  (legacy {@code ErpTypeCd.VENDOR_PAYMENT_RESULT}). */
+    static final String ERP_TRNS_TYPE_VENDOR_PAYMENT_RESULT = "04";
 
     /** Approval-status codes returned by the legacy {@code wb_get_appr_stts(...)}
      *  function, used by the approve/reject "already final" guard. {@code "C"} =
@@ -180,10 +174,6 @@ public class VendorPaymentService {
     private final com.kosign.wecms.domain.payment.approvalbox.service.ApprovalDisplayFlagsResolver displayFlagsResolver;
     /** M-1 (legacy parity): shared Request Approval attachment writer (EXPT_RESOL_FILE). */
     private final com.kosign.wecms.domain.payment.approvalbox.service.ApprovalAttachmentWriter approvalAttachmentWriter;
-    /** Dispatch-table writes for the per-line Re-run action. */
-    private final com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileDataRepository tbPayFileDataRepository;
-    /** Per-line dispatch-result lookup (shared resolver). */
-    private final com.kosign.wecms.domain.payment.dispatch.service.DispatchResultResolver dispatchResultResolver;
     /** Approval-Box fan-out — see InternalTransferService for rationale. */
     private final ApprovalBoxFanoutService      approvalBoxFanoutService;
     /** Shared request-approval bulletin / notification writer (BLTB_* tables). */
@@ -233,7 +223,7 @@ public class VendorPaymentService {
                 apprTypeArg,
                 pageable);
 
-        Map<String, String> docNoByApprSeqNo = buildDocNoMap(bizKey, rows.getContent());
+        Map<String, ExptResolMstr> apprMstrByApprSeqNo = buildApprMstrMap(bizKey, rows.getContent());
         // G4: Approver column — first approver name + chain length ([N] badge) +
         // full ordered chain (popup). Mirrors InternalTransferService.buildFirstApproverMap.
         Map<String, ApproverSummary> approverByApprSeqNo = buildFirstApproverMap(bizKey, rows.getContent());
@@ -241,7 +231,7 @@ public class VendorPaymentService {
         Map<String, String> apprSttsByApprSeqNo = legacyFunctions.apprSttsByApprSeqNos(
                 bizKey, rows.getContent().stream().map(ScdulPymnSumr::getApprSeqNo).toList());
         List<ScheduledTransferRow> dtoRows = rows.getContent().stream()
-                .map(s -> toListRow(s, docNoByApprSeqNo, approverByApprSeqNo, apprSttsByApprSeqNo))
+                .map(s -> toListRow(s, apprMstrByApprSeqNo, approverByApprSeqNo, apprSttsByApprSeqNo))
                 .toList();
         List<CurrencyTotal> totals = computeCurrencyTotals(rows.getContent());
 
@@ -319,7 +309,10 @@ public class VendorPaymentService {
                 master.getScdulPymnNo(),
                 master.getScdulPymnTypeCd(),
                 master.getOutBankCd(),
-                transferLineDetailMapper.resolveBankNm(master.getOutBankCd()),
+                // C-2: withdrawal-bank name via legacy wb_get_bank_name_any_code
+                // (legacy IDO.SCDUL_PYMN_SUMR_R002.xml:97), matching the legacy
+                // OUT_BANK_NM verbatim. Per-line deposit banks keep resolveBankNm.
+                legacyFunctions.resolveBankNameAnyCode(master.getOutBankCd()),
                 master.getWdrlActNo(),
                 master.getTitl(),
                 master.getTotalTranAmt(),
@@ -598,6 +591,17 @@ public class VendorPaymentService {
         String displayName = master.getOrgFileNm() == null || master.getOrgFileNm().isBlank()
                 ? saveFileNm
                 : master.getOrgFileNm();
+        // F2 — legacy pymn_0002_002_r002 writes an ERP_TRNS_HSTR 'W' (WeCMS→ERP)
+        // audit row on the Result-page original-file download. The shared /file
+        // endpoint carries no Scheduled-vs-Result context (legacy distinguishes by
+        // SVC_ID), so the RESULT code is scoped to dispatched batches
+        // (trnf_yn='Y' — exactly what the Result list shows; Scheduled-context
+        // downloads are out of this task's scope). Non-blocking: the writer is
+        // REQUIRES_NEW and swallows failures, matching legacy's swallow-and-log.
+        if ("Y".equals(master.getTrnfYn())) {
+            erpHistoryWriter.recordExportedFile(
+                    ERP_TRNS_TYPE_VENDOR_PAYMENT_RESULT, path, displayName);
+        }
         return new DownloadResource(path, displayName, saveFileNm, fileSize);
     }
 
@@ -654,78 +658,6 @@ public class VendorPaymentService {
                 bizKey, id, lineId, req.chartAcctCd());
     }
 
-    /**
-     * Delete a draft Vendor Payment batch. Mirrors
-     * {@link com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService#delete}
-     * but stamps the Vendor type discriminator and Vendor audit keys.
-     *
-     * Re-run one detail line — legacy parity with
-     * `pymn_0002_002.ts:441-472`. Same shape as
-     * {@link com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService#rerun}.
-     */
-    @Transactional
-    public void rerun(String scdulPymnNo, String scdulPymnDetlNo) {
-        String bizKey = requireTenant();
-        ScdulPymnSumr master = loadMaster(bizKey, scdulPymnNo);
-        ScdulPymnSumrDetl detl = detlRepository
-                .findByBizKeyAndScdulPymnNoAndScdulPymnDetlNo(bizKey, scdulPymnNo, scdulPymnDetlNo)
-                .orElseThrow(() -> new BusinessException("WBE2061"));
-
-        String tranDt    = detl.getPayTranDt();
-        String tranSeq   = detl.getPayTranSeq();
-        String fileSeqNo = master.getPayFileSeqNo();
-        if (tranDt == null || tranDt.isBlank()
-                || tranSeq == null || tranSeq.isBlank()
-                || fileSeqNo == null || fileSeqNo.isBlank()) {
-            throw new BusinessException("WBE2122");
-        }
-
-        java.util.Map<String,
-                com.kosign.wecms.domain.payment.dispatch.service.DispatchResult> results =
-                dispatchResultResolver.resolve(master, java.util.List.of(detl));
-        com.kosign.wecms.domain.payment.dispatch.service.DispatchResult result =
-                results.get(scdulPymnDetlNo);
-        if (result == null || result.rsCd() == null
-                || !RERUN_VALID_RS_CDS.contains(result.rsCd())) {
-            throw new BusinessException("WBE2123");
-        }
-        String procDttm = result.procDttm();
-        if (procDttm == null || procDttm.length() < 8) {
-            throw new BusinessException("WBE2124");
-        }
-        String todayYmd = java.time.OffsetDateTime.now(clock)
-                .withOffsetSameInstant(java.time.ZoneOffset.UTC)
-                .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd"));
-        if (!todayYmd.equals(procDttm.substring(0, 8))) {
-            throw new BusinessException("WBE2124");
-        }
-
-        java.math.BigDecimal seq;
-        try {
-            seq = new java.math.BigDecimal(tranSeq);
-        } catch (NumberFormatException ex) {
-            throw new BusinessException("WBE2122");
-        }
-        com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileDataId dataId =
-                new com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileDataId(
-                        tranDt, bizKey, fileSeqNo, seq);
-        tbPayFileDataRepository.findById(dataId).ifPresent(data -> {
-            data.setRsCd(null);
-            tbPayFileDataRepository.save(data);
-        });
-
-        auditLogService.append(AuditLogContext.builder()
-                .wsvcId(WSVC_ID)
-                .refNo(REF_NO)
-                .refNo1(scdulPymnNo)
-                .refNo2(scdulPymnDetlNo)
-                .activityKey(AUDIT_ACTIVITY_KEY)
-                .detailKey(AUDIT_RERUN_KEY)
-                .build());
-
-        log.info("feature=vendor-payment rerun bizKey={} scdulPymnNo={} lineId={} tranDt={} seq={}",
-                bizKey, scdulPymnNo, scdulPymnDetlNo, tranDt, seq);
-    }
 
     /**
      * Mirrors {@link com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService#delete}.
@@ -994,12 +926,12 @@ public class VendorPaymentService {
         ScdulPymnSumr master = loadMaster(bizKey, id);
 
         if (master.getApprSeqNo() == null || master.getApprSeqNo().isBlank()) {
-            throw new BusinessException("WBE2094");
+            throw new BusinessException("WBE2126");
         }
 
         String current = legacyFunctions.getApprStts(bizKey, master.getApprSeqNo());
         if (APPR_STTS_APPROVED.equals(current) || APPR_STTS_REJECTED.equals(current)) {
-            throw new BusinessException("WBE2095");
+            throw new BusinessException("WBE2127");
         }
 
         // Delegate approver-chain logic — multi-approver workflows stay
@@ -1042,7 +974,7 @@ public class VendorPaymentService {
 
         String apprSeqNo = master.getApprSeqNo();
         if (apprSeqNo == null || apprSeqNo.isBlank()) {
-            throw new BusinessException("WBE2094");
+            throw new BusinessException("WBE2126");
         }
 
         approvalBoxFanoutService.withdrawApproval(apprSeqNo);
@@ -1081,7 +1013,7 @@ public class VendorPaymentService {
 
         String apprSeqNo = master.getApprSeqNo();
         if (apprSeqNo == null || apprSeqNo.isBlank()) {
-            throw new BusinessException("WBE2094");
+            throw new BusinessException("WBE2126");
         }
 
         approvalBoxFanoutService.changeApprovalLine(apprSeqNo, apprLineNo);
@@ -1171,7 +1103,15 @@ public class VendorPaymentService {
                 .orElseThrow(() -> new BusinessException("WBE2060"));
     }
 
-    private Map<String, String> buildDocNoMap(String bizKey, List<ScdulPymnSumr> rows) {
+    /**
+     * Map {@code APPR_SEQ_NO → EXPT_RESOL_MSTR} for the rows on the current page,
+     * via a single batched {@code findByBizKeyAndApprSeqNoIn} fetch. The list row
+     * derives its Approval Ref. ({@code DOC_NO}), Requestor ({@code DRAFT_USER_NM},
+     * C-3) and Schedule Date ({@code PAY_DATE}, C-4) from this map — all three
+     * columns come from {@code EXPT_RESOL_MSTR} in legacy
+     * {@code IDO.SCDUL_PYMN_SUMR_R002.xml}, so one fetch backs all three.
+     */
+    private Map<String, ExptResolMstr> buildApprMstrMap(String bizKey, List<ScdulPymnSumr> rows) {
         List<String> apprSeqNos = rows.stream()
                 .map(ScdulPymnSumr::getApprSeqNo)
                 .filter(seq -> seq != null && !seq.isBlank())
@@ -1180,20 +1120,30 @@ public class VendorPaymentService {
         if (apprSeqNos.isEmpty()) return Map.of();
         return exptResolMstrRepository.findByBizKeyAndApprSeqNoIn(bizKey, apprSeqNos)
                 .stream()
-                .filter(m -> m.getDocNo() != null)
                 .collect(java.util.stream.Collectors.toMap(
-                        com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr::getApprSeqNo,
-                        com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr::getDocNo,
+                        ExptResolMstr::getApprSeqNo,
+                        m -> m,
                         (a, b) -> a));
     }
 
     private static ScheduledTransferRow toListRow(ScdulPymnSumr s,
-            Map<String, String> docNoByApprSeqNo,
+            Map<String, ExptResolMstr> apprMstrByApprSeqNo,
             Map<String, ApproverSummary> approverByApprSeqNo,
             Map<String, String> apprSttsByApprSeqNo) {
-        String docNo = s.getApprSeqNo() != null
-                ? docNoByApprSeqNo.getOrDefault(s.getApprSeqNo(), s.getErpFileNum())
+        ExptResolMstr mstr = s.getApprSeqNo() != null
+                ? apprMstrByApprSeqNo.get(s.getApprSeqNo())
+                : null;
+        // Approval Ref. = EXPT_RESOL_MSTR.DOC_NO (legacy R002), fallback ERP_FILE_NUM.
+        String docNo = (mstr != null && mstr.getDocNo() != null)
+                ? mstr.getDocNo()
                 : s.getErpFileNum();
+        // C-3: Requestor = EXPT_RESOL_MSTR.DRAFT_USER_NM (legacy R002 selects it
+        // for the list Requestor column); null for drafts with no approval request.
+        String draftUserNm = (mstr != null && mstr.getDraftUserNm() != null
+                && !mstr.getDraftUserNm().isBlank()) ? mstr.getDraftUserNm() : null;
+        // C-4: Schedule Date = EXPT_RESOL_MSTR.PAY_DATE (legacy R002 지급예정일,
+        // set at Request Approval) — NOT SCDUL_PYMN_SUMR.PAY_TRAN_DT (dispatch date).
+        String payDate = (mstr != null) ? mstr.getPayDate() : null;
         // G4: Approver column — null pre-approval (no APPR_SEQ_NO / no chain),
         // so the shared shell leaves the cell blank exactly like legacy.
         ApproverSummary appr = s.getApprSeqNo() != null
@@ -1221,14 +1171,15 @@ public class VendorPaymentService {
                 s.getTrnfYn(),
                 s.getOutBankCd(),
                 s.getWdrlActNo(),
-                s.getPayTranDt(),
+                payDate,                    // C-4: ERM.PAY_DATE, not SPS.PAY_TRAN_DT
                 s.getOrgFileNm(),
                 docNo,
                 s.getWdrlCcyCd(),
                 null,                       // appr_fund_tp — Payroll-only column
                 approver,
                 approverCount,
-                approvers);
+                approvers,
+                draftUserNm);               // C-3: ERM.DRAFT_USER_NM (Requestor)
     }
 
     /** First approver name + total chain length + the full ordered chain

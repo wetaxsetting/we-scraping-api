@@ -14,10 +14,11 @@ import java.util.List;
  * Jackson naming strategy.
  */
 public record ApprovalBoxListResponse(
-        List<ApprovalBoxRow>  list,
-        long                  totalCount,
-        ApprovalBoxTabCounts  tabCounts,
-        int                   pageNumber,
-        int                   pageSize,
-        int                   totalPages
+        List<ApprovalBoxRow>     list,
+        long                     totalCount,
+        ApprovalBoxTabCounts     tabCounts,
+        ApprovalBoxFooterTotals  footerTotals,
+        int                      pageNumber,
+        int                      pageSize,
+        int                      totalPages
 ) { }

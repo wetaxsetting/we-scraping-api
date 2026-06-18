@@ -46,4 +46,30 @@ public interface ExportRowProvider {
      * dataset exceeds the cap.
      */
     ExportFetch fetch(ExcelExportRequest request);
+
+    /**
+     * Opt-in: when {@code true}, {@link ExcelExportService} writes the
+     * workbook to a temp file, hands it to {@link #recordErpExport} (so the
+     * provider can persist a WeCMS&rarr;ERP {@code ERP_TRNS_HSTR}
+     * {@code ERP_TYPE='W'} audit row — legacy {@code pymn_*_r003} parity),
+     * then streams that temp file to the response and deletes it. Defaults to
+     * {@code false} so every existing exporter (Account Inquiry, Firm Banking
+     * History, ERP Transaction History, …) keeps the byte-identical
+     * direct-to-response stream with no temp file and no audit.
+     */
+    default boolean auditsErpExport() {
+        return false;
+    }
+
+    /**
+     * Called by {@link ExcelExportService} ONLY when {@link #auditsErpExport()}
+     * is {@code true}, with the fully-written workbook temp file and the
+     * download file name. Implementations persist the ERP audit row via their
+     * own (domain) writer — keeping {@code common/export} free of any
+     * {@code domain/setting} dependency. Must be non-blocking (swallow
+     * failures), matching the legacy swallow-and-log around the export audit.
+     */
+    default void recordErpExport(java.nio.file.Path workbookFile, String orgFileNm) {
+        // no-op by default
+    }
 }

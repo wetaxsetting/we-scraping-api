@@ -23,11 +23,14 @@ import org.hibernate.type.SqlTypes;
  * / {@code VAS_ACCT_SEQ_NO} / {@code CHART_ACCT_*} suggestions feed
  * into the Smart Organizer eligibility list.
  *
- * <p>{@code RCV_PAY_DV} is derived at write-time from {@code USE_USAG_CD}'s
- * {@code USAG_GRP_CD} ({@code CD_4} → {@code RCV}, {@code CD_6} →
- * {@code PAY}) — legacy {@code fnsh_0200_002_c001_act.jsp:103-110}
- * parity. The Smart Organizer eligibility query joins against this
- * column off the bank row's {@code INOUT_DV} (1 → RCV, 2 → PAY).
+ * <p>For a grouped-usage rule, {@code RCV_PAY_DV} is derived at
+ * write-time from {@code USE_USAG_CD}'s {@code USAG_GRP_CD}
+ * ({@code '4'} → {@code RCV}, {@code '6'} → {@code PAY}) — legacy
+ * {@code fnsh_0200_002_c001_act.jsp:103-110} parity, enforced by
+ * {@code OrganizerRuleService.resolveRcvPayDv}. VAS-only / chart-only
+ * rules (no {@code USE_USAG_CD}) keep the client-supplied value. The
+ * Smart Organizer eligibility query joins against this column off the
+ * bank row's {@code INOUT_DV} (1 → RCV, 2 → PAY).
  *
  * <p>Audit columns: {@code REG_ID}, {@code REG_DTM} only (no MOD_*
  * on legacy DEV — V160 does not add them). Does NOT extend

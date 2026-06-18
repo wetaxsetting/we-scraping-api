@@ -12,7 +12,7 @@ Package root: `wecms-api-main/src/main/java/com/kosign/wecms/domain/payment/appr
 
 | File | Role |
 |---|---|
-| `service/ApprovalBoxService.java` | Core feature service. `list`, `listForExport`, `approvers`, `approve`, `reject`, `bulkApprove`, `withdraw`, `changeApprovalLine`; private `loadForAction` / `applyApprove` / `applyReject` / `writeBackApprStts` / `clearSourceApprStamp` / `promoteNextWaiting` / `mapProjections` / `toRow` / `deriveApprStts` / validation helpers. Audit + notification wiring. |
+| `service/ApprovalBoxService.java` | Core feature service. `list`, `listForExport`, `approvers`, `approve`, `reject`, `bulkApprove`, `withdraw`, `changeApprovalLine`; private `loadForAction` / `applyApprove` / `applyReject` / `promoteNextWaiting` / `mapProjections` / `toRow` / `deriveApprStts` / **`computeFooterTotals`** (footer aggregate, G1) / shared static **`resolveCurrency`** + **`resolveAmount`** (card-aware, G5) + **`toBigDecimal`** / validation helpers. Constant `CARD_APPR_DV = "33"`. Audit + notification wiring. (No `writeBackApprStts` — the legacy SCDUL/OVRS `APPR_STTS` mirror was removed 2026-06-10; withdraw uses the source repos' `clearApprSeqNo`.) |
 | `service/ApprovalBoxFanoutService.java` | Shared write-side fan-out called by sibling Payment modules: `fanout` (insert master + chain + notify), `nextDocNo` (`VO_YYMMDD_NNN`), `withdrawApproval`, `changeApprovalLine`. Nested `record Approver`. |
 | `service/ApprDv.java` | Enum of the six (+legacy) payment-type codes; `code()`, `slug()`, `i18nKey()`, `resolveSlug`, `fromCode`, `APPROVAL_BOX_CODES`. |
 | `service/ApprTypeCd.java` | Constants for master tab discriminator (`PENDING 00`, `APPROVED 01`, `REJECTED 02`, `IN_PROGRESS 03`). |
@@ -23,7 +23,7 @@ Package root: `wecms-api-main/src/main/java/com/kosign/wecms/domain/payment/appr
 
 | File | Role |
 |---|---|
-| `repository/ExptResolMstrRepository.java` | `search` (paged constructor projection + visibility), `countTabs`, `findMaxDocNoSeq…`, `findByBizKeyAndApprSeqNoIn`, `findCompletedApprSeqNos`, doc-no lookups. |
+| `repository/ExptResolMstrRepository.java` | `search` (paged constructor projection + 5-branch visibility), `countTabs` (identical visibility, no `apprTypeCd`), **`findAmountBasisForTotals`** (footer basis — tab-unfiltered, same visibility, G1), `findByBizKeyAndApprSeqNoIn`, `findDocNoByApprSeqNos`, `findCompletedApprSeqNos`, doc-no lookups. |
 | `repository/ExptResolApprvrInfmRepository.java` | `findChain`, `countByStatus`, `stopDownstream` (`W→S`), `stopAllActive` (`P,W→S`), `deleteByBizKeyAndApprSeqNo`. |
 
 ## Entity
@@ -42,8 +42,9 @@ Package root: `wecms-api-main/src/main/java/com/kosign/wecms/domain/payment/appr
 | `dto/ApprovalBoxRow.java` | One list row on the wire (apprSeqNo, docNo, title, fileName, cont, apprDv, typeLabel, currency, totPayAmt string, payDate, draftUser*, regDtm, apprStts, counts, payEndYn, approvers). |
 | `dto/ApprovalBoxProjection.java` | Internal JPQL constructor projection (never on the wire). |
 | `dto/ApprovalBoxApprover.java` | Approver row (lineNo, id, name, status, actedAt). |
-| `dto/ApprovalBoxListResponse.java` | `{ list, totalCount, tabCounts, pageNumber, pageSize, totalPages }`. |
+| `dto/ApprovalBoxListResponse.java` | `{ list, totalCount, tabCounts, footerTotals, pageNumber, pageSize, totalPages }`. |
 | `dto/ApprovalBoxTabCounts.java` | `{ pending, inProgress, approved, rejected }` + `empty()`. |
+| `dto/ApprovalBoxFooterTotals.java` | `{ totalDocumentCount, totalUsdAmount, totalVndAmount, totalKrwAmount }` + `empty()`. Footer bar — tab-unfiltered, full result set (G1/G4). Wire: `footer_totals`. |
 | `dto/ApprovalBoxActionResponse.java` | `{ apprSeqNo, apprStts, apprvrApprTotCnt, apprvrTotCnt }`. |
 | `dto/ApprovalBoxBulkApproveRequest.java` | `{ apprSeqNos }` (`@NotNull @NotEmpty @Size(max=100)`). |
 | `dto/ApprovalBoxBulkApproveResponse.java` | `{ successes[], failures[] }` + nested `Failure`. |
@@ -65,8 +66,9 @@ Package root: `wecms-api-main/src/main/java/com/kosign/wecms/domain/payment/appr
 
 | File | Why |
 |---|---|
-| `domain/payment/internaltransfer/repository/ScdulPymnSumrRepository.java` | currency/file batch reads + `APPR_STTS` write-back + `clearApprSeqNo` (Internal/Vendor/Expense/Payroll) |
-| `domain/payment/overseas/repository/OvrsPymnSumrRepository.java` | same for Overseas (`APPR_DV='34'`) |
+| `domain/payment/internaltransfer/repository/ScdulPymnSumrRepository.java` | currency (`findCcyCdByBizKeyAndApprSeqNos`) + file-name (`findOrgFileNmByBizKeyAndApprSeqNos`) batch reads, uploader-visibility EXISTS (`reg_id`, G3), `clearApprSeqNo` on withdraw (Internal/Vendor/Expense/Payroll). No `APPR_STTS` write-back — the column does not exist in legacy. |
+| `domain/payment/overseas/repository/OvrsPymnSumrRepository.java` | same for Overseas (`APPR_DV='34'`): currency + file-name batch reads, uploader-visibility EXISTS, `clearApprSeqNo`. |
+| `domain/payment/cardtransactions/repository/CardTrnsHstrRepository.java` | currency (`findCcyCdByBizKeyAndApprSeqNos`) + **card-amount** (`sumTrscAmtByBizKeyAndApprSeqNos` — `SUM(TRSC_AMT)`, G5) batch reads, uploader-visibility EXISTS (`APPR_DV='33'`). |
 | `domain/auth/repository/BusiAdmnInfmRepository.java` | business-admin recipients for decision notifications |
 | `common/auditlog/AuditLogService` | `AUDIT_LOGS_INFM` writes (`WSVC_ID="approval-box"`, `REQUIRES_NEW`) |
 | `domain/notification/service/NotificationService` (+ `NotificationApprovalWriter`) | request / decision notifications (best-effort) |

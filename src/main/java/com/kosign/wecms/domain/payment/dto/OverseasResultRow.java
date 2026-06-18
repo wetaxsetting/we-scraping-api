@@ -37,5 +37,10 @@ public record OverseasResultRow(
         /** Approval workflow status code — {@code EXPT_RESOL_MSTR.APPR_TYPE_CD}. */
         String apprStts,
         /** Approver display name — complex join deferred; null for now. */
-        String apprvrNm
+        String apprvrNm,
+        /** F4b — approval-document key ({@code OVRS_PYMN_SUMR.APPR_SEQ_NO}). Wire
+         *  {@code appr_seq_no}; the frontend maps it to {@code approvalRefId} so the
+         *  Approval Ref cell opens the shared Approval Details popup (legacy
+         *  {@code comm_0195_001}). Null for drafts with no approval → plain text. */
+        String apprSeqNo
 ) {}

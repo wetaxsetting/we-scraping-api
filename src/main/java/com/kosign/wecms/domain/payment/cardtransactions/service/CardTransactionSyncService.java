@@ -8,9 +8,13 @@ import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.banking.bankcredentials.repository.BankCertInfoRepository;
 import com.kosign.wecms.domain.banking.bankcredentials.service.BankCredentialService;
 import com.kosign.wecms.domain.banking.bankcredentials.service.BankCredentialService.DecryptedCredential;
+import com.kosign.wecms.domain.banking.nxisas.NxisasApiLog;
 import com.kosign.wecms.domain.banking.nxisas.NxisasBankConfig;
+import com.kosign.wecms.domain.banking.nxisas.NxisasCardBanks;
 import com.kosign.wecms.domain.banking.nxisas.NxisasGatewayClient;
 import com.kosign.wecms.domain.banking.nxisas.NxisasGatewayClient.GatewayContinuation;
+import com.kosign.wecms.domain.banking.nxisas.NxisasMask;
+import com.kosign.wecms.domain.banking.nxisas.NxisasResultCodes;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasApiOut;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasCardUsingEntry;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasCardUsingJobInput;
@@ -131,6 +135,13 @@ public class CardTransactionSyncService {
         String now    = OffsetDateTime.now(ZoneOffset.UTC).format(DTM14);
         long startedNs = System.nanoTime();
 
+        // Shared NXISAS debug trace id for this Update/sync run. Card sync
+        // has no NxisasScrapeSession (challenges aren't pumped — they
+        // surface as re-auth notices), so we mint a per-run id and use it
+        // across every NxisasApiLog line for the run. flow = CARD_UPDATE_TRANSACTIONS.
+        final String traceId = java.util.UUID.randomUUID().toString();
+        final String FLOW = NxisasApiLog.FLOW_CARD_UPDATE_TRANSACTIONS;
+
         log.info("---------------------------- card-sync :: START ----------------------------");
         log.info("card-sync :: bizKey={} from={} to={} auto={}",
                 bizKey, req.fromDate(), req.toDate(), req.auto());
@@ -143,6 +154,8 @@ public class CardTransactionSyncService {
         if (cards.isEmpty()) {
             log.info("---------------------------- card-sync :: DONE :: no eligible cards ({} ms) ----------------------------",
                     (System.nanoTime() - startedNs) / 1_000_000);
+            NxisasApiLog.event(traceId, FLOW, "COMPLETE",
+                    "success", 0, "attempted", 0, "reason", "NO_ELIGIBLE_CARDS");
             return new SyncCardTransactionsResponse(0, 0, 0, 0, List.of(), List.of());
         }
 
@@ -204,7 +217,7 @@ public class CardTransactionSyncService {
                         .orElse(null);
                 if (resolved == null) {
                     log.warn("card-sync :: orphan card has NO BANK_CERT_INFO for bankCd={} cardNo={} — surfacing as WBE_CARD_SYNC_NO_CREDENTIAL",
-                            c.getBankCd(), c.getCardNo());
+                            c.getBankCd(), NxisasMask.card(c.getCardNo()));
                     unresolvableCards.add(c);
                     continue;
                 }
@@ -213,7 +226,7 @@ public class CardTransactionSyncService {
                 c.setModDtm(now);
                 cardMstrRepo.saveAndFlush(c);
                 log.info("card-sync :: auto-linked orphan card bankCd={} cardNo={} → bankCertSeq={} (persisting on flush)",
-                        c.getBankCd(), c.getCardNo(), resolved);
+                        c.getBankCd(), NxisasMask.card(c.getCardNo()), resolved);
             }
             resolvableCards.add(c);
         }
@@ -247,6 +260,9 @@ public class CardTransactionSyncService {
 
         log.info("---------------------------- card-sync :: orgObj ----------------------------");
         log.info("card-sync :: grouped into {} credential bucket(s)", byCredential.size());
+        NxisasApiLog.event(traceId, FLOW, "START",
+                "cards", cards.size(), "groups", byCredential.size(),
+                "from", effFromDt, "to", effToDt);
 
         for (Map.Entry<BigDecimal, List<CardMstr>> entry : byCredential.entrySet()) {
             BigDecimal credSeqNo = entry.getKey();
@@ -263,9 +279,22 @@ public class CardTransactionSyncService {
             log.info("card-sync :: credential seq_no={} bankCd={} bankNm={} cards={}",
                     credSeqNo, groupBankCd, groupBankNm, group.size());
             for (CardMstr c : group) {
-                log.info("card-sync ::   card_no={} card_nm={}", c.getCardNo(), c.getCardNm());
+                log.info("card-sync ::   card_no={} card_nm={}", NxisasMask.card(c.getCardNo()), c.getCardNm());
             }
             log.info("---------------------------- card-sync :: credential ----------------------------");
+            // Card scraping supports only Shinhan + Woori — tag the flow so
+            // the logs make the two-bank scope explicit and an out-of-scope
+            // bank (only possible via a stale/hand-seeded card row) is
+            // visible rather than silently treated as a card bank.
+            boolean cardBankSupported = NxisasCardBanks.isSupported(groupBankCd);
+            NxisasApiLog.event(traceId, FLOW, "GROUP_START",
+                    "bankCd", groupBankCd, "cardBank", NxisasCardBanks.label(groupBankCd),
+                    "cardBankSupported", cardBankSupported, "cards", group.size());
+            if (!cardBankSupported) {
+                log.warn("card-sync :: UNSUPPORTED card bank in scrape scope bankCd={} (only Shinhan/Woori supported)",
+                        groupBankCd);
+                NxisasApiLog.event(traceId, FLOW, "UNSUPPORTED_CARD_BANK", "bankCd", groupBankCd);
+            }
 
             // 3a. Decrypt credentials. Failure (missing row, wrong
             //     tenant, etc.) → mark every card in this group as
@@ -345,6 +374,8 @@ public class CardTransactionSyncService {
             log.info("card-sync :: LOGIN bankCd={} module={} class={} loginType={}",
                     bankCd, cfg.module(), cfg.category(),
                     loginInput.getLoginType() == null ? "" : loginInput.getLoginType());
+            NxisasApiLog.event(traceId, FLOW, "LOGIN_START",
+                    "bankCd", bankCd, "module", cfg.module(), "class", cfg.category());
 
             NxisasApiOut<NxisasLoginJobResult> loginOut =
                     gateway.login(cfg.module(), cfg.category(), trSeq, loginInput);
@@ -356,6 +387,8 @@ public class CardTransactionSyncService {
                         : loginOut.getCommon().getResultMsg();
                 log.warn("card-sync :: LOGIN FAILED bankCd={} resultCd={} msg={}",
                         bankCd, loginResultCd, msg);
+                NxisasApiLog.event(traceId, FLOW, "ERROR",
+                        "stage", "LOGIN", "scope", "GATEWAY", "bankCd", bankCd, "resultCode", loginResultCd);
                 for (CardMstr c : group) {
                     errors.add(new CardSyncError(
                             c.getBankCd(), resolveBankName(c.getBankCd()), c.getCardNo(),
@@ -378,6 +411,11 @@ public class CardTransactionSyncService {
                 String msg = "bank requires OTP / Q&A / CAPTCHA — finish via Manage Cards";
                 log.warn("card-sync :: LOGIN CHALLENGE bankCd={} callBackFunc={}",
                         bankCd, loginRes.getCallBackFunc());
+                // Card sync does not pump challenges — surfaced as a per-card
+                // re-auth notice (the user finishes via Manage Cards).
+                NxisasApiLog.event(traceId, FLOW, "CHALLENGE_REQUIRED",
+                        "bankCd", bankCd, "callBackFunc", loginRes.getCallBackFunc(),
+                        "outcome", "NEEDS_RE_AUTH");
                 for (CardMstr c : group) {
                     errors.add(new CardSyncError(
                             c.getBankCd(), resolveBankName(c.getBankCd()), c.getCardNo(),
@@ -394,6 +432,8 @@ public class CardTransactionSyncService {
                 continue;
             }
             log.info("card-sync :: LOGIN OK bankCd={}", bankCd);
+            NxisasApiLog.event(traceId, FLOW, "LOGIN_SUCCESS",
+                    "bankCd", bankCd, "sasSessionId", NxisasMask.token(loginOut.getSasSessionID()));
 
             GatewayContinuation cont = GatewayContinuation.from(loginOut);
 
@@ -408,7 +448,10 @@ public class CardTransactionSyncService {
                     cardInput.setCardType("0");
                 }
                 log.info("card-sync :: CARD_USING bankCd={} cardNo={} from={} to={}",
-                        card.getBankCd(), card.getCardNo(), effFromDt, effToDt);
+                        card.getBankCd(), NxisasMask.card(card.getCardNo()), effFromDt, effToDt);
+                NxisasApiLog.event(traceId, FLOW, "CARD_USING_START",
+                        "bankCd", card.getBankCd(), "cardNo", NxisasMask.card(card.getCardNo()),
+                        "from", effFromDt, "to", effToDt);
 
                 String useTrSeq = gateway.newTrSeq();
                 NxisasApiOut<NxisasCardUsingJobResult> useOut;
@@ -418,7 +461,10 @@ public class CardTransactionSyncService {
                 } catch (Exception ex) {
                     String msg = ex.getMessage() == null ? "gateway call failed" : ex.getMessage();
                     log.warn("card-sync :: CARD_USING THREW bankCd={} cardNo={} msg={}",
-                            card.getBankCd(), card.getCardNo(), msg);
+                            card.getBankCd(), NxisasMask.card(card.getCardNo()), msg);
+                    NxisasApiLog.event(traceId, FLOW, "ERROR",
+                            "stage", "CARD_USING", "scope", "TRANSPORT",
+                            "bankCd", card.getBankCd(), "cardNo", NxisasMask.card(card.getCardNo()));
                     errors.add(new CardSyncError(
                             card.getBankCd(), resolveBankName(card.getBankCd()), card.getCardNo(),
                             "WBE_CARD_SYNC_GATEWAY_ERROR", msg));
@@ -434,7 +480,11 @@ public class CardTransactionSyncService {
                             ? "Coocon CARD_USING failed (no envelope)"
                             : useOut.getCommon().getResultMsg();
                     log.warn("card-sync :: CARD_USING FAILED bankCd={} cardNo={} resultCd={} msg={}",
-                            card.getBankCd(), card.getCardNo(), useResultCd, msg);
+                            card.getBankCd(), NxisasMask.card(card.getCardNo()), useResultCd, msg);
+                    NxisasApiLog.event(traceId, FLOW, "ERROR",
+                            "stage", "CARD_USING", "scope", "GATEWAY",
+                            "bankCd", card.getBankCd(), "cardNo", NxisasMask.card(card.getCardNo()),
+                            "resultCode", useResultCd);
                     errors.add(new CardSyncError(
                             card.getBankCd(), resolveBankName(card.getBankCd()), card.getCardNo(),
                             "WBE_CARD_SYNC_GATEWAY_ERROR", msg));
@@ -461,7 +511,7 @@ public class CardTransactionSyncService {
                 }
 
                 log.info("card-sync :: CARD_USING OK bankCd={} cardNo={} scraped={}",
-                        card.getBankCd(), card.getCardNo(), scraped.size());
+                        card.getBankCd(), NxisasMask.card(card.getCardNo()), scraped.size());
 
                 // 3e. Insert with dedup. One inserted row per
                 //     scraped transaction that doesn't already exist;
@@ -472,7 +522,10 @@ public class CardTransactionSyncService {
                 skippedCount  += counts[1];
 
                 log.info("card-sync :: persisted bankCd={} cardNo={} inserted={} skipped={}",
-                        card.getBankCd(), card.getCardNo(), counts[0], counts[1]);
+                        card.getBankCd(), NxisasMask.card(card.getCardNo()), counts[0], counts[1]);
+                NxisasApiLog.event(traceId, FLOW, "CARD_DONE",
+                        "bankCd", card.getBankCd(), "cardNo", NxisasMask.card(card.getCardNo()),
+                        "scraped", scraped.size(), "inserted", counts[0], "skipped", counts[1]);
 
                 // Stamp the last-success on CARD_MSTR so subsequent
                 // syncs default to the post-success window — but
@@ -520,7 +573,7 @@ public class CardTransactionSyncService {
                     credSeqNo, groupBankCd, groupCards.size());
             for (SyncGroupCard gc : groupCards) {
                 log.info("card-sync ::   card_no={} scraped={} inserted={} skipped={} errorCode={}",
-                        gc.cardNo(), gc.scrapedCount(), gc.inserted(), gc.skipped(),
+                        NxisasMask.card(gc.cardNo()), gc.scrapedCount(), gc.inserted(), gc.skipped(),
                         gc.errorCode() == null ? "-" : gc.errorCode());
             }
             log.info("---------------------------- card-sync :: tranList Result(Unit) ----------------------------");
@@ -549,6 +602,10 @@ public class CardTransactionSyncService {
                 bizKey, cardsSucceeded, cardsAttempted, insertedCount, skippedCount,
                 errors.size(), elapsedMs, groups.size());
         log.info("---------------------------- card-sync :: tranList Result ----------------------------");
+        NxisasApiLog.event(traceId, FLOW, "COMPLETE",
+                "success", cardsSucceeded, "attempted", cardsAttempted,
+                "inserted", insertedCount, "skipped", skippedCount,
+                "errors", errors.size(), "durationMs", elapsedMs);
 
         return new SyncCardTransactionsResponse(
                 cardsAttempted, cardsSucceeded, insertedCount, skippedCount, errors, groups);
@@ -664,11 +721,10 @@ public class CardTransactionSyncService {
     }
 
     private static boolean isGatewayError(String resultCd) {
-        if (resultCd == null || resultCd.isBlank()) return false;
-        if ("00000000".equals(resultCd)) return false;
-        if ("0000".equals(resultCd)) return false;
-        if ("OK".equalsIgnoreCase(resultCd)) return false;
-        return true;
+        // Shared NXISAS result-code policy (also used by BankScrapingService
+        // + BankTransactionSyncService). Identical behaviour to the former
+        // inline copy.
+        return NxisasResultCodes.isGatewayError(resultCd);
     }
 
     /** Detect a challenge-required LOGIN response shape. Coocon

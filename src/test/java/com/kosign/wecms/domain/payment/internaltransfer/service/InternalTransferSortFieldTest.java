@@ -63,4 +63,16 @@ class InternalTransferSortFieldTest {
         assertThat(InternalTransferResultSortField.PROC_STAT.entityProperty())
                 .isEqualTo("trnfYn");
     }
+
+    @Test
+    void result_date_time_column_sorts_on_trnf_dtm() {
+        // F-1 fix: the Transfer Result Date/Time column (TRAN_DT) displays
+        // and therefore sorts on TRNF_DTM (dispatch datetime), NOT REG_DTM.
+        // Legacy IDO SCDUL_PYMN_SUMR_R007 emits `TRNF_DTM AS REG_DTM`; the
+        // displayed value and its sort key must stay aligned.
+        assertThat(InternalTransferResultSortField.parse("TRAN_DT"))
+                .contains(InternalTransferResultSortField.TRAN_DT);
+        assertThat(InternalTransferResultSortField.TRAN_DT.entityProperty())
+                .isEqualTo("trnfDtm");
+    }
 }

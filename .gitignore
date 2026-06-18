@@ -42,3 +42,7 @@ src/main/resources/application-local.yml
 .env.*
 !.env.example
 
+### JVM dump artifacts ###
+replay_pid*.log
+hs_err_pid*.log
+

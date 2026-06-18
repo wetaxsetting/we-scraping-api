@@ -353,11 +353,47 @@ Until tests land, the integration check is **manual against the local Coocon tes
 
 **OQ-4 — Delete wiring in the panel.** Backend endpoint exists (`DELETE /api/v1/banking/credentials/{seqNo}`); the panel's kebab → Delete fires only the confirmation dialog today. Trivial wire-up; bundled with OQ-2 (audit-write) so the delete event records correctly. Owner: frontend + backend. Status: ready to land.
 
-**OQ-5 — Per-account registration into `ACCT_MSTR`.** Today's persist call lands only the credential row in `BANK_CERT_INFO`. The accounts the user picks in `SelectBankAccountsDialog` are intentionally not forwarded — mapping the scraped 8-field shape into `ACCT_MSTR`'s 30+ columns is a follow-up. Owner: backend. Status: deferred until the account-management feature consolidates the schema.
+**OQ-5 — Per-account registration into `ACCT_MSTR`. RESOLVED (2026-06-17).** The accounts the user picks in `SelectBankAccountsDialog` ARE now forwarded and persisted. `POST /api/v1/banking/accounts/register` → [`AccountRegistrationService`](../../../src/main/java/com/kosign/wecms/domain/banking/service/AccountRegistrationService.java) upserts each picked account into `ACCT_MSTR` (INSERT new / UPDATE existing, legacy `fnsh_0101_001_c001` parity) and fans out `ACCT_AUTH_INFO` on insert. The frontend `persistPickedAccounts` (in `LoginCredentialsPanel.tsx`) maps the picked rows to the register payload. See § "Select Bank Accounts registration — final state" below. Owner: backend. Status: **DONE**.
 
 **OQ-6 — Consolidate `/banking/credentials` and `/login-credentials/bank` surfaces.** Today the list query goes through the generic CRUD path (`GET /api/v1/banking/credentials`) and the verify+persist write goes through `/login-credentials/bank`. A future MR may collapse the two under one consistent prefix (likely `/api/v1/settings/login-credentials/*`). Owner: backend. Status: deferred — works today; consolidation is hygiene, not function.
 
 **OQ-7 — CAPTCHA / Q&A challenge support.** Some banks return `CAPTCHA_REQUIRED` / `QNA_REQUIRED` instead of `OTP_REQUIRED`. Today the panel surfaces a system error and collapses. Add proper dialogs when a real bank in the local test set demands it. Owner: frontend + backend. Status: deferred until a real consumer.
+
+**OQ-8 — Maturity Date persistence. COMPLETE (2026-06-17).** `maturityDate` is read end-to-end **and persisted** to `ACCT_MSTR.EXPI_DT`. The frontend sends `maturity_date` in the Save payload; `AccountEntry.maturityDate` → `AccountRegistrationService.normalizeExpiDt(...)` normalizes `yyyy-MM-dd` / `yyyyMMdd` → `yyyyMMdd` (stores on insert + update); an invalid/unknown format is skipped (never saved silently). Owner: backend. Status: **DONE**.
+
+**OQ-9 — VAS Code / VAS Account Name persistence. COMPLETE (2026-06-17).** VAS columns render for non-`H` product types and persist to `ACCT_MSTR.VAS_ACCT_CD` / `VAS_ACCT_NM` (`AccountEntry.vasAcctCd` / `vasAcctNm`, set on insert + update). Hidden + omitted for product type `H` (see OQ-11). `VAS_ACCT_SEQ_NO` is left null — the popup collects free-text code/name, not a `BUSI_VAS_ACCT_INFM` seq (legacy only set the seq on the patch branch when present); see Operational Follow-up #2. Owner: backend. Status: **DONE** (seq confirmation pending — operational).
+
+**OQ-10 — Full atomic credential+accounts save. COMPLETE (2026-06-17).** Implemented the legacy `fnsh_0101_001_c001` "all-on-Save" guarantee. The frontend verifies the login **inline** (`POST /banking/scraping/verify` — **no `BANK_CERT_INFO` created during the scrape**) and holds the verified credential in transient state; on Save it calls `POST /api/v1/login-credentials/bank/register` → `LoginCredentialsService.createBankWithAccounts(...)`, which inserts `BANK_CERT_INFO` + registers `ACCT_MSTR` + fans out `ACCT_AUTH_INFO` (+ audit) in **one `@Transactional`**. Empty accounts are rejected before the credential is written; a registration failure rolls the whole tx back. Observable rule holds: **no save ⇒ no `BANK_CERT_INFO`**; successful save ⇒ all three exist. Abandon-cleanup remains as a guarded safety net. Owner: backend + frontend. Status: **DONE**.
+
+**OQ-11 — Product type `H` VAS hiding. COMPLETE (2026-06-17).** The popup hides VAS Code / VAS Account Name and omits them from the Save payload when the session's product type is `H` (`showVas = !isProductType(userStorage.get(), "H")`), mirroring legacy `comm_0218_nxisas_view.jsp` `if (!"H".equals(prdtTypes))`. UX-only gate; the backend enforces product type from the signed JWT. Owner: frontend. Status: **DONE**.
+
+---
+
+## 10a. Select Bank Accounts registration — final state (Phase 1 + Phase 2, 2026-06-17)
+
+`POST /api/v1/banking/accounts/register` → [`AccountRegistrationService.register`](../../../src/main/java/com/kosign/wecms/domain/banking/service/AccountRegistrationService.java) persists the picked accounts (frontend popup: `SelectBankAccountsDialog`). Final state of the remediation:
+
+| Item | Status | Backend detail |
+|---|---|---|
+| Account Type auto-mapping | ✅ **COMPLETE** (OQ — see flow audit) | `NxisasAcctTypeMappingRepository` resolves raw `(bankCd, ccy, NXISAS_ACCT_TYPE)` → `ACCT_TYPE_CD` in `runAcctList`; wire `acct_type_cd`; popup shows only Current/Savings/Fixed Deposit, auto-selects mapped code, blank+manual when unmapped, never raw. `acct_type_cd` whitelisted (`02`–`08`, default `03`). |
+| Per-account `ACCT_MSTR` upsert | ✅ Done (OQ-5) | INSERT new / UPDATE existing; `BANK_CD` resolved server-side off the credential; `PRN_SEQ` via `wb_get_next_val`; `ACCT_AUTH_INFO` fan-out on insert. |
+| **Maturity Date** | ✅ **COMPLETE** (OQ-8) | Gateway `NxisasAcctListEntry.maturityDate` → `ScrapedAccount.maturityDate` → wire `maturity_date` → **persisted** to `ACCT_MSTR.EXPI_DT` via `normalizeExpiDt` (yyyyMMdd; invalid skipped). Displayed read-only in the popup. |
+| **VAS Code / VAS Account Name** | ✅ **COMPLETE** (OQ-9) | Render for non-`H`; persist to `ACCT_MSTR.VAS_ACCT_CD` / `VAS_ACCT_NM` (insert + update). `VAS_ACCT_SEQ_NO` null — see Operational Follow-up #2. |
+| **Product type `H`** | ✅ **COMPLETE** (OQ-11) | VAS hidden + omitted from payload when product type = `H` (`showVas` gate). |
+| **Balance** | ✅ Saved, not displayed | `AccountEntry.bal` persisted to `ACCT_MSTR.BAL` (INSERT + UPDATE). `REAL_AMT` set to `0` (not persisted — matches legacy, which never writes `REAL_AMT`). No Balance column in the UI (legacy parity). |
+| **Atomic save** | ✅ **COMPLETE** (OQ-10) | Inline verify (no `BANK_CERT_INFO` during scrape) + `POST /bank/register` → `createBankWithAccounts` (one `@Transactional`: credential + `ACCT_MSTR` + `ACCT_AUTH_INFO` + audit). No save ⇒ no credential. Abandon-cleanup kept as safety net. |
+
+**Readiness:** **SIT Ready — YES**, conditional on the operational follow-ups below (DBA seed + live-gateway verification). **UAT Ready — NO** until the SIT live-gateway pass and the `VAS_ACCT_SEQ_NO` confirmation.
+
+### Operational Follow-ups
+
+All five feature items above are COMPLETE in code. The remaining items are operational, not development:
+
+1. **DBA — run the `NXISAS_ACCT_TYPE_MAPPING` seed** per env: [Claude Code (AI)/sql/nxisas_acct_type_mapping_20260617.sql](../../../../Claude%20Code%20(AI)/sql/nxisas_acct_type_mapping_20260617.sql) (DDL + 18 rows, idempotent). Off-inventory table → also needs PO (Mr. Jung) baseline sign-off + `legacy-table-inventory.md` update. Auto-mapping degrades to manual selection until seeded (safe).
+2. **PO/DBA — `VAS_ACCT_SEQ_NO` confirmation.** VAS Code/Name persist; the `BUSI_VAS_ACCT_INFM` seq FK is left null (the popup has no seq source). Confirm whether the seq must be resolved/persisted.
+3. **SIT — live-gateway verification** on a licensed Windows origin: real `maturityDate` value/format, VAS round-trip, and the atomic Save against the live Coocon gateway (cannot run headless).
+
+Frontend counterpart: [wecms-web/docs/features/settings/login-credentials.md](../../../../wecms-web/docs/features/settings/login-credentials.md) (§ Select Bank Accounts popup — remediation status). Source audits: [docs/audits/login-credentials-legacy-vs-refactor-audit.md](../../../../docs/audits/login-credentials-legacy-vs-refactor-audit.md).
 
 ---
 
@@ -396,4 +432,12 @@ Until tests land, the integration check is **manual against the local Coocon tes
 | Frontend Delete | ⏳ Static UI | OQ-4 |
 | Frontend Password Reveal | ✅ Wired | OQ-3 (RESOLVED 2026-06-02) — `revealLoginCredential` |
 | Standalone `/banking/credentials` spike route | 🗑 Removed | The earlier `app/(dashboard)/banking/credentials/` route was the verify-before-save spike that predated the Settings panel. Removed — the Settings panel is the canonical UI surface. |
+| Select Bank Accounts → `ACCT_MSTR` register | ✅ Wired (2026-06-17) | OQ-5 RESOLVED — `POST /api/v1/banking/accounts/register` + `AccountRegistrationService` (see §10a) |
+| Select Bank Accounts popup layout / Account Type / orphan cleanup | ✅ Fixed (2026-06-17) | Fixed height + body-only scroll; functional Account Type + Save validation; atomic save (no orphan). See frontend doc §"Select Bank Accounts popup". |
+| Account Type auto-mapping | ✅ **COMPLETE** | `NXISAS_ACCT_TYPE_MAPPING` raw→`ACCT_TYPE_CD` server-side; 3 business labels; blank+manual when unmapped. DBA seed = operational follow-up #1. |
+| Maturity Date | ✅ **COMPLETE** (OQ-8) | Gateway field wired + rendered read-only + persisted to `ACCT_MSTR.EXPI_DT` (`normalizeExpiDt`). |
+| Balance | ✅ Saved, not displayed | `ACCT_MSTR.BAL` persisted; `REAL_AMT` not persisted (legacy parity); no UI column. |
+| VAS Code / Account Name | ✅ **COMPLETE** (OQ-9) | Persist to `VAS_ACCT_CD`/`VAS_ACCT_NM` (non-`H`); hidden for `H` (OQ-11). `VAS_ACCT_SEQ_NO` = operational follow-up #2. |
+| Product type `H` VAS hide | ✅ **COMPLETE** (OQ-11) | `showVas` gate, legacy parity. |
+| Full atomic save | ✅ **COMPLETE** (OQ-10) | Inline verify + `POST /bank/register` → `createBankWithAccounts` (one tx). No save ⇒ no credential. |
 | Feature doc (this file) | ✅ Authored | — |
