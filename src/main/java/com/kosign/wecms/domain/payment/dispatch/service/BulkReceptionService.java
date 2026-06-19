@@ -22,6 +22,7 @@ import com.kosign.wecms.domain.payment.dispatch.repository.TbFirmBatApiTranRepos
 import com.kosign.wecms.domain.payment.dispatch.repository.TbFirmConfRepository;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbFirmFileDataRepository;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbFirmFileMstRepository;
+import com.kosign.wecms.domain.payment.dispatch.repository.BulkValidationCounts;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileDataRepository;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileMstRepository;
 import com.kosign.wecms.domain.payment.dispatch.sftp.SftpClient;
@@ -47,6 +48,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Optional;
 import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
@@ -137,6 +139,9 @@ public class BulkReceptionService {
     private final FixedLengthCodec fixedLengthCodec;
     private final SftpClient sftpClient;
     private final SftpProperties sftpProperties;
+    /** BATCH1 pre-flight network/currency validator (legacy
+     *  FILE_DEPOSIT_TRANSFER_BATCH1:113-266, Gate A). */
+    private final BulkTransferValidator bulkTransferValidator;
 
     /**
      * Request-time bulk reception of one pay-file target: build + upload the
@@ -176,6 +181,24 @@ public class BulkReceptionService {
         details.sort(Comparator.comparing(TbPayFileData::getSeq));
 
         int reqCnt = details.size();
+
+        // 3a. BATCH1 pre-flight network/currency validation (legacy
+        //     FILE_DEPOSIT_TRANSFER_BATCH1:113-266, Gate A) — runs BEFORE branch-split,
+        //     the PROC_STAT='6' mark, and any TB_FIRM_* / SFTP / EFS work. On failure,
+        //     the whole file is marked FAIL ('3') with the legacy RS_MSG and skipped
+        //     (legacy `continue`). NOTE: the operating-hours / cut-off gate (legacy
+        //     :269-447) is intentionally NOT ported (Mr. Kang: DB 24h, inert; pending PO).
+        BulkValidationCounts counts =
+                payFileDataRepository.aggregateValidationCounts(bizKey, tranDt, fileSeqNo);
+        Optional<String> vrfiMsg = bulkTransferValidator.validate(pay, counts);
+        if (vrfiMsg.isPresent()) {
+            pay.setProcStat(ProcStat.FAIL.code());
+            pay.setRsMsg(vrfiMsg.get());
+            payFileMstRepository.save(pay);
+            log.warn("00301 pre-flight validation failed — file marked FAIL bizKey={} fileSeqNo={} reason={}",
+                    bizKey, fileSeqNo, vrfiMsg.get());
+            return;
+        }
 
         // 4. Branch-split division (legacy calculateBatchDivision): split into
         //    ceil(reqCnt/limit) files of `chunkSize` rows when BAT_TRAN_BRANCH_DIV='Y'

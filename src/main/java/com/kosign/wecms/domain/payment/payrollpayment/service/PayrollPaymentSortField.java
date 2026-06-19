@@ -33,7 +33,15 @@ public enum PayrollPaymentSortField implements SortableField {
     FILE_NM       ("orgFileNm"),
     TOT_TRNS_CNT  ("totTrnsCnt"),
     TOTAL_TRAN_AMT("totalTranAmt"),
-    PAY_DATE      ("payTranDt"),
+    // Schedule Date is displayed from EXPT_RESOL_MSTR.PAY_DATE (toListRow), so it
+    // must sort by that same column — the {@code erm} join alias declared by
+    // ScdulPymnSumrRepository.search's {@code LEFT JOIN ExptResolMstr erm} — NOT
+    // SCDUL_PYMN_SUMR.PAY_TRAN_DT (dispatch-time, null for pending/approved
+    // batches). Legacy parity: SortHelper("pymn_0001_001_r001") sorts PAY_DATE by
+    // lower(pay_date) = the projected ERM.PAY_DATE (SortHelper.java:3148-3150).
+    // Spring Data leaves an already-dot-qualified sort property un-prefixed and
+    // Hibernate resolves it against the join. Mirrors VendorPaymentSortField.
+    PAY_DATE      ("erm.payDate"),
     // APPR_STTS removed 2026-06-10: derived from EXPT_RESOL_MSTR (no
     // SCDUL_PYMN_SUMR.APPR_STTS column in legacy JEX) — not a single-table
     // sort key; falls back to default ORDER BY.

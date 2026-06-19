@@ -2,12 +2,14 @@ package com.kosign.wecms.domain.payment.payrollpayment.service;
 
 import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
+import com.kosign.wecms.domain.payment.dispatch.repository.TbFirmConfRepository;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileDataRepository;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileMstRepository;
 import com.kosign.wecms.domain.payment.dispatch.service.DispatchAutoReceiveRegistrar;
 import com.kosign.wecms.domain.payment.dispatch.service.DispatchKeyGenerator;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumr;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrDetl;
+import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConf;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -21,6 +23,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -39,6 +42,7 @@ class PayrollDispatchExecutorAutoReceiveTest {
     @Mock TbPayFileMstRepository tbPayFileMstRepository;
     @Mock TbPayFileDataRepository tbPayFileDataRepository;
     @Mock AcctMstrRepository acctMstrRepository;
+    @Mock TbFirmConfRepository tbFirmConfRepository;
     @Mock DispatchKeyGenerator keyGenerator;
     @Mock LegacyFunctionRepository legacyFunctions;
     @Mock DispatchAutoReceiveRegistrar autoReceiveRegistrar;
@@ -51,7 +55,12 @@ class PayrollDispatchExecutorAutoReceiveTest {
     void setUp() {
         executor = new PayrollDispatchExecutor(
                 tbPayFileMstRepository, tbPayFileDataRepository, acctMstrRepository,
-                keyGenerator, clock, legacyFunctions, autoReceiveRegistrar);
+                tbFirmConfRepository, keyGenerator, clock, legacyFunctions, autoReceiveRegistrar);
+
+        TbFirmConf defaultConf = org.mockito.Mockito.mock(TbFirmConf.class);
+        when(defaultConf.getBankPrtnId()).thenReturn("PRTN-DEFAULT");
+        when(tbFirmConfRepository.findById(any())).thenReturn(Optional.of(defaultConf));
+
         when(tbPayFileMstRepository.save(any())).thenAnswer(i -> i.getArgument(0));
         when(tbPayFileDataRepository.save(any())).thenAnswer(i -> i.getArgument(0));
         when(keyGenerator.nextFileSeqNo(anyString(), anyString())).thenReturn(FILE_SEQ_NO);

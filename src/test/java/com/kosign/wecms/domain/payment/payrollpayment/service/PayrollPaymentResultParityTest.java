@@ -55,9 +55,12 @@ class PayrollPaymentResultParityTest {
         DispatchCountRepository dispatchCountRepository = mock(DispatchCountRepository.class);
         TransferLineDetailMapper transferLineDetailMapper = mock(TransferLineDetailMapper.class);
         DispatchResultResolver dispatchResultResolver = mock(DispatchResultResolver.class);
+        com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions =
+                mock(com.kosign.wecms.common.legacy.LegacyFunctionRepository.class);
         service = new PayrollPaymentResultService(
                 sumrRepository, detlRepository, dispatchCountRepository,
-                transferLineDetailMapper, dispatchResultResolver, exptResolMstrRepository);
+                transferLineDetailMapper, dispatchResultResolver, exptResolMstrRepository,
+                legacyFunctions);
 
         when(dispatchCountRepository.countByBatch(anyString(), anyList()))
                 .thenReturn(Collections.emptyList());

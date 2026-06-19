@@ -15,7 +15,6 @@ import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxActionResponse
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprDv;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxFanoutService;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxService;
-import com.kosign.wecms.domain.payment.dispatch.service.TransferDispatchExecutor;
 import com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalActionRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.CreateScheduledTransferRequest;
@@ -160,7 +159,7 @@ public class VendorPaymentService {
     private final VendorPaymentFileResolver     fileResolver;
     private final ErpTrnsHistoryWriter          erpHistoryWriter;
     private final AuditLogService               auditLogService;
-    private final TransferDispatchExecutor      dispatchExecutor;
+    private final VendorDispatchExecutor        dispatchExecutor;
     /** Approver-chain authority — see InternalTransferService for the rationale. */
     private final ApprovalBoxService            approvalBoxService;
     /** Shared projector that resolves the per-line bank name +
@@ -1044,8 +1043,10 @@ public class VendorPaymentService {
      * but stamps the Vendor type discriminator and Vendor audit keys.
      * Cut-off-time gate, {@code TRNF_YN='Y'} stamp on the master,
      * and {@code TB_PAY_TARGET} / {@code TB_PAY_FILE_MST} +
-     * {@code TB_PAY_FILE_DATA} writes via the shared
-     * {@code TransferDispatchExecutor}.
+     * {@code TB_PAY_FILE_DATA} writes via the Vendor-specific
+     * {@link VendorDispatchExecutor} (legacy-parity copy of the
+     * {@code pymn_0001_001_c001} engine — replaces the shared
+     * {@code TransferDispatchExecutor} whose file path diverged from legacy).
      */
     @Transactional
     public void dispatch(String id, DispatchRequest req) {

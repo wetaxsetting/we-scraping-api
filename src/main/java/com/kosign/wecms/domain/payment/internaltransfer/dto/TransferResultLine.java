@@ -51,13 +51,27 @@ public record TransferResultLine(
         // Banking-match read fields (Phase 1, additive — SCDUL_PYMN_SUMR_DETL).
         String     linkMatchYn,
         String     acctSeqNo,
-        String     bankTrnsFullId) {
+        String     bankTrnsFullId,
+        /**
+         * Reporting Account display strings (Payroll Result detail —
+         * legacy {@code IDO.SCDUL_PYMN_SUMR_R011.xml:70-71}).
+         * {@code chartAcctNm} = {@code wb_get_chart_acct_nm(...)} (primary
+         * line, e.g. {@code "Code0011 - SALES TEST"}); {@code chartAcctLevelNm}
+         * = {@code wb_get_chart_acct_lv_nm(...)} (grey level line, e.g.
+         * {@code "REVENUE > SALES"}). Populated only by the Payroll Result
+         * service; the sibling modules (Internal Transfer / Vendor / Expense /
+         * Overseas) pass {@code null} via the backward-compatible constructors
+         * below until their own Reporting-Account parity MR lands.
+         */
+        String     chartAcctNm,
+        String     chartAcctLevelNm) {
 
     /**
      * Backward-compatible constructor matching the pre-banking-match
      * (22-arg) signature. Lets sibling result services that have not been
-     * wired for banking match (Internal Transfer, Payroll) construct a line
-     * unchanged; the three match fields default to {@code null}.
+     * wired for banking match (Internal Transfer) construct a line
+     * unchanged; the three match fields and the two chart-name fields
+     * default to {@code null}.
      */
     public TransferResultLine(
             String     scdulPymnDetlNo,
@@ -86,6 +100,48 @@ public record TransferResultLine(
                 fincMdaNo, tranUsag, ccyCd, trnfCcyCd, depoCcyCd, note, docNo,
                 chartAcctCd, chartAcctSeqNo, bankTrnsShortId, procStat, procStatKey,
                 procDttm, rsltDttm, rsCd, rsMsg,
-                null, null, null);
+                null, null, null,
+                null, null);
+    }
+
+    /**
+     * Backward-compatible constructor matching the pre-Reporting-Account
+     * (25-arg) signature — base fields + the three banking-match fields.
+     * Lets the Vendor / Expense result services (which populate banking match
+     * but not the chart-name fields) construct a line unchanged; the two
+     * chart-name fields default to {@code null}.
+     */
+    public TransferResultLine(
+            String     scdulPymnDetlNo,
+            BigDecimal tranAmt,
+            String     antDivCd,
+            String     rcptNm,
+            String     tarBankCd,
+            String     tarBankNm,
+            String     fincMdaNo,
+            String     tranUsag,
+            String     ccyCd,
+            String     trnfCcyCd,
+            String     depoCcyCd,
+            String     note,
+            String     docNo,
+            String     chartAcctCd,
+            String     chartAcctSeqNo,
+            String     bankTrnsShortId,
+            String     procStat,
+            String     procStatKey,
+            String     procDttm,
+            String     rsltDttm,
+            String     rsCd,
+            String     rsMsg,
+            String     linkMatchYn,
+            String     acctSeqNo,
+            String     bankTrnsFullId) {
+        this(scdulPymnDetlNo, tranAmt, antDivCd, rcptNm, tarBankCd, tarBankNm,
+                fincMdaNo, tranUsag, ccyCd, trnfCcyCd, depoCcyCd, note, docNo,
+                chartAcctCd, chartAcctSeqNo, bankTrnsShortId, procStat, procStatKey,
+                procDttm, rsltDttm, rsCd, rsMsg,
+                linkMatchYn, acctSeqNo, bankTrnsFullId,
+                null, null);
     }
 }

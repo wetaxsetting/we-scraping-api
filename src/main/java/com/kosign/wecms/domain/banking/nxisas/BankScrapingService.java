@@ -130,6 +130,9 @@ public class BankScrapingService {
             case CARD_REGISTER -> NxisasApiLog.FLOW_CARD_MANAGEMENT_SETTING;
             case SYNC -> NxisasApiLog.FLOW_BANK_SYNC;
             case SETUP -> NxisasApiLog.FLOW_BANK_SETUP;
+            // CARD_SYNC sessions are owned by CardTransactionScrapeService
+            // and never reach this service; map it for switch-exhaustiveness.
+            case CARD_SYNC -> NxisasApiLog.FLOW_CARD_UPDATE_TRANSACTIONS;
         };
     }
 

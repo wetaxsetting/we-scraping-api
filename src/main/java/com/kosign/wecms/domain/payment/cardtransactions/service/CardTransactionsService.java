@@ -240,23 +240,23 @@ public class CardTransactionsService {
         CardTransactionListFilters f = buildFilters(fromDt, toDt, srchWd, bankCds, cardNos, linkYn);
         Pageable pageable = buildPageable(page, size, sortField, sortDirection);
 
-        // Phase B note: bank/card multi-select filters are still
-        // accepted on the wire + propagated into CardTransactionListFilters
-        // for API stability, but the repository does NOT yet apply them
-        // (the JPQL `:list IS EMPTY` idiom doesn't compile in Hibernate 6 —
-        // it's reserved for entity collection-valued paths). When the
-        // frontend popovers ship, fan out to a sibling repository method
-        // that declares `AND c.bankCd IN :bankCds` and branch on
-        // `f.bankCds().isEmpty()` here. The accepted-but-ignored shape
-        // mirrors how Internal Transfer treated its `apprType` filter
-        // during Phase A.
+        // Bank/card multi-select filters (audit D2): applied to BOTH the
+        // page and the totals query so the grid and the dashboard tiles
+        // stay consistent. Boolean flag + non-empty sentinel keeps the
+        // bound IN list valid SQL when the filter is absent.
+        boolean filterBank = hasFilter(f.bankCds());
+        boolean filterCard = hasFilter(f.cardNos());
         Page<CardTrnsHstr> entityPage = cardTrnsRepo.findLedgerPage(
                 bizKey, f.fromDt(), f.toDt(),
+                filterBank, inParam(f.bankCds()),
+                filterCard, inParam(f.cardNos()),
                 f.srchWdPattern(), f.linkYn(),
                 pageable);
 
         LedgerTotalsProjection raw = cardTrnsRepo.findLedgerTotals(
                 bizKey, f.fromDt(), f.toDt(),
+                filterBank, inParam(f.bankCds()),
+                filterCard, inParam(f.cardNos()),
                 f.srchWdPattern(), f.linkYn());
 
         // Pre-resolve bank names for the rows on this page so the row
@@ -302,6 +302,8 @@ public class CardTransactionsService {
 
         Page<CardTrnsHstr> page = cardTrnsRepo.findLedgerPage(
                 bizKey, f.fromDt(), f.toDt(),
+                hasFilter(f.bankCds()), inParam(f.bankCds()),
+                hasFilter(f.cardNos()), inParam(f.cardNos()),
                 f.srchWdPattern(), f.linkYn(),
                 pageable);
 
@@ -359,7 +361,8 @@ public class CardTransactionsService {
                         c.getCardNo(),
                         c.getCardNm(),
                         c.getCardNickNm(),
-                        c.getCardHldrNm()))
+                        c.getCardHldrNm(),
+                        c.getTrnLstSucDtm()))
                 .toList();
         log.debug("feature=card-transactions cards bizKey={} bankCd={} count={}",
                 bizKey, narrow, cards.size());
@@ -1189,7 +1192,7 @@ public class CardTransactionsService {
             row.setDocId(doc.getDocId());
             row.setUserId(userId);
             row.setRcvPayHisSeqNo(nextSeq);
-            row.setRcvPayWayCd("C"); // RcvPayWayCd.CARD
+            row.setRcvPayWayCd("R"); // RcvPayWayCd.CARD ('C' is CASH) — legacy card_0001_002_c001_act.jsp:174
             row.setBankCd(safe(card.getBankCd()));
             row.setCardNo(safe(card.getCardNo()));
             row.setTrscDt(safe(card.getTrscDt()));
@@ -1836,6 +1839,20 @@ public class CardTransactionsService {
                 fromDt, toDt, bankCdsNorm, cardNosNorm, pattern, linkYnNorm);
     }
 
+    /** True when a multi-select filter list carries at least one value. */
+    private static boolean hasFilter(List<String> v) {
+        return v != null && !v.isEmpty();
+    }
+
+    /** Sentinel-safe IN parameter: the repository's {@code IN :list}
+     *  clause is bound even when its boolean guard is {@code false}, so
+     *  the list must never be empty (an empty {@code IN ()} is invalid
+     *  SQL). Returns the values when present, else a one-element list
+     *  that the {@code :filterXxx = FALSE} guard never lets match. */
+    private static List<String> inParam(List<String> v) {
+        return hasFilter(v) ? v : List.of("");
+    }
+
     private Pageable buildPageable(int page, int size, String sortField, String sortDirection) {
         int safePage = Math.max(0, page);
         int safeSize = size <= 0 ? DEFAULT_PAGE_SIZE : Math.min(size, MAX_PAGE_SIZE);
@@ -1934,7 +1951,7 @@ public class CardTransactionsService {
      *
      * <p>Each card may have 0 or more linked docs (one row per
      * {@code BUSA_DOC_RCV_PAY_HIS} entry where
-     * {@code RCV_PAY_WAY_CD='C'} and {@code REF_NO=cardSeqNo}). The
+     * {@code RCV_PAY_WAY_CD='R'} (CARD) and {@code REF_NO=cardSeqNo}). The
      * frontend renders the first doc id on the Link Reference cell + a
      * dropdown listing the rest.
      */
@@ -1968,7 +1985,8 @@ public class CardTransactionsService {
                         bizKey, bankCd, cardNo))
                 .map(c -> new ActiveCard(
                         c.getBankCd(), null,
-                        c.getCardNo(), c.getCardNm(), c.getCardNickNm(), c.getCardHldrNm()))
+                        c.getCardNo(), c.getCardNm(), c.getCardNickNm(), c.getCardHldrNm(),
+                        c.getTrnLstSucDtm()))
                 .orElse(null);
     }
 

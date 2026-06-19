@@ -15,6 +15,7 @@ import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTransactionListR
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTransactionRow;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTransactionTotals;
 import com.kosign.wecms.domain.payment.cardtransactions.service.CardTranListR001Service;
+import com.kosign.wecms.domain.payment.cardtransactions.service.CardTransactionScrapeService;
 import com.kosign.wecms.domain.payment.cardtransactions.service.CardTransactionSyncService;
 import com.kosign.wecms.domain.payment.cardtransactions.service.CardTransactionsService;
 import org.junit.jupiter.api.AfterEach;
@@ -58,6 +59,7 @@ class CardTransactionsControllerTest {
     private MockMvc mvc;
     private CardTransactionsService service;
     private CardTransactionSyncService syncService;
+    private CardTransactionScrapeService scrapeService;
     private CardTranListR001Service cardTranListR001Service;
     private ExcelExportService excelExportService;
 
@@ -65,6 +67,7 @@ class CardTransactionsControllerTest {
     void setUp() {
         service = mock(CardTransactionsService.class);
         syncService = mock(CardTransactionSyncService.class);
+        scrapeService = mock(CardTransactionScrapeService.class);
         cardTranListR001Service = mock(CardTranListR001Service.class);
         excelExportService = mock(ExcelExportService.class);
 
@@ -81,7 +84,7 @@ class CardTransactionsControllerTest {
         GlobalExceptionHandler advice = new GlobalExceptionHandler(messages);
 
         mvc = MockMvcBuilders
-                .standaloneSetup(new CardTransactionsController(service, syncService, cardTranListR001Service, excelExportService))
+                .standaloneSetup(new CardTransactionsController(service, syncService, scrapeService, cardTranListR001Service, excelExportService))
                 .setMessageConverters(jsonConverter)
                 .setControllerAdvice(advice)
                 .build();
@@ -206,7 +209,8 @@ class CardTransactionsControllerTest {
     void cards_happyPathSerialisesSnakeCase() throws Exception {
         CardListResponse payload = new CardListResponse(List.of(
                 new ActiveCard("11704088", "Shinhan Bank VN",
-                        "4696********4372", "", "Shinhan VN(4372)", "LEE JAEHWAN")));
+                        "4696********4372", "", "Shinhan VN(4372)", "LEE JAEHWAN",
+                        "20260619120000")));
         when(service.cards(eq(null))).thenReturn(payload);
 
         mvc.perform(get("/api/v1/payment/card-transactions/cards"))
@@ -214,7 +218,8 @@ class CardTransactionsControllerTest {
                 .andExpect(jsonPath("$.data.cards[0].bank_cd",     is("11704088")))
                 .andExpect(jsonPath("$.data.cards[0].bank_nm",     is("Shinhan Bank VN")))
                 .andExpect(jsonPath("$.data.cards[0].card_no",     is("4696********4372")))
-                .andExpect(jsonPath("$.data.cards[0].card_hldr_nm",is("LEE JAEHWAN")));
+                .andExpect(jsonPath("$.data.cards[0].card_hldr_nm",is("LEE JAEHWAN")))
+                .andExpect(jsonPath("$.data.cards[0].trn_lst_suc_dtm", is("20260619120000")));
     }
 
     /* =================================================================

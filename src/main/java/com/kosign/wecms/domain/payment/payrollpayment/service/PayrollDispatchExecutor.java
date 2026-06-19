@@ -1,17 +1,21 @@
 package com.kosign.wecms.domain.payment.payrollpayment.service;
 
+import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.banking.entity.AcctMstr;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileData;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileMst;
+import com.kosign.wecms.domain.payment.dispatch.repository.TbFirmConfRepository;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileDataRepository;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileMstRepository;
 import com.kosign.wecms.domain.payment.dispatch.service.DispatchAutoReceiveRegistrar;
 import com.kosign.wecms.domain.payment.dispatch.service.DispatchKeyGenerator;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumr;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrDetl;
+import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConf;
+import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConfId;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -92,12 +96,11 @@ public class PayrollDispatchExecutor {
     /** Cross-bank routing flag — legacy {@code BankChnlDiv.OTHER_BANK_TRANSFER} = "O". */
     private static final String BANK_CHNL_DIV_OTHER_BANK = "O";
 
-    /** Placeholder bank-partner id (TB_FIRM_CONF.BANK_PRTN_ID not yet exposed). */
-    private static final String BANK_PRTN_ID_PLACEHOLDER = "DEFAULT";
-
     private final TbPayFileMstRepository  tbPayFileMstRepository;
     private final TbPayFileDataRepository tbPayFileDataRepository;
     private final AcctMstrRepository      acctMstrRepository;
+    /** Real {@code BANK_PRTN_ID} source (legacy {@code TB_FIRM_CONF}). */
+    private final TbFirmConfRepository    tbFirmConfRepository;
     private final DispatchKeyGenerator    keyGenerator;
     private final Clock                   clock;
     private final LegacyFunctionRepository legacyFunctions;
@@ -133,7 +136,8 @@ public class PayrollDispatchExecutor {
         mst.setFileSeqNo(fileSeqNo);
         mst.setOutBankCd(master.getOutBankCd());
         mst.setWdrlActNo(master.getWdrlActNo());
-        mst.setBankPrtnId(BANK_PRTN_ID_PLACEHOLDER);
+        // BANK_PRTN_ID — real value from TB_FIRM_CONF (legacy pymn_0005_001_c001_act.jsp:153).
+        mst.setBankPrtnId(resolveBankPrtnId(bizKey, master));
         mst.setFundTp(resolveFundTp(apprFundTp));
         mst.setTranTp(TRAN_TP_DEPOSIT);
         mst.setProcStat(PROC_STAT_PENDING);
@@ -230,5 +234,18 @@ public class PayrollDispatchExecutor {
 
     private static boolean sameBank(String outBankCd, String tarBankCd) {
         return outBankCd != null && outBankCd.equals(tarBankCd);
+    }
+
+    /** Real {@code BANK_PRTN_ID} from {@code TB_FIRM_CONF} (PK
+     *  {@code (BIZ_KEY, OUT_BANK_CD, WDRL_ACT_NO)}). Blocks with {@code WBE2089}
+     *  when the row is missing — legacy parity (pymn_0005_001_c001_act.jsp:153
+     *  reads it with no null guard and NPE-rolls-back; refactor blocks cleanly,
+     *  mirroring ExpenseDispatchExecutor / VendorDispatchExecutor). */
+    private String resolveBankPrtnId(String bizKey, ScdulPymnSumr master) {
+        return tbFirmConfRepository
+                .findById(new TbFirmConfId(bizKey, master.getOutBankCd(), master.getWdrlActNo()))
+                .map(TbFirmConf::getBankPrtnId)
+                .map(s -> s == null || s.isBlank() ? null : s.trim())
+                .orElseThrow(() -> new BusinessException("WBE2089"));
     }
 }

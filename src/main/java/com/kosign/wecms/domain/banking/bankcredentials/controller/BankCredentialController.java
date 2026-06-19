@@ -8,6 +8,7 @@ import com.kosign.wecms.domain.banking.bankcredentials.dto.BankCredentialUpdateR
 import com.kosign.wecms.domain.banking.bankcredentials.service.BankCredentialService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -29,10 +30,19 @@ import java.math.BigDecimal;
  * plaintext password is only ever read by the scraping flow
  * server-side via
  * {@link com.kosign.wecms.domain.banking.bankcredentials.service.BankCredentialService#loadForScraping}.
+ *
+ * <p><b>Authorization (audit X-1 fix, 2026-06-19):</b> this controller manages
+ * bank login credentials ({@code BANK_CERT_INFO}) and is consumed only by the
+ * Bank Credentials page, which is login-credential management. It is therefore
+ * gated on the same entitlement as the Login Credentials settings panel —
+ * {@code settings-core-login-credentials}. A normal user without that grant is
+ * denied (403 / {@code WBE1003}); an admin bypasses the per-user grant via
+ * {@link com.kosign.wecms.domain.navigation.service.MenuAuthorizationGuard}.
  */
 @RestController
 @RequestMapping("/api/v1/banking/credentials")
 @RequiredArgsConstructor
+@PreAuthorize("@menuAuthz.canAccess('settings-core-login-credentials')")
 public class BankCredentialController {
 
     private final BankCredentialService service;

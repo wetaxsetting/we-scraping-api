@@ -15,6 +15,7 @@ import com.kosign.wecms.domain.payment.internaltransfer.service.ApprovalAttachme
 import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnDtlsRepository;
 import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnMstrRepository;
 import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnSumrRepository;
+import com.kosign.wecms.domain.payment.repository.OverseasPaymentRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -61,6 +62,7 @@ class OverseasPaymentDetailTest {
     @Mock private ExptResolMstrRepository      exptResolMstrRepository;
     @Mock private DispatchResultResolver       dispatchResultResolver;
     @Mock private ApprovalAttachmentLoader     approvalAttachmentLoader;
+    @Mock private OverseasPaymentRepository    paymentRepo;
 
     @InjectMocks private OverseasPaymentService service;
 
@@ -110,7 +112,7 @@ class OverseasPaymentDetailTest {
     // ----- M-mode (GAP-OVS-MODE) -------------------------------------------
 
     @Test
-    void getDetail_legacyMmode_doesNotThrowWBE2045_returnsGracefulResponse() {
+    void getDetail_legacyMmode_rendersRealRemittanceRow_notHeaderOnly() {
         OvrsPymnMstr mstrRow = new OvrsPymnMstr();
         mstrRow.setBizKey(BIZ_KEY);
         mstrRow.setOvrsPymnNo("OV-M-1");
@@ -128,20 +130,26 @@ class OverseasPaymentDetailTest {
         // Lives only in OVRS_PYMN_MSTR (legacy M-mode).
         when(ovrsPymnMstrRepository.findByBizKeyAndOvrsPymnNo(BIZ_KEY, "OV-M-1"))
                 .thenReturn(Optional.of(mstrRow));
-        when(ovrsPymnMstrRepository.findByBizKeyAndApprSeqNo(BIZ_KEY, "300"))
-                .thenReturn(List.of(mstrRow));
         when(exptResolMstrRepository.findById(any())).thenReturn(Optional.empty());
         when(approvalAttachmentLoader.load(BIZ_KEY, "300")).thenReturn(List.of());
+        // F3 — the single M remittance line (R007 M branch projection).
+        when(paymentRepo.findMmodeDetailRows(BIZ_KEY, "OV-M-1"))
+                .thenReturn(java.util.Collections.singletonList(mmodeDetailRow("USD", "1500", "John Doe", "0", "0000")));
 
         OverseasPaymentDetailResponse resp = service.getDetail("OV-M-1");
 
-        assertThat(resp.legacyMmode()).isTrue();
-        assertThat(resp.legacyMmodeNotice()).isNotBlank();
+        // F3 — M-mode now fully rendered (no header-only fallback).
+        assertThat(resp.legacyMmode()).isFalse();
+        assertThat(resp.legacyMmodeNotice()).isNull();
         assertThat(resp.ovrsPymnNo()).isEqualTo("OV-M-1");
         assertThat(resp.apprSeqNo()).isEqualTo("300");
-        // Detail line table is empty (M-mode lines not supported yet) — but the
-        // popup gets a valid 200 response, not a WBE2045 crash.
-        assertThat(resp.rows()).isEmpty();
+        // Detail line table carries the one M remittance row from OVRS_PYMN_MSTR.
+        assertThat(resp.rows()).singleElement().satisfies(r -> {
+            assertThat(r.ovrsPymnDetlNo()).isNull();       // M-mode (R010 parity)
+            assertThat(r.bnfcNm()).isEqualTo("John Doe");
+            assertThat(r.procStat()).isEqualTo("0");
+            assertThat(r.rsCd()).isEqualTo("0000");
+        });
         assertThat(resp.totalTranAmt()).isEqualByComparingTo("1500");
     }
 
@@ -172,12 +180,40 @@ class OverseasPaymentDetailTest {
                 .thenReturn(List.of(mstrRow));
         when(exptResolMstrRepository.findById(any())).thenReturn(Optional.of(mstr));
         when(approvalAttachmentLoader.load(BIZ_KEY, "301")).thenReturn(List.of());
+        when(paymentRepo.findMmodeDetailRows(BIZ_KEY, "OV-M-2"))
+                .thenReturn(java.util.Collections.singletonList(mmodeDetailRow("EUR", "900", "Acme GmbH", "0", "0000")));
 
         OverseasPaymentDetailResponse resp = service.getDetail("VO_250904_005");
 
-        assertThat(resp.legacyMmode()).isTrue();
+        // F3 — resolved via DOC_NO fallback; M-mode now fully rendered.
+        assertThat(resp.legacyMmode()).isFalse();
         assertThat(resp.apprSeqNo()).isEqualTo("301");
         assertThat(resp.docNo()).isEqualTo("VO_250904_005");
+        assertThat(resp.rows()).hasSize(1);
+    }
+
+    /** Builds a {@code findMmodeDetailRows} projection row (17 cols, R007 M branch). */
+    private static Object[] mmodeDetailRow(String ccy, String amt, String bnfcNm,
+                                           String procStat, String rsCd) {
+        Object[] m = new Object[17];
+        m[0]  = "OV-M";                 // ovrs_pymn_no
+        m[1]  = null;                   // hand_trco_key
+        m[2]  = ccy;                    // trnf_ccy_cd
+        m[3]  = new BigDecimal(amt);    // trnf_amt
+        m[4]  = "B";                    // fee_payer_cd
+        m[5]  = "memo";                 // memo
+        m[6]  = null;                   // chart_acct_cd
+        m[7]  = bnfcNm;                 // bnfc_nm
+        m[8]  = "BANK OF X";            // bnfc_bank_name
+        m[9]  = "BOFXUS";               // bnfc_bank_bic
+        m[10] = "123456789";            // bnfc_acct_no
+        m[11] = "1 Main St";            // bnfc_addr
+        m[12] = "Y";                    // trnf_yn
+        m[13] = procStat;               // proc_stat
+        m[14] = "20250813102604";       // proc_dttm
+        m[15] = rsCd;                   // rs_cd
+        m[16] = null;                   // rs_msg
+        return m;
     }
 
     // ----- genuinely not found ---------------------------------------------

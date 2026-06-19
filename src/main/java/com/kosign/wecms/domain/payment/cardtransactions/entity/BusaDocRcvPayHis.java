@@ -16,7 +16,8 @@ import java.math.BigDecimal;
 /**
  * Per-document link from a business doc ({@code BUSA_DOC_MSTR}) to a
  * receive/payment record. Card flow writes one row per linked expense
- * with {@code RCV_PAY_WAY_CD = 'C'} (Card), {@code REF_NO = CARD_SEQ_NO},
+ * with {@code RCV_PAY_WAY_CD = 'R'} ({@code RcvPayWayCd.CARD} — the enum
+ * maps {@code 'C'} to CASH), {@code REF_NO = CARD_SEQ_NO},
  * {@code DEDU_AMT = item.dedu_amt}.
  *
  * <p>V13 created the table with the Sprint-1 read subset (7 cols); V23
@@ -55,8 +56,9 @@ public class BusaDocRcvPayHis {
     @Column(name = "USER_ID", length = 100)
     private String userId;
 
-    /** Payment method code — {@code 'C'} for Card link writes
-     *  ({@code wabooks.enums.RcvPayWayCd.CARD}). Legacy {@code char(1)}. */
+    /** Payment method code — {@code 'R'} for Card link writes
+     *  ({@code wabooks.enums.RcvPayWayCd.CARD}; {@code 'C'} is CASH).
+     *  Legacy {@code char(1)}. */
     @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "RCV_PAY_WAY_CD", length = 1)
     private String rcvPayWayCd;

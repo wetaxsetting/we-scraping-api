@@ -12,94 +12,116 @@ import java.util.Optional;
 public interface BankExchRateInfmRepository extends JpaRepository<BankExchRateInfm, BankExchRateInfmId> {
 
     /**
-     * One row per currency pair — latest batch round — across ALL tenants.
+     * One row per currency pair for the tenant's latest batch round.
      *
-     * <p>Exchange rates are global bank data identical for every tenant.
-     * The {@code biz_key} filter has been removed so any authenticated user
-     * can see rates regardless of which tenant they belong to.</p>
+     * <p>Mirrors legacy JEX {@code exch_0001_001_r001_act.jsp}: the rate read is
+     * strictly tenant-scoped ({@code biz_key = current tenant}) and base-currency
+     * scoped ({@code ccy_cd = 'VND'}, with the foreign currency in
+     * {@code ref_ccy_cd}). {@code BANK_EXCH_RATE_INFM} is physically partitioned
+     * per tenant — {@code BIZ_KEY} is part of the PK — and the batch fans the same
+     * Coocon rates out to every active company; each company reads only its own
+     * copy. Rate <em>values</em> are logically global, but storage and the read
+     * contract are per-tenant, so a tenant with no rows must see nothing (never
+     * another company's rows).</p>
      *
-     * <p>DISTINCT ON (ccy_cd, ref_ccy_cd) is required because both banks store
-     * rates with {@code ccy_cd = 'VND'} and the foreign currency in
-     * {@code ref_ccy_cd}. ORDER BY uses {@code CAST(seq_no AS integer) DESC} so
-     * the highest batch round (latest update) is picked, then {@code biz_key ASC}
-     * for fully deterministic tie-breaking when multiple tenants hold the same round.</p>
+     * <p>DISTINCT ON (ccy_cd, ref_ccy_cd) with {@code CAST(seq_no AS integer) DESC}
+     * picks the highest batch round (latest update) per currency. No cross-tenant
+     * {@code biz_key} tiebreak is needed now that the query is scoped to one tenant.</p>
      */
     @Query(nativeQuery = true, value = """
             SELECT DISTINCT ON (ccy_cd, ref_ccy_cd) *
             FROM BANK_EXCH_RATE_INFM
-            WHERE bank_cd = :bankCd AND ref_date = :refDate
-            ORDER BY ccy_cd ASC, ref_ccy_cd ASC, CAST(seq_no AS integer) DESC, biz_key ASC
+            WHERE biz_key = :bizKey AND bank_cd = :bankCd AND ref_date = :refDate AND ccy_cd = 'VND'
+            ORDER BY ccy_cd ASC, ref_ccy_cd ASC, CAST(seq_no AS integer) DESC
             """)
-    List<BankExchRateInfm> findLatestPerCurrencyByBankCdAndRefDate(
+    List<BankExchRateInfm> findLatestPerCurrencyByBizKeyAndBankCdAndRefDate(
+            @Param("bizKey") String bizKey,
             @Param("bankCd") String bankCd,
             @Param("refDate") String refDate);
 
     /**
-     * One row per currency pair for a specific batch round, across ALL tenants.
-     * Used when the frontend selects a specific notification round from the dropdown.
+     * One row per currency pair for a specific batch round — tenant-scoped and
+     * base-currency scoped (see
+     * {@link #findLatestPerCurrencyByBizKeyAndBankCdAndRefDate}). Used when the
+     * frontend selects a specific notification round from the dropdown.
      */
     @Query(nativeQuery = true, value = """
             SELECT DISTINCT ON (ccy_cd, ref_ccy_cd) *
             FROM BANK_EXCH_RATE_INFM
-            WHERE bank_cd = :bankCd AND ref_date = :refDate AND seq_no = :seqNo
-            ORDER BY ccy_cd ASC, ref_ccy_cd ASC, biz_key ASC
+            WHERE biz_key = :bizKey AND bank_cd = :bankCd AND ref_date = :refDate AND ccy_cd = 'VND' AND seq_no = :seqNo
+            ORDER BY ccy_cd ASC, ref_ccy_cd ASC
             """)
-    List<BankExchRateInfm> findLatestPerCurrencyByBankCdAndRefDateAndSeqNo(
+    List<BankExchRateInfm> findLatestPerCurrencyByBizKeyAndBankCdAndRefDateAndSeqNo(
+            @Param("bizKey") String bizKey,
             @Param("bankCd") String bankCd,
             @Param("refDate") String refDate,
             @Param("seqNo") String seqNo);
 
     /**
-     * Finds an exact match for updating the exchange rate data from the batch.
+     * Finds an exact logical row for the batch upsert/skip decision — mirrors the
+     * legacy existence key verbatim:
+     * {@code biz_key + bank_cd + ref_date + ref_ccy_cd + ccy_cd + seq_no}
+     * (see {@code EXCH_0001/0010/0030_001#execute}, e.g. {@code EXCH_0010_001.java:202}).
+     *
+     * <p>{@code ref_ccy_cd} (the foreign currency — USD/KRW/JPY/…) is the
+     * discriminator: for Shinhan/Woori VN data {@code ccy_cd} is always
+     * {@code 'VND'}, so a key without {@code ref_ccy_cd} collapses all 12/5
+     * currencies of a round onto one logical row. This is the correct key.
      */
-    Optional<BankExchRateInfm> findByBizKeyAndBankCdAndRefDateAndCcyCdAndSeqNo(
-            String bizKey, String bankCd, String refDate, String ccyCd, String seqNo);
+    Optional<BankExchRateInfm> findByBizKeyAndBankCdAndRefDateAndRefCcyCdAndCcyCdAndSeqNo(
+            String bizKey, String bankCd, String refDate, String refCcyCd, String ccyCd, String seqNo);
 
     /**
-     * Returns the most recent REF_DATE across ALL tenants for the given bank.
-     * Used as a fallback when today's date has no rows yet (e.g. batch hasn't run).
-     * Exchange rates are global bank data — no biz_key filter needed.
+     * Returns the most recent REF_DATE for the tenant + bank. Used as a fallback
+     * when today's date has no rows yet (refactor addition — legacy has no such
+     * fallback). Tenant-scoped to match the rate read.
      */
-    @Query("SELECT MAX(e.refDate) FROM BankExchRateInfm e WHERE e.bankCd = :bankCd")
-    Optional<String> findLatestRefDateByBankCd(@Param("bankCd") String bankCd);
+    @Query("SELECT MAX(e.refDate) FROM BankExchRateInfm e WHERE e.bizKey = :bizKey AND e.bankCd = :bankCd")
+    Optional<String> findLatestRefDateByBizKeyAndBankCd(@Param("bizKey") String bizKey,
+                                                        @Param("bankCd") String bankCd);
 
     /**
-     * Distinct bank codes that have exchange rate data — across ALL tenants.
-     * Used by the {@code /exchange-rates/banks} endpoint to populate the bank selector.
+     * Distinct bank codes that have exchange rate data for the tenant.
+     * Used by the {@code /exchange-rates/banks} endpoint to populate the bank
+     * selector. Tenant-scoped so no cross-company bank set leaks; the frontend
+     * falls back to its static Shinhan/Woori list when the tenant has no rows.
      */
-    @Query("SELECT DISTINCT e.bankCd FROM BankExchRateInfm e ORDER BY e.bankCd ASC")
-    List<String> findDistinctBankCd();
+    @Query("SELECT DISTINCT e.bankCd FROM BankExchRateInfm e WHERE e.bizKey = :bizKey ORDER BY e.bankCd ASC")
+    List<String> findDistinctBankCdByBizKey(@Param("bizKey") String bizKey);
 
     /**
-     * Distinct display-currency codes across ALL tenants — used by the
+     * Distinct display-currency codes for the tenant — used by the
      * {@code /exchange-rates/currencies} endpoint.
      *
      * <p>The display currency is the foreign side of each pair: Shinhan stores
      * the foreign currency in {@code ccy_cd}; Woori stores it in {@code ref_ccy_cd}
      * (with {@code ccy_cd} fixed to "VND"). The CASE expression normalises both
      * orientations to the foreign currency, matching the frontend's
-     * {@code getDisplayCcy()} helper.</p>
+     * {@code getDisplayCcy()} helper. Tenant-scoped for isolation parity.</p>
      */
     @Query(nativeQuery = true, value = """
             SELECT DISTINCT CASE WHEN ccy_cd = 'VND' THEN ref_ccy_cd ELSE ccy_cd END AS display_ccy
             FROM BANK_EXCH_RATE_INFM
+            WHERE biz_key = :bizKey
             ORDER BY display_ccy ASC
             """)
-    List<String> findDistinctDisplayCurrency();
+    List<String> findDistinctDisplayCurrencyByBizKey(@Param("bizKey") String bizKey);
 
     /**
-     * Distinct batch rounds (SEQ_NO) for a given bank and date, across ALL tenants.
-     * Groups by SEQ_NO (batch round "1"=morning, "2"=afternoon) — NOT by EXCH_SEQ_NO
-     * (auto-increment PK) — so the dropdown shows 2 entries max, not one per row.
+     * Distinct batch rounds (SEQ_NO) for the tenant's data on a given bank + date.
+     * Tenant-scoped and base-currency scoped to match the rate read. Groups by
+     * SEQ_NO (batch round "1"=morning, "2"=afternoon) — NOT by EXCH_SEQ_NO
+     * (auto-increment PK) — so the dropdown shows one entry per round, not per row.
      */
     @Query(nativeQuery = true, value = """
             SELECT seq_no, MAX(last_update_time) AS last_update_time
             FROM BANK_EXCH_RATE_INFM
-            WHERE bank_cd = :bankCd AND ref_date = :refDate
+            WHERE biz_key = :bizKey AND bank_cd = :bankCd AND ref_date = :refDate AND ccy_cd = 'VND'
             GROUP BY seq_no
             ORDER BY CAST(seq_no AS integer) DESC
             """)
-    List<Object[]> findDistinctRoundsByBankCdAndRefDate(
+    List<Object[]> findDistinctRoundsByBizKeyAndBankCdAndRefDate(
+            @Param("bizKey") String bizKey,
             @Param("bankCd") String bankCd,
             @Param("refDate") String refDate);
 

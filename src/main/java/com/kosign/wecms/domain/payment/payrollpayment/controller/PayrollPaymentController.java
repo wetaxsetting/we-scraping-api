@@ -85,6 +85,16 @@ public class PayrollPaymentController {
      *  page using either identifier. */
     private static final String SCDUL_PYMN_NO_PATTERN = "^([0-9]{1,30}|VO_[0-9]{6}_[0-9]{1,9})$";
 
+    /** Path-segment guard for the Payment <b>Result</b> detail route
+     *  ({@code GET /results/{id}}). Numeric {@code SCDUL_PYMN_NO} only — the
+     *  Result detail service ({@link PayrollPaymentResultService#detail}) looks
+     *  up exclusively by {@code SCDUL_PYMN_NO}, and the legacy Result page
+     *  navigates by {@code SCDUL_PYMN_NO} from {@code sessionStorage} (never by
+     *  {@code DOC_NO}). Unlike the Scheduled route, a {@code DOC_NO} (VO_…) id
+     *  has no fallback here, so it is rejected at the boundary (WBE_VALIDATION)
+     *  rather than 404-ing — the unsupported path no longer looks valid. */
+    static final String RESULT_SCDUL_PYMN_NO_PATTERN = "^[0-9]{1,30}$";
+
     /** Line-id format on {@code SCDUL_PYMN_SUMR_DETL.SCDUL_PYMN_DETL_NO}
      *  — alphanumeric, 1-20 chars (mirrors Internal Transfer). */
     private static final String SCDUL_PYMN_DETL_NO_PATTERN = "^[A-Za-z0-9]{1,20}$";
@@ -138,7 +148,7 @@ public class PayrollPaymentController {
     public ApiResponse<TransferResultDetailResponse> resultDetail(
             @PathVariable("id")
             @Size(max = 30)
-            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            @Pattern(regexp = RESULT_SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
             String id) {
         return ApiResponse.ok(resultService.detail(id));
     }
@@ -319,7 +329,24 @@ public class PayrollPaymentController {
         return ApiResponse.ok(service.createDraft(request, fileData));
     }
 
+    /**
+     * Original-upload Excel download — <b>shared</b> by the Payroll Scheduled
+     * detail and the Payroll Result detail (and the Result list row glyph): all
+     * three FE call sites hit this one endpoint
+     * ({@code downloadOriginalPayrollExcel} → {@code GET /{id}/file}).
+     *
+     * <p>Authorization fix (closure-audit D1): without a method-level gate this
+     * inherited the class-level {@code 'payment-payroll-scheduled'}, so a user
+     * granted only the Payroll <b>Result</b> menu got 403 when downloading from
+     * the Result detail. {@code payment-payroll-result} and
+     * {@code payment-payroll-scheduled} are independent, separately-grantable
+     * menu nodes (V243 seed), so the shared endpoint must accept <b>either</b>.
+     * The write-action endpoints (delete / approval / dispatch / match) keep the
+     * class-level {@code scheduled} gate unchanged — only this read-only download
+     * is widened.
+     */
     @GetMapping("/{id}/file")
+    @PreAuthorize("@menuAuthz.canAccess('payment-payroll-result') or @menuAuthz.canAccess('payment-payroll-scheduled')")
     public ResponseEntity<InputStreamResource> downloadFile(
             @PathVariable("id")
             @Size(max = 30)

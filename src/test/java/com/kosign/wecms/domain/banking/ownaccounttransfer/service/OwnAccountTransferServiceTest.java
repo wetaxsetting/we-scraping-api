@@ -6,7 +6,6 @@ import com.kosign.wecms.common.enums.LangCd;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.banking.entity.AcctMstr;
-import com.kosign.wecms.domain.banking.entity.BankInfm;
 import com.kosign.wecms.domain.banking.entity.NapasBankInfo;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.OwnAccountTransferAuditActions;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.OwnAccountTransferConstants;
@@ -16,8 +15,8 @@ import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.response.BalanceRe
 import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.response.NapasBankInfoRow;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.response.SourceAccountListResponse;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
-import com.kosign.wecms.domain.banking.repository.BankInfmRepository;
 import com.kosign.wecms.domain.banking.repository.NapasBankInfoRepository;
+import com.kosign.wecms.domain.banking.service.BankCdResolver;
 import com.kosign.wecms.domain.setting.bankaccount.entity.AcctAuthInfo;
 import com.kosign.wecms.domain.setting.bankaccount.repository.AcctAuthInfoRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -65,7 +64,7 @@ class OwnAccountTransferServiceTest {
 
     @Mock private AcctMstrRepository           acctMstrRepo;
     @Mock private AcctAuthInfoRepository       acctAuthRepo;
-    @Mock private BankInfmRepository           bankInfmRepo;
+    @Mock private BankCdResolver               bankCdResolver;
     @Mock private NapasBankInfoRepository      napasBankInfoRepo;
     @Mock private com.kosign.wecms.domain.banking.repository.NapasRemitTrnsHstrRepository napasRemitTrnsHstrRepo;
     @Mock private AuditLogService              auditLog;
@@ -622,10 +621,7 @@ class OwnAccountTransferServiceTest {
     }
 
     private void stubBankName(String bankCd, String name) {
-        BankInfm b = new BankInfm();
-        b.setBankCd(bankCd);
-        b.setRprsBankNm(name);
-        when(bankInfmRepo.findById(bankCd)).thenReturn(Optional.of(b));
+        when(bankCdResolver.resolveBankNm(bankCd)).thenReturn(name);
     }
 
     private void verifyAuditAppended(String expectedAction) {

@@ -41,32 +41,48 @@ import java.util.Optional;
 public interface CardTrnsHstrRepository extends JpaRepository<CardTrnsHstr, CardTrnsHstrId> {
 
     /**
-     * Paged + sorted + filtered ledger read.
+     * Paged + sorted + filtered ledger read. Mirrors legacy
+     * {@code IDO.CARD_MSTR_R002.xml} + {@code card_0001_001_r001_act.jsp}
+     * dynamic predicates.
      *
-     * <p>{@code linkYn} {@code Y} / {@code N} / blank maps to
-     * {@code apprSeqNo IS NOT NULL} / {@code IS NULL} / no-op
-     * respectively. Until {@code BUSA_DOC_RCV_PAY_HIS} is ported the
-     * presence of an {@code APPR_SEQ_NO} stamp on the row is the only
-     * Sprint 0 indicator of "linked" — same approximation legacy uses
-     * when the linked-doc sub-select is empty.
+     * <p><b>Linked / Unlinked ({@code linkYn}).</b> Legacy keys "linked"
+     * on the presence of a linked document in {@code BUSA_DOC_RCV_PAY_HIS}
+     * — {@code REC_1 IS [NOT] NULL} where {@code REC_1} aggregates
+     * {@code BUSA_DOC_RCV_PAY_HIS BDRPH WHERE BDRPH.REF_NO = CTH.CARD_SEQ_NO
+     * AND BDRPH.RCV_PAY_WAY_CD = 'R'} ({@code card_0001_001_r001_act.jsp:140-148},
+     * {@code IDO.CARD_MSTR_R002.xml:131-138}). {@code 'R'} is
+     * {@code RcvPayWayCd.CARD} (the legacy enum maps {@code 'C'} to CASH);
+     * the link write / linked-doc read paths use the same {@code 'R'}.
+     * {@code Y} → linked-doc EXISTS, {@code N} → NOT EXISTS,
+     * blank/null → no-op. (Was incorrectly keyed on {@code APPR_SEQ_NO};
+     * fixed 2026-06-19, audit D1.)
      *
-     * <p><b>Sprint 0 scope:</b> the multi-select bank-code / card-no
-     * filters are not yet exercised by the frontend (the popovers are
-     * Phase B per the frontend design doc). The service signature
-     * still accepts both lists for forward compatibility; the
-     * repository ignores them today. When the popovers ship, the IN
-     * clauses get added back via the canonical Spring Data pattern —
-     * NOT via {@code :param IS NULL OR :param IS EMPTY}: JPA's
-     * {@code IS EMPTY} operator only accepts collection-valued entity
-     * paths (e.g. {@code parent.children IS EMPTY}), never bound
-     * parameters. The clean idiom is to branch in the service: when
-     * the filter list is non-empty, call a sibling method that
-     * declares {@code AND c.bankCd IN :bankCds}; when empty, call the
-     * filter-less method.
+     * <p><b>Search ({@code srchWdPattern}).</b> Legacy ILIKEs
+     * {@code CM.CARD_HLDR_NM | CM.CARD_NM | CM.CARD_NICK_NM | CTH.MERCH_NM}
+     * ({@code card_0001_001_r001_act.jsp:107-110}). The cardholder /
+     * nickname / card-name terms live on {@code CARD_MSTR}, reached here
+     * via a correlated {@code EXISTS} sub-select on the
+     * {@code (BIZ_KEY, BANK_CD, CARD_NO)} natural key; merchant matches on
+     * {@code CARD_TRNS_HSTR} directly. (Was merchant + CTH.card_nm only;
+     * fixed 2026-06-19, audit D3.)
+     *
+     * <p><b>Bank-code / card-no multi-select ({@code filterBank} /
+     * {@code filterCard}).</b> Legacy applies {@code CTH.bank_cd IN (...)}
+     * / {@code CTH.card_no IN (...)} ({@code card_0001_001_r001_act.jsp:72-102}).
+     * Expressed here as a boolean-flag guard so the {@code IN} list is only
+     * evaluated when a filter is present — the service passes a non-empty
+     * sentinel list when the flag is {@code false} so the bound {@code IN}
+     * clause stays valid SQL (JPA's {@code IS EMPTY} only accepts
+     * collection-valued entity paths, never bound parameters). (Was
+     * accepted-but-ignored; fixed 2026-06-19, audit D2.)
      *
      * @param bizKey          tenant scope; required
      * @param fromDt          inclusive {@code yyyyMMdd} lower bound on {@code TRSC_DT}
      * @param toDt            inclusive {@code yyyyMMdd} upper bound on {@code TRSC_DT}
+     * @param filterBank      apply the {@code bankCds} IN filter when {@code true}
+     * @param bankCds         bank-code IN list (non-empty sentinel when {@code filterBank} is false)
+     * @param filterCard      apply the {@code cardNos} IN filter when {@code true}
+     * @param cardNos         card-no IN list (non-empty sentinel when {@code filterCard} is false)
      * @param srchWdPattern   pre-lowercased {@code %foo%} pattern; null → no-op
      * @param linkYn          {@code Y} / {@code N} / blank/null → no-op
      */
@@ -74,17 +90,35 @@ public interface CardTrnsHstrRepository extends JpaRepository<CardTrnsHstr, Card
             SELECT c FROM CardTrnsHstr c
              WHERE c.bizKey = :bizKey
                AND c.trscDt BETWEEN :fromDt AND :toDt
+               AND (:filterBank = FALSE OR c.bankCd IN :bankCds)
+               AND (:filterCard = FALSE OR c.cardNo IN :cardNos)
                AND (:srchWdPattern IS NULL
                     OR LOWER(COALESCE(c.merchNm, '')) LIKE :srchWdPattern
-                    OR LOWER(COALESCE(c.cardNm,  '')) LIKE :srchWdPattern)
+                    OR EXISTS (SELECT 1 FROM CardMstr m
+                                WHERE m.bizKey = c.bizKey
+                                  AND m.bankCd = c.bankCd
+                                  AND m.cardNo = c.cardNo
+                                  AND (LOWER(COALESCE(m.cardHldrNm, '')) LIKE :srchWdPattern
+                                       OR LOWER(COALESCE(m.cardNm,     '')) LIKE :srchWdPattern
+                                       OR LOWER(COALESCE(m.cardNickNm, '')) LIKE :srchWdPattern)))
                AND (:linkYn IS NULL OR :linkYn = ''
-                    OR (:linkYn = 'Y' AND c.apprSeqNo IS NOT NULL AND c.apprSeqNo <> '')
-                    OR (:linkYn = 'N' AND (c.apprSeqNo IS NULL OR c.apprSeqNo = '')))
+                    OR (:linkYn = 'Y' AND EXISTS (SELECT 1 FROM BusaDocRcvPayHis h
+                                                   WHERE h.bizKey = c.bizKey
+                                                     AND h.refNo = c.cardSeqNo
+                                                     AND h.rcvPayWayCd = 'R'))
+                    OR (:linkYn = 'N' AND NOT EXISTS (SELECT 1 FROM BusaDocRcvPayHis h
+                                                       WHERE h.bizKey = c.bizKey
+                                                         AND h.refNo = c.cardSeqNo
+                                                         AND h.rcvPayWayCd = 'R')))
             """)
     Page<CardTrnsHstr> findLedgerPage(
             @Param("bizKey")        String       bizKey,
             @Param("fromDt")        String       fromDt,
             @Param("toDt")          String       toDt,
+            @Param("filterBank")    boolean      filterBank,
+            @Param("bankCds")       List<String> bankCds,
+            @Param("filterCard")    boolean      filterCard,
+            @Param("cardNos")       List<String> cardNos,
             @Param("srchWdPattern") String       srchWdPattern,
             @Param("linkYn")        String       linkYn,
             Pageable pageable);
@@ -117,17 +151,35 @@ public interface CardTrnsHstrRepository extends JpaRepository<CardTrnsHstr, Card
               FROM CardTrnsHstr c
              WHERE c.bizKey = :bizKey
                AND c.trscDt BETWEEN :fromDt AND :toDt
+               AND (:filterBank = FALSE OR c.bankCd IN :bankCds)
+               AND (:filterCard = FALSE OR c.cardNo IN :cardNos)
                AND (:srchWdPattern IS NULL
                     OR LOWER(COALESCE(c.merchNm, '')) LIKE :srchWdPattern
-                    OR LOWER(COALESCE(c.cardNm,  '')) LIKE :srchWdPattern)
+                    OR EXISTS (SELECT 1 FROM CardMstr m
+                                WHERE m.bizKey = c.bizKey
+                                  AND m.bankCd = c.bankCd
+                                  AND m.cardNo = c.cardNo
+                                  AND (LOWER(COALESCE(m.cardHldrNm, '')) LIKE :srchWdPattern
+                                       OR LOWER(COALESCE(m.cardNm,     '')) LIKE :srchWdPattern
+                                       OR LOWER(COALESCE(m.cardNickNm, '')) LIKE :srchWdPattern)))
                AND (:linkYn IS NULL OR :linkYn = ''
-                    OR (:linkYn = 'Y' AND c.apprSeqNo IS NOT NULL AND c.apprSeqNo <> '')
-                    OR (:linkYn = 'N' AND (c.apprSeqNo IS NULL OR c.apprSeqNo = '')))
+                    OR (:linkYn = 'Y' AND EXISTS (SELECT 1 FROM BusaDocRcvPayHis h
+                                                   WHERE h.bizKey = c.bizKey
+                                                     AND h.refNo = c.cardSeqNo
+                                                     AND h.rcvPayWayCd = 'R'))
+                    OR (:linkYn = 'N' AND NOT EXISTS (SELECT 1 FROM BusaDocRcvPayHis h
+                                                       WHERE h.bizKey = c.bizKey
+                                                         AND h.refNo = c.cardSeqNo
+                                                         AND h.rcvPayWayCd = 'R')))
             """)
     LedgerTotalsProjection findLedgerTotals(
             @Param("bizKey")        String       bizKey,
             @Param("fromDt")        String       fromDt,
             @Param("toDt")          String       toDt,
+            @Param("filterBank")    boolean      filterBank,
+            @Param("bankCds")       List<String> bankCds,
+            @Param("filterCard")    boolean      filterCard,
+            @Param("cardNos")       List<String> cardNos,
             @Param("srchWdPattern") String       srchWdPattern,
             @Param("linkYn")        String       linkYn);
 
@@ -155,27 +207,45 @@ public interface CardTrnsHstrRepository extends JpaRepository<CardTrnsHstr, Card
     long countByBizKeyAndBankCdAndCardNo(String bizKey, String bankCd, String cardNo);
 
     /**
-     * Dedup probe for the Update Cards sync. Returns {@code true} when
-     * a row with the same {@code (BIZ_KEY, BANK_CD, CARD_NO, TRSC_DT,
-     * AUTH_CODE)} already exists. Mirrors the legacy
-     * {@code IDO.CARD_TRNS_HSTR_CHK} idempotency probe — Coocon returns
-     * the same {@code AUTH_CODE} for every re-scrape of the same
-     * transaction, so the auth code is the de-facto natural key once
-     * the (bank, card, date) scope is fixed.
+     * Dedup probe for the Update Cards scrape — matches the legacy
+     * composite natural key <b>exactly</b>
+     * ({@code fnsh_0001_001_c001_act.jsp:1335-1357}):
+     * {@code biz_key, card_no, trsc_dt, trsc_tm, ccy_cd, trsc_amt,
+     * merch_nm} plus {@code coalesce(trim(auth_code),'') =
+     * coalesce(trim(?),'')}. Legacy does NOT key on {@code bank_cd}
+     * (card_no is bank-unique); we drop it too for byte-for-byte parity.
      *
-     * <p>When {@code AUTH_CODE} is null / blank (some adapters omit it
-     * for cash advances etc.) the caller falls back to a wider check
-     * via {@link #existsByBizKeyAndBankCdAndCardNoAndTrscDtAndTrscTmAndTrscAmt}.
+     * <p>Replaces the earlier auth-code-first / wider-fallback pair,
+     * which could skip genuinely-distinct transactions sharing an
+     * auth code, or admit duplicates legacy would reject — a
+     * migration-safety hazard on the first re-scrape after a JEX →
+     * refactor data move (audit D5, fixed 2026-06-19).
+     *
+     * <p>Probe values must be the same normalised/truncated values the
+     * insert path stores (merch_nm truncated to 50, auth_code to 15),
+     * so a re-scrape of an already-persisted row resolves to a match.
      */
-    boolean existsByBizKeyAndBankCdAndCardNoAndTrscDtAndAuthCode(
-            String bizKey, String bankCd, String cardNo, String trscDt, String authCode);
-
-    /** Wider dedup fallback when the bank adapter omits {@code AUTH_CODE}.
-     *  Same composite-natural-key shape as legacy
-     *  {@code IDO.CARD_TRNS_HSTR_CHK} when {@code AUTH_CODE} is empty. */
-    boolean existsByBizKeyAndBankCdAndCardNoAndTrscDtAndTrscTmAndTrscAmt(
-            String bizKey, String bankCd, String cardNo, String trscDt,
-            String trscTm, java.math.BigDecimal trscAmt);
+    @Query("""
+            SELECT CASE WHEN COUNT(c) > 0 THEN TRUE ELSE FALSE END
+              FROM CardTrnsHstr c
+             WHERE c.bizKey  = :bizKey
+               AND c.cardNo  = :cardNo
+               AND c.trscDt  = :trscDt
+               AND c.trscTm  = :trscTm
+               AND c.ccyCd   = :ccyCd
+               AND c.trscAmt = :trscAmt
+               AND c.merchNm = :merchNm
+               AND COALESCE(TRIM(c.authCode), '') = COALESCE(TRIM(:authCode), '')
+            """)
+    boolean existsLegacyScrapeDuplicate(
+            @Param("bizKey")  String bizKey,
+            @Param("cardNo")  String cardNo,
+            @Param("trscDt")  String trscDt,
+            @Param("trscTm")  String trscTm,
+            @Param("ccyCd")   String ccyCd,
+            @Param("trscAmt") java.math.BigDecimal trscAmt,
+            @Param("merchNm") String merchNm,
+            @Param("authCode") String authCode);
 
     /**
      * Cash Flow report aggregator read &mdash; all classified card

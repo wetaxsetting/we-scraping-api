@@ -24,10 +24,10 @@ import org.hibernate.type.SqlTypes;
  * {@code OVRS_PYMN_DTLS}. The class name is retained to limit churn; the
  * mapping is the legacy {@code OVRS_PYMN_SUMR_DETL}. This entity maps the
  * subset of columns the overseas-payment flow reads/writes; the remaining
- * JEX columns ({@code pay_file_seq_no}, {@code pay_seq}, {@code chart_acct_seq_no},
- * {@code erp_*}, {@code acct_seq_no}, {@code bank_trns_*}, {@code link_match_yn})
- * are nullable / defaulted in JEX and intentionally unmapped — Hibernate
- * {@code validate} ignores unmapped DB columns.
+ * JEX columns ({@code pay_file_seq_no}, {@code pay_seq}, {@code erp_*},
+ * {@code acct_seq_no}, {@code bank_trns_*}, {@code link_match_yn}) are nullable /
+ * defaulted in JEX and intentionally unmapped — Hibernate {@code validate}
+ * ignores unmapped DB columns.
  */
 @Entity
 @Table(name = "OVRS_PYMN_SUMR_DETL")
@@ -90,6 +90,20 @@ public class OvrsPymnSumrDetl {
     /** Reporting account — legacy {@code CHART_ACCT_CD}. Nullable. */
     @Column(name = "CHART_ACCT_CD", length = 20)
     private String rprtAcctCd;
+
+    /**
+     * Reporting account sequence — legacy {@code CHART_ACCT_SEQ_NO}. Nullable.
+     *
+     * <p>This is the {@code CHART_ACCT_INFM} primary-key identity (PK =
+     * BIZ_KEY + CHART_ACCT_SEQ_NO); {@code CHART_ACCT_CD} alone is non-unique.
+     * The Excel-upload path and the legacy inline picker both write
+     * {@code (CHART_ACCT_SEQ_NO, CHART_ACCT_CD)} together, and the legacy
+     * name lookups {@code wb_get_chart_acct_nm} / {@code wb_get_chart_acct_lv_nm}
+     * resolve on the seq_no, so the reporting-account save must persist both
+     * to keep the pair consistent for legacy/migration parity.
+     */
+    @Column(name = "CHART_ACCT_SEQ_NO", length = 10)
+    private String chartAcctSeqNo;
 
     /** File-batch transfer date (yyyyMMdd) — shadow key stamped by the
      *  dispatch flow. Joins to {@code TB_PAY_FILE_DATA.TRAN_DT}. */

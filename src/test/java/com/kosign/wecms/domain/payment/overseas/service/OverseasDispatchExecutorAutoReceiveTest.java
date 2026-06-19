@@ -59,7 +59,12 @@ class OverseasDispatchExecutorAutoReceiveTest {
         when(tbPayFileDataRepository.save(any())).thenAnswer(i -> i.getArgument(0));
         when(keyGenerator.nextFileSeqNo(anyString(), anyString())).thenReturn(FILE_SEQ_NO);
         when(legacyFunctions.nextTbPayFileDataSeq(anyString(), anyString())).thenReturn("1");
-        when(firmBankingSettingRepository.findById(any())).thenReturn(Optional.empty());
+        // TB_FIRM_CONF present so the file-path dispatch proceeds (BANK_PRTN_ID resolves);
+        // the missing / blank cases are covered in OverseasDispatchExecutorBankPrtnIdTest.
+        com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConf conf =
+                org.mockito.Mockito.mock(com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConf.class);
+        when(conf.getBankPrtnId()).thenReturn("PRTN-DEFAULT");
+        when(firmBankingSettingRepository.findById(any())).thenReturn(Optional.of(conf));
     }
 
     @Test

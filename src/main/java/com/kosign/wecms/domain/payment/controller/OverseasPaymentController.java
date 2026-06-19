@@ -251,10 +251,15 @@ public class OverseasPaymentController {
             @Size(max = 100)
             String keyword,
 
-            /** {@code "Y"} = Completed only, {@code "N"} = In Progress only, absent = all. */
-            @RequestParam(value = "trnf_yn", required = false)
-            @Pattern(regexp = "^[YN]$", message = "trnf_yn must be Y or N")
-            String trnfYn,
+            /**
+             * Legacy PROC_STAT CSV (F2) mirroring the Completed / In-Progress
+             * checkboxes: Completed = {@code "0,3"}, In Progress = {@code "6"},
+             * absent = all. The service maps these to the computed TRNF_STTS
+             * (C/F/P) — see {@code IDO.OVRS_PYMN_SUMR_R005}.
+             */
+            @RequestParam(value = "proc_stat", required = false)
+            @Pattern(regexp = "^[0-9]+(,[0-9]+)*$", message = "proc_stat must be a comma-separated list of digits")
+            String procStat,
 
             @RequestParam(value = "page", defaultValue = "0") int page,
             @RequestParam(value = "size", defaultValue = "0") int size,
@@ -262,7 +267,7 @@ public class OverseasPaymentController {
             @RequestParam(value = "sort_field",     required = false) String sortField,
             @RequestParam(value = "sort_direction",  required = false) String sortDirection) {
 
-        return ApiResponse.ok(overseasPaymentService.listResult(fromDt, toDt, keyword, trnfYn, page, size, sortField, sortDirection));
+        return ApiResponse.ok(overseasPaymentService.listResult(fromDt, toDt, keyword, procStat, page, size, sortField, sortDirection));
     }
 
     /**
@@ -294,26 +299,35 @@ public class OverseasPaymentController {
             @Size(max = 100)
             String keyword,
 
-            @RequestParam(value = "trnf_yn", required = false)
-            @Pattern(regexp = "^[YN]$", message = "trnf_yn must be Y or N")
-            String trnfYn,
+            @RequestParam(value = "proc_stat", required = false)
+            @Pattern(regexp = "^[0-9]+(,[0-9]+)*$", message = "proc_stat must be a comma-separated list of digits")
+            String procStat,
 
             HttpServletResponse response) throws IOException {
 
-        overseasPaymentService.exportResult(fromDt, toDt, keyword, trnfYn, response);
+        overseasPaymentService.exportResult(fromDt, toDt, keyword, procStat, response);
     }
 
     /**
      * Assign or clear the reporting account for a single detail line.
-     * Pass {@code rprt_acct_cd: null} to clear the assignment.
+     * Pass {@code rprt_acct_cd: null} (and {@code rprt_acct_seq_no: null}) to
+     * clear the assignment. Both the code and the seq_no are sent together —
+     * {@code CHART_ACCT_SEQ_NO} is the {@code CHART_ACCT_INFM} PK identity, so
+     * the pair must stay consistent (legacy {@code pymn_0007_001_u001} parity).
      */
     @PatchMapping("/{id}/details/{ovrsPymnDetlNo}/reporting-account")
-    @PreAuthorize("@menuAuthz.canAccess('payment-overseas-result')")
+    // Legacy parity: the reporting-account updater pymn_0007_001_u001 lives in the
+    // Payment Request / Scheduled namespace (pymn_0007_001), with the same authority
+    // as the scheduled list/detail — NOT the Result menu (pymn_0008_001). Gate the
+    // save on the Request menu so a user who can open the Scheduled detail page can
+    // also save the reporting account (mirrors the class-level default).
+    @PreAuthorize("@menuAuthz.canAccess('payment-overseas-request')")
     public ApiResponse<Void> saveReportingAccount(
             @PathVariable("id") String id,
             @PathVariable("ovrsPymnDetlNo") String ovrsPymnDetlNo,
             @RequestBody Map<String, String> body) {
-        overseasPaymentService.saveReportingAccount(id, ovrsPymnDetlNo, body.get("rprt_acct_cd"));
+        overseasPaymentService.saveReportingAccount(
+                id, ovrsPymnDetlNo, body.get("rprt_acct_cd"), body.get("rprt_acct_seq_no"));
         return ApiResponse.ok(null);
     }
 

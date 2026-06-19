@@ -81,6 +81,7 @@ class BulkReceptionReceiveTest {
     @Mock TbFirmBatApiTranRepository firmBatApiTranRepository;
     @Mock DispatchKeyGenerator dispatchKeyGenerator;
     @Mock SftpClient sftpClient;
+    @Mock BulkTransferValidator bulkTransferValidator;
 
     private final EfsCryptoService crypto = new EfsCryptoService();
     // Spy so split tests can capture the per-file encode(header, lines, trailer) calls
@@ -97,8 +98,11 @@ class BulkReceptionReceiveTest {
                 efsApiClient, crypto, vanApiKeyService, efsProperties, objectMapper,
                 payFileMstRepository, payFileDataRepository, firmConfRepository,
                 firmFileMstRepository, firmFileDataRepository, firmBatApiTranRepository,
-                dispatchKeyGenerator, codec, sftpClient, sftpProperties);
+                dispatchKeyGenerator, codec, sftpClient, sftpProperties, bulkTransferValidator);
 
+        // Pre-flight validation passes by default; the dedicated cases live in
+        // BulkReceptionServiceValidationTest.
+        when(bulkTransferValidator.validate(any(), any())).thenReturn(Optional.empty());
         when(firmFileMstRepository.save(any())).thenAnswer(i -> i.getArgument(0));
         when(payFileMstRepository.save(any())).thenAnswer(i -> i.getArgument(0));
         when(firmFileDataRepository.save(any())).thenAnswer(i -> i.getArgument(0));

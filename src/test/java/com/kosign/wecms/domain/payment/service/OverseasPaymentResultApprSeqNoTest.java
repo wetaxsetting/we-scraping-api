@@ -45,12 +45,17 @@ class OverseasPaymentResultApprSeqNoTest {
         TenantContext.clear();
     }
 
-    /** 18-column buildResultSql row (indices 0..17); only appr_seq_no (r[17]) set. */
+    /** buildResultSql row (indices 0..22); only the fields under test are set. */
     private static Object[] row(String apprSeqNo) {
-        Object[] r = new Object[18];
+        Object[] r = new Object[23];
         r[0] = "OP1";   // ovrs_pymn_no
+        r[4] = 0;       // tot_trns_cnt
         r[11] = "Y";    // trnf_yn
         r[17] = apprSeqNo;
+        r[18] = 0;      // tot_trns_succ_cnt
+        r[19] = 0;      // tot_trns_error_cnt
+        r[20] = 0;      // prs_cnt
+        r[21] = "C";    // trnf_stts
         return r;
     }
 

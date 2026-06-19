@@ -1,6 +1,7 @@
 package com.kosign.wecms.domain.payment.payrollpayment.service;
 
 import com.kosign.wecms.common.exception.BusinessException;
+import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.common.web.SortDirection;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
@@ -67,6 +68,13 @@ public class PayrollPaymentResultService {
      *  {@code pymn_0006_002} Requestor field). Same wiring as
      *  {@link com.kosign.wecms.domain.payment.vendorpayment.service.VendorPaymentResultService}. */
     private final ExptResolMstrRepository     exptResolMstrRepository;
+    /** Funnel for the surviving legacy display functions this page needs:
+     *  {@code wb_get_napas_bank_nm} (detail-header withdrawal bank, legacy
+     *  {@code R005.xml:50}) and {@code wb_get_chart_acct_nm} /
+     *  {@code wb_get_chart_acct_lv_nm} (per-line Reporting Account, legacy
+     *  {@code R011.xml:70-71}). Single-executor rule — see
+     *  {@code wecms-api/CLAUDE.md} "Surviving legacy functions". */
+    private final LegacyFunctionRepository    legacyFunctions;
 
     @Transactional(readOnly = true)
     public TransferResultListResponse list(
@@ -190,9 +198,24 @@ public class PayrollPaymentResultService {
                 .findByBizKeyAndScdulPymnNo(bizKey, id, lineSort);
         Map<String, DispatchResult> resultByDetlNo =
                 dispatchResultResolver.resolve(master, detailRows);
+
+        // Reporting Account display (legacy R011.xml:70-71) — resolve
+        // wb_get_chart_acct_nm / wb_get_chart_acct_lv_nm for every line that
+        // carries a chart-account, in ONE batched funnel call (no N+1). Keyed
+        // by CHART_ACCT_SEQ_NO, matching the legacy CHART_ACCT_INFM join.
+        List<String> chartSeqNos = detailRows.stream()
+                .filter(d -> d.getChartAcctCd() != null && !d.getChartAcctCd().isBlank())
+                .map(ScdulPymnSumrDetl::getChartAcctSeqNo)
+                .filter(s -> s != null && !s.isBlank())
+                .distinct()
+                .toList();
+        Map<String, String[]> chartDisplay = chartSeqNos.isEmpty()
+                ? Collections.emptyMap()
+                : legacyFunctions.resolveChartAcctDisplay(bizKey, chartSeqNos);
+
         List<TransferResultLine> lines = detailRows.stream()
                 .map(d -> toResultLine(d, resultByDetlNo.getOrDefault(
-                        d.getScdulPymnDetlNo(), DispatchResult.EMPTY)))
+                        d.getScdulPymnDetlNo(), DispatchResult.EMPTY), chartDisplay))
                 .toList();
 
         // G1: header tab counts (All / Success / Failed / In Progress) —
@@ -202,11 +225,14 @@ public class PayrollPaymentResultService {
         // pattern as VendorPaymentResultService / InternalTransferResultService.
         long[] counts = countByStatus(lines);
 
-        // Issue-1 (Result detail): withdrawal bank display name (legacy OUT_BANK_NM) —
-        // same shared resolver the per-line Deposit Bank cell uses. null when
-        // unresolvable; the frontend falls back to the raw outBankCd. Lets the
-        // Payroll Result-detail header render the bank name like Vendor/Expense.
-        String outBankNm = transferLineDetailMapper.resolveBankNm(master.getOutBankCd());
+        // Result-detail header withdrawal bank display name (legacy OUT_BANK_NM).
+        // Legacy R005.xml:50 resolves this via the SINGLE-arg
+        // wb_get_napas_bank_nm(OUT_BANK_CD) — NOT the two-arg NAPAS-or-CITAD
+        // variant used for the per-line Deposit Bank (R011.xml:54). The two
+        // diverge (e.g. 970424 → "Shinhan VN" here vs "ShinhanBank"), so the
+        // header MUST funnel wb_get_napas_bank_nm to match legacy verbatim.
+        // null when unresolvable → the frontend falls back to the raw outBankCd.
+        String outBankNm = legacyFunctions.resolveNapasBankNm(master.getOutBankCd());
 
         // Load the approval master once and reuse it for BOTH the requester
         // display name (legacy pymn_0006_002 EXPT_RESOL_MSTR.DRAFT_USER_NM) and
@@ -305,7 +331,16 @@ public class PayrollPaymentResultService {
 
     /* ---------------------------------------------------------------- */
 
-    private TransferResultLine toResultLine(ScdulPymnSumrDetl d, DispatchResult r) {
+    private TransferResultLine toResultLine(
+            ScdulPymnSumrDetl d, DispatchResult r, Map<String, String[]> chartDisplay) {
+        // Reporting Account (legacy R011 render gate, pymn_0006_002.ts:475-479):
+        // the name + level lines show ONLY when CHART_ACCT_CD is present;
+        // otherwise the cell is blank. Resolved values come from the batched
+        // wb_get_chart_acct_nm / wb_get_chart_acct_lv_nm map keyed by seq-no.
+        boolean hasChart = d.getChartAcctCd() != null && !d.getChartAcctCd().isBlank();
+        String[] chart = hasChart ? chartDisplay.get(d.getChartAcctSeqNo()) : null;
+        String chartAcctNm      = chart != null ? chart[0] : null;
+        String chartAcctLevelNm = chart != null ? chart[1] : null;
         return new TransferResultLine(
                 d.getScdulPymnDetlNo(),
                 d.getTranAmt(),
@@ -324,7 +359,11 @@ public class PayrollPaymentResultService {
                 d.getChartAcctSeqNo(),
                 d.getBankTrnsShortId(),
                 r.procStat(), r.procStatKey(), r.procDttm(), r.rsltDttm(),
-                r.rsCd(), r.rsMsg());
+                r.rsCd(), r.rsMsg(),
+                // Banking-match fields — Payroll does not populate per-line match.
+                null, null, null,
+                // Reporting Account display (legacy R011.xml:70-71).
+                chartAcctNm, chartAcctLevelNm);
     }
 
     private static TransferResultRow toResultRow(

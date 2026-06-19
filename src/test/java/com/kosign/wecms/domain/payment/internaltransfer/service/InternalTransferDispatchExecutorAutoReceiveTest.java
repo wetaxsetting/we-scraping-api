@@ -10,6 +10,9 @@ import com.kosign.wecms.domain.payment.dispatch.service.DispatchKeyGenerator;
 import com.kosign.wecms.domain.payment.dispatch.service.RealtimeDispatchRegistrar;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumr;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrDetl;
+import com.kosign.wecms.domain.payment.dispatch.repository.TbFirmConfRepository;
+import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConf;
+import com.kosign.wecms.domain.setting.firmbankingsettings.repository.TbFirmBankCodeRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -23,6 +26,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
@@ -50,6 +54,8 @@ class InternalTransferDispatchExecutorAutoReceiveTest {
     @Mock TbPayFileMstRepository tbPayFileMstRepository;
     @Mock TbPayFileDataRepository tbPayFileDataRepository;
     @Mock AcctMstrRepository acctMstrRepository;
+    @Mock TbFirmBankCodeRepository tbFirmBankCodeRepository;
+    @Mock TbFirmConfRepository tbFirmConfRepository;
     @Mock DispatchKeyGenerator keyGenerator;
     @Mock LegacyFunctionRepository legacyFunctions;
     @Mock DispatchAutoReceiveRegistrar autoReceiveRegistrar;
@@ -63,8 +69,13 @@ class InternalTransferDispatchExecutorAutoReceiveTest {
     void setUp() {
         executor = new InternalTransferDispatchExecutor(
                 tbPayTargetRepository, tbPayFileMstRepository, tbPayFileDataRepository,
-                acctMstrRepository, keyGenerator, clock, legacyFunctions,
+                acctMstrRepository, tbFirmBankCodeRepository, tbFirmConfRepository,
+                keyGenerator, clock, legacyFunctions,
                 autoReceiveRegistrar, realtimeDispatchRegistrar);
+
+        TbFirmConf defaultConf = org.mockito.Mockito.mock(TbFirmConf.class);
+        when(defaultConf.getBankPrtnId()).thenReturn("PRTN-DEFAULT");
+        when(tbFirmConfRepository.findById(any())).thenReturn(Optional.of(defaultConf));
 
         when(tbPayFileMstRepository.save(any())).thenAnswer(i -> i.getArgument(0));
         when(tbPayFileDataRepository.save(any())).thenAnswer(i -> i.getArgument(0));

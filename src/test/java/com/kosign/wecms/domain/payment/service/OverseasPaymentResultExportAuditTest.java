@@ -42,4 +42,31 @@ class OverseasPaymentResultExportAuditTest {
         verify(erpHistoryWriter, times(1)).recordExportedFile(eq("14"), any(Path.class), eq("OverseasPaymentResult.xlsx"));
         assertThat(resp.getContentAsByteArray().length).isGreaterThan(0);
     }
+
+    /** F3 — an M-mode export batch emits its line from OVRS_PYMN_MSTR
+     *  (via findMmodeDetailRows / R010 M branch), not from OVRS_PYMN_SUMR_DETL. */
+    @Test void export_mmode_batch_emits_line_from_mstr() throws Exception {
+        Object[] mBatch = new Object[24];
+        mBatch[0]  = "OV-M-1";            // ovrs_pymn_no
+        mBatch[1]  = "USD";              // ccy_cd
+        mBatch[2]  = "John Doe";         // file_nm (BNFC_NM)
+        mBatch[5]  = "20250813102604";   // reg_dtm (=TRNF_DT)
+        mBatch[11] = "Y";                // trnf_yn
+        mBatch[23] = "M";                // ovrs_pymn_type
+        when(paymentRepo.findResultForExport(anyString(), anyString(), anyString(), any(), any()))
+                .thenReturn(java.util.Collections.singletonList(mBatch));
+
+        Object[] mLine = new Object[17];
+        mLine[2]  = "USD";   mLine[3] = new java.math.BigDecimal("1500");
+        mLine[7]  = "John Doe"; mLine[13] = "0"; mLine[15] = "0000";
+        when(paymentRepo.findMmodeDetailRows("VN_VNM0004_000001", "OV-M-1"))
+                .thenReturn(java.util.Collections.singletonList(mLine));
+
+        MockHttpServletResponse resp = new MockHttpServletResponse();
+        service.exportResult("20250101", "20251231", null, null, resp);
+
+        verify(paymentRepo, times(1)).findMmodeDetailRows("VN_VNM0004_000001", "OV-M-1");
+        verify(erpHistoryWriter, times(1)).recordExportedFile(eq("14"), any(Path.class), eq("OverseasPaymentResult.xlsx"));
+        assertThat(resp.getContentAsByteArray().length).isGreaterThan(0);
+    }
 }

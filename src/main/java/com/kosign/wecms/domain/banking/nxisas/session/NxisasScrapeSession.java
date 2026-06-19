@@ -87,8 +87,12 @@ public class NxisasScrapeSession {
      *  TRANSACTION + BALANCE);
      *  CARD_REGISTER = Card Management Setting "Add Card" flow
      *  (LOGIN + CARD_INFO post-login — registers cards into
-     *  {@code CARD_MSTR} via {@code POST /api/v1/payment/card-transactions/cards}). */
-    public enum Mode { SETUP, SYNC, CARD_REGISTER }
+     *  {@code CARD_MSTR} via {@code POST /api/v1/payment/card-transactions/cards});
+     *  CARD_SYNC = Card Transactions &gt; Update popup (LOGIN + per-card
+     *  CARD_USING post-login — persists into {@code CARD_TRNS_HSTR}).
+     *  Owned by {@code CardTransactionScrapeService}; structurally the
+     *  card twin of {@code SYNC}. */
+    public enum Mode { SETUP, SYNC, CARD_REGISTER, CARD_SYNC }
     @Setter(AccessLevel.PUBLIC) private Mode mode = Mode.SETUP;
 
     /** {@code yyyyMMdd} sync window start — captured on the initial
@@ -206,6 +210,37 @@ public class NxisasScrapeSession {
      *  LOGIN clears. SYNC mode only — the SETUP flow scrapes one bank per
      *  session and never sets it. */
     @Setter(AccessLevel.PUBLIC) private String activeLoginGroupKey;
+
+    // -- CARD_SYNC-only state -----------------------------------------
+    // Consumed by CardTransactionScrapeService when this session serves
+    // the Card Transactions > Update popup (mode = CARD_SYNC). The card
+    // twin of accountsQueue + the per-account counters above. Other modes
+    // leave these at their empty defaults.
+
+    /** One card pending CARD_USING after the current LOGIN clears.
+     *  {@code bankCertSeq} is the credential the card was registered
+     *  under ({@code CARD_MSTR.BANK_CERT_SEQ}); it is the login-group key
+     *  so all cards sharing a credential reuse a single LOGIN. The
+     *  refactor never silently falls back to another credential — a card
+     *  with a null {@code bankCertSeq} is rejected before it reaches the
+     *  queue (audit requirement #6). */
+    public record CardScrapeKey(String bankCd, String cardNo,
+                                String cardType, BigDecimal bankCertSeq) { }
+
+    /** FIFO queue of cards still to scrape after the current LOGIN
+     *  succeeds — the card twin of {@link #accountsQueue}. Drained by
+     *  {@code CardTransactionScrapeService.advance()} after challenge
+     *  resolution. */
+    @Setter(AccessLevel.PUBLIC) private Deque<CardScrapeKey> cardsQueue = new ArrayDeque<>();
+
+    /** Running count of newly-inserted {@code CARD_TRNS_HSTR} rows across
+     *  every card in the batch. */
+    @Setter(AccessLevel.PUBLIC) private int cardRowsInserted = 0;
+    /** Running count of scraped rows skipped as duplicates (legacy
+     *  composite-key dedup hit). */
+    @Setter(AccessLevel.PUBLIC) private int cardRowsSkipped = 0;
+    /** Count of cards whose CARD_USING completed (login + scrape + persist). */
+    @Setter(AccessLevel.PUBLIC) private int cardsSynced = 0;
 
     public void touch() {
         lastTouched = Instant.now();

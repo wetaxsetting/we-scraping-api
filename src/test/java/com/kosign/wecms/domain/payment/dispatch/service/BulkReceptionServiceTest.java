@@ -52,7 +52,7 @@ class BulkReceptionServiceTest {
         // exercised by these tests, so null is fine.
         return new BulkReceptionService(
                 efsApiClient, crypto, vanApiKeyService, props, mapper,
-                null, null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null, null);
     }
 
     private static BulkReceptionApiCommand cmd() {

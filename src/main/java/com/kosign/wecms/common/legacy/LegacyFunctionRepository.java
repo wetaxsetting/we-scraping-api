@@ -562,6 +562,92 @@ public class LegacyFunctionRepository {
     }
 
     /**
+     * Payment &gt; Payroll Payment Result (detail header) &mdash; resolve the
+     * withdrawal-bank display name for an {@code OUT_BANK_CD} via the legacy
+     * {@code wb_get_napas_bank_nm(bank_cd)} single-argument function. This is the
+     * EXACT resolver the legacy detail-header IDO uses
+     * ({@code IDO.SCDUL_PYMN_SUMR_R005.xml:50} —
+     * {@code wb_get_napas_bank_nm(SPS.OUT_BANK_CD) AS OUT_BANK_NM}).
+     *
+     * <p>Distinct from {@link #resolveNapasOrCitadBankName} (the two-arg
+     * NAPAS-or-CITAD variant the per-line Deposit Bank cell uses,
+     * {@code R011.xml:54}). The two functions diverge for some codes &mdash;
+     * e.g. {@code 970424 → "Shinhan VN"} (this fn) vs {@code "ShinhanBank"}
+     * (the or-CITAD fn), {@code 970457 → "Woori VN"} vs {@code "WooriBank"} &mdash;
+     * so the Payroll Result detail header MUST use this overload to match legacy
+     * verbatim (the former {@code TransferLineDetailMapper.resolveBankNm} chain
+     * resolved the header to the or-CITAD names, which mismatched legacy).
+     *
+     * <p>Returns {@code null} for an unknown / blank result so the caller falls
+     * back to the raw {@code OUT_BANK_CD}.
+     */
+    public String resolveNapasBankNm(String bankCd) {
+        if (bankCd == null || bankCd.isBlank()) {
+            return null;
+        }
+        Query q = em.createNativeQuery(
+                "SELECT wb_get_napas_bank_nm(CAST(?1 AS varchar))");
+        q.setParameter(1, bankCd.trim());
+        Object result = q.getSingleResult();
+        return result != null && !result.toString().isBlank() ? result.toString() : null;
+    }
+
+    /**
+     * Payment &gt; Payroll Payment Result (detail rows) &mdash; resolve the
+     * Reporting Account display strings for a set of {@code CHART_ACCT_SEQ_NO}
+     * values, mirroring the legacy detail-rows IDO
+     * ({@code IDO.SCDUL_PYMN_SUMR_R011.xml:70-71}):
+     * <ul>
+     *   <li>{@code wb_get_chart_acct_nm(biz_key, seq_no, cd)} &rarr; the
+     *       primary line, e.g. {@code "Code0011 - SALES TEST"}.</li>
+     *   <li>{@code wb_get_chart_acct_lv_nm(biz_key, seq_no, cd)} &rarr; the
+     *       grey level line, e.g. {@code "REVENUE > SALES"}.</li>
+     * </ul>
+     *
+     * <p>The join + function arguments reproduce the legacy query exactly:
+     * {@code CHART_ACCT_INFM CHAT} keyed by {@code (BIZ_KEY, CHART_ACCT_SEQ_NO)},
+     * passing {@code CHAT.CHART_ACCT_CD} (the chart row's own code) into both
+     * functions. Batched (one query for every line's seq-no) to avoid an N+1.
+     *
+     * <p>Returns {@code seqNo &rarr; [chartAcctNm, chartAcctLevelNm]}; either
+     * element may be {@code null} when the function returns blank. Seq-nos with
+     * no {@code CHART_ACCT_INFM} row are simply absent from the map (caller
+     * renders blank). Both functions already exist in the refactor DB with
+     * legacy-identical signatures &mdash; no new DB object.
+     *
+     * <p>Retire plan: drop this method once the Chart-of-Accounts name/level
+     * resolution is reconciled into a pure-Java walker &mdash; same window as
+     * the other surviving legacy functions (see {@code wecms-api/CLAUDE.md}).
+     */
+    @SuppressWarnings("unchecked")
+    public java.util.Map<String, String[]> resolveChartAcctDisplay(
+            String bizKey, java.util.Collection<String> chartAcctSeqNos) {
+        java.util.List<String> ids = chartAcctSeqNos == null ? java.util.List.of()
+                : chartAcctSeqNos.stream().filter(s -> s != null && !s.isBlank()).distinct().toList();
+        if (bizKey == null || bizKey.isBlank() || ids.isEmpty()) {
+            return java.util.Map.of();
+        }
+        Query q = em.createNativeQuery(
+                "SELECT chat.chart_acct_seq_no, " +
+                        "wb_get_chart_acct_nm(chat.biz_key, chat.chart_acct_seq_no, chat.chart_acct_cd), " +
+                        "wb_get_chart_acct_lv_nm(chat.biz_key, chat.chart_acct_seq_no, chat.chart_acct_cd) " +
+                        "FROM chart_acct_infm chat " +
+                        "WHERE chat.biz_key = CAST(:bizKey AS varchar) " +
+                        "  AND chat.chart_acct_seq_no IN (:seqs)");
+        q.setParameter("bizKey", bizKey);
+        q.setParameter("seqs", ids);
+        java.util.Map<String, String[]> out = new java.util.HashMap<>();
+        for (Object[] row : (java.util.List<Object[]>) q.getResultList()) {
+            if (row[0] != null) {
+                String nm = row[1] != null ? row[1].toString() : null;
+                String lv = row[2] != null ? row[2].toString() : null;
+                out.put(row[0].toString(), new String[] { nm, lv });
+            }
+        }
+        return out;
+    }
+
+    /**
      * Banking &mdash; resolve the display bank name for ANY bank code
      * (internal / NAPAS / CITAD) via the legacy {@code wb_get_bank_name_any_code}
      * function. This is the resolver legacy

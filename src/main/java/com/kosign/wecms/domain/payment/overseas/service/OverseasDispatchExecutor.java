@@ -1,5 +1,6 @@
 package com.kosign.wecms.domain.payment.overseas.service;
 
+import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.domain.banking.entity.AcctMstr;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
@@ -39,7 +40,9 @@ import java.util.Optional;
  * <p>Per row in the batch:
  * <ol>
  *   <li>Insert one {@link TbPayFileMst} header (PROC_STAT='9' pending,
- *       FUND_TP='9' overseas remittance, TRAN_TP='1', BANK_PRTN_ID placeholder).</li>
+ *       FUND_TP='S' overseas remittance ({@code FundTp.OVERSEAS_REMITTANCE_SHINHAN},
+ *       legacy {@code pymn_0007} parity), TRAN_TP='1', BANK_PRTN_ID from
+ *       {@code TB_FIRM_CONF} — WBE2089 when the config row is missing/blank).</li>
  *   <li>Insert one {@link TbPayFileData} per detail line. Beneficiary
  *       fields are mapped from {@link OvrsPymnSumrDetl}: {@code BIC_CD} →
  *       {@code TAR_BANK_CD}, {@code BNFC_ACCT_NO} → {@code FINC_MDA_NO},
@@ -76,11 +79,13 @@ public class OverseasDispatchExecutor {
     /** {@code TB_PAY_FILE_DATA.PROC_RSLT_DIV} initial state. */
     private static final String PROC_RSLT_DIV_UNPROCESSED = "N";
 
-    /** {@code FUND_TP='9'} — overseas remittance. Mirrors the DEV
-     *  {@code tb_pay_file_mst} distribution: every cross-currency batch
-     *  (USD↔VND) carries this value, verified against 28 dispatched
-     *  overseas-flavored rows on JEX DEV. */
-    private static final String FUND_TP_OVERSEAS = "9";
+    /** {@code FUND_TP='S'} — overseas remittance ({@code FundTp.OVERSEAS_REMITTANCE_SHINHAN}).
+     *  Legacy parity: {@code pymn_0007_001_c001_act.jsp:192,318} writes
+     *  {@code FundTp.OVERSEAS_REMITTANCE_SHINHAN} ('S'); live JEX DEV
+     *  {@code TB_PAY_FILE_MST} carries 'S' on 38 overseas rows. (An earlier
+     *  '9' was a mis-sampling of the domestic foreign-currency rows, which DO
+     *  carry '9' — those come from the SCDUL_PYMN executors, not pymn_0007.) */
+    private static final String FUND_TP_OVERSEAS = "S";
 
     /** {@code TRAN_TP='1'} — DEV's actual stored value. The
      *  SCDUL_PYMN executor writes {@code 'D'} (enum {@code TranTpF.DEPOSIT})
@@ -113,13 +118,6 @@ public class OverseasDispatchExecutor {
      *  {@code TRNF_CCY_CD} (transfer currency) for this bank. */
     private static final String OUT_BANK_CD_WOORI = "970457";
 
-    /** {@code BANK_PRTN_ID} fallback — used only when
-     *  {@code TB_FIRM_CONF.BANK_PRTN_ID} can't be resolved for the
-     *  tenant's withdrawal account (rare; bank-side daemon would
-     *  fail downstream anyway). Mirrors the SCDUL_PYMN executor's
-     *  pragmatic choice — the dispatch row still lands so refactor R&D
-     *  flows when local test data lacks a firm-banking row. */
-    private static final String BANK_PRTN_ID_FALLBACK = "DEFAULT";
 
     /** Minimum BIC length needed to extract the 2-char country code
      *  (chars 5-6 of an 11-char SWIFT BIC, 0-indexed 4-5). Shorter
@@ -361,29 +359,21 @@ public class OverseasDispatchExecutor {
      * read from the per-tenant firm-banking config row and stamped onto
      * the dispatch header so the bank-side daemon can route correctly.
      *
-     * <p>Returns {@link #BANK_PRTN_ID_FALLBACK} ({@code "DEFAULT"}) when
-     * the firm-banking config row is missing. Legacy would NPE in that
-     * case — we log warn + fall back so refactor R&D can dispatch
-     * without first seeding {@code TB_FIRM_CONF}; the daemon never runs
-     * locally anyway.
+     * <p>Blocks with {@code WBE2089} when the firm-banking config row is
+     * missing or its {@code BANK_PRTN_ID} is blank — legacy parity
+     * ({@code pymn_0007_001_c001_act.jsp:182/200} reads the row with no null
+     * guard and NPE-rolls-back when it is absent; the refactor blocks cleanly,
+     * mirroring Vendor / Expense / Internal Transfer / Payroll).
      */
     private String resolveBankPrtnId(String bizKey, String outBankCd, String wdrlActNo) {
         if (outBankCd == null || wdrlActNo == null) {
-            log.warn("feature=overseas-payment dispatch: outBankCd or wdrlActNo is null; bankPrtnId falls back to '{}'",
-                    BANK_PRTN_ID_FALLBACK);
-            return BANK_PRTN_ID_FALLBACK;
+            throw new BusinessException("WBE2089");
         }
-        TbFirmConfId id = new TbFirmConfId(bizKey, outBankCd, wdrlActNo);
-        Optional<TbFirmConf> conf = firmBankingSettingRepository.findById(id);
-        if (conf.isEmpty()) {
-            log.warn("feature=overseas-payment dispatch: TB_FIRM_CONF row missing for bizKey={} outBankCd={} wdrlActNo={}; bankPrtnId falls back to '{}'",
-                    bizKey, outBankCd, wdrlActNo, BANK_PRTN_ID_FALLBACK);
-            return BANK_PRTN_ID_FALLBACK;
-        }
-        String bankPrtnId = conf.get().getBankPrtnId();
-        return (bankPrtnId == null || bankPrtnId.isBlank())
-                ? BANK_PRTN_ID_FALLBACK
-                : bankPrtnId;
+        return firmBankingSettingRepository
+                .findById(new TbFirmConfId(bizKey, outBankCd, wdrlActNo))
+                .map(TbFirmConf::getBankPrtnId)
+                .map(s -> s == null || s.isBlank() ? null : s.trim())
+                .orElseThrow(() -> new BusinessException("WBE2089"));
     }
 
     /**

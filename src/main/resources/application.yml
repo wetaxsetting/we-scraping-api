@@ -218,6 +218,20 @@ wecms:
       woori-bank-cd:   ${WECMS_WOORI_BANK_CD:11704000}
 
   # =============================================================================
+  # Exchange-rate collection batch (Shinhan + Woori FX scraping)
+  # =============================================================================
+  # OFF BY DEFAULT. In the live-JEX-DB coexistence model the LEGACY JEX batch
+  # owns FX collection into BANK_EXCH_RATE_INFM; the refactor must NOT collect
+  # automatically or it would double-write / race the legacy batch against the
+  # shared DB. Only flip to true in an environment that genuinely owns FX
+  # collection (e.g. a future cut-over). When false/absent, the gated
+  # ExchangeRateBatchScheduler bean is not created, so no FX @Scheduled job
+  # fires; the on-demand path (ExchangeRateService.runOnDemand) is unaffected.
+  exchange-rate:
+    batch:
+      enabled: ${WECMS_EXCHANGE_RATE_BATCH_ENABLED:false}
+
+  # =============================================================================
   # Coocon
   # =============================================================================
   coocon:

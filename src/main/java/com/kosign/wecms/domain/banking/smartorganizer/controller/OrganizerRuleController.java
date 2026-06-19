@@ -9,6 +9,7 @@ import com.kosign.wecms.domain.banking.smartorganizer.service.OrganizerRuleServi
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Positive;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -28,6 +29,18 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/banking/smart-organizer/rules")
 @RequiredArgsConstructor
 @Validated
+// Authorization (audit F-3 fix, 2026-06-19): the Organizer Settings rule CRUD is
+// opened from the Smart Organizer dialog under the transaction flow, so it is
+// gated on the same entitlement as its sibling SmartOrganizerController
+// (/eligible, /confirm) and the frontend route mapping in lib/menuAuth.ts —
+// either the VND or FCY "Inquire transactions" grant admits. A user holding
+// neither is denied (403 / WBE1003); an admin bypasses the per-user grant.
+@PreAuthorize(
+  "@menuAuthz.canAccessAny(" +
+  "'banking-vnd-inquire-transactions'," +
+  "'banking-fcy-inquire-transactions'" +
+  ")"
+)
 public class OrganizerRuleController {
 
     private final OrganizerRuleService service;

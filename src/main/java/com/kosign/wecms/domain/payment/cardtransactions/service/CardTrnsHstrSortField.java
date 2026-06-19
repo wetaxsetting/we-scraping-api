@@ -41,7 +41,7 @@ public enum CardTrnsHstrSortField implements SortableField {
     TRSC_AMT          ("trscAmt"),
     CHART_ACCT_NM     ("chartAcctCd"),   // projection-only — proxy to the raw code
     STTS              ("prchStts"),
-    CARD_TRNS_USAGE_NM("cardTrnsUsageCd"),// projection-only — proxy to the code
+    CARD_TRNS_USAGE_NM("cardTrnsUsageCode"),// projection-only — proxy to the code
     DISP_DOC_ID       ("apprSeqNo"),     // projection-only — proxy to apprSeqNo
     CONT              ("cont"),
     APPR_DOC_NO       ("apprSeqNo"),     // projection-only — proxy to apprSeqNo

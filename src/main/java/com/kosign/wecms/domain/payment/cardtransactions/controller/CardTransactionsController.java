@@ -3,8 +3,11 @@ package com.kosign.wecms.domain.payment.cardtransactions.controller;
 import com.kosign.wecms.common.export.ExcelExportRequest;
 import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.response.ApiResponse;
+import com.kosign.wecms.domain.banking.nxisas.dto.SubmitChallengeRequest;
+import com.kosign.wecms.domain.banking.nxisas.dto.SubmitQnaRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardListResponse;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.CardSyncSessionResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardManagementListResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTranListPeriodLimitRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTranListPeriodLimitResponse;
@@ -33,6 +36,7 @@ import com.kosign.wecms.domain.payment.cardtransactions.dto.UpdateCardActiveRequ
 import com.kosign.wecms.domain.payment.cardtransactions.dto.UpdateCardInfoRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.UpdateReportingAccountRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.service.CardTranListR001Service;
+import com.kosign.wecms.domain.payment.cardtransactions.service.CardTransactionScrapeService;
 import com.kosign.wecms.domain.payment.cardtransactions.service.CardTransactionSyncService;
 import com.kosign.wecms.domain.payment.cardtransactions.service.CardTransactionsService;
 import jakarta.validation.Valid;
@@ -54,6 +58,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.security.access.prepost.PreAuthorize;
 
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Payment &gt; Card Transactions — four REST endpoints under
@@ -109,9 +114,10 @@ public class CardTransactionsController {
      *  legacy seed values without re-imposing a tighter shape. */
     private static final String CARD_SEQ_NO_PATTERN = "^[0-9]{1,20}$";
 
-    private final CardTransactionsService    service;
-    private final CardTransactionSyncService syncService;
-    private final CardTranListR001Service    cardTranListR001Service;
+    private final CardTransactionsService     service;
+    private final CardTransactionSyncService  syncService;
+    private final CardTransactionScrapeService scrapeService;
+    private final CardTranListR001Service     cardTranListR001Service;
     /** Shared Excel writer — orchestrates the
      *  {@link com.kosign.wecms.domain.payment.cardtransactions.export.CardTransactionsExportProvider}
      *  + writes the XLSX response. */
@@ -442,10 +448,66 @@ public class CardTransactionsController {
      * Failures don't abort the run — the orchestrator collects errors
      * and surfaces them all in the response.
      */
+    /**
+     * @deprecated Headless single-shot scrape — aborts QNA/OTP/CAPTCHA-gated
+     *     banks (e.g. Shinhan 11704088) with {@code WBE_CARD_SYNC_NEEDS_RE_AUTH}.
+     *     Superseded 2026-06-19 by the session/challenge-aware
+     *     {@code POST /sync-session} flow (Update button now uses that).
+     *     Retained for the non-challenge fallback path; do not remove
+     *     without PO sign-off.
+     */
+    @Deprecated
     @PostMapping("/sync")
     public ApiResponse<SyncCardTransactionsResponse> sync(
             @Valid @RequestBody SyncCardTransactionsRequest req) {
         return ApiResponse.ok(syncService.sync(req));
+    }
+
+    /* ----------------------------------------------------------------
+     *  Update Cards — session/challenge-aware scrape (Shinhan QNA, etc.)
+     * ---------------------------------------------------------------- */
+
+    /**
+     * Start a Card Transactions Update scrape session. Reuses the shared
+     * NXISAS session/challenge framework (the same one Account Inquiry >
+     * Bank Transaction Sync and Login Credentials use): runs
+     * {@code LOGIN → (QNA/OTP/CAPTCHA?) → CARD_USING} per eligible card
+     * and persists into {@code CARD_TRNS_HSTR}. On a challenge it returns
+     * {@code *_REQUIRED} + a {@code session_id} the frontend echoes back
+     * to the matching resume endpoint below.
+     *
+     * <p>Replaces the headless {@code POST /sync} for the Update button —
+     * that path could not complete QNA-gated banks (Shinhan). See
+     * {@link CardTransactionScrapeService}.
+     */
+    @PostMapping("/sync-session")
+    public ApiResponse<CardSyncSessionResponse> startSyncSession(
+            @Valid @RequestBody SyncCardTransactionsRequest req) {
+        return ApiResponse.ok(scrapeService.start(req));
+    }
+
+    /** Resume a Card Update scrape after a QNA (security-question) answer. */
+    @PostMapping("/sync-session/{sessionId}/qna")
+    public ApiResponse<CardSyncSessionResponse> submitSyncSessionQna(
+            @PathVariable UUID sessionId,
+            @Valid @RequestBody SubmitQnaRequest req) {
+        return ApiResponse.ok(scrapeService.submitQna(sessionId, req));
+    }
+
+    /** Resume a Card Update scrape after an OTP submission. */
+    @PostMapping("/sync-session/{sessionId}/otp")
+    public ApiResponse<CardSyncSessionResponse> submitSyncSessionOtp(
+            @PathVariable UUID sessionId,
+            @Valid @RequestBody SubmitChallengeRequest req) {
+        return ApiResponse.ok(scrapeService.submitOtp(sessionId, req));
+    }
+
+    /** Resume a Card Update scrape after a CAPTCHA submission. */
+    @PostMapping("/sync-session/{sessionId}/captcha")
+    public ApiResponse<CardSyncSessionResponse> submitSyncSessionCaptcha(
+            @PathVariable UUID sessionId,
+            @Valid @RequestBody SubmitChallengeRequest req) {
+        return ApiResponse.ok(scrapeService.submitCaptcha(sessionId, req));
     }
 
     /**

@@ -73,11 +73,8 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
-import java.util.TreeMap;
 
 /**
  * Payment &gt; Payroll Payment — Scheduled list service. Mirrors the
@@ -219,7 +216,18 @@ public class PayrollPaymentService {
         List<ScheduledTransferRow> dtoRows = rows.getContent().stream()
                 .map(r -> toListRow(r, exptBySeqNo, approverByApprSeqNo, apprSttsByApprSeqNo))
                 .toList();
-        List<CurrencyTotal> totals = computeCurrencyTotals(rows.getContent());
+        // F-1: footer totals must aggregate the ENTIRE filtered result set
+        // (legacy IDO.SCDUL_PYMN_SUMR_R003 — full set, no pagination), not the
+        // current page slice. The aggregate query reuses search()'s exact
+        // predicate (tenant / type='00' / date range / search / status filter)
+        // and ignores pagination. Mirrors InternalTransferService.list.
+        List<CurrencyTotal> totals = mapCurrencyTotals(
+                sumrRepository.searchCurrencyTotals(
+                        bizKey, ScdulPymnTypeCd.PAYROLL.code(),
+                        fromDtm, toDtm,
+                        srchWdPattern,
+                        null,
+                        apprTypeArg));
 
         log.info("feature=payroll-payment list bizKey={} total={} page={} size={}",
                 bizKey, rows.getTotalElements(), page, pageable.getPageSize());
@@ -264,21 +272,29 @@ public class PayrollPaymentService {
                 .map(d -> transferLineDetailMapper.toLineDetail(d, chartByCode))
                 .toList();
 
-        // G2 (Scheduled detail): requester display name (legacy pymn_0005_003
-        // Requestor cell = EXPT_RESOL_MSTR.DRAFT_USER_NM), looked up by APPR_SEQ_NO.
-        // null when the batch has no approval request yet — the frontend falls back
-        // to regId. Byte-identical wiring to VendorPaymentService / ExpensePaymentService
-        // / InternalTransferService.
+        // G2 (Scheduled detail): one EXPT_RESOL_MSTR fetch by APPR_SEQ_NO feeds
+        // both the Requestor (legacy pymn_0005_003 / R012: ERM.DRAFT_USER_NM)
+        // and the Approval Ref (legacy R012: ERM.DOC_NO) — same join the list
+        // uses (R002), so detail and list show identical values. null/empty when
+        // the batch has no approval request yet.
         String apprSeqNo = master.getApprSeqNo();
-        String requestor = (apprSeqNo != null && !apprSeqNo.isBlank())
+        ExptResolMstr erm = (apprSeqNo != null && !apprSeqNo.isBlank())
                 ? exptResolMstrRepository
                         .findByBizKeyAndApprSeqNoIn(bizKey, java.util.List.of(apprSeqNo))
                         .stream()
                         .findFirst()
-                        .map(ExptResolMstr::getDraftUserNm)
-                        .filter(s -> s != null && !s.isBlank())
                         .orElse(null)
                 : null;
+        String requestor = (erm != null && erm.getDraftUserNm() != null && !erm.getDraftUserNm().isBlank())
+                ? erm.getDraftUserNm()
+                : null;
+        // Approval Ref — legacy detail (R012) binds ERM.DOC_NO, NOT
+        // SCDUL_PYMN_SUMR.ERP_FILE_NUM. Identical expression to the list
+        // (toListRow): DOC_NO when present, else the legacy ERP file number —
+        // guarantees detail Approval Ref == list Approval Ref for every row.
+        String docNo = (erm != null && erm.getDocNo() != null)
+                ? erm.getDocNo()
+                : master.getErpFileNum();
 
         // G5 (Scheduled detail): approval attachments — UNION of EXPT_RESOL_FILE
         // + EXPT_RESOL_PAY_EVID_FILE (mirrors legacy IDO.EXPT_RESOL_FILE_R002;
@@ -297,7 +313,7 @@ public class PayrollPaymentService {
                 master.getTitl(),
                 master.getTotalTranAmt(),
                 master.getTotTrnsCnt(),
-                master.getErpFileNum(),
+                docNo,
                 master.getRegId(),
                 requestor,
                 master.getRegDtm(),
@@ -1059,11 +1075,21 @@ public class PayrollPaymentService {
         String  approver      = appr != null ? appr.firstName() : null;
         Integer approverCount = appr != null ? appr.count()     : null;
         List<ScheduledTransferApprover> approvers = appr != null ? appr.approvers() : null;
+        // Requestor — legacy IDO.SCDUL_PYMN_SUMR_R002 binds ERM.DRAFT_USER_NM
+        // (발의자명) for the list "Requestor" column, from the same
+        // EXPT_RESOL_MSTR join already fetched above. null for drafts (no
+        // approval request) — the column stays blank, matching legacy.
+        String draftUserNm = (erm != null && erm.getDraftUserNm() != null && !erm.getDraftUserNm().isBlank())
+                ? erm.getDraftUserNm()
+                : null;
         return new ScheduledTransferRow(
                 s.getScdulPymnNo(),
                 s.getScdulPymnTypeCd(),
                 s.getCcyCd(),
-                s.getTitl(),
+                // Approval Title — legacy IDO.SCDUL_PYMN_SUMR_R002:58 binds the
+                // list "Title" column to ERM.TITL (EXPT_RESOL_MSTR.TITL), NOT
+                // SCDUL_PYMN_SUMR.TITL. Null until the batch has an approval row.
+                erm != null ? erm.getTitl() : null,
                 s.getApprSeqNo(),
                 s.getTotalTranAmt(),
                 s.getTotTrnsCnt(),
@@ -1081,13 +1107,18 @@ public class PayrollPaymentService {
                 s.getOutBankCd(),
                 s.getWdrlActNo(),
                 payDate,
-                s.getOrgFileNm(),
+                // File Name — legacy IDO.SCDUL_PYMN_SUMR_R002:57 binds the list
+                // "File Name" column to FILE_NM = SPS.TITL (SCDUL_PYMN_SUMR.TITL),
+                // NOT ORG_FILE_NM. (The detail page's file-card still uses
+                // ORG_FILE_NM via the separate detail response — unchanged.)
+                s.getTitl(),
                 docNo,
                 s.getWdrlCcyCd(),
                 apprFundTp,
                 approver,
                 approverCount,
-                approvers);
+                approvers,
+                draftUserNm);
     }
 
     /** First approver name + total chain length + the full ordered chain
@@ -1131,23 +1162,22 @@ public class PayrollPaymentService {
         return out;
     }
 
-    private static List<CurrencyTotal> computeCurrencyTotals(List<ScdulPymnSumr> rows) {
-        Map<String, BigDecimal> amountByCcy = new TreeMap<>();
-        Map<String, BigDecimal> countByCcy  = new TreeMap<>();
-        Map<String, BigDecimal> trnsByCcy   = new TreeMap<>();
-        for (ScdulPymnSumr r : rows) {
-            String ccy = Objects.requireNonNullElse(r.getCcyCd(), "");
-            amountByCcy.merge(ccy, Objects.requireNonNullElse(r.getTotalTranAmt(), BigDecimal.ZERO), BigDecimal::add);
-            countByCcy.merge(ccy, BigDecimal.ONE, BigDecimal::add);
-            trnsByCcy.merge(ccy, Objects.requireNonNullElse(r.getTotTrnsCnt(), BigDecimal.ZERO), BigDecimal::add);
-        }
-        return amountByCcy.entrySet().stream()
-                .sorted(Comparator.comparing(Map.Entry::getKey))
-                .map(e -> new CurrencyTotal(
-                        e.getValue(),
-                        countByCcy.get(e.getKey()),
-                        e.getKey(),
-                        trnsByCcy.get(e.getKey())))
+    /**
+     * Map the {@code [ccyCd, sumAmount, docCount, sumTransactionCount]} rows
+     * from {@link ScdulPymnSumrRepository#searchCurrencyTotals} into the
+     * {@link CurrencyTotal} wire records. The DB aggregate has already summed
+     * across the full filtered set and grouped by currency (F-1, legacy
+     * IDO.SCDUL_PYMN_SUMR_R003); this method only does the {@code COUNT}-Long →
+     * {@code BigDecimal} projection and null-safety. Mirrors
+     * {@code InternalTransferService#mapCurrencyTotals}.
+     */
+    private static List<CurrencyTotal> mapCurrencyTotals(List<Object[]> aggregated) {
+        return aggregated.stream()
+                .map(r -> new CurrencyTotal(
+                        r[1] == null ? BigDecimal.ZERO : (BigDecimal) r[1],
+                        r[2] == null ? BigDecimal.ZERO : BigDecimal.valueOf(((Number) r[2]).longValue()),
+                        r[0] == null ? "" : (String) r[0],
+                        r[3] == null ? BigDecimal.ZERO : (BigDecimal) r[3]))
                 .toList();
     }
 

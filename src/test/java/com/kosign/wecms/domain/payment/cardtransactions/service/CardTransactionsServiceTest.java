@@ -45,6 +45,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -102,10 +103,10 @@ class CardTransactionsServiceTest {
                 new BigDecimal("799200.000000"), "VND", "1", "1390");
         Page<CardTrnsHstr> page = new PageImpl<>(List.of(row), PageRequest.of(0, 15), 1L);
         when(cardTrnsRepo.findLedgerPage(eq(TENANT), eq("20250101"), eq("20251231"),
-                eq(null), eq(null), any(Pageable.class)))
+                eq(false), any(), eq(false), any(), eq(null), eq(null), any(Pageable.class)))
                 .thenReturn(page);
         when(cardTrnsRepo.findLedgerTotals(eq(TENANT), eq("20250101"), eq("20251231"),
-                eq(null), eq(null)))
+                eq(false), any(), eq(false), any(), eq(null), eq(null)))
                 .thenReturn(totals(1L, "799200.000000", 1L, "799200.000000", 0L, "0"));
         when(bankInfmRepo.findById("11704020"))
                 .thenReturn(Optional.of(bankInfm("11704020", "VietinBank")));
@@ -140,9 +141,9 @@ class CardTransactionsServiceTest {
     @Test
     void list_emptyTenantPopulatesZeroedTotals() {
         Page<CardTrnsHstr> empty = new PageImpl<>(List.of(), PageRequest.of(0, 15), 0L);
-        when(cardTrnsRepo.findLedgerPage(any(), any(), any(), any(), any(), any(Pageable.class)))
+        when(cardTrnsRepo.findLedgerPage(any(), any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), any(), any(Pageable.class)))
                 .thenReturn(empty);
-        when(cardTrnsRepo.findLedgerTotals(any(), any(), any(), any(), any()))
+        when(cardTrnsRepo.findLedgerTotals(any(), any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), any()))
                 .thenReturn(totals(0L, "0", 0L, "0", 0L, "0"));
 
         CardTransactionListResponse res = service.list(
@@ -151,6 +152,98 @@ class CardTransactionsServiceTest {
         assertThat(res.rows()).isEmpty();
         assertThat(res.totals().totalCount()).isZero();
         assertThat(res.totals().totlAmt()).isEqualByComparingTo(BigDecimal.ZERO);
+    }
+
+    /* =================================================================
+     *  D2 — bank_cd / card_no multi-select filters (audit D2)
+     *  Legacy card_0001_001_r001_act.jsp:72-102 applies
+     *  CTH.bank_cd IN (...) and CTH.card_no IN (...) to the grid AND
+     *  the count. The refactor previously accepted both on the wire but
+     *  dropped them. These tests pin the filters through to BOTH the
+     *  page query and the totals query so grid + dashboard stay in sync.
+     * ================================================================= */
+
+    @Test
+    void list_bankAndCardFilters_passedToPageAndTotals() {
+        Page<CardTrnsHstr> empty = new PageImpl<>(List.of(), PageRequest.of(0, 15), 0L);
+        when(cardTrnsRepo.findLedgerPage(any(), any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), any(), any(Pageable.class)))
+                .thenReturn(empty);
+        when(cardTrnsRepo.findLedgerTotals(any(), any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), any()))
+                .thenReturn(totals(0L, "0", 0L, "0", 0L, "0"));
+
+        service.list("20250101", "20251231", null,
+                List.of("11704020", "11704088"), List.of("407465******5559"),
+                null, null, null, 0, 15);
+
+        // Page query: filterBank=true with the two bank codes, filterCard=true with the one card.
+        ArgumentCaptor<Boolean> fb = ArgumentCaptor.forClass(Boolean.class);
+        ArgumentCaptor<List<String>> banks = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<Boolean> fc = ArgumentCaptor.forClass(Boolean.class);
+        ArgumentCaptor<List<String>> cards = ArgumentCaptor.forClass(List.class);
+        verify(cardTrnsRepo).findLedgerPage(eq(TENANT), eq("20250101"), eq("20251231"),
+                fb.capture(), banks.capture(), fc.capture(), cards.capture(),
+                eq(null), eq(null), any(Pageable.class));
+        assertThat(fb.getValue()).isTrue();
+        assertThat(banks.getValue()).containsExactly("11704020", "11704088");
+        assertThat(fc.getValue()).isTrue();
+        assertThat(cards.getValue()).containsExactly("407465******5559");
+
+        // Totals query must carry the SAME flags + lists so the dashboard
+        // tiles reflect the same filtered set as the grid.
+        verify(cardTrnsRepo).findLedgerTotals(eq(TENANT), eq("20250101"), eq("20251231"),
+                eq(true), eq(List.of("11704020", "11704088")),
+                eq(true), eq(List.of("407465******5559")),
+                eq(null), eq(null));
+    }
+
+    @Test
+    void list_noBankOrCardFilter_passesFalseFlagsAndNonEmptySentinel() {
+        Page<CardTrnsHstr> empty = new PageImpl<>(List.of(), PageRequest.of(0, 15), 0L);
+        when(cardTrnsRepo.findLedgerPage(any(), any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), any(), any(Pageable.class)))
+                .thenReturn(empty);
+        when(cardTrnsRepo.findLedgerTotals(any(), any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), any()))
+                .thenReturn(totals(0L, "0", 0L, "0", 0L, "0"));
+
+        service.list("20250101", "20251231", null, null, null, null, null, null, 0, 15);
+
+        ArgumentCaptor<Boolean> fb = ArgumentCaptor.forClass(Boolean.class);
+        ArgumentCaptor<List<String>> banks = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<Boolean> fc = ArgumentCaptor.forClass(Boolean.class);
+        ArgumentCaptor<List<String>> cards = ArgumentCaptor.forClass(List.class);
+        verify(cardTrnsRepo).findLedgerPage(eq(TENANT), any(), any(),
+                fb.capture(), banks.capture(), fc.capture(), cards.capture(),
+                any(), any(), any(Pageable.class));
+        // Flags off, but the bound IN lists must stay NON-EMPTY so the
+        // generated SQL `IN (?)` is valid (empty IN () is a SQL error).
+        assertThat(fb.getValue()).isFalse();
+        assertThat(fc.getValue()).isFalse();
+        assertThat(banks.getValue()).isNotEmpty();
+        assertThat(cards.getValue()).isNotEmpty();
+    }
+
+    /* =================================================================
+     *  D1 — Linked / Unlinked filter forwards linkYn to page + totals
+     *  (audit D1). The link semantics themselves (EXISTS over
+     *  BUSA_DOC_RCV_PAY_HIS with RCV_PAY_WAY_CD='R') live in the
+     *  repository @Query; here we pin that the normalised linkYn reaches
+     *  BOTH queries so the grid and dashboard agree.
+     * ================================================================= */
+
+    @Test
+    void list_linkYn_forwardedToPageAndTotals() {
+        Page<CardTrnsHstr> empty = new PageImpl<>(List.of(), PageRequest.of(0, 15), 0L);
+        when(cardTrnsRepo.findLedgerPage(any(), any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), any(), any(Pageable.class)))
+                .thenReturn(empty);
+        when(cardTrnsRepo.findLedgerTotals(any(), any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), any()))
+                .thenReturn(totals(0L, "0", 0L, "0", 0L, "0"));
+
+        service.list("20250101", "20251231", null, null, null, "y", null, null, 0, 15);
+
+        // "y" normalises to "Y"; both queries receive it.
+        verify(cardTrnsRepo).findLedgerPage(eq(TENANT), any(), any(),
+                anyBoolean(), any(), anyBoolean(), any(), eq(null), eq("Y"), any(Pageable.class));
+        verify(cardTrnsRepo).findLedgerTotals(eq(TENANT), any(), any(),
+                anyBoolean(), any(), anyBoolean(), any(), eq(null), eq("Y"));
     }
 
     @Test

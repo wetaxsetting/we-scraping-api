@@ -236,7 +236,7 @@ public class OverseasPaymentService {
             String fromDt,
             String toDt,
             String keyword,
-            String trnfYn,
+            String procStat,
             int page,
             int size,
             String sortField,
@@ -250,25 +250,51 @@ public class OverseasPaymentService {
         int    pageIndex  = Math.max(0, page);
         int    offset     = pageIndex * pageSize;
         String likePat    = buildLikePattern(keyword);
-        String trnfFilter = (trnfYn != null && !trnfYn.isBlank()) ? trnfYn : null;
-        String orderBy    = buildOrderBy(OverseasResultSortField.parse(sortField), sortDirection, "ops.reg_dtm DESC");
+        // F2 — map the legacy PROC_STAT CSV (checkbox values "0,3" / "6") to the
+        // computed TRNF_STTS letters {C,F,P} the query filters on.
+        List<String> statusLetters = mapProcStatToStatusLetters(procStat);
+        String orderBy    = buildOrderBy(OverseasResultSortField.parse(sortField), sortDirection, "reg_dtm DESC");
 
-        long totalCount = paymentRepo.countResult(bizKey, fromDt, toDt, likePat, trnfFilter);
+        long totalCount = paymentRepo.countResult(bizKey, fromDt, toDt, likePat, statusLetters);
 
         java.util.List<Object[]> rawRows = totalCount == 0
                 ? java.util.List.of()
-                : paymentRepo.findResult(bizKey, fromDt, toDt, likePat, trnfFilter, offset, pageSize, orderBy);
+                : paymentRepo.findResult(bizKey, fromDt, toDt, likePat, statusLetters, offset, pageSize, orderBy);
 
         java.util.List<OverseasResultRow> rows = rawRows.stream()
                 .map(this::mapResultRow)
                 .collect(java.util.stream.Collectors.toList());
 
-        java.util.List<Object[]> rawTotals = paymentRepo.sumResultByCurrency(bizKey, fromDt, toDt, likePat, trnfFilter);
+        // Footer totals — legacy parity: NO status filter (mirrors R005_CNT which
+        // is fed date+keyword only). See OverseasPaymentRepository.sumResultByCurrency.
+        java.util.List<Object[]> rawTotals = paymentRepo.sumResultByCurrency(bizKey, fromDt, toDt, likePat);
         java.util.List<OverseasCurrencyTotal> totals = rawTotals.stream()
                 .map(this::mapTotal)
                 .collect(java.util.stream.Collectors.toList());
 
         return new OverseasResultListResponse(totalCount, pageIndex, pageSize, rows, totals);
+    }
+
+    /**
+     * Maps the legacy {@code PROC_STAT} CSV the Completed / In-Progress checkboxes
+     * send (Completed = {@code "0,3"}, In Progress = {@code "6"}) to the computed
+     * {@code TRNF_STTS} letters the result query filters on. Mirrors legacy
+     * {@code pymn_0008_001_r001_act.jsp} {@code getDynamicStatusFilter}:
+     * {@code 0→C}, {@code 3→F}, {@code 6→P}, {@code 9→P}. Returns {@code null}
+     * (no filter, "all") when blank or no recognised value.
+     */
+    private static List<String> mapProcStatToStatusLetters(String procStat) {
+        if (procStat == null || procStat.isBlank()) return null;
+        java.util.LinkedHashSet<String> letters = new java.util.LinkedHashSet<>();
+        for (String p : procStat.split(",")) {
+            switch (p.trim()) {
+                case "0" -> letters.add("C");
+                case "3" -> letters.add("F");
+                case "6", "9" -> letters.add("P");
+                default -> { /* ignore unrecognised values */ }
+            }
+        }
+        return letters.isEmpty() ? null : new java.util.ArrayList<>(letters);
     }
 
     public OverseasResultRow getResultById(String ovrsPymnNo) {
@@ -286,36 +312,74 @@ public class OverseasPaymentService {
      *
      * <p>Mirrors legacy {@code pymn_0007_001} Excel export path.
      */
-    public void exportResult(String fromDt, String toDt, String keyword, String trnfYn,
+    public void exportResult(String fromDt, String toDt, String keyword, String procStat,
                              HttpServletResponse response) throws IOException {
         if (fromDt == null || fromDt.isBlank()) throw new BusinessException("WBE_VALIDATION", "FROM_DT is required");
         if (toDt   == null || toDt.isBlank())   throw new BusinessException("WBE_VALIDATION", "TO_DT is required");
 
         String bizKey    = TenantContext.currentBizKey();
-        String trnfFilter = (trnfYn != null && !trnfYn.isBlank()) ? trnfYn : null;
+        // F2 — same computed-status filter as the list (what you see is what exports).
+        List<String> statusLetters = mapProcStatToStatusLetters(procStat);
         String likePat    = buildLikePattern(keyword);
 
-        List<Object[]> batches = paymentRepo.findResultForExport(bizKey, fromDt, toDt, likePat, trnfFilter);
+        List<Object[]> batches = paymentRepo.findResultForExport(bizKey, fromDt, toDt, likePat, statusLetters);
 
         Map<String, BigDecimal> currencyTotals = new LinkedHashMap<>();
         List<OverseasPaymentResultExcelWriter.ExportRow> exportRows = new ArrayList<>();
 
+        // Index layout matches OverseasPaymentRepository.buildResultSql (reused by
+        // findResultForExport). b[5]=reg_dtm (=TRNF_DT, F1); b[2]=file_nm (=TITL, F4).
         for (Object[] b : batches) {
             String ovrsPymnNo  = toStr(b[0]);
-            String batchRegDtm = toStr(b[5]);
+            String batchRegDtm = toStr(b[5]);   // TRNF_DT → Transfer Date Time
             String draftUserNm = toStr(b[6]);
             String regId       = toStr(b[7]);
             String outBankNm   = toStr(b[8]);
-            String wdrlActNo   = toStr(b[9]);
-            String trnfYnVal   = toStr(b[10]);
-            String docNo       = toStr(b[11]);
-            String apprTitl    = toStr(b[12]);
-            String apprRegDtm  = toStr(b[13]);
-            String apprTypeCd  = toStr(b[14]);
-            String payDate     = toStr(b[15]);
-            String orgFileNm   = toStr(b[2]);
+            String wdrlActNo   = toStr(b[10]);
+            String trnfYnVal   = toStr(b[11]);
+            String docNo       = toStr(b[12]);
+            String apprTitl    = toStr(b[13]);
+            String apprRegDtm  = toStr(b[22]);  // EXPT_RESOL_MSTR.REG_DTM → Request Date/Time
+            String apprTypeCd  = toStr(b[15]);
+            String payDate     = toStr(b[14]);
+            String orgFileNm   = toStr(b[2]);   // OVRS_PYMN_SUMR.TITL (legacy R005 FILE_NM)
             String requestor   = draftUserNm != null && !draftUserNm.isBlank()
                     ? draftUserNm : OverseasPaymentResultExcelWriter.safe(regId);
+
+            // F3 — M-mode batch: one export line from OVRS_PYMN_MSTR itself
+            // (no OVRS_PYMN_SUMR_DETL child). Mirrors legacy R010 M branch.
+            if ("M".equals(toStr(b[23]))) {
+                for (Object[] m : paymentRepo.findMmodeDetailRows(bizKey, ovrsPymnNo)) {
+                    String rowCcy = toStr(m[2]) != null ? toStr(m[2]) : toStr(b[1]);
+                    BigDecimal amt = toBigDecimal(m[3]);
+                    currencyTotals.merge(rowCcy, amt, BigDecimal::add);
+                    exportRows.add(new OverseasPaymentResultExcelWriter.ExportRow(
+                            OverseasPaymentResultExcelWriter.formatDtm(batchRegDtm),
+                            ovrsPymnNo,
+                            OverseasPaymentResultExcelWriter.mapStatus(trnfYnVal),
+                            OverseasPaymentResultExcelWriter.formatDtm(apprRegDtm),
+                            OverseasPaymentResultExcelWriter.stripExtension(orgFileNm),
+                            OverseasPaymentResultExcelWriter.safe(outBankNm),
+                            OverseasPaymentResultExcelWriter.safe(wdrlActNo),
+                            OverseasPaymentResultExcelWriter.safe(toStr(m[7])),   // bnfcNm
+                            OverseasPaymentResultExcelWriter.safe(toStr(m[8])),   // bnfcBankNm
+                            OverseasPaymentResultExcelWriter.safe(toStr(m[9])),   // bic
+                            OverseasPaymentResultExcelWriter.safe(toStr(m[10])),  // bnfcAcctNo
+                            OverseasPaymentResultExcelWriter.safe(toStr(m[11])),  // bnfcAddr
+                            rowCcy,
+                            amt,
+                            OverseasPaymentResultExcelWriter.mapFeePayer(toStr(m[4])),
+                            OverseasPaymentResultExcelWriter.safe(toStr(m[6])),   // rprtAcct (chart_acct_cd)
+                            OverseasPaymentResultExcelWriter.safe(toStr(m[5])),   // memo
+                            requestor,
+                            OverseasPaymentResultExcelWriter.formatDate(payDate),
+                            OverseasPaymentResultExcelWriter.mapApprovalStatus(apprTypeCd),
+                            OverseasPaymentResultExcelWriter.safe(docNo),
+                            OverseasPaymentResultExcelWriter.safe(apprTitl)
+                    ));
+                }
+                continue;
+            }
 
             List<OvrsPymnSumrDetl> dtls =
                     dtlsRepository.findByBizKeyAndOvrsPymnNoOrderByOvrsPymnDetlNoAsc(bizKey, ovrsPymnNo);
@@ -504,17 +568,19 @@ public class OverseasPaymentService {
     }
 
     /**
-     * GAP-OVS-MODE: graceful fallback for a legacy "M-mode" overseas
-     * approval — a record that lives in {@code OVRS_PYMN_MSTR} but has no
-     * {@code OVRS_PYMN_SUMR} row. The previous code threw {@code WBE2045}
-     * here, which crashed the Approval Details popup for these (historical,
-     * pre-cutover) records even though they are still listed in the approval
-     * box. We now return a header-only response: real header fields (title /
-     * status / doc-no / withdrawal account / summed amount) + approval
-     * attachments, an empty {@code rows} list, and {@code legacyMmode=true}
-     * with a notice. Full per-line M-mode detail (reading the individual
-     * {@code OVRS_PYMN_MSTR} beneficiary rows onto the line table) is a
-     * follow-up — see the remediation plan §3.7 Option A.
+     * F3 (2026-06-19): full M-mode (OVRS_PYMN_MSTR) Result detail — a record
+     * that lives in {@code OVRS_PYMN_MSTR} (type 'M', individual/manual) and has
+     * no {@code OVRS_PYMN_SUMR} row. Mirrors legacy R006 (header) + R007 (the
+     * single remittance line). An M-mode payment is one remittance, so the line
+     * table renders exactly one row sourced from the {@code OVRS_PYMN_MSTR} record
+     * itself (no {@code OVRS_PYMN_SUMR_DETL} child); {@code OVRS_PYMN_DETL_NO} is
+     * null (R010 parity). The per-line {@code PROC_STAT}/{@code RS_CD} come from
+     * {@code TB_PAY_FILE_MST}/{@code _DATA}, so the FE derives the result status
+     * the same way it does for E-mode lines. {@code legacyMmode} is now
+     * {@code false} — M-mode is fully supported.
+     *
+     * <p>Header withdrawal bank/account = the debit-account fields
+     * ({@code DBT_ACCT_CD}/{@code DBT_ACCT_NO}/{@code DBT_CCY_CD}) per R006 M branch.
      *
      * <p>Throws {@code WBE2045} only when the id resolves to nothing in
      * {@code OVRS_PYMN_MSTR} either (genuinely not found / wrong tenant).
@@ -522,34 +588,21 @@ public class OverseasPaymentService {
     private OverseasPaymentDetailResponse resolveLegacyMmodeOrThrow(
             String bizKey, String id, String docFallbackApprSeqNo) {
 
-        List<OvrsPymnMstr> mmode;
+        // Resolve the single target M record. When id was a DOC_NO the fallback
+        // already gave us its APPR_SEQ_NO (take the first remittance under it);
+        // otherwise id is an OVRS_PYMN_NO that lives only in OVRS_PYMN_MSTR.
+        OvrsPymnMstr target;
         String apprSeqNo = docFallbackApprSeqNo;
         if (apprSeqNo != null) {
-            // DOC_NO fallback already resolved an APPR_SEQ_NO — gather all
-            // its M-mode remittance rows.
-            mmode = ovrsPymnMstrRepository.findByBizKeyAndApprSeqNo(bizKey, apprSeqNo);
+            target = ovrsPymnMstrRepository.findByBizKeyAndApprSeqNo(bizKey, apprSeqNo)
+                    .stream().findFirst().orElse(null);
         } else {
-            // id might be an OVRS_PYMN_NO that exists only in the M-mode master.
-            mmode = ovrsPymnMstrRepository.findByBizKeyAndOvrsPymnNo(bizKey, id)
-                    .map(List::of)
-                    .orElseGet(List::of);
-            if (!mmode.isEmpty()) {
-                String resolved = mmode.get(0).getApprSeqNo();
-                if (resolved != null && !resolved.isBlank()) {
-                    apprSeqNo = resolved;
-                    // Re-gather sibling remittances sharing the same approval.
-                    mmode = ovrsPymnMstrRepository.findByBizKeyAndApprSeqNo(bizKey, apprSeqNo);
-                }
-            }
+            target = ovrsPymnMstrRepository.findByBizKeyAndOvrsPymnNo(bizKey, id).orElse(null);
+            if (target != null) apprSeqNo = target.getApprSeqNo();
         }
 
-        if (mmode.isEmpty()) {
+        if (target == null) {
             throw new BusinessException("WBE2045", "overseas payment not found: " + id);
-        }
-
-        OvrsPymnMstr first = mmode.get(0);
-        if (apprSeqNo == null || apprSeqNo.isBlank()) {
-            apprSeqNo = first.getApprSeqNo();
         }
 
         ExptResolMstr mstr = (apprSeqNo != null && !apprSeqNo.isBlank())
@@ -561,45 +614,78 @@ public class OverseasPaymentService {
         String apprStts = mstr != null ? mapApprTypeCd(mstr.getApprTypeCd()) : "P";
         String titl     = mstr != null ? mstr.getTitl() : null;
 
-        // Sum the per-remittance amounts for a meaningful header total.
-        BigDecimal total = mmode.stream()
-                .map(OvrsPymnMstr::getTrnfAmt)
-                .filter(java.util.Objects::nonNull)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        // F3 — the M remittance line(s) for this OVRS_PYMN_NO (R007 M branch),
+        // carrying PROC_STAT / RS_CD from TB_PAY_FILE so the FE derives status.
+        List<OverseasPaymentDetailRowResponse> rows =
+                paymentRepo.findMmodeDetailRows(bizKey, target.getOvrsPymnNo())
+                        .stream()
+                        .map(this::mapMmodeDetailRow)
+                        .collect(Collectors.toList());
 
         List<ApprovalAttachmentRow> attachments =
                 approvalAttachmentLoader.load(bizKey, apprSeqNo);
 
-        log.warn("feature=overseas-payment approval-details legacy M-mode (OVRS_PYMN_MSTR) "
-                + "bizKey={} apprSeqNo={} ovrsPymnNo={} remittanceRows={} — "
-                + "detail lines not fully supported yet (GAP-OVS-MODE)",
-                bizKey, apprSeqNo, first.getOvrsPymnNo(), mmode.size());
+        // R006 M: header total = OPM.TOTAL_TRAN_AMT (fall back to the single
+        // remittance amount when the summary column is null).
+        BigDecimal total = target.getTotalTranAmt() != null ? target.getTotalTranAmt()
+                : (target.getTrnfAmt() != null ? target.getTrnfAmt() : BigDecimal.ZERO);
+
+        log.debug("feature=overseas-payment result-detail M-mode (OVRS_PYMN_MSTR) "
+                + "bizKey={} apprSeqNo={} ovrsPymnNo={} lines={}",
+                bizKey, apprSeqNo, target.getOvrsPymnNo(), rows.size());
 
         return new OverseasPaymentDetailResponse(
-                first.getOvrsPymnNo(),
+                target.getOvrsPymnNo(),
                 titl,
                 apprStts,
                 total,
-                first.getTrnfCcyCd(),
-                mmode.size(),
-                mstr != null ? mstr.getRegId() : first.getRegId(),
-                mstr != null ? mstr.getRegDtm() : first.getRegDtm(),
-                first.getModDtm(),
-                // M-mode has no OUT_BANK_CD — surface the debit (withdrawal)
-                // account fields instead so the header isn't blank.
-                first.getDbtAcctCd(),
-                first.getDbtAcctNo(),
-                first.getDbtCcyCd(),
+                target.getTrnfCcyCd(),
+                target.getTotTrnsCnt() != null ? target.getTotTrnsCnt() : rows.size(),
+                mstr != null ? mstr.getRegId() : target.getRegId(),
+                mstr != null ? mstr.getRegDtm() : target.getRegDtm(),
+                target.getModDtm(),
+                // M-mode withdrawal = debit-account fields (R006 M branch).
+                target.getDbtAcctCd(),
+                target.getDbtAcctNo(),
+                target.getDbtCcyCd(),
                 docNo,
                 apprSeqNo,
                 null,                       // fileNm
                 null,                       // fileSize
                 null,                       // orgFileNm
-                List.of(),                  // rows — legacy M-mode lines not supported yet
-                attachments,
-                true,                       // legacyMmode
-                "Legacy M-mode overseas approval (OVRS_PYMN_MSTR). "
-                        + "Detail lines are not fully supported yet.");
+                rows,
+                attachments);               // 19-arg ctor → legacyMmode=false, notice=null
+    }
+
+    /**
+     * Maps one {@link OverseasPaymentRepository#findMmodeDetailRows} row to the
+     * detail-row DTO. {@code ovrsPymnDetlNo} is null (M-mode, R010 parity);
+     * {@code procStatKey} is left null so the FE {@code deriveResultStatus}
+     * resolves the status from the raw {@code proc_stat}/{@code rs_cd} (same path
+     * as an E-mode line whose key isn't yet mapped).
+     */
+    private OverseasPaymentDetailRowResponse mapMmodeDetailRow(Object[] m) {
+        String memo = toStr(m[5]);
+        return new OverseasPaymentDetailRowResponse(
+                null,                                  // ovrsPymnDetlNo (M-mode)
+                toStr(m[1]),                           // bnfcCode = HAND_TRCO_KEY
+                toStr(m[2]),                           // ccyCd (TRNF_CCY_CD)
+                m[3] != null ? toBigDecimal(m[3]) : BigDecimal.ZERO, // trnfAmt
+                toStr(m[4]),                           // feePayerCd
+                memo != null ? memo : "",              // memo
+                toStr(m[6]),                           // rprtAcctCd (CHART_ACCT_CD)
+                toStr(m[7]),                           // bnfcNm
+                toStr(m[8]),                           // bnfcBankNm
+                toStr(m[9]),                           // bicCd (BNFC_BANK_BIC)
+                toStr(m[10]),                          // bnfcAcctNo
+                toStr(m[11]),                          // bnfcAddr
+                toStr(m[12]) != null ? toStr(m[12]) : "N", // trnfYn
+                toStr(m[13]),                          // procStat
+                null,                                  // procStatKey (FE derives from raw)
+                toStr(m[14]),                          // procDttm
+                toStr(m[14]),                          // rsltDttm = procDttm (R007 RSLT_DTTM)
+                toStr(m[15]),                          // rsCd
+                toStr(m[16]));                         // rsMsg
     }
 
     /**
@@ -1053,12 +1139,20 @@ public class OverseasPaymentService {
     }
 
     /**
-     * Saves the selected reporting account code on a single detail line.
+     * Saves the selected reporting account on a single detail line.
      * Mirrors the legacy inline account-picker save in the scheduled-payment
-     * detail dialog ({@code pymn_0007_001} detail row update).
+     * detail dialog ({@code pymn_0007_001_u001} → patches CHART_ACCT_SEQ_NO +
+     * CHART_ACCT_CD together).
+     *
+     * <p>Both {@code CHART_ACCT_SEQ_NO} and {@code CHART_ACCT_CD} are persisted
+     * as a pair: the seq_no is the {@code CHART_ACCT_INFM} PK identity and the
+     * legacy name-resolver functions key on it, so writing only the code would
+     * leave a stale seq_no and mis-render the account in legacy / shared-DB
+     * screens (migration-safety + coexistence parity).
      */
     @Transactional
-    public void saveReportingAccount(String ovrsPymnNo, String ovrsPymnDetlNo, String rprtAcctCd) {
+    public void saveReportingAccount(String ovrsPymnNo, String ovrsPymnDetlNo,
+                                     String rprtAcctCd, String rprtAcctSeqNo) {
         String bizKey = TenantContext.currentBizKey();
         // Resolve via doc_no fallback so URL like VO_260521_003 works
         String resolvedNo = resolveSumr(bizKey, ovrsPymnNo).getOvrsPymnNo();
@@ -1067,12 +1161,14 @@ public class OverseasPaymentService {
                 .orElseThrow(() -> new BusinessException("WBE2045",
                         "detail line not found: " + ovrsPymnNo + " / " + ovrsPymnDetlNo));
 
-        String code = (rprtAcctCd == null || rprtAcctCd.isBlank()) ? null : rprtAcctCd.trim();
+        String code  = (rprtAcctCd == null || rprtAcctCd.isBlank()) ? null : rprtAcctCd.trim();
+        String seqNo = (rprtAcctSeqNo == null || rprtAcctSeqNo.isBlank()) ? null : rprtAcctSeqNo.trim();
         dtl.setRprtAcctCd(code);
+        dtl.setChartAcctSeqNo(seqNo);
         dtlsRepository.save(dtl);
 
-        log.info("feature=overseas-payment reporting-account bizKey={} ovrsPymnNo={} ovrsPymnDetlNo={} rprtAcctCd={}",
-                bizKey, ovrsPymnNo, ovrsPymnDetlNo, code);
+        log.info("feature=overseas-payment reporting-account bizKey={} ovrsPymnNo={} ovrsPymnDetlNo={} rprtAcctCd={} rprtAcctSeqNo={}",
+                bizKey, ovrsPymnNo, ovrsPymnDetlNo, code, seqNo);
     }
 
     /**
@@ -1514,12 +1610,14 @@ public class OverseasPaymentService {
                 toStr(r[11]),        // trnfYn (CHAR(1) → Character)
                 toStr(r[12]),        // docNo
                 toStr(r[13]),        // titl (approval title)
-                0,                   // successCount — not yet tracked at batch level
-                0,                   // failedCount  — not yet tracked at batch level
+                toInt(r[18]),        // successCount — F2 (PROC_STAT='0' AND RS_CD='0000')
+                toInt(r[19]),        // failedCount  — F2 (PROC_STAT='3' or '0'+RS_CD<>'0000')
                 toStr(r[14]),        // payDate
                 toStr(r[15]),        // apprStts (appr_type_cd)
                 toStr(r[16]),        // apprvrNm (NULL — complex join deferred)
-                toStr(r[17])         // apprSeqNo (F4b — OVRS_PYMN_SUMR.APPR_SEQ_NO)
+                toStr(r[17]),        // apprSeqNo (F4b — OVRS_PYMN_SUMR.APPR_SEQ_NO)
+                toStr(r[21]),        // trnfStts (computed F/P/C — F2)
+                toInt(r[20])         // prsCnt — F2 (tot - error - success)
         );
     }
 
