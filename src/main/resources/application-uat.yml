@@ -15,6 +15,20 @@ spring:
     show-sql: false
     open-in-view: false
 
+# Error responses — mirror PROD (this file "Mirrors the PROD profile's hard rules").
+# These control Spring's fallback `/error` page only; the custom GlobalExceptionHandler
+# envelope (status.code / status.message / trace_id) is built independently and is NOT
+# suppressed by these flags — so UAT testers still get WBE codes + messages + trace ids
+# from the API. What these hide is the raw exception message / stacktrace / binding
+# errors on unhandled fall-through faults, which should not be exposed in a pre-prod
+# environment any more than in prod. (Added 2026-06-22 — was previously inheriting the
+# base `include-message: always`, the one place UAT was NOT mirroring prod.)
+server:
+  error:
+    include-message: never
+    include-stacktrace: never
+    include-binding-errors: never
+
 # Firm-banking payment dispatch (EFS / VAN gateway). Every environment-specific
 # value comes from an env var — NO secrets, URLs, IPs, or keys in this file. All
 # switches default OFF so the app boots inert until ops provisions the gateway.

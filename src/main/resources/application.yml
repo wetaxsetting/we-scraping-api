@@ -13,6 +13,19 @@ spring:
     # this via the SPRING_PROFILES_ACTIVE env var (set on the host), so
     # changing the default here only affects developer laptops.
     #
+    # ⚠ DEPLOYMENT RISK (fail-open to DEV): if a SIT/UAT/PROD host launches WITHOUT
+    # SPRING_PROFILES_ACTIVE (or --spring.profiles.active), this default makes the
+    # app silently activate `local` → application-local.yml → the shared DEV DB
+    # (172.168.5.172) with the insecure dev JWT secret and DEV Coocon credentials.
+    # KEPT here (removal would break out-of-the-box IDE runs), but the safer options
+    # are operational, in order of preference:
+    #   1) ALWAYS set SPRING_PROFILES_ACTIVE on every non-local host (deploy guard).
+    #   2) Devs select the `local` profile via IDE/Gradle run-config instead of relying
+    #      on this default (then this line can be removed for true fail-fast everywhere).
+    #   3) If removed: a no-profile boot has no datasource and fails fast — safe for
+    #      servers, but each developer must pass --spring.profiles.active=local.
+    # Do NOT change this line without sign-off — it is an ergonomics-vs-safety tradeoff.
+    #
     # Why `local` is the right default:
     #   - application-local.yml carries a 75-byte placeholder for
     #     wecms.jwt.secret so JwtTokenProvider can boot out of the box.
@@ -248,6 +261,17 @@ wecms:
     # Per-environment smart-gateway hosts (Sonny, 2026-05-28):
     #   DEV / SIT  → https://dev-sgw.webcashvietnam.com:8443/...
     #   UAT / PROD → https://sgw.webcashvietnam.com/...           (no port, no 'dev-' prefix)
+    #
+    # TODO (committed DEV credentials in a tracked file — relocate, pending approval):
+    # api-key / smart-api-key below are real Coocon DEV vendor keys baked as defaults
+    # in this COMMITTED base file. They are also redundant for the only profiles that
+    # use them: application-local.yml AND application-sit.yml each fully re-declare all
+    # five coocon keys, so they override these base defaults; -uat / -prod re-declare
+    # coocon WITHOUT a default (fail-fast). The base defaults therefore only apply to a
+    # no-profile / test boot. Preferred fix: drop the inline DEV key defaults here and
+    # keep them only in the .gitignored application-local.yml / -sit.yml (or source from
+    # env), leaving these as bare `${WECMS_COOCON_*}` placeholders. NOT removed now —
+    # removing could break a base-only/test boot, which needs sign-off first.
     api-key: ${WECMS_COOCON_API_KEY:r2L7U6KnB4T51VokPlkg}
     api-url: ${WECMS_COOCON_API_URL:https://dev2.coocon.co.kr:8443/overseas/finance/scrap/bigdata_info.jsp}
     smart-api-key: ${WECMS_COOCON_SMART_API_KEY:fxAeocJbuweNTgv5FBns}
@@ -263,9 +287,15 @@ wecms:
     # kr.co.coocon.sgw.RestClient → coocon.api_url. Wire shape pinned by
     # ApiIn.java / BI08In.java / BI08Out.java
     # ({ ApiKey, ApiId, UniqueKey, Input: { search } }).
-    # Local R&D / DEV defaults set in application-local.yml.
-    # PROD: supply via WECMS_OSMC_URL / WECMS_OSMC_API_KEY /
-    # WECMS_OSMC_API_ID / WECMS_OSMC_UNIQUE_KEY env vars.
+    # NOTE: application-local.yml / -sit.yml do NOT re-declare `osmc`, so local
+    # and SIT inherit the defaults below — and `url` defaults to the PROD host
+    # (sgw.webcashvietnam.com). OSMC/GDT is unreachable in local R&D anyway
+    # (Cambodia network/IP restriction), so this is latent rather than active.
+    # TODO: confirm the correct DEV/SIT OSMC host and set `wecms.osmc.url` in
+    # application-local.yml / -sit.yml instead of inheriting the PROD host here.
+    # PROD/UAT: `osmc` is re-declared there WITHOUT a default (fail-fast) — supply
+    # via WECMS_OSMC_URL / WECMS_OSMC_API_KEY / WECMS_OSMC_API_ID /
+    # WECMS_OSMC_UNIQUE_KEY env vars.
     url: ${WECMS_OSMC_URL:https://sgw.webcashvietnam.com/overseas/finance/scrap/bigdata_info.jsp}
     api-key: ${WECMS_OSMC_API_KEY:r2L7U6KnB4T51VokPlkg}
     api-id: ${WECMS_OSMC_API_ID:BI09}
@@ -280,8 +310,16 @@ wecms:
 logging:
   pattern:
     level: "%5p [traceId=%X{traceId:--}]"
+  # Base carries ONLY production-safe logging defaults. SQL-statement logging
+  # and JDBC bind-parameter logging are dev-only concerns and live in
+  # application-local.yml / application-sit.yml (both of which re-declare the
+  # full verbose set), NOT here.
+  #
+  # Why this matters: Spring resolves `logging.level.<logger>` per individual
+  # key, not as an atomic map. -uat / -prod override `org.hibernate.SQL` but do
+  # NOT re-declare `org.springframework.jdbc.core` / `org.hibernate.orm.jdbc.bind`,
+  # so any TRACE value left here would survive the profile merge into UAT/PROD —
+  # logging SQL bind values (PII: account numbers, credentials) in production and
+  # breaking the -uat/-prod "SQL logging OFF" hard rule. (Trimmed 2026-06-22.)
   level:
     org.hibernate: info
-    org.hibernate.SQL: debug
-    org.springframework.jdbc.core: trace
-    org.hibernate.orm.jdbc.bind: trace

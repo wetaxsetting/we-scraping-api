@@ -56,17 +56,43 @@ wecms:
   # =============================================================================
   # Security (CORS / JWT)
   # =============================================================================
+  jwt:
+    # Local-only placeholder. Must be >= 32 characters for HS256.
+    # NEVER use this value outside a developer laptop / SIT.
+    # Generate a real one with: openssl rand -hex 64
+    secret: ${WECMS_JWT_SECRET:local-rnd-dev-only-insecure-jwt-signing-secret-override-in-prod-abcdef123456}
   cors:
     # Allowed cross-origin frontends. Includes localhost:3000 (Next.js dev
     # server) plus the SIT frontend at https://wecms.kosign.dev. Add more
     # comma-separated origins (e.g. UAT) as they come online. Override via
     # env var WECMS_CORS_ALLOWED_ORIGINS without redeploying the WAR.
     allowed-origins: ${WECMS_CORS_ALLOWED_ORIGINS:http://localhost:3000,https://wecms.kosign.dev}
-  jwt:
-    # Local-only placeholder. Must be >= 32 characters for HS256.
-    # NEVER use this value outside a developer laptop / SIT.
-    # Generate a real one with: openssl rand -hex 64
-    secret: ${WECMS_JWT_SECRET:local-rnd-dev-only-insecure-jwt-signing-secret-override-in-prod-abcdef123456}
+  # =============================================================================
+  # Credential cipher (legacy pgcrypto-compatible)
+  # =============================================================================
+  crypto:
+    # AES-256-CBC (zero-IV, PKCS#5) seed for the BANK_CERT_INFO / GDT_CERT_INFO
+    # password column; SHA-256(seed) is the AES key — byte-identical to the legacy
+    # JEX public.encrypt()/decrypt() DB functions. This is a cross-system
+    # COMPATIBILITY CONSTANT, not an environment-specific value: it MUST be the
+    # same in every profile and equal to the legacy seed, or cert credentials
+    # written by one system cannot be read by the other. Same value as the base
+    # application.yml — declared here only so local and sit stay self-consistent.
+    legacy-cert-seed: ${WECMS_CRYPTO_LEGACY_CERT_SEED:wabooksvn}
+  # =============================================================================
+  # Login Credentials
+  # =============================================================================
+  login-credentials:
+    # GDT (tax-portal) verify-before-save. FALSE on SIT — and NOT flipped to true
+    # like exchange-rate.batch above. The blocker here is NOT DB isolation (so the
+    # isolated refactor DB does not unblock it): the GDT portal requires an
+    # interactive captcha and the challenge-chain (frontend dialog + resume
+    # endpoints) has not landed, so enabling it would make any GDT credential save
+    # that hits a captcha FAIL — worse than legacy. Flip via
+    # WECMS_LOGIN_CREDENTIALS_GDT_VERIFY_ENABLED=true only once the challenge-chain
+    # ships AND SIT has a reachable GDT gateway.
+    # See docs/audits/login-credentials-legacy-vs-refactor-audit.md (G2).
+    gdt-verify-enabled: ${WECMS_LOGIN_CREDENTIALS_GDT_VERIFY_ENABLED:false}
   # =============================================================================
   # EFS / Van Center
   # =============================================================================
@@ -154,6 +180,19 @@ wecms:
   # root for files written before the multi-tenant split.
   # Most roots default to "C:/WECMS PROJECT/File Data"; internal-transfer and
   # overseas-payment still default to different roots (flagged inline below).
+  #
+  # TODO (storage-root normalization — UNRESOLVED, do NOT guess): the SIT roots
+  # are inconsistent — internal-transfer / overseas-payment / vendor-payment /
+  # expense-payment / payroll default to "c:/WeCMS/File Data" while contacts /
+  # preferences / user-image / erp-transaction-history default to
+  # "C:/WECMS PROJECT/File Data". The canonical SIT path cannot be confirmed from
+  # config alone: the real SIT host runs on Linux and sets every WECMS_*_STORAGE_ROOT
+  # via externalized env config (setenv.sh under /DATA/src-wecms/...), so these
+  # Windows defaults are fallback-only and likely never used on the SIT box.
+  # ACTION: confirm the real SIT storage root with ops, then either (a) point every
+  # WECMS_*_STORAGE_ROOT env var at it on the host (preferred — config stays env-driven),
+  # or (b) collapse all nine defaults below to that single confirmed path. Until
+  # confirmed, leave the defaults untouched.
   overseas-payment:
     # storage-root — NON-STANDARD: defaults to "c:/WeCMS/File Data" (aligned
     # 2026-06-12 with internal-transfer / vendor-payment / expense-payment /
@@ -208,6 +247,19 @@ wecms:
         napas: { start: "00:15", end: "23:55" }
         citad: { start: "08:30", end: "17:40" }
         swift: { start: "08:30", end: "19:10" }
+
+  # =============================================================================
+  # Exchange-rate collection batch (Shinhan + Woori FX scraping)
+  # =============================================================================
+  # ON by default on SIT. SIT runs against its OWN isolated refactor DB instance
+  # (separate from the legacy JEX database — same schema/DDL/tables/functions, but
+  # a distinct instance), so the refactor FX batch writing BANK_EXCH_RATE_INFM
+  # cannot double-write or race the legacy JEX batch. SIT therefore genuinely owns
+  # FX collection and exercises the real batch. Set
+  # WECMS_EXCHANGE_RATE_BATCH_ENABLED=false to disable for a one-off run.
+  exchange-rate:
+    batch:
+      enabled: ${WECMS_EXCHANGE_RATE_BATCH_ENABLED:true}
 
   # =============================================================================
   # Coocon
