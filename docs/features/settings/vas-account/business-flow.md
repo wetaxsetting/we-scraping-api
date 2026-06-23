@@ -92,9 +92,10 @@ soft-deleted `VAS_ACCT_SEQ_NO` are untouched (no cascade).
 
 ## 6. Sequence generation + concurrency
 
-`VasAcctSeqNoGenerator.next(bizKey)` = `repository.findMaxSeqNoByBizKey(bizKey)` → `null ? 1 : max+1`.
-This is the Java reimplementation of the legacy `SeqHelper.getNextVal('BUSI_VAS_ACCT_INFM',
-'vas_acct_seq_no', BIZ_KEY)` shared IDO branch (per-`BIZ_KEY` MAX+1).
+`VasAcctSeqNoGenerator.next(bizKey)` routes through `LegacyFunctionRepository.nextVasAcctSeqNo(bizKey)`
+— the single `wb_get_next_val` funnel (V140 branch #25, per-`BIZ_KEY` MAX+1 copied verbatim from the
+live JEX function). This keeps allocation identical to, and non-colliding with, the legacy
+`SeqHelper.getNextVal('BUSI_VAS_ACCT_INFM', 'vas_acct_seq_no', BIZ_KEY)` shared IDO branch.
 
 **Concurrency:** the read + INSERT run inside the caller's `@Transactional`. Under READ COMMITTED two
 parallel inserts can compute the same MAX+1 and collide on the composite PK → Hibernate raises

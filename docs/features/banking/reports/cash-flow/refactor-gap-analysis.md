@@ -15,7 +15,7 @@ Severity: **Critical** (wrong numbers / broken) · **Major** (user-visible behav
 
 | Area | Legacy | Refactor | Status |
 |---|---|---|---|
-| **Search** | `_r001` → `get_cashflow_report` | `GET /cash-flow-report` → Java `CashFlowReportService` | **MATCH** |
+| **Search** | `_r001` → `get_cashflow_report` | `GET /cash-flow-report` → `CashFlowReportService` → `CashFlowReportRepository` → `get_cashflow_report` (direct call, 2026-06-13) | **MATCH** |
 | **Year filtering** | `payment_year = p_year` in `filtered_payment_data` | `SUBSTRING(date,1,4)=:year` per source query | **MATCH** |
 | **Quarter filtering** | server filter exists but **dormant** (UI sends null); columns hidden client-side | server filter **removed**; full Jan–Dec always; columns hidden client-side | **MATCH** (legacy live behaviour; PO 2026-06-04 — G5/D-1 resolved) |
 | **Currency handling** | per-currency `ROUND` CASE (VND 2dp, USD 4dp, KRW 2dp) | `FxConverter` single-round HALF_UP, same scales | **MATCH** (N0-B; `FxConverterTest`) |
@@ -37,8 +37,11 @@ Severity: **Critical** (wrong numbers / broken) · **Major** (user-visible behav
 > permissions are all **MATCH**. The 2026-06-04 parity audit concluded **READY FOR SIT/UAT**.
 >
 > **Supporting evidence:** `CashFlowReportQuarterParityTest`, `BalanceCalculatorTest`, `FxConverterTest`
-> all pass; approval-gate equivalence proven (N0-A); FX single-round HALF_UP proven (N0-B);
-> `get_cashflow_report` confirmed **not called** anywhere (Java reimplementation is live). The three
+> all pass; approval-gate equivalence proven (N0-A); FX single-round HALF_UP proven (N0-B). **Superseded
+> 2026-06-13:** the earlier statement that `get_cashflow_report` was "not called" reflected the (now
+> retired) live state — the live path now **calls `get_cashflow_report` directly** via
+> `CashFlowReportRepository` (`CashFlowReportRepository.java:67`); the Java reimplementation is retained
+> but off the active path. The three
 > **PARTIAL** rows (Excel number format, FX-rate selection, Haengsung hide-closed) are **non-blocking PO
 > calls** — presentation-only or a deferred product-gate — not parity defects in the report math.
 
@@ -48,7 +51,7 @@ Severity: **Critical** (wrong numbers / broken) · **Major** (user-visible behav
 
 | # | Gap | Area | Severity | Status / recommendation |
 |---|---|---|---|---|
-| G1 | Calc reimplemented in Java, not delegating to the function | Service | Critical → **Major** | parity holds; keep the parity suite. Sub-risks G1-approval + G1-FX **resolved** (N0-A/N0-B). |
+| G1 | ~~Calc reimplemented in Java, not delegating to the function~~ | Service | Critical → **Major → RESOLVED 2026-06-13** | **Superseded:** the live path now calls `get_cashflow_report` directly via `CashFlowReportRepository`; the Java reimplementation is retained but off the active path. Parity suite + sub-risks G1-approval/G1-FX (N0-A/N0-B) remain as the historical record of the (off-path) Java pipeline. |
 | G2 | INVESTMENT-subset codes hardcoded; absent in DEV | Balance | Major → **Minor + NV** | refactor uses the **identical** set; confirm codes exist on UAT/PROD |
 | G3 | Conditional FX-rate requirement (D2) vs legacy always-required | Validation | Minor (intentional) | documented divergence; FE matches |
 | G4 | Auth tightened (`_r001 login=N` → JWT) | Security | Minor (improvement) | confirm no anonymous/batch consumer broke |

@@ -27,7 +27,7 @@ Detailed DB reference (preserved): [../../../references/database/chart-of-accoun
 | `MOD_ID` | VARCHAR(100) | NO | | Last-modify user |
 | `MOD_DTM` | VARCHAR(14) | NO | | Last-modify stamp |
 
-**Primary key:** `(BIZ_KEY, CHART_ACCT_SEQ_NO)` — `@IdClass(ChartOfAccountId.class)`.
+**Primary key:** `(BIZ_KEY, CHART_ACCT_SEQ_NO)` — `@IdClass(ChartAcctInfmId.class)`.
 **Unique key:** `uk_chart_acct_cd (BIZ_KEY, CHART_ACCT_CD, DEL_YN)` — the 3-column UK is what enables revive-on-create and archive-rename-on-delete (one active + one soft-deleted row may share a code).
 **Helper indexes (beyond DEV):** `ix_chart_acct_infm_biz_parent` (partial `WHERE del_yn='N'`) powers child re-parent + has-children; `ix_chart_acct_infm_biz_moddtm` supports the optional MOD_DTM sort.
 **No CHECK / FK** on DEV → none locally (parity).
@@ -36,7 +36,7 @@ Detailed DB reference (preserved): [../../../references/database/chart-of-accoun
 
 ## 2. Column mapping — Legacy → Entity → DTO → UI
 
-| Concept | Legacy column | Refactor entity field (`ChartOfAccount`) | Wire / DTO (`ChartOfAccountRow`) | Frontend (`ChartOfAccountsRow`) | UI label |
+| Concept | Legacy column | Refactor entity field (`ChartAcctInfm`) | Wire / DTO (`ChartOfAccountRow`) | Frontend (`ChartOfAccountsRow`) | UI label |
 |---|---|---|---|---|---|
 | Account Code | `CHART_ACCT_CD` | `chartAcctCd: String` | `chart_acct_cd` | `accountCode` | Account Code |
 | Account Name (EN) | `CHART_ACCT_NM_EN` | `chartAcctNmEn: String` | `chart_acct_nm_en` | `accountTypeEn` | Account Type (English) |

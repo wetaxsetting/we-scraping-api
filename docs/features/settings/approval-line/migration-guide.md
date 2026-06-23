@@ -39,8 +39,8 @@ add-flow deep dive: [references/migration/jex-analysis/approval-line-add-flow-an
 - `<mntLogYn>Y` is a framework maintenance-log flag, **not** an app `AUDIT_LOGS_INFM` write — the refactor writes no audit rows (parity; the JSPs don't either).
 
 ### Entity / DAO → JPA
-- `ApprLineInfm` / `ApprLineInfmDetl` (JEX) → `ApprovalLine` / `ApprovalLineApprover` (slug-named JPA entities, legacy column names preserved in `@Column`).
-- `SeqHelper.getNextVal(util, idoCon, ApprLineInfm.class, "appr_line_no")` → `LegacyFunctionRepository.nextApprLineNo(bizKey)` → `wb_get_next_val('appr_line_infm','appr_line_no', biz_key)` (V91 branch, copied verbatim from DEV).
+- `ApprLineInfm` / `ApprLineInfmDetl` (JEX) → `ApprovalLine` (slug-named master) / `ApprLineInfmDetl` (detail keeps the legacy name) — JPA entities with legacy column names preserved in `@Column`.
+- `SeqHelper.getNextVal(util, idoCon, ApprLineInfm.class, "appr_line_no")` → `LegacyFunctionRepository.nextApprLineNo(bizKey)` → `wb_get_next_val('appr_line_infm','appr_line_no', biz_key)` (branch in the consolidated V140 `wb_get_next_val` function, copied verbatim from DEV).
 
 ---
 

@@ -11,18 +11,23 @@ OQ decisions below are the resolved open questions carried forward from [../cont
 |---|---|---|---|---|
 | List + search | `GET /` | `ContactsService.list` | — | no |
 | Detail | `GET /{trcoKey}` | `getOne` | — | no |
-| Create | `POST /` | `create` → `persistNewContact` | master + children + PGRO links | yes |
-| Update | `PUT /{trcoKey}` | `update` | master + child upsert/delete | yes |
-| Soft-delete | `DELETE /{trcoKey}` | `softDelete` | `TRCO_STTS='C'` | yes |
-| Bulk soft-delete | `POST /bulk-delete` | `bulkSoftDelete` | `TRCO_STTS='C'` ×N | yes |
+| Create | `POST /` | `create` → `persistNewContact` | master + children + PGRO links | no¹ |
+| Update | `PUT /{trcoKey}` | `update` | master + child upsert/delete | no¹ |
+| Soft-delete | `DELETE /{trcoKey}` | `softDelete` | `TRCO_STTS='C'` | no¹ |
+| Bulk soft-delete | `POST /bulk-delete` | `bulkSoftDelete` | `TRCO_STTS='C'` ×N | no¹ |
 | Export | `POST /export` | `listForExport` (read) → provider | — | no |
 | Import preflight | `POST /excel/preflight` | `preflightExcelImport` | — | no |
 | Import resolve | `POST /excel/resolve-recipients` | `resolveExcelImportRecipients` | — | no |
-| Import | `POST /excel/import` | `ContactsImportService.bulkImport` | master + children ×N (per-row tx) | yes (per row) |
+| Import | `POST /excel/import` | `ContactsImportService.bulkImport` | master + children ×N (per-row tx) | no¹ |
 | By codes | `POST /by-codes` | `getByBeneficiaryCodes` | — | no |
 | Bank list | `GET /banks` | `listBanks` | — | no |
 | Lookup recipient | `POST /lookup-recipient` | `lookupRecipient` | — | no |
 | Attachments | `…/{trcoKey}/files…` | `ContactsFileService` | `TRCO_INFO_FILE` | no |
+
+¹ **No audit rows are written today.** `ContactsService` does not inject `AuditLogService` and there is
+no AOP audit aspect that targets it — Create / Update / Delete / Import currently write **no**
+`AUDIT_LOGS_INFM` row. OQ-6 only fixes the *slug* (`'contacts'`) that audit rows would carry **if/when**
+audit writes are wired; see [§ Audit-log expectations](#audit-log-expectations).
 
 ## Field contract (master)
 
@@ -115,9 +120,15 @@ Server-managed, never on the wire: `TRCO_KEY` (path / generated), `BIZ_KEY` (ten
 
 ## Audit-log expectations
 
-Create / Update / single + bulk Delete (and per-row Import) write `AUDIT_LOGS_INFM` with
-`WSVC_ID = 'contacts'` (slug, OQ-6), handled by the global audit aspect. Reads, Excel
-preflight/resolve, bank list, and lookup do not audit.
+**Current state (verified against shipped code):** the contacts service writes **no** `AUDIT_LOGS_INFM`
+rows. `ContactsService` neither injects `AuditLogService` nor is covered by any AOP audit aspect — so
+Create / Update / single + bulk Delete / per-row Import produce no audit row today. Reads, Excel
+preflight/resolve, bank list, and lookup do not audit either.
+
+OQ-6 fixes the **slug only**: if/when audit writes are wired, the rows must carry
+`WSVC_ID = 'contacts'` (the route slug, never the legacy `comm_0184_001`). The Javadoc on
+`ContactsService` references "the existing global audit aspect" as the intended mechanism, but no such
+aspect exists in the tree — wiring the writes is open work, not implemented.
 
 ## Resolved open questions (OQ-1…OQ-8)
 

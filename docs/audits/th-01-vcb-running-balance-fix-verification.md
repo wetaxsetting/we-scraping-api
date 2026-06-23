@@ -1,5 +1,7 @@
 # TH-01 — Vietcombank Running-Balance Fix · Verification Note
 
+> _**Historical one-off audit.** A point-in-time record of a completed verification / remediation — findings are preserved unchanged. For the feature’s current state see its `features/.../refactor-gap-analysis.md`; for context see the [audits index](README.md)._
+
 > **Finding closed:** TH-01 (`docs/audits/vcb-11704004-running-balance-parity-audit.md`)
 > **Screen:** Current & Savings > Transaction History (VND) · **Bank:** `BANK_CD = '11704004'` (Vietcombank)
 > **Legacy source of truth:** `IDO.ACCT_TRNS_HSTR_R016.xml:42-73` (issue #42771)

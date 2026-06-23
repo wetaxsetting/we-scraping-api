@@ -1,15 +1,17 @@
+> ⚠️ This document is a high-level feature summary.
+> The detailed source of truth is located in: [docs/features/banking/current-savings-vnd/](account-inquiry/README.md)
+
 # Banking → Current & Savings (VND)
 
 WeCMS menu: **Banking → Current & Savings (VND)**. VND-denominated current / savings accounts —
-balance inquiry, transaction ledger, and the Smart Organizer view.
+balance inquiry, transaction ledger, and the Smart Organizer view. The legacy single-file specs for
+this group have been superseded by the standardized per-module folders below.
 
-## Screens in this group
+## See the authoritative module docs
 
-| Screen | Doc | Status |
-|---|---|---|
-| Account Inquiry (VND) | [account-inquiry.md](account-inquiry.md) | Implemented |
-| Transaction History (VND) | [transaction-history.md](transaction-history.md) | Implemented |
-| Smart Organizer (VND) | [smart-organizer.md](smart-organizer.md) | Backend implemented (`SmartOrganizerController` + `OrganizerRuleController` + V172–V174); Next.js route exists |
+- [account-inquiry/README.md](account-inquiry/README.md) — Account Inquiry (VND)
+- [transaction-history/README.md](transaction-history/README.md) — Transaction History (VND)
+- [../smart-organizer/README.md](../smart-organizer/README.md) — Smart Organizer (shared VND/FCY)
 
 ## Related reference docs
 
@@ -20,5 +22,4 @@ balance inquiry, transaction ledger, and the Smart Organizer view.
 | JEX → Spring mapping | [references/migration/](../../../references/migration/) |
 | Frontend (Next.js) | [wecms-web/docs/features/banking/](../../../../../wecms-web/docs/features/banking/) |
 
-The FCY counterpart is [../current-savings-fcy/](../current-savings-fcy/). Foreign-exchange rates used
-in the FCY views come from Payment → Add-on → [exchange-rate-inquiry.md](../../payment/exchange-rate-inquiry.md).
+The FCY counterpart is [../current-savings-fcy/](../current-savings-fcy/README.md).

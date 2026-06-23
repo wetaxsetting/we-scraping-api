@@ -9,6 +9,11 @@ inventory already on disk. Oracle: the JEX live system (`dev.wecms.vn/cash_0001_
 
 ## 1. Automated tests on disk
 
+> **Note (2026-06-13):** the `BalanceCalculatorTest` / `FxConverterTest` / `CashFlowReportQuarterParityTest`
+> suites below exercise the **retained Java pipeline, which is now off the active path** — the live path
+> calls `get_cashflow_report` directly via `CashFlowReportRepository`. The tests remain valid as the
+> regression record of the (off-path) Java reimplementation; live-path numeric truth is the DB function itself.
+
 | Test | Asserts |
 |---|---|
 | `CashFlowReportQuarterParityTest` | (a) **This Year vs Q1–Q4 return byte-identical rows** (`usingRecursiveComparison`) for Year 2026 · VND · All Banks — Opening / End / all 12 months equal; pinned End Balance Dec = 780, Mar = 240 (proves full year, not one quarter). (b) `applyFilters_keepsAllTwelveMonths_noQuarterTrim` — `applyFilters` never drops a month. The permanent regression guard against re-introducing server-side quarter filtering (**G5/D-1**). |

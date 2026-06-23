@@ -92,15 +92,25 @@ vs refactor) and approved change sets.
 
 ---
 
-## 2 · Explicitly not implemented / deferred
+## 2 · Status of the originally-deferred items
 
-These are documented as out of scope and were **not** implemented:
+> **Update 2026-06-23.** Two items listed as "Deferred" in the original
+> 2026-06-02 note have since **shipped** and are now MATCH against legacy —
+> they are recorded below as APPROVED DEVIATION → resolved. The remaining two
+> are still genuinely out of scope.
+
+### Now implemented (no longer deferred)
+
+| Item | Current status | Notes |
+|---|---|---|
+| Approval notification + comment creation | **MATCH** (implemented) | `ApprovalNotificationService.notifyApprovalAction(apprSeqNo, apprDv, comntTaskCd)` is wired into `ApprovalBoxService.applyApprove` / `applyReject` — it writes the `BLTB_COMNT_INFM` REMARK and `BLTB_NOTI_INFM` / `BLTB_NOTI_CONT_INFM` to admins + acted approvers (legacy `createNotificationToApprvrAfterRequest` parity). Backed by **legacy BLTB tables**, **not** the removed refactor-only `NOTIFICATION` table (see memory `project_notification_module_removed.md`). The notification **read-side** controller is still a stub — see payment-gap-analysis CC-1. |
+| Uploader visibility branch | **MATCH** (implemented) | Restored 2026-06-16. `ExptResolMstrRepository.search` / `countTabs` apply the uploader `EXISTS` branches over `SCDUL_PYMN_SUMR` / `OVRS_PYMN_SUMR` / `CARD_TRNS_HSTR` (`reg_id = :userId`), so non-admin visibility = uploader **OR** requester **OR** approver — full Redmine #42046 parity (G3). |
+
+### Still deferred / out of scope
 
 | Item | Status | Notes |
 |---|---|---|
 | ERP status synchronization | **Deferred / likely out of scope** | Legacy gates ERP updates on `PrdtType.H` (Haengsung). The refactor is local-only R&D with no bank/ERP integration. Needs a PO scope decision before any work. |
-| Approval notification + comment creation | **Deferred** | Legacy writes a `BLTB_COMNT_INFM` REMARK and notifies the next approver on approve/reject. No notification subsystem exists in the refactor yet. |
-| Uploader visibility branch | **Deferred** | Legacy non-admin visibility = uploader **OR** requester **OR** approver; the refactor keeps requester + approver only (the uploader `EXISTS` branch over SCDUL/OVRS/CARD is dropped until those sibling features fully port). Strictly fewer rows — no over-exposure. |
 | Vietnamese translated keyword search | **Deferred** | Legacy adds `wb_get_translate_text(TITL)` to the keyword `ILIKE` for VN; the refactor matches `DOC_NM` / `TITL` / `DOC_NO` only. Blocked by the no-new-legacy-DB-function policy; needs a PO decision on the translation source. |
 
 ---

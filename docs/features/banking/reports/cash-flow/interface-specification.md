@@ -142,7 +142,7 @@ Body: the shared [`ExcelExportRequest`](../../../../../src/main/java/com/kosign/
 
 | Legacy | Refactor |
 |---|---|
-| `cash_0001_001_r001` + IDO `CASH_FLOW_R001` + fn `get_cashflow_report` | `GET /api/v1/banking/reports/cash-flow-report` (Java reimpl) |
+| `cash_0001_001_r001` + IDO `CASH_FLOW_R001` + fn `get_cashflow_report` | `GET /api/v1/banking/reports/cash-flow-report` (calls `get_cashflow_report` directly via `CashFlowReportRepository`, 2026-06-13; the earlier Java reimpl is retained but off the active path) |
 | client ExcelJS export | `POST .../export` → `CashFlowExcelWriter` (server POI) |
 | `cash_0001_001_r002` (FX rate) | `GET /api/v1/banking/exchange-rates` (selection logic differs — N3) |
 | `cash_0001_001_r003` (bank list) | `GET /api/v1/banking/accounts` (Haengsung hide-closed not ported — N4) |

@@ -14,6 +14,15 @@ Wire JSON is lowercase snake_case (global Jackson `SNAKE_CASE`). Every endpoint 
 | 7 | POST | `/api/v1/payment/approval-box/bulk-approve` | body `ApprovalBoxBulkApproveRequest` | `ApprovalBoxBulkApproveResponse` |
 | 8 | POST | `/api/v1/payment/approval-box/export` | body `ExcelExportRequest` | XLSX stream (no envelope) |
 
+**Shared Approval-Details-popup support endpoints** (same controller; consumed by the common popup opened from a header notification, not by the main list page):
+
+| # | Method | URI | Request | Response data |
+|---|---|---|---|---|
+| 9 | GET | `/api/v1/payment/approval-box/detail` | query `appr_seq_no` OR `post_seq_no` (+ optional `bltb_cd`) | `ApprovalBoxRow` (`WBE_APPROVAL_DETAIL_NOT_FOUND` when missing/withdrawn/cross-tenant) |
+| 10 | GET | `/api/v1/payment/approval-box/{apprSeqNo}/transactions` | path | `ApprovalTransactionRow[]` (per-line txns for the four scheduled kinds; card/overseas → `[]`) |
+| 11 | GET | `/api/v1/payment/approval-box/{apprSeqNo}/attachments` | path | `ApprovalAttachmentRow[]` (`EXPT_RESOL_FILE` ∪ `EXPT_RESOL_PAY_EVID_FILE`) |
+| 12 | GET | `/api/v1/payment/approval-box/{apprSeqNo}/attachments/{fileId}` | path + optional `fileType` (`EXPT_RESOL_FILE` default / `EXPT_RESOL_PAY_EVID_FILE`) | binary stream (`WBE2069` when missing) |
+
 ---
 
 ## 1. List — `GET /api/v1/payment/approval-box`

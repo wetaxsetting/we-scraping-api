@@ -9,8 +9,8 @@ reference: [docs/jex/features/purpose/database-mapping.md](../../../../../docs/j
 
 ## 1. Core table — `BUSI_USAG_SET_INFM`
 
-Entity: [BusiUsagSet.java](../../../../src/main/java/com/kosign/wecms/domain/setting/purposesettings/entity/BusiUsagSet.java)
-(`@Table("BUSI_USAG_SET_INFM")`, `@IdClass(BusiUsagSetId.class)`). 15 columns, V80 migration; PK
+Entity: [BusiUsagSetInfm.java](../../../../src/main/java/com/kosign/wecms/domain/setting/purposesettings/entity/BusiUsagSetInfm.java)
+(`@Table("BUSI_USAG_SET_INFM")`, `@IdClass(BusiUsagSetId.class)`). 15 columns, V35 migration; PK
 verified on DEV 2026-05-12 via the `postgres` MCP. The entity does **not** extend `BaseEntity` — the
 legacy table has only `MOD_*` audit columns (no `REG_ID`/`REG_DTM`), so the service writes
 `mod_id`/`mod_dtm` explicitly.
@@ -35,17 +35,17 @@ legacy table has only `MOD_*` audit columns (no `REG_ID`/`REG_DTM`), so the serv
 
 Columns 8–11 stay mapped for **schema parity** with DEV (Legacy Schema Parity Rule) but the refactor service never writes them.
 
-Helper index (V80, beyond DEV): `busi_usag_set_infm_parent_ix` on `(biz_key, parent_use_usag_cd) WHERE parent_use_usag_cd IS NOT NULL AND use_yn='Y'` — powers the recursive child / in-use lookups.
+No helper index ships in V35 — the table is created with only the `busi_usag_set_infm_pk` primary key `(biz_key, use_usag_cd)`. The recursive child / in-use lookups run against the PK + the `@Subselect`; an optional `(biz_key, parent_use_usag_cd)` partial index could be added later if profiling warrants it (not currently present).
 
 ---
 
-## 2. In-use view — `v_purpose_in_use` (V81)
+## 2. In-use projection — `VPurposeInUse` `@Subselect` (no DB view)
 
 Read-only projection driving both `used_in_transactions` on the wire and the recursive delete guard.
-Entity: [PurposeInUseRow.java](../../../../src/main/java/com/kosign/wecms/domain/setting/purposesettings/entity/PurposeInUseRow.java) (`@Immutable`, 2 columns `biz_key`, `use_usag_cd`).
+Entity: [VPurposeInUse.java](../../../../src/main/java/com/kosign/wecms/domain/setting/purposesettings/entity/VPurposeInUse.java) (`@Immutable` `@Subselect`, 2 columns `biz_key`, `use_usag_cd`). There is **no `v_purpose_in_use` DB object** — the legacy JEX DB has no such view and the refactor provisions none (no view migration exists). The query below is carried as a Hibernate `@Subselect` over the legacy `busi_usag_set_infm` table, so `ddl-auto=validate` never looks for a `v_purpose_in_use` relation (same pattern as the firm-banking-history `@Subselect`).
 
 ```sql
-CREATE OR REPLACE VIEW v_purpose_in_use AS
+-- @Subselect body on VPurposeInUse (NOT a CREATE VIEW)
 SELECT DISTINCT biz_key, use_usag_cd FROM (
   -- (a) another active purpose lists this row as its parent
   SELECT biz_key, parent_use_usag_cd AS use_usag_cd
@@ -62,10 +62,12 @@ real transaction consumers (`PYMN_*` / `TRNS_*` / `EXPS_*`) — see
 
 ---
 
-## 3. PK generation — `wb_get_next_val` branch (V82)
+## 3. PK generation — `wb_get_next_val` branch (V140)
 
-`use_usag_cd` is allocated by the ported legacy function (documented exception per OQ-3), called via
-`PurposeSettingsRepository.nextUseUsagCd(bizKey)`:
+`use_usag_cd` is allocated by the ported legacy function (documented exception per OQ-3), called
+through the single funnel `LegacyFunctionRepository.nextUseUsagCd(bizKey, "")` (the scattered native
+`@Query` that once lived on `PurposeSettingsRepository` was removed — every `wb_get_next_val` call
+goes through the one funnel per CLAUDE.md):
 
 ```sql
 SELECT wb_get_next_val('busi_usag_set_infm', 'use_usag_cd', :bizKey, '');

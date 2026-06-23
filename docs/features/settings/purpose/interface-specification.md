@@ -58,7 +58,7 @@ GET /api/v1/settings/purpose-settings?keyword=Operating
 
 ```
 GET /api/v1/settings/purpose-settings/{use_usag_cd}
-→ data: PurposeSettingDetail (same fields as a row, flat, no children) | 404 if not in tenant
+→ data: PurposeSettingDetail (same fields as a row, flat, no children) | `WBE_VALIDATION` (HTTP 200) if not in tenant
 ```
 
 ## 3. Create
@@ -78,7 +78,7 @@ PUT /api/v1/settings/purpose-settings/{use_usag_cd}
 { "hand_use_usag_cd": "BD02", "use_usag_nm": "Capital Expenditure (Renamed)",
   "use_usag_cont": "...", "parent_use_usag_cd": "0000000001", "disp_yn": "Y" }
 → 200, data: PurposeSettingDetail (refreshed)
-errors: WBW1138 (dup name excl. self) · WBE_VALIDATION (parent invalid / self / demote-with-children) · 404
+errors: WBW1138 (dup name excl. self) · WBE_VALIDATION (parent invalid / self / demote-with-children; also row not in tenant — HTTP 200, not 404)
 ```
 
 ## 5. Soft-delete
@@ -86,7 +86,7 @@ errors: WBW1138 (dup name excl. self) · WBE_VALIDATION (parent invalid / self /
 ```
 DELETE /api/v1/settings/purpose-settings/{use_usag_cd}
 → 200, data: null    (sets USE_YN='N')
-errors: WBE1199 (active children OR row/child referenced by an active transaction) · 404
+errors: WBE1199 (active children OR row/child referenced by an active transaction) · WBE_VALIDATION (row not in tenant — HTTP 200, not 404)
 ```
 
 ## 6. Reorder

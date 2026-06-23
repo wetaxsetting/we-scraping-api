@@ -1,5 +1,7 @@
 # Full-Project Field-Name Casing Parity Audit — Refactor (wecms-api + wecms-web)
 
+> _**Historical one-off audit.** A point-in-time record of a completed verification / remediation — findings are preserved unchanged. For the feature’s current state see its `features/.../refactor-gap-analysis.md`; for context see the [audits index](README.md)._
+
 - **Date:** 2026-06-06
 - **System:** Refactor (Spring Boot `wecms-api` + Next.js `wecms-web`)
 - **Author:** Source-based audit (Claude Code) — re-verified against live source, not prior reports

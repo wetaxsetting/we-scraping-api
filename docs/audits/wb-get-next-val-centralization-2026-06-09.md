@@ -1,5 +1,7 @@
 # `wb_get_next_val` Centralization Audit — FINAL STATUS
 
+> _**Historical one-off audit.** A point-in-time record of a completed verification / remediation — findings are preserved unchanged. For the feature’s current state see its `features/.../refactor-gap-analysis.md`; for context see the [audits index](README.md)._
+
 - **Date:** 2026-06-09
 - **System:** Refactor (wecms-api)
 - **Scope:** Route every in-scope business key / sequence generation through the single `LegacyFunctionRepository` → `wb_get_next_val` funnel, matching the live JEX key-generation so the refactor never mints a colliding key on a shared JEX database.
@@ -94,7 +96,7 @@ Search of `src/main` + `src/test` for `wb_get_next_val(`, `createNativeQuery("�
 
 ## 5. Open decisions (recorded, not actioned)
 
-See [../planning/open-questions/wb-get-next-val-open-decisions.md](../planning/open-questions/wb-get-next-val-open-decisions.md).
+See ../planning/open-questions/wb-get-next-val-open-decisions.md _(removed — historical `planning/` folder deleted by project decision)_.
 
 - **OD-1 — Contacts `trco_acct_key`:** `ContactsService` accepts `trco_acct_key` from the client request instead of generating it via `wb_get_next_val` (the e-Invoice path to the same table IS funneled, branch #28). Create-vs-update key-contract review. **Do not change now.**
 - **OD-2 — Date-prefixed payment keys:** exception #5 above. PO/architecture decision. **Do not change now.**

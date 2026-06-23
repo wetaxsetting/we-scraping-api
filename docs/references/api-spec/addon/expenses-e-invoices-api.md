@@ -10,7 +10,7 @@
 
 JEX is **read-only reference**.
 
-> **Inherits Phase 2 implementation rules from the Sales planning doc** — see [Sales § Phase 2 implementation rules (locked decisions)](../../../planning/addon/sales-e-invoices-plan.md#phase-2-implementation-rules-locked-decisions). IR-1 through IR-9 apply verbatim. The single rule that bites Expenses harder than Sales is **IR-1**: `EXPENSE → 'B'` (NOT `'E'`).
+> **Inherits Phase 2 implementation rules from the Sales planning doc** — see Sales § Phase 2 implementation rules (locked decisions) _(removed — historical `planning/` folder deleted by project decision)_. IR-1 through IR-9 apply verbatim. The single rule that bites Expenses harder than Sales is **IR-1**: `EXPENSE → 'B'` (NOT `'E'`).
 
 ---
 
@@ -245,7 +245,7 @@ If `ExportRowProvider` only allows one `screenId()` per bean, register two beans
 - Frontend page: [../../frontend/addon/expenses-e-invoices-page.md](../../../../../wecms-web/docs/features/addon-service/expenses-e-invoices.md)
 - Database: [../../database/addon/expenses-e-invoices-db.md](../../database/addon/expenses-e-invoices-db.md)
 - Migration mapping: [../../migration/service-mapping.md](../../migration/service-mapping.md)
-- Implementation plan: [../../planning/addon/expenses-e-invoices-plan.md](../../../planning/addon/expenses-e-invoices-plan.md)
-- Sales planning rules (IR-1 through IR-9 inherited): [../../planning/addon/sales-e-invoices-plan.md](../../../planning/addon/sales-e-invoices-plan.md)
+- Implementation plan: ../../planning/addon/expenses-e-invoices-plan.md _(removed — historical `planning/` folder deleted by project decision)_
+- Sales planning rules (IR-1 through IR-9 inherited): ../../planning/addon/sales-e-invoices-plan.md _(removed — historical `planning/` folder deleted by project decision)_
 - Legacy WSVC: `WECMS DEV/WECMS_ETC/xml/service/WSVC/WSVC.einv_0001_001_r001.xml`
 - Legacy view: `WECMS DEV/WECMS/web/view/jex/wabooks/einv/einv_0001_001_view.jsp` (with `einvType=2`)

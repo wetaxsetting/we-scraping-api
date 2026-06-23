@@ -56,9 +56,11 @@ The list table renders six data columns plus a View Details action column. Sorta
 Columns that ride in the row but are **not** sortable and **not** shown as their own grid column:
 `rslt_msg`, `job`, `req_data`, `van_org_cd` — these feed the detail popover.
 
-> The Excel export uses a parallel FIELD_ID set seeded for View Setting (V165): `REG_DTM`,
-> `SVC_TYPE`, `SVC_NM`, `SEQ_NO`, `DEP_BANK_CD`, `RS_CD`, `RS_MSG`. `REG_DTM`/`RS_CD`/`RS_MSG` are the
-> seed's names for the grid's `TARN_DTM`/`RSLT_CD`/`RSLT_MSG`. See [interface-specification.md § Export](interface-specification.md#4-export-contract).
+> The Excel export uses a parallel FIELD_ID set — the `FirmBankingHistoryExportProvider` allow-list:
+> `REG_DTM`, `SVC_TYPE`, `SVC_NM`, `SEQ_NO`, `DEP_BANK_CD`, `RS_CD`, `RS_MSG`. `REG_DTM`/`RS_CD`/`RS_MSG`
+> are the export's names for the grid's `TARN_DTM`/`RSLT_CD`/`RSLT_MSG`. This screen has **no View Setting
+> seed** (export-only, no popover); the column set comes from request columns ∩ this allow-list. See
+> [interface-specification.md § Export](interface-specification.md#4-export-contract).
 
 ---
 
@@ -111,7 +113,7 @@ the frontend holds **zero** hardcoded service-code → label maps.
   `F → …service_type.firm_banking_transaction`, `S → …scraping_transfer`, `G → …vietnam_gdt_inquiry`, `B → …vietnam_business_inquiry`. Null only for an unknown letter.
 - **`svc_name_key`** — from [`FirmBankingServiceNameResolver`](../../../../src/main/java/com/kosign/wecms/domain/setting/firmbankinghistory/service/FirmBankingServiceNameResolver.java):
   - F leg → `TranTp.fromCode(svc_nm)` → `fb_history.service.{201|202|203}` (code `204` has no verified EN label → `null`).
-  - S leg → switch on the V60 literals → `fb_history.service.{funds_transfer_scraping|scraping_balance|scraping_transaction|scraping_card_transaction}`.
+  - S leg → switch on the `@Subselect` English literals → `fb_history.service.{funds_transfer_scraping|scraping_balance|scraping_transaction|scraping_card_transaction}`.
   - G leg → `fb_history.service.{sale_einvoice_inquiry|expense_einvoice_inquiry}`.
   - B leg → `fb_history.service.vietnam_business_inquiry`.
   - Unknown pair → `null` (frontend falls back to raw `svc_nm`).

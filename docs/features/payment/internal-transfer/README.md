@@ -1,8 +1,60 @@
-# Internal Transfer — Refactor Feature Spec
+# Internal Transfer — Refactor Feature Spec (Backend)
 
-> ## Functional-flow docs (this folder) — source-code-verified 2026-06-08
+> **WEB counterpart:** [wecms-web/.../internal-transfer/README.md](../../../../../wecms-web/docs/features/payment/internal-transfer/README.md)
 >
-> Internal Transfer is documented as **four distinct functional flows**, each traced from the actual controllers / services / repositories / DTOs / entities (backend) and pages / components / hooks / API clients / types (frontend). Source code is the authority — where this baseline spec's older "Phase A stub" language disagrees with current code, the flow docs win.
+> **Status:** Implemented — parity COMPLETE (MATCH). Source-code-verified 2026-06-23. Backend in [com.kosign.wecms.domain.payment.internaltransfer](../../../../src/main/java/com/kosign/wecms/domain/payment/internaltransfer).
+
+## Sub-modules
+
+| Sub-module | JEX WSVC | Refactor base | Scope |
+|---|---|---|---|
+| **Scheduled Transfer** | `pymn_0009_*` | `/api/v1/payment/internal-transfer` | upload/create, edit, delete, request-approval, approve/reject/withdraw/change-line, dispatch (R/U/D/T) |
+| **Transfer Result** | `pymn_0010_*` | `/api/v1/payment/internal-transfer/results` | executed-result list + per-line detail + XLSX export (R only) |
+
+## Standard docs (this folder)
+
+| Doc | Content |
+|---|---|
+| [business-flow.md](business-flow.md) | End-to-end flow per sub-module (Legacy/Spring/React), status derivation, key-gen |
+| [database-mapping.md](database-mapping.md) | Tables, entity↔column, PK/FK, key-gen branches |
+| [functional-specification.md](functional-specification.md) | Filters, status tabs+counts, columns, actions, validation, rules |
+| [interface-specification.md](interface-specification.md) | Every REST endpoint — URL, method, authz, DTOs, params, errors |
+| [migration-guide.md](migration-guide.md) | Legacy WSVC/IDO/act.jsp → controller/service, deviations, dead legacy |
+| [refactor-gap-analysis.md](refactor-gap-analysis.md) | Parity matrix (MATCH / DEAD LEGACY / …) |
+| [source-code-index.md](source-code-index.md) | Complete Legacy → Backend → Frontend file map |
+| [test-scenarios.md](test-scenarios.md) | BE test inventory + scenarios + missing coverage |
+
+### Endpoint summary
+
+| Method · Path | Op | Authz screenId |
+|---|---|---|
+| `GET /` | Scheduled list | `payment-internal-transfer-scheduled` |
+| `GET /withdrawal-accounts` | Withdrawal picker | scheduled |
+| `GET /{id}` | Scheduled detail | scheduled |
+| `GET /{id}/file` | Original Excel download | scheduled |
+| `GET /{id}/approval/{apprSeqNo}/attachments/{fileId}` | Attachment download | scheduled |
+| `GET /next-doc-no` | Doc-no preview | scheduled |
+| `POST /uploads/parse` | Excel parse | scheduled |
+| `POST /` | Create draft | scheduled |
+| `PATCH /{id}/lines/{lineId}/reporting-account` | Edit reporting account | scheduled |
+| `POST /{id}/dispatch` | Transfer (T) | scheduled |
+| `DELETE /{id}` | Delete draft | scheduled |
+| `POST /{id}/request-approval` | Request approval | scheduled |
+| `DELETE /{id}/approval` | Withdraw | scheduled |
+| `PUT /{id}/approval-line` | Change approval line | scheduled |
+| `POST /{id}/approval-action` | Approve / Reject | scheduled |
+| `GET/POST/DELETE /{id}/lines/{lineId}/match*` · `DELETE /{id}/matches` | Banking match | scheduled |
+| `GET /results` | Result list | `payment-internal-transfer-result` |
+| `GET /results/{id}` | Result detail | result |
+| `POST /results/export` | XLSX export | result |
+
+> _DEAD LEGACY:_ no `rerun` endpoint (re-run never ported — PO-deprecated).
+
+---
+
+> ## Functional-flow docs (this folder) — source-code-verified 2026-06-23
+>
+> Internal Transfer is also documented as **four distinct functional flows**, each traced from the actual controllers / services / repositories / DTOs / entities (backend) and pages / components / hooks / API clients / types (frontend). These predate the standard docs above and are folded into [business-flow.md](business-flow.md); they remain as the granular per-flow reference. Source code is the authority.
 >
 > | Doc | Flow |
 > |---|---|
@@ -10,8 +62,6 @@
 > | [scheduled-transfer-flow.md](scheduled-transfer-flow.md) | **Flow 2** — Scheduled Transfer (search / detail / edit / delete / dispatch) |
 > | [transfer-result-flow.md](transfer-result-flow.md) | **Flow 3** — Transfer Result (executed-result list + per-line detail + export) |
 > | [approval-flow.md](approval-flow.md) | **Flow 4** — Approval / Approval Box (request → status → approve / reject / withdraw / change-line) |
-> | [refactor-gap-analysis.md](refactor-gap-analysis.md) | Legacy-vs-refactor parity matrix + the "Re-submit after reject" verification (intentional match) |
-> | [source-code-index.md](source-code-index.md) | Complete Legacy → Backend → Frontend file map |
 >
 > **Status correction (verified against current code, supersedes the "Phase A stub" notes below):** the Excel parser is a **real Apache POI parser** (`InternalTransferExcelParser`), not a stub; dispatch **writes the real `TB_PAY_*` rows** via `InternalTransferDispatchExecutor`; request-approval performs the **real `EXPT_RESOL_MSTR` + `EXPT_RESOL_APPRVR_INFM` fan-out** and approve/reject delegate to `ApprovalBoxService` (advancing the approver chain). The frontend `lib/api/internalTransfer.ts` Javadoc still calls several of these "stub" — that comment is stale; the wire calls are live. The four flow docs reflect the live behaviour.
 >
@@ -24,10 +74,10 @@ The four screens are sections of this hub (no separate per-screen files). Full p
 
 | Screen | JEX WSVC | Scope | Status |
 |---|---|---|---|
-| Scheduled Transfer | `pymn_0009_001` | List + create scheduled internal transfer batches (Excel upload, request approval, transfer). | Locked baseline (Phase A backend + partial frontend) |
-| Scheduled Transfer Details | `pymn_0009_001` (view `pymn_0009_003`) | Drill-down detail of one scheduled batch — line items, amounts, withdrawal account, approver chain. | Locked baseline (Phase A backend + partial frontend) |
-| Transfer Result | `pymn_0010_001` | Executed internal-transfer results with status filter (Incomplete / Processing / Success / Failed). | Locked baseline (Phase A backend + partial frontend) |
-| Transfer Result Details | `pymn_0010_001` (view `pymn_0010_002`) | Per-transaction result detail (Success / Failed + failure reason) for one executed item. | Locked baseline (Phase A backend + partial frontend) |
+| Scheduled Transfer | `pymn_0009_001` | List + create scheduled internal transfer batches (Excel upload, request approval, transfer). | Implemented (backend + frontend live-wired) |
+| Scheduled Transfer Details | `pymn_0009_001` (view `pymn_0009_003`) | Drill-down detail of one scheduled batch — line items, amounts, withdrawal account, approver chain. | Implemented (backend + frontend live-wired) |
+| Transfer Result | `pymn_0010_001` | Executed internal-transfer results with status filter (Incomplete / Processing / Success / Failed). | Implemented (backend + frontend live-wired) |
+| Transfer Result Details | `pymn_0010_001` (view `pymn_0010_002`) | Per-transaction result detail (Success / Failed + failure reason) for one executed item. | Implemented (backend + frontend live-wired) |
 
 
 | Field | Value |
@@ -154,7 +204,7 @@ All tables below are in the PROD Active Table List ([api CLAUDE.md § "Active ta
 >
 > Direct `information_schema` queries against DEV revealed corrections to the previously drafted spec:
 >
-> - **`SCDUL_PYMN_NO` is `VARCHAR(10)` in DEV** — not 20 as the WSVC `length="20"` suggests. Live data is 1-3 chars (numeric increment per tenant). **The refactor schema declared `VARCHAR(20)` in [V131__internal_transfer_schema.sql:70](../../../../src/main/resources/db/migration/V131__internal_transfer_schema.sql#L70)** to fit the 14-char Java-side generator (`YYYYMMDD<seq:6>`); this is an intentional refactor-only widening — see § 12 BLOCKER-A (resolved).
+> - **`SCDUL_PYMN_NO` is `VARCHAR(10)` in DEV**, and the refactor entity now maps it at `length=10` (`ScdulPymnSumr.scdulPymnNo`) — DEV parity. **Update (2026-06-09 OD-2 reversal):** the earlier refactor-only date-prefixed 14-char generator (`YYYYMMDD<seq:6>`) that would have needed `VARCHAR(20)` was **removed**; `InternalTransferKeyGenerator` now funnels through `wb_get_next_val('scdul_pymn_sumr','scdul_pymn_no',biz_key)` and mints the same plain per-tenant int the live JEX DB does (1-3 chars). The controller path-param regex stays permissive (`1..30` digits) only to accept legacy/seed values; the column itself is DEV-parity 10.
 > - **There is only ONE conn table** in DEV: `SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN` (note `SCDU_` not `SCDUL_`). It links detail → `TB_PAY_TARGET` via nullable `(tran_dt, tran_seq)`. The previously-drafted second table `SCDUL_PYMN_PAY_FILE_MST_CONN` **does not exist** — the file-path linkage is encoded directly on `SCDUL_PYMN_SUMR_DETL.pay_file_seq_no + pay_seq` columns and on `SCDUL_PYMN_SUMR.pay_file_seq_no` master pointer.
 > - **No `FULL_PATH` / `FILE_INFO` columns on `SCDUL_PYMN_SUMR`.** Three separate file columns: `org_file_nm VARCHAR(500)`, `save_file_nm VARCHAR(500)`, `file_size VARCHAR(100)`. The legacy entity `ScdulPymnSumr.getFullPath()` builds an in-app path from `save_file_nm` plus a server-side prefix; refactor follows the ERP Transaction History precedent (see [docs/refactor-wecms/database/payment/internal-transfer-schema.md § 8 File storage](../../../references/database/payment/internal-transfer-schema.md)).
 > - **No `APPR_STTS` / `TRNF_STTS` / `DRAFT_USER_NM` / `DRAFT_USER_ID` on `SCDUL_PYMN_SUMR`** — these are computed/joined columns produced by the list IDO from `EXPT_RESOL_MSTR` and `USER_INFM`. The refactor list service must JOIN explicitly.
@@ -224,8 +274,9 @@ On an approved batch (APPR_STTS = "01" (approved), TRNF_YN = "N")
             → API path — insert one TB_PAY_TARGET row per line:
                 tran_dt   = DateTimeUtils.utcNow().toLocalDate()
                 biz_key   = loginUser.bizKey
-                tran_seq  = next per-(tran_dt, biz_key) sequence (legacy wb_get_next_val today)
-                proc_stat = "50" (TRANSFER_PENDING)  -- ProcStat.TRANSFER_PENDING
+                tran_seq  = next per-(tran_dt, biz_key) sequence (via the wb_get_next_val funnel)
+                proc_stat = legacy transfer-pending code stamped by InternalTransferDispatchExecutor
+                            (the bank daemon later flips it to '0' success / '3' fail; not run locally)
                 ant_div_cd = (OUT_BANK_CD == TAR_BANK_CD) ? "INTER" : detail.ANT_DIV_CD.trim()
                 trsc_ccy_cd = isWooriUsdToVnd ? "USD" : "VND"
               And update SCDUL_PYMN_SUMR_DETL with pay_tran_dt + pay_tran_seq.

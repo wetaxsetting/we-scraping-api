@@ -1,154 +1,73 @@
-# Payroll Payment — Refactor Feature Spec (STUB)
+# Payroll Payment — Refactor Backend Feature Spec
 
-## Screens (this feature)
-
-The four screens are sections of this hub (no separate per-screen files). File-level detail is in §1.2
-(frontend) + §1.3 (routes) + §2b (Scheduled View Setting); one-line summaries:
-
-| Screen | JEX WSVC | Scope | Status |
-|---|---|---|---|
-| Scheduled Payment | `pymn_0005_001` | List + create scheduled payroll batches (Excel upload, payroll-period selector, request approval, transfer). Legacy column parity in §2b (V232). | Implemented in code; doc stub (backfill pending) |
-| Scheduled Payment Details | `pymn_0005_001` | Drill-down detail of one scheduled payroll batch — employee lines, salary breakdown, approver chain. | Implemented in code; doc stub (backfill pending) |
-| Payment Result | `pymn_0006_001` | Executed payroll results with status filter; renders the totals footer. | Implemented in code; doc stub (backfill pending) |
-| Payment Result Details | `pymn_0006_001` | Per-transaction result detail — **5-column Payroll-specific layout** per Figma (not the canonical 11-column set). | Implemented in code; doc stub (backfill pending) |
-
+> **Frontend counterpart:** [wecms-web/docs/features/payment/payroll/README.md](../../../../../wecms-web/docs/features/payment/payroll/README.md). API and WEB are refactored together — a contract change on one side has a matching change on the other.
 
 | Field | Value |
 |---|---|
-| System | Refactor (Spring Boot + Next.js) |
-| Slug | `payroll` (frontend folder + route base) / `payroll-payment` (backend package + audit `WSVC_ID`) — the frontend prefers the shorter slug; the backend tags itself with `-payment` for symmetry with Vendor/Expense. |
+| System | Refactor (Spring Boot backend) |
 | Module | Payment → Payroll |
-| JEX counterparts | `pymn_0005_*` (Payroll Scheduled) + `pymn_0006_*` (Payroll Result) — labels confirmed at [comm_0190_003_view.jsp:588](../../../../../WECMS%20DEV/WECMS/web/view/jex/wabooks/comm/comm_0190_003_view.jsp#L588) (Scheduled) and [comm_0190_003_view.jsp:597-599](../../../../../WECMS%20DEV/WECMS/web/view/jex/wabooks/comm/comm_0190_003_view.jsp) (Result). |
-| Discriminator | `SCDUL_PYMN_TYPE_CD = "00"` — verified at [pymn_0005_001_r001_act.jsp:173](../../../../../WECMS%20DEV/WECMS/web/WEB-INF/action/jex/wabooks/pymn/pymn_0005_001_r001_act.jsp#L173) + refactor enum `ScdulPymnTypeCd.PAYROLL.code()`. |
-| Audit `WSVC_ID` | `payroll-payment` — declared as a `static final String` at [PayrollPaymentService.java:94](../../../../src/main/java/com/kosign/wecms/domain/payment/payrollpayment/service/PayrollPaymentService.java#L94). |
-| REST URI base | `/api/v1/payment/payroll-payment` |
-| Frontend route base | `/payment/payroll` |
-| Status | **Implementation status: documented retroactively against existing code as of 2026-05-22.** Backend + frontend pages exist; this stub preserves the implementation in the docs surface so it isn't lost. A full-spec follow-up MR is needed to bring this doc to parity with [internal-transfer.md](../internal-transfer/README.md). |
-| Baseline | [internal-transfer/README.md](../internal-transfer/README.md) — Payroll mirrors this shape; see [payment hub README](../README.md). |
+| Slug | `payroll` (frontend route base) / `payroll-payment` (backend package + audit `WSVC_ID` + REST base) |
+| REST base | **`/api/v1/payment/payroll-payment`** (note `-payment`; **not** `/payroll`) |
+| Backend package | `com.kosign.wecms.domain.payment.payrollpayment` |
+| Discriminator | `SCDUL_PYMN_TYPE_CD = "00"` — `ScdulPymnTypeCd.PAYROLL.code()` ([pymn_0005_001_r001_act.jsp:173](../../../../../WECMS%20DEV/WECMS/web/WEB-INF/action/jex/wabooks/pymn/pymn_0005_001_r001_act.jsp#L173)) |
+| Audit `WSVC_ID` | `payroll-payment` — `static final String` at [PayrollPaymentService.java:96](../../../../src/main/java/com/kosign/wecms/domain/payment/payrollpayment/service/PayrollPaymentService.java#L96) |
+| JEX counterparts | `pymn_0005_*` (Scheduled), `pymn_0006_*` (Result); detail pages `pymn_0005_003` / `pymn_0006_002` |
+| Status | **Fully implemented** — ~18 endpoints (Scheduled + Result + upload/parse/create + approval flow + dispatch + banking match + export + file download), documented retroactively against the latest code. |
 
-> **Special note.** Payroll uses `SCDUL_PYMN_TYPE_CD = "00"`. The `scdul_pymn_sumr_chk01` CHECK constraint was relaxed in [V146__scdul_pymn_sumr_chk01_allow_payroll.sql](../../../../src/main/resources/db/migration/V146__scdul_pymn_sumr_chk01_allow_payroll.sql) to admit `'00'`. Don't tighten the CHECK without re-allowing all four siblings.
+## Sub-module map
 
----
+| Sub-module | JEX list / detail | REST | Authz |
+|---|---|---|---|
+| **Scheduled Payment** | `pymn_0005_001` / `pymn_0005_003` | `GET /` · `GET /{id}` (+ write actions) | `payment-payroll-scheduled` |
+| **Payment Result** | `pymn_0006_001` / `pymn_0006_002` | `GET /results` · `GET /results/{id}` · `POST /results/export` · banking match | `payment-payroll-result` |
 
-## 1. Files in use
+Payroll, Vendor, Expense and Internal Transfer share the physical `SCDUL_PYMN_SUMR`(+ `_DETL`) table; the `SCDUL_PYMN_TYPE_CD = "00"` discriminator stamped by the service layer isolates Payroll. Payroll reuses the Internal Transfer wire DTOs (`internaltransfer.dto.*`) one-for-one.
 
-### 1.1 Backend ([`com.kosign.wecms.domain.payment.payrollpayment`](../../../../src/main/java/com/kosign/wecms/domain/payment/payrollpayment))
+## Companion docs
 
-- **Controller:** [`PayrollPaymentController.java`](../../../../src/main/java/com/kosign/wecms/domain/payment/payrollpayment/controller/PayrollPaymentController.java) — full write-action endpoint set (delete, request-approval, approval-action, dispatch, parse, create, file-download). Discriminator `SCDUL_PYMN_TYPE_CD = '00'` is pinned at L53.
-- **Services:**
-  - [`PayrollPaymentService.java`](../../../../src/main/java/com/kosign/wecms/domain/payment/payrollpayment/service/PayrollPaymentService.java) — `WSVC_ID = "payroll-payment"` at L94; `ScdulPymnTypeCd.PAYROLL.code() = "00"` discriminator at every repository call.
-  - `PayrollPaymentResultService.java` — Result-side read service.
-  - `PayrollPaymentExcelParser.java` — Apache POI walk (uses `PymnType.PAYROLL_PAYMENT("PAYR")` for blocked-chars lookup).
-  - `PayrollPaymentSortField.java` + `PayrollPaymentResultSortField.java` — sort whitelists.
-- **Export:** [`PayrollPaymentResultExportProvider.java`](../../../../src/main/java/com/kosign/wecms/domain/payment/payrollpayment/export/PayrollPaymentResultExportProvider.java) — implements `ExportRowProvider`.
-- **Shared infrastructure consumed** — same as other siblings per [payment hub README §2](../README.md).
-
-### 1.2 Frontend ([`components/payment/payroll/`](../../../../../wecms-web/components/payment/payroll))
-
-| File | Role |
+| Doc | Scope |
 |---|---|
-| [`ScheduledPaymentPage.tsx`](../../../../../wecms-web/components/payment/payroll/ScheduledPaymentPage.tsx) | Scheduled list (composes `<PaymentScheduledBatchListPage>`). Exports as `PayrollScheduledPaymentPage`. |
-| [`ScheduledPaymentDetailPage.tsx`](../../../../../wecms-web/components/payment/payroll/ScheduledPaymentDetailPage.tsx) | Scheduled detail (composes `<PaymentDetailPage>`). |
-| [`PaymentResultPage.tsx`](../../../../../wecms-web/components/payment/payroll/PaymentResultPage.tsx) | Result list (composes `<PaymentResultBatchListPage>`). |
-| [`PaymentResultDetailPage.tsx`](../../../../../wecms-web/components/payment/payroll/PaymentResultDetailPage.tsx) | Result detail (composes `<ResultDetailView>` with a **Payroll-specific 5-column variant** per Figma — NOT the canonical 11-column `resultDetailColumns`). |
-| [`PayrollPaymentUploadDialog.tsx`](../../../../../wecms-web/components/payment/payroll/PayrollPaymentUploadDialog.tsx) | Thin wrapper over `<PaymentExcelUploadDialog>` — Payroll-specific columns (employee id + salary breakdown). |
-| `types.ts` | Local component types. |
+| [business-flow.md](business-flow.md) | End-to-end Legacy / Spring / React flow — upload → request approval → approve/reject → dispatch → result inquiry → banking match |
+| [database-mapping.md](database-mapping.md) | Entity ↔ table ↔ column, PK/FK, key generation, migrations |
+| [functional-specification.md](functional-specification.md) | Filters, status tabs + counts, columns (incl. `APPR_FUND_TP` Payroll Type), actions, validation, business rules |
+| [interface-specification.md](interface-specification.md) | Every endpoint — URL, method, `@PreAuthorize`, request/response DTO fields, query params, errors |
+| [migration-guide.md](migration-guide.md) | Legacy `pymn_0005_*` / `pymn_0006_*` → Spring controller/service, approved deviations, dead legacy |
+| [refactor-gap-analysis.md](refactor-gap-analysis.md) | Per-gap classification (MATCH / APPROVED DEVIATION / DEAD LEGACY / PARTIAL / MISSING) |
+| [source-code-index.md](source-code-index.md) | Controller / services / repos / entities / DTOs + FE routes / components / hooks / `lib/api/payrollPayment.ts` + tests |
+| [test-scenarios.md](test-scenarios.md) | Backend test coverage + the frontend test gap |
 
-### 1.3 Routes ([`app/(dashboard)/payment/payroll/`](../../../../../wecms-web/app/(dashboard)/payment/payroll))
+## Detail-page column projection — corrected
 
-| Route | page.tsx export | Imported component |
-|---|---|---|
-| `scheduled-payment/page.tsx` | `PaymentPayrollScheduledPage` | `PayrollScheduledPaymentPage` |
-| `scheduled-payment/[id]/page.tsx` | `PaymentPayrollScheduledDetailRoute` | `PayrollScheduledPaymentDetailPage` |
-| `payment-result/page.tsx` | `PaymentPayrollResultPage` | `PayrollPaymentResultPage` |
-| `payment-result/[id]/page.tsx` | `PaymentPayrollResultDetailRoute` | `PayrollPaymentResultDetailPage` |
+Two **different** subsets of the canonical column factories are projected via View Setting; neither is a bespoke layout:
 
-### 1.4 API client + SCREEN_IDS + Flyway
+- **Scheduled detail** (`pymn_0005_003`) = **5-column subset** of the canonical `scheduledDetailColumns` (Deposit Bank, Recipient Name, Transfer Amount, Remarks, Reporting Account).
+- **Payment Result detail** (`pymn_0006_002`) = **8-column subset** of the canonical `resultDetailColumns` (Date/Time, Deposit Bank, Recipient Name, Transfer Amount, Remarks, Results, Result Date/Time, Reporting Account).
 
-- API client: [`lib/api/payrollPayment.ts`](../../../../../wecms-web/lib/api/payrollPayment.ts) (payroll approval endpoints; broader surface lands in follow-up MR).
-- SCREEN_IDS — 4 constants in [`lib/viewSettingScreens.ts`](../../../../../wecms-web/lib/viewSettingScreens.ts):
-  - `PAYMENT_PAYROLL_PAYMENT_SCHEDULED` = `"payment-payroll-payment-scheduled"`
-  - `PAYMENT_PAYROLL_PAYMENT_SCHEDULED_DETAIL` = `"payment-payroll-payment-scheduled-detail"`
-  - `PAYMENT_PAYROLL_PAYMENT_RESULT` = `"payment-payroll-payment-result"`
-  - `PAYMENT_PAYROLL_PAYMENT_RESULT_DETAIL` = `"payment-payroll-payment-result-detail"`
-- View Setting seed: [V144__payroll_payment_view_setting_seed.sql](../../../../src/main/resources/db/migration/V144__payroll_payment_view_setting_seed.sql).
-- CHECK relaxation: [V146__scdul_pymn_sumr_chk01_allow_payroll.sql](../../../../src/main/resources/db/migration/V146__scdul_pymn_sumr_chk01_allow_payroll.sql) — must be re-asserted by any future migration that touches `scdul_pymn_sumr_chk01`.
+> **Stale-claim removal (2026-06-23).** The earlier README's "5-column Payroll-specific layout (not the canonical set)" claim for the Result detail, and the "STUB / backfill pending" labels, were **incorrect** and are removed. The Result detail consumes the canonical `resultDetailColumns` projected to an 8-column View-Setting subset; the feature is fully implemented.
 
----
+## Payroll-only column — Payroll Type (`APPR_FUND_TP`)
 
-## 2. Divergence from the Internal Transfer baseline
+Both Payroll list pages add a Payroll-only **Payroll Type** column sourced from `EXPT_RESOL_MSTR.APPR_FUND_TP` (joined by `APPR_SEQ_NO`): `"0"` → Salary, `"1"` → Bonus, else blank (legacy `pymn_0005_001.ts` / `pymn_0006_001.ts`). It is written at Request Approval time (`stampApproval`, mandatory for `APPR_DV=21`) and read back on the Scheduled + Result lists.
 
-| Concern | Internal Transfer | Payroll |
-|---|---|---|
-| Controller split | Two controllers (Scheduled + Result) | **Single** `PayrollPaymentController` covers both |
-| Subroute names | `internal-transfer/scheduled-transfer` + `internal-transfer/transfer-result` | `payroll/scheduled-payment` + `payroll/payment-result` (note: frontend route base is `/payroll`, not `/payroll-payment`) |
-| Result list totals footer | **Omitted** | **Rendered** (single-currency typically, but the shared `<PaymentResultBatchListPage>` `totals` prop is still passed) |
-| **Result detail table** | 11-column canonical `resultDetailColumns` (Date/Time, Deposit Bank, Recipient Name, Transfer Amount, Remarks, Results, Result Date/Time, Reporting Account, Description, Document No., Banking Transaction ID) | **5-column Payroll-specific layout** per Figma — narrower row, employee-centric columns. This is the most prominent UX divergence among the four siblings. Backed by a Payroll-specific column array in `<PayrollPaymentResultDetailPage>` rather than the default `resultDetailColumns`. |
-| Upload-dialog column set | recipient acct, name, bank, network, amount, description, doc no, note | Payroll-specific — employee id + salary breakdown columns (gross, deductions, net, etc.); exact list: follow-up MR documents from `<PayrollPaymentUploadDialog>`'s `COLUMNS` array. |
-| Discriminator value | `"03"` | **`"00"`** (and the `scdul_pymn_sumr_chk01` CHECK constraint had to be relaxed in V146 to admit it) |
-| Audit `WSVC_ID` | `internal-transfer` | `payroll-payment` |
-| Key-sequence helper table | `INTERNAL_TRANSFER_KEY_SEQ` | Payroll maintains its own per-(tenant, day) sequence — table name TBD-by-code-inspection |
-| Slug asymmetry | matches across all surfaces (`internal-transfer`) | Frontend `payroll`, backend `payroll-payment`, audit `payroll-payment` — the only sibling with a slug asymmetry. Confirmed acceptable; documented here so a future audit doesn't try to "fix" it. |
-| Payroll-period concept | n/a | Payroll has a **payroll-period selector** above the file pane in the upload dialog (the per-feature extra-step content), distinct from Internal Transfer's withdrawal-account picker. |
+## Endpoint summary (~18)
 
-Per [payment hub README §2 + §3](../README.md), Payroll consumes the shared infrastructure verbatim.
+Base `/api/v1/payment/payroll-payment` — full table in [interface-specification.md](interface-specification.md).
 
----
+| Group | Endpoints |
+|---|---|
+| Scheduled read | `GET /` · `GET /{id}` |
+| Result read | `GET /results` · `GET /results/{id}` · `POST /results/export` |
+| Upload | `GET /withdrawal-accounts` · `POST /uploads/parse` · `POST /` (create draft) |
+| Approval flow | `POST /{id}/request-approval` (multipart) · `POST /{id}/approval-action` · `DELETE /{id}/approval` · `PUT /{id}/approval-line` |
+| Line edit | `PATCH /{id}/lines/{lineId}/reporting-account` |
+| Dispatch | `POST /{id}/dispatch` |
+| Banking match | `GET /{id}/match/candidates` · `POST /{id}/match` · `DELETE /{id}/match` |
+| File | `GET /{id}/file` (shared by Scheduled + Result; either menu) · `DELETE /{id}` (delete draft) |
 
-## 2b. Scheduled Payment View Setting — legacy column parity (V232, 2026-05-31)
+## Notes
 
-Payroll Scheduled (`payment-payroll-payment-scheduled`) was the last Scheduled sibling on the pre-V217 column set. V232 brings it to legacy `pymn_0005_001` parity, mirroring Internal Transfer (V217) **plus** the Payroll-only `APPR_FUND_TP` (Payroll Type) column.
+- `SCDUL_PYMN_TYPE_CD = "00"` — the `scdul_pymn_sumr_chk01` CHECK was relaxed in [V146](../../../../src/main/resources/db/migration/V146__scdul_pymn_sumr_chk01_allow_payroll.sql) to admit `'00'`; do not tighten without re-allowing all siblings.
+- Status is **never** stored on `SCDUL_PYMN_SUMR` (no `APPR_STTS` column in legacy JEX) — it is derived via `wb_get_appr_stts(...)` through `LegacyFunctionRepository`. Rejected = `R` (legacy code, not `X`).
+- Slug asymmetry (frontend `payroll`, backend/audit `payroll-payment`) is intentional and confirmed acceptable.
 
-**Column set (CHECKBOX + 11 data + ETC):**
-
-| disp_ord | FIELD_ID | Label | size | sort_yn | Refactor source | Sortable? |
-|---|---|---|---|---|---|---|
-| 0 | CHECKBOX | Checkbox | 40px | N | — | — |
-| 1 | REG_DTM | Date/Time | 105px | Y | `ScdulPymnSumr.regDtm` | ✅ |
-| 2 | FILE_NM | File Name | 290px | Y | `ScdulPymnSumr.orgFileNm` | ✅ |
-| 3 | TOT_TRNS_CNT | No. of Transactions | 150px | Y | `ScdulPymnSumr.totTrnsCnt` | ✅ |
-| 4 | TOTAL_TRAN_AMT | Total Transfer Amount | 200px | Y | `ScdulPymnSumr.totalTranAmt` | ✅ |
-| 5 | PAY_DATE | Scheduled Date | 150px | Y | `ScdulPymnSumr.payTranDt` (`extraColumn`) | ✅ |
-| 6 | APPR_STTS | Approval Status | 170px | Y | `ScdulPymnSumr.apprStts` | ✅ |
-| 7 | APPR_FUND_TP | Payroll Type | 150px | Y | `ExptResolMstr.apprFundTp` (`extraColumnAfterStatus`) | ⚠️ display-only |
-| 8 | DRAFT_USER_NM | Requestor | 100px | Y | `ScdulPymnSumr.regId` | ✅ |
-| 9 | APPRVR_NM | Approver | 175px | Y | approval-line join | ⚠️ display-only |
-| 10 | APPR_DOC_NO | Approval Ref. | 150px | Y | `ScdulPymnSumr.erpFileNum` | ✅ |
-| 11 | TITL | Approval Title | 250px | Y | `ScdulPymnSumr.titl` | ✅ |
-| 99 | ETC | (action) | 150px | N | — | — |
-
-- **`APPR_FUND_TP` (Payroll Type)** value semantics: `"0"`→Salary, `"1"`→Bonus, else blank (legacy [pymn_0005_001.ts:1054-1064](../../../../../WECMS%20DEV/WECMS_STATIC/ts-src/js/jex/wabooks/pymn/pymn_0005_001.ts)). It and `PAY_DATE` both join from `EXPT_RESOL_MSTR` on `APPR_SEQ_NO` in legacy ([IDO.SCDUL_PYMN_SUMR_R002.xml:98-100](../../../../../WECMS%20DEV/WECMS_ETC/xml/service/IDO/IDO.SCDUL_PYMN_SUMR_R002.xml)); the refactor sources Scheduled Date from the entity's own `PAY_TRAN_DT` (sibling convention) and Payroll Type from `EXPT_RESOL_MSTR.APPR_FUND_TP` (mapped in `PayrollPaymentService.toListRow`, one fetch shared with the Approval Ref `DOC_NO` resolution).
-- **Sort whitelist:** `PayrollPaymentSortField` realigned to the V232 FIELD_IDs (mirrors `InternalTransferSortField`). `APPRVR_NM` + `APPR_FUND_TP` carry `SORT_YN='Y'` for legacy parity but are **not** in the whitelist / frontend `SORTABLE_COLUMNS` — both project from joins the single-table paged query can't sort on, so no glyph renders (same deferral as the sibling Approver column).
-- **Shared component:** `<PaymentScheduledBatchListPage>` gained one additive optional prop `extraColumnAfterStatus` (rendered between Approval Status and Requestor) for the Payroll Type column. Siblings unaffected.
-- **Wire:** `apprFundTp` added to the shared `ScheduledTransferRow` record (backward-compatible constructor → siblings pass `null`) and `appr_fund_tp` to the frontend `ApiScheduledTransferRow`.
-
-Touched files: [V232 migration](../../../../src/main/resources/db/migration/V232__payroll_payment_scheduled_view_setting_legacy.sql), `PayrollPaymentSortField.java`, `PayrollPaymentService.java`, `ScheduledTransferRow.java`; `lib/types/api.ts`, `components/payment/shared/PaymentScheduledBatchListPage.tsx`, `components/payment/payroll/ScheduledPaymentPage.tsx` + `types.ts`, `locales/{en,ko,vi}.json`.
-
----
-
-## 3. Open documentation gaps (backfill in a follow-up MR)
-
-Same gap list as [vendor-payment/README.md §3](../vendor-payment/README.md) — full §1–§12 spec + 5 companion docs are not yet written.
-
-Payroll-specific pieces to backfill with priority:
-
-- [ ] The **5-column result-detail layout** — Figma spec citation + the actual `columns` array passed to `<ResultDetailView>` in `<PayrollPaymentResultDetailPage>`.
-- [ ] The **payroll-period selector** UX — Figma + the `extraStep` content in `<PayrollPaymentUploadDialog>`.
-- [ ] Payroll-specific employee/salary validation rules (likely strictest of the four — employee id must exist in HR master, gross ≥ net, etc.).
-- [ ] Why `SCDUL_PYMN_TYPE_CD = '00'` instead of `'04'` or a higher number — historical reason from the JEX legacy enum order. Mention it in the per-feature spec so reviewers don't misread it as accidental.
-
----
-
-## 4. Verification ground truth
-
-When backfilling:
-
-1. [`PayrollPaymentController.java`](../../../../src/main/java/com/kosign/wecms/domain/payment/payrollpayment/controller/PayrollPaymentController.java) — REST surface.
-2. [`PayrollPaymentService.java`](../../../../src/main/java/com/kosign/wecms/domain/payment/payrollpayment/service/PayrollPaymentService.java) — business logic + audit-key channel.
-3. `<PayrollScheduledPaymentPage>` + `<PayrollPaymentResultDetailPage>` + `<PayrollPaymentUploadDialog>` — UX (the Result detail's 5-column variant especially).
-4. JEX `pymn_0005_*` + `pymn_0006_*` actions + WSVC XML.
-5. Figma (Payroll-specific frames) — for the 5-column result-detail table + the payroll-period selector. **Note:** Figma MCP is currently disconnected; cite Publishing (AI) handoffs under `c:/WeCMS/Publishing (AI)/` when they exist, or flag the UX claim as unverified pending Figma access (see Open Questions in [internal-transfer.md §12](../internal-transfer/README.md)).
-
----
-
-Last verified: 2026-05-22
+Last verified against code: 2026-06-23

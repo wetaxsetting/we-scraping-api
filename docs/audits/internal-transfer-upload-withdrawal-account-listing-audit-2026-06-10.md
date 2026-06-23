@@ -1,5 +1,7 @@
 # Internal Transfer Excel Upload — Withdrawal Account Listing Audit
 
+> _**Historical one-off audit.** A point-in-time record of a completed verification / remediation — findings are preserved unchanged. For the feature’s current state see its `features/.../refactor-gap-analysis.md`; for context see the [audits index](README.md)._
+
 **System:** Refactor (wecms-api / wecms-web) audited against JEX legacy (source of truth)
 **Date:** 2026-06-10
 **Author:** Withdrawal-account listing parity audit (Claude)

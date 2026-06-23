@@ -4,7 +4,7 @@
 > **Audited:** 2026-06-06 · **Method:** Read-only analysis of legacy JEX doc set (`docs/jex/features/transaction-history-vnd/`) cross-checked against live JEX source citations, **verified against actual refactor source** in `wecms-api/` (Spring Boot) and `wecms-web/` (Next.js).
 > **Evidence rule:** Every verdict below carries `file:line` evidence read directly from source. Items derived from a sub-agent sweep but not personally re-opened by the auditor are tagged **`AGENT-VERIFIED`** (source code was read by a delegate, not docs); items that could not be confirmed are tagged **`NOT VERIFIED`**.
 >
-> **Primary feature home (2026-06-06):** consolidated into [features/banking/transaction-history-vnd/](../features/banking/transaction-history-vnd/README.md) — see its [refactor-gap-analysis.md](../features/banking/transaction-history-vnd/refactor-gap-analysis.md) for the current parity table. This audit is preserved as the detailed evidence trail.
+> **Primary feature home (2026-06-06):** consolidated into [features/banking/transaction-history-vnd/](../features/banking/current-savings-vnd/transaction-history/README.md) — see its [refactor-gap-analysis.md](../features/banking/current-savings-vnd/transaction-history/refactor-gap-analysis.md) for the current parity table. This audit is preserved as the detailed evidence trail.
 
 ---
 

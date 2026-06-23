@@ -1,5 +1,7 @@
 # Withdrawal-Account Listing — Option A Implementation Report
 
+> _**Historical one-off audit.** A point-in-time record of a completed verification / remediation — findings are preserved unchanged. For the feature’s current state see its `features/.../refactor-gap-analysis.md`; for context see the [audits index](README.md)._
+
 **System:** Refactor (`wecms-api`) · **Baseline:** JEX legacy `comm_1001_001` (source of truth)
 **Date:** 2026-06-12 · **Plan:** [vendor-expense-payroll-withdrawal-account-remediation-plan-2026-06-10.md](vendor-expense-payroll-withdrawal-account-remediation-plan-2026-06-10.md) — **Option A** (single shared service for all five consumers)
 **Scope guardrails honored:** no frontend change · no endpoint-URL change · no DTO response-shape change · no controller `@PreAuthorize`/`@menuAuthz` change · no G4/G5 · no unrelated refactoring · Flyway G3 seed (plan step 9) **not** in scope of this request.

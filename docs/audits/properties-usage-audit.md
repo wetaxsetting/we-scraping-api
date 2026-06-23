@@ -1,5 +1,7 @@
 # Properties & Configuration Usage Audit — WeCMS Refactor (`wecms-api`)
 
+> _**Historical one-off audit.** A point-in-time record of a completed verification / remediation — findings are preserved unchanged. For the feature’s current state see its `features/.../refactor-gap-analysis.md`; for context see the [audits index](README.md)._
+
 > **Read-only audit.** No code was modified. Scope: every `.properties` / `.yml` / `.yaml`
 > file under [`wecms-api/src/main/resources`](../../src/main/resources) plus every Java
 > usage of `MessageSource` / `getMessage(...)` / `@Value` / `@ConfigurationProperties` /
@@ -11,7 +13,7 @@
 
 ## 1. Inventory — every config file under `src/main/resources`
 
-`find src/main/resources -type f \( -name "*.properties" -o -name "*.yml" -o -name "*.yaml" \)` → **10 files**, no `.yaml` (long form) and no nested config files (the `db/`, `db/manual/`, `db/migration/` subtrees hold only SQL).
+`find src/main/resources -type f \( -name "*.properties" -o -name "*.yml" -o -name "*.yaml" \)` → **10 files**, no `.yaml` (long form) and no nested config files (the `db/migration/` subtree holds only SQL (the `db/manual/` and `db/archive/` SQL subtrees were removed 2026-06-23)).
 
 | # | File | Type | Category |
 |---|---|---|---|

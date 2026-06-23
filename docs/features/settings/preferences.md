@@ -1,80 +1,38 @@
-# Preferences
+# Settings > Preferences — Feature Summary (Refactor)
 
-> Canonical Settings-menu entry for **Settings → Preferences** (backend). **Confirmed against source
-> 2026-06-01** — legacy `comm_0215_001`, refactor split across `domain/setting/preferences/`
-> (company profile + logo) and `domain/setting/environmentsettings/` (feature toggles). Implemented.
+> ⚠️ This document is a high-level feature summary.
+> The detailed source of truth is located in:
+> `docs/features/settings/preferences/`
 
-## Overview
-Preferences (left nav, between **Bank Account** and **Users**) carries the **company profile**
-(logo, Vietnamese name, display name, Tax ID, representative e-mail, address) plus the system-wide
-**feature toggles** *Use Purpose* and *Use VAS Account*. Slug: `preferences` (replaces legacy WSVC id
-`comm_0215_001`).
+## Feature Overview
+- **Purpose:** Per-tenant company profile — Vietnamese name, display/English name, Tax ID, representative name + email, tel/fax, the four-part representative business address, and the company logo. A single-row resource (`BUSI_INFM`, PK `BIZ_KEY`); no list, pagination, or search.
+- **Business role:** A tenant administrator reads the profile, saves the editable fields in place (a pure UPDATE on the one `BUSI_INFM` row), and uploads / clears / streams the company logo.
 
-### Confirmed source files
-**JEX (read-only reference)** — `WECMS DEV/.../comm/`
-- Views: `comm_0215_001_view.jsp`, `comm_0215_001_r002_view.jsp`
-- Actions: `comm_0215_001_r001_act.jsp` (read), `_u001` (save profile), `_u002`/`_u003`/`_u004`
-  (toggles), `_c001`/`_c005` (logo upload), `_d001` (logo clear)
-- Env data layer: `IDO.BUSI_ENV_SET_INFM_*.xml`, entities `wabooks/entity/BusiEnvSetInfm.java` +
-  `SysEnvSetInfm.java`, DAO `BusiEnvSetInfmDAO.java`
+## Menu / Route Mapping
+- **Menu / panel:** Settings → Preferences (Settings modal panel — no standalone route; sidebar between Bank Account and Users)
+- **Menu permission ID (slug):** `settings-core-preference` (class-level `@PreAuthorize("@menuAuthz.canAccess('settings-core-preference')")` on `PreferencesController`)
+- **Wire base path:** `/api/v1/settings/preferences`
+- **Frontend mount / route:** Settings modal panel key `preferences`
+- **Legacy JEX counterpart:** WSVC family `comm_0215_001` (`_r001` read · `_u001` save profile · `_c001`/`_c005` logo upload · `_d001` logo clear); table `BUSI_INFM`, logo in `BUSI_INFM.CMPN_LOGO` — legacy ids cited for traceability only.
 
-**Refactor (`wecms-api`)**
-- Company profile + logo: `domain/setting/preferences/` — `PreferencesController`, `PreferencesService`,
-  `PreferencesLogoResolver`, `PreferencesConfig`, DTOs `PreferencesResponse` / `PreferencesUpdateRequest`
-  / `PreferencesAddress`
-- Feature toggles: `domain/setting/environmentsettings/` — `EnvironmentSettingsController`,
-  `EnvironmentSettingsService`, `TenantEnvironmentSettingsBootstrapService`, entities `BusiEnvSetInfm`
-  + `SysEnvSetInfm`, `SysEnvSetInfmRepository`
-- Migrations: `V69__sys_busi_env_set_infm_schema.sql`, `V70__busi_env_set_infm_init_existing_tenant.sql`,
-  `V119__preferences_env_set_seed.sql`
+## Current Status
+- ✅ **Implemented:** Full-stack. Five endpoints — GET (read profile) · PUT (save profile, single-row UPDATE) · `POST /logo` (multipart upload, ≤ 2 MB, JPG/JPEG/PNG/GIF/SVG, opaque save filename, per-tenant subtree) · `DELETE /logo` (idempotent clear) · `GET /logo` (JWT-protected binary stream with `?v=` cache-buster). Profile Update writes one `AUDIT_LOGS_INFM` row (`WSVC_ID='preferences'`); read + logo upload/delete write none (legacy parity). Frontend panel (`PreferencesPanel.tsx`) is fully wired with no mock fallback. No new entity/repository — reuses the auth domain's `BusiInfm` + `BusiInfmRepository`; no new Flyway migration.
+- 🟡 **Partially implemented:** No automated backend tests on disk (no `PreferencesServiceTest` / `…ControllerTest`); SIT/UAT coverage only — a JUnit suite is a tracked follow-up.
+- ⚪ **Deprecated / Legacy / Not ported:** The *Use Purpose* / *Use VAS Account* toggles rendered on this panel are NOT part of this module — they route through the generic Environment Settings endpoint pair (`GET/PUT /api/v1/settings/environment-settings/{env_set_inf}`, codes `00077` / `00074`). The legacy `comm_0215_001` returned profile + toggles in one screen; the refactor deliberately split persistence (toggle parity belongs to `environment-settings.md`). The legacy secondary read view `comm_0215_001_r002_view.jsp` is folded into the single read endpoint.
 
-- Legacy plan: [../../../docs/about-preferences-in-jaunty-goblet.md](../../../../docs/about-preferences-in-jaunty-goblet.md)
-  *(note: that plan names the toggle table `ENV_SETN_INFM` — **incorrect**; see Database Tables)*
-- Toggles consumed by: [purpose.md](purpose.md), [vas-account.md](vas-account.md)
+## Detailed Documentation
+| Doc | Link |
+|---|---|
+| Overview / README | [preferences/README.md](preferences/README.md) |
+| Business flow | [preferences/business-flow.md](preferences/business-flow.md) |
+| Database mapping | [preferences/database-mapping.md](preferences/database-mapping.md) |
+| Functional specification | [preferences/functional-specification.md](preferences/functional-specification.md) |
+| Interface specification | [preferences/interface-specification.md](preferences/interface-specification.md) |
+| Migration guide | [preferences/migration-guide.md](preferences/migration-guide.md) |
+| Refactor gap analysis | [preferences/refactor-gap-analysis.md](preferences/refactor-gap-analysis.md) |
+| Source code index | [preferences/source-code-index.md](preferences/source-code-index.md) |
+| Test scenarios | [preferences/test-scenarios.md](preferences/test-scenarios.md) |
 
-## Related APIs
-**Company profile** — base `/api/v1/settings/preferences` (JWT, snake_case wire):
-- `GET /` — load profile (mirrors `comm_0215_001_r001`, `BUSI_INFM` half)
-- `PUT /` — save profile (mirrors `comm_0215_001_u001`)
-- `POST /logo` — logo upload (multipart, `@RequestPart("file")`)
-- `DELETE /logo` — clear logo
-- `GET /logo` — stream the logo
-
-**Feature toggles** — base `/api/v1/settings/environment-settings`:
-- `GET /{env_set_inf}` — read one toggle
-- `PUT /{env_set_inf}` — upsert one toggle (e.g. *Use Purpose*, *Use VAS Account*)
-
-## Database Tables
-> ✅ **CONFIRMED.** The toggle table is **`BUSI_ENV_SET_INFM`**, not `ENV_SETN_INFM`. `ENV_SETN_INFM`
-> appears in **zero** source files (Java/XML/SQL) — it was a documentation error. Bare `ENV_SET_INFM`
-> never appears standalone either; every occurrence is `BUSI_ENV_SET_INFM` (50 refs) or
-> `SYS_ENV_SET_INFM` (22 refs).
-
-- **`BUSI_INFM`** — company profile, one row per tenant (PK `BIZ_KEY`). Logo lives in `BUSI_INFM.CMPN_LOGO`.
-- **`BUSI_ENV_SET_INFM`** — per-tenant environment toggles (N rows per tenant, e.g. *Use Purpose*,
-  *Use VAS Account*). Legacy `comm_0215_001` returned these as the `REC[]`.
-- **`SYS_ENV_SET_INFM`** — system-level environment defaults (seeded; tenant rows initialised from it
-  by V70 / the bootstrap service).
-- **`AUDIT_LOGS_INFM`** — profile-change audit via `AuditLogService` (`REF_NO = "BUSI_INFM"`).
-
-## Business Rules
-- Dual-source read: one `BUSI_INFM` row (profile) + N `BUSI_ENV_SET_INFM` toggle rows.
-- Profile save is a pure UPDATE on the single `BUSI_INFM` row scoped to `BIZ_KEY` (mirrors
-  `comm_0215_001_u001_act.jsp:48-95`).
-- Each toggle is a single-key upsert into `BUSI_ENV_SET_INFM`.
-- Logo upload writes a server-generated filename to `BUSI_INFM.CMPN_LOGO`; upload/delete mutate only
-  that one column. New tenants are initialised from `SYS_ENV_SET_INFM`.
-- Audit `WSVC_ID` uses the slug `preferences`.
-
-## Validation
-- Tax ID / representative e-mail format-checked; required company fields non-blank.
-- Logo file type/size constrained by `PreferencesLogoStorageProperties` / `PreferencesConfig`.
-
-## Error Cases
-- Missing `BUSI_INFM` row for the tenant → handled (logged warn; should resolve at login).
-- Invalid logo file type → validation error.
-- Standard envelope; `WBE_VALIDATION` / `WBE9999`.
-
-## Notes
-Turning *Use Purpose* / *Use VAS Account* off hides those Settings panels and their transaction-setup
-fields. Web/UI: [../../../wecms-web/docs/settings/preferences.md](../../../../wecms-web/docs/features/settings/preferences.md).
+## Historical Design Notes (preserved)
+- **Status-label drift (resolved here):** earlier docs (and the workspace + `wecms-web` CLAUDE.md Feature-Status tables) called this panel "Static UI". That is **stale** — the panel is fully wired to all five live endpoints plus the two env toggles. Stale DTO/client Javadocs ("logo upload not in scope / placeholder SVG") predate the logo endpoints landing. The code is authoritative; the CLAUDE.md status labels are a tracked non-blocking docs cleanup.
+- **[Not ported]** The old flat file's reference to a legacy plan naming the toggle table `ENV_SETN_INFM` was a documentation error — the real tables are `BUSI_ENV_SET_INFM` (per-tenant) + `SYS_ENV_SET_INFM` (system defaults). `ENV_SETN_INFM` appears in zero source files.

@@ -50,7 +50,7 @@ The screenshot showed the **report region rendered** (the "As of 04-Jun-2026 · 
 ## 2. Endpoint correctness
 
 - Frontend: [`banking.ts:782-787`](../../../../../wecms-web/lib/api/banking.ts#L782-L787) → `api.get("/api/v1/banking/reports/daily-financial", { params })`.
-- Backend: [`ReportController.java:16,29-36`](../../../../src/main/java/com/kosign/wecms/domain/banking/controller/ReportController.java#L29-L36) → `@RequestMapping("/api/v1/banking/reports")` + `@GetMapping("/daily-financial")`, params `asOf` / `currencyScope` / `activeAccountsOnly` / `includeInternalTransfers`.
+- Backend: [`ReportController.java:16,29-36`](../../../../../src/main/java/com/kosign/wecms/domain/banking/controller/ReportController.java#L29-L36) → `@RequestMapping("/api/v1/banking/reports")` + `@GetMapping("/daily-financial")`, params `asOf` / `currencyScope` / `activeAccountsOnly` / `includeInternalTransfers`.
 - **Path + params match exactly.** The endpoint wiring is correct.
 - **Base URL** ([`axios.ts:5-6`](../../../../../wecms-web/lib/axios.ts#L5-L6)): `process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080"`. On a **deployed** frontend (e.g. `sample.coocon.co.kr:3000`) where this env var is unset, the browser resolves `http://localhost:8080` against the **viewer's own machine**, not the server → connection refused → `ApiCallError("NETWORK")` → mock. This is the most probable runtime trigger.
 
@@ -93,7 +93,7 @@ Local probe this run: `GET http://localhost:8080/actuator/health` → **HTTP 404
 | [`lib/api/useApiData.ts`](../../../../../wecms-web/lib/api/useApiData.ts) | sets `data=null` on throw |
 | [`lib/axios.ts`](../../../../../wecms-web/lib/axios.ts) | `baseURL` (env var), JWT interceptor, 401 re-auth |
 | [`lib/api/mappers.ts`](../../../../../wecms-web/lib/api/mappers.ts) | `mapFinancialStatus` / `mapCurrentAccountRow` (pass-through, no fallback) |
-| [`ReportController.java`](../../../../src/main/java/com/kosign/wecms/domain/banking/controller/ReportController.java) · [`ReportService.java`](../../../../src/main/java/com/kosign/wecms/domain/banking/service/ReportService.java) | backend endpoint + query (verified correct, returns real data) |
+| [`ReportController.java`](../../../../../src/main/java/com/kosign/wecms/domain/banking/controller/ReportController.java) · [`ReportService.java`](../../../../../src/main/java/com/kosign/wecms/domain/banking/service/ReportService.java) | backend endpoint + query (verified correct, returns real data) |
 
 ## 6. Recommended fix (NOT applied — logic unchanged per instructions)
 

@@ -59,7 +59,13 @@ Legacy ↔ refactor file map for Settings > Contacts. Paths relative to the work
 (Embedded ops: `AddressOp`, `AccountOp`, `OverseasOp`, `AccountDeleteKey`, `OverseasDeleteKey`.)
 
 ### Migrations
-- `V112__contacts_schema.sql` (5 tables) · `V113__wb_get_next_val_trco_infm.sql` (`sq_trco_key` + branch) · `V114__wb_get_napas_bank_nm_or_citad_bank_nm.sql` · `V115__contacts_demo_seed.sql` · `V117__contacts_disp_ord_to_integer.sql` · `V139__trco_info_file_schema.sql` · `V140__wb_get_next_val_trco_info_file.sql` · `V154__contacts_view_setting_seed.sql` (re-applied `V187`) · `V247__contacts_export_view_setting_seed.sql` (GAP-01). All under [src/main/resources/db/migration/](../../../../src/main/resources/db/migration). ⚠️ internal `-- V8x` header comments are stale — cite by filename.
+Current per-table scheme after the 2026-06-09 consolidation (one legacy table per file, DDL copied verbatim from the live JEX DB incl. triggers / `bpchar` / full column sets):
+- `V112__trco_acct_info.sql` · `V114__trco_addr_infm.sql` · `V116__trco_info_file.sql` · `V119__trco_infm.sql` · `V121__trco_ovrs_infm.sql` · `V82__pgro_bsac_lnkn_infm.sql` (schema) · `V140__wb_get_next_val.sql` (carries the `trco_infm.trco_key` + `trco_info_file.file_id` branches) · `V159__sq_trco_key.sql` (sequence, START 0).
+- **No** `wb_get_napas_bank_nm_or_citad_bank_nm` migration — that function is expected to pre-exist in the live JEX DB (`LegacyFunctionRepository.resolveNapasOrCitadBankName` calls it directly).
+- **No** live contacts View Setting seed and **no** export View Setting seed: the old `V154`/`V187` (list) and `V247` (export) seeds were archived in the 2026-06-09 renumber and **removed with `db/archive/` on 2026-06-23 (approved decision)** — not applied (the refactor reuses the live JEX DB). Export columns resolve via the provider allow-list ∩ request columns (no `WBE2013` gate from a seed).
+- **No** demo seed and **no** `disp_ord → INTEGER` hotfix in the current set — `DISP_ORD` is `NUMERIC(10,0)` mapped via `@JdbcTypeCode(NUMERIC)`.
+
+All under [src/main/resources/db/migration/](../../../../src/main/resources/db/migration). ⚠️ The earlier doc revisions cited a stale scheme (V112=5-table; V113/V115/V117/V139/V154/V187/V247) — those numbers no longer match the tree; cite by the filenames above.
 
 ### Tests
 - [ContactsControllerTest.java](../../../../src/test/java/com/kosign/wecms/domain/setting/contacts/controller/ContactsControllerTest.java) — MockMvc, snake_case wire, validation envelopes, WBE1190.

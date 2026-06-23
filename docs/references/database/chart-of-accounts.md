@@ -2,7 +2,7 @@
 
 **Slug:** `chart-of-accounts`
 **Tenant:** all tables tenant-scoped via `BIZ_KEY`.
-**Related docs:** [feature spec](../../features/settings/chart-of-accounts.md) · [migration map](../migration/chart-of-accounts.md) · [backend](../business-rules/chart-of-accounts.md) · [frontend](../../../../wecms-web/docs/features/settings/chart-of-accounts.md) · [plan](../../archive/planning/phase-1/chart-of-accounts-plan.md).
+**Related docs:** [feature spec](../../features/settings/chart-of-accounts.md) · [migration map](../migration/chart-of-accounts.md) · [backend](../business-rules/chart-of-accounts.md) · [frontend](../../../../wecms-web/docs/features/settings/chart-of-accounts.md) · plan _(removed — historical `archive/` folder deleted by project decision)_.
 
 The refactor mirrors the JEX DEV schema column-for-column per the [Legacy Schema Parity Rule](../../../CLAUDE.md). DEV introspection was captured on 2026-05-13; this doc is the canonical reference for the Phase-1 Flyway migration.
 

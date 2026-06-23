@@ -16,9 +16,9 @@ All identity (`bizKey`, `userId`, `isAdmin`) is read from `TenantContext` (popul
 Approval Box does not create approvals; the sibling Payment modules do, at submission time, via the shared `ApprovalBoxFanoutService.fanout(...)`:
 
 1. Build an `EXPT_RESOL_MSTR` row: `APPR_TYPE_CD = "00"` (Pending), `APPR_DV` = the payment type code (`21`/`31`/`32`/`33`/`34`/`35`), draft date/time/user from `TenantContext`, `DOC_NM = ApprDv.slug()`, amount stored in the currency-specific column (USD → `TOT_PAY_USD_AMT`; VND/blank → `TOT_PAY_KHR_AMT` + `TOT_PAY_VND_AMT`), `DEL_YN = "N"`.
-2. `DOC_NO` is allocated by `nextDocNo(bizKey, now)` → `VO_<yyMMdd>_<NNN>` (per-tenant, per-day sequence; the caller's supplied doc number is **overridden**).
+2. `DOC_NO` is allocated through the single key-gen funnel `LegacyFunctionRepository.nextDocNo` → `wb_get_next_val('expt_resol_mstr','doc_no',…)` (V140 branch #39, env-set-driven) → `VO_<yyMMdd>_<NNN>` (per-tenant, per-day sequence; the caller's supplied doc number is **overridden**). `APPR_SEQ_NO` is allocated through the same funnel via `LegacyFunctionRepository.nextApprSeqNo` → the global `sq_appr_seq_no` sequence (V140 branch #1, V148).
 3. Insert one `EXPT_RESOL_APPRVR_INFM` row per approver in line order: line 1 → `APPRVR_STTS = "P"` (Pending, their turn), lines 2..N → `"W"` (Waiting).
-4. Fire `notificationService.notifyApprovalRequested(...)` to the whole chain (best-effort, isolated transaction).
+4. Fire the lifecycle notification via `ApprovalNotificationService` (BLTB tables — `BLTB_COMNT_INFM` / `BLTB_NOTI_INFM` / `BLTB_NOTI_CONT_INFM`) to the whole chain (best-effort, isolated transaction). There is no refactor-only `NOTIFICATION` table — it was removed 2026-06-10 (memory `project_notification_module_removed.md`).
 
 `ApprDv` codes: `21` Payroll · `31` Expense · `32` Vendor · `33` Corporate Card · `34` Overseas · `35` Internal Transfer.
 
@@ -65,8 +65,10 @@ The legacy detail/approve/reject popup `comm_0195_001` is what the approver chai
 5. **No source write-back.** `SCDUL_PYMN_SUMR` / `OVRS_PYMN_SUMR` have no `APPR_STTS` column in the legacy JEX schema, so nothing is mirrored onto the batch on approve (the legacy `updateApprStts` mirror was removed 2026-06-10). The Overseas / Scheduled list+detail pages derive status on read from the joined `EXPT_RESOL_MSTR.APPR_TYPE_CD`.
 6. Recompute `totalCount` (chain size) and `approvedCount` (count of `'A'`).
 7. **Audit:** `auditLogService.append(...)` with `WSVC_ID = "approval-box"`, ref `EXPT_RESOL_MSTR`/`apprSeqNo`, detail key `audit.approval_box.approve.detail` (one row per locale, `REQUIRES_NEW`).
-8. **Notification:** `notifyApprovalDecision(true, ...)` to the resolved recipients (chain members in {P,A,R} + business admins, minus the actor and the requester) — best-effort, isolated.
+8. **Notification:** `approvalNotificationService.notifyApprovalAction(apprSeqNo, apprDv, comntTaskCd)` — `comntTaskCd = "R003"` (COMPLETE) when fully approved, `"R004"` (APPROVED step) otherwise — writes a `BLTB_COMNT_INFM` remark + `BLTB_NOTI_INFM`/`BLTB_NOTI_CONT_INFM` to admins + acted approvers. Best-effort, isolated.
 9. Return `ApprovalBoxActionResponse(apprSeqNo, deriveApprStts(apprTypeCd), approvedCount, totalCount)`.
+
+> On full approval the master also stamps `PAY_END_YN='Y'` + `PAY_END_DTM` + `PAY_END_NM` (legacy `comm_0192_010_u001` parity).
 
 No `DOC_NO` is generated on approve — the document number is allocated only at fan-out time.
 
@@ -80,7 +82,7 @@ No `DOC_NO` is generated on approve — the document number is allocated only at
 2. `approverRepository.stopDownstream(...)` — single UPDATE flips every `W` row to `S` (Stopped). Downstream approvers can no longer act.
 3. Master `APPR_TYPE_CD = '02'` (Rejected).
 4. No source write-back (same reason as approve §3.5 — the batch tables carry no `APPR_STTS` column).
-5. Recompute counts, audit (`audit.approval_box.reject.detail`), `notifyApprovalDecision(false, ...)`, return the action response (`appr_stts = "R"`).
+5. Recompute counts, audit (`audit.approval_box.reject.detail`), `approvalNotificationService.notifyApprovalAction(apprSeqNo, apprDv, "R002")` (REJECT remark + BLTB notification), return the action response (`appr_stts = "R"`). On the rejecting vote the master also stamps `PAY_END_*` when every approver has now voted (legacy `comm_0192_010_u002` parity).
 
 ---
 
@@ -115,7 +117,7 @@ The wire `appr_stts` shown to the user is derived from `APPR_TYPE_CD` (`deriveAp
 
 These tables are **read-only** on the Approval Box list path (`CARD_TRNS_HSTR`, `SCDUL_PYMN_SUMR`, `OVRS_PYMN_SUMR` supply currency / file name / card amount / uploader visibility — see §8). The list endpoint writes nothing.
 
-Notification rows are written best-effort by `NotificationService` in an isolated transaction so a notification failure never rolls back the approval.
+Notification/bulletin rows are written best-effort by `ApprovalNotificationService` (legacy `BLTB_*` tables) in an isolated transaction so a notification failure never rolls back the approval.
 
 ---
 

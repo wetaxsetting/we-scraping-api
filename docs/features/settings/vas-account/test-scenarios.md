@@ -5,9 +5,10 @@ plan (preserved, 4-layer): [testing/vas-account.md](../../../testing/vas-account
 truth: [docs/jex/features/vas-account/test-scenarios.md](../../../../../docs/jex/features/vas-account/test-scenarios.md).
 
 > Automated coverage lives in `src/test/java/com/kosign/wecms/domain/setting/vasaccount/` —
-> `VasAccountServiceTest` (~24), `VasAccountControllerTest` (~12, standalone MockMvc),
-> `VasAccountExcelServiceTest` (~16), `VasAccountExportProviderTest` (~8), `VasAccountSortFieldTest`.
-> `VasAccountIntegrationTest` is **`@Disabled` (F1)** — its cases are listed as ⏳ below.
+> `service/VasAccountServiceTest` (27), `controller/VasAccountControllerTest` (12, standalone MockMvc),
+> `service/VasAccountExcelServiceTest` (18), `export/VasAccountExportProviderTest` (8),
+> `service/VasAccountSortFieldTest` (4). `VasAccountIntegrationTest` (21 cases) is
+> **`@Disabled` (F1)** — its cases are listed as ⏳ below.
 
 ## Search
 
@@ -101,5 +102,5 @@ truth: [docs/jex/features/vas-account/test-scenarios.md](../../../../../docs/jex
 | V1 | Detail 404 envelope | `WBE2040`, `trace_id` + `path` present | ✅ |
 | V2 | Concurrent create (sequence race) | one succeeds; the loser → `WBE_DB` (no retry) | ⏳ (integration — F1) |
 | V3 | Tenant isolation (wrong-tenant seqNo) | `WBE2040` (never leaks existence) | ⏳ (integration — F1) |
-| V4 | View Setting lazy-init for `vas-account` | first GET copies sys rows to user table | ⏳ (integration — F1) |
+| V4 | View Setting not adopted for `vas-account` | no `SYS_SCR_OPTION_WECMS` seed (V156 lists it audit-slug-only); no popover, no lazy-init path | ✅ (verified absent) |
 | V5 | Audit ledger row written per action | one `AUDIT_LOGS_INFM` row, `wsvc_id='vas-account'` | ✅ (unit, append verified) / ⏳ (end-to-end — F1) |

@@ -1,5 +1,7 @@
 # Vendor / Expense / Payroll Excel Upload — Withdrawal-Account Listing Remediation Plan (G1 / G2 / G3)
 
+> _**Historical one-off audit.** A point-in-time record of a completed verification / remediation — findings are preserved unchanged. For the feature’s current state see its `features/.../refactor-gap-analysis.md`; for context see the [audits index](README.md)._
+
 **System:** Refactor (wecms-api) · **Baseline:** JEX legacy `comm_1001_001` (source of truth)
 **Date:** 2026-06-10 · **Author:** Fix-planning review (Claude)
 **Status:** Plan only — **no code/tests/schema changed.** Implementation NOT started.

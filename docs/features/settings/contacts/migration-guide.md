@@ -16,13 +16,13 @@ a port.
 | Edit | `comm_0184_005_u001_act.jsp` (+ IDO `TRCO_INFM_U001`) | `PUT /{trcoKey}` → `ContactsService.update` (one tx, combined child upsert/delete) |
 | Bulk soft-delete | `comm_0184_001_u001_act.jsp` (IDO `TRCO_INFM_U004` → `TRCO_STTS='C'`) | `DELETE /{trcoKey}` + `POST /bulk-delete` → `softDelete` / `bulkSoftDelete` |
 | In-use guard | IDO `TRCO_INFM_R021_CNT` (counts `ACCT_TRNS_RCV_PAY_INFM`) | `AcctTrnsRcvPayInfmRepository.existsByBizKeyAndRcvPayTrcoKey` → `WBE1190` |
-| Export | `comm_0184_001_r006_excel_view.jsp` (Apache POI XSSF) | `POST /export` → shared `ExcelExportService` → `ContactsLocalExportProvider` / `ContactsOverseasExportProvider` → `ContactsService.listForExport` (seeded by V247) |
+| Export | `comm_0184_001_r006_excel_view.jsp` (Apache POI XSSF) | `POST /export` → shared `ExcelExportService` → `ContactsLocalExportProvider` / `ContactsOverseasExportProvider` → `ContactsService.listForExport` (columns via provider allow-list ∩ request — no live View Setting seed) |
 | Excel import | `comm_0184_007_*` (IDOs `DAT_IMP_WIZ_TRCO_INFM_*`) | `POST /excel/preflight` + `/excel/resolve-recipients` + `/excel/import` → `ContactsImportService` |
 | Address sub-popup | `comm_0184_003_*_act.jsp` | folded into the contact create/update body (address ops) |
 | Account sub-popup | `comm_0184_004_*_act.jsp` | folded into the contact create/update body (account ops) |
 | Attachments | `comm_0184_005_u002/u003/u008` + `TRCO_INFO_FILE` IDOs | `…/{trcoKey}/files…` → `ContactsFileService` |
-| TRCO_KEY gen | `SeqHelper.getNextVal(...)` → `wb_get_next_val('trco_infm','trco_key')` | `LegacyFunctionRepository.nextTrcoKey` (V113 + `sq_trco_key`, OQ-4) |
-| Bank-name resolve | IDO `wb_get_napas_bank_nm_or_citad_bank_nm` | `LegacyFunctionRepository.resolveNapasOrCitadBankName` (V114, OQ-7) |
+| TRCO_KEY gen | `SeqHelper.getNextVal(...)` → `wb_get_next_val('trco_infm','trco_key')` | `LegacyFunctionRepository.nextTrcoKey` (branch in V140 + `sq_trco_key` in V159, OQ-4) |
+| Bank-name resolve | IDO `wb_get_napas_bank_nm_or_citad_bank_nm` | `LegacyFunctionRepository.resolveNapasOrCitadBankName` (function pre-exists in the live JEX DB — not a refactor migration; OQ-7) |
 
 > **Screen-id clarification:** the live "Settings > Contacts" screen is the `comm_0184_*` WSVC family,
 > NOT `trco_0001_001`. Both operate on `TRCO_INFM`, but `trco_0001_001` is the standalone WABOOKS
@@ -60,29 +60,37 @@ reference).
 - **Out-of-scope tables** — only PROD-active tables were ported. `TRCO_INFO_FILE` was added by an
   explicit 2026-05-13 PO scope-widening (the only contacts table added beyond the original audit).
 
-## Schema migration (Flyway) — numbering drift
+## Schema migration (Flyway) — current per-table scheme
 
-Contacts migrations were **drafted at lower numbers and renumbered on commit**; the files' internal
-`-- V8x` header comments are stale. **Always cite by filename version:**
+After the **2026-06-09 consolidation**, the contacts schema lands as **one legacy table per migration
+file**, with the DDL copied verbatim from the live JEX DB (triggers, `bpchar`, full column sets). Cite
+by the filename version below — earlier doc revisions cited a now-stale scheme (V112=5-table schema,
+V113/V115/V117/V139/V154/V187/V247) that no longer matches the tree.
 
-| Filename version | Stale internal header | Summary |
-|---|---|---|
-| V112 | `V84` | 5-table schema (`TRCO_INFM` 47, `TRCO_ADDR_INFM` 11, `TRCO_ACCT_INFO` 20, `TRCO_OVRS_INFM` 13, `PGRO_BSAC_LNKN_INFM` 6) |
-| V113 | `V85` | `sq_trco_key` (START 1,000,000) + `wb_get_next_val('trco_infm','trco_key')` branch |
-| V114 | `V86` | port `wb_get_napas_bank_nm_or_citad_bank_nm(code, lang)` over `tb_firm_bank_code` |
-| V115 | `V87` | demo seed (30 masters + 30 addresses + 28 accounts + 9 overseas + 30 PGRO links, tenant `VN_VNM0004_000001`, DEV TRCO_KEYs 9212–9322) |
-| V117 | `V89` | `TRCO_ADDR_INFM.DISP_ORD` / `TRCO_ACCT_INFO.DISP_ORD` `NUMERIC(10,0)` → `INTEGER` |
-| V139 / V140 | `V98` / `V99` | `TRCO_INFO_FILE` schema + `trco_info_file.file_id` next-val branch |
-| V154 (re-applied V187) | `V88` / `V169` | list View Setting seed (`web_svc_id='contacts'`, 8 cols incl. CHECKBOX + ETC; `BANK_NM` / `TRCO_BSUN_POST_ADRS` `SORT_YN='N'`) |
-| V247 | (committed) | export View Setting seed (`settings-contacts-local` 9 cols + `settings-contacts-overseas` 11 cols; all `FIX_YN='Y' SORT_YN='N'`; GAP-01 gate) |
+| Filename version | Summary |
+|---|---|
+| V112 | `trco_acct_info` schema (incl. legacy `bank_cd`/`trco_nm`/`trco_enm`/`owac_nm`/`napas_bank_yn` columns + the entity-mapped `bank_nm`/`napas_bank_cd`/`citad_bank_cd`/`acct_ccy_cd`/`finc_mda_owner_nm`/`owac_addr`; `DISP_ORD NUMERIC(10,0)`; BEFORE-INSERT/UPDATE trigger `reject_not_existing_bank_cd()`) |
+| V114 | `trco_addr_infm` schema (`DISP_ORD NUMERIC(10,0)`) |
+| V116 | `trco_info_file` schema (attachments) |
+| V119 | `trco_infm` master schema (full DEV column set, PK `trco_key` alone) |
+| V121 | `trco_ovrs_infm` schema (overseas beneficiaries) |
+| V82  | `pgro_bsac_lnkn_infm` schema (group links) |
+| V140 | `wb_get_next_val` — carries the `trco_infm.trco_key` (global, via `sq_trco_key`) + `trco_info_file.file_id` (per-contact MAX+1) branches |
+| V159 | `sq_trco_key` sequence — **START 0** (regression-repair file; the old V113 START-1,000,000 sequence was dropped in the renumber while the V140 consumer branch survived) |
 
-V93 also seeds 18 NAPAS bank rows into `TB_FIRM_BANK_CODE` for the bank picker.
+**Not present in the live set:** there is **no** `wb_get_napas_bank_nm_or_citad_bank_nm` migration (the
+function is expected to pre-exist in the live JEX DB and is called directly), **no** demo seed, **no**
+`disp_ord → INTEGER` hotfix, and **no** contacts View Setting seed — the old list seed (`V154`,
+re-applied `V187`) and the export seed (`V247`) were archived to `db/archive/` (**removed 2026-06-23, approved decision**) and
+are not applied. Export columns resolve via the provider allow-list ∩ request columns instead of a seed.
 
 ## Surviving legacy functions
 
-Two `wb_get_next_val` branches (`trco_infm.trco_key`, `trco_info_file.file_id`) + `sq_trco_key` +
-`wb_get_napas_bank_nm_or_citad_bank_nm` are kept by exception (OQ-4 / OQ-7) — bodies copied verbatim
-from DEV. Retirement plans in the `wecms-api/CLAUDE.md` "Surviving legacy functions" table. Per the
+Two `wb_get_next_val` branches (`trco_infm.trco_key`, `trco_info_file.file_id`, in V140) + `sq_trco_key`
+(V159) + `wb_get_napas_bank_nm_or_citad_bank_nm` are kept by exception (OQ-4 / OQ-7). The
+`wb_get_next_val` body is copied verbatim from DEV; `wb_get_napas_bank_nm_or_citad_bank_nm` is **not**
+redefined by any refactor migration — it is expected to pre-exist in the live JEX DB and is called
+directly. Retirement plans in the `wecms-api/CLAUDE.md` "Surviving legacy functions" table. Per the
 DB-function policy these are the documented exceptions; no other legacy helper is called from contacts
 code.
 

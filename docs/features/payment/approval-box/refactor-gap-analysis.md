@@ -24,7 +24,7 @@ Area-by-area comparison of the legacy JEX `resl_0001_001` / `comm_0195_001` beha
 | **Excel Export** | client-side XLSX in `resl_0001_001_osmc.ts` | `POST .../export` server-side via shared POI pipeline (`ApprovalBoxExportProvider`, ≤ 50k rows, server-computed subheader; card-aware amount per G5) | **MATCH** (supersedes client-side generation) |
 | **Bulk approve** | (none) | `POST .../bulk-approve` (per-row independent) | **MATCH** (refactor addition — D8) |
 | **Change approval line** | (none on this screen) | `PUT .../approval-line` (rebuild chain) | **MATCH** (refactor addition) |
-| **Notifications** | (request only, partial) | request + approve + reject notifications implemented; comment notifications deferred | **PARTIAL** (comment notifications out of scope) |
+| **Notifications** | request + approve/reject notify next approver; approve/reject also write a `BLTB_COMNT_INFM` REMARK | request + approve + reject notifications **and** the `BLTB_COMNT_INFM` REMARK write are implemented via `ApprovalNotificationService.notifyApprovalAction` (BLTB tables — write-side live). The notification **read-side** controller (list / unread-count / mark-read) is still a stub. | **MATCH** (write-side; read-side stub tracked as payment-gap CC-1) |
 
 ---
 
@@ -82,6 +82,6 @@ The SIT-readiness audit raised five gaps on the main list page. Each is recorded
 
 ## Refactor Status: Complete
 
-All reviewed areas are **MATCH**, with two **PARTIAL** items that are deliberate, documented out-of-scope decisions (BLTB discussion-thread cascade on delete; approval-comment notifications), not gaps in the Approval Box feature itself. No reviewed area is **MISSING**.
+All reviewed areas are **MATCH**, with one **PARTIAL** item that is a deliberate, documented out-of-scope decision (BLTB discussion-thread cascade on delete), not a gap in the Approval Box feature itself. Approve/reject notifications **and** the `BLTB_COMNT_INFM` REMARK write are implemented (write-side live); the only notification-side gap is the read-side controller stub, tracked separately as payment-gap **CC-1** (not an Approval Box gap). No reviewed area is **MISSING**.
 
 The five SIT-readiness gaps (G1–G5) are resolved: **G1, G3, G4, G5 fixed** and verified to legacy parity; **G2 confirmed a false positive** (refactor already matches legacy). The Approval Box backend refactor is **complete and SIT/UAT-verified** against its agreed scope. The caveats above are engineering-quality follow-ups, not functional gaps.

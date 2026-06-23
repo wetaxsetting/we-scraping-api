@@ -1,5 +1,7 @@
 # Account Inquiry (VND) — AI-01 + AI-06 Implementation Verification
 
+> _**Historical one-off audit.** A point-in-time record of a completed verification / remediation — findings are preserved unchanged. For the feature’s current state see its `features/.../refactor-gap-analysis.md`; for context see the [audits index](README.md)._
+
 > **Decision:** "Follow legacy behavior first" — implement AI-01 (as-of-date historical balance) and AI-06 (PrdtType H summary-card exclusion) exactly as legacy, instead of carrying undocumented deviations.
 > **Screen:** Current & Savings > Account Inquiry (VND) — legacy `fnsh_0001_001`.
 > **Date:** 2026-06-15 · **Type:** full-stack change (`wecms-api` + `wecms-web`) + tests + live-DB validation.

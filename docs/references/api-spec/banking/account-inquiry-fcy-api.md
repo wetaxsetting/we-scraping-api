@@ -1,11 +1,11 @@
 # Banking > Account Inquiry (FCY) — Backend API Design
 
 **Refactor screen ID:** `banking-account-inquiry-fcy`
-**Feature spec:** [../../features/banking/account-inquiry-fcy.md](../../../features/banking/current-savings-fcy/account-inquiry.md)
+**Feature spec:** [../../features/banking/account-inquiry-fcy.md](../../../features/banking/current-savings-fcy/account-inquiry/README.md)
 **JEX reference:**
 - Live FCY page in JEX is **`fnsh_0005_001` (USD-only)** — separate WSVC, separate view JSP, separate TS driver. The action JSP (`fnsh_0005_001_r001_act.jsp`) invokes `FnshHelper.fnsh_0001_001_r001(..., CcyCd.USD)`; the TS driver hardcodes `CCY_CD: "USD"`.
 - The legacy VND page is `fnsh_0001_001_r001`, which calls the same helper with `CcyCd.VND`. Both share `FnshHelper.fnsh_0001_001_r001` but with distinct `(ccy_cd, acct_type_cd IN (...))` predicates.
-- **There is no legacy KRW account-list page.** The refactor's "all non-VND" semantic is a deliberate enhancement, not a port — see [`account-inquiry-fcy.md`](../../../features/banking/current-savings-fcy/account-inquiry.md) → "Refactor enhancement".
+- **There is no legacy KRW account-list page.** The refactor's "all non-VND" semantic is a deliberate enhancement, not a port — see [`account-inquiry-fcy.md`](../../../features/banking/current-savings-fcy/account-inquiry/README.md) → "Refactor enhancement".
 
 The refactor consolidates the JEX twin pair onto **one endpoint** (`GET /api/v1/banking/accounts`) with a `currency` query param distinguishing them. **One export controller endpoint** (`POST /api/v1/banking/accounts/export`) with **per-screen `ExportRowProvider` strategies** distinguishes the two via `screenId`.
 
@@ -250,8 +250,8 @@ Same error envelope as VND:
 
 ## Cross-references
 
-- Feature spec: [../../features/banking/account-inquiry-fcy.md](../../../features/banking/current-savings-fcy/account-inquiry.md)
-- Frontend page: [../../frontend/banking/account-inquiry-fcy-page.md](../../../../../wecms-web/docs/features/banking/current-savings-fcy/account-inquiry.md)
+- Feature spec: [../../features/banking/account-inquiry-fcy.md](../../../features/banking/current-savings-fcy/account-inquiry/README.md)
+- Frontend page: [../../frontend/banking/account-inquiry-fcy-page.md](../../../../../wecms-web/docs/features/banking/current-savings-fcy/account-inquiry/README.md)
 - DB design: [../../database/banking/account-inquiry-fcy-db.md](../../database/banking/account-inquiry-fcy-db.md)
 - VND twin (read-only reference): [./account-inquiry-vnd-api.md](account-inquiry-vnd-api.md)
 - Cross-feature API mapping: [../api-mapping.md](../api-mapping.md)

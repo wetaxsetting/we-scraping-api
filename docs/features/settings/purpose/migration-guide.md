@@ -20,10 +20,10 @@ the feature-folder summary. Legacy analysis: [docs/jex/features/purpose/migratio
 | Reorder | `comm_0187_001_u004` | `PUT /purpose-settings/order` → `service.reorder` |
 | Excel parse | `comm_0187_004_r001` | `POST /purpose-settings/excel/preview` → `PurposeExcelService.preview` |
 | Excel insert | `comm_0187_004_c001` | `POST /purpose-settings/excel/import` → `PurposeExcelService.import_` |
-| Entity | `BusiUsagSetInfm` + `BusiUsagSetInfmPk` | `BusiUsagSet` + `BusiUsagSetId` (`@IdClass`) |
+| Entity | `BusiUsagSetInfm` + `BusiUsagSetInfmPk` | `BusiUsagSetInfm` + `BusiUsagSetId` (`@IdClass`) |
 | DAO | `BusiUsagSetInfmDAO` | Spring Data `PurposeSettingsRepository` (+ `PurposeInUseRepository`) |
-| Key-gen | `SeqHelper` → `wb_get_next_val` | ported `wb_get_next_val('busi_usag_set_infm','use_usag_cd',…)` branch (V82), called via `nextUseUsagCd` |
-| "In use" check | inline JSP count IDO (`_R007`) | `v_purpose_in_use` view (V81) + `PurposeInUseRepository` (recursive, OQ-5) |
+| Key-gen | `SeqHelper` → `wb_get_next_val` | `wb_get_next_val('busi_usag_set_infm','use_usag_cd',…)` branch in the centralized V140 function (no-group branch #19), called via the `LegacyFunctionRepository.nextUseUsagCd` funnel |
+| "In use" check | inline JSP count IDO (`_R007`) | `VPurposeInUse` `@Subselect` (no DB view) + `PurposeInUseRepository` (recursive, OQ-5) |
 
 ---
 
@@ -31,7 +31,7 @@ the feature-folder summary. Legacy analysis: [docs/jex/features/purpose/migratio
 
 Every refactor identifier surface carries the kebab slug **`purpose-settings`** — REST URI, Java
 package (`…domain.setting.purposesettings`), class names (`PurposeSettingsController`,
-`PurposeSettingsService`, `BusiUsagSet`), DTO records, i18n keys (`audit.purpose_settings.*`), log
+`PurposeSettingsService`, `BusiUsagSetInfm`), DTO records, i18n keys (`audit.purpose_settings.*`), log
 tags, and the audit `WSVC_ID`. The menu permission code is the route-aligned slug
 **`settings-core-purpose`**. Legacy WSVC ids (`comm_0187_001`, …) appear only in JEX file:line
 citations and migration prose.
@@ -70,8 +70,10 @@ See [refactor-gap-analysis.md](refactor-gap-analysis.md) GAP-1 / GAP-2 for the c
 
 | Version | Purpose |
 |---|---|
-| V80 | `CREATE TABLE BUSI_USAG_SET_INFM` (15 cols, column-for-column DEV parity) + `busi_usag_set_infm_parent_ix` |
-| V81 | `CREATE OR REPLACE VIEW v_purpose_in_use` (parent-child branch live; consumer-table branches are the extension point) |
-| V82 | extend `wb_get_next_val` with the `busi_usag_set_infm.use_usag_cd` branch (10-digit zero-padded, per-tenant MAX+1) |
+| V35 | `CREATE TABLE BUSI_USAG_SET_INFM` (15 cols, column-for-column DEV parity; PK `(biz_key, use_usag_cd)` only — no helper index) |
+| V36 | `CREATE TABLE BUSI_USAG_SET_INFM_LANG_DETL` (legacy language-detail table — kept in the inventory for parity but **not** an entity in this feature; single-table model) |
+| V140 | the centralized `wb_get_next_val` carries the `busi_usag_set_infm.use_usag_cd` branch (no-group plain 10-digit zero-padded per-tenant MAX+1, branch #19; grouped companion branch #18). No `v_purpose_in_use` view migration exists — the in-use projection is a Hibernate `@Subselect` only. |
 
-Demo seed for tenant `VN_VNM0004_000001` lands in the V75–V83 groundwork window (see `wecms-api/CLAUDE.md` migration table).
+> The earlier V80–V82 numbering in this doc predated the 2026-06-09 migration renumber/consolidation
+> and was stale (V80–V82 now belong to unrelated payment/PGRO tables). Demo seed for tenant
+> `VN_VNM0004_000001` lands in the seed-migration window — see the `wecms-api/CLAUDE.md` migration table.

@@ -1,7 +1,7 @@
 # Banking > Account Inquiry (VND) — DB Design
 
 **Refactor screen ID:** `banking-account-inquiry-vnd`
-**Feature spec:** [../../features/banking/account-inquiry-vnd.md](../../../features/banking/current-savings-vnd/account-inquiry.md)
+**Feature spec:** [../../features/banking/account-inquiry-vnd.md](../../../features/banking/current-savings-vnd/account-inquiry/README.md)
 **JEX reference:** `ACCT_MSTR` table (read-only — same physical table on both sides)
 
 ---
@@ -102,9 +102,9 @@ For the full migration log see [../../../wecms-api/CLAUDE.md](../../../../CLAUDE
 
 ## Cross-references
 
-- Feature spec: [../../features/banking/account-inquiry-vnd.md](../../../features/banking/current-savings-vnd/account-inquiry.md)
+- Feature spec: [../../features/banking/account-inquiry-vnd.md](../../../features/banking/current-savings-vnd/account-inquiry/README.md)
 - Backend API: [../../backend/banking/account-inquiry-vnd-api.md](../../api-spec/banking/account-inquiry-vnd-api.md)
-- Frontend page: [../../frontend/banking/account-inquiry-vnd-page.md](../../../../../wecms-web/docs/features/banking/current-savings-vnd/account-inquiry.md)
+- Frontend page: [../../frontend/banking/account-inquiry-vnd-page.md](../../../../../wecms-web/docs/features/banking/current-savings-vnd/account-inquiry/README.md)
 - Cross-feature DB mapping: [../db-mapping.md](../table-mapping/db-mapping.md)
 - DB parity audit: [../../audits/db-parity-audit-2026-04-30.md](../../audits/db-parity-audit-2026-04-30.md)
 - JEX schema reference: [../../../jex/architecture/database-design.md](../../../../../docs/jex/architecture/database-design.md), [../../../jex/architecture/ERD.md](../../../../../docs/jex/architecture/ERD.md)

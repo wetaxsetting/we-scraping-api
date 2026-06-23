@@ -31,7 +31,7 @@ truth: [docs/jex/features/vas-account/migration-guide.md](../../../../../docs/je
 | `BUSI_VAS_ACCT_INFM_U001` (full update) | `JpaRepository.save` on a loaded entity |
 | `BUSI_VAS_ACCT_INFM_U002` (DEL_YN update) | `save` after `delYn="Y"` (single-record); `softDeleteAllLiveForTenant(...)` for Excel Replace |
 | `BUSI_VAS_ACCT_INFM_D001` (physical delete) | **not ported** — dead code on both sides |
-| — | `existsByBizKeyAndVasAcctCdAndDelYn` (dup-check), `findByBizKeyAndVasAcctSeqNoAndDelYn` (live load), `findByBizKeyAndVasAcctCdAndDelYn` (banking code lookup), `findLiveCodesByBizKey` (Excel dup), `findMaxSeqNoByBizKey` (sequence) |
+| — | `existsByBizKeyAndVasAcctCdAndDelYn` (dup-check), `findByBizKeyAndVasAcctSeqNoAndDelYn` (live load), `findByBizKeyAndVasAcctCdAndDelYn` (banking code lookup), `findLiveCodesByBizKey` (Excel dup); sequence allocation routes through `LegacyFunctionRepository.nextVasAcctSeqNo` (the `wb_get_next_val` funnel), not a repository finder |
 
 ## 3. Envelope / naming migration
 
@@ -49,8 +49,9 @@ Legacy `BusiVasAcctInfmDAO.create()` →
 `SeqHelper.getNextVal(util, idoCon, "BUSI_VAS_ACCT_INFM", "vas_acct_seq_no", bizKey)` (per-`BIZ_KEY`
 MAX+1 via the shared `GET_NEXT_VAL` IDO — no Postgres sequence object).
 
-Refactor → `VasAcctSeqNoGenerator.next(bizKey)` = `findMaxSeqNoByBizKey` → `null ? 1 : max+1`, in
-**Java** (no `wb_get_next_val` branch, no sequence). See
+Refactor → `VasAcctSeqNoGenerator.next(bizKey)` routes through `LegacyFunctionRepository.nextVasAcctSeqNo`
+— the single `wb_get_next_val` funnel (V140 branch #25; per-`BIZ_KEY` MAX+1 copied verbatim from the live
+JEX function), keeping allocation non-colliding with the live JEX / WABOOKS systems. See
 [business-flow.md §6](business-flow.md#6-sequence-generation--concurrency) for the concurrency note
 (no one-shot retry on this path — a deliberate difference from Chart of Accounts).
 
@@ -65,5 +66,5 @@ Refactor → `VasAcctSeqNoGenerator.next(bizKey)` = `findMaxSeqNoByBizKey` → `
 | Sequence concurrency retry | n/a | **No retry** on PK collision (Chart of Accounts retries once — VAS Account does not). |
 | Hierarchy / parent | flat list (no parent column) | **flat list** — unchanged. Frontend prefix-tree grouping is display-only. |
 | Bulk activate/deactivate / bulk delete | none | **none** — parity. |
-| `VAS_ACCT_SEQ_NO` storage | NUMERIC(10,0) | **BIGINT** (entity `Long`) — documented V77 deviation. |
+| `VAS_ACCT_SEQ_NO` storage | NUMERIC(10,0) | **NUMERIC(10,0)** (V37 — DEV parity); entity maps `Long` via `@JdbcTypeCode(SqlTypes.NUMERIC)`. No type deviation. |
 | Integration tests | n/a | `VasAccountIntegrationTest` **`@Disabled`** (F1) pending Testcontainers + JWT-mock infra. |

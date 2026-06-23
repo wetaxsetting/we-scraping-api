@@ -25,12 +25,12 @@ Package root: `com.kosign.wecms.domain.setting.firmbankinghistory`
 
 | Layer | File | Notes |
 |---|---|---|
-| Controller | [controller/FirmBankingHistoryController.java](../../../../src/main/java/com/kosign/wecms/domain/setting/firmbankinghistory/controller/FirmBankingHistoryController.java) | `GET` list + `POST /export`; `@PreAuthorize("hasAnyRole('ADMIN','USER')")` |
+| Controller | [controller/FirmBankingHistoryController.java](../../../../src/main/java/com/kosign/wecms/domain/setting/firmbankinghistory/controller/FirmBankingHistoryController.java) | `GET` list + `POST /export`; `@PreAuthorize("hasAnyRole('ADMIN','USER') and @menuAuthz.canAccess('settings-firm-banking-history')")` (class-level, both endpoints inherit) |
 | Service | [service/FirmBankingHistoryService.java](../../../../src/main/java/com/kosign/wecms/domain/setting/firmbankinghistory/service/FirmBankingHistoryService.java) | `list()` + `listAll()`; validation, paging, tenant scope, `toRow()`; `DEFAULT_PAGE_SIZE=15`, `MAX_PAGE_SIZE=100`, `ALLOWED_SVC_TYPES={F,S,G,B}` |
 | Sort whitelist | [service/FirmBankingHistorySortField.java](../../../../src/main/java/com/kosign/wecms/domain/setting/firmbankinghistory/service/FirmBankingHistorySortField.java) | 6 FIELD_IDs → entity props; lenient `parse()` |
 | Service-name resolver | [service/FirmBankingServiceNameResolver.java](../../../../src/main/java/com/kosign/wecms/domain/setting/firmbankinghistory/service/FirmBankingServiceNameResolver.java) | `(svcType, svcNm) → fb_history.service.* key` |
-| Repository | [repository/FirmBankingHistoryRepository.java](../../../../src/main/java/com/kosign/wecms/domain/setting/firmbankinghistory/repository/FirmBankingHistoryRepository.java) | single JPQL `search()` over the view |
-| Entity | [entity/FirmBankingHistoryView.java](../../../../src/main/java/com/kosign/wecms/domain/setting/firmbankinghistory/entity/FirmBankingHistoryView.java) | `@Immutable @Table(V_FIRM_BANKING_HISTORY)` |
+| Repository | [repository/FirmBankingHistoryRepository.java](../../../../src/main/java/com/kosign/wecms/domain/setting/firmbankinghistory/repository/FirmBankingHistoryRepository.java) | single JPQL `search()` over the `@Subselect` entity |
+| Entity | [entity/FirmBankingHistoryView.java](../../../../src/main/java/com/kosign/wecms/domain/setting/firmbankinghistory/entity/FirmBankingHistoryView.java) | `@Immutable @Subselect` (5-leg union over legacy base tables; no DB view) |
 | Entity id | [entity/FirmBankingHistoryViewId.java](../../../../src/main/java/com/kosign/wecms/domain/setting/firmbankinghistory/entity/FirmBankingHistoryViewId.java) | composite `(bizKey, tarnDtm, svcType, seqNo)` |
 | DTO — row | [dto/FirmBankingHistoryRow.java](../../../../src/main/java/com/kosign/wecms/domain/setting/firmbankinghistory/dto/FirmBankingHistoryRow.java) | 12-field record |
 | DTO — response | [dto/FirmBankingHistoryListResponse.java](../../../../src/main/java/com/kosign/wecms/domain/setting/firmbankinghistory/dto/FirmBankingHistoryListResponse.java) | `list`, `total_count`, `page_number`, `page_size`, `total_pages` |
@@ -38,14 +38,18 @@ Package root: `com.kosign.wecms.domain.setting.firmbankinghistory`
 | Enum — F-leg codes | [common/enums/TranTp.java](../../../../src/main/java/com/kosign/wecms/common/enums/TranTp.java) | 201/202/203 → key; 204 → null |
 | Enum — leg discriminator | [common/enums/FirmBankingSvcType.java](../../../../src/main/java/com/kosign/wecms/common/enums/FirmBankingSvcType.java) | F/S/G/B → service-type key |
 
-### Flyway migrations
+### Flyway migrations (post 2026-06-09 renumber; no view-creating migration — the entity is a `@Subselect`)
 
-| Version | File |
-|---|---|
-| V59 | [V59__firm_banking_history_source_tables.sql](../../../../src/main/resources/db/migration/V59__firm_banking_history_source_tables.sql) |
-| V60 | [V60__firm_banking_history_view_and_fns.sql](../../../../src/main/resources/db/migration/V60__firm_banking_history_view_and_fns.sql) |
-| V61 | [V61__firm_banking_history_demo_seed.sql](../../../../src/main/resources/db/migration/V61__firm_banking_history_demo_seed.sql) |
-| V165 | [V165__firm_banking_history_view_setting_seed.sql](../../../../src/main/resources/db/migration/V165__firm_banking_history_view_setting_seed.sql) |
+| Version | File | Purpose |
+|---|---|---|
+| V73 | [V73__nxsias_module_tran_log_his.sql](../../../../src/main/resources/db/migration/V73__nxsias_module_tran_log_his.sql) | Source table `NXSIAS_MODULE_TRAN_LOG_HIS` (G/B legs) |
+| V97 | [V97__tb_firm_bank_code.sql](../../../../src/main/resources/db/migration/V97__tb_firm_bank_code.sql) | Source table `TB_FIRM_BANK_CODE` |
+| V104 | [V104__tb_firm_tran.sql](../../../../src/main/resources/db/migration/V104__tb_firm_tran.sql) | Source table `TB_FIRM_TRAN` (F leg) |
+
+> **No View Setting seed.** Firm Banking History is export-only (no popover) and is **not** seeded into
+> `SYS_SCR_OPTION_WECMS` — `V156__sys_scr_option_wecms.sql` explicitly lists `firm-banking-history` in
+> its EXCLUDED set. Export relies on the `WBE2001` → request-cols ∩ allow-list fallback in
+> `ExcelExportService.resolveColumns`, not on a seed.
 
 ### Tests
 

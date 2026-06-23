@@ -1,5 +1,13 @@
 # Daily Cash — Interface Specification
 
+> **⚠️ Data-source corrected 2026-06-13 (noted 2026-06-23).** The live read path calls the legacy DB
+> functions **`rept_0900_001_rec1..rec4`** directly via `DailyCashReportFunctionRepository`
+> (`DailyCashReportService.java:24-75` — the documented set-returning exception, same stance as Cash Flow
+> and Daily Financial). The prior **Java live-recompute** (`DailyCashRecomputeRepository` /
+> `CurrencyAccumulator`) is **bypassed / no longer wired** and retained only as a cleanup candidate. Any
+> "live recompute over `ACCT_MSTR` + `ACCT_TRNS_HSTR`" wording below is the **superseded pre-pivot** record
+> (audit history preserved).
+
 API IDs, request/response structures, the Excel POST contract, and the refactor REST contract.
 
 ---
@@ -87,14 +95,16 @@ The action switches on `ReptBatId` (`REPT_0200..0900_001`) but all branches run 
 
 ## 4. Refactor REST contract (Spring Boot)
 
-> **Data source (2026-06-04):** the request params and response shape below are **unchanged**, but
-> the backend now builds the response by **live recompute** over `ACCT_MSTR` + `ACCT_TRNS_HSTR`
-> (`DailyCashRecomputeRepository.findAccountsAsOf` = legacy `rept_0900_001_rec1`) + Java summary
-> (`rec2`), **not** from the batch snapshot `DAILY_CASH_REPT_DAILY_SUMR_DETL`. Behavioural effect: a
-> selected date returns accounts even when no snapshot exists (e.g. 2026-06-04). `total_cash` is
-> always `0` (legacy `rec3/rec4` source `CASH_REPY_MSTR` is out of refactor scope);
-> `last_collected_date` is `null` on this path. The frontend summary block always renders after
-> Search (zero **VND/USD/KRW** fallback when summary is empty); detail tables have no checkbox column.
+> **Data source (2026-06-13):** the request params and response shape below are **unchanged**, but
+> the backend now **calls the legacy DB functions `rept_0900_001_rec1..4` directly** via
+> `DailyCashReportFunctionRepository` (`DailyCashReportService.search`), **not** from the batch snapshot
+> `DAILY_CASH_REPT_DAILY_SUMR_DETL`. The earlier Java live-recompute over `ACCT_MSTR` + `ACCT_TRNS_HSTR`
+> (`DailyCashRecomputeRepository.findAccountsAsOf` = legacy `rept_0900_001_rec1`) + Java `rec2` summary is
+> **superseded (2026-06-13)** — `DailyCashRecomputeRepository` is `@Deprecated(forRemoval=true)`, off the
+> active path. Behavioural effect: a selected date returns accounts even when no snapshot exists. `rec1`/`rec2`
+> are active; `total_cash` is `0` (legacy `rec3/rec4` source `CASH_REPY_MSTR` needs data not yet present);
+> `last_collected_date` (`LST_COLL_DATE`) is `null` on this path. The frontend summary block always renders
+> after Search (zero **VND/USD/KRW** fallback when summary is empty); detail tables have no checkbox column.
 
 ### Search — `GET /api/v1/banking/reports/daily-cash-report`
 > Controller `DailyCashReportController` maps `/api/v1/banking/reports/daily-cash-report`.

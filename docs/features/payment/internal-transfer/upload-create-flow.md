@@ -1,6 +1,6 @@
 # Flow 1 — Upload / Create Internal Transfer
 
-Source-code-verified 2026-06-08. Backend authority: `com.kosign.wecms.domain.payment.internaltransfer`. Frontend touchpoints summarised; full frontend detail in [wecms-web/.../internal-transfer/upload-create-flow.md](../../../../../wecms-web/docs/features/payment/internal-transfer/upload-create-flow.md).
+Source-code-verified 2026-06-23. Backend authority: `com.kosign.wecms.domain.payment.internaltransfer`. Frontend touchpoints summarised; full frontend detail in [wecms-web/.../internal-transfer/upload-create-flow.md](../../../../../wecms-web/docs/features/payment/internal-transfer/upload-create-flow.md).
 
 ---
 
@@ -40,10 +40,10 @@ All endpoints gated by `@PreAuthorize("@menuAuthz.canAccess('payment-internal-tr
 - Cross-row consistency (`UploadConsistencyValidator`): single currency (`WBE2120`), VND/USD whitelist, single network CITAD-vs-NAPAS (`WBE2121`).
 
 ### Create draft (`createDraft`)
-1. `keyGenerator.nextScdulPymnNo(bizKey)` → 14-digit `<yyyyMMdd><6-seq>` (`InternalTransferKeyGenerator`, no `wb_get_next_val`).
+1. `keyGenerator.nextScdulPymnNo(bizKey)` → per-tenant plain-int key via the `wb_get_next_val('scdul_pymn_sumr','scdul_pymn_no',biz_key)` funnel (`InternalTransferKeyGenerator` → `LegacyFunctionRepository`, `@Transactional(MANDATORY)`). The master INSERT is `saveAndFlush`-ed up front; on a `DataIntegrityViolationException` (the funnel `MAX+1` has no row lock) `createDraft` re-runs the whole transaction once via `TransactionalRetry.runOnce` before surfacing `WBE_SCHEDULED_PAYMENT_KEY_RACE`. **NOTE (2026-06-09 OD-2 reversal):** the earlier refactor-only date-prefixed `<yyyyMMdd><6-seq>` counter-table key was removed — the generator now mints the same value the live JEX DB would.
 2. Master: `outBankCd` normalised to canonical NAPAS code (`OutBankCdNormalizer`), `wdrlActNo`, `ccyCd`/`wdrlCcyCd`, `titl`, `trnfYn='N'`, `totTrnsCnt`=line count, `totalTranAmt`=Σ line amounts.
 3. If a file is present: sanitise name, `saveFileNm = <scdulPymnNo>_<orgFileNm>`, stream to `<storage-root>/<bizKey>/internal-transfer/`, stamp `orgFileNm`/`saveFileNm`/`fileSize`.
-4. One `SCDUL_PYMN_SUMR_DETL` per line (`scdulPymnDetlNo = %06d`), copying all line fields.
+4. One `SCDUL_PYMN_SUMR_DETL` per line. `SCDUL_PYMN_DETL_NO` is seeded once via the `wb_get_next_val('scdul_pymn_sumr_detl','scdul_pymn_detl_no',biz_key)` funnel then incremented in Java across the batch (same pattern as Overseas) — copying all line fields.
 5. Copy the Excel into **ERP Transaction History** (`ErpTrnsHistoryWriter.recordUploadedFile`, `TRNS_TYPE_CD='16'`, best-effort `REQUIRES_NEW`).
 6. Audit row (`WSVC_ID='internal-transfer'`, detail `audit.internal_transfer.create.detail`).
 
@@ -71,7 +71,7 @@ All endpoints gated by `@PreAuthorize("@menuAuthz.canAccess('payment-internal-tr
 | `AUDIT_LOGS_INFM` | create audit row (`WSVC_ID='internal-transfer'`) |
 | filesystem | original Excel under `<storage-root>/<bizKey>/internal-transfer/<saveFileNm>` |
 
-Entities: `ScdulPymnSumr` (`@Table EXPT… no` → `@Table("SCDUL_PYMN_SUMR")`, PK `(BIZ_KEY, SCDUL_PYMN_NO)`), `ScdulPymnSumrDetl` (PK `(BIZ_KEY, SCDUL_PYMN_NO, SCDUL_PYMN_DETL_NO)`). Columns of note: `OUT_BANK_CD`, `WDRL_ACT_NO`, `CCY_CD`/`WDRL_CCY_CD`, `TITL`, `TOT_TRNS_CNT`, `TOTAL_TRAN_AMT`, `ORG_FILE_NM`/`SAVE_FILE_NM`/`FILE_SIZE`, `APPR_SEQ_NO` (null until Flow 4), `APPR_STTS`, `TRNF_YN`/`TRNF_DTM`.
+Entities: `ScdulPymnSumr` (`@Table EXPT… no` → `@Table("SCDUL_PYMN_SUMR")`, PK `(BIZ_KEY, SCDUL_PYMN_NO)`), `ScdulPymnSumrDetl` (PK `(BIZ_KEY, SCDUL_PYMN_NO, SCDUL_PYMN_DETL_NO)`). Columns of note: `OUT_BANK_CD`, `WDRL_ACT_NO`, `CCY_CD`/`WDRL_CCY_CD`, `TITL`, `TOT_TRNS_CNT`, `TOTAL_TRAN_AMT`, `ORG_FILE_NM`/`SAVE_FILE_NM`/`FILE_SIZE`, `APPR_SEQ_NO` (null until Flow 4), `TRNF_YN`/`TRNF_DTM`. **No `APPR_STTS` column** — the refactor removed it (legacy JEX has none); status is derived on read via `wb_get_appr_stts`.
 
 ---
 
@@ -84,13 +84,13 @@ Entities: `ScdulPymnSumr` (`@Table EXPT… no` → `@Table("SCDUL_PYMN_SUMR")`, 
 | `comm_1001_001` (withdrawal account picker) | `GET .../withdrawal-accounts` |
 | `PymnHelper.uploadPaymentExcel:1315-1317` (OUT_BANK_CD normalise) | `OutBankCdNormalizer` |
 | `ErpTrnsHisHelper.erpTrnsHisUploader` | `ErpTrnsHistoryWriter.recordUploadedFile` |
-| `wb_get_next_val('scdul_pymn_sumr','scdul_pymn_no')` | `InternalTransferKeyGenerator.nextScdulPymnNo` (Java, no DB fn) |
+| `wb_get_next_val('scdul_pymn_sumr','scdul_pymn_no')` | `InternalTransferKeyGenerator.nextScdulPymnNo` → `LegacyFunctionRepository` → the **same** `wb_get_next_val` branch (funnelled, not bypassed) |
 
 ---
 
 ## Legacy parity status
 
-**MATCH** — parse + per-cell validation, save-draft, withdrawal-account picker, file storage, and ERP-history capture are all implemented against the live schema. Deliberate divergences: `SCDUL_PYMN_NO` widened to `VARCHAR(20)` for the 14-char Java generator; no manual line entry (legacy is also Excel-only).
+**MATCH** — parse + per-cell validation, save-draft, withdrawal-account picker, file storage, and ERP-history capture are all implemented against the live schema, with `SCDUL_PYMN_NO` minted through the legacy `wb_get_next_val` funnel (DEV-parity values). Deliberate divergence: no manual line entry (legacy is also Excel-only). The `SCDUL_PYMN_NO` entity column is mapped at `length=10` (legacy DEV `VARCHAR(10)`); the path-param regex stays permissive (`1..30` digits) only to accept seed values.
 
 ## Refactor status
 

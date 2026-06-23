@@ -1,5 +1,7 @@
 # Legacy JEX vs Spring Refactor — Properties / Message / Config Structure Audit
 
+> _**Historical one-off audit.** A point-in-time record of a completed verification / remediation — findings are preserved unchanged. For the feature’s current state see its `features/.../refactor-gap-analysis.md`; for context see the [audits index](README.md)._
+
 > **Read-only comparison audit.** No code modified, no migration created, no refactor performed.
 > Goal: determine whether the Spring refactor's properties / message / config usage follows the
 > legacy JEX standard, or diverges into a non-standard structure — and whether any divergence is risky.

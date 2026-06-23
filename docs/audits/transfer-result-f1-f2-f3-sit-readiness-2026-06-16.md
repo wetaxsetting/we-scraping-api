@@ -1,5 +1,7 @@
 # Transfer Result (Internal Transfer) — F-1 / F-2 / F-3 SIT-Readiness Audit & Fixes
 
+> _**Historical one-off audit.** A point-in-time record of a completed verification / remediation — findings are preserved unchanged. For the feature’s current state see its `features/.../refactor-gap-analysis.md`; for context see the [audits index](README.md)._
+
 **System:** Refactor (wecms-api + wecms-web)
 **Feature:** Payment › Internal Transfer › Transfer Result (list + detail)
 **Legacy counterpart:** `pymn_0010_001` (list) / `pymn_0010_002` (detail), both delegating to `PymnHelper.pymn_0002_001_r001` / `pymn_0002_002_r001` with `SCDUL_PYMN_TYPE_CD='03'`

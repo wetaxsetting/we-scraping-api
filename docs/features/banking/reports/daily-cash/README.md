@@ -1,8 +1,16 @@
 # Daily Cash — Legacy Analysis & Refactor-Parity Package (Backend)
 
+> **⚠️ Data-source corrected 2026-06-13 (noted 2026-06-23).** The live read path calls the legacy DB
+> functions **`rept_0900_001_rec1..rec4`** directly via `DailyCashReportFunctionRepository`
+> (`DailyCashReportService.java:24-75` — the documented set-returning exception, same stance as Cash Flow
+> and Daily Financial). The prior **Java live-recompute** (`DailyCashRecomputeRepository` /
+> `CurrencyAccumulator`) is **bypassed / no longer wired** and retained only as a cleanup candidate. Any
+> "live recompute over `ACCT_MSTR` + `ACCT_TRNS_HSTR`" wording below is the **superseded pre-pivot** record
+> (audit history preserved).
+
 > **Scope of this folder.** This package is the *full legacy-to-refactor analysis* of the JEX
 > **Daily Cash** report (`rept_0009_001`). It expands the one-page planning stub at
-> [`../daily-cash.md`](../daily-cash.md) (kept in place as the short feature-spec entry). Every
+> [`../daily-cash.md`](legacy-spec.md) (kept in place as the short feature-spec entry). Every
 > statement here is backed by actual source-code analysis of the live JEX tree (`WECMS DEV/`), the
 > live JEX DEV database (`wecmsvndev`, read-only `postgres` MCP), and the current refactor trees
 > (`wecms-api/`, `wecms-web/`). No assumptions.
@@ -58,9 +66,9 @@ frontend [ui-specification.md](../../../../../../wecms-web/docs/features/banking
 | File | Purpose |
 |---|---|
 | [README.md](README.md) | This file — overview, identity, index, **executive summary** + completion table. |
-| [business-flow.md](business-flow.md) | User workflow, legacy batch + read orchestration, refactor live-recompute flow, data-flow narrative. |
+| [business-flow.md](business-flow.md) | User workflow, legacy batch + read orchestration, refactor flow (live path calls `rept_0900_001_rec1..4` directly; superseded Java recompute documented historically), data-flow narrative. |
 | [functional-specification.md](functional-specification.md) | Search conditions, the authoritative `ACCT_TYPE_CD` 01–08 table, grid rules, ML keys, validation, permissions. |
-| [database-mapping.md](database-mapping.md) | Tables / functions, column lists, legacy read-path mapping, **refactor live-recompute source** + dormant snapshot path. |
+| [database-mapping.md](database-mapping.md) | Tables / functions, column lists, legacy read-path mapping, **refactor active source = direct `rept_0900_001_rec1..4` calls** + superseded Java-recompute / dormant snapshot paths. |
 | [interface-specification.md](interface-specification.md) | Legacy WSVC contract, Excel POST contract, refactor REST contract (search + export), field map. |
 | [source-code-index.md](source-code-index.md) | Full traceability: every JSP / TS / action / IDO / function / table (legacy) ↔ controller / service / repo / DTO / page / component (refactor). |
 | [migration-guide.md](migration-guide.md) | Legacy architecture → Spring architecture; service-by-service mapping; wire/naming rules; doc reconciliation. |
@@ -73,13 +81,13 @@ frontend [ui-specification.md](../../../../../../wecms-web/docs/features/banking
 
 ## 3. Related documents
 
-- [`../daily-cash.md`](../daily-cash.md) — the one-page refactor feature spec stub (superseded in detail by this package; retained).
-- [`../daily-financial.md`](../daily-financial.md) + [`daily-financial/`](../daily-financial/) — the deeper sibling report; same as-of snapshot pattern.
-- [`../cash-flow.md`](../cash-flow.md) — the third Banking → Reports screen.
+- [`../daily-cash.md`](legacy-spec.md) — the one-page refactor feature spec stub (superseded in detail by this package; retained).
+- [`../daily-financial.md`](../daily-financial/README.md) + [`daily-financial/`](../daily-financial/) — the deeper sibling report; same as-of snapshot pattern.
+- [`../cash-flow.md`](../cash-flow/README.md) — the third Banking → Reports screen.
 - [`../README.md`](../README.md) — Banking → Reports group index.
 - Frontend package: [`wecms-web/docs/features/banking/reports/daily-cash/`](../../../../../../wecms-web/docs/features/banking/reports/daily-cash/).
 - Deprecated origin: [`docs/features/daily-cash/`](../../../../../../docs/features/daily-cash/) — read-only legacy location.
-- Cross-cutting: [`docs/references/database/erd/banking-erd.md`](../../../../references/database/erd/banking-erd.md) (`DAILY_CASH_REPT_DAILY_SUMR_DETL`, V125), [`docs/references/database/table-ownership.md`](../../../../references/database/table-ownership.md), [`docs/planning/open-questions/banking-reports-remaining-scope.md`](../../../../planning/open-questions/banking-reports-remaining-scope.md).
+- Cross-cutting: [`docs/references/database/erd/banking-erd.md`](../../../../references/database/erd/banking-erd.md) (`DAILY_CASH_REPT_DAILY_SUMR_DETL`, V125), [`docs/references/database/table-ownership.md`](../../../../references/database/table-ownership.md), `docs/planning/open-questions/banking-reports-remaining-scope.md` _(removed — historical `planning/` folder deleted by project decision)_.
 - Backend rules: [`wecms-api/CLAUDE.md`](../../../../../CLAUDE.md) — §"Legacy report DB functions", §"PROD DB Table Scope", §"Excel export — `common/export/`".
 
 ---
@@ -96,11 +104,14 @@ summary, `rec3`=cash flow, `rec4`=total cash — assembled into `REC` / `REC1` /
 (`REPT_0900_001` → `ReptHelper.call_REPT_0900_001`) also persists these into snapshot tables, but the
 read functions recompute on every read.
 
-The refactor implements the read path as a **live recompute** over `ACCT_MSTR` + `ACCT_TRNS_HSTR`
-(`DailyCashRecomputeRepository.findAccountsAsOf`), with the per-currency summary + flow aggregated in
-Java (`CurrencyAccumulator`). It does **not** read the persisted snapshot, so a chosen date returns
-accounts even when no nightly batch row exists — matching legacy behavior. Physical cash
-(`rec3/rec4` from `CASH_REPY_MSTR`) is out of PROD-active-table scope, so `total_cash = 0`.
+The refactor's live read path **calls the legacy DB functions `rept_0900_001_rec1..4` directly**
+(`DailyCashReportService.search` → `DailyCashReportFunctionRepository`, since 2026-06-13). The earlier
+Java live-recompute over `ACCT_MSTR` + `ACCT_TRNS_HSTR` (`DailyCashRecomputeRepository.findAccountsAsOf`
++ `CurrencyAccumulator`) is **superseded (2026-06-13) and off the active path** —
+`DailyCashRecomputeRepository` is `@Deprecated(forRemoval=true)`. Like legacy, the read functions
+recompute on every read, so a chosen date returns accounts even when no nightly batch row exists. `rec1`/`rec2`
+are active; `rec3`/`rec4` (physical cash from `CASH_REPY_MSTR`) need data not yet present, so `total_cash = 0`;
+`LST_COLL_DATE` is null.
 
 ### Refactor completion
 
@@ -109,7 +120,7 @@ accounts even when no nightly batch row exists — matching legacy behavior. Phy
 | Search (`as_of_date` + `currency` ALL/FCY/VND) | yes | **Done** | `DailyCashReportController` `GET /daily-cash-report`; `DailyCashCurrencyFilter` |
 | Three-tier response (currency summary / accounts / currency flow) | yes | **Done** | `DailyCashReportResponse` (REC/REC1/REC2 parity) |
 | Account-type bucketing (`03/04`=Current, `05/06`=Savings, `02`=Term, `01`=Loan) | yes | **Done — DB-verified** | `AcctTypeCd.fromCode` + `CurrencyAccumulator`; `DailyCashReportServiceTest`; parity §1.5 |
-| Data source (live recompute over `ACCT_MSTR`+`ACCT_TRNS_HSTR`) | yes | **Done** | `DailyCashRecomputeRepository.findAccountsAsOf` (replaces snapshot read) |
+| Data source (direct calls to legacy `rept_0900_001_rec1..4`) | yes | **Done (2026-06-13)** | `DailyCashReportService.search` → `DailyCashReportFunctionRepository`; rec1/rec2 active, rec3/rec4 data-blocked. (Earlier `DailyCashRecomputeRepository.findAccountsAsOf` Java recompute is `@Deprecated(forRemoval=true)`, off the active path.) |
 | Current / Savings grids (8 cols, no checkbox) | yes | **Done** | `wecms-web` `DailyCashPage.tsx` `AccountLedger` ×2 |
 | Cash table + checkbox removal | yes | **Done** | Redmine #42096 — `DailyCashClient.tsx` / `DailyCashPage.tsx` doc comments |
 | Currency handling (`total_cash = 0`, cash source dropped) | scope-reduced | **Done (by scope)** | `CASH_REPY_MSTR` not in PROD active list → `cash=0` |
@@ -121,9 +132,9 @@ accounts even when no nightly batch row exists — matching legacy behavior. Phy
 **Completion estimate (evidence-based):**
 
 - **≈ 100 % of the in-scope read & display surface** — search, three-tier response, DB-verified
-  account-type bucketing, live recompute, the two grids, summary, and the Cash-table/checkbox cleanup
-  are all implemented and **frontend/backend aligned**. This is the surface the user described as
-  "completed", and it is.
+  account-type bucketing, direct calls to `rept_0900_001_rec1..4`, the two grids, summary, and the
+  Cash-table/checkbox cleanup are all implemented and **frontend/backend aligned**. This is the surface
+  the user described as "completed", and it is.
 - **≈ 90 % counting residual technical debt** — three known items remain (none block the screen):
   1. **Export is a dual path** — the UI generates the workbook client-side instead of calling the
      backend `/export` provider, which violates the single-producer rule (gap #2 / fix-plan #4).

@@ -9,7 +9,7 @@
 
 JEX is **read-only reference**. Local schema changes go through Flyway only (`spring.jpa.hibernate.ddl-auto = validate`).
 
-> **Inherits Phase 2 implementation rules from the Sales planning doc** — see [Sales § Phase 2 implementation rules (locked decisions)](../../../planning/addon/sales-e-invoices-plan.md#phase-2-implementation-rules-locked-decisions). The DB-level rules (IR-1 / IR-2 / IR-4 / IR-5 / IR-6 / IR-9) all apply identically. The single rule that bites Expenses harder than Sales is **IR-1** — `EXPENSE → 'B'` (NOT `'E'`).
+> **Inherits Phase 2 implementation rules from the Sales planning doc** — see Sales § Phase 2 implementation rules (locked decisions) _(removed — historical `planning/` folder deleted by project decision)_. The DB-level rules (IR-1 / IR-2 / IR-4 / IR-5 / IR-6 / IR-9) all apply identically. The single rule that bites Expenses harder than Sales is **IR-1** — `EXPENSE → 'B'` (NOT `'E'`).
 
 ---
 
@@ -210,8 +210,8 @@ These tables become relevant only for the **per-invoice detail page** (separate 
 - Frontend page: [../../frontend/addon/expenses-e-invoices-page.md](../../../../../wecms-web/docs/features/addon-service/expenses-e-invoices.md)
 - Backend API: [../../backend/addon/expenses-e-invoices-api.md](../../api-spec/addon/expenses-e-invoices-api.md)
 - Migration mapping: [../../migration/service-mapping.md](../../migration/service-mapping.md)
-- Implementation plan: [../../planning/addon/expenses-e-invoices-plan.md](../../../planning/addon/expenses-e-invoices-plan.md)
-- Sales planning rules (IR-1 through IR-9 inherited): [../../planning/addon/sales-e-invoices-plan.md](../../../planning/addon/sales-e-invoices-plan.md)
+- Implementation plan: ../../planning/addon/expenses-e-invoices-plan.md _(removed — historical `planning/` folder deleted by project decision)_
+- Sales planning rules (IR-1 through IR-9 inherited): ../../planning/addon/sales-e-invoices-plan.md _(removed — historical `planning/` folder deleted by project decision)_
 - DB parity audit (Sprint 1): [../../audits/db-parity-audit-2026-04-30.md](../../audits/db-parity-audit-2026-04-30.md)
 - Schema parity rules: [wecms-api/CLAUDE.md → Legacy Schema Parity Rule](../../../../CLAUDE.md)
 - PROD active table list: [wecms-api/CLAUDE.md → PROD DB Table Scope for Refactoring](../../../../CLAUDE.md)

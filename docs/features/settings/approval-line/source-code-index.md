@@ -17,23 +17,23 @@ Package `com.kosign.wecms.domain.setting.approvalline`.
 | Repository (approvers) | [repository/ApprovalLineApproverRepository.java](../../../../src/main/java/com/kosign/wecms/domain/setting/approvalline/repository/ApprovalLineApproverRepository.java) |
 | Entity (master) | [entity/ApprovalLine.java](../../../../src/main/java/com/kosign/wecms/domain/setting/approvalline/entity/ApprovalLine.java) |
 | Composite PK (master) | [entity/ApprovalLineId.java](../../../../src/main/java/com/kosign/wecms/domain/setting/approvalline/entity/ApprovalLineId.java) |
-| Entity (approver) | [entity/ApprovalLineApprover.java](../../../../src/main/java/com/kosign/wecms/domain/setting/approvalline/entity/ApprovalLineApprover.java) |
-| Composite PK (approver) | [entity/ApprovalLineApproverId.java](../../../../src/main/java/com/kosign/wecms/domain/setting/approvalline/entity/ApprovalLineApproverId.java) |
+| Entity (approver) | [entity/ApprLineInfmDetl.java](../../../../src/main/java/com/kosign/wecms/domain/setting/approvalline/entity/ApprLineInfmDetl.java) |
+| Composite PK (approver) | [entity/ApprLineInfmDetlId.java](../../../../src/main/java/com/kosign/wecms/domain/setting/approvalline/entity/ApprLineInfmDetlId.java) |
 | DTOs | dto/ApprovalLineListResponse · ApprovalLineRow · ApprovalLineApproverRow · ApprovalLineCreateRequest · ApprovalLineUpdateRequest · ApprovalLineApproverInput · ApprovalLineSortField — all under [dto/](../../../../src/main/java/com/kosign/wecms/domain/setting/approvalline/dto/) |
 | Constants | [ApprovalLineConstants.java](../../../../src/main/java/com/kosign/wecms/domain/setting/approvalline/ApprovalLineConstants.java) (`SLUG = "approval-line"`, `MAX_APPROVERS = 5`) |
 | Key-gen funnel | [LegacyFunctionRepository.nextApprLineNo(...)](../../../../src/main/java/com/kosign/wecms/common/legacy/LegacyFunctionRepository.java) |
 | Tenant-link guard repo | [UserBusiConnInfmRepository.findAllByUserIdInAndBizKeyAndDelYn(...)](../../../../src/main/java/com/kosign/wecms/domain/auth/repository/UserBusiConnInfmRepository.java) |
 | Sort primitives (shared) | [common/web/SortDirection.java](../../../../src/main/java/com/kosign/wecms/common/web/SortDirection.java) · [common/web/SortableField.java](../../../../src/main/java/com/kosign/wecms/common/web/SortableField.java) |
-| Flyway | [V90](../../../../src/main/resources/db/migration/V90__approval_line_schema.sql) (schema) · [V91](../../../../src/main/resources/db/migration/V91__wb_get_next_val_appr_line_infm.sql) (`wb_get_next_val` branch) · [V92](../../../../src/main/resources/db/migration/V92__approval_line_numeric_to_int_types.sql) (NUMERIC→BIGINT/INTEGER hotfix) |
+| Flyway | [V6](../../../../src/main/resources/db/migration/V6__appr_line_infm.sql) (`APPR_LINE_INFM` schema) · [V7](../../../../src/main/resources/db/migration/V7__appr_line_infm_detl.sql) (`APPR_LINE_INFM_DETL` schema) · `appr_line_infm.appr_line_no` `wb_get_next_val` branch in the consolidated [V140](../../../../src/main/resources/db/migration/V140__wb_get_next_val.sql). No NUMERIC→BIGINT/INTEGER hotfix — entities map `Long`/`Integer` onto the `NUMERIC(15,0)`/`NUMERIC(1,0)` columns via `@JdbcTypeCode(SqlTypes.NUMERIC)`. |
 | Error messages | `WBE_APPROVAL_LINE_*` in [messages.properties](../../../../src/main/resources/messages.properties) + [messages_en.properties](../../../../src/main/resources/messages_en.properties) |
-| Tests | [ApprovalLineServiceTest](../../../../src/test/java/com/kosign/wecms/domain/setting/approvalline/service/ApprovalLineServiceTest.java) (13 cases — see [test-scenarios.md](test-scenarios.md)) |
+| Tests | [ApprovalLineServiceTest](../../../../src/test/java/com/kosign/wecms/domain/setting/approvalline/service/ApprovalLineServiceTest.java) (12 cases — see [test-scenarios.md](test-scenarios.md)) |
 
 Validation is Bean Validation on the record DTOs + service-layer guards (`validateApproverList`,
 `verifyTenantLinks`, `requireApprLineNm`) — no standalone validator class.
 
-> **Class-naming note.** Entity classes are `ApprovalLine` / `ApprovalLineApprover` (slug-derived),
-> not the legacy `ApprLineInfm` / `ApprLineInfmDetl` names — only `@Table` / `@Column` carry the
-> legacy `UPPER_SNAKE` identifiers.
+> **Class-naming note.** The master entity is the slug-derived `ApprovalLine` (not the legacy
+> `ApprLineInfm`); the detail entity keeps the legacy name `ApprLineInfmDetl` / `ApprLineInfmDetlId`.
+> Only `@Table` / `@Column` carry the legacy `UPPER_SNAKE` identifiers.
 
 ---
 

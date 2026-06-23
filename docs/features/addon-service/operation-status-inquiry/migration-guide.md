@@ -1,6 +1,6 @@
 # Operation Status Inquiry — JEX → Spring Migration Guide
 
-How the legacy JEX `aosv_0001_*` services map onto the Spring Boot implementation. Narrative migration history also in [../../../migration/operation-status-inquiry.md](../../../migration/operation-status-inquiry.md). JEX is read-only functional reference under `WECMS DEV/`.
+How the legacy JEX `aosv_0001_*` services map onto the Spring Boot implementation. Narrative migration history also in ../../../migration/operation-status-inquiry.md _(removed — historical `migration/` folder deleted by project decision)_. JEX is read-only functional reference under `WECMS DEV/`.
 
 ---
 

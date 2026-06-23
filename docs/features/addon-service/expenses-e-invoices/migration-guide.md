@@ -28,7 +28,7 @@ All identical to [Sales §3–§5](../sales-e-invoices/migration-guide.md#3-wsvc
 
 ## 4. Search whitelist
 
-The legacy whitelist is keyed by `dymId` (`table1` Sales / `table2` Expenses). The refactor ships the same fixed 5-column subset (IR-5) for both; verifying whether the legacy `table2` whitelist diverges from `table1` is tracked in the [planning doc](../../../planning/addon/expenses-e-invoices-plan.md) and the [scraping parity audit](../../../audits/sales-expense-einvoices-scraping-parity.md).
+The legacy whitelist is keyed by `dymId` (`table1` Sales / `table2` Expenses). The refactor ships the same fixed 5-column subset (IR-5) for both; verifying whether the legacy `table2` whitelist diverges from `table1` is tracked in the planning doc _(removed — historical `planning/` folder deleted by project decision)_ and the [scraping parity audit](../../../audits/sales-expense-einvoices-scraping-parity.md).
 
 ## 5. PROD scope & status
 

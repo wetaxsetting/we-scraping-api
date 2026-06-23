@@ -1,5 +1,13 @@
 # Daily Cash — Migration Guide (JEX → Spring Boot + Next.js)
 
+> **⚠️ Data-source corrected 2026-06-13 (noted 2026-06-23).** The live read path calls the legacy DB
+> functions **`rept_0900_001_rec1..rec4`** directly via `DailyCashReportFunctionRepository`
+> (`DailyCashReportService.java:24-75` — the documented set-returning exception, same stance as Cash Flow
+> and Daily Financial). The prior **Java live-recompute** (`DailyCashRecomputeRepository` /
+> `CurrencyAccumulator`) is **bypassed / no longer wired** and retained only as a cleanup candidate. Any
+> "live recompute over `ACCT_MSTR` + `ACCT_TRNS_HSTR`" wording below is the **superseded pre-pivot** record
+> (audit history preserved).
+
 Refactor guidance with legacy parity as the goal. A refactor implementation **already exists**;
 this guide maps legacy → refactor service-by-service and flags what must change for parity. For
 the prioritized defect list see [`refactor-gap-analysis.md`](./refactor-gap-analysis.md).

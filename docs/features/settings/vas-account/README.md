@@ -2,7 +2,7 @@
 
 **Module:** Settings → VAS Account
 **Menu:** Settings popup → "VAS Account" submenu
-**Refactor screen ID / View Setting `WEB_SVC_ID`:** `vas-account` (single area `default`)
+**Refactor screen ID:** `vas-account` — also the export `screenId` and the **reserved** View Setting `WEB_SVC_ID` (single area `default`). View Setting is **not adopted** (no `SYS_SCR_OPTION_WECMS` seed; no popover).
 **Feature-folder slug (matches JEX + frontend):** `vas-account`
 **REST base:** `/api/v1/settings/vas-account` (list · lookup · detail · create · update · delete · excel preview/import · export)
 **Audit `WSVC_ID`:** `vas-account` (slug — never `comm_0217_001`)
@@ -12,10 +12,12 @@
 
 > **Status — Refactor complete (full-stack).** VAS Account list (search + Active/Inactive
 > status filter), single-record detail, create, update, soft-delete, the active-only lookup
-> picker, Excel preview + import (Append / Replace modes), and XLSX export are migrated and wired
-> end-to-end. Legacy parity verified against the `comm_0217_*` family; SIT/UAT completed. The one
-> tracked deviation is **F1 — `VasAccountIntegrationTest` is `@Disabled`** (Testcontainers + JWT-mock
-> infra deferred); unit + controller + Excel + export-provider coverage is green. See
+> picker, and Excel preview + import (Append / Replace modes) are migrated and wired
+> end-to-end. The XLSX **export** endpoint + `VasAccountExportProvider` are implemented and tested on
+> the backend, but the frontend panel surfaces no export button yet (OQ-VAS-1 open). Legacy parity
+> verified against the `comm_0217_*` family; SIT/UAT completed. The one tracked deviation is
+> **F1 — `VasAccountIntegrationTest` is `@Disabled`** (Testcontainers + JWT-mock infra deferred);
+> unit + controller + Excel + export-provider coverage is green. See
 > [refactor-gap-analysis.md](refactor-gap-analysis.md).
 >
 > **Three premises commonly assumed about this feature are false — confirmed against the code and
@@ -76,7 +78,7 @@ a backend template-download endpoint (the template is a static XLSX served by th
 |---|---|
 | [functional-specification.md](functional-specification.md) | Scope (incl. the "no hierarchy / no bulk-status" boundary), filters, grid columns, sequence generation, status/type codes, validation, permissions, export — the *what*. |
 | [business-flow.md](business-flow.md) | List / create / update / delete / lookup / Excel preview+import / export flows, sequence allocation + concurrency, audit emission, the SmartOrganizer & banking consumption boundary — the *how*. |
-| [database-mapping.md](database-mapping.md) | `BUSI_VAS_ACCT_INFM` tables + legacy-column → entity-field → DTO-field → UI-field chain; status/type columns; migrations V77/V78/V79. |
+| [database-mapping.md](database-mapping.md) | `BUSI_VAS_ACCT_INFM` table + legacy-column → entity-field → DTO-field → UI-field chain; status/type columns; migration V37 (`CREATE TABLE` only — no seed, no View Setting seed). |
 | [interface-specification.md](interface-specification.md) | Every REST endpoint, request/response DTO field lists, wire shapes, error codes. |
 | [source-code-index.md](source-code-index.md) | Legacy JEX ↔ refactor backend ↔ refactor frontend file index + id correspondence. |
 | [migration-guide.md](migration-guide.md) | JEX WSVC / IDO / `_act.jsp` → Spring controller/service/repository mapping; envelope/naming/key-generation migration; deliberate deviations. |
@@ -95,7 +97,7 @@ a backend template-download endpoint (the template is a static XLSX served by th
 | Test plan (4-layer) — preserved | [testing/vas-account.md](../../../testing/vas-account.md) |
 | Settings ERD | [references/database/erd/settings-erd.md](../../../references/database/erd/settings-erd.md) |
 | Table ownership | [references/database/table-ownership.md](../../../references/database/table-ownership.md) |
-| Archived menu-entry hub stub (retired — do not link onward) | [archive/settings-menu-hubs/vas-account.md](../../../archive/settings-menu-hubs/vas-account.md) |
+| Archived menu-entry hub stub (retired — do not link onward) | archive/settings-menu-hubs/vas-account.md _(removed — historical `archive/` folder deleted by project decision)_ |
 | JEX functional spec (source of truth) | [docs/jex/features/vas-account/](../../../../../docs/jex/features/vas-account/README.md) |
 
 ---
@@ -113,7 +115,7 @@ a backend template-download endpoint (the template is a static XLSX served by th
 | Entity (`@Table BUSI_VAS_ACCT_INFM`, `@IdClass`) | `BusiVasAcctInfm` / `BusiVasAcctInfmId` | `src/main/java/com/kosign/wecms/domain/setting/vasaccount/entity/` |
 | Excel export provider | `VasAccountExportProvider` (`screenId = "vas-account"`) | `src/main/java/com/kosign/wecms/domain/setting/vasaccount/export/VasAccountExportProvider.java` |
 | Status / type enums | `AStts` (`A`/`I`), `VasAcctType` (`0`/`1`/`2`) | `src/main/java/com/kosign/wecms/common/enums/` |
-| Schema / seed / View Setting | V77 (schema) · V78 (seed) · V79 (View Setting seed) | `src/main/resources/db/migration/` |
+| Schema | **V37** (`busi_vas_acct_infm` — `CREATE TABLE` only; no seed migration, no View Setting seed) | `src/main/resources/db/migration/V37__busi_vas_acct_infm.sql` |
 
 DTOs (`src/main/java/com/kosign/wecms/domain/setting/vasaccount/dto/`): `VasAccountListResponse`,
 `VasAccountRow`, `VasAccountLookupResponse`, `VasAccountLookupRow`, `VasAccountCreateRequest`,
@@ -125,8 +127,10 @@ DTOs (`src/main/java/com/kosign/wecms/domain/setting/vasaccount/dto/`): `VasAcco
 ## Migration status
 
 **Refactor Status: 100% Complete (full-stack).** List + search + status filter, lookup picker,
-detail, create, update, soft-delete, Excel preview + import (Append / Replace), and XLSX export are
-migrated and wired end-to-end with verified `comm_0217_*` parity; SIT/UAT completed. The only open
-item is **F1** — the integration-test class is `@Disabled` pending Testcontainers/JWT-mock infra
-(unit / controller / Excel / export coverage is green). No functional gap. Evidence for every closed
-area is in [refactor-gap-analysis.md](refactor-gap-analysis.md).
+detail, create, update, soft-delete, and Excel preview + import (Append / Replace) are migrated and
+wired end-to-end with verified `comm_0217_*` parity; SIT/UAT completed. The XLSX export endpoint +
+`VasAccountExportProvider` are implemented and tested on the backend; the frontend export button is
+not yet surfaced (OQ-VAS-1 open). Open items: **F1** — the integration-test class is `@Disabled`
+pending Testcontainers/JWT-mock infra (unit / controller / Excel / export coverage is green); and the
+frontend export-button decision (OQ-VAS-1). No functional gap. Evidence for every closed area is in
+[refactor-gap-analysis.md](refactor-gap-analysis.md).

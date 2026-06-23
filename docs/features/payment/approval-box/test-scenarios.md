@@ -1,18 +1,36 @@
 # Approval Box — Test Scenarios (Backend)
 
-Covers existing automated tests plus the manual / integration / SIT-UAT matrix. Test file: `src/test/java/com/kosign/wecms/domain/payment/approvalbox/controller/ApprovalBoxControllerTest.java` (MockMvc).
+Covers existing automated tests plus the manual / integration / SIT-UAT matrix. Four test files exist under `src/test/java/com/kosign/wecms/domain/payment/approvalbox/`: the controller MockMvc test plus three service unit tests.
 
 ---
 
-## 1. Existing automated tests (`ApprovalBoxControllerTest`)
+## 1. Existing automated tests
+
+### `controller/ApprovalBoxControllerTest` (MockMvc)
 
 | Test | Asserts |
 |---|---|
+| `list_happyPath_returnsSnakeCaseEnvelope` | List happy path → snake_case `{ status, data }` envelope |
 | `list_missingFromDate_returnsValidationEnvelope` | Missing required `from_date` → `WBE_VALIDATION` envelope (HTTP 200, `status.error=true`) |
-| `bulkApprove_emptyBody_rejectedByBeanValidation` | Empty `appr_seq_nos` → bean-validation rejection (`WBE_VALIDATION` / `WBE2054`) |
-| (list/approvers/approve/reject wiring) | Endpoint routing, path-variable binding, response envelope shape |
+| `approve_returnsActionResponse` | Approve → `ApprovalBoxActionResponse` wiring |
+| `approve_surfacesBusinessCodeFromService` | Service `BusinessException` code surfaces in the envelope |
+| `reject_returnsActionResponse` | Reject → `ApprovalBoxActionResponse` wiring |
+| `bulkApprove_returnsPartialResult` | Bulk approve → `{ successes[], failures[] }` partial result |
+| `bulkApprove_emptyBody_rejectedByBeanValidation` | Empty `appr_seq_nos` → bean-validation rejection |
 
-> Service-layer logic (status transitions, write-back, counts) is exercised through the controller tests + the manual/SIT scenarios below. A dedicated `ApprovalBoxServiceTest` is a recommended follow-up (see [refactor-gap-analysis.md](refactor-gap-analysis.md) Open Questions).
+### `service/ApprovalBoxFanoutServiceTest`
+
+`writeResolutionDetail` (funnel seq; blank-currency→VND / null-amount→0), `writeApprovalLineSnapshot` (env-gated insert + no-op when disabled/unseeded), `fanout` stamps `APPR_STS` In Progress.
+
+### `service/ApprovalAttachmentWriterTest`
+
+`persist` inserts one `EXPT_RESOL_FILE` row per file, no-op when no files, filename path/metacharacter sanitisation.
+
+### `service/ApprovalDisplayFlagsResolverTest`
+
+`resolve` reads each print-flag from the env (case-insensitive `Y`), defaults to `N` when unseeded.
+
+> No dedicated `ApprovalBoxServiceTest` — the core approve/reject status transitions are exercised through `ApprovalBoxControllerTest` + the manual/SIT scenarios below. A Mockito service test (A1/A2/R1 transitions + footer-totals + card-amount) is the recommended follow-up (see [refactor-gap-analysis.md](refactor-gap-analysis.md) caveat 6).
 
 ---
 
@@ -61,7 +79,7 @@ Covers existing automated tests plus the manual / integration / SIT-UAT matrix. 
 
 | # | Scenario | Expected |
 |---|---|---|
-| R1 | Approver rejects | caller `P→R`; all `W→S`; master `02`; source `APPR_STTS='X'`; response `appr_stts="R"` |
+| R1 | Approver rejects | caller `P→R`; all `W→S`; master `02`; **no source write-back** (SCDUL/OVRS carry no `APPR_STTS` column); `PAY_END_*` stamped if all have voted; response `appr_stts="R"` |
 | R2 | Reject not your turn / not an approver / finalised | `WBE2052` / `WBE2051` / `WBE2053` |
 | R3 | Downstream approvers after reject | cannot act (`S`) — attempting → `WBE2052` |
 
@@ -78,7 +96,7 @@ Covers existing automated tests plus the manual / integration / SIT-UAT matrix. 
 
 | # | Scenario | Expected |
 |---|---|---|
-| W1 | Withdraw a Pending doc | master + chain deleted; source `APPR_SEQ_NO`/`APPR_STTS` nulled (Draft); audit row |
+| W1 | Withdraw a Pending doc | master + chain deleted; source `APPR_SEQ_NO` nulled only (Draft — no `APPR_STTS` column on source); audit row |
 | W2 | Withdraw an Approved/Rejected doc | `WBE_VALIDATION` (only Pending/In-Progress) |
 | W3 | Withdraw unknown | `WBE_NOT_FOUND` |
 | C1 | Change line on a Pending doc to a valid line | chain rebuilt (line 1 `P`, rest `W`); master `00`; audit |

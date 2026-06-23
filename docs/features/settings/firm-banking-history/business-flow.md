@@ -18,9 +18,9 @@ FirmBankingHistoryController.list(...)          (thin pass-through; @PreAuthoriz
         ↓
 FirmBankingHistoryService.list(...)             (validate → build filters/sort → page → tenant scope)
         ↓
-FirmBankingHistoryRepository.search(...)        (single JPQL over the read-only view)
+FirmBankingHistoryRepository.search(...)        (single JPQL over the @Subselect entity)
         ↓
-V_FIRM_BANKING_HISTORY  (5-leg UNION ALL, Flyway V60)
+FirmBankingHistoryView @Subselect  (5-leg UNION ALL over legacy base tables; no DB view)
         ↓
 Page<FirmBankingHistoryView>  →  toRow(...)     (resolve svc_type_key + svc_name_key i18n keys)
         ↓
@@ -38,7 +38,7 @@ Row "View Details"  →  client-side popover (no extra HTTP call — every detai
 ## Step-by-step (list path)
 
 1. **Controller receives the request.**
-   [`FirmBankingHistoryController.list`](../../../../src/main/java/com/kosign/wecms/domain/setting/firmbankinghistory/controller/FirmBankingHistoryController.java) binds the snake_case wire params (`from_date`, `to_date`, `svc_type`, `keyword`, `sort_field`, `sort_direction`, `page`, `size`) to camelCase Java params via `@RequestParam(value = …)`. The class-level `@PreAuthorize("hasAnyRole('ADMIN','USER')")` gates both endpoints. The controller does no logic beyond delegating to the service and wrapping the result in `ApiResponse.ok(...)`.
+   [`FirmBankingHistoryController.list`](../../../../src/main/java/com/kosign/wecms/domain/setting/firmbankinghistory/controller/FirmBankingHistoryController.java) binds the snake_case wire params (`from_date`, `to_date`, `svc_type`, `keyword`, `sort_field`, `sort_direction`, `page`, `size`) to camelCase Java params via `@RequestParam(value = …)`. The class-level `@PreAuthorize("hasAnyRole('ADMIN','USER') and @menuAuthz.canAccess('settings-firm-banking-history')")` gates both endpoints. The controller does no logic beyond delegating to the service and wrapping the result in `ApiResponse.ok(...)`.
 
 2. **Service validates input** ([`FirmBankingHistoryService.list`](../../../../src/main/java/com/kosign/wecms/domain/setting/firmbankinghistory/service/FirmBankingHistoryService.java)):
    - `from_date` / `to_date` — required, exactly 8 chars, parseable as `LocalDate` via `yyyyMMdd`. Blank/length/parse failure → `BusinessException("WBE_VALIDATION")`.
@@ -61,7 +61,7 @@ Row "View Details"  →  client-side popover (no extra HTTP call — every detai
      AND (:svcType IS NULL OR v.svcType = :svcType)
      AND (:keywordPattern IS NULL OR LOWER(v.seqNo) LIKE :keywordPattern ESCAPE '!')
    ```
-   Spring Data appends `ORDER BY` + `LIMIT/OFFSET` from the `Pageable`. The query targets the read-only view `V_FIRM_BANKING_HISTORY`, so the five-leg union is resolved by PostgreSQL, not in Java.
+   Spring Data appends `ORDER BY` + `LIMIT/OFFSET` from the `Pageable`. The query targets the `@Subselect`-backed `FirmBankingHistoryView` entity (no DB view object), so the five-leg union is resolved by PostgreSQL, not in Java.
 
 6. **Service maps rows** (`toRow`): each `FirmBankingHistoryView` becomes a `FirmBankingHistoryRow`, computing two server-resolved i18n keys:
    - `svc_type_key` ← `FirmBankingSvcType.resolveKey(svcType)` → `settings.firm_banking_history.service_type.*`.
@@ -100,21 +100,26 @@ ExcelExportService resolves FirmBankingHistoryExportProvider (screenId "firm-ban
         ↓
 provider.fetch(...)  →  FirmBankingHistoryService.listAll(...)   (same filter/sort path, unpaged)
         ↓
-rows → FIELD_ID-keyed maps; subheader "N record(s)"; columns intersected with View Setting (V165 seed)
+rows → FIELD_ID-keyed maps; subheader "N record(s)"; columns = request cols ∩ provider allow-list (no View Setting seed)
         ↓
 ExcelWorkbookWriter (POI SXSSF)  →  XLSX stream  (≤ 50,000 rows; RFC 5987 filename)
 ```
 
 The export reuses the shared `common/export/` pipeline; the provider is the only feature-specific
-piece. Column visibility is intersected with the `SYS_SCR_OPTION_WECMS` seed (`web_svc_id =
-'firm-banking-history'`, Flyway V165) as defence-in-depth.
+piece. Firm Banking History is an **export-only** screen with **no** View Setting seed (it renders
+no popover), so there is no persisted column visibility to intersect: `ScreenOptionService.load`
+throws `WBE2001`, `ExcelExportService.resolveColumns` catches it and falls back to **request columns
+∩ provider allow-list** (`{REG_DTM, SVC_TYPE, SVC_NM, SEQ_NO, DEP_BANK_CD, RS_CD, RS_MSG}`) — see
+memory `project_export_only_screens_no_seed.md`.
 
 ---
 
 ## Authority & tenant rules
 
-- **Authority:** class-level `@PreAuthorize("hasAnyRole('ADMIN','USER')")`. Both roles are *normal
-  company* roles stamped from `authGrCd` by `JwtAuthenticationFilter`. The refactor has no WTA/agent
+- **Authority:** class-level `@PreAuthorize("hasAnyRole('ADMIN','USER') and @menuAuthz.canAccess('settings-firm-banking-history')")`.
+  Both roles are *normal
+  company* roles stamped from `authGrCd` by `JwtAuthenticationFilter`; the `@menuAuthz.canAccess('settings-firm-banking-history')`
+  term is the F-3 per-menu authorization gate (stacked on the role check, not weakening it). The refactor has no WTA/agent
   users (the admin portal is a separate system), so "normal company user" is faithfully mapped to
   "authenticated `ROLE_ADMIN` or `ROLE_USER`". Mirrors legacy `WSVC.comm_0221_001_r001.xml:24-27`
   (`NORM_USER_ONLY_YN=Y`, `WTA_USER_ALLOW_YN=N`).

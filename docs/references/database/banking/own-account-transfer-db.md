@@ -2,7 +2,7 @@
 
 **Refactor slug:** `own-account-transfer`
 **Status:** Phase 1 — design only. No code in this phase.
-**Feature spec:** [../../features/banking/own-account-transfer.md](../../../features/banking/own-account-transfer/own-account-transfer.md)
+**Feature spec:** [../../features/banking/own-account-transfer.md](../../../features/banking/internal-transfer-vnd/own-account-transfer/README.md)
 **Migration mapping:** [../../migration/banking/own-account-transfer.md](../../migration/banking/own-account-transfer.md)
 **Backend API:** [../../backend/banking/own-account-transfer-api.md](../../api-spec/banking/own-account-transfer-api.md)
 
@@ -194,7 +194,7 @@ Following the [refactor schema parity rule](../../../../CLAUDE.md) — tenant bo
 
 Add a Flyway migration that seeds `SYS_SCR_OPTION_WECMS` (the system-default rows for the View Setting popover) for `WEB_SVC_ID='own-account-transfer'`, `DYM_AREA_ID='default'`. Columns per the existing seed-row shape used by `banking-account-inquiry-vnd` (V32) — copy that file's structure verbatim.
 
-Per the [frontend doc §8 column list](../../../../../wecms-web/docs/features/banking/own-account-transfer/own-account-transfer.md#8-view-setting-registration-screenid--own-account-transfer):
+Per the [frontend doc §8 column list](../../../../../wecms-web/docs/features/banking/internal-transfer-vnd/own-account-transfer/README.md#8-view-setting-registration-screenid--own-account-transfer):
 
 ```sql
 -- =========================================================================

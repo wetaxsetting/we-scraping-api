@@ -1,6 +1,6 @@
 # Settings > Contacts — Backend Feature (Refactor)
 
-**Status:** ✅ Implemented full-stack — backend (controller + 7 services + 2 documented repositories + 3 entities + 22 DTOs + 3 export providers + V112/V113/V114/V115/V117/V139/V140/V154/V187/V247 schema & seeds, with unit + controller tests) and frontend wired; legacy parity verified; **Contacts Export (GAP-01) CLOSED 2026-06-08**; SIT/UAT verified.
+**Status:** ✅ Implemented full-stack — backend (controller + 7 services + documented repositories + 6 entities + 22 DTOs + 3 export providers + per-table Flyway migrations, with unit + controller tests) and frontend wired; legacy parity verified; **Contacts Export (GAP-01) CLOSED 2026-06-08**; SIT/UAT verified. **Migration numbering note:** the schema now lands as per-table migrations (V112/V114/V116/V119/V121 + V140/V159) after the 2026-06-09 consolidation — see [§ Backend package layout](#backend-package-layout) and [migration-guide.md](migration-guide.md). **Audit gap:** the contacts service currently writes **no** `AUDIT_LOGS_INFM` rows (see [§ Audit](#quick-facts) note + [functional-specification.md](functional-specification.md)).
 **Module / menu:** Settings → **Contacts** (Settings modal panel — **no standalone route**)
 **Refactor slug:** `contacts` (matches the JEX-traceability, backend, and frontend counterparts)
 **Wire base path:** `/api/v1/settings/contacts` (list · detail · create · update · single + bulk soft-delete · `/export` · `/excel/import` · `/excel/preflight` · `/excel/resolve-recipients` · `/by-codes` · `/banks` · `/lookup-recipient` · `/{trcoKey}/files…`)
@@ -52,13 +52,13 @@ between the account model (`TRCO_ACCT_INFO`) and the beneficiary model (`TRCO_OV
 | Tables | `TRCO_INFM` (master, 47 cols, PK `TRCO_KEY` alone) + `TRCO_ADDR_INFM` (addresses) + `TRCO_ACCT_INFO` (Local bank accounts) + `TRCO_OVRS_INFM` (Overseas beneficiaries) + `PGRO_BSAC_LNKN_INFM` (group links) + `TRCO_INFO_FILE` (attachments) |
 | Soft-delete | `TRCO_STTS='C'`; no physical delete. No Trash UI (OQ-5 — list hard-codes `coalesce(trco_stts,'') <> 'C'`) |
 | Delete guard | `WBE1190` when the contact is referenced by an active `ACCT_TRNS_RCV_PAY_INFM` row — on single delete, bulk delete, AND the edit-time `trco_stts → 'C'` transition (OQ-2) |
-| PK generation | `wb_get_next_val('trco_infm','trco_key')` → global `sq_trco_key` (OQ-4, V113); one-shot retry on PK collision |
-| Bank-name resolution | `wb_get_napas_bank_nm_or_citad_bank_nm(code, lang)` (OQ-7, V114) — `BankCdResolver` NOT used in this flow |
-| Export (GAP-01) | `POST /export` → shared `ExcelExportService` → `ContactsLocalExportProvider` (9 cols) / `ContactsOverseasExportProvider` (11 cols); seeded by V247; reuses `ContactsService.listForExport` |
+| PK generation | `wb_get_next_val('trco_infm','trco_key')` → global `sq_trco_key` (OQ-4; branch in V140, sequence in V159 — START 0, not 1,000,000); one-shot retry on PK collision |
+| Bank-name resolution | `wb_get_napas_bank_nm_or_citad_bank_nm(code, lang)` (OQ-7) via `LegacyFunctionRepository.resolveNapasOrCitadBankName` — function pre-exists in the live JEX DB (not created by any refactor migration); `BankCdResolver` NOT used in this flow |
+| Export (GAP-01) | `POST /export` → shared `ExcelExportService` → `ContactsLocalExportProvider` (9 cols) / `ContactsOverseasExportProvider` (11 cols); reuses `ContactsService.listForExport`. **No live View Setting seed** (old V247 archived) — columns resolve via the provider allow-list ∩ request columns |
 | Excel import | two-phase `/excel/preflight` + `/excel/resolve-recipients` → `/excel/import` (per-row, ≤500 rows, partial success, always HTTP 200) |
 | Attachments | `TRCO_INFO_FILE` (PROD-scope widened 2026-05-13); 10 MB cap; allow-list jpg/jpeg/png/gif/pdf/doc/docx/xls/xlsx/ppt/pptx |
-| Audit | `AUDIT_LOGS_INFM.WSVC_ID = 'contacts'` (slug, OQ-6) |
-| View Setting | List page seeded under `web_svc_id='contacts'` (V154/V187, 8 cols); export seeded under `settings-contacts-local` / `settings-contacts-overseas` (V247) |
+| Audit | **None written today** — `ContactsService` makes no `AuditLogService` call and no AOP aspect targets it; OQ-6 fixes only the slug `'contacts'` for any future write |
+| View Setting | **No live seed** — neither the list seed (old V154/V187) nor the export seed (old V247) is applied (both archived 2026-06-09). Export columns resolve via the provider allow-list ∩ request; the on-screen grid is a fixed 8-col layout (no popover) |
 | Wire format | lowercase snake_case (global Jackson `SNAKE_CASE`) |
 
 ---
@@ -91,7 +91,7 @@ com.kosign.wecms.domain.setting.contacts
 └── dto/                                           22 records — see source-code-index.md
 ```
 
-Flyway: V112 schema (5 tables) · V113 `sq_trco_key` + `wb_get_next_val` branch · V114 `wb_get_napas_bank_nm_or_citad_bank_nm` · V115 demo seed · V117 `disp_ord` → INTEGER · V139 `TRCO_INFO_FILE` schema · V140 file_id next-val branch · V154 list View Setting seed (re-applied V187) · V247 export View Setting seed. **Cite by filename version** — the internal `-- V8x` header comments are stale (renumbered on commit; see [migration-guide.md](migration-guide.md)).
+Flyway (current per-table scheme after the 2026-06-09 consolidation — **one legacy table per migration file, DDL copied verbatim from the live JEX DB incl. triggers/`bpchar`/full column sets**): V112 `trco_acct_info` · V114 `trco_addr_infm` · V116 `trco_info_file` · V119 `trco_infm` · V121 `trco_ovrs_infm` · V82 `pgro_bsac_lnkn_infm`; V140 `wb_get_next_val` (carries the `trco_infm.trco_key` + `trco_info_file.file_id` branches) · V159 `sq_trco_key`. **The `wb_get_napas_bank_nm_or_citad_bank_nm` function is NOT defined by any refactor migration — it is expected to pre-exist in the live JEX DB** (refactor runs against the live JEX DB in all envs; `LegacyFunctionRepository.resolveNapasOrCitadBankName` calls it directly). There is **no contacts row in the View Setting seed (V93/V156)** and **no export View Setting seed in the live set** — the old `V247__contacts_export_view_setting_seed.sql` was archived in the 2026-06-09 renumber and **removed with `db/archive/` 2026-06-23 (approved decision)**; export columns resolve via the provider allow-list ∩ request columns (no `WBE2013` gate). No demo seed (V115) and no `disp_ord`→INTEGER hotfix (V117) in the current set — `DISP_ORD` is `NUMERIC(10,0)` and the entities map it via `@JdbcTypeCode(NUMERIC)`. ⚠️ The earlier doc revisions cited a different, now-stale migration layout (V112=5-table schema, V113/V114/V115/V117/V139/V140/V154/V187/V247); those numbers no longer match the tree.
 
 ---
 
@@ -104,7 +104,7 @@ Flyway: V112 schema (5 tables) · V113 `sq_trco_key` + `wb_get_next_val` branch 
 | [database-mapping.md](database-mapping.md) | The 6 tables, PK-gen + bank-name functions, and the full legacy-column → entity-field → DTO-field → UI-field mapping |
 | [interface-specification.md](interface-specification.md) | REST contract — request/response shapes per endpoint, error-code registry, authorization, wire envelope |
 | [source-code-index.md](source-code-index.md) | Legacy ↔ refactor file map (backend + frontend), file:line citations |
-| [migration-guide.md](migration-guide.md) | How each JEX layer (JSP / `_act.jsp` / IDO / WSVC / entity) became its Spring counterpart; identifier translation; dropped/dead flows; Flyway numbering drift |
+| [migration-guide.md](migration-guide.md) | How each JEX layer (JSP / `_act.jsp` / IDO / WSVC / entity) became its Spring counterpart; identifier translation; dropped/dead flows; current per-table Flyway scheme |
 | [test-scenarios.md](test-scenarios.md) | SIT/UAT scenarios + the existing JUnit coverage map |
 | [refactor-gap-analysis.md](refactor-gap-analysis.md) | Final parity review (MATCH / APPROVED DEVIATION / DEAD LEGACY / PARTIAL / MISSING) with completion status + GAP-01 closure evidence |
 
@@ -127,7 +127,7 @@ entry point; deep detail lives here:
   — incl. [refactor-audit.md](../../../../../docs/features/contacts/refactor-audit.md) and
   [refactor-gap-analysis.md](../../../../../docs/features/contacts/refactor-gap-analysis.md). Sits at a
   CLAUDE.md-non-compliant workspace-root path (flagged 2026-06-08); cross-linked, not moved.
-- **Archived task plan:** [archive/planning/phase-1/contacts-tasks.md](../../../archive/planning/phase-1/contacts-tasks.md)
+- **Archived task plan:** archive/planning/phase-1/contacts-tasks.md _(removed — historical `archive/` folder deleted by project decision)_
 - **Frontend feature folder:** [wecms-web/docs/features/settings/contacts/](../../../../../wecms-web/docs/features/settings/contacts/README.md)
 - **Settings ERD:** [references/database/erd/settings-erd.md](../../../references/database/erd/settings-erd.md)
 - **Settings feature index:** [../README.md](../README.md)

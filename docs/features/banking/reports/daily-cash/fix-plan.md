@@ -109,8 +109,8 @@ Confirmed bugs are ordered by severity. Issues 1–2 are correctness bugs (wrong
 
 ## Issue 6 — Currency ordering not VND-first ⚠️ Low — gated on OQ-3
 
-**Root cause.** `findRows` orders `ccyCd ASC` (`DailyCashReptDailySumrDetlRepository.java:31`); legacy REC2 is VND-first.
-**Steps (after OQ-3):** Add a VND-first ordering (e.g. `ORDER BY CASE WHEN ccyCd='VND' THEN 0 ELSE 1 END, ccyCd` or sort the `LinkedHashMap` build) to match legacy.
+**Root cause.** Recorded against the superseded `findRows` path (`ccyCd ASC`). **As of 2026-06-13** the active path calls `rept_0900_001_rec1..4` directly via `DailyCashReportFunctionRepository`; the rec3 IDO carries the legacy VND-first ORDER BY, so re-verify whether this gap still reproduces before changing anything.
+**Steps (after OQ-3):** If the gap persists on the direct-function path, add a VND-first ordering to match legacy REC2.
 **Risk:** Low.
 
 ---

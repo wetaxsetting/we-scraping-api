@@ -10,7 +10,7 @@ Legacy (`comm_0222_*` under `WECMS DEV/`) vs the implemented refactor. Status vo
 
 The Approval Line refactor is **functionally complete and at parity** with the legacy line-configuration
 feature, with the documented deviations below (all intentional and signed off). Backend + frontend are
-both wired end-to-end (no mock fallback), the 13-case service test is green, and SIT/UAT is verified.
+both wired end-to-end (no mock fallback), the 12-case service test is green, and SIT/UAT is verified.
 All three tracked gaps (AL-GAP-01 / AL-GAP-02 / AL-GAP-03) are **RESOLVED**.
 
 ---
@@ -56,9 +56,9 @@ read path returns approvers ordered `APPRVR_DISP_ORD ASC` — so **order persist
 renumbers). Evidence: [wecms-web/docs/features/settings/approval-line/ui-specification.md §Drag-and-drop](../../../../../wecms-web/docs/features/settings/approval-line/ui-specification.md#drag-and-drop-reorder) + service `update`/`create` `apprvrDispOrd = i + 1`.
 
 ### AL-GAP-02 — Test coverage
-**RESOLVED.** `ApprovalLineServiceTest` ships 13 Mockito cases covering create (happy + 5 guards),
+**RESOLVED.** `ApprovalLineServiceTest` ships 12 Mockito cases covering create (happy + 5 guards),
 diff-sync update (insert/update/delete/resequence), update guards, and delete (order + not-found) — all
-green. See [test-scenarios.md §Automated coverage map](test-scenarios.md#automated-coverage-map-approvallineservicetest--13-cases-all-green).
+green. See [test-scenarios.md §Automated coverage map](test-scenarios.md#automated-coverage-map-approvallineservicetest--12-cases-all-green).
 Residual: no controller/integration (`@SpringBootTest`/MockMvc) test yet — non-blocking, listed below.
 
 ### AL-GAP-03 — Auth gate
@@ -72,14 +72,17 @@ guard (no un-annotated business handler may ship).
 
 ## Authorization parity
 
-Live code: class-level `@menuAuthz` gate (above) — **authoritative**. Two **stale** notes remain and
-are flagged for non-blocking cleanup (docs, not code):
+Live code: class-level `@menuAuthz` gate (above) — **authoritative**. The `ApprovalLineController`
+class-level Javadoc now fully documents this gate (it already references the F-3 `@menuAuthz` rollout
+and no longer reads "OQ-5 no `@PreAuthorize`"). One **stale** note remains and is flagged for
+non-blocking cleanup (doc, not code):
 
-1. `ApprovalLineController` method Javadoc still reads "OQ-5 no `@PreAuthorize`".
-2. `wecms-api/CLAUDE.md` Feature-Status row still reads "OQ-5 no `@PreAuthorize` admin gate".
+1. `wecms-api/CLAUDE.md` Feature-Status row still reads "OQ-5 no `@PreAuthorize` admin gate" (and still
+   cites the schema as "V90" + the key-gen branch as "V91" — both stale; real schema is V6 / V7 and the
+   `wb_get_next_val` branch lives in the consolidated V140).
 
-Both predate F-3. Recommend updating both comments to reference the live `@menuAuthz` gate. This is a
-comment/doc cleanup only — the runtime gate is correct.
+This predates F-3. Recommend updating the CLAUDE.md row to reference the live `@menuAuthz` gate and the
+correct migration numbers. This is a doc cleanup only — the runtime gate is correct.
 
 ---
 
@@ -87,7 +90,7 @@ comment/doc cleanup only — the runtime gate is correct.
 
 | Item | Status |
 |---|---|
-| Service unit tests (13 cases) | ✅ present, green |
+| Service unit tests (12 cases) | ✅ present, green |
 | Controller / MockMvc integration test | ⏳ not present — recommended next stabilisation pass (assert envelope shape, `@menuAuthz` 403, path-var validation) |
 
 ---
@@ -102,7 +105,7 @@ comment/doc cleanup only — the runtime gate is correct.
 | OQ-4 | `disp_ord` normalisation on Create | Resolved — normalise on Create + Update (APPROVED DEVIATION) |
 | OQ-5 | Admin-only access | Resolved — no admin gate; menu-grant gate via `@menuAuthz` (live, supersedes the "no `@PreAuthorize`" note) |
 | OQ-6 | Audit on refactor side | Resolved — **no audit** (parity; deliberate divergence from `firm-banking-settings`/`contacts`) |
-| OQ-7 | `appr_line_no` generator | Resolved — reuse `wb_get_next_val` branch (V91) |
+| OQ-7 | `appr_line_no` generator | Resolved — reuse the `appr_line_infm.appr_line_no` `wb_get_next_val` branch (consolidated V140 function) |
 
 No open questions block completion. The only follow-ups are the two stale-comment cleanups and the
 optional controller integration test.

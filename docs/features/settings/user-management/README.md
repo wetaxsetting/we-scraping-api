@@ -62,15 +62,19 @@ scope). Both of those were dropped before release; see
 | Repositories | `UserInfmRepository`, `UserBusiConnInfmRepository`, `BusiAdmnInfmRepository`, `UserMenuAuthInfmRepository`, `AcctAuthInfoRepository` |
 | Entities | `UserInfm`, `UserBusiConnInfm` (+Id), `BusiAdmnInfm` (+Id), `UserMenuAuthInfm` (+Id) |
 | Tables | `USER_INFM`, `USER_BUSI_CONN_INFM`, `BUSI_ADMN_INFM`, `USER_MENU_AUTH_INFM`, `ACCT_AUTH_INFO` |
-| Migration | `V126__user_menu_auth_infm.sql` (creates `USER_MENU_AUTH_INFM`) |
+| Migration | `V131__user_menu_auth_infm.sql` (creates `USER_MENU_AUTH_INFM`) |
 | Tests | `UserManagementAuthorizationTest`, `UserManagementAccessPolicyTest` |
 
 ## 5. Authorization summary (SEC-1, revised 2026-06-05)
 
 | Action class | Gate |
 |---|---|
-| **Read** (list, detail, avatar stream) | `@PreAuthorize("@userMgmtAccess.canViewUsers()")` — ADMIN **or** the user holding the `settings-core-users` menu grant |
-| **Write** (create, update, delete, check-id, menu-entitlement, avatar upload/delete) | `@PreAuthorize("hasRole('ADMIN')")` + a defence-in-depth service guard (`requireAdmin()` → `AccessDeniedException` → 403 / `WBE1003`) |
+| **Read** (list, detail, avatar stream) | `@PreAuthorize("@userMgmtAccess.canViewUsers() and @menuAuthz.canAccess('settings-core-users')")` — ADMIN **or** the user holding the `settings-core-users` menu grant |
+| **Write** (create, update, delete, check-id, menu-entitlement, avatar upload/delete) | `@PreAuthorize("hasRole('ADMIN') and @menuAuthz.canAccess('settings-core-users')")` + a defence-in-depth service guard (`requireAdmin()` → `AccessDeniedException` → 403 / `WBE1003`) |
+
+> Every controller method additionally stacks `@menuAuthz.canAccess('settings-core-users')` (the F-3
+> menu-authorization guard) alongside the read/write gate above. For an ADMIN the navigation tree is
+> the full product tree, so that term is satisfied implicitly.
 
 There is **no separate "Manager" role** in the implemented model — see
 [functional-specification.md §Permission model](functional-specification.md#permission-model).

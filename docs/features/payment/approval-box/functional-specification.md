@@ -93,9 +93,9 @@ Wire `FIELD_ID` → entity property. Unknown/blank → default sort (no exceptio
 
 | Operation | Preconditions | Effect |
 |---|---|---|
-| **Approve** | master exists in tenant (`WBE2050`); not finalised `01/02` (`WBE2053`); caller is an assigned approver (`WBE2051`); caller's row is `P` (`WBE2052`) | caller `P→A`; if no `P`/`W` left → master `01` + source `C`; else master `03`, promote first `W→P`, source `I` |
-| **Reject** | same as approve | caller `P→R`; all `W→S`; master `02`; source `X` |
-| **Withdraw** | master Pending/In Progress (`00/03`) else `WBE_VALIDATION`; not found → `WBE_NOT_FOUND` | delete chain + master; null source `APPR_SEQ_NO`/`APPR_STTS` (back to Draft) |
+| **Approve** | master exists in tenant (`WBE2050`); not finalised `01/02` (`WBE2053`); caller is an assigned approver (`WBE2051`); caller's row is `P` (`WBE2052`) | caller `P→A`; if no `P`/`W` left → master `01` + stamp `PAY_END_*`; else master `03`, promote first `W→P`. **No source write-back** (SCDUL/OVRS carry no `APPR_STTS` column — status derives on read) |
+| **Reject** | same as approve | caller `P→R`; all `W→S`; master `02`; stamp `PAY_END_*` if all have voted. **No source write-back** |
+| **Withdraw** | master Pending/In Progress (`00/03`) else `WBE_VALIDATION`; not found → `WBE_NOT_FOUND` | delete chain + master; null source `APPR_SEQ_NO` only (back to Draft — there is no `APPR_STTS` column on the source tables) |
 | **Change line** | master Pending/In Progress; `appr_line_no` positive (`WBE_VALIDATION`); picked line has approvers | rebuild chain from template (line 1 `P`, rest `W`); master → `00` |
 | **Bulk approve** | 1..100 ids (`WBE2054`) | per-id `approve`; aggregate `{successes, failures}` |
 

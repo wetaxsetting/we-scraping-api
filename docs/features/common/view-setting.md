@@ -1,93 +1,47 @@
-# Common > View Setting (Screen Options) — Refactor Feature Spec (Backend)
+# Common > View Setting (Screen Options) — Summary (Backend)
 
-**Domain:** `common` / `setting` (global, screen-agnostic)
-**Refactor screen ID / slug:** `view-setting`
+> ⚠️ This document is a high-level feature summary.
+> The detailed source of truth is located in:
+> `docs/features/common/view-setting/`
+
+**Domain:** `common` / `setting` (global, screen-agnostic) · **Slug:** `view-setting`
 **Backend package:** `com.kosign.wecms.domain.setting` (`ScreenOptionController` / `ScreenOptionService`)
-**Status:** **Working** — endpoints implemented; first wired screen `banking-account-inquiry-vnd`.
-**JEX service IDs:** `comm_0108_001_r001_osmc` (load), `comm_0108_001_u002_osmc` (save), `comm_0108_001_u001_osmc` (reset), `SYS_SCR_OPTION_WECMS_R002` (areas).
-**JEX functional reference (read-only):** [`../../../../docs/jex/features/view-setting.md`](../../../../docs/jex/features/view-setting.md).
+**Status:** ✅ Implemented — endpoints live; first wired screen `banking-account-inquiry-vnd`.
 
-> Created 2026-06-01 to resolve **OQ-DOC-2**. This doc is the canonical feature spine; the full
-> behavioural design lives in the JEX reference above and the implementation rules in
-> `wecms-api/CLAUDE.md` §"Screen Option (View Setting)". It documents an **already-implemented**
-> global feature — no new scope is introduced.
+## Feature overview
 
-## Overview
+The toolbar "list-view" popover (Figma 100:13382 / legacy `comm_0108_001`) lets a user toggle column
+visibility, reorder, and reset to defaults on any list page. **Global feature** — one controller, one
+service, one DTO set, two tables (`SYS_SCR_OPTION_WECMS` / `USER_SCR_OPTION_WECMS`), keyed by
+`WEB_SVC_ID` (semantic kebab slug) + `DYM_AREA_ID`. Adopting a new page is a Flyway **seed-only** change.
 
-View Setting (the toolbar "list-view" popover, Figma 100:13382 / legacy `comm_0108_001`) lets a user
-toggle column visibility, reorder columns, and reset to system defaults on any list page. It is a
-**global feature**: one shared controller, one service, one DTO set, two tables — keyed only by
-`WEB_SVC_ID` + `DYM_AREA_ID`. Adopting a new page is a Flyway **seed-only** change; no controller,
-service, or DTO change. "Screen Options" is the REST surface name (`/api/v1/screen-options/...`); it
-is the same feature.
+## Endpoints (at a glance)
 
-Per memory `feedback_view_setting_global`, every list/table screen consumes the same shared component +
-hook + REST surface + per-page registry — never a per-page fork.
-
-## Endpoints
-
-| Method | Path | Returns | JEX counterpart |
-|---|---|---|---|
-| GET | `/api/v1/screen-options/{webSvcId}/{dymAreaId}` | `ScreenOptionListResponse` (merged sys + user; lazy-init on first call) | `comm_0108_001_r001_osmc` |
-| GET | `/api/v1/screen-options/{webSvcId}/areas` | `ScreenAreaListResponse` (distinct areas + counts) | `SYS_SCR_OPTION_WECMS_R002` |
-| PUT | `/api/v1/screen-options/{webSvcId}/{dymAreaId}` | `ScreenOptionListResponse` (refreshed) | `comm_0108_001_u002_osmc` |
-| DELETE | `/api/v1/screen-options/{webSvcId}/{dymAreaId}` | `ScreenOptionListResponse` (re-init from sys) | `comm_0108_001_u001_osmc` |
-
-All four are JWT-protected. Bad path input → `WBE_VALIDATION`; unknown `screenId` (regex passes but
-no sys row) → `WBE2001`.
-
-## Behaviour (merge / save / reset)
-
-- **Load** — `SELECT` sys rows + user override rows, overlay user `(DISP_ORD, USE_YN)` on each sys
-  row, `FIX_YN='Y'` forces `USE_YN='Y'`, sort by effective `DISP_ORD`. Lazy-INSERT copies sys → user
-  on first call per `(BIZ_KEY, USER_ID, WEB_SVC_ID, DYM_AREA_ID)` scope.
-- **Save** — delete-then-insert the user scope in one transaction; full merged column list in the
-  payload preserves order; unknown FIELD_IDs silently dropped; `FIX_YN='Y'` rows persist `USE_YN='Y'`
-  regardless of payload.
-- **Reset** — delete user rows + immediately re-init from sys in the same transaction; response is the
-  pure sys defaults.
-
-## Identifier conventions (locked)
-
-- **`WEB_SVC_ID`** — semantic route-based kebab-case `<module>-<page>[-<type>]`
-  (e.g. `banking-account-inquiry-vnd`). Backend `@Pattern` requires ≥2 kebab segments and rejects
-  legacy JEX ids (`fnsh_0001_001` — underscores not allowed). Single source of truth:
-  [`wecms-web/lib/viewSettingScreens.ts`](../../../../wecms-web/lib/viewSettingScreens.ts).
-- **`DYM_AREA_ID`** — required in every call/row; single-area pages use `default`.
-- **`FIELD_ID`** — uppercase, stable across releases (a public contract; renaming orphans user overrides).
-- **Special FIELD_IDs** — `CHECKBOX` (`DISP_ORD=0`) and `ETC` (`DISP_ORD=99`) are admin-controlled:
-  hidden in the popover, locked server-side via `ScreenOptionService.SPECIAL_FIELD_IDS`.
-
-## Data model
-
-| Table | Role | PK |
+| Method | Path | Purpose |
 |---|---|---|
-| `SYS_SCR_OPTION_WECMS` | System defaults per screen | `WEB_SVC_ID + DYM_AREA_ID + FIELD_ID` |
-| `USER_SCR_OPTION_WECMS` | Per-user overrides | `BIZ_KEY + USER_ID + WEB_SVC_ID + DYM_AREA_ID + FIELD_ID` |
+| GET | `/api/v1/screen-options/{webSvcId}/{dymAreaId}` | merged sys+user (lazy-init) |
+| GET | `/api/v1/screen-options/{webSvcId}/areas` | distinct areas + counts |
+| PUT | `/api/v1/screen-options/{webSvcId}/{dymAreaId}` | save user overrides (delete-then-insert) |
+| DELETE | `/api/v1/screen-options/{webSvcId}/{dymAreaId}` | reset → re-init from sys |
 
-Schema landed in V30; semantic-id cutover + `DYM_AREA_ID NOT NULL` in V32; CHECKBOX/SIZE/parity in
-V33–V42 (per-screen seeds live in the owning feature's migration). The `SIZE` column is schema-aligned
-and value-seeded (Figma WB365 widths) but **not yet consumed end-to-end** — see
-[`project_view_setting_size_deferred`] memory and `wecms-api/CLAUDE.md` §"View Setting SIZE feature".
+Errors: `WBE2001` (unknown screenId), `WBE_VALIDATION` (kebab pattern fail). Audit slug = `view-setting`.
 
-## Audit logging
+## Detailed documentation
 
-Writes use the **slug** `view-setting` for `AUDIT_LOGS_INFM.WSVC_ID` (never the legacy `comm_0108_001`),
-per the workspace CLAUDE.md identifier rule.
-
-## Adopting a new screen (checklist)
-
-1. Add the page's column set to `SYS_SCR_OPTION_WECMS` in the **same Flyway migration** that ships the page.
-2. Register the `screenId` in [`wecms-web/lib/viewSettingScreens.ts`](../../../../wecms-web/lib/viewSettingScreens.ts).
-3. Seed `SORT_YN='Y'` only for columns that have a backing sort whitelist entry (see CLAUDE.md §"Common table sort").
-4. No controller / service / DTO change — the endpoints already accept any `(WEB_SVC_ID, DYM_AREA_ID)`.
-
-**Pages currently configured:** `banking-account-inquiry-vnd`, `contacts`, `firm-banking-history`,
-`erp-transaction-history` (see `wecms-api/CLAUDE.md` for the authoritative list).
+| Doc | Scope |
+|---|---|
+| [view-setting/README.md](view-setting/README.md) | Folder hub + full document index |
+| [view-setting/business-flow.md](view-setting/business-flow.md) | load / save / reset / areas flows |
+| [view-setting/functional-specification.md](view-setting/functional-specification.md) | merge rules, special fields, validation |
+| [view-setting/database-mapping.md](view-setting/database-mapping.md) | tables, PKs, entity mapping, Flyway history |
+| [view-setting/interface-specification.md](view-setting/interface-specification.md) | endpoint contracts + error codes |
+| [view-setting/migration-guide.md](view-setting/migration-guide.md) | legacy `comm_0108_001` → Spring |
+| [view-setting/refactor-gap-analysis.md](view-setting/refactor-gap-analysis.md) | parity matrix |
+| [view-setting/source-code-index.md](view-setting/source-code-index.md) | verified file map |
+| [view-setting/test-scenarios.md](view-setting/test-scenarios.md) | SIT/UAT scenarios |
 
 ## Related
 
-- Frontend spec: [`../../../../wecms-web/docs/features/common/view-setting.md`](../../../../wecms-web/docs/features/common/view-setting.md)
-- Frontend architecture: [`../../../../wecms-web/docs/architecture/view-setting/README.md`](../../../../wecms-web/docs/architecture/view-setting/README.md)
-- Endpoint index: [`../../references/api-spec/api-mapping.md`](../../references/api-spec/api-mapping.md) · JEX→Spring: [`../../references/migration/service-mapping.md`](../../references/migration/service-mapping.md)
+- Frontend twin: [`../../../../wecms-web/docs/features/common/view-setting/README.md`](../../../../wecms-web/docs/features/common/view-setting/README.md)
 - JEX functional reference: [`../../../../docs/jex/features/view-setting.md`](../../../../docs/jex/features/view-setting.md)
+- Audit deliverables: [`../../audits/common-source-index.md`](../../audits/common-source-index.md) · [`common-gap-analysis.md`](../../audits/common-gap-analysis.md) · [`common-docs-audit.md`](../../audits/common-docs-audit.md)

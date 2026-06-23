@@ -75,4 +75,4 @@ configured via `wecms.coocon.smart-api-*`. Local-origin licensing caveats apply 
 - Frontend spec: [../../../../wecms-web/docs/features/banking/bank-credentials.md](../../../../wecms-web/docs/features/banking/bank-credentials.md)
 - Settings → Login Credentials (shared `BANK_CERT_INFO` + scraping; boundary OQ-DOC-7): [../settings/login-credentials.md](../settings/login-credentials.md)
 - Endpoint index: [../../references/api-spec/api-mapping.md](../../references/api-spec/api-mapping.md)
-- Open question: [../../planning/open-questions/documentation-follow-up.md](../../planning/open-questions/documentation-follow-up.md) (OQ-DOC-7)
+- Open question: ../../planning/open-questions/documentation-follow-up.md _(removed — historical `planning/` folder deleted by project decision)_ (OQ-DOC-7)

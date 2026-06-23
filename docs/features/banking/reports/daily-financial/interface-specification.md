@@ -80,7 +80,7 @@ Account-level: `BANK_CD(20)`, `ACCT_NO(100)`, `CCY_CD(3)`, `ACCT_NICK_NM(50)`, `
 | `activeAccountsOnly` | `ACTV_ACCT_ONLY_YN` | boolean, default `true` |
 | `includeInternalTransfers` | `INCL_INTL_TRNS_YN` | boolean, default `true` |
 
-> **Naming divergence to reconcile:** the planning stub [`../daily-financial.md`](../daily-financial.md)
+> **Naming divergence to reconcile:** the planning stub [`../daily-financial.md`](legacy-spec.md)
 > documents `referenceDate` + `currency`; the implemented controller uses `asOf` + `currencyScope`.
 > Flag for alignment (see [refactor-gap-analysis.md](refactor-gap-analysis.md)).
 

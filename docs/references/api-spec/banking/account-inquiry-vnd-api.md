@@ -1,7 +1,7 @@
 # Banking > Account Inquiry (VND) — Backend API Design
 
 **Refactor screen ID:** `banking-account-inquiry-vnd`
-**Feature spec:** [../../features/banking/account-inquiry-vnd.md](../../../features/banking/current-savings-vnd/account-inquiry.md)
+**Feature spec:** [../../features/banking/account-inquiry-vnd.md](../../../features/banking/current-savings-vnd/account-inquiry/README.md)
 **JEX reference:** `fnsh_0001_001_r001` (read-only — see WSVC.fnsh_0001_001_r001.xml)
 
 ---
@@ -176,8 +176,8 @@ Per-currency totals + scalar `BALANCE`/`AVAILABLE_BAL` come from a sibling aggre
 
 ## Cross-references
 
-- Feature spec: [../../features/banking/account-inquiry-vnd.md](../../../features/banking/current-savings-vnd/account-inquiry.md)
-- Frontend page: [../../frontend/banking/account-inquiry-vnd-page.md](../../../../../wecms-web/docs/features/banking/current-savings-vnd/account-inquiry.md)
+- Feature spec: [../../features/banking/account-inquiry-vnd.md](../../../features/banking/current-savings-vnd/account-inquiry/README.md)
+- Frontend page: [../../frontend/banking/account-inquiry-vnd-page.md](../../../../../wecms-web/docs/features/banking/current-savings-vnd/account-inquiry/README.md)
 - DB design: [../../database/banking/account-inquiry-vnd-db.md](../../database/banking/account-inquiry-vnd-db.md)
 - Cross-feature API mapping: [../api-mapping.md](../api-mapping.md)
 - Service-mapping (JEX → Spring): [../../migration/service-mapping.md](../../migration/service-mapping.md)

@@ -14,8 +14,8 @@ against the JEX DEV database (read-only MCP), the IDO/WSVC contracts, and the re
 
 | Object | Kind | Legacy use | Refactor counterpart |
 |---|---|---|---|
-| `get_cashflow_report(...)` | **plpgsql function** | `_r001` / IDO `CASH_FLOW_R001` — computes the whole report | **Not ported** — reimplemented in `CashFlowReportService` + `cashflow/*` |
-| `wb_get_chart_acct_level_text` / `wb_get_chart_acct_level` | functions | account depth → `'Level 1..5'` | `ChartOfAccountsHierarchy.levelOf` (Java parent-walk) |
+| `get_cashflow_report(...)` | **plpgsql function** | `_r001` / IDO `CASH_FLOW_R001` — computes the whole report | **Called directly (2026-06-13)** by `CashFlowReportService.search` → `CashFlowReportRepository`. The earlier `cashflow/*` Java reimplementation is retained but off the active path. |
+| `wb_get_chart_acct_level_text` / `wb_get_chart_acct_level` | functions | account depth → `'Level 1..5'` | **Added to the refactor DB (2026-06-13)** — consumed by `get_cashflow_report` on the live path. (The off-path `ChartOfAccountsHierarchy.levelOf` Java parent-walk is retained.) |
 | `wb_get_appr_stts` / `wb_get_admin_yn` | functions | approval status `P/C/R/I` | `ApprovalStatusResolver` (reduces to `appr_type_cd='01'`) |
 | `chart_acct_infm` | table | row backbone (L1/L2/L3 tree) | `ChartAcctInfm` entity + `ChartAcctInfmRepository` |
 | `scdul_pymn_sumr` / `scdul_pymn_sumr_detl` | tables | source #1 (scheduled payments) | `ScdulPymnSumr*` entity + `ScdulPymnSumrDetlRepository.findCashFlowSourceRows` |
@@ -85,9 +85,12 @@ refactor repository query; `chart_acct_cd` must be non-null/non-empty.
 
 ## 4. Column mapping — Legacy → Entity → DTO → UI
 
-The report's wire row is built by `CashFlowRowAssembler`, not by a single entity, so the "entity"
-column below is the *source* of each value. Wire names are auto snake_cased by the global Jackson
-`SNAKE_CASE` strategy from the camelCase DTO fields.
+The report's wire row maps to `CashFlowRow` (no single backing entity), so the "entity" column below is
+the *source* of each value. **As of 2026-06-13 the live path populates these rows from
+`get_cashflow_report`** (via `CashFlowReportRepository`); the `CashFlowRowAssembler` referenced below is
+the retained, off-active-path Java assembler — the column/value contract it describes still matches the
+wire shape. Wire names are auto snake_cased by the global Jackson `SNAKE_CASE` strategy from the
+camelCase DTO fields.
 
 | Legacy `get_cashflow_report` column / WSVC field | Source (entity / computed) | DTO field (`CashFlowRow`) | Wire (snake_case) | Frontend (camelCase) | UI column |
 |---|---|---|---|---|---|
@@ -148,8 +151,11 @@ no Haengsung hide-closed rule is applied (consistent with Haengsung product-gate
 
 `CHART_ACCT_INFM` schema (V94) + restricted roots (V96) + demo seed (V97) land with Chart of Accounts;
 `ACCT_TRNS_HSTR`/`ACCT_TRNS_RCV_PAY_INFM` (V13/V21/V23), `EXPT_RESOL_MSTR` (V109), `SCDUL_PYMN_SUMR(_DETL)`
-(V131) land with their owning features. **No DB function** (`get_cashflow_report`) is created locally —
-it is reimplemented in Java per the [DB Function / Legacy Function Policy](../../../../../CLAUDE.md).
+(V131) land with their owning features. **`get_cashflow_report` is called directly (2026-06-13)** —
+the function (plus the `wb_get_chart_acct_level` / `wb_get_chart_acct_level_text` helpers) was added to
+the refactor DB and `CashFlowReportService.search` → `CashFlowReportRepository` invokes it. The earlier
+Java reimplementation (per the [DB Function / Legacy Function Policy](../../../../../CLAUDE.md)) is retained
+but off the active path.
 
 ## 8. Keys / indexes — `Needs Verification`
 

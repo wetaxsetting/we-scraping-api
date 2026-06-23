@@ -3,9 +3,9 @@
 **Refactor slug:** `own-account-transfer`
 **Refactor route:** `/banking/own-account-transfer`
 **Status:** Phase 1 — design only. No code in this phase.
-**Feature spec:** [../../features/banking/own-account-transfer.md](../../../features/banking/own-account-transfer/own-account-transfer.md)
+**Feature spec:** [../../features/banking/own-account-transfer.md](../../../features/banking/internal-transfer-vnd/own-account-transfer/README.md)
 **Backend design:** [../../backend/banking/own-account-transfer-api.md](../../api-spec/banking/own-account-transfer-api.md)
-**Frontend design:** [../../frontend/banking/own-account-transfer-page.md](../../../../../wecms-web/docs/features/banking/own-account-transfer/own-account-transfer.md)
+**Frontend design:** [../../frontend/banking/own-account-transfer-page.md](../../../../../wecms-web/docs/features/banking/internal-transfer-vnd/own-account-transfer/README.md)
 **DB design:** [../../database/banking/own-account-transfer-db.md](../../database/banking/own-account-transfer-db.md)
 
 > JEX trees are read-only reference. This file traces every JEX artefact (citation only) to its refactor counterpart. Legacy WSVC ids (`trns_0001_001*`) appear **only** as citations — every refactor identifier surface uses the slug `own-account-transfer`.

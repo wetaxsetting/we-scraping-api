@@ -7,7 +7,7 @@
 **Output-path note (per task):** the task suggested `docs/features/chart-of-accounts/refactor-gap-analysis.md`. Per `wecms-api/CLAUDE.md` → Documentation Structure Rules, *parity audits (refactor vs JEX)* live under `wecms-api/docs/audits/`. This audit spans both refactor trees but is filed here (the designated audits home) and cross-references `wecms-web`. The JEX legacy dossier stays read-only reference.
 
 Legacy reference dossier: [docs/jex/features/chart-of-accounts/](../../../docs/jex/features/chart-of-accounts/) (README, business-flow, functional-spec, database-mapping, interface-spec, source-code-index, migration-guide, test-scenarios, refactor-gap-analysis).
-Related OQ tracking: memory `project-chart-of-accounts-oq-pending`; [planning/open-questions/README.md](../planning/open-questions/README.md).
+Related OQ tracking: memory `project-chart-of-accounts-oq-pending`; planning/open-questions/README.md _(removed — historical `planning/` folder deleted by project decision)_.
 
 ---
 
@@ -293,4 +293,4 @@ not a code change:
 - Legacy dossier: [docs/jex/features/chart-of-accounts/](../../../docs/jex/features/chart-of-accounts/)
 - Backend feature spec: [../features/settings/chart-of-accounts.md](../features/settings/chart-of-accounts.md)
 - DB / business-rule refs: [../references/database/chart-of-accounts.md](../references/database/chart-of-accounts.md), [../references/business-rules/chart-of-accounts.md](../references/business-rules/chart-of-accounts.md)
-- OQ tracking: [../planning/open-questions/README.md](../planning/open-questions/README.md); memory `project-chart-of-accounts-oq-pending`
+- OQ tracking: ../planning/open-questions/README.md _(removed — historical `planning/` folder deleted by project decision)_; memory `project-chart-of-accounts-oq-pending`

@@ -1,33 +1,101 @@
-# Change Password (refactor slug: `change-password`)
+# Settings > Change Password — Feature Summary (Refactor)
 
-Self-service password change for the logged-in user. Refactor port of legacy
-JEX `comm_0401_001` (popup) + `comm_0400_001_u001` (action).
+> ⚠️ This document is a high-level feature summary.
+> Change Password has **no module folder** — it is a small, self-contained slice of the
+> **`auth` domain**, not a Settings-menu screen. The authoritative source of truth is the code:
+> backend `domain/auth/` (`ChangePasswordService` + the `POST /api/v1/auth/change-password`
+> endpoint on `AuthController`) and frontend `components/layout/ChangePasswordDialog.tsx`
+> wired into `ProfileMenu`. Related password-write context lives under
+> [user-management/](user-management/README.md) (Settings → Users create/reset) and
+> [login-credentials.md](login-credentials.md).
 
-- **JEX spec (read-only reference):** `WECMS DEV/WECMS/web/WEB-INF/action/jex/wabooks/comm/comm_0400_001_u001_act.jsp`, `comm_0401_001_view.jsp`, `IDO.USER_PW_CHG_HIS_R003.xml`, `IDO.USER_PW_CHG_HIS_C001.xml`.
-- **Entry point:** Header → profile dropdown → "Change Password".
+## Feature Overview
 
-## Flow (parity with legacy)
+- **Purpose:** Let the logged-in user change their own WeCMS sign-in password from the header
+  profile dropdown.
+- **Business role:** Self-service credential maintenance. It is **not** a Settings-menu item —
+  the entry point is the avatar **profile dropdown** (a "Change Password" row), reached from any
+  page, the same as Logout.
 
-1. **Required fields** — `currentPassword` / `newPassword` / `confirmPassword` all required. Frontend: zod (no API call on failure). Backend backstop: bean validation → `WBE_VALIDATION`. (Legacy `ValidationHelper.validateRequired`.)
-2. **New == Confirm** — else `WBE_CHANGE_PASSWORD_MISMATCH` (legacy `WBE1052`). Caught first on the frontend by a zod `refine`.
-3. **Current password matches the stored hash** — else `WBE2091` "Password confirmation failed." (legacy `WBE1053`; reuses the existing Login-Credentials-reveal code, same "verify the logged-in user's password" semantic).
-4. **No reuse of the last 3 passwords** — else `WBE_CHANGE_PASSWORD_REUSED` (legacy `WBE1017`; `USER_PW_CHG_HIS_R003` parity). BCrypt comparison loop over the 3 newest `USER_PW_CHG_HIS` rows via the shared `PasswordEncoder`.
-5. **On success** — `USER_INFM.USER_PW` rewritten with a fresh BCrypt hash (`WecmsPasswordEncoder`, same as login write path) + one `USER_PW_CHG_HIS` row appended (`REG_SEQ_NO` = per-user MAX+1, Java-side generator — no `wb_get_next_val` branch).
+## Menu / Route Mapping
 
-## Backend
+- **Menu / panel:** Header → profile dropdown → "Change Password" row (opens a feature dialog).
+  Not in the Settings modal, not in the sidebar.
+- **Menu permission ID (slug):** none — no `@menuAuthz` / View Setting `WEB_SVC_ID`. The endpoint
+  is gated only by the global `anyRequest().authenticated()` rule (JWT required); it is **not** in
+  the `SecurityConfig` public list. The user id is read from `TenantContext` only — never accepted
+  from the body (the credential being changed is always the caller's own).
+- **Wire base path:** `POST /api/v1/auth/change-password` (verified in
+  `domain/auth/controller/AuthController.java`).
+- **Frontend mount / route:** no route — a shadcn feature dialog
+  (`components/layout/ChangePasswordDialog.tsx`) opened from `ProfileMenu.tsx`; API client
+  `changePassword(...)` in `lib/auth/client.ts`; wire type `ChangePasswordRequestRec` in
+  `lib/types/api.ts`.
+- **Legacy JEX counterpart:** popup `comm_0401_001` + action `comm_0400_001_u001` (traceability
+  only). The refactor uses the `change-password` slug and the `auth` REST base, not the legacy
+  WSVC ids.
 
-- **Endpoint:** `POST /api/v1/auth/change-password` — JWT-protected (not in the SecurityConfig public list). User id is read from `TenantContext` only; never accepted from the body.
-- **DTO:** `ChangePasswordRequest` (`current_password` / `new_password` / `confirm_password`).
-- **Service:** `ChangePasswordService` (`@Transactional`).
-- **Entity / repo / schema:** `UserPwChgHis` + `UserPwChgHisId` + `UserPwChgHisRepository`; table `USER_PW_CHG_HIS` (Flyway **V207**). PROD-active-list table. `REG_DTM`/`MOD_DTM` are `TIMESTAMPTZ` and `REG_SEQ_NO` is `BIGINT` — documented deviations from the legacy `VARCHAR(14)`/`NUMERIC` shapes (USER_LOGIN_HIS / V36 precedent).
-- **Messages:** `WBE_CHANGE_PASSWORD_MISMATCH`, `WBE_CHANGE_PASSWORD_REUSED` (new); `WBE2091` reused.
+## Current Status
 
-## Frontend
+⚪ **Not a standalone Settings module** — but the functionality itself is fully built.
 
-- **API client:** `changePassword(...)` in `lib/auth/client.ts` (wire type `ChangePasswordRequestRec`); rejects with `LoginError` carrying `status.code`.
-- **UI:** `components/layout/ChangePasswordDialog.tsx` — shadcn feature dialog (§3a rhythm), zod schema with translation keys, validation + success/error surfaced via the shared `useDialog()` system dialog. Double-submit guarded by `isSubmitting`; fields cleared and popup closed on success. Wired into `ProfileMenu`.
-- **i18n:** `change_password.*` keys in `locales/{en,ko,vi}.json`.
+- ✅ **Implemented (backend, `auth` domain):**
+  - `POST /api/v1/auth/change-password` — JWT-protected; `ChangePasswordRequest`
+    (`current_password` / `new_password` / `confirm_password`); `ChangePasswordService`
+    (`@Transactional`).
+  - Validation order mirrors legacy: required fields (`WBE_VALIDATION`) → new == confirm
+    (`WBE_CHANGE_PASSWORD_MISMATCH`, legacy WBE1052) → current matches stored hash (`WBE2091`
+    "Password confirmation failed.", legacy WBE1053) → not one of the last 3 history rows
+    (`WBE_CHANGE_PASSWORD_REUSED`, legacy WBE1017).
+  - On success: `USER_INFM.USER_PW` rewritten **via the shared `WecmsPasswordEncoder`**, plus one
+    `USER_PW_CHG_HIS` row appended.
+  - Entity / repo: `UserPwChgHis` + `UserPwChgHisId` + `UserPwChgHisRepository`; table
+    `USER_PW_CHG_HIS` created by **Flyway V132** (PROD-active-list table).
+  - `REG_SEQ_NO` is allocated through the single `wb_get_next_val` funnel
+    (`LegacyFunctionRepository.nextUserPwChgRegSeqNo`, branch #27 — per-user MAX+1), not a private
+    Java generator.
+- ✅ **Implemented (frontend):**
+  - `ChangePasswordDialog.tsx` — shadcn feature dialog, zod schema (required + new/confirm
+    `refine`), translated chrome, success/error surfaced through the shared `useDialog()` system
+    dialog. Double-submit guarded; fields cleared and dialog closed on success.
+  - Wired into `ProfileMenu` — the "Change Password" row's `onClick` opens the dialog
+    (`setPwOpen(true)`). i18n keys `change_password.*` in `locales/{en,ko,vi}.json`.
+- ⚪ **Out of scope (deferred per `wecms-api/CLAUDE.md`):** password-expiry / forced-change
+  (`USER_INFM.PW_CHG_REQ_SEQ_NO`), 5-failure auto-lock. Neither is wired here.
 
-## Out of scope
+> **Doc note (2026-06-23):** two stale claims removed from the previous revision of this file —
+> the password is written as the legacy **SHA-256** `public.hash()` value (coexistence rule), NOT
+> BCrypt; and `REG_SEQ_NO` is allocated by the **`wb_get_next_val` funnel**, NOT a Java-side
+> MAX+1 generator. The `USER_PW_CHG_HIS` table is **V132**, not V207. The previous "frontend
+> handler is empty" status (still echoed in `wecms-web/CLAUDE.md`'s Feature Status table) is also
+> stale — the dialog is fully wired.
 
-Password-expiry / forced-change (`PW_CHG_REQ_SEQ_NO`), 5-failure auto-lock — remain deferred per `wecms-api/CLAUDE.md`.
+## How it relates to other modules
+
+Change Password shares the **single coexistence password-write path** with the other two flows
+that write `USER_INFM.USER_PW`:
+
+| Flow | Where | Encoder |
+|---|---|---|
+| Self-service change | `ChangePasswordService` (this doc) | `WecmsPasswordEncoder.encode()` |
+| Settings → Users create / reset | `UserManagementService` (`user-management/`) | `WecmsPasswordEncoder.encode()` |
+| Login | `AuthService.login` | verify-only — **no write-back** |
+
+`WecmsPasswordEncoder.encode()` always emits the legacy `public.hash()` SHA-256 base64 value (via
+`LegacyHashPasswordEncoder`) so the live JEX system can authenticate the same row — never BCrypt.
+This is why a password set here is also valid for legacy JEX login, and why the reuse-history
+check compares cleanly against legacy-imported `USER_PW_CHG_HIS` rows.
+
+## Detailed Documentation
+
+There is no `change-password/` folder. Authoritative references that **do** exist:
+
+- Settings → Users password write path — [user-management/](user-management/README.md).
+- Bank/GDT credential reveal + the shared `WBE2091` "verify the logged-in user's password"
+  semantic — [login-credentials.md](login-credentials.md).
+- Coexistence / SHA-256 password policy — `wecms-api/CLAUDE.md` §"Passwords
+  (`WecmsPasswordEncoder` + `LegacyHashPasswordEncoder`)" and memory
+  `project_login_password_coexistence_sha256.md`.
+- Code: `domain/auth/service/ChangePasswordService.java`,
+  `domain/auth/controller/AuthController.java`,
+  `common/security/WecmsPasswordEncoder.java`, Flyway `V132__user_pw_chg_his.sql`.

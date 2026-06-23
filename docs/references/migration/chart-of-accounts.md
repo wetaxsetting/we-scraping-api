@@ -3,7 +3,7 @@
 **Slug:** `chart-of-accounts`
 **Refactor home:** Spring Boot ([wecms-api/](../../../)) + Next.js Settings panel ([wecms-web/components/settings/chart-of-accounts/](../../../../wecms-web/components/settings/chart-of-accounts/)).
 **Legacy WSVC ids (traceability only — never echoed in refactor identifiers):** `comm_0223_001` (main view + CRUD), `comm_0223_002` (Excel bulk upload).
-**Related docs:** [feature spec](../../features/settings/chart-of-accounts.md) · [backend design](../business-rules/chart-of-accounts.md) · [frontend design](../../../../wecms-web/docs/features/settings/chart-of-accounts.md) · [database](../database/chart-of-accounts.md) · [plan](../../archive/planning/phase-1/chart-of-accounts-plan.md).
+**Related docs:** [feature spec](../../features/settings/chart-of-accounts.md) · [backend design](../business-rules/chart-of-accounts.md) · [frontend design](../../../../wecms-web/docs/features/settings/chart-of-accounts.md) · [database](../database/chart-of-accounts.md) · plan _(removed — historical `archive/` folder deleted by project decision)_.
 
 The legacy implementation lives entirely under the WABOOKS `comm` namespace. Every artifact below is read-only reference for the refactor — never edit, never deploy, never wire two-way.
 
@@ -208,4 +208,4 @@ Legacy WSVC ids (`comm_0223_001`, `comm_0223_002`) appear nowhere except this do
 - **`CARD_TRNS_HSTR` join** — ports with the Card module (not yet on the refactor roadmap).
 - **Upload-history audit ledger** (`comm_0223_002_r001` / `_r002`) — ports with the broader `ERP_TRNS_HSTR`-style audit feature.
 
-These are tracked in [docs/refactor-wecms/archive/planning/phase-1/chart-of-accounts-plan.md](../../archive/planning/phase-1/chart-of-accounts-plan.md) §"Out of scope".
+These are tracked in docs/refactor-wecms/archive/planning/phase-1/chart-of-accounts-plan.md _(removed — historical `archive/` folder deleted by project decision)_ §"Out of scope".

@@ -10,16 +10,16 @@ Ownership rule: a table has exactly **one** owning module. Shared reference/infr
 
 | Table | Sub-module / package | Primary feature doc | Consumed by |
 |---|---|---|---|
-| `ACCT_MSTR` | `banking` | [features/banking](../../features/banking/current-savings-vnd/account-inquiry.md) | Settings (auth, firm-conf), Payment, reports |
-| `ACCT_TRNS_HSTR` | `banking` | [features/banking transaction-history](../../features/banking/current-savings-vnd/transaction-history.md) | Add-on (doc link), matching |
-| `ACCT_TRNS_RCV_PAY_INFM` | `banking` | [transaction-history](../../features/banking/current-savings-vnd/transaction-history.md) | Contacts in-use guard |
-| `BUSA_DOC_RCV_PAY_HIS` | `banking` | [transaction-history](../../features/banking/current-savings-vnd/transaction-history.md) | Add-on e-invoice, card link |
-| `NAPAS_REMIT_TRNS_HSTR` | `banking` | [own-account-transfer](../../features/banking/own-account-transfer/transfer-history.md) | — |
+| `ACCT_MSTR` | `banking` | [features/banking](../../features/banking/current-savings-vnd/account-inquiry/README.md) | Settings (auth, firm-conf), Payment, reports |
+| `ACCT_TRNS_HSTR` | `banking` | [features/banking transaction-history](../../features/banking/current-savings-vnd/transaction-history/README.md) | Add-on (doc link), matching |
+| `ACCT_TRNS_RCV_PAY_INFM` | `banking` | [transaction-history](../../features/banking/current-savings-vnd/transaction-history/README.md) | Contacts in-use guard |
+| `BUSA_DOC_RCV_PAY_HIS` | `banking` | [transaction-history](../../features/banking/current-savings-vnd/transaction-history/README.md) | Add-on e-invoice, card link |
+| `NAPAS_REMIT_TRNS_HSTR` | `banking` | [own-account-transfer](../../features/banking/internal-transfer-vnd/transfer-history/README.md) | — |
 | `BANK_EXCH_RATE_INFM` | `banking` | [exchange-rate-inquiry](../../features/payment/exchange-rate-inquiry.md) | Payment (FX) |
-| `RMRK_ORG_INFM` | `banking/smartorganizer` | [smart-organizer](../../features/banking/current-savings-vnd/smart-organizer.md) | — |
+| `RMRK_ORG_INFM` | `banking/smartorganizer` | [smart-organizer](../../features/banking/smart-organizer/README.md) | — |
 | `MEMO_INFM` | `banking` (polymorphic) | — | every page (polymorphic memo) |
-| `BUSI_MATCH_LOG` | `banking` (matching) | [smart-organizer](../../features/banking/current-savings-vnd/smart-organizer.md) | — |
-| `DAILY_CASH_REPT_DAILY_SUMR_DETL` | `banking` (reports) | [reports/daily-cash](../../features/banking/reports/daily-cash.md) | — |
+| `BUSI_MATCH_LOG` | `banking` (matching) | [smart-organizer](../../features/banking/smart-organizer/README.md) | — |
+| `DAILY_CASH_REPT_DAILY_SUMR_DETL` | `banking` (reports) | [reports/daily-cash](../../features/banking/reports/daily-cash/README.md) | — |
 
 ## Payment — `domain/payment` · ERD [erd/payment-erd.md](erd/payment-erd.md)
 
@@ -114,5 +114,5 @@ Ownership rule: a table has exactly **one** owning module. Shared reference/infr
 ## Related
 
 - ERD set: [erd/README.md](erd/README.md) · Coverage: [database-coverage-matrix.md](database-coverage-matrix.md)
-- Open questions: [planning/open-questions/database-follow-up.md](../../planning/open-questions/database-follow-up.md)
+- Open questions: planning/open-questions/database-follow-up.md _(removed — historical `planning/` folder deleted by project decision)_
 - PROD active-table scope: `wecms-api/CLAUDE.md` § "PROD DB Table Scope for Refactoring"

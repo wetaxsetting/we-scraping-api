@@ -67,7 +67,7 @@ The shared write-side fan-out (`ApprovalBoxFanoutService`) is owned by this pack
 - Table ownership: [../../../references/database/table-ownership.md](../../../references/database/table-ownership.md)
 - Screen / page mapping: [../../../references/migration/screen-mapping/page-mapping.md](../../../references/migration/screen-mapping/page-mapping.md)
 - Migration playbook: [../../../references/migration/MIGRATION_PLAYBOOK.md](../../../references/migration/MIGRATION_PLAYBOOK.md)
-- Open-questions follow-up: [../../../planning/open-questions/documentation-follow-up.md](../../../planning/open-questions/documentation-follow-up.md)
+- Open-questions follow-up: ../../../planning/open-questions/documentation-follow-up.md _(removed — historical `planning/` folder deleted by project decision)_
 
 **Frontend counterpart:** [../../../../../wecms-web/docs/features/payment/approval-box/README.md](../../../../../wecms-web/docs/features/payment/approval-box/README.md)
 

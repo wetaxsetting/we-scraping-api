@@ -39,7 +39,7 @@ JEX is **read-only reference**. This file exists for traceability only — never
 
 ## Field-level mapping convention
 
-Per-feature mapping files (e.g. [account-inquiry-vnd.md](../../features/banking/current-savings-vnd/account-inquiry.md)) carry the field-by-field translation:
+Per-feature mapping files (e.g. [account-inquiry-vnd.md](../../features/banking/current-savings-vnd/account-inquiry/README.md)) carry the field-by-field translation:
 
 ```
 JEX WSVC field (UPPER_SNAKE)  →  Java property (camelCase)  →  JSON @JsonProperty (UPPER_SNAKE)
@@ -126,7 +126,7 @@ Page file: [`wecms-web/app/(dashboard)/addon/sales-einvoices/page.tsx`](../../..
 
 Static UI is complete and approved (one of the four canonical UI baselines per [wecms-web/CLAUDE.md § Approved reference set](../../../../wecms-web/CLAUDE.md)). Backend skeleton returns rows but the wire shape is not yet aligned with the full UI column set. Filters / sort / pagination / Excel / Print / Update buttons are all unwired. View Setting + table sort + Excel export adoption is pending — same shape as Account Inquiry's adoption.
 
-**Implementation rules are locked.** See [planning § Phase 2 implementation rules (locked decisions)](../../planning/addon/sales-e-invoices-plan.md#phase-2-implementation-rules-locked-decisions) — IR-1 through IR-7 cover `DOC_TYPE` mapping, baseline filters, date-range validation, status localisation strategy, simplified search scope, totals computation, and the `INV_TYPE` cleanup. **IR-9** scopes View Setting: data + column-metadata consumption is in scope, but the user-facing popover / list-view toolbar icon / Update / Reset UI is out of scope for the Sales e-Invoices page (toolbar stays Print + Excel + Update only). PO/designer items in the same doc's "Deferred / PO decision" table do NOT block implementation.
+**Implementation rules are locked.** See planning § Phase 2 implementation rules (locked decisions) _(removed — historical `planning/` folder deleted by project decision)_ — IR-1 through IR-7 cover `DOC_TYPE` mapping, baseline filters, date-range validation, status localisation strategy, simplified search scope, totals computation, and the `INV_TYPE` cleanup. **IR-9** scopes View Setting: data + column-metadata consumption is in scope, but the user-facing popover / list-view toolbar icon / Update / Reset UI is out of scope for the Sales e-Invoices page (toolbar stays Print + Excel + Update only). PO/designer items in the same doc's "Deferred / PO decision" table do NOT block implementation.
 
 ### Field-by-field mapping (subset wired today)
 
@@ -182,7 +182,7 @@ EINV_INVOICESTATUS            →  einvInvoicestatus           →  EINV_INVOICE
 - Frontend page: [../frontend/addon/sales-e-invoices-page.md](../../../../wecms-web/docs/features/addon-service/sales-e-invoices.md)
 - Backend API: [../backend/addon/sales-e-invoices-api.md](../api-spec/addon/sales-e-invoices-api.md)
 - Database: [../database/addon/sales-e-invoices-db.md](../database/addon/sales-e-invoices-db.md)
-- Implementation plan: [../planning/addon/sales-e-invoices-plan.md](../../planning/addon/sales-e-invoices-plan.md)
+- Implementation plan: ../planning/addon/sales-e-invoices-plan.md _(removed — historical `planning/` folder deleted by project decision)_
 
 ## Add-on Service > Expenses e-Invoices
 
@@ -200,7 +200,7 @@ Same JEX assets as Sales — the legacy view, action JSP, WSVC, IDO, and TypeScr
 
 The legacy `WSVC.einv_0002_001_r001.xml` file is a **separate BCS-side service** (likely the bank-matching ingestion path), NOT the Expenses listing page. Do NOT mirror it.
 
-**Expenses counterpart on the wire:** `DOC_TYPE='B'` (verified against `BusaDocType.java` and `einv_0001_001_r001_act.jsp`). The current `EInvoiceService.resolveDocType` mapping `EXPENSE → 'E'` is a **bug** — must be `'B'`. See [Sales planning IR-1](../../planning/addon/sales-e-invoices-plan.md#ir-1-doc_type-mapping--final-rule).
+**Expenses counterpart on the wire:** `DOC_TYPE='B'` (verified against `BusaDocType.java` and `einv_0001_001_r001_act.jsp`). The current `EInvoiceService.resolveDocType` mapping `EXPENSE → 'E'` is a **bug** — must be `'B'`. See Sales planning IR-1 _(removed — historical `planning/` folder deleted by project decision)_.
 
 ### Proposed Spring Boot endpoints
 
@@ -281,8 +281,8 @@ For Expenses, **`COMPANYSTATUS` is the highest-value Phase 2 addition** — it c
 - Frontend page: [../frontend/addon/expenses-e-invoices-page.md](../../../../wecms-web/docs/features/addon-service/expenses-e-invoices.md)
 - Backend API: [../backend/addon/expenses-e-invoices-api.md](../api-spec/addon/expenses-e-invoices-api.md)
 - Database: [../database/addon/expenses-e-invoices-db.md](../database/addon/expenses-e-invoices-db.md)
-- Implementation plan: [../planning/addon/expenses-e-invoices-plan.md](../../planning/addon/expenses-e-invoices-plan.md)
-- Sister docs (Sales — primary source for shared rules): [../features/addon-service/sales-e-invoices.md](../../features/addon-service/sales-e-invoices.md), [../planning/addon/sales-e-invoices-plan.md](../../planning/addon/sales-e-invoices-plan.md)
+- Implementation plan: ../planning/addon/expenses-e-invoices-plan.md _(removed — historical `planning/` folder deleted by project decision)_
+- Sister docs (Sales — primary source for shared rules): [../features/addon-service/sales-e-invoices.md](../../features/addon-service/sales-e-invoices.md), ../planning/addon/sales-e-invoices-plan.md _(removed — historical `planning/` folder deleted by project decision)_
 
 ## Add-on Service > Operation Status Inquiry
 
@@ -358,7 +358,7 @@ REPRESENTATIVEFIRSTNAME       →  representativefirstname    →  (not surfaced
 - ✅ Sort: `SortHelper.getSortDynamic("aosv_0001_001_r001")` — View-Setting-driven; default surfaces `SEARCHDATETIME DESC` in practice.
 - ✅ Audit-log table `EXT_TRAN_CALL_HIS` created in V16 but not yet read/written; `BIZ_KEY` deliberately nullable per legacy.
 
-**Open follow-ups (non-blocking — see [planning doc](../../planning/addon/operation-status-inquiry-plan.md) Open Questions table for full list):**
+**Open follow-ups (non-blocking — see planning doc _(removed — historical `planning/` folder deleted by project decision)_ Open Questions table for full list):**
 
 1. **Wire field-name parity** — keep refactor names (`COMPANY_NM` / `OFFICE_ADD` / `LAST_UPDATE`) or revert to legacy WSVC names (`COMPANYNAME` / `OFFICEADD` / `SEARCHDATETIME`)? *Owner: Sonny — Phase 4 task #6.*
 2. **Keyword query param name** — `q` (current) or `SRCH_WD` (legacy WSVC)? *Owner: Sonny — Phase 4 task #1.*
@@ -392,7 +392,7 @@ REPRESENTATIVEFIRSTNAME       →  representativefirstname    →  (not surfaced
 - Frontend page: [../frontend/addon/operation-status-inquiry-page.md](../../../../wecms-web/docs/features/addon-service/operation-status-inquiry.md)
 - Backend API: [../backend/addon/operation-status-inquiry-api.md](../api-spec/addon/operation-status-inquiry-api.md)
 - Database: [../database/addon/operation-status-inquiry-db.md](../database/addon/operation-status-inquiry-db.md)
-- Implementation plan: [../planning/addon/operation-status-inquiry-plan.md](../../planning/addon/operation-status-inquiry-plan.md)
+- Implementation plan: ../planning/addon/operation-status-inquiry-plan.md _(removed — historical `planning/` folder deleted by project decision)_
 - Sister features that consume `OPRT_STTS_INFO.COMPANYSTATUS` on their Buyer / Supplier cell: [Sales e-Invoices](#add-on-service--sales-e-invoices), [Expenses e-Invoices](#add-on-service--expenses-e-invoices)
 
 ## Reference

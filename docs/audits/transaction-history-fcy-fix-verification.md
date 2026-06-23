@@ -1,5 +1,7 @@
 # Transaction History (FCY) — Fix Verification
 
+> _**Historical one-off audit.** A point-in-time record of a completed verification / remediation — findings are preserved unchanged. For the feature’s current state see its `features/.../refactor-gap-analysis.md`; for context see the [audits index](README.md)._
+
 > **System:** Refactor (`wecms-api` Spring Boot + `wecms-web` Next.js)
 > **Date:** 2026-06-06 · **Scope:** SIT-readiness fixes for the parity audit's CONDITIONAL-GO blockers
 > **Parent audit:** [transaction-history-fcy-parity-audit.md](transaction-history-fcy-parity-audit.md)

@@ -24,10 +24,10 @@ control flow inside Java.
 
 | Legacy mechanism | Refactor approach |
 |---|---|
-| `hash(:USER_PW)` DB function | `WecmsPasswordEncoder` — BCrypt(10) write; reads accept BCrypt **or** legacy SHA-256 base64 (transparent upgrade on next login) |
+| `hash(:USER_PW)` DB function | `WecmsPasswordEncoder` — writes legacy SHA-256 base64 (matches JEX `public.hash()` for coexistence); reads accept legacy SHA-256 **or** BCrypt (dev-only tolerance). **No transparent upgrade / write-back** (`upgradeEncoding()` returns false) |
 | `encrypt/decrypt(CLPH_NO)` DB functions | Refactor stores phone **plain**; legacy DEV-imported rows are sanitized on read (drop non-phone glyphs). No `encrypt()`/`decrypt()` PL/pgSQL added (DB-function policy) |
 | Admin = `BusiAdmnInfmDAO.upsert` / `deleteByPk` | `set_as_admin` flag drives `BUSI_ADMN_INFM` insert/delete, guarded by the last-admin rule |
-| Menu grants keyed by `WEB_SVC_ID` (JEX id) | Keyed by kebab-case **menu slug** in `MENU_AUTH_CD` (e.g. `settings-core-users`) |
+| Menu grants keyed by `WEB_SVC_ID` (JEX id) | Same `WEB_SVC_ID` column repurposed to hold a kebab-case **menu slug** (e.g. `settings-core-users`); Java field `menuAuthCd` |
 | ML codes (`P00001`, `WBW1151`, `WBE1178`…) | Translated to `WBE_USERS_*` / `WBE211x`; added to `messages.properties` |
 | `COMMON_HEAD`/`REC` envelope | `ApiResponse<T>` `{ status, data, … }` |
 | Soft-delete = `DEL_YN='Y'` on master + link | **Per-tenant unlink only**: `USER_BUSI_CONN_INFM.DEL_YN='Y'`; master `USER_INFM` preserved |
@@ -44,7 +44,7 @@ It **deliberately omits** (all justified in the gap analysis):
 
 ## 4. Schema work
 
-Only one migration was needed — `V126__user_menu_auth_infm.sql` (creates `USER_MENU_AUTH_INFM`). The
+Only one migration was needed — `V131__user_menu_auth_infm.sql` (creates `USER_MENU_AUTH_INFM`). The
 other four tables already existed from the auth/bootstrap/banking schema, so CRUD + avatar reuse
 existing columns with **no `ALTER`** and `ddl-auto: validate` intact.
 
@@ -52,10 +52,10 @@ existing columns with **no `ALTER`** and `ddl-auto: validate` intact.
 
 - [x] List/detail/create/update/delete over `USER_INFM` + `USER_BUSI_CONN_INFM`.
 - [x] Admin toggle through `BUSI_ADMN_INFM` with last-admin + self-delete guards.
-- [x] Menu entitlement read/write (`USER_MENU_AUTH_INFM`, V126) — delete-then-insert, Y-only.
+- [x] Menu entitlement read/write (`USER_MENU_AUTH_INFM`, V131) — delete-then-insert, Y-only.
 - [x] Avatar upload/remove/stream on `USER_BUSI_CONN_INFM.USER_IMG`.
 - [x] Login-id availability check (global).
-- [x] BCrypt password handling + legacy hash read compatibility.
+- [x] Legacy SHA-256 password write (JEX coexistence) + BCrypt read tolerance; no upgrade/write-back.
 - [x] Split authorization (read = ADMIN or `settings-core-users`; write = ADMIN) + service guards.
 - [x] Wire shape lowercase snake_case; standard error envelope + trace id.
 - [x] Frontend wired to live endpoints (no mock fallback).

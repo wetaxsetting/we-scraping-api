@@ -13,15 +13,15 @@ mirror: [wecms-web/docs/features/settings/purpose/component-index.md](../../../.
 | Service | [service/PurposeSettingsService.java](../../../../src/main/java/com/kosign/wecms/domain/setting/purposesettings/service/PurposeSettingsService.java) |
 | Excel service | [service/PurposeExcelService.java](../../../../src/main/java/com/kosign/wecms/domain/setting/purposesettings/service/PurposeExcelService.java) |
 | Repository (main) | [repository/PurposeSettingsRepository.java](../../../../src/main/java/com/kosign/wecms/domain/setting/purposesettings/repository/PurposeSettingsRepository.java) |
-| Repository (in-use view) | [repository/PurposeInUseRepository.java](../../../../src/main/java/com/kosign/wecms/domain/setting/purposesettings/repository/PurposeInUseRepository.java) |
-| Entity | [entity/BusiUsagSet.java](../../../../src/main/java/com/kosign/wecms/domain/setting/purposesettings/entity/BusiUsagSet.java) |
+| Repository (in-use projection) | [repository/PurposeInUseRepository.java](../../../../src/main/java/com/kosign/wecms/domain/setting/purposesettings/repository/PurposeInUseRepository.java) |
+| Entity | [entity/BusiUsagSetInfm.java](../../../../src/main/java/com/kosign/wecms/domain/setting/purposesettings/entity/BusiUsagSetInfm.java) |
 | Composite PK | [entity/BusiUsagSetId.java](../../../../src/main/java/com/kosign/wecms/domain/setting/purposesettings/entity/BusiUsagSetId.java) |
-| In-use projection | [entity/PurposeInUseRow.java](../../../../src/main/java/com/kosign/wecms/domain/setting/purposesettings/entity/PurposeInUseRow.java) |
+| In-use projection | [entity/VPurposeInUse.java](../../../../src/main/java/com/kosign/wecms/domain/setting/purposesettings/entity/VPurposeInUse.java) (`@Subselect`, not a DB view) |
 | DTOs | dto/PurposeSettingListResponse · PurposeSettingRow · PurposeSettingDetail · PurposeSettingCreateRequest · PurposeSettingUpdateRequest · PurposeReorderRequest · PurposeReorderItem · PurposeExcelPreview · PurposeExcelPreviewRow · PurposeExcelFieldError · PurposeExcelImportRequest · PurposeExcelImportResult — all under [dto/](../../../../src/main/java/com/kosign/wecms/domain/setting/purposesettings/dto/) |
-| Flyway | `V80` (BUSI_USAG_SET_INFM schema) · `V81` (v_purpose_in_use view) · `V82` (wb_get_next_val branch) — [db/migration/](../../../../src/main/resources/db/migration/) |
+| Flyway | `V35` (BUSI_USAG_SET_INFM schema) · `V36` (BUSI_USAG_SET_INFM_LANG_DETL — legacy lang-detail table; not an entity in this feature) · `V140` (centralized `wb_get_next_val` carries the `busi_usag_set_infm.use_usag_cd` branch; PK-gen funnels through `LegacyFunctionRepository.nextUseUsagCd`). No `v_purpose_in_use` view migration exists — the in-use projection is a `@Subselect` only. — [db/migration/](../../../../src/main/resources/db/migration/) |
 | Tests | [PurposeSettingsServiceTest](../../../../src/test/java/com/kosign/wecms/domain/setting/purposesettings/service/PurposeSettingsServiceTest.java) · [PurposeExcelServiceTest](../../../../src/test/java/com/kosign/wecms/domain/setting/purposesettings/service/PurposeExcelServiceTest.java) · [PurposeSettingsControllerTest](../../../../src/test/java/com/kosign/wecms/domain/setting/purposesettings/controller/PurposeSettingsControllerTest.java) |
 
-Validation is Bean Validation on the record DTOs + service-layer guards (no standalone validator class); the in-use guard rides the `v_purpose_in_use` view + `PurposeInUseRepository`.
+Validation is Bean Validation on the record DTOs + service-layer guards (no standalone validator class); the in-use guard rides the `VPurposeInUse` `@Subselect` (no DB view) + `PurposeInUseRepository`.
 
 ---
 

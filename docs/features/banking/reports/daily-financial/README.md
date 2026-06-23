@@ -2,7 +2,7 @@
 
 > **Scope of this folder.** This package is the *full legacy-to-refactor analysis* of the JEX
 > **Daily Financial** report (`rept_0015_001`). It expands the one-page planning stub at
-> [`../daily-financial.md`](../daily-financial.md) (kept in place — that stub remains the short
+> [`../daily-financial.md`](legacy-spec.md) (kept in place — that stub remains the short
 > feature-spec entry). Every statement here is backed by actual source-code analysis of the live
 > JEX tree (`WECMS DEV/`), the live JEX DEV database (`wecmsvndev` schema, read-only `postgres`
 > MCP), and the current refactor trees (`wecms-api/`, `wecms-web/`). No assumptions.
@@ -66,18 +66,18 @@ reconciliation.
 
 ## 3. Related documents
 
-- [`../daily-financial.md`](../daily-financial.md) — the original one-page refactor feature stub (superseded in detail by this package; retained).
-- [`../daily-cash.md`](../daily-cash.md) — sibling report; the **reference implementation** to clone for completing this feature.
+- [`../daily-financial.md`](legacy-spec.md) — the original one-page refactor feature stub (superseded in detail by this package; retained).
+- [`../daily-cash.md`](../daily-cash/README.md) — sibling report; the **reference implementation** to clone for completing this feature.
 - [`../README.md`](../README.md) — Banking → Reports group index.
 - JEX functional spec (read-only source of truth): `docs/jex/features/` (if a `daily-financial` JEX doc lands, it must share this slug).
 - Backend rules: [`wecms-api/CLAUDE.md`](../../../../../CLAUDE.md) — §"Legacy report DB functions — Sprint 1 stance", §"PROD DB Table Scope for Refactoring", §"Excel export".
 
 ### Planning, open questions & traceability (preserved — cross-linked, not duplicated)
 
-- [planning/open-questions/banking-reports-remaining-scope.md](../../../../planning/open-questions/banking-reports-remaining-scope.md) — tracks Daily Financial CMC (partial) + HS (hardcoded fixture), the HS deferral, and the `fn_get_haengsung_daily_financial_report` port decision. **Primary open-questions doc for this feature.**
-- [planning/open-questions/documentation-follow-up.md](../../../../planning/open-questions/documentation-follow-up.md) — OQ-DOC-6 (report JEX-id citation consistency) + OQ-DOC-8 (HS variant scope).
+- planning/open-questions/banking-reports-remaining-scope.md _(removed — historical `planning/` folder deleted by project decision)_ — tracks Daily Financial CMC (partial) + HS (hardcoded fixture), the HS deferral, and the `fn_get_haengsung_daily_financial_report` port decision. **Primary open-questions doc for this feature.**
+- planning/open-questions/documentation-follow-up.md _(removed — historical `planning/` folder deleted by project decision)_ — OQ-DOC-6 (report JEX-id citation consistency) + OQ-DOC-8 (HS variant scope).
 - [references/database/db-function-classification.md](../../../../references/database/db-function-classification.md) — classifies `rept_0015_001_r001_rec1/rec3` + `fn_get_haengsung_daily_financial_report` and their target Java repos.
-- Feature-local open questions raised by this package: **OQ-DF-1** read strategy (resolved → Strategy B), **OQ-DF-2** param-name contract (resolved → `asOf`/`currencyScope`), **OQ-DF-3** `includeInternalTransfers` functional-in-v1 — see [refactor-gap-analysis.md](refactor-gap-analysis.md#recommended-actions). The human closes these.
+- Feature-local open questions raised by this package: **OQ-DF-1** read strategy (resolved 2026-06-14 → **direct `rept_0015_001_r001_rec1` call**, which superseded the earlier Strategy-A-vs-B options), **OQ-DF-2** param-name contract (resolved → `asOf`/`currencyScope`), **OQ-DF-3** `includeInternalTransfers` functional-in-v1 — see [refactor-gap-analysis.md](refactor-gap-analysis.md#recommended-actions). The human closes these.
 - Frontend counterpart package (same slug): [wecms-web/docs/features/banking/reports/daily-financial/](../../../../../../wecms-web/docs/features/banking/reports/daily-financial/README.md).
 - Related JEX-system bug (HAENGSUNG `rept_0017_001`, separate from this CMC package): [docs/bug-reports/BUG-001_haengsung_daily_financial_wrong_account_type_label.md](../../../../../../docs/bug-reports/BUG-001_haengsung_daily_financial_wrong_account_type_label.md).
 
@@ -153,8 +153,8 @@ running-balance subqueries, and two set-returning PL/pgSQL functions).
 - Transaction History Details popup (implemented; UI aligned to the **e-Invoice Latest Inquiry History** popup)
 - VND / USD / KRW support (KRW renders its own Financial Status section with `₩` formatting)
 - API integration (real data; `NEXT_PUBLIC_API_BASE_URL` env configuration fixed — no mock fallback in a correctly-configured environment)
-- Date-aware balances (as-of end-of-day balance from `ACCT_TRNS_HSTR`, `ACCT_MSTR` fallback)
-- Debit / Credit / Internal debit / Internal credit count + amount calculations (live-computed)
+- Date-aware balances (as-of balance computed by `rept_0015_001_r001_rec1`: latest `BAL ≤ asOf`, else `ACCT_MSTR.BAL`)
+- Debit / Credit / Internal debit / Internal credit count + amount columns (read from `rept_0015_001_r001_rec1`, not Java-recomputed)
 
 **Transaction History Details popup — implemented (READY FOR SIT):**
 

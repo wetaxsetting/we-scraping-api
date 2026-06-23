@@ -24,8 +24,8 @@ All paths relative to `wecms-api/` (backend) and `wecms-web/` (frontend). Packag
 | File | Role |
 |---|---|
 | `.../repository/ChartOfAccountRepository.java` | `findByBizKeyAndDelYn` (`:33`), `searchByBizKey` (JPQL LOWER LIKE code/EN, `:41-51`), `findByBizKeyAndChartAcctCdAndDelYn` (`:57`), `…AndChartAcctSeqNoNot` (`:65`), `findByBizKeyAndParentChartAcctCdAndDelYn` (`:73`), `reparentActiveChildren` (`@Modifying`, `:80-94`) |
-| `.../entity/ChartOfAccount.java` | `@Entity @Table("CHART_ACCT_INFM") @IdClass`; 15 columns; CHAR(1) flags via `@JdbcTypeCode(SqlTypes.CHAR)` |
-| `.../entity/ChartOfAccountId.java` | `Serializable` composite key (`bizKey`, `chartAcctSeqNo` — both `String`) |
+| `.../entity/ChartAcctInfm.java` | `@Entity @Table("CHART_ACCT_INFM") @IdClass(ChartAcctInfmId.class)`; 15 columns; CHAR(1) flags via `@JdbcTypeCode(SqlTypes.CHAR)` |
+| `.../entity/ChartAcctInfmId.java` | `Serializable` composite key (`bizKey`, `chartAcctSeqNo` — both `String`) |
 
 ### DTOs (`.../dto/`)
 | File | Role |
@@ -73,8 +73,8 @@ All paths relative to `wecms-api/` (backend) and `wecms-web/` (frontend). Packag
 | `components/settings/chart-of-accounts/mappers.ts` | wire ↔ in-memory mapping |
 | `components/settings/chart-of-accounts/types.ts` | `ChartOfAccountsRow` (group/child union), `ChartOfAccountsFormValues`, `InlineRowMode` |
 | `lib/api/chartOfAccounts.ts` | API client (list/tree/detail/create/update/delete/bulk-upload/bulk-delete/bulk-deactivate) |
-| `lib/types/api.ts:2887-2992` | wire types `ApiChartOfAccount*` |
-| `components/settings/SettingsModal.tsx:197` / `SettingsNav.tsx:63` | panel mount + nav entry (`settings-core-chart-of-accounts`) |
+| `lib/types/api.ts:3040-3145` | wire types `ApiChartOfAccount*` |
+| `components/settings/SettingsModal.tsx:201` / `SettingsNav.tsx:64` | panel mount + nav entry (`settings-core-chart-of-accounts`) |
 | `locales/{en,ko,vi}.json` | `settings.chart_of_accounts.*` keys |
 
 ---
@@ -91,7 +91,7 @@ All paths relative to `wecms-api/` (backend) and `wecms-web/` (frontend). Packag
 | Parent-null patch | `comm_0223_001_u002_act.jsp` | folded into `#delete` (re-parent) |
 | Soft-delete | `comm_0223_001_d001_act.jsp` | `DELETE /{seq}` → `#delete` |
 | Excel view + insert | `comm_0223_002_view.jsp` / `comm_0223_002_c001_act.jsp` | `ExcelUploadDialog.tsx` + `POST /bulk-upload` → `#bulkUpload` |
-| Entity / DAO | `wabooks/entity/ChartAcctInfm.java`, `wabooks/dao/ChartAcctInfmDAO.java` | `ChartOfAccount` / `ChartOfAccountRepository` |
+| Entity / DAO | `wabooks/entity/ChartAcctInfm.java`, `wabooks/dao/ChartAcctInfmDAO.java` | `ChartAcctInfm` / `ChartOfAccountRepository` |
 | TS hierarchy | `WECMS_STATIC/.../comm_0223_001.ts`, `comm_0223_002.ts` | server-side `TreeBuilder` + FE `useExcelUpload.ts` |
 
 Full IDO mapping (R001–R004, C001, U000–U003, D001) is in [migration-guide.md](migration-guide.md) §1 and the preserved [migration reference](../../../references/migration/chart-of-accounts.md).

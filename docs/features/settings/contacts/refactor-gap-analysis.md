@@ -19,12 +19,12 @@ vocabulary: **MATCH** · **APPROVED DEVIATION** · **DEAD LEGACY** · **PARTIAL*
 | **Address (current/old)** | two rows discriminated by `DISP_ORD` | `disp_ord ∈ {1,2}` (OQ-8), validated on upsert | **MATCH** |
 | **Bank information** | NAPAS/CITAD + `wb_get_napas_bank_nm_or_citad_bank_nm` | same function (OQ-7); `/banks` picker | **MATCH** |
 | **Import** | `comm_0184_007` one-wizard upload (`DAT_IMP_WIZ_*`) | two-phase preflight + resolve → per-row import (partial success) | **APPROVED DEVIATION** (superset) |
-| **Export (GAP-01)** | `comm_0184_001_r006_excel` (POI XSSF, Local 9 / Overseas 11) | `POST /export` → Local/Overseas providers, same column sets, seeded V247 | **MATCH** — **CLOSED 2026-06-08** |
+| **Export (GAP-01)** | `comm_0184_001_r006_excel` (POI XSSF, Local 9 / Overseas 11) | `POST /export` → Local/Overseas providers, same column sets; columns via provider allow-list ∩ request (no live View Setting seed) | **MATCH** — **CLOSED 2026-06-08** |
 | **Attachments** | `comm_0184_005_u002/u003/u008` + `TRCO_INFO_FILE` | `…/{trcoKey}/files…` → `ContactsFileService` | **MATCH** (scope widened 2026-05-13) |
 | **Validation** | JEX ML codes | `WBE_CONTACTS_*` + bean validation | **MATCH** (codes translated) |
 | **Authorization** | menu visibility only | explicit `@menuAuthz.canAccess('settings-core-contacts')` | **APPROVED DEVIATION** (stronger) |
-| **Audit `WSVC_ID`** | `comm_0184_001` | slug `contacts` (OQ-6) | **APPROVED DEVIATION** (workspace slug rule) |
-| **PK generation** | `SeqHelper` → `wb_get_next_val('trco_infm','trco_key')` | `LegacyFunctionRepository.nextTrcoKey` (V113, verbatim) | **MATCH** |
+| **Audit `WSVC_ID`** | `comm_0184_001` writes audit rows | refactor writes **no** audit rows today (no `AuditLogService` call, no aspect); OQ-6 fixes only the slug `'contacts'` for any future write | **PARTIAL** (audit not wired; slug decided) |
+| **PK generation** | `SeqHelper` → `wb_get_next_val('trco_infm','trco_key')` | `LegacyFunctionRepository.nextTrcoKey` (branch in V140 + `sq_trco_key` in V159, verbatim) | **MATCH** |
 | **Trash tab + Restore** | `comm_0184_001_u003` (restore) | not ported (OQ-5) | **DEAD LEGACY** |
 | **Local bank required rule** | legacy does NOT require it | rule retired 2026-05-25 (`WBE_CONTACTS_LOCAL_BANK_REQUIRED` removed) | **MATCH** (parity restored) |
 | **`trco_0001_001` inquiry page** | standalone WABOOKS page | out of scope (different surface) | **N/A** (not this feature) |
@@ -43,9 +43,10 @@ vocabulary: **MATCH** · **APPROVED DEVIATION** · **DEAD LEGACY** · **PARTIAL*
 - Backend `POST /api/v1/settings/contacts/export` → shared `ExcelExportService` →
   `ContactsLocalExportProvider` / `ContactsOverseasExportProvider` → `ContactsService.listForExport`
   (tenant scope + active-only + `TRCO_TYPE` + keyword — the same query path as the list).
-- Flyway **V247** seeds both export screenIds into `SYS_SCR_OPTION_WECMS` (`settings-contacts-local`
-  9 rows, `settings-contacts-overseas` 11 rows; all `USE_YN='Y' FIX_YN='Y' DISP_YN='Y' SORT_YN='N'`) —
-  without it `ExcelExportService` would drop every column with `WBE2013`.
+- Columns resolve via the **provider allow-list ∩ requested columns** — there is **no live View Setting
+  seed** for the export screenIds. The old `V247__contacts_export_view_setting_seed.sql` was archived to
+  `db/archive/` and is not applied — and that archive was **removed 2026-06-23 (approved decision)**; the provider allow-list (Local 9 / Overseas 11)
+  is the column authority, so the `WBE2013`-from-seed path does not apply.
 - Frontend `exportContacts(...)` wired to `DownloadDropdown` (`ContactsPanel`), Local/Overseas split.
 
 **Export columns (legacy parity):**
@@ -95,13 +96,14 @@ Refactor Status: 100% Complete (for the in-scope feature surface)
 Evidence for closed gaps:
 - **All 17 endpoints implemented** (controller verified) with unit + controller tests green — see
   [test-scenarios.md §2](test-scenarios.md).
-- **GAP-01 (export) CLOSED 2026-06-08** — providers + V247 seed + frontend wiring; Local 9 / Overseas
-  11 columns match legacy.
+- **GAP-01 (export) CLOSED 2026-06-08** — providers + frontend wiring; Local 9 / Overseas 11 columns
+  match legacy (columns from the provider allow-list ∩ request; no live View Setting seed).
 - **CRUD + soft-delete + WBE1190 (single/bulk/edit-trash)** verified by service + controller tests.
 - **Create dup checks + PGRO seed + PK retry + Local-zero-accounts** verified by service tests.
 - **Import** two-phase preflight/resolve + per-row partial-success import implemented.
 - **Attachments** end-to-end (`TRCO_INFO_FILE`, scope widened 2026-05-13).
-- **Slug `contacts` + `settings-core-contacts`** used end-to-end (URI, package, audit `WSVC_ID`, menu grant).
+- **Slug `contacts` + `settings-core-contacts`** used end-to-end (URI, package, menu grant; audit
+  `WSVC_ID` slug is decided but no audit rows are written yet — see the Audit row above).
 - **DEAD LEGACY** (Trash/Restore) confirmed intentionally excluded (OQ-5).
 - **SIT/UAT verified.**
 
@@ -112,7 +114,12 @@ Residual (non-blocking, tracked):
 2. **No `docs/jex/features/contacts*` JEX spec** — the legacy source-of-truth currently lives in the
    off-spec workspace-root `docs/features/contacts/` bundle (documentation follow-up; see
    [README.md § Open item](README.md#open-item--jex-docsjexfeaturescontacts-is-missing)).
-3. **Dedicated export-provider unit test** — column order is pinned by the V247 seed + provider
-   allow-lists and SIT-verified; an isolated unit test is a nice-to-have.
+3. **Dedicated export-provider unit test** — column order is pinned by the provider allow-lists and
+   SIT-verified; an isolated unit test is a nice-to-have.
+4. **Audit-log writes not wired** — `ContactsService` writes no `AUDIT_LOGS_INFM` row (no
+   `AuditLogService` call, no AOP aspect); the OQ-6 slug `'contacts'` is decided for any future write.
+   Legacy `comm_0184_*` does audit creates/updates/deletes, so this is a parity gap to track (not a
+   correctness bug for the implemented surface).
 
-None of the residual items affect the implemented feature's parity or correctness.
+The residual items above do not affect the implemented feature's CRUD/export correctness; item 4 is a
+known audit-parity gap.

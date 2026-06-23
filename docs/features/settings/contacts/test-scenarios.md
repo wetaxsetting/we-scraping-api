@@ -42,7 +42,7 @@ SIT/UAT scenarios for Settings > Contacts plus the existing JUnit coverage map. 
 ### Delete
 | # | Scenario | Expected |
 |---|---|---|
-| D1 | Single delete, free contact | `TRCO_STTS='C'` + audit |
+| D1 | Single delete, free contact | `TRCO_STTS='C'` (no audit row written today — see functional-specification.md § Audit) |
 | D2 | Single delete, in use | `WBE1190`; status unchanged |
 | D3 | Bulk delete, all free | All flipped to `'C'` |
 | D4 | Bulk delete with one in-use key | `WBE1190`; the whole batch rolls back (no partial flip) |
@@ -100,11 +100,12 @@ SIT/UAT scenarios for Settings > Contacts plus the existing JUnit coverage map. 
 - List: paged rows with tenant scope; `HAND_TRCO_KEY ASC` reaches search as `handTrcoKey` asc; unknown sort field falls back to default order.
 - getOne: missing row and trashed (`trcoStts='C'`) row both → `WBE_CONTACTS_NOT_FOUND`.
 - Create: happy path (allocates key, seeds exactly two PGRO rows `B`/`S` with `USER_ID='ALL'`, asserts `TRCO_INQ_YN='Y'`); duplicate hand_trco_key → `WBE_CONTACTS_HAND_KEY_DUP` (+ `verifyNoInteractions(legacyFn)`); duplicate tax id → `WBE_CONTACTS_TAX_ID_DUP`; **Local with zero accounts succeeds**; address upsert disp_ord out-of-range (3) → `WBE_VALIDATION`; PK collision retries once (`nextTrcoKey` called twice).
-- Soft-delete: in-use → `WBE1190` (status not flipped); free row flips to `'C'` with audit; bulk delete with an in-use key throws `WBE1190` before the second flip lands.
+- Soft-delete: in-use → `WBE1190` (status not flipped); free row flips to `'C'`; bulk delete with an in-use key throws `WBE1190` before the second flip lands. (No audit interaction is asserted — the service writes no audit row.)
 
 ## 3. Coverage notes
 
 - Export providers (GAP-01) are covered by the frontend wiring + SIT verification; backend column
-  order is pinned by the V247 seed and the provider allow-lists. A dedicated provider unit test is a
+  order is pinned by the provider allow-lists (Local 9 / Overseas 11) — there is **no** live View
+  Setting seed (the old V247 seed was archived 2026-06-09). A dedicated provider unit test is a
   non-blocking follow-up.
 - Frontend test scenarios: [wecms-web/docs/features/settings/contacts/test-scenarios.md](../../../../../wecms-web/docs/features/settings/contacts/test-scenarios.md).
