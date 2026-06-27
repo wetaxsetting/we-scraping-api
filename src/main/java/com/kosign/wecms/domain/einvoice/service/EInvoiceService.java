@@ -180,6 +180,36 @@ public class EInvoiceService {
                 totals);
     }
 
+    /**
+     * Full-entity variant for the "Download Excel with Details" export
+     * (legacy {@code einv_0001_001_r002_excel} / IDO
+     * {@code BUSA_DOC_MSTR_R024}). Reuses the exact same filter chain as
+     * {@link #list} (IR-1 doc-type, IR-2 baseline {@code PROV_STTS}/{@code
+     * HAND_REG_YN}, IR-3 required date range, IR-5 keyword) via
+     * {@code repo.findFiltered}, but returns the full {@link BusaDocMstr}
+     * entities instead of the slim {@link EInvoiceRow} projection so the
+     * detail export can read the 40+ master-enrichment columns the list
+     * row doesn't carry. Unpaged (IR-6) — every matching invoice.
+     */
+    @Transactional(readOnly = true)
+    public List<BusaDocMstr> listMastersForExport(
+            String type,
+            String fromDt,
+            String toDt,
+            String keyword,
+            String sortField,
+            String sortDirection) {
+
+        final String bizKey  = TenantContext.currentBizKey();
+        final String docType = resolveDocType(type);
+        validateDateRange(fromDt, toDt);
+
+        Pageable effective = applyDefaultSortIfNeeded(Pageable.unpaged(), sortField, sortDirection);
+        String keywordPattern = buildKeywordPattern(keyword);
+
+        return repo.findFiltered(bizKey, docType, fromDt, toDt, keywordPattern, effective).getContent();
+    }
+
     /** When a caller passes a {@link Pageable} with no sort (e.g. the
      *  export path's {@code Pageable.unpaged()}), weave the user-driven
      *  sort (or the default ORDER BY) in. Mirrors the {@code AccountService}
