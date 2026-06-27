@@ -24,10 +24,6 @@
 |---|---|
 | Feature slug | `daily-cash-report` |
 | Module | Banking → Reports |
-| Legacy JEX menu | **Daily Cash** (일일시재보고서 / *Daily Cash Report*) |
-| Legacy view service | `rept_0009_001` (view) |
-| Legacy read API | `rept_0009_001_r001` (`.jct`, sync) |
-| Legacy last-collection API | `rept_0100_001_r001` (`BAT_ID=REPT_0900_001`) — **not ported** |
 | Refactor route | `/banking/reports/daily-cash` (Next.js, `(dashboard)` group) |
 | Refactor base URI | `/api/v1/banking/reports/daily-cash-report` (Spring Boot) |
 | Audit `WSVC_ID` | `daily-cash-report` (slug — never `rept_0009_001`) |
@@ -156,3 +152,16 @@ are active; `rec3`/`rec4` (physical cash from `CASH_REPY_MSTR`) need data not ye
 - **Raising factors:** faithfully replicating the legacy `rec1` balance-as-of + same-day debit/credit
   aggregation in one native query, and the `rec2` per-type bucketing in Java, had to be DB-verified
   against the live functions (done — parity §1.5) to avoid the earlier fabricated-account-code defect.
+
+---
+
+## Legacy & Migration Traceability
+
+Legacy JEX source-of-truth mapping for this report (moved from the header metadata table; refactor identity stays up top):
+
+| Field | Value |
+|---|---|
+| Legacy JEX menu | **Daily Cash** (일일시재보고서 / *Daily Cash Report*) |
+| Legacy view service | `rept_0009_001` (view) |
+| Legacy read API | `rept_0009_001_r001` (`.jct`, sync) |
+| Legacy last-collection API | `rept_0100_001_r001` (`BAT_ID=REPT_0900_001`) — **not ported** |

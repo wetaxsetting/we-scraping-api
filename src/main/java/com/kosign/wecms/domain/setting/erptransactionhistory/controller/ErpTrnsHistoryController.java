@@ -3,6 +3,7 @@ package com.kosign.wecms.domain.setting.erptransactionhistory.controller;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.export.ExcelExportRequest;
 import com.kosign.wecms.common.export.ExcelExportService;
+import com.kosign.wecms.common.file.SecureFileDownload;
 import com.kosign.wecms.common.response.ApiResponse;
 import com.kosign.wecms.domain.setting.erptransactionhistory.dto.ErpTrnsHistoryListResponse;
 import com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryService;
@@ -12,9 +13,6 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.InputStreamResource;
-import org.springframework.http.ContentDisposition;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -27,7 +25,6 @@ import org.springframework.security.access.prepost.PreAuthorize;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 
 /**
@@ -129,17 +126,10 @@ public class ErpTrnsHistoryController {
         DownloadResource resolved = service.resolveDownload(seqNo);
         InputStream stream = Files.newInputStream(resolved.path());
 
-        ContentDisposition cd = ContentDisposition.builder("attachment")
-                .filename(resolved.saveFileNm(), StandardCharsets.UTF_8)
-                .build();
-
-        return ResponseEntity.ok()
-                .contentType(MediaType.APPLICATION_OCTET_STREAM)
-                .contentLength(resolved.fileSize())
-                .header(HttpHeaders.CONTENT_DISPOSITION, cd.toString())
-                .header("X-Content-Type-Options", "nosniff")
-                .header("Access-Control-Expose-Headers", HttpHeaders.CONTENT_DISPOSITION)
-                .body(new InputStreamResource(stream));
+        // Response construction (RFC 5987 Content-Disposition + binary
+        // headers) is the shared R-08 primitive — see SecureFileDownload.
+        return SecureFileDownload.attachment(
+                new InputStreamResource(stream), resolved.saveFileNm(), resolved.fileSize());
     }
 
     /**

@@ -5,7 +5,6 @@
 **Refactor slug:** `preferences` (matches the JEX-traceability, backend, and frontend counterparts)
 **Wire base path:** `/api/v1/settings/preferences` (GET profile · PUT profile · `POST /logo` · `DELETE /logo` · `GET /logo` stream)
 **Menu permission slug:** `settings-core-preference`
-**Legacy JEX counterpart:** WSVC family `comm_0215_001` (`_r001` read · `_u001` save profile · `_c001`/`_c005` logo upload · `_d001` logo clear; the `_u002`/`_u003`/`_u004` env-toggle actions are out of this module). Table `BUSI_INFM` (single tenant row) — logo stored in `BUSI_INFM.CMPN_LOGO`.
 
 > This folder is the **primary documentation home** for the Preferences company-profile feature on the
 > backend. It consolidates and indexes material that previously lived in a single flat file; that file
@@ -23,7 +22,7 @@ administrator can:
 
 - **Read** the company profile for the current `BIZ_KEY`.
 - **Save** the editable profile fields in place (a pure UPDATE on the single `BUSI_INFM` row).
-- **Upload** a new company logo (multipart, ≤ 2 MB, JPG/JPEG/PNG/GIF/SVG).
+- **Upload** a new company logo (multipart, ≤ 2 MB, JPG/JPEG/PNG/GIF). SVG is **rejected** (F-02 — an inline-served SVG can carry `<script>`, i.e. stored XSS).
 - **Delete** (clear) the company logo.
 - **Stream** the raw logo bytes back for the frontend `<img>` (JWT-protected GET).
 
@@ -54,7 +53,7 @@ deliberately **split** the two persistence paths so the profile save stays a cle
 | Tenant scope | `TenantContext.currentBizKey()` — `BIZ_KEY` is the `BUSI_INFM` PK; never from a request param |
 | Table | `BUSI_INFM` (single row per tenant; in the legacy-table inventory). **No new entity** — reuses the auth domain's `BusiInfm` + `BusiInfmRepository`. |
 | Logo column | `BUSI_INFM.CMPN_LOGO` (VARCHAR(500)) holds the opaque server-generated save filename |
-| Logo storage | per-tenant filesystem subtree `<storage-root>/<biz_key>/preferences/<save_file_nm>` (read-fallback to a legacy flat root); cap 2 MB; extensions JPG/JPEG/PNG/GIF/SVG |
+| Logo storage | per-tenant filesystem subtree `<storage-root>/<biz_key>/preferences/<save_file_nm>` (read-fallback to a legacy flat root); cap 2 MB; extensions JPG/JPEG/PNG/GIF (SVG **rejected** — F-02 stored-XSS) |
 | Audit | profile **Update** writes one `AUDIT_LOGS_INFM` row with `WSVC_ID = 'preferences'` (slug). Read + logo upload/delete write **no** audit row (legacy parity). |
 | Wire format | lowercase snake_case (global Jackson `SNAKE_CASE`) |
 | Persistence change | UPDATE-only on a pre-existing `BUSI_INFM` row (created at company setup); never INSERT, never physical DELETE |
@@ -100,6 +99,12 @@ logo storage root is config-only (`wecms.preferences.storage-root`).
 | [migration-guide.md](migration-guide.md) | How each JEX layer (`_view.jsp` / `_act.jsp` / IDO / WSVC / entity / DAO) became its Spring counterpart, incl. the split toggles + dropped flows |
 | [test-scenarios.md](test-scenarios.md) | SIT/UAT scenarios (read / edit / save / cancel / logo upload-delete-stream / authz / errors) |
 | [refactor-gap-analysis.md](refactor-gap-analysis.md) | Final parity review (MATCH / APPROVED DEVIATION / DEAD LEGACY / PARTIAL / MISSING) |
+
+---
+
+## Legacy & Migration Traceability
+
+**Legacy JEX counterpart:** WSVC family `comm_0215_001` (`_r001` read · `_u001` save profile · `_c001`/`_c005` logo upload · `_d001` logo clear; the `_u002`/`_u003`/`_u004` env-toggle actions are out of this module). Table `BUSI_INFM` (single tenant row) — logo stored in `BUSI_INFM.CMPN_LOGO`.
 
 ---
 

@@ -41,6 +41,9 @@ src/main/resources/application-local.yml
 .env
 .env.*
 !.env.example
+# Tracked templates: every committed *.example stays in git; real per-profile
+# .env files (.env.local / .env.sit / .env.uat / .env.prod) remain ignored.
+!.env.*.example
 
 ### JVM dump artifacts ###
 replay_pid*.log

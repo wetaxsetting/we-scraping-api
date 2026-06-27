@@ -1,6 +1,9 @@
 package com.kosign.wecms.domain.setting.logincredentials.controller;
 
+import com.kosign.wecms.common.exception.RateLimitExceededException;
 import com.kosign.wecms.common.response.ApiResponse;
+import com.kosign.wecms.common.tenant.TenantContext;
+import com.kosign.wecms.common.web.RateLimiter;
 import com.kosign.wecms.domain.setting.logincredentials.dto.BankFormInfoResponse;
 import com.kosign.wecms.domain.setting.logincredentials.dto.BankPickerResponse;
 import com.kosign.wecms.domain.setting.logincredentials.dto.BankCredentialCreateRequest;
@@ -54,7 +57,13 @@ import java.math.BigDecimal;
 @PreAuthorize("@menuAuthz.canAccess('settings-core-login-credentials')")
 public class LoginCredentialsController {
 
+    /** F-10: per-(tenant,user) reveal rate limit — reveal confirms a credential's
+     *  own password, so throttling blocks password-confirmation abuse. */
+    private static final int REVEAL_MAX_PER_WINDOW = 5;
+    private static final int REVEAL_WINDOW_SECONDS  = 60;
+
     private final LoginCredentialsService service;
+    private final RateLimiter rateLimiter;
 
     /** Grouped list: one row per BANK_CD (with N accounts) + one
      *  GDT row when configured. */
@@ -186,6 +195,13 @@ public class LoginCredentialsController {
             @PathVariable String type,
             @PathVariable BigDecimal seqNo,
             @Valid @RequestBody RevealRequest req) {
+        // F-10: throttle reveal attempts per caller (tenant + user, from the signed
+        // JWT — never request input) so a stolen session can't brute-force the
+        // credential-confirmation password.
+        String key = "reveal:" + TenantContext.currentBizKey() + ":" + TenantContext.currentUserId();
+        if (!rateLimiter.tryAcquire(key, REVEAL_MAX_PER_WINDOW, REVEAL_WINDOW_SECONDS)) {
+            throw new RateLimitExceededException("WBE_TOO_MANY_REQUESTS");
+        }
         return ApiResponse.ok(service.reveal(type, seqNo, req.userPassword()));
     }
 

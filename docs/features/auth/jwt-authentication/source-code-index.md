@@ -13,7 +13,8 @@ mirror: [wecms-web/docs/features/auth/jwt-authentication/README.md](../../../../
 | Concern | File | Key members |
 |---|---|---|
 | **Token issue + parse** | [common/security/JwtTokenProvider.java](../../../../src/main/java/com/kosign/wecms/common/security/JwtTokenProvider.java) | constructor (`:26-45`) fail-fast secret + HS256/HS512 pick (`:43`); `issue(userId, userNm, bizKey, langCd, authGrCd, prdtType)` (`:62-92`); `parse(token) → Jws<Claims>` (`:94-99`); `expiresInSeconds()` (`:101-103`) |
-| **Per-request filter** | [common/security/JwtAuthenticationFilter.java](../../../../src/main/java/com/kosign/wecms/common/security/JwtAuthenticationFilter.java) | `OncePerRequestFilter`; `doFilterInternal(...)` (`:34-96`) — read Bearer (`:38-41`), `parse` (`:43`), authorities `ROLE_ADMIN`/`ROLE_USER` (`:56-64`), `TenantContext.set(...)` (`:78-84`), `JwtException` → clear context (`:86-89`), `TenantContext.clear()` in `finally` (`:93-95`) |
+| **Per-request filter** | [common/security/JwtAuthenticationFilter.java](../../../../src/main/java/com/kosign/wecms/common/security/JwtAuthenticationFilter.java) | `OncePerRequestFilter`; `doFilterInternal(...)` — read Bearer, `parse`, **revocation check via `TokenRevocationService`** (reject revoked `jti` / superseded-by-cutoff token), authorities `ROLE_ADMIN`/`ROLE_USER`, `TenantContext.set(...)`, `JwtException` → clear context, `TenantContext.clear()` in `finally` |
+| **Token revocation** | [common/security/TokenRevocationService.java](../../../../src/main/java/com/kosign/wecms/common/security/TokenRevocationService.java) | in-memory `jti` denylist + per-user not-before cutoff; `revokeToken(...)` (logout), `revokeAllForUser(...)` (admin lock/delete/demote/password-reset), `isRevoked(...)`. *(Added 2026 via F-03 — formerly absent.)* |
 | **401 entry point** | [common/security/JwtAuthenticationEntryPoint.java](../../../../src/main/java/com/kosign/wecms/common/security/JwtAuthenticationEntryPoint.java) | `AuthenticationEntryPoint`; `CODE_SESSION_EXPIRED = "WBE1401"` (`:52`, parity legacy `SES001`); `commence(...)` (`:57-74`) — HTTP 401, `ApiResponse.error(WBE1401, msg, uri, traceId)` (`:68-72`) |
 | **Config properties** | [config/JwtProperties.java](../../../../src/main/java/com/kosign/wecms/config/JwtProperties.java) | `@ConfigurationProperties("wecms.jwt")` record — `@NotBlank secret`, `@Positive expiresInSeconds`, `@NotBlank issuer` |
 | **Security filter chain** | [config/SecurityConfig.java](../../../../src/main/java/com/kosign/wecms/config/SecurityConfig.java) | `@EnableMethodSecurity` (`:24`); `filterChain(...)` (`:42-69`) — CSRF off (`:44`), CORS on (`:45`), `STATELESS` (`:46`), permit-all matchers (`:48-53`), `authenticationEntryPoint(jwtAuthenticationEntryPoint)` (`:58`), filter order `CallbackIpWhitelistFilter → jwtFilter → UsernamePasswordAuthenticationFilter` (`:66-67`) |
@@ -28,7 +29,8 @@ mirror: [wecms-web/docs/features/auth/jwt-authentication/README.md](../../../../
 | Trace id (MDC + `X-Trace-Id`) | [common/exception/TraceId.java](../../../../src/main/java/com/kosign/wecms/common/exception/TraceId.java) | `common/exception` — `TraceId.current()` for the 401 body + header |
 | Language enum | [common/enums/LangCd.java](../../../../src/main/java/com/kosign/wecms/common/enums/LangCd.java) | `common/enums` — `LangCd.fromCodeOrDefault(claim)` in the filter |
 | Product-type enum | [common/enums/PrdtType.java](../../../../src/main/java/com/kosign/wecms/common/enums/PrdtType.java) | `common/enums` — consumers resolve `TenantContext.currentPrdtType()` via `PrdtType.fromCode(...)` |
-| Issuance caller | [domain/auth/service/AuthService.java](../../../../src/main/java/com/kosign/wecms/domain/auth/service/AuthService.java) | `domain/auth` — `login(...)` calls `JwtTokenProvider.issue(...)`; see [../login/](../login/) |
+| Issuance caller | [domain/auth/service/AuthService.java](../../../../src/main/java/com/kosign/wecms/domain/auth/service/AuthService.java) | `domain/auth` — `login(...)` calls `JwtTokenProvider.issue(...)`; `logout(...)` calls `TokenRevocationService.revokeToken(...)`; see [../login/](../login/) + [../logout/](../logout/) |
+| Admin bulk revoke caller | [domain/setting/users/service/UserManagementService.java](../../../../src/main/java/com/kosign/wecms/domain/setting/users/service/UserManagementService.java) | `domain/setting/users` — `revokeAllForUser(...)` on lock/delete/demote/password-reset |
 | Callback edge filter (runs before JWT) | [domain/payment/dispatch/callback/CallbackIpWhitelistFilter.java](../../../../src/main/java/com/kosign/wecms/domain/payment/dispatch/callback/CallbackIpWhitelistFilter.java) | `domain/payment/dispatch/callback` — first in the chain (`SecurityConfig:66`) |
 
 ### Config / properties
@@ -38,11 +40,13 @@ mirror: [wecms-web/docs/features/auth/jwt-authentication/README.md](../../../../
 
 ### Tests
 
-**No dedicated JWT unit test on disk in this pass** — no `JwtTokenProviderTest`,
-`JwtAuthenticationFilterTest`, or `JwtAuthenticationEntryPointTest`. The filter is exercised
-indirectly by `@SpringBootTest` boot + auth-flow tests, but the token mechanics (HS256/HS512 pick,
-claim round-trip, expiry, invalid signature, 401 envelope) are **MISSING** dedicated coverage. See
-[test-scenarios.md §2](test-scenarios.md).
+The **revocation path is covered** by
+[common/security/JwtRevocationTest.java](../../../../src/test/java/com/kosign/wecms/common/security/JwtRevocationTest.java).
+**No dedicated test for the rest of the token mechanics on disk in this pass** — no
+`JwtTokenProviderTest`, `JwtAuthenticationFilterTest`, or `JwtAuthenticationEntryPointTest`. The filter
+is otherwise exercised indirectly by `@SpringBootTest` boot + auth-flow tests, but the token mechanics
+(HS256/HS512 pick, claim round-trip, expiry, invalid signature, 401 envelope) are **MISSING** dedicated
+coverage. See [test-scenarios.md §2](test-scenarios.md).
 
 ---
 

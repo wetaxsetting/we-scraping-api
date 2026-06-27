@@ -99,6 +99,57 @@ public interface AcctAuthInfoRepository
             @Param("acctNo")   String acctNo,
             @Param("authType") String authType);
 
+    /** Batched per-(account, auth_type) active grantee COUNT for the whole
+     *  tenant — the list-endpoint aggregate in one query instead of a
+     *  per-row {@link #countActiveByAccount}. Identical active + non-admin
+     *  filter; grouped so each row's count equals the per-account count. */
+    @Query("""
+            SELECT a.bankCd AS bankCd, a.acctNo AS acctNo, a.authType AS authType, COUNT(a) AS cnt
+              FROM AcctAuthInfo a
+             WHERE a.bizKey = :bizKey
+               AND a.useYn  = 'Y'
+               AND NOT EXISTS (
+                   SELECT 1 FROM com.kosign.wecms.domain.auth.entity.BusiAdmnInfm b
+                    WHERE b.bizKey = a.bizKey AND b.userId = a.userId)
+             GROUP BY a.bankCd, a.acctNo, a.authType
+            """)
+    List<PermissionCount> countActiveByTenant(@Param("bizKey") String bizKey);
+
+    /** Batched active non-admin grantee display names for the whole tenant,
+     *  ordered so the FIRST row per (account, auth_type) is the earliest-
+     *  REG_DTM grantee — the head name for the list label. Same join + filter
+     *  as {@link #findFirstActiveUserName}; the extra leading ORDER BY keys
+     *  only group the rows and do not change the per-group earliest-REG_DTM
+     *  pick. */
+    @Query("""
+            SELECT a.bankCd AS bankCd, a.acctNo AS acctNo, a.authType AS authType, u.userNm AS userNm
+              FROM AcctAuthInfo a, com.kosign.wecms.domain.auth.entity.UserInfm u
+             WHERE a.bizKey = :bizKey
+               AND a.useYn  = 'Y'
+               AND u.userId = a.userId
+               AND NOT EXISTS (
+                   SELECT 1 FROM com.kosign.wecms.domain.auth.entity.BusiAdmnInfm b
+                    WHERE b.bizKey = a.bizKey AND b.userId = a.userId)
+             ORDER BY a.bankCd ASC, a.acctNo ASC, a.authType ASC, a.regDtm ASC
+            """)
+    List<PermissionFirstName> findActiveGranteesByTenant(@Param("bizKey") String bizKey);
+
+    /** Projection — one row per (account, auth_type) with the active count. */
+    interface PermissionCount {
+        String getBankCd();
+        String getAcctNo();
+        String getAuthType();
+        long getCnt();
+    }
+
+    /** Projection — active grantee names, earliest REG_DTM first per group. */
+    interface PermissionFirstName {
+        String getBankCd();
+        String getAcctNo();
+        String getAuthType();
+        String getUserNm();
+    }
+
     /** All active permission rows the user holds inside the tenant
      *  (any account, any AUTH_TYPE) — used by Own Account Transfer to
      *  project source-account authority in a single round-trip instead

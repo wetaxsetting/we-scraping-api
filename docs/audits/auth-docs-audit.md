@@ -26,7 +26,7 @@ detail delegated to the module folders).
 | Module | Slug | Backend surface | Frontend surface | Doc status (before → after) |
 |---|---|---|---|---|
 | Login | `login` | `POST /api/v1/auth/login` (multi-company resolution, flag-gates, JWT issue, login history) | `/login` page, two-step + `CompanyChooser` | Flat summary (stale) → **Standardized (9+6)** |
-| Logout | `logout` | `POST /api/v1/auth/logout` (stateless stub) | `ProfileMenu` logout + confirm | Mentioned only → **Standardized (9+6)** |
+| Logout | `logout` | `POST /api/v1/auth/logout` (server-side `jti` revocation — REMEDIATED via F-03) | `ProfileMenu` logout + confirm | Mentioned only → **Standardized (9+6)** |
 | Change Password | `change-password` | `POST /api/v1/auth/change-password` (3-step validation, last-3 reuse, SHA-256) | `ChangePasswordDialog` | Marked "not implemented" (stale) → **Standardized (9+6)** |
 | Profile | `profile` | `GET /api/v1/users` (tenant directory, `comm_0192_001_r001`) | `ProfileMenu` identity + language | Undocumented → **Standardized (9+6)** |
 | JWT Authentication | `jwt-authentication` | `JwtTokenProvider/Filter/EntryPoint` + `JwtProperties` | token storage (`storage.ts`) + Bearer transport (`axios.ts`) | Inline in login-auth → **Standardized (9+6)** |
@@ -65,12 +65,15 @@ Authentication flow verified against `AuthService.login`: flag-gate order (DEL_Y
 LOCK_YN→WBE1011, pw→WBE1009), multi-company resolution (0 links→WBE1009, 1→auto-pick, ≥2 no biz_key→chooser
 [no JWT/no audit/no LST_LGN_DATE], ≥2 +biz_key→match/WBE1009), SUCCESS/FAIL `USER_LOGIN_HIS` audit
 (`@Transactional(REQUIRES_NEW)`), authority via `BUSI_ADMN_INFM`, JWT claims `{sub,userNm,bizKey,langCd,authGrCd,prdtType?}`.
-Refresh token = **MISSING**; 5-failure auto-lock / post-auth gates = **MISSING**.
+Refresh token = **MISSING** (deferred); 5-failure auto-lock = **REMEDIATED via F-10** (`LoginLockoutService` sets `USER_INFM.LOCK_YN='Y'` after the latest 5 attempts are all failures) and login rate-limiting = **REMEDIATED** (in-memory `RateLimiter`, key `login:<ip>`); post-auth gates (`NTNL_CD`/`CHNL_TYPE`/`BUSI_STTS`) = **MISSING** (deferred).
 
 ### Logout — Standardized
-`POST /api/v1/auth/logout` is a public stateless stub returning `ApiResponse.ok("Logout successful", null)`.
-Server-side revocation/blacklist = **MISSING**; legacy server-session teardown = **DEAD LEGACY**; client
-cleanup (token+user cleared, locale+savedId preserved) = **MATCH**.
+`POST /api/v1/auth/logout` is a public endpoint that **revokes the presented JWT `jti` server-side**
+(`AuthService.logout → TokenRevocationService`) and returns `ApiResponse.ok("Logout successful", null)`.
+Server-side revocation/blacklist = **REMEDIATED via F-03** (formerly MISSING — `JwtAuthenticationFilter`
+rejects revoked / superseded tokens; open item is the **in-memory** revocation store, durable /
+distributed deferred); legacy server-session teardown = **DEAD LEGACY**; client cleanup (token+user
+cleared, locale+savedId preserved) = **MATCH**.
 
 ### Change Password — Standardized
 `ChangePasswordService` validation order confirmed: confirm≠new→`WBE_CHANGE_PASSWORD_MISMATCH` (legacy WBE1052),
@@ -87,9 +90,11 @@ non-blank); `USER_IMG` lives on `USER_BUSI_CONN_INFM` (per-tenant). Avatar CRUD 
 **MISSING** (UI-only placeholder).
 
 ### JWT Authentication — Standardized
-HS256 (secret 32–63B) / HS512 (≥64B); fail-fast secret; claims incl. `prdtType` omitted-when-null; filter sets
-`ROLE_ADMIN/ROLE_USER` + populates/clears `TenantContext`; entry point → **WBE1401**. Stateless: no refresh, no
-revocation (**MISSING**). Frontend half = token storage (non-HttpOnly cookie `Max-Age=3600` + localStorage) +
+HS256 (secret 32–63B) / HS512 (≥64B); fail-fast secret; claims incl. `jti` + `prdtType` omitted-when-null; filter
+parses, **checks revocation** (`TokenRevocationService` jti denylist + per-user not-before cutoff), then sets
+`ROLE_ADMIN/ROLE_USER` + populates/clears `TenantContext`; entry point → **WBE1401**. Server-side revocation =
+**REMEDIATED via F-03** (formerly MISSING; open item = **in-memory** store, per-node); refresh token =
+**MISSING** (deferred). Frontend half = token storage (non-HttpOnly cookie `Max-Age=3600` + localStorage) +
 Bearer transport; no FE claim-decode for security.
 
 ### Authorization — Standardized
@@ -111,8 +116,9 @@ Users (delete-then-insert, admin-only WBE1003). `NavigationServiceTest` 8/8 = MA
 `GET /api/v1/auth/me`: re-validate user (not deleted/inactive/locked) + token-bound link, fetch CMPN_NM/TAX_ID,
 return `MeResponse(+ all_menus, allowed_menu_cds)`. Stateless model = APPROVED DEVIATION (HttpSession = DEAD
 LEGACY). 401 → WBE1401 → FE `SessionExpiredDialog` re-auth + retry (`_isRetry` guard). Edge guard `proxy.ts`
-(cookie presence). Refresh token / server-side revocation / 5-failure auto-lock = **MISSING**; `/me` rejection-path
-unit tests = **MISSING**; async ThreadLocal propagation = **PARTIAL/by-design**.
+(cookie presence). Server-side revocation = **REMEDIATED via F-03** (in-memory store open) and 5-failure auto-lock
+= **REMEDIATED via F-10**; refresh token = **MISSING** (deferred); `/me` rejection-path unit tests = **MISSING**;
+async ThreadLocal propagation = **PARTIAL/by-design**.
 
 ---
 

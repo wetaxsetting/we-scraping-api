@@ -5,7 +5,6 @@
 **Refactor slug:** `login-credentials` (matches the JEX-traceability, backend, and frontend counterparts)
 **Wire base path:** **`/api/v1/login-credentials`** (NOT `/settings/...`) — list · `/banks` · `/banks/{bankCd}/form-info` · `/bank` (create) · `/bank/register` (atomic save) · `/bank/{seqNo}` (update) · `/bank/{seqNo}/verify-update` · `/gdt` (create) · `/gdt/{seqNo}` (update) · `/gdt/engine-config` · `/{type}/{seqNo}` (delete) · `/{type}/{seqNo}/reveal` · `/{type}/{seqNo}/audit-logs`
 **Menu permission slug:** `settings-core-login-credentials`
-**Legacy JEX counterpart:** WSVC family `comm_0218_*` — `comm_0218_001` (list/audit), `comm_0218_003_c001` (Add bank), `comm_0218_004_u001` (Edit password, `decrypt(...)` guard), `comm_0218_007_c001` (GDT upsert), `comm_0218_008_r001` (reveal re-auth), `comm_0218_nxisas` (Coocon LOGIN + ACCT_LIST orchestration), and `fnsh_0101_001_c001` (Select Bank Accounts save → `ACCT_MSTR` + `ACCT_AUTH_INFO`). Tables `BANK_CERT_INFO`, `GDT_CERT_INFO`, `ACCT_AUTH_INFO`, `ACCT_MSTR`, `AUDIT_LOGS_INFM`, `BANK_INFM_DETL`.
 
 > This folder is the **primary documentation home** for Login Credentials on the backend. It
 > consolidates and indexes the rich material that previously lived in a single flat file and in the
@@ -117,6 +116,12 @@ Cross-package collaborators (reused, not re-implemented):
 [AcctAuthInfo](../../../../src/main/java/com/kosign/wecms/domain/setting/bankaccount/entity/AcctAuthInfo.java) (bank-account),
 [AccountRegistrationService](../../../../src/main/java/com/kosign/wecms/domain/banking/service/AccountRegistrationService.java) + [BankScrapingService](../../../../src/main/java/com/kosign/wecms/domain/banking/nxisas/BankScrapingService.java) (banking),
 [AuditLogService](../../../../src/main/java/com/kosign/wecms/common/auditlog/service/AuditLogService.java) + [AuditLogEntryRepository](../../../../src/main/java/com/kosign/wecms/common/auditlog/repository/AuditLogEntryRepository.java) (common).
+
+---
+
+## Legacy & Migration Traceability
+
+**Legacy JEX counterpart:** WSVC family `comm_0218_*` — `comm_0218_001` (list/audit), `comm_0218_003_c001` (Add bank), `comm_0218_004_u001` (Edit password, `decrypt(...)` guard), `comm_0218_007_c001` (GDT upsert), `comm_0218_008_r001` (reveal re-auth), `comm_0218_nxisas` (Coocon LOGIN + ACCT_LIST orchestration), and `fnsh_0101_001_c001` (Select Bank Accounts save → `ACCT_MSTR` + `ACCT_AUTH_INFO`). Tables `BANK_CERT_INFO`, `GDT_CERT_INFO`, `ACCT_AUTH_INFO`, `ACCT_MSTR`, `AUDIT_LOGS_INFM`, `BANK_INFM_DETL`.
 
 ---
 

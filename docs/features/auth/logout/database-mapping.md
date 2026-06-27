@@ -4,48 +4,57 @@
 
 ## 1. No tables are read or written
 
-Logout is **stateless** and performs **no database access**. The handler
+Logout performs **no database access**. The handler
 ([AuthController.logout()](../../../../src/main/java/com/kosign/wecms/domain/auth/controller/AuthController.java))
-returns a constant `ApiResponse<Void>` and touches no service, repository, or entity.
+delegates to `AuthService.logout(...) → TokenRevocationService.revokeToken(...)`, which records the
+revoked `jti` in an **in-memory** store — not in any table. No repository or entity is involved.
 
-| Concern | Table | Read | Written |
+| Concern | Store | Read | Written |
 |---|---|---|---|
-| Token revocation / blacklist | *(none — stateless JWT)* | — | — |
+| Token revocation / denylist | **In-memory `TokenRevocationService`** (jti denylist + per-user not-before cutoff) — not a DB table | — | In-memory only |
 | Server session | *(none — `SessionCreationPolicy.STATELESS`)* | — | — |
 | Audit | `AUDIT_LOGS_INFM` | No | No |
 | Login history | `USER_LOGIN_HIS` | No | No |
 
-There is **no entity, repository, DTO, or column mapping** for this module — by design.
+There is **no entity, repository, DTO, or column mapping** for this module — revocation state lives in
+process memory, by design.
 
 ---
 
-## 2. Why there is nothing to map
+## 2. Why there is nothing to map (to a table)
 
-The access token is a stateless, signed JWT (`jwt-authentication`). The server keeps no session and no
-token store, so logout has nothing to persist or delete. Contrast:
+Server-side revocation is implemented, but it is held **in process memory**, not in a table — so the
+data layer still has nothing to map. Contrast:
 
 - **Login** writes a SUCCESS `USER_LOGIN_HIS` row and updates `USER_BUSI_CONN_INFM.LST_LGN_DATE`.
-- **Logout** writes nothing.
+- **Logout** writes no row — it adds the token's `jti` to the in-memory `TokenRevocationService`
+  denylist.
 
-This is the **APPROVED DEVIATION** (stateless model) plus the **DEAD LEGACY** (server-session teardown)
-flowing through to the data layer — see [refactor-gap-analysis.md](refactor-gap-analysis.md).
+The legacy server-session teardown remains **DEAD LEGACY** (no `HttpSession` to invalidate); the
+JWT-native server-side revocation replaces it — see
+[refactor-gap-analysis.md](refactor-gap-analysis.md).
 
 ---
 
-## 3. Where a future revocation table would live
+## 3. Revocation store today — in-memory, not a DB table
 
-Server-side token revocation is **MISSING** (deferred). If/when it is built, it would introduce a
-refactor-side token store — most likely a **`REFRESH_TOKEN`** table (rotate-on-use + a revocation
-flag), wired into
-[JwtAuthenticationFilter](../../../../src/main/java/com/kosign/wecms/common/security/JwtAuthenticationFilter.java)
-so a revoked/rotated token is rejected on the next request. The logout handler is where the revocation
-call would attach.
+> **Formerly "where a future revocation table would live" (GAP-1, deferred) — server-side revocation
+> was implemented 2026 via F-03.** Logout now revokes the presented `jti`; the store is the in-memory
+> [TokenRevocationService](../../../../src/main/java/com/kosign/wecms/common/security/JwtAuthenticationFilter.java)
+> (denylist + per-user not-before cutoff), checked by
+> [JwtAuthenticationFilter](../../../../src/main/java/com/kosign/wecms/common/security/JwtAuthenticationFilter.java)
+> on every request. **No table backs it.**
 
-> **Inventory note.** No such table exists in the
+**Open limitation (still deferred):** the in-memory store is lost on restart and is not shared across
+instances. A **durable / distributed** store (Redis, or a PO-approved DB table) would be needed before
+a multi-node deploy. Likewise a **`REFRESH_TOKEN`** table (rotate-on-use) for refresh tokens is still
+unbuilt.
+
+> **Inventory note.** Neither a revocation table nor a `REFRESH_TOKEN` table exists in the
 > [legacy table inventory](../../../references/database/legacy-table-inventory.md) today, and a
 > refactor-only table is not permitted without a PO baseline decision (root CLAUDE.md §"Refactor DB &
-> Legacy-Compatibility Rules"). A `REFRESH_TOKEN` / blacklist table would need that decision before any
-> entity / migration is created. This is recorded as deferred design intent, **not** an approved table.
+> Legacy-Compatibility Rules"). Promoting the in-memory revocation store to a durable table would need
+> that decision first. This is recorded as deferred design intent, **not** an approved table.
 
 See [session-management](../session-management/README.md) for the broader stateless / refresh-token
 discussion.

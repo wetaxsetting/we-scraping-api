@@ -1,3 +1,16 @@
+> ## ⚠️ SUPERSEDED — HISTORICAL SPIKE (do not treat as current)
+>
+> This spike describes an **AES-GCM cert cipher** keyed by the `wecms.crypto.cert-key`
+> config slot. **That cipher and that config slot were RETIRED.** The live implementation
+> in `BankCertCryptoService` is the **legacy pgcrypto AES-256-CBC** cipher
+> (zero IV, key = `SHA-256(seed 'wabooksvn')`, PKCS5 padding, base64) — byte-identical to
+> the legacy `encrypt()` / `decrypt()` DB functions so bank + GDT credentials read/write
+> cross-system with live JEX. AES-GCM is **not** active anywhere.
+>
+> Everything below is preserved for **historical reference only**. For the current cipher
+> see memory `project_cert_info_cipher_incompatible.md` and the login-credentials audit
+> (`docs/audits/login-credentials-legacy-vs-refactor-audit.md` §7 + db-object-audit §11).
+
 # NXISAS VCB Scraping Spike — Audit
 
 **Date:** 2026-05-13

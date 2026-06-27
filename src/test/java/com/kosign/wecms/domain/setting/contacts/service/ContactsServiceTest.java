@@ -12,8 +12,10 @@ import com.kosign.wecms.domain.setting.contacts.dto.ContactBankRow;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactCreateRequest;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactListResponse;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactRow;
+import com.kosign.wecms.domain.setting.contacts.dto.OverseasOp;
 import com.kosign.wecms.domain.setting.contacts.entity.PgroBsacLnknInfm;
 import com.kosign.wecms.domain.setting.contacts.entity.TrcoInfm;
+import com.kosign.wecms.domain.setting.contacts.entity.TrcoOvrsInfm;
 import com.kosign.wecms.domain.setting.contacts.repository.PgroBsacLnknInfmRepository;
 import com.kosign.wecms.domain.setting.contacts.repository.TrcoAcctInfoRepository;
 import com.kosign.wecms.domain.setting.contacts.repository.TrcoAddrInfmRepository;
@@ -41,6 +43,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -405,6 +408,395 @@ class ContactsServiceTest {
         b.setBankNm(engNm);
         b.setBankStas("1");
         return b;
+    }
+
+    /* =================================================================
+     *  OD-1 — TRCO_ACCT_INFO.trco_acct_key via wb_get_next_val funnel
+     * ================================================================= */
+
+    @Test
+    void create_account_generatesKeyViaFunnel_ignoringPlaceholder() {
+        ContactCreateRequest req = localCreate("ACCT1", "0123456789"); // account placeholder key "1"
+        when(trcoInfmRepo.existsByBizKeyAndHandTrcoKey(BIZ, "ACCT1")).thenReturn(false);
+        when(trcoInfmRepo.existsByBizKeyAndTrcoTaxId(BIZ, "0123456789")).thenReturn(false);
+        when(legacyFn.nextTrcoKey(BIZ)).thenReturn(TRCO_KEY);
+        when(legacyFn.nextTrcoAcctKey(BIZ, TRCO_KEY)).thenReturn("5001");
+        when(trcoInfmRepo.findByTrcoKeyAndBizKey(TRCO_KEY, BIZ))
+                .thenReturn(Optional.of(stubMaster(TRCO_KEY, "ACCT1", "L")));
+        when(addrRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+        when(acctRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+        when(ovrsRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+
+        service.create(req);
+
+        org.mockito.ArgumentCaptor<com.kosign.wecms.domain.setting.contacts.entity.TrcoAcctInfo> cap =
+                org.mockito.ArgumentCaptor.forClass(com.kosign.wecms.domain.setting.contacts.entity.TrcoAcctInfo.class);
+        verify(acctRepo).saveAndFlush(cap.capture());
+        // Persisted key is the funnel value — NOT the frontend placeholder "1".
+        assertThat(cap.getValue().getTrcoAcctKey()).isEqualTo("5001");
+        assertThat(cap.getValue().getTrcoAcctKey()).isNotEqualTo("1");
+        verify(legacyFn).nextTrcoAcctKey(BIZ, TRCO_KEY);
+    }
+
+    @Test
+    void create_multipleAccounts_generatesDistinctSequentialKeys() {
+        AccountOp a1 = new AccountOp("upsert", "1", "Bank A", "111", null, null, "VND", "Owner", null, 1);
+        AccountOp a2 = new AccountOp("upsert", "2", "Bank B", "222", null, null, "VND", "Owner", null, 2);
+        ContactCreateRequest req = new ContactCreateRequest(
+                "MULTI", "Co", "Co EN", null, "L", List.of(), List.of(a1, a2), List.of());
+        when(trcoInfmRepo.existsByBizKeyAndHandTrcoKey(BIZ, "MULTI")).thenReturn(false);
+        when(legacyFn.nextTrcoKey(BIZ)).thenReturn(TRCO_KEY);
+        when(legacyFn.nextTrcoAcctKey(BIZ, TRCO_KEY)).thenReturn("5001", "5002");
+        when(trcoInfmRepo.findByTrcoKeyAndBizKey(TRCO_KEY, BIZ))
+                .thenReturn(Optional.of(stubMaster(TRCO_KEY, "MULTI", "L")));
+        when(addrRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+        when(acctRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+        when(ovrsRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+
+        service.create(req);
+
+        org.mockito.ArgumentCaptor<com.kosign.wecms.domain.setting.contacts.entity.TrcoAcctInfo> cap =
+                org.mockito.ArgumentCaptor.forClass(com.kosign.wecms.domain.setting.contacts.entity.TrcoAcctInfo.class);
+        verify(acctRepo, times(2)).saveAndFlush(cap.capture());
+        java.util.List<String> keys = cap.getAllValues().stream()
+                .map(com.kosign.wecms.domain.setting.contacts.entity.TrcoAcctInfo::getTrcoAcctKey)
+                .toList();
+        assertThat(keys).containsExactly("5001", "5002");   // distinct + sequential from funnel
+        verify(legacyFn, times(2)).nextTrcoAcctKey(BIZ, TRCO_KEY);
+    }
+
+    @Test
+    void update_existingAccount_preservesKey_noFunnelCall() {
+        com.kosign.wecms.domain.setting.contacts.entity.TrcoAcctInfo existingAcct = stubAcct("9001");
+        AccountOp keep = new AccountOp("upsert", "9001", "Bank A", "111", null, null, "VND", "Owner", null, 1);
+        com.kosign.wecms.domain.setting.contacts.dto.ContactUpdateRequest req =
+                new com.kosign.wecms.domain.setting.contacts.dto.ContactUpdateRequest(
+                        "C001", "Test Co", "Test Co EN", "1201496252", "L", null,
+                        List.of(), List.of(keep), List.of(), List.of(), List.of());
+        when(trcoInfmRepo.findByTrcoKeyAndBizKey(TRCO_KEY, BIZ))
+                .thenReturn(Optional.of(stubMaster(TRCO_KEY, "C001", "L")));
+        when(addrRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+        when(acctRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of(existingAcct));
+        when(ovrsRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+
+        service.update(TRCO_KEY, req);
+
+        org.mockito.ArgumentCaptor<com.kosign.wecms.domain.setting.contacts.entity.TrcoAcctInfo> cap =
+                org.mockito.ArgumentCaptor.forClass(com.kosign.wecms.domain.setting.contacts.entity.TrcoAcctInfo.class);
+        verify(acctRepo).saveAndFlush(cap.capture());
+        assertThat(cap.getValue().getTrcoAcctKey()).isEqualTo("9001");   // existing key preserved
+        verify(legacyFn, never()).nextTrcoAcctKey(any(), any());
+    }
+
+    @Test
+    void update_newPlaceholderAccount_generatesKey() {
+        AccountOp added = new AccountOp("upsert", "CA0202606240001", "Bank A", "111", null, null, "VND", "Owner", null, 1);
+        com.kosign.wecms.domain.setting.contacts.dto.ContactUpdateRequest req =
+                new com.kosign.wecms.domain.setting.contacts.dto.ContactUpdateRequest(
+                        "C001", "Test Co", "Test Co EN", "1201496252", "L", null,
+                        List.of(), List.of(added), List.of(), List.of(), List.of());
+        when(trcoInfmRepo.findByTrcoKeyAndBizKey(TRCO_KEY, BIZ))
+                .thenReturn(Optional.of(stubMaster(TRCO_KEY, "C001", "L")));
+        when(legacyFn.nextTrcoAcctKey(BIZ, TRCO_KEY)).thenReturn("9002");
+        when(addrRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+        when(acctRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+        when(ovrsRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+
+        service.update(TRCO_KEY, req);
+
+        org.mockito.ArgumentCaptor<com.kosign.wecms.domain.setting.contacts.entity.TrcoAcctInfo> cap =
+                org.mockito.ArgumentCaptor.forClass(com.kosign.wecms.domain.setting.contacts.entity.TrcoAcctInfo.class);
+        verify(acctRepo).saveAndFlush(cap.capture());
+        assertThat(cap.getValue().getTrcoAcctKey()).isEqualTo("9002");   // generated, placeholder ignored
+        verify(legacyFn).nextTrcoAcctKey(BIZ, TRCO_KEY);
+    }
+
+    @Test
+    void update_deleteAccount_unchanged_noFunnelCall() {
+        AccountOp del = new AccountOp("delete", "9001", null, null, null, null, null, null, null, null);
+        com.kosign.wecms.domain.setting.contacts.dto.ContactUpdateRequest req =
+                new com.kosign.wecms.domain.setting.contacts.dto.ContactUpdateRequest(
+                        "C001", "Test Co", "Test Co EN", "1201496252", "L", null,
+                        List.of(), List.of(del), List.of(), List.of(), List.of());
+        when(trcoInfmRepo.findByTrcoKeyAndBizKey(TRCO_KEY, BIZ))
+                .thenReturn(Optional.of(stubMaster(TRCO_KEY, "C001", "L")));
+        when(addrRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+        when(acctRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+        when(ovrsRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+
+        service.update(TRCO_KEY, req);
+
+        verify(acctRepo).deleteByBizKeyAndTrcoKeyAndTrcoAcctKey(BIZ, TRCO_KEY, "9001");
+        verify(acctRepo, never()).saveAndFlush(any());
+        verify(legacyFn, never()).nextTrcoAcctKey(any(), any());
+    }
+
+    /* =================================================================
+     *  OD-1 — TRCO_ADDR_INFM.trco_addr_key via wb_get_next_val funnel
+     *  (per (biz_key, trco_key) MAX+1 — branch already on the live fn)
+     * ================================================================= */
+
+    @Test
+    void create_address_generatesKeyViaFunnel_ignoringPlaceholder() {
+        // Frontend sends a non-blank placeholder "TEMP"; it must NOT persist.
+        AddressOp addr = new AddressOp("upsert", "TEMP", "123 Some Street", 1, "20260513", "20260514");
+        ContactCreateRequest req = new ContactCreateRequest(
+                "ADDR1", "Co", "Co EN", null, "L", List.of(addr), List.of(), List.of());
+        when(trcoInfmRepo.existsByBizKeyAndHandTrcoKey(BIZ, "ADDR1")).thenReturn(false);
+        when(legacyFn.nextTrcoKey(BIZ)).thenReturn(TRCO_KEY);
+        when(legacyFn.nextTrcoAddrKey(BIZ, TRCO_KEY)).thenReturn("3001");
+        when(trcoInfmRepo.findByTrcoKeyAndBizKey(TRCO_KEY, BIZ))
+                .thenReturn(Optional.of(stubMaster(TRCO_KEY, "ADDR1", "L")));
+        when(addrRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+        when(acctRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+        when(ovrsRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+
+        service.create(req);
+
+        org.mockito.ArgumentCaptor<com.kosign.wecms.domain.setting.contacts.entity.TrcoAddrInfm> cap =
+                org.mockito.ArgumentCaptor.forClass(com.kosign.wecms.domain.setting.contacts.entity.TrcoAddrInfm.class);
+        verify(addrRepo).saveAndFlush(cap.capture());
+        assertThat(cap.getValue().getTrcoAddrKey()).isEqualTo("3001");
+        assertThat(cap.getValue().getTrcoAddrKey()).isNotEqualTo("TEMP");
+        verify(legacyFn).nextTrcoAddrKey(BIZ, TRCO_KEY);
+    }
+
+    @Test
+    void create_multipleAddresses_generatesDistinctSequentialKeys() {
+        AddressOp a1 = new AddressOp("upsert", "T1", "Addr 1", 1, "20260513", "20260514");
+        AddressOp a2 = new AddressOp("upsert", "T2", "Addr 2", 2, "20260513", "20260514");
+        ContactCreateRequest req = new ContactCreateRequest(
+                "ADDRM", "Co", "Co EN", null, "L", List.of(a1, a2), List.of(), List.of());
+        when(trcoInfmRepo.existsByBizKeyAndHandTrcoKey(BIZ, "ADDRM")).thenReturn(false);
+        when(legacyFn.nextTrcoKey(BIZ)).thenReturn(TRCO_KEY);
+        when(legacyFn.nextTrcoAddrKey(BIZ, TRCO_KEY)).thenReturn("1", "2");
+        when(trcoInfmRepo.findByTrcoKeyAndBizKey(TRCO_KEY, BIZ))
+                .thenReturn(Optional.of(stubMaster(TRCO_KEY, "ADDRM", "L")));
+        when(addrRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+        when(acctRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+        when(ovrsRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+
+        service.create(req);
+
+        org.mockito.ArgumentCaptor<com.kosign.wecms.domain.setting.contacts.entity.TrcoAddrInfm> cap =
+                org.mockito.ArgumentCaptor.forClass(com.kosign.wecms.domain.setting.contacts.entity.TrcoAddrInfm.class);
+        verify(addrRepo, times(2)).saveAndFlush(cap.capture());
+        assertThat(cap.getAllValues().stream()
+                .map(com.kosign.wecms.domain.setting.contacts.entity.TrcoAddrInfm::getTrcoAddrKey).toList())
+                .containsExactly("1", "2");
+        verify(legacyFn, times(2)).nextTrcoAddrKey(BIZ, TRCO_KEY);
+    }
+
+    @Test
+    void update_existingAddress_preservesKey_noFunnelCall() {
+        com.kosign.wecms.domain.setting.contacts.entity.TrcoAddrInfm existing = stubAddr("7");
+        AddressOp keep = new AddressOp("upsert", "7", "Addr", 1, "20260513", "20260514");
+        com.kosign.wecms.domain.setting.contacts.dto.ContactUpdateRequest req =
+                new com.kosign.wecms.domain.setting.contacts.dto.ContactUpdateRequest(
+                        "C001", "Test Co", "Test Co EN", "1201496252", "L", null,
+                        List.of(keep), List.of(), List.of(), List.of(), List.of());
+        when(trcoInfmRepo.findByTrcoKeyAndBizKey(TRCO_KEY, BIZ))
+                .thenReturn(Optional.of(stubMaster(TRCO_KEY, "C001", "L")));
+        when(addrRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of(existing));
+        when(acctRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+        when(ovrsRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+
+        service.update(TRCO_KEY, req);
+
+        org.mockito.ArgumentCaptor<com.kosign.wecms.domain.setting.contacts.entity.TrcoAddrInfm> cap =
+                org.mockito.ArgumentCaptor.forClass(com.kosign.wecms.domain.setting.contacts.entity.TrcoAddrInfm.class);
+        verify(addrRepo).saveAndFlush(cap.capture());
+        assertThat(cap.getValue().getTrcoAddrKey()).isEqualTo("7");
+        verify(legacyFn, never()).nextTrcoAddrKey(any(), any());
+    }
+
+    @Test
+    void update_newPlaceholderAddress_generatesKey() {
+        AddressOp added = new AddressOp("upsert", "CA0202606240001", "New addr", 2, "20260513", "20260514");
+        com.kosign.wecms.domain.setting.contacts.dto.ContactUpdateRequest req =
+                new com.kosign.wecms.domain.setting.contacts.dto.ContactUpdateRequest(
+                        "C001", "Test Co", "Test Co EN", "1201496252", "L", null,
+                        List.of(added), List.of(), List.of(), List.of(), List.of());
+        when(trcoInfmRepo.findByTrcoKeyAndBizKey(TRCO_KEY, BIZ))
+                .thenReturn(Optional.of(stubMaster(TRCO_KEY, "C001", "L")));
+        when(legacyFn.nextTrcoAddrKey(BIZ, TRCO_KEY)).thenReturn("9");
+        when(addrRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+        when(acctRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+        when(ovrsRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+
+        service.update(TRCO_KEY, req);
+
+        org.mockito.ArgumentCaptor<com.kosign.wecms.domain.setting.contacts.entity.TrcoAddrInfm> cap =
+                org.mockito.ArgumentCaptor.forClass(com.kosign.wecms.domain.setting.contacts.entity.TrcoAddrInfm.class);
+        verify(addrRepo).saveAndFlush(cap.capture());
+        assertThat(cap.getValue().getTrcoAddrKey()).isEqualTo("9");
+        assertThat(cap.getValue().getTrcoAddrKey()).isNotEqualTo("CA0202606240001");
+        verify(legacyFn).nextTrcoAddrKey(BIZ, TRCO_KEY);
+    }
+
+    @Test
+    void update_deleteAddress_unchanged_noFunnelCall() {
+        AddressOp del = new AddressOp("delete", "7", null, null, null, null);
+        com.kosign.wecms.domain.setting.contacts.dto.ContactUpdateRequest req =
+                new com.kosign.wecms.domain.setting.contacts.dto.ContactUpdateRequest(
+                        "C001", "Test Co", "Test Co EN", "1201496252", "L", null,
+                        List.of(del), List.of(), List.of(), List.of(), List.of());
+        when(trcoInfmRepo.findByTrcoKeyAndBizKey(TRCO_KEY, BIZ))
+                .thenReturn(Optional.of(stubMaster(TRCO_KEY, "C001", "L")));
+        when(addrRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+        when(acctRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+        when(ovrsRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+
+        service.update(TRCO_KEY, req);
+
+        verify(addrRepo).deleteByBizKeyAndTrcoKeyAndTrcoAddrKey(BIZ, TRCO_KEY, "7");
+        verify(addrRepo, never()).saveAndFlush(any());
+        verify(legacyFn, never()).nextTrcoAddrKey(any(), any());
+    }
+
+    /* =================================================================
+     *  OD-1 — TRCO_OVRS_INFM.trco_ovrs_key via wb_get_next_val funnel
+     *  (per (biz_key) MAX+1 — branch already on the live fn)
+     * ================================================================= */
+
+    @Test
+    void create_overseas_generatesKeyViaFunnel_ignoringPlaceholder() {
+        OverseasOp o = new OverseasOp("upsert", "TEMP", "Bene", "ACC1", "BIC1", "BankName", "BC", "Addr");
+        ContactCreateRequest req = new ContactCreateRequest(
+                "OVRS1", "Co", "Co EN", null, "O", List.of(), List.of(), List.of(o));
+        when(trcoInfmRepo.existsByBizKeyAndHandTrcoKey(BIZ, "OVRS1")).thenReturn(false);
+        when(legacyFn.nextTrcoKey(BIZ)).thenReturn(TRCO_KEY);
+        when(legacyFn.nextTrcoOvrsKey(BIZ)).thenReturn("40");
+        when(trcoInfmRepo.findByTrcoKeyAndBizKey(TRCO_KEY, BIZ))
+                .thenReturn(Optional.of(stubMaster(TRCO_KEY, "OVRS1", "O")));
+        when(addrRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+        when(acctRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+        when(ovrsRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+
+        service.create(req);
+
+        org.mockito.ArgumentCaptor<TrcoOvrsInfm> cap = org.mockito.ArgumentCaptor.forClass(TrcoOvrsInfm.class);
+        verify(ovrsRepo).saveAndFlush(cap.capture());
+        assertThat(cap.getValue().getTrcoOvrsKey()).isEqualTo("40");
+        assertThat(cap.getValue().getTrcoOvrsKey()).isNotEqualTo("TEMP");
+        verify(legacyFn).nextTrcoOvrsKey(BIZ);
+    }
+
+    @Test
+    void create_multipleOverseas_generatesDistinctSequentialKeys() {
+        OverseasOp o1 = new OverseasOp("upsert", "T1", "Bene1", "ACC1", "BIC1", "Bank1", "BC1", "Addr1");
+        OverseasOp o2 = new OverseasOp("upsert", "T2", "Bene2", "ACC2", "BIC2", "Bank2", "BC2", "Addr2");
+        ContactCreateRequest req = new ContactCreateRequest(
+                "OVRSM", "Co", "Co EN", null, "O", List.of(), List.of(), List.of(o1, o2));
+        when(trcoInfmRepo.existsByBizKeyAndHandTrcoKey(BIZ, "OVRSM")).thenReturn(false);
+        when(legacyFn.nextTrcoKey(BIZ)).thenReturn(TRCO_KEY);
+        when(legacyFn.nextTrcoOvrsKey(BIZ)).thenReturn("40", "41");
+        when(trcoInfmRepo.findByTrcoKeyAndBizKey(TRCO_KEY, BIZ))
+                .thenReturn(Optional.of(stubMaster(TRCO_KEY, "OVRSM", "O")));
+        when(addrRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+        when(acctRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+        when(ovrsRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+
+        service.create(req);
+
+        org.mockito.ArgumentCaptor<TrcoOvrsInfm> cap = org.mockito.ArgumentCaptor.forClass(TrcoOvrsInfm.class);
+        verify(ovrsRepo, times(2)).saveAndFlush(cap.capture());
+        assertThat(cap.getAllValues().stream().map(TrcoOvrsInfm::getTrcoOvrsKey).toList())
+                .containsExactly("40", "41");
+        verify(legacyFn, times(2)).nextTrcoOvrsKey(BIZ);
+    }
+
+    @Test
+    void update_existingOverseas_preservesKey_noFunnelCall() {
+        TrcoOvrsInfm existing = stubOvrs("21");
+        OverseasOp keep = new OverseasOp("upsert", "21", "Bene", "ACC1", "BIC1", "Bank", "BC", "Addr");
+        com.kosign.wecms.domain.setting.contacts.dto.ContactUpdateRequest req =
+                new com.kosign.wecms.domain.setting.contacts.dto.ContactUpdateRequest(
+                        "C001", "Test Co", "Test Co EN", "1201496252", "O", null,
+                        List.of(), List.of(), List.of(), List.of(keep), List.of());
+        when(trcoInfmRepo.findByTrcoKeyAndBizKey(TRCO_KEY, BIZ))
+                .thenReturn(Optional.of(stubMaster(TRCO_KEY, "C001", "O")));
+        when(addrRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+        when(acctRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+        when(ovrsRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of(existing));
+
+        service.update(TRCO_KEY, req);
+
+        org.mockito.ArgumentCaptor<TrcoOvrsInfm> cap = org.mockito.ArgumentCaptor.forClass(TrcoOvrsInfm.class);
+        verify(ovrsRepo).saveAndFlush(cap.capture());
+        assertThat(cap.getValue().getTrcoOvrsKey()).isEqualTo("21");
+        verify(legacyFn, never()).nextTrcoOvrsKey(any());
+    }
+
+    @Test
+    void update_newPlaceholderOverseas_generatesKey() {
+        OverseasOp added = new OverseasOp("upsert", "OV0202606240001", "Bene", "ACC9", "BIC9", "Bank", "BC", "Addr");
+        com.kosign.wecms.domain.setting.contacts.dto.ContactUpdateRequest req =
+                new com.kosign.wecms.domain.setting.contacts.dto.ContactUpdateRequest(
+                        "C001", "Test Co", "Test Co EN", "1201496252", "O", null,
+                        List.of(), List.of(), List.of(), List.of(added), List.of());
+        when(trcoInfmRepo.findByTrcoKeyAndBizKey(TRCO_KEY, BIZ))
+                .thenReturn(Optional.of(stubMaster(TRCO_KEY, "C001", "O")));
+        when(legacyFn.nextTrcoOvrsKey(BIZ)).thenReturn("42");
+        when(addrRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+        when(acctRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+        when(ovrsRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+
+        service.update(TRCO_KEY, req);
+
+        org.mockito.ArgumentCaptor<TrcoOvrsInfm> cap = org.mockito.ArgumentCaptor.forClass(TrcoOvrsInfm.class);
+        verify(ovrsRepo).saveAndFlush(cap.capture());
+        assertThat(cap.getValue().getTrcoOvrsKey()).isEqualTo("42");
+        assertThat(cap.getValue().getTrcoOvrsKey()).isNotEqualTo("OV0202606240001");
+        verify(legacyFn).nextTrcoOvrsKey(BIZ);
+    }
+
+    @Test
+    void update_deleteOverseas_unchanged_noFunnelCall() {
+        OverseasOp del = new OverseasOp("delete", "21", null, null, null, null, null, null);
+        com.kosign.wecms.domain.setting.contacts.dto.ContactUpdateRequest req =
+                new com.kosign.wecms.domain.setting.contacts.dto.ContactUpdateRequest(
+                        "C001", "Test Co", "Test Co EN", "1201496252", "O", null,
+                        List.of(), List.of(), List.of(), List.of(del), List.of());
+        when(trcoInfmRepo.findByTrcoKeyAndBizKey(TRCO_KEY, BIZ))
+                .thenReturn(Optional.of(stubMaster(TRCO_KEY, "C001", "O")));
+        when(addrRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+        when(acctRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+        when(ovrsRepo.findByBizKeyAndTrcoKey(BIZ, TRCO_KEY)).thenReturn(List.of());
+
+        service.update(TRCO_KEY, req);
+
+        verify(ovrsRepo).deleteByBizKeyAndTrcoKeyAndTrcoOvrsKey(BIZ, TRCO_KEY, "21");
+        verify(ovrsRepo, never()).saveAndFlush(any());
+        verify(legacyFn, never()).nextTrcoOvrsKey(any());
+    }
+
+    private static com.kosign.wecms.domain.setting.contacts.entity.TrcoAddrInfm stubAddr(String addrKey) {
+        com.kosign.wecms.domain.setting.contacts.entity.TrcoAddrInfm e =
+                new com.kosign.wecms.domain.setting.contacts.entity.TrcoAddrInfm();
+        e.setBizKey(BIZ);
+        e.setTrcoKey(TRCO_KEY);
+        e.setTrcoAddrKey(addrKey);
+        e.setDispOrd(1);
+        return e;
+    }
+
+    private static TrcoOvrsInfm stubOvrs(String ovrsKey) {
+        TrcoOvrsInfm e = new TrcoOvrsInfm();
+        e.setBizKey(BIZ);
+        e.setTrcoKey(TRCO_KEY);
+        e.setTrcoOvrsKey(ovrsKey);
+        return e;
+    }
+
+    private static com.kosign.wecms.domain.setting.contacts.entity.TrcoAcctInfo stubAcct(String acctKey) {
+        com.kosign.wecms.domain.setting.contacts.entity.TrcoAcctInfo e =
+                new com.kosign.wecms.domain.setting.contacts.entity.TrcoAcctInfo();
+        e.setBizKey(BIZ);
+        e.setTrcoKey(TRCO_KEY);
+        e.setTrcoAcctKey(acctKey);
+        e.setDispOrd(1);
+        return e;
     }
 
     private static TrcoInfm stubMaster(String trcoKey, String handTrcoKey, String trcoType) {

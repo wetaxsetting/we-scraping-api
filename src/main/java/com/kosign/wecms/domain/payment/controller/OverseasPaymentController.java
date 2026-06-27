@@ -72,6 +72,17 @@ public class OverseasPaymentController {
     private final ExcelExportService            excelExportService;
 
     /**
+     * Preview the next {@code VO_YYMMDD_NNN} document number for the Request
+     * Approval popup (read-only; reserves / persists nothing). Mirrors the
+     * Internal Transfer / Card / Vendor / Expense / Payroll precedent so
+     * Overseas Payment renders the same friendly id format before submit.
+     */
+    @GetMapping("/next-doc-no")
+    public ApiResponse<com.kosign.wecms.domain.payment.internaltransfer.dto.NextDocNoResponse> nextDocNo() {
+        return ApiResponse.ok(overseasPaymentService.previewNextDocNo());
+    }
+
+    /**
      * Overseas scheduled-payment list.
      * Mirrors legacy {@code pymn_0007_001_r001}.
      *

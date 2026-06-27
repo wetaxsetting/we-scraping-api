@@ -9,6 +9,13 @@
 > **No files were fixed.** Detailed findings live in the three companion drift reports:
 > [authorization-doc-drift.md](authorization-doc-drift.md) · [database-doc-drift.md](database-doc-drift.md) · [api-contract-drift.md](api-contract-drift.md).
 
+> **⚠️ SUPERSEDED for the auth verdict.** This audit's conclusion that **auth = docs
+> accurate / LOW risk** predates the landing of **F-03 (server-side logout / token
+> revocation)** and **F-10 (login lockout / rate-limiting)**. The auth feature-doc set has
+> since been corrected to reflect those changes, so **the auth verdict recorded in this
+> audit is superseded** — do not cite it as the current state of the auth docs. The
+> non-auth findings below stand as written.
+
 ## Top-line conclusion
 
 The WeCMS refactor documentation is **healthier than a typical doc set** and, unusually, the feature docs are mostly

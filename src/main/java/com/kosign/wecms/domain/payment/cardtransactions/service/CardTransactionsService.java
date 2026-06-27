@@ -830,8 +830,8 @@ public class CardTransactionsService {
             ent.setApprSeqNo(null);
             ent.setModId(userId);
             ent.setModDtm(now);
-            cardTrnsRepo.save(ent);
         }
+        cardTrnsRepo.saveAll(stamped);
 
         // Bulletin / attachment cleanup (legacy comm_0192_004_d001) — before
         // the master delete (EXPT_RESOL_FILE FK).
@@ -1180,6 +1180,12 @@ public class CardTransactionsService {
         // 6) Insert per-doc child rows. RCV_PAY_HIS_SEQ_NO is the JEX
         //    natural key, allocated per-doc via MAX+1 — first link row
         //    for a given doc gets 1.
+        // Each doc is distinct by doc_id (findLinkableByDocIds returns one row
+        // per doc_id and the size guard above rejects duplicate request ids), so
+        // the per-doc MAX+1 allocations are independent — collect the rows and
+        // saveAll without needing a flush between iterations. Per-doc key
+        // generation is unchanged.
+        java.util.List<BusaDocRcvPayHis> hisRows = new java.util.ArrayList<>(docs.size());
         for (BusaDocMstr doc : docs) {
             var item = itemByDoc.get(doc.getDocId());
             // RCV_PAY_HIS_SEQ_NO via the single wb_get_next_val funnel
@@ -1200,8 +1206,9 @@ public class CardTransactionsService {
             row.setDeduAmt(item.deduAmt());
             row.setRegId(userId);
             row.setRegDtm(now);
-            busaDocRcvPayHisRepo.save(row);
+            hisRows.add(row);
         }
+        busaDocRcvPayHisRepo.saveAll(hisRows);
 
         auditLogService.append(AuditLogContext.builder()
                 .wsvcId(WSVC_ID)

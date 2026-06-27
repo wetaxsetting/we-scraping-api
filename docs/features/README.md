@@ -16,10 +16,11 @@ shape, and DB tables touched. Each doc is the spine that links the supporting re
 |---|---|---|---|
 | Auth *(system)* | [auth/](auth/) | [auth/README.md](auth/README.md) | Cross-cutting — login / logout / me (not a top-menu group) |
 | Common *(system)* | [common/](common/) | [common/README.md](common/README.md) | Cross-cutting — View Setting (Screen Options) and other shared features (not a top-menu group) |
-| Banking | [banking/](banking/) | [banking/README.md](banking/README.md) | Banking → Current & Savings (VND/FCY), Own Account Transfer, Reports |
+| Banking | [banking/](banking/) | [banking/README.md](banking/README.md) · [flow-process HTML](banking/banking-flow-process.html) | Banking → Current & Savings (VND/FCY), Own Account Transfer, Reports |
 | Payment | [payment/](payment/) | [payment/README.md](payment/README.md) | Payment → Approval Box, Internal/Vendor/Expense/Payroll/Overseas, Exchange Rate, Card |
 | Add-on Service | [addon-service/](addon-service/) | [addon-service/README.md](addon-service/README.md) | Add-on Service → Sales/Expenses e-Invoices, Operation Status |
 | Settings | [settings/](settings/) | [settings/README.md](settings/README.md) | Settings menu (one doc per Settings item) |
+| WeCMS Batch *(infrastructure)* | [wecms-batch/](wecms-batch/) | [wecms-batch/README.md](wecms-batch/README.md) · [flow-process HTML](wecms-batch/wecms-batch-flow-process.html) | Firm-banking dispatch engine (no menu — backend batch/dispatch path; payment-domain capability kept at features root by request) |
 
 ## How a feature doc maps to the reference layers
 

@@ -5,7 +5,6 @@
 **Refactor slug:** `approval-line` (matches the JEX-traceability, backend, and frontend counterparts)
 **Wire base path:** `/api/v1/settings/approval-line` (list · detail · create · update · delete)
 **Menu permission slug:** `settings-core-approval-line`
-**Legacy JEX counterpart:** WSVC family `comm_0222_001` (+ `_r001` / `_d001`), `comm_0222_002` (+ `_c001`), `comm_0222_003` (+ `_r001` / `_u001`). Tables `APPR_LINE_INFM` + `APPR_LINE_INFM_DETL`.
 
 > This folder is the **primary documentation home** for Approval Line on the backend.
 > It consolidates and indexes material that previously lived in a single flat file and in the
@@ -88,6 +87,12 @@ com.kosign.wecms.domain.setting.approvalline
 > The `@Table` / `@Column` annotations carry the legacy `UPPER_SNAKE` identifiers, per the API naming rule.
 
 Flyway: [V6](../../../../src/main/resources/db/migration/V6__appr_line_infm.sql) `APPR_LINE_INFM` schema · [V7](../../../../src/main/resources/db/migration/V7__appr_line_infm_detl.sql) `APPR_LINE_INFM_DETL` schema · `wb_get_next_val('appr_line_infm','appr_line_no',…)` branch lives in the consolidated [V140](../../../../src/main/resources/db/migration/V140__wb_get_next_val.sql) function. No `NUMERIC → BIGINT/INTEGER` hotfix exists — the columns stay `NUMERIC(15,0)` / `NUMERIC(1,0)` and the entities map onto them via `@JdbcTypeCode(SqlTypes.NUMERIC)`.
+
+---
+
+## Legacy & Migration Traceability
+
+**Legacy JEX counterpart:** WSVC family `comm_0222_001` (+ `_r001` / `_d001`), `comm_0222_002` (+ `_c001`), `comm_0222_003` (+ `_r001` / `_u001`). Tables `APPR_LINE_INFM` + `APPR_LINE_INFM_DETL`.
 
 ---
 

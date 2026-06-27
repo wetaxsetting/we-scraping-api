@@ -5,7 +5,6 @@
 **Package:** `com.kosign.wecms.domain.setting.chartofaccounts`
 **REST base:** `/api/v1/settings/chart-of-accounts`
 **Table:** `CHART_ACCT_INFM`
-**Legacy WSVC (traceability only):** `comm_0223_001` (view + CRUD) · `comm_0223_002` (Excel upload)
 **Status (2026-06-08):** 🟢 **Code-complete for SIT** · 🟡 final closure pending PO ratification only — SIT/UAT verified.
 
 > This folder is the **primary documentation home** for the Chart of Accounts backend feature. It documents the **actual final refactored implementation** (read from source on 2026-06-07/08), not the pre-implementation design intent. Where the design-era docs disagree with shipped code, the shipped behaviour wins and the delta is flagged inline.
@@ -56,6 +55,12 @@ The three roots `ACC-01` (REVENUE), `ACC-02` (EXPENSES), `ACC-03` (INVESTMENT) a
 | Status | `STTS` `A` (Active) / `I` (Inactive) — distinct from soft-delete `DEL_YN` `N`/`Y` | `ChartAcctInfm.java` |
 | Authorization | `@PreAuthorize("@menuAuthz.canAccess('settings-core-chart-of-accounts')")` — **live at runtime** | `ChartOfAccountsController.java:79` |
 | Audit | One `AUDIT_LOGS_INFM` row per Create/Update/Delete, `WSVC_ID = "chart-of-accounts"` (slug) | `ChartOfAccountsService.java`; `ChartOfAccountsConstants.AUDIT_REF_NO` |
+
+---
+
+## Legacy & Migration Traceability
+
+**Legacy WSVC (traceability only):** `comm_0223_001` (view + CRUD) · `comm_0223_002` (Excel upload)
 
 ---
 

@@ -9,6 +9,7 @@ import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolApprvrInfmRepository;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprDv;
+import com.kosign.wecms.domain.payment.internaltransfer.service.ApprovalContentLoader;
 import com.kosign.wecms.domain.payment.dto.ChangeApprovalLineRequest;
 import com.kosign.wecms.domain.payment.dto.OverseasApprover;
 import com.kosign.wecms.domain.payment.dto.OverseasCurrencyTotal;
@@ -102,6 +103,9 @@ public class OverseasPaymentService {
     private final DispatchResultResolver         dispatchResultResolver;
     private final ExptResolMstrRepository        exptResolMstrRepository;
     private final ExptResolApprvrInfmRepository  exptResolApprvrInfmRepository;
+    /** Shared Approval Content loader — reads {@code BLTB_POST_INFM.POST_CONT}
+     *  (the legacy source of truth), identical to the four scheduled types. */
+    private final ApprovalContentLoader          approvalContentLoader;
     private final AuditLogService                auditLogService;
     /** F2 — shared ERP_TRNS_HSTR writer for the Overseas Result export 'W' row. */
     private final com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter erpHistoryWriter;
@@ -342,7 +346,7 @@ public class OverseasPaymentService {
             String apprRegDtm  = toStr(b[22]);  // EXPT_RESOL_MSTR.REG_DTM → Request Date/Time
             String apprTypeCd  = toStr(b[15]);
             String payDate     = toStr(b[14]);
-            String orgFileNm   = toStr(b[2]);   // OVRS_PYMN_SUMR.TITL (legacy R005 FILE_NM)
+            String orgFileNm   = toStr(b[2]);   // file_nm column = OVRS_PYMN_SUMR.ORG_FILE_NM (uploaded file name)
             String requestor   = draftUserNm != null && !draftUserNm.isBlank()
                     ? draftUserNm : OverseasPaymentResultExcelWriter.safe(regId);
 
@@ -525,7 +529,10 @@ public class OverseasPaymentService {
                             // transfer flag lives on the master OVRS_PYMN_SUMR.
                             sumr.getTrnfYn() != null ? sumr.getTrnfYn() : "N",
                             r.procStat(), r.procStatKey(), r.procDttm(), r.rsltDttm(),
-                            r.rsCd(), r.rsMsg());
+                            r.rsCd(), r.rsMsg(),
+                            // Transaction Seq — legacy R007 maps PAY_TRAN_SEQ → PAY_FILE_SEQ_NO
+                            // (pymn_0008_002 "Transaction Seq" column).
+                            parsePayTranSeq(d.getPayTranSeq()));
                 })
                 .collect(Collectors.toList());
 
@@ -545,6 +552,9 @@ public class OverseasPaymentService {
         List<ApprovalAttachmentRow> attachments =
                 approvalAttachmentLoader.load(bizKey, sumr.getApprSeqNo());
 
+        // Approval Content — BLTB_POST_INFM.POST_CONT (legacy R010 source).
+        String cont = approvalContentLoader.load(bizKey, sumr.getApprSeqNo());
+
         return new OverseasPaymentDetailResponse(
                 sumr.getOvrsPymnNo(),
                 sumr.getTitl(),
@@ -561,10 +571,11 @@ public class OverseasPaymentService {
                 docNo,
                 sumr.getApprSeqNo(),
                 sumr.getOrgFileNm(),
-                null,                       // fileSize
+                sumr.getFileSize(),         // fileSize — OVRS_PYMN_SUMR.FILE_SIZE (was hardcoded null)
                 sumr.getOrgFileNm(),
                 rows,
-                attachments);
+                attachments,
+                cont);
     }
 
     /**
@@ -654,7 +665,8 @@ public class OverseasPaymentService {
                 null,                       // fileSize
                 null,                       // orgFileNm
                 rows,
-                attachments);               // 19-arg ctor → legacyMmode=false, notice=null
+                attachments,                // legacyMmode=false, notice=null (via convenience ctor)
+                approvalContentLoader.load(bizKey, apprSeqNo));  // Approval Content — BLTB_POST_INFM.POST_CONT
     }
 
     /**
@@ -685,7 +697,163 @@ public class OverseasPaymentService {
                 toStr(m[14]),                          // procDttm
                 toStr(m[14]),                          // rsltDttm = procDttm (R007 RSLT_DTTM)
                 toStr(m[15]),                          // rsCd
-                toStr(m[16]));                         // rsMsg
+                toStr(m[16]),                          // rsMsg
+                null);                                 // trnSeq (M-mode — no PAY_TRAN_SEQ column in findMmodeDetailRows)
+    }
+
+    /**
+     * Parse the legacy {@code OVRS_PYMN_SUMR_DETL.PAY_TRAN_SEQ} varchar into the
+     * {@code Integer} the wire {@code trn_seq} field expects. Null / blank /
+     * non-numeric → null (renders blank in the Result detail "Transaction Seq"
+     * column rather than throwing).
+     */
+    private static Integer parsePayTranSeq(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return Integer.valueOf(raw.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Overseas per-line transactions for one approval, normalized to the shared
+     * {@link com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalTransactionRow}
+     * the Approval Details popup consumes. Resolves by {@code APPR_SEQ_NO}:
+     * E-mode batches live in {@code OVRS_PYMN_SUMR} + {@code OVRS_PYMN_SUMR_DETL};
+     * M-mode (individual/manual) remittances live only in {@code OVRS_PYMN_MSTR}
+     * (one line). Empty when the approval resolves in neither table.
+     *
+     * <p>Field mapping mirrors the per-type Overseas Scheduled page's
+     * {@code detailLineToApprovalTransaction} 1:1 (bic_cd→deposit bank code,
+     * bnfc_bank_nm→deposit bank name, bnfc_nm→recipient, memo→remarks/description,
+     * rprt_acct_cd→reporting account) so the popup renders identically whether
+     * opened from the Scheduled page (per-type fetch) or the shared
+     * {@code CommonApprovalDetailsDialog} (this path, used by the Result page +
+     * Notifications). Backs the {@code APPR_DV='34'} branch in
+     * {@code ApprovalDetailService.transactions}.
+     */
+    @Transactional(readOnly = true)
+    public List<com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalTransactionRow>
+            transactionLinesByApprSeqNo(String bizKey, String apprSeqNo) {
+        if (apprSeqNo == null || apprSeqNo.isBlank()) {
+            return List.of();
+        }
+        // E-mode: OVRS_PYMN_SUMR + OVRS_PYMN_SUMR_DETL.
+        java.util.Optional<OvrsPymnSumr> sumrOpt =
+                sumrRepository.findByBizKeyAndApprSeqNo(bizKey, apprSeqNo);
+        if (sumrOpt.isPresent()) {
+            return dtlsRepository
+                    .findByBizKeyAndOvrsPymnNoOrderByOvrsPymnDetlNoAsc(
+                            bizKey, sumrOpt.get().getOvrsPymnNo())
+                    .stream()
+                    .map(OverseasPaymentService::toApprovalTxnFromDetl)
+                    .collect(Collectors.toList());
+        }
+        // M-mode: OVRS_PYMN_MSTR (single remittance line, R007 M branch).
+        OvrsPymnMstr mstr = ovrsPymnMstrRepository
+                .findByBizKeyAndApprSeqNo(bizKey, apprSeqNo)
+                .stream().findFirst().orElse(null);
+        if (mstr != null) {
+            return paymentRepo.findMmodeDetailRows(bizKey, mstr.getOvrsPymnNo())
+                    .stream()
+                    .map(this::mapMmodeDetailRow)
+                    .map(OverseasPaymentService::toApprovalTxnFromRow)
+                    .collect(Collectors.toList());
+        }
+        return List.of();
+    }
+
+    /** E-mode {@code OVRS_PYMN_SUMR_DETL} → shared {@code ApprovalTransactionRow}. */
+    private static com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalTransactionRow
+            toApprovalTxnFromDetl(OvrsPymnSumrDetl d) {
+        return new com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalTransactionRow(
+                d.getOvrsPymnDetlNo(),
+                d.getBicCd(),                                  // deposit bank code = beneficiary BIC
+                d.getBnfcBankNm(),                             // deposit bank name = beneficiary bank
+                d.getCcyCd(),
+                d.getBnfcAcctNo(),                             // deposit account = beneficiary account
+                d.getTrnfAmt(),
+                d.getBnfcNm(),                                 // recipient = beneficiary name
+                d.getMemo(),                                   // remarks = memo
+                null,                                          // contact name — n/a for overseas
+                d.getMemo(),                                   // description = memo (FE parity)
+                null,                                          // document no — n/a
+                d.getRprtAcctCd(),                             // reporting account
+                null);                                         // reporting breadcrumb
+    }
+
+    /** M-mode row (already mapped to {@link OverseasPaymentDetailRowResponse})
+     *  → shared {@code ApprovalTransactionRow}. */
+    private static com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalTransactionRow
+            toApprovalTxnFromRow(OverseasPaymentDetailRowResponse r) {
+        return new com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalTransactionRow(
+                r.ovrsPymnDetlNo(),
+                r.bicCd(),
+                r.bnfcBankNm(),
+                r.ccyCd(),
+                r.bnfcAcctNo(),
+                r.trnfAmt(),
+                r.bnfcNm(),
+                r.memo(),
+                null,
+                r.memo(),
+                null,
+                r.rprtAcctCd(),
+                null);
+    }
+
+    /** Withdrawal-account fields for the Approval Details popup's General
+     *  Information row, keyed by {@code APPR_SEQ_NO}. {@code outBankNm} is left
+     *  null (overseas {@code getDetail} likewise ships the raw code; the
+     *  frontend falls back to it) to avoid a separate bank-name resolver here. */
+    public record ApprovalWithdrawalInfo(
+            String outBankCd, String outBankNm, String wdrlActNo, String wdrlCcyCd) {}
+
+    /**
+     * Overseas withdrawal account by {@code APPR_SEQ_NO} — E-mode reads
+     * {@code OVRS_PYMN_SUMR} (OUT_BANK_CD / WDRL_ACT_NO / CCY_CD); M-mode reads
+     * the {@code OVRS_PYMN_MSTR} debit-account fields (DBT_ACCT_CD / DBT_ACCT_NO
+     * / DBT_CCY_CD), mirroring {@link #getDetail}'s withdrawal mapping for both
+     * modes. Empty when the approval resolves in neither table. Backs the
+     * overseas fallback in {@code ApprovalDetailService.master}.
+     */
+    @Transactional(readOnly = true)
+    public java.util.Optional<ApprovalWithdrawalInfo> withdrawalByApprSeqNo(
+            String bizKey, String apprSeqNo) {
+        if (apprSeqNo == null || apprSeqNo.isBlank()) {
+            return java.util.Optional.empty();
+        }
+        java.util.Optional<OvrsPymnSumr> sumrOpt =
+                sumrRepository.findByBizKeyAndApprSeqNo(bizKey, apprSeqNo);
+        if (sumrOpt.isPresent()) {
+            OvrsPymnSumr s = sumrOpt.get();
+            return java.util.Optional.of(new ApprovalWithdrawalInfo(
+                    s.getOutBankCd(), null, s.getWdrlActNo(), s.getCcyCd()));
+        }
+        OvrsPymnMstr m = ovrsPymnMstrRepository
+                .findByBizKeyAndApprSeqNo(bizKey, apprSeqNo)
+                .stream().findFirst().orElse(null);
+        if (m != null) {
+            return java.util.Optional.of(new ApprovalWithdrawalInfo(
+                    m.getDbtAcctCd(), null, m.getDbtAcctNo(), m.getDbtCcyCd()));
+        }
+        return java.util.Optional.empty();
+    }
+
+    /**
+     * Preview the next {@code VO_YYMMDD_NNN} document number for the Request
+     * Approval popup (read-only). Computes via the shared {@link DocNoGenerator}
+     * WITHOUT reserving or persisting anything — the authoritative DOC_NO is
+     * stamped at {@link #requestApproval} submit time. Mirrors
+     * {@link com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService#previewNextDocNo}.
+     */
+    @Transactional(readOnly = true)
+    public com.kosign.wecms.domain.payment.internaltransfer.dto.NextDocNoResponse previewNextDocNo() {
+        return new com.kosign.wecms.domain.payment.internaltransfer.dto.NextDocNoResponse(
+                docNoGenerator.nextDocNo(TenantContext.currentBizKey()));
     }
 
     /**
@@ -783,12 +951,30 @@ public class OverseasPaymentService {
         // validateOverseasPayment per REC4 item). Reject if already
         // transferred or already carrying an approval.
         List<OvrsPymnMstr> masters = new ArrayList<>();
+        // Batch-load all referenced masters in one query, then run the
+        // original per-element checks (in request order) against the map.
+        // Behavior is preserved byte-for-byte: blank → WBE_VALIDATION,
+        // missing → WBE_NOT_FOUND, transferred → WBE2127, approved →
+        // WBE2046, all in the same first-failure order; duplicate input
+        // ids re-check the same row exactly as the prior findById loop.
+        List<OvrsPymnMstrId> ids = new ArrayList<>();
+        for (String no : req.ovrsPymnNos()) {
+            if (no != null && !no.isBlank()) {
+                ids.add(new OvrsPymnMstrId(bizKey, no.trim()));
+            }
+        }
+        Map<String, OvrsPymnMstr> byNo = new LinkedHashMap<>();
+        for (OvrsPymnMstr loaded : ovrsPymnMstrRepository.findAllById(ids)) {
+            byNo.put(loaded.getOvrsPymnNo(), loaded);
+        }
         for (String no : req.ovrsPymnNos()) {
             if (no == null || no.isBlank()) {
                 throw new BusinessException("WBE_VALIDATION", "ovrs_pymn_no: blank entry");
             }
-            OvrsPymnMstr m = ovrsPymnMstrRepository.findById(new OvrsPymnMstrId(bizKey, no.trim()))
-                    .orElseThrow(() -> new BusinessException("WBE_NOT_FOUND", "ovrs_pymn_no: " + no));
+            OvrsPymnMstr m = byNo.get(no.trim());
+            if (m == null) {
+                throw new BusinessException("WBE_NOT_FOUND", "ovrs_pymn_no: " + no);
+            }
             if ("Y".equals(m.getTrnfYn())) {
                 throw new BusinessException("WBE2127");
             }

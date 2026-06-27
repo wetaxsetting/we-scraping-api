@@ -35,6 +35,8 @@ import com.kosign.wecms.domain.payment.cardtransactions.dto.SyncCardTransactions
 import com.kosign.wecms.domain.payment.cardtransactions.dto.UpdateCardActiveRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.UpdateCardInfoRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.UpdateReportingAccountRequest;
+import com.kosign.wecms.domain.payment.approvalbox.dto.EditApprovalRequest;
+import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalEditService;
 import com.kosign.wecms.domain.payment.cardtransactions.service.CardTranListR001Service;
 import com.kosign.wecms.domain.payment.cardtransactions.service.CardTransactionScrapeService;
 import com.kosign.wecms.domain.payment.cardtransactions.service.CardTransactionSyncService;
@@ -114,10 +116,17 @@ public class CardTransactionsController {
      *  legacy seed values without re-imposing a tighter shape. */
     private static final String CARD_SEQ_NO_PATTERN = "^[0-9]{1,20}$";
 
+    /** Audit-log slug for Corporate Card edits. */
+    private static final String AUDIT_WSVC_ID_CARD = "card-transactions";
+
     private final CardTransactionsService     service;
     private final CardTransactionSyncService  syncService;
     private final CardTransactionScrapeService scrapeService;
     private final CardTranListR001Service     cardTranListR001Service;
+    /** Shared Approval Details edit command (title / content / approver line /
+     *  attachments) — same code path as the Approval Box edit, audited under
+     *  the card slug. */
+    private final ApprovalEditService         approvalEditService;
     /** Shared Excel writer — orchestrates the
      *  {@link com.kosign.wecms.domain.payment.cardtransactions.export.CardTransactionsExportProvider}
      *  + writes the XLSX response. */
@@ -213,6 +222,28 @@ public class CardTransactionsController {
             @org.springframework.web.bind.annotation.RequestBody
             com.kosign.wecms.domain.payment.cardtransactions.dto.ChangeApprovalLineRequest req) {
         service.changeApprovalLine(apprSeqNo, req != null ? req.apprLineNo() : null);
+        return ApiResponse.ok(null);
+    }
+
+    /**
+     * Edit an in-flight (Pending / In Progress) Corporate Card approval —
+     * title + approval content + approver line + attachment add/remove in one
+     * multipart call. Delegates to the shared {@link ApprovalEditService}
+     * (same edit surface as Approval Box; the card approval IS an
+     * {@code EXPT_RESOL_MSTR} row with {@code APPR_DV='33'}), audited under the
+     * card slug. Mirrors legacy {@code comm_0192_013_u002}.
+     */
+    @PutMapping(value = "/by-approval/{apprSeqNo}/edit",
+                consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ApiResponse<Void> editApproval(
+            @PathVariable("apprSeqNo")
+            @Pattern(regexp = "^[0-9]{1,15}$",
+                     message = "appr_seq_no: invalid format")
+            String apprSeqNo,
+            @Valid @org.springframework.web.bind.annotation.RequestPart("request") EditApprovalRequest request,
+            @org.springframework.web.bind.annotation.RequestPart(value = "attachments", required = false)
+            List<org.springframework.web.multipart.MultipartFile> attachments) {
+        approvalEditService.edit(apprSeqNo, request, attachments, AUDIT_WSVC_ID_CARD);
         return ApiResponse.ok(null);
     }
 

@@ -22,6 +22,8 @@ The folder tree mirrors the live WeCMS **Banking top menu**: each menu group is 
 
 Group hubs: [current-savings-vnd/](current-savings-vnd/README.md) · [current-savings-fcy/](current-savings-fcy/README.md) · [internal-transfer-vnd/](internal-transfer-vnd/README.md) · [reports/](reports/README.md).
 
+> **📊 Module flow & architecture (visual handover):** [banking-flow-process.html](banking-flow-process.html) — single-page visual guide to the whole Banking module (overview · module map · end-to-end process · per-domain flows · architecture · database · API · user journey · error handling · security · navigation). Open in a browser. Sibling of [wecms-batch/wecms-batch-flow-process.html](../wecms-batch/wecms-batch-flow-process.html).
+
 > **Smart Organizer is a single screen serving both VND and FCY** (currency is data-driven, not a separate screen) — it is its own top-menu group, not a Current & Savings child. The older per-currency single-file specs are preserved as [smart-organizer/legacy-spec-vnd.md](smart-organizer/legacy-spec-vnd.md) + [smart-organizer/legacy-spec-fcy.md](smart-organizer/legacy-spec-fcy.md).
 >
 > **Daily Financial (HAENGSUNG)** ⚠️ — a separate `H`-product report (`rept_0017_001`, route `/banking/reports/daily-financial-hs`) exists in code; its doc scope is pending **OQ-DOC-8** and it is folded into the [reports/daily-financial/](reports/daily-financial/README.md) package for now.

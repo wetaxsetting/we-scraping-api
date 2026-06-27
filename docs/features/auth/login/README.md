@@ -98,8 +98,8 @@ the `PasswordEncoder` bean (`WecmsPasswordEncoder`) +
 
 ## Sibling auth modules (cross-links, not duplicated here)
 
-- [session-management](../session-management/README.md) — `GET /api/v1/auth/me`, stateless TTL, no refresh / blacklist
-- [logout](../logout/README.md) — `POST /api/v1/auth/logout` (client-side token clear; stub)
+- [session-management](../session-management/README.md) — `GET /api/v1/auth/me`, stateless TTL, in-memory `jti` revocation (no refresh token)
+- [logout](../logout/README.md) — `POST /api/v1/auth/logout` (client-side token clear + server-side `jti` revocation)
 - [change-password](../change-password/README.md) — `POST /api/v1/auth/change-password` (password hashing detail lives here)
 - [jwt-authentication](../jwt-authentication/README.md) — token issue / parse / filter chain / 401 entry point
 - [authorization](../authorization/README.md) · [menu-authorization](../menu-authorization/README.md) — `@menuAuthz`, product-tree gating

@@ -487,14 +487,16 @@ public class TransactionService {
 
         String userId = TenantContext.currentUserId();
         String nowDtm = OffsetDateTime.now(ZoneOffset.UTC).format(DTM_FMT);
+        List<AcctTrnsRcvPayInfm> modified = new ArrayList<>();
         for (AcctTrnsRcvPayInfm rp : rcvPayRepo.findByBizKeyAndAcctSeqNo(r.bizKey, trnsSeqNo)) {
             if (rp.getRcvPayUsagCd() != null) {
                 rp.setRcvPayUsagCd(null);
                 rp.setModId(userId);
                 rp.setModDtm(nowDtm);
-                rcvPayRepo.save(rp);
+                modified.add(rp);
             }
         }
+        rcvPayRepo.saveAll(modified);
 
         return detail(acctSeqNo, trnsSeqNo);
     }
@@ -556,14 +558,16 @@ public class TransactionService {
 
         String userId = TenantContext.currentUserId();
         String nowDtm = OffsetDateTime.now(ZoneOffset.UTC).format(DTM_FMT);
+        List<AcctTrnsRcvPayInfm> modified = new ArrayList<>();
         for (AcctTrnsRcvPayInfm rp : rcvPayRepo.findByBizKeyAndAcctSeqNo(r.bizKey, trnsSeqNo)) {
             if (rp.getVasAcctCd() != null) {
                 rp.setVasAcctCd(null);
                 rp.setModId(userId);
                 rp.setModDtm(nowDtm);
-                rcvPayRepo.save(rp);
+                modified.add(rp);
             }
         }
+        rcvPayRepo.saveAll(modified);
 
         return detail(acctSeqNo, trnsSeqNo);
     }
@@ -628,15 +632,17 @@ public class TransactionService {
 
         String userId = TenantContext.currentUserId();
         String nowDtm = OffsetDateTime.now(ZoneOffset.UTC).format(DTM_FMT);
+        List<AcctTrnsRcvPayInfm> modified = new ArrayList<>();
         for (AcctTrnsRcvPayInfm rp : rcvPayRepo.findByBizKeyAndAcctSeqNo(r.bizKey, trnsSeqNo)) {
             if (rp.getRcvPayTrcoKey() != null || rp.getRcvPayTrcoNm() != null) {
                 rp.setRcvPayTrcoKey(null);
                 rp.setRcvPayTrcoNm(null);
                 rp.setModId(userId);
                 rp.setModDtm(nowDtm);
-                rcvPayRepo.save(rp);
+                modified.add(rp);
             }
         }
+        rcvPayRepo.saveAll(modified);
 
         return detail(acctSeqNo, trnsSeqNo);
     }

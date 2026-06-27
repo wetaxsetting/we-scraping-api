@@ -12,6 +12,7 @@ import com.kosign.wecms.domain.banking.service.AccountAccessGuard;
 import com.kosign.wecms.domain.banking.service.BankCdResolver;
 import com.kosign.wecms.domain.banking.smartorganizer.dto.ConfirmRequest;
 import com.kosign.wecms.domain.banking.smartorganizer.dto.ConfirmResponse;
+import com.kosign.wecms.domain.banking.smartorganizer.repository.SmartOrganizerEligibleRepository;
 import com.kosign.wecms.domain.setting.chartofaccounts.repository.ChartOfAccountRepository;
 import com.kosign.wecms.domain.setting.contacts.repository.TrcoInfmRepository;
 import com.kosign.wecms.domain.setting.purposesettings.entity.BusiUsagSetInfm;
@@ -38,6 +39,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -67,6 +69,7 @@ class SmartOrganizerServiceTest {
     @Mock ChartOfAccountRepository     chartRepo;
     @Mock AcctMstrRepository           acctMstrRepo;
     @Mock BankCdResolver               bankCdResolver;
+    @Mock SmartOrganizerEligibleRepository eligibleRepo;
 
     SmartOrganizerService service;
 
@@ -79,7 +82,8 @@ class SmartOrganizerServiceTest {
     void setUp() {
         service = new SmartOrganizerService(
                 acctTrnsHstrRepo, rcvPayRepo, legacy, accountAccessGuard,
-                vasRepo, trcoRepo, purposeRepo, chartRepo, acctMstrRepo, bankCdResolver);
+                vasRepo, trcoRepo, purposeRepo, chartRepo, acctMstrRepo, bankCdResolver,
+                eligibleRepo);
         TenantContext.set(USER, USER, BIZ, LangCd.EN, TenantContext.AUTH_GR_ADMIN);
     }
 
@@ -152,38 +156,53 @@ class SmartOrganizerServiceTest {
         verify(rcvPayRepo, never()).save(any());
     }
 
-    /* ---- eligibility SQL carries the usage-group direction filter ------ */
+    /* ---- eligibility now delegates to the repository ------------------- */
 
-    /** The generated count/select SQL must include the legacy getDynamic1
-     *  group↔direction filter, gated on a non-null USE_USAG_CD (Option B). */
+    /** The eligibility read delegates count + page to
+     *  {@link SmartOrganizerEligibleRepository}; the SQL-content assertion
+     *  (usage-group filter, tenant filter, parameter binding) lives in
+     *  {@code SmartOrganizerEligibleRepositoryTest}. When the count is zero
+     *  the service returns early and never asks for a page. */
     @Test
-    void listEligible_sqlAppliesUsageGroupDirectionFilter() {
-        ReflectionTestUtils.setField(service, "em", em());
-        // total == 0 returns early, so only the COUNT query is built.
+    void listEligible_zeroCount_returnsEmpty_noPageQuery() {
+        when(eligibleRepo.countEligible(BIZ, BANK, ACCT, "20260101", "20260131", null))
+                .thenReturn(0L);
 
-        service.listEligible(BANK, ACCT, "20260101", "20260131",
+        var resp = service.listEligible(BANK, ACCT, "20260101", "20260131",
                 null, null, null, 1, 15);
 
-        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
-        verify(capturedEm).createNativeQuery(sqlCaptor.capture());
-        String sql = sqlCaptor.getValue();
-        assertThat(sql).contains("busi_usag_set_infm");
-        assertThat(sql).contains("u.usag_grp_cd = CASE WHEN h.inout_dv = '1' THEN '4' ELSE '6' END");
-        assertThat(sql).contains("r.use_usag_cd IS NULL OR EXISTS");
+        assertThat(resp.totalCount()).isEqualTo(0L);
+        assertThat(resp.rows()).isEmpty();
+        verify(eligibleRepo).countEligible(BIZ, BANK, ACCT, "20260101", "20260131", null);
+        verify(eligibleRepo, never()).pageEligible(
+                any(), any(), any(), any(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean(),
+                org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyInt());
+    }
+
+    /** When rows exist, the service pages with the whitelist-validated sort
+     *  expression (default {@code h.trsc_dt} when no sort field is supplied)
+     *  and maps the raw rows. */
+    @Test
+    void listEligible_withRows_pagesWithDefaultSortExpression() {
+        when(eligibleRepo.countEligible(BIZ, BANK, ACCT, "20260101", "20260131", null))
+                .thenReturn(1L);
+        when(eligibleRepo.pageEligible(
+                eq(BIZ), eq(BANK), eq(ACCT), eq("20260101"), eq("20260131"), org.mockito.ArgumentMatchers.isNull(),
+                eq("h.trsc_dt"), org.mockito.ArgumentMatchers.anyBoolean(),
+                org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyInt()))
+                .thenReturn(List.of());
+
+        var resp = service.listEligible(BANK, ACCT, "20260101", "20260131",
+                null, null, null, 1, 15);
+
+        assertThat(resp.totalCount()).isEqualTo(1L);
+        verify(eligibleRepo).pageEligible(
+                eq(BIZ), eq(BANK), eq(ACCT), eq("20260101"), eq("20260131"), org.mockito.ArgumentMatchers.isNull(),
+                eq("h.trsc_dt"), org.mockito.ArgumentMatchers.anyBoolean(),
+                org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyInt());
     }
 
     // ---- fixtures ------------------------------------------------------
-
-    private EntityManager capturedEm;
-
-    private EntityManager em() {
-        capturedEm = mock(EntityManager.class);
-        Query q = mock(Query.class);
-        when(capturedEm.createNativeQuery(anyString())).thenReturn(q);
-        when(q.setParameter(anyString(), any())).thenReturn(q);
-        when(q.getSingleResult()).thenReturn(0L);
-        return capturedEm;
-    }
 
     private void stubBank(String inoutDv) {
         AcctTrnsHstr h = new AcctTrnsHstr();

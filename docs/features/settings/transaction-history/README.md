@@ -5,7 +5,6 @@
 **Refactor slug:** `erp-transaction-history` (REST URI, Java package, log tags, audit `WSVC_ID`, View Setting `screenId`, export `screenId`). Doc-folder name `transaction-history` per the prompt; the slug on every identifier surface is `erp-transaction-history`.
 **Wire base path:** `/api/v1/settings/erp-transaction-history` (GET list+counts · GET `/{seqNo}/download` · GET `/{seqNo}/thumbnail` · POST `/export`)
 **Menu permission slug:** `settings-erp-transaction-history`
-**Legacy JEX counterpart:** WSVC family `comm_0219_001` — `_r001` (list + counts), `_r002` (download), `_c001` (upload — NOT ported). Table `ERP_TRNS_HSTR`.
 
 > This folder is the **primary documentation home** for ERP Transaction History on the backend.
 > It consolidates and indexes material that previously lived in a single flat file; that file is
@@ -101,6 +100,12 @@ Flyway (live numbering): [`V54__erp_trns_hstr.sql`](../../../../src/main/resourc
 | [migration-guide.md](migration-guide.md) | How each JEX layer (JSP / `_act.jsp` / IDO / WSVC / entity / DAO) became its Spring counterpart, incl. dropped/dead legacy flows |
 | [refactor-gap-analysis.md](refactor-gap-analysis.md) | Parity review (MATCH / APPROVED DEVIATION / DEAD LEGACY / PARTIAL / MISSING) — incl. the upload-write-path exclusion (OQ-1) and the View Setting seed gap |
 | [test-scenarios.md](test-scenarios.md) | SIT/UAT scenarios — list/per-tab/filter, download success + WBE2015 + WBE2014, export, sort, search; no create/update/delete; no upload |
+
+---
+
+## Legacy & Migration Traceability
+
+**Legacy JEX counterpart:** WSVC family `comm_0219_001` — `_r001` (list + counts), `_r002` (download), `_c001` (upload — NOT ported). Table `ERP_TRNS_HSTR`.
 
 ---
 

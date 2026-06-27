@@ -24,10 +24,15 @@ import java.util.Base64;
  * Output is always 44 characters (32 bytes × 4/3, padded). Unsalted and
  * deterministic — same plaintext always produces the same hash.
  *
- * <p>This encoder exists so that rows copied directly from the legacy DB
- * (where USER_PW is still a SHA-256 base64 string) can still log in. New
- * passwords are always written with BCrypt via {@link WecmsPasswordEncoder},
- * which transparently upgrades legacy hashes on successful login.
+ * <p>This encoder is the single write path for {@code USER_INFM.USER_PW}:
+ * {@link WecmsPasswordEncoder#encode} delegates here so every password the
+ * Spring app persists is the legacy {@code public.hash()} SHA-256 base64
+ * value — never BCrypt — keeping the live JEX system able to authenticate
+ * the same credential (coexistence rule, 2026-06-10). Login is verify-only:
+ * there is <b>no</b> transparent SHA-256&nbsp;&rarr;&nbsp;BCrypt upgrade and
+ * <b>no</b> automatic rewrite of {@code USER_PW} on successful login. (The
+ * earlier upgrade behaviour described in pre-2026-06-10 revisions was
+ * removed because it mutated live data and broke JEX login.)
  */
 public final class LegacyHashPasswordEncoder implements PasswordEncoder {
 

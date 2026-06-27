@@ -81,6 +81,12 @@ public class OverseasPaymentExcelService {
     private final TrcoInfmRepository           contactRepo;
     private final TrcoOvrsInfmRepository       overseasContactRepo;
     private final SpecialCharValidator         specialCharValidator;
+    /** Folds the user-supplied withdrawal bank code (internal {@code BANK_CD}
+     *  e.g. {@code 11704088}) into the canonical NAPAS code ({@code 970424})
+     *  before it lands on {@code OVRS_PYMN_SUMR.OUT_BANK_CD} — the form the
+     *  Transfer/dispatch path keys {@code TB_FIRM_CONF} by. Mirrors legacy
+     *  {@code pymn_0007_003_c001_act.jsp:106-107}. */
+    private final com.kosign.wecms.domain.payment.common.OutBankCdNormalizer outBankCdNormalizer;
     private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
     private final TransactionalRetry           transactionalRetry;
     /** F2 — shared ERP_TRNS_HSTR writer for the Overseas Result download 'W' row. */
@@ -487,7 +493,14 @@ public class OverseasPaymentExcelService {
         sumr.setCcyCd(req.ccy_cd());
         sumr.setTotalTranAmt(serverTotalAmt);
         sumr.setTotTrnsCnt(serverTotTrnsCnt);
-        sumr.setOutBankCd(req.wdrl_bank_cd());
+        // Persist the canonical NAPAS code, NOT the raw account BANK_CD. Legacy
+        // pymn_0007_003_c001_act.jsp:106-107 looks the withdrawal bank up in
+        // NAPAS_BANK_INFO (bank_cd = ? OR napas_bank_cd = ?) and stores
+        // napas_bank_cd. The Transfer/dispatch path keys TB_FIRM_CONF by
+        // OUT_BANK_CD (OverseasDispatchExecutor.resolveBankPrtnId) and that
+        // table is keyed by the NAPAS code (970424), so storing the raw
+        // 11704088 here caused WBE2089 ("firm-banking configuration not found").
+        sumr.setOutBankCd(outBankCdNormalizer.normalize(req.wdrl_bank_cd()));
         // OUT_BANK_NM is not stored on OVRS_PYMN_SUMR in JEX — the withdrawal
         // bank name is derived from OUT_BANK_CD via BANK_INFM in the list/result queries.
         sumr.setWdrlActNo(req.wdrl_acct_no());

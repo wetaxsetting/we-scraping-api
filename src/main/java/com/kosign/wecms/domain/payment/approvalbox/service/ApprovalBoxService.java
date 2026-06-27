@@ -350,7 +350,11 @@ public class ApprovalBoxService {
                 m.getDraftUserId(), m.getDraftUserNm(), m.getRegDtm(), m.getApprTypeCd(), m.getPayEndYn(),
                 total, approved);
 
-        return mapProjections(bizKey, List.of(p)).stream().findFirst().orElse(null);
+        ApprovalBoxRow row = mapProjections(bizKey, List.of(p)).stream().findFirst().orElse(null);
+        // Payroll Type (APPR_FUND_TP) — detail-only, sourced from the master
+        // entity here (mapProjections has no access to it). Null for non-payroll;
+        // the frontend renders the row only when kind === payroll.
+        return row == null ? null : row.withApprFundTp(m.getApprFundTp());
     }
 
     /* =================================================================
@@ -943,7 +947,12 @@ public class ApprovalBoxService {
                 p.apprvrTotCnt() == null ? 0L : p.apprvrTotCnt(),
                 p.apprvrApprTotCnt() == null ? 0L : p.apprvrApprTotCnt(),
                 p.payEndYn(),
-                approvers);
+                approvers,
+                // List rows carry no detail-only fields — withdrawal account
+                // (4) + payroll fund type are populated only on the single-row
+                // detail read (ApprovalDetailService.master → withDetail;
+                // findOne → withApprFundTp).
+                null, null, null, null, null);
     }
 
     private static ApprovalBoxApprover toApprover(ExptResolApprvrInfm a) {

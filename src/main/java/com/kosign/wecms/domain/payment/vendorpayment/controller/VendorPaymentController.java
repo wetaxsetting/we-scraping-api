@@ -131,6 +131,17 @@ public class VendorPaymentController {
     }
 
     /**
+     * Preview the next {@code VO_YYMMDD_NNN} document number for the Request
+     * Approval popup (read-only; reserves / persists nothing). Mirrors the
+     * Internal Transfer / Card precedent so Vendor Payment renders the same
+     * friendly id format before submit.
+     */
+    @GetMapping("/next-doc-no")
+    public ApiResponse<com.kosign.wecms.domain.payment.internaltransfer.dto.NextDocNoResponse> nextDocNo() {
+        return ApiResponse.ok(service.previewNextDocNo());
+    }
+
+    /**
      * Scheduled Vendor Payment detail. Mirrors legacy
      * {@code pymn_0001_002_r001}.
      */

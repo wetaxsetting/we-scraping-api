@@ -76,7 +76,7 @@ None block release; each needs a product call.
 | OQ-DOC-UM-1 | Should user create/update/delete write `AUDIT_LOGS_INFM` rows (slug `user-management`), matching firm-banking-settings / contacts / chart-of-accounts? | Currently **no audit write**. Proposed: add audit on mutations for consistency. |
 | OQ-DOC-UM-2 | Is action-level (CRUD) entitlement (`USER_MENU_ACTION_AUTH_INFM`) in scope, or is menu-level sufficient? | Menu-level only today. Proposed: defer until a product requirement appears. |
 | OQ-DOC-UM-3 | Should admins toggle `ACTV_YN` / `LOCK_YN` (activate/deactivate, unlock) from this screen? | Not editable here today; status is DBA/auth-driven. Proposed: add if business needs in-screen status control. |
-| OQ-DOC-UM-4 | Should password reuse history (`USER_PW_CHG_HIS`) + 5-failure auto-lock be enforced? | Deferred to the auth-stabilisation MR. |
+| OQ-DOC-UM-4 | Should password reuse history (`USER_PW_CHG_HIS`) + 5-failure auto-lock be enforced? | **Resolved.** 5-failure auto-lock is **implemented** (F-10, `LoginLockoutService` → `USER_INFM.LOCK_YN`); password-reuse history (last-3) is enforced by `ChangePasswordService` via `USER_PW_CHG_HIS`. |
 | OQ-DOC-UM-5 | The wire `clph_no` carries no separate country code, so the inbound `mapUserRow` stamps `phoneCountryCode="84"`. The Add/Edit forms already render an interactive `PhoneCountryPicker` (default `"84"`, KH/KR/VN), but the picked code is not persisted as a distinct wire field. Should the wire carry a real country code? | Cosmetic; the picker exists but the code isn't round-tripped. Revisit when the wire splits country code from number. |
 
 ## 5. Migration status

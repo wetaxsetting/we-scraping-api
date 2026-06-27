@@ -57,6 +57,10 @@ admin-vs-user menu payload.
   Testcontainers is deferred).
 - **Refresh-token flow — MISSING (feature not implemented).** No test because there is no refresh token
   (see [refactor-gap-analysis.md](refactor-gap-analysis.md) GAP-1).
-- **Server-side logout revocation — MISSING (feature not implemented).** GAP-2.
-- **5-failure auto-lock — MISSING (feature not implemented).** GAP-3 (owned by [login](../login/README.md)).
+- **Server-side logout revocation — IMPLEMENTED + tested** (formerly MISSING — implemented 2026 via
+  F-03). The revocation path is covered by `JwtRevocationTest` (logout-then-reuse → 401, admin
+  revoke-all). GAP-2. The only open item is the **in-memory** revocation store (durable / distributed
+  deferred) — an SIT-observable restart test (revoke → restart → token works again) documents it.
+- **5-failure auto-lock — IMPLEMENTED + tested** (formerly MISSING — implemented 2026 via F-10).
+  Covered by `LoginLockoutServiceTest`; owned by [login](../login/README.md). GAP-3.
 - **Async `TenantContext` propagation — not tested (by design, not implemented).** GAP-4.

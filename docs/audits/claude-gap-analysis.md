@@ -32,7 +32,7 @@ The task asks to separate three categories. They are tagged in the **Kind** colu
 | CA-7 | Many Feature Status rows say "Frontend not verified this pass"; later passes verified `login-credentials`, `einvoice`, `operation`, `vas-account`, `own-account-transfer`, `transfer-history` as frontend-wired. | PARTIAL | stale-doc | maintainer |
 | CA-8 | Project Overview "What works today" omits `change-password`, which is implemented (`AuthController.java:72`). | PARTIAL (understated) | stale-doc | maintainer |
 | CA-9 | "Deferred inside auth: password-change-history reset" — still accurate (the *reset* sub-feature is not built). | MISSING | impl-gap | dev |
-| CA-10 | Dashboard / refresh-token / 5-failure auto-lock listed Not implemented — accurate. | MISSING | impl-gap | dev |
+| CA-10 | Dashboard / refresh-token listed Not implemented — still accurate. **5-failure auto-lock is now IMPLEMENTED** (F-10, `LoginLockoutService` → `USER_INFM.LOCK_YN`); the "Not implemented" claim for auto-lock is stale. | PARTIAL (auto-lock remediated; dashboard + refresh-token still MISSING) | stale-doc / impl-gap | dev |
 
 ## B. wecms-web/CLAUDE.md
 

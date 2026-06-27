@@ -17,7 +17,7 @@ JEX is **read-only reference**. The refactor mirrors JEX schema column-for-colum
 | Table | Refactor Entity | Domain | First Migration | JEX Counterpart | Notes |
 |---|---|---|---|---|---|
 | `BUSI_INFM` | `BusiInfm` | `auth` | V1 | `BUSI_INFM` | PK = `BIZ_KEY`; tenant master |
-| `USER_INFM` | `UserInfm` | `auth` | V1 | `USER_INFM` | PK = `USER_ID`; legacy SHA-256 → BCrypt upgrade on login |
+| `USER_INFM` | `UserInfm` | `auth` | V1 | `USER_INFM` | PK = `USER_ID`; password = legacy SHA-256 (`public.hash()`); verify-only, no upgrade (corrected 2026-06-10) |
 | `USER_BUSI_CONN_INFM` | `UserBusiConnInfm` | `auth` | V1 | `USER_BUSI_CONN_INFM` | Composite PK (`USER_ID`, `BIZ_KEY`) |
 | `USER_LOGIN_HIS` | `UserLoginHis` | `auth` | V1 (PK rebuilt in V28) | `USER_LOGIN_HIS` | Composite PK (`USER_ID`, `REG_DTM`, `REG_UID`) post-V28 |
 | `ACCT_MSTR` | `AcctMstr` | `banking` | V1 | `ACCT_MSTR` | Account master |

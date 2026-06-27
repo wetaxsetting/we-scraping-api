@@ -144,6 +144,11 @@ public class PayrollDispatchExecutor {
         mst.setReqCnt(master.getTotTrnsCnt());
         mst.setReqAmt(master.getTotalTranAmt());
         mst.setRegDttm(dttm14);
+        // PROC_DTTM is NOT NULL in TB_PAY_FILE_MST_HIS (the trigger-written audit
+        // mirror copies new.proc_dttm verbatim). Legacy stamps proc_dttm = reg_dttm
+        // on the initial insert ('C' snapshot has proc_stat='9', proc_dttm==reg_dttm);
+        // the real processing time is written by the later callback UPDATE.
+        mst.setProcDttm(dttm14);
 
         tbPayFileMstRepository.save(mst);
 

@@ -87,6 +87,10 @@ class BankTransactionSyncServiceLoginGroupingTest {
 
     private BankTransactionSyncService service;
 
+    // Cumulative set of stubbed accounts — returned by the batched
+    // acctRepo.findAllById(...) used by the sync pre-filter loop.
+    private java.util.List<AcctMstr> mockedAccts;
+
     // Shared OK gateway envelope.
     private NxisasCommon okCommon;
     // Per-job out objects (shared across banks — login() returns the same
@@ -114,6 +118,9 @@ class BankTransactionSyncServiceLoginGroupingTest {
                 legacyFn, registry, syncHistoryWriter, statusUpdater);
 
         TenantContext.set(USER_ID, BIZ_KEY, LangCd.EN);
+
+        mockedAccts = new java.util.ArrayList<>();
+        when(acctRepo.findAllById(any())).thenReturn(mockedAccts);
 
         when(gateway.newTrSeq()).thenReturn("20260617000000");
     }
@@ -178,6 +185,7 @@ class BankTransactionSyncServiceLoginGroupingTest {
         when(acct.getHandRegYn()).thenReturn("N");
         when(acctRepo.findByBizKeyAndBankCdAndAcctNo(eq(BIZ_KEY), eq(bankCd), eq(acctNo)))
                 .thenReturn(Optional.of(acct));
+        mockedAccts.add(acct);
     }
 
     private void stubCredential(String bankCd) {

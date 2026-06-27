@@ -60,15 +60,16 @@ public class UserImageService {
     /** 2 MB cap per user avatar — matches the company-logo cap. */
     public static final long MAX_IMAGE_SIZE_BYTES = 2L * 1024L * 1024L;
 
+    // F-02: SVG is NOT allowed. An inline-served SVG can carry <script> and
+    // execute in the WeCMS origin (stored XSS). Raster image formats only.
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of(
-            "jpg", "jpeg", "png", "gif", "svg");
+            "jpg", "jpeg", "png", "gif");
 
     private static final Map<String, String> MIME_BY_EXT = Map.of(
             "jpg",  "image/jpeg",
             "jpeg", "image/jpeg",
             "png",  "image/png",
-            "gif",  "image/gif",
-            "svg",  "image/svg+xml");
+            "gif",  "image/gif");
 
     private static final String DEL_N = "N";
 

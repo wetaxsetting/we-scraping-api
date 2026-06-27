@@ -17,6 +17,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * Logs every HTTP request + response (method, URI, query, status, duration,
@@ -34,6 +35,17 @@ public class RequestResponseLoggingFilter extends OncePerRequestFilter {
 
     private static final int MAX_BODY_CHARS = 8_000;
     private static final ObjectMapper PRETTY = new ObjectMapper();
+
+    /**
+     * F-06: redact values of sensitive JSON fields before any body is logged, so
+     * the DEBUG request/response log (active under the {@code local} profile)
+     * never captures passwords, tokens, or bank/GDT credential ciphertext. Matches
+     * the field NAME only and replaces its string value with {@code "***"}.
+     */
+    private static final Pattern SENSITIVE_FIELD = Pattern.compile(
+            "(?i)(\"(?:user_pw|password|passwd|pwd|user_password|new_password"
+          + "|current_password|old_password|access_token|refresh_token|token"
+          + "|secret|authorization|cert_info_detl_con\\d?)\"\\s*:\\s*)\"[^\"]*\"");
 
     /**
      * Content types whose response body is binary and must never be
@@ -154,6 +166,7 @@ public class RequestResponseLoggingFilter extends OncePerRequestFilter {
                     // fall through with raw text
                 }
             }
+            text = SENSITIVE_FIELD.matcher(text).replaceAll("$1\"***\"");
             return text.length() > MAX_BODY_CHARS
                     ? text.substring(0, MAX_BODY_CHARS) + "\n...<truncated " + (text.length() - MAX_BODY_CHARS) + " chars>"
                     : text;

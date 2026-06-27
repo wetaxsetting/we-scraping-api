@@ -70,6 +70,8 @@ class CardTransactionsControllerTest {
         scrapeService = mock(CardTransactionScrapeService.class);
         cardTranListR001Service = mock(CardTranListR001Service.class);
         excelExportService = mock(ExcelExportService.class);
+        var approvalEditService = mock(
+                com.kosign.wecms.domain.payment.approvalbox.service.ApprovalEditService.class);
 
         ObjectMapper mapper = new ObjectMapper()
                 .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
@@ -84,7 +86,7 @@ class CardTransactionsControllerTest {
         GlobalExceptionHandler advice = new GlobalExceptionHandler(messages);
 
         mvc = MockMvcBuilders
-                .standaloneSetup(new CardTransactionsController(service, syncService, scrapeService, cardTranListR001Service, excelExportService))
+                .standaloneSetup(new CardTransactionsController(service, syncService, scrapeService, cardTranListR001Service, approvalEditService, excelExportService))
                 .setMessageConverters(jsonConverter)
                 .setControllerAdvice(advice)
                 .build();

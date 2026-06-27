@@ -76,7 +76,7 @@ The `logo_url` is **not** in the request body — logos have their own endpoints
 
 ```
 POST /api/v1/settings/preferences/logo        Content-Type: multipart/form-data
-  part "file" = the user's image (.jpg/.jpeg/.png/.gif/.svg, ≤ 2 MB)
+  part "file" = the user's image (.jpg/.jpeg/.png/.gif, ≤ 2 MB; .svg rejected — F-02 stored-XSS)
 → 200, data: PreferencesResponse (refreshed; logo_url now non-null with a fresh ?v= cache-buster)
 errors: WBE2084 (no filename) · WBE2085 (empty) · WBE2086 (> 2 MB, {0}=cap) ·
         WBE2087 (extension not allowed, {0}=allowed list) · WBE2081 (disk write failed) · WBE2080
@@ -94,7 +94,7 @@ errors: WBE2080
 
 ```
 GET /api/v1/settings/preferences/logo
-→ 200, Content-Type: image/png|image/jpeg|image/gif|image/svg+xml   (resolved per stored extension)
+→ 200, Content-Type: image/png|image/jpeg|image/gif   (resolved per stored extension; image/svg+xml never occurs — .svg uploads are rejected, F-02)
        Content-Length: <bytes>
        Content-Disposition: inline
        Cache-Control: private, max-age=300

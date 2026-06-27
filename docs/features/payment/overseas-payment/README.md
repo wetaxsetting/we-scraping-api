@@ -6,7 +6,6 @@
 |---|---|
 | Slug | `overseas-payment` |
 | Module | Payment → Overseas Payment |
-| JEX counterparts | `pymn_0007_*` (Overseas Scheduled Payment) + `pymn_0008_*` (Overseas Payment Result) — label at [comm_0190_003_view.jsp:608](../../../../../WECMS%20DEV/WECMS/web/view/jex/wabooks/comm/comm_0190_003_view.jsp#L608); `getDynamicOvrs()` branch at [pymn_0007_001_r001_act.jsp:198](../../../../../WECMS%20DEV/WECMS/web/WEB-INF/action/jex/wabooks/pymn/pymn_0007_001_r001_act.jsp#L198) |
 | Backend controller | [`OverseasPaymentController`](../../../../src/main/java/com/kosign/wecms/domain/payment/controller/OverseasPaymentController.java) — base `/api/v1/payment/overseas-payment` (**single controller**, not a two-controller split) |
 | Backend service | [`OverseasPaymentService`](../../../../src/main/java/com/kosign/wecms/domain/payment/service/OverseasPaymentService.java) + helper package [`domain/payment/overseas/**`](../../../../src/main/java/com/kosign/wecms/domain/payment/overseas) (dispatch, key-gen, file/storage, result-detail export) |
 | Frontend folder | [`components/payment/overseas-payment/`](../../../../../wecms-web/components/payment/overseas-payment) |
@@ -79,6 +78,10 @@ All under base `/api/v1/payment/overseas-payment` (single controller). Full deta
 | POST | `/result/{id}/export` | `exportResultDetail` (per-batch XLSX) | **result** |
 
 > Banking-match endpoints (per-line candidates / match / unmatch / unmatch-all) for the Result Detail screen are consumed by the frontend (`lib/api/payment.ts`); see [interface-specification.md](interface-specification.md) §"Banking match".
+
+## Legacy & Migration Traceability
+
+- **JEX counterparts:** `pymn_0007_*` (Overseas Scheduled Payment) + `pymn_0008_*` (Overseas Payment Result) — label at [comm_0190_003_view.jsp:608](../../../../../WECMS%20DEV/WECMS/web/view/jex/wabooks/comm/comm_0190_003_view.jsp#L608); `getDynamicOvrs()` branch at [pymn_0007_001_r001_act.jsp:198](../../../../../WECMS%20DEV/WECMS/web/WEB-INF/action/jex/wabooks/pymn/pymn_0007_001_r001_act.jsp#L198)
 
 ## Cross-links
 

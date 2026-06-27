@@ -29,7 +29,7 @@ test-demo fallback (`LoginResponse.chooser(...)` + `CompanyOption[]`, and the fr
 | Method | Path | Auth | Module |
 |---|---|---|---|
 | POST | `/api/v1/auth/login` | Public | [login/](login/README.md) |
-| POST | `/api/v1/auth/logout` | Public (stateless stub) | [logout/](logout/README.md) |
+| POST | `/api/v1/auth/logout` | Public (revokes the presented JWT `jti` server-side) | [logout/](logout/README.md) |
 | GET | `/api/v1/auth/me` | Protected | [session-management/](session-management/README.md) |
 | POST | `/api/v1/auth/change-password` | Protected | [change-password/](change-password/README.md) |
 

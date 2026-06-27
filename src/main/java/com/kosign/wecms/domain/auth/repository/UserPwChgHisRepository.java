@@ -14,8 +14,10 @@ public interface UserPwChgHisRepository
      * Backs the "cannot reuse your last 3 passwords" rule — mirrors legacy
      * {@code IDO.USER_PW_CHG_HIS_R003.xml} (ORDER BY REG_DTM DESC LIMIT 3).
      * The candidate new password is compared against each row's
-     * {@code USER_PW} hash with the shared {@code PasswordEncoder} so both
-     * BCrypt and legacy SHA-256 rows are honoured.
+     * {@code USER_PW} hash with the shared {@code PasswordEncoder}. New rows
+     * are always the legacy SHA-256 ({@code public.hash()}) value; the
+     * encoder also tolerates a pre-existing BCrypt hash on read (legacy dev
+     * rows only), so both forms verify — but only SHA-256 is ever written.
      */
     List<UserPwChgHis> findTop3ByUserIdOrderByRegDtmDescRegSeqNoDesc(String userId);
 

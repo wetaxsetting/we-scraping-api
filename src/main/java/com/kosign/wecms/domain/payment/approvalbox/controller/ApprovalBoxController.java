@@ -13,8 +13,10 @@ import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxBulkApproveRes
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxListResponse;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalTransactionRow;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ChangeApprovalLineRequest;
+import com.kosign.wecms.domain.payment.approvalbox.dto.EditApprovalRequest;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxService;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalDetailService;
+import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalEditService;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalAttachmentRow;
 import com.kosign.wecms.domain.payment.internaltransfer.service.ApprovalAttachmentDownloadService;
 import jakarta.servlet.http.HttpServletResponse;
@@ -36,7 +38,9 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.security.access.prepost.PreAuthorize;
 
 import java.io.IOException;
@@ -76,10 +80,15 @@ import java.util.List;
 @PreAuthorize("@menuAuthz.canAccess('payment-approval-box')")
 public class ApprovalBoxController {
 
+    /** Audit-log slug for Approval Box edits (matches
+     *  {@code ApprovalBoxService.AUDIT_WSVC_ID}). */
+    private static final String AUDIT_WSVC_ID_APPROVAL_BOX = "approval-box";
+
     private final ApprovalBoxService service;
     private final ApprovalDetailService approvalDetailService;
     private final ExcelExportService excelExportService;
     private final ApprovalAttachmentDownloadService approvalAttachmentDownloadService;
+    private final ApprovalEditService approvalEditService;
     /*Deploy v3*/
     /**
      * List Approval Box rows for the current tenant.
@@ -277,6 +286,25 @@ public class ApprovalBoxController {
             @PathVariable String apprSeqNo,
             @Valid @RequestBody ChangeApprovalLineRequest req) {
         service.changeApprovalLine(apprSeqNo, req != null ? req.apprLineNo() : null);
+        return ApiResponse.ok(null);
+    }
+
+    /**
+     * Edit an in-flight (Pending / In Progress) approval for a non-card payment
+     * type — title + approval content + approver line + attachment add/remove in
+     * one multipart call. Mirrors legacy {@code comm_0192_013_u002}
+     * ({@code comm_0195_001.ts editApproval()}). Requestor / admin only
+     * (enforced in {@link ApprovalEditService}). The JSON {@code request} part
+     * is {@link EditApprovalRequest}; {@code attachments} are the newly-added
+     * files (legacy REC3). Card approvals use the dedicated
+     * {@code /card-transactions/by-approval/{apprSeqNo}/edit} endpoint.
+     */
+    @PutMapping(value = "/{apprSeqNo}/edit", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ApiResponse<Void> edit(
+            @PathVariable String apprSeqNo,
+            @Valid @RequestPart("request") EditApprovalRequest request,
+            @RequestPart(value = "attachments", required = false) List<MultipartFile> attachments) {
+        approvalEditService.edit(apprSeqNo, request, attachments, AUDIT_WSVC_ID_APPROVAL_BOX);
         return ApiResponse.ok(null);
     }
 

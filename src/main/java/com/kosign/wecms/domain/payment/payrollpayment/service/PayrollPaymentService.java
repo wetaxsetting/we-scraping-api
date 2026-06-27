@@ -45,6 +45,7 @@ import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolApprvrInf
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
 import com.kosign.wecms.domain.payment.internaltransfer.service.ApprovalAttachmentLoader;
+import com.kosign.wecms.domain.payment.internaltransfer.service.ApprovalContentLoader;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprDv;
 import com.kosign.wecms.domain.payment.service.DocNoGenerator;
 import com.kosign.wecms.domain.payment.internaltransfer.service.CutoffValidator;
@@ -174,6 +175,7 @@ public class PayrollPaymentService {
      *  {@code VendorPaymentService} / {@code ExpensePaymentService} /
      *  {@code InternalTransferService}. */
     private final ApprovalAttachmentLoader      approvalAttachmentLoader;
+    private final ApprovalContentLoader         approvalContentLoader;
     private final DocNoGenerator                docNoGenerator;
     private final BusiInfmRepository            busiInfmRepository;
     private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
@@ -304,11 +306,18 @@ public class PayrollPaymentService {
         List<ApprovalAttachmentRow> attachments =
                 approvalAttachmentLoader.load(bizKey, apprSeqNo);
 
+        // Approval Content — legacy BLTB_POST_INFM.POST_CONT (R007), NOT
+        // EXPT_RESOL_MSTR.CONT (the two can diverge on the live JEX DB).
+        String cont = approvalContentLoader.load(bizKey, apprSeqNo);
+
         return new ScheduledTransferDetailResponse(
                 master.getScdulPymnNo(),
                 master.getScdulPymnTypeCd(),
                 master.getOutBankCd(),
-                transferLineDetailMapper.resolveBankNm(master.getOutBankCd()),
+                // C-2: withdrawal-bank name via legacy wb_get_bank_name_any_code
+                // (legacy IDO.SCDUL_PYMN_SUMR_R002.xml:97), matching the legacy
+                // OUT_BANK_NM verbatim. Per-line deposit banks keep resolveBankNm.
+                legacyFunctions.resolveBankNameAnyCode(master.getOutBankCd()),
                 master.getWdrlActNo(),
                 master.getTitl(),
                 master.getTotalTranAmt(),
@@ -330,7 +339,13 @@ public class PayrollPaymentService {
                 master.getOrgFileNm(),
                 master.getFileSize() == null || master.getFileSize().isBlank() ? null : new java.math.BigDecimal(master.getFileSize().trim()),
                 lines,
-                attachments);
+                attachments,
+                cont,  // Approval Content — BLTB_POST_INFM.POST_CONT (legacy R007)
+                // Payroll Type — EXPT_RESOL_MSTR.APPR_FUND_TP joined by APPR_SEQ_NO
+                // (same `erm` fetch used for Requestor / Approval Ref above). The
+                // frontend resolves "0"=Salary / "1"=Bonus / "9"=Other via
+                // resolvePayrollTypeLabel. Null until the batch has an approval row.
+                erm != null ? erm.getApprFundTp() : null);
     }
 
     /* ----------------------------------------------------------------
@@ -651,6 +666,19 @@ public class PayrollPaymentService {
      *  Request Approval
      * ---------------------------------------------------------------- */
 
+    /**
+     * Preview the next {@code VO_YYMMDD_NNN} document number for the Request
+     * Approval popup (read-only). Computes via the shared {@link DocNoGenerator}
+     * WITHOUT reserving or persisting anything — the authoritative DOC_NO is
+     * stamped at {@link #requestApproval} submit time. Mirrors
+     * {@link com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService#previewNextDocNo}.
+     */
+    @Transactional(readOnly = true)
+    public com.kosign.wecms.domain.payment.internaltransfer.dto.NextDocNoResponse previewNextDocNo() {
+        return new com.kosign.wecms.domain.payment.internaltransfer.dto.NextDocNoResponse(
+                docNoGenerator.nextDocNo(requireTenant()));
+    }
+
     @Transactional
     public RequestApprovalResponse requestApproval(String id, RequestApprovalRequest req,
             java.util.List<org.springframework.web.multipart.MultipartFile> attachments) {
@@ -719,9 +747,13 @@ public class PayrollPaymentService {
         // 1. Stamp SCDUL_PYMN_SUMR (status is NOT stored here — derived from
         //    EXPT_RESOL_MSTR.APPR_TYPE_CD, set Pending on the master below).
         master.setApprSeqNo(apprSeqNo);
-        if (req.postTitle() != null && !req.postTitle().isBlank()) {
-            master.setTitl(req.postTitle().trim());
-        }
+        // Do NOT overwrite SCDUL_PYMN_SUMR.TITL here. Legacy
+        // comm_0192_001_c005_act.jsp:356-373 (updateScheduledPaymentSummary)
+        // updates ONLY OUT_BANK_CD / WDRL_ACT_NO / APPR_SEQ_NO / WDRL_CCY_CD at
+        // Request Approval — it never touches SPS.TITL. The batch title stays the
+        // uploaded file/batch name; the approval-request title lives only in
+        // EXPT_RESOL_MSTR.TITL (set below). Overwriting TITL here corrupted the
+        // File Name column (it showed the approval title instead of the file).
         // H-1 (legacy parity, comm_0192_001_c005_act.jsp:362-371
         // updateScheduledPaymentSummary): persist the withdrawal account the
         // user selected in the Request Approval popup. OUT_BANK_CD is the
@@ -1107,11 +1139,14 @@ public class PayrollPaymentService {
                 s.getOutBankCd(),
                 s.getWdrlActNo(),
                 payDate,
-                // File Name — legacy IDO.SCDUL_PYMN_SUMR_R002:57 binds the list
-                // "File Name" column to FILE_NM = SPS.TITL (SCDUL_PYMN_SUMR.TITL),
-                // NOT ORG_FILE_NM. (The detail page's file-card still uses
-                // ORG_FILE_NM via the separate detail response — unchanged.)
-                s.getTitl(),
+                // File Name = ORG_FILE_NM (the original uploaded Excel name).
+                // Legacy IDO R002:57 aliases `SPS.TITL AS FILE_NM`, but SPS.TITL is
+                // the upload batch title which the approval flow / Approval Box edit
+                // can repurpose — ORG_FILE_NM is the stable uploaded-file name and is
+                // what the Payroll Result list (TransferResultRow.fileNm) and
+                // Vendor/Expense already display. Approval Title comes from
+                // EXPT_RESOL_MSTR.TITL separately (the `titl` arg above).
+                s.getOrgFileNm(),
                 docNo,
                 s.getWdrlCcyCd(),
                 apprFundTp,

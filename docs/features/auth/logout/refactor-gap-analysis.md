@@ -1,8 +1,8 @@
 # Logout — Refactor Gap Analysis (Parity Review)
 
-Legacy JEX (server-side `HttpSession` teardown on logout) vs. the refactor (`logout` — a stateless
-public stub). Status vocabulary: **MATCH** · **APPROVED DEVIATION** · **DEAD LEGACY** · **PARTIAL** ·
-**MISSING**.
+Legacy JEX (server-side `HttpSession` teardown on logout) vs. the refactor (`logout` — a public
+endpoint that **revokes the presented JWT server-side**). Status vocabulary: **MATCH** ·
+**APPROVED DEVIATION** · **DEAD LEGACY** · **PARTIAL** · **MISSING**.
 
 ---
 
@@ -10,10 +10,10 @@ public stub). Status vocabulary: **MATCH** · **APPROVED DEVIATION** · **DEAD L
 
 | Area | Legacy | Refactor | Status |
 |---|---|---|---|
-| **Logout endpoint exists** | session-invalidation action | `POST /api/v1/auth/logout` → stub `ApiResponse<Void>` "Logout successful" | **MATCH** (endpoint present) |
+| **Logout endpoint exists** | session-invalidation action | `POST /api/v1/auth/logout` → revokes the `jti`, returns `ApiResponse<Void>` "Logout successful" | **MATCH** (endpoint present + functional) |
 | **Stateless session model** | server `HttpSession` | `SessionCreationPolicy.STATELESS` (no server session) | **APPROVED DEVIATION** (architecture) |
-| **Server-side session invalidation** | `HttpSession` torn down on logout | none — there is no server session to invalidate | **DEAD LEGACY** (GAP-2) |
-| **Server-side token revocation / blacklist** | implicit via session drop | none — JWT valid until expiry; logout does not revoke | **MISSING** (GAP-1, deferred) |
+| **Server-side session invalidation** | `HttpSession` torn down on logout | none — there is no server session to invalidate; JWT `jti` revocation replaces it | **DEAD LEGACY** (GAP-2) |
+| **Server-side token revocation / blacklist** | implicit via session drop | `AuthService.logout → TokenRevocationService` revokes the `jti`; `JwtAuthenticationFilter` rejects it on the next request (store is in-memory) | **IMPLEMENTED** (formerly GAP-1, deferred — implemented 2026 via F-03; open: in-memory store) |
 | **Client token clear** | server-dropped session cookie | client clears `wecms_token` + `wecms_user` (WEB) | **MATCH** (effect achieved, client-side) |
 | **Redirect after logout** | server-issued | frontend `router.replace("/login")` | **APPROVED DEVIATION** (SPA flow) |
 | **Route protection** | session-gated | **public** (permit-all in `SecurityConfig`) | **APPROVED DEVIATION** (must succeed for an expired token) |
@@ -23,16 +23,22 @@ public stub). Status vocabulary: **MATCH** · **APPROVED DEVIATION** · **DEAD L
 
 ## Specially-verified gaps
 
-### GAP-1 — Server-side token revocation / blacklist (MISSING — deferred)
+### GAP-1 — Server-side token revocation / blacklist (IMPLEMENTED — formerly MISSING, deferred)
 
-The refactor uses a stateless, signed JWT with no server-side token store. Logout does **not** revoke
-the token: an issued JWT remains valid until it **expires on its own** (TTL
-`wecms.jwt.expires-in-seconds`, default 3600 s). Calling logout does not shorten that window. A future
-**`REFRESH_TOKEN` / blacklist table** would wire revocation into
+> **Formerly GAP-1 (MISSING — deferred); implemented 2026 via F-03.**
+
+Logout now revokes the presented token server-side. The JWT carries a `jti` (`JwtTokenProvider`);
+`AuthService.logout → TokenRevocationService.revokeToken(...)` adds that `jti` to the denylist, and
 [JwtAuthenticationFilter](../../../../src/main/java/com/kosign/wecms/common/security/JwtAuthenticationFilter.java)
-so a revoked token is rejected on the next request. **Status: MISSING** (deferred; aligns with
-`jwt-authentication` and `session-management`, which record refresh-token / revocation as deferred).
-Owner: backend + PO (a refactor-side token table needs a baseline decision per root CLAUDE.md).
+rejects revoked / superseded tokens (the per-user not-before cutoff handles admin lock / delete /
+demote / password-reset via `UserManagementService.revokeAllForUser`). A revoked token therefore stops
+working on the **next** request, well before its TTL (`wecms.jwt.expires-in-seconds`, default 3600 s).
+
+**Open limitation (still deferred):** the revocation store (`TokenRevocationService`) is **in-memory** —
+the denylist + per-user cutoff are lost on restart and are **not** shared across instances. A durable /
+distributed store (Redis, or a PO-approved table) is required before any multi-node deploy. A refactor-
+side token table needs a baseline decision per root CLAUDE.md. **Status: IMPLEMENTED; in-memory store
+open.** Owner: backend + PO.
 
 ### GAP-2 — Legacy server-session invalidation (DEAD LEGACY)
 
@@ -42,29 +48,36 @@ The behaviour is intentionally **not ported**. **Status: DEAD LEGACY.**
 
 ### Stateless model (APPROVED DEVIATION)
 
-The whole logout shape — public stub, no server work, client-side token clear, frontend redirect — is a
-direct consequence of the **stateless JWT** decision (`jwt-authentication`,
-[session-management](../session-management/README.md)). This is a sanctioned architectural divergence
-from the legacy server-session model. **Status: APPROVED DEVIATION.**
+The logout shape — public endpoint, server-side `jti` revocation, client-side token clear, frontend
+redirect — is a direct consequence of the **stateless JWT** decision (`jwt-authentication`,
+[session-management](../session-management/README.md)). Server-side state is limited to the in-memory
+revocation denylist (no `HttpSession`). This is a sanctioned architectural divergence from the legacy
+server-session model. **Status: APPROVED DEVIATION.**
 
 ---
 
 ## Migration status
 
 ```
-Refactor Status: complete for the in-scope feature surface (the stub endpoint);
-                 server-side revocation (GAP-1) MISSING/deferred; legacy session teardown (GAP-2) DEAD LEGACY.
+Refactor Status: complete for the in-scope feature surface (endpoint + server-side jti revocation);
+                 server-side revocation (GAP-1) IMPLEMENTED — open item is the in-memory store;
+                 legacy session teardown (GAP-2) DEAD LEGACY.
 ```
 
 Evidence:
 
-- **Endpoint implemented** — `AuthController.logout()` returns `ApiResponse.ok("Logout successful", null)`.
+- **Endpoint implemented + functional** — `AuthController.logout()` → `AuthService.logout` →
+  `TokenRevocationService.revokeToken(...)`; returns `ApiResponse.ok("Logout successful", null)`.
+- **Revocation enforced** — `JwtAuthenticationFilter` rejects revoked / superseded `jti` on every request.
 - **Public route confirmed** — `/api/v1/auth/logout` in the `SecurityConfig` permit-all list.
-- **No DB footprint** — no service/repository/entity (see [database-mapping.md](database-mapping.md)).
+- **No DB footprint** — revocation state is in-memory (`TokenRevocationService`); no service-owned
+  repository/entity (see [database-mapping.md](database-mapping.md)).
 
 Residual (non-blocking, tracked):
 
-1. GAP-1 — server-side revocation when a `REFRESH_TOKEN` / blacklist table lands (PO baseline decision).
-2. No dedicated logout test on disk (see [test-scenarios.md](test-scenarios.md)) — **MISSING**.
+1. GAP-1 open item — the revocation store is **in-memory** (lost on restart, per-node); a durable /
+   distributed store needs a PO baseline decision before any multi-node deploy.
+2. Refresh tokens remain **MISSING** (deferred).
+3. No dedicated logout test on disk (see [test-scenarios.md](test-scenarios.md)) — **MISSING**.
 
-Neither residual item affects the implemented stub's correctness.
+None of the residual items affect the correctness of the implemented server-side revocation.

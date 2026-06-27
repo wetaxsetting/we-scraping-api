@@ -4,10 +4,10 @@
 
 ## Sub-module map
 
-| Sub-module | JEX WSVC | Screens |
-|---|---|---|
-| **Scheduled Payment** | `pymn_0003_*` | Scheduled Payment + Scheduled Payment Details |
-| **Payment Result** | `pymn_0004_*` | Payment Result + Payment Result Details |
+| Sub-module | Screens |
+|---|---|
+| **Scheduled Payment** | Scheduled Payment + Scheduled Payment Details |
+| **Payment Result** | Payment Result + Payment Result Details |
 
 ## Documentation set (this feature)
 
@@ -47,7 +47,6 @@ The four screens are sections of this hub (no separate per-screen files). File-l
 | System | Refactor (Spring Boot + Next.js) |
 | Slug | `expense-payment` |
 | Module | Payment → Expense Payment |
-| JEX counterparts | `pymn_0003_*` (Expense Payment Scheduled) + `pymn_0004_*` (Expense Payment Result) — labels confirmed at [comm_0190_003_view.jsp:569](../../../../../WECMS%20DEV/WECMS/web/view/jex/wabooks/comm/comm_0190_003_view.jsp#L569) (Scheduled) and [comm_0190_003_view.jsp:578-579](../../../../../WECMS%20DEV/WECMS/web/view/jex/wabooks/comm/comm_0190_003_view.jsp) (Result). |
 | Discriminator | `SCDUL_PYMN_TYPE_CD = "02"` — verified at [pymn_0003_001_r001_act.jsp:68](../../../../../WECMS%20DEV/WECMS/web/WEB-INF/action/jex/wabooks/pymn/pymn_0003_001_r001_act.jsp#L68) + refactor enum `ScdulPymnTypeCd.EXPENSE.code()`. |
 | Audit `WSVC_ID` | `expense-payment` — declared as a `static final String` at [ExpensePaymentService.java:109](../../../../src/main/java/com/kosign/wecms/domain/payment/expensepayment/service/ExpensePaymentService.java#L109). |
 | REST URI base | `/api/v1/payment/expense-payment` |
@@ -176,6 +175,13 @@ Source-of-truth files:
 
 - `ExpenseDispatchExecutorTest`, `ExpensePaymentDispatchApprovalGateTest`, `ExpensePaymentResultDownloadAuditTest`, `ExpensePaymentResultFooterTotalsTest`, `ExpensePaymentResultParityTest`.
 - **MISSING coverage:** no test exercises Scheduled create/parse, request-approval, approval-action, withdraw/change-approval-line, reporting-account PATCH, or the per-line banking-match endpoints. No frontend tests for the Expense pages.
+
+---
+
+## Legacy & Migration Traceability
+
+- **Sub-module WSVC mapping:** Scheduled Payment = `pymn_0003_*` ; Payment Result = `pymn_0004_*`.
+- **JEX counterparts:** `pymn_0003_*` (Expense Payment Scheduled) + `pymn_0004_*` (Expense Payment Result) — labels confirmed at [comm_0190_003_view.jsp:569](../../../../../WECMS%20DEV/WECMS/web/view/jex/wabooks/comm/comm_0190_003_view.jsp#L569) (Scheduled) and [comm_0190_003_view.jsp:578-579](../../../../../WECMS%20DEV/WECMS/web/view/jex/wabooks/comm/comm_0190_003_view.jsp) (Result).
 
 ---
 

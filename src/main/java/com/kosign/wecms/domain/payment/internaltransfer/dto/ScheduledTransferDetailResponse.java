@@ -64,7 +64,16 @@ public record ScheduledTransferDetailResponse(
          *  note. Only Internal Transfer populates this today; the sibling
          *  Scheduled-detail services construct via the backward-compatible
          *  constructor below and emit it as null. */
-        String                    cont) {
+        String                    cont,
+        /** Payroll Type code — {@code EXPT_RESOL_MSTR.APPR_FUND_TP}
+         *  ("0"=Salary, "1"=Bonus, "9"=Other). ONLY the Payroll
+         *  Scheduled-detail service populates it; the Internal Transfer /
+         *  Vendor / Expense siblings emit null (they construct via the
+         *  backward-compatible constructors below). The frontend resolves the
+         *  label via {@code resolvePayrollTypeLabel} (legacy
+         *  {@code comm_0195_001.ts:885-898} — withdrawal {@code BANK_CD}
+         *  "11704088" overrides to "Salary/Allowance/Bonus"). */
+        String                    apprFundTp) {
 
     /**
      * Backward-compatible constructor for the sibling Scheduled-detail callers
@@ -100,7 +109,7 @@ public record ScheduledTransferDetailResponse(
         this(scdulPymnNo, scdulPymnTypeCd, outBankCd, outBankNm, wdrlActNo, titl,
              totalTranAmt, totTrnsCnt, docNo, regId, null, regDtm, apprSeqNo,
              apprStts, apprSttsKey, modDtm, trnfYn, trnfDtm, ccyCd, wdrlCcyCd,
-             orgFileNm, fileSize, rows, attachments, null);
+             orgFileNm, fileSize, rows, attachments, null, null);
     }
 
     /**
@@ -138,6 +147,6 @@ public record ScheduledTransferDetailResponse(
         this(scdulPymnNo, scdulPymnTypeCd, outBankCd, outBankNm, wdrlActNo, titl,
              totalTranAmt, totTrnsCnt, docNo, regId, requestor, regDtm, apprSeqNo,
              apprStts, apprSttsKey, modDtm, trnfYn, trnfDtm, ccyCd, wdrlCcyCd,
-             orgFileNm, fileSize, rows, attachments, null);
+             orgFileNm, fileSize, rows, attachments, null, null);
     }
 }

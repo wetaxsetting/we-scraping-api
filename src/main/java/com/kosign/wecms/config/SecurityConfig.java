@@ -16,6 +16,7 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
 
 @Configuration
 // Enables @PreAuthorize method-security. The JWT filter already populates
@@ -32,9 +33,13 @@ public class SecurityConfig {
 
     @Bean
     public PasswordEncoder passwordEncoder() {
-        // Hybrid: accepts legacy JEX SHA-256 base64 hashes (public.hash()) on
-        // the read path, always writes BCrypt on the write path, and flags
-        // legacy hashes for transparent upgrade via upgradeEncoding().
+        // Coexistence encoder: WRITES the legacy JEX SHA-256 base64
+        // (public.hash()) value on every write path — NEVER BCrypt — so the
+        // live JEX system can authenticate the same USER_INFM row. On read it
+        // verifies the SHA-256 hash (and tolerates a pre-existing BCrypt hash
+        // for old dev rows only). upgradeEncoding() always returns false:
+        // login is verify-only, with no transparent upgrade and no rewrite of
+        // USER_PW. See WecmsPasswordEncoder / LegacyHashPasswordEncoder.
         return new WecmsPasswordEncoder();
     }
 
@@ -43,6 +48,28 @@ public class SecurityConfig {
         return http
                 .csrf(AbstractHttpConfigurer::disable)
                 .cors(cors -> { })
+                // F-04: explicit browser-security headers for a financial API.
+                // This is a JSON + image/file-blob API (the Next.js frontend is a
+                // separate origin with its own CSP), so a restrictive policy is
+                // safe here and also hardens the inline image/file responses:
+                //   - CSP default-src 'none'  → a served document loads no active
+                //     sub-resources (defence-in-depth vs. any inline-content XSS).
+                //   - frame-ancestors 'none' + frameOptions DENY → anti-clickjacking.
+                //   - HSTS is emitted ONLY on HTTPS requests (Spring gates it on
+                //     request.isSecure()), so local plain-HTTP dev is unaffected
+                //     while SIT/UAT/PROD behind TLS get a 1-year policy.
+                // Spring Security's other defaults (X-Content-Type-Options nosniff,
+                // Cache-Control) remain applied. If a future endpoint must serve a
+                // real HTML page from this origin, relax the CSP for that path only.
+                .headers(headers -> headers
+                        .contentSecurityPolicy(csp -> csp.policyDirectives(
+                                "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"))
+                        .frameOptions(frame -> frame.deny())
+                        .referrerPolicy(rp -> rp.policy(
+                                ReferrerPolicyHeaderWriter.ReferrerPolicy.NO_REFERRER))
+                        .httpStrictTransportSecurity(hsts -> hsts
+                                .includeSubDomains(true)
+                                .maxAgeInSeconds(31_536_000)))
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/v1/auth/login", "/api/v1/auth/logout", "/actuator/health").permitAll()

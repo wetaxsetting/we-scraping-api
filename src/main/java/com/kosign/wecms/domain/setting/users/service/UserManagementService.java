@@ -1,6 +1,7 @@
 package com.kosign.wecms.domain.setting.users.service;
 
 import com.kosign.wecms.common.exception.BusinessException;
+import com.kosign.wecms.common.security.TokenRevocationService;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.auth.entity.BusiAdmnInfm;
 import com.kosign.wecms.domain.auth.entity.BusiAdmnInfmId;
@@ -24,6 +25,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -93,6 +95,7 @@ public class UserManagementService {
     private final BusiAdmnInfmRepository     busiAdmnRepo;
     private final AcctAuthInfoRepository     acctAuthInfoRepo;
     private final PasswordEncoder            passwordEncoder;
+    private final TokenRevocationService     tokenRevocation;
 
     // ---------------------------------------------------------------- list
 
@@ -168,8 +171,10 @@ public class UserManagementService {
      *       supplied login id (PK collision; surfaces as
      *       {@code WBE_USERS_DUPLICATE_LOGIN_ID} — the check-id
      *       endpoint catches this earlier on the happy path).</li>
-     *   <li>Insert {@code USER_INFM} with a BCrypt-hashed password
-     *       and {@code ACTV_YN='Y' / LOCK_YN='N' / DEL_YN='N'}.</li>
+     *   <li>Insert {@code USER_INFM} with a legacy SHA-256
+     *       ({@code public.hash()}) password — never BCrypt, per the
+     *       coexistence rule (see this class's header + {@code WecmsPasswordEncoder})
+     *       — and {@code ACTV_YN='Y' / LOCK_YN='N' / DEL_YN='N'}.</li>
      *   <li>Insert {@code USER_BUSI_CONN_INFM} with
      *       {@code DEL_YN='N'}.</li>
      *   <li>If {@code setAsAdmin}, insert {@code BUSI_ADMN_INFM}.</li>
@@ -288,6 +293,16 @@ public class UserManagementService {
                     });
         }
 
+        // F-03: revoke the target user's existing sessions when their privilege
+        // or credential changed under them — a demotion (admin → user) or an
+        // admin-driven password reset must not leave a stale token usable until
+        // its natural expiry. (In-process revocation; see TokenRevocationService.)
+        boolean demoted = wasAdmin && !wantAdmin;
+        boolean passwordReset = req.userPw() != null && !req.userPw().isBlank();
+        if (demoted || passwordReset) {
+            tokenRevocation.revokeAllForUser(userId, Instant.now());
+        }
+
         return toRow(user, link, wantAdmin, Objects.equals(userId, actorId));
     }
 
@@ -338,6 +353,11 @@ public class UserManagementService {
         // history preserved).
         acctAuthInfoRepo.revokeAllByBizKeyAndUserId(
                 bizKey, userId, actorId, LocalDateTime.now(ZoneOffset.UTC).format(DTM14));
+
+        // F-03: immediately invalidate the removed member's existing tokens —
+        // without this their privileged token stays usable until natural expiry.
+        // (In-process revocation; see TokenRevocationService for the limitations.)
+        tokenRevocation.revokeAllForUser(userId, Instant.now());
     }
 
     // ----------------------------------------------------------- internals

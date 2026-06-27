@@ -51,18 +51,18 @@ session machinery. Login issuance → [../login/](../login/); `/me` lifecycle �
 | Legacy flow | Disposition |
 |---|---|
 | JEX `HttpSession` server-side session state | **DEAD LEGACY** — replaced wholesale by the stateless JWT. No session attributes, no `JSESSIONID` reliance, no session store. |
-| Server-side logout / session invalidation | **DEAD LEGACY** (the server step) → logout is client-only in the refactor. The corresponding refactor capability (token revocation) is **MISSING** (deferred), not ported. |
+| Server-side logout / session invalidation | **DEAD LEGACY** (the `HttpSession` step) → the refactor has no server session to invalidate. Its JWT-native replacement, **token revocation, is IMPLEMENTED** (formerly MISSING, deferred — implemented 2026 via F-03): logout revokes the presented `jti` and `JwtAuthenticationFilter` rejects it. Open: the revocation store is in-memory. |
 | Session-cookie auth transport | **DEAD LEGACY** — the API contract uses the `Authorization: Bearer` header. (A non-HttpOnly cookie exists on the frontend only as the edge-middleware presence check, not the API auth credential.) |
 
 ---
 
-## Not yet built (MISSING — deferred)
+## Status of formerly-deferred capabilities
 
-| Capability | Status | Where it would land |
+| Capability | Status | Where it lives / would land |
 |---|---|---|
-| Refresh token (issuance + rotation) | **MISSING** | new PO-approved `REFRESH_TOKEN` table ([database-mapping.md §3](database-mapping.md)) + rotation in `JwtAuthenticationFilter` |
-| Server-side revocation / blacklist | **MISSING** | revocation store consulted by `JwtAuthenticationFilter`; would make logout invalidate an in-flight token |
-| Rate-limiting / brute-force guard | **MISSING** | mandatory before any non-local deploy (`wecms-api/CLAUDE.md` "Notes for future implementation") |
+| Server-side revocation / blacklist | **IMPLEMENTED** (formerly MISSING, deferred — 2026 via F-03) | in-memory `TokenRevocationService` consulted by `JwtAuthenticationFilter`; logout + admin lock/delete/demote/password-reset revoke tokens. **Open:** durable / distributed store deferred (Redis or a PO-approved table). |
+| Rate-limiting / brute-force guard | **IMPLEMENTED** (formerly MISSING, deferred — 2026) | in-memory `RateLimiter` on `POST /api/v1/auth/login` + credential reveal; 5-failure auto-lock (`LoginLockoutService`). **Open:** durable / distributed limiter deferred. |
+| Refresh token (issuance + rotation) | **MISSING** (deferred) | new PO-approved `REFRESH_TOKEN` table ([database-mapping.md §3](database-mapping.md)) + rotation in `JwtAuthenticationFilter` |
 
 ---
 

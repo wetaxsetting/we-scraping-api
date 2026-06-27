@@ -44,7 +44,17 @@ public record OverseasPaymentDetailResponse(
         boolean legacyMmode,
         /** Human-readable notice when {@link #legacyMmode} is true; null
          *  otherwise. Lets the popup explain why the line table is empty. */
-        String legacyMmodeNotice
+        String legacyMmodeNotice,
+        /** Approval Content note shown in the popup's "Approval Content"
+         *  section. Legacy source of truth = {@code BLTB_POST_INFM.POST_CONT}
+         *  joined by {@code APPR_SEQ_NO} — the legacy approval-detail reads
+         *  {@code EXPT_RESOL_MSTR_R009 / R010} select {@code BPI.POST_CONT} and
+         *  {@code comm_0195_001.ts:863} renders it into {@code #approval_input}.
+         *  This is {@code POST_CONT}, NOT {@code EXPT_RESOL_MSTR.CONT}: the two
+         *  columns can diverge (verified on the live JEX DB) and the legacy
+         *  popup displays {@code POST_CONT}. null when the batch has no approval
+         *  request yet or the note is blank. */
+        String cont
 ) {
     /**
      * Backward-compatible constructor for the S-mode (OVRS_PYMN_SUMR) path
@@ -57,9 +67,9 @@ public record OverseasPaymentDetailResponse(
             String outBankCd, String wdrlActNo, String wdrlCcyCd, String docNo,
             String apprSeqNo, String fileNm, String fileSize, String orgFileNm,
             List<OverseasPaymentDetailRowResponse> rows,
-            List<ApprovalAttachmentRow> attachments) {
+            List<ApprovalAttachmentRow> attachments, String cont) {
         this(ovrsPymnNo, titl, apprStts, totalTranAmt, ccyCd, totTrnsCnt, regId, regDtm,
              modDtm, outBankCd, wdrlActNo, wdrlCcyCd, docNo, apprSeqNo, fileNm, fileSize,
-             orgFileNm, rows, attachments, false, null);
+             orgFileNm, rows, attachments, false, null, cont);
     }
 }

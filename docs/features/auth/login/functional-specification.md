@@ -135,8 +135,10 @@ transaction rolls back. Per call it writes a `USER_LOGIN_HIS` row:
 | `RSLT_CONT` | reason tag on FAIL (`USER_NOT_FOUND`, `DEL_YN=Y`, `ACTV_YN=N`, `LOCK_YN=Y`, `PW_MISMATCH`, `NO_TENANT_LINKS`, `TENANT_OUT_OF_SCOPE`); `null` on SUCCESS |
 
 The chooser branch (step 6 branch two) writes **no** row — the user has not authenticated to any
-specific company yet. There is no 5-failure auto-lock counter (deferred — see
-[refactor-gap-analysis.md](refactor-gap-analysis.md)).
+specific company yet. A **5-failure auto-lock counter** reads these FAIL rows: `LoginLockoutService`
+sets `USER_INFM.LOCK_YN='Y'` once the latest 5 login attempts for the user are all failures (formerly
+deferred — implemented 2026 via F-10; see [refactor-gap-analysis.md](refactor-gap-analysis.md)). The
+login endpoint is also throttled by an in-memory `RateLimiter` (key `login:<ip>`).
 
 ---
 

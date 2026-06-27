@@ -52,6 +52,18 @@ Evidence: golden test 5/5 within-tenant identical to legacy `R028`, cross-tenant
 - **Deviation:** legacy's `USAG_GRP_CD`→direction validation degrades to a presence check because
   `BUSI_USAG_SET_INFM.USAG_GRP_CD` is unpopulated in the refactor DB; the rule's stored `RCV_PAY_DV`
   carries direction instead. Non-blocking; documented in [migration-guide.md §4](migration-guide.md#4-rcv_pay_dv-derivation-r03-deviation).
+- **⚠️ Backend follow-up opened 2026-06-27 — FB-01 (see §4).** The frontend Organizer Settings
+  dialog **removed the manual Receive/Pay select** that this deviation relied on. Legacy
+  `fnsh_0200_002` has exactly **one** Type select (`MATCH_TYPE` Contains/Exact — `fnsh_0200_002.ts:448-489`)
+  and **no** direction picker; legacy derives direction server-side from the chosen Purpose's
+  usage-group (`fnsh_0200_002_c001_act.jsp:103-110`: group `4` deposit→`RCV`, group `6` withdraw→`PAY`).
+  The refactor FE had surfaced a manual select only because the backend could not derive direction.
+  With that select gone (legacy-UI parity), the rule-save still accepts `rcv_pay_dv` on the wire but
+  the FE now sends `RCV` for new rows / preserves the stored value for existing rows — so **PAY-rule
+  creation is no longer possible from the UI until the backend derives `RCV_PAY_DV` from the Purpose.**
+  No backend code was changed in the FE pass; the save contract is unchanged. Frontend record:
+  [wecms-web/docs/tech-debt.md](../../../../../wecms-web/docs/tech-debt.md) + the FE
+  [OrganizerSettingsDialog.tsx](../../../../../wecms-web/components/banking/smart-organizer/OrganizerSettingsDialog.tsx) comment.
 
 ### R05 — Persistence — **MATCH**
 `confirm()` denormalizes at write (`AcctTrnsRcvPayInfm`):
@@ -92,7 +104,8 @@ matching-parity test passed on the live engine.
 
 | Item | Note |
 |---|---|
-| R03 direction | User-selected, not derived (`USAG_GRP_CD` unpopulated). Data re-key for legacy `RCV`-defaulted rules. |
+| **FB-01 — R03 direction (backend follow-up, opened 2026-06-27)** | **Derive `RCV_PAY_DV` from the selected Purpose's usage-group at rule save**, matching legacy `fnsh_0200_002_c001_act.jsp:103-110` (usage group `4` deposit→`RCV`, `6` withdraw→`PAY`). **Why now:** the frontend removed its manual Receive/Pay select (legacy-UI parity — legacy has one Type select only); until the backend derives direction, new rules default to `RCV` and **PAY-rule creation is unavailable from the UI**. **Needs:** populate `BUSI_USAG_SET_INFM.USAG_GRP_CD` (or another verified direction source) in the refactor DB, then derive at `OrganizerRuleService` save. Until done: existing rules keep their stored direction; new rules = `RCV`. **FE-only Banking fix did NOT include this — open as a separate backend task.** Frontend `ApiPurposeSettingRow` exposes no `usag_grp_cd`, so deriving on the FE is not possible. |
+| R03 direction (data) | Data re-key for legacy `RCV`-defaulted rules (pre-existing). |
 | R07 breadcrumb | `chart_acct_level_nm` is leaf-name only. |
 | Reorder UI | `POST /rules/reorder` implemented; frontend drag-save wiring deferred. |
 | FCY runtime smoke | Data path verified; no organizer-eligible FCY account in dev seed for an end-to-end render test. |

@@ -6,7 +6,6 @@
 **Wire base path:** `/api/v1/settings/users`
 **Java package:** `com.kosign.wecms.domain.setting.users`
 **Status:** ✅ **Implemented — full-stack, legacy parity verified (2026-06-05)**
-**JEX functional reference:** legacy `comm_0190_001 / _002 / _003` WSVCs (NOT `admn_0021_*` — that is subscriber/business admin in the Jex Admin portal)
 
 ---
 
@@ -36,6 +35,12 @@ scope). Both of those were dropped before release; see
 | [migration-guide.md](migration-guide.md) | How the JEX `comm_0190_*` behaviour was ported to Spring Boot |
 | [test-scenarios.md](test-scenarios.md) | SIT/UAT scenarios — CRUD, permission, read-only viewer, validation, security |
 | [refactor-gap-analysis.md](refactor-gap-analysis.md) | Legacy vs refactor parity table + plan-vs-shipped drift + open questions |
+
+## Legacy & Migration Traceability
+
+**JEX functional reference:** legacy `comm_0190_001 / _002 / _003` WSVCs (NOT `admn_0021_*` — that is subscriber/business admin in the Jex Admin portal)
+
+---
 
 ## 3. Related docs (cross-system — preserved, not duplicated)
 

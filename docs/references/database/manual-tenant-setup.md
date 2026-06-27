@@ -4,6 +4,14 @@
 **Status:** Authoritative. Replaces any prior Spring auto-bootstrap path.
 **Last updated:** 2026-05-11.
 
+> **DB-target note (2026-06-24):** the **canonical local-run target is the shared dev DB
+> `172.168.5.172:5432/wecmsdevdb`** (VPN-required), per `application-local.yml` —
+> see [docs/INFRASTRUCTURE_ACCESS.md](../../../../docs/INFRASTRUCTURE_ACCESS.md). The
+> `localhost:5434/wecms_dev` references below (and the "Refactor LOCAL" table row + §6/§7
+> Script B) describe the **developer-local PostgreSQL fallback** — valid, but not the default.
+> Schema flavour (legacy `hash()`/`encrypt()` vs modern PG types) is a separate axis from
+> host: pick Script A/B by the target DB's actual schema, not by the host alone.
+
 ---
 
 ## 1. Why this exists
@@ -74,18 +82,27 @@ BUSI_INFM  →  EMPL_INFM  →  USER_INFM  →  BUSI_ADMN_INFM  →  USER_BUSI_C
 
 Spring login (`WecmsPasswordEncoder` + `LegacyHashPasswordEncoder` + `AuthService.login`) verifies the supplied password against `USER_INFM.USER_PW` by **re-hashing the input and comparing**. The stored value is never decrypted (passwords are one-way hashes, not reversible encryption).
 
+> **⚠️ CORRECTION (auth coexistence, 2026-06-10):** the BCrypt-preferred /
+> auto-upgrade story below is **WRONG and has been corrected**. The live system
+> writes the **legacy unsalted SHA-256 base64 (`public.hash()`)** value on **every**
+> write path and **never** writes BCrypt. There is **no** transparent SHA-256→BCrypt
+> upgrade and **no** hash rewrite on login — login is **verify-only**. The startup
+> `DataSeeder` and the `__BCRYPT_PENDING__` sentinel were **removed 2026-06-10**.
+> See memory `project_login_password_coexistence_sha256.md` and `wecms-api/CLAUDE.md`
+> §"Passwords". The corrected table + behaviour follow.
+
 | Format | Detection | Where it comes from | Supported by Spring login? |
 |---|---|---|---|
-| **BCrypt** | starts with `$2a$` / `$2b$` / `$2y$`, length 60 | Spring's `BCryptPasswordEncoder` (strength 10) | ✅ Preferred. All new account writes from the refactor go through `PasswordHashService.encodeForNewUser(...)`. |
-| **Legacy SHA-256 base64** | 44-char Base64, no `$` prefix | `public.hash(text)` PL/pgSQL function: `encode(digest(text, 'sha256'), 'base64')`. Installed in legacy DEV/UAT/PROD only. | ✅ Read-only path. `LegacyHashPasswordEncoder` replicates the algorithm in Java for verification (constant-time compare). |
-| **Sentinel `__BCRYPT_PENDING__`** | literal exact-string match | Flyway seed migrations on local R&D (V2 / V5 / V10 / V73) | ⚠️ **Local profile only.** `DataSeeder` (`@Profile("local")`) runs at startup, finds rows whose `USER_PW = '__BCRYPT_PENDING__'`, and replaces each with `BCrypt("Password!1")`. After that one-time patch, the user logs in with `Password!1`. **Never use this sentinel on UAT/PROD** — DataSeeder does not run there. |
+| **Legacy SHA-256 base64** | 44-char Base64, no `$` prefix | `public.hash(text)` PL/pgSQL function: `encode(digest(text, 'sha256'), 'base64')`. Installed in legacy DEV/UAT/PROD. **`WecmsPasswordEncoder.encode()` emits this exact format on every write** (Settings → Users create/reset, change-password, seeds). | ✅ **The single supported credential format.** `LegacyHashPasswordEncoder` replicates the algorithm in Java for verification (constant-time compare). |
+| **BCrypt** | starts with `$2a$` / `$2b$` / `$2y$`, length 60 | Not written by the refactor. May exist only on old local/dev rows from a prior (now-removed) build. | ⚠️ **Tolerated on read only** for those legacy dev rows. **Never written.** Writing BCrypt would lock the user out of live JEX (which computes SHA-256 and compares). |
+| ~~Sentinel `__BCRYPT_PENDING__`~~ | — | **Removed 2026-06-10** along with the `DataSeeder` bootstrap package. | ❌ **Retired.** Do not use this sentinel anywhere. Seed passwords are written as the `public.hash()` SHA-256 value directly. |
 | Anything else (plain text, MD5, raw SHA-1, …) | — | — | ❌ Never matches. Login fails. |
 
-### Auto-upgrade on successful login
+### Login is verify-only — no upgrade, no rewrite
 
-After a successful `passwordEncoder.matches(rawPw, storedHash)`, if `storedHash` is not already BCrypt, `AuthService.login` (line ~94 of the file) re-encodes and rewrites `USER_INFM.USER_PW` with a fresh BCrypt hash. The original legacy SHA-256 row is replaced; subsequent logins use BCrypt. This is the documented "transparent SHA-256 → BCrypt upgrade" path.
+After a successful `passwordEncoder.matches(rawPw, storedHash)`, **`AuthService.login` writes nothing back to `USER_INFM.USER_PW`.** The stored SHA-256 value stays intact. `WecmsPasswordEncoder.upgradeEncoding()` always returns `false`. There is **no** transparent SHA-256→BCrypt upgrade — that path was **removed (2026-06-10)** so the live JEX system can authenticate the same `USER_INFM` row (coexistence rule).
 
-**Operational implication for ops:** if the refactor is ever deployed alongside the legacy JEX system against a shared DB, this auto-upgrade would silently break legacy login for upgraded users (legacy code only knows the 44-char SHA-256 format). Today this is a non-issue — refactor is local-only R&D — but document this if/when coexistence becomes real.
+**Operational implication for ops:** because the refactor only ever stores the legacy SHA-256 format and never rewrites it, a refactor deployment can safely coexist with live JEX against a shared DB — both compute SHA-256 and compare. (The earlier text here warned that an auto-upgrade would break legacy login; that concern is moot now that no upgrade exists.)
 
 ---
 
@@ -399,19 +416,19 @@ INSERT INTO EMPL_INFM (
 
 -- Step 5: Insert the user row.
 --
--- TWO password options — pick one (Option 1 is simplest for local R&D):
+-- ⚠️ CORRECTED 2026-06-10 — the previous "__BCRYPT_PENDING__ sentinel" and
+--   "pre-computed BCrypt hash" options are RETIRED. The DataSeeder that patched
+--   the sentinel was removed; the refactor stores ONLY the legacy SHA-256
+--   (public.hash()) value and never writes BCrypt. Set USER_PW to the legacy
+--   SHA-256 base64 of the chosen password.
 --
--- ► Option 1: __BCRYPT_PENDING__ sentinel + local-profile DataSeeder.
---   At Spring startup on `local` profile, DataSeeder finds this sentinel
---   in USER_INFM.USER_PW and replaces it with BCrypt("Password!1").
---   The user can then log in with password = Password!1.
---   ONLY works under the local profile — never use on UAT/PROD.
+-- ► On legacy DEV/UAT/PROD (where public.hash() is installed): compute it in-DB:
+--       USER_PW = public.hash('Password!1')        -- 44-char SHA-256 base64
+--   (This is what the legacy DBA setup SQL uses; live JEX validates the same value.)
 --
--- ► Option 2: pre-computed BCrypt hash literal.
---   Compute a BCrypt hash externally (Java's BCryptPasswordEncoder,
---   `htpasswd -bnBC 10 "" "password" | tr -d ':\n'`, or any BCrypt
---   library) and paste the resulting $2a$10$… string verbatim.
---   Works on any profile; no DataSeeder dependency.
+-- ► If you cannot call public.hash() (e.g. a LOCAL DB without it): compute the
+--   identical value externally — encode(digest('Password!1','sha256'),'base64')
+--   in any SHA-256 + base64 tool — and paste the resulting 44-char string verbatim.
 --
 INSERT INTO USER_INFM (
     USER_ID, USER_NM, CLPH_NO, EML, USER_PW,
@@ -422,7 +439,7 @@ INSERT INTO USER_INFM (
     'THÁI ĐÌNH LÂN',
     '+0084318575627',                       -- plain text
     'NuApartment_LOCAL@gmail.com',
-    '__BCRYPT_PENDING__',                   -- ← Option 1; or substitute a pre-computed BCrypt hash
+    public.hash('Password!1'),              -- ← legacy SHA-256 base64; or paste the 44-char value
     'Y', 'N', 'N',
     'SYSTEM', now(), 'SYSTEM', now()
 );
@@ -452,8 +469,8 @@ INSERT INTO USER_BUSI_CONN_INFM (
 
 COMMIT;
 
--- → If Option 1: restart Spring (./gradlew bootRun) so DataSeeder patches the sentinel.
--- → If Option 2: log in immediately with the password that hashed to the literal you pasted.
+-- → Log in immediately with the password whose SHA-256 base64 you stored in USER_PW.
+--   No restart / DataSeeder step (that path was removed 2026-06-10); login is verify-only.
 
 -- Step 8 (REQUIRED): initialize default tenant data via the DB function (§5a).
 --   Legacy ran this automatically at registration; the refactor keeps the same function.
@@ -483,8 +500,8 @@ Once the manual SQL has committed, the user can log in with no further setup. `A
    - `DEL_YN = 'Y'` → `WBE1128` (deleted)
    - `ACTV_YN = 'N'` → `WBE1010` (inactive)
    - `LOCK_YN = 'Y'` → `WBE1011` (locked)
-3. **`passwordEncoder.matches(raw, USER_PW)`** → uses `WecmsPasswordEncoder`, accepts BCrypt OR legacy SHA-256 base64. Mismatch → `WBE1009`.
-4. **Optional transparent upgrade** — if `storedHash` is not BCrypt, rewrite `USER_PW` with a fresh BCrypt hash. The row's `MOD_ID` becomes the user's own `USER_ID`, `MOD_DTM` auto-updates.
+3. **`passwordEncoder.matches(raw, USER_PW)`** → uses `WecmsPasswordEncoder`; verifies against the legacy SHA-256 base64 value (BCrypt tolerated on read only, for any old local/dev rows). Mismatch → `WBE1009`.
+4. **Verify-only — no write-back (corrected 2026-06-10).** `USER_PW` is **never** rewritten on login. The former "transparent SHA-256 → BCrypt upgrade" was **removed** so the live JEX system can authenticate the same SHA-256 credential (coexistence rule). `upgradeEncoding()` always returns `false`.
 5. **`USER_BUSI_CONN_INFM.findAllByUserIdAndDelYn(USER_ID, 'N')`** → must return at least one row. Empty → `WBE1009`. One row → auto-pick (normal path). Two or more → chooser response (exceptional path; see §10).
 6. **`USER_BUSI_CONN_INFM`** `LST_LGN_DATE` updated on the resolved link.
 7. **`BUSI_INFM.findById(bizKey)`** → reads `CMPN_NM` (for sidebar display) + `PRDT_TYPE` (for the JWT claim).
@@ -563,8 +580,8 @@ SELECT
 | Topic | Limitation |
 |---|---|
 | **`hash()` / `encrypt()` legacy DB functions** | Only present in DEV / UAT / PROD. **Never installed on the refactor LOCAL DB** — the "DB Function / Legacy Function Policy" rule in [wecms-api/CLAUDE.md](../../../CLAUDE.md) forbids adding new legacy PL/pgSQL helpers. Script A will not run against LOCAL. |
-| **`__BCRYPT_PENDING__` sentinel** | Only works under the Spring `local` profile (`DataSeeder` is `@Profile("local")`). Production / UAT / staging deployments must use Option 2 (pre-computed BCrypt hash) instead. |
-| **Auto-upgrade of legacy SHA-256 to BCrypt on login** | Currently always-on in `AuthService.login`. Acceptable for local R&D. If the refactor is ever deployed to coexist with legacy JEX on the same DB, this must be gated off — a BCrypt-encoded `USER_PW` cannot be validated by legacy JEX login. |
+| **~~`__BCRYPT_PENDING__` sentinel~~** | **RETIRED 2026-06-10.** The `DataSeeder` that patched it was removed. Set `USER_PW` to the legacy SHA-256 base64 (`public.hash(...)`) value directly — on every profile. |
+| **~~Auto-upgrade of legacy SHA-256 to BCrypt on login~~** | **REMOVED 2026-06-10 — no such upgrade exists.** Login is verify-only; `USER_PW` is never rewritten. The refactor stores ONLY the legacy SHA-256 value, so it coexists safely with live JEX on a shared DB (both compute SHA-256). |
 | **One user = one company account (operational rule)** | Current WeCMS operation treats a `USER_ID` as belonging to exactly one active `BIZ_KEY`. The refactor has chooser infrastructure that handles ≥ 2 active links, but this is **not** an officially supported production pattern — it exists as a safe fallback only. Do not derive business requirements from the chooser's existence. If a real multi-company rule lands later, the relevant docs (here + CLAUDE.md) must be revised. |
 | **`EMPL_INFM` not required for login** | Login reads only `USER_INFM`, `USER_BUSI_CONN_INFM`, `BUSI_INFM`, `BUSI_ADMN_INFM`. A user can log in with `USER_BUSI_CONN_INFM.EMPL_NO = NULL`. The `EMPL_INFM` row is required by HR / payroll / employee-management modules (most not yet ported to the refactor). For minimum-viable login, you could skip Steps 3 and 4 — but provision the employee row anyway so HR features work when they land. |
 | **Phone ciphertext (legacy)** | Refactor has no equivalent of `public.encrypt(text)`. Legacy DEV-imported users carry encrypted CLPH_NO blobs that the refactor cannot decrypt. Login does not read CLPH_NO, so this has zero impact on auth — but any future feature that displays a phone field will see opaque text for legacy-imported users. |

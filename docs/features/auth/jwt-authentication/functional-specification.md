@@ -82,10 +82,11 @@ contract, never a body field.
 
 1. Reads the `Authorization` header; proceeds only when it is present **and** starts with `Bearer ` (`:40`).
 2. `tokenProvider.parse(token)` (`:43`) → `Jwts.parser().verifyWith(key).build().parseSignedClaims(token)` (`JwtTokenProvider:94-99`). This verifies the **signature** and the **expiry** — an expired or forged token throws `JwtException`.
-3. Extracts claims: `sub`, `userNm`, `bizKey`, `authGrCd`, `prdtType`, `langCd` (`:45-50`).
-4. **Defensive defaults:** an `authGrCd`-less token defaults to `USER` (never silently elevates to ADMIN, `:56-58`); a blank `userNm` falls back to `userId` (`:80`); `prdtType` is allowed to be null (pre-`prdtType`-cutover tokens, `:84`).
-5. Sets a `UsernamePasswordAuthenticationToken(principal=userId, authorities=[ROLE_<auth>])` into the `SecurityContextHolder` (`:62-64`).
-6. Populates `TenantContext` (full six-arg setter, `:78-84`).
+3. Extracts claims: `sub`, `userNm`, `bizKey`, `authGrCd`, `prdtType`, `langCd`, and the `jti` (token id).
+4. **Revocation check:** the filter consults `TokenRevocationService` — a token whose `jti` is on the denylist (logout), or that was issued before the per-user not-before cutoff (admin lock / delete / demote / password-reset), is treated as invalid; the `SecurityContext` is left unauthenticated (→ 401 on a protected matcher). *(Formerly absent — server-side revocation was deferred; implemented 2026 via F-03.)*
+5. **Defensive defaults:** an `authGrCd`-less token defaults to `USER` (never silently elevates to ADMIN, `:56-58`); a blank `userNm` falls back to `userId` (`:80`); `prdtType` is allowed to be null (pre-`prdtType`-cutover tokens, `:84`).
+6. Sets a `UsernamePasswordAuthenticationToken(principal=userId, authorities=[ROLE_<auth>])` into the `SecurityContextHolder` (`:62-64`).
+7. Populates `TenantContext` (full six-arg setter, `:78-84`).
 
 ### 2.4 Authorize
 
@@ -106,8 +107,8 @@ by `tenantSet` so a request without a token doesn't touch the holder.
 - TTL is `wecms.jwt.expires-in-seconds` (`JwtProperties`, default `3600` s in `application.yml:102`).
 - `issue(...)` sets `exp = iat + expiresInSeconds()`.
 - `parse(...)` validates `exp` — an expired token throws `JwtException` (subclass `ExpiredJwtException`), the filter clears the context, and the request reaches an authenticated matcher with no `SecurityContext` → `JwtAuthenticationEntryPoint` returns **401 WBE1401**.
-- There is **no sliding/refresh** — the token simply expires. Re-authentication = a fresh login. Refresh tokens are MISSING ([refactor-gap-analysis.md](refactor-gap-analysis.md)).
-- A claim change (authority promoted, product type changed) takes effect at the **next login** only — the in-flight token's claims are signed and immutable.
+- There is **no sliding/refresh** — the token simply expires. Re-authentication = a fresh login. Refresh tokens are **MISSING** (deferred — [refactor-gap-analysis.md](refactor-gap-analysis.md)).
+- A claim change (authority promoted, product type changed) takes effect at the **next login** only — the in-flight token's claims are signed and immutable. A token can, however, be **revoked** immediately (logout, or admin lock/delete/demote/password-reset) via `TokenRevocationService`, after which the filter rejects it before its TTL. The revocation store is in-memory (open limitation).
 
 ---
 

@@ -107,7 +107,7 @@ which menu items a non-admin user sees. Admins bypass entitlement filtering enti
 Backed by `UserImageService`; the file token lives in `USER_BUSI_CONN_INFM.USER_IMG` (per-tenant link).
 
 - **Upload** (`POST .../{userId}/image`, multipart, ADMIN): validate filename / size (≤ 2 MB) /
-  extension (jpg, jpeg, png, gif, svg) → write an opaque SHA-256-named file under the storage root →
+  extension (jpg, jpeg, png, gif; `svg` **rejected** — F-02 stored-XSS) → write an opaque SHA-256-named file under the storage root →
   update `USER_IMG` → delete the previous file. Returns the refreshed `UserRowResponse`.
 - **Delete** (`DELETE .../{userId}/image`, ADMIN): clear `USER_IMG`, delete the disk file (idempotent).
 - **Stream** (`GET .../{userId}/image`, `canViewUsers()`): stream the bytes; `WBE2113` when no avatar

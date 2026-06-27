@@ -75,10 +75,7 @@ class SettingsBankAccountServiceBankNameTest {
                 .thenReturn(List.of(newAcct(SHINHAN, ACCT, "VND")));
         // Resolver returns the legacy SHORT name.
         when(bankCdResolver.resolveBankNm(SHINHAN)).thenReturn("Shinhan VN");
-        // No active grantees → permission-label lookup short-circuits before
-        // the name query, so only the count stub is needed.
-        when(acctAuthRepo.countActiveByAccount(BIZ, SHINHAN, ACCT, "V")).thenReturn(0L);
-        when(acctAuthRepo.countActiveByAccount(BIZ, SHINHAN, ACCT, "W")).thenReturn(0L);
+        // No active grantees → batched permission lookups return empty (default).
 
         BankAccountListResponse response = service.list();
 
@@ -94,8 +91,6 @@ class SettingsBankAccountServiceBankNameTest {
         when(acctRepo.findByBizKeyAndActvYn(eq(BIZ), eq("Y"), any(Sort.class)))
                 .thenReturn(List.of(newAcct(SHINHAN, ACCT, "VND")));
         when(bankCdResolver.resolveBankNm(SHINHAN)).thenReturn("Shinhan VN");
-        when(acctAuthRepo.countActiveByAccount(BIZ, SHINHAN, ACCT, "V")).thenReturn(0L);
-        when(acctAuthRepo.countActiveByAccount(BIZ, SHINHAN, ACCT, "W")).thenReturn(0L);
 
         BankAccountListResponse response = service.list();
 
@@ -114,9 +109,9 @@ class SettingsBankAccountServiceBankNameTest {
         when(acctRepo.findByBizKeyAndActvYn(eq(BIZ), eq("Y"), any(Sort.class)))
                 .thenReturn(List.of(newAcct(SHINHAN, ACCT, "VND")));
         when(bankCdResolver.resolveBankNm(SHINHAN)).thenReturn("Shinhan VN");
-        // Admin-only account → query excludes the admin → count 0 for both kinds.
-        when(acctAuthRepo.countActiveByAccount(BIZ, SHINHAN, ACCT, "V")).thenReturn(0L);
-        when(acctAuthRepo.countActiveByAccount(BIZ, SHINHAN, ACCT, "W")).thenReturn(0L);
+        // Admin-only account → batched count query excludes the admin → no group.
+        when(acctAuthRepo.countActiveByTenant(BIZ)).thenReturn(List.of());
+        when(acctAuthRepo.findActiveGranteesByTenant(BIZ)).thenReturn(List.of());
 
         BankAccountListResponse response = service.list();
 
@@ -129,14 +124,17 @@ class SettingsBankAccountServiceBankNameTest {
         when(acctRepo.findByBizKeyAndActvYn(eq(BIZ), eq("Y"), any(Sort.class)))
                 .thenReturn(List.of(newAcct(SHINHAN, ACCT, "VND")));
         when(bankCdResolver.resolveBankNm(SHINHAN)).thenReturn("Shinhan VN");
-        when(acctAuthRepo.countActiveByAccount(BIZ, SHINHAN, ACCT, "V")).thenReturn(1L);
-        when(acctAuthRepo.findFirstActiveUserName(BIZ, SHINHAN, ACCT, "V"))
-                .thenReturn(List.of("Pedri Gonzalez"));
-        when(acctAuthRepo.countActiveByAccount(BIZ, SHINHAN, ACCT, "W")).thenReturn(0L);
+        when(acctAuthRepo.countActiveByTenant(BIZ)).thenReturn(List.of(pc(SHINHAN, ACCT, "V", 1L)));
+        when(acctAuthRepo.findActiveGranteesByTenant(BIZ))
+                .thenReturn(List.of(pn(SHINHAN, ACCT, "V", "Pedri Gonzalez")));
 
         BankAccountListResponse response = service.list();
 
         assertThat(response.items().get(0).viewPermissionLabel()).isEqualTo("Pedri Gonzalez");
+        // Batched path used; the per-row finders are never called.
+        verify(acctAuthRepo).countActiveByTenant(BIZ);
+        verify(acctAuthRepo, never()).countActiveByAccount(any(), any(), any(), any());
+        verify(acctAuthRepo, never()).findFirstActiveUserName(any(), any(), any(), any());
     }
 
     @Test
@@ -144,15 +142,71 @@ class SettingsBankAccountServiceBankNameTest {
         when(acctRepo.findByBizKeyAndActvYn(eq(BIZ), eq("Y"), any(Sort.class)))
                 .thenReturn(List.of(newAcct(SHINHAN, ACCT, "VND")));
         when(bankCdResolver.resolveBankNm(SHINHAN)).thenReturn("Shinhan VN");
-        when(acctAuthRepo.countActiveByAccount(BIZ, SHINHAN, ACCT, "V")).thenReturn(3L);
-        when(acctAuthRepo.findFirstActiveUserName(BIZ, SHINHAN, ACCT, "V"))
-                .thenReturn(List.of("Pedri Gonzalez"));
-        when(acctAuthRepo.countActiveByAccount(BIZ, SHINHAN, ACCT, "W")).thenReturn(0L);
+        when(acctAuthRepo.countActiveByTenant(BIZ)).thenReturn(List.of(pc(SHINHAN, ACCT, "V", 3L)));
+        when(acctAuthRepo.findActiveGranteesByTenant(BIZ))
+                .thenReturn(List.of(pn(SHINHAN, ACCT, "V", "Pedri Gonzalez")));
+
+        BankAccountListResponse response = service.list();
+
+        // count (3) drives "+ N more"; head is the first grantee name.
+        assertThat(response.items().get(0).viewPermissionLabel())
+                .isEqualTo("Pedri Gonzalez + 2 more");
+    }
+
+    /* C1 parity — first-name selection is the EARLIEST grantee. The query
+     * returns grantees ordered earliest-REG_DTM first per group; the service
+     * keeps the first via putIfAbsent. Two grantees for the same (acct, V)
+     * → the head is the first list entry, not the second. */
+    @Test
+    void list_permissionLabel_firstNameIsEarliestGrantee() {
+        when(acctRepo.findByBizKeyAndActvYn(eq(BIZ), eq("Y"), any(Sort.class)))
+                .thenReturn(List.of(newAcct(SHINHAN, ACCT, "VND")));
+        when(bankCdResolver.resolveBankNm(SHINHAN)).thenReturn("Shinhan VN");
+        when(acctAuthRepo.countActiveByTenant(BIZ)).thenReturn(List.of(pc(SHINHAN, ACCT, "V", 2L)));
+        when(acctAuthRepo.findActiveGranteesByTenant(BIZ)).thenReturn(List.of(
+                pn(SHINHAN, ACCT, "V", "Earliest Grantee"),   // earliest REG_DTM (query order)
+                pn(SHINHAN, ACCT, "V", "Later Grantee")));
 
         BankAccountListResponse response = service.list();
 
         assertThat(response.items().get(0).viewPermissionLabel())
-                .isEqualTo("Pedri Gonzalez + 2 more");
+                .isEqualTo("Earliest Grantee + 1 more");
+    }
+
+    /* C1 parity — count > 0 but no grantee has a USER_INFM name match
+     * (query returns no name row for the group) → label is null, matching
+     * the legacy {@code firstName.isEmpty() → null} branch. */
+    @Test
+    void list_permissionLabel_countButNoName_nullLabel() {
+        when(acctRepo.findByBizKeyAndActvYn(eq(BIZ), eq("Y"), any(Sort.class)))
+                .thenReturn(List.of(newAcct(SHINHAN, ACCT, "VND")));
+        when(bankCdResolver.resolveBankNm(SHINHAN)).thenReturn("Shinhan VN");
+        when(acctAuthRepo.countActiveByTenant(BIZ)).thenReturn(List.of(pc(SHINHAN, ACCT, "V", 2L)));
+        when(acctAuthRepo.findActiveGranteesByTenant(BIZ)).thenReturn(List.of());
+
+        BankAccountListResponse response = service.list();
+
+        assertThat(response.items().get(0).viewPermissionLabel()).isNull();
+    }
+
+    private static AcctAuthInfoRepository.PermissionCount pc(
+            String bankCd, String acctNo, String authType, long cnt) {
+        return new AcctAuthInfoRepository.PermissionCount() {
+            public String getBankCd()   { return bankCd; }
+            public String getAcctNo()   { return acctNo; }
+            public String getAuthType() { return authType; }
+            public long   getCnt()      { return cnt; }
+        };
+    }
+
+    private static AcctAuthInfoRepository.PermissionFirstName pn(
+            String bankCd, String acctNo, String authType, String userNm) {
+        return new AcctAuthInfoRepository.PermissionFirstName() {
+            public String getBankCd()   { return bankCd; }
+            public String getAcctNo()   { return acctNo; }
+            public String getAuthType() { return authType; }
+            public String getUserNm()   { return userNm; }
+        };
     }
 
     /* G4 — audit logs: maps wire rows, tenant + REF_NO/WSVC_ID sets, latest-first. */

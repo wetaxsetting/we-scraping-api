@@ -17,10 +17,6 @@
 |---|---|
 | Feature slug | `cash-flow-report` (runtime id; file/folder named `cash-flow` to match the menu) |
 | Module | Banking → Reports |
-| Legacy JEX menu | **Cash Flow** (ML `inc_wabook_fnsh_lnb_m013`), WABOOKS **Financial (FNSH)** module |
-| Legacy view service | `cash_0001_001` (`login=Y`, `NORM_USER_ONLY_YN=Y`) |
-| Legacy read APIs | `cash_0001_001_r001` (cash-flow data), `_r002` (exchange rate), `_r003` (bank list) |
-| Legacy calc engine | PL/pgSQL function `get_cashflow_report(...)` on JEX DEV (≈ 90 KB) — **called directly** by the refactor (2026-06-13); the earlier Java reimplementation is retained but off the active path |
 | Refactor route | `/banking/reports/cash-flow` (Next.js, `(dashboard)` group) |
 | Refactor base URI | `GET /api/v1/banking/reports/cash-flow-report` + `POST .../export` (Spring Boot) |
 | Audit `WSVC_ID` | `cash-flow-report` (slug — never `cash_0001_001`) |
@@ -166,3 +162,16 @@ the live path calls `get_cashflow_report` directly.
 
 - **Confirmed** — verified against source/DEV/refactor code on disk.
 - **Needs Verification** — inferred or not present in DEV data; must be checked on UAT/PROD or with the PO.
+
+---
+
+## Legacy & Migration Traceability
+
+Legacy JEX source-of-truth mapping for this report (moved from the header metadata table; refactor identity stays up top):
+
+| Field | Value |
+|---|---|
+| Legacy JEX menu | **Cash Flow** (ML `inc_wabook_fnsh_lnb_m013`), WABOOKS **Financial (FNSH)** module |
+| Legacy view service | `cash_0001_001` (`login=Y`, `NORM_USER_ONLY_YN=Y`) |
+| Legacy read APIs | `cash_0001_001_r001` (cash-flow data), `_r002` (exchange rate), `_r003` (bank list) |
+| Legacy calc engine | PL/pgSQL function `get_cashflow_report(...)` on JEX DEV (≈ 90 KB) — **called directly** by the refactor (2026-06-13); the earlier Java reimplementation is retained but off the active path |

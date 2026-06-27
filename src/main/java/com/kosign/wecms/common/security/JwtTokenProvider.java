@@ -23,14 +23,30 @@ public class JwtTokenProvider {
     private final SecretKey key;
     private final MacAlgorithm algorithm;
 
+    /**
+     * The retired hardcoded dev placeholder (F-01). It was once the default in
+     * application-local.yml / application-sit.yml, so it is public / compromised.
+     * It is rejected on every profile so it can never sign a token again, even if
+     * someone re-introduces it via env var or config.
+     */
+    static final String KNOWN_INSECURE_DEV_SECRET =
+            "local-rnd-dev-only-insecure-jwt-signing-secret-override-in-prod-abcdef123456";
+
     public JwtTokenProvider(JwtProperties props) {
         this.props = props;
         String secret = props.secret();
         if (secret == null || secret.isBlank()) {
             throw new IllegalStateException(
-                    "wecms.jwt.secret is not set. "
-                  + "Set env var WECMS_JWT_SECRET (32+ chars) or run with the 'local' "
-                  + "profile active (application-local.yml provides an R&D default).");
+                    "wecms.jwt.secret is not set. Set env var WECMS_JWT_SECRET "
+                  + "(32+ bytes; 64+ preferred for HS512). run-local.bat / run-local.sh "
+                  + "export a local-only dev secret automatically; SIT/UAT/PROD must "
+                  + "provide a unique per-environment secret.");
+        }
+        if (KNOWN_INSECURE_DEV_SECRET.equals(secret)) {
+            throw new IllegalStateException(
+                    "wecms.jwt.secret is the known insecure development placeholder, which is "
+                  + "public and must never sign tokens. Set WECMS_JWT_SECRET to a unique "
+                  + "per-environment value (openssl rand -hex 64).");
         }
         byte[] secretBytes = secret.getBytes(StandardCharsets.UTF_8);
         if (secretBytes.length < 32) {
@@ -84,6 +100,9 @@ public class JwtTokenProvider {
         return Jwts.builder()
                 .issuer(props.issuer())
                 .subject(userId)
+                // F-03: unique token id so a specific token can be revoked
+                // (logout / denylist) — read back via Claims.getId().
+                .id(java.util.UUID.randomUUID().toString())
                 .claims(claims)
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(exp))

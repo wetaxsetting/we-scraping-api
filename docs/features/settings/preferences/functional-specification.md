@@ -73,7 +73,7 @@ Server-managed on save: `MOD_ID`, `MOD_DTM`. `CMPN_LOGO` is **never** touched by
 - Multipart field name: **`file`** (`@RequestPart("file")`).
 - Validations, in order: filename present (`WBE2084`) → size > 0 (`WBE2085`) → size ≤ 2 MB
   (`WBE2086`, `{0}` = "2 MB") → extension in allow-list (`WBE2087`, `{0}` = allowed list).
-- Allow-list: `jpg`, `jpeg`, `png`, `gif`, `svg` (lower-cased, no leading dot).
+- Allow-list: `jpg`, `jpeg`, `png`, `gif` (lower-cased, no leading dot). `svg` is **rejected** (F-02 — an inline-served SVG can carry `<script>`, i.e. stored XSS).
 - `MAX_LOGO_SIZE_BYTES = 2 MB`. The cap is checked in-service to surface a friendly envelope before the
   container's multipart limit rejects.
 - On success the new bytes are written to a fresh opaque filename, `CMPN_LOGO` is repointed, and the

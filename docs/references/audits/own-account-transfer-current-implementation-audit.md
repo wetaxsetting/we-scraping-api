@@ -1,5 +1,9 @@
 # Own Account Transfer — Current Implementation Audit (Refactor vs Legacy Business Rules)
 
+> **⚠️ SUPERSEDED crypto note (2026-06-24).** "AES-GCM decrypt server-side" below is **stale** — the cert
+> cipher is now legacy-compatible **pgcrypto AES-256-CBC** (`BankCertCryptoService`). The AES-GCM build was
+> retired. See [../../security/remaining-security-risk-register.md](../../security/remaining-security-risk-register.md) (R-1 / F-08).
+
 > **System:** Refactor (Spring Boot + Next.js)
 > **Audited against:** [own-account-transfer-legacy-bank-business-rules.md](own-account-transfer-legacy-bank-business-rules.md) (legacy source of truth)
 > **Date:** 2026-06-01

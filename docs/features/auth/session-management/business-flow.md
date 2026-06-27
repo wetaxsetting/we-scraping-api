@@ -76,9 +76,12 @@ GET /api/v1/auth/me   (token still unexpired, but the live DB state changed)
   → GlobalExceptionHandler maps the BusinessException → WBE1401 envelope
 ```
 
-This is the substance of `/me`: because the model is stateless and the JWT cannot be revoked, the
-re-validation gates are the only place a still-valid token is bounced when the underlying account state
-changes. Both §2 and §3 surface the same `WBE1401` code; the frontend reacts identically.
+This is the substance of `/me`: the re-validation gates bounce a still-valid token when the underlying
+account state changes within the token's lifetime. (Admin actions can also revoke a user's tokens
+server-side via `TokenRevocationService` — see [jwt-authentication](../jwt-authentication/README.md) —
+so the gates are no longer the *only* place a live token is stopped, but they remain the per-request
+re-check `/me` performs.) Both §2 and §3 surface the same `WBE1401` code; the frontend reacts
+identically.
 
 ---
 
@@ -94,11 +97,11 @@ changes. Both §2 and §3 surface the same `WBE1401` code; the frontend reacts i
 | Company display / tax id | loaded once into the session | `BUSI_INFM.CMPN_NM` + `TAX_ID` re-queried per `/me` (ops correction surfaces without re-login) | **MATCH** |
 | Menu / permission set | loaded into the session at bootstrap | resolved fresh per `/me` via `MenuAuthorizationService` (admin bypass) | **MATCH** (intent preserved; see [menu-authorization](../menu-authorization/README.md)) |
 | Session expiry | server-side session timeout | JWT TTL `wecms.jwt.expires-in-seconds` (default 3600); no sliding window | **APPROVED DEVIATION** |
-| Session invalidation on logout | server invalidates the `HttpSession` | client clears the token; no server revocation | **DEAD LEGACY** (owned by [logout](../logout/README.md)) |
+| Session invalidation on logout | server invalidates the `HttpSession` | client clears the token **and** the server revokes the `jti` (`TokenRevocationService`) | **DEAD LEGACY** (the `HttpSession` step) — revocation is the JWT-native replacement (owned by [logout](../logout/README.md)) |
 | 401 on lost session | redirect to login | `JwtAuthenticationEntryPoint` → 401 `WBE1401` (legacy `SES001` parity) | **MATCH** (intent preserved; code is the slug-era `WBE1401`) |
 | Refresh token (silent renew) | n/a | not implemented — token simply expires | **MISSING** (deferred — future `REFRESH_TOKEN`) |
-| Server-side logout revocation | session invalidation | not implemented (stateless) | **MISSING** (deferred) |
-| 5-failure auto-lock | legacy counts failures and locks | not implemented (owned by login; `USER_LOGIN_HIS` is the scaffold) | **MISSING** (deferred — see [login](../login/README.md)) |
+| Server-side logout revocation | session invalidation | `jti` revoked on logout (+ admin lock/delete/demote/password-reset); filter rejects revoked tokens | **IMPLEMENTED** (formerly MISSING, deferred — implemented 2026 via F-03; open: in-memory store) |
+| 5-failure auto-lock | legacy counts failures and locks | `LoginLockoutService` sets `USER_INFM.LOCK_YN='Y'` after the latest 5 attempts are all failures (owned by login) | **IMPLEMENTED** (formerly MISSING, deferred — implemented 2026 via F-10; see [login](../login/README.md)) |
 | Async `TenantContext` propagation | n/a (servlet thread) | plain `ThreadLocal`; no `@Async` / child-thread propagation | **PARTIAL** (by design for the synchronous request model) |
 | Response envelope | JEX `COMMON_HEAD` / `REC` | `{ status, data, … }` lowercase snake_case | **APPROVED DEVIATION** (CTO directive) |
 | Identifier surface | WSVC id `logn_0001_001_r002` | kebab slug `session-management` everywhere | **APPROVED DEVIATION** (slug rule) |

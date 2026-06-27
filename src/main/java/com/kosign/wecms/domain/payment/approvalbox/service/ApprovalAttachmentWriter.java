@@ -3,8 +3,11 @@ package com.kosign.wecms.domain.payment.approvalbox.service;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.common.tenant.TenantContext;
+import com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalAttachmentRow;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ExptResolFile;
+import com.kosign.wecms.domain.payment.internaltransfer.entity.ExptResolPayEvidFile;
 import com.kosign.wecms.domain.payment.internaltransfer.repository.ExptResolFileRepository;
+import com.kosign.wecms.domain.payment.internaltransfer.repository.ExptResolPayEvidFileRepository;
 import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferFileResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -56,10 +59,11 @@ public class ApprovalAttachmentWriter {
     private static final DateTimeFormatter DTM14 = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
     private static final ZoneId VIETNAM_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
 
-    private final ExptResolFileRepository      exptResolFileRepository;
-    private final InternalTransferFileResolver fileResolver;
-    private final LegacyFunctionRepository     legacyFunctions;
-    private final java.time.Clock              clock;
+    private final ExptResolFileRepository        exptResolFileRepository;
+    private final ExptResolPayEvidFileRepository exptResolPayEvidFileRepository;
+    private final InternalTransferFileResolver   fileResolver;
+    private final LegacyFunctionRepository       legacyFunctions;
+    private final java.time.Clock                clock;
 
     /**
      * Stream each attachment to disk and insert one {@code EXPT_RESOL_FILE}
@@ -118,6 +122,68 @@ public class ApprovalAttachmentWriter {
             row.setRegNm(userNm == null ? userId : userNm);
             row.setRegDtm(nowDtm);
             exptResolFileRepository.save(row);
+        }
+    }
+
+    /**
+     * One attachment to delete — its per-(biz_key, appr_seq_no) file id plus the
+     * source-table discriminator ({@link ApprovalAttachmentRow#TYPE_EXPT_RESOL_FILE}
+     * vs {@link ApprovalAttachmentRow#TYPE_PAY_EVID_FILE}).
+     */
+    public record FileRef(String fileId, String fileType) {
+    }
+
+    /**
+     * Delete the given attachment rows + their on-disk binaries (legacy REC4 of
+     * {@code comm_0192_013_u002}: delete from {@code EXPT_RESOL_FILE} /
+     * {@code EXPT_RESOL_PAY_EVID_FILE} by file id, then drop the physical file).
+     * Routes each ref to the correct legacy table by {@link FileRef#fileType}.
+     *
+     * <p>Defensive: a ref whose row is not found for this tenant / approval is
+     * silently skipped (never leaks another tenant's file, never throws on a
+     * stale id). A missing physical file is logged at {@code warn} and skipped —
+     * the metadata row is still removed (mirrors the legacy
+     * {@code FileUtils.deleteQuietly} behaviour). Runs inside the caller's
+     * {@code @Transactional} boundary; a null / empty list is a no-op.
+     */
+    public void deleteByRefs(String bizKey, String apprSeqNo, List<FileRef> refs) {
+        if (refs == null || refs.isEmpty()) {
+            return;
+        }
+        for (FileRef ref : refs) {
+            if (ref == null || ref.fileId() == null || ref.fileId().isBlank()) {
+                continue;
+            }
+            if (ApprovalAttachmentRow.TYPE_PAY_EVID_FILE.equals(ref.fileType())) {
+                exptResolPayEvidFileRepository
+                        .findByBizKeyAndApprSeqNoAndEvidFileId(bizKey, apprSeqNo, ref.fileId())
+                        .ifPresent(row -> {
+                            deleteBinaryQuietly(bizKey, apprSeqNo, row.getSaveFileNm());
+                            exptResolPayEvidFileRepository.delete(row);
+                        });
+            } else {
+                exptResolFileRepository
+                        .findByBizKeyAndApprSeqNoAndFileId(bizKey, apprSeqNo, ref.fileId())
+                        .ifPresent(row -> {
+                            deleteBinaryQuietly(bizKey, apprSeqNo, row.getSaveFileNm());
+                            exptResolFileRepository.delete(row);
+                        });
+            }
+        }
+    }
+
+    /** Best-effort physical-file delete — never aborts the edit when the binary
+     *  is already gone (legacy {@code FileUtils.deleteQuietly}). */
+    private void deleteBinaryQuietly(String bizKey, String apprSeqNo, String saveFileNm) {
+        if (saveFileNm == null || saveFileNm.isBlank()) {
+            return;
+        }
+        try {
+            Path target = fileResolver.resolveApprovalAttachment(bizKey, apprSeqNo, saveFileNm);
+            Files.deleteIfExists(target);
+        } catch (IOException | RuntimeException ex) {
+            log.warn("feature=payment approval-edit attachment-delete-failed bizKey={} apprSeqNo={} saveFileNm={} err={}",
+                    bizKey, apprSeqNo, saveFileNm, ex.getMessage());
         }
     }
 

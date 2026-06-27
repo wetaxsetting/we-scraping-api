@@ -73,6 +73,16 @@ All refactor backend documentation lives under this project's own [`docs/`](docs
 - **Product type:** `BUSI_INFM.PRDT_TYPE` (one-character legacy code) is stamped into the JWT at login finalize and surfaced via `TenantContext.currentPrdtType()`. The refactor recognises three letters explicitly today — `F` (WeCMS default, used by `VN_VNM0004_000001`), `M` (WeCMS Lumens), and `H` (WeCMS HAENGSUNG Electronics, used by `VN_VNM0004_000014`) — via `common/enums/PrdtType`. The remaining 11 legacy letters (`W` / `R` / `B` / `E` / `U` / `L` / `S` / `P` / `C` / `D` / `T`) are carried verbatim on the wire and in the JWT but intentionally not modelled — a constant lands in `PrdtType` only when a real consumer for that letter arrives. Per-product behavioural gates (HAENGSUNG payment-table-2 layout, account masking for bank `11704020`, hidden expense file column, daily-financial-HS report gating; WeCMS Default e-Invoice gate; Lumens readonly overrides) are **deferred** and port with each feature MR. Infrastructure only this phase.
 - **Deploy target:** developer laptop only. Runs against a local PostgreSQL instance owned by the developer.
 
+## Security & SIT Readiness Status
+
+> Concise status only — full detail lives in the closure docs (linked below); do not duplicate them here.
+
+- **Spring security review:** deep review done 2026-06-24 (adversarial, scored 6.0/10 initially). Findings-of-record + remediation banner in [docs/security/spring-security-deep-review.md](../docs/security/spring-security-deep-review.md).
+- **Remediation:** **F-01–F-07 + F-10 closed and verified** (JWT secret fail-fast/blocklist, SVG rejection, `jti` revocation + real logout, security headers/CSP/HSTS, committed-secret cleanup, SIT logging hygiene, reveal audit, brute-force lockout + rate limiting). Compile green; 6 security-guarding unit test classes pass (31 tests, 0 failures). Documentation/comments aligned (no stale BCrypt-write / AES-GCM-active / SVG-allowed / logout-no-op claims remain).
+- **UAT readiness:** **Conditionally Ready** — provided host env secrets are set (fail-fast otherwise), dispatch stays OFF (default), and the historically-committed Coocon keys are rotated.
+- **PROD blockers:** (1) secret rotation (Ops); (2) F-09 callback hardening before any dispatch enablement; (3) action-level authz (R-02); (4) multi-instance durability decision for the in-memory revocation/rate-limit stores. Accepted legacy constraints: F-08 (AES-256-CBC cert cipher) + F-11 (unsalted SHA-256 passwords) — kept for JEX coexistence.
+- **Closure docs:** [docs/security/README.md](docs/security/README.md) (index) → closure report, remaining-risk register, ops rotation handoff, required-environment-secrets; SIT run-book at [docs/deployment/sit-security-deployment-checklist.md](docs/deployment/sit-security-deployment-checklist.md).
+
 ## Tech Stack
 
 | Layer | Choice |
@@ -282,6 +292,77 @@ com.kosign.wecms
 | `/actuator/health` | GET | Public | Spring Actuator |
 | Everything else | any | Protected | 401 if no valid JWT (via `JwtAuthenticationEntryPoint`) |
 
+## REST API Design Conventions (Canonical)
+
+> **Source:** consolidated from [docs/audits/rest-api-design-consistency-audit.md](../docs/audits/rest-api-design-consistency-audit.md) (2026-06-24, score 7.5/10). These are the **canonical rules for every NEW endpoint.** Existing endpoints that diverge are **grandfathered** — they are not rewritten in unrelated MRs; they migrate behind a future `/api/v2` boundary with paired frontend changes. The "Known divergences" notes below exist so a new developer is not misled into thinking the whole surface already conforms. **When this section and an older scattered rule disagree, this section wins for new code.**
+
+### 1. Pagination — `page` + `size`, zero-based
+
+- List endpoints paginate with exactly two query params: **`page`** (zero-based, default `0`) and **`size`** (integer, default `20`, clamped to a per-resource `MAX_PAGE_SIZE`).
+- `size` is an **`int`**, never a string. Do not introduce `page_no`, `page_per_cnt`, `pageNo`, `pageNum`, `offset`, `perPage`, or a one-based `page`.
+- The unpaged filtered total ships as **`total_count` (`long`)** on the list DTO (see §7). A future `common/web/PagedResponse<T>` will standardize `{ items, total_count, page, size, total_pages }`.
+- **Known divergences (grandfathered):** `ReportController` `/daily-financial/transactions` and `SmartOrganizerController` use a one-based `page`; `TransferHistoryController` uses `page_no` + `page_per_cnt` (string). New endpoints must not copy these.
+
+### 2. Response envelope — `ApiResponse<T>` on every JSON endpoint
+
+- Every JSON endpoint returns **`ApiResponse<T>`** = `{ status: { error, code, message }, data }`; errors add `timestamp`, `path`, `trace_id`. Success → `ApiResponse.ok(data)`; failure → throw `BusinessException("WBExxxx")` (never hand-roll a body).
+- Wire is lowercase snake_case (global Jackson `SNAKE_CASE`). Do not define a second envelope shape.
+- Verified 2026-06-24: 304 of 315 handlers return `ApiResponse<T>` — the envelope is effectively universal. This consistency is what makes a single shared frontend `unwrap()` safe to extract (frontend action-plan **H-2**).
+
+### 3. Binary download / export — the documented exception to §2
+
+- File **download** and Excel **export** endpoints return **`ResponseEntity<InputStreamResource>` / `ResponseEntity<Resource>` / a streamed body**, **not** `ApiResponse<T>`. This is the **only** sanctioned envelope exception (11 endpoints as of 2026-06-24).
+- Such endpoints set `Content-Type: application/octet-stream` (or the XLSX MIME for exports) and an **RFC 5987** `Content-Disposition: attachment; filename*=UTF-8''…` so Korean/Khmer/Vietnamese filenames round-trip.
+- **Frontend contract:** these endpoints are consumed via `lib/file.ts` / `lib/excel.ts` (blob handling) and **must never be routed through the shared `unwrap()`** — `unwrap()` is for JSON `ApiResponse<T>` only.
+- See §9 for the security rules these endpoints must follow.
+
+### 4. Error handling contract — single funnel; `BusinessException` → HTTP 200
+
+- `GlobalExceptionHandler` (`@RestControllerAdvice`) is the single funnel. Every error carries `code` + localized `message` + `path` + `trace_id` (also in the `X-Trace-Id` header). Never return a stack trace, raw exception text, or internal hostname in `status.message`.
+- **`BusinessException` returns HTTP 200 by design** — a documented business outcome. The frontend reads `status.error`, **not** the HTTP code, for known business results. This is intentional and surprises REST-trained newcomers, so it is stated explicitly here.
+- Status mapping (canonical): `BusinessException` → **200**; bean/`@Valid`/`@Validated`/missing-param/type-mismatch validation → **200** (`WBE_VALIDATION`); `IllegalArgumentException` / malformed JSON → **400**; method not allowed → **405**; unsupported media type → **415**; no handler → **404**; `AuthenticationException` → **401**; `AccessDeniedException` → **403** (`WBE1003`); `DataAccessException` → **500** (`WBE_DB`); `TimeoutException` → **504**; any other → **500** (`WBE9999`, logged with stack + traceId). JWT 401 is handled by `JwtAuthenticationEntryPoint` (fires before the advice).
+- New error categories add a handler row here + a `WBE`/`WBI` key in `messages.properties` — never a parallel envelope.
+
+### 5. Query-parameter naming — lowercase snake_case
+
+- All query params are **lowercase snake_case**: `sort_field`, `sort_direction`, `page`, `size`, `from_dt`, `to_dt`, `search`, `bank_cd`, `acct_no`, `as_of`. No camelCase, no kebab-case.
+- Sorting uses `sort_field` (a View Setting `FIELD_ID`) + `sort_direction` (`ASC`/`DESC`), resolved through the per-domain whitelist enum (never concatenated into SQL); unknown values fall back to the default ORDER BY.
+- **Known divergences (grandfathered):** several existing endpoints ship camelCase params — `sortField`/`sortDirection` (most list controllers), and `asOf`/`bankCd`/`acctNo`/`currencyScope`/`activeAccountsOnly` (`ReportController`). The older common-sort reference snippet elsewhere in this file shows `@RequestParam("sortField")` — that camelCase form is **legacy**; the canonical form for new endpoints is `sort_field`. `TransferHistoryController` already uses the canonical snake_case.
+
+### 6. HTTP method conventions
+
+- **GET** = reads only, never state-changing. Filtered reads are GET with query params (do **not** model a filtered read as POST).
+- **POST** = create, or a genuine domain **action/command** (`/approve`, `/reject`, `/dispatch`, `/request-approval`, `/bulk-delete`). Action sub-resources are acceptable for a banking/payment domain — they are not CRUD and should not be forced into it.
+- **PUT** = full replacement of a resource. **PATCH** = partial update. Pick one per operation and keep it consistent across modules — e.g. "set approval line" is **`PUT /{id}/approval-line`** (the majority form).
+- **DELETE** = delete / clear a sub-resource. Idempotent toggles use a paired `PUT`+`DELETE` on the sub-resource (e.g. `.../confirm`).
+- **Known divergences (grandfathered):** `OperationStatusController` exposes `POST /operation-status/inquire` (read-as-POST) and `POST /operation-status/update` (update-as-POST); `OverseasPaymentController` uses `PATCH /{id}/approval-line` (vs PUT in 5 peers) and `GET /result/export` (vs POST elsewhere). New endpoints follow the canonical rules above.
+
+### 7. DTO naming & shape conventions
+
+- Java **records**, camelCase fields, auto-serialized to snake_case by the global Jackson strategy. `@JsonProperty` only when the wire name genuinely diverges (the one canonical case is `access_token`).
+- **Suffix vocabulary (canonical — keep predictable):**
+  - `…Request` — request body (e.g. `LoginRequest`, `ContactCreateRequest`).
+  - `…Response` — single-object response (e.g. `MeResponse`).
+  - `…Row` — one row in a list payload (e.g. `AccountRow`).
+  - `…ListResponse` — a list payload `{ rows/items, total_count, … }` (e.g. `ContactListResponse`).
+  - `…Detail` — a detail/expanded view when it differs from `…Response`.
+  - Reserve `…Command` for internal service inputs, not wire DTOs.
+- Verified 2026-06-24: suffix usage is already consistent (`Request` 96 · `Row` 78 · `Response` 65 · `ListResponse` 48). Avoid mixing `…Result` with `…Response` for the same concept.
+- Vendor/external DTOs (`domain/banking/nxisas/gateway/`) keep **vendor casing** verbatim — they are not the WeCMS wire and are exempt from the snake_case rule.
+
+### 8. Authorization — canonical pattern + two pre-deploy gates
+
+- Every business `/api/v1/**` endpoint is gated by `@PreAuthorize("@menuAuthz.canAccess('<route-slug>')")` (stack `hasRole(...)` / `@userMgmtAccess` on top, never weaker). The only unannotated handlers are the documented allow-list (auth/public, navigation, screen-options, country, sync-history, blocked-chars, and the dispatch callbacks).
+- **Pre-deploy gate R-02 — action-level authorization:** per-action authority (Request-approval / Delete / Dispatch — "R/D/T") is **not yet enforced backend or frontend** (the frontend uses a static `{R:true,D:true,T:true}` stub). Before any UAT/PROD deploy, define the per-action authority source and add server-side `@PreAuthorize` for state-changing actions. The frontend flag is UX only and is never the boundary.
+- **Pre-deploy gate R-03 — dispatch-callback protection:** the callback controllers under `/api/v1/payment/dispatch/callbacks` (`BulkExecutionResultController`, `BulkReceptionResultController`) are **unauthenticated**. Acceptable for local R&D; before any non-local deploy they must be restricted by network / mTLS / shared-secret. Document why they are public when you do.
+- Neither gate blocks local R&D, but **both block UAT/PROD** and must be closed at cutover.
+
+### 9. File download/export security (applies to §3 endpoints)
+
+- Resolve the physical path under a tenant-scoped root and **reject traversal**: normalize, then verify `resolved.startsWith(tenantRoot)` (reference: `ErpTrnsHistoryFileResolver.resolve(...)`). Never build a path directly from a client-supplied filename without this guard.
+- Enforce tenant scope (`TenantContext.currentBizKey()`) on every download/export — never cross tenants.
+- **Known gap (R-08, MEDIUM):** the traversal guard is currently a per-feature pattern, not a shared primitive — a future download handler could omit it. New download endpoints must replicate the guard (or route through a shared `common/file` helper if/when one is extracted).
+
 ## Coding Rules
 
 **Controllers**
@@ -360,7 +441,7 @@ com.kosign.wecms
 | `domain/payment/notification` | `…/notifications` (`GET /`, `GET /unread-count`, `PUT /{id}/read`, `PUT /read-all`) | **Implemented** — header-bell popup backed by legacy `BLTB_*` tables (5 entities); ports `comm_0192_007`; **BLTB branch only** (General `TYPE='G'` not ported). No `@menuAuthz` (global header surface; allow-listed). Producer leg `ApprovalNotificationService`. Frontend: header bell + slide-over. The earlier refactor-only `domain/notification/` + `NOTIFICATION` table (V238) was **removed 2026-06-10** (DEAD LEGACY). |
 | `common/auditlog` | shared `AUDIT_LOGS_INFM` writer | **Backend implemented** (+ tests). Internal — no standalone endpoint. |
 | `domain/auth` (`UserController`) | user lookup / image (auth-adjacent) | **Backend present** — endpoint scope not re-verified this pass (**Unknown**). |
-| `domain/member`; dashboard; refresh-token & server-side logout revocation; 5-failure auto-lock | — | **Not implemented.** No controller/service on disk. (Notifications **is** now implemented — see the `domain/payment/notification` row above. Post-login menu / permission resolution is **Phase 1 implemented** — see the `domain/navigation` row.) |
+| `domain/member`; dashboard; refresh tokens | — | **Not implemented.** No controller/service on disk. (Server-side **logout revocation** is now implemented — F-03, `TokenRevocationService` — and **5-failure auto-lock** is implemented — F-10, `LoginLockoutService`; both moved out of this row. Notifications **is** now implemented — see the `domain/payment/notification` row. Post-login menu / permission resolution is **Phase 1 implemented** — see the `domain/navigation` row.) |
 
 > **Status legend (added 2026-06-02 — evidence-based reconciliation):** *Implemented* = backend **and** frontend both evidenced on disk. *Backend implemented* = controller + service (often + tests/migrations) present; the matching Next.js frontend was **not verified in this pass** — do not read as full-stack-complete. *Partial* = backend itself is incomplete/stub in parts. *Unknown* = code present but scope not re-verified. *Not implemented* = no controller/service exists. This table was rebuilt from the actual `domain/**/controller/` + `service/` + `src/test/` tree on 2026-06-02; the prior "Everything else — Not started" line was inaccurate (42 controllers exist). "Backend implemented" rows are conservative — confirm the frontend before declaring a feature done.
 >
@@ -368,7 +449,7 @@ com.kosign.wecms
 >
 > **Frontend verification (2026-06-02):** `login-credentials`, `einvoice` (sales/expenses), and `operation-status` were checked against `wecms-web` and found **frontend-wired** (calling live endpoints, no mock fallback) — more complete than their feature docs claimed. Residual gaps only: e-invoice invoice-status server-side filter (IR-4), operation-status inquire-dialog Save persist endpoint, and the `resolveDocType EXPENSE→'E'` backend code bug. Details in the content-validation report under [docs/archive/reports/](docs/archive/reports/).
 
-Deferred inside `auth` (intentionally out of Sprint 0 scope): 5-failure auto-lock counter, password-change-history reset, `NTNL_CD` / `CHNL_TYPE` / `BUSI_STTS` post-auth gates, post-login menu resolution, refresh tokens, JWT blacklist / server-side logout.
+Deferred inside `auth` (still genuinely open): password-change-history reset, `NTNL_CD` / `CHNL_TYPE` / `BUSI_STTS` post-auth gates, refresh tokens, and a durable/multi-instance revocation + rate-limit store. **No longer deferred — now implemented:** 5-failure auto-lock (F-10), JWT revocation / server-side logout (F-03), and post-login menu resolution (F-3).
 
 ## Auth Rules
 
@@ -404,11 +485,12 @@ The chooser response (multi-link user, no `biz_key` in request) stamps the per-c
 ### JWT (`JwtTokenProvider`)
 - Secret: `wecms.jwt.secret` (env var `WECMS_JWT_SECRET`). Minimum 32 bytes → HS256; ≥ 64 bytes → HS512 (preferred). Fail-fast on missing/too-short secret.
 - Claims: `sub = USER_ID`, `userNm`, `bizKey`, `langCd`, `authGrCd` (`"ADMIN"` or `"USER"` — stamped at login finalize from `BUSI_ADMN_INFM`), `prdtType` (verbatim `BUSI_INFM.PRDT_TYPE` letter — omitted when the row carries no value). Lifetime from `wecms.jwt.expires-in-seconds` (default 3600 s).
-- **Stateless**: no refresh token, no server-side blacklist. Authority / product-type changes (rows modified in `BUSI_ADMN_INFM` or `BUSI_INFM.PRDT_TYPE`) take effect at the next login — the in-flight JWT's claims are signed and immutable.
+- **Stateless transport, with server-side revocation (F-03):** no refresh token, but there **is** a revocation store — `TokenRevocationService` holds a `jti` denylist (logout) + a per-user not-before cutoff (admin lock/delete/demote/password-reset), consulted by `JwtAuthenticationFilter` on every request. The store is **in-memory** (lost on restart, not shared across instances — a durable/multi-instance store is the one open item here). Authority / product-type changes (rows modified in `BUSI_ADMN_INFM` or `BUSI_INFM.PRDT_TYPE`) otherwise take effect at the next login — the in-flight JWT's claims are signed and immutable.
 
 ### JWT filter (`JwtAuthenticationFilter`)
 - Runs before `UsernamePasswordAuthenticationFilter`. Reads `Authorization: Bearer <token>`, parses, and:
-  - Sets `UsernamePasswordAuthenticationToken` with `principal = userId` and `authorities = [ROLE_ADMIN | ROLE_USER]` derived from the `authGrCd` claim (advisory until `@PreAuthorize` lands).
+  - Sets `UsernamePasswordAuthenticationToken` with `principal = userId` and `authorities = [ROLE_ADMIN | ROLE_USER]` derived from the `authGrCd` claim. These authorities are **enforced** — `@EnableMethodSecurity` is active and business endpoints are gated by `@PreAuthorize` / `@menuAuthz` (F-3), so the role is a live access-control input, not advisory.
+  - Rejects **revoked** tokens (F-03): a logged-out `jti` on the denylist, or a token issued before the user's revocation cutoff, is treated as invalid → 401 (via `TokenRevocationService`).
   - Populates `TenantContext` with `(userId, userNm, bizKey, langCd, authGrCd, prdtType)` for the duration of the request. `prdtType` is the verbatim DB letter and may be null when the issuing tenant row had no value.
 - Invalid token → clear context, let `JwtAuthenticationEntryPoint` return **401** with the standard `ApiResponse` envelope (`status.code = WBE1009`). The frontend's Axios response interceptor watches for 401 to surface the global session-expired re-auth dialog.
 - **Never trust frontend-sent `biz_key` or `prdt_type` outside the login endpoint.** Domain services read the active company and product type exclusively from `TenantContext.currentBizKey()` / `TenantContext.currentPrdtType()` (sourced from the signed JWT). A request body or query parameter cannot override the tenant or product type a JWT is bound to. Frontend-side `productType` in `StoredUser` is for UI display + gating only — never a security boundary.
@@ -541,7 +623,7 @@ Add new codes to `messages.properties` first, then throw `new BusinessException(
 
 ### Database (LOCAL)
 
-- PostgreSQL `localhost:5434/wecms_dev`, user `postgres`. Password via env `WECMS_DB_PASSWORD` or the R&D default baked into `application-local.yml` (`.gitignore`d in real setups).
+- **Canonical local target: the shared dev DB `172.168.5.172:5432/wecmsdevdb`, user `wecmsdev_owner`** (VPN-required), configured in `application-local.yml`. Password via env `WECMS_DB_PASSWORD` or the R&D default in that file (gitignored — **not** in a fresh clone; obtain it per [docs/INFRASTRUCTURE_ACCESS.md](../docs/INFRASTRUCTURE_ACCESS.md)). A developer-local `localhost:5434/wecms_dev` (user `postgres`) is a **documented fallback only**.
 - **Flyway owns the schema.** `spring.jpa.hibernate.ddl-auto = validate` — never `update` or `create`. Schema changes always land as a new `V{N}__{description}.sql` in `src/main/resources/db/migration/`.
 - Current migrations:
 
@@ -725,7 +807,7 @@ The refactor is moving away from legacy JEX-style PL/pgSQL helpers in favour of 
 
 **`wb_get_next_val` centralization — FINAL STATUS (2026-06-09)**
 
-The legacy-key generation surface was consolidated and centralized. The authoritative function is now **`V155__wb_get_next_val_centralize.sql`** which **supersedes V140** (`CREATE OR REPLACE`, 8-param signature unchanged) and carries the **curated 28 branches** actually invoked by Spring (the 10 kept from V140 + 2 regressed branches restored — `audit_logs_infm.audit_logs_seq_no`, `busi_usag_set_infm.use_usag_cd` — + 16 added for tables whose Spring code previously used Java-side `MAX+1`). Status: **all in-scope business key generation now routes through `LegacyFunctionRepository` → `wb_get_next_val`; compile + affected tests pass.** Full record: [docs/audits/wb-get-next-val-centralization-2026-06-09.md](docs/audits/wb-get-next-val-centralization-2026-06-09.md).
+The legacy-key generation surface was consolidated and centralized. The authoritative function is the live **`V140__wb_get_next_val.sql`** on disk (it was authored as `V155__wb_get_next_val_centralize.sql` and **renumbered to V140** during the 2026-06-09 consolidation — verify by `ls src/main/resources/db/migration/`), a `CREATE OR REPLACE` (8-param signature unchanged) carrying the **curated 28 branches** actually invoked by Spring (the 10 kept from V140 + 2 regressed branches restored — `audit_logs_infm.audit_logs_seq_no`, `busi_usag_set_infm.use_usag_cd` — + 16 added for tables whose Spring code previously used Java-side `MAX+1`). Status: **all in-scope business key generation now routes through `LegacyFunctionRepository` → `wb_get_next_val`; compile + affected tests pass.** Full record: [docs/audits/wb-get-next-val-centralization-2026-06-09.md](docs/audits/wb-get-next-val-centralization-2026-06-09.md).
 
 **Funnel architecture rule (non-negotiable):**
 
@@ -753,7 +835,7 @@ Spring services → LegacyFunctionRepository → wb_get_next_val() → JEX-compa
 
 **Surviving legacy functions (kept by exception, not by default)**
 
-> **Updated 2026-06-09:** the row below is **historical** (pre-V155). The live function is **V155 with 28 branches** (see "centralization — FINAL STATUS" above + the audit doc). The per-branch retirement plans still apply.
+> **Updated 2026-06-09:** the row below is **historical**. The live function on disk is **`V140__wb_get_next_val.sql`** with **28 branches** (authored as V155, renumbered to V140 in the 2026-06-09 consolidation; see "centralization — FINAL STATUS" above + the audit doc). The per-branch retirement plans still apply.
 
 | Function / sequence | Created by | Consumed by | Why kept | Retire when |
 |---|---|---|---|---|
@@ -1305,7 +1387,7 @@ Update this section (and only this section) when the filtered list changes. Neve
 
 ```bash
 ./gradlew build                                              # compile + unit tests
-./gradlew bootRun --args='--spring.profiles.active=local'    # run against localhost:5434
+./gradlew bootRun --args='--spring.profiles.active=local'    # runs against the shared dev DB in application-local.yml (172.168.5.172)
 ./gradlew test                                               # tests only
 
 ./run-local.bat    # Windows wrapper — sets env vars + bootRun
@@ -1343,8 +1425,9 @@ Test users (when seeded):
 
 | Issue | Location | Status |
 |---|---|---|
-| No auto-lock counter | `AuthService`, `USER_LOGIN_HIS` | Scaffold (RSLT_CD=FAIL rows) exists; 5-failure logic deferred |
-| Logout is client-only | `AuthController.logout()` | Stub endpoint; no server-side token invalidation |
+| In-memory revocation / rate-limit durability | `TokenRevocationService`, `RateLimiter` | **Open (by design for single-instance).** Both stores are in-memory — revocations and rate-limit counters are lost on restart and not shared across instances. Bounded (≤ access-token TTL after restart); a shared cache / PO-approved table is required before a multi-instance deploy. |
+| 5-failure auto-lock | `LoginLockoutService`, `AuthService`, `USER_LOGIN_HIS` | **Implemented (F-10).** After 5 consecutive FAIL rows, `LoginLockoutService` sets `USER_INFM.LOCK_YN='Y'` (own `REQUIRES_NEW` tx), wired in `AuthService.login`. |
+| Server-side logout / revocation | `AuthService.logout()`, `TokenRevocationService`, `JwtAuthenticationFilter` | **Implemented (F-03).** Logout revokes the token's `jti`; admin lock/delete/demote/password-reset revokes all the user's tokens; the filter rejects revoked/superseded tokens. (Durability caveat tracked in the row above.) |
 | PW_CHG_REQ_SEQ_NO unused | `UserInfm.pwChgReqSeqNo` | Mapped but not read; password-expiry flow deferred |
 | NTNL_CD/CHNL_TYPE/BUSI_STTS gates missing | `AuthService.login` | Post-auth gates deferred; not in Sprint 0 scope |
 | No SpringDoc / Swagger | — | Deferred; add with first non-auth module |
@@ -1354,10 +1437,10 @@ Test users (when seeded):
 ## Notes for future implementation
 
 - **SpringDoc OpenAPI** — first non-auth module should add `org.springdoc:springdoc-openapi-starter-webmvc-ui` and annotate controllers with `@Operation`.
-- **Refresh tokens / logout revocation** — when needed, introduce a `REFRESH_TOKEN` table, rotate on use, and wire revocation into `JwtAuthenticationFilter`.
-- **Auto-lock counter** — 5 consecutive failures → lock user. `USER_LOGIN_HIS` has the data; implement the counter in `AuthService`.
+- **Logout / token revocation** — **implemented (F-03).** `AuthService.logout` revokes by `jti`; admin lock/delete/demote/password-reset revokes all of a user's tokens; `JwtAuthenticationFilter` enforces it. **Still open:** refresh tokens (not implemented), and a **durable / multi-instance** revocation store (the current `TokenRevocationService` is in-memory — lost on restart, per-node; a shared cache or a PO-approved table is the next step, see `docs/security/jwt-revocation.md`).
+- **Auto-lock counter** — **implemented (F-10).** `LoginLockoutService.lockIfThresholdReached` sets `USER_INFM.LOCK_YN='Y'` after the latest 5 attempts are all failures (own `REQUIRES_NEW` tx); wired in `AuthService.login`.
 - **Password expiry** — `USER_INFM.PW_CHG_REQ_SEQ_NO` is mapped but unused. Wire to a `/auth/change-password` flow before non-local deploy.
-- **Menu / permission resolution** — **complete (Phases 1–5 + F-3, 2026-06-06).** `domain/navigation` (`GET /api/v1/navigation`, V242–V244) serves the per-product menu tree, server-resolved to `Product Tree ∩ grants` (admin = full tree). All four `wecms-web` nav surfaces (Sidebar, Top Nav, mobile MENU, Menu Entitlement) are wired to the endpoint (hardcoded arrays removed); the Menu Entitlement universe + per-user grant write-path are implemented (`USER_MENU_AUTH_INFM`, generated via `entitlementTree.ts`); and server-side per-menu `@PreAuthorize` enforcement is live (F-3). See the `domain/navigation` row in the Feature Status table + [endpoint-authorization-matrix.md](../docs/jex/features/menu-product-type-management/endpoint-authorization-matrix.md).
-- **Rate-limiting / brute-force protection** — not in scope for R&D but mandatory before any non-local deploy.
+- **Menu / permission resolution** — **complete (Phases 1–5 + F-3, 2026-06-06).** `domain/navigation` (`GET /api/v1/navigation`; live catalogue migrations **V137–V139** — the pre-renumber `V242–V244` are archived; the catalogue **seed** is **not** in the renumbered live set, so a freshly-migrated DB may have an empty `MENU_ITEM` — verify per [docs/TROUBLESHOOTING.md](../docs/TROUBLESHOOTING.md) §4) serves the per-product menu tree, server-resolved to `Product Tree ∩ grants` (admin = full tree). All four `wecms-web` nav surfaces (Sidebar, Top Nav, mobile MENU, Menu Entitlement) are wired to the endpoint (hardcoded arrays removed); the Menu Entitlement universe + per-user grant write-path are implemented (`USER_MENU_AUTH_INFM`, generated via `entitlementTree.ts`); and server-side per-menu `@PreAuthorize` enforcement is live (F-3). See the `domain/navigation` row in the Feature Status table + [endpoint-authorization-matrix.md](../docs/jex/features/menu-product-type-management/endpoint-authorization-matrix.md).
+- **Rate-limiting / brute-force protection** — **implemented (F-10).** In-memory fixed-window `RateLimiter` guards `POST /auth/login` (`login:<ip>`) and credential reveal. **Still open:** a **durable / distributed** limiter (the current one is in-memory — per-node, resets on restart) for any multi-instance deploy.
 - **NTNL_CD / CHNL_TYPE / BUSI_STTS post-auth gates** — legacy JEX checks additional business flags after password validation; implement these in `AuthService.login` before production use.
 - **View Setting SIZE feature** — when (and only when) admin-tunable column widths or drag-to-resize becomes a real product requirement, ship one migration + cross-stack change: `ALTER COLUMN "SIZE" TYPE VARCHAR(20)` to align with DEV, map the field on `SysScrOptionWecms` / `UserScrOptionWecms`, add `@JsonProperty("SIZE")` to `ScreenOptionItem`, surface `SIZE` in the TS `ApiScreenOptionItem`, consume it in the frontend `<col width>` rendering, and backfill the seed with **Figma WB365** values (NOT legacy DEV values — the two diverge in 5/7 columns). Until then SIZE is intentionally schema-only metadata; the layout source of truth is Figma → Tailwind tokens.

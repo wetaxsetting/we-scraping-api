@@ -194,6 +194,16 @@ public class GlobalExceptionHandler {
                 .body(buildError("WBE_TIMEOUT", messages.resolve("WBE_TIMEOUT"), req));
     }
 
+    /** F-10 — rate limit exceeded (login / credential reveal). HTTP 429 so
+     *  clients and proxies can back off. The message is generic and never
+     *  reveals account state or whether an id exists. */
+    @ExceptionHandler(RateLimitExceededException.class)
+    public ResponseEntity<ApiResponse<Void>> handleRateLimit(RateLimitExceededException ex, HttpServletRequest req) {
+        log.warn("Rate limit exceeded on {} {} (code={})", req.getMethod(), req.getRequestURI(), ex.getCode());
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .body(buildError(ex.getCode(), messages.resolve(ex.getCode()), req));
+    }
+
     /** The genuine catch-all. {@link NullPointerException} and any other
      *  unmapped {@link RuntimeException} land here. Logs the full stack
      *  trace at error level — the {@code traceId} in MDC ties the log

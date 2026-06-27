@@ -92,11 +92,15 @@ even though their unexpired token is otherwise valid.
 - **No `HttpSession`.** Spring Security creates no session and stores no `SecurityContext` server-side.
   Each request stands alone — the `SecurityContext` is rebuilt from the Bearer token by
   `JwtAuthenticationFilter` and discarded at the end of the request.
-- **No server-side token store / blacklist.** A token is valid until it expires; the server cannot
-  revoke a still-valid token. There is no DB row, no Redis entry, nothing to invalidate.
-- **Logout is client-only.** `POST /api/v1/auth/logout` is a stub that returns success; the client clears
-  its token. The token remains cryptographically valid until expiry — there is no server revocation. See
-  [logout](../logout/README.md).
+- **No persisted token store; revocation is in-memory.** A token is valid until it expires **unless** it
+  has been revoked: `TokenRevocationService` holds an in-memory `jti` denylist + per-user not-before
+  cutoff, and `JwtAuthenticationFilter` rejects a revoked / superseded token. There is no DB row or Redis
+  entry today — the denylist lives in process memory (lost on restart, per-node). *(Formerly "the server
+  cannot revoke a still-valid token / nothing to invalidate" — server-side revocation was implemented
+  2026 via F-03.)*
+- **Logout revokes server-side.** `POST /api/v1/auth/logout` revokes the presented token's `jti` (via
+  `AuthService.logout → TokenRevocationService`) **and** the client clears its copy. The revoked token is
+  rejected on the next request, before its TTL. See [logout](../logout/README.md).
 - **Authority / product-type changes take effect at the next login.** Editing `BUSI_ADMN_INFM` or
   `BUSI_INFM.PRDT_TYPE` does not affect an in-flight JWT — its claims are signed and immutable. (Menu
   grants are the exception: they are resolved fresh on every `/me`, so they apply on the next reload.)

@@ -21,11 +21,11 @@ stateless JWT layer (`JwtTokenProvider` + `JwtAuthenticationFilter` + `JwtAuthen
 | **HS256 / HS512 by secret length** | n/a | chosen at construction — HS256 (32–63 B), HS512 (≥ 64 B) (`JwtTokenProvider:43`) | **MATCH (design)** — intentional, fail-fast |
 | **Fail-fast secret (≥ 32 bytes or boot fails)** | n/a | `JwtTokenProvider:29-44` + `JwtProperties` bean validation | **MATCH (design)** |
 | **JEX `HttpSession` server-side state** | present | removed entirely | **DEAD LEGACY** (GAP-1) |
-| **Server-side logout / session invalidation** | invalidates session | client-only logout; JWT valid until `exp` | **DEAD LEGACY** (server step) + **MISSING** (revocation, GAP-3) |
+| **Server-side logout / session invalidation** | invalidates session | logout revokes the `jti`; filter rejects revoked tokens | **DEAD LEGACY** (the `HttpSession` step) + **IMPLEMENTED** (revocation, GAP-3) |
 | **Session-cookie auth transport** | session cookie is the credential | Bearer header is the credential | **DEAD LEGACY** (GAP-2) |
 | **Refresh token** | implicit session renewal | none — token expires; re-login required | **MISSING** (GAP-3) |
-| **Server-side revocation / blacklist** | session invalidation | none — no revocation store | **MISSING** (GAP-3) |
-| **Rate-limiting / brute-force guard** | (n/a to token layer) | none | **MISSING** (GAP-4) |
+| **Server-side revocation / blacklist** | session invalidation | `TokenRevocationService` (in-memory jti denylist + per-user cutoff); filter rejects revoked / superseded tokens | **IMPLEMENTED** (formerly MISSING — GAP-3, implemented 2026 via F-03; open: in-memory store) |
+| **Rate-limiting / brute-force guard** | (n/a to token layer) | in-memory `RateLimiter` on `POST /api/v1/auth/login` + credential reveal | **IMPLEMENTED** (formerly MISSING — GAP-4, implemented 2026; open: in-memory limiter) |
 
 ---
 
@@ -45,20 +45,34 @@ The API authenticates on the `Authorization: Bearer` header only (`JwtAuthentica
 legacy session-cookie transport is gone. (A non-HttpOnly cookie does exist on the frontend, but only as
 the Next.js edge-middleware *presence* check — it is not the API credential.) **Status: DEAD LEGACY.**
 
-### GAP-3 — Refresh token + server-side revocation (MISSING)
+### GAP-3 — Refresh token (MISSING) + server-side revocation (IMPLEMENTED)
 
-There is **no refresh token** and **no revocation/blacklist store**. A token is valid until its `exp`
-claim; re-authentication is a fresh login. Logout is client-only (clears the stored token) — an
-in-flight JWT stays cryptographically valid until it expires, because there is nothing to revoke it
-against. Both are **deferred** R&D items; a future `REFRESH_TOKEN` table would require PO baseline
-approval (it is absent from the legacy inventory) — see [database-mapping.md §3](database-mapping.md)
-and `wecms-api/CLAUDE.md` §"Notes for future implementation". **Status: MISSING** (the legacy server
-step they would partially replace is DEAD LEGACY).
+> **Server-side revocation was formerly part of this gap (MISSING) — implemented 2026 via F-03.**
 
-### GAP-4 — Rate-limiting / brute-force protection (MISSING)
+**Server-side revocation — IMPLEMENTED.** Every JWT carries a `jti` (`JwtTokenProvider`).
+`TokenRevocationService` keeps an in-memory `jti` denylist + a per-user not-before cutoff; logout
+revokes the presented `jti`, and admin lock / delete / demote / password-reset revoke all of a user's
+tokens (`UserManagementService.revokeAllForUser`). `JwtAuthenticationFilter` rejects revoked /
+superseded tokens on every request, so a token can be killed **before** its `exp`. **Open limitation:**
+the store is **in-memory** — lost on restart, not shared across instances; a durable / distributed store
+(Redis, or a PO-approved table) is still deferred.
 
-No rate-limiting on the auth surface. Out of scope for local R&D but **mandatory before any non-local
-deploy** (`wecms-api/CLAUDE.md`). **Status: MISSING.**
+**Refresh token — MISSING (deferred).** There is **no refresh token / rotation**; a token is valid until
+its `exp` and re-authentication is a fresh login. A future `REFRESH_TOKEN` table would require PO
+baseline approval (it is absent from the legacy inventory) — see
+[database-mapping.md §3](database-mapping.md) and `wecms-api/CLAUDE.md` §"Notes for future
+implementation". **Status: refresh token MISSING; revocation IMPLEMENTED (in-memory store open).**
+
+### GAP-4 — Rate-limiting / brute-force protection (IMPLEMENTED)
+
+> **Formerly MISSING (deferred) — implemented 2026.**
+
+In-memory `RateLimiter` (`common/web/RateLimiter`) throttles `POST /api/v1/auth/login` (key
+`login:<ip>`) and the credential-reveal endpoint; 5 consecutive login failures also auto-lock the
+account (`LoginLockoutService` sets `USER_INFM.LOCK_YN='Y'` — see [../login/](../login/)). **Open
+limitation:** the limiter is **in-memory** — per-node and reset on restart; durable / distributed rate
+limiting is still deferred (and remains advisable before a high-traffic non-local deploy).
+**Status: IMPLEMENTED (in-memory limiter open).**
 
 ### HS256/HS512 selection by secret length (MATCH — design)
 
@@ -80,8 +94,9 @@ auto-upgrades the MAC, and a too-short or missing secret fails application boot.
 
 ```
 Refactor Status: complete for the in-scope token mechanics
-                 (issue / parse / authorize / 401 / fail-fast secret / stateless tenant binding).
-                 Refresh token, server-side revocation, and rate-limiting are MISSING (deferred).
+                 (issue / parse / revoke / authorize / 401 / fail-fast secret / stateless tenant binding).
+                 Server-side revocation + login rate-limiting are IMPLEMENTED (in-memory stores — open).
+                 Refresh token is MISSING (deferred).
 ```
 
 Evidence for the implemented surface:
@@ -94,9 +109,9 @@ Evidence for the implemented surface:
 
 Residual (non-blocking, tracked):
 
-1. GAP-3 — refresh token + revocation when the feature is genuinely needed (PO baseline decision required).
-2. GAP-4 — rate-limiting before any non-local deploy.
+1. GAP-3 — **refresh token** still MISSING (deferred; PO baseline decision required for a `REFRESH_TOKEN` table).
+2. GAP-3 / GAP-4 open limitation — the revocation store **and** the rate limiter are **in-memory** (per-node, reset on restart); durable / distributed versions are deferred before a multi-node deploy.
 3. Stale `SecurityConfig` `passwordEncoder()` Javadoc cleanup.
-4. No dedicated JWT JUnit on disk (see [test-scenarios.md §2](test-scenarios.md)) — MISSING.
+4. No dedicated JWT token-mechanics JUnit on disk (the revocation path is covered by `JwtRevocationTest`) — see [test-scenarios.md §2](test-scenarios.md). MISSING.
 
-None of the residual items affect the implemented token mechanics' correctness.
+None of the residual items affect the implemented token mechanics', revocation's, or rate limiting's correctness.

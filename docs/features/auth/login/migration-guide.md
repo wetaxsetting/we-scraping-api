@@ -58,7 +58,7 @@ emits a WSVC id.
 | Tenant binding | single configured-tenant pin | per-user `USER_BUSI_CONN_INFM` resolution; single-link auto-pick is the production successor to the pin |
 | Multi-company | one user spanning companies is not a normal case | chooser response retained as a safe generic fallback (exceptional path; V76 removed the local test fixture) |
 | Password on login | none re-hashed | **verify-only**, explicitly no write-back (coexistence with the live JEX system on a shared DB) |
-| Session | server-side session | stateless JWT — no server session, no refresh token, no blacklist |
+| Session | server-side session | stateless JWT — no server session, no refresh token; in-memory `jti` revocation denylist (logout / admin actions revoke server-side) |
 | Response | `COMMON_HEAD` / `REC` | `{ status, data, timestamp?, path?, trace_id? }` lowercase snake_case (CTO directive) |
 | Authority | resolved from admin tables | `BUSI_ADMN_INFM` presence stamped into the JWT `authGrCd` claim at finalize |
 | ML codes | JEX `Pxxxxx` etc. | translated to `WBE1009/1010/1011/1128` + `WBI0000` in `messages*.properties` |
@@ -71,9 +71,9 @@ emits a WSVC id.
 |---|---|
 | Server-side session creation / invalidation | **DEAD LEGACY** — replaced by stateless JWT; logout is client-side (see [logout](../logout/README.md)) |
 | SHA-256 → BCrypt password upgrade on login | **DEAD LEGACY / corrected** — the refactor is verify-only, no write-back. The earlier "upgrade on login" claim in the old root doc is **stale** (the upgrade code was removed; it broke live JEX login). |
-| 5-failure auto-lock counter | **MISSING (deferred)** — `USER_LOGIN_HIS` FAIL rows are the scaffold; the counter is not implemented |
+| 5-failure auto-lock counter | **IMPLEMENTED** (formerly MISSING, deferred — implemented 2026 via F-10) — `LoginLockoutService` sets `USER_INFM.LOCK_YN='Y'` after the latest 5 attempts are all failures (FAIL `USER_LOGIN_HIS` rows still written) |
 | `NTNL_CD` / `CHNL_TYPE` / `BUSI_STTS` post-auth gates | **MISSING / PARTIAL (deferred)** — columns mapped, gates not enforced |
-| Rate-limiting / brute-force protection | **MISSING (deferred)** — mandatory before any non-local deploy |
+| Rate-limiting / brute-force protection | **IMPLEMENTED** (formerly MISSING, deferred — implemented 2026) — in-memory `RateLimiter` throttles `POST /api/v1/auth/login` (key `login:<ip>`) + credential reveal. **Open:** in-memory limiter, per-node (durable / distributed deferred) |
 
 See [refactor-gap-analysis.md](refactor-gap-analysis.md) for the full classification.
 

@@ -1,7 +1,13 @@
 # Logout — Functional Specification (Backend)
 
 The implemented behavior of the logout endpoint. JEX behaviour reference (read-only): server-side
-`HttpSession` teardown on the legacy JSP/WSVC session. This is a thin, stateless stub.
+`HttpSession` teardown on the legacy JSP/WSVC session. The refactor replaces that with **server-side
+JWT revocation** — logout adds the presented token's `jti` to the revocation denylist so it stops
+authenticating immediately.
+
+> **Formerly a stateless no-op stub (GAP-1, deferred) — implemented 2026 via F-03.** This doc
+> previously described logout as performing no server-side work, with "no blacklist / no revocation
+> list". That is no longer accurate; the live behavior is documented below.
 
 ---
 
@@ -9,25 +15,23 @@ The implemented behavior of the logout endpoint. JEX behaviour reference (read-o
 
 | # | Operation | HTTP | URI | Auth | Maps to JEX | Audit |
 |---|---|---|---|---|---|---|
-| 1 | Logout (stub) | POST | `/api/v1/auth/logout` | **Public** (permit-all) | server-session invalidation (not ported) | No |
+| 1 | Logout (server-side revoke) | POST | `/api/v1/auth/logout` | **Public** (permit-all) | server-session invalidation → JWT `jti` revocation | No |
 
 ---
 
 ## 2. Endpoint behavior
 
-`POST /api/v1/auth/logout` returns `ApiResponse<Void>` with message `"Logout successful"` and
-`data: null`:
+`POST /api/v1/auth/logout` reads the presented Bearer token, revokes it server-side, and returns
+`ApiResponse<Void>` with message `"Logout successful"` and `data: null`. The handler delegates to
+`AuthService.logout(...)`, which calls `TokenRevocationService.revokeToken(...)` to add the token's
+`jti` to the denylist.
 
-```java
-@PostMapping("/logout")
-public ApiResponse<Void> logout() {
-    return ApiResponse.ok("Logout successful", null);
-}
-```
-
-- **No request body.** The handler takes no arguments.
-- **No work performed.** No service call, no `TenantContext` read, no DB access, no token revocation.
-- **Always 200.** The endpoint cannot fail under normal operation — it is a constant response.
+- **No request body.** The token is read from the `Authorization: Bearer` header, not the body.
+- **Server-side work performed.** The presented token's `jti` is added to the revocation denylist
+  (in-memory `TokenRevocationService`); subsequent requests carrying that token are rejected by
+  `JwtAuthenticationFilter` with 401.
+- **Always 200.** The endpoint returns success even when no/an already-expired token is presented
+  (nothing to revoke) — it never fails under normal operation.
 - **Public route.** Permit-all in `SecurityConfig`, so the request succeeds with or without a valid
   `Authorization: Bearer` header. A client that has already discarded its token can still call it.
 
@@ -35,21 +39,25 @@ public ApiResponse<Void> logout() {
 
 ## 3. Business rules
 
-### 3.1 Token invalidation is client-only (no server revocation)
+### 3.1 Token invalidation is server-side (revocation), coordinated with the client
 
-The access token is a **stateless, signed JWT**. The server holds no session and no token store, so
-the logout endpoint performs **no server-side invalidation**:
+The access token is a **signed JWT** carrying a `jti` claim. Logout invalidates it on **both** sides:
 
-- There is **no blacklist**, **no revocation list**, and **no refresh-token revocation**.
-- An issued JWT remains valid until it **expires on its own** (TTL `wecms.jwt.expires-in-seconds`,
-  default 3600 s) — calling logout does **not** shorten that lifetime.
-- "Logging out" is the **client discarding its own token** (clearing `wecms_token` from `localStorage`
-  and the cookie, plus `wecms_user`). The backend is not involved in that discard.
+- **Server-side revocation (live):** `AuthService.logout → TokenRevocationService.revokeToken(...)`
+  adds the presented token's `jti` to the in-memory denylist. On every subsequent request
+  `JwtAuthenticationFilter` checks the `jti` (and the per-user not-before cutoff) and rejects a revoked
+  or superseded token with 401 — so the JWT stops working **before** its TTL elapses.
+- **Client discard:** the client also clears `wecms_token` from `localStorage` and the cookie (plus
+  `wecms_user`).
+- An un-revoked JWT still expires on its own at the TTL (`wecms.jwt.expires-in-seconds`, default
+  3600 s); revocation is what makes logout take effect immediately rather than at TTL.
 
-Server-side revocation is **MISSING** (deferred) — a future `REFRESH_TOKEN` / blacklist table would
-wire revocation into `JwtAuthenticationFilter`. See
-[refactor-gap-analysis.md](refactor-gap-analysis.md) (GAP-1) and
-[session-management](../session-management/README.md).
+> **Formerly GAP-1, deferred — implemented 2026 via F-03.** This section previously stated there was
+> "no blacklist, no revocation list" and that invalidation was client-only. Server-side revocation now
+> exists. **Open limitation:** the revocation store is **in-memory** — lost on restart and not shared
+> across instances; a durable / distributed store is required before a multi-node deploy. Refresh-token
+> revocation remains **MISSING** (deferred). See [refactor-gap-analysis.md](refactor-gap-analysis.md)
+> (GAP-1) and [session-management](../session-management/README.md).
 
 ### 3.2 Session handling is stateless
 

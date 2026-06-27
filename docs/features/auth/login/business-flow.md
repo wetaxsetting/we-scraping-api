@@ -91,11 +91,11 @@ reason tag. The chooser branch writes no row.
 | Password write-back on login | none (legacy never re-hashes on login) | none — **verify-only**, no write-back (coexistence) | **MATCH** (was wrongly documented as a BCrypt upgrade — corrected) |
 | Tenant resolution | single configured tenant pin | per-user `USER_BUSI_CONN_INFM` lookup; single-link auto-pick is the configured-tenant pin's successor | **APPROVED DEVIATION** (one-user-one-company operational model) |
 | Multi-company chooser | legacy WeCMS does not treat one user spanning companies as a normal case | chooser response retained as a safe generic fallback | **APPROVED DEVIATION** (exceptional path) |
-| Session model | server-side session | stateless JWT (no server session, no refresh, no blacklist) | **APPROVED DEVIATION** (see jwt-authentication / session-management) |
+| Session model | server-side session | stateless JWT (no server session, no refresh); in-memory `jti` revocation denylist | **APPROVED DEVIATION** (see jwt-authentication / session-management) |
 | Response envelope | JEX `COMMON_HEAD` / `REC` | `{ status, data, … }` lowercase snake_case | **APPROVED DEVIATION** (CTO directive) |
-| 5-failure auto-lock | legacy counts consecutive failures and locks | scaffold only (`USER_LOGIN_HIS` FAIL rows exist); counter not implemented | **MISSING** (deferred) |
+| 5-failure auto-lock | legacy counts consecutive failures and locks | `LoginLockoutService` sets `USER_INFM.LOCK_YN='Y'` after the latest 5 attempts are all failures | **IMPLEMENTED** (formerly MISSING, deferred — implemented 2026 via F-10) |
 | `NTNL_CD` / `CHNL_TYPE` / `BUSI_STTS` post-auth gates | legacy checks extra business flags after password | not implemented | **MISSING / PARTIAL** (deferred) |
-| Rate-limiting / brute-force protection | — | not implemented (mandatory before non-local deploy) | **MISSING** (deferred) |
+| Rate-limiting / brute-force protection | — | in-memory `RateLimiter` throttles `POST /api/v1/auth/login` (key `login:<ip>`) | **IMPLEMENTED** (formerly MISSING, deferred — implemented 2026; open: in-memory limiter) |
 | Identifier surface | WSVC id `logn_0001_001` | kebab slug `login` everywhere (route, package, docs) | **APPROVED DEVIATION** (slug rule) |
 
 `/me` (session bootstrap), logout, and the password-hashing detail are **DEAD LEGACY / out of scope** for

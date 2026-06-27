@@ -39,11 +39,17 @@ claims for a security decision (the FE uses them for display only).
 | Language | `langCd` | string | `EN` / `KO` / `KM` / `VI` | no |
 | Authority | `authGrCd` | string | `ADMIN` or `USER` (normalized at issue) | no (defaults `USER` on read if absent) |
 | Product type | `prdtType` | string | verbatim `BUSI_INFM.PRDT_TYPE` letter | **yes** — claim omitted entirely when null/blank |
+| Token id | `jti` | string | unique per-token id — keys server-side revocation (`TokenRevocationService`) | no |
 | Issuer | `iss` | string | `wecms.jwt.issuer` (`wecms-api`) | no |
-| Issued at | `iat` | epoch seconds | issue time | no |
+| Issued at | `iat` | epoch seconds | issue time — compared against the per-user not-before cutoff on revocation | no |
 | Expiry | `exp` | epoch seconds | `iat + expires_in_seconds` | no |
 
 Header `alg` is `HS256` (secret 32–63 bytes) or `HS512` (≥ 64 bytes), fixed at startup.
+
+The `jti` lets logout (and admin lock/delete/demote/password-reset) revoke a specific token or all of a
+user's tokens server-side; `JwtAuthenticationFilter` rejects a revoked / superseded token with **401
+`WBE1401`**, before its `exp`. *(Server-side revocation was formerly absent — implemented 2026 via
+F-03; the revocation store is in-memory.)*
 
 ---
 

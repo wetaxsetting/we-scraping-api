@@ -16,7 +16,8 @@ The endpoint is under base path **`/api/v1/auth`**. Wire format is lowercase sna
 ([SecurityConfig.java](../../../../src/main/java/com/kosign/wecms/config/SecurityConfig.java), the same
 `.requestMatchers(...).permitAll()` entry as `/api/v1/auth/login` and `/actuator/health`). No JWT, no
 menu grant, no role gate. A request with a missing / invalid / expired token still succeeds (it bypasses
-the `JwtAuthenticationEntryPoint` 401 path).
+the `JwtAuthenticationEntryPoint` 401 path) — in that case there is simply no valid `jti` to revoke.
+When a valid token is presented, the handler revokes its `jti` server-side.
 
 ---
 
@@ -28,8 +29,10 @@ the `JwtAuthenticationEntryPoint` 401 path).
 POST /api/v1/auth/logout
 ```
 
-- **No request body** (empty). The handler takes no arguments.
-- `Authorization: Bearer <token>` header is **optional** (route is permit-all).
+- **No request body** (empty).
+- `Authorization: Bearer <token>` header is **optional** (route is permit-all). When present and valid,
+  its `jti` is revoked server-side (`TokenRevocationService`), so the token is rejected on the next
+  request.
 
 ### Response
 

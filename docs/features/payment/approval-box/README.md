@@ -5,7 +5,6 @@
 **Refactor screen ID / View Setting `WEB_SVC_ID` / audit `WSVC_ID` / export `screenId`:** `approval-box`
 **REST base:** `/api/v1/payment/approval-box`
 **Java package:** `com.kosign.wecms.domain.payment.approvalbox`
-**JEX counterpart (read-only reference):** module `resl` — list `resl_0001_001_r001`, delete `resl_0001_001_d001`, detail/approve/reject popup `comm_0195_001` (menu id `resl_0001_001`)
 **Status:** ✅ **Completed** — list + tab counts + date/keyword filter + sort + approver chain + approve + reject + bulk-approve + withdraw + change-approval-line + Excel export all implemented; controller unit tests present; legacy parity verified; SIT/UAT verification complete.
 
 > This folder is the consolidated, code-accurate home for the **completed** Approval Box backend feature. It supersedes the *status* claims in the older planning/design docs (which were written when only the read path was in scope — the mutation flows that were "deferred" at that time have since shipped). Those design-history docs are kept in place and cross-linked below; the naming-bug finding and JEX inventory they carry remain authoritative.
@@ -47,6 +46,12 @@ The shared write-side fan-out (`ApprovalBoxFanoutService`) is owned by this pack
 | [migration-guide.md](migration-guide.md) | JEX `resl` / `comm_0195_001` WSVC/IDO/JSP/SQL → Spring controller/service/repository/DTO mapping; field-by-field; deliberate divergences; migration status. |
 | [test-scenarios.md](test-scenarios.md) | Existing controller unit tests + manual / integration / SIT-UAT scenarios. |
 | [refactor-gap-analysis.md](refactor-gap-analysis.md) | Completed-coverage-vs-JEX matrix (Search · Detail · Approval · Rejection · Status · Persistence · Security · UI · Error · Parity) with MATCH / PARTIAL / MISSING verdicts and the final status statement. |
+
+---
+
+## Legacy & Migration Traceability
+
+**JEX counterpart (read-only reference):** module `resl` — list `resl_0001_001_r001`, delete `resl_0001_001_d001`, detail/approve/reject popup `comm_0195_001` (menu id `resl_0001_001`)
 
 ---
 

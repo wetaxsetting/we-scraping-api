@@ -67,6 +67,18 @@ public interface ScdulPymnSumrRepository extends JpaRepository<ScdulPymnSumr, Sc
             String bizKey, String apprSeqNo, String scdulPymnTypeCd);
 
     /**
+     * Detail read — single batch by tenant + approval sequence number, with NO
+     * payment-type discriminator. {@code APPR_SEQ_NO} is globally unique across
+     * the shared {@code SCDUL_PYMN_SUMR} table (one approval = one batch), so a
+     * type-agnostic lookup is safe and is what the Approval Details popup needs:
+     * it knows only the {@code APPR_SEQ_NO} and must resolve the batch's
+     * withdrawal account + {@code SCDUL_PYMN_NO} for Internal Transfer / Vendor /
+     * Expense / Payroll uniformly (mirrors legacy {@code comm_0193_001_r001}
+     * loading {@code ScdulPymnSumr} by {@code (biz_key, appr_seq_no)}).
+     */
+    Optional<ScdulPymnSumr> findFirstByBizKeyAndApprSeqNo(String bizKey, String apprSeqNo);
+
+    /**
      * List read — paged, filtered by tenant + payment type + date range
      * (inclusive on REG_DTM) + optional title / doc-no LIKE + optional
      * {@code TRNF_YN} (used by the Transfer Result list to drop drafts).

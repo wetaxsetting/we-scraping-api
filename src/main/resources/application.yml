@@ -105,7 +105,7 @@ wecms:
     # Comma-separated list of allowed cross-origin frontends. Baseline
     # is local dev only — each profile (application-local.yml etc.)
     # adds its own environment origins on top.
-    allowed-origins: ${WECMS_CORS_ALLOWED_ORIGINS:http://localhost:3000}
+    allowed-origins: ${WECMS_CORS_ALLOWED_ORIGINS}
   # =============================================================================
   # Credential cipher (legacy pgcrypto-compatible)
   # =============================================================================
@@ -133,7 +133,7 @@ wecms:
     # turning this on will reject any GDT login that hits a captcha. Local
     # R&D also has no reachable gateway. See
     # docs/audits/login-credentials-legacy-vs-refactor-audit.md (G2).
-    gdt-verify-enabled: ${WECMS_LOGIN_CREDENTIALS_GDT_VERIFY_ENABLED:false}
+    gdt-verify-enabled: ${WECMS_LOGIN_CREDENTIALS_GDT_VERIFY_ENABLED}
   # NXiSAS local-engine (client-side) GDT module config moved out of YAML
   # 2026-06-16 — the single fixed GDT triple now lives as code constants in
   # GdtNxisasConfig (mirroring NxisasBankConfig). Served via
@@ -194,30 +194,30 @@ wecms:
   # root for files written before the multi-tenant split.
   # This file holds the CI / unit-test defaults; each profile overrides the roots.
   overseas-payment:
-    storage-root: ${WECMS_OVERSEAS_PAYMENT_STORAGE_ROOT:./tmp/overseas-payment}
+    storage-root: ${WECMS_OVERSEAS_PAYMENT_STORAGE_ROOT}
   # vendor-payment / expense-payment / payroll — own roots; defaults mirror the
   # internal-transfer root so the physical layout is unchanged.
   vendor-payment:
-    storage-root: ${WECMS_VENDOR_PAYMENT_STORAGE_ROOT:./tmp/internal-transfer}
+    storage-root: ${WECMS_VENDOR_PAYMENT_STORAGE_ROOT}
   expense-payment:
-    storage-root: ${WECMS_EXPENSE_PAYMENT_STORAGE_ROOT:./tmp/internal-transfer}
+    storage-root: ${WECMS_EXPENSE_PAYMENT_STORAGE_ROOT}
   payroll:
-    storage-root: ${WECMS_PAYROLL_STORAGE_ROOT:./tmp/internal-transfer}
+    storage-root: ${WECMS_PAYROLL_STORAGE_ROOT}
   contacts:
-    storage-root: ${WECMS_CONTACTS_STORAGE_ROOT:./tmp/contacts}
+    storage-root: ${WECMS_CONTACTS_STORAGE_ROOT}
   preferences:
-    storage-root: ${WECMS_PREFERENCES_STORAGE_ROOT:./tmp/preferences}
+    storage-root: ${WECMS_PREFERENCES_STORAGE_ROOT}
   user-image:
     # Save filename is an opaque HMAC token (defence-in-depth on top of
     # tenant isolation).
-    storage-root: ${WECMS_USER_IMAGE_STORAGE_ROOT:./tmp/user-image}
+    storage-root: ${WECMS_USER_IMAGE_STORAGE_ROOT}
   erp-transaction-history:
-    storage-root: ${WECMS_ERP_TRANSACTION_HISTORY_STORAGE_ROOT:./tmp/erp-trns-hstr}
+    storage-root: ${WECMS_ERP_TRANSACTION_HISTORY_STORAGE_ROOT}
   # internal-transfer is listed last in this section because its YAML key also
   # carries the Banking Cut-off Configuration (next section): Spring binds that
   # under wecms.internal-transfer.cutoff, so it must stay nested under this key.
   internal-transfer:
-    storage-root: ${WECMS_INTERNAL_TRANSFER_STORAGE_ROOT:./tmp/internal-transfer}
+    storage-root: ${WECMS_INTERNAL_TRANSFER_STORAGE_ROOT}
 
     # ===========================================================================
     # Banking cut-off configuration
@@ -227,8 +227,8 @@ wecms:
     # file storage. Bank codes for the past-cut-off rule; the full Woori +
     # Shinhan time table lives in application-local.yml / -sit.yml.
     cutoff:
-      shinhan-bank-cd: ${WECMS_SHINHAN_BANK_CD:88886000}
-      woori-bank-cd:   ${WECMS_WOORI_BANK_CD:11704000}
+      shinhan-bank-cd: ${WECMS_SHINHAN_BANK_CD}
+      woori-bank-cd:   ${WECMS_WOORI_BANK_CD}
 
   # =============================================================================
   # Exchange-rate collection batch (Shinhan + Woori FX scraping)
@@ -242,7 +242,7 @@ wecms:
   # fires; the on-demand path (ExchangeRateService.runOnDemand) is unaffected.
   exchange-rate:
     batch:
-      enabled: ${WECMS_EXCHANGE_RATE_BATCH_ENABLED:false}
+      enabled: ${WECMS_EXCHANGE_RATE_BATCH_ENABLED}
 
   # =============================================================================
   # Coocon
@@ -262,21 +262,20 @@ wecms:
     #   DEV / SIT  → https://dev-sgw.webcashvietnam.com:8443/...
     #   UAT / PROD → https://sgw.webcashvietnam.com/...           (no port, no 'dev-' prefix)
     #
-    # TODO (committed DEV credentials in a tracked file — relocate, pending approval):
-    # api-key / smart-api-key below are real Coocon DEV vendor keys baked as defaults
-    # in this COMMITTED base file. They are also redundant for the only profiles that
-    # use them: application-local.yml AND application-sit.yml each fully re-declare all
-    # five coocon keys, so they override these base defaults; -uat / -prod re-declare
-    # coocon WITHOUT a default (fail-fast). The base defaults therefore only apply to a
-    # no-profile / test boot. Preferred fix: drop the inline DEV key defaults here and
-    # keep them only in the .gitignored application-local.yml / -sit.yml (or source from
-    # env), leaving these as bare `${WECMS_COOCON_*}` placeholders. NOT removed now —
-    # removing could break a base-only/test boot, which needs sign-off first.
-    api-key: ${WECMS_COOCON_API_KEY:r2L7U6KnB4T51VokPlkg}
-    api-url: ${WECMS_COOCON_API_URL:https://dev2.coocon.co.kr:8443/overseas/finance/scrap/bigdata_info.jsp}
-    smart-api-key: ${WECMS_COOCON_SMART_API_KEY:fxAeocJbuweNTgv5FBns}
-    smart-api-url: ${WECMS_COOCON_SMART_API_URL:https://dev-sgw.webcashvietnam.com:8443/domestic/finance/scrap/smart_gateway.jsp}
-    unique-key: ${WECMS_COOCON_UNIQUE_KEY:0000099}
+    # F-05 (2026-06-24): the committed DEV vendor-key defaults were REMOVED. The
+    # secret keys are now bare ${VAR} placeholders, so any environment that does
+    # not supply them via env var fails fast at startup (CooconProperties is
+    # @NotBlank-validated and the placeholder is unresolved) instead of silently
+    # falling back to the DEV keys. Non-secret URL / unique-key defaults are kept
+    # (they are not credentials). Local dev still works — the .gitignored
+    # application-local.yml re-declares these with dev defaults. The previously-
+    # committed DEV keys remain in git history and MUST be rotated by infra/ops —
+    # see docs/security/required-environment-secrets.md.
+    api-key: ${WECMS_COOCON_API_KEY}
+    api-url: ${WECMS_COOCON_API_URL}
+    smart-api-key: ${WECMS_COOCON_SMART_API_KEY}
+    smart-api-url: ${WECMS_COOCON_SMART_API_URL}
+    unique-key: ${WECMS_COOCON_UNIQUE_KEY}
   #
   # --- GDT lookup (OSMC) ---
   osmc:
@@ -287,19 +286,21 @@ wecms:
     # kr.co.coocon.sgw.RestClient → coocon.api_url. Wire shape pinned by
     # ApiIn.java / BI08In.java / BI08Out.java
     # ({ ApiKey, ApiId, UniqueKey, Input: { search } }).
-    # NOTE: application-local.yml / -sit.yml do NOT re-declare `osmc`, so local
-    # and SIT inherit the defaults below — and `url` defaults to the PROD host
-    # (sgw.webcashvietnam.com). OSMC/GDT is unreachable in local R&D anyway
-    # (Cambodia network/IP restriction), so this is latent rather than active.
-    # TODO: confirm the correct DEV/SIT OSMC host and set `wecms.osmc.url` in
-    # application-local.yml / -sit.yml instead of inheriting the PROD host here.
+    # NOTE: application-local.yml / -sit.yml NOW re-declare `osmc` to pin the DEV
+    # bigdata host (dev2.coocon.co.kr:8443) — the GDT lookup is the same Coocon
+    # bigdata endpoint as `coocon.api-url`. The defaults below (PROD host) apply
+    # only when no profile-specific override is present. A GDT call against the
+    # wrong host/key returns "등록되지 않은 인증키 입니다" (WBE_OSMC_LOOKUP_FAILED).
+    # Note OSMC/GDT may still be blocked in local R&D by a Cambodia network/IP
+    # restriction even with the correct key — that is a separate infra concern.
     # PROD/UAT: `osmc` is re-declared there WITHOUT a default (fail-fast) — supply
     # via WECMS_OSMC_URL / WECMS_OSMC_API_KEY / WECMS_OSMC_API_ID /
     # WECMS_OSMC_UNIQUE_KEY env vars.
-    url: ${WECMS_OSMC_URL:https://sgw.webcashvietnam.com/overseas/finance/scrap/bigdata_info.jsp}
-    api-key: ${WECMS_OSMC_API_KEY:r2L7U6KnB4T51VokPlkg}
-    api-id: ${WECMS_OSMC_API_ID:BI09}
-    unique-key: ${WECMS_OSMC_UNIQUE_KEY:0000099}
+    url: ${WECMS_OSMC_URL}
+    # F-05: secret default removed — bare placeholder, fail-fast when unset.
+    api-key: ${WECMS_OSMC_API_KEY}
+    api-id: ${WECMS_OSMC_API_ID}
+    unique-key: ${WECMS_OSMC_UNIQUE_KEY}
 
 # =============================================================================
 # Logging

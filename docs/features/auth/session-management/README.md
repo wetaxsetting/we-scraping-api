@@ -4,8 +4,11 @@
 menu-resolution cases green). `GET /api/v1/auth/me` re-hydrates the authenticated session from the
 server of record: it reads the request-scoped `TenantContext` (populated by the JWT filter), re-verifies
 the user is still eligible, re-checks the token-bound tenant link, fetches the company display name + tax
-id, and returns the menu-authorization payload. The session model is **stateless** — no `HttpSession`,
-no server-side token store, no blacklist. Logout is client-only.
+id, and returns the menu-authorization payload. The session model is **stateless** — no `HttpSession`
+and no persisted token store — but it does keep a small **in-memory revocation denylist**
+(`TokenRevocationService`): logout revokes the presented token's `jti`, and admin
+lock/delete/demote/password-reset revoke all of a user's tokens, so a revoked token is rejected on the
+next request.
 **Module:** Auth (cross-cutting system domain — not a WeCMS top-menu group)
 **Refactor slug:** `session-management` (matches the `wecms-web` frontend counterpart)
 **Wire base path:** `GET /api/v1/auth/me` (protected — `anyRequest().authenticated()` in `SecurityConfig`)
@@ -15,7 +18,8 @@ Tables `USER_INFM`, `USER_BUSI_CONN_INFM`, `BUSI_INFM` — all in the
 
 > This folder is the **primary documentation home** for the session lifecycle on the backend — `GET
 > /api/v1/auth/me`, the stateless token model, the request-scoped `TenantContext`, TTL/expiry, and the
-> 401 session-expired path. The login credential exchange, the logout stub, the JWT token mechanics, and
+> 401 session-expired path. The login credential exchange, the logout flow (which revokes the token
+> server-side), the JWT token mechanics, and
 > the menu-grant resolution are **separate auth modules** — cross-linked below, not duplicated here. The
 > JEX-side spec is the read-only source of truth for legacy behaviour; the implemented Spring code is the
 > source of truth for the refactor behaviour.
@@ -59,7 +63,7 @@ the frontend surfaces its session-expired re-auth dialog.
 |---|---|
 | Endpoint | `GET /api/v1/auth/me` — see [interface-specification.md](interface-specification.md) |
 | Auth | **Protected** (`anyRequest().authenticated()`); the JWT filter must have bound a valid token |
-| Session model | **Stateless** — `SessionCreationPolicy.STATELESS`; no `HttpSession`, no server token store, no blacklist |
+| Session model | **Stateless** — `SessionCreationPolicy.STATELESS`; no `HttpSession`, no persisted token store. Server state is limited to the in-memory revocation denylist (`TokenRevocationService`). |
 | Tables | `USER_INFM` (re-validate flags), `USER_BUSI_CONN_INFM` (link check), `BUSI_INFM` (`CMPN_NM` / `TAX_ID`) — all in the inventory. **No session-store table.** |
 | Re-validation gates | user `DEL_YN=Y` / `ACTV_YN≠Y` / `LOCK_YN=Y` / link missing → `WBE1401` |
 | Identity source | `TenantContext` (request-scoped `ThreadLocal`), populated by `JwtAuthenticationFilter` from the signed JWT |
@@ -67,8 +71,9 @@ the frontend surfaces its session-expired re-auth dialog.
 | Menu payload | `all_menus` (admin bypass) + `allowed_menu_cds[]` — resolved fresh per `/me` via `MenuAuthorizationService` (never from a JWT claim) |
 | TTL | `wecms.jwt.expires-in-seconds` (default **3600** s) |
 | 401 path | `JwtAuthenticationEntryPoint` → HTTP 401, code `WBE1401` (legacy `SES001` parity), `X-Trace-Id` header |
-| Logout | client-only token clear (cross-link [logout](../logout/README.md)); no server revocation |
-| Deferred | refresh tokens · server-side logout revocation · 5-failure auto-lock = **MISSING** |
+| Logout | client clears its token **and** the server revokes the `jti` (cross-link [logout](../logout/README.md)) — revoked tokens are rejected on the next request |
+| Implemented (formerly deferred) | server-side logout revocation + 5-failure auto-lock (`USER_INFM.LOCK_YN`) + login rate-limiting = **IMPLEMENTED** (2026; in-memory revocation/limiter stores are the open limitation) |
+| Still deferred | refresh tokens = **MISSING**; durable / distributed revocation + rate-limiting stores = **MISSING** |
 | Wire format | lowercase snake_case (global Jackson `SNAKE_CASE`) |
 
 ---
@@ -110,8 +115,8 @@ the `USER_INFM` / `USER_BUSI_CONN_INFM` / `BUSI_INFM` entities + repositories ow
 ## Sibling auth modules (cross-links, not duplicated here)
 
 - [login](../login/README.md) — `POST /api/v1/auth/login` (credential exchange that mints the JWT)
-- [logout](../logout/README.md) — `POST /api/v1/auth/logout` (client-side token clear; stub — session
-  ends client-side because the model is stateless)
+- [logout](../logout/README.md) — `POST /api/v1/auth/logout` (client-side token clear **+ server-side
+  `jti` revocation** — the session ends on both sides)
 - [jwt-authentication](../jwt-authentication/README.md) — token issue / parse / filter chain / **401
   `WBE1401` entry point** (the token mechanics this module relies on)
 - [menu-authorization](../menu-authorization/README.md) — `MenuAuthorizationService.grantedMenuCds(...)`

@@ -11,11 +11,6 @@
 |---|---|
 | Feature slug | `daily-financial` |
 | Module | Banking → Reports |
-| Legacy JEX menu | **Daily Financial** (`data-jex-ml="rept_0015_001_m002"`) |
-| Legacy view service | `rept_0015_001` (view) |
-| Legacy read API | `rept_0015_001_r001` |
-| Legacy popups | `rept_0015_002` (txn history), `rept_0015_003` (receipt/payment detail), `rept_0015_004` (cash-book detail) |
-| Legacy Excel | `view/jexGrid/file/rept_0015_001_excel.jsp` (4,508 lines, Apache POI) |
 | Refactor route | `/banking/reports/daily-financial` (Next.js) |
 | Refactor base URI | `/api/v1/banking/reports/daily-financial` (Spring Boot) |
 | Audit `WSVC_ID` | `daily-financial` (slug — never `rept_0015_001`) |
@@ -214,3 +209,17 @@ time value. This is not a defect; the column binding and header alignment are co
 - Completed SIT readiness review — **Daily Financial: READY FOR SIT** (in-PROD scope; remaining items are P1 / out-of-scope non-blockers).
 
 > Documentation-only release note. No business logic or implementation changed in this update.
+
+---
+
+## Legacy & Migration Traceability
+
+Legacy JEX source-of-truth mapping for this report (moved from the header metadata table; refactor identity stays up top):
+
+| Field | Value |
+|---|---|
+| Legacy JEX menu | **Daily Financial** (`data-jex-ml="rept_0015_001_m002"`) |
+| Legacy view service | `rept_0015_001` (view) |
+| Legacy read API | `rept_0015_001_r001` |
+| Legacy popups | `rept_0015_002` (txn history), `rept_0015_003` (receipt/payment detail), `rept_0015_004` (cash-book detail) |
+| Legacy Excel | `view/jexGrid/file/rept_0015_001_excel.jsp` (4,508 lines, Apache POI) |

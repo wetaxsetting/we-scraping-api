@@ -187,6 +187,7 @@ public class InternalTransferService {
      *  EXPT_RESOL_PAY_EVID_FILE (mirrors legacy IDO.EXPT_RESOL_FILE_R002).
      *  GAP-ATT-1. */
     private final ApprovalAttachmentLoader approvalAttachmentLoader;
+    private final ApprovalContentLoader approvalContentLoader;
     /** Shared fileType-routed attachment download resolver — the single
      *  place that maps a {@code (apprSeqNo, fileId, fileType)} triple to a
      *  binary path across both legacy attachment tables. */
@@ -254,6 +255,10 @@ public class InternalTransferService {
 
         Map<String, String> docNoByApprSeqNo    = buildDocNoMap(bizKey, rows.getContent());
         Map<String, String> payDateByApprSeqNo  = buildPayDateMap(bizKey, rows.getContent());
+        // Requestor (legacy EXPT_RESOL_MSTR.DRAFT_USER_NM) keyed by APPR_SEQ_NO —
+        // mirrors IDO.SCDUL_PYMN_SUMR_R002.xml which selects ERM.DRAFT_USER_NM
+        // for the list "Requestor" column. Without this the column rendered blank.
+        Map<String, String> draftUserNmByApprSeqNo = buildDraftUserNmMap(bizKey, rows.getContent());
         Map<String, ApproverSummary> approverByApprSeqNo = buildFirstApproverMap(bizKey, rows.getContent());
         // appr_stts derived via the legacy wb_get_appr_stts(...) function over
         // EXPT_RESOL_MSTR (SCDUL_PYMN_SUMR has no APPR_STTS column in legacy JEX)
@@ -261,7 +266,7 @@ public class InternalTransferService {
         Map<String, String> apprSttsByApprSeqNo = legacyFunctions.apprSttsByApprSeqNos(
                 bizKey, rows.getContent().stream().map(ScdulPymnSumr::getApprSeqNo).toList());
         List<ScheduledTransferRow> dtoRows = rows.getContent().stream()
-                .map(s -> toListRow(s, docNoByApprSeqNo, payDateByApprSeqNo, approverByApprSeqNo, apprSttsByApprSeqNo))
+                .map(s -> toListRow(s, docNoByApprSeqNo, payDateByApprSeqNo, approverByApprSeqNo, apprSttsByApprSeqNo, draftUserNmByApprSeqNo))
                 .toList();
         // F-1: footer totals must aggregate the ENTIRE filtered result set
         // (legacy SCDUL_PYMN_SUMR_R003), not the current page slice. The
@@ -376,14 +381,11 @@ public class InternalTransferService {
                 .map(ExptResolMstr::getDraftUserNm)
                 .filter(s -> s != null && !s.isBlank())
                 .orElse(null);
-        // Approval Content — EXPT_RESOL_MSTR.CONT (legacy POST_CONT). Null
-        // when the batch has no approval request yet or was submitted with
-        // an empty note; the popup's "Approval Content" section renders
-        // the empty-state placeholder in that case.
-        String cont = apprMstr
-                .map(ExptResolMstr::getCont)
-                .filter(s -> s != null && !s.isBlank())
-                .orElse(null);
+        // Approval Content — legacy BLTB_POST_INFM.POST_CONT (R007), NOT
+        // EXPT_RESOL_MSTR.CONT. The two columns can hold different values on
+        // the live JEX DB (verified) and the legacy popup displays POST_CONT.
+        // Null when the batch has no approval request yet or the note is blank.
+        String cont = approvalContentLoader.load(bizKey, apprSeqNo);
 
         // Approval attachments registered against this batch's APPR_SEQ_NO —
         // UNION of EXPT_RESOL_FILE + EXPT_RESOL_PAY_EVID_FILE (mirrors legacy
@@ -428,7 +430,40 @@ public class InternalTransferService {
                 master.getFileSize() == null || master.getFileSize().isBlank() ? null : new java.math.BigDecimal(master.getFileSize().trim()),
                 lines,
                 attachments,
-                cont);
+                cont,
+                null);  // appr_fund_tp — Payroll Type only; Internal Transfer has none
+    }
+
+    /**
+     * Withdrawal account + batch key for one approval, resolved from the
+     * sibling {@code SCDUL_PYMN_SUMR} batch by {@code APPR_SEQ_NO}. Carries the
+     * resolved bank display name (same {@code TransferLineDetailMapper} path the
+     * detail popup's withdrawal row uses). Covers the four scheduled kinds that
+     * live in {@code SCDUL_PYMN_SUMR} (Internal Transfer / Vendor / Expense /
+     * Payroll). Empty for Overseas / Card (no SCDUL row) or a missing approval.
+     *
+     * <p>Backs the shared {@code ApprovalDetailService} so the Approval Details
+     * popup opened from a Result page / notification renders the same withdrawal
+     * bank + transaction lines as the per-type Scheduled detail and legacy
+     * {@code comm_0193_001_r001}.
+     */
+    public record ApprovalBatchInfo(
+            String scdulPymnNo, String outBankCd, String outBankNm,
+            String wdrlActNo, String wdrlCcyCd) {}
+
+    @Transactional(readOnly = true)
+    public java.util.Optional<ApprovalBatchInfo> approvalBatchByApprSeqNo(
+            String bizKey, String apprSeqNo) {
+        if (apprSeqNo == null || apprSeqNo.isBlank()) {
+            return java.util.Optional.empty();
+        }
+        return sumrRepository.findFirstByBizKeyAndApprSeqNo(bizKey, apprSeqNo)
+                .map(m -> new ApprovalBatchInfo(
+                        m.getScdulPymnNo(),
+                        m.getOutBankCd(),
+                        transferLineDetailMapper.resolveBankNm(m.getOutBankCd()),
+                        m.getWdrlActNo(),
+                        m.getWdrlCcyCd()));
     }
 
     /* ----------------------------------------------------------------
@@ -551,6 +586,7 @@ public class InternalTransferService {
                   + "returned null/blank for bizKey=" + bizKey);
         }
         long detlNoCursor = Long.parseLong(detlSeedRaw.trim()) - 1;
+        java.util.List<ScdulPymnSumrDetl> detls = new java.util.ArrayList<>(req.lines().size());
         for (TransferLineInput line : req.lines()) {
             ScdulPymnSumrDetl detl = new ScdulPymnSumrDetl();
             detl.setBizKey(bizKey);
@@ -577,8 +613,9 @@ public class InternalTransferService {
             detl.setRegDtm(now);
             detl.setModId(userId);
             detl.setModDtm(now);
-            detlRepository.save(detl);
+            detls.add(detl);
         }
+        detlRepository.saveAll(detls);
 
         // Preserve the uploaded Excel under ERP Transaction History so
         // the user can later download it from Settings > ERP Transaction
@@ -1520,7 +1557,8 @@ public class InternalTransferService {
             Map<String, String> docNoByApprSeqNo,
             Map<String, String> payDateByApprSeqNo,
             Map<String, ApproverSummary> approverByApprSeqNo,
-            Map<String, String> apprSttsByApprSeqNo) {
+            Map<String, String> apprSttsByApprSeqNo,
+            Map<String, String> draftUserNmByApprSeqNo) {
         String apprSeqNo = s.getApprSeqNo();
         boolean hasAppr = apprSeqNo != null && !apprSeqNo.isBlank();
         // doc_no comes from EXPT_RESOL_MSTR.DOC_NO (docNoByApprSeqNo map);
@@ -1543,6 +1581,9 @@ public class InternalTransferService {
         Integer approverCount = appr != null ? appr.count()     : null;
         List<com.kosign.wecms.domain.payment.internaltransfer.dto.ScheduledTransferApprover> approvers =
                 appr != null ? appr.approvers() : null;
+        // Requestor display name (legacy EXPT_RESOL_MSTR.DRAFT_USER_NM); blank
+        // for drafts with no approval request — matches legacy null2void.
+        String draftUserNm = hasAppr ? draftUserNmByApprSeqNo.get(apprSeqNo) : null;
         return new ScheduledTransferRow(
                 s.getScdulPymnNo(),
                 s.getScdulPymnTypeCd(),
@@ -1569,7 +1610,8 @@ public class InternalTransferService {
                 null,      // appr_fund_tp — Payroll-only column
                 approver,
                 approverCount,
-                approvers);
+                approvers,
+                draftUserNm);
     }
 
     /** First approver name + total chain length + the full ordered chain
@@ -1599,6 +1641,30 @@ public class InternalTransferService {
                 .collect(java.util.stream.Collectors.toMap(
                         ExptResolMstr::getApprSeqNo,
                         ExptResolMstr::getPayDate,
+                        (a, b) -> a));
+    }
+
+    /**
+     * Map {@code APPR_SEQ_NO → EXPT_RESOL_MSTR.DRAFT_USER_NM} (the requestor /
+     * 발의자명) for the rows on the current page. Drives the Scheduled Transfer
+     * list's "Requestor" column — mirrors legacy
+     * {@code IDO.SCDUL_PYMN_SUMR_R002.xml} which selects {@code ERM.DRAFT_USER_NM}
+     * via the {@code LEFT JOIN EXPT_RESOL_MSTR ... ON APPR_SEQ_NO}. One batched
+     * query; empty when no row has been submitted for approval.
+     */
+    private Map<String, String> buildDraftUserNmMap(String bizKey, List<ScdulPymnSumr> rows) {
+        List<String> apprSeqNos = rows.stream()
+                .map(ScdulPymnSumr::getApprSeqNo)
+                .filter(seq -> seq != null && !seq.isBlank())
+                .distinct()
+                .toList();
+        if (apprSeqNos.isEmpty()) return Map.of();
+        return exptResolMstrRepository.findByBizKeyAndApprSeqNoIn(bizKey, apprSeqNos)
+                .stream()
+                .filter(m -> m.getDraftUserNm() != null && !m.getDraftUserNm().isBlank())
+                .collect(java.util.stream.Collectors.toMap(
+                        ExptResolMstr::getApprSeqNo,
+                        ExptResolMstr::getDraftUserNm,
                         (a, b) -> a));
     }
 

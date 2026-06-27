@@ -11,15 +11,14 @@
 | Backend package | `com.kosign.wecms.domain.payment.payrollpayment` |
 | Discriminator | `SCDUL_PYMN_TYPE_CD = "00"` — `ScdulPymnTypeCd.PAYROLL.code()` ([pymn_0005_001_r001_act.jsp:173](../../../../../WECMS%20DEV/WECMS/web/WEB-INF/action/jex/wabooks/pymn/pymn_0005_001_r001_act.jsp#L173)) |
 | Audit `WSVC_ID` | `payroll-payment` — `static final String` at [PayrollPaymentService.java:96](../../../../src/main/java/com/kosign/wecms/domain/payment/payrollpayment/service/PayrollPaymentService.java#L96) |
-| JEX counterparts | `pymn_0005_*` (Scheduled), `pymn_0006_*` (Result); detail pages `pymn_0005_003` / `pymn_0006_002` |
 | Status | **Fully implemented** — ~18 endpoints (Scheduled + Result + upload/parse/create + approval flow + dispatch + banking match + export + file download), documented retroactively against the latest code. |
 
 ## Sub-module map
 
-| Sub-module | JEX list / detail | REST | Authz |
-|---|---|---|---|
-| **Scheduled Payment** | `pymn_0005_001` / `pymn_0005_003` | `GET /` · `GET /{id}` (+ write actions) | `payment-payroll-scheduled` |
-| **Payment Result** | `pymn_0006_001` / `pymn_0006_002` | `GET /results` · `GET /results/{id}` · `POST /results/export` · banking match | `payment-payroll-result` |
+| Sub-module | REST | Authz |
+|---|---|---|
+| **Scheduled Payment** | `GET /` · `GET /{id}` (+ write actions) | `payment-payroll-scheduled` |
+| **Payment Result** | `GET /results` · `GET /results/{id}` · `POST /results/export` · banking match | `payment-payroll-result` |
 
 Payroll, Vendor, Expense and Internal Transfer share the physical `SCDUL_PYMN_SUMR`(+ `_DETL`) table; the `SCDUL_PYMN_TYPE_CD = "00"` discriminator stamped by the service layer isolates Payroll. Payroll reuses the Internal Transfer wire DTOs (`internaltransfer.dto.*`) one-for-one.
 
@@ -69,5 +68,10 @@ Base `/api/v1/payment/payroll-payment` — full table in [interface-specificatio
 - `SCDUL_PYMN_TYPE_CD = "00"` — the `scdul_pymn_sumr_chk01` CHECK was relaxed in [V146](../../../../src/main/resources/db/migration/V146__scdul_pymn_sumr_chk01_allow_payroll.sql) to admit `'00'`; do not tighten without re-allowing all siblings.
 - Status is **never** stored on `SCDUL_PYMN_SUMR` (no `APPR_STTS` column in legacy JEX) — it is derived via `wb_get_appr_stts(...)` through `LegacyFunctionRepository`. Rejected = `R` (legacy code, not `X`).
 - Slug asymmetry (frontend `payroll`, backend/audit `payroll-payment`) is intentional and confirmed acceptable.
+
+## Legacy & Migration Traceability
+
+- **JEX counterparts:** `pymn_0005_*` (Scheduled), `pymn_0006_*` (Result); detail pages `pymn_0005_003` / `pymn_0006_002`.
+- **Sub-module list / detail WSVC mapping:** Scheduled Payment = `pymn_0005_001` / `pymn_0005_003` ; Payment Result = `pymn_0006_001` / `pymn_0006_002`.
 
 Last verified against code: 2026-06-23

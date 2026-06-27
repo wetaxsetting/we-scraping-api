@@ -118,6 +118,17 @@ public class PayrollPaymentController {
                 fromDate, toDate, srchWd, apprType, sortField, sortDirection, page, size));
     }
 
+    /**
+     * Preview the next {@code VO_YYMMDD_NNN} document number for the Request
+     * Approval popup (read-only; reserves / persists nothing). Mirrors the
+     * Internal Transfer / Card precedent so Payroll renders the same friendly
+     * id format before submit.
+     */
+    @GetMapping("/next-doc-no")
+    public ApiResponse<com.kosign.wecms.domain.payment.internaltransfer.dto.NextDocNoResponse> nextDocNo() {
+        return ApiResponse.ok(service.previewNextDocNo());
+    }
+
     @GetMapping("/{id}")
     public ApiResponse<ScheduledTransferDetailResponse> detail(
             @PathVariable("id")

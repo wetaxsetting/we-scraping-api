@@ -94,12 +94,11 @@ public class BankAccountPermissionService {
                 userBusiRepo.findTenantUsersForManagement(bizKey);
 
         // Admin set for the tenant (USER_TYPE = ADMIN).
+        // Tenant-scoped query — never findAll() across every tenant's
+        // admin rows then filter in Java.
         Set<String> adminUserIds = new HashSet<>();
-        busiAdmnRepo.findAll().forEach(row -> {
-            if (bizKey.equals(row.getBizKey())) {
-                adminUserIds.add(row.getUserId());
-            }
-        });
+        busiAdmnRepo.findAllByBizKey(bizKey)
+                .forEach(row -> adminUserIds.add(row.getUserId()));
 
         List<BankAccountPermissionMember> members = new ArrayList<>(users.size());
         for (TenantUserManagementProjection u : users) {
@@ -190,12 +189,11 @@ public class BankAccountPermissionService {
         // them via ADMIN_YN != 'Y'), so there is no "admin must remain
         // selected" guard: the popup never lists admins and the FE never
         // sends admin ids in the want set.
+        // Tenant-scoped query — never findAll() across every tenant's
+        // admin rows then filter in Java.
         Set<String> adminIds = new HashSet<>();
-        busiAdmnRepo.findAll().forEach(row -> {
-            if (bizKey.equals(row.getBizKey())) {
-                adminIds.add(row.getUserId());
-            }
-        });
+        busiAdmnRepo.findAllByBizKey(bizKey)
+                .forEach(row -> adminIds.add(row.getUserId()));
 
         // Self-revoke guard for non-admin callers.
         if (!TenantContext.currentIsAdmin()

@@ -1,5 +1,6 @@
 package com.kosign.wecms.domain.setting.erptransactionhistory.service;
 
+import com.kosign.wecms.common.file.SecureFileDownload;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Path;
@@ -60,13 +61,10 @@ public class ErpTrnsHistoryFileResolver {
         Path resolved   = tenantRoot.resolve(saveFileNm).toAbsolutePath().normalize();
 
         // Defence in depth — `Path.resolve` happily accepts ".." in the
-        // file-name component. Reject anything that escapes the tenant
-        // subtree so a future writer mistake can't surface as a path-
-        // traversal exposure.
-        if (!resolved.startsWith(tenantRoot)) {
-            throw new IllegalArgumentException(
-                    "Resolved path escapes the tenant subtree: " + resolved);
-        }
+        // file-name component. The shared R-08 primitive rejects anything
+        // that escapes the tenant subtree so a future writer mistake can't
+        // surface as a path-traversal exposure (throws IllegalArgumentException).
+        SecureFileDownload.assertWithinRoot(tenantRoot, resolved);
         return resolved;
     }
 

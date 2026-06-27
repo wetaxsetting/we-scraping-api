@@ -76,10 +76,10 @@ migration-traceability prose (this doc). No session identifier surface emits a W
 | Legacy flow | Disposition |
 |---|---|
 | Server-side `HttpSession` object | **DEAD LEGACY** — intentionally not ported; replaced by the stateless JWT. (The *deviation* — stateless model vs. `HttpSession` — is an **APPROVED DEVIATION**; the `HttpSession` artifact itself is dead.) |
-| Server-side session invalidation on logout | **DEAD LEGACY** — logout is client-side (see [logout](../logout/README.md)); no server revocation |
+| Server-side session invalidation on logout | **DEAD LEGACY** (the `HttpSession` step) — replaced by JWT `jti` revocation: logout revokes the token server-side (see [logout](../logout/README.md)) |
 | Silent token refresh / refresh token | **MISSING (deferred)** — token simply expires; a future `REFRESH_TOKEN` table would be PO-gated/off-inventory (see [database-mapping.md](database-mapping.md)) |
-| Server-side logout revocation / blacklist | **MISSING (deferred)** — stateless model has nothing to revoke |
-| 5-failure auto-lock | **MISSING (deferred)** — owned by [login](../login/README.md); `USER_LOGIN_HIS` is the scaffold |
+| Server-side logout revocation / blacklist | **IMPLEMENTED** (formerly MISSING, deferred — implemented 2026 via F-03) — `jti` denylist + per-user cutoff (`TokenRevocationService`); `JwtAuthenticationFilter` rejects revoked tokens. **Open:** in-memory store (durable / distributed deferred) |
+| 5-failure auto-lock | **IMPLEMENTED** (formerly MISSING, deferred — implemented 2026 via F-10) — `LoginLockoutService` sets `USER_INFM.LOCK_YN='Y'` after the latest 5 attempts are all failures; owned by [login](../login/README.md) |
 | Async `TenantContext` propagation | **PARTIAL (by design)** — plain `ThreadLocal`; no `@Async`/child-thread propagation in the synchronous request model |
 
 See [refactor-gap-analysis.md](refactor-gap-analysis.md) for the full classification.

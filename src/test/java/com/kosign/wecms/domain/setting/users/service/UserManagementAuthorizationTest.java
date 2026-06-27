@@ -56,7 +56,8 @@ class UserManagementAuthorizationTest {
 
     private UserManagementService userService() {
         return new UserManagementService(
-                userInfmRepo, userBusiConnRepo, busiAdmnRepo, acctAuthInfoRepo, passwordEncoder);
+                userInfmRepo, userBusiConnRepo, busiAdmnRepo, acctAuthInfoRepo, passwordEncoder,
+                new com.kosign.wecms.common.security.TokenRevocationService());
     }
 
     private MenuEntitlementService menuService() {

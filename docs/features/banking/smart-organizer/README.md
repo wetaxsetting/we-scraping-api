@@ -6,7 +6,6 @@
 **View Setting `WEB_SVC_ID`:** `smart-organizer` (V174 seed)
 **Menu permission:** `banking-vnd-inquire-transactions` **OR** `banking-fcy-inquire-transactions` (`@menuAuthz.canAccessAny(...)`)
 **REST base:** `/api/v1/banking/smart-organizer` (eligibility list + confirm) and `/api/v1/banking/smart-organizer/rules` (Organizer Settings rule CRUD)
-**JEX counterpart:** `fnsh_0200_001` (eligibility list + confirm) + `fnsh_0200_002` (Organizer Settings popup) — [docs/jex/features/smart-organizer/](../../../../../docs/jex/features/smart-organizer/README.md)
 **Frontend counterpart:** [wecms-web/docs/features/banking/smart-organizer/](../../../../../wecms-web/docs/features/banking/smart-organizer/README.md)
 
 > **Status — Refactor complete (full-stack).** Eligibility listing (account-scoped, date-range,
@@ -139,3 +138,9 @@ suppressed). Residual non-blocking items (R03 direction is user-selected rather 
 `BUSI_USAG_SET_INFM.USAG_GRP_CD` is unpopulated in the refactor; R07 chart breadcrumb is leaf-name
 only; reorder endpoint exists but the drag-save UI is not yet wired) are tracked in
 [refactor-gap-analysis.md](refactor-gap-analysis.md) §"Open items".
+
+---
+
+## Legacy & Migration Traceability
+
+**JEX counterpart:** `fnsh_0200_001` (eligibility list + confirm) + `fnsh_0200_002` (Organizer Settings popup) — [docs/jex/features/smart-organizer/](../../../../../docs/jex/features/smart-organizer/README.md)

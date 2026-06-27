@@ -20,13 +20,13 @@ stateless JWT). Status vocabulary: **MATCH** · **APPROVED DEVIATION** · **DEAD
 | **401 on lost session** | redirect to login | `JwtAuthenticationEntryPoint` → HTTP 401 `WBE1401` (legacy `SES001` parity) | **MATCH** (code is the slug-era `WBE1401`) |
 | **Session model** | server-side `HttpSession` | stateless JWT (`SessionCreationPolicy.STATELESS`, no `HttpSession`, no server store/blacklist) | **APPROVED DEVIATION** |
 | **`HttpSession` object** | server-side session per user | not ported — no session object exists | **DEAD LEGACY** |
-| **Server-side session invalidation (logout)** | server invalidates the `HttpSession` | client clears the token; no server revocation | **DEAD LEGACY** (owned by [logout](../logout/README.md)) |
+| **Server-side session invalidation (logout)** | server invalidates the `HttpSession` | client clears the token **and** the server revokes the `jti` (`TokenRevocationService`) | **DEAD LEGACY** (the `HttpSession` step) — JWT `jti` revocation is the replacement (owned by [logout](../logout/README.md)) |
 | **Session expiry** | server session timeout | JWT TTL `wecms.jwt.expires-in-seconds` (default 3600); no sliding window | **APPROVED DEVIATION** |
 | **Response envelope** | `COMMON_HEAD` / `REC` | `{ status, data, … }` lowercase snake_case | **APPROVED DEVIATION** (CTO directive) |
 | **Identifier surface** | WSVC id `logn_0001_001_r002` | kebab slug `session-management` everywhere | **APPROVED DEVIATION** (slug rule) |
 | **Refresh token (silent renew)** | n/a | not implemented — token simply expires | **MISSING** (GAP-1, deferred) |
-| **Server-side logout revocation / blacklist** | session invalidation | not implemented (stateless — nothing to revoke) | **MISSING** (GAP-2, deferred) |
-| **5-failure auto-lock counter** | locks after 5 consecutive failures | not implemented (`USER_LOGIN_HIS` FAIL rows are the scaffold) | **MISSING** (GAP-3, deferred — owned by [login](../login/README.md)) |
+| **Server-side logout revocation / blacklist** | session invalidation | `jti` denylist + per-user cutoff (`TokenRevocationService`); filter rejects revoked tokens | **IMPLEMENTED** (formerly GAP-2 MISSING, deferred — implemented 2026 via F-03; open: in-memory store) |
+| **5-failure auto-lock counter** | locks after 5 consecutive failures | `LoginLockoutService` sets `USER_INFM.LOCK_YN='Y'` after the latest 5 attempts are all failures | **IMPLEMENTED** (formerly GAP-3 MISSING, deferred — implemented 2026 via F-10; owned by [login](../login/README.md)) |
 | **Async `TenantContext` propagation** | n/a (servlet thread) | plain `ThreadLocal`; no `@Async`/child-thread propagation | **PARTIAL** (GAP-4, by design) |
 
 ---
@@ -43,20 +43,28 @@ refactor-only construct, so it requires explicit **PO (Mr. Jung) approval** befo
 / migration is created (the same gate that retired `NOTIFICATION` / `OAT_IDEMPOTENCY_KEY`). Do not add it
 speculatively. See [database-mapping.md](database-mapping.md) §4.
 
-### GAP-2 — Server-side logout revocation (MISSING; deferred)
+### GAP-2 — Server-side logout revocation (IMPLEMENTED — formerly MISSING, deferred)
 
-The model is stateless, so a still-valid token cannot be revoked: there is no server token store and no
-blacklist. `POST /api/v1/auth/logout` is a client-coordination stub; the token remains cryptographically
-valid until expiry. **Status: MISSING** — deferred (would land with the refresh-token work and a
-revocation store). Owned conceptually by [logout](../logout/README.md).
+> **Formerly GAP-2 (MISSING — deferred); implemented 2026 via F-03.**
 
-### GAP-3 — 5-failure auto-lock counter (MISSING; deferred)
+A still-valid token **can** now be revoked. Every JWT carries a `jti`; `TokenRevocationService` holds an
+in-memory `jti` denylist + a per-user not-before cutoff. `POST /api/v1/auth/logout` revokes the presented
+`jti` (and admin lock/delete/demote/password-reset revoke all of a user's tokens via
+`UserManagementService.revokeAllForUser`); `JwtAuthenticationFilter` rejects revoked / superseded tokens
+on the next request, before their TTL. **Open limitation:** the store is **in-memory** — lost on restart,
+not shared across instances; a durable / distributed store (Redis, or a PO-approved table) is still
+deferred. **Status: IMPLEMENTED; in-memory store open.** Owned conceptually by
+[logout](../logout/README.md) + [jwt-authentication](../jwt-authentication/README.md).
 
-Legacy locks a user after five consecutive failed logins. The refactor writes a FAIL `USER_LOGIN_HIS` row
-on every failed login attempt (the data scaffold, in the [login](../login/README.md) module), but no
-counter reads those rows to flip `LOCK_YN`. It is **out of the session-management scope** (the lock would
-be enforced at login, not at `/me`), listed here only because it is part of the same auth-session
-hardening backlog. **Status: MISSING** — deferred.
+### GAP-3 — 5-failure auto-lock counter (IMPLEMENTED — formerly MISSING, deferred)
+
+> **Formerly GAP-3 (MISSING — deferred); implemented 2026 via F-10.**
+
+Legacy locks a user after five consecutive failed logins. The refactor now does the same:
+`LoginLockoutService` sets `USER_INFM.LOCK_YN='Y'` once the latest 5 login attempts for the user are all
+failures (in addition to the FAIL `USER_LOGIN_HIS` rows already written). It is **enforced at login, not
+at `/me`** — so it is owned by the [login](../login/README.md) module and listed here only because it is
+part of the same auth-session hardening backlog. **Status: IMPLEMENTED.**
 
 ### GAP-4 — Async `TenantContext` propagation (PARTIAL; by design)
 
@@ -75,8 +83,10 @@ present architecture; revisit if an async path needs the tenant principal.
 Refactor Status: complete + unit-tested for the in-scope session surface (GET /me rehydrate, re-validate
                  gates, JWT-claim echo of authGrCd/prdtType, fresh menu payload, stateless model, 401
                  WBE1401 path).
-                 Deferred (not parity-blocking for R&D): refresh tokens, server-side logout revocation,
-                 5-failure auto-lock.
+                 Implemented (formerly deferred): server-side logout revocation (F-03), 5-failure
+                 auto-lock (F-10) — both with in-memory stores as the open limitation.
+                 Still deferred (not parity-blocking for R&D): refresh tokens; durable / distributed
+                 revocation store.
 ```
 
 Evidence for closed items:
@@ -92,9 +102,9 @@ Evidence for closed items:
 - **Slug `session-management`** used end-to-end (route, docs).
 
 Residual (non-blocking, tracked):
-1. GAP-1 — refresh tokens (deferred; PO-gated, off-inventory).
-2. GAP-2 — server-side logout revocation (deferred).
-3. GAP-3 — 5-failure auto-lock (deferred; owned by login).
+1. GAP-1 — refresh tokens (still MISSING; deferred; PO-gated, off-inventory).
+2. GAP-2 — server-side logout revocation IMPLEMENTED; open item is the **in-memory** store (durable / distributed deferred).
+3. GAP-3 — 5-failure auto-lock IMPLEMENTED (owned by login).
 4. GAP-4 — async `TenantContext` propagation (PARTIAL / by design).
 5. **No `me()` rejection test** (deleted/inactive/locked/link-removed → `WBE1401`) and **no `@WebMvcTest`**
    wire-shape test — see [test-scenarios.md](test-scenarios.md).

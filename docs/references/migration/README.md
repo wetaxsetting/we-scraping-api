@@ -30,6 +30,7 @@ Per-feature migration mapping: which JEX WSVC/IDO maps to which Spring controlle
 - `view-setting.md`
 - `payment-approval-box.md`
 - `service-mapping.md` — cross-feature index of WSVC → REST mappings
+- [`wecms-batch-migration.md`](wecms-batch-migration.md) — **moved** → the firm-banking dispatch batch is now a feature doc set at [features/wecms-batch/](../../features/wecms-batch/README.md); legacy mapping lives in [legacy-jex-mapping.md](../../features/wecms-batch/legacy-jex-mapping.md)
 
 ## Reference
 

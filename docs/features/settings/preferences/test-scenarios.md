@@ -43,9 +43,10 @@ SIT/UAT scenarios for the Preferences company-profile backend. Frontend scenario
 | L2 | Replace an existing logo | new file written, `CMPN_LOGO` repointed, previous file best-effort deleted |
 | L3 | Empty (zero-byte) file | `WBE2085` |
 | L4 | File > 2 MB | `WBE2086` (`{0}` = "2 MB") |
-| L5 | Disallowed extension (e.g. `.bmp` / `.pdf`) | `WBE2087` (`{0}` = "jpg, jpeg, png, gif, svg") |
+| L5 | Disallowed extension (e.g. `.bmp` / `.pdf` / `.svg`) | `WBE2087` (`{0}` = "jpg, jpeg, png, gif") |
 | L6 | Upload with no filename | `WBE2084` |
-| L7 | Allowed extensions | `.jpg` / `.jpeg` / `.png` / `.gif` / `.svg` all accepted |
+| L7 | Allowed extensions | `.jpg` / `.jpeg` / `.png` / `.gif` all accepted |
+| L7b | `.svg` upload (F-02) | **rejected** → `WBE2087` (`{0}` = "jpg, jpeg, png, gif") — an inline-served SVG can carry `<script>` (stored XSS) |
 | L8 | Upload writes NO audit row | no `AUDIT_LOGS_INFM` row for the upload |
 | L9 | IO failure on write (simulate read-only root) | `WBE2081`; previous logo + DB pointer unchanged (write-new-before-delete-old) |
 
@@ -65,7 +66,7 @@ SIT/UAT scenarios for the Preferences company-profile backend. Frontend scenario
 | T2 | Stream when no logo set | `WBE2082` (JSON error envelope) — frontend treats as "show placeholder" |
 | T3 | Stream when DB points at a missing file | `WBE2083` |
 | T4 | Stream resolves a legacy flat-root logo | bytes returned via `resolveForRead` fallback |
-| T5 | SVG content type | `image/svg+xml` |
+| T5 | SVG upload / `image/svg+xml` (F-02) | **rejected at upload** → `WBE2087`; no `image/svg+xml` is ever stored or streamed (an inline-served SVG can carry `<script>` — stored XSS) |
 
 ### Authorization
 

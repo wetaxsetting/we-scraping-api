@@ -81,21 +81,24 @@ re-read — they ride in the signed JWT and are echoed from `TenantContext` (a n
 
 The session is the signed JWT — there is **no DB table backing the session**:
 
-- No server-side `HttpSession`, no session table, no token-blacklist / revocation table, no
-  refresh-token table.
+- No server-side `HttpSession`, no session table, no **persisted** token-blacklist / revocation table, no
+  refresh-token table. (Server-side revocation **is** implemented, but its store is the **in-memory**
+  `TokenRevocationService` — not a DB table; see [jwt-authentication](../jwt-authentication/README.md).)
 - `auth_gr_cd` and `prdt_type` are **not** persisted per session — they live as signed JWT claims and are
   surfaced through `TenantContext` (a request-scoped `ThreadLocal`, not a DB row).
 - The menu payload (`all_menus` / `allowed_menu_cds`) is computed on the fly from
   `USER_MENU_AUTH_INFM` via `MenuAuthorizationService` (owned by
   [menu-authorization](../menu-authorization/README.md)); session management does not store or cache it.
 
-> **Future `REFRESH_TOKEN` (not in scope).** Refresh tokens and server-side logout revocation are
-> **MISSING** (deferred — see [refactor-gap-analysis.md](refactor-gap-analysis.md)). A `REFRESH_TOKEN`
-> table is **not** in the [legacy table inventory](../../../references/database/legacy-table-inventory.md)
-> and would be a refactor-only construct — per the root CLAUDE.md "Refactor DB & Legacy-Compatibility
-> Rules", that requires explicit **PO (Mr. Jung) approval** before any entity / repository / migration is
-> created (the same gate that retired the refactor-only `NOTIFICATION` and `OAT_IDEMPOTENCY_KEY`
-> objects). Do **not** add it speculatively.
+> **Future `REFRESH_TOKEN` / durable revocation store (not in scope).** Refresh tokens are **MISSING**
+> (deferred). Server-side logout revocation **is implemented** (formerly MISSING, deferred — implemented
+> 2026 via F-03) but its store is **in-memory** — making it durable / distributed (or adding a
+> `REFRESH_TOKEN` table) is the deferred part. Such a table is **not** in the
+> [legacy table inventory](../../../references/database/legacy-table-inventory.md) and would be a
+> refactor-only construct — per the root CLAUDE.md "Refactor DB & Legacy-Compatibility Rules", that
+> requires explicit **PO (Mr. Jung) approval** before any entity / repository / migration is created (the
+> same gate that retired the refactor-only `NOTIFICATION` and `OAT_IDEMPOTENCY_KEY` objects). Do **not**
+> add it speculatively. See [refactor-gap-analysis.md](refactor-gap-analysis.md).
 
 ---
 

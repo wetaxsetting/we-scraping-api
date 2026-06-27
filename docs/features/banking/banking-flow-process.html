@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WeCMS Banking Module — Flow Process &amp; Architecture Guide (JEX → Spring Boot)</title>
+<style>
+  :root{
+    --ink:#1b2733; --muted:#5b6b7b; --faint:#8593a3;
+    --bg:#f4f7fb; --card:#ffffff; --line:#e3e9f1; --line-2:#eef3f9;
+    --navy:#1f4e8c; --navy-d:#163a6b; --blue-soft:#eaf1fb; --accent:#2f6fd0;
+    --green:#1f9d6b; --green-bg:#e7f6ef; --green-bd:#bfe6d3;
+    --amber:#b9770e; --amber-bg:#fdf4e3; --amber-bd:#f0dcae;
+    --red:#c0392b; --red-bg:#fbecea; --red-bd:#f1c9c2;
+    --purple:#7c5cbf; --purple-bg:#f1ecfa;
+    --legacy:#7a6a52; --legacy-bg:#f4f0e8; --legacy-bd:#e3d9c5;
+    --sans:'Inter','Noto Sans KR','Malgun Gothic','Dotum',sans-serif;
+    --mono:ui-monospace,'Cascadia Code','Consolas','Menlo',monospace;
+    --shadow:0 1px 2px rgba(27,39,51,.04),0 4px 14px rgba(27,39,51,.06);
+  }
+  *{box-sizing:border-box;}
+  html{font-size:13px; scroll-behavior:smooth;}
+  body{margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans); font-size:13px; line-height:1.6; letter-spacing:-0.01em; -webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1140px; margin:0 auto; padding:0 28px;}
+  a{color:var(--accent); text-decoration:none;}
+  a:hover{text-decoration:underline;}
+  a:focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:3px;}
+  code,.mono{font-family:var(--mono);}
+  code{background:#eef2f7; color:#33455a; padding:1px 5px; border-radius:4px; font-size:12px;}
+
+  /* header */
+  header.hero{background:linear-gradient(135deg,var(--navy-d),var(--navy)); color:#fff; padding:46px 0 38px;}
+  .hero .kicker{font-family:var(--mono); font-size:11px; letter-spacing:.22em; text-transform:uppercase; color:#aecbf2;}
+  .hero h1{margin:12px 0 4px; font-size:29px; font-weight:800; letter-spacing:-.03em; line-height:1.12;}
+  .hero .sub{font-size:15px; color:#d6e4f7; font-weight:500;}
+  .hero .sub .kr{color:#aecbf2;}
+  .badges{display:flex; flex-wrap:wrap; gap:8px; margin-top:20px;}
+  .badge{display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-weight:600; padding:5px 11px; border-radius:999px; border:1px solid transparent;}
+  .badge::before{content:""; width:7px; height:7px; border-radius:50%; background:currentColor;}
+  .badge.ok{background:rgba(231,246,239,.16); color:#9ff0c8; border-color:rgba(159,240,200,.35);}
+  .badge.info{background:rgba(234,241,251,.16); color:#bcd6f7; border-color:rgba(188,214,247,.35);}
+  .badge.warn{background:rgba(253,244,227,.14); color:#f4cf86; border-color:rgba(244,207,134,.4);}
+  .badge.stop{background:rgba(251,236,234,.14); color:#f3b3a9; border-color:rgba(243,179,169,.4);}
+  .hero-meta{display:flex; flex-wrap:wrap; gap:6px 22px; margin-top:18px; font-family:var(--mono); font-size:11px; color:#aecbf2;}
+
+  /* toc */
+  nav.toc{position:sticky; top:0; z-index:10; background:rgba(255,255,255,.93); backdrop-filter:saturate(140%) blur(6px); border-bottom:1px solid var(--line);}
+  nav.toc .wrap{display:flex; flex-wrap:wrap; gap:2px 3px; padding-top:8px; padding-bottom:8px;}
+  nav.toc a{font-size:11px; color:var(--muted); padding:3px 8px; border-radius:6px; white-space:nowrap;}
+  nav.toc a:hover{background:var(--blue-soft); color:var(--navy); text-decoration:none;}
+
+  /* sections */
+  section{padding:38px 0; border-bottom:1px solid var(--line); scroll-margin-top:48px;}
+  .sec-no{font-family:var(--mono); font-size:11px; font-weight:600; letter-spacing:.16em; color:var(--accent); text-transform:uppercase;}
+  h2{font-size:21px; font-weight:700; letter-spacing:-.02em; margin:7px 0 4px;}
+  h2 .kr{font-size:14px; color:var(--faint); font-weight:500;}
+  h3{font-size:14px; font-weight:700; margin:18px 0 10px;}
+  h4{font-size:12.5px; font-weight:700; margin:0 0 8px; color:var(--navy-d);}
+  p{margin:10px 0; color:#33424f;}
+  .lead{color:var(--muted); max-width:80ch;}
+  ul.clean{margin:8px 0; padding-left:18px; color:#33424f;}
+  ul.clean li{margin:4px 0;}
+
+  .card{background:var(--card); border:1px solid var(--line); border-radius:10px; padding:18px 20px; box-shadow:var(--shadow);}
+  .card + .card{margin-top:14px;}
+  .grid-2{display:grid; grid-template-columns:1fr 1fr; gap:16px;}
+  .grid-3{display:grid; grid-template-columns:repeat(3,1fr); gap:14px;}
+
+  .kpis{display:grid; grid-template-columns:repeat(5,1fr); gap:14px; margin-top:18px;}
+  .kpi{background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; box-shadow:var(--shadow); border-top:3px solid var(--accent);}
+  .kpi .n{font-size:22px; font-weight:800; color:var(--navy); letter-spacing:-.03em; line-height:1.05;}
+  .kpi .l{font-size:11.5px; color:var(--muted); margin-top:7px;}
+  .kpi .s{font-size:10.5px; margin-top:6px;}
+
+  /* module cards */
+  .modgrid{display:grid; grid-template-columns:repeat(2,1fr); gap:16px; margin-top:6px;}
+  .modcard{background:#fff; border:1px solid var(--line); border-top:3px solid var(--accent); border-radius:10px; padding:15px 17px; box-shadow:var(--shadow);}
+  .modcard .ttl{font-size:13.5px; font-weight:700; color:var(--navy-d);}
+  .modcard .rt{font-family:var(--mono); font-size:11px; color:var(--faint); margin:2px 0 8px;}
+  .modcard dl{display:grid; grid-template-columns:80px 1fr; gap:5px 10px; margin:0; font-size:12px;}
+  .modcard dt{font-weight:700; color:var(--navy-d);}
+  .modcard dd{margin:0; color:#33424f;}
+
+  /* horizontal & vertical flow */
+  .flow{display:flex; flex-wrap:wrap; align-items:stretch; gap:10px; margin:12px 0;}
+  .flow.tight{gap:6px;}
+  .step{flex:0 1 auto; background:#fff; border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:8px; padding:10px 13px; min-width:118px; box-shadow:var(--shadow);}
+  .step .t{font-weight:600; font-size:12.5px;}
+  .step .d{font-size:11px; color:var(--muted); margin-top:2px;}
+  .step.db{border-left-color:var(--purple);}
+  .step.ext{border-left-color:var(--amber);}
+  .step.ok{border-left-color:var(--green);}
+  .step.fail{border-left-color:var(--red);}
+  .step.legacy{border-left-color:var(--legacy); background:var(--legacy-bg);}
+  .arrow{display:flex; align-items:center; color:var(--faint); font-size:17px; font-weight:700; padding:0 1px;}
+  .flow.vertical{flex-direction:column; align-items:flex-start;}
+  .flow.vertical .arrow{transform:rotate(90deg); padding:1px 0; margin-left:46px;}
+  .flow.vertical .step{min-width:240px;}
+  .legend{display:flex; flex-wrap:wrap; gap:14px; margin-top:12px; font-size:11px; color:var(--muted);}
+  .legend span{display:inline-flex; align-items:center; gap:6px;}
+  .legend i{width:11px; height:11px; border-radius:3px; display:inline-block;}
+
+  /* branch row */
+  .branch{display:flex; flex-wrap:wrap; gap:14px; margin-top:12px;}
+  .branch .lane{flex:1 1 280px; border:1px solid var(--line); border-radius:8px; padding:12px 14px; background:#fff;}
+  .branch .lane.ok{border-top:3px solid var(--green);}
+  .branch .lane.fail{border-top:3px solid var(--red);}
+
+  /* tables */
+  table{width:100%; border-collapse:collapse; margin:14px 0; font-size:12.5px; background:#fff; border:1px solid var(--line); border-radius:10px; overflow:hidden;}
+  thead th{background:#f1f5fb; color:var(--navy-d); text-align:left; font-weight:700; font-size:11.5px; padding:11px 13px; border-bottom:1px solid var(--line);}
+  tbody td{padding:10px 13px; border-bottom:1px solid var(--line-2); vertical-align:top; color:#33424f;}
+  tbody tr:last-child td{border-bottom:0;}
+  tbody tr:nth-child(even){background:#fafcfe;}
+  td code,th code{background:#eef2f7;}
+  .center{text-align:center;}
+  .tablescroll{overflow-x:auto;}
+
+  /* inline tags / status chips */
+  .tag{display:inline-block; font-family:var(--mono); font-size:10.5px; font-weight:600; padding:2px 7px; border-radius:5px; border:1px solid;}
+  .tag.g{color:var(--green); background:var(--green-bg); border-color:var(--green-bd);}
+  .tag.a{color:var(--amber); background:var(--amber-bg); border-color:var(--amber-bd);}
+  .tag.r{color:var(--red); background:var(--red-bg); border-color:var(--red-bd);}
+  .tag.b{color:var(--navy); background:var(--blue-soft); border-color:#cfe0f6;}
+  .tag.p{color:var(--purple); background:var(--purple-bg); border-color:#dccff2;}
+  .chip{display:inline-flex; align-items:center; justify-content:center; min-width:26px; font-family:var(--mono); font-weight:700; font-size:12px; padding:2px 8px; border-radius:6px; border:1px solid;}
+  .chip.s9{color:var(--navy); background:var(--blue-soft); border-color:#cfe0f6;}
+  .chip.s6{color:var(--amber); background:var(--amber-bg); border-color:var(--amber-bd);}
+  .chip.s0{color:var(--green); background:var(--green-bg); border-color:var(--green-bd);}
+  .chip.s3{color:var(--red); background:var(--red-bg); border-color:var(--red-bd);}
+
+  /* callouts */
+  .callout{border-radius:10px; padding:13px 16px; margin:16px 0; border:1px solid; display:flex; gap:11px; align-items:flex-start;}
+  .callout .ic{font-size:16px; line-height:1.2;}
+  .callout.warn{background:var(--amber-bg); border-color:var(--amber-bd); color:#7a5208;}
+  .callout.stop{background:var(--red-bg); border-color:var(--red-bd); color:#8c2a1f;}
+  .callout.note{background:var(--blue-soft); border-color:#cfe0f6; color:#1d3f6b;}
+  .callout.ok{background:var(--green-bg); border-color:var(--green-bd); color:#13694a;}
+  .callout a{color:inherit; text-decoration:underline;}
+
+  /* sequence diagram */
+  .seq{background:#fff; border:1px solid var(--line); border-radius:10px; padding:6px 18px 12px; box-shadow:var(--shadow);}
+  .seq-step{display:grid; grid-template-columns:30px 1fr; gap:12px; padding:9px 0; border-bottom:1px dashed var(--line-2); align-items:start;}
+  .seq-step:last-child{border-bottom:0;}
+  .seq-step .n{width:24px; height:24px; border-radius:50%; background:var(--navy); color:#fff; font-family:var(--mono); font-size:11px; font-weight:700; display:flex; align-items:center; justify-content:center; margin-top:1px;}
+  .seq-lane{font-family:var(--mono); font-size:11.5px; font-weight:600;}
+  .seq-lane .from{color:var(--navy);} .seq-lane .to{color:var(--amber);} .seq-lane .ar{color:var(--faint); padding:0 4px;}
+  .seq-msg{font-size:12px; color:var(--muted); margin-top:2px;}
+
+  /* decision tree (troubleshooting) */
+  .dtree{display:flex; flex-direction:column; gap:0; margin-top:6px;}
+  .dstep{display:flex; flex-wrap:wrap; align-items:center; gap:10px;}
+  .dcond{background:#fff; border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:8px; padding:9px 13px; font-weight:600; font-size:12.5px; box-shadow:var(--shadow);}
+  .dno{font-size:11.5px; color:var(--red); background:var(--red-bg); border:1px solid var(--red-bd); border-radius:6px; padding:5px 10px;}
+  .dno b{font-family:var(--mono);}
+  .dvert{color:var(--green); font-weight:700; padding:4px 0 4px 18px; font-size:12px;}
+  .dend{background:var(--green-bg); border:1px solid var(--green-bd); color:#13694a; border-radius:8px; padding:9px 13px; font-weight:600; font-size:12.5px; align-self:flex-start;}
+
+  /* source / appendix list */
+  .srclist{list-style:none; margin:8px 0 0; padding:0; columns:2; column-gap:26px;}
+  .srclist li{padding:6px 0; font-size:12.5px; break-inside:avoid;}
+  .srclist .mono{font-size:11px; color:var(--muted); display:block;}
+
+  footer{padding:28px 0 56px; color:var(--faint); font-size:11.5px;}
+  footer .wrap{display:flex; flex-wrap:wrap; gap:6px 18px; justify-content:space-between;}
+
+  @media (max-width:880px){
+    .grid-2,.grid-3,.kpis,.modgrid{grid-template-columns:1fr;}
+    .srclist{column-count:1; columns:1;}
+    .hero h1{font-size:23px;}
+  }
+  @media print{
+    body{background:#fff;}
+    nav.toc{display:none;}
+    header.hero{background:#fff!important; color:var(--ink); border-bottom:2px solid var(--navy);}
+    .hero .kicker,.hero .sub,.hero .sub .kr,.hero-meta{color:var(--muted);}
+    .badge{color:var(--ink)!important; border-color:var(--line)!important; background:#f2f5f9!important;}
+    .card,.kpi,.step,table,.seq,.modcard{box-shadow:none;}
+    section{padding:16px 0; break-inside:avoid;}
+    a{color:var(--ink); text-decoration:none;}
+    *{-webkit-print-color-adjust:exact; print-color-adjust:exact;}
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ HEADER ============ -->
+<header class="hero">
+  <div class="wrap">
+    <div class="kicker">Onboarding &amp; Handover · 인수인계</div>
+    <h1>WeCMS Banking Module</h1>
+    <div class="sub">Flow Process &amp; Architecture Guide · Legacy JEX → Spring Boot + Next.js <span class="kr">· 뱅킹 모듈 처리 흐름</span></div>
+    <div class="badges">
+      <span class="badge ok">Account Inquiry VND/FCY — full-stack</span>
+      <span class="badge ok">Transaction History — full-stack</span>
+      <span class="badge ok">Internal Transfer VND — full-stack</span>
+      <span class="badge info">Reports — 4 reports live</span>
+      <span class="badge info">Smart Organizer — full-stack</span>
+    </div>
+    <div class="hero-meta">
+      <span>Domain: com.kosign.wecms.domain.banking</span>
+      <span>Spring Boot 3.5.13 · Java 21 · Next.js</span>
+      <span>Prepared 2026-06-24</span>
+      <span>A developer should understand the whole Banking module from this document without reading source.</span>
+    </div>
+  </div>
+</header>
+
+<!-- ============ TOC ============ -->
+<nav class="toc">
+  <div class="wrap">
+    <a href="#s1">1·Overview</a>
+    <a href="#s2">2·Module Map</a>
+    <a href="#s3">3·End-to-End</a>
+    <a href="#s4">4·Savings VND</a>
+    <a href="#s5">5·Savings FCY</a>
+    <a href="#s6">6·Transfer VND</a>
+    <a href="#s7">7·Reports</a>
+    <a href="#s8">8·Smart Organizer</a>
+    <a href="#s9">9·Architecture</a>
+    <a href="#s10">10·Database</a>
+    <a href="#s11">11·API</a>
+    <a href="#s12">12·User Journey</a>
+    <a href="#s13">13·Error Handling</a>
+    <a href="#s14">14·Security</a>
+    <a href="#s15">15·Navigation</a>
+    <a href="#s16">16·Related Docs</a>
+  </div>
+</nav>
+
+<main class="wrap">
+
+  <!-- ============ 1. OVERVIEW ============ -->
+  <section id="s1">
+    <div class="sec-no">01 — Banking Overview</div>
+    <h2>Purpose, scope &amp; status <span class="kr">개요</span></h2>
+    <p class="lead"><b>Purpose.</b> The Banking module is the cash-visibility and money-movement core of WeCMS — it lets a company see real-time balances across every connected bank account, drill into the transaction ledger, classify and reconcile each transaction, move funds between its own VND accounts, and produce daily-cash / financial / cash-flow reports. Bank connectivity is live: balances and transactions are scraped from the banks through the Coocon / NXiSAS smart gateway.</p>
+    <p class="lead"><b>Scope.</b> Five business domains, all inside the single <code>wecms-api</code> Spring Boot deployable plus the <code>wecms-web</code> Next.js client: <b>Current &amp; Savings (VND)</b>, <b>Current &amp; Savings (FCY)</b>, <b>Internal Transfer (VND)</b>, <b>Reports</b> (Daily Cash · Daily Financial · Cash Flow), and <b>Smart Organizer</b>. Bank Credentials &amp; live scraping support all of them.</p>
+    <p class="lead"><b>Current status.</b> Account Inquiry (VND + FCY), Transaction History (VND + FCY), Own Account Transfer, Transfer History, Smart Organizer and all four reports are migrated and wired <b>full-stack</b>; SIT/UAT verification is complete for the inquiry/history/transfer/organizer features. Reports call the legacy DB functions directly (no Java recompute on the active path).</p>
+    <p class="lead"><b>Refactor north-star.</b> Preserve legacy JEX behavior — the refactor reproduces what JEX does column-for-column against the live JEX DB; it does not redesign it. New identifiers are kebab-case slugs (<code>banking-account-inquiry-vnd</code>), never legacy WSVC ids.</p>
+
+    <div class="kpis">
+      <div class="kpi"><div class="n">Savings FCY</div><div class="l">Multi-currency account inquiry + history</div><div class="s"><span class="tag g">full-stack</span></div></div>
+      <div class="kpi"><div class="n">Savings VND</div><div class="l">VND account inquiry + history</div><div class="s"><span class="tag g">full-stack</span></div></div>
+      <div class="kpi"><div class="n">Transfer VND</div><div class="l">Own-account transfer + history</div><div class="s"><span class="tag g">full-stack</span></div></div>
+      <div class="kpi"><div class="n">Reports</div><div class="l">Daily Cash · Daily Financial · Cash Flow</div><div class="s"><span class="tag b">4 live</span></div></div>
+      <div class="kpi"><div class="n">Smart Organizer</div><div class="l">Rule-driven bulk classification</div><div class="s"><span class="tag g">full-stack</span></div></div>
+    </div>
+  </section>
+
+  <!-- ============ 2. MODULE MAP ============ -->
+  <section id="s2">
+    <div class="sec-no">02 — Banking Module Map</div>
+    <h2>The five banking domains <span class="kr">모듈 구성</span></h2>
+    <div class="card" style="margin-bottom:14px;">
+      <div class="flow vertical">
+        <div class="step"><div class="t">Banking</div><div class="d">top menu group</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">Current &amp; Savings (FCY)</div><div class="d">account-inquiry · transaction-history</div></div>
+        <div class="step"><div class="t">Current &amp; Savings (VND)</div><div class="d">account-inquiry · transaction-history</div></div>
+        <div class="step"><div class="t">Internal Transfer (VND)</div><div class="d">own-account-transfer · transfer-history</div></div>
+        <div class="step"><div class="t">Reports</div><div class="d">daily-cash · daily-financial · cash-flow</div></div>
+        <div class="step"><div class="t">Smart Organizer</div><div class="d">single screen, VND + FCY</div></div>
+      </div>
+    </div>
+    <div class="modgrid">
+      <div class="modcard"><div class="ttl">Current &amp; Savings (VND)</div><div class="rt">/banking/current-savings-vnd · fnsh_0001_001 / fnsh_0002_001</div>
+        <dl><dt>Purpose</dt><dd>List VND current/savings accounts with live balance; drill into the per-account ledger and classify transactions.</dd>
+        <dt>Functions</dt><dd>Account list · filter/sort/paginate · update balance (sync) · transaction history · confirm/classify · Excel export</dd>
+        <dt>Users</dt><dd>Finance/treasury staff with view (V) authority; admins see all accounts.</dd></dl>
+      </div>
+      <div class="modcard"><div class="ttl">Current &amp; Savings (FCY)</div><div class="rt">/banking/current-savings-fcy · fnsh_0005_001 / fnsh_0006_001</div>
+        <dl><dt>Purpose</dt><dd>Same as VND but for foreign-currency accounts (USD/KRW/EUR/JPY/…). Multi-currency, per-currency totals.</dd>
+        <dt>Functions</dt><dd>Multi-currency list · in-page currency narrow · sync · per-account history (own CCY only) · classify · export</dd>
+        <dt>Users</dt><dd>Treasury staff handling FX accounts; admins.</dd></dl>
+      </div>
+      <div class="modcard"><div class="ttl">Internal Transfer (VND)</div><div class="rt">/banking/internal-transfer-vnd · trns_0001_001 / trns_0003_001</div>
+        <dl><dt>Purpose</dt><dd>Move funds between the company's own VND accounts (same-bank or NAPAS cross-bank); review executed transfers.</dd>
+        <dt>Functions</dt><dd>Source picker · balance refresh · composer + target validation · engine-driven execution · result intake · transfer history</dd>
+        <dt>Users</dt><dd>Users with withdraw (W) authority on the source account; admins.</dd></dl>
+      </div>
+      <div class="modcard"><div class="ttl">Reports</div><div class="rt">/banking/reports · rept_0009/0015/0017 · cash_0001</div>
+        <dl><dt>Purpose</dt><dd>Daily cash position, daily financial snapshot (CMC + HAENGSUNG), and a 12-month cash-flow matrix.</dd>
+        <dt>Functions</dt><dd>As-of/year filters · legacy DB-function compute · per-currency aggregation · Excel export</dd>
+        <dt>Users</dt><dd>Finance managers; HS report is HAENGSUNG (product H) only.</dd></dl>
+      </div>
+      <div class="modcard"><div class="ttl">Smart Organizer</div><div class="rt">/banking/smart-organizer · fnsh_0200_001 / fnsh_0200_002</div>
+        <dl><dt>Purpose</dt><dd>Apply saved remark-matching rules to unconfirmed transactions and bulk-confirm them with a proposed classification.</dd>
+        <dt>Functions</dt><dd>Rule CRUD + reorder · eligibility match (LATERAL join) · proposal pre-fill · bulk confirm</dd>
+        <dt>Users</dt><dd>Accounting staff reconciling bank transactions; reuses transaction-history permissions.</dd></dl>
+      </div>
+      <div class="modcard" style="border-top-color:var(--amber);"><div class="ttl">Bank Credentials &amp; Scraping <span class="tag a">support</span></div><div class="rt">settings-adjacent · BANK_CERT_INFO · GDT_CERT_INFO</div>
+        <dl><dt>Purpose</dt><dd>Store saved bank login credentials and drive live scraping via the Coocon / NXiSAS smart gateway.</dd>
+        <dt>Functions</dt><dd>Credential CRUD (no ciphertext on wire) · scrape account-list / verify · OTP / QnA / CAPTCHA challenge resume</dd>
+        <dt>Users</dt><dd>Underpins balance/transaction sync for every account screen.</dd></dl>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 3. END-TO-END ============ -->
+  <section id="s3">
+    <div class="sec-no">03 — End-to-End Banking Process</div>
+    <h2>From login to reporting <span class="kr">업무 흐름</span></h2>
+    <div class="card">
+      <div class="flow vertical">
+        <div class="step"><div class="t">Login</div><div class="d">JWT issued (bizKey · authGrCd · prdtType)</div></div><div class="arrow">→</div>
+        <div class="step db"><div class="t">Account Inquiry</div><div class="d">list accounts (ACCT_MSTR)</div></div><div class="arrow">→</div>
+        <div class="step ext"><div class="t">Balance Verification</div><div class="d">sync via Coocon/NXiSAS → refresh balance</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">Transaction Creation</div><div class="d">compose own-account transfer</div></div><div class="arrow">→</div>
+        <div class="step ext"><div class="t">Approval (bank)</div><div class="d">engine 2nd-factor: OTP/QnA + bank IB</div></div><div class="arrow">→</div>
+        <div class="step ext"><div class="t">Transfer</div><div class="d">engine TRANSFER → bank rails (NAPAS)</div></div><div class="arrow">→</div>
+        <div class="step db"><div class="t">Result Processing</div><div class="d">record outcome → NAPAS_REMIT_TRNS_HSTR</div></div><div class="arrow">→</div>
+        <div class="step ok"><div class="t">Reporting</div><div class="d">daily cash / financial / cash-flow</div></div>
+      </div>
+    </div>
+    <ul class="clean">
+      <li><b>Login.</b> The user authenticates; the JWT carries the tenant (<code>bizKey</code>), authority (<code>authGrCd</code> = ADMIN/USER) and product type (<code>prdtType</code> = F/M/H). Every banking call reads identity from this signed token via <code>TenantContext</code> — never from request input.</li>
+      <li><b>Account Inquiry.</b> Banking lands on the account list. The backend resolves currency scope and per-user account authority (<code>ACCT_AUTH_INFO</code>) and returns balances + totals from <code>ACCT_MSTR</code>.</li>
+      <li><b>Balance Verification.</b> "Update balance" drives a live scrape (LOGIN → BALANCE → TRANSACTION jobs) through the Coocon/NXiSAS gateway; on success <code>ACCT_MSTR</code> balance + <code>ACCT_TRNS_HSTR</code> rows are refreshed.</li>
+      <li><b>Transaction Creation → Approval → Transfer.</b> An own-account transfer is composed and validated, then the browser-driven engine executes it with a bank 2nd-factor; the bank itself is the approval authority — there is no in-app approval state machine for own-account transfers.</li>
+      <li><b>Result Processing.</b> Spring records the final engine outcome as one immutable row in <code>NAPAS_REMIT_TRNS_HSTR</code> (idempotent on the supplied key).</li>
+      <li><b>Reporting.</b> Confirmed ledger + classification data feed the four reports, computed by legacy PostgreSQL functions.</li>
+    </ul>
+    <div class="legend">
+      <span><i style="background:var(--accent)"></i> service / app step</span>
+      <span><i style="background:var(--purple)"></i> database</span>
+      <span><i style="background:var(--amber)"></i> external (bank gateway)</span>
+      <span><i style="background:var(--green)"></i> terminal / output</span>
+      <span><i style="background:var(--legacy)"></i> legacy JEX</span>
+    </div>
+  </section>
+
+  <!-- ============ 4. CURRENT SAVINGS VND ============ -->
+  <section id="s4">
+    <div class="sec-no">04 — Current &amp; Savings (VND)</div>
+    <h2>VND account inquiry &amp; history <span class="kr">VND 계좌</span></h2>
+    <div class="card">
+      <div class="flow vertical">
+        <div class="step"><div class="t">User</div><div class="d">opens Banking → C&amp;S (VND)</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">Current &amp; Savings VND</div><div class="d">GET /api/v1/banking/accounts?currency=VND</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">Account Selection</div><div class="d">filter (bank/keyword) · sort · paginate</div></div><div class="arrow">→</div>
+        <div class="step ext"><div class="t">Balance Inquiry</div><div class="d">update balance → scrape → refresh ACCT_MSTR</div></div><div class="arrow">→</div>
+        <div class="step db"><div class="t">Transaction History</div><div class="d">GET …/accounts/{acctSeqNo}/transactions</div></div><div class="arrow">→</div>
+        <div class="step ok"><div class="t">Display Result</div><div class="d">grid + totals + confirm/classify</div></div>
+      </div>
+    </div>
+    <div class="grid-3" style="margin-top:14px;">
+      <div class="card"><h4>Main pages</h4><ul class="clean" style="font-size:12px;">
+        <li><code>/banking/current-savings-vnd/account-inquiry</code></li>
+        <li><code>/banking/current-savings-vnd/[accountId]/transaction-history</code></li>
+        <li><code>/banking/sync-history</code> — sync audit log</li>
+      </ul></div>
+      <div class="card"><h4>Main APIs</h4><ul class="clean" style="font-size:12px;">
+        <li><code>GET /banking/accounts</code> (list, filter, sort, page)</li>
+        <li><code>POST /banking/accounts/transactions-sync</code> (+ <code>/otp</code> · <code>/captcha</code> · <code>/qna</code>)</li>
+        <li><code>GET /banking/accounts/{acctSeqNo}/transactions</code> (+ <code>/summary</code> · <code>/{trnsSeqNo}</code>)</li>
+        <li><code>PUT|DELETE …/{trnsSeqNo}/confirm</code> · <code>PATCH …/purpose|reporting-account|vas-account|contact</code></li>
+        <li><code>POST /banking/accounts/export</code> · <code>POST /banking/accounts/transactions/export</code> (XLSX)</li>
+      </ul></div>
+      <div class="card"><h4>Main tables</h4><ul class="clean" style="font-size:12px;">
+        <li><code>ACCT_MSTR</code> — account master (R + sync W)</li>
+        <li><code>ACCT_TRNS_HSTR</code> — ledger rows (R + sync W)</li>
+        <li><code>ACCT_TRNS_RCV_PAY_INFM</code> — confirm/classify (R + W)</li>
+        <li><code>ACCT_AUTH_INFO</code> — per-user authority (R)</li>
+        <li><code>BANK_INFM</code> / <code>BANK_CERT_INFO</code> — names / cert (R)</li>
+        <li><code>EXT_TRAN_CALL_HIS</code> — scrape audit (W)</li>
+      </ul></div>
+    </div>
+    <p class="lead" style="margin-bottom:0;"><b>Spring components.</b> <code>AccountController</code> · <code>AccountService</code> (list/filter/sort/format) · <code>TransactionService</code> (list/detail/confirm/classify) · <code>BankTransactionSyncService</code> (gateway orchestration) · <code>AmountFormatter</code> · <code>BankCdResolver</code> · sort whitelist <code>AccountSortField</code>. Default list order mirrors legacy <code>fnsh_0001_001</code> (<code>PRN_SEQ ASC, BANK_CD ASC, ACCT_NO ASC</code>). <span class="tag g">Account Inquiry — full-stack, SIT/UAT verified</span> <span class="tag a">History export columns + per-column sort: deferred, non-blocking</span></p>
+  </section>
+
+  <!-- ============ 5. CURRENT SAVINGS FCY ============ -->
+  <section id="s5">
+    <div class="sec-no">05 — Current &amp; Savings (FCY)</div>
+    <h2>Foreign-currency accounts <span class="kr">외화 계좌</span></h2>
+    <div class="card">
+      <div class="flow vertical">
+        <div class="step"><div class="t">User</div><div class="d">opens Banking → C&amp;S (FCY)</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">Current &amp; Savings FCY</div><div class="d">GET /api/v1/banking/accounts?currency=FCY</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">Currency Selection</div><div class="d">in-page narrow USD/KRW/EUR/JPY…</div></div><div class="arrow">→</div>
+        <div class="step ext"><div class="t">Balance Inquiry</div><div class="d">sync → per-currency totals</div></div><div class="arrow">→</div>
+        <div class="step db"><div class="t">Transaction History</div><div class="d">per-account, own CCY only</div></div><div class="arrow">→</div>
+        <div class="step ok"><div class="t">Display Result</div><div class="d">locale-aware amounts (₫/$/€/₩/¥)</div></div>
+      </div>
+    </div>
+    <div class="grid-2" style="margin-top:14px;">
+      <div class="card"><h4>Foreign-currency handling</h4><ul class="clean" style="font-size:12px;">
+        <li><b>Multi-currency (FCY-A01).</b> Lists every non-VND account (<code>CCY_CD &lt;&gt; 'VND'</code>); an in-page dropdown narrows to a concrete currency. Legacy was USD-only — that restriction was retired by PO direction.</li>
+        <li><b>Per-account scope (FCY-T01).</b> Transaction History inherits the account's own <code>ACCT_MSTR.CCY_CD</code>; each account renders only its own currency's rows — no mixing, no cross-currency arithmetic.</li>
+        <li><b>Per-currency totals.</b> The list response carries <code>totals_by_ccy[]</code>; a scalar "Balance" sum is meaningful only after narrowing to one currency.</li>
+        <li><b>Formatting.</b> <code>AmountFormatter.forDisplay(value, ccyCd)</code> renders ₫ for VND, prefix symbols for USD/EUR/KRW/JPY, none for the rest.</li>
+        <li><b>Last-update source (FCY-A02).</b> Online accounts read <code>ACCT_HIS_LST_INQ_DT</code>; FD-only banks fall back to <code>ACCT_BAL_LST_INQ_DTM</code> — mirrors legacy.</li>
+      </ul></div>
+      <div class="card"><h4>Exchange information &amp; related services</h4><ul class="clean" style="font-size:12px;">
+        <li>FCY shares one code path with VND — a single <code>AccountController</code> / <code>AccountService</code> / <code>TransactionService</code>; the account resolves its own currency (no <code>if (FCY)</code> branch).</li>
+        <li><b>Exchange Rate Inquiry</b> is a separate Payment-domain module; FCY screens display amounts in the account CCY and do <b>not</b> perform live conversion.</li>
+        <li><b>Smart Organizer</b> match/unmatch is wired from FCY Transaction History (per-account scope, R11 fix).</li>
+        <li>View Setting screenIds: <code>banking-account-inquiry-fcy</code> + shared <code>banking-transaction-history</code>.</li>
+        <li>Export providers: <code>AccountInquiryFcyExportProvider</code> + <code>TransactionHistoryExportProvider</code>.</li>
+      </ul></div>
+    </div>
+    <p class="lead" style="margin-bottom:0;"><span class="tag g">FCY — full-stack, SIT/UAT verified (5 blockers closed)</span> <span class="tag a">As-of-date historical balances (OQ-FCY-2): live snapshot only; reconstruction deferred</span></p>
+  </section>
+
+  <!-- ============ 6. INTERNAL TRANSFER VND ============ -->
+  <section id="s6">
+    <div class="sec-no">06 — Internal Transfer (VND)</div>
+    <h2>Own-account transfer &amp; history <span class="kr">내부 이체</span></h2>
+    <p class="lead">Move funds between the company's own registered VND current/saving accounts within the same tenant — <b>SAME_BANK</b> (same bank code) or <b>NAPAS</b> (cross-bank via NAPAS rails). Execution is browser-driven through the vendor-signed NXiSAS engine; Spring records the final outcome <b>once, immutably</b>. There is no in-app Pending/Approved state machine — the bank's own 2nd-factor + IB review is the approval.</p>
+    <div class="card">
+      <div class="flow vertical">
+        <div class="step"><div class="t">Create Transfer</div><div class="d">source picker → composer; lazy-load targets</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">Validate Account</div><div class="d">VND · active · type 03/05 · authority · NAPAS code resolve</div></div><div class="arrow">→</div>
+        <div class="step ext"><div class="t">Approval (bank)</div><div class="d">engine LOGIN → OTP/QnA/Confirm</div></div><div class="arrow">→</div>
+        <div class="step ext"><div class="t">Dispatch</div><div class="d">engine TRANSFER[_ML|_INTERNAL] → bank rails</div></div><div class="arrow">→</div>
+        <div class="step ext"><div class="t">Bank Response</div><div class="d">SEED-CBC encrypted Output.Result</div></div><div class="arrow">→</div>
+        <div class="step db"><div class="t">Result Update</div><div class="d">7-step validation → NAPAS_REMIT_TRNS_HSTR</div></div>
+      </div>
+    </div>
+
+    <div class="grid-2" style="margin-top:14px;">
+      <div class="card"><h4>Request flow</h4><ul class="clean" style="font-size:12px;">
+        <li><code>GET /own-account-transfer/source-accounts</code> — VND, active, type 03/05, product allow-list (F: Shinhan/IBK/VCB/VietinBank/Woori; H: VietinBank only + maturity/BAL&gt;0), non-admins intersect <code>ACCT_AUTH_INFO</code>. Each row carries a <code>canTransfer</code> flag (W-grant/ADMIN).</li>
+        <li><code>POST /own-account-transfer/balance-refresh</code> — apply engine BALANCE scrape: always patch inquiry status; on success + change set <code>CORC_BF_BAL</code>=old, <code>BAL</code>=new.</li>
+        <li><code>GET /own-account-transfer/target-accounts</code> — own-account universe minus source; resolves NAPAS codes.</li>
+        <li><code>GET /own-account-transfer/napas-bank-info/{code}</code> — NAPAS display names + internal <code>bank_cd</code>.</li>
+      </ul></div>
+      <div class="card"><h4>Approval &amp; execution flow</h4><ul class="clean" style="font-size:12px;">
+        <li>Browser drives the engine: <code>LOGIN</code> → 2nd factor (OTP / QnA / Confirm) → <code>TRANSFER</code> → <code>LOGOUT</code>.</li>
+        <li><code>POST /nxisas/decrypt</code> · <code>/encrypt</code> — SEED-CBC (gated by <code>wecms.oat.seed-decrypt.enabled</code>).</li>
+        <li><code>POST /nxisas/cert-acct-list</code> — cert account lookup for the engine bundle.</li>
+        <li><code>POST /engine-connection-check</code> (204) · <code>POST /nxisas/logging</code> (204) — readiness + per-job forensic audit (<code>NXSIAS_MODULE_TRAN_LOG_HIS</code>).</li>
+      </ul></div>
+    </div>
+
+    <div class="card" style="margin-top:14px;"><h4>Result flow — <code>POST /own-account-transfer/scraping-result</code> (7-step intake)</h4>
+      <div class="flow tight" style="margin-top:6px;">
+        <div class="step"><div class="t">1 · Idempotency</div><div class="d">replay → cached row, already_recorded=true</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">2 · Currency</div><div class="d">must be VND</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">3 · Type shape</div><div class="d">SAME_BANK→target_bank_cd · NAPAS→napas code</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">4 · Amount</div><div class="d">requested == actual, exact</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">5 · Source</div><div class="d">active VND, W-grant/ADMIN</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">6 · Target</div><div class="d">active VND own-account; NAPAS resolved</div></div><div class="arrow">→</div>
+        <div class="step db"><div class="t">7 · Persist</div><div class="d">SEQ_NO MAX+1 (retry); TRNS_STLM_YN='N'</div></div>
+      </div>
+      <div class="branch">
+        <div class="lane ok"><h4>Success</h4><p style="margin:6px 0 0; font-size:12px; color:var(--muted);">Row written to <code>NAPAS_REMIT_TRNS_HSTR</code>; audit <code>SCRAPING_RESULT_OK</code> (<code>AUDIT_LOGS_INFM.WSVC_ID='own-account-transfer'</code>). Response carries <code>seq_no</code>, <code>bank_tx_id</code>, <code>trns_stts</code>, <code>status=success</code>.</p></div>
+        <div class="lane fail"><h4>Validation / engine failure</h4><p style="margin:6px 0 0; font-size:12px; color:var(--muted);">Nothing persisted; audit <code>SCRAPING_RESULT_REJECT</code>. Codes e.g. <code>WBE_OWN_ACCOUNT_TRANSFER_INVALID_CCY</code>. Idempotency is a partial unique index on <code>(BIZ_KEY, OAT_IDEMPOTENCY_KEY)</code>.</p></div>
+      </div>
+    </div>
+
+    <div class="grid-2" style="margin-top:14px;">
+      <div class="card"><h4>Transfer history</h4><ul class="clean" style="font-size:12px;">
+        <li><code>GET /internal-transfer/transfer-history</code> — read-only list of executed NAPAS transfers.</li>
+        <li>Filters: <code>from_dt</code>/<code>to_dt</code> (required, <code>to ≥ from</code>), optional <code>trns_stts</code> (<code>00000000</code> success / <code>99999999</code> failed), 1-based <code>page_no</code> + <code>page_per_cnt</code>, <code>sort_field</code>/<code>sort_direction</code>.</li>
+        <li>Per-currency totals (VND/USD) computed server-side; user-name resolved from <code>USER_INFM</code>; in-bank name via legacy <code>wb_get_napas_bank_nm_or_citad_bank_nm</code>.</li>
+      </ul></div>
+      <div class="card"><h4>Components, tables &amp; status</h4><ul class="clean" style="font-size:12px;">
+        <li><code>OwnAccountTransferController</code> + <code>OwnAccountTransferService</code> · <code>OatNxisasService</code> · <code>OatSeedDecryptService</code>.</li>
+        <li><code>TransferHistoryController</code> + <code>TransferHistoryQueryService</code>.</li>
+        <li>Tables: <code>ACCT_MSTR</code> (R+U) · <code>NAPAS_REMIT_TRNS_HSTR</code> (I+R) · <code>ACCT_AUTH_INFO</code> · <code>NAPAS_BANK_INFO</code> · <code>BANK_CERT_INFO</code> · <code>BANK_INFM</code> · audit (<code>AUDIT_LOGS_INFM</code>, <code>NXSIAS_MODULE_TRAN_LOG_HIS</code>, <code>EXT_TRAN_CALL_HIS</code>).</li>
+        <li>Legacy: <code>trns_0001_*</code> (transfer), <code>trns_0003_001</code> (history).</li>
+        <li><span class="tag g">full-stack (2026-05-20)</span> <span class="tag a">composer credential-collection (OQ-FE-1) deferred</span></li>
+      </ul></div>
+    </div>
+  </section>
+
+  <!-- ============ 7. REPORTS ============ -->
+  <section id="s7">
+    <div class="sec-no">07 — Reports</div>
+    <h2>Daily cash · financial · cash flow <span class="kr">리포트</span></h2>
+    <div class="card">
+      <div class="flow vertical">
+        <div class="step"><div class="t">User</div><div class="d">opens a report page</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">Report Request</div><div class="d">GET /api/v1/banking/reports/…</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">Filter Criteria</div><div class="d">as-of/year · currency/scope · flags</div></div><div class="arrow">→</div>
+        <div class="step db"><div class="t">Database Query</div><div class="d">legacy PL/pgSQL set-returning function</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">Aggregation</div><div class="d">per-currency totals · per-account rows</div></div><div class="arrow">→</div>
+        <div class="step ok"><div class="t">Export</div><div class="d">Apache POI XLSX (attachment)</div></div>
+      </div>
+    </div>
+    <div class="tablescroll">
+    <table>
+      <thead><tr><th>Report</th><th>Route / slug</th><th>Search endpoint</th><th>DB function (called directly)</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td><b>Daily Cash</b><br><span class="mono" style="font-size:11px;color:var(--faint)">rept_0009_001</span></td><td><code>/banking/reports/daily-cash</code></td><td><code>GET …/daily-cash-report</code> + <code>/export</code></td><td><code>rept_0900_001_rec1..4</code> via <code>DailyCashReportFunctionRepository</code></td><td><span class="tag g">live</span> rec1/rec2 active; rec3/rec4 data-blocked</td></tr>
+        <tr><td><b>Daily Financial (CMC)</b><br><span class="mono" style="font-size:11px;color:var(--faint)">rept_0015_001</span></td><td><code>/banking/reports/daily-financial</code></td><td><code>GET …/daily-financial</code> (+ <code>/transactions</code>, <code>/export</code> P1)</td><td><code>rept_0015_001_r001_rec1</code> via <code>DailyFinancialCmcFunctionRepository</code></td><td><span class="tag g">live + SIT-ready</span></td></tr>
+        <tr><td><b>Daily Financial (HS)</b><br><span class="mono" style="font-size:11px;color:var(--faint)">rept_0017_001</span></td><td><code>/banking/reports/daily-financial-hs</code></td><td><code>GET …/daily-financial-hs</code></td><td><code>fn_get_haengsung_daily_financial_report</code> via <code>DailyFinancialHsReportRepository</code></td><td><span class="tag g">live (product H)</span> UI multi-select + seed deferred</td></tr>
+        <tr><td><b>Cash Flow</b><br><span class="mono" style="font-size:11px;color:var(--faint)">cash_0001_001</span></td><td><code>/banking/reports/cash-flow</code></td><td><code>GET …/cash-flow-report</code> + <code>/export</code></td><td><code>get_cashflow_report</code> via <code>CashFlowReportRepository</code></td><td><span class="tag g">live + parity-verified</span></td></tr>
+      </tbody>
+    </table>
+    </div>
+    <div class="grid-2" style="margin-top:4px;">
+      <div class="card"><h4>Search &amp; report-generation flow</h4><p style="margin:0; font-size:12px; color:var(--muted);">Each report takes filter criteria (Daily Cash: <code>as_of_date</code>+<code>currency</code>; Daily Financial: <code>as_of</code>+<code>currency_scope</code>+<code>active_accounts_only</code>+<code>include_internal_transfers</code>; Cash Flow: <code>year</code>+<code>base_currency</code>+<code>usd_rate</code>/<code>krw_rate</code>+<code>bank_filters</code>) and hands them to the legacy DB function. <b>No Java recompute on the active path (2026-06-13+).</b> Cash Flow reads from <code>CHART_ACCT_INFM</code> (3-level hierarchy) + 4 sources: <code>SCDUL_PYMN_SUMR</code>, <code>OVRS_PYMN_MSTR</code>, <code>CARD_TRNS_HSTR</code>, <code>ACCT_TRNS_HSTR</code> (approval-gated via <code>EXPT_RESOL_MSTR</code>).</p></div>
+      <div class="card"><h4>Excel export flow</h4><p style="margin:0; font-size:12px; color:var(--muted);">Exports stream XLSX through the shared <code>common/export</code> pipeline (<code>ExcelExportService</code> → <code>ExcelWorkbookWriter</code>, Apache POI SXSSF) with an RFC 5987 <code>Content-Disposition</code> filename. Cash Flow uses a dedicated <code>CashFlowExcelWriter</code> (title → subheader → header → merged monthly rows). Daily Cash exports client-side today; the Daily Financial server-side provider is <span class="tag a">P1 deferred</span>.</p></div>
+    </div>
+    <p class="lead" style="margin-bottom:0;"><b>Components.</b> <code>ReportController</code> + <code>ReportService</code> orchestrate all four; <code>DailyCashReportController</code> / <code>CashFlowReportController</code> exist for their slices. Product gate: Daily Cash / Daily Financial CMC / Cash Flow are F/M only; Daily Financial HS is the H-only counterpart.</p>
+  </section>
+
+  <!-- ============ 8. SMART ORGANIZER ============ -->
+  <section id="s8">
+    <div class="sec-no">08 — Smart Organizer</div>
+    <h2>Rule-driven bulk classification <span class="kr">스마트 정리</span></h2>
+    <div class="card">
+      <div class="flow vertical">
+        <div class="step db"><div class="t">Transaction Data</div><div class="d">ACCT_TRNS_HSTR (synced, unconfirmed)</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">Classification</div><div class="d">LATERAL match to RMRK_ORG_INFM (R01)</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">Grouping</div><div class="d">rule supplies proposal: direction · acct · purpose · VAS · contact</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">Organization</div><div class="d">resolveRows() denormalizes codes → names (R07)</div></div><div class="arrow">→</div>
+        <div class="step ok"><div class="t">Display</div><div class="d">review grid → bulk confirm → ACCT_TRNS_RCV_PAY_INFM</div></div>
+      </div>
+    </div>
+    <div class="grid-2" style="margin-top:14px;">
+      <div class="card"><h4>Purpose &amp; user benefit</h4><ul class="clean" style="font-size:12px;">
+        <li>A single-account, rule-driven classifier that lists unconfirmed transactions matching a saved remark rule and pre-fills each with the rule's proposed classification.</li>
+        <li><b>Benefit:</b> drastically reduces manual data entry for reconciliation — staff review and bulk-confirm instead of classifying row-by-row.</li>
+        <li>One screen serves <b>both VND and FCY</b> — currency is data-driven (R06), no code fork; the account's own <code>CCY_CD</code> drives amount formatting.</li>
+      </ul></div>
+      <div class="card"><h4>Logic</h4><ul class="clean" style="font-size:12px;">
+        <li><b>Rules</b> in <code>RMRK_ORG_INFM</code>: remark pattern + <code>MATCH_TYPE</code> (Exact/Contains) + direction, prioritized by <code>DISP_ORD</code>.</li>
+        <li><b>Exact</b> matches when remark is identical and direction aligns; <b>Contains</b> matches on case-insensitive substring regardless of direction.</li>
+        <li>Match runs as a SQL <code>LATERAL</code> sub-join (legacy correlated sub-query parity), tenant + account scoped (R11).</li>
+        <li>Confirm writes denormalized names (VAS + contact) to <code>ACCT_TRNS_RCV_PAY_INFM</code> (R05); <code>RCV_PAY_SEQ_NO</code> via <code>wb_get_next_val</code>.</li>
+      </ul></div>
+    </div>
+    <p class="lead" style="margin-bottom:0;"><b>APIs:</b> <code>GET /banking/smart-organizer/eligible</code> · <code>POST /banking/smart-organizer/confirm</code> · rule CRUD <code>GET|POST|PUT|DELETE …/rules</code> + <code>POST …/rules/reorder</code>. <b>Components:</b> <code>SmartOrganizerController</code> / <code>OrganizerRuleController</code> + <code>SmartOrganizerService</code> / <code>OrganizerRuleService</code> + <code>AccountAccessGuard</code> + <code>BankCdResolver</code>. Migrations V172–V174. Legacy <code>fnsh_0200_001/002</code>. <span class="tag g">full-stack, SIT/UAT verified (6 blockers closed)</span> <span class="tag a">drag-reorder save UI (SO-2) deferred</span></p>
+  </section>
+
+  <!-- ============ 9. ARCHITECTURE ============ -->
+  <section id="s9">
+    <div class="sec-no">09 — Banking Architecture</div>
+    <h2>Layered request flow <span class="kr">아키텍처</span></h2>
+    <div class="card">
+      <div class="flow vertical">
+        <div class="step"><div class="t">Frontend (Next.js)</div><div class="d">lowercase snake_case wire · JWT Bearer</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">Controller</div><div class="d">AccountController · ReportController · OwnAccountTransferController · …</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">Service</div><div class="d">@Transactional · business rules · audit writes · TenantContext</div></div><div class="arrow">→</div>
+        <div class="step db"><div class="t">Repository</div><div class="d">Spring Data JPA · BIZ_KEY-scoped queries</div></div><div class="arrow">→</div>
+        <div class="step db"><div class="t">Database</div><div class="d">legacy JEX schema (UPPER_SNAKE, column-for-column)</div></div>
+      </div>
+      <p style="margin:12px 0 0; font-size:12px; color:var(--muted);">External edge: <code>BankTransactionSyncService</code> / <code>OatNxisasService</code> reach the <b>Coocon / NXiSAS smart gateway</b> (<code>dev-sgw…:8443</code> DEV/SIT · <code>sgw.webcashvietnam.com</code> UAT/PROD). Reports bypass the repository's JPA query layer and call legacy PL/pgSQL functions directly through dedicated <code>*FunctionRepository</code> classes.</p>
+      <div class="legend">
+        <span><i style="background:var(--accent)"></i> app layer</span>
+        <span><i style="background:var(--purple)"></i> data layer</span>
+        <span><i style="background:var(--amber)"></i> external gateway</span>
+      </div>
+    </div>
+    <div class="grid-2" style="margin-top:14px;">
+      <div class="card"><h4>Package layout</h4><ul class="clean" style="font-size:12px;">
+        <li><code>domain/banking/controller</code> · <code>service</code> · <code>repository</code> · <code>entity</code> · <code>dto</code> · <code>export</code></li>
+        <li><code>domain/banking/ownaccounttransfer</code> · <code>transferhistory</code> · <code>smartorganizer</code> · <code>nxisas</code> · <code>synchistory</code></li>
+        <li><code>common/export</code> (XLSX) · <code>common/legacy/LegacyFunctionRepository</code> (<code>wb_get_next_val</code> funnel)</li>
+      </ul></div>
+      <div class="card"><h4>Cross-cutting rules</h4><ul class="clean" style="font-size:12px;">
+        <li>Controller → Service → Repository only; no cross-layer shortcuts, no cross-domain repo access.</li>
+        <li>Wire is lowercase snake_case; envelope <code>{ status, data }</code> (+ <code>trace_id</code> on error).</li>
+        <li>Every tenant-scoped query constrains on <code>BIZ_KEY</code> from <code>TenantContext</code> — never a client value.</li>
+        <li>Key generation funnels through <code>LegacyFunctionRepository</code> → <code>wb_get_next_val</code>.</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <!-- ============ 10. DATABASE FLOW ============ -->
+  <section id="s10">
+    <div class="sec-no">10 — Database Flow</div>
+    <h2>Tables &amp; CRUD ownership <span class="kr">데이터 흐름</span></h2>
+    <div class="grid-2">
+      <div class="card"><h4>Inquiry / history</h4>
+        <div class="flow vertical">
+          <div class="step db"><div class="t">ACCT_MSTR</div></div><div class="arrow">→</div>
+          <div class="step db"><div class="t">ACCT_TRNS_HSTR</div></div><div class="arrow">→</div>
+          <div class="step db"><div class="t">ACCT_TRNS_RCV_PAY_INFM</div></div><div class="arrow">→</div>
+          <div class="step db"><div class="t">EXT_TRAN_CALL_HIS (audit)</div></div>
+        </div>
+      </div>
+      <div class="card"><h4>Transfer</h4>
+        <div class="flow vertical">
+          <div class="step db"><div class="t">ACCT_MSTR (R + balance U)</div></div><div class="arrow">→</div>
+          <div class="step db"><div class="t">NAPAS_BANK_INFO (resolve)</div></div><div class="arrow">→</div>
+          <div class="step db"><div class="t">NAPAS_REMIT_TRNS_HSTR (I)</div></div><div class="arrow">→</div>
+          <div class="step db"><div class="t">NXSIAS_MODULE_TRAN_LOG_HIS</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="tablescroll">
+    <table>
+      <thead><tr><th>Table</th><th>Used by</th><th>Role</th><th class="center">R</th><th class="center">I</th><th class="center">U</th></tr></thead>
+      <tbody>
+        <tr><td><code>ACCT_MSTR</code></td><td>VND · FCY · Transfer · Reports</td><td>Account master — balance, status, currency, inquiry timestamps</td><td class="center">✔</td><td class="center">—</td><td class="center">✔</td></tr>
+        <tr><td><code>ACCT_TRNS_HSTR</code></td><td>VND · FCY · Organizer · Reports</td><td>Transaction ledger; written by sync</td><td class="center">✔</td><td class="center">✔</td><td class="center">✔</td></tr>
+        <tr><td><code>ACCT_TRNS_RCV_PAY_INFM</code></td><td>VND · FCY · Organizer</td><td>Confirmation + classification (purpose / VAS / contact / reporting acct)</td><td class="center">✔</td><td class="center">✔</td><td class="center">✔</td></tr>
+        <tr><td><code>ACCT_AUTH_INFO</code></td><td>VND · FCY · Transfer</td><td>Per-user V/W account authority (non-admin filter)</td><td class="center">✔</td><td class="center">—</td><td class="center">—</td></tr>
+        <tr><td><code>NAPAS_REMIT_TRNS_HSTR</code></td><td>Transfer · Transfer History</td><td>One immutable row per executed transfer (idempotent)</td><td class="center">✔</td><td class="center">✔</td><td class="center">—</td></tr>
+        <tr><td><code>NAPAS_BANK_INFO</code></td><td>Transfer</td><td>NAPAS code → internal bank_cd + display names</td><td class="center">✔</td><td class="center">—</td><td class="center">—</td></tr>
+        <tr><td><code>RMRK_ORG_INFM</code></td><td>Smart Organizer</td><td>Rule definitions (pattern, direction, proposed classification)</td><td class="center">✔</td><td class="center">✔</td><td class="center">✔</td></tr>
+        <tr><td><code>CHART_ACCT_INFM</code></td><td>Reports · Organizer · classify</td><td>Chart of accounts (Cash Flow 3-level hierarchy; reporting-account picker)</td><td class="center">✔</td><td class="center">—</td><td class="center">—</td></tr>
+        <tr><td><code>SCDUL_PYMN_SUMR</code> · <code>OVRS_PYMN_MSTR</code> · <code>CARD_TRNS_HSTR</code></td><td>Reports (Cash Flow)</td><td>Cash-flow source streams (+ <code>EXPT_RESOL_MSTR</code> approval gate)</td><td class="center">✔</td><td class="center">—</td><td class="center">—</td></tr>
+        <tr><td><code>REPT_TRNS_HSTR</code></td><td>Reports (Daily Financial HS)</td><td>HS report base table (seed rows deferred)</td><td class="center">✔</td><td class="center">—</td><td class="center">—</td></tr>
+        <tr><td><code>BANK_INFM</code> · <code>BANK_INFM_DETL</code></td><td>all</td><td>Bank code → display name resolver</td><td class="center">✔</td><td class="center">—</td><td class="center">—</td></tr>
+        <tr><td><code>BANK_CERT_INFO</code> · <code>GDT_CERT_INFO</code></td><td>Credentials / scraping</td><td>Saved bank/GDT credentials (no ciphertext on wire)</td><td class="center">✔</td><td class="center">✔</td><td class="center">✔</td></tr>
+        <tr><td><code>EXT_TRAN_CALL_HIS</code> · <code>NXSIAS_MODULE_TRAN_LOG_HIS</code> · <code>AUDIT_LOGS_INFM</code></td><td>all</td><td>Scrape / engine-job / app audit trails</td><td class="center">✔</td><td class="center">✔</td><td class="center">—</td></tr>
+        <tr><td><code>SYS_SCR_OPTION_WECMS</code> · <code>USER_SCR_OPTION_WECMS</code></td><td>list screens</td><td>View Setting column visibility / order</td><td class="center">✔</td><td class="center">—</td><td class="center">✔</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p class="lead" style="margin-bottom:0;">Every table above is in the PROD Active Table List / legacy-table-inventory. Per-table schema in <a href="../../references/database/banking/">references/database/banking/</a>; ERD in <a href="../../references/database/erd/banking-erd.md">banking-erd.md</a>; reports' DB functions are called directly through dedicated <code>*FunctionRepository</code> classes (the documented set-returning exception to the no-new-DB-function rule).</p>
+  </section>
+
+  <!-- ============ 11. API FLOW ============ -->
+  <section id="s11">
+    <div class="sec-no">11 — API Flow</div>
+    <h2>REST interaction <span class="kr">API 흐름</span></h2>
+    <div class="card">
+      <div class="flow">
+        <div class="step"><div class="t">Frontend</div><div class="d">Axios + JWT</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">REST API</div><div class="d">/api/v1/banking/…</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">Service</div><div class="d">@Transactional</div></div><div class="arrow">→</div>
+        <div class="step db"><div class="t">Repository</div><div class="d">JPA / function</div></div><div class="arrow">→</div>
+        <div class="step db"><div class="t">Database</div><div class="d">legacy schema</div></div>
+      </div>
+    </div>
+    <div class="tablescroll">
+    <table>
+      <thead><tr><th>Domain</th><th>Method + path (base <code>/api/v1/banking</code>)</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td rowspan="3">Account Inquiry (VND/FCY)</td><td><code>GET /accounts</code></td><td>List accounts (<code>currency</code>, <code>bankCd</code>, <code>keyword</code>, sort, page)</td></tr>
+        <tr><td><code>POST /accounts/transactions-sync</code> (+ <code>/otp</code> · <code>/captcha</code> · <code>/qna</code>)</td><td>Live balance/transaction sync + challenge resume</td></tr>
+        <tr><td><code>POST /accounts/export</code></td><td>XLSX export</td></tr>
+        <tr><td rowspan="3">Transaction History</td><td><code>GET /accounts/{acctSeqNo}/transactions</code> (+ <code>/summary</code> · <code>/{trnsSeqNo}</code>)</td><td>List / summary / detail</td></tr>
+        <tr><td><code>PUT|DELETE …/{trnsSeqNo}/confirm</code></td><td>Confirm / undo</td></tr>
+        <tr><td><code>PATCH|DELETE …/{trnsSeqNo}/{purpose|reporting-account|vas-account|contact}</code></td><td>Classify / clear</td></tr>
+        <tr><td rowspan="3">Internal Transfer (VND)</td><td><code>GET /own-account-transfer/source-accounts</code> · <code>/target-accounts</code> · <code>/napas-bank-info/{code}</code></td><td>Source / target / NAPAS lookup</td></tr>
+        <tr><td><code>POST /own-account-transfer/balance-refresh</code> · <code>/scraping-result</code></td><td>Balance refresh · transfer result intake</td></tr>
+        <tr><td><code>GET /internal-transfer/transfer-history</code></td><td>Executed transfer list</td></tr>
+        <tr><td rowspan="2">Reports</td><td><code>GET /reports/{daily-cash-report|daily-financial|daily-financial-hs|cash-flow-report}</code></td><td>Report search</td></tr>
+        <tr><td><code>POST /reports/{daily-cash-report|cash-flow-report}/export</code></td><td>XLSX export</td></tr>
+        <tr><td rowspan="2">Smart Organizer</td><td><code>GET /smart-organizer/eligible</code> · <code>POST /smart-organizer/confirm</code></td><td>Eligibility list · bulk confirm</td></tr>
+        <tr><td><code>GET|POST|PUT|DELETE /smart-organizer/rules</code> · <code>POST …/rules/reorder</code></td><td>Rule CRUD + reorder</td></tr>
+        <tr><td>Credentials / scraping</td><td><code>GET|POST|PUT|DELETE /credentials</code> · <code>POST /scraping/{account-list|verify|…}</code></td><td>Credential CRUD · live scrape + challenge</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <div class="callout note"><span class="ic">ℹ</span><div>Every JSON endpoint returns <code>ApiResponse&lt;T&gt;</code> = <code>{ status: { error, code, message }, data }</code>; errors add <code>timestamp</code> + <code>path</code> + <code>trace_id</code>. The only envelope exception is binary export/download (<code>ResponseEntity</code> stream with RFC 5987 filename). <b>BusinessException returns HTTP 200</b> — the frontend reads <code>status.error</code>, not the HTTP code, for business outcomes. Full contracts: <a href="../../references/api-spec/banking/">references/api-spec/banking/</a>.</div></div>
+  </section>
+
+  <!-- ============ 12. USER JOURNEY ============ -->
+  <section id="s12">
+    <div class="sec-no">12 — User Journey</div>
+    <h2>Three task-focused journeys <span class="kr">사용자 여정</span></h2>
+    <div class="grid-3">
+      <div class="card"><h4>Inquiry journey</h4>
+        <div class="flow vertical">
+          <div class="step"><div class="t">Login</div></div><div class="arrow">→</div>
+          <div class="step"><div class="t">Select Banking → C&amp;S</div></div><div class="arrow">→</div>
+          <div class="step"><div class="t">Select Account</div></div><div class="arrow">→</div>
+          <div class="step ext"><div class="t">Update Balance (sync)</div></div><div class="arrow">→</div>
+          <div class="step ok"><div class="t">View Balance &amp; Ledger</div></div>
+        </div>
+      </div>
+      <div class="card"><h4>Transfer journey</h4>
+        <div class="flow vertical">
+          <div class="step"><div class="t">Login</div></div><div class="arrow">→</div>
+          <div class="step"><div class="t">Internal Transfer (VND)</div></div><div class="arrow">→</div>
+          <div class="step"><div class="t">Pick source + target</div></div><div class="arrow">→</div>
+          <div class="step ext"><div class="t">Engine login + OTP</div></div><div class="arrow">→</div>
+          <div class="step ext"><div class="t">Execute transfer</div></div><div class="arrow">→</div>
+          <div class="step ok"><div class="t">Result recorded</div></div>
+        </div>
+      </div>
+      <div class="card"><h4>Report journey</h4>
+        <div class="flow vertical">
+          <div class="step"><div class="t">Login</div></div><div class="arrow">→</div>
+          <div class="step"><div class="t">Banking → Reports</div></div><div class="arrow">→</div>
+          <div class="step"><div class="t">Set as-of / year + filters</div></div><div class="arrow">→</div>
+          <div class="step db"><div class="t">Generate (DB function)</div></div><div class="arrow">→</div>
+          <div class="step ok"><div class="t">View + Export XLSX</div></div>
+        </div>
+      </div>
+    </div>
+    <p class="lead" style="margin-bottom:0;">A user only sees the menu items their product type (F/M/H) and per-user grants permit — see §15. Classification (Smart Organizer / per-transaction confirm) is an inquiry-journey extension reached from Transaction History.</p>
+  </section>
+
+  <!-- ============ 13. ERROR HANDLING ============ -->
+  <section id="s13">
+    <div class="sec-no">13 — Error Handling Flow</div>
+    <h2>Diagnostic decision trees <span class="kr">오류 처리</span></h2>
+    <div class="grid-2">
+      <div class="card"><h4>Account not found</h4>
+        <div class="dtree">
+          <div class="dstep"><div class="dcond">acctSeqNo resolves in ACCT_MSTR?</div><div class="dno">NO → show error</div></div>
+          <div class="dvert">↓ YES</div>
+          <div class="dstep"><div class="dcond">row belongs to tenant (BIZ_KEY)?</div><div class="dno">NO → 403 WBE1003</div></div>
+          <div class="dvert">↓ YES</div>
+          <div class="dstep"><div class="dcond">user holds V authority? (non-admin)</div><div class="dno">NO → AccountAccessGuard → 403</div></div>
+          <div class="dvert">↓ YES</div>
+          <div class="dstep"><div class="dend">Load account + ledger</div></div>
+        </div>
+      </div>
+      <div class="card"><h4>Transfer failed</h4>
+        <div class="dtree">
+          <div class="dstep"><div class="dcond">validation passed? (7-step)</div><div class="dno">NO → reject, audit SCRAPING_RESULT_REJECT</div></div>
+          <div class="dvert">↓ YES</div>
+          <div class="dstep"><div class="dcond">currency = VND?</div><div class="dno">NO → WBE_OWN_ACCOUNT_TRANSFER_INVALID_CCY</div></div>
+          <div class="dvert">↓ YES</div>
+          <div class="dstep"><div class="dcond">requested_amt == actual_amt?</div><div class="dno">NO → reject (amount mismatch)</div></div>
+          <div class="dvert">↓ YES</div>
+          <div class="dstep"><div class="dend">Persist NAPAS_REMIT_TRNS_HSTR (idempotent)</div></div>
+        </div>
+      </div>
+      <div class="card"><h4>Balance sync failed</h4>
+        <div class="dtree">
+          <div class="dstep"><div class="dcond">bank credential exists (BANK_CERT_INFO)?</div><div class="dno">NO → WBE2050 / prompt setup</div></div>
+          <div class="dvert">↓ YES</div>
+          <div class="dstep"><div class="dcond">gateway reachable + engine licensed?</div><div class="dno">NO → engine/connection error</div></div>
+          <div class="dvert">↓ YES</div>
+          <div class="dstep"><div class="dcond">2nd-factor satisfied (OTP/QnA/CAPTCHA)?</div><div class="dno">NO → return session_id → resume</div></div>
+          <div class="dvert">↓ YES</div>
+          <div class="dstep"><div class="dend">Refresh ACCT_MSTR + insert ACCT_TRNS_HSTR; audit EXT_TRAN_CALL_HIS</div></div>
+        </div>
+      </div>
+      <div class="card"><h4>Report empty / error</h4>
+        <div class="dtree">
+          <div class="dstep"><div class="dcond">product type permits this report?</div><div class="dno">NO → 403 (e.g. F/M on daily-financial-hs)</div></div>
+          <div class="dvert">↓ YES</div>
+          <div class="dstep"><div class="dcond">DB function present + base data seeded?</div><div class="dno">NO → empty / WBE_DB</div></div>
+          <div class="dvert">↓ YES</div>
+          <div class="dstep"><div class="dcond">rows match as-of/year + filters?</div><div class="dno">NO → empty result (not an error)</div></div>
+          <div class="dvert">↓ YES</div>
+          <div class="dstep"><div class="dend">Aggregate + render; export XLSX</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="callout note"><span class="ic">ℹ</span><div>All errors funnel through <code>GlobalExceptionHandler</code> and carry <code>code</code> + localized <code>message</code> + <code>path</code> + <code>trace_id</code> (also the <code>X-Trace-Id</code> response header). Status mapping: <code>BusinessException</code> → 200; validation → 200 (<code>WBE_VALIDATION</code>); <code>AccessDeniedException</code> → 403 (<code>WBE1003</code>); <code>DataAccessException</code> → 500 (<code>WBE_DB</code>); unmapped → 500 (<code>WBE9999</code>).</div></div>
+  </section>
+
+  <!-- ============ 14. SECURITY ============ -->
+  <section id="s14">
+    <div class="sec-no">14 — Security Flow</div>
+    <h2>Authentication → authorization → execute <span class="kr">보안 흐름</span></h2>
+    <div class="card">
+      <div class="flow vertical">
+        <div class="step"><div class="t">Login</div><div class="d">verify SHA-256 password (coexistence)</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">JWT / Session</div><div class="d">signed claims: sub · bizKey · authGrCd · prdtType · langCd</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">Authorization</div><div class="d">@menuAuthz.canAccess(slug) — product tree ∩ grants</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">Business Validation</div><div class="d">tenant + per-account authority (ACCT_AUTH_INFO) + rules</div></div><div class="arrow">→</div>
+        <div class="step ok"><div class="t">Execute</div><div class="d">repository write / read, scoped by BIZ_KEY</div></div>
+      </div>
+    </div>
+    <div class="grid-2" style="margin-top:14px;">
+      <div class="card"><h4>Authentication &amp; authorization</h4><ul class="clean" style="font-size:12px;">
+        <li><b>JWT</b> carries identity, tenant, authority and product type — signed and immutable; <code>JwtAuthenticationFilter</code> populates <code>TenantContext</code> per request and rejects revoked tokens.</li>
+        <li><b>Menu authz (F-3 live):</b> every business endpoint is gated by <code>@PreAuthorize("@menuAuthz.canAccess('&lt;slug&gt;')")</code>. Access = product tree (F/M/H) ∩ <code>USER_MENU_AUTH_INFM</code> grants; admins get the full product tree but never bypass the product scope.</li>
+        <li><b>Frontend is never trusted</b> — a direct endpoint call is gated server-side regardless of UI state.</li>
+      </ul></div>
+      <div class="card"><h4>Approval &amp; transaction validation</h4><ul class="clean" style="font-size:12px;">
+        <li><b>Per-account authority:</b> non-admins are filtered to their <code>ACCT_AUTH_INFO</code> V (view) / W (withdraw) grants; <code>AccountAccessGuard</code> enforces it on detail/transfer.</li>
+        <li><b>Transfer approval</b> is the bank's own 2nd-factor (OTP/QnA) + IB review — there is no in-app approval state machine for own-account transfers; Spring records the final outcome only.</li>
+        <li><b>Transaction validation:</b> own-account transfer runs the 7-step intake (idempotency, currency, type, amount, source, target, persist).</li>
+        <li><b>Coexistence:</b> passwords stay legacy SHA-256 (verify-only, no write-back); bank certs use the legacy AES-256-CBC cipher.</li>
+      </ul></div>
+    </div>
+    <div class="callout warn"><span class="ic">⚠</span><div><b>Pre-deploy gates.</b> R-02 (action-level R/D/T authorization) and R-03 (dispatch-callback network protection) do not block local R&amp;D but block UAT/PROD. Bank scraping reaches the Coocon gateway; the in-memory token-revocation / rate-limit stores need a durable/multi-instance backing before a multi-instance deploy.</div></div>
+  </section>
+
+  <!-- ============ 15. NAVIGATION ============ -->
+  <section id="s15">
+    <div class="sec-no">15 — Navigation Guide</div>
+    <h2>Menu tree &amp; doc map <span class="kr">탐색</span></h2>
+    <div class="card">
+      <div class="flow vertical">
+        <div class="step"><div class="t">Banking</div><div class="d">top menu group</div></div>
+        <div class="step"><div class="t">Current &amp; Savings (FCY)</div><div class="d"><a href="current-savings-fcy/README.md">current-savings-fcy/</a></div></div>
+        <div class="step"><div class="t">Current &amp; Savings (VND)</div><div class="d"><a href="current-savings-vnd/README.md">current-savings-vnd/</a></div></div>
+        <div class="step"><div class="t">Internal Transfer (VND)</div><div class="d"><a href="internal-transfer-vnd/README.md">internal-transfer-vnd/</a></div></div>
+        <div class="step"><div class="t">Reports</div><div class="d"><a href="reports/README.md">reports/</a></div></div>
+        <div class="step"><div class="t">Smart Organizer</div><div class="d"><a href="smart-organizer/README.md">smart-organizer/</a></div></div>
+      </div>
+    </div>
+    <div class="tablescroll">
+    <table>
+      <thead><tr><th>Menu group</th><th>Submenu page</th><th>Doc folder</th><th>F</th><th>M</th><th>H</th></tr></thead>
+      <tbody>
+        <tr><td rowspan="2">Current &amp; Savings (VND)</td><td>Account Inquiry</td><td><a href="current-savings-vnd/account-inquiry/README.md">current-savings-vnd/account-inquiry/</a></td><td class="center">✔</td><td class="center">✔</td><td class="center">✔</td></tr>
+        <tr><td>Transaction History</td><td><a href="current-savings-vnd/transaction-history/README.md">current-savings-vnd/transaction-history/</a></td><td class="center">✔</td><td class="center">✔</td><td class="center">✔</td></tr>
+        <tr><td rowspan="2">Current &amp; Savings (FCY)</td><td>Account Inquiry</td><td><a href="current-savings-fcy/account-inquiry/README.md">current-savings-fcy/account-inquiry/</a></td><td class="center">✔</td><td class="center">✔</td><td class="center">✔</td></tr>
+        <tr><td>Transaction History</td><td><a href="current-savings-fcy/transaction-history/README.md">current-savings-fcy/transaction-history/</a></td><td class="center">✔</td><td class="center">✔</td><td class="center">✔</td></tr>
+        <tr><td rowspan="2">Internal Transfer (VND)</td><td>Own Account Transfer</td><td><a href="internal-transfer-vnd/own-account-transfer/README.md">internal-transfer-vnd/own-account-transfer/</a></td><td class="center">✔</td><td class="center">✔</td><td class="center">✔</td></tr>
+        <tr><td>Transfer History</td><td><a href="internal-transfer-vnd/transfer-history/README.md">internal-transfer-vnd/transfer-history/</a></td><td class="center">✔</td><td class="center">✔</td><td class="center">✔</td></tr>
+        <tr><td rowspan="4">Reports</td><td>Daily Cash</td><td><a href="reports/daily-cash/README.md">reports/daily-cash/</a></td><td class="center">✔</td><td class="center">✔</td><td class="center">—</td></tr>
+        <tr><td>Daily Financial (CMC)</td><td><a href="reports/daily-financial/README.md">reports/daily-financial/</a></td><td class="center">✔</td><td class="center">✔</td><td class="center">—</td></tr>
+        <tr><td>Daily Financial (HS)</td><td><a href="reports/daily-financial/README.md">reports/daily-financial/</a> (HS)</td><td class="center">—</td><td class="center">—</td><td class="center">✔</td></tr>
+        <tr><td>Cash Flow</td><td><a href="reports/cash-flow/README.md">reports/cash-flow/</a></td><td class="center">✔</td><td class="center">✔</td><td class="center">—</td></tr>
+        <tr><td>Smart Organizer</td><td>Smart Organizer (VND + FCY)</td><td><a href="smart-organizer/README.md">smart-organizer/</a></td><td class="center">✔</td><td class="center">✔</td><td class="center">✔</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p class="lead" style="margin-bottom:0;">F/M product trees are structurally identical (M differs only in VI/KO translations). H drops Daily Cash / Daily Financial CMC / Cash Flow and gains the Daily Financial HS node — even an H admin is 403'd on F/M-only report pages. Cross-cutting detail: <a href="menu-authorization-and-product-types.md">menu-authorization-and-product-types.md</a>.</p>
+  </section>
+
+  <!-- ============ 16. RELATED DOCS ============ -->
+  <section id="s16" style="border-bottom:none;">
+    <div class="sec-no">16 — Related Documents</div>
+    <h2>Reference index <span class="kr">관련 문서</span></h2>
+    <div class="grid-2">
+      <div class="card"><h4>Banking module docs</h4><ul class="clean">
+        <li><a href="README.md">README.md</a> — Banking module hub (menu → docs map)</li>
+        <li><a href="menu-authorization-and-product-types.md">menu-authorization-and-product-types.md</a> — authz + product-type behavior</li>
+        <li><a href="bank-credentials.md">bank-credentials.md</a> — bank credentials &amp; live scraping</li>
+        <li><a href="current-savings-vnd/README.md">current-savings-vnd/</a> — VND inquiry + history</li>
+        <li><a href="current-savings-fcy/README.md">current-savings-fcy/</a> — FCY inquiry + history</li>
+        <li><a href="internal-transfer-vnd/README.md">internal-transfer-vnd/</a> — own-account transfer + history</li>
+        <li><a href="reports/README.md">reports/</a> — daily cash / financial / cash flow</li>
+        <li><a href="smart-organizer/README.md">smart-organizer/</a> — rule-driven classification</li>
+      </ul></div>
+      <div class="card"><h4>References, audits &amp; cross-tree</h4><ul class="clean">
+        <li><a href="../../references/api-spec/banking/">references/api-spec/banking/</a> — REST endpoint contracts</li>
+        <li><a href="../../references/database/banking/">references/database/banking/</a> — table / column schema</li>
+        <li><a href="../../references/database/erd/banking-erd.md">banking-erd.md</a> — Banking ERD</li>
+        <li><a href="../../references/migration/">references/migration/</a> — JEX → Spring mapping</li>
+        <li><a href="../../audits/banking-docs-audit.md">banking-docs-audit.md</a> · <a href="../../audits/banking-source-index.md">banking-source-index.md</a> · <a href="../../audits/banking-gap-analysis.md">banking-gap-analysis.md</a></li>
+        <li><a href="../README.md">../features/README.md</a> — feature index (all domains)</li>
+        <li><a href="../wecms-batch/wecms-batch-flow-process.html">wecms-batch-flow-process.html</a> — sibling dispatch flow doc</li>
+        <li><a href="../../../../wecms-web/docs/features/banking/">wecms-web/docs/features/banking/</a> — frontend twin</li>
+      </ul></div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <span><b>WeCMS Banking Module</b> · Flow Process &amp; Architecture Guide · JEX → Spring Boot + Next.js</span>
+    <span>Prepared 2026-06-24 · documentation only · verify code claims against current source</span>
+  </div>
+</footer>
+
+</body>
+</html>

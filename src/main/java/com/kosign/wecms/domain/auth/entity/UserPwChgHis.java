@@ -24,10 +24,12 @@ import java.time.OffsetDateTime;
  * password against the {@code USER_PW} hash of the three most-recent rows
  * (legacy {@code IDO.USER_PW_CHG_HIS_R003.xml} parity).
  * <p>
- * {@code USER_PW} stores a BCrypt hash, exactly like {@code USER_INFM.USER_PW}
- * — written via {@code WecmsPasswordEncoder.encode}. Legacy stored the
- * {@code hash(:USER_PW)} SHA-256 base64 value; the refactor's hybrid encoder
- * reads either form, so DEV-imported rows still match.
+ * {@code USER_PW} stores the legacy {@code hash(:USER_PW)} SHA-256 base64
+ * value, exactly like {@code USER_INFM.USER_PW} — written via
+ * {@code WecmsPasswordEncoder.encode} (SHA-256, never BCrypt; coexistence
+ * rule). The encoder also tolerates a pre-existing BCrypt hash on read for
+ * any legacy dev row, so DEV-imported rows still match; no row is ever
+ * rewritten or upgraded.
  * <p>
  * No {@code BaseEntity} (this table has no BIZ_KEY and no standard audit
  * column set) — same precedent as the sibling {@link UserLoginHis}.

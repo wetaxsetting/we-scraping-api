@@ -74,18 +74,20 @@ storage + transport + 401 dialog): [wecms-web/docs/features/auth/jwt-authenticat
 
 | # | Scenario | Expected |
 |---|---|---|
-| ST1 | Logout then reuse the same token | request still **succeeds** until `exp` — logout is client-only, no server revocation (documents MISSING revocation) |
-| ST2 | Authority changed in DB mid-session | in-flight token keeps old `authGrCd`; new authority applies only at next login |
+| ST1 | Logout then reuse the same token | request is **rejected → 401 `WBE1401`** — logout revoked the `jti` server-side; `JwtAuthenticationFilter` rejects it before `exp` (covered by `JwtRevocationTest`). *(Formerly "still succeeds — revocation MISSING"; implemented 2026 via F-03.)* |
+| ST1b | Admin locks/deletes/demotes a user, or resets their password, mid-session | the user's in-flight tokens are revoked via the per-user not-before cutoff (`revokeAllForUser`) → next request 401 `WBE1401` |
+| ST2 | Authority changed in DB mid-session (no revoke) | in-flight token keeps old `authGrCd`; new authority *claim* applies only at next login (claims are signed) — but an admin can force re-auth via revocation (ST1b) |
 | ST3 | Token past TTL | rejected at parse → 401 `WBE1401`; no refresh path (documents MISSING refresh) |
+| ST4 | Restart the app, then reuse a token revoked before the restart | request **succeeds** — the in-memory revocation store was lost on restart (documents the in-memory-store open limitation; durable / distributed revocation deferred) |
 
 ---
 
 ## 2. Coverage notes
 
-- **No dedicated JWT unit test on disk in this pass — MISSING.** There is no `JwtTokenProviderTest`, `JwtAuthenticationFilterTest`, or `JwtAuthenticationEntryPointTest`. The filter + entry point are exercised only **indirectly** via `@SpringBootTest` boot and the auth-flow tests; the token mechanics themselves (HS256/HS512 selection, claim round-trip incl. `prdtType` omission, expiry, invalid-signature rejection, the `WBE1401` envelope shape) have **no direct assertions**.
+- **Revocation is covered by `JwtRevocationTest`** (ST1 / ST1b). **No dedicated test for the rest of the JWT token mechanics on disk in this pass — MISSING.** There is no `JwtTokenProviderTest`, `JwtAuthenticationFilterTest`, or `JwtAuthenticationEntryPointTest`. The filter + entry point are otherwise exercised only **indirectly** via `@SpringBootTest` boot and the auth-flow tests; the token mechanics themselves (HS256/HS512 selection, claim round-trip incl. `prdtType` omission, expiry, invalid-signature rejection, the `WBE1401` envelope shape) have **no direct assertions**.
   - **Recommended (MISSING) tests to add:**
     - `JwtTokenProviderTest` — I1–I7 + S1–S3 (issue claim round-trip, `prdtType` omission, HS256/HS512 by secret length, fail-fast secret). Pure Mockito/POJO; needs only a `JwtProperties` stub.
     - `JwtAuthenticationFilterTest` — P1–P6 + T1–T7 (parse success/failure, authority derivation, defensive defaults, `TenantContext` set + `finally` clear). Mock `JwtTokenProvider` + `FilterChain`; assert `SecurityContextHolder` + `TenantContext`.
     - `JwtAuthenticationEntryPointTest` / `@WebMvcTest` slice — E1–E5 + ST3 (401 status, `WBE1401` code, envelope + `X-Trace-Id`, EN/locale message). Use `spring-security-test` + `MockMvc` against a protected matcher with no/expired token.
 - **Cross-cutting nature.** Because every protected endpoint depends on this layer, a regression here breaks the whole API — the dedicated tests above are the cheapest guardrail and should land in the next stabilisation pass.
-- **SIT note.** Live 401 behaviour (E1–E4) is observable end-to-end against any protected endpoint with a stripped/expired Bearer header; ST1 (logout-then-reuse) is the concrete demonstration that revocation is MISSING.
+- **SIT note.** Live 401 behaviour (E1–E4) is observable end-to-end against any protected endpoint with a stripped/expired Bearer header; ST1 (logout-then-reuse → 401) is the concrete demonstration that server-side revocation **works**, and ST4 (revoke → restart → reuse succeeds) demonstrates the in-memory-store open limitation.

@@ -337,6 +337,58 @@ public class LegacyFunctionRepository {
         return nextVal("trco_acct_info", "trco_acct_key", bizKey, trcoKey, null, null, null, null);
     }
 
+    /**
+     * Settings &gt; Contacts &mdash; allocate the next {@code TRCO_ADDR_KEY}
+     * for an address row by delegating to the legacy
+     * {@code wb_get_next_val('trco_addr_infm', 'trco_addr_key', biz_key, trco_key)}
+     * branch. Mirrors legacy {@code TrcoAddrInfmDAO.create:73}
+     * ({@code SeqHelper.getNextVal(util, idoCon, TrcoAddrInfm.class, "trco_addr_key",
+     * bizKey, trcoKey)}).
+     *
+     * <p>The live JEX branch body is {@code SELECT
+     * COALESCE(MAX(trco_addr_key::numeric), 0) + 1 FROM trco_addr_infm
+     * WHERE biz_key = $3 AND trco_key = $4} &mdash; per-(tenant, contact)
+     * {@code MAX+1}, the same shape as {@link #nextTrcoAcctKey}. Closes the
+     * OD-1 client-key gap (the refactor previously persisted the frontend
+     * placeholder verbatim, risking a PK collision with existing UAT/PROD
+     * rows).
+     *
+     * <p>Concurrency / batch: lock-free {@code MAX+1}, so callers creating
+     * several addresses in one transaction {@code saveAndFlush} between rows
+     * so the next read sees the prior insert (same seed pattern as accounts).
+     *
+     * <p>Returns a numeric text token (e.g. {@code "1"}, {@code "2"}); the
+     * caller stores it verbatim in {@code TRCO_ADDR_INFM.TRCO_ADDR_KEY}.
+     */
+    public String nextTrcoAddrKey(String bizKey, String trcoKey) {
+        return nextVal("trco_addr_infm", "trco_addr_key", bizKey, trcoKey, null, null, null, null);
+    }
+
+    /**
+     * Settings &gt; Contacts &mdash; allocate the next {@code TRCO_OVRS_KEY}
+     * for an overseas-beneficiary row by delegating to the legacy
+     * {@code wb_get_next_val('trco_ovrs_infm', 'trco_ovrs_key', biz_key)}
+     * branch. Mirrors legacy {@code TrcoOvrsInfmDAO.create}
+     * ({@code SeqHelper.getNextVal(util, idoCon, TrcoOvrsInfm.class, "trco_ovrs_key")}).
+     *
+     * <p>The live JEX branch body is {@code SELECT
+     * COALESCE(MAX(trco_ovrs_key::numeric), 0) + 1 FROM trco_ovrs_infm
+     * WHERE biz_key = $3} &mdash; <strong>per-tenant</strong> {@code MAX+1}
+     * (NOT per-contact; the legacy scope is {@code biz_key} only, so
+     * {@code trco_ovrs_key} is unique across the whole tenant). Closes the
+     * OD-1 client-key gap.
+     *
+     * <p>Concurrency / batch: lock-free {@code MAX+1}, so callers creating
+     * several overseas rows in one transaction {@code saveAndFlush} between
+     * rows so the next read sees the prior insert.
+     *
+     * <p>Returns a numeric text token; the caller stores it verbatim in
+     * {@code TRCO_OVRS_INFM.TRCO_OVRS_KEY}.
+     */
+    public String nextTrcoOvrsKey(String bizKey) {
+        return nextVal("trco_ovrs_infm", "trco_ovrs_key", bizKey, null, null, null, null, null);
+    }
+
     /** Payment &gt; Overseas: OVRS_PYMN_SUMR_DETL.OVRS_PYMN_DETL_NO — per-tenant MAX+1 over (mstr UNION detl) (V140 #30). */
     public String nextOvrsPymnDetlNo(String bizKey) {
         return nextVal("ovrs_pymn_sumr_detl", "ovrs_pymn_detl_no", bizKey, null, null, null, null, null);

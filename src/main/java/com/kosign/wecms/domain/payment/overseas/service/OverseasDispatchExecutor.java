@@ -191,6 +191,10 @@ public class OverseasDispatchExecutor {
                 ? null : new BigDecimal(master.getTotTrnsCnt()));
         mst.setReqAmt(master.getTotalTranAmt());
         mst.setRegDttm(dttm14);
+        // PROC_DTTM is NOT NULL in TB_PAY_FILE_MST_HIS (trigger-written mirror copies
+        // new.proc_dttm). Legacy stamps proc_dttm = reg_dttm on insert; the callback
+        // UPDATE later writes the real processing time.
+        mst.setProcDttm(dttm14);
 
         tbPayFileMstRepository.save(mst);
 

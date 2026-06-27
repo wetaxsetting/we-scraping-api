@@ -5,7 +5,6 @@
 **Refactor slug:** `bank-account` (matches the JEX-traceability, backend, and frontend counterparts)
 **Wire base path:** `/api/v1/settings/bank-account` (list · update · register · permissions GET/PUT · audit-logs GET)
 **Menu permission slug:** `settings-core-bank-account`
-**Legacy JEX counterpart:** WSVC family `comm_0183_001` (list) · `comm_0183_002` (permissions) · `comm_0183_003` (detail/edit) · `comm_0183_004` (audit logs). Tables `ACCT_MSTR` + `ACCT_AUTH_INFO`.
 
 > This folder is the **primary documentation home** for Bank Account on the backend. It consolidates
 > and indexes material that previously lived in the single flat file
@@ -103,6 +102,12 @@ itself lands in the banking schema migration (`V13`, extended by `V23`).
 | [migration-guide.md](migration-guide.md) | How each JEX layer (JSP / `_act.jsp` / IDO / WSVC / entity / DAO) became its Spring counterpart, incl. dropped/dead legacy flows |
 | [test-scenarios.md](test-scenarios.md) | SIT/UAT scenarios per operation (list / update / register / permissions / audit-logs) + which CRUD ops do NOT exist |
 | [refactor-gap-analysis.md](refactor-gap-analysis.md) | Parity review (MATCH / APPROVED DEVIATION / DEAD LEGACY / PARTIAL / MISSING) with status + evidence |
+
+---
+
+## Legacy & Migration Traceability
+
+**Legacy JEX counterpart:** WSVC family `comm_0183_001` (list) · `comm_0183_002` (permissions) · `comm_0183_003` (detail/edit) · `comm_0183_004` (audit logs). Tables `ACCT_MSTR` + `ACCT_AUTH_INFO`.
 
 ---
 

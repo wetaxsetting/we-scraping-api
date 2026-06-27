@@ -177,10 +177,28 @@ public class BankTransactionSyncService {
         // chain.
         final String bizKey = requireBizKey();
         java.util.List<TransactionsSyncRequest.AccountKey> filtered = new java.util.ArrayList<>(req.accounts().size());
+        // Batch-load all referenced accounts in one query, then run the
+        // original per-element not-found + HAND_REG checks (request order)
+        // against the map. Missing account still throws
+        // WBE_BANK_ACCOUNT_NOT_FOUND on the first absent key; HAND_REG rows
+        // are still skipped; queue order is unchanged.
+        java.util.List<com.kosign.wecms.domain.banking.entity.AcctMstrId> ids =
+                new java.util.ArrayList<>(req.accounts().size());
         for (TransactionsSyncRequest.AccountKey key : req.accounts()) {
-            AcctMstr acct = acctRepo.findByBizKeyAndBankCdAndAcctNo(
-                            bizKey, key.bankCd(), key.acctNo())
-                    .orElseThrow(() -> new BusinessException("WBE_BANK_ACCOUNT_NOT_FOUND"));
+            ids.add(new com.kosign.wecms.domain.banking.entity.AcctMstrId(
+                    bizKey, key.bankCd(), key.acctNo()));
+        }
+        // Key by (bank_cd, acct_no); biz_key is constant within this call
+        // and findAllById already scopes by the composite PK.
+        java.util.Map<String, AcctMstr> byKey = new java.util.HashMap<>();
+        for (AcctMstr acct : acctRepo.findAllById(ids)) {
+            byKey.put(acct.getBankCd() + " " + acct.getAcctNo(), acct);
+        }
+        for (TransactionsSyncRequest.AccountKey key : req.accounts()) {
+            AcctMstr acct = byKey.get(key.bankCd() + " " + key.acctNo());
+            if (acct == null) {
+                throw new BusinessException("WBE_BANK_ACCOUNT_NOT_FOUND");
+            }
             if ("Y".equalsIgnoreCase(acct.getHandRegYn())) {
                 log.info("BankTransactionSync skipping HAND_REG account [bank={}, acct={}]",
                         key.bankCd(), key.acctNo());

@@ -217,9 +217,19 @@ public class OverseasPaymentRepository {
                        erm.appr_dv,
                        ops.out_bank_cd,
                        ops.wdrl_act_no,
-                       (SELECT bi.rprs_bank_nm FROM bank_infm bi
-                         WHERE bi.bank_cd = ops.out_bank_cd
-                         ORDER BY bi.start_date DESC LIMIT 1) AS out_bank_nm,
+                       /* Withdrawal-bank name — legacy R002 uses
+                          wb_get_bank_name_any_code(OUT_BANK_CD) which resolves NAPAS
+                          codes (e.g. 970424 → "Shinhan VN", the form stamped at
+                          Request Approval). Fall back to the BANK_INFM exact-match
+                          for CITAD/internal codes (e.g. 11704088) the NAPAS lookup
+                          doesn't carry, so every stored code resolves to a name
+                          instead of showing "-". */
+                       COALESCE(
+                           wb_get_bank_name_any_code(ops.out_bank_cd),
+                           (SELECT bi.rprs_bank_nm FROM bank_infm bi
+                             WHERE bi.bank_cd = ops.out_bank_cd
+                             ORDER BY bi.start_date DESC LIMIT 1)
+                       ) AS out_bank_nm,
                        NULL                     AS bnfc_nm,
                        erm.pay_date,
                        %s AS apprvr_tot_cnt,
@@ -546,15 +556,29 @@ public class OverseasPaymentRepository {
                       SELECT ops.ovrs_pymn_no,
                              'E'                       AS ovrs_pymn_type,
                              ops.ccy_cd,
-                             ops.titl                 AS file_nm,
+                             /* File Name = ORG_FILE_NM (the uploaded Excel name).
+                                NOT OVRS_PYMN_SUMR.TITL — the Request-Approval flow
+                                (stampApproval) overwrites TITL with the approval
+                                post-title, so TITL would show the approval title in
+                                the File Name column. The scheduled list E branch
+                                already uses org_file_nm (line ~197); this matches it.
+                                Approval Title is sourced separately from erm.titl below. */
+                             ops.org_file_nm          AS file_nm,
                              ops.total_tran_amt,
                              ops.tot_trns_cnt,
                              ops.trnf_dt              AS reg_dtm,
                              erm.draft_user_nm,
                              ops.reg_id,
-                             (SELECT bi.rprs_bank_nm FROM bank_infm bi
-                               WHERE bi.bank_cd = ops.out_bank_cd
-                               ORDER BY bi.start_date DESC LIMIT 1) AS out_bank_nm,
+                             /* Withdrawal-bank name — wb_get_bank_name_any_code
+                                (NAPAS) with a BANK_INFM exact-match fallback
+                                (CITAD/internal), so every stored code resolves.
+                                Mirrors the scheduled-list query + legacy R005. */
+                             COALESCE(
+                                 wb_get_bank_name_any_code(ops.out_bank_cd),
+                                 (SELECT bi.rprs_bank_nm FROM bank_infm bi
+                                   WHERE bi.bank_cd = ops.out_bank_cd
+                                   ORDER BY bi.start_date DESC LIMIT 1)
+                             ) AS out_bank_nm,
                              ops.out_bank_cd,
                              ops.wdrl_act_no,
                              ops.trnf_yn,

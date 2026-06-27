@@ -10,7 +10,9 @@ import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepos
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalAttachmentRow;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.TransferLineDetail;
 import com.kosign.wecms.domain.payment.internaltransfer.service.ApprovalAttachmentLoader;
+import com.kosign.wecms.domain.payment.internaltransfer.service.ApprovalContentLoader;
 import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService;
+import com.kosign.wecms.domain.payment.service.OverseasPaymentService;
 import com.kosign.wecms.domain.payment.notification.entity.BltbPostInfmId;
 import com.kosign.wecms.domain.payment.notification.repository.BltbPostInfmRepository;
 import lombok.RequiredArgsConstructor;
@@ -49,9 +51,9 @@ import java.util.Set;
  * four. <b>Card</b> ({@code 33}) is intentionally returned empty here — the
  * frontend loads card lines through the existing
  * {@code fetchCardTransactionsByApproval} path (card carries extra card-only
- * fields). <b>Overseas</b> ({@code 34}) line loading is deferred (returns
- * empty) — documented gap; the header / approvers / content / attachments
- * still render for overseas.
+ * fields). <b>Overseas</b> ({@code 34}) lines are read from
+ * {@code OVRS_PYMN_SUMR_DETL} (E-mode) or {@code OVRS_PYMN_MSTR} (M-mode) via
+ * {@link OverseasPaymentService#transactionLinesByApprSeqNo(String, String)}.
  *
  * <p>Everything is tenant-scoped via {@link TenantContext#currentBizKey()};
  * a missing / wrong-tenant approval yields an empty list (never an error) so
@@ -74,7 +76,9 @@ public class ApprovalDetailService {
     private final ExptResolMstrRepository exptResolMstrRepository;
     private final ExptResolDetlRepository exptResolDetlRepository;
     private final InternalTransferService internalTransferService;
+    private final OverseasPaymentService overseasPaymentService;
     private final ApprovalAttachmentLoader approvalAttachmentLoader;
+    private final ApprovalContentLoader approvalContentLoader;
     private final ApprovalBoxService approvalBoxService;
     private final BltbPostInfmRepository bltbPostInfmRepository;
 
@@ -105,7 +109,42 @@ public class ApprovalDetailService {
         if (resolved == null) {
             return null;
         }
-        return approvalBoxService.findOne(resolved);
+        ApprovalBoxRow base = approvalBoxService.findOne(resolved);
+        if (base == null) {
+            return null;
+        }
+
+        // Enrich the master row so the shared Approval Details popup matches the
+        // per-type Scheduled detail (and legacy comm_0193_001_r001) regardless of
+        // entry point: (1) withdrawal bank/account from the sibling
+        // SCDUL_PYMN_SUMR batch, (2) the Approval Content note from
+        // BLTB_POST_INFM.POST_CONT (NOT EXPT_RESOL_MSTR.CONT — the two can
+        // diverge; the legacy popup shows POST_CONT). findOne (the list-shaped
+        // read) supplies neither.
+        String bizKey = TenantContext.currentBizKey();
+        InternalTransferService.ApprovalBatchInfo batch =
+                internalTransferService.approvalBatchByApprSeqNo(bizKey, resolved).orElse(null);
+        String postCont = approvalContentLoader.load(bizKey, resolved);
+        String cont = (postCont != null && !postCont.isBlank()) ? postCont : base.cont();
+
+        if (batch != null) {
+            return base.withDetail(
+                    batch.outBankCd(), batch.outBankNm(), batch.wdrlActNo(), batch.wdrlCcyCd(), cont);
+        }
+        // Overseas (34) lives in OVRS_PYMN_SUMR / OVRS_PYMN_MSTR, not SCDUL —
+        // resolve its withdrawal (E-mode summary or M-mode debit account) so the
+        // overseas popup shows the same General Information row as everything else.
+        if ("34".equals(base.apprDv())) {
+            OverseasPaymentService.ApprovalWithdrawalInfo ow =
+                    overseasPaymentService.withdrawalByApprSeqNo(bizKey, resolved).orElse(null);
+            if (ow != null) {
+                return base.withDetail(
+                        ow.outBankCd(), ow.outBankNm(), ow.wdrlActNo(), ow.wdrlCcyCd(), cont);
+            }
+        }
+        // Card / no sibling batch — still apply POST_CONT; the dialog omits the
+        // withdrawal row when the fields are null (card has none).
+        return base.withDetail(null, null, null, null, cont);
     }
 
     /** Resolve the effective {@code APPR_SEQ_NO}: prefer the explicit value,
@@ -156,20 +195,39 @@ public class ApprovalDetailService {
         }
 
         String apprDv = mstr.getApprDv();
+        if ("34".equals(apprDv)) {
+            // Overseas — read E-mode (OVRS_PYMN_SUMR_DETL) or M-mode
+            // (OVRS_PYMN_MSTR) lines by APPR_SEQ_NO, normalized to the shared
+            // ApprovalTransactionRow. Mirrors the per-type Overseas Scheduled
+            // detail so the popup is identical from either entry point.
+            return overseasPaymentService.transactionLinesByApprSeqNo(bizKey, apprSeqNo);
+        }
         if (!SCHEDULED_APPR_DV.contains(apprDv)) {
-            // Card (33) → loaded on the frontend via fetchCardTransactionsByApproval.
-            // Overseas (34) → deferred (OVRS_PYMN_SUMR_DETL line read not yet ported).
+            // Card (33) → loaded on the frontend via fetchCardTransactionsByApproval
+            // (card carries extra card-only fields rendered by a dedicated grid).
             return List.of();
         }
 
-        // Bridge APPR_SEQ_NO → batch key (DOC_ID) → scheduled line read.
-        String batchKey = exptResolDetlRepository
-                .findByBizKeyAndApprSeqNo(bizKey, apprSeqNo)
-                .stream()
-                .map(ExptResolDetl::getDocId)
+        // Resolve APPR_SEQ_NO → batch key (SCDUL_PYMN_NO) the legacy way:
+        // load SCDUL_PYMN_SUMR by APPR_SEQ_NO (comm_0193_001_r001 loads the
+        // batch directly, then reads lines by its SCDUL_PYMN_NO). This is the
+        // reliable bridge for every approval. The legacy EXPT_RESOL_DETL.DOC_ID
+        // path is kept only as a fallback for rows whose SCDUL summary is absent
+        // — without it, any approval missing the (refactor-stamped)
+        // EXPT_RESOL_DETL row showed 0 transactions.
+        String batchKey = internalTransferService.approvalBatchByApprSeqNo(bizKey, apprSeqNo)
+                .map(InternalTransferService.ApprovalBatchInfo::scdulPymnNo)
                 .filter(d -> d != null && !d.isBlank())
-                .findFirst()
                 .orElse(null);
+        if (batchKey == null) {
+            batchKey = exptResolDetlRepository
+                    .findByBizKeyAndApprSeqNo(bizKey, apprSeqNo)
+                    .stream()
+                    .map(ExptResolDetl::getDocId)
+                    .filter(d -> d != null && !d.isBlank())
+                    .findFirst()
+                    .orElse(null);
+        }
         if (batchKey == null) {
             return List.of();
         }

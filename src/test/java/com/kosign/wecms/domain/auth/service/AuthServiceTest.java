@@ -46,6 +46,7 @@ class AuthServiceTest {
     @Mock JwtTokenProvider tokenProvider;
     @Mock LoginHistoryService history;
     @Mock MenuAuthorizationService menuAuthService;
+    @Mock LoginLockoutService loginLockout;
 
     AuthService authService;
 
@@ -67,7 +68,9 @@ class AuthServiceTest {
     void seed() {
         authService = new AuthService(
                 userRepo, userBusiRepo, busiRepo, busiAdmnRepo,
-                passwordEncoder, tokenProvider, history, menuAuthService);
+                passwordEncoder, tokenProvider, history, menuAuthService,
+                new com.kosign.wecms.common.security.TokenRevocationService(),
+                loginLockout);
 
         user = new UserInfm();
         user.setUserId(ID);
@@ -452,6 +455,34 @@ class AuthServiceTest {
         assertBusinessCode("WBE1009", () -> authService.login(new LoginRequest(ID, PW, null), IP, LANG));
         verify(history).record(ID, IP, UserLoginHis.RSLT_FAIL, "NO_TENANT_LINKS");
         verify(userBusiRepo, never()).save(any());
+    }
+
+    // ---------------------------------------------------------------
+    // F-10 — brute-force auto-lock wiring.
+    // ---------------------------------------------------------------
+
+    @Test
+    void badPassword_invokesBruteForceLockoutCheck() {
+        when(userRepo.findById(ID)).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches(PW, HASH)).thenReturn(false);
+
+        assertBusinessCode("WBE1009", () -> authService.login(new LoginRequest(ID, PW, null), IP, LANG));
+        // FAIL row recorded first, then the lockout check runs for this user.
+        verify(history).record(ID, IP, UserLoginHis.RSLT_FAIL, "PW_MISMATCH");
+        verify(loginLockout).lockIfThresholdReached(ID);
+    }
+
+    @Test
+    void lockedUser_cannotLoginEvenWithCorrectPassword() {
+        user.setLockYn("Y");
+        when(userRepo.findById(ID)).thenReturn(Optional.of(user));
+
+        // Even though the password is correct, the lock gate short-circuits before
+        // any password check or token issue.
+        assertBusinessCode("WBE1011", () -> authService.login(new LoginRequest(ID, PW, null), IP, LANG));
+        verify(passwordEncoder, never()).matches(any(), any());
+        verify(tokenProvider, never()).issue(any(), any(), any(), any(), any(), any());
+        verify(loginLockout, never()).lockIfThresholdReached(any());
     }
 
     private void assertBusinessCode(String expectedCode, Runnable action) {

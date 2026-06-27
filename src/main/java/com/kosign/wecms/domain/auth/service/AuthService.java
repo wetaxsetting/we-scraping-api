@@ -3,7 +3,10 @@ package com.kosign.wecms.domain.auth.service;
 import com.kosign.wecms.common.enums.LangCd;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.security.JwtTokenProvider;
+import com.kosign.wecms.common.security.TokenRevocationService;
 import com.kosign.wecms.common.tenant.TenantContext;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.JwtException;
 import com.kosign.wecms.domain.auth.dto.CompanyOption;
 import com.kosign.wecms.domain.auth.dto.LoginRequest;
 import com.kosign.wecms.domain.auth.dto.LoginResponse;
@@ -108,6 +111,8 @@ public class AuthService {
     private final JwtTokenProvider tokenProvider;
     private final LoginHistoryService history;
     private final MenuAuthorizationService menuAuthService;
+    private final TokenRevocationService tokenRevocation;
+    private final LoginLockoutService loginLockout;
 
     @Transactional
     public LoginResponse login(LoginRequest req, String ipAddr, String langCd) {
@@ -137,6 +142,13 @@ public class AuthService {
 
         if (!passwordEncoder.matches(req.userPw(), user.getUserPw())) {
             history.record(userId, ipAddr, UserLoginHis.RSLT_FAIL, "PW_MISMATCH");
+            // F-10: brute-force auto-lock. After the FAIL row is committed (above,
+            // REQUIRES_NEW), lock the account when the last 5 attempts are all
+            // failures. The lock write is its own REQUIRES_NEW tx so it survives
+            // the rollback caused by the throw below. The error stays the generic
+            // WBE1009 (the password WAS wrong); the lock takes effect on the next
+            // attempt → WBE1011, even with the correct password.
+            loginLockout.lockIfThresholdReached(userId);
             throw new BusinessException(CODE_BAD_CREDENTIALS);
         }
 
@@ -310,6 +322,32 @@ public class AuthService {
                 allMenus,
                 allowedMenuCds
         );
+    }
+
+    /**
+     * F-03 — server-side logout. Revoke the presented access token by its
+     * {@code jti} so it is rejected on every subsequent request (see
+     * {@link com.kosign.wecms.common.security.JwtAuthenticationFilter}). The
+     * token has already been validated by the filter on the way in; we re-parse
+     * only to read the {@code jti} + {@code exp}. Best-effort: an
+     * already-invalid/expired token has nothing to revoke and is ignored.
+     *
+     * <p>Revocation is in-process only (see {@link TokenRevocationService} for
+     * the documented restart / multi-instance limitations).
+     */
+    public void logout(String authorizationHeader) {
+        if (authorizationHeader == null || !authorizationHeader.startsWith("Bearer ")) {
+            return;
+        }
+        String token = authorizationHeader.substring("Bearer ".length());
+        try {
+            Claims claims = tokenProvider.parse(token).getPayload();
+            if (claims.getId() != null && claims.getExpiration() != null) {
+                tokenRevocation.revokeToken(claims.getId(), claims.getExpiration().toInstant());
+            }
+        } catch (JwtException ignored) {
+            // Token already invalid / expired — nothing to revoke.
+        }
     }
 
     /**

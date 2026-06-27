@@ -43,6 +43,7 @@ import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolApprvrInfm;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolApprvrInfmRepository;
 import com.kosign.wecms.domain.payment.internaltransfer.service.ApprovalAttachmentLoader;
+import com.kosign.wecms.domain.payment.internaltransfer.service.ApprovalContentLoader;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprDv;
 import com.kosign.wecms.domain.payment.service.DocNoGenerator;
@@ -185,6 +186,7 @@ public class VendorPaymentService {
      *  list (consumed by the shared Approval Details popup). Shared
      *  repository; same wiring as {@code InternalTransferService}. */
     private final ApprovalAttachmentLoader      approvalAttachmentLoader;
+    private final ApprovalContentLoader         approvalContentLoader;
     private final DocNoGenerator                docNoGenerator;
     private final BusiInfmRepository            busiInfmRepository;
     private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
@@ -304,6 +306,10 @@ public class VendorPaymentService {
         List<ApprovalAttachmentRow> attachments =
                 approvalAttachmentLoader.load(bizKey, apprSeqNo);
 
+        // Approval Content — legacy BLTB_POST_INFM.POST_CONT (R007), NOT
+        // EXPT_RESOL_MSTR.CONT (the two can diverge on the live JEX DB).
+        String cont = approvalContentLoader.load(bizKey, apprSeqNo);
+
         return new ScheduledTransferDetailResponse(
                 master.getScdulPymnNo(),
                 master.getScdulPymnTypeCd(),
@@ -333,7 +339,9 @@ public class VendorPaymentService {
                 master.getOrgFileNm(),
                 master.getFileSize() == null || master.getFileSize().isBlank() ? null : new java.math.BigDecimal(master.getFileSize().trim()),
                 lines,
-                attachments);
+                attachments,
+                cont,
+                null);   // appr_fund_tp — Payroll-only; null for Vendor
     }
 
     /* ----------------------------------------------------------------
@@ -486,6 +494,7 @@ public class VendorPaymentService {
                   + "returned null/blank for bizKey=" + bizKey);
         }
         long detlNoCursor = Long.parseLong(detlSeedRaw.trim()) - 1;
+        java.util.List<ScdulPymnSumrDetl> detls = new java.util.ArrayList<>(req.lines().size());
         for (TransferLineInput line : req.lines()) {
             ScdulPymnSumrDetl detl = new ScdulPymnSumrDetl();
             detl.setBizKey(bizKey);
@@ -512,8 +521,9 @@ public class VendorPaymentService {
             detl.setRegDtm(now);
             detl.setModId(userId);
             detl.setModDtm(now);
-            detlRepository.save(detl);
+            detls.add(detl);
         }
+        detlRepository.saveAll(detls);
 
         // Preserve the uploaded Excel under ERP Transaction History so
         // the user can later download it from Settings > ERP Transaction
@@ -716,6 +726,19 @@ public class VendorPaymentService {
     /* ----------------------------------------------------------------
      *  Request Approval (legacy comm_0194_001 → comm_0192_001_c005)
      * ---------------------------------------------------------------- */
+
+    /**
+     * Preview the next {@code VO_YYMMDD_NNN} document number for the Request
+     * Approval popup (read-only). Computes via the shared {@link DocNoGenerator}
+     * WITHOUT reserving or persisting anything — the authoritative DOC_NO is
+     * stamped at {@link #requestApproval} submit time. Mirrors
+     * {@link com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService#previewNextDocNo}.
+     */
+    @Transactional(readOnly = true)
+    public com.kosign.wecms.domain.payment.internaltransfer.dto.NextDocNoResponse previewNextDocNo() {
+        return new com.kosign.wecms.domain.payment.internaltransfer.dto.NextDocNoResponse(
+                docNoGenerator.nextDocNo(requireTenant()));
+    }
 
     /**
      * Submit one batch for approval. Mirrors

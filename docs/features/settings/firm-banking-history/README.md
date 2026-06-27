@@ -4,7 +4,6 @@
 **Module / menu:** Settings → Firm Banking → **Firm Banking History**
 **Refactor slug:** `firm-banking-history` (matches the JEX, backend, and frontend counterparts)
 **Wire base path:** `GET /api/v1/settings/firm-banking-history` (+ `POST .../export`)
-**Legacy JEX counterpart:** WSVC `comm_0221_001` (view) + `comm_0221_001_r001` (read API), IDO `TB_FIRM_TRAN_R002`
 
 > **DB-shape note (verify against code):** there is **no** `V_FIRM_BANKING_HISTORY` database view. The
 > five-leg union is carried by a Hibernate `@Subselect` on
@@ -99,6 +98,12 @@ Supporting enums (in `common/enums/`): [`TranTp`](../../../../src/main/java/com/
 | [migration-guide.md](migration-guide.md) | How each JEX layer (JSP / `_act.jsp` / IDO / WSVC / DB functions) became its Spring counterpart |
 | [test-scenarios.md](test-scenarios.md) | SIT/UAT scenarios + the existing JUnit coverage map |
 | [refactor-gap-analysis.md](refactor-gap-analysis.md) | Final parity review (MATCH / PARTIAL / MISSING) with completion status |
+
+---
+
+## Legacy & Migration Traceability
+
+**Legacy JEX counterpart:** WSVC `comm_0221_001` (view) + `comm_0221_001_r001` (read API), IDO `TB_FIRM_TRAN_R002`
 
 ---
 

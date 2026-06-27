@@ -97,20 +97,20 @@ public class PreferencesService {
     public static final long MAX_LOGO_SIZE_BYTES = 2L * 1024L * 1024L;
 
     /** Allow-list of permitted logo extensions (lower-case, no leading
-     *  dot). Images only. */
+     *  dot). Raster images only. F-02: SVG is excluded — an inline-served
+     *  SVG can carry &lt;script&gt; and execute as stored XSS in the
+     *  WeCMS origin. */
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of(
-            "jpg", "jpeg", "png", "gif", "svg");
+            "jpg", "jpeg", "png", "gif");
 
     /** MIME type emitted on the download response per extension. The
      *  frontend trusts our Content-Type header so we map deterministically
-     *  rather than re-detecting via probeContentType (which Windows
-     *  reports inconsistently for SVG). */
+     *  rather than re-detecting via probeContentType. */
     private static final java.util.Map<String, String> MIME_BY_EXT = java.util.Map.of(
             "jpg",  "image/jpeg",
             "jpeg", "image/jpeg",
             "png",  "image/png",
-            "gif",  "image/gif",
-            "svg",  "image/svg+xml");
+            "gif",  "image/gif");
 
     /** Source of randomness for the opaque save filename. Thread-safe;
      *  one shared instance is sufficient. */

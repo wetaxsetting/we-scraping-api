@@ -49,6 +49,7 @@ class ApprovalAttachmentWriterTest {
     private static final String APPR_SEQ_NO = "100";
 
     @Mock private ExptResolFileRepository      fileRepository;
+    @Mock private com.kosign.wecms.domain.payment.internaltransfer.repository.ExptResolPayEvidFileRepository payEvidFileRepository;
     @Mock private InternalTransferFileResolver fileResolver;
     @Mock private LegacyFunctionRepository     legacyFunctions;
 
@@ -60,7 +61,7 @@ class ApprovalAttachmentWriterTest {
     void setUp() {
         // Fixed UTC clock — ICT (+7) renders as 2026-06-13 10:00:00 → 20260613100000.
         Clock clock = Clock.fixed(Instant.parse("2026-06-13T03:00:00Z"), ZoneOffset.UTC);
-        writer = new ApprovalAttachmentWriter(fileRepository, fileResolver, legacyFunctions, clock);
+        writer = new ApprovalAttachmentWriter(fileRepository, payEvidFileRepository, fileResolver, legacyFunctions, clock);
         TenantContext.set(USER_ID, "Tester", BIZ_KEY, LangCd.EN);
     }
 

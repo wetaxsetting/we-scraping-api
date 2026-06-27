@@ -20,7 +20,7 @@ implementation. The earlier flat `login-auth.md` is now a [summary](login-auth.m
 | Module | Scope | Backend surface | Status |
 |---|---|---|---|
 | [login](login/README.md) | Authentication flow, JWT issuance, login history, multi-company resolution | `POST /api/v1/auth/login` | Working |
-| [logout](logout/README.md) | Stateless logout stub | `POST /api/v1/auth/logout` | Working (stub) |
+| [logout](logout/README.md) | Logout — server-side `jti` revocation + client token clear | `POST /api/v1/auth/logout` | Working |
 | [change-password](change-password/README.md) | Self-service password change, history reuse, SHA-256 | `POST /api/v1/auth/change-password` | Working |
 | [profile](profile/README.md) | Tenant user directory (`comm_0192_001_r001`) | `GET /api/v1/users` | Working |
 | [jwt-authentication](jwt-authentication/README.md) | Token issue/parse/filter/entry-point, claims, TTL | `JwtTokenProvider` + filter chain | Working |

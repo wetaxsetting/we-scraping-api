@@ -103,6 +103,7 @@ class BankTransactionSyncServiceVpProfileTest {
         when(acct.getAcctNo()).thenReturn(ACCT_NO);
         when(acct.getCcyCd()).thenReturn("VND");
         when(acct.getHandRegYn()).thenReturn("N");
+        when(acctRepo.findAllById(any())).thenReturn(List.of(acct));
         when(acctRepo.findByBizKeyAndBankCdAndAcctNo(anyString(), anyString(), anyString()))
                 .thenReturn(Optional.of(acct));
 
@@ -183,6 +184,7 @@ class BankTransactionSyncServiceVpProfileTest {
         when(acct.getAcctNo()).thenReturn(ACCT_NO);
         when(acct.getCcyCd()).thenReturn("VND");
         when(acct.getHandRegYn()).thenReturn("N");
+        when(acctRepo.findAllById(any())).thenReturn(List.of(acct));
         when(acctRepo.findByBizKeyAndBankCdAndAcctNo(anyString(), anyString(), anyString()))
                 .thenReturn(Optional.of(acct));
 

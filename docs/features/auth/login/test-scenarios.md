@@ -83,7 +83,10 @@ Mockito unit test; mocks all five repositories + `PasswordEncoder` + `JwtTokenPr
   or the legacy-DTM conversions (per `wecms-api/CLAUDE.md`, Testcontainers is deferred).
 - **Coexistence cross-system check (T10) — manual only.** Cannot be exercised headless — needs a shared
   JEX DB and a live JEX login path; confirm in SIT, not in a unit test.
-- **5-failure auto-lock — MISSING (feature not implemented).** No test because the counter does not exist
-  (see [refactor-gap-analysis.md](refactor-gap-analysis.md) GAP-3).
-- **Rate-limiting / brute-force — MISSING (feature not implemented).** GAP-5.
+- **5-failure auto-lock — IMPLEMENTED + tested** (formerly MISSING — implemented 2026 via F-10).
+  `LoginLockoutService` flips `USER_INFM.LOCK_YN='Y'` after the latest 5 attempts are all failures;
+  covered by `LoginLockoutServiceTest` (see [refactor-gap-analysis.md](refactor-gap-analysis.md) GAP-3).
+- **Rate-limiting / brute-force — IMPLEMENTED + tested** (formerly MISSING — implemented 2026). In-memory
+  `RateLimiter` throttles `POST /api/v1/auth/login`; covered by `RateLimiterTest`. GAP-5. Open item: the
+  limiter is in-memory (per-node, reset on restart) — durable / distributed limiting deferred.
 - **Post-auth gates (`NTNL_CD` / `CHNL_TYPE` / `BUSI_STTS`) — MISSING (feature not implemented).** GAP-4.

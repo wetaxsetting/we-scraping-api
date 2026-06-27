@@ -24,11 +24,11 @@ Status vocabulary: **MATCH** · **APPROVED DEVIATION** · **DEAD LEGACY** · **P
 | **Identifier surface** | WSVC id `logn_0001_001` | kebab slug `login` everywhere | **APPROVED DEVIATION** (slug rule) |
 | **SHA-256 → BCrypt login upgrade** | (old refactor build had this) | removed — verify-only | **DEAD LEGACY** (GAP-1) |
 | **Server-side session invalidation** | yes | not ported (logout is client-side) | **DEAD LEGACY** (owned by [logout](../logout/README.md)) |
-| **5-failure auto-lock counter** | locks after 5 consecutive failures | `USER_LOGIN_HIS` FAIL scaffold only; counter not implemented | **MISSING** (GAP-3, deferred) |
+| **5-failure auto-lock counter** | locks after 5 consecutive failures | `LoginLockoutService` sets `USER_INFM.LOCK_YN='Y'` after the latest 5 attempts are all failures | **IMPLEMENTED** (formerly GAP-3 MISSING, deferred — implemented 2026 via F-10) |
 | **`NTNL_CD` post-auth gate** | legacy checks national-code after password | not enforced (column mapped, unused) | **MISSING** (GAP-4, deferred) |
 | **`CHNL_TYPE` post-auth gate** | legacy checks channel type | not modelled / enforced | **MISSING** (GAP-4, deferred) |
 | **`BUSI_STTS` post-auth gate** | legacy checks company status after password | column mapped on `BusiInfm`, not enforced at login | **PARTIAL** (GAP-4, deferred) |
-| **Rate-limiting / brute-force protection** | — | not implemented | **MISSING** (GAP-5, deferred — mandatory before non-local deploy) |
+| **Rate-limiting / brute-force protection** | — | in-memory `RateLimiter` throttles `POST /api/v1/auth/login` (key `login:<ip>`) | **IMPLEMENTED** (formerly GAP-5 MISSING, deferred — implemented 2026; open: in-memory limiter, per-node) |
 
 ---
 
@@ -56,12 +56,15 @@ company — but the chooser is real, tested
 (`AuthServiceTest.multiLink_firstCall_chooserOptionsCarryPerCompanyPrdtType`), and must be documented as
 present. **Status: APPROVED DEVIATION** (safe generic fallback, not a routine UX surface).
 
-### GAP-3 — 5-failure auto-lock counter (MISSING)
+### GAP-3 — 5-failure auto-lock counter (IMPLEMENTED — formerly MISSING, deferred)
 
-Legacy locks a user after five consecutive failed logins. The refactor writes a FAIL `USER_LOGIN_HIS`
-row on every failed attempt (the data scaffold), but no counter reads those rows to flip `LOCK_YN`.
-**Status: MISSING** — deferred (Sprint 0 out-of-scope); implement the counter in `AuthService` against
-the existing `USER_LOGIN_HIS` data before any non-local deploy.
+> **Formerly GAP-3 (MISSING — deferred); implemented 2026 via F-10.**
+
+Legacy locks a user after five consecutive failed logins, and the refactor now does too:
+`LoginLockoutService` flips `USER_INFM.LOCK_YN='Y'` once the latest 5 login attempts for the user are all
+failures (the FAIL `USER_LOGIN_HIS` rows are still written as before). A subsequently locked account hits
+the `LOCK_YN=Y` → `WBE1011` gate on the next attempt. Covered by `LoginLockoutServiceTest`.
+**Status: IMPLEMENTED.**
 
 ### GAP-4 — `NTNL_CD` / `CHNL_TYPE` / `BUSI_STTS` post-auth gates (MISSING / PARTIAL)
 
@@ -70,10 +73,15 @@ columns (`NTNL_CD`, `BUSI_STTS`) but does not gate login on them, and `CHNL_TYPE
 **Status: `NTNL_CD` MISSING, `CHNL_TYPE` MISSING, `BUSI_STTS` PARTIAL** (mapped, not enforced) — deferred
 to a pre-production hardening pass.
 
-### GAP-5 — Rate-limiting / brute-force protection (MISSING)
+### GAP-5 — Rate-limiting / brute-force protection (IMPLEMENTED — formerly MISSING, deferred)
 
-No throttling on `POST /api/v1/auth/login`. **Status: MISSING** — out of scope for R&D, mandatory before
-any non-local deploy.
+> **Formerly GAP-5 (MISSING — deferred); implemented 2026.**
+
+`POST /api/v1/auth/login` is throttled by the in-memory `RateLimiter` (`common/web/RateLimiter`, key
+`login:<ip>`); the credential-reveal endpoint is throttled too. Combined with the 5-failure auto-lock
+(GAP-3), the brute-force surface is covered. **Open limitation:** the limiter is **in-memory** — per-node
+and reset on restart; durable / distributed rate limiting is still deferred (advisable before a
+high-traffic non-local deploy). **Status: IMPLEMENTED (in-memory limiter open).**
 
 ---
 
@@ -83,8 +91,10 @@ any non-local deploy.
 Refactor Status: complete + unit-tested for the in-scope login surface (single-link auto-pick,
                  multi-link chooser, finalize, flag gates, verify-only password, USER_LOGIN_HIS audit,
                  authority + product-type resolution, JWT issuance).
-                 Deferred (not parity-blocking for R&D): 5-failure auto-lock, post-auth gates,
-                 rate-limiting.
+                 Implemented (formerly deferred): 5-failure auto-lock (F-10), login rate-limiting
+                 (in-memory).
+                 Still deferred (not parity-blocking for R&D): NTNL_CD / CHNL_TYPE / BUSI_STTS post-auth
+                 gates; durable / distributed rate limiting.
 ```
 
 Evidence for closed items:
@@ -96,7 +106,7 @@ Evidence for closed items:
 - **Slug `login`** used end-to-end (route, package, docs).
 
 Residual (non-blocking, tracked):
-1. GAP-3 — 5-failure auto-lock counter (deferred).
-2. GAP-4 — `NTNL_CD` / `CHNL_TYPE` / `BUSI_STTS` post-auth gates (deferred).
-3. GAP-5 — rate-limiting (deferred; pre-deploy mandatory).
+1. GAP-3 — 5-failure auto-lock counter IMPLEMENTED (F-10).
+2. GAP-4 — `NTNL_CD` / `CHNL_TYPE` / `BUSI_STTS` post-auth gates (still MISSING / PARTIAL; deferred).
+3. GAP-5 — rate-limiting IMPLEMENTED; open item is the **in-memory** limiter (durable / distributed deferred).
 4. No `@WebMvcTest` controller test for the wire shape yet (see [test-scenarios.md](test-scenarios.md)).

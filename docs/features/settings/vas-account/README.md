@@ -7,7 +7,6 @@
 **REST base:** `/api/v1/settings/vas-account` (list · lookup · detail · create · update · delete · excel preview/import · export)
 **Audit `WSVC_ID`:** `vas-account` (slug — never `comm_0217_001`)
 **i18n key prefix:** `settings.vas_account.*` · audit `audit.vas_account.*`
-**JEX counterpart:** `comm_0217_001` family (`_001` list/delete · `_002` Excel upload · `_003` create · `_004` detail/update) + `comm_1002_001` (lookup picker) — [docs/jex/features/vas-account/](../../../../../docs/jex/features/vas-account/README.md)
 **Frontend counterpart:** [wecms-web/docs/features/settings/vas-account/](../../../../../wecms-web/docs/features/settings/vas-account/README.md)
 
 > **Status — Refactor complete (full-stack).** VAS Account list (search + Active/Inactive
@@ -134,3 +133,9 @@ not yet surfaced (OQ-VAS-1 open). Open items: **F1** — the integration-test cl
 pending Testcontainers/JWT-mock infra (unit / controller / Excel / export coverage is green); and the
 frontend export-button decision (OQ-VAS-1). No functional gap. Evidence for every closed area is in
 [refactor-gap-analysis.md](refactor-gap-analysis.md).
+
+---
+
+## Legacy & Migration Traceability
+
+**JEX counterpart:** `comm_0217_001` family (`_001` list/delete · `_002` Excel upload · `_003` create · `_004` detail/update) + `comm_1002_001` (lookup picker) — [docs/jex/features/vas-account/](../../../../../docs/jex/features/vas-account/README.md)

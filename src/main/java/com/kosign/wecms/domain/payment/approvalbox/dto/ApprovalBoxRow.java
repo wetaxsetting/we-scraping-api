@@ -103,6 +103,71 @@ public record ApprovalBoxRow(
         String payEndYn,
 
         /** Approver chain, ordered by {@code APPRVR_LINE_NO ASC}. */
-        List<ApprovalBoxApprover> approvers
+        List<ApprovalBoxApprover> approvers,
 
-) { }
+        /* ── Detail-only withdrawal-account fields (Approval Details popup) ──
+         *  Populated ONLY on the single-row detail read
+         *  ({@code ApprovalDetailService.master}); always {@code null} on
+         *  list rows ({@code ApprovalBoxService.list} → {@code toRow}). Mirror
+         *  the legacy {@code comm_0195_001} "Withdrawal Bank/Account No." row,
+         *  sourced from the sibling {@code SCDUL_PYMN_SUMR} batch by
+         *  {@code APPR_SEQ_NO} (legacy R007 + the SCDUL overlay). The shared
+         *  {@code CommonApprovalDetailsDialog} renders the row from these. */
+
+        /** Withdrawal bank code ({@code SCDUL_PYMN_SUMR.OUT_BANK_CD}). */
+        String outBankCd,
+
+        /** Resolved withdrawal bank display name (BANK_INFM / NAPAS-CITAD). */
+        String outBankNm,
+
+        /** Withdrawal account number ({@code SCDUL_PYMN_SUMR.WDRL_ACT_NO}). */
+        String wdrlActNo,
+
+        /** Withdrawal account currency ({@code SCDUL_PYMN_SUMR.WDRL_CCY_CD}). */
+        String wdrlCcyCd,
+
+        /** Payroll fund type ({@code EXPT_RESOL_MSTR.APPR_FUND_TP}) —
+         *  {@code 0}=Salary / {@code 1}=Bonus / {@code 9}=Other. Detail-read
+         *  only (null on list rows; meaningful only when {@code apprDv = '21'}).
+         *  The frontend resolves the localized label (legacy
+         *  {@code comm_0195_001.ts:885-898}, incl. the BANK_CD 11704088
+         *  override) so the dialog stays presentational. */
+        String apprFundTp
+
+) {
+
+    /**
+     * Detail-read enrichment: returns a copy of this row with the
+     * withdrawal-account fields populated and {@code cont} overridden with the
+     * legacy {@code BLTB_POST_INFM.POST_CONT} note. Used by
+     * {@code ApprovalDetailService.master} so the shared Approval Details popup
+     * matches the per-type Scheduled detail (and legacy {@code comm_0195_001})
+     * regardless of entry point. The list path never calls this — its rows keep
+     * null withdrawal fields and the {@code EXPT_RESOL_MSTR.CONT} value.
+     * {@code apprFundTp} is preserved (it is enriched separately in
+     * {@code findOne} via {@link #withApprFundTp}).
+     */
+    public ApprovalBoxRow withDetail(String outBankCd, String outBankNm,
+                                     String wdrlActNo, String wdrlCcyCd, String cont) {
+        return new ApprovalBoxRow(
+                apprSeqNo, docNo, title, fileName, cont, apprDv, typeLabel, currency,
+                totPayAmt, payDate, draftUserId, draftUserNm, regDtm, apprStts,
+                apprvrTotCnt, apprvrApprTotCnt, payEndYn, approvers,
+                outBankCd, outBankNm, wdrlActNo, wdrlCcyCd, apprFundTp);
+    }
+
+    /**
+     * Detail-read enrichment for the Payroll Type row. Populated in
+     * {@code ApprovalBoxService.findOne} from {@code EXPT_RESOL_MSTR.APPR_FUND_TP}
+     * (which is loaded there); null on every list row. Kept separate from
+     * {@link #withDetail} because the value's source is the master entity, not
+     * the sibling batch.
+     */
+    public ApprovalBoxRow withApprFundTp(String apprFundTp) {
+        return new ApprovalBoxRow(
+                apprSeqNo, docNo, title, fileName, cont, apprDv, typeLabel, currency,
+                totPayAmt, payDate, draftUserId, draftUserNm, regDtm, apprStts,
+                apprvrTotCnt, apprvrApprTotCnt, payEndYn, approvers,
+                outBankCd, outBankNm, wdrlActNo, wdrlCcyCd, apprFundTp);
+    }
+}

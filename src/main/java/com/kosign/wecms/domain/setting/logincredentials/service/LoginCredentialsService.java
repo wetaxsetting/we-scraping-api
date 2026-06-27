@@ -667,6 +667,18 @@ public class LoginCredentialsService {
         if (storedPassword == null || !storedPassword.equals(userPassword)) {
             throw new BusinessException("WBE2091");
         }
+        // F-07: audit the successful reveal. Actor / tenant / timestamp are filled
+        // by AuditLogService from TenantContext; refNo = credential table, refNo1 =
+        // SEQ_NO. The plaintext credential is NEVER recorded — only the activity.
+        // AuditLogService.append runs in its own REQUIRES_NEW transaction, so this
+        // write commits independently of this read-only method.
+        auditLogService.append(AuditLogContext.builder()
+                .wsvcId(WSVC_ID)
+                .refNo(TYPE_BANK.equals(normalizedType) ? REF_NO_BANK : REF_NO_GDT)
+                .refNo1(seqNo.toPlainString())
+                .activityKey("audit.login_credentials.activity")
+                .detailKey("audit.login_credentials.reveal.detail")
+                .build());
         return new RevealResponse(loginId, storedPassword);
     }
 

@@ -1,6 +1,6 @@
 # Vendor Payment — Refactor Feature Spec (Backend)
 
-> **Frontend counterpart:** [wecms-web/docs/features/payment/vendor-payment/README.md](../../../../../wecms-web/docs/features/payment/vendor-payment/README.md) · **Sub-modules:** Scheduled Payment (`pymn_0001_*`) + Payment Result (`pymn_0002_*`).
+> **Frontend counterpart:** [wecms-web/docs/features/payment/vendor-payment/README.md](../../../../../wecms-web/docs/features/payment/vendor-payment/README.md) · **Sub-modules:** Scheduled Payment + Payment Result.
 
 ## Documents in this folder
 
@@ -33,7 +33,6 @@ The four screens are sections of this hub (no separate per-screen files). File-l
 | System | Refactor (Spring Boot + Next.js) |
 | Slug | `vendor-payment` |
 | Module | Payment → Vendor Payment |
-| JEX counterparts | `pymn_0001_*` (Vendor Payment Scheduled) + `pymn_0002_*` (Vendor Payment Result). |
 | Discriminator | `SCDUL_PYMN_TYPE_CD = "01"` — refactor enum `ScdulPymnTypeCd.VENDOR.code()` (applied at every repository call). |
 | Audit `WSVC_ID` | `vendor-payment` — declared as a `static final String WSVC_ID` at [VendorPaymentService.java:113](../../../../src/main/java/com/kosign/wecms/domain/payment/vendorpayment/service/VendorPaymentService.java#L113). |
 | REST URI base | `/api/v1/payment/vendor-payment` |
@@ -181,6 +180,13 @@ Source from (in priority order):
 1. [`VendorPaymentController.java`](../../../../src/main/java/com/kosign/wecms/domain/payment/vendorpayment/controller/VendorPaymentController.java) for the REST surface.
 2. [`VendorPaymentService.java`](../../../../src/main/java/com/kosign/wecms/domain/payment/vendorpayment/service/VendorPaymentService.java) + [`VendorPaymentResultService.java`](../../../../src/main/java/com/kosign/wecms/domain/payment/vendorpayment/service/VendorPaymentResultService.java) for business logic + audit channel.
 3. The frontend pages + [`lib/api/vendorPayment.ts`](../../../../../wecms-web/lib/api/vendorPayment.ts) for the UX + wire surface.
+
+---
+
+## Legacy & Migration Traceability
+
+- **Sub-module WSVC mapping:** Scheduled Payment = `pymn_0001_*` ; Payment Result = `pymn_0002_*`.
+- **JEX counterparts:** `pymn_0001_*` (Vendor Payment Scheduled) + `pymn_0002_*` (Vendor Payment Result).
 
 ---
 

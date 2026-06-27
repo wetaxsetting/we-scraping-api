@@ -140,8 +140,22 @@ public class SettingsBankAccountService {
         Map<String, String> bankNames = resolveBankNames(rows);
         Map<String, String> modifierNames = resolveModifierNames(rows);
 
+        // Permission-label inputs, batched for the whole tenant in two
+        // queries (was 4 per row: count V/W + first-name V/W). The maps
+        // reproduce the exact per-account aggregate used below.
+        Map<String, Long> permCounts = new HashMap<>();
+        for (AcctAuthInfoRepository.PermissionCount pc : acctAuthRepo.countActiveByTenant(bizKey)) {
+            permCounts.put(permKey(pc.getBankCd(), pc.getAcctNo(), pc.getAuthType()), pc.getCnt());
+        }
+        Map<String, String> permFirstNames = new HashMap<>();
+        for (AcctAuthInfoRepository.PermissionFirstName pn : acctAuthRepo.findActiveGranteesByTenant(bizKey)) {
+            // First row per group is the earliest-REG_DTM grantee (query ORDER BY).
+            permFirstNames.putIfAbsent(permKey(pn.getBankCd(), pn.getAcctNo(), pn.getAuthType()), pn.getUserNm());
+        }
+
         List<BankAccountRow> items = rows.stream()
-                .map(r -> toRow(r, bankNames, modifierNames, resolvePermissionLabels(bizKey, r)))
+                .map(r -> toRow(r, bankNames, modifierNames,
+                        resolvePermissionLabels(r, permCounts, permFirstNames)))
                 .toList();
         return new BankAccountListResponse(items);
     }
@@ -179,23 +193,29 @@ public class SettingsBankAccountService {
      *  grantee's name, plus "+ N more" when more than one. Returns a
      *  two-element array: [viewLabel, withdrawalLabel]. Either can be
      *  null when the account has no active grantee of that kind. */
-    private String[] resolvePermissionLabels(String bizKey, AcctMstr r) {
+    private String[] resolvePermissionLabels(AcctMstr r,
+            Map<String, Long> permCounts, Map<String, String> permFirstNames) {
         return new String[] {
-                composePermissionLabel(bizKey, r, "V"),
-                composePermissionLabel(bizKey, r, "W"),
+                composePermissionLabel(r, "V", permCounts, permFirstNames),
+                composePermissionLabel(r, "W", permCounts, permFirstNames),
         };
     }
 
-    private String composePermissionLabel(String bizKey, AcctMstr r, String authType) {
-        long count = acctAuthRepo.countActiveByAccount(
-                bizKey, r.getBankCd(), r.getAcctNo(), authType);
+    private String composePermissionLabel(AcctMstr r, String authType,
+            Map<String, Long> permCounts, Map<String, String> permFirstNames) {
+        String key = permKey(r.getBankCd(), r.getAcctNo(), authType);
+        long count = permCounts.getOrDefault(key, 0L);
         if (count == 0) return null;
-        List<String> firstName = acctAuthRepo.findFirstActiveUserName(
-                bizKey, r.getBankCd(), r.getAcctNo(), authType);
-        if (firstName.isEmpty()) return null;
-        String head = firstName.get(0);
+        String head = permFirstNames.get(key);
+        if (head == null) return null;          // active grantee(s) but none with a USER_INFM match
         if (count == 1) return head;
         return head + " + " + (count - 1) + " more";
+    }
+
+    /** Composite map key for (bankCd, acctNo, authType). Space separator —
+     *  bank codes and account numbers are bank-issued and contain no spaces. */
+    private static String permKey(String bankCd, String acctNo, String authType) {
+        return bankCd + " " + acctNo + " " + authType;
     }
 
     /**

@@ -23,11 +23,16 @@ import java.math.BigDecimal;
  * does NOT extend {@link com.kosign.wecms.common.entity.BaseEntity},
  * same precedent as {@code BankCertInfo}.
  *
- * <p>{@code CERT_INFO_DETL_CON} holds an AES-GCM base64 ciphertext of
- * the password, produced by
- * {@link com.kosign.wecms.domain.banking.bankcredentials.service.BankCertCryptoService}.
- * Bank and GDT credentials share one crypto key so the same service
- * handles both column populations.
+ * <p>{@code CERT_INFO_DETL_CON} holds a legacy-compatible AES-256-CBC
+ * (pgcrypto {@code encrypt()}) base64 ciphertext of the password, produced
+ * by
+ * {@link com.kosign.wecms.domain.banking.bankcredentials.service.BankCertCryptoService}
+ * — byte-identical to the legacy JEX {@code public.encrypt()/decrypt()} DB
+ * functions. Bank and GDT credentials share one crypto key so the same
+ * service handles both column populations.
+ *
+ * <p>(Superseded note: the retired refactor AES-GCM cipher is NOT used here
+ * — do not reintroduce it while the DB is shared with JEX.)
  */
 @Getter
 @Setter
@@ -54,7 +59,7 @@ public class GdtCertInfo {
     @Column(name = "CERT_INFO_CON", length = 2000)
     private String certInfoCon;
 
-    /** AES-GCM ciphertext (base64) of the password. */
+    /** Legacy-compatible AES-256-CBC (pgcrypto {@code encrypt()}) base64 ciphertext of the password. */
     @Column(name = "CERT_INFO_DETL_CON", length = 2000)
     private String certInfoDetlCon;
 

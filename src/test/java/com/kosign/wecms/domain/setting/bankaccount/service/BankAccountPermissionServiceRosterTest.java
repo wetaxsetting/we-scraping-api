@@ -24,6 +24,8 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -73,7 +75,7 @@ class BankAccountPermissionServiceRosterTest {
         when(authRepo.findAllByAccount(BIZ, BANK, ACCT, "V")).thenReturn(List.of());
         when(userBusiRepo.findTenantUsersForManagement(BIZ))
                 .thenReturn(List.of(adminUser, normalUser));
-        when(busiAdmnRepo.findAll()).thenReturn(List.of(admin(ADMIN)));
+        when(busiAdmnRepo.findAllByBizKey(BIZ)).thenReturn(List.of(admin(ADMIN)));
 
         BankAccountPermissionResponse resp = service.list(BANK, ACCT, "VIEW");
 
@@ -85,6 +87,9 @@ class BankAccountPermissionServiceRosterTest {
         // No member is ever typed ADMIN.
         assertThat(resp.members())
                 .noneMatch(m -> "ADMIN".equals(m.userType()));
+        // Tenant scoping: the cross-tenant findAll() must never be used.
+        verify(busiAdmnRepo).findAllByBizKey(BIZ);
+        verify(busiAdmnRepo, never()).findAll();
     }
 
     @Test
@@ -96,13 +101,14 @@ class BankAccountPermissionServiceRosterTest {
         when(authRepo.findAllByAccount(BIZ, BANK, ACCT, "W")).thenReturn(List.of());
         when(userBusiRepo.findTenantUsersForManagement(BIZ))
                 .thenReturn(List.of(adminUser, normalUser));
-        when(busiAdmnRepo.findAll()).thenReturn(List.of(admin(ADMIN)));
+        when(busiAdmnRepo.findAllByBizKey(BIZ)).thenReturn(List.of(admin(ADMIN)));
 
         BankAccountPermissionResponse resp = service.list(BANK, ACCT, "WITHDRAWAL");
 
         assertThat(resp.members()).hasSize(1);
         assertThat(resp.members().get(0).userId()).isEqualTo(USER);
         assertThat(resp.members()).noneMatch(m -> "ADMIN".equals(m.userType()));
+        verify(busiAdmnRepo, never()).findAll();
     }
 
     /* ------------------------------------------------------------------ */

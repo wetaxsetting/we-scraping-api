@@ -1,11 +1,10 @@
 # Settings > Contacts — Backend Feature (Refactor)
 
-**Status:** ✅ Implemented full-stack — backend (controller + 7 services + documented repositories + 6 entities + 22 DTOs + 3 export providers + per-table Flyway migrations, with unit + controller tests) and frontend wired; legacy parity verified; **Contacts Export (GAP-01) CLOSED 2026-06-08**; SIT/UAT verified. **Migration numbering note:** the schema now lands as per-table migrations (V112/V114/V116/V119/V121 + V140/V159) after the 2026-06-09 consolidation — see [§ Backend package layout](#backend-package-layout) and [migration-guide.md](migration-guide.md). **Audit gap:** the contacts service currently writes **no** `AUDIT_LOGS_INFM` rows (see [§ Audit](#quick-facts) note + [functional-specification.md](functional-specification.md)).
+**Status:** ✅ Implemented full-stack — backend (controller + 7 services + documented repositories + 6 entities + 22 DTOs + 3 export providers + per-table Flyway migrations, with unit + controller tests) and frontend wired; legacy parity verified; **Contacts Export (GAP-01) CLOSED 2026-06-08**; SIT/UAT verified. **Audit gap:** the contacts service currently writes **no** `AUDIT_LOGS_INFM` rows (see [§ Audit](#quick-facts) note + [functional-specification.md](functional-specification.md)).
 **Module / menu:** Settings → **Contacts** (Settings modal panel — **no standalone route**)
 **Refactor slug:** `contacts` (matches the JEX-traceability, backend, and frontend counterparts)
 **Wire base path:** `/api/v1/settings/contacts` (list · detail · create · update · single + bulk soft-delete · `/export` · `/excel/import` · `/excel/preflight` · `/excel/resolve-recipients` · `/by-codes` · `/banks` · `/lookup-recipient` · `/{trcoKey}/files…`)
 **Menu permission slug:** `settings-core-contacts` (`@PreAuthorize("@menuAuthz.canAccess('settings-core-contacts')")`, class-level)
-**Legacy JEX counterpart:** WSVC family `comm_0184_001` (list) · `comm_0184_002_c001` (create) · `comm_0184_005_u001` (edit) · `comm_0184_001_u001` (bulk soft-delete) · `comm_0184_007` (Excel import) · `comm_0184_001_r006_excel` (export). Tables `TRCO_INFM` + `TRCO_ADDR_INFM` + `TRCO_ACCT_INFO` + `TRCO_OVRS_INFM` + `PGRO_BSAC_LNKN_INFM` + `TRCO_INFO_FILE`.
 
 > This folder is the **primary backend documentation home** for Contacts.
 > It consolidates and indexes material that previously lived in a single flat file
@@ -92,6 +91,14 @@ com.kosign.wecms.domain.setting.contacts
 ```
 
 Flyway (current per-table scheme after the 2026-06-09 consolidation — **one legacy table per migration file, DDL copied verbatim from the live JEX DB incl. triggers/`bpchar`/full column sets**): V112 `trco_acct_info` · V114 `trco_addr_infm` · V116 `trco_info_file` · V119 `trco_infm` · V121 `trco_ovrs_infm` · V82 `pgro_bsac_lnkn_infm`; V140 `wb_get_next_val` (carries the `trco_infm.trco_key` + `trco_info_file.file_id` branches) · V159 `sq_trco_key`. **The `wb_get_napas_bank_nm_or_citad_bank_nm` function is NOT defined by any refactor migration — it is expected to pre-exist in the live JEX DB** (refactor runs against the live JEX DB in all envs; `LegacyFunctionRepository.resolveNapasOrCitadBankName` calls it directly). There is **no contacts row in the View Setting seed (V93/V156)** and **no export View Setting seed in the live set** — the old `V247__contacts_export_view_setting_seed.sql` was archived in the 2026-06-09 renumber and **removed with `db/archive/` 2026-06-23 (approved decision)**; export columns resolve via the provider allow-list ∩ request columns (no `WBE2013` gate). No demo seed (V115) and no `disp_ord`→INTEGER hotfix (V117) in the current set — `DISP_ORD` is `NUMERIC(10,0)` and the entities map it via `@JdbcTypeCode(NUMERIC)`. ⚠️ The earlier doc revisions cited a different, now-stale migration layout (V112=5-table schema, V113/V114/V115/V117/V139/V140/V154/V187/V247); those numbers no longer match the tree.
+
+---
+
+## Legacy & Migration Traceability
+
+**Legacy JEX counterpart:** WSVC family `comm_0184_001` (list) · `comm_0184_002_c001` (create) · `comm_0184_005_u001` (edit) · `comm_0184_001_u001` (bulk soft-delete) · `comm_0184_007` (Excel import) · `comm_0184_001_r006_excel` (export). Tables `TRCO_INFM` + `TRCO_ADDR_INFM` + `TRCO_ACCT_INFO` + `TRCO_OVRS_INFM` + `PGRO_BSAC_LNKN_INFM` + `TRCO_INFO_FILE`.
+
+**Migration numbering note:** the schema now lands as per-table migrations (V112/V114/V116/V119/V121 + V140/V159) after the 2026-06-09 consolidation — see [§ Backend package layout](#backend-package-layout) and [migration-guide.md](migration-guide.md).
 
 ---
 

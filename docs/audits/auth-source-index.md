@@ -27,7 +27,7 @@ Frontend paths under `wecms-web/`.
 - `lib/types/api.ts` — `LoginRequestRec`, `LoginResponseRec` (dual shape), `CompanyOptionRec`.
 
 ## logout
-**Backend** — `AuthController.logout()` (public stub) + `config/SecurityConfig.java` permit-all entry.
+**Backend** — `AuthController.logout()` → `AuthService.logout()` → `common/security/TokenRevocationService.revokeToken(...)` (revokes the presented JWT `jti`; **REMEDIATED via F-03** — formerly a public no-op stub) + `config/SecurityConfig.java` permit-all entry. Revocation store is in-memory (per-node). Test: `common/security/JwtRevocationTest.java`.
 **Frontend** — `components/layout/ProfileMenu.tsx` (confirm dialog + `useTransition`), `lib/auth/client.logout()`, `lib/auth/storage.ts` (`tokenStorage.clear`/`userStorage.clear`; preserves locale + saved id).
 
 ## change-password
@@ -45,7 +45,7 @@ Frontend paths under `wecms-web/`.
 
 ## jwt-authentication
 **Backend** — `common/security/`
-- `JwtTokenProvider.java` (HS256/HS512, `issue(...)`, `parse(...)`, `expiresInSeconds()`), `JwtAuthenticationFilter.java`, `JwtAuthenticationEntryPoint.java` (→`WBE1401`), `config/JwtProperties.java` (`wecms.jwt.*`, env `WECMS_JWT_SECRET`), `common/tenant/TenantContext.java`.
+- `JwtTokenProvider.java` (HS256/HS512, `issue(...)` stamps a `jti`, `parse(...)`, `expiresInSeconds()`), `JwtAuthenticationFilter.java` (parses + **checks revocation** before binding authorities), `TokenRevocationService.java` (in-memory `jti` denylist + per-user not-before cutoff; `revokeToken`/`revokeAllForUser` — **REMEDIATED via F-03**), `JwtAuthenticationEntryPoint.java` (→`WBE1401`), `config/JwtProperties.java` (`wecms.jwt.*`, env `WECMS_JWT_SECRET`), `common/tenant/TenantContext.java`. Test: `common/security/JwtRevocationTest.java`.
 **Frontend** — `lib/auth/storage.ts` (`tokenStorage` — `wecms_token` localStorage + non-HttpOnly cookie `Max-Age=3600`), `lib/axios.ts` (request Bearer interceptor, `baseURL` `NEXT_PUBLIC_API_BASE_URL`).
 
 ## authorization

@@ -143,7 +143,7 @@ Authorization error — viewer attempts a write → **HTTP 403**, `status.code =
 | `WBE2115` | 200 | Uploaded file has no usable filename |
 | `WBE2116` | 200 | Uploaded file empty |
 | `WBE2117` | 200 | Uploaded file exceeds 2 MB (arg = cap) |
-| `WBE2118` | 200 | Extension not in allow-list jpg/jpeg/png/gif/svg (arg = list) |
+| `WBE2118` | 200 | Extension not in allow-list jpg/jpeg/png/gif (arg = list); `svg` is **rejected** (F-02 — inline SVG can carry `<script>`, stored XSS) |
 | `WBE9999` | 500 | Unexpected server fault |
 
 All codes resolve via `messages.properties` / `messages_en.properties`. Envelope + trace-id rules:

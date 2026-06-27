@@ -5,7 +5,6 @@
 **Refactor slug:** `firm-banking-settings` (matches the JEX-traceability, backend, and frontend counterparts)
 **Wire base path:** `/api/v1/settings/firm-banking-settings` (list · detail · audit · create · update · delete)
 **Menu permission slug:** `settings-firm-banking-settings`
-**Legacy JEX counterpart:** WSVC family `comm_0220_001` (list `_r001` / delete `_d001`), `comm_0220_002` (create `_c001`), `comm_0220_003` (detail+audit `_r001` / update `_u001`). Table `TB_FIRM_CONF`.
 
 > This folder is the **primary documentation home** for Firm Banking Settings on the backend.
 > It consolidates and indexes material that previously lived in a single flat file; that file is
@@ -93,6 +92,12 @@ com.kosign.wecms.domain.setting.firmbankingsettings
 | [migration-guide.md](migration-guide.md) | How each JEX layer (`_view.jsp` / `_act.jsp` / IDO / WSVC / entity / DAO) became its Spring counterpart, incl. dropped/dead legacy flows |
 | [test-scenarios.md](test-scenarios.md) | SIT/UAT scenarios + the existing JUnit coverage map |
 | [refactor-gap-analysis.md](refactor-gap-analysis.md) | Final parity review (MATCH / APPROVED DEVIATION / DEAD LEGACY / PARTIAL / MISSING) + the OQ decision log |
+
+---
+
+## Legacy & Migration Traceability
+
+**Legacy JEX counterpart:** WSVC family `comm_0220_001` (list `_r001` / delete `_d001`), `comm_0220_002` (create `_c001`), `comm_0220_003` (detail+audit `_r001` / update `_u001`). Table `TB_FIRM_CONF`.
 
 ---
 

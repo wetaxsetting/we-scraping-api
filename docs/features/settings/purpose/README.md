@@ -5,7 +5,6 @@
 **Refactor slug:** `purpose-settings` (matches the JEX-traceability, backend, and frontend counterparts)
 **Wire base path:** `/api/v1/settings/purpose-settings` (list · detail · create · update · delete · `/order` · `/excel/preview` · `/excel/import`)
 **Menu permission slug:** `settings-core-purpose`
-**Legacy JEX counterpart:** WSVC family `comm_0187_001` (+ `_r002` / `_c001` / `_u002` / `_u004`) and `comm_0187_004` (Excel). Table `BUSI_USAG_SET_INFM`.
 
 > This folder is the **primary documentation home** for Purpose on the backend.
 > It consolidates and indexes material that previously lived in a single flat file and in the
@@ -78,6 +77,12 @@ com.kosign.wecms.domain.setting.purposesettings
 ```
 
 Flyway: [V35](../../../../src/main/resources/db/migration) `BUSI_USAG_SET_INFM` schema (column-for-column DEV parity) · [V36](../../../../src/main/resources/db/migration) `BUSI_USAG_SET_INFM_LANG_DETL` schema (legacy lang-detail table — present in the inventory, but **not** an entity in this feature; single-table model) · [V140](../../../../src/main/resources/db/migration) the centralized `wb_get_next_val` carries the `busi_usag_set_infm.use_usag_cd` branch (no-group plain 10-digit, branch #19; grouped companion branch #18), PK-gen funnels through `LegacyFunctionRepository.nextUseUsagCd`. There is **no** `v_purpose_in_use` view migration — the in-use projection is a Hibernate `@Subselect` only. (The earlier V80–V82 numbering in this doc predated the 2026-06-09 migration renumber/consolidation and was stale.)
+
+---
+
+## Legacy & Migration Traceability
+
+**Legacy JEX counterpart:** WSVC family `comm_0187_001` (+ `_r002` / `_c001` / `_u002` / `_u004`) and `comm_0187_004` (Excel). Table `BUSI_USAG_SET_INFM`.
 
 ---
 
