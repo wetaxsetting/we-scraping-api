@@ -31,6 +31,14 @@ single cross-sibling / shared-infrastructure authority for the module (this READ
 > Shared payment infrastructure (dispatch, dispatch callbacks, validation/blocked-chars, notification
 > BLTB write-side) is indexed in [payment-source-index.md](../../audits/payment-source-index.md) §8.
 
+## Cross-cutting payment features
+- **HAENGSUNG Oracle Integration — master roadmap** (all six Oracle flows, step-by-step): [`../haengsung-oracle-integration-roadmap.md`](../haengsung-oracle-integration-roadmap.md). Start here for the end-to-end plan + recommended order.
+- **HAENGSUNG Payment Refresh** (Vendor / Expense / Payroll / Overseas, `PRDT_TYPE='H'` only — Internal Transfer excluded): [`../haengsung-payment-refresh.md`](../haengsung-payment-refresh.md). Two-datasource (WeCMS Postgres + HAENGSUNG Oracle ERP) import that replaces Excel Upload with Refresh. **Phase 1 (this feature)** = manual Refresh import only.
+- **HAENGSUNG ERP integration — follow-on / separate flows** (deferred; see the Refresh spec §25 scope decision):
+  - **Phase 3** — Approval-status write-back: [`../haengsung-approval-status-writeback.md`](../haengsung-approval-status-writeback.md) (`ErpStatusUpdateHelper`).
+  - **Phase 4** — Dispatch-result write-back: [`../haengsung-dispatch-result-writeback.md`](../haengsung-dispatch-result-writeback.md) (`ERP_0100_004`).
+  - **Separate ERP sync** (not payment): [`../haengsung-exchange-rate-sync.md`](../haengsung-exchange-rate-sync.md) (`ERP_0100_001`) · [`../haengsung-card-account-sync.md`](../haengsung-card-account-sync.md) (`ERP_0100_003`).
+
 ## Audit (2026-06-23 re-audit)
 - **Doc-vs-code audit:** [payment-docs-audit.md](../../audits/payment-docs-audit.md) — per-module status + corrections made.
 - **Gap analysis:** [payment-gap-analysis.md](../../audits/payment-gap-analysis.md) — remaining gaps (MATCH / APPROVED DEVIATION / DEAD LEGACY / PARTIAL / MISSING).

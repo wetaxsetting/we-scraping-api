@@ -45,6 +45,12 @@ src/main/resources/application-local.yml
 # .env files (.env.local / .env.sit / .env.uat / .env.prod) remain ignored.
 !.env.*.example
 
+# HAENGSUNG Oracle credential handoff files — NEVER commit. Only the
+# placeholder env templates (.env.sit.example) carry Oracle keys.
+SIT oracle db.txt
+*oracle*db*.txt
+*oracle*.secret
+
 ### JVM dump artifacts ###
 replay_pid*.log
 hs_err_pid*.log

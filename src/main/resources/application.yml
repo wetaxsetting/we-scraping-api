@@ -303,6 +303,32 @@ wecms:
     unique-key: ${WECMS_OSMC_UNIQUE_KEY}
 
 # =============================================================================
+# HAENGSUNG Oracle ERP integration (Step 1 foundation)
+# =============================================================================
+# Secondary, OPTIONAL Oracle datasource for HAENGSUNG (PRDT_TYPE='H') ERP
+# integration — see docs/features/haengsung-oracle-integration-roadmap.md.
+# OFF BY DEFAULT: when `enabled` is false no Oracle bean is created and the app
+# boots against PostgreSQL only. The PostgreSQL datasource stays @Primary; this
+# Oracle datasource is secondary and JdbcTemplate-only (no JPA entities, no
+# Flyway, no Oracle table in the inventory).
+#
+# These are bound here in the base file (with safe defaults) so EVERY profile
+# inherits the OFF default. Real values are supplied per environment via env:
+#   - Local dev SIT run -> the gitignored .env.sit (copy from .env.sit.example).
+#   - Real SIT host     -> OS env via Tomcat bin/setenv.sh (AUTHORITATIVE —
+#                          .env.sit is NOT read on the SIT box, per memory
+#                          reference_sit_server_config_setenv).
+# Credentials are never committed and never logged. When `enabled=true` and any
+# of url/username/password is missing, HaengsungOracleProperties fails fast at
+# startup (naming the missing setting, never its value).
+haengsung:
+  oracle:
+    enabled: ${HAENGSUNG_ORACLE_ENABLED:false}
+    url: ${HAENGSUNG_ORACLE_URL:}
+    username: ${HAENGSUNG_ORACLE_USERNAME:}
+    password: ${HAENGSUNG_ORACLE_PASSWORD:}
+
+# =============================================================================
 # Logging
 # =============================================================================
 # Surface the per-request traceId (set by TraceIdFilter into MDC under key
