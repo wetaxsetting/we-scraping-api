@@ -30,6 +30,7 @@ Status legend: ✅ Implemented · 🟡 Partial (live but with a deferred slice /
 | 9 | Table Sort | [table-sort/](table-sort/README.md) | — | ✅ Implemented (query-param contract; `common/web` + 28 per-domain whitelist enums) |
 | 10 | Dialog / Popup | [dialog-popup/](dialog-popup/README.md) | — | ⚪ WEB-only (no backend surface; API README is a stub → frontend) |
 | 11 | Error Envelope (response/exception/trace/i18n) | [error-envelope/](error-envelope/README.md) | — | ✅ Implemented (applies to every endpoint) |
+| 12 | Bank Cut-off Validation | [bank-cutoff-validation/](bank-cutoff-validation/bank-cutoff-validation.md) | — | ✅ Implemented (shared `CutoffValidator`; all 5 payment product types; Shinhan CITAD 16:30 + VCB) |
 
 ## Cross-linked — owned by a domain (no Common folder)
 

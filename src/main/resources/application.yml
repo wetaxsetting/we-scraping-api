@@ -224,11 +224,30 @@ wecms:
     # ===========================================================================
     # Bound under wecms.internal-transfer.cutoff (CutoffProperties prefix), so it
     # stays nested under internal-transfer — but it is a distinct concern from
-    # file storage. Bank codes for the past-cut-off rule; the full Woori +
-    # Shinhan time table lives in application-local.yml / -sit.yml.
+    # file storage. Vietnam-local cut-off windows from legacy
+    # PymnHelper.getCutoffConfig. The bank a window belongs to is resolved at
+    # runtime from TB_FIRM_BANK_CODE.ENG_ABRVAT_NM (ShinhanBank / WooriBank /
+    # Vietcombank) — NOT a hard-coded OUT_BANK_CD; the old shinhan-bank-cd /
+    # woori-bank-cd env keys (88886000 / 11704000) never matched the real firm
+    # codes (970424 / 970457 / 970436) and were removed 2026-06-29.
+    #   citad     = CITAD/EBANK/VCB via File SFTP
+    #   citad-api = CITAD via real-time API (Shinhan only — 16:30, Shinhan Bank
+    #               confirmation 17-Jun-2026; replaces the old 15:30 for the API channel)
+    #   citad-large = VCB ≥500,000,000 VND per-transaction tier (16:30)
     cutoff:
-      shinhan-bank-cd: ${WECMS_SHINHAN_BANK_CD}
-      woori-bank-cd:   ${WECMS_WOORI_BANK_CD}
+      shinhan:
+        napas:     { start: "00:05", end: "23:45" }
+        citad:     { start: "09:00", end: "15:30" }
+        citad-api: { start: "09:00", end: "16:30" }
+        swift:     { start: "09:00", end: "22:00" }
+      woori:
+        napas:     { start: "00:15", end: "23:55" }
+        citad:     { start: "08:30", end: "17:40" }
+        swift:     { start: "08:30", end: "19:10" }
+      vcb:
+        napas:       { start: "00:05", end: "23:45" }
+        citad:       { start: "08:00", end: "15:30" }
+        citad-large: { start: "08:00", end: "16:30" }
 
   # =============================================================================
   # Exchange-rate collection batch (Shinhan + Woori FX scraping)

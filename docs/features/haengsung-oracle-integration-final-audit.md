@@ -3,7 +3,39 @@
 **System:** Refactor (Spring Boot `wecms-api` + Next.js `wecms-web`) vs Legacy JEX
 **Audit date:** 2026-06-29
 **Auditor:** Claude Code (read-only across all 5 systems)
-**Verdict:** ✅ **Implementation complete and legacy-faithful.** All 11 in-scope flows are implemented, wired, tested, and flag-gated OFF by default. All Oracle interface tables and WeCMS target columns exist and match. Differences from legacy are limited to **documented intentional improvements** (event-driven write-back vs batch; explicit success dialog; inline spinner). One low-severity verification item is flagged (card-sync source table naming). No credential leak. No DB write was performed during this audit.
+**Verdict:** ✅ **Code/DB/legacy complete and legacy-faithful.** All 11 in-scope flows are implemented, wired, tested. All Oracle interface tables and WeCMS target columns exist and match. Differences from legacy are limited to **documented intentional improvements** (event-driven write-back vs batch; explicit success dialog; inline spinner). No credential leak. No DB write was performed during this audit.
+
+> ⚠️ **See the §Re-audit (2026-06-29) below for the current release verdict** — the YAML config was changed to bare placeholders since this section was written, which introduces deployment-config WARNINGs. The code-level verdict above stands; the *release* verdict is 🟡 conditional.
+
+---
+
+## Re-audit — 2026-06-29 (final pre-SIT, from source)
+
+Re-verified from source (not from prior reports): backend (27 files), frontend (4 modules + shared), legacy JEX (`ErpDataRefreshHelper`, `ErpStatusUpdateHelper`, `ERP_0100_001`–`004`, refresh JSP), Oracle DB (5 tables, live), WeCMS Postgres (8 target tables, live), and all config/docs.
+
+### Verified ✅ (no defects found)
+- **Backend:** no dead/duplicated code, no orphan beans, no wrong `@Transactional`, no JPA on Oracle (all `@Repository`+`JdbcTemplate` via `@Qualifier(ORACLE_JDBC_TEMPLATE)`). PostgreSQL stays `@Primary`; Oracle secondary/JdbcTemplate-only; `initializationFailTimeout(-1)` so an Oracle outage never blocks boot. All services + 3 scheduler jobs `@ConditionalOnProperty(...enabled=true, matchIfMissing=false)` + double-gated via `ObjectProvider` when `haengsung.oracle.enabled=false`. ShedLock `PT10M/PT30S`, zone `Asia/Ho_Chi_Minh`. No credential/URL logged (redacted SQLState/errorCode only).
+- **Legacy parity:** status lifecycle matches legacy literals — `LAST_STATUS` 00/10/20/32/51/52; master `END_GB='1'` on reject/close; detail `END_GB` 2 (received)/3 (reject)/5 (fail)/8 (success); detail `PROC_STS='XXXX'` on reject, `'0999'` on dispatch fail, else `RS_CD`; `ERP_RCV_FLAG='Y'`+`IF_SND_*`/`FLAG_*` on receive; `ERP_SND_YN='Y'`+`ERP_GET_ST='0'` on FX/account/card; `ERP_PROC_CMPL_YN='Y'` after dispatch; status map PENDING→10/APPROVED→20/REJECTED→32/PROCESSING→51; account VND/FCY audit split. NOR/BUL/ERR counts + amounts match.
+- **Oracle DB (read-only):** `TB_TRNS_MAST` (22), `TB_TRNS_DETAIL` (40), `TB_FCY_EXRATE` (6,368), `TB_ACCT_HISTORY` (1,543), `TB_CARD_APPROVAL` (112) — all required columns present.
+- **WeCMS Postgres:** all 8 target tables carry the required ERP columns (`erp_file_*`, `erp_proc_cmpl_yn`, `appr_seq_no`, `trnf_yn`, `erp_snd_yn`, `hand_reg_yn`, `erp_type`).
+- **Frontend:** Refresh gated `isProductType(user,'H') && onRefresh!==undefined`; Internal Transfer never passes `onRefresh` (Excel Upload only); single shared `useHaengsungRefresh` hook + single `haengsungPaymentRefresh` client (no dup/dead); loading/disable/duplicate-guard/success+error dialogs/list-reload all present; shared `RequestApprovalDialog` + `CommonApprovalDetailsDialog` (approve/reject gated to first-pending approver).
+
+### Findings (classified)
+| # | Sev | Finding | Evidence | Action |
+|---|---|---|---|---|
+| W1 | 🟡 | **Bare YAML placeholders, no defaults.** All 5 profiles bind `${HAENGSUNG_*}` (10 each, 0 defaults) — OFF-by-default safety removed; any missing var crashes the *whole* app (`Could not resolve placeholder`), not just HAENGSUNG. Caused 2 boot failures during this session. | `application*.yml` (verified 10 bare / 0 default each) | Every env's `.env`/setenv.sh must define all 10. SIT `.env.sit` verified complete (10/10) → boots. Consider restoring `:false`/`:` defaults for non-secret keys (lead's call). |
+| W2 | 🟡 | **`.env.sit` has `HAENGSUNG_ORACLE_ENABLED=false`** while its comment says "Oracle ON" → HAENGSUNG is **inert on SIT** as configured (Refresh → `WBE_HS_REFRESH_DISABLED`). | `.env.sit` (verified) | Set `=true` when the deploy intent is to exercise HAENGSUNG; align the comment. |
+| W3 | 🟡 | **Doc mismatches** (fixed in this pass): roadmap said "Planning — nothing implemented"; roadmap + SIT checklist said env vars "optional / OFF by default" (now mandatory under bare placeholders). | roadmap.md, haengsung-sit-deployment-checklist.md | ✅ Corrected 2026-06-29. |
+| W4 | 🟡 | **Card-sync source divergence (F-1).** Legacy `ERP_0100_003` reads card rows from `CARD_MSTR` (flag-update via `CARD_TRNS_HSTR_U003`); refactor reads `card_trns_hstr` directly. Both write Oracle `TB_CARD_APPROVAL` identically. | `ERP_0100_003.java` vs `HaengsungCardAccountSyncService` | Confirm row-set parity before trusting card sync in volume (SIT Step 8). |
+| W5 | 🟡 | **Exposed credentials** (Oracle `wecms` + DB `wecmsdev_owner`) pasted in chat; `.env.*` gitignored (not committed). | session transcript | Rotate both after SIT testing. |
+| W6 | 🟡 | **PROD gates open** (not SIT blockers): R-02 action-level authz, R-03 dispatch-callback hardening. | CLAUDE.md | Close before UAT/PROD. |
+
+**No 🔴 BLOCKER for SIT:** the app boots on SIT (`.env.sit` supplies all 10 vars), code is correct, datasource isolation intact, no secret committed.
+
+### Release Readiness Score — **70 / 100**
+Deductions: W1 bare-placeholder fragility −10 · W2 `.env.sit` ENABLED=false vs intent −4 · W3 doc mismatches (fixed) −6 · W4 card-sync parity unverified −4 · W5 creds to rotate −3 · W6 PROD gates −3.
+
+**Release verdict:** 🟡 **CONDITIONAL GO for SIT** — deploy boots and is safe; to actually exercise HAENGSUNG set `HAENGSUNG_ORACLE_ENABLED=true` in `.env.sit`, then run Step 8 verification (incl. F-1 card-sync parity). Not PROD-ready until W4–W6 close.
 
 > Sibling docs (source-of-truth for each flow):
 > [haengsung-oracle-integration-roadmap.md](haengsung-oracle-integration-roadmap.md) ·

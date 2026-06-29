@@ -242,24 +242,11 @@ wecms:
     # flagged for normalization. Override via WECMS_INTERNAL_TRANSFER_STORAGE_ROOT.
     storage-root: ${WECMS_INTERNAL_TRANSFER_STORAGE_ROOT}
 
-    # ===========================================================================
-    # Banking cut-off configuration
-    # ===========================================================================
-    # Bound under wecms.internal-transfer.cutoff (CutoffProperties prefix), so it
-    # stays nested under internal-transfer — but it is a distinct concern from
-    # file storage. Vietnam-local cut-off windows from legacy
-    # PymnHelper.getCutoffConfig; Shinhan past-cut-off is logged-only (non-blocking).
-    cutoff:
-      shinhan-bank-cd: ${WECMS_SHINHAN_BANK_CD}
-      woori-bank-cd:   ${WECMS_WOORI_BANK_CD}
-      shinhan:
-        napas: { start: "00:05", end: "23:45" }
-        citad: { start: "09:00", end: "15:30" }
-        swift: { start: "09:00", end: "22:00" }
-      woori:
-        napas: { start: "00:15", end: "23:55" }
-        citad: { start: "08:30", end: "17:40" }
-        swift: { start: "08:30", end: "19:10" }
+    # Banking cut-off windows (wecms.internal-transfer.cutoff) are defined once
+    # in the base application.yml (Shinhan / Woori / VCB incl. CITAD-via-API
+    # 16:30 + VCB ≥500M tier) and inherited here — no SIT override needed. Bank
+    # identity is resolved from TB_FIRM_BANK_CODE.ENG_ABRVAT_NM, so the
+    # WECMS_SHINHAN_BANK_CD / WECMS_WOORI_BANK_CD env vars are no longer consumed.
 
   # =============================================================================
   # Exchange-rate collection batch (Shinhan + Woori FX scraping)

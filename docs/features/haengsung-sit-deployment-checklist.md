@@ -2,8 +2,8 @@
 
 **Audience:** Ops / deployer (SIT Tomcat host).
 **Target:** `wecms-api` WAR on external Tomcat, `SPRING_PROFILES_ACTIVE=sit`.
-**Datasources:** WeCMS PostgreSQL (Primary, JPA/Flyway-validated) + HAENGSUNG Oracle (Secondary, JdbcTemplate-only, **optional**).
-**Golden rule:** the Oracle integration is **OFF by default**. With `HAENGSUNG_ORACLE_ENABLED=false` the app boots exactly as it does today (PostgreSQL only). No credential is ever committed or logged.
+**Datasources:** WeCMS PostgreSQL (Primary, JPA/Flyway-validated) + HAENGSUNG Oracle (Secondary, JdbcTemplate-only, **optional feature**).
+**Golden rule:** Oracle is turned off with `HAENGSUNG_ORACLE_ENABLED=false` (then the app boots PostgreSQL-only, no Oracle bean). ⚠️ **Updated 2026-06-29 — config changed to fail-fast:** `application-*.yml` now binds the HAENGSUNG vars as **bare `${…}` placeholders with no YAML defaults**. Consequently **all 10 `HAENGSUNG_*` keys must be DEFINED in the environment (`.env.*` / setenv.sh) even when the feature is OFF** — omitting any one makes the *whole app* fail to start with `Could not resolve placeholder 'HAENGSUNG_…'`. "OFF by default" now means "set `ENABLED=false`", **not** "omit the vars". No credential is ever committed or logged.
 
 Config source on the real SIT box is **`$CATALINA_BASE/bin/setenv.sh` OS environment variables** — NOT `.env.sit` (per memory `reference_sit_server_config_setenv`). `application-sit.yml` carries only bare `${WECMS_*}` / inherited `${HAENGSUNG_*}` placeholders.
 
@@ -14,16 +14,18 @@ Config source on the real SIT box is **`$CATALINA_BASE/bin/setenv.sh` OS environ
 ### 1a. Already required by the existing SIT app (unchanged)
 `WECMS_DB_URL`, `WECMS_DB_USERNAME`, `WECMS_DB_PASSWORD`, `WECMS_JWT_SECRET`, `WECMS_CORS_ALLOWED_ORIGINS`, `WECMS_COOCON_*`, `WECMS_OSMC_*`, `WECMS_*_STORAGE_ROOT`, `WECMS_SHINHAN_BANK_CD`, `WECMS_WOORI_BANK_CD`, `WECMS_EXCHANGE_RATE_BATCH_ENABLED`, dispatch/SFTP/EFS flags. (See `docs/security/required-environment-secrets.md`.)
 
-### 1b. HAENGSUNG Oracle — datasource (the only ones needed to turn the feature ON)
+### 1b. HAENGSUNG Oracle — datasource
 
-| Variable | Required when | Example | Notes |
-|---|---|---|---|
-| `HAENGSUNG_ORACLE_ENABLED` | always (controls everything) | `false` → `true` | Master switch. `false` = feature fully inert. |
-| `HAENGSUNG_ORACLE_URL` | `ENABLED=true` | `jdbc:oracle:thin:@//<host>:1521/<service>` | **Secret-adjacent. Never commit.** Fail-fast if blank when enabled. |
-| `HAENGSUNG_ORACLE_USERNAME` | `ENABLED=true` | `<oracle-user>` | Fail-fast if blank when enabled. |
-| `HAENGSUNG_ORACLE_PASSWORD` | `ENABLED=true` | `<secret>` | **Secret.** Fail-fast if blank when enabled. Never logged. |
+> ⚠️ **Every key below must be DEFINED in each environment** — the YAML binds them bare (no defaults). When the feature is OFF the value may be blank (e.g. `HAENGSUNG_ORACLE_URL=`); when `ENABLED=true` the URL/username/password must be non-blank (else `HaengsungOracleProperties` fail-fast). **Omitting a key entirely → startup crash**, even when disabled.
 
-### 1c. HAENGSUNG schedulers — all default OFF (set only when enabling that flow)
+| Variable | Key present | Value required | Example | Notes |
+|---|---|---|---|---|
+| `HAENGSUNG_ORACLE_ENABLED` | always | always (`true`/`false`) | `false` → `true` | Master switch. `false` = feature inert (beans absent). |
+| `HAENGSUNG_ORACLE_URL` | always | when `ENABLED=true` | `jdbc:oracle:thin:@//<host>:1521/<service>` | **Secret-adjacent. Never commit.** |
+| `HAENGSUNG_ORACLE_USERNAME` | always | when `ENABLED=true` | `<oracle-user>` | |
+| `HAENGSUNG_ORACLE_PASSWORD` | always | when `ENABLED=true` | `<secret>` | **Secret.** Never logged. |
+
+### 1c. HAENGSUNG schedulers — keys mandatory; values default to OFF
 
 | Variable | Default | Notes |
 |---|---|---|

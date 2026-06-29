@@ -10,6 +10,7 @@ import com.kosign.wecms.domain.payment.internaltransfer.dto.DispatchRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumr;
 import com.kosign.wecms.domain.payment.internaltransfer.repository.ScdulPymnSumrDetlRepository;
 import com.kosign.wecms.domain.payment.internaltransfer.repository.ScdulPymnSumrRepository;
+import com.kosign.wecms.domain.payment.internaltransfer.service.CutoffCheck;
 import com.kosign.wecms.domain.payment.internaltransfer.service.CutoffValidator;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -33,6 +34,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -167,7 +169,7 @@ class ExpensePaymentDispatchApprovalGateTest {
         service.dispatch(ID, new DispatchRequest("VND"));
 
         verify(dispatchExecutor).execute(eq(m), anyList(), eq("VND"));
-        verify(cutoffValidator).validate(eq("970424"), any());
+        verify(cutoffValidator).validate(argThat((CutoffCheck c) -> "970424".equals(c.outBankCd())));
         assertThat(m.getTrnfYn()).isEqualTo("Y");
     }
 }

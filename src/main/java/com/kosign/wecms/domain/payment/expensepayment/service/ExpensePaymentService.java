@@ -50,6 +50,7 @@ import com.kosign.wecms.domain.payment.service.DocNoGenerator;
 import com.kosign.wecms.domain.payment.internaltransfer.service.CutoffValidator;
 import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferKeyGenerator;
 import com.kosign.wecms.domain.payment.internaltransfer.service.ScdulPymnTypeCd;
+import com.kosign.wecms.domain.payment.internaltransfer.service.CutoffCheck;
 import com.kosign.wecms.domain.payment.internaltransfer.service.TransferNetwork;
 import com.kosign.wecms.domain.payment.internaltransfer.service.TrnfYn;
 import lombok.RequiredArgsConstructor;
@@ -1116,7 +1117,16 @@ public class ExpensePaymentService {
         TransferNetwork network = lines.isEmpty()
                 ? TransferNetwork.CITAD
                 : TransferNetwork.fromAntDivCd(lines.get(0).getAntDivCd());
-        cutoffValidator.validate(master.getOutBankCd(), network);
+        // Shared executor routes VND via the real-time API path, else File SFTP.
+        // Feed that + the legacy VND→VND hard-block and ≥500M VCB tier signals
+        // into the cut-off check.
+        boolean apiTransport = "VND".equalsIgnoreCase(req.trnfCcyCd());
+        boolean vndToVnd = "VND".equalsIgnoreCase(master.getCcyCd())
+                && "VND".equalsIgnoreCase(master.getWdrlCcyCd());
+        boolean hasLargeTxn = lines.stream().anyMatch(l -> l.getTranAmt() != null
+                && l.getTranAmt().compareTo(CutoffCheck.LARGE_TXN_THRESHOLD) >= 0);
+        cutoffValidator.validate(new CutoffCheck(
+                master.getOutBankCd(), network, apiTransport, vndToVnd, hasLargeTxn));
 
         dispatchExecutor.execute(master, lines, req.trnfCcyCd());
 

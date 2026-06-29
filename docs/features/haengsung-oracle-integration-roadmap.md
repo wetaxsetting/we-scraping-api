@@ -1,8 +1,8 @@
 # HAENGSUNG Oracle Integration Roadmap
 
-**Slug:** `haengsung-oracle-integration-roadmap` · **Domain:** Payment / Banking (ERP integration) · **Status:** Planning — docs only, nothing implemented · **Product type:** `H` (HAENGSUNG Electronics) only · **Last updated:** 2026-06-28
+**Slug:** `haengsung-oracle-integration-roadmap` · **Domain:** Payment / Banking (ERP integration) · **Status:** Implemented (Steps 1–7) — **Step 8 SIT verification pending** · **Product type:** `H` (HAENGSUNG Electronics) only · **Last updated:** 2026-06-29
 
-> **Docs only.** No Java / TS / YAML / Gradle / SQL / migration / runtime config has been written. This is the master plan that sequences every HAENGSUNG↔Oracle flow. Per-feature detail lives in the linked specs; this file is the spine + order of execution.
+> **Implemented (2026-06-29).** Steps 1–7 are built and unit-tested (foundation, manual refresh, scheduled import, approval + dispatch write-back, exchange-rate + account/card sync) and the frontend Refresh button is wired; only **Step 8 (end-to-end SIT verification)** remains. This file is the master plan + order of execution; per-feature detail lives in the linked specs. Re-audit verdict + open items: [haengsung-oracle-integration-final-audit.md](haengsung-oracle-integration-final-audit.md).
 
 ---
 
@@ -125,7 +125,7 @@ The shared base every later step reuses. Build once.
 
 - **Do not hardcode Oracle credentials** — bind from `${HAENGSUNG_ORACLE_*}` env only; fail-fast if missing while enabled.
 - **Do not commit `.env.sit` or any password file** — only `.env.sit.example` (placeholders). SIT host uses `setenv.sh` OS env. If a credential is ever committed, rotate it.
-- **Keep WeCMS Postgres as the primary datasource** (`@Primary`); the Oracle datasource is **secondary** and flag-gated OFF by default.
+- **Keep WeCMS Postgres as the primary datasource** (`@Primary`); the Oracle datasource is **secondary** and flag-gated. **Config note (2026-06-29):** per lead decision, `application-*.yml` binds the HAENGSUNG vars as **bare `${…}` placeholders with no YAML defaults**, so all 10 `HAENGSUNG_*` vars must be defined in every environment's `.env`/setenv.sh (value may be blank when `ENABLED=false`) — otherwise startup fails with `Could not resolve placeholder`. "OFF by default" therefore means `HAENGSUNG_ORACLE_ENABLED=false`, not a YAML default. The `*.example` files carry the full 10-var block.
 - **Oracle tables must NOT be added to the WeCMS Flyway inventory** and get no primary-unit `@Entity`.
 - **Do not duplicate legacy import logic** — `ErpDataRefreshHelper` + `ERP_0100_002` collapse into one `ErpPaymentRefreshService`; manual Refresh and scheduled import share it.
 - **Use the upsert + dedup + approval-lock model** for import (not the batch's insert-only copy).

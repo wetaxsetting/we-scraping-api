@@ -165,8 +165,41 @@ public class InternalTransferDispatchExecutor {
         String dttm14 = nowVn.format(DTM14);
 
         // --- Routing flags (legacy PymnHelper.pymn_0009_001_c001 ~2459-2494) ---
+        RoutingFlags rf = computeRoutingFlags(master, lines, trnfCcyCd);
+        String wdrlCcyCd = rf.wdrlCcyCd();
+
+        // --- G18 path selection ---
+        if (rf.useApiPath()) {
+            writeApiPath(master, lines, bizKey, userId, tranDt, regTm, dttm14, trnfCcyCd,
+                    wdrlCcyCd, rf.isWooriUsdToVnd());
+        } else {
+            writeFilePath(master, lines, bizKey, tranDt, dttm14, trnfCcyCd, wdrlCcyCd,
+                    rf.isShinhanUsdToVnd());
+        }
+    }
+
+    /**
+     * Whether this batch dispatches via the real-time API path
+     * ({@code TB_PAY_TARGET}) rather than the File-SFTP path. Same rule
+     * {@link #execute} applies for routing — exposed so the cut-off
+     * validator can pick the Shinhan CITAD-via-API window (16:30) vs.
+     * the File-SFTP CITAD window (15:30) from a single source of truth.
+     * Read-only — no DB writes.
+     */
+    public boolean usesApiPath(ScdulPymnSumr master, List<ScdulPymnSumrDetl> lines, String trnfCcyCd) {
+        return computeRoutingFlags(master, lines, trnfCcyCd).useApiPath();
+    }
+
+    /** Routing decision + the currency flags {@link #execute} threads
+     *  into the API / File writers. Single computation reused by both
+     *  {@link #execute} and {@link #usesApiPath}. */
+    private record RoutingFlags(
+            boolean useApiPath, boolean isShinhanUsdToVnd, boolean isWooriUsdToVnd, String wdrlCcyCd) { }
+
+    private RoutingFlags computeRoutingFlags(
+            ScdulPymnSumr master, List<ScdulPymnSumrDetl> lines, String trnfCcyCd) {
         String outBankCd = trimToNull(master.getOutBankCd());
-        String wdrlCcyCd = resolveWdrlCcyCd(bizKey, master);
+        String wdrlCcyCd = resolveWdrlCcyCd(master.getBizKey(), master);
         String depoCcyCd = lines.isEmpty() ? null : trimToNull(lines.get(0).getDepoCcyCd());
 
         boolean isWooriUsdToVnd =
@@ -178,19 +211,11 @@ public class InternalTransferDispatchExecutor {
                 eq(outBankCd, shinhanBankCd)
                 && CCY_USD.equalsIgnoreCase(wdrlCcyCd)
                 && CCY_VND.equalsIgnoreCase(depoCcyCd);
-
-        // --- G18 path selection ---
         boolean useApiPath =
                 (CCY_VND.equalsIgnoreCase(trimToNull(trnfCcyCd)) && !isShinhanUsdToVnd)
                 || isWooriUsdToVnd;
 
-        if (useApiPath) {
-            writeApiPath(master, lines, bizKey, userId, tranDt, regTm, dttm14, trnfCcyCd,
-                    wdrlCcyCd, isWooriUsdToVnd);
-        } else {
-            writeFilePath(master, lines, bizKey, tranDt, dttm14, trnfCcyCd, wdrlCcyCd,
-                    isShinhanUsdToVnd);
-        }
+        return new RoutingFlags(useApiPath, isShinhanUsdToVnd, isWooriUsdToVnd, wdrlCcyCd);
     }
 
     /* ───────────────── API path (TB_PAY_TARGET) ───────────────── */

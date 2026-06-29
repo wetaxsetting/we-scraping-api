@@ -1,55 +1,76 @@
 package com.kosign.wecms.domain.payment.internaltransfer.service;
 
 import com.kosign.wecms.common.exception.BusinessException;
+import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmBankCode;
+import com.kosign.wecms.domain.setting.firmbankingsettings.repository.TbFirmBankCodeRepository;
 import org.junit.jupiter.api.Test;
 
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalTime;
 import java.time.ZoneOffset;
-import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * Unit tests for {@link CutoffValidator}. Pins the cut-off table at a
- * known shape and exercises the weekend / start / end branches plus
- * the Shinhan past-cutoff exemption.
+ * known shape and exercises the weekend / start / end branches, the
+ * Shinhan past-cutoff exemption + CITAD VND→VND hard-block, the
+ * CITAD-via-API (16:30) split, and the VCB ≥500M tier (16:30). Bank
+ * identity is resolved from {@code TB_FIRM_BANK_CODE.ENG_ABRVAT_NM}
+ * (mocked) keyed on the real firm out-bank codes.
  */
 class CutoffValidatorTest {
 
-    /** Stable property fixture — Shinhan + Woori windows. Matches the
-     *  values seeded in {@code application-local.yml}. */
+    private static final String SHINHAN = "970424";
+    private static final String WOORI   = "970457";
+    private static final String VCB     = "970436";
+
+    private static CutoffProperties.NetworkWindows win(int h1, int m1, int h2, int m2) {
+        return new CutoffProperties.NetworkWindows(LocalTime.of(h1, m1), LocalTime.of(h2, m2));
+    }
+
+    /** Stable property fixture — mirrors the base application.yml table. */
     private static final CutoffProperties FIXTURE = new CutoffProperties(
-            "88886000",
-            "11704000",
-            Map.of(
-                    "napas", new CutoffProperties.NetworkWindows(LocalTime.of(0, 5),   LocalTime.of(23, 45)),
-                    "citad", new CutoffProperties.NetworkWindows(LocalTime.of(9, 0),   LocalTime.of(15, 30)),
-                    "swift", new CutoffProperties.NetworkWindows(LocalTime.of(9, 0),   LocalTime.of(22, 0))
-            ),
-            Map.of(
-                    "napas", new CutoffProperties.NetworkWindows(LocalTime.of(0, 15),  LocalTime.of(23, 55)),
-                    "citad", new CutoffProperties.NetworkWindows(LocalTime.of(8, 30),  LocalTime.of(17, 40)),
-                    "swift", new CutoffProperties.NetworkWindows(LocalTime.of(8, 30),  LocalTime.of(19, 10))
-            )
+            // shinhan: napas, citad(File SFTP), citadApi(16:30), swift, citadLarge(n/a)
+            new CutoffProperties.BankWindows(
+                    win(0, 5, 23, 45), win(9, 0, 15, 30), win(9, 0, 16, 30), win(9, 0, 22, 0), null),
+            // woori: napas, citad, citadApi(n/a), swift, citadLarge(n/a)
+            new CutoffProperties.BankWindows(
+                    win(0, 15, 23, 55), win(8, 30, 17, 40), null, win(8, 30, 19, 10), null),
+            // vcb: napas, citad(base 15:30), citadApi(n/a), swift(n/a), citadLarge(16:30)
+            new CutoffProperties.BankWindows(
+                    win(0, 5, 23, 45), win(8, 0, 15, 30), null, null, win(8, 0, 16, 30))
     );
 
-    /** Friday 2026-05-15 10:00 UTC == 17:00 Vietnam — inside Woori
-     *  CITAD window (08:30-17:40), outside Shinhan CITAD (09:00-15:30).
-     *  Used as the "happy-path" baseline. */
+    /** Build a validator with a fixed clock and a bank repo that resolves
+     *  the three firm codes to their {@code ENG_ABRVAT_NM} brands. */
     private CutoffValidator clockAt(String iso) {
         Clock clock = Clock.fixed(Instant.parse(iso), ZoneOffset.UTC);
-        return new CutoffValidator(FIXTURE, clock);
+        TbFirmBankCodeRepository repo = mock(TbFirmBankCodeRepository.class);
+        when(repo.findFirstByBankCdAndBankStas(SHINHAN, "1")).thenReturn(Optional.of(bank("ShinhanBank")));
+        when(repo.findFirstByBankCdAndBankStas(WOORI, "1")).thenReturn(Optional.of(bank("WooriBank")));
+        when(repo.findFirstByBankCdAndBankStas(VCB, "1")).thenReturn(Optional.of(bank("Vietcombank")));
+        // Any other code resolves to Optional.empty() (Mockito default) → unknown → pass.
+        return new CutoffValidator(FIXTURE, clock, repo);
+    }
+
+    private static TbFirmBankCode bank(String engAbrvatNm) {
+        TbFirmBankCode b = new TbFirmBankCode();
+        b.setEngAbrvatNm(engAbrvatNm);
+        return b;
     }
 
     @Test
     void should_allow_when_within_woori_citad_window() {
         // 2026-05-15 (Fri) 10:00 UTC == 17:00 Vietnam — inside Woori CITAD (08:30-17:40).
         CutoffValidator v = clockAt("2026-05-15T10:00:00Z");
-        assertThatCode(() -> v.validate("11704000", TransferNetwork.CITAD))
+        assertThatCode(() -> v.validate(WOORI, TransferNetwork.CITAD))
                 .doesNotThrowAnyException();
     }
 
@@ -57,7 +78,7 @@ class CutoffValidatorTest {
     void should_reject_with_WBE2068_when_weekend_non_napas() {
         // 2026-05-16 (Sat) 03:00 UTC == 10:00 Vietnam — weekend, CITAD.
         CutoffValidator v = clockAt("2026-05-16T03:00:00Z");
-        assertThatThrownBy(() -> v.validate("11704000", TransferNetwork.CITAD))
+        assertThatThrownBy(() -> v.validate(WOORI, TransferNetwork.CITAD))
                 .isInstanceOf(BusinessException.class)
                 .extracting(ex -> ((BusinessException) ex).getCode())
                 .isEqualTo("WBE2068");
@@ -67,7 +88,7 @@ class CutoffValidatorTest {
     void should_allow_weekend_napas() {
         // 2026-05-16 (Sat) 03:00 UTC == 10:00 Vietnam — NAPAS runs weekends.
         CutoffValidator v = clockAt("2026-05-16T03:00:00Z");
-        assertThatCode(() -> v.validate("11704000", TransferNetwork.NAPAS))
+        assertThatCode(() -> v.validate(WOORI, TransferNetwork.NAPAS))
                 .doesNotThrowAnyException();
     }
 
@@ -75,7 +96,7 @@ class CutoffValidatorTest {
     void should_reject_with_WBE2067_before_start_time() {
         // 2026-05-15 (Fri) 01:00 UTC == 08:00 Vietnam — before Woori CITAD start (08:30).
         CutoffValidator v = clockAt("2026-05-15T01:00:00Z");
-        assertThatThrownBy(() -> v.validate("11704000", TransferNetwork.CITAD))
+        assertThatThrownBy(() -> v.validate(WOORI, TransferNetwork.CITAD))
                 .isInstanceOf(BusinessException.class)
                 .extracting(ex -> ((BusinessException) ex).getCode())
                 .isEqualTo("WBE2067");
@@ -85,26 +106,91 @@ class CutoffValidatorTest {
     void should_reject_with_WBE2066_after_cutoff_for_woori() {
         // 2026-05-15 (Fri) 11:00 UTC == 18:00 Vietnam — past Woori CITAD end (17:40).
         CutoffValidator v = clockAt("2026-05-15T11:00:00Z");
-        assertThatThrownBy(() -> v.validate("11704000", TransferNetwork.CITAD))
+        assertThatThrownBy(() -> v.validate(WOORI, TransferNetwork.CITAD))
                 .isInstanceOf(BusinessException.class)
                 .extracting(ex -> ((BusinessException) ex).getCode())
                 .isEqualTo("WBE2066");
     }
 
     @Test
-    void should_log_warn_and_allow_when_past_cutoff_for_shinhan() {
-        // 2026-05-15 (Fri) 09:00 UTC == 16:00 Vietnam — past Shinhan CITAD end (15:30).
-        // Legacy parity: Shinhan past-cutoff is logged, NOT blocked.
+    void should_log_warn_and_allow_when_past_cutoff_for_shinhan_non_vnd_to_vnd() {
+        // 2026-05-15 (Fri) 09:00 UTC == 16:00 Vietnam — past Shinhan CITAD File end (15:30).
+        // Legacy parity: Shinhan past-cutoff is logged, NOT blocked (unless CITAD VND→VND).
         CutoffValidator v = clockAt("2026-05-15T09:00:00Z");
-        assertThatCode(() -> v.validate("88886000", TransferNetwork.CITAD))
+        assertThatCode(() -> v.validate(SHINHAN, TransferNetwork.CITAD))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void should_allow_shinhan_citad_vnd_to_vnd_file_route_between_1530_and_1630() {
+        // 16:00 Vietnam — Shinhan CITAD VND→VND on the FILE route (apiTransport=false,
+        // e.g. Payroll). Legacy parity: VND→VND uses the 16:30 cut-off regardless of
+        // transport (PymnHelper.java:3257-3263), so 16:00 is still inside the window.
+        CutoffValidator v = clockAt("2026-05-15T09:00:00Z");
+        assertThatCode(() -> v.validate(
+                new CutoffCheck(SHINHAN, TransferNetwork.CITAD, false, true, false)))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void should_block_shinhan_citad_vnd_to_vnd_after_1630_with_1630_time() {
+        // 17:00 Vietnam — past the 16:30 VND→VND cut-off; hard-blocks with "16:30",
+        // on the FILE route (apiTransport=false) too. Legacy WBW1168 → refactor WBE2066.
+        CutoffValidator v = clockAt("2026-05-15T10:00:00Z");
+        assertThatThrownBy(() -> v.validate(
+                new CutoffCheck(SHINHAN, TransferNetwork.CITAD, false, true, false)))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> {
+                    BusinessException be = (BusinessException) ex;
+                    assertThat(be.getCode()).isEqualTo("WBE2066");
+                    assertThat(be.getArgs()[0]).isEqualTo("16:30");
+                });
+    }
+
+    @Test
+    void should_allow_shinhan_citad_api_between_1530_and_1630() {
+        // 16:00 Vietnam — Shinhan CITAD VND→VND on the API route (apiTransport=true):
+        // within the 16:30 window. (apiTransport no longer drives the window — vndToVnd does —
+        // but this still confirms the API path allows.)
+        CutoffValidator v = clockAt("2026-05-15T09:00:00Z");
+        assertThatCode(() -> v.validate(
+                new CutoffCheck(SHINHAN, TransferNetwork.CITAD, true, true, false)))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void should_log_warn_and_allow_shinhan_citad_non_vnd_to_vnd_file_past_cutoff() {
+        // 16:00 Vietnam — Shinhan CITAD NON-VND→VND (e.g. USD, File route): base 15:30
+        // window, but Shinhan is exempt past cut-off → logged + allowed (legacy parity).
+        CutoffValidator v = clockAt("2026-05-15T09:00:00Z");
+        assertThatCode(() -> v.validate(
+                new CutoffCheck(SHINHAN, TransferNetwork.CITAD, false, false, false)))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void should_reject_vcb_citad_base_after_1530() {
+        // 16:00 Vietnam — past VCB CITAD base end (15:30); no large txn → blocks (VCB not exempt).
+        CutoffValidator v = clockAt("2026-05-15T09:00:00Z");
+        assertThatThrownBy(() -> v.validate(
+                new CutoffCheck(VCB, TransferNetwork.CITAD, false, false, false)))
+                .isInstanceOf(BusinessException.class)
+                .extracting(ex -> ((BusinessException) ex).getCode())
+                .isEqualTo("WBE2066");
+    }
+
+    @Test
+    void should_allow_vcb_citad_large_tier_until_1630() {
+        // 16:00 Vietnam — a ≥500M txn bumps VCB CITAD to 16:30, so 16:00 is allowed.
+        CutoffValidator v = clockAt("2026-05-15T09:00:00Z");
+        assertThatCode(() -> v.validate(
+                new CutoffCheck(VCB, TransferNetwork.CITAD, false, false, true)))
                 .doesNotThrowAnyException();
     }
 
     @Test
     void should_bypass_for_unknown_bank() {
-        // Unknown bank → null window → pass (matches legacy getCutoffConfig returning null).
-        // 2026-05-15 (Fri) 10:00 UTC == 17:00 Vietnam — Friday weekday so the
-        // weekend block doesn't fire first.
+        // Unknown bank → ENG_ABRVAT_NM lookup empty → pass (legacy getCutoffConfig null).
         CutoffValidator v = clockAt("2026-05-15T10:00:00Z");
         assertThatCode(() -> v.validate("99999999", TransferNetwork.CITAD))
                 .doesNotThrowAnyException();

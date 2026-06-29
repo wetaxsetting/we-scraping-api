@@ -51,6 +51,7 @@ import com.kosign.wecms.domain.payment.service.DocNoGenerator;
 import com.kosign.wecms.domain.payment.internaltransfer.service.CutoffValidator;
 import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferKeyGenerator;
 import com.kosign.wecms.domain.payment.internaltransfer.service.ScdulPymnTypeCd;
+import com.kosign.wecms.domain.payment.internaltransfer.service.CutoffCheck;
 import com.kosign.wecms.domain.payment.internaltransfer.service.TransferNetwork;
 import com.kosign.wecms.domain.payment.internaltransfer.service.TrnfYn;
 import lombok.RequiredArgsConstructor;
@@ -1024,7 +1025,15 @@ public class PayrollPaymentService {
         TransferNetwork network = lines.isEmpty()
                 ? TransferNetwork.CITAD
                 : TransferNetwork.fromAntDivCd(lines.get(0).getAntDivCd());
-        cutoffValidator.validate(master.getOutBankCd(), network);
+        // Payroll always dispatches via the File-SFTP route (never TB_PAY_TARGET),
+        // so apiTransport=false → Shinhan CITAD uses the 15:30 File-SFTP window.
+        // VND→VND still drives the Shinhan hard-block; ≥500M the VCB CITAD tier.
+        boolean vndToVnd = "VND".equalsIgnoreCase(master.getCcyCd())
+                && "VND".equalsIgnoreCase(master.getWdrlCcyCd());
+        boolean hasLargeTxn = lines.stream().anyMatch(l -> l.getTranAmt() != null
+                && l.getTranAmt().compareTo(CutoffCheck.LARGE_TXN_THRESHOLD) >= 0);
+        cutoffValidator.validate(new CutoffCheck(
+                master.getOutBankCd(), network, false, vndToVnd, hasLargeTxn));
 
         // PR2: resolve Payroll Type (EXPT_RESOL_MSTR.APPR_FUND_TP by APPR_SEQ_NO)
         // → TB_PAY_FILE_MST.FUND_TP, then dispatch via the Payroll-only

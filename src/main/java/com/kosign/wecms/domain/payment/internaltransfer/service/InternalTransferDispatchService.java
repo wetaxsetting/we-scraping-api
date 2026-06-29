@@ -116,7 +116,16 @@ public class InternalTransferDispatchService {
         TransferNetwork network = lines.isEmpty()
                 ? TransferNetwork.CITAD
                 : TransferNetwork.fromAntDivCd(lines.get(0).getAntDivCd());
-        cutoffValidator.validate(master.getOutBankCd(), network);
+        // CITAD-via-API (16:30) vs File-SFTP (15:30) hinges on the same
+        // routing rule the dispatch executor applies; VND→VND drives the
+        // Shinhan CITAD hard-block; ≥500M drives the VCB CITAD tier.
+        boolean apiTransport = dispatchExecutor.usesApiPath(master, lines, req.trnfCcyCd());
+        boolean vndToVnd = "VND".equalsIgnoreCase(master.getCcyCd())
+                && "VND".equalsIgnoreCase(master.getWdrlCcyCd());
+        boolean hasLargeTxn = lines.stream().anyMatch(l -> l.getTranAmt() != null
+                && l.getTranAmt().compareTo(CutoffCheck.LARGE_TXN_THRESHOLD) >= 0);
+        cutoffValidator.validate(new CutoffCheck(
+                master.getOutBankCd(), network, apiTransport, vndToVnd, hasLargeTxn));
 
         // Insert dispatch rows (TB_PAY_TARGET for the API path, TB_PAY_FILE_MST
         // + TB_PAY_FILE_DATA for the file path). Uses the Internal-Transfer-
