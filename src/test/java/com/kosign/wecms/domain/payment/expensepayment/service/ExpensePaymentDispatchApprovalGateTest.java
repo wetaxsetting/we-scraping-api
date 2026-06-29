@@ -61,6 +61,7 @@ class ExpensePaymentDispatchApprovalGateTest {
     @Mock private ExpenseDispatchExecutor     dispatchExecutor;
     @Mock private AuditLogService             auditLogService;
     @Mock private ExptResolMstrRepository     exptResolMstrRepository;
+    @Mock private org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     @Spy
     private Clock clock = Clock.fixed(Instant.parse("2026-06-17T03:00:00Z"),

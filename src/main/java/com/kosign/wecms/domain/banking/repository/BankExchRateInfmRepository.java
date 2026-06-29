@@ -3,8 +3,10 @@ package com.kosign.wecms.domain.banking.repository;
 import com.kosign.wecms.domain.banking.entity.BankExchRateInfm;
 import com.kosign.wecms.domain.banking.entity.BankExchRateInfmId;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Optional;
@@ -160,4 +162,48 @@ public interface BankExchRateInfmRepository extends JpaRepository<BankExchRateIn
     Optional<String> findHighestSeqNo(@Param("bankCd") String bankCd,
                                       @Param("refDate") String refDate,
                                       @Param("ccyCd") String ccyCd);
+
+    /**
+     * HAENGSUNG Oracle exchange-rate sync (Step 6 — legacy {@code ERP_0100_001}
+     * via {@code BANK_EXCH_RATE_INFM_R003}). Reads ALL of a tenant's rate rows for
+     * one reference date — every currency/bank/round, regardless of
+     * {@code ERP_SND_YN} (legacy filter {@code coalesce(erp_snd_yn,'N') in ('Y','N')}
+     * = all rows). {@code ERP_SND_YN} then drives the per-row insert-vs-update
+     * decision in the service. Tenant-scoped by {@code BIZ_KEY}.
+     */
+    List<BankExchRateInfm> findByBizKeyAndRefDate(String bizKey, String refDate);
+
+    /**
+     * HAENGSUNG Oracle exchange-rate sync (Step 6) — mark a single rate row as sent
+     * to the ERP ({@code ERP_SND_YN='Y'}, legacy {@code BANK_EXCH_RATE_INFM_U003}).
+     * Keyed on the row's full natural PK
+     * ({@code BIZ_KEY, BANK_CD, REF_DATE, CCY_CD, EXCH_SEQ_NO}). Called ONLY after
+     * the Oracle write for the row succeeds; an Oracle failure leaves the flag
+     * unchanged so the row is retried later.
+     *
+     * <p>Note: {@code BANK_CD} here is the WeCMS-stored ORIGINAL code (the row's
+     * real PK). The legacy U003 reverse-mapped the CITAD code back to the original
+     * for this WHERE; the refactor reads the entity directly, so its
+     * {@code BANK_CD} is already the original — no reverse map needed.
+     */
+    @Modifying
+    @Transactional
+    @Query("""
+            UPDATE BankExchRateInfm e
+               SET e.erpSndYn = 'Y',
+                   e.modId    = :modId,
+                   e.modDtm   = :modDtm
+             WHERE e.bizKey     = :bizKey
+               AND e.bankCd     = :bankCd
+               AND e.refDate    = :refDate
+               AND e.ccyCd      = :ccyCd
+               AND e.exchSeqNo  = :exchSeqNo
+            """)
+    int markErpSent(@Param("bizKey")    String bizKey,
+                    @Param("bankCd")    String bankCd,
+                    @Param("refDate")   String refDate,
+                    @Param("ccyCd")     String ccyCd,
+                    @Param("exchSeqNo") String exchSeqNo,
+                    @Param("modId")     String modId,
+                    @Param("modDtm")    String modDtm);
 }

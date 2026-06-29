@@ -11,7 +11,10 @@ import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepos
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalAttachmentWriter;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxFanoutService;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalDisplayFlagsResolver;
+import com.kosign.wecms.domain.payment.approvalbox.event.PaymentApprovalStatus;
+import com.kosign.wecms.domain.payment.approvalbox.event.PaymentApprovalStatusChangedEvent;
 import com.kosign.wecms.domain.payment.common.OutBankCdNormalizer;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.web.multipart.MultipartFile;
 import com.kosign.wecms.domain.payment.entity.OvrsPymnSumr;
@@ -67,6 +70,7 @@ class OverseasPaymentRequestApprovalBackstampTest {
     @Mock private AuditLogService auditLogService;
     @Mock private ApprovalDisplayFlagsResolver displayFlagsResolver;
     @Mock private ApprovalAttachmentWriter approvalAttachmentWriter;
+    @Mock private ApplicationEventPublisher eventPublisher;
 
     @InjectMocks private OverseasPaymentService service;
 
@@ -157,5 +161,36 @@ class OverseasPaymentRequestApprovalBackstampTest {
         assertThat(mstr.getCmpnLogoDispYn()).isEqualTo("Y");
         assertThat(mstr.getRegDispYn()).isEqualTo("N");
         verify(displayFlagsResolver).resolve(BIZ_KEY);
+    }
+
+    @Test
+    void requestApproval_publishesPendingForHaengsungOracleWriteBack() {
+        OvrsPymnSumr sumr = new OvrsPymnSumr();
+        sumr.setBizKey(BIZ_KEY);
+        sumr.setOvrsPymnNo(OVRS_PYMN_NO);
+        sumr.setCcyCd("USD");
+        sumr.setTotalTranAmt(new BigDecimal("2500"));
+
+        when(sumrRepository.findByBizKeyAndOvrsPymnNo(anyString(), anyString()))
+                .thenReturn(Optional.of(sumr));
+        when(legacyFunctions.nextApprSeqNo(anyString())).thenReturn("200");
+        when(docNoGenerator.nextDocNo(anyString())).thenReturn("VO_260613_002");
+        when(busiInfmRepository.findById(anyString())).thenReturn(Optional.empty());
+        when(outBankCdNormalizer.normalize("11704088")).thenReturn("970424");
+        when(displayFlagsResolver.resolve(anyString()))
+                .thenReturn(new ApprovalDisplayFlagsResolver.DisplayFlags("Y", "N", "Y", "N"));
+
+        RequestApprovalRequest req = new RequestApprovalRequest(
+                "Overseas Title", "note", "11704088", "007654321", "USD", "20260613",
+                null, 7L,
+                List.of(new RequestApprovalRequest.ApproverInput("u1", "User One")),
+                List.of());
+
+        service.requestApproval(OVRS_PYMN_NO, req, null);
+
+        // Request Approval submitted (single AF1 path) → PENDING lifecycle signal →
+        // HAENGSUNG Oracle TB_TRNS_MAST.LAST_STATUS='10'. apprSeqNo = "200".
+        verify(eventPublisher).publishEvent(
+                new PaymentApprovalStatusChangedEvent(BIZ_KEY, "200", PaymentApprovalStatus.PENDING));
     }
 }

@@ -123,6 +123,28 @@ wecms:
     api-id:     ${WECMS_OSMC_API_ID}
     unique-key: ${WECMS_OSMC_UNIQUE_KEY}
 
+# =============================================================================
+# HAENGSUNG Oracle ERP integration
+# =============================================================================
+# Same property bindings as the base application.yml, declared per-profile for
+# explicit visibility. OFF by default; real values resolve from env vars. No
+# secrets in YAML.
+haengsung:
+  oracle:
+    enabled: ${HAENGSUNG_ORACLE_ENABLED}
+    url: ${HAENGSUNG_ORACLE_URL}
+    username: ${HAENGSUNG_ORACLE_USERNAME}
+    password: ${HAENGSUNG_ORACLE_PASSWORD}
+  scheduled-payment-import:
+    enabled: ${HAENGSUNG_SCHEDULED_IMPORT_ENABLED}
+    cron: ${HAENGSUNG_SCHEDULED_IMPORT_CRON}
+  exchange-rate-sync:
+    enabled: ${HAENGSUNG_EXCHANGE_RATE_SYNC_ENABLED}
+    cron: ${HAENGSUNG_EXCHANGE_RATE_SYNC_CRON}
+  card-account-sync:
+    enabled: ${HAENGSUNG_CARD_ACCOUNT_SYNC_ENABLED}
+    cron: ${HAENGSUNG_CARD_ACCOUNT_SYNC_CRON}
+
 logging:
   level:
     root: WARN

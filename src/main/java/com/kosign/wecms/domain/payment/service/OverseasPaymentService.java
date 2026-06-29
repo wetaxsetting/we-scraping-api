@@ -86,6 +86,8 @@ public class OverseasPaymentService {
     private static final String            ERP_TRNS_TYPE_OVERSEAS_RESULT = "14";
 
     private final OverseasPaymentRepository      paymentRepo;
+    /** Emits the PROCESSING lifecycle signal on dispatch (HAENGSUNG Oracle write-back). */
+    private final org.springframework.context.ApplicationEventPublisher eventPublisher;
     private final OverseasApproverRepository     approverRepo;
     private final OvrsPymnSumrRepository         sumrRepository;
     /** OVRS_PYMN_MSTR access for the multi-payment ("M" type) Request
@@ -920,6 +922,18 @@ public class OverseasPaymentService {
         log.info("feature=overseas-payment request-approval bizKey={} ovrsPymnNo={} apprSeqNo={} docNo={} apprLineNo={} approvers={}",
                 bizKey, ovrsPymnNo, apprSeqNo, docNo, req.apprLineNo(), req.approvers().size());
 
+        // Lifecycle signal — request-approval submitted (PENDING). The HAENGSUNG
+        // Oracle write-back listener maps this to TB_TRNS_MAST.LAST_STATUS='10'
+        // (legacy comm_0192_001_c005 → ErpStatusUpdateHelper PENDING). No-op for
+        // non-HAENGSUNG / non-ERP batches (listener guards). apprSeqNo is the
+        // value resolved above (after the one-shot race retry). NOTE: the M-mode
+        // requestApprovalMulti path is intentionally NOT wired — the HAENGSUNG
+        // refresh imports overseas as single AF1 batches (OVRS_PYMN_SUMR), never
+        // M-mode, so its apprSeqNo would not resolve to an ERP-linked summary.
+        eventPublisher.publishEvent(new com.kosign.wecms.domain.payment.approvalbox.event
+                .PaymentApprovalStatusChangedEvent(bizKey, apprSeqNo,
+                com.kosign.wecms.domain.payment.approvalbox.event.PaymentApprovalStatus.PENDING));
+
         return new RequestApprovalResponse(apprSeqNo, docNo);
     }
 
@@ -1311,6 +1325,11 @@ public class OverseasPaymentService {
         sumr.setModDtm(nowDtm);
         sumr.setModId(userId);
         sumrRepository.save(sumr);
+
+        // Lifecycle signal — dispatched / processing (HAENGSUNG Oracle write-back).
+        eventPublisher.publishEvent(new com.kosign.wecms.domain.payment.approvalbox.event
+                .PaymentApprovalStatusChangedEvent(sumr.getBizKey(), sumr.getApprSeqNo(),
+                com.kosign.wecms.domain.payment.approvalbox.event.PaymentApprovalStatus.PROCESSING));
 
         auditLogService.append(AuditLogContext.builder()
                 .wsvcId(WSVC_ID)

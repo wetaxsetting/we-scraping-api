@@ -150,6 +150,9 @@ public class ApprovalBoxService {
      *  notification (legacy parity). */
     private final com.kosign.wecms.domain.payment.notification.service.ApprovalNotificationService
                                                  approvalNotificationService;
+    /** Emits APPROVED / REJECTED lifecycle signals consumed by the HAENGSUNG
+     *  Oracle approval-status write-back (the single Oracle-sync subscriber). */
+    private final org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     /* =================================================================
      *  List
@@ -407,6 +410,14 @@ public class ApprovalBoxService {
                 ctx.master.getBizKey(), ctx.master.getApprSeqNo(), ctx.userId,
                 ctx.master.getApprTypeCd());
 
+        // Oracle sync signal only on FINAL approval ('01'); an intermediate
+        // multi-approver advance ('03' IN_PROGRESS) has no Oracle mapping.
+        if (ApprTypeCd.APPROVED.equals(ctx.master.getApprTypeCd())) {
+            eventPublisher.publishEvent(new com.kosign.wecms.domain.payment.approvalbox.event
+                    .PaymentApprovalStatusChangedEvent(ctx.master.getBizKey(), ctx.master.getApprSeqNo(),
+                    com.kosign.wecms.domain.payment.approvalbox.event.PaymentApprovalStatus.APPROVED));
+        }
+
         return new ApprovalBoxActionResponse(
                 ctx.master.getApprSeqNo(),
                 deriveApprStts(ctx.master.getApprTypeCd()),
@@ -445,6 +456,10 @@ public class ApprovalBoxService {
 
         log.info("approval-box rejected bizKey={} apprSeqNo={} approverId={}",
                 ctx.master.getBizKey(), ctx.master.getApprSeqNo(), ctx.userId);
+
+        eventPublisher.publishEvent(new com.kosign.wecms.domain.payment.approvalbox.event
+                .PaymentApprovalStatusChangedEvent(ctx.master.getBizKey(), ctx.master.getApprSeqNo(),
+                com.kosign.wecms.domain.payment.approvalbox.event.PaymentApprovalStatus.REJECTED));
 
         return new ApprovalBoxActionResponse(
                 ctx.master.getApprSeqNo(),

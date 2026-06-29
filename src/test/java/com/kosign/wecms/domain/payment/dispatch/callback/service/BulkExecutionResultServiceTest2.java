@@ -83,6 +83,7 @@ class BulkExecutionResultServiceTest2 {
     @Mock TbFirmBatApiTranRepository firmBatApiTranRepository;
     @Mock TbPayFileMstRepository payFileMstRepository;
     @Mock TbPayFileDataRepository payFileDataRepository;
+    @Mock org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     private final EfsCryptoService crypto = new EfsCryptoService();
     private final FixedLengthCodec codec = new FixedLengthCodec();
@@ -101,7 +102,8 @@ class BulkExecutionResultServiceTest2 {
         service = new BulkExecutionResultService(
                 crypto, vanApiKeyService, objectMapper, sftpClient, sftpProperties, codec,
                 dispatchKeyGenerator, firmFileMstRepository, firmFileDataRepository,
-                firmFileRsltRepository, firmBatApiTranRepository, payFileMstRepository, payFileDataRepository);
+                firmFileRsltRepository, firmBatApiTranRepository, payFileMstRepository, payFileDataRepository,
+                eventPublisher);
 
         when(vanApiKeyService.getApiKey(VAN)).thenReturn(TEST_KEY);
         when(dispatchKeyGenerator.nextTranSeq(anyString(), anyString())).thenReturn("1");

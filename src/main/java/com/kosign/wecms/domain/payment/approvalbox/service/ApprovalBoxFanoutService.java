@@ -75,6 +75,8 @@ public class ApprovalBoxFanoutService {
     /** Withdraw-time bulletin/file cleanup (legacy comm_0192_004_d001 parity). */
     private final com.kosign.wecms.domain.payment.notification.service.ApprovalNotificationService
                                                 approvalNotificationService;
+    /** Emits the PENDING lifecycle signal consumed by HAENGSUNG Oracle write-back. */
+    private final org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     /**
      * Persist the master + per-approver rows for one Request Approval
@@ -226,6 +228,13 @@ public class ApprovalBoxFanoutService {
 
         log.info("approval-box fanout bizKey={} apprSeqNo={} apprDv={} approvers={}",
                 bizKey, apprSeqNo, apprDv.code(), approvers.size());
+
+        // Lifecycle signal — request-approval submitted (PENDING). The HAENGSUNG
+        // Oracle write-back is the only subscriber and filters to HAENGSUNG/ERP
+        // batches; emitting it for every module/tenant is safe.
+        eventPublisher.publishEvent(new com.kosign.wecms.domain.payment.approvalbox.event
+                .PaymentApprovalStatusChangedEvent(bizKey, apprSeqNo,
+                com.kosign.wecms.domain.payment.approvalbox.event.PaymentApprovalStatus.PENDING));
     }
 
     /**

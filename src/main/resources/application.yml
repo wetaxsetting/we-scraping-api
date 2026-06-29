@@ -118,7 +118,7 @@ wecms:
     # MUST equal the legacy seed for cross-system data compatibility on a
     # shared JEX DB. Do NOT change unless the legacy DB function changes.
     # (Replaces the retired AES-GCM `wecms.crypto.cert-key`.)
-    legacy-cert-seed: ${WECMS_CRYPTO_LEGACY_CERT_SEED:wabooksvn}
+    legacy-cert-seed: ${WECMS_CRYPTO_LEGACY_CERT_SEED}
   # =============================================================================
   # Login Credentials
   # =============================================================================
@@ -323,10 +323,38 @@ wecms:
 # startup (naming the missing setting, never its value).
 haengsung:
   oracle:
-    enabled: ${HAENGSUNG_ORACLE_ENABLED:false}
-    url: ${HAENGSUNG_ORACLE_URL:}
-    username: ${HAENGSUNG_ORACLE_USERNAME:}
-    password: ${HAENGSUNG_ORACLE_PASSWORD:}
+    enabled: ${HAENGSUNG_ORACLE_ENABLED}
+    url: ${HAENGSUNG_ORACLE_URL}
+    username: ${HAENGSUNG_ORACLE_USERNAME}
+    password: ${HAENGSUNG_ORACLE_PASSWORD}
+  # Scheduled Oracle payment-import batch (Step 3, legacy ERP_0100_002).
+  # OFF BY DEFAULT: when `enabled` is false the HaengsungScheduledPaymentImportJob
+  # bean is not created and no cron is registered. It also no-ops if the Oracle
+  # feature above is off. When enabled, it reuses the SAME ErpPaymentRefreshService
+  # as the manual Refresh (one import implementation) and runs per HAENGSUNG
+  # company. cron is a Spring cron (ICT); default = every 5 minutes (legacy cadence).
+  scheduled-payment-import:
+    enabled: ${HAENGSUNG_SCHEDULED_IMPORT_ENABLED}
+    cron: ${HAENGSUNG_SCHEDULED_IMPORT_CRON}
+  # Scheduled Oracle exchange-rate sync (Step 6, legacy ERP_0100_001).
+  # OFF BY DEFAULT: when `enabled` is false the HaengsungExchangeRateSyncJob bean
+  # is not created and no cron is registered. It also no-ops if the Oracle feature
+  # above is off. When enabled it pushes WeCMS BANK_EXCH_RATE_INFM rates into the
+  # Oracle TB_FCY_EXRATE per HAENGSUNG company. cron is a Spring cron (ICT);
+  # default = every 5 minutes (legacy cadence is Jex-Studio-defined, not in source).
+  exchange-rate-sync:
+    enabled: ${HAENGSUNG_EXCHANGE_RATE_SYNC_ENABLED}
+    cron: ${HAENGSUNG_EXCHANGE_RATE_SYNC_CRON}
+  # Scheduled Oracle account-history + card-approval sync (Step 7, legacy ERP_0100_003).
+  # OFF BY DEFAULT: when `enabled` is false the HaengsungCardAccountSyncJob bean is
+  # not created and no cron is registered. It also no-ops if the Oracle feature
+  # above is off. When enabled it pushes WeCMS ACCT_TRNS_HSTR → Oracle
+  # TB_ACCT_HISTORY and CARD_MSTR/CARD_TRNS_HSTR → Oracle TB_CARD_APPROVAL per
+  # HAENGSUNG company. cron is a Spring cron (ICT); default = every 5 minutes
+  # (legacy cadence is Jex-Studio-defined, not in source).
+  card-account-sync:
+    enabled: ${HAENGSUNG_CARD_ACCOUNT_SYNC_ENABLED}
+    cron: ${HAENGSUNG_CARD_ACCOUNT_SYNC_CRON}
 
 # =============================================================================
 # Logging

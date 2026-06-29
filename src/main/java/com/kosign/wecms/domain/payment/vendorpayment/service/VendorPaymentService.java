@@ -151,6 +151,8 @@ public class VendorPaymentService {
     private static final ZoneId VIETNAM_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
 
     private final ScdulPymnSumrRepository       sumrRepository;
+    /** Emits the PROCESSING lifecycle signal on dispatch (HAENGSUNG Oracle write-back). */
+    private final org.springframework.context.ApplicationEventPublisher eventPublisher;
     private final ScdulPymnSumrDetlRepository   detlRepository;
     private final com.kosign.wecms.domain.payment.common.WithdrawalAccountListService withdrawalAccountListService;
     private final CutoffValidator               cutoffValidator;
@@ -790,6 +792,15 @@ public class VendorPaymentService {
                 "feature=vendor-payment request-approval bizKey={} scdulPymnNo={} apprSeqNo={} apprLineNo={} approvers={}",
                 bizKey, id, apprSeqNo, req.apprLineNo(), req.approvers().size());
 
+        // Lifecycle signal — request-approval submitted (PENDING). The HAENGSUNG
+        // Oracle write-back listener maps this to TB_TRNS_MAST.LAST_STATUS='10'
+        // (legacy comm_0192_001_c005 → ErpStatusUpdateHelper PENDING). No-op for
+        // non-HAENGSUNG / non-ERP batches (listener guards). apprSeqNo is the
+        // value resolved above (after the one-shot race retry).
+        eventPublisher.publishEvent(new com.kosign.wecms.domain.payment.approvalbox.event
+                .PaymentApprovalStatusChangedEvent(bizKey, apprSeqNo,
+                com.kosign.wecms.domain.payment.approvalbox.event.PaymentApprovalStatus.PENDING));
+
         return new RequestApprovalResponse(apprSeqNo, docNo);
     }
 
@@ -1102,6 +1113,11 @@ public class VendorPaymentService {
         master.setModId(userId);
         master.setModDtm(now);
         sumrRepository.saveAndFlush(master);
+
+        // Lifecycle signal — dispatched / processing (HAENGSUNG Oracle write-back).
+        eventPublisher.publishEvent(new com.kosign.wecms.domain.payment.approvalbox.event
+                .PaymentApprovalStatusChangedEvent(bizKey, master.getApprSeqNo(),
+                com.kosign.wecms.domain.payment.approvalbox.event.PaymentApprovalStatus.PROCESSING));
 
         auditLogService.append(AuditLogContext.builder()
                 .wsvcId(WSVC_ID)

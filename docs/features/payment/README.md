@@ -38,6 +38,7 @@ single cross-sibling / shared-infrastructure authority for the module (this READ
   - **Phase 3** — Approval-status write-back: [`../haengsung-approval-status-writeback.md`](../haengsung-approval-status-writeback.md) (`ErpStatusUpdateHelper`).
   - **Phase 4** — Dispatch-result write-back: [`../haengsung-dispatch-result-writeback.md`](../haengsung-dispatch-result-writeback.md) (`ERP_0100_004`).
   - **Separate ERP sync** (not payment): [`../haengsung-exchange-rate-sync.md`](../haengsung-exchange-rate-sync.md) (`ERP_0100_001`) · [`../haengsung-card-account-sync.md`](../haengsung-card-account-sync.md) (`ERP_0100_003`).
+- **HAENGSUNG Oracle Integration — final full audit** (2026-06-29; all 11 flows compared across legacy / API / Web / Oracle DB / WeCMS DB; DB columns + row counts verified): [`../haengsung-oracle-integration-final-audit.md`](../haengsung-oracle-integration-final-audit.md). Verdict: complete + legacy-faithful; one low-severity card-sync source-parity item (F-1) for SIT.
 
 ## Audit (2026-06-23 re-audit)
 - **Doc-vs-code audit:** [payment-docs-audit.md](../../audits/payment-docs-audit.md) — per-module status + corrections made.

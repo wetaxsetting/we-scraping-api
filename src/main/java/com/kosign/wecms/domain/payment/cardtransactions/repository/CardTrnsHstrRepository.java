@@ -416,4 +416,62 @@ public interface CardTrnsHstrRepository extends JpaRepository<CardTrnsHstr, Card
     java.util.List<Object[]> sumTrscAmtByBizKeyAndApprSeqNos(
             @Param("bizKey")     String bizKey,
             @Param("apprSeqNos") java.util.List<String> apprSeqNos);
+
+    /**
+     * HAENGSUNG Oracle card-approval sync (Step 7 — legacy {@code ERP_0100_003}
+     * via {@code CARD_MSTR_R005}). Reads a tenant's UNSENT card transactions
+     * ({@code coalesce(cth.erp_snd_yn,'N')='N'}) joined to {@code CARD_MSTR} for
+     * {@code CARD_HLDR_NM} + {@code CARD_HIS_LST_INQ_DT}, with {@code BANK_CD}
+     * resolved to the CITAD code and {@code AUTH_NO} computed per the legacy CASE
+     * ({@code BANK_CD='11704020'} → {@code TRSC_DT||TRSC_TM}, else {@code AUTH_CODE}).
+     * Columns aliased to the {@link com.kosign.wecms.domain.payment.haengsung.cardaccount.CardApprovalSyncRow}
+     * getter names. ({@code CARD_MSTR} has no {@code ERP_SND_YN} column, so the
+     * legacy unqualified flag filter resolves to {@code CTH.ERP_SND_YN} — qualified
+     * here for clarity.)
+     */
+    @Query(nativeQuery = true, value = """
+            SELECT
+                cth.biz_key                                                                   AS "bizKey",
+                (SELECT l.citad_bank_cd FROM CITAD_BANK_CD_LOOKUP l
+                  WHERE l.bank_cd = cth.bank_cd AND l.use_yn = 'Y')                           AS "bankCd",
+                cth.card_no                                                                   AS "cardNo",
+                cth.trsc_dt                                                                   AS "apprDt",
+                cth.trsc_tm                                                                   AS "apprTm",
+                (CASE WHEN cth.bank_cd = '11704020' THEN cth.trsc_dt || cth.trsc_tm
+                      ELSE cth.auth_code END)                                                 AS "authNo",
+                cth.merch_nm                                                                  AS "merchNm",
+                mstr.card_hldr_nm                                                             AS "cardHldrNm",
+                cth.ccy_cd                                                                    AS "ccyCd",
+                cth.trsc_amt                                                                  AS "apprAmt",
+                cth.city                                                                      AS "city",
+                mstr.card_his_lst_inq_dt                                                      AS "lastInqDttm",
+                cth.card_seq_no                                                               AS "cardSeqno",
+                cth.prch_stts                                                                 AS "prchStts"
+            FROM CARD_MSTR mstr
+            JOIN CARD_TRNS_HSTR cth
+              ON mstr.biz_key = cth.biz_key
+             AND mstr.bank_cd = cth.bank_cd
+             AND mstr.card_no = cth.card_no
+            WHERE cth.biz_key = :bizKey
+              AND COALESCE(cth.erp_snd_yn, 'N') = 'N'
+            """)
+    java.util.List<com.kosign.wecms.domain.payment.haengsung.cardaccount.CardApprovalSyncRow>
+        findHaengsungCardApprovalForSync(@Param("bizKey") String bizKey);
+
+    /**
+     * HAENGSUNG Oracle card-approval sync (Step 7) — mark ONE card transaction
+     * as sent ({@code ERP_SND_YN='Y'}, legacy {@code CARD_TRNS_HSTR_U003},
+     * narrowed to a single row). Keyed on the PK {@code (BIZ_KEY, CARD_SEQ_NO)};
+     * idempotent guard. Called ONLY after the Oracle insert for the row succeeds.
+     * Returns rows updated.
+     */
+    @Modifying
+    @org.springframework.transaction.annotation.Transactional
+    @Query(nativeQuery = true, value = """
+            UPDATE CARD_TRNS_HSTR SET ERP_SND_YN = 'Y'
+             WHERE BIZ_KEY = :bizKey
+               AND CARD_SEQ_NO = :cardSeqNo
+               AND COALESCE(ERP_SND_YN, 'N') = 'N'
+            """)
+    int markErpSent(@Param("bizKey") String bizKey, @Param("cardSeqNo") String cardSeqNo);
 }

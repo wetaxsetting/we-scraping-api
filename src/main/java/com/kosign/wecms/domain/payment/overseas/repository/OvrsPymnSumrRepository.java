@@ -31,6 +31,46 @@ public interface OvrsPymnSumrRepository extends JpaRepository<OvrsPymnSumr, Ovrs
      *  EXPT_RESOL_MSTR, then calls this to get the OVRS_PYMN_SUMR row. */
     Optional<OvrsPymnSumr> findByBizKeyAndApprSeqNo(String bizKey, String apprSeqNo);
 
+    /**
+     * HAENGSUNG Oracle Refresh import — dedup lookup by the ERP batch key
+     * {@code (BIZ_KEY, ERP_FILE_NUM, ERP_FILE_DATE)} for Overseas (FILE_GB='AF1')
+     * batches. Returns the existing draft summary so the import updates it
+     * rather than inserting a duplicate (see {@code haengsung-payment-refresh}
+     * §6.4). */
+    Optional<OvrsPymnSumr> findFirstByBizKeyAndErpFileNumAndErpFileDate(
+            String bizKey, String erpFileNum, String erpFileDate);
+
+    /**
+     * HAENGSUNG Oracle dispatch-result write-back (Step 5) — resolve the overseas
+     * batch(es) bound to a just-finalized firm-banking pay-file by its shadow
+     * keys {@code (BIZ_KEY, PAY_TRAN_DT, PAY_FILE_SEQ_NO)}. The write-back filters
+     * to ERP batches by {@code ERP_FILE_*} afterwards.
+     */
+    List<OvrsPymnSumr> findByBizKeyAndPayTranDtAndPayFileSeqNo(
+            String bizKey, String payTranDt, String payFileSeqNo);
+
+    /**
+     * HAENGSUNG Oracle dispatch-result write-back (Step 5) — mark the overseas
+     * batch's ERP result as pushed ({@code ERP_PROC_CMPL_YN='Y'}). Called ONLY
+     * after the Oracle write-back succeeds (legacy {@code ERP_0100_004}
+     * OverseaProcess STEP 5). Own transaction — an Oracle failure leaves the flag
+     * at {@code 'N'} for retry.
+     */
+    @Modifying
+    @org.springframework.transaction.annotation.Transactional
+    @Query("""
+            UPDATE OvrsPymnSumr s
+               SET s.erpProcCmplYn = 'Y',
+                   s.modId         = :modId,
+                   s.modDtm        = :modDtm
+             WHERE s.bizKey      = :bizKey
+               AND s.ovrsPymnNo  = :ovrsPymnNo
+            """)
+    int markErpProcComplete(@Param("bizKey")     String bizKey,
+                            @Param("ovrsPymnNo") String ovrsPymnNo,
+                            @Param("modId")      String modId,
+                            @Param("modDtm")     String modDtm);
+
     /** Batch-fetch (apprSeqNo → ccyCd) pairs for the Approval Box list.
      *  Returns only rows whose apprSeqNo is in the given set so the
      *  caller can build a lookup map without an N+1 query. */

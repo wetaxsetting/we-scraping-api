@@ -91,7 +91,7 @@ wecms:
     # same in every profile and equal to the legacy seed, or cert credentials
     # written by one system cannot be read by the other. Same value as the base
     # application.yml — declared here only so local and sit stay self-consistent.
-    legacy-cert-seed: ${WECMS_CRYPTO_LEGACY_CERT_SEED:wabooksvn}
+    legacy-cert-seed: ${WECMS_CRYPTO_LEGACY_CERT_SEED}
   # =============================================================================
   # Login Credentials
   # =============================================================================
@@ -298,6 +298,28 @@ wecms:
     api-key: ${WECMS_OSMC_API_KEY}
     api-id: ${WECMS_OSMC_API_ID}
     unique-key: ${WECMS_OSMC_UNIQUE_KEY}
+
+# =============================================================================
+# HAENGSUNG Oracle ERP integration
+# =============================================================================
+# Same property bindings as the base application.yml, declared per-profile for
+# explicit visibility. OFF by default; real values resolve from env vars on the
+# SIT host. No secrets in YAML.
+haengsung:
+  oracle:
+    enabled: ${HAENGSUNG_ORACLE_ENABLED}
+    url: ${HAENGSUNG_ORACLE_URL}
+    username: ${HAENGSUNG_ORACLE_USERNAME}
+    password: ${HAENGSUNG_ORACLE_PASSWORD}
+  scheduled-payment-import:
+    enabled: ${HAENGSUNG_SCHEDULED_IMPORT_ENABLED}
+    cron: ${HAENGSUNG_SCHEDULED_IMPORT_CRON}
+  exchange-rate-sync:
+    enabled: ${HAENGSUNG_EXCHANGE_RATE_SYNC_ENABLED}
+    cron: ${HAENGSUNG_EXCHANGE_RATE_SYNC_CRON}
+  card-account-sync:
+    enabled: ${HAENGSUNG_CARD_ACCOUNT_SYNC_ENABLED}
+    cron: ${HAENGSUNG_CARD_ACCOUNT_SYNC_CRON}
 
 # =============================================================================
 # Logging

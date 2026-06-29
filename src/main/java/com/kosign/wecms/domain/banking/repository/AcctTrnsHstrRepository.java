@@ -339,4 +339,57 @@ public interface AcctTrnsHstrRepository extends JpaRepository<AcctTrnsHstr, Acct
             @Param("ovrsPymnDetlNo") String ovrsPymnDetlNo,
             @Param("userId") String userId,
             @Param("nowDtm") String nowDtm);
+
+    /**
+     * HAENGSUNG Oracle account-history sync (Step 7 — legacy {@code ERP_0100_003}
+     * via {@code ACCT_TRNS_HSTR_R029}). Reads a tenant's UNSENT account
+     * transactions ({@code hand_reg_yn='N' AND coalesce(erp_snd_yn,'N')='N'}),
+     * joined to {@code ACCT_MSTR} for {@code LAST_INQ_DTTM}, with {@code BANK_CD}
+     * resolved to the CITAD code via {@code CITAD_BANK_CD_LOOKUP} — exactly the
+     * legacy R029 projection. Columns are aliased to the
+     * {@link AcctHistorySyncRow} getter names (quoted, case-preserving).
+     */
+    @Query(nativeQuery = true, value = """
+            SELECT
+                ath.biz_key                                                                   AS "bizKey",
+                (SELECT l.citad_bank_cd FROM CITAD_BANK_CD_LOOKUP l
+                  WHERE l.bank_cd = ath.bank_cd AND l.use_yn = 'Y')                           AS "bankCd",
+                ath.acct_no                                                                   AS "acctNo",
+                ath.trsc_dt                                                                   AS "trDt",
+                ath.acct_seq_no                                                               AS "trSeqno",
+                ath.ccy_cd                                                                    AS "ccyCd",
+                ath.inout_dv                                                                  AS "ioGb",
+                ath.trsc_amt                                                                  AS "trAmt",
+                ath.bal                                                                       AS "trCurBal",
+                mstr.acct_his_lst_inq_dt                                                      AS "lastInqDttm",
+                ath.rmrk                                                                      AS "acctMemo"
+            FROM ACCT_TRNS_HSTR ath
+            JOIN ACCT_MSTR mstr
+              ON mstr.biz_key = ath.biz_key
+             AND mstr.bank_cd = ath.bank_cd
+             AND mstr.acct_no = ath.acct_no
+            WHERE ath.biz_key = :bizKey
+              AND ath.hand_reg_yn = 'N'
+              AND COALESCE(ath.erp_snd_yn, 'N') = 'N'
+            """)
+    List<com.kosign.wecms.domain.payment.haengsung.cardaccount.AcctHistorySyncRow>
+        findHaengsungAcctHistoryForSync(@Param("bizKey") String bizKey);
+
+    /**
+     * HAENGSUNG Oracle account-history sync (Step 7) — mark ONE account-history
+     * row as sent ({@code ERP_SND_YN='Y'}, legacy {@code ACCT_TRNS_HSTR_U002},
+     * narrowed to a single row). Keyed on the PK {@code (BIZ_KEY, ACCT_SEQ_NO)};
+     * the {@code COALESCE(...)='N'} guard keeps it idempotent. Called ONLY after
+     * the Oracle insert for the row succeeds; an Oracle failure leaves the flag
+     * unchanged so the row is retried later. Returns rows updated.
+     */
+    @Modifying
+    @Transactional
+    @Query(nativeQuery = true, value = """
+            UPDATE ACCT_TRNS_HSTR SET ERP_SND_YN = 'Y'
+             WHERE BIZ_KEY = :bizKey
+               AND ACCT_SEQ_NO = :acctSeqNo
+               AND COALESCE(ERP_SND_YN, 'N') = 'N'
+            """)
+    int markErpSent(@Param("bizKey") String bizKey, @Param("acctSeqNo") String acctSeqNo);
 }

@@ -50,8 +50,11 @@ public class HaengsungOracleHealthCheck implements ApplicationRunner {
             Integer result = oracleJdbcTemplate.queryForObject(VALIDATION_QUERY, Integer.class);
             return result != null && result == 1;
         } catch (Exception ex) {
-            // Redacted: SQLState / error code only — no URL / credentials.
-            log.debug("HAENGSUNG Oracle connectivity probe failed: {}", describe(ex));
+            // Redacted: exception class + SQLState / vendor error code only — never
+            // the URL, username, password, or connection string. Logged at WARN so
+            // ops can diagnose the ORA-xxxxx cause from SIT logs (INFO level) without
+            // turning on DEBUG.
+            log.warn("HAENGSUNG Oracle connectivity probe failed: {}", describe(ex));
             return false;
         }
     }

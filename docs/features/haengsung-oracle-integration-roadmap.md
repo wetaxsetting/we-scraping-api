@@ -111,6 +111,13 @@ The shared base every later step reuses. Build once.
 - **No credential leakage check** — grep repo + logs for host/user/password; confirm `.env.sit`/`setenv.sh` not committed.
 - **Logs check** — errors log SQLState/code only (no DSN); per-master rollback + retry observable; audit (`ERP_TRNS_HSTR`) rows present.
 - **Done condition:** all flows verified on SIT against the real Oracle `DEV` instance; sign-off recorded.
+- **Verification record:** [haengsung-oracle-integration-sit-verification.md](haengsung-oracle-integration-sit-verification.md) — static PASS on all 7 flows + foundation + credential hygiene (93/93 HAENGSUNG unit tests green, 2026-06-28); the live-SIT runtime checklist (Surface B) + per-flow SQL is Section 9 there, to be executed on the SIT box.
+
+### Final Step — Frontend Legacy Parity Verification
+
+- **Status (2026-06-28): frontend wiring complete and functionally at legacy parity.** The refactor Refresh button (Vendor / Expense / Payroll / Overseas) now calls the real import API (`POST /api/v1/payments/haengsung/refresh`) instead of only re-fetching the list, and matches the legacy JEX frontend (`pymn_000{1,3,5,7}_001`) on every load-bearing behavior: HAENGSUNG-only button gating (else Excel Upload), Internal Transfer untouched, payment-type literals, period window, no confirmation popup, error popup, list reload, filter/page preservation, duplicate-click prevention, localization (EN/KO/VI), and permission/product-`H` gating.
+- **Audit doc:** [wecms-web/docs/features/payment/haengsung-payment-refresh-frontend-parity.md](../../../wecms-web/docs/features/payment/haengsung-payment-refresh-frontend-parity.md) — full legacy↔refactor comparison matrix + state transitions + parity checklist.
+- **No required (missing) frontend behavior remains.** The refactor is not missing any legacy behavior. The only divergence is **one extra, additive UX behavior**: the refactor shows a **success popup** after a successful import (legacy shows none). This is a **PO decision (D1, Medium)** — keep it as a UX improvement, or remove it for byte-for-byte legacy parity (one-line change in `useHaengsungRefresh`). Two further differences (D2 inline spinner vs global progress overlay; D3 single-day `period_date` form) are **cosmetic and behavior-equivalent**. None block UAT.
 
 ---
 
@@ -156,6 +163,7 @@ Follow-on dependencies (not Step-2 blockers): Step 4 needs the refactor approval
 6. **Exchange-Rate Sync** (Step 6) — P5 (independent; can move earlier if prioritised).
 7. **Account-History / Card-Approval Sync** (Step 7) — P5 (independent).
 8. **Full SIT test** (Step 8) — P6, gate to UAT.
+9. **Frontend Legacy Parity Verification** (Final Step) — done 2026-06-28; functionally at parity, one optional PO decision (D1 success popup) outstanding. See the Final Step subsection above + the [frontend parity audit](../../../wecms-web/docs/features/payment/haengsung-payment-refresh-frontend-parity.md).
 
 Steps 6–7 are independent of the payment chain (Steps 2–5) and could run in parallel once the Foundation (Step 1) exists, if a second developer is available — but they remain lower priority than the payment Refresh.
 
@@ -165,5 +173,6 @@ Steps 6–7 are independent of the payment chain (Steps 2–5) and could run in 
 - Import + Oracle schema/status/mapping/mismatches: [haengsung-payment-refresh.md](haengsung-payment-refresh.md)
 - Write-backs: [haengsung-approval-status-writeback.md](haengsung-approval-status-writeback.md) · [haengsung-dispatch-result-writeback.md](haengsung-dispatch-result-writeback.md)
 - Separate ERP sync: [haengsung-exchange-rate-sync.md](haengsung-exchange-rate-sync.md) · [haengsung-card-account-sync.md](haengsung-card-account-sync.md)
+- Step 8 SIT verification record: [haengsung-oracle-integration-sit-verification.md](haengsung-oracle-integration-sit-verification.md)
 - Payment domain index: [payment/README.md](payment/README.md)
 - Memories: `reference_sit_server_config_setenv`, `project_hs_prod_datasource_ora17008`, `project_batch_refactor_real_impl`

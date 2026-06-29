@@ -12,6 +12,7 @@ import com.kosign.wecms.domain.payment.entity.OvrsPymnMstr;
 import com.kosign.wecms.domain.payment.entity.OvrsPymnSumr;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalAttachmentRow;
 import com.kosign.wecms.domain.payment.internaltransfer.service.ApprovalAttachmentLoader;
+import com.kosign.wecms.domain.payment.internaltransfer.service.ApprovalContentLoader;
 import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnDtlsRepository;
 import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnMstrRepository;
 import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnSumrRepository;
@@ -62,6 +63,7 @@ class OverseasPaymentDetailTest {
     @Mock private ExptResolMstrRepository      exptResolMstrRepository;
     @Mock private DispatchResultResolver       dispatchResultResolver;
     @Mock private ApprovalAttachmentLoader     approvalAttachmentLoader;
+    @Mock private ApprovalContentLoader        approvalContentLoader;
     @Mock private OverseasPaymentRepository    paymentRepo;
 
     @InjectMocks private OverseasPaymentService service;

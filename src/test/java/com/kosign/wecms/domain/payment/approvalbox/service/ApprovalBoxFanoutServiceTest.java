@@ -72,7 +72,8 @@ class ApprovalBoxFanoutServiceTest {
         service = new ApprovalBoxFanoutService(
                 mstrRepository, approverRepository, apprLineApproverRepository,
                 detlRepository, apprLineRepository, busiEnvSetInfmRepository,
-                clock, legacyFunctions, approvalNotificationService);
+                clock, legacyFunctions, approvalNotificationService,
+                org.mockito.Mockito.mock(org.springframework.context.ApplicationEventPublisher.class));
         TenantContext.set(USER, TENANT, LangCd.EN);
     }
 

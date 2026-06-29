@@ -116,6 +116,28 @@ public class OvrsPymnSumrDetl {
     @Column(name = "PAY_TRAN_SEQ", length = 10)
     private String payTranSeq;
 
+    /** HAENGSUNG ERP batch date (Oracle {@code TB_TRNS_DETAIL.FILE_DATE}) —
+     *  part of the per-line dedup key for the HAENGSUNG Oracle Refresh import
+     *  ({@code haengsung-payment-refresh}). Null for Excel-upload lines. DB
+     *  columns already present on {@code OVRS_PYMN_SUMR_DETL}; mapped
+     *  2026-06-28 for the Overseas Refresh leg (M-5). */
+    @Column(name = "ERP_FILE_DATE", length = 8)
+    private String erpFileDate;
+
+    /** HAENGSUNG ERP batch number (Oracle {@code TB_TRNS_DETAIL.FILE_NUM}). */
+    @Column(name = "ERP_FILE_NUM", length = 8)
+    private String erpFileNum;
+
+    /** HAENGSUNG ERP line sequence (Oracle {@code TB_TRNS_DETAIL.FILE_SEQ}) —
+     *  completes the per-line dedup key {@code (BIZ_KEY, ERP_FILE_NUM,
+     *  ERP_FILE_DATE, ERP_FILE_SEQ)}. */
+    @Column(name = "ERP_FILE_SEQ", precision = 10, scale = 0)
+    private java.math.BigDecimal erpFileSeq;
+
+    /** HAENGSUNG ERP attribute passthrough (Oracle {@code TB_TRNS_DETAIL.ATTRIBUTE2}). */
+    @Column(name = "ERP_ATTRIBUTE2", length = 150)
+    private String erpAttribute2;
+
     @Column(name = "REG_ID", length = 100, nullable = false)
     private String regId;
 

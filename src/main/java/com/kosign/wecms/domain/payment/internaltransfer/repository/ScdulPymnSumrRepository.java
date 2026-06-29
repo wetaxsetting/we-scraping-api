@@ -67,6 +67,38 @@ public interface ScdulPymnSumrRepository extends JpaRepository<ScdulPymnSumr, Sc
             String bizKey, String apprSeqNo, String scdulPymnTypeCd);
 
     /**
+     * HAENGSUNG Oracle dispatch-result write-back (Step 5) — resolve the
+     * scheduled batch(es) bound to a just-finalized firm-banking pay-file by its
+     * shadow keys {@code (BIZ_KEY, PAY_TRAN_DT, PAY_FILE_SEQ_NO)}. Covers Vendor /
+     * Expense / Payroll (any {@code SCDUL_PYMN_TYPE_CD}) — the write-back filters
+     * to ERP batches by {@code ERP_FILE_*} afterwards. Type-agnostic on purpose.
+     */
+    List<ScdulPymnSumr> findByBizKeyAndPayTranDtAndPayFileSeqNo(
+            String bizKey, String payTranDt, String payFileSeqNo);
+
+    /**
+     * HAENGSUNG Oracle dispatch-result write-back (Step 5) — mark the batch's ERP
+     * result as pushed ({@code ERP_PROC_CMPL_YN='Y'}) so it is never re-pushed.
+     * Called ONLY after the Oracle write-back for the batch has succeeded
+     * (legacy {@code ERP_0100_004} STEP 5 {@code setErpProcCmplYn(YES)}). Its own
+     * transaction — an Oracle failure leaves the flag at {@code 'N'} for retry.
+     */
+    @Modifying
+    @org.springframework.transaction.annotation.Transactional
+    @Query("""
+            UPDATE ScdulPymnSumr s
+               SET s.erpProcCmplYn = 'Y',
+                   s.modId         = :modId,
+                   s.modDtm        = :modDtm
+             WHERE s.bizKey       = :bizKey
+               AND s.scdulPymnNo  = :scdulPymnNo
+            """)
+    int markErpProcComplete(@Param("bizKey")      String bizKey,
+                            @Param("scdulPymnNo") String scdulPymnNo,
+                            @Param("modId")       String modId,
+                            @Param("modDtm")      String modDtm);
+
+    /**
      * Detail read — single batch by tenant + approval sequence number, with NO
      * payment-type discriminator. {@code APPR_SEQ_NO} is globally unique across
      * the shared {@code SCDUL_PYMN_SUMR} table (one approval = one batch), so a
@@ -77,6 +109,18 @@ public interface ScdulPymnSumrRepository extends JpaRepository<ScdulPymnSumr, Sc
      * loading {@code ScdulPymnSumr} by {@code (biz_key, appr_seq_no)}).
      */
     Optional<ScdulPymnSumr> findFirstByBizKeyAndApprSeqNo(String bizKey, String apprSeqNo);
+
+    /**
+     * HAENGSUNG Oracle Refresh import — dedup lookup by the ERP batch key
+     * {@code (BIZ_KEY, ERP_FILE_NUM, ERP_FILE_DATE)}. Returns the existing
+     * draft summary for a previously-imported Oracle batch so the import
+     * updates it instead of inserting a duplicate (see
+     * {@code haengsung-payment-refresh} §6.4). Type-agnostic — the Oracle
+     * {@code (FILE_DATE, FILE_NUM)} pair is globally unique per tenant, so the
+     * batch resolves regardless of {@code SCDUL_PYMN_TYPE_CD}.
+     */
+    Optional<ScdulPymnSumr> findFirstByBizKeyAndErpFileNumAndErpFileDate(
+            String bizKey, String erpFileNum, String erpFileDate);
 
     /**
      * List read — paged, filtered by tenant + payment type + date range

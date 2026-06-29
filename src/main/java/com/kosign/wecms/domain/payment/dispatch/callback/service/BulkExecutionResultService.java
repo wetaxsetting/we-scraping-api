@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.domain.payment.dispatch.callback.dto.BulkExecutionResultRequest;
 import com.kosign.wecms.domain.payment.dispatch.callback.dto.EfsCallbackEnvelope;
+import com.kosign.wecms.domain.payment.dispatch.callback.event.PaymentDispatchResultFinalizedEvent;
 import com.kosign.wecms.domain.payment.dispatch.constant.FirmBankingResultCd;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmBatApiTran;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmFileData;
@@ -30,6 +31,7 @@ import com.kosign.wecms.domain.payment.dispatch.van.client.VanApiKeyService;
 import com.kosign.wecms.domain.payment.dispatch.van.crypto.EfsCryptoService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -98,6 +100,7 @@ public class BulkExecutionResultService {
     private final TbFirmBatApiTranRepository firmBatApiTranRepository;
     private final TbPayFileMstRepository payFileMstRepository;
     private final TbPayFileDataRepository payFileDataRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     /**
      * Handle a 01302 execution-result callback.
@@ -276,6 +279,15 @@ public class BulkExecutionResultService {
                     pay.setProcStat(stat);
                     pay.setProcDttm(dttm14);
                     payFileMstRepository.save(pay);
+
+                    // Single trigger for the HAENGSUNG Oracle dispatch-result
+                    // write-back (Step 5). Fires once, only on actual pay-file
+                    // finalization (all siblings reported). Deferred to
+                    // AFTER_COMMIT by the subscriber, which filters to
+                    // HAENGSUNG / ERP batches and is a no-op otherwise — so it
+                    // is harmless for every other tenant/module.
+                    eventPublisher.publishEvent(
+                            new PaymentDispatchResultFinalizedEvent(bizKey, tranDt, fileSeqNo));
                 });
     }
 

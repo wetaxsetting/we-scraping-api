@@ -21,4 +21,14 @@ public interface BusiInfmRepository extends JpaRepository<BusiInfm, String> {
      */
     List<BusiInfm> findByDelYnAndBusiSttsAndPrdtTypeIn(
             String delYn, String busiStts, Collection<String> prdtTypes);
+
+    /**
+     * Tenants for the HAENGSUNG scheduled Oracle import batch
+     * ({@code haengsung-payment-refresh} §19 — legacy {@code ERP_0100_002}
+     * selects {@code BUSI_INFM WHERE prdt_type='H' AND del_yn='N'}). Distinct
+     * from {@link #findByDelYnAndBusiSttsAndPrdtTypeIn}: the ERP import does not
+     * additionally constrain {@code BUSI_STTS} — it imports for every non-deleted
+     * HAENGSUNG company.
+     */
+    List<BusiInfm> findByPrdtTypeAndDelYn(String prdtType, String delYn);
 }

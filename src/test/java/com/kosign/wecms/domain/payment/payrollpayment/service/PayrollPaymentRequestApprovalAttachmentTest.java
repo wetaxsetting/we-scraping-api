@@ -10,6 +10,8 @@ import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepos
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalAttachmentWriter;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxFanoutService;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalDisplayFlagsResolver;
+import com.kosign.wecms.domain.payment.approvalbox.event.PaymentApprovalStatus;
+import com.kosign.wecms.domain.payment.approvalbox.event.PaymentApprovalStatusChangedEvent;
 import com.kosign.wecms.domain.payment.common.OutBankCdNormalizer;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumr;
@@ -25,6 +27,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -65,6 +68,7 @@ class PayrollPaymentRequestApprovalAttachmentTest {
     @Mock private ApprovalNotificationService approvalNotificationService;
     @Mock private AuditLogService auditLogService;
     @Mock private ApprovalAttachmentWriter approvalAttachmentWriter;
+    @Mock private ApplicationEventPublisher eventPublisher;
 
     @InjectMocks private PayrollPaymentService service;
 
@@ -109,5 +113,35 @@ class PayrollPaymentRequestApprovalAttachmentTest {
 
         assertThat(resp.apprSeqNo()).isEqualTo("400");
         verify(approvalAttachmentWriter).persist(BIZ_KEY, "400", attachments);
+    }
+
+    @Test
+    void requestApproval_publishesPendingForHaengsungOracleWriteBack() {
+        ScdulPymnSumr master = new ScdulPymnSumr();
+        master.setBizKey(BIZ_KEY);
+        master.setScdulPymnNo(SCDUL_PYMN_NO);
+        master.setCcyCd("VND");
+        master.setTotalTranAmt(new BigDecimal("9000000"));
+        when(sumrRepository.findByBizKeyAndScdulPymnNoAndScdulPymnTypeCd(anyString(), anyString(), anyString()))
+                .thenReturn(Optional.of(master));
+        when(legacyFunctions.nextApprSeqNo(anyString())).thenReturn("400");
+        when(clock.instant()).thenReturn(Instant.parse("2026-06-13T03:00:00Z"));
+        when(docNoGenerator.nextDocNo(anyString())).thenReturn("VO_260613_004");
+        when(busiInfmRepository.findById(anyString())).thenReturn(Optional.empty());
+        when(displayFlagsResolver.resolve(anyString()))
+                .thenReturn(new ApprovalDisplayFlagsResolver.DisplayFlags("N", "N", "N", "N"));
+
+        RequestApprovalRequest req = new RequestApprovalRequest(
+                "Payroll Title", "note", "11704020", "001234567", "VND", "20260613",
+                "0", 5L,
+                List.of(new RequestApprovalRequest.ApproverInput("u1", "User One")),
+                List.of());
+
+        service.requestApproval(SCDUL_PYMN_NO, req, null);
+
+        // Request Approval submitted → PENDING lifecycle signal → HAENGSUNG Oracle
+        // TB_TRNS_MAST.LAST_STATUS='10' (legacy comm_0192_001_c005). apprSeqNo = "400".
+        verify(eventPublisher).publishEvent(
+                new PaymentApprovalStatusChangedEvent(BIZ_KEY, "400", PaymentApprovalStatus.PENDING));
     }
 }

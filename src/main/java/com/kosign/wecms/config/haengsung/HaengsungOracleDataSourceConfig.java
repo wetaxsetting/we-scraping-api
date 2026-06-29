@@ -90,6 +90,11 @@ public class HaengsungOracleDataSourceConfig {
         cfg.setKeepaliveTime(props.keepaliveMs());
         cfg.setValidationTimeout(props.validationTimeoutMs());
 
+        // Cap connection lifetime at 29 minutes — below the common 30-minute
+        // network idle cutoff, so a connection is retired by the pool before a
+        // firewall / Oracle profile silently drops it.
+        cfg.setMaxLifetime(1_740_000L);
+
         // Secondary / optional: never block or fail application startup when
         // Oracle is unreachable. The pool initialises lazily on first use;
         // connectivity is surfaced (not enforced) by HaengsungOracleHealthCheck.
