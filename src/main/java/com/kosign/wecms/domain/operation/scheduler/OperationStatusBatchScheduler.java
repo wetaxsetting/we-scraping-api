@@ -32,12 +32,11 @@ import org.springframework.stereotype.Component;
  * because ShedLock runs in scheduler-proxy mode — the lock is applied by the
  * scheduler proxy, so it must annotate the scheduled method, not the delegate.
  *
- * <p><b>Cron is a PLACEHOLDER.</b> Both crons are externalised
+ * <p><b>Cron.</b> Both crons are externalised
  * ({@code wecms.operation-status.batch.seed-cron} / {@code .refresh-cron}, anchored
- * to {@code Asia/Ho_Chi_Minh}) with provisional defaults (02:00 / 03:00 ICT). The
- * legacy cadence lives in the JEX batch-admin tables
- * ({@code TB_BATCH_SCHEDULE_INFO} / {@code _DTL}), NOT in source — replace the
- * defaults once it is confirmed (audit OQ-1). Nothing fires while the gate is OFF.
+ * to {@code Asia/Ho_Chi_Minh}). They match the confirmed legacy JEX Batch Admin
+ * schedule — run once a day, every day, at 00:00:00 ICT ({@code 0 0 0 * * ?}).
+ * Nothing fires while the gate is OFF.
  */
 @Slf4j
 @Component
@@ -53,8 +52,8 @@ public class OperationStatusBatchScheduler {
 
     private final OperationStatusBatchService batchService;
 
-    /** OPRT_0001_001 — seed / discovery. PLACEHOLDER cron until batch-admin confirmed. */
-    @Scheduled(cron = "${wecms.operation-status.batch.seed-cron:0 0 2 * * ?}", zone = VIETNAM_TZ_ID)
+    /** OPRT_0001_001 — seed / discovery. Legacy Batch Admin: daily @ 00:00 ICT. */
+    @Scheduled(cron = "${wecms.operation-status.batch.seed-cron:0 0 0 * * ?}", zone = VIETNAM_TZ_ID)
     @SchedulerLock(name = "oprt-status-seed",
                    lockAtMostFor = "PT30M",
                    lockAtLeastFor = "PT1M")
@@ -62,8 +61,8 @@ public class OperationStatusBatchScheduler {
         batchService.seedAllTenants();
     }
 
-    /** OPRT_0010_001 — refresh / update. PLACEHOLDER cron until batch-admin confirmed. */
-    @Scheduled(cron = "${wecms.operation-status.batch.refresh-cron:0 0 3 * * ?}", zone = VIETNAM_TZ_ID)
+    /** OPRT_0010_001 — refresh / update. Legacy Batch Admin: daily @ 00:00 ICT. */
+    @Scheduled(cron = "${wecms.operation-status.batch.refresh-cron:0 0 0 * * ?}", zone = VIETNAM_TZ_ID)
     @SchedulerLock(name = "oprt-status-refresh",
                    lockAtMostFor = "PT30M",
                    lockAtLeastFor = "PT1M")

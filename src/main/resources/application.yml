@@ -265,7 +265,7 @@ wecms:
 
   # Operation Status Inquiry batch (legacy OPRT_0001_001 seed / OPRT_0010_001 refresh).
   # OFF by default — the legacy JEX batch still owns OPRT_STTS_INFO on the shared DB.
-  # Crons are PLACEHOLDERS until the JEX batch-admin schedule is confirmed (audit OQ-1).
+  # Crons match the confirmed legacy Batch Admin schedule: once a day at 00:00 ICT.
   operation-status:
     batch:
       enabled: ${WECMS_OPERATION_STATUS_BATCH_ENABLED}
