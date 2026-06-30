@@ -174,10 +174,10 @@ class EInvoiceServiceTest {
         whenRepoReturnsEmpty();
 
         // size=200 should clamp to MAX_PAGE_SIZE=100, page=-3 to 0.
-        service.list("SALES", FROM, TO, null, -3, 200, null, null);
+        service.list("SALES", FROM, TO, null, null,-3, 200, null, null);
 
         ArgumentCaptor<Pageable> captor = ArgumentCaptor.forClass(Pageable.class);
-        verify(repo).findFiltered(eq(BIZ), eq("I"), eq(FROM), eq(TO), isNull(), captor.capture());
+        verify(repo).findFiltered(eq(BIZ), eq("I"), eq(FROM), eq(TO), isNull(),isNull(), captor.capture());
         Pageable p = captor.getValue();
         assertThat(p.getPageNumber()).isEqualTo(0);
         assertThat(p.getPageSize()).isEqualTo(100);
@@ -186,12 +186,12 @@ class EInvoiceServiceTest {
     @Test
     void list_responseEnvelopesPaginationFields() {
         BusaDocMstr r = sampleRow("D1", "VND", new BigDecimal("100"));
-        when(repo.findFiltered(eq(BIZ), eq("I"), eq(FROM), eq(TO), isNull(), any(Pageable.class)))
+        when(repo.findFiltered(eq(BIZ), eq("I"), eq(FROM), eq(TO), isNull(),isNull(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(r), PageRequest.of(2, 10), 53L));
-        when(repo.aggregateByCurrency(eq(BIZ), eq("I"), eq(FROM), eq(TO), isNull()))
+        when(repo.aggregateByCurrency(eq(BIZ), eq("I"), eq(FROM), eq(TO), isNull(),isNull()))
                 .thenReturn(List.of());
 
-        EInvoiceListResponse res = service.list("SALES", FROM, TO, null, 2, 10, null, null);
+        EInvoiceListResponse res = service.list("SALES", FROM, TO, null, null,2, 10, null, null);
 
         assertThat(res.totalCount()).isEqualTo(53L);
         assertThat(res.totalPages()).isEqualTo(6);    // ceil(53/10)
@@ -259,10 +259,10 @@ class EInvoiceServiceTest {
     void list_unknownSortField_passesDefaultPageable() {
         whenRepoReturnsEmpty();
 
-        service.list("SALES", FROM, TO, null, 0, 10, "BOGUS", "ASC");
+        service.list("SALES", FROM, TO, null, null,0, 10, "BOGUS", "ASC");
 
         ArgumentCaptor<Pageable> captor = ArgumentCaptor.forClass(Pageable.class);
-        verify(repo).findFiltered(eq(BIZ), eq("I"), eq(FROM), eq(TO), isNull(), captor.capture());
+        verify(repo).findFiltered(eq(BIZ), eq("I"), eq(FROM), eq(TO), isNull(),isNull(), captor.capture());
         List<Sort.Order> orders = captor.getValue().getSort().toList();
         assertThat(orders).extracting(Sort.Order::getProperty)
                 .containsExactly("issuDt", "regDtm");
@@ -298,17 +298,17 @@ class EInvoiceServiceTest {
     @Test
     void list_blankKeyword_passesNullPatternToRepo() {
         whenRepoReturnsEmpty();
-        service.list("SALES", FROM, TO, "   ", 0, 10, null, null);
-        verify(repo).findFiltered(eq(BIZ), eq("I"), eq(FROM), eq(TO), isNull(), any(Pageable.class));
-        verify(repo).aggregateByCurrency(eq(BIZ), eq("I"), eq(FROM), eq(TO), isNull());
+        service.list("SALES", FROM, TO, "   ", null, 0, 10, null, null);
+        verify(repo).findFiltered(eq(BIZ), eq("I"), eq(FROM), eq(TO), isNull(),isNull(), any(Pageable.class));
+        verify(repo).aggregateByCurrency(eq(BIZ), eq("I"), eq(FROM), eq(TO), isNull(),isNull());
     }
 
     @Test
     void list_nonBlankKeyword_passesEscapedPatternToRepo() {
         whenRepoReturnsEmpty();
-        service.list("SALES", FROM, TO, "ADTECH", 0, 10, null, null);
-        verify(repo).findFiltered(eq(BIZ), eq("I"), eq(FROM), eq(TO), eq("%adtech%"), any(Pageable.class));
-        verify(repo).aggregateByCurrency(eq(BIZ), eq("I"), eq(FROM), eq(TO), eq("%adtech%"));
+        service.list("SALES", FROM, TO, "ADTECH", null, 0, 10, null, null);
+        verify(repo).findFiltered(eq(BIZ), eq("I"), eq(FROM), eq(TO), isNull(), eq("%adtech%"), any(Pageable.class));
+        verify(repo).aggregateByCurrency(eq(BIZ), eq("I"), eq(FROM), eq(TO), isNull(), eq("%adtech%"));
     }
 
     // ------------------------------------------------------------------
@@ -321,17 +321,17 @@ class EInvoiceServiceTest {
         // returns the full filtered dataset's totals — VND with 53
         // count and 100 million total. Phase 2 trusts the aggregator.
         BusaDocMstr r = sampleRow("D1", "VND", new BigDecimal("100"));
-        when(repo.findFiltered(eq(BIZ), eq("I"), eq(FROM), eq(TO), isNull(), any(Pageable.class)))
+        when(repo.findFiltered(eq(BIZ), eq("I"), eq(FROM), eq(TO), isNull(),isNull(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(r), PageRequest.of(2, 10), 53L));
 
-        when(repo.aggregateByCurrency(eq(BIZ), eq("I"), eq(FROM), eq(TO), isNull()))
+        when(repo.aggregateByCurrency(eq(BIZ), eq("I"), eq(FROM), eq(TO), isNull(),isNull()))
                 .thenReturn(List.of(
                         new EInvoiceCcyAggregate("VND", 50L,
                                 new BigDecimal("100000000"), new BigDecimal("10000000"), new BigDecimal("90000000")),
                         new EInvoiceCcyAggregate("USD",  3L,
                                 new BigDecimal("5000"), new BigDecimal("500"), new BigDecimal("4500"))));
 
-        EInvoiceListResponse res = service.list("SALES", FROM, TO, null, 2, 10, null, null);
+        EInvoiceListResponse res = service.list("SALES", FROM, TO, null, null,2, 10, null, null);
 
         assertThat(res.totals()).hasSize(2);
         assertThat(res.totals()).extracting(CurrencyTotal::ccyCd).containsExactly("VND", "USD");
@@ -356,39 +356,39 @@ class EInvoiceServiceTest {
     @Test
     void list_sales_callsRepoWithI_andCurrentBizKey() {
         BusaDocMstr r = sampleRow("D1", "VND", new BigDecimal("100"));
-        when(repo.findFiltered(eq(BIZ), eq("I"), eq(FROM), eq(TO), isNull(), any(Pageable.class)))
+        when(repo.findFiltered(eq(BIZ), eq("I"), eq(FROM), eq(TO), isNull(),isNull(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(r), PageRequest.of(0, 10), 1L));
-        when(repo.aggregateByCurrency(eq(BIZ), eq("I"), eq(FROM), eq(TO), isNull()))
+        when(repo.aggregateByCurrency(eq(BIZ), eq("I"), eq(FROM), eq(TO), isNull(),isNull()))
                 .thenReturn(List.of(new EInvoiceCcyAggregate("VND", 1L,
                         new BigDecimal("100"), BigDecimal.ZERO, new BigDecimal("100"))));
 
-        EInvoiceListResponse res = service.list("SALES", FROM, TO, null, 0, 10, null, null);
+        EInvoiceListResponse res = service.list("SALES", FROM, TO, null, null,0, 10, null, null);
 
         assertThat(res.totalCount()).isEqualTo(1L);
         assertThat(res.rows()).hasSize(1);
         assertThat(res.rows().get(0).docId()).isEqualTo("D1");
         assertThat(res.totals()).hasSize(1);
-        verify(repo).findFiltered(eq(BIZ), eq("I"), eq(FROM), eq(TO), isNull(), any(Pageable.class));
+        verify(repo).findFiltered(eq(BIZ), eq("I"), eq(FROM), eq(TO), isNull(),isNull(), any(Pageable.class));
     }
 
     @Test
     void list_expense_callsRepoWithB() {
         whenRepoReturnsEmpty();
-        service.list("EXPENSE", FROM, TO, null, 0, 10, null, null);
-        verify(repo).findFiltered(eq(BIZ), eq("B"), eq(FROM), eq(TO), isNull(), any(Pageable.class));
+        service.list("EXPENSE", FROM, TO, null, null, 0, 10, null, null);
+        verify(repo).findFiltered(eq(BIZ), eq("B"), eq(FROM), eq(TO), isNull(), isNull(), any(Pageable.class));
     }
 
     @Test
     void list_invalidType_skipsRepo() {
-        assertBusinessCode("WBE2002", () -> service.list("E", FROM, TO, null, 0, 10, null, null));
-        verify(repo, never()).findFiltered(any(), any(), any(), any(), any(), any(Pageable.class));
-        verify(repo, never()).aggregateByCurrency(any(), any(), any(), any(), any());
+        assertBusinessCode("WBE2002", () -> service.list("E", FROM, TO, null, null, 0, 10, null, null));
+        verify(repo, never()).findFiltered(any(), any(), any(), any(), any(), any(), any(Pageable.class));
+        verify(repo, never()).aggregateByCurrency(any(), any(), any(), any(), any(), any());
     }
 
     @Test
     void list_invalidDateRange_skipsRepo() {
-        assertBusinessCode("WBE_VALIDATION", () -> service.list("SALES", null, TO, null, 0, 10, null, null));
-        verify(repo, never()).findFiltered(any(), any(), any(), any(), any(), any(Pageable.class));
+        assertBusinessCode("WBE_VALIDATION", () -> service.list("SALES", null, TO, null, null, 0, 10, null, null));
+        verify(repo, never()).findFiltered(any(), any(), any(), any(), any(), any(), any(Pageable.class));
     }
 
     // ------------------------------------------------------------------
@@ -419,12 +419,12 @@ class EInvoiceServiceTest {
         BusaDocMstr r = sampleRow("D1", "VND", new BigDecimal("100"));
         r.setEinvInvoicestatus("Hóa đơn thay thế"); // legacy stored Vietnamese form
         r.setEinvInvoicestatusBef("Hóa đơn mới");
-        when(repo.findFiltered(eq(BIZ), eq("I"), eq(FROM), eq(TO), isNull(), any(Pageable.class)))
+        when(repo.findFiltered(eq(BIZ), eq("I"), eq(FROM), eq(TO), isNull(),isNull(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(r), PageRequest.of(0, 10), 1L));
-        when(repo.aggregateByCurrency(eq(BIZ), eq("I"), eq(FROM), eq(TO), isNull()))
+        when(repo.aggregateByCurrency(eq(BIZ), eq("I"), eq(FROM), eq(TO), isNull(),isNull()))
                 .thenReturn(List.of());
 
-        EInvoiceListResponse res = service.list("SALES", FROM, TO, null, 0, 10, null, null);
+        EInvoiceListResponse res = service.list("SALES", FROM, TO, null, null,0, 10, null, null);
 
         EInvoiceRow row = res.rows().get(0);
         assertThat(row.einvInvoicestatus()).isEqualTo("Hóa đơn thay thế");
@@ -433,14 +433,39 @@ class EInvoiceServiceTest {
         // regex-based display per IR-4.
     }
 
+    @Test
+    void list_statusFilter_passesVietnameseValueToBothQueries() {
+        // Server-side status filter (2026-06-30) — the frontend sends the
+        // canonical stored Vietnamese string; the service forwards it
+        // verbatim to BOTH the paged query and the totals aggregate so
+        // pagination + totals stay status-aware.
+        when(repo.findFiltered(eq(BIZ), eq("I"), eq(FROM), eq(TO), eq("Hóa đơn đã bị thay thế"), isNull(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 10), 0L));
+        when(repo.aggregateByCurrency(eq(BIZ), eq("I"), eq(FROM), eq(TO), eq("Hóa đơn đã bị thay thế"), isNull()))
+                .thenReturn(List.of());
+
+        service.list("SALES", FROM, TO, null, "Hóa đơn đã bị thay thế", 0, 10, null, null);
+
+        verify(repo).findFiltered(eq(BIZ), eq("I"), eq(FROM), eq(TO), eq("Hóa đơn đã bị thay thế"), isNull(), any(Pageable.class));
+        verify(repo).aggregateByCurrency(eq(BIZ), eq("I"), eq(FROM), eq(TO), eq("Hóa đơn đã bị thay thế"), isNull());
+    }
+
+    @Test
+    void list_blankStatus_passesNullToRepo() {
+        whenRepoReturnsEmpty();
+        service.list("SALES", FROM, TO, null, "   ", 0, 10, null, null);
+        verify(repo).findFiltered(eq(BIZ), eq("I"), eq(FROM), eq(TO), isNull(), isNull(), any(Pageable.class));
+        verify(repo).aggregateByCurrency(eq(BIZ), eq("I"), eq(FROM), eq(TO), isNull(), isNull());
+    }
+
     // ------------------------------------------------------------------
     // helpers
     // ------------------------------------------------------------------
 
     private void whenRepoReturnsEmpty() {
-        when(repo.findFiltered(eq(BIZ), any(), eq(FROM), eq(TO), any(), any(Pageable.class)))
+        when(repo.findFiltered(eq(BIZ), any(), eq(FROM), eq(TO), any(), any(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 10), 0L));
-        when(repo.aggregateByCurrency(eq(BIZ), any(), eq(FROM), eq(TO), any()))
+        when(repo.aggregateByCurrency(eq(BIZ), any(), eq(FROM), eq(TO), any(), any()))
                 .thenReturn(List.of());
     }
 

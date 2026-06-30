@@ -23,6 +23,12 @@ import java.util.List;
  *   <li>{@code PROV_STTS NOT IN ('VD','EE')} — hides drafts + cancelled</li>
  *   <li>{@code HAND_REG_YN <> 'Y'} — hides hand-registered rows</li>
  *   <li>{@code ISSU_DT BETWEEN :fromDt AND :toDt} — required range (IR-3)</li>
+ *   <li>Optional {@code status} — exact match against
+ *       {@code EINV_INVOICESTATUS} (the stored GDT Vietnamese status
+ *       string). Mirrors legacy {@code einv_0001_001_r001_act.jsp:88-92}:
+ *       the dropdown's {@code dv00x} values are the verbatim stored
+ *       strings, so legacy does {@code WHERE einv_invoiceStatus = ?}.
+ *       Blank / {@code null} = no status filter.</li>
  *   <li>Optional {@code keyword} — case-insensitive partial match across
  *       {@code DOC_ID}, {@code TRCO_CMNM}, {@code TRCO_TAX_ID},
  *       {@code EINV_INVOICESYMBOL}, {@code DISP_DOC_ID} (rule IR-5).</li>
@@ -57,6 +63,7 @@ public interface BusaDocMstrRepository extends JpaRepository<BusaDocMstr, BusaDo
                AND m.provStts NOT IN ('VD', 'EE')
                AND m.handRegYn <> 'Y'
                AND m.issuDt BETWEEN :fromDt AND :toDt
+               AND (:status IS NULL OR m.einvInvoicestatus = :status)
                AND (:keywordPattern IS NULL
                     OR LOWER(COALESCE(m.docId, ''))             LIKE :keywordPattern ESCAPE '!'
                     OR LOWER(COALESCE(m.trcoCmnm, ''))          LIKE :keywordPattern ESCAPE '!'
@@ -69,6 +76,7 @@ public interface BusaDocMstrRepository extends JpaRepository<BusaDocMstr, BusaDo
             @Param("docType")        String docType,
             @Param("fromDt")         String fromDt,
             @Param("toDt")           String toDt,
+            @Param("status")         String status,
             @Param("keywordPattern") String keywordPattern,
             Pageable pageable);
 
@@ -85,6 +93,7 @@ public interface BusaDocMstrRepository extends JpaRepository<BusaDocMstr, BusaDo
                AND m.provStts NOT IN ('VD', 'EE')
                AND m.handRegYn <> 'Y'
                AND m.issuDt BETWEEN :fromDt AND :toDt
+               AND (:status IS NULL OR m.einvInvoicestatus = :status)
                AND (:keywordPattern IS NULL
                     OR LOWER(COALESCE(m.docId, ''))             LIKE :keywordPattern ESCAPE '!'
                     OR LOWER(COALESCE(m.trcoCmnm, ''))          LIKE :keywordPattern ESCAPE '!'
@@ -99,6 +108,7 @@ public interface BusaDocMstrRepository extends JpaRepository<BusaDocMstr, BusaDo
             @Param("docType")        String docType,
             @Param("fromDt")         String fromDt,
             @Param("toDt")           String toDt,
+            @Param("status")         String status,
             @Param("keywordPattern") String keywordPattern);
 
     /**
@@ -288,4 +298,27 @@ public interface BusaDocMstrRepository extends JpaRepository<BusaDocMstr, BusaDo
             @Param("toDt")    String toDt,
             @Param("modDtm")  String modDtm,
             Sort sort);
+
+    /**
+     * Operation Status Inquiry <b>seed</b> batch ({@code OperationStatusBatchService.seedTenant},
+     * legacy {@code bcs.jex.wabooks.oprt.OPRT_0001_001}) — every distinct, non-blank
+     * counterparty tax id used on this tenant's documents, restricted to
+     * {@code HAND_REG_YN = 'N'} (synced-from-GDT rows, not manually entered).
+     *
+     * <p>Mirrors legacy {@code IDO.BUSA_DOC_MSTR_R035}:
+     * {@code SELECT DISTINCT TRCO_TAX_ID FROM BUSA_DOC_MSTR
+     * WHERE NULLIF(TRIM(TRCO_TAX_ID),'') IS NOT NULL} + dynamic
+     * {@code biz_key = ? AND hand_reg_yn = 'N'}. The seed batch is the only
+     * consumer; read-only — it never writes {@code BUSA_DOC_MSTR}.
+     */
+    @Query("""
+            SELECT DISTINCT m.trcoTaxId FROM BusaDocMstr m
+             WHERE m.bizKey = :bizKey
+               AND m.handRegYn = :handRegYn
+               AND m.trcoTaxId IS NOT NULL
+               AND TRIM(m.trcoTaxId) <> ''
+            """)
+    List<String> findDistinctTrcoTaxIdByBizKeyAndHandRegYn(
+            @Param("bizKey")    String bizKey,
+            @Param("handRegYn") String handRegYn);
 }

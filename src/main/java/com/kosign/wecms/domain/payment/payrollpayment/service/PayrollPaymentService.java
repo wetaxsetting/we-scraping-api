@@ -16,6 +16,8 @@ import com.kosign.wecms.domain.payment.approvalbox.service.ApprDv;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxFanoutService;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxService;
 import com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter;
+import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmBankCode;
+import com.kosign.wecms.domain.setting.firmbankingsettings.repository.TbFirmBankCodeRepository;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalActionRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.CreateScheduledTransferRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.CreateScheduledTransferResponse;
@@ -120,6 +122,11 @@ public class PayrollPaymentService {
      *  the {@code settings.erp_transaction_history.type.12} locale
      *  entry ("Payroll Scheduled Payment"). */
     static final String ERP_TRNS_TYPE_PAYROLL_SCHEDULED_PAYMENT = "12";
+
+    /** Vietcombank NAPAS code. Payroll VCB prohibition (G4, PO mapping
+     *  2026-06-16) — mirrors legacy {@code pymn_0005_002_c001_act.jsp:134}
+     *  ({@code "970436".equals(OUT_BANK_CD)}). */
+    static final String VCB_BANK_CD = "970436";
     /** WeCMS&rarr;ERP ('W') audit code for the Payroll Payment RESULT download
      *  (legacy {@code ErpTypeCd.PAYROLL_PAYMENT_RESULT}). */
     static final String ERP_TRNS_TYPE_PAYROLL_PAYMENT_RESULT = "06";
@@ -172,6 +179,9 @@ public class PayrollPaymentService {
     private final Clock                         clock;
     private final ExptResolMstrRepository       exptResolMstrRepository;
     private final ExptResolApprvrInfmRepository exptResolApprvrInfmRepository;
+    /** Shared avatar-URL resolver — maps approver ids → /api/v1/users/{id}/image
+     *  (null when no stored image). Single home for the USER_IMG → URL logic. */
+    private final com.kosign.wecms.domain.auth.service.UserImageUrlResolver userImageUrlResolver;
     /** G5: approval-request attachments ({@code EXPT_RESOL_FILE}) keyed by
      *  {@code APPR_SEQ_NO} — surfaces the Scheduled-detail {@code attachments}
      *  list (consumed by the shared Approval Details popup). Same wiring as
@@ -182,6 +192,10 @@ public class PayrollPaymentService {
     private final DocNoGenerator                docNoGenerator;
     private final BusiInfmRepository            busiInfmRepository;
     private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
+    /** G2 (legacy parity): resolves the typed CITAD 3-digit bank code to the
+     *  6-digit internal BANK_CD on save (legacy {@code getBankCode} CITAD
+     *  branch). Same repository the parser uses. */
+    private final TbFirmBankCodeRepository      firmBankCodeRepo;
 
     @Transactional(readOnly = true)
     public ScheduledTransferListResponse list(
@@ -274,7 +288,9 @@ public class PayrollPaymentService {
         List<TransferLineDetail> lines = detlRepository
                 .findByBizKeyAndScdulPymnNo(bizKey, resolvedId, lineSort)
                 .stream()
-                .map(d -> transferLineDetailMapper.toLineDetail(d, chartByCode))
+                // G1: payroll Remarks lives in WDRL_ACCT_RMRK (not TRAN_USAG),
+                // so source the detail-line remarks from there.
+                .map(d -> transferLineDetailMapper.toLineDetail(d, chartByCode, payrollRemarks(d)))
                 .toList();
 
         // G2 (Scheduled detail): one EXPT_RESOL_MSTR fetch by APPR_SEQ_NO feeds
@@ -484,12 +500,40 @@ public class PayrollPaymentService {
             detl.setScdulPymnNo(scdulPymnNo);
             detl.setScdulPymnDetlNo(Long.toString(++detlNoCursor));
             detl.setTranAmt(line.tranAmt());
-            detl.setTrnfCcyCd(emptyToDefault(line.trnfCcyCd(), req.trnfCcyCd()));
-            detl.setAntDivCd(emptyToNull(line.antDivCd()));
+            String lineCcy = emptyToDefault(line.trnfCcyCd(), req.trnfCcyCd());
+            detl.setTrnfCcyCd(lineCcy);
+            // G3 (legacy parity): payroll forces ANT_DIV_CD=CITAD on every
+            // detail row — legacy pymn_0005_002_c001_act.jsp:118,125 hardcodes
+            // AntDivCd.CITAD. Payroll is CITAD-only in the live system; NAPAS
+            // payroll support needs a PO decision before relaxing this.
+            detl.setAntDivCd("CITAD");
             detl.setRcptNm(emptyToNull(line.rcptNm()));
-            detl.setTarBankCd(emptyToNull(line.tarBankCd()));
+            // G2 (legacy parity): resolve the typed CITAD code to the 6-digit
+            // internal BANK_CD before persisting (legacy getBankCode CITAD
+            // branch, pymn_0005_002_c001_act.jsp:126,162-185).
+            String resolvedTarBankCd = resolveCitadBankCd(line.tarBankCd());
+            detl.setTarBankCd(resolvedTarBankCd);
             detl.setFincMdaNo(line.fincMdaNo());
-            detl.setTranUsag(emptyToNull(line.tranUsag()));
+            // G4 (legacy parity, PO mapping 2026-06-16): payroll VCB
+            // prohibitions enforced at upload save (legacy
+            // pymn_0005_002_c001_act.jsp:128-142). VCB-as-source cannot do VND
+            // payroll at all; VCB USD only to VCB (same bank). Throwing here
+            // rolls the whole draft back (matches legacy WbRollbackException).
+            if (VCB_BANK_CD.equals(master.getOutBankCd())) {
+                if ("VND".equalsIgnoreCase(lineCcy)) {
+                    throw new BusinessException("WBE_PAYROLL_VCB_VND_NOT_SUPPORTED");
+                }
+                if (!VCB_BANK_CD.equals(resolvedTarBankCd)) {
+                    throw new BusinessException("WBE_PAYROLL_VCB_USD_OTHER_BANK");
+                }
+            }
+            // G1 (legacy parity): payroll Remarks (Excel col 6) persists to
+            // WDRL_ACCT_RMRK, NOT TRAN_USAG — legacy pymn_0005_002_r001_act.jsp
+            // packs the cell into "WDRL_ACCT_RMRK" (:341,357,623) and c001
+            // copyFrom(recItem) saves it there. The shared wire DTO carries the
+            // value in tran_usag, so read it from there and write the legacy
+            // column; leave TRAN_USAG null to match legacy payroll rows.
+            detl.setWdrlActRmrk(emptyToNull(line.tranUsag()));
             detl.setTrcoKey(emptyToNull(line.trcoKey()));
             detl.setHandTrcoKey(emptyToNull(line.handTrcoKey()));
             detl.setDocNo(emptyToNull(line.docNo()));
@@ -535,6 +579,45 @@ public class PayrollPaymentService {
         log.info("feature=payroll-payment create bizKey={} scdulPymnNo={} lineCount={} totalAmount={}",
                 bizKey, scdulPymnNo, req.lines().size(), totalAmount);
         return new CreateScheduledTransferResponse(scdulPymnNo);
+    }
+
+    /**
+     * G2 (legacy parity): resolve a typed CITAD bank code (3-digit) to its
+     * 6-digit internal {@code BANK_CD} via {@code TB_FIRM_BANK_CODE}. Mirrors
+     * legacy {@code pymn_0005_002_c001_act.jsp getBankCode(...,"CITAD",...)}
+     * (query {@code ant_div_cd='CITAD' AND citad_bank_cd=? AND
+     * bank_branch_div='1'} &rarr; {@code BANK_CD}; the {@code bank_stas='1'}
+     * predicate is deferred per the repository's documented caveat — same
+     * lookup the parser uses).
+     *
+     * <p>Legacy returns {@code ""} when the code is not in the CITAD registry;
+     * we keep the typed code as a fallback so a registry miss does not silently
+     * blank the bank code (refactor safety — legacy's empty result is itself a
+     * latent gap, not a behaviour to reproduce).
+     */
+    private String resolveCitadBankCd(String typed) {
+        String code = emptyToNull(typed);
+        if (code == null) {
+            return null;
+        }
+        return firmBankCodeRepo
+                .findFirstByAntDivCdAndCitadBankCd("CITAD", code)
+                .map(TbFirmBankCode::getBankCd)
+                .filter(b -> b != null && !b.isBlank())
+                .orElse(code);
+    }
+
+    /**
+     * G1 (legacy parity): payroll Remarks read source. Legacy keeps Remarks in
+     * {@code WDRL_ACCT_RMRK}; refactor rows written before this fix may still
+     * carry the value in {@code TRAN_USAG}, so coalesce (WDRL_ACCT_RMRK first).
+     */
+    private static String payrollRemarks(ScdulPymnSumrDetl d) {
+        String rmrk = d.getWdrlActRmrk();
+        if (rmrk != null && !rmrk.isBlank()) {
+            return rmrk;
+        }
+        return d.getTranUsag();
     }
 
     /* ----------------------------------------------------------------
@@ -1212,9 +1295,12 @@ public class PayrollPaymentService {
             if (!chain.isEmpty()) {
                 String nm = chain.get(0).getApprvrNm();
                 String firstName = (nm != null && !nm.isBlank()) ? nm.trim() : null;
+                Map<String, String> imgUrlByApprvrId = userImageUrlResolver.resolveImageUrls(
+                        bizKey, chain.stream().map(a -> a.getApprvrId()).toList());
                 List<ScheduledTransferApprover> list = chain.stream()
                         .map(a -> new ScheduledTransferApprover(
-                                a.getApprvrNm(), a.getApprvrStts(), a.getApprDtm()))
+                                a.getApprvrNm(), a.getApprvrStts(), a.getApprDtm(),
+                                imgUrlByApprvrId.get(a.getApprvrId())))
                         .toList();
                 out.put(seq, new ApproverSummary(firstName, chain.size(), list));
             }

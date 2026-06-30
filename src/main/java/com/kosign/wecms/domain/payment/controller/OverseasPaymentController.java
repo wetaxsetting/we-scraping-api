@@ -18,6 +18,7 @@ import com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalReque
 import com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.WithdrawalAccountRow;
 import com.kosign.wecms.domain.payment.common.WithdrawalAccountListService;
+import com.kosign.wecms.domain.payment.service.OverseasPaymentDownloadService;
 import com.kosign.wecms.domain.payment.service.OverseasPaymentExcelService;
 import com.kosign.wecms.domain.payment.service.OverseasPaymentExcelService.DownloadResource;
 import com.kosign.wecms.domain.payment.service.OverseasPaymentService;
@@ -26,6 +27,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
@@ -70,6 +72,7 @@ public class OverseasPaymentController {
     private final OverseasPaymentExcelService   overseasExcelService;
     private final WithdrawalAccountListService  withdrawalAccountListService;
     private final ExcelExportService            excelExportService;
+    private final OverseasPaymentDownloadService downloadService;
 
     /**
      * Preview the next {@code VO_YYMMDD_NNN} document number for the Request
@@ -455,5 +458,64 @@ public class OverseasPaymentController {
                 .header("X-Content-Type-Options", "nosniff")
                 .header("Access-Control-Expose-Headers", HttpHeaders.CONTENT_DISPOSITION)
                 .body(new InputStreamResource(stream));
+    }
+
+    /**
+     * Excel Download — the legacy 22-column populated report
+     * (ports {@code pymn_0008_002_r002}). Loads the locale template from the
+     * backend classpath, populates one row per transfer detail preserving all
+     * template styling, and streams
+     * {@code WeCMS_Overseas_Payment_download_{LANG}.xlsx}.
+     *
+     * <p>This is the artifact the Scheduled Payment list-row glyph and detail
+     * file card download — NOT the originally uploaded Excel file (which
+     * {@code GET /scheduled/{id}/file} still serves as the import source). See
+     * {@code docs/audits/overseas-payment-excel-download-audit.md}. Scheduled
+     * scope inherits the class-level {@code payment-overseas-request} authz.
+     *
+     * @param id   batch key ({@code OVRS_PYMN_NO})
+     * @param lang optional UI-locale hint (EN/KO/VI; KM/other → EN). When
+     *             omitted the JWT {@code langCd} is used.
+     */
+    @GetMapping("/{id}/report")
+    public ResponseEntity<ByteArrayResource> downloadReport(
+            @PathVariable("id") String id,
+            @RequestParam(value = "lang", required = false) String lang) {
+        return reportResponse(downloadService.generate(id, lang));
+    }
+
+    /**
+     * Excel Download — same generated 22-column report as
+     * {@link #downloadReport}, exposed under the Result namespace so the
+     * {@code payment-overseas-result} menu authorization applies. The Payment
+     * Result list-row glyph and Result detail file card call this endpoint.
+     *
+     * @param id   batch key ({@code OVRS_PYMN_NO})
+     * @param lang optional UI-locale hint (EN/KO/VI; KM/other → EN)
+     */
+    @GetMapping("/result/{id}/report")
+    @PreAuthorize("@menuAuthz.canAccess('payment-overseas-result')")
+    public ResponseEntity<ByteArrayResource> downloadResultReport(
+            @PathVariable("id") String id,
+            @RequestParam(value = "lang", required = false) String lang) {
+        return reportResponse(downloadService.generate(id, lang));
+    }
+
+    /** Shared builder for the generated-report binary response (RFC 5987
+     *  filename, XLSX content type, no-sniff). */
+    private static ResponseEntity<ByteArrayResource> reportResponse(
+            OverseasPaymentDownloadService.GeneratedReport report) {
+        ContentDisposition cd = ContentDisposition.builder("attachment")
+                .filename(report.fileName(), StandardCharsets.UTF_8)
+                .build();
+        ByteArrayResource body = new ByteArrayResource(report.content());
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .contentLength(body.contentLength())
+                .header(HttpHeaders.CONTENT_DISPOSITION, cd.toString())
+                .header("X-Content-Type-Options", "nosniff")
+                .header("Access-Control-Expose-Headers", HttpHeaders.CONTENT_DISPOSITION)
+                .body(body);
     }
 }

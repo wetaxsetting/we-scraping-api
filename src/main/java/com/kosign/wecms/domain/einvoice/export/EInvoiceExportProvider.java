@@ -106,15 +106,17 @@ public abstract class EInvoiceExportProvider implements ExportRowProvider {
         String fromDt  = stringOrNull(filters.get("from"));
         String toDt    = stringOrNull(filters.get("to"));
         String keyword = stringOrNull(filters.get("keyword"));
+        String status  = stringOrNull(filters.get("status"));
 
         ExcelSortSpec sort = request.sort();
         String sortField     = sort != null ? sort.field()     : null;
         String sortDirection = sort != null ? sort.direction() : null;
 
-        // Same query the list endpoint runs — IR-1 / IR-2 / IR-3 / IR-5 /
-        // IR-6 all enforced inside the service.
+        // Same query the list endpoint runs — IR-1 / IR-2 / IR-3 / IR-4
+        // (status) / IR-5 / IR-6 all enforced inside the service, so the
+        // export matches exactly what the on-screen filtered list shows.
         EInvoiceListResponse data = eInvoiceService.list(
-                type, fromDt, toDt, keyword,
+                type, fromDt, toDt, keyword, status,
                 Pageable.unpaged(),
                 sortField, sortDirection);
 

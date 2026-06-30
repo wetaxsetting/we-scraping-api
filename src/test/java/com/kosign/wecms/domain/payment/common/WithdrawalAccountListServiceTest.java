@@ -36,9 +36,9 @@ import static org.mockito.Mockito.when;
  * three remediation fixes:
  * <ul>
  *   <li><b>G1</b> — the query is called with the legacy bank set
- *       {@code ('11704088','11704020')}.</li>
- *   <li><b>G2</b> — only accounts the user holds an active {@code V}/{@code W}
- *       grant on are returned; non-V/W grants and ungranted accounts are
+ *       {@code ('11704088','11704020','11704004')}.</li>
+ *   <li><b>G2</b> — only accounts the user holds an active {@code V}/{@code W}/{@code F}
+ *       grant on are returned; other grant types and ungranted accounts are
  *       dropped.</li>
  *   <li><b>No admin bypass</b> — an ADMIN principal with no grants gets an
  *       empty list (legacy {@code comm_1001_001} has no admin branch).</li>
@@ -59,6 +59,7 @@ class WithdrawalAccountListServiceTest {
 
     private static final String SHINHAN = "11704088";
     private static final String WOORI   = "11704020";
+    private static final String VCB     = "11704004";
 
     @Mock private AcctMstrRepository     acctMstrRepository;
     @Mock private AcctAuthInfoRepository acctAuthInfoRepository;
@@ -80,32 +81,35 @@ class WithdrawalAccountListServiceTest {
     }
 
     @Test
-    void list_appliesBankSet_firmFallbackOff_andVwPermissionIntersection() {
-        // Three accounts that already passed the bank + firm-banking gate
-        // (the query is mocked). User has: V on A, W on B, a non-V/W grant on C.
+    void list_appliesBankSet_firmFallbackOff_andVwfPermissionIntersection() {
+        // Four accounts that already passed the bank + firm-banking gate
+        // (the query is mocked). User has: V on A, W on B, F on D (VCB), and a
+        // non-V/W/F grant on C.
         AcctMstr a = acct(SHINHAN, "1111", "03", "VND");
         AcctMstr b = acct(WOORI,   "2222", "04", "USD");
         AcctMstr c = acct(WOORI,   "3333", "05", "VND");
+        AcctMstr d = acct(VCB,     "4444", "03", "VND");
         when(acctMstrRepository.findFirmBankingWithdrawalAccounts(eq(TENANT), any(), any(), eq(false)))
-                .thenReturn(List.of(a, b, c));
+                .thenReturn(List.of(a, b, c, d));
         when(acctAuthInfoRepository.findByBizKeyAndUserIdAndUseYn(TENANT, USER, "Y"))
                 .thenReturn(List.of(
                         grant(SHINHAN, "1111", WithdrawalAccountConstants.AUTH_TYPE_VIEW),
                         grant(WOORI,   "2222", WithdrawalAccountConstants.AUTH_TYPE_WITHDRAW),
-                        grant(WOORI,   "3333", "M")));   // non-V/W → must be excluded
+                        grant(WOORI,   "3333", "M"),    // non-V/W/F → must be excluded
+                        grant(VCB,     "4444", WithdrawalAccountConstants.AUTH_TYPE_FILE)));
 
         List<WithdrawalAccountRow> rows = service.list(null);
 
-        // G2: only the V- and W-granted accounts survive.
+        // G2: the V-, W- and F-granted accounts survive; the 'M' grant is dropped.
         assertThat(rows).extracting(WithdrawalAccountRow::acctNo)
-                .containsExactlyInAnyOrder("1111", "2222");
+                .containsExactlyInAnyOrder("1111", "2222", "4444");
 
-        // G1 + G3: the query received the legacy bank set and fallback OFF.
+        // G1 + G3: the query received the legacy 3-bank set and fallback OFF.
         ArgumentCaptor<java.util.Collection<String>> banks = ArgumentCaptor.forClass(java.util.Collection.class);
         ArgumentCaptor<Boolean> fallback = ArgumentCaptor.forClass(Boolean.class);
         org.mockito.Mockito.verify(acctMstrRepository)
                 .findFirmBankingWithdrawalAccounts(eq(TENANT), any(), banks.capture(), fallback.capture());
-        assertThat(banks.getValue()).containsExactlyInAnyOrder(SHINHAN, WOORI);
+        assertThat(banks.getValue()).containsExactlyInAnyOrder(SHINHAN, WOORI, VCB);
         assertThat(banks.getValue()).isEqualTo(WithdrawalAccountConstants.WITHDRAWAL_BANK_CDS);
         assertThat(fallback.getValue()).isFalse();
     }

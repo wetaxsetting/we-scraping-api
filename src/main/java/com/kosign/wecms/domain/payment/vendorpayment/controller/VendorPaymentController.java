@@ -22,6 +22,7 @@ import com.kosign.wecms.domain.payment.match.dto.PaymentLineMatchRequest;
 import com.kosign.wecms.domain.payment.match.dto.PaymentLineMatchResultResponse;
 import com.kosign.wecms.domain.payment.match.dto.PaymentLineUnmatchAllResponse;
 import com.kosign.wecms.domain.payment.match.service.DomesticPaymentLineMatchService;
+import com.kosign.wecms.domain.payment.vendorpayment.service.VendorPaymentDownloadService;
 import com.kosign.wecms.domain.payment.vendorpayment.service.VendorPaymentResultService;
 import com.kosign.wecms.domain.payment.vendorpayment.service.VendorPaymentService;
 import com.kosign.wecms.domain.payment.vendorpayment.service.VendorPaymentService.DownloadResource;
@@ -36,6 +37,7 @@ import java.nio.file.Files;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
@@ -101,6 +103,7 @@ public class VendorPaymentController {
 
     private final VendorPaymentService            service;
     private final VendorPaymentResultService      resultService;
+    private final VendorPaymentDownloadService    downloadService;
     private final ExcelExportService              excelExportService;
     private final DomesticPaymentLineMatchService lineMatchService;
 
@@ -155,6 +158,33 @@ public class VendorPaymentController {
     }
 
     /**
+     * Excel Download — the legacy 22-column populated report
+     * (ports {@code pymn_0002_002_r002}, Vendor branch / type {@code "01"}).
+     * Loads the locale template from the backend classpath, populates one
+     * row per transfer detail (incl. Contact Name / {@code TRCO_CMENM} at
+     * column J) preserving all template styling, and streams
+     * {@code WeCMS_Vendor_Payment_download_{LANG}.xlsx}.
+     *
+     * <p>This is the artifact the Scheduled Payment list-row glyph and the
+     * Scheduled detail file-card download — NOT the originally uploaded
+     * Excel file (which {@code GET /{id}/file} still serves as the import
+     * source). See {@code docs/audits/vendor-payment-excel-download-audit.md}.
+     *
+     * @param id   batch key
+     * @param lang optional UI-locale hint (EN/KO/VI; KM/other → EN). When
+     *             omitted the JWT {@code langCd} is used.
+     */
+    @GetMapping("/{id}/report")
+    public ResponseEntity<ByteArrayResource> downloadReport(
+            @PathVariable("id")
+            @Size(max = 30)
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id,
+            @RequestParam(value = "lang", required = false) String lang) {
+        return reportResponse(downloadService.generate(id, lang));
+    }
+
+    /**
      * List Vendor Payment results (dispatched + not-yet-dispatched
      * batches with their per-currency totals). Mirrors legacy
      * {@code pymn_0002_001_r001}.
@@ -187,6 +217,44 @@ public class VendorPaymentController {
             @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
             String id) {
         return ApiResponse.ok(resultService.detail(id));
+    }
+
+    /**
+     * Excel Download — the legacy 22-column report for a Vendor Payment
+     * Result batch. Same artifact as {@link #downloadReport} but routed
+     * through the result-scoped endpoint so {@code payment-vendor-result}
+     * menu authorization applies (the report is per-batch, keyed only by
+     * {@code SCDUL_PYMN_NO}). Drives the Result list-row glyph and the
+     * Result detail file-card download.
+     */
+    @GetMapping("/results/{id}/report")
+    @PreAuthorize("@menuAuthz.canAccess('payment-vendor-result')")
+    public ResponseEntity<ByteArrayResource> downloadResultReport(
+            @PathVariable("id")
+            @Size(max = 30)
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id,
+            @RequestParam(value = "lang", required = false) String lang) {
+        return reportResponse(downloadService.generate(id, lang));
+    }
+
+    /** Shared builder for the generated-report binary response (RFC 5987
+     *  filename, XLSX content type, no-sniff). Mirrors the Internal Transfer
+     *  controller's {@code reportResponse}. */
+    private static ResponseEntity<ByteArrayResource> reportResponse(
+            VendorPaymentDownloadService.GeneratedReport report) {
+        ContentDisposition cd = ContentDisposition.builder("attachment")
+                .filename(report.fileName(), StandardCharsets.UTF_8)
+                .build();
+        ByteArrayResource body = new ByteArrayResource(report.content());
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .contentLength(body.contentLength())
+                .header(HttpHeaders.CONTENT_DISPOSITION, cd.toString())
+                .header("X-Content-Type-Options", "nosniff")
+                .header("Access-Control-Expose-Headers", HttpHeaders.CONTENT_DISPOSITION)
+                .body(body);
     }
 
     /** Excel export of the Vendor Payment Result list. Provider:

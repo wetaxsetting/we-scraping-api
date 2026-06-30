@@ -16,6 +16,8 @@ import com.kosign.wecms.domain.payment.approvalbox.service.ApprDv;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxFanoutService;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxService;
 import com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter;
+import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmBankCode;
+import com.kosign.wecms.domain.setting.firmbankingsettings.repository.TbFirmBankCodeRepository;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalActionRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.CreateScheduledTransferRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.CreateScheduledTransferResponse;
@@ -184,6 +186,9 @@ public class VendorPaymentService {
     private final Clock                         clock;
     private final ExptResolMstrRepository       exptResolMstrRepository;
     private final ExptResolApprvrInfmRepository exptResolApprvrInfmRepository;
+    /** Shared avatar-URL resolver — maps approver ids → /api/v1/users/{id}/image
+     *  (null when no stored image). Single home for the USER_IMG → URL logic. */
+    private final com.kosign.wecms.domain.auth.service.UserImageUrlResolver userImageUrlResolver;
     /** Approval-request attachments ({@code EXPT_RESOL_FILE}) keyed by
      *  {@code APPR_SEQ_NO} — surfaces the Scheduled-detail {@code attachments}
      *  list (consumed by the shared Approval Details popup). Shared
@@ -193,6 +198,14 @@ public class VendorPaymentService {
     private final DocNoGenerator                docNoGenerator;
     private final BusiInfmRepository            busiInfmRepository;
     private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
+    /** TB_FIRM_BANK_CODE registry — resolves the CITAD head-office 6-digit
+     *  BANK_CD persisted into SCDUL_PYMN_SUMR_DETL.TAR_BANK_CD (legacy
+     *  PymnHelper#getBankCode parity). */
+    private final TbFirmBankCodeRepository      firmBankCodeRepo;
+    /** ACCT_MSTR — resolves the selected withdrawal account's own currency
+     *  for SCDUL_PYMN_SUMR.WDRL_CCY_CD (legacy parity — withdrawal currency
+     *  is independent of the transfer currency). */
+    private final AcctMstrRepository            acctMstrRepository;
 
     /**
      * List Vendor Payment batches for the current tenant in the given
@@ -451,7 +464,13 @@ public class VendorPaymentService {
         master.setOutBankCd(outBankCdNormalizer.normalize(req.bankCd()));
         master.setWdrlActNo(req.acctNo());
         master.setCcyCd(req.ccyCd());
-        master.setWdrlCcyCd(req.ccyCd());
+        // GAP-4 (legacy parity): WDRL_CCY_CD is the WITHDRAWAL account's own
+        // currency (legacy reads the dropdown's data-ccycd = ACCT_MSTR.CCY_CD),
+        // NOT the transfer currency — the two differ when an account pays in a
+        // different currency. Resolve from ACCT_MSTR by the selected
+        // (bank_cd, acct_no); fall back to the transfer currency only if the
+        // row can't be resolved (defensive — the picker guarantees it exists).
+        master.setWdrlCcyCd(resolveWithdrawalCcyCd(bizKey, req.bankCd(), req.acctNo(), req.ccyCd()));
         master.setTitl(req.titl());
         master.setTrnfYn(TrnfYn.NOT_TRANSFERRED.code());
         master.setErpProcCmplYn("N");
@@ -507,14 +526,20 @@ public class VendorPaymentService {
             detl.setTrnfCcyCd(emptyToDefault(line.trnfCcyCd(), req.trnfCcyCd()));
             detl.setAntDivCd(emptyToNull(line.antDivCd()));
             detl.setRcptNm(emptyToNull(line.rcptNm()));
-            detl.setTarBankCd(emptyToNull(line.tarBankCd()));
+            // GAP-1 + GAP-8 (legacy PymnHelper.uploadPaymentExcel parity):
+            // persist the legacy-shaped TAR_BANK_CD (6-digit BANK_CD) +
+            // CITAD_BANK_CD ("000" NAPAS / 3-char CITAD) rather than the raw
+            // user-typed code with a null CITAD_BANK_CD. Resolved here at save
+            // time, exactly as legacy getBankCode + the :1360-1364/:1468 stamps.
+            DetailBankCodes bankCodes = resolveDetailBankCodes(line.antDivCd(), line.tarBankCd());
             detl.setFincMdaNo(line.fincMdaNo());
+            detl.setTarBankCd(bankCodes.tarBankCd());
             detl.setTranUsag(emptyToNull(line.tranUsag()));
             detl.setTrcoKey(emptyToNull(line.trcoKey()));
             detl.setHandTrcoKey(emptyToNull(line.handTrcoKey()));
             detl.setDocNo(emptyToNull(line.docNo()));
             detl.setNote(emptyToNull(line.note()));
-            detl.setCitadBankCd(emptyToNull(line.citadBankCd()));
+            detl.setCitadBankCd(bankCodes.citadBankCd());
             detl.setTrcoCmnm(emptyToNull(line.trcoCmnm()));
             detl.setTrcoCmenm(emptyToNull(line.trcoCmenm()));
             detl.setChartAcctSeqNo(emptyToNull(line.chartAcctSeqNo()));
@@ -1263,9 +1288,12 @@ public class VendorPaymentService {
             if (!chain.isEmpty()) {
                 String nm = chain.get(0).getApprvrNm();
                 String firstName = (nm != null && !nm.isBlank()) ? nm.trim() : null;
+                Map<String, String> imgUrlByApprvrId = userImageUrlResolver.resolveImageUrls(
+                        bizKey, chain.stream().map(a -> a.getApprvrId()).toList());
                 List<ScheduledTransferApprover> list = chain.stream()
                         .map(a -> new ScheduledTransferApprover(
-                                a.getApprvrNm(), a.getApprvrStts(), a.getApprDtm()))
+                                a.getApprvrNm(), a.getApprvrStts(), a.getApprDtm(),
+                                imgUrlByApprvrId.get(a.getApprvrId())))
                         .toList();
                 out.put(seq, new ApproverSummary(firstName, chain.size(), list));
             }
@@ -1344,6 +1372,84 @@ public class VendorPaymentService {
     private static String emptyToDefault(String s, String def) {
         String v = emptyToNull(s);
         return v == null ? def : v;
+    }
+
+    /** Persisted {@code TAR_BANK_CD} + {@code CITAD_BANK_CD} pair for one
+     *  detail line (legacy {@code PymnHelper.uploadPaymentExcel}). */
+    private record DetailBankCodes(String tarBankCd, String citadBankCd) {}
+
+    /**
+     * Resolve the legacy-shaped {@code TAR_BANK_CD} + {@code CITAD_BANK_CD}
+     * for one detail line, mirroring {@code PymnHelper.uploadPaymentExcel}
+     * ({@code WECMS DEV/.../PymnHelper.java}):
+     *
+     * <ul>
+     *   <li><b>CITAD</b> ({@code :1360-1361}, {@code getBankCode :1237-1251},
+     *       {@code :1450-1451}+{@code :1468}) — {@code TAR_BANK_CD} = the
+     *       6-digit head-office {@code BANK_CD} resolved from
+     *       {@code TB_FIRM_BANK_CODE} (
+     *       {@code ant_div_cd='CITAD' AND citad_bank_cd=<3char>
+     *       AND bank_stas='1' AND bank_branch_div='1'});
+     *       {@code CITAD_BANK_CD} = the 3-char code the user typed.</li>
+     *   <li><b>NAPAS</b> ({@code :1362-1364}, {@code getBankCode :1252-1253})
+     *       — {@code TAR_BANK_CD} = the 6-digit code as-is;
+     *       {@code CITAD_BANK_CD} = {@code "000"}.</li>
+     * </ul>
+     *
+     * <p>The Excel parser already validated the bank code exists, so the
+     * CITAD head-office lookup should resolve; if it somehow returns no
+     * row the typed code is kept (never an empty {@code TAR_BANK_CD}) and
+     * the miss is logged for follow-up. {@code antDivCd} is the
+     * parser-resolved network on the validated line ({@code "CITAD"} /
+     * {@code "NAPAS"}); any other value falls through the NAPAS-shaped
+     * branch.
+     */
+    private DetailBankCodes resolveDetailBankCodes(String antDivCd, String typedBankCd) {
+        String typed = emptyToNull(typedBankCd);
+        if ("CITAD".equals(antDivCd)) {
+            String headOffice = firmBankCodeRepo
+                    .findFirstByAntDivCdAndCitadBankCdAndBankStasAndBankBranchDiv(
+                            "CITAD", typed, "1", "1")
+                    .map(TbFirmBankCode::getBankCd)
+                    .filter(cd -> cd != null && !cd.isBlank())
+                    .orElse(null);
+            if (headOffice == null) {
+                log.warn("feature=vendor-payment CITAD head-office BANK_CD not found "
+                        + "citadBankCd={} — keeping typed code on TAR_BANK_CD", typed);
+                return new DetailBankCodes(typed, typed);
+            }
+            return new DetailBankCodes(headOffice, typed);
+        }
+        // NAPAS (validated path) — TAR_BANK_CD as-is, CITAD_BANK_CD = "000".
+        return new DetailBankCodes(typed, "000");
+    }
+
+    /**
+     * Resolve {@code SCDUL_PYMN_SUMR.WDRL_CCY_CD} = the selected withdrawal
+     * account's own currency (legacy parity — the {@code comm_1001_001}
+     * dropdown carries the account's {@code ACCT_MSTR.CCY_CD} as its
+     * {@code data-ccycd}, which legacy persists verbatim). Looked up by the
+     * selected {@code (BIZ_KEY, BANK_CD, ACCT_NO)} — {@code bankCd} here is
+     * the internal {@code ACCT_MSTR.BANK_CD} the picker returned (not the
+     * NAPAS-normalized {@code OUT_BANK_CD}). Falls back to {@code fallbackCcyCd}
+     * (the transfer currency) only when the row can't be resolved, so the
+     * column is never left null.
+     */
+    private String resolveWithdrawalCcyCd(
+            String bizKey, String bankCd, String acctNo, String fallbackCcyCd) {
+        if (bankCd == null || bankCd.isBlank() || acctNo == null || acctNo.isBlank()) {
+            return fallbackCcyCd;
+        }
+        return acctMstrRepository
+                .findByBizKeyAndBankCdAndAcctNo(bizKey, bankCd.trim(), acctNo.trim())
+                .map(AcctMstr::getCcyCd)
+                .filter(c -> c != null && !c.isBlank())
+                .orElseGet(() -> {
+                    log.warn("feature=vendor-payment withdrawal account not resolved for "
+                            + "WDRL_CCY_CD bizKey={} bankCd={} acctNo={} — using transfer ccy {}",
+                            bizKey, bankCd, acctNo, fallbackCcyCd);
+                    return fallbackCcyCd;
+                });
     }
 
     /** Path-traversal-safe filename leaf — mirrors Internal Transfer's

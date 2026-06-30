@@ -42,11 +42,13 @@ class TransferResultControllerTest {
     private MockMvc mvc;
     private InternalTransferResultService service;
     private ExcelExportService excelExportService;
+    private com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferDownloadService downloadService;
 
     @BeforeEach
     void setUp() {
         service = mock(InternalTransferResultService.class);
         excelExportService = mock(ExcelExportService.class);
+        downloadService = mock(com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferDownloadService.class);
 
         ObjectMapper mapper = new ObjectMapper()
                 .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
@@ -60,7 +62,7 @@ class TransferResultControllerTest {
         GlobalExceptionHandler advice = new GlobalExceptionHandler(messages);
 
         mvc = MockMvcBuilders
-                .standaloneSetup(new TransferResultController(service, excelExportService))
+                .standaloneSetup(new TransferResultController(service, excelExportService, downloadService))
                 .setMessageConverters(jsonConverter)
                 .setControllerAdvice(advice)
                 .build();

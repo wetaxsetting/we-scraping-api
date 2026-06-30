@@ -349,7 +349,10 @@ public class PayrollPaymentResultService {
                 d.getTarBankCd(),
                 transferLineDetailMapper.resolveBankNm(d.getTarBankCd()),
                 d.getFincMdaNo(),
-                d.getTranUsag(),
+                // G1 (legacy parity): payroll Remarks lives in WDRL_ACCT_RMRK,
+                // not TRAN_USAG. Coalesce so legacy-migrated rows (and any
+                // pre-fix refactor rows that wrote TRAN_USAG) still render.
+                payrollRemarks(d),
                 d.getTrnfCcyCd(),
                 d.getTrnfCcyCd(),
                 d.getDepoCcyCd(),
@@ -470,5 +473,18 @@ public class PayrollPaymentResultService {
         if (s == null) return null;
         String trimmed = s.trim();
         return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    /**
+     * G1 (legacy parity): payroll Remarks read source. Legacy keeps Remarks in
+     * {@code WDRL_ACCT_RMRK}; coalesce so legacy-migrated rows (and any pre-fix
+     * refactor rows that wrote {@code TRAN_USAG}) still render.
+     */
+    private static String payrollRemarks(ScdulPymnSumrDetl d) {
+        String rmrk = d.getWdrlActRmrk();
+        if (rmrk != null && !rmrk.isBlank()) {
+            return rmrk;
+        }
+        return d.getTranUsag();
     }
 }

@@ -108,10 +108,12 @@ public class EInvoiceDetailExportService {
         String fromDt  = stringOrNull(filters.get("from"));
         String toDt    = stringOrNull(filters.get("to"));
         String keyword = stringOrNull(filters.get("keyword"));
+        String status  = stringOrNull(filters.get("status"));
 
-        // Full master entities — same filter chain as the list (IR-1/2/3/5/6).
+        // Full master entities — same filter chain as the list
+        // (IR-1/2/3/4(status)/5/6).
         List<BusaDocMstr> masters = eInvoiceService.listMastersForExport(
-                type, fromDt, toDt, keyword, null, null);
+                type, fromDt, toDt, keyword, status, null, null);
 
         List<Object[]> rows = new ArrayList<>();
         int invoiceCount = 0;

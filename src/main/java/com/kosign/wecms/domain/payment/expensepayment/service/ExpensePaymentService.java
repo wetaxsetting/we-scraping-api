@@ -91,10 +91,13 @@ import java.util.TreeMap;
  * {@code internaltransfer.dto} package — only the type discriminator
  * differs.
  *
- * <p><b>Phase A scope</b>: read-only list. Detail, create / draft upload,
- * dispatch, request-approval, and the Result list/detail land in
- * subsequent MRs. See workspace memory
- * {@code project_payment_module_reference.md} for the locked baseline.
+ * <p><b>Scope</b>: full surface implemented — read-only list + detail,
+ * Excel parse + save draft ({@link #parseExcel} / {@link #createDraft}),
+ * withdrawal-account lookup, request-approval / approval-action /
+ * withdraw-approval / change-approval-line, dispatch, payment-line
+ * matching, original-file download, and the Result list/detail. (The
+ * earlier "Phase A scope: read-only list; the rest land in subsequent
+ * MRs" note was stale and was removed — audit G8.)
  *
  * <p>Shared DTOs note: {@link ScheduledTransferRow},
  * {@link ScheduledTransferListResponse}, and {@link CurrencyTotal} live
@@ -183,6 +186,9 @@ public class ExpensePaymentService {
     private final Clock                         clock;
     private final ExptResolMstrRepository       exptResolMstrRepository;
     private final ExptResolApprvrInfmRepository exptResolApprvrInfmRepository;
+    /** Shared avatar-URL resolver — maps approver ids → /api/v1/users/{id}/image
+     *  (null when no stored image). Single home for the USER_IMG → URL logic. */
+    private final com.kosign.wecms.domain.auth.service.UserImageUrlResolver userImageUrlResolver;
     /** Approval-request attachments ({@code EXPT_RESOL_FILE}) keyed by
      *  {@code APPR_SEQ_NO} — surfaces the Scheduled-detail {@code attachments}
      *  list (consumed by the shared Approval Details popup). Shared
@@ -192,6 +198,9 @@ public class ExpensePaymentService {
     private final DocNoGenerator                docNoGenerator;
     private final BusiInfmRepository            busiInfmRepository;
     private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
+    /** Contacts master — used by the save-side contact re-derivation guard
+     *  (audit G5; legacy {@code PymnHelper.ckContactCode} parity). */
+    private final com.kosign.wecms.domain.setting.contacts.repository.TrcoInfmRepository contactRepo;
 
     /**
      * List Expense Payment batches for the current tenant in the given
@@ -453,7 +462,13 @@ public class ExpensePaymentService {
         master.setOutBankCd(outBankCdNormalizer.normalize(req.bankCd()));
         master.setWdrlActNo(req.acctNo());
         master.setCcyCd(req.ccyCd());
-        master.setWdrlCcyCd(req.ccyCd());
+        // G4 — WDRL_CCY_CD is the withdrawal account's own currency
+        // (legacy PymnHelper.uploadPaymentExcel:1320), distinct from the
+        // transfer currency. The frontend now sends it as wdrl_ccy_cd
+        // (= selectedAccount.ccy_cd). Fall back to ccy_cd when absent so
+        // any caller that does not send it (e.g. Internal Transfer, or an
+        // older client) keeps the prior behaviour.
+        master.setWdrlCcyCd(emptyToDefault(req.wdrlCcyCd(), req.ccyCd()));
         master.setTitl(req.titl());
         master.setTrnfYn(TrnfYn.NOT_TRANSFERRED.code());
         master.setErpProcCmplYn("N");
@@ -501,6 +516,33 @@ public class ExpensePaymentService {
         long detlNoCursor = Long.parseLong(detlSeedRaw.trim()) - 1;
         java.util.List<ScdulPymnSumrDetl> detls = new java.util.ArrayList<>(req.lines().size());
         for (TransferLineInput line : req.lines()) {
+            // G5 — save-side contact re-derivation (legacy ckContactCode
+            // parity). Expense Payment pays a registered contact, so the
+            // detail row must carry TRCO_KEY / TRCO_CMNM / TRCO_CMENM. The
+            // parse step cross-fills them and the frontend forwards them
+            // (audit G1). Defend against a stale/crafted save request that
+            // dropped them: when TRCO_KEY is missing but a HAND_TRCO_KEY is
+            // present, re-derive the identity from TRCO_INFM. A
+            // present-but-unresolvable contact code is rejected rather than
+            // persisted with a null identity. (No contact code at all is
+            // left as-is — that is an upstream parse error, not this
+            // guard's concern, and rejecting it here would not improve the
+            // user-facing flow.)
+            String trcoKey   = emptyToNull(line.trcoKey());
+            String handTrcoKey = emptyToNull(line.handTrcoKey());
+            String trcoCmnm  = emptyToNull(line.trcoCmnm());
+            String trcoCmenm = emptyToNull(line.trcoCmenm());
+            if (trcoKey == null && handTrcoKey != null) {
+                final String htk = handTrcoKey;
+                var contact = contactRepo
+                        .findActiveByBizKeyAndHandTrcoKey(bizKey, htk)
+                        .orElseThrow(() -> new BusinessException(
+                                "WBE_VALIDATION", "contact code is not registered: " + htk));
+                trcoKey = contact.getTrcoKey();
+                if (trcoCmnm == null)  trcoCmnm  = emptyToNull(contact.getTrcoCmnm());
+                if (trcoCmenm == null) trcoCmenm = emptyToNull(contact.getTrcoCmenm());
+            }
+
             ScdulPymnSumrDetl detl = new ScdulPymnSumrDetl();
             detl.setBizKey(bizKey);
             detl.setScdulPymnNo(scdulPymnNo);
@@ -512,13 +554,13 @@ public class ExpensePaymentService {
             detl.setTarBankCd(emptyToNull(line.tarBankCd()));
             detl.setFincMdaNo(line.fincMdaNo());
             detl.setTranUsag(emptyToNull(line.tranUsag()));
-            detl.setTrcoKey(emptyToNull(line.trcoKey()));
-            detl.setHandTrcoKey(emptyToNull(line.handTrcoKey()));
+            detl.setTrcoKey(trcoKey);
+            detl.setHandTrcoKey(handTrcoKey);
             detl.setDocNo(emptyToNull(line.docNo()));
             detl.setNote(emptyToNull(line.note()));
             detl.setCitadBankCd(emptyToNull(line.citadBankCd()));
-            detl.setTrcoCmnm(emptyToNull(line.trcoCmnm()));
-            detl.setTrcoCmenm(emptyToNull(line.trcoCmenm()));
+            detl.setTrcoCmnm(trcoCmnm);
+            detl.setTrcoCmenm(trcoCmenm);
             detl.setChartAcctSeqNo(emptyToNull(line.chartAcctSeqNo()));
             detl.setChartAcctCd(emptyToNull(line.chartAcctCd()));
             detl.setDepoCcyCd(emptyToNull(line.depoCcyCd()));
@@ -1276,9 +1318,12 @@ public class ExpensePaymentService {
             if (!chain.isEmpty()) {
                 String nm = chain.get(0).getApprvrNm();
                 String firstName = (nm != null && !nm.isBlank()) ? nm.trim() : null;
+                Map<String, String> imgUrlByApprvrId = userImageUrlResolver.resolveImageUrls(
+                        bizKey, chain.stream().map(a -> a.getApprvrId()).toList());
                 List<ScheduledTransferApprover> list = chain.stream()
                         .map(a -> new ScheduledTransferApprover(
-                                a.getApprvrNm(), a.getApprvrStts(), a.getApprDtm()))
+                                a.getApprvrNm(), a.getApprvrStts(), a.getApprDtm(),
+                                imgUrlByApprvrId.get(a.getApprvrId())))
                         .toList();
                 out.put(seq, new ApproverSummary(firstName, chain.size(), list));
             }

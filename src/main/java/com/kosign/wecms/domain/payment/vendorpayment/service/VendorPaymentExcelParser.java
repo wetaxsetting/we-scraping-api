@@ -120,6 +120,12 @@ public class VendorPaymentExcelParser {
     private static final int CITAD_LENGTH = 3;
     private static final int NAPAS_LENGTH = 6;
 
+    /** Vietcombank NAPAS code — legacy {@code PymnHelper.VCB_BANK_CD} (970436).
+     *  VCB does not support USD transfers to other banks
+     *  ({@code PymnHelper.uploadPaymentExcel:1460-1465}). Mirrors the sibling
+     *  {@code InternalTransferExcelParser#VCB_BANK_CD}. */
+    private static final String VCB_BANK_CD = "970436";
+
     /** Expected column header text at row 3. Mirrors legacy
      *  {@code PymnHelper#HEADER_TITLE_EN/KO/VI} (lines 94-103). 10
      *  columns — the Contact-Code header at index 7 is the divergence
@@ -164,6 +170,13 @@ public class VendorPaymentExcelParser {
      *  {@code PymnHelper.java:420-436} + {@code :1261-1297}. */
     private final com.kosign.wecms.domain.payment.common.UploadConsistencyValidator
                                            uploadConsistencyValidator;
+    /** Folds the withdrawal bank code (NAPAS or internal {@code BANK_CD})
+     *  to its canonical NAPAS code so the VCB-USD-to-other-bank guard can
+     *  compare it against {@link #VCB_BANK_CD}. Mirrors legacy
+     *  {@code PymnHelper.uploadPaymentExcel:1315-1317} + the sibling
+     *  Internal Transfer parser. */
+    private final com.kosign.wecms.domain.payment.common.OutBankCdNormalizer
+                                           outBankCdNormalizer;
 
     @Transactional(readOnly = true)
     public ParseExcelResponse parse(MultipartFile file, String bankCd) {
@@ -181,6 +194,13 @@ public class VendorPaymentExcelParser {
 
             DataFormatter fmt = new DataFormatter();
             validateHeaderRow(sheet, fmt);
+
+            // VCB-USD guard precompute (legacy PymnHelper.uploadPaymentExcel:
+            // 1460): the withdrawal bank code arrives in internal BANK_CD form;
+            // fold it to its canonical NAPAS code once so the per-row USD check
+            // can compare against VCB. Mirrors the sibling Internal Transfer parser.
+            boolean withdrawalIsVcb =
+                    VCB_BANK_CD.equals(outBankCdNormalizer.normalize(bankCd));
 
             int lastRow = Math.min(sheet.getLastRowNum(), FIRST_DATA_ROW + MAX_ROWS - 1);
             for (int r = FIRST_DATA_ROW; r <= lastRow; r++) {
@@ -202,7 +222,7 @@ public class VendorPaymentExcelParser {
                     break;
                 }
 
-                ParsedRow parsed = parseRow(row, fmt, bankCd);
+                ParsedRow parsed = parseRow(row, fmt, bankCd, withdrawalIsVcb);
                 rows.add(parsed.line);
                 if (parsed.hasError) {
                     errCnt++;
@@ -272,7 +292,8 @@ public class VendorPaymentExcelParser {
     private record ParsedRow(ParsedTransferLine line, boolean hasError) {}
     private record FieldError(String fieldId, String cause) {}
 
-    private ParsedRow parseRow(Row row, DataFormatter fmt, String bankCd) {
+    private ParsedRow parseRow(Row row, DataFormatter fmt, String bankCd,
+                               boolean withdrawalIsVcb) {
         String bankCodeIn  = cellString(row, 0, fmt);
         String fincMdaNo   = cellString(row, 1, fmt);
         String tranAmtIn   = cellString(row, 3, fmt);
@@ -504,6 +525,22 @@ public class VendorPaymentExcelParser {
             errors.add(new FieldError(FLD_TRNF_CCY_CD, "Transfer Currency is required"));
         } else {
             trnfCcyCd = trnfCcyIn.trim().toUpperCase();
+        }
+
+        // VCB-USD → other-bank block (legacy PymnHelper.uploadPaymentExcel:
+        // 1460-1465; GAP-3). When the WITHDRAWAL bank is Vietcombank and the
+        // transfer currency is USD, the target bank must also be Vietcombank —
+        // VCB does not support USD transfers to other banks. Compared against
+        // the resolved target bank code (resolvedBankCd), exactly as the
+        // sibling Internal Transfer parser and as legacy compares its resolved
+        // TAR_BANK_CD against VCB_BANK_CD. Now reachable because GAP-6 re-added
+        // VCB (11704004) to the withdrawal-account picker. The dispatch-time
+        // re-check (VendorDispatchExecutor → WBE2088) remains the authoritative
+        // guard; this surfaces the error in the upload preview beforehand.
+        if (withdrawalIsVcb && "USD".equals(trnfCcyCd)
+                && !VCB_BANK_CD.equals(resolvedBankCd)) {
+            errors.add(new FieldError(FLD_TRNF_CCY_CD,
+                    "VCB does not support USD transfer to other banks."));
         }
 
         // Reporting Account validation — mirrors the inline picker on

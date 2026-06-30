@@ -74,13 +74,13 @@ class EInvoiceExportProviderTest {
     @Test
     void salesProvider_defaultType_isSALES() {
         ExcelExportRequest req = requestWithFilters(Map.of());
-        when(eInvoiceService.list(eq("SALES"), any(), any(), any(),
+        when(eInvoiceService.list(eq("SALES"), any(), any(), any(), any(),
                 any(Pageable.class), any(), any()))
                 .thenReturn(emptyResponse());
 
         provider.fetch(req);
 
-        verify(eInvoiceService).list(eq("SALES"), any(), any(), any(),
+        verify(eInvoiceService).list(eq("SALES"), any(), any(), any(), any(),
                 any(Pageable.class), any(), any());
     }
 
@@ -88,13 +88,13 @@ class EInvoiceExportProviderTest {
     void billProvider_defaultType_isEXPENSE() {
         BillEInvoiceExportProvider bill = new BillEInvoiceExportProvider(eInvoiceService);
         ExcelExportRequest req = requestWithFilters(Map.of());
-        when(eInvoiceService.list(eq("EXPENSE"), any(), any(), any(),
+        when(eInvoiceService.list(eq("EXPENSE"), any(), any(), any(), any(),
                 any(Pageable.class), any(), any()))
                 .thenReturn(emptyResponse());
 
         bill.fetch(req);
 
-        verify(eInvoiceService).list(eq("EXPENSE"), any(), any(), any(),
+        verify(eInvoiceService).list(eq("EXPENSE"), any(), any(), any(), any(),
                 any(Pageable.class), any(), any());
     }
 
@@ -118,7 +118,7 @@ class EInvoiceExportProviderTest {
                 "to",   "20240131",
                 "keyword", "ADTECH"));
         when(eInvoiceService.list(anyString(), anyString(), anyString(), anyString(),
-                any(Pageable.class), any(), any()))
+                any(), any(Pageable.class), any(), any()))
                 .thenReturn(emptyResponse());
 
         provider.fetch(req);
@@ -126,7 +126,7 @@ class EInvoiceExportProviderTest {
         ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
         verify(eInvoiceService).list(
                 eq("SALES"), eq("20240101"), eq("20240131"), eq("ADTECH"),
-                pageableCaptor.capture(), isNull(), isNull());
+                isNull(), pageableCaptor.capture(), isNull(), isNull());
         assertThat(pageableCaptor.getValue().isUnpaged()).isTrue();
     }
 
@@ -134,14 +134,29 @@ class EInvoiceExportProviderTest {
     void fetch_typeFilterOverridesDefault() {
         ExcelExportRequest req = requestWithFilters(Map.of(
                 "from", "20240101", "to", "20240131", "type", "BILL"));
-        when(eInvoiceService.list(eq("BILL"), any(), any(), any(),
+        when(eInvoiceService.list(eq("BILL"), any(), any(), any(), any(),
                 any(Pageable.class), any(), any()))
                 .thenReturn(emptyResponse());
 
         provider.fetch(req);
 
-        verify(eInvoiceService).list(eq("BILL"), any(), any(), any(),
+        verify(eInvoiceService).list(eq("BILL"), any(), any(), any(), any(),
                 any(Pageable.class), any(), any());
+    }
+
+    @Test
+    void fetch_statusFilter_flowsToService() {
+        ExcelExportRequest req = requestWithFilters(Map.of(
+                "from", "20240101", "to", "20240131",
+                "status", "Hóa đơn đã bị hủy"));
+        when(eInvoiceService.list(eq("SALES"), anyString(), anyString(), any(),
+                eq("Hóa đơn đã bị hủy"), any(Pageable.class), any(), any()))
+                .thenReturn(emptyResponse());
+
+        provider.fetch(req);
+
+        verify(eInvoiceService).list(eq("SALES"), eq("20240101"), eq("20240131"),
+                isNull(), eq("Hóa đơn đã bị hủy"), any(Pageable.class), isNull(), isNull());
     }
 
     @Test
@@ -149,14 +164,14 @@ class EInvoiceExportProviderTest {
         ExcelExportRequest req = requestWithFiltersAndSort(
                 Map.of("from", "20240101", "to", "20240131"),
                 new ExcelSortSpec("BUYER", "ASC"));
-        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(),
+        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(), any(),
                 any(Pageable.class), eq("BUYER"), eq("ASC")))
                 .thenReturn(emptyResponse());
 
         provider.fetch(req);
 
         verify(eInvoiceService).list(eq("SALES"), eq("20240101"), eq("20240131"),
-                isNull(), any(Pageable.class), eq("BUYER"), eq("ASC"));
+                isNull(), isNull(), any(Pageable.class), eq("BUYER"), eq("ASC"));
     }
 
     // ------------------------------------------------------------------
@@ -166,7 +181,7 @@ class EInvoiceExportProviderTest {
     @Test
     void subheader_period_isLeftHalf() {
         ExcelExportRequest req = requestWithFilters(Map.of("from", "20240101", "to", "20240131"));
-        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(),
+        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(), any(),
                 any(Pageable.class), any(), any()))
                 .thenReturn(emptyResponse());
 
@@ -180,7 +195,7 @@ class EInvoiceExportProviderTest {
     @Test
     void subheader_totals_isRightHalf_singleCcy() {
         ExcelExportRequest req = requestWithFilters(Map.of("from", "20240101", "to", "20240131"));
-        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(),
+        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(), any(),
                 any(Pageable.class), any(), any()))
                 .thenReturn(responseWith(
                         List.of(sampleRow("D1")),
@@ -196,7 +211,7 @@ class EInvoiceExportProviderTest {
     @Test
     void subheader_totals_multiCcy_commaSeparated() {
         ExcelExportRequest req = requestWithFilters(Map.of("from", "20240101", "to", "20240131"));
-        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(),
+        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(), any(),
                 any(Pageable.class), any(), any()))
                 .thenReturn(responseWith(
                         List.of(sampleRow("D1"), sampleRow("D2")),
@@ -218,7 +233,7 @@ class EInvoiceExportProviderTest {
     @Test
     void rowMap_carriesAll9FieldIds() {
         ExcelExportRequest req = requestWithFilters(Map.of("from", "20240101", "to", "20240131"));
-        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(),
+        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(), any(),
                 any(Pageable.class), any(), any()))
                 .thenReturn(responseWith(List.of(sampleRow("DOC123")), List.of()));
 
@@ -231,7 +246,7 @@ class EInvoiceExportProviderTest {
     @Test
     void rowMap_dateCell_isDateOnly_ddMMyyyy() {
         ExcelExportRequest req = requestWithFilters(Map.of("from", "20240101", "to", "20240131"));
-        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(),
+        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(), any(),
                 any(Pageable.class), any(), any()))
                 .thenReturn(responseWith(List.of(sampleRow("DOC123")), List.of()));
 
@@ -242,7 +257,7 @@ class EInvoiceExportProviderTest {
     @Test
     void rowMap_buyerNameAndTaxCode_areSeparateCells() {
         ExcelExportRequest req = requestWithFilters(Map.of("from", "20240101", "to", "20240131"));
-        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(),
+        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(), any(),
                 any(Pageable.class), any(), any()))
                 .thenReturn(responseWith(List.of(sampleRow("DOC123")), List.of()));
 
@@ -254,7 +269,7 @@ class EInvoiceExportProviderTest {
     @Test
     void rowMap_invoiceNo_usesDispDocId() {
         ExcelExportRequest req = requestWithFilters(Map.of("from", "20240101", "to", "20240131"));
-        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(),
+        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(), any(),
                 any(Pageable.class), any(), any()))
                 .thenReturn(responseWith(List.of(sampleRow("DOC123")), List.of()));
 
@@ -265,7 +280,7 @@ class EInvoiceExportProviderTest {
     @Test
     void rowMap_amountCells_areRawWireDecimals() {
         ExcelExportRequest req = requestWithFilters(Map.of("from", "20240101", "to", "20240131"));
-        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(),
+        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(), any(),
                 any(Pageable.class), any(), any()))
                 .thenReturn(responseWith(List.of(sampleRow("DOC123")), List.of()));
 

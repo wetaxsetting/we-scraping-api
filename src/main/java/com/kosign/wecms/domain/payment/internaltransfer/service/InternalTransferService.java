@@ -100,14 +100,15 @@ import java.util.stream.Collectors;
  * applies it as a predicate of every query / write — no method on this
  * service accepts a wire-supplied {@code bizKey}.
  *
- * <h2>Phase A scope</h2>
+ * <h2>Upload flow</h2>
  *
- * <p>{@link #parseExcel(MultipartFile, String)} ships as a local stub
- * — it performs file-shape validation (non-empty, extension allow-list)
- * but does not parse cell contents. {@link #createDraft} accepts a
- * pre-validated row set from the frontend ({@link TransferLineInput})
- * and persists it. Real Apache POI workbook parsing lands in a
- * follow-up MR per backend doc §13.
+ * <p>{@link #parseExcel(MultipartFile, String)} validates the file-shape
+ * envelope (non-empty, extension allow-list, withdrawal bank code present)
+ * then delegates the full Apache POI workbook walk + per-cell validation
+ * to {@link InternalTransferExcelParser} (mirrors legacy
+ * {@code PymnHelper.readExcelFromInternalTransfer}). {@link #createDraft}
+ * accepts the frontend-confirmed success rows ({@link TransferLineInput})
+ * and persists the draft batch into {@code SCDUL_PYMN_SUMR(_DETL)}.
  */
 @Slf4j
 @Service
@@ -180,6 +181,9 @@ public class InternalTransferService {
     private final Clock                        clock;
     private final ExptResolMstrRepository       exptResolMstrRepository;
     private final ExptResolApprvrInfmRepository exptResolApprvrInfmRepository;
+    /** Shared avatar-URL resolver — maps approver ids → /api/v1/users/{id}/image
+     *  (null when no stored image). Single home for the USER_IMG → URL logic. */
+    private final com.kosign.wecms.domain.auth.service.UserImageUrlResolver userImageUrlResolver;
     /** Approval-request attachments — written on submit (EXPT_RESOL_FILE),
      *  read on detail. See V208. */
     private final com.kosign.wecms.domain.payment.internaltransfer.repository.ExptResolFileRepository exptResolFileRepository;
@@ -539,7 +543,13 @@ public class InternalTransferService {
         // resolve correctly.
         master.setOutBankCd(outBankCdNormalizer.normalize(req.bankCd()));
         master.setWdrlActNo(req.acctNo());
-        master.setCcyCd(req.ccyCd());
+        // Legacy parity (PymnHelper.uploadPaymentExcel:1317-1320): the two
+        // currency columns hold DIFFERENT values — CCY_CD is the TRANSFER
+        // currency (legacy `setCcyCd(TRNF_CCY_CD)`) and WDRL_CCY_CD is the
+        // WITHDRAWAL-ACCOUNT currency (legacy `setWdrlCcyCd(CCY_CD)`). The
+        // frontend now sends `ccy_cd` = the selected account's currency and
+        // `trnf_ccy_cd` = the batch transfer currency (G3 option (a)).
+        master.setCcyCd(req.trnfCcyCd());
         master.setWdrlCcyCd(req.ccyCd());
         master.setTitl(req.titl());
         master.setTrnfYn(TrnfYn.NOT_TRANSFERRED.code());
@@ -1690,14 +1700,17 @@ public class InternalTransferService {
                 String nm = chain.get(0).getApprvrNm();
                 String firstName = (nm != null && !nm.isBlank()) ? nm.trim() : null;
                 // Full ordered chain for the Phase-2 click popup
-                // (name + status + approval datetime). findChain is already
-                // ordered by APPRVR_LINE_NO ASC.
+                // (name + status + approval datetime + avatar URL). findChain
+                // is already ordered by APPRVR_LINE_NO ASC.
+                Map<String, String> imgUrlByApprvrId = userImageUrlResolver.resolveImageUrls(
+                        bizKey, chain.stream().map(a -> a.getApprvrId()).toList());
                 List<com.kosign.wecms.domain.payment.internaltransfer.dto.ScheduledTransferApprover> list =
                         chain.stream()
                                 .map(a -> new com.kosign.wecms.domain.payment.internaltransfer.dto.ScheduledTransferApprover(
                                         a.getApprvrNm(),
                                         a.getApprvrStts(),
-                                        a.getApprDtm()))
+                                        a.getApprDtm(),
+                                        imgUrlByApprvrId.get(a.getApprvrId())))
                                 .toList();
                 out.put(seq, new ApproverSummary(firstName, chain.size(), list));
             }

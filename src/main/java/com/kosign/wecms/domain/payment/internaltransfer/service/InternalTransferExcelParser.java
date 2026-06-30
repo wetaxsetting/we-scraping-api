@@ -6,6 +6,7 @@ import com.kosign.wecms.domain.banking.entity.AcctMstr;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ParseExcelResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ParsedTransferLine;
+import com.kosign.wecms.domain.payment.common.OutBankCdNormalizer;
 import com.kosign.wecms.domain.payment.validation.FieldCd;
 import com.kosign.wecms.domain.payment.validation.PymnType;
 import com.kosign.wecms.domain.payment.validation.SpecialCharValidator;
@@ -59,10 +60,13 @@ import java.util.Optional;
  * <p>Column order on the data side (matches legacy
  * {@code PymnHelper.readExcelFromInternalTransfer} cell indices):
  * <ol start="0">
- *   <li>Bank Code — {@code ANT_DIV_CD} value (legacy stamps the raw
- *       cell into {@code TAR_BANK_CD} too). 3 chars → CITAD, 6 chars
- *       → NAPAS. Resolution goes through
- *       {@link TbFirmBankCodeRepository}; the display name from
+ *   <li>Bank Code — 3 chars → CITAD, 6 chars → NAPAS. Resolution
+ *       goes through {@link TbFirmBankCodeRepository}: {@code TAR_BANK_CD}
+ *       persists the resolved registry {@code BANK_CD} (legacy
+ *       {@code getBankCode}; NAPAS = the 6-digit code, CITAD = the full
+ *       {@code BANK_CD} the 3-digit {@code citad_bank_cd} maps to), and
+ *       {@code CITAD_BANK_CD} carries the 3-digit code for a CITAD row /
+ *       {@code "000"} for a NAPAS row. The display name from
  *       {@code ENG_ABRVAT_NM} lands on {@code TAR_BANK_NM} (the
  *       Bank column).</li>
  *   <li>Deposit No. — {@code FINC_MDA_NO}</li>
@@ -104,6 +108,20 @@ public class InternalTransferExcelParser {
      *  706-712} byte-for-byte: 3 chars → CITAD, 6 chars → NAPAS. */
     private static final int CITAD_LENGTH = 3;
     private static final int NAPAS_LENGTH = 6;
+
+    /** Vietcombank NAPAS code — legacy {@code PymnHelper.VCB_BANK_CD} (970436).
+     *  VCB does not support USD transfers to other banks (PymnHelper
+     *  .uploadPaymentExcel:1460-1465). */
+    private static final String VCB_BANK_CD = "970436";
+
+    /** Legacy field-length caps flagged at preview
+     *  ({@code PymnHelper.checkValidStringInMax}): Remarks 200, Description
+     *  200, Document No. 50. They equal the DB column lengths on
+     *  {@code SCDUL_PYMN_SUMR_DETL} ({@code TRAN_USAG}/{@code NOTE} = 200,
+     *  {@code DOC_NO} = 50). */
+    private static final int REMARKS_MAX_LEN = 200;
+    private static final int NOTE_MAX_LEN    = 200;
+    private static final int DOC_NO_MAX_LEN  = 50;
 
     /**
      * Expected column header text at row 3 for each supported locale.
@@ -150,6 +168,11 @@ public class InternalTransferExcelParser {
      *  is the recipient's holder name. Mirrors legacy
      *  {@code PymnHelper.validateBankAccountInAcctMstr}. */
     private final AcctMstrRepository       acctMstrRepository;
+    /** Folds the withdrawal bank code (NAPAS or internal {@code BANK_CD})
+     *  to its canonical NAPAS code so the VCB-USD-to-other-bank guard can
+     *  compare it against {@link #VCB_BANK_CD}. Mirrors legacy
+     *  {@code PymnHelper.uploadPaymentExcel:1315-1317}. */
+    private final OutBankCdNormalizer      outBankCdNormalizer;
 
     @Transactional(readOnly = true)
     public ParseExcelResponse parse(MultipartFile file, String bankCd) {
@@ -167,6 +190,13 @@ public class InternalTransferExcelParser {
 
             DataFormatter fmt = new DataFormatter();
             validateHeaderRow(sheet, fmt);
+
+            // VCB-USD guard precompute (legacy PymnHelper.uploadPaymentExcel:
+            // 1460): the withdrawal bank code arrives in internal BANK_CD form;
+            // fold it to its canonical NAPAS code once so the per-row USD check
+            // can compare against VCB.
+            boolean withdrawalIsVcb =
+                    VCB_BANK_CD.equals(outBankCdNormalizer.normalize(bankCd));
 
             // Cap at MAX_ROWS — Excel templates often carry hundreds
             // of styled-but-empty trailing rows. The early-break below
@@ -191,7 +221,7 @@ public class InternalTransferExcelParser {
                     break;
                 }
 
-                ParsedRow parsed = parseRow(row, fmt, bankCd);
+                ParsedRow parsed = parseRow(row, fmt, bankCd, withdrawalIsVcb);
                 rows.add(parsed.line);
                 if (parsed.hasError) {
                     errCnt++;
@@ -288,7 +318,8 @@ public class InternalTransferExcelParser {
      */
     private record FieldError(String fieldId, String cause) {}
 
-    private ParsedRow parseRow(Row row, DataFormatter fmt, String bankCd) {
+    private ParsedRow parseRow(Row row, DataFormatter fmt, String bankCd,
+                               boolean withdrawalIsVcb) {
         String bankCodeIn  = cellString(row, 0, fmt);
         String fincMdaNo   = cellString(row, 1, fmt);
         String tranAmtIn   = cellString(row, 3, fmt);
@@ -311,6 +342,24 @@ public class InternalTransferExcelParser {
                     .ifPresent(msg -> errors.add(new FieldError("TRAN_USAG", msg)));
         }
 
+        // Legacy field-length caps flagged at preview
+        // (PymnHelper.checkValidStringInMax): Remarks 200, Description 200,
+        // Document No. 50. Mirrors the legacy preview-time validation so the
+        // user sees over-length cells before save instead of an opaque
+        // constraint failure at insert time.
+        if (!isBlank(tranUsag) && tranUsag.trim().length() > REMARKS_MAX_LEN) {
+            errors.add(new FieldError("TRAN_USAG",
+                    "Remarks must not exceed " + REMARKS_MAX_LEN + " characters"));
+        }
+        if (!isBlank(note) && note.trim().length() > NOTE_MAX_LEN) {
+            errors.add(new FieldError("NOTE",
+                    "Description must not exceed " + NOTE_MAX_LEN + " characters"));
+        }
+        if (!isBlank(docNo) && docNo.trim().length() > DOC_NO_MAX_LEN) {
+            errors.add(new FieldError("DOC_NO",
+                    "Document No. must not exceed " + DOC_NO_MAX_LEN + " characters"));
+        }
+
         if (isBlank(fincMdaNo)) {
             errors.add(new FieldError(FLD_FINC_MDA_NO, "Deposit No. is required"));
         }
@@ -320,6 +369,11 @@ public class InternalTransferExcelParser {
         String resolvedBankCd = null;
         String resolvedBankNm = null;
         String resolvedAntDiv = null;
+        // CITAD_BANK_CD persisted on the detail row — legacy parity
+        // (PymnHelper.uploadPaymentExcel:1468): the 3-char CITAD code for a
+        // CITAD row, the literal "000" for a NAPAS row, null when the bank
+        // code never resolved.
+        String resolvedCitadBankCd = null;
         if (isBlank(bankCodeIn)) {
             errors.add(new FieldError(FLD_ANT_DIV_CD, "Bank Code is required"));
         } else {
@@ -339,8 +393,15 @@ public class InternalTransferExcelParser {
             }
 
             if (hit.isPresent()) {
-                resolvedBankCd = trimmed;
+                // Legacy parity (PymnHelper.getBankCode + uploadPaymentExcel:
+                // 1450-1468): TAR_BANK_CD persists the RESOLVED BANK_CD from
+                // TB_FIRM_BANK_CODE — for NAPAS the 6-digit code (== input),
+                // for CITAD the full BANK_CD the 3-digit citad_bank_cd resolves
+                // to (e.g. "202" → "01202001"). CITAD_BANK_CD then carries the
+                // 3-digit code for CITAD, "000" for NAPAS.
+                resolvedBankCd = hit.get().getBankCd();
                 resolvedBankNm = displayName(hit.get());
+                resolvedCitadBankCd = "CITAD".equals(resolvedAntDiv) ? trimmed : "000";
             } else if (resolvedAntDiv.isEmpty()) {
                 // Length already flagged — fall-through, value passes
                 // through verbatim so the cell shows the raw input.
@@ -379,6 +440,18 @@ public class InternalTransferExcelParser {
             errors.add(new FieldError(FLD_TRNF_CCY_CD, "Transfer Currency is required"));
         } else {
             trnfCcyCd = trnfCcyIn.trim().toUpperCase();
+        }
+
+        // VCB-USD → other-bank block (legacy PymnHelper.uploadPaymentExcel:
+        // 1460-1465). When the WITHDRAWAL bank is Vietcombank and the transfer
+        // currency is USD, the target bank must also be Vietcombank — VCB does
+        // not support USD transfers to other banks. Compared against the
+        // RESOLVED target BANK_CD, exactly as legacy compares its resolved
+        // TAR_BANK_CD against VCB_BANK_CD.
+        if (withdrawalIsVcb && "USD".equals(trnfCcyCd)
+                && !VCB_BANK_CD.equals(resolvedBankCd)) {
+            errors.add(new FieldError(FLD_TRNF_CCY_CD,
+                    "VCB does not support USD transfer to other banks."));
         }
 
         // Resolve RCPT_NM + DEPO_CCY_CD from ACCT_MSTR — Internal
@@ -493,7 +566,8 @@ public class InternalTransferExcelParser {
                 null, null,
                 emptyToNull(docNo),
                 emptyToNull(note),
-                null, null, null,
+                resolvedCitadBankCd,         // CITAD_BANK_CD — 3-digit (CITAD) / "000" (NAPAS), legacy parity
+                null, null,                  // trcoCmnm, trcoCmenm
                 resolvedChartAcctSeqNo,      // CHART_ACCT_SEQ_NO — looked up from CHART_ACCT_INFM
                 resolvedChartAcctCd,         // CHART_ACCT_CD — normalised to the registered code
                 trnfCcyCd,

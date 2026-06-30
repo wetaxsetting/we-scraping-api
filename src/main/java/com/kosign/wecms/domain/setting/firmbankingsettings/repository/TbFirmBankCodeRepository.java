@@ -120,6 +120,22 @@ public interface TbFirmBankCodeRepository extends JpaRepository<TbFirmBankCode, 
     List<TbFirmBankCode> findByEngAbrvatNmIn(Collection<String> engAbrvatNms);
 
     /**
+     * Resolve the CITAD <b>head-office</b> registry row for a 3-char
+     * {@code CITAD_BANK_CD}, mirroring legacy
+     * {@code PymnHelper#getBankCode} (the CITAD branch at
+     * {@code PymnHelper.java:1237-1251}):
+     * {@code ant_div_cd='CITAD' AND citad_bank_cd=? AND bank_stas='1'
+     * AND bank_branch_div='1'}. A single 3-char CITAD code maps to many
+     * branch {@code BANK_CD} rows; the {@code BANK_BRANCH_DIV='1'}
+     * predicate is what collapses them to the one head-office row whose
+     * 6-digit {@code BANK_CD} legacy persists into
+     * {@code SCDUL_PYMN_SUMR_DETL.TAR_BANK_CD}. Read-only, not
+     * tenant-scoped (the dictionary is global).
+     */
+    Optional<TbFirmBankCode> findFirstByAntDivCdAndCitadBankCdAndBankStasAndBankBranchDiv(
+            String antDivCd, String citadBankCd, String bankStas, String bankBranchDiv);
+
+    /**
      * Resolve one active registry row by bank code, for the dispatch
      * File-path same-banking-group check (legacy
      * {@code PymnHelper.pymn_0001_001_c001:2331-2347}, which reads

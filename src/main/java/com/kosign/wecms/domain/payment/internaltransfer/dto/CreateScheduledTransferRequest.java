@@ -21,6 +21,14 @@ import java.util.List;
  *   <li>{@code bankCd}, {@code acctNo} — required (legacy lines 34-35).</li>
  *   <li>{@code ccyCd}, {@code trnfCcyCd} — required + 3-char ISO
  *       currency (legacy lines 36-37 + {@code validateCcyCd}).</li>
+ *   <li>{@code wdrlCcyCd} — OPTIONAL withdrawal-account currency
+ *       (SCDUL_PYMN_SUMR.WDRL_CCY_CD). Distinct from {@code trnfCcyCd};
+ *       legacy stores the account's own currency here
+ *       ({@code PymnHelper.uploadPaymentExcel:1320}). Expense Payment
+ *       sends it (audit G4); Internal Transfer does not, so the service
+ *       falls back to {@code ccyCd} when it is null — the 6-arg
+ *       convenience constructor preserves the Internal-Transfer call
+ *       shape unchanged.</li>
  *   <li>{@code lines} — must contain at least one entry; each entry
  *       validated through {@link TransferLineInput} via {@link Valid}.</li>
  * </ul>
@@ -55,6 +63,24 @@ public record CreateScheduledTransferRequest(
                  message = "trnf_ccy_cd: must be a 3-letter ISO 4217 currency code")
         String trnfCcyCd,
 
+        @Pattern(regexp = "^[A-Z]{3}$",
+                 message = "wdrl_ccy_cd: must be a 3-letter ISO 4217 currency code")
+        String wdrlCcyCd,
+
         @NotEmpty
         @Valid
-        List<TransferLineInput> lines) { }
+        List<TransferLineInput> lines) {
+
+    /**
+     * Backward-compatible 6-arg constructor (no {@code wdrlCcyCd}) — keeps
+     * existing Internal-Transfer call sites and tests compiling. Defaults
+     * {@code wdrlCcyCd} to {@code null}; the service then falls back to
+     * {@code ccyCd}. Jackson deserialization always targets the canonical
+     * 7-arg record constructor, so the wire contract is unaffected.
+     */
+    public CreateScheduledTransferRequest(String titl, String bankCd, String acctNo,
+                                          String ccyCd, String trnfCcyCd,
+                                          List<TransferLineInput> lines) {
+        this(titl, bankCd, acctNo, ccyCd, trnfCcyCd, null, lines);
+    }
+}

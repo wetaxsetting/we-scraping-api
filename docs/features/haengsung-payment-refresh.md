@@ -1,9 +1,11 @@
 # HAENGSUNG Payment Refresh — Backend Feature Spec
 
-**Slug:** `haengsung-payment-refresh` · **Domain:** Payment · **Status:** Design / pre-implementation (docs only — no Java written yet)
-**Product type:** HAENGSUNG (`PRDT_TYPE = 'H'`) only · **Last updated:** 2026-06-28
+**Slug:** `haengsung-payment-refresh` · **Domain:** Payment · **Status:** ✅ Implemented (Phase 1 — manual Refresh import) · **Last updated:** 2026-06-29
+**Product type:** HAENGSUNG (`PRDT_TYPE = 'H'`) only
 
-> **Scope guard.** This is a design document. **No Java, no `build.gradle`, no `application*.yml`, no Flyway migration has been written.** Per the root CLAUDE.md "analyze before implement" rule, every mapping below is validated against the legacy JEX behaviour first.
+> **Implemented (2026-06-29).** Phase 1 (manual Refresh import + receive write-back) is built, wired end-to-end, and unit-tested; the frontend Refresh button calls `POST /api/v1/payments/haengsung/refresh`. Implementation verdict + per-flow matrix: [haengsung-oracle-integration-final-audit.md](haengsung-oracle-integration-final-audit.md). Remaining work is **Step 8 SIT verification** ([haengsung-oracle-integration-sit-verification.md](haengsung-oracle-integration-sit-verification.md)). This document remains the **design + Oracle source-of-truth** (schema, status flow, field mapping, mismatches); the design-time framing below is preserved as the analysis record.
+>
+> **Original scope guard (historical — superseded by the implementation above).** *This was a design document. No Java, no `build.gradle`, no `application*.yml`, no Flyway migration had been written at authoring time.* Per the root CLAUDE.md "analyze before implement" rule, every mapping below was validated against the legacy JEX behaviour first.
 >
 > **2026-06-28 — Oracle documents received & analysed.** The HAENGSUNG Oracle interface table definition, the remittance status-flow workbook, and the SIT connection file (under `C:\WECMS PROJECT\Oracle DB\`) have been read. The analysis is in **[Appendix A (§13–§18)](#appendix-a--oracle-document-analysis-2026-06-28)** and is now the **source of truth** for the Oracle side. It **confirms** the legacy column names + write-back values and surfaces several **mismatches** ([§17](#17-mismatch-report--source-of-truth-vs-legacy-vs-refactor)) that must be resolved with the PO before coding. Open items [OQ-2/3/4/8/9](#10-open-items) are now **answered (pending PO confirmation)**; implementation remains gated on the [§17](#17-mismatch-report--source-of-truth-vs-legacy-vs-refactor) mismatches + PO sign-off.
 
@@ -22,7 +24,32 @@ For HAENGSUNG product type only, four payment types replace **Excel Upload** wit
 
 HAENGSUNG does not upload Excel manually for these four. Their ERP writes payment batches into an external **Oracle** DB; WeCMS imports them on demand when the user clicks **Refresh**.
 
-This feature is the backend half (`wecms-api`); the frontend half is tracked in the paired frontend doc — see [§12 Cross-references](#12-cross-references). The frontend toggle (Refresh vs Excel Upload, gated on `PRDT_TYPE = 'H'`) already exists; today its handler only re-fetches the list. The backend import endpoint described here does **not** yet exist.
+This feature is the backend half (`wecms-api`); the frontend half is tracked in the paired frontend doc — see [§12 Cross-references](#12-cross-references). The frontend Refresh button (Refresh vs Excel Upload, gated on `PRDT_TYPE = 'H'`) is wired and calls this import endpoint.
+
+---
+
+## Scope
+
+This feature applies **only to HAENGSUNG** (`PRDT_TYPE = 'H'`). For every other product type the payment screens are untouched (Excel Upload everywhere).
+
+**Supported by Refresh (ERP Import)** — these four payment modules replace **Excel Upload** with the **Refresh** button on their Scheduled-payment screen:
+
+- **Vendor Payment**
+- **Expense Payment**
+- **Payroll**
+- **Overseas Payment**
+
+**Explicitly out of scope — Internal Transfer continues using Excel Upload.** Internal Transfer keeps Excel Upload for **every** product type, including HAENGSUNG. It has **no Refresh button and no Oracle import path** — there is no behavioural change to Internal Transfer in this feature.
+
+| Payment module | HAENGSUNG behaviour |
+|---|---|
+| Internal Transfer | Excel Upload (unchanged) |
+| Vendor Payment | Refresh (ERP Import) |
+| Expense Payment | Refresh (ERP Import) |
+| Payroll | Refresh (ERP Import) |
+| Overseas Payment | Refresh (ERP Import) |
+
+> The module-level matrix (Standard WeCMS vs HAENGSUNG, all five modules) is in [payment/README.md → "Payment import strategy"](payment/README.md#payment-import-strategy--standard-wecms-vs-haengsung).
 
 ---
 

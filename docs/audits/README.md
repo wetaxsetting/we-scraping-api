@@ -69,6 +69,11 @@ All **active** unless noted.
 | [wecms-batch-full-legacy-vs-refactor-final-gap-audit.md](wecms-batch-full-legacy-vs-refactor-final-gap-audit.md) | Payment · Firm-Banking Batch | Full dispatch gap audit |
 | [wecms-batch-tobe-process-audit.md](wecms-batch-tobe-process-audit.md) | Payment · Firm-Banking Batch | To-be process audit |
 | [smart-organizer-r11-verification.md](smart-organizer-r11-verification.md) | Banking · Smart Organizer | R11 verification |
+| [internal-transfer-excel-upload-audit.md](internal-transfer-excel-upload-audit.md) | Payment · Internal Transfer · Excel Upload | Excel-upload parity + Recipient Name / Lookup Recipient parity (§ added 2026-06-30) |
+| [vendor-payment-excel-upload-audit.md](vendor-payment-excel-upload-audit.md) | Payment · Vendor · Excel Upload / Refresh | Excel-upload parity + Recipient Name / Lookup Recipient parity (§ added 2026-06-30) |
+| [expense-payment-excel-upload-audit.md](expense-payment-excel-upload-audit.md) | Payment · Expense · Excel Upload / Refresh | Excel-upload parity + Recipient Name / Lookup Recipient parity (§ added 2026-06-30) |
+| [payroll-payment-excel-upload-audit.md](payroll-payment-excel-upload-audit.md) | Payment · Payroll · Excel Upload / Refresh | Excel-upload parity + Recipient Name / Lookup Recipient parity (§ added 2026-06-30) |
+| [overseas-payment-excel-upload-audit.md](overseas-payment-excel-upload-audit.md) | Payment · Overseas · Excel Upload / Refresh | Excel-upload parity + Recipient Name / Lookup Recipient parity (§ added 2026-06-30) |
 
 ## 4. Historical One-Off Audits
 

@@ -48,9 +48,19 @@ import java.util.Locale;
  *       are mandatory; {@code YYYYMMDD} format; {@code from ≤ to}.
  *       Format validation runs at the controller ({@code @Pattern});
  *       calendar-validity + ordering run here.</li>
- *   <li><b>IR-4</b> {@code EINV_INVOICESTATUS} — Phase 2 returns the
- *       raw stored value; frontend regex handles display + badge tint.
- *       No port of {@code wb_get_invoice_status} in this MR.</li>
+ *   <li><b>IR-4</b> {@code EINV_INVOICESTATUS} — the wire row still
+ *       returns the raw stored value (frontend regex handles display +
+ *       badge tint; no port of {@code wb_get_invoice_status}). The
+ *       <b>status filter is now server-side</b> (2026-06-30): an exact
+ *       {@code WHERE EINV_INVOICESTATUS = :status} match, mirroring legacy
+ *       {@code einv_0001_001_r001_act.jsp:88-92}. Stored values are always
+ *       the GDT Vietnamese strings (verified on JEX DEV: "Hóa đơn mới" /
+ *       "Hóa đơn thay thế" / "Hóa đơn điều chỉnh" / "Hóa đơn đã bị thay thế"
+ *       / "Hóa đơn đã bị điều chỉnh" / "Hóa đơn đã bị hủy"), so the frontend
+ *       sends the canonical Vietnamese value per dropdown option (see
+ *       {@code wecms-web/lib/api/einvoiceStatus.ts}). Applied to both the
+ *       paged query AND the totals aggregate so pagination + currency
+ *       totals stay status-aware (rule IR-6).</li>
  *   <li><b>IR-5</b> {@code keyword} search — fixed 5-column subset
  *       ({@code DOC_ID}, {@code TRCO_CMNM}, {@code TRCO_TAX_ID},
  *       {@code EINV_INVOICESYMBOL}, {@code DISP_DOC_ID}). Plain
@@ -111,6 +121,7 @@ public class EInvoiceService {
             String fromDt,
             String toDt,
             String keyword,
+            String status,
             int page,
             int size,
             String sortField,
@@ -119,7 +130,7 @@ public class EInvoiceService {
         int safePage = Math.max(0, page);
         Sort sort = buildSort(EInvoiceSortField.parse(sortField), SortDirection.parse(sortDirection));
         Pageable pageable = PageRequest.of(safePage, safeSize, sort);
-        return list(type, fromDt, toDt, keyword, pageable, sortField, sortDirection);
+        return list(type, fromDt, toDt, keyword, status, pageable, sortField, sortDirection);
     }
 
     /**
@@ -144,6 +155,7 @@ public class EInvoiceService {
             String fromDt,
             String toDt,
             String keyword,
+            String status,
             Pageable pageable,
             String sortField,
             String sortDirection) {
@@ -157,9 +169,10 @@ public class EInvoiceService {
                 : applyDefaultSortIfNeeded(pageable, sortField, sortDirection);
 
         String keywordPattern = buildKeywordPattern(keyword);
+        String statusFilter   = blankToNull(status);
 
-        Page<BusaDocMstr> result = repo.findFiltered(bizKey, docType, fromDt, toDt, keywordPattern, effective);
-        List<EInvoiceCcyAggregate> aggregates = repo.aggregateByCurrency(bizKey, docType, fromDt, toDt, keywordPattern);
+        Page<BusaDocMstr> result = repo.findFiltered(bizKey, docType, fromDt, toDt, statusFilter, keywordPattern, effective);
+        List<EInvoiceCcyAggregate> aggregates = repo.aggregateByCurrency(bizKey, docType, fromDt, toDt, statusFilter, keywordPattern);
 
         List<EInvoiceRow> rows = result.getContent().stream().map(this::toRow).toList();
         List<CurrencyTotal> totals = aggregates.stream()
@@ -197,6 +210,7 @@ public class EInvoiceService {
             String fromDt,
             String toDt,
             String keyword,
+            String status,
             String sortField,
             String sortDirection) {
 
@@ -206,8 +220,9 @@ public class EInvoiceService {
 
         Pageable effective = applyDefaultSortIfNeeded(Pageable.unpaged(), sortField, sortDirection);
         String keywordPattern = buildKeywordPattern(keyword);
+        String statusFilter   = blankToNull(status);
 
-        return repo.findFiltered(bizKey, docType, fromDt, toDt, keywordPattern, effective).getContent();
+        return repo.findFiltered(bizKey, docType, fromDt, toDt, statusFilter, keywordPattern, effective).getContent();
     }
 
     /** When a caller passes a {@link Pageable} with no sort (e.g. the
@@ -330,6 +345,19 @@ public class EInvoiceService {
         }
         b.append('%');
         return b.toString().toLowerCase(Locale.ROOT);
+    }
+
+    /**
+     * Rule IR-4 status filter — trim and collapse blank to {@code null}
+     * so the JPQL {@code (:status IS NULL OR …)} guard skips the predicate.
+     * The value is matched verbatim against the stored (Vietnamese)
+     * {@code EINV_INVOICESTATUS} — no case-folding, no locale resolution
+     * (legacy did a plain {@code = ?} too).
+     */
+    static String blankToNull(String raw) {
+        if (raw == null) return null;
+        String trimmed = raw.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     /* ------------------------------------------------------------------

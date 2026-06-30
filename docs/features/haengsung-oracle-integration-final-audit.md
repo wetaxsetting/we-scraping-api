@@ -102,6 +102,32 @@ Deductions: W1 bare-placeholder fragility −10 · W2 `.env.sit` ENABLED=false v
 
 ---
 
+## 3A. UI Integration Result
+
+Final UI behaviour after the HAENGSUNG Payment Refresh implementation. The scheduled-payment screen renders **one** primary import control per module, selected by product type: standard tenants always see **Excel Upload**; HAENGSUNG (`PRDT_TYPE='H'`) sees **Refresh (ERP Import)** on the four supported modules, and keeps **Excel Upload** on Internal Transfer.
+
+**Implementation matrix**
+
+| Payment module | Standard WeCMS | HAENGSUNG (`PRDT_TYPE='H'`) |
+|---|---|---|
+| Internal Transfer | Excel Upload | **Excel Upload** (unchanged — no Refresh) |
+| Vendor Payment | Excel Upload | **Refresh (ERP Import)** |
+| Expense Payment | Excel Upload | **Refresh (ERP Import)** |
+| Payroll | Excel Upload | **Refresh (ERP Import)** |
+| Overseas Payment | Excel Upload | **Refresh (ERP Import)** |
+
+**Observed final behaviour (verified ✅):**
+
+- **Button selection is product-type-gated.** `PaymentScheduledBatchListPage` renders `showRefresh = isProductType(user,'H') && onRefresh !== undefined`; when true it shows the **Refresh** button, otherwise it shows `<ExcelUploadButton>`. Product type is read from the signed JWT / stored user, never a request field.
+- **Refresh replaces Excel Upload only on the four supported modules.** Vendor / Expense / Payroll / Overseas pass `onRefresh` to the shared list page, so under HAENGSUNG they render Refresh; under any other product type they render Excel Upload.
+- **Internal Transfer always shows Excel Upload.** `ScheduledTransferPage` never passes `onRefresh`, so Excel Upload renders regardless of product type — including HAENGSUNG. No Refresh button, no Oracle import path.
+- **Refresh drives the import end-to-end.** The single shared `useHaengsungRefresh` hook → `haengsungPaymentRefresh()` → `POST /api/v1/payments/haengsung/refresh` (`{payment_type, period_date}`); on success it reloads the list (preserving filter / sort / page) and shows the result dialog (D1). Loading state disables the button and animates the spinner; a re-entry guard prevents duplicate clicks.
+- **No standard-tenant regression.** Non-`H` tenants are unaffected — every module keeps Excel Upload.
+
+Module-level source-of-truth matrix: [payment/README.md → "Payment import strategy"](payment/README.md#payment-import-strategy--standard-wecms-vs-haengsung). Feature scope: [haengsung-payment-refresh.md → "Scope"](haengsung-payment-refresh.md#scope). Frontend legacy-parity detail: [wecms-web/docs/features/payment/haengsung-payment-refresh-frontend-parity.md](../../../wecms-web/docs/features/payment/haengsung-payment-refresh-frontend-parity.md).
+
+---
+
 ## 4. DB verification
 
 ### 4.1 Oracle (HAENGSUNG SIT, `WECMS` schema — read-only)

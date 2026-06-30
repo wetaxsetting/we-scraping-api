@@ -79,7 +79,13 @@ public class PayrollPaymentExcelParser {
 
     private static final int HEADER_ROW = 3;
     private static final int FIRST_DATA_ROW = 4;
-    private static final int MAX_ROWS = 500;
+    // G5 (2026-06-29): legacy DOM path caps at 1000 data rows
+    // (pymn_0005_002_r001_act.jsp:510-512); the SAX/.xlsx path is uncapped.
+    // The prior 500 + Math.min(...) silently DROPPED rows 501+, which
+    // under-pays large payroll files. Raise the cap to the legacy DOM value
+    // and REJECT (WBE_PAYROLL_TOO_MANY_ROWS) instead of silently truncating
+    // — see the parse loop below.
+    private static final int MAX_ROWS = 1000;
 
     private static final int CITAD_LENGTH = 3;
     private static final int NAPAS_LENGTH = 6;
@@ -128,14 +134,20 @@ public class PayrollPaymentExcelParser {
             DataFormatter fmt = new DataFormatter();
             validateHeaderRow(sheet, fmt);
 
-            int lastRow = Math.min(sheet.getLastRowNum(), FIRST_DATA_ROW + MAX_ROWS - 1);
-            for (int r = FIRST_DATA_ROW; r <= lastRow; r++) {
+            // G5: iterate to the real last row (no Math.min truncation) and
+            // stop at the first all-blank data row (legacy break). Counting
+            // only the contiguous non-blank data rows means trailing blank /
+            // formatted rows never trip the cap with a false positive.
+            for (int r = FIRST_DATA_ROW; r <= sheet.getLastRowNum(); r++) {
                 Row row = sheet.getRow(r);
                 if (row == null) continue;
 
-                // Mirrors legacy `pymn_0005_002_r001_act.jsp:255-260` —
-                // skip rows whose critical cells (A/C/D/E/F/G) are all
-                // empty.
+                // G6 (legacy parity): SKIP (continue) rows whose critical
+                // cells (A/C/D/E/F/G) are all empty — legacy
+                // `pymn_0005_002_r001_act.jsp:255-260` continues/returns past a
+                // blank row and keeps processing later rows. The prior `break`
+                // stopped at the first blank, silently dropping every row after
+                // a mid-file blank separator.
                 String c0 = cellString(row, 0, fmt);
                 String c2 = cellString(row, 2, fmt);
                 String c3 = cellString(row, 3, fmt);
@@ -144,7 +156,14 @@ public class PayrollPaymentExcelParser {
                 String c6 = cellString(row, 6, fmt);
                 if (isBlank(c0) && isBlank(c2) && isBlank(c3)
                         && isBlank(c4) && isBlank(c5) && isBlank(c6)) {
-                    break;
+                    continue;
+                }
+
+                // G5: reject oversized files rather than silently dropping
+                // rows 501+ (the old Math.min behaviour). Throws on the
+                // (MAX_ROWS+1)-th non-blank data row.
+                if (rows.size() >= MAX_ROWS) {
+                    throw new BusinessException("WBE_PAYROLL_TOO_MANY_ROWS");
                 }
 
                 ParsedRow parsed = parseRow(row, fmt, bankCd);

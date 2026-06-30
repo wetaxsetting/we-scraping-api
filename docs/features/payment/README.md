@@ -40,6 +40,23 @@ single cross-sibling / shared-infrastructure authority for the module (this READ
   - **Separate ERP sync** (not payment): [`../haengsung-exchange-rate-sync.md`](../haengsung-exchange-rate-sync.md) (`ERP_0100_001`) · [`../haengsung-card-account-sync.md`](../haengsung-card-account-sync.md) (`ERP_0100_003`).
 - **HAENGSUNG Oracle Integration — final full audit** (2026-06-29; all 11 flows compared across legacy / API / Web / Oracle DB / WeCMS DB; DB columns + row counts verified): [`../haengsung-oracle-integration-final-audit.md`](../haengsung-oracle-integration-final-audit.md). Verdict: complete + legacy-faithful; one low-severity card-sync source-parity item (F-1) for SIT.
 
+### Payment import strategy — Standard WeCMS vs HAENGSUNG
+
+How each payment module gets its scheduled-payment data into WeCMS depends on the tenant's product type. Standard tenants upload an Excel file on every module; HAENGSUNG (`PRDT_TYPE='H'`) replaces the **Excel Upload** button with a **Refresh** button on four of the five modules, pulling the payment data directly from the external Oracle ERP interface tables (`TB_TRNS_MAST` / `TB_TRNS_DETAIL`) instead of from a manually-uploaded file.
+
+| Payment module | Standard WeCMS | HAENGSUNG (`PRDT_TYPE='H'`) |
+|---|---|---|
+| Internal Transfer | Excel Upload | **Excel Upload** (unchanged — no Refresh) |
+| Vendor Payment | Excel Upload | **Refresh (ERP Import)** |
+| Expense Payment | Excel Upload | **Refresh (ERP Import)** |
+| Payroll | Excel Upload | **Refresh (ERP Import)** |
+| Overseas Payment | Excel Upload | **Refresh (ERP Import)** |
+
+- **Refresh replaces Excel Upload only for the four modules above** (Vendor / Expense / Payroll / Overseas). For those four, the HAENGSUNG scheduled-payment screen renders **Refresh** instead of **Excel Upload**; the button imports payment batches directly from the Oracle ERP interface tables and upserts them as WeCMS drafts identical to an uploaded batch (same `SCDUL_PYMN_SUMR(_DETL)` / `OVRS_PYMN_SUMR(_DETL)` target tables, same downstream approval / dispatch / result flow).
+- **Internal Transfer always uses Excel Upload** for every product type — including HAENGSUNG. It has no Refresh button and no Oracle import path.
+- **Standard (non-`H`) tenants are unaffected** — every module keeps Excel Upload regardless.
+- Full design + Oracle schema / status flow / field mapping: [`../haengsung-payment-refresh.md`](../haengsung-payment-refresh.md). Frontend gating + legacy parity: [`wecms-web/docs/features/payment/haengsung-payment-refresh-frontend-parity.md`](../../../../wecms-web/docs/features/payment/haengsung-payment-refresh-frontend-parity.md).
+
 ## Audit (2026-06-23 re-audit)
 - **Doc-vs-code audit:** [payment-docs-audit.md](../../audits/payment-docs-audit.md) — per-module status + corrections made.
 - **Gap analysis:** [payment-gap-analysis.md](../../audits/payment-gap-analysis.md) — remaining gaps (MATCH / APPROVED DEVIATION / DEAD LEGACY / PARTIAL / MISSING).

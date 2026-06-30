@@ -17,6 +17,8 @@ import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolApprvrInfm;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolApprvrInfmId;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId;
+import com.kosign.wecms.domain.auth.entity.UserBusiConnInfm;
+import com.kosign.wecms.domain.auth.repository.UserBusiConnInfmRepository;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolApprvrInfmRepository;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
 import com.kosign.wecms.domain.payment.internaltransfer.repository.ScdulPymnSumrRepository;
@@ -39,9 +41,11 @@ import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -136,8 +140,17 @@ public class ApprovalBoxService {
     private static final DateTimeFormatter DTM14 =
             DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
 
+    /** Shared, non-admin user-image URI template — same value the
+     *  Approval Line + notification paths emit. The streaming endpoint
+     *  is {@code UserController#streamImage} ({@code GET /api/v1/users/{id}/image}). */
+    private static final String USER_IMAGE_URI_TEMPLATE = "/api/v1/users/%s/image";
+
+    /** Active-link sentinel for {@code USER_BUSI_CONN_INFM.DEL_YN}. */
+    private static final String DEL_YN_ACTIVE = "N";
+
     private final ExptResolMstrRepository        masterRepository;
     private final ExptResolApprvrInfmRepository  approverRepository;
+    private final UserBusiConnInfmRepository     userBusiRepo;
     private final OvrsPymnSumrRepository         ovrsPymnSumrRepository;
     private final ScdulPymnSumrRepository        scdulPymnSumrRepository;
     /** Corporate Card (APPR_DV='33') currency enrichment — the card
@@ -307,8 +320,11 @@ public class ApprovalBoxService {
             throw new BusinessException("WBE_VALIDATION", "appr_seq_no: is required");
         }
         String bizKey = TenantContext.currentBizKey();
-        return approverRepository.findChain(bizKey, apprSeqNo).stream()
-                .map(ApprovalBoxService::toApprover)
+        List<ExptResolApprvrInfm> chain = approverRepository.findChain(bizKey, apprSeqNo);
+        Map<String, String> imgUrlByApprvrId = resolveImageUrls(
+                bizKey, chain.stream().map(ExptResolApprvrInfm::getApprvrId).toList());
+        return chain.stream()
+                .map(a -> toApprover(a, imgUrlByApprvrId))
                 .toList();
     }
 
@@ -930,12 +946,13 @@ public class ApprovalBoxService {
                                   Map<String, String> ccyByApprSeqNo,
                                   Map<String, String> fileNameByApprSeqNo,
                                   Map<String, BigDecimal> cardAmtByApprSeqNo) {
-        List<ApprovalBoxApprover> approvers = approverRepository
-                .findChain(bizKey, p.apprSeqNo())
-                .stream()
+        List<ExptResolApprvrInfm> chain = approverRepository.findChain(bizKey, p.apprSeqNo());
+        Map<String, String> imgUrlByApprvrId = resolveImageUrls(
+                bizKey, chain.stream().map(ExptResolApprvrInfm::getApprvrId).toList());
+        List<ApprovalBoxApprover> approvers = chain.stream()
                 .sorted(Comparator.comparing(
                         a -> a.getApprvrLineNo() == null ? BigDecimal.ZERO : a.getApprvrLineNo()))
-                .map(ApprovalBoxService::toApprover)
+                .map(a -> toApprover(a, imgUrlByApprvrId))
                 .toList();
 
         String currency = resolveCurrency(ccyByApprSeqNo, p.apprSeqNo());
@@ -970,13 +987,40 @@ public class ApprovalBoxService {
                 null, null, null, null, null);
     }
 
-    private static ApprovalBoxApprover toApprover(ExptResolApprvrInfm a) {
+    private static ApprovalBoxApprover toApprover(
+            ExptResolApprvrInfm a, Map<String, String> imgUrlByApprvrId) {
         return new ApprovalBoxApprover(
                 a.getApprvrLineNo() == null ? null : a.getApprvrLineNo().intValue(),
                 a.getApprvrId(),
                 a.getApprvrNm(),
                 a.getApprvrStts(),
-                a.getApprDtm());
+                a.getApprDtm(),
+                imgUrlByApprvrId.get(a.getApprvrId()));
+    }
+
+    /**
+     * Resolve {@code user_img_url} for every approver id with a single
+     * batched {@code findAllByUserIdInAndBizKeyAndDelYn}. Returns a map
+     * keyed by {@code apprvrId}; an approver with no stored image is
+     * absent from the map (→ {@code toApprover} ships a null URL and the
+     * frontend renders the initials disc). Mirrors
+     * {@code ApprovalLineService.resolveImageUrls} so both approver
+     * surfaces emit the identical shared {@code /api/v1/users/{id}/image}
+     * URL shape.
+     */
+    private Map<String, String> resolveImageUrls(String bizKey, List<String> apprvrIds) {
+        if (apprvrIds == null || apprvrIds.isEmpty()) return Map.of();
+        Set<String> distinct = new HashSet<>(apprvrIds);
+        List<UserBusiConnInfm> links = userBusiRepo
+                .findAllByUserIdInAndBizKeyAndDelYn(distinct, bizKey, DEL_YN_ACTIVE);
+        Map<String, String> out = new HashMap<>(links.size());
+        for (UserBusiConnInfm link : links) {
+            String image = link.getUserImg();
+            if (image != null && !image.isBlank()) {
+                out.put(link.getUserId(), String.format(USER_IMAGE_URI_TEMPLATE, link.getUserId()));
+            }
+        }
+        return out;
     }
 
     /* =================================================================

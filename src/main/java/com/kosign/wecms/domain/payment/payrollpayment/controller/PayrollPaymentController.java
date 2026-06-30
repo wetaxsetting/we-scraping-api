@@ -20,6 +20,7 @@ import com.kosign.wecms.domain.payment.payrollpayment.dto.PayrollMatchCandidateL
 import com.kosign.wecms.domain.payment.payrollpayment.dto.PayrollMatchRequest;
 import com.kosign.wecms.domain.payment.payrollpayment.dto.PayrollMatchResultResponse;
 import com.kosign.wecms.domain.payment.payrollpayment.service.PayrollBankingMatchService;
+import com.kosign.wecms.domain.payment.payrollpayment.service.PayrollPaymentDownloadService;
 import com.kosign.wecms.domain.payment.payrollpayment.service.PayrollPaymentResultService;
 import com.kosign.wecms.domain.payment.payrollpayment.service.PayrollPaymentService;
 import com.kosign.wecms.domain.payment.payrollpayment.service.PayrollPaymentService.DownloadResource;
@@ -34,6 +35,7 @@ import java.nio.file.Files;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
@@ -99,10 +101,11 @@ public class PayrollPaymentController {
      *  — alphanumeric, 1-20 chars (mirrors Internal Transfer). */
     private static final String SCDUL_PYMN_DETL_NO_PATTERN = "^[A-Za-z0-9]{1,20}$";
 
-    private final PayrollPaymentService       service;
-    private final PayrollPaymentResultService resultService;
-    private final PayrollBankingMatchService  matchService;
-    private final ExcelExportService          excelExportService;
+    private final PayrollPaymentService         service;
+    private final PayrollPaymentResultService   resultService;
+    private final PayrollPaymentDownloadService downloadService;
+    private final PayrollBankingMatchService    matchService;
+    private final ExcelExportService            excelExportService;
 
     @GetMapping
     public ApiResponse<ScheduledTransferListResponse> list(
@@ -138,6 +141,33 @@ public class PayrollPaymentController {
         return ApiResponse.ok(service.detail(id));
     }
 
+    /**
+     * Excel Download — the legacy 20-column populated report
+     * (ports {@code pymn_0006_002_r002}, Payroll type {@code "00"}).
+     * Loads the locale template from the backend classpath, populates one
+     * row per transfer detail (incl. the payroll-specific Payroll Type at
+     * column O) preserving all template styling, and streams
+     * {@code WeCMS_Payroll_download_{LANG}.xlsx}.
+     *
+     * <p>This is the artifact the Scheduled Payment list-row glyph and the
+     * Scheduled detail file-card download — NOT the originally uploaded
+     * Excel file (which {@code GET /{id}/file} still serves as the import
+     * source). See {@code docs/audits/payroll-payment-excel-download-audit.md}.
+     *
+     * @param id   batch key
+     * @param lang optional UI-locale hint (EN/KO/VI; KM/other → EN). When
+     *             omitted the JWT {@code langCd} is used.
+     */
+    @GetMapping("/{id}/report")
+    public ResponseEntity<ByteArrayResource> downloadReport(
+            @PathVariable("id")
+            @Size(max = 30)
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id,
+            @RequestParam(value = "lang", required = false) String lang) {
+        return reportResponse(downloadService.generate(id, lang));
+    }
+
     @GetMapping("/results")
     @PreAuthorize("@menuAuthz.canAccess('payment-payroll-result')")
     public ApiResponse<TransferResultListResponse> listResults(
@@ -162,6 +192,44 @@ public class PayrollPaymentController {
             @Pattern(regexp = RESULT_SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
             String id) {
         return ApiResponse.ok(resultService.detail(id));
+    }
+
+    /**
+     * Excel Download — the legacy 20-column report for a Payroll Payment
+     * Result batch. Same artifact as {@link #downloadReport} but routed
+     * through the result-scoped endpoint so {@code payment-payroll-result}
+     * menu authorization applies (the report is per-batch, keyed only by
+     * {@code SCDUL_PYMN_NO}). Drives the Result list-row glyph and the
+     * Result detail file-card download.
+     */
+    @GetMapping("/results/{id}/report")
+    @PreAuthorize("@menuAuthz.canAccess('payment-payroll-result')")
+    public ResponseEntity<ByteArrayResource> downloadResultReport(
+            @PathVariable("id")
+            @Size(max = 30)
+            @Pattern(regexp = RESULT_SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id,
+            @RequestParam(value = "lang", required = false) String lang) {
+        return reportResponse(downloadService.generate(id, lang));
+    }
+
+    /** Shared builder for the generated-report binary response (RFC 5987
+     *  filename, XLSX content type, no-sniff). Mirrors the Vendor / Expense /
+     *  Internal Transfer controllers' {@code reportResponse}. */
+    private static ResponseEntity<ByteArrayResource> reportResponse(
+            PayrollPaymentDownloadService.GeneratedReport report) {
+        ContentDisposition cd = ContentDisposition.builder("attachment")
+                .filename(report.fileName(), StandardCharsets.UTF_8)
+                .build();
+        ByteArrayResource body = new ByteArrayResource(report.content());
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .contentLength(body.contentLength())
+                .header(HttpHeaders.CONTENT_DISPOSITION, cd.toString())
+                .header("X-Content-Type-Options", "nosniff")
+                .header("Access-Control-Expose-Headers", HttpHeaders.CONTENT_DISPOSITION)
+                .body(body);
     }
 
     /** Excel export of the Payroll Payment Result list. Provider:

@@ -22,6 +22,7 @@ import com.kosign.wecms.domain.payment.match.dto.PaymentLineMatchRequest;
 import com.kosign.wecms.domain.payment.match.dto.PaymentLineMatchResultResponse;
 import com.kosign.wecms.domain.payment.match.dto.PaymentLineUnmatchAllResponse;
 import com.kosign.wecms.domain.payment.match.service.DomesticPaymentLineMatchService;
+import com.kosign.wecms.domain.payment.expensepayment.service.ExpensePaymentDownloadService;
 import com.kosign.wecms.domain.payment.expensepayment.service.ExpensePaymentResultService;
 import com.kosign.wecms.domain.payment.expensepayment.service.ExpensePaymentService;
 import com.kosign.wecms.domain.payment.expensepayment.service.ExpensePaymentService.DownloadResource;
@@ -36,6 +37,7 @@ import java.nio.file.Files;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
@@ -57,18 +59,19 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.multipart.MultipartFile;
 
 /**
- * Payment &gt; Expense Payment — REST endpoints. Phase A scope:
+ * Payment &gt; Expense Payment — REST endpoints.
  *
- * <ul>
- *   <li>{@code GET /api/v1/payment/expense-payment} — Scheduled Payment
- *       list (legacy {@code pymn_0003_001_r001}).</li>
- *   <li>{@code GET /api/v1/payment/expense-payment/results} — Payment
- *       Result list (legacy {@code pymn_0004_001_r001}).</li>
- * </ul>
- *
- * <p>Detail / create / dispatch / request-approval endpoints land in
- * Phase B following the Internal Transfer baseline (see memory
- * {@code project_payment_module_reference.md}).
+ * <p>Full CRUD + workflow surface is implemented: Scheduled Payment list
+ * (legacy {@code pymn_0003_001_r001}) + detail (legacy
+ * {@code pymn_0003_002_r001}), Excel parse/preview + save draft (legacy
+ * {@code pymn_0003_002_r001} / {@code _c001}), withdrawal-account lookup
+ * (legacy {@code comm_1001_001}), request-approval / approval-action /
+ * withdraw-approval / change-approval-line, dispatch (legacy
+ * {@code pymn_0003_001_c001}), payment-line matching, original-file
+ * download, and the Payment Result list + detail + export (legacy
+ * {@code pymn_0004_001_r001} / {@code _002_r001}). (The earlier "Phase A
+ * — list only; detail/create/dispatch/request-approval land in Phase B"
+ * note was stale and was removed — audit G8.)
  *
  * <p>Expense, Vendor and Internal Transfer share the physical
  * {@code SCDUL_PYMN_SUMR} table; the {@code SCDUL_PYMN_TYPE_CD = '02'}
@@ -101,6 +104,7 @@ public class ExpensePaymentController {
 
     private final ExpensePaymentService           service;
     private final ExpensePaymentResultService     resultService;
+    private final ExpensePaymentDownloadService   downloadService;
     private final ExcelExportService              excelExportService;
     private final DomesticPaymentLineMatchService lineMatchService;
 
@@ -155,6 +159,33 @@ public class ExpensePaymentController {
     }
 
     /**
+     * Excel Download — the legacy 22-column populated report
+     * (ports {@code pymn_0002_002_r002}, Expense branch / type {@code "02"}).
+     * Loads the locale template from the backend classpath, populates one
+     * row per transfer detail (incl. Contact Name / {@code TRCO_CMENM} at
+     * column J) preserving all template styling, and streams
+     * {@code WeCMS_Expense_Payment_download_{LANG}.xlsx}.
+     *
+     * <p>This is the artifact the Scheduled Payment list-row glyph and the
+     * Scheduled detail file-card download — NOT the originally uploaded
+     * Excel file (which {@code GET /{id}/file} still serves as the import
+     * source). See {@code docs/audits/expense-payment-excel-download-audit.md}.
+     *
+     * @param id   batch key
+     * @param lang optional UI-locale hint (EN/KO/VI; KM/other → EN). When
+     *             omitted the JWT {@code langCd} is used.
+     */
+    @GetMapping("/{id}/report")
+    public ResponseEntity<ByteArrayResource> downloadReport(
+            @PathVariable("id")
+            @Size(max = 30)
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id,
+            @RequestParam(value = "lang", required = false) String lang) {
+        return reportResponse(downloadService.generate(id, lang));
+    }
+
+    /**
      * List Expense Payment results (dispatched + not-yet-dispatched
      * batches with their per-currency totals). Mirrors legacy
      * {@code pymn_0004_001_r001}.
@@ -187,6 +218,44 @@ public class ExpensePaymentController {
             @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
             String id) {
         return ApiResponse.ok(resultService.detail(id));
+    }
+
+    /**
+     * Excel Download — the legacy 22-column report for an Expense Payment
+     * Result batch. Same artifact as {@link #downloadReport} but routed
+     * through the result-scoped endpoint so {@code payment-expense-result}
+     * menu authorization applies (the report is per-batch, keyed only by
+     * {@code SCDUL_PYMN_NO}). Drives the Result list-row glyph and the
+     * Result detail file-card download.
+     */
+    @GetMapping("/results/{id}/report")
+    @PreAuthorize("@menuAuthz.canAccess('payment-expense-result')")
+    public ResponseEntity<ByteArrayResource> downloadResultReport(
+            @PathVariable("id")
+            @Size(max = 30)
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id,
+            @RequestParam(value = "lang", required = false) String lang) {
+        return reportResponse(downloadService.generate(id, lang));
+    }
+
+    /** Shared builder for the generated-report binary response (RFC 5987
+     *  filename, XLSX content type, no-sniff). Mirrors the Vendor Payment /
+     *  Internal Transfer controllers' {@code reportResponse}. */
+    private static ResponseEntity<ByteArrayResource> reportResponse(
+            ExpensePaymentDownloadService.GeneratedReport report) {
+        ContentDisposition cd = ContentDisposition.builder("attachment")
+                .filename(report.fileName(), StandardCharsets.UTF_8)
+                .build();
+        ByteArrayResource body = new ByteArrayResource(report.content());
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .contentLength(body.contentLength())
+                .header(HttpHeaders.CONTENT_DISPOSITION, cd.toString())
+                .header("X-Content-Type-Options", "nosniff")
+                .header("Access-Control-Expose-Headers", HttpHeaders.CONTENT_DISPOSITION)
+                .body(body);
     }
 
     /** Excel export of the Expense Payment Result list. Provider:

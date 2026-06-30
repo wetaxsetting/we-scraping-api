@@ -105,6 +105,9 @@ public class OverseasPaymentService {
     private final DispatchResultResolver         dispatchResultResolver;
     private final ExptResolMstrRepository        exptResolMstrRepository;
     private final ExptResolApprvrInfmRepository  exptResolApprvrInfmRepository;
+    /** Shared avatar-URL resolver — maps approver ids → /api/v1/users/{id}/image
+     *  (null when no stored image). Single home for the USER_IMG → URL logic. */
+    private final com.kosign.wecms.domain.auth.service.UserImageUrlResolver userImageUrlResolver;
     /** Shared Approval Content loader — reads {@code BLTB_POST_INFM.POST_CONT}
      *  (the legacy source of truth), identical to the four scheduled types. */
     private final ApprovalContentLoader          approvalContentLoader;
@@ -183,9 +186,10 @@ public class OverseasPaymentService {
 
         Map<String, List<Object[]>> approversBySeq =
                 approverRepo.findByApprSeqNos(bizKey, apprSeqNos);
+        Map<String, String> imgUrlByApprvrId = resolveApproverImageUrls(bizKey, approversBySeq);
 
         List<OverseasScheduledRow> rows = rawRows.stream()
-                .map(r -> mapRow(r, approversBySeq))
+                .map(r -> mapRow(r, approversBySeq, imgUrlByApprvrId))
                 .collect(Collectors.toList());
 
         // Currency totals (same filter as the paged query)
@@ -233,7 +237,8 @@ public class OverseasPaymentService {
         Map<String, List<Object[]>> approversBySeq = apprSeqNo != null
                 ? approverRepo.findByApprSeqNos(bizKey, List.of(apprSeqNo))
                 : Map.of();
-        return mapRow(r, approversBySeq);
+        Map<String, String> imgUrlByApprvrId = resolveApproverImageUrls(bizKey, approversBySeq);
+        return mapRow(r, approversBySeq, imgUrlByApprvrId);
     }
 
     // ─── result list ──────────────────────────────────────────────────────────
@@ -1735,14 +1740,15 @@ public class OverseasPaymentService {
 
     // ─── mappers ──────────────────────────────────────────────────────────────
 
-    private OverseasScheduledRow mapRow(Object[] r, Map<String, List<Object[]>> approversBySeq) {
+    private OverseasScheduledRow mapRow(Object[] r, Map<String, List<Object[]>> approversBySeq,
+                                        Map<String, String> imgUrlByApprvrId) {
         String apprSeqNo = (String) r[11];
 
         List<OverseasApprover> approvers = apprSeqNo == null
                 ? List.of()
                 : approversBySeq.getOrDefault(apprSeqNo, List.of())
                         .stream()
-                        .map(this::mapApprover)
+                        .map(a -> mapApprover(a, imgUrlByApprvrId))
                         .collect(Collectors.toList());
 
         Number apprvrTotCnt     = (Number) r[24];
@@ -1778,15 +1784,33 @@ public class OverseasPaymentService {
         );
     }
 
-    private OverseasApprover mapApprover(Object[] r) {
+    private OverseasApprover mapApprover(Object[] r, Map<String, String> imgUrlByApprvrId) {
+        String apprvrId = toStr(r[2]);
         return new OverseasApprover(
-                toStr(r[2]),  // apprvrId
+                apprvrId,     // apprvrId
                 toStr(r[3]),  // apprvrNm
                 toStr(r[4]),  // apprvrStts (CHAR(1))
                 toStr(r[1]),  // apprvrLineNo
                 toStr(r[5]),  // modDtm
-                toStr(r[6])   // regImgUrl
+                // Shared, non-admin avatar URL (/api/v1/users/{id}/image) for
+                // approvers WITH a stored image; null otherwise (the query's
+                // r[6] reg_img_url column stays NULL — resolved in Java here).
+                imgUrlByApprvrId.get(apprvrId)   // regImgUrl
         );
+    }
+
+    /** Collect every approver id across the page's chains and batch-resolve
+     *  their avatar URLs in one query via the shared resolver. */
+    private Map<String, String> resolveApproverImageUrls(
+            String bizKey, Map<String, List<Object[]>> approversBySeq) {
+        java.util.Set<String> ids = new java.util.HashSet<>();
+        for (List<Object[]> chain : approversBySeq.values()) {
+            for (Object[] a : chain) {
+                String id = toStr(a[2]);
+                if (id != null && !id.isBlank()) ids.add(id);
+            }
+        }
+        return userImageUrlResolver.resolveImageUrls(bizKey, ids);
     }
 
     private OverseasCurrencyTotal mapTotal(Object[] r) {

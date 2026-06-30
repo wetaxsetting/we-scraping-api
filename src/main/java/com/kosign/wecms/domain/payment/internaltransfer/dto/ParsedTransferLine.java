@@ -10,8 +10,8 @@ import java.math.BigDecimal;
  * preview's red highlights.
  *
  * <p>Mirrors legacy {@code WSVC.pymn_0009_002_r001.xml:rule_Sub_0}.
- * Phase A always ships this empty — see
- * {@link ParseExcelResponse} Javadoc.
+ * One instance is emitted per workbook data row by
+ * {@code InternalTransferExcelParser}.
  */
 public record ParsedTransferLine(
         BigDecimal tranAmt,

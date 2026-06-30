@@ -244,35 +244,54 @@ public class OperationStatusService {
     }
 
     /**
-     * Map the GDT free-text Vietnamese {@code COMPANYSTATUS} into a
-     * compact 3-state code the static UI's {@code OperationStatusCode}
-     * enum expects.
+     * Resolve the GDT free-text Vietnamese {@code COMPANYSTATUS} into a
+     * stable status code, reproducing the legacy {@code aosv_0001_001.ts}
+     * {@code companyStatus} map 1:1 (legacy
+     * {@code WECMS_STATIC/ts-src/js/jex/wabooks/aosv/aosv_0001_001.ts:58-72}).
      *
-     * <p>Observed DEV strings (audit 2026-05-04, tenant
-     * {@code VN_VNM0004_000001}, 6 distinct values across 202 rows):
-     * <ul>
-     *   <li>"NNT đang hoạt động (đã được cấp GCN ĐKT)"  → active</li>
-     *   <li>"NNT đang hoạt động"                          → active</li>
-     *   <li>"NNT đang hoạt động (được cấp thông báo MST)" → active</li>
-     *   <li>"NNT ngừng hoạt động và đã đóng MST"          → suspended</li>
-     *   <li>"NNT ngừng hoạt động và đã hoàn thành thủ tục
-     *        chấm dứt hiệu lực MST"                       → suspended</li>
-     *   <li>"NNT tạm nghỉ kinh doanh có thời hạn"         → suspended</li>
-     * </ul>
+     * <p>The legacy column renders one of <b>13 distinct tax-authority
+     * statuses</b> (each keyed on the <i>exact</i> Vietnamese phrase) plus
+     * an unknown fallback that shows the raw {@code COMPANYSTATUS} string
+     * verbatim. The earlier compact 3-state model
+     * ({@code active_certificate_issued / suspended / not_registered}) was
+     * a refactor invention that collapsed e.g. "tạm nghỉ" (Temporarily
+     * closed) into "suspended" — removed 2026-06-30 for legacy parity.
+     * See {@code wecms-api/docs/audits/operation-status-inquiry-status-column-legacy-audit.md}.
      *
-     * <p>Anything we don't recognise → {@code not_registered}. This is a
-     * defensive fallback; if it starts firing on real data the regex
-     * needs tightening — extend the list above.
+     * <p>Matching is <b>exact</b> (after trim), mirroring the legacy
+     * object-key lookup — not a substring scan. Anything unmatched →
+     * {@code "unknown"}, and the frontend renders the raw GDT string with
+     * no icon (legacy {@code status: "", msg: v.COMPANYSTATUS}). Each
+     * code's green/active vs red/inactive presentation lives on the
+     * frontend ({@code OperationStatusCell}), mirroring the legacy
+     * {@code status: "active" | "Inactive"} flag.
      */
     static String resolveStatusCd(String status) {
-        if (status == null) return "not_registered";
-        String s = status.toLowerCase(Locale.ROOT);
-        if (s.contains("đang hoạt động")) return "active_certificate_issued";
-        if (s.contains("ngừng hoạt động")) return "suspended";
-        if (s.contains("tạm ngừng"))       return "suspended";
-        if (s.contains("tạm nghỉ"))        return "suspended";
-        return "not_registered";
+        if (status == null) return "unknown";
+        return LEGACY_STATUS_CODES.getOrDefault(status.trim(), "unknown");
     }
+
+    /**
+     * Exact Vietnamese {@code COMPANYSTATUS} → stable code, copied verbatim
+     * from the legacy {@code aosv_0001_001.companyStatus} object keys. The
+     * three "đang hoạt động*" phrases are the legacy {@code status:"active"}
+     * set; the remaining ten are {@code status:"Inactive"}.
+     */
+    private static final Map<String, String> LEGACY_STATUS_CODES = Map.ofEntries(
+            Map.entry("NNT đang hoạt động",                                                  "active"),
+            Map.entry("NNT đang hoạt động (đã được cấp GCN ĐKT)",                            "active_certificate_issued"),
+            Map.entry("NNT đang hoạt động (được cấp thông báo MST)",                         "active_tax_notice_issued"),
+            Map.entry("NNT không hoạt động tại địa chỉ đã đăng ký",                          "address_mismatch"),
+            Map.entry("NNT chờ làm thủ tục phá sản",                                         "bankruptcy_in_progress"),
+            Map.entry("NNT ngừng hoạt động và đã đóng MST",                                  "closed"),
+            Map.entry("NNT ngừng hoạt động và đã hoàn thành thủ tục chấm dứt hiệu lực MST",  "mst_terminated"),
+            Map.entry("NNT ngừng hoạt động nhưng chưa hoàn thành thủ tục đóng MST",          "on_closing"),
+            Map.entry("NNT chờ xác minh tình trạng hoạt động tại địa chỉ đã đăng ký",        "pending_address_verification"),
+            Map.entry("Mã số thuế chờ cập nhật thông tin số định danh cá nhân",              "pending_personal_id_update"),
+            Map.entry("NNT đã được cấp MST",                                                 "tax_code_issued"),
+            Map.entry("NNT đã chuyển cơ quan thuế quản lý",                                  "tax_office_changed"),
+            Map.entry("NNT tạm nghỉ kinh doanh có thời hạn",                                 "temporarily_closed")
+    );
 
     /* ------------------------------------------------------------------
      *  Inquire — single Tax ID lookup (Get Business Info popup)

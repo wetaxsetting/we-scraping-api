@@ -5,8 +5,11 @@ import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.response.ApiResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.TransferResultDetailResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.TransferResultListResponse;
+import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferDownloadService;
 import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferResultService;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.ResponseEntity;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -44,8 +47,9 @@ public class TransferResultController {
 
     private static final String SCDUL_PYMN_NO_PATTERN = "^([0-9]{1,30}|VO_[0-9]{6}_[0-9]{1,9})$";
 
-    private final InternalTransferResultService service;
-    private final ExcelExportService            excelExportService;
+    private final InternalTransferResultService   service;
+    private final ExcelExportService              excelExportService;
+    private final InternalTransferDownloadService downloadService;
 
     /**
      * List Transfer Result batches for the current tenant. Mirrors
@@ -89,5 +93,26 @@ public class TransferResultController {
             @Valid @RequestBody ExcelExportRequest request,
             HttpServletResponse response) {
         excelExportService.exportTo(response, request);
+    }
+
+    /**
+     * Excel Download — the legacy 21-column populated report
+     * (ports {@code pymn_0010_002_r002}). Same generated artifact as the
+     * Scheduled side ({@link InternalTransferController#downloadReport});
+     * the Transfer Result list-row glyph and detail screen call this
+     * result-scoped endpoint so the {@code payment-internal-transfer-result}
+     * menu authorization applies. NOT the originally uploaded file.
+     *
+     * @param id   batch key
+     * @param lang optional UI-locale hint (EN/KO/VI; KM/other → EN)
+     */
+    @GetMapping("/{id}/report")
+    public ResponseEntity<ByteArrayResource> downloadReport(
+            @PathVariable("id")
+            @Size(max = 30)
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id,
+            @RequestParam(value = "lang", required = false) String lang) {
+        return InternalTransferController.reportResponse(downloadService.generate(id, lang));
     }
 }

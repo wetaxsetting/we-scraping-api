@@ -29,8 +29,8 @@ Per-feature specs:
 
 | Step | Feature | Direction | Legacy Source | Oracle Tables | WeCMS Tables | Priority |
 |---|---|---|---|---|---|---|
-| 1 | Oracle Foundation (datasource + shared infra) | — | (new infra) | — (connects to `TB_*`) | — | **P0 — required first** |
-| 2 | Payment Refresh Import (manual) | Oracle → WeCMS | `ErpDataRefreshHelper.java` | R `TB_TRNS_MAST`, `TB_TRNS_DETAIL`; W receive-status | W `SCDUL_PYMN_SUMR(_DETL)`, `OVRS_PYMN_SUMR(_DETL)`, `ERP_TRNS_HSTR` | **P1 — primary** |
+| 1 | Oracle Foundation (datasource + shared infra) | — | (new infra) | — (connects to `TB_*`) | — | **P0 — required first** · ✅ **Completed** |
+| 2 | Payment Refresh Import (manual) | Oracle → WeCMS | `ErpDataRefreshHelper.java` | R `TB_TRNS_MAST`, `TB_TRNS_DETAIL`; W receive-status | W `SCDUL_PYMN_SUMR(_DETL)`, `OVRS_PYMN_SUMR(_DETL)`, `ERP_TRNS_HSTR` | **P1 — primary** · ✅ **Completed** |
 | 3 | Scheduled Import Batch | Oracle → WeCMS | `ERP_0100_002.java` (trigger only) | same as Step 2 | same as Step 2 | P2 — optional, PO-gated |
 | 4 | Approval-Status Write-back | WeCMS → Oracle | `ErpStatusUpdateHelper.java` | W `TB_TRNS_MAST.LAST_STATUS`; reject → `TB_TRNS_DETAIL.PROC_STS/END_GB` | R `SCDUL_*`/`OVRS_*` (keys) | P3 — follow-on, PO-gated |
 | 5 | Dispatch-Result Write-back | WeCMS → Oracle | `ERP_0100_004.java` | W `TB_TRNS_MAST` (`LAST_STATUS=52`…), `TB_TRNS_DETAIL` (`END_GB=8/5`, `PROC_STS`…) | R `SCDUL_*`/`OVRS_*` + dispatch tbls; W summary `ERP_PROC_CMPL_YN='Y'` | P4 — follow-on, needs dispatch live |
@@ -44,7 +44,7 @@ Per-feature specs:
 
 ## 3. Step-by-step Implementation Plan
 
-### Step 1 — Oracle Foundation
+### Step 1 — Oracle Foundation ✅ Completed
 
 The shared base every later step reuses. Build once.
 
@@ -54,7 +54,7 @@ The shared base every later step reuses. Build once.
 - **Test needed:** boot with flag OFF (no Oracle bean, app starts clean); boot with flag ON + valid creds → connectivity smoke (`SELECT 1 FROM dual`); boot with flag ON + missing var → fail-fast; confirm Postgres autoconfig unchanged.
 - **Done condition:** secondary Oracle datasource connects from local + SIT, primary Postgres untouched, no credential in repo/logs, flag-gated OFF by default.
 
-### Step 2 — Payment Refresh Import (manual)
+### Step 2 — Payment Refresh Import (manual) ✅ Completed
 
 - **Files expected to change (backend):** new `ErpPaymentRefreshService` (ports `ErpDataRefreshHelper` logic — upsert + dedup + approval-lock); new controller `POST /api/v1/payments/haengsung/refresh` (product-type `H` guard, `@menuAuthz`); Oracle read access for `TB_TRNS_MAST`/`TB_TRNS_DETAIL`; reuse `ErpTrnsHistoryWriter`, `LegacyFunctionRepository` (`wb_get_next_val`), existing `SCDUL_*`/`OVRS_*` persistence; **add `erpFile*` columns to `OvrsPymnSumr`/`OvrsPymnSumrDetl` entities** (M-5; + DBA DDL if absent).
 - **Frontend work:** repoint the existing HAENGSUNG Refresh button handler from list-only `refreshList` to call the new API, then reload the list ([refresh spec §5](haengsung-payment-refresh.md#5-recommended-frontend-fix)). Toggle (Refresh vs Excel Upload for `H`) already exists.
