@@ -70,5 +70,14 @@ public record CardTransactionRow(
         String           city,
         /** {@code CARD_TRNS_HSTR.NOTE} — distinct from {@code CONT}
          *  (the free-form description). Both ship on the wire. */
-        String           note) {
+        String           note,
+        /** Row-level memo sticker color — the legacy {@code getMemoPopup2}
+         *  token ({@code fileG/fileB/fileY/fileW/fileR/fileP}) of this
+         *  card's memo thread, from {@code MEMO_INFM} scoped by
+         *  {@code (BIZ_KEY, WEB_SVC_ID, REF_NO=CARD_SEQ_NO)}. Null when the
+         *  row has no memo — the grid then renders the default empty icon. */
+        String           memoColor,
+        /** Number of memos on this card transaction (0 = none). Drives the
+         *  memo-icon presence on the list grid. */
+        int              memoCount) {
 }

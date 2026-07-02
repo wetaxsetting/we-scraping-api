@@ -53,6 +53,13 @@ public class AccountInquiryFcyExportProvider extends AccountInquiryExportProvide
         return "FCY";
     }
 
+    /** Account Inquiry (FCY) → {@code TRNS_TYPE_CD = "10"} (legacy
+     *  {@code downloadProc.jsp:1377}, {@code fnsh_0005_001} branch). */
+    @Override
+    protected String erpExportTrnsTypeCd() {
+        return "10";
+    }
+
     @Override
     protected String composeSubHeader(int rowCount, AccountListResponse data, String currency) {
         List<CurrencyTotal> totals = data.totalsByCcy();

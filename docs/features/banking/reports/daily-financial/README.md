@@ -61,6 +61,7 @@ reconciliation.
 
 ## 3. Related documents
 
+- [`../daily-financial-hs/`](../daily-financial-hs/README.md) — **the HAENGSUNG variant now has its own standalone package (2026-07-02)**; the "HAENGSUNG variant" row in §4 below reflects the 2026-06-14 snapshot and is superseded by it.
 - [`../daily-financial.md`](legacy-spec.md) — the original one-page refactor feature stub (superseded in detail by this package; retained).
 - [`../daily-cash.md`](../daily-cash/README.md) — sibling report; the **reference implementation** to clone for completing this feature.
 - [`../README.md`](../README.md) — Banking → Reports group index.

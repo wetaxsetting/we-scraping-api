@@ -144,6 +144,36 @@ public class ExpensePaymentResultService {
         }
     }
 
+    /** Hard cap on the number of batches a single bulk Excel export pulls. */
+    private static final int EXPORT_MAX = 10_000;
+
+    /**
+     * Ordered list of dispatched Payment-Result batch keys for the current
+     * filter — drives the toolbar bulk Excel export. Uses the SAME predicate,
+     * date-window, search pattern and ordering as {@link #list} (so the export
+     * mirrors what the user sees) but is not page-capped.
+     */
+    @Transactional(readOnly = true)
+    public List<String> dispatchedIdsForExport(
+            String fromDate, String toDate, String srchWd, String trnfStts) {
+        validateDateRange(fromDate, toDate);
+        String bizKey  = requireTenant();
+        String fromDtm = (fromDate + "000000").substring(0, 14);
+        String toDtm   = (toDate   + "235959").substring(0, 14);
+        String procSttsFilter = emptyToNull(trnfStts);
+        String srchWdPattern  = buildLikePattern(srchWd);
+        Sort sort = Sort.by(Sort.Order.desc("trnfDtm"), Sort.Order.desc("scdulPymnNo"));
+        Page<ScdulPymnSumr> rows = sumrRepository.searchDispatched(
+                bizKey, ScdulPymnTypeCd.EXPENSE.code(),
+                fromDtm, toDtm, srchWdPattern, procSttsFilter,
+                PageRequest.of(0, EXPORT_MAX, sort));
+        if (rows.getTotalElements() > EXPORT_MAX) {
+            log.warn("feature=expense-payment bulk-export truncated bizKey={} total={} cap={}",
+                    bizKey, rows.getTotalElements(), EXPORT_MAX);
+        }
+        return rows.getContent().stream().map(ScdulPymnSumr::getScdulPymnNo).toList();
+    }
+
     /* ----------------------------------------------------------------
      *  Detail
      * ---------------------------------------------------------------- */

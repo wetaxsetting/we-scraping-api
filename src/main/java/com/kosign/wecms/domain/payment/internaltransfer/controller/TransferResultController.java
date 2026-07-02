@@ -6,6 +6,7 @@ import com.kosign.wecms.common.response.ApiResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.TransferResultDetailResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.TransferResultListResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferDownloadService;
+import com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter;
 import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferResultService;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.core.io.ByteArrayResource;
@@ -50,6 +51,9 @@ public class TransferResultController {
     private final InternalTransferResultService   service;
     private final ExcelExportService              excelExportService;
     private final InternalTransferDownloadService downloadService;
+    /** ERP_TRNS_HSTR 'W' audit writer for the Result generated-report
+     *  download (code 17 = Internal Transfer Result). */
+    private final ErpTrnsHistoryWriter            erpHistoryWriter;
 
     /**
      * List Transfer Result batches for the current tenant. Mirrors
@@ -87,12 +91,42 @@ public class TransferResultController {
      * CLAUDE.md §13b. Provider:
      * {@code InternalTransferResultExportProvider}
      * ({@code screenId = "payment-internal-transfer-result"}).
+     *
+     * <p><b>Deprecated for the toolbar</b> (2026-06-30): the toolbar Excel
+     * now calls {@link #downloadBulkReport} so it produces the same
+     * locale-template 21-column report as the per-row download (legacy
+     * {@code pymn_0002_002_r003} bulk-report parity), not this 7-column
+     * summary. Endpoint retained for any other consumer / back-compat.
      */
     @PostMapping("/export")
     public void exportResults(
             @Valid @RequestBody ExcelExportRequest request,
             HttpServletResponse response) {
         excelExportService.exportTo(response, request);
+    }
+
+    /**
+     * Toolbar Excel — the legacy 21-column populated report for ALL batches
+     * in the current Transfer Result filter (bulk). Same locale template and
+     * column layout as the per-row {@link #downloadReport}, with every
+     * filtered batch's transfer lines appended into one workbook (legacy
+     * {@code pymn_0002_002_r003} bulk-report parity). Replaces the old
+     * from-scratch 7-column {@code ExcelExportService} summary for the
+     * toolbar. Filter params mirror {@link #list}.
+     */
+    @GetMapping("/report")
+    public ResponseEntity<ByteArrayResource> downloadBulkReport(
+            @RequestParam("from_date")                          String fromDate,
+            @RequestParam("to_date")                            String toDate,
+            @RequestParam(value = "srch_wd",   required = false) String srchWd,
+            @RequestParam(value = "trnf_stts", required = false) String trnfStts,
+            @RequestParam(value = "lang",      required = false) String lang) {
+        java.util.List<String> ids = service.dispatchedIdsForExport(fromDate, toDate, srchWd, trnfStts);
+        // Bulk Transfer Result report download → ERP_TRNS_HSTR 'W' / 17
+        // (Internal Transfer Result), same audit code as the per-row report.
+        InternalTransferDownloadService.GeneratedReport report = downloadService.generateBulk(ids, lang);
+        erpHistoryWriter.recordExportedBytes("17", report.content(), report.fileName());
+        return InternalTransferController.reportResponse(report);
     }
 
     /**
@@ -113,6 +147,11 @@ public class TransferResultController {
             @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
             String id,
             @RequestParam(value = "lang", required = false) String lang) {
-        return InternalTransferController.reportResponse(downloadService.generate(id, lang));
+        // Result list-row/detail report download → ERP_TRNS_HSTR 'W' / 17
+        // (Internal Transfer Result). Same artifact as the Scheduled download,
+        // recorded with the Result type code.
+        InternalTransferDownloadService.GeneratedReport report = downloadService.generate(id, lang);
+        erpHistoryWriter.recordExportedBytes("17", report.content(), report.fileName());
+        return InternalTransferController.reportResponse(report);
     }
 }

@@ -339,7 +339,8 @@ public class OperationStatusService {
         OsmcGdtResult result = osmcClient.lookup(List.of(taxCode), uniqueKey);
 
         // 3. Patch the EXT_TRAN_CALL_HIS row with the bridge outcome.
-        audit.setRsltCd(result.errorCode());
+        // RSLT_CD is VARCHAR(10); long WBE_OSMC_* failure codes overflow + roll back the tx — truncate (full text stays in ERR_CONT).
+        audit.setRsltCd(truncate(result.errorCode(), 10));
         audit.setErrCont(truncate(result.errorMessage(), 1000));
         extTranCallHisRepo.save(audit);
 
@@ -496,7 +497,8 @@ public class OperationStatusService {
         String uniqueKey = generateUniqueKey();
         OsmcGdtResult result = osmcClient.lookup(taxCodes, uniqueKey);
 
-        audit.setRsltCd(result.errorCode());
+        // RSLT_CD is VARCHAR(10); long WBE_OSMC_* failure codes overflow + roll back the tx — truncate (full text stays in ERR_CONT).
+        audit.setRsltCd(truncate(result.errorCode(), 10));
         audit.setErrCont(truncate(result.errorMessage(), 1000));
         extTranCallHisRepo.save(audit);
 

@@ -29,4 +29,11 @@ public class AccountInquiryVndExportProvider extends AccountInquiryExportProvide
     protected String defaultCurrency() {
         return "VND";
     }
+
+    /** Account Inquiry (VND) → {@code TRNS_TYPE_CD = "09"} (legacy
+     *  {@code downloadProc.jsp:1373}, {@code fnsh_0001_001} branch). */
+    @Override
+    protected String erpExportTrnsTypeCd() {
+        return "09";
+    }
 }

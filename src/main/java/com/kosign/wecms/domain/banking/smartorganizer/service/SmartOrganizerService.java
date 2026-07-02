@@ -342,7 +342,15 @@ public class SmartOrganizerService {
             c.setVasAcctCd(vas == null ? null : vas.getVasAcctCd());
             c.setVasAcctNm(vas == null ? null : vas.getVasAcctNm());
             c.setCnfmYn("Y");
-            c.setCnfmByUserId(userId);
+            // Legacy parity — the confirm write stamps CNFM_BY_USER_ID with the
+            // BIZ_KEY, not the login user id (fnsh_0002_001_u002_act.jsp:90,103 /
+            // fnsh_0006_001_u002_act.jsp:91,104). CNFM_BY_USER_ID is varchar(20)
+            // in the legacy DDL; WeCMS VN user ids are emails that can exceed 20
+            // chars (e.g. wecmshaengsung@gmail.com = 24) and would overflow the
+            // column. Display name stays in CNFM_BY_USER_NM; the real user id is
+            // preserved in REG_ID/MOD_ID (varchar(100)). Mirrors the Confirm-button
+            // fix — see docs/audits/transaction-history-confirm-legacy-audit.md §12.
+            c.setCnfmByUserId(bizKey);
             c.setCnfmByUserNm(userNm);
             c.setCnfmDtm(nowDtm);
             c.setRegId(userId);

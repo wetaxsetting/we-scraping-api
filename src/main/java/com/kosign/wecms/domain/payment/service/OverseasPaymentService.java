@@ -317,6 +317,29 @@ public class OverseasPaymentService {
     }
 
     /**
+     * Ordered list of Overseas Payment Result batch keys ({@code OVRS_PYMN_NO})
+     * for the current filter — drives the toolbar bulk template-report export
+     * ({@code OverseasPaymentDownloadService.generateBulk}). Uses the SAME
+     * predicate + ordering as {@link #exportResult} / {@link #listResult}
+     * ({@code findResultForExport}), so the bulk report mirrors what the user
+     * sees on screen. One id per batch (E and M alike); the download service
+     * dispatches each id to its E/M branch.
+     */
+    @Transactional(readOnly = true)
+    public List<String> resultIdsForExport(String fromDt, String toDt, String keyword, String procStat) {
+        if (fromDt == null || fromDt.isBlank()) throw new BusinessException("WBE_VALIDATION", "FROM_DT is required");
+        if (toDt   == null || toDt.isBlank())   throw new BusinessException("WBE_VALIDATION", "TO_DT is required");
+        String bizKey = TenantContext.currentBizKey();
+        List<String> statusLetters = mapProcStatToStatusLetters(procStat);
+        String likePat = buildLikePattern(keyword);
+        return paymentRepo.findResultForExport(bizKey, fromDt, toDt, likePat, statusLetters)
+                .stream()
+                .map(b -> toStr(b[0]))
+                .filter(s -> s != null && !s.isBlank())
+                .toList();
+    }
+
+    /**
      * Streams the Overseas Payment Result XLSX per the WeCMS spec:
      * title row → summary row (USD/VND/KRW totals) → header row → one data row per
      * OVRS_PYMN_DTLS across all matching batches.
@@ -1671,19 +1694,14 @@ public class OverseasPaymentService {
         String userId    = TenantContext.currentUserId();
         String nowDtm    = ZonedDateTime.now(VIETNAM_ZONE).format(DTM_FMT);
 
-        // Bulletin / attachment cleanup (legacy comm_0192_004_d001) — before
-        // the master delete so EXPT_RESOL_FILE's FK to EXPT_RESOL_MSTR holds.
-        approvalNotificationService.cleanupApprovalArtifacts(apprSeqNo);
-
-        // Delete approver chain rows
-        List<ExptResolApprvrInfm> existing = exptResolApprvrInfmRepository.findChain(bizKey, apprSeqNo);
-        exptResolApprvrInfmRepository.deleteAll(existing);
-        exptResolApprvrInfmRepository.flush();
-
-        // Delete master approval row
+        // Delete the full approval object graph child-first (EXPT_RESOL_
+        // PAY_EVID_FILE / FILE+bulletin / DETL / APPR_LINE / APPRVR_INFM /
+        // MSTR-last) through the shared helper — the EXPT_RESOL_DETL leg is
+        // what keeps expt_resol_detl_fk01 satisfied. Mirrors legacy
+        // ExptResolMstrDAO.deleteByPk (comm_0192_004_d001).
         exptResolMstrRepository.findById(
                 new com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId(bizKey, apprSeqNo))
-                .ifPresent(exptResolMstrRepository::delete);
+                .ifPresent(mstr -> approvalBoxFanoutService.purgeApprovalGraph(bizKey, apprSeqNo, mstr));
         exptResolMstrRepository.flush();
 
         // Reset the batch to draft state — clearing APPR_SEQ_NO is the reset;

@@ -59,6 +59,8 @@ class ApprovalBoxFanoutServiceTest {
     @Mock private ApprovalLineApproverRepository apprLineApproverRepository;
     @Mock private ExptResolDetlRepository        detlRepository;
     @Mock private ExptResolApprLineRepository    apprLineRepository;
+    @Mock private com.kosign.wecms.domain.payment.internaltransfer.repository.ExptResolPayEvidFileRepository
+                                                 payEvidFileRepository;
     @Mock private BusiEnvSetInfmRepository       busiEnvSetInfmRepository;
     @Mock private LegacyFunctionRepository       legacyFunctions;
     @Mock private com.kosign.wecms.domain.payment.notification.service.ApprovalNotificationService
@@ -71,7 +73,8 @@ class ApprovalBoxFanoutServiceTest {
         Clock clock = Clock.fixed(Instant.parse("2026-06-12T03:00:00Z"), ZoneOffset.UTC);
         service = new ApprovalBoxFanoutService(
                 mstrRepository, approverRepository, apprLineApproverRepository,
-                detlRepository, apprLineRepository, busiEnvSetInfmRepository,
+                detlRepository, apprLineRepository, payEvidFileRepository,
+                busiEnvSetInfmRepository,
                 clock, legacyFunctions, approvalNotificationService,
                 org.mockito.Mockito.mock(org.springframework.context.ApplicationEventPublisher.class));
         TenantContext.set(USER, TENANT, LangCd.EN);
@@ -178,7 +181,78 @@ class ApprovalBoxFanoutServiceTest {
         assertThat(captor.getValue().getApprSts()).isEqualTo("2");
     }
 
+    /* ---- withdraw / purgeApprovalGraph (audit F1/F2/F3/F4) ---------- */
+
+    /**
+     * Shared payment withdraw (Internal Transfer / Vendor / Expense /
+     * Payroll route here) with an EXPT_RESOL_DETL row present must delete
+     * the full graph <b>child-first</b> and the master LAST — this is what
+     * keeps {@code expt_resol_detl_fk01} satisfied (no FK error).
+     */
+    @Test
+    void withdrawApproval_pending_deletes_children_before_master() {
+        ExptResolMstr mstr = mstrPending("100");
+        when(mstrRepository.findById(any())).thenReturn(Optional.of(mstr));
+
+        ExptResolMstr returned = service.withdrawApproval("100");
+
+        assertThat(returned).isSameAs(mstr);
+        // Every FK child + snapshot + approver row is deleted, then master last.
+        org.mockito.InOrder ord = org.mockito.Mockito.inOrder(
+                payEvidFileRepository, approvalNotificationService, detlRepository,
+                apprLineRepository, approverRepository, mstrRepository);
+        ord.verify(payEvidFileRepository).deleteByBizKeyAndApprSeqNo(TENANT, "100");
+        ord.verify(approvalNotificationService).cleanupApprovalArtifacts("100");
+        ord.verify(detlRepository).deleteByBizKeyAndApprSeqNo(TENANT, "100");
+        ord.verify(apprLineRepository).deleteByBizKeyAndApprSeqNo(TENANT, "100");
+        ord.verify(approverRepository).deleteByBizKeyAndApprSeqNo(TENANT, "100");
+        ord.verify(mstrRepository).delete(mstr);   // parent LAST
+    }
+
+    /**
+     * {@code purgeApprovalGraph} is the single shared helper the three
+     * withdraw entry points (fanout / Card / Overseas) route through.
+     * Verify it removes DETL before the master regardless of caller.
+     */
+    @Test
+    void purgeApprovalGraph_removes_detail_before_master() {
+        ExptResolMstr mstr = mstrPending("77");
+
+        service.purgeApprovalGraph(TENANT, "77", mstr);
+
+        org.mockito.InOrder ord = org.mockito.Mockito.inOrder(detlRepository, mstrRepository);
+        ord.verify(detlRepository).deleteByBizKeyAndApprSeqNo(TENANT, "77");
+        ord.verify(mstrRepository).delete(mstr);
+        verify(payEvidFileRepository).deleteByBizKeyAndApprSeqNo(TENANT, "77");
+        verify(apprLineRepository).deleteByBizKeyAndApprSeqNo(TENANT, "77");
+        verify(approverRepository).deleteByBizKeyAndApprSeqNo(TENANT, "77");
+    }
+
+    /** Non-pending (Approved) approval must be rejected — no rows touched. */
+    @Test
+    void withdrawApproval_rejects_non_pending() {
+        ExptResolMstr approved = new ExptResolMstr();
+        approved.setBizKey(TENANT);
+        approved.setApprSeqNo("100");
+        approved.setApprTypeCd("01");   // Approve — closed, immutable
+        when(mstrRepository.findById(any())).thenReturn(Optional.of(approved));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.withdrawApproval("100"))
+                .isInstanceOf(com.kosign.wecms.common.exception.BusinessException.class);
+
+        verify(detlRepository, never()).deleteByBizKeyAndApprSeqNo(any(), any());
+        verify(mstrRepository, never()).delete(any());
+    }
+
     /* ---- fixtures --------------------------------------------------- */
+
+    private ExptResolMstr mstrPending(String apprSeqNo) {
+        ExptResolMstr m = new ExptResolMstr();
+        m.setBizKey(TENANT);
+        m.setApprSeqNo(apprSeqNo);
+        m.setApprTypeCd("00");   // Pending — withdrawable
+        return m;
+    }
 
     private void env(String key, String value) {
         BusiEnvSetInfm row = new BusiEnvSetInfm();

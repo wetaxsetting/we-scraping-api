@@ -193,4 +193,69 @@ class OverseasPaymentRequestApprovalBackstampTest {
         verify(eventPublisher).publishEvent(
                 new PaymentApprovalStatusChangedEvent(BIZ_KEY, "200", PaymentApprovalStatus.PENDING));
     }
+
+    /* =================================================================
+     *  removeApprovalLine — withdraw (audit fix, expt_resol_detl_fk01)
+     * ================================================================= */
+
+    /**
+     * Withdrawing a pending overseas approval (which carries EXPT_RESOL_DETL
+     * rows) must route the full approval-graph delete through the shared
+     * {@code purgeApprovalGraph} helper (child-first, EXPT_RESOL_DETL before
+     * EXPT_RESOL_MSTR — no FK error) and clear {@code OVRS_PYMN_SUMR.APPR_SEQ_NO}.
+     */
+    @Test
+    void removeApprovalLine_pending_purgesGraphAndClearsSummary() {
+        OvrsPymnSumr sumr = new OvrsPymnSumr();
+        sumr.setBizKey(BIZ_KEY);
+        sumr.setOvrsPymnNo(OVRS_PYMN_NO);
+        sumr.setApprSeqNo("200");   // submitted → pending
+        // trnfYn null → not yet transferred
+
+        com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr mstr =
+                new com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr();
+        mstr.setBizKey(BIZ_KEY);
+        mstr.setApprSeqNo("200");
+        mstr.setApprTypeCd("00");   // Pending → deriveApprStts == 'P'
+
+        when(sumrRepository.findByBizKeyAndOvrsPymnNo(BIZ_KEY, OVRS_PYMN_NO))
+                .thenReturn(Optional.of(sumr));
+        when(exptResolMstrRepository.findById(
+                new com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId(BIZ_KEY, "200")))
+                .thenReturn(Optional.of(mstr));
+
+        service.removeApprovalLine(OVRS_PYMN_NO);
+
+        verify(approvalBoxFanoutService).purgeApprovalGraph(BIZ_KEY, "200", mstr);
+        assertThat(sumr.getApprSeqNo()).isNull();
+        verify(sumrRepository).save(sumr);
+    }
+
+    /** A transferred / approved overseas batch cannot be withdrawn — no
+     *  approval-graph delete happens. */
+    @Test
+    void removeApprovalLine_nonPending_rejectedNoGraphTouched() {
+        OvrsPymnSumr sumr = new OvrsPymnSumr();
+        sumr.setBizKey(BIZ_KEY);
+        sumr.setOvrsPymnNo(OVRS_PYMN_NO);
+        sumr.setApprSeqNo("200");
+
+        com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr approved =
+                new com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr();
+        approved.setBizKey(BIZ_KEY);
+        approved.setApprSeqNo("200");
+        approved.setApprTypeCd("01");   // Approved → deriveApprStts == 'C'
+
+        when(sumrRepository.findByBizKeyAndOvrsPymnNo(BIZ_KEY, OVRS_PYMN_NO))
+                .thenReturn(Optional.of(sumr));
+        when(exptResolMstrRepository.findById(
+                new com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId(BIZ_KEY, "200")))
+                .thenReturn(Optional.of(approved));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.removeApprovalLine(OVRS_PYMN_NO))
+                .isInstanceOf(com.kosign.wecms.common.exception.BusinessException.class);
+
+        verify(approvalBoxFanoutService, org.mockito.Mockito.never())
+                .purgeApprovalGraph(any(), any(), any());
+    }
 }

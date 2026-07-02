@@ -288,7 +288,12 @@ public class OperationStatusBatchService {
     }
 
     private void patchAudit(ExtTranCallHis audit, OsmcGdtResult result) {
-        audit.setRsltCd(result.errorCode());
+        // RSLT_CD is VARCHAR(10). On a GDT/OSMC failure the client returns long
+        // sentinel codes (e.g. WBE_OSMC_NOT_CONFIGURED, WBE_OSMC_TRANSPORT) that
+        // exceed 10 chars — storing them raw overflows the column and rolls back
+        // the whole per-tenant transaction (audit row + status updates), so the run
+        // leaves no trace. Truncate to the column width (full text stays in ERR_CONT).
+        audit.setRsltCd(truncate(result.errorCode(), 10));
         audit.setErrCont(truncate(result.errorMessage(), 1000));
         extTranCallHisRepo.save(audit);
     }

@@ -3,6 +3,9 @@ package com.kosign.wecms.domain.payment.approvalbox.repository;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolDetl;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolDetlId;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 
@@ -23,4 +26,20 @@ public interface ExptResolDetlRepository extends JpaRepository<ExptResolDetl, Ex
      * responsibility — always pass {@code TenantContext.currentBizKey()}.
      */
     List<ExptResolDetl> findByBizKeyAndApprSeqNo(String bizKey, String apprSeqNo);
+
+    /**
+     * Physically delete every resolution-detail row for one approval
+     * reference. Required by the withdraw path so the {@code EXPT_RESOL_MSTR}
+     * delete does not violate {@code expt_resol_detl_fk01} (the FK has no
+     * {@code ON DELETE CASCADE} — legacy parity; the cascade is done in
+     * application code, mirroring {@code ExptResolMstrDAO.deleteByPk}).
+     * Always pass {@code TenantContext.currentBizKey()}.
+     */
+    @Modifying
+    @Query("""
+           DELETE FROM ExptResolDetl d
+           WHERE d.bizKey = :bizKey AND d.apprSeqNo = :apprSeqNo
+           """)
+    int deleteByBizKeyAndApprSeqNo(@Param("bizKey") String bizKey,
+                                   @Param("apprSeqNo") String apprSeqNo);
 }

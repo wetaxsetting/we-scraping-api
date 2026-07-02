@@ -119,7 +119,9 @@ class CardTransactionsControllerTest {
                 "lamine@gmail.com", "20251023073754",
                 "lamine@gmail.com", "20251216043342",
                 // GAP-CARD-FIELDS — usingType / authCode / city / note
-                "ONLINE", "AUTH123", "HANOI", "client dinner");
+                "ONLINE", "AUTH123", "HANOI", "client dinner",
+                // Row-level memo icon — color + count.
+                "fileG", 2);
 
         CardTransactionListResponse payload = new CardTransactionListResponse(
                 0, 15, 1L,
@@ -149,7 +151,9 @@ class CardTransactionsControllerTest {
                 .andExpect(jsonPath("$.data.rows[0].card_nick_nm",     is("VTB(5559)")))
                 .andExpect(jsonPath("$.data.rows[0].stts_key",         is("payment.card_transactions.status.1")))
                 .andExpect(jsonPath("$.data.rows[0].linked_docs",      is(List.of())))
-                .andExpect(jsonPath("$.data.rows[0].approvers",        is(List.of())));
+                .andExpect(jsonPath("$.data.rows[0].approvers",        is(List.of())))
+                .andExpect(jsonPath("$.data.rows[0].memo_color",       is("fileG")))
+                .andExpect(jsonPath("$.data.rows[0].memo_count",       is(2)));
     }
 
     @Test

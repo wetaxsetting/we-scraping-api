@@ -60,6 +60,7 @@ class InternalTransferControllerTest {
     private InternalTransferDispatchService dispatchService;
     private com.kosign.wecms.domain.payment.match.service.DomesticPaymentLineMatchService lineMatchService;
     private com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferDownloadService downloadService;
+    private com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter erpHistoryWriter;
 
     @BeforeEach
     void setUp() {
@@ -67,6 +68,7 @@ class InternalTransferControllerTest {
         dispatchService = mock(InternalTransferDispatchService.class);
         lineMatchService = mock(com.kosign.wecms.domain.payment.match.service.DomesticPaymentLineMatchService.class);
         downloadService = mock(com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferDownloadService.class);
+        erpHistoryWriter = mock(com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter.class);
 
         ObjectMapper mapper = new ObjectMapper()
                 .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
@@ -80,7 +82,7 @@ class InternalTransferControllerTest {
         GlobalExceptionHandler advice = new GlobalExceptionHandler(messages);
 
         mvc = MockMvcBuilders
-                .standaloneSetup(new InternalTransferController(service, dispatchService, lineMatchService, downloadService))
+                .standaloneSetup(new InternalTransferController(service, dispatchService, lineMatchService, downloadService, erpHistoryWriter))
                 .setMessageConverters(jsonConverter)
                 .setControllerAdvice(advice)
                 .build();

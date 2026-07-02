@@ -26,6 +26,7 @@ import com.kosign.wecms.domain.payment.expensepayment.service.ExpensePaymentDown
 import com.kosign.wecms.domain.payment.expensepayment.service.ExpensePaymentResultService;
 import com.kosign.wecms.domain.payment.expensepayment.service.ExpensePaymentService;
 import com.kosign.wecms.domain.payment.expensepayment.service.ExpensePaymentService.DownloadResource;
+import com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Pattern;
@@ -105,6 +106,9 @@ public class ExpensePaymentController {
     private final ExpensePaymentService           service;
     private final ExpensePaymentResultService     resultService;
     private final ExpensePaymentDownloadService   downloadService;
+    /** ERP_TRNS_HSTR 'W' audit writer for the generated-report downloads
+     *  (Scheduled → code 03, Result → code 05). */
+    private final ErpTrnsHistoryWriter            erpHistoryWriter;
     private final ExcelExportService              excelExportService;
     private final DomesticPaymentLineMatchService lineMatchService;
 
@@ -182,7 +186,11 @@ public class ExpensePaymentController {
             @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
             String id,
             @RequestParam(value = "lang", required = false) String lang) {
-        return reportResponse(downloadService.generate(id, lang));
+        // Scheduled list/detail report download → ERP_TRNS_HSTR 'W' / 03
+        // (Expense Scheduled Payment). Audit the exact downloaded bytes.
+        ExpensePaymentDownloadService.GeneratedReport report = downloadService.generate(id, lang);
+        erpHistoryWriter.recordExportedBytes("03", report.content(), report.fileName());
+        return reportResponse(report);
     }
 
     /**
@@ -236,7 +244,11 @@ public class ExpensePaymentController {
             @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
             String id,
             @RequestParam(value = "lang", required = false) String lang) {
-        return reportResponse(downloadService.generate(id, lang));
+        // Result list-row/detail report download → ERP_TRNS_HSTR 'W' / 05
+        // (Expense Payment Result).
+        ExpensePaymentDownloadService.GeneratedReport report = downloadService.generate(id, lang);
+        erpHistoryWriter.recordExportedBytes("05", report.content(), report.fileName());
+        return reportResponse(report);
     }
 
     /** Shared builder for the generated-report binary response (RFC 5987
@@ -258,14 +270,40 @@ public class ExpensePaymentController {
                 .body(body);
     }
 
-    /** Excel export of the Expense Payment Result list. Provider:
-     *  {@code ExpensePaymentResultExportProvider} (CLAUDE.md §13b). */
+    /** Excel export of the Expense Payment Result list (legacy 7-column summary
+     *  via {@code ExpensePaymentResultExportProvider}, CLAUDE.md §13b).
+     *  <b>Deprecated for the toolbar</b> (2026-06-30): the toolbar Excel now
+     *  calls {@link #downloadResultBulkReport} for the full 22-column bulk
+     *  template report. Retained for back-compat. */
     @PostMapping("/results/export")
     @PreAuthorize("@menuAuthz.canAccess('payment-expense-result')")
     public void exportResults(
             @Valid @RequestBody ExcelExportRequest request,
             HttpServletResponse response) {
         excelExportService.exportTo(response, request);
+    }
+
+    /**
+     * Toolbar Excel — the legacy 22-column report for ALL batches in the
+     * current Payment Result filter (bulk). Same locale template + column
+     * layout (incl. Contact Name) as the per-row {@link #downloadResultReport},
+     * with every filtered batch appended into one workbook (legacy
+     * {@code pymn_0002_002_r003} bulk-report parity). Replaces the old
+     * from-scratch 7-column summary for the toolbar.
+     */
+    @GetMapping("/results/report")
+    @PreAuthorize("@menuAuthz.canAccess('payment-expense-result')")
+    public ResponseEntity<ByteArrayResource> downloadResultBulkReport(
+            @RequestParam("from_date")                           String fromDate,
+            @RequestParam("to_date")                             String toDate,
+            @RequestParam(value = "srch_wd",   required = false) String srchWd,
+            @RequestParam(value = "trnf_stts", required = false) String trnfStts,
+            @RequestParam(value = "lang",      required = false) String lang) {
+        java.util.List<String> ids = resultService.dispatchedIdsForExport(fromDate, toDate, srchWd, trnfStts);
+        // Bulk Result report download → ERP_TRNS_HSTR 'W' / 05 (Expense Result).
+        ExpensePaymentDownloadService.GeneratedReport report = downloadService.generateBulk(ids, lang);
+        erpHistoryWriter.recordExportedBytes("05", report.content(), report.fileName());
+        return reportResponse(report);
     }
 
     /* ----------------------------------------------------------------

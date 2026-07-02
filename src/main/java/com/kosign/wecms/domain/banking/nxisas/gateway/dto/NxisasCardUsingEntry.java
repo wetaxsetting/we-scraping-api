@@ -28,9 +28,14 @@ import lombok.Setter;
  *       bank by {@code CardTransactionSyncService#mapPurchaseStatus})</li>
  *   <li>{@code usingType}      &rarr; {@code USING_TYPE}</li>
  *   <li>{@code cardName}       &rarr; {@code CARD_NM}</li>
- *   <li>{@code cardNum}        &rarr; cross-check against the requested
- *       card (defence-in-depth; the orchestrator already knows the
- *       card from the per-cert loop)</li>
+ *   <li>{@code cardNum}        &rarr; the scraped card number this
+ *       transaction belongs to. <b>Consumed</b> by
+ *       {@code CardTransactionPersister.cardNoMatches(...)} to attribute
+ *       each row to its own card: a CARD_USING response can carry
+ *       transactions for more than the requested card, so the persister
+ *       keeps only the rows whose {@code cardNum} matches the card the
+ *       call ran for (bug fix 2026-07-02 — previously ignored, which
+ *       duplicated one merchant row across every registered card).</li>
  * </ul>
  *
  * <p>Coocon's CARD_USING response does NOT carry an {@code inoutDv}

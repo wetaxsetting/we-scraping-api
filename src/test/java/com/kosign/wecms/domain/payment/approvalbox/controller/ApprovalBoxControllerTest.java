@@ -64,6 +64,10 @@ class ApprovalBoxControllerTest {
                 com.kosign.wecms.domain.payment.internaltransfer.service.ApprovalAttachmentDownloadService.class);
         var approvalEditService = mock(
                 com.kosign.wecms.domain.payment.approvalbox.service.ApprovalEditService.class);
+        var downloadService = mock(
+                com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxDownloadService.class);
+        var erpHistoryWriter = mock(
+                com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter.class);
 
         mapper = new ObjectMapper()
                 .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
@@ -77,7 +81,7 @@ class ApprovalBoxControllerTest {
         GlobalExceptionHandler advice = new GlobalExceptionHandler(messages);
 
         mvc = MockMvcBuilders
-                .standaloneSetup(new ApprovalBoxController(service, approvalDetailService, excelExportService, approvalAttachmentDownloadService, approvalEditService))
+                .standaloneSetup(new ApprovalBoxController(service, approvalDetailService, excelExportService, approvalAttachmentDownloadService, approvalEditService, downloadService, erpHistoryWriter))
                 .setMessageConverters(jsonConverter)
                 .setControllerAdvice(advice)
                 .build();

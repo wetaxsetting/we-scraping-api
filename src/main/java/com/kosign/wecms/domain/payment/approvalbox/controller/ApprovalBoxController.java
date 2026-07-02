@@ -14,11 +14,13 @@ import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxListResponse;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalTransactionRow;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ChangeApprovalLineRequest;
 import com.kosign.wecms.domain.payment.approvalbox.dto.EditApprovalRequest;
+import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxDownloadService;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxService;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalDetailService;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalEditService;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalAttachmentRow;
 import com.kosign.wecms.domain.payment.internaltransfer.service.ApprovalAttachmentDownloadService;
+import com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Pattern;
@@ -29,6 +31,7 @@ import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -84,11 +87,20 @@ public class ApprovalBoxController {
      *  {@code ApprovalBoxService.AUDIT_WSVC_ID}). */
     private static final String AUDIT_WSVC_ID_APPROVAL_BOX = "approval-box";
 
+    /** ERP transaction-type code for the Approval Box (Approval Result)
+     *  WeCMS&rarr;ERP export audit — legacy {@code downloadProc.jsp:1381}
+     *  {@code ErpTypeCd.APPROVAL_RESULT}. */
+    private static final String ERP_TRNS_TYPE_APPROVAL_RESULT = "11";
+
     private final ApprovalBoxService service;
     private final ApprovalDetailService approvalDetailService;
     private final ExcelExportService excelExportService;
     private final ApprovalAttachmentDownloadService approvalAttachmentDownloadService;
     private final ApprovalEditService approvalEditService;
+    /** Template-populate download report (PO-requested Excel Download). */
+    private final ApprovalBoxDownloadService downloadService;
+    /** Shared ERP_TRNS_HSTR writer for the WeCMS&rarr;ERP 'W' / "11" export audit. */
+    private final ErpTrnsHistoryWriter erpHistoryWriter;
     /*Deploy v3*/
     /**
      * List Approval Box rows for the current tenant.
@@ -338,5 +350,54 @@ public class ApprovalBoxController {
             @Valid @RequestBody ExcelExportRequest request,
             HttpServletResponse response) {
         excelExportService.exportTo(response, request);
+    }
+
+    /**
+     * Approval Box Excel Download — PO-requested <b>template-based</b> report
+     * (dedicated endpoint; does NOT reuse the generic {@link #export} path).
+     * Loads the locale {@code .xls} template, populates the pre-styled rows
+     * from {@link ApprovalBoxService#listForExport} (same filter / sort /
+     * tenant path as the on-screen list), and streams the populated
+     * {@code application/vnd.ms-excel} workbook. See
+     * {@code docs/audits/approval-box-excel-download-audit.md}.
+     *
+     * <p>Preserves the legacy ERP audit: after the workbook is generated, one
+     * {@code ERP_TRNS_HSTR} row is written with {@code TRNS_TYPE_CD = "11"}
+     * (Approval Result) / {@code ERP_TYPE = "W"} via
+     * {@link ErpTrnsHistoryWriter#recordExportedBytes} — the bytes analogue of
+     * the generic provider's {@code recordExportedFile("11", …)} (legacy
+     * {@code downloadProc.jsp:1380-1399}). The audit write is
+     * {@code REQUIRES_NEW} + swallow-and-log, so it never fails the download.
+     *
+     * @param lang optional UI locale ({@code EN}/{@code KO}/{@code VI}); blank
+     *             → JWT {@code langCd}; {@code KM}/other → EN.
+     */
+    @GetMapping("/report")
+    public ResponseEntity<ByteArrayResource> report(
+            @RequestParam("from_date")                                String fromDate,
+            @RequestParam("to_date")                                  String toDate,
+            @RequestParam(value = "srch_wd",        required = false) String srchWd,
+            @RequestParam(value = "appr_type_cd",   required = false) String apprTypeCd,
+            @RequestParam(value = "sort_field",     required = false) String sortField,
+            @RequestParam(value = "sort_direction", required = false) String sortDirection,
+            @RequestParam(value = "lang",           required = false) String lang) {
+        ApprovalBoxDownloadService.GeneratedReport report = downloadService.generate(
+                fromDate, toDate, srchWd, apprTypeCd, sortField, sortDirection, lang);
+
+        // ERP 'W' / "11" (Approval Result) audit — bytes variant (legacy parity).
+        erpHistoryWriter.recordExportedBytes(
+                ERP_TRNS_TYPE_APPROVAL_RESULT, report.content(), report.fileName());
+
+        ContentDisposition cd = ContentDisposition.builder("attachment")
+                .filename(report.fileName(), StandardCharsets.UTF_8)
+                .build();
+        ByteArrayResource body = new ByteArrayResource(report.content());
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("application/vnd.ms-excel"))
+                .contentLength(report.content().length)
+                .header(HttpHeaders.CONTENT_DISPOSITION, cd.toString())
+                .header("X-Content-Type-Options", "nosniff")
+                .header("Access-Control-Expose-Headers", HttpHeaders.CONTENT_DISPOSITION)
+                .body(body);
     }
 }

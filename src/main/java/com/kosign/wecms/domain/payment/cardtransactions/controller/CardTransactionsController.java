@@ -21,6 +21,8 @@ import com.kosign.wecms.domain.payment.cardtransactions.dto.CreateReceiptRespons
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CreateMemoRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.MemoListResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.MemoRow;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.UpdateMemoColorRequest;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.UpdateMemoRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.PurposeOption;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.ReceiptDetailResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.LinkExpensesRequest;
@@ -754,6 +756,29 @@ public class CardTransactionsController {
     public ApiResponse<MemoRow> createMemo(
             @Valid @RequestBody CreateMemoRequest req) {
         return ApiResponse.ok(service.createMemo(req));
+    }
+
+    /**
+     * Edit one memo's text. Mirrors legacy {@code comm_0105_001_u002}.
+     * Author-only — non-authors get {@code WBE_MEMO_NOT_AUTHOR}.
+     */
+    @PatchMapping("/memos/{seq_no}")
+    public ApiResponse<MemoRow> updateMemo(
+            @PathVariable("seq_no") java.math.BigDecimal seqNo,
+            @Valid @RequestBody UpdateMemoRequest req) {
+        return ApiResponse.ok(service.updateMemo(seqNo, req));
+    }
+
+    /**
+     * Set the row-level sticker color for a card transaction's whole
+     * memo thread. Mirrors legacy {@code comm_0105_001_u003}
+     * ({@code MEMO_INFO_U002}) — color-only, no author gate.
+     */
+    @PatchMapping("/memos/color")
+    public ApiResponse<Void> updateMemoColor(
+            @Valid @RequestBody UpdateMemoColorRequest req) {
+        service.updateMemoColor(req);
+        return ApiResponse.ok(null);
     }
 
     /**

@@ -7,10 +7,12 @@ import com.kosign.wecms.domain.banking.dto.TransactionListResponse;
 import com.kosign.wecms.domain.banking.dto.TransactionRow;
 import com.kosign.wecms.domain.banking.service.AmountFormatter;
 import com.kosign.wecms.domain.banking.service.TransactionService;
+import com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter;
 import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.math.BigDecimal;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -29,10 +31,18 @@ import java.util.Set;
  * <p>Allow-list mirrors the V128 seed minus the special {@code CHECKBOX}
  * row (filtered by {@link com.kosign.wecms.common.export.ExcelExportService}
  * via the View Setting special-field guard).
+ *
+ * <p>Abstract base: the VND and FCY scopes register distinct screenIds
+ * ({@code banking-transaction-history-vnd} / {@code -fcy}, matching the
+ * V156 seed and the frontend's {@code viewSettingScreenId}) and write
+ * distinct ERP audit type codes ({@code "01"} VND / {@code "08"} FCY,
+ * legacy {@code downloadProc.jsp} {@code fnsh_0002_001} /
+ * {@code fnsh_0006_001} branches). The query / filter / sort / row-mapping
+ * is identical for both, so it lives here and the subclasses bind only
+ * the two scope-specific values.
  */
-@Component
 @RequiredArgsConstructor
-public class TransactionHistoryExportProvider implements ExportRowProvider {
+public abstract class TransactionHistoryExportProvider implements ExportRowProvider {
 
     // Mirrors the V157 + V159 seed which aligns the screen with the
     // legacy on-screen table (12 fields, all FIX_YN='N'). The matching
@@ -56,11 +66,41 @@ public class TransactionHistoryExportProvider implements ExportRowProvider {
             "CONFIRMED_BY"
     );
 
-    private final TransactionService transactionService;
+    protected final TransactionService transactionService;
 
+    /**
+     * Shared ERP_TRNS_HSTR writer for the WeCMS&rarr;ERP 'W' export audit.
+     * Field-injected so the VND / FCY subclasses keep their lean
+     * {@code super(transactionService)} constructors — same precedent as
+     * {@code PaymentResultExportProvider} / {@code AccountInquiryExportProvider}.
+     */
+    @Autowired
+    private ErpTrnsHistoryWriter erpHistoryWriter;
+
+    /** Subclass binds the concrete screenId
+     *  ({@code banking-transaction-history-vnd} / {@code -fcy}). */
     @Override
-    public String screenId() {
-        return "banking-transaction-history";
+    public abstract String screenId();
+
+    /** The 2-char {@code ERP_TRNS_HSTR.TRNS_TYPE_CD} — {@code "01"}
+     *  Transaction History (VND) / {@code "08"} Transaction History (FCY),
+     *  legacy {@code downloadProc.jsp} {@code fnsh_0002_001} /
+     *  {@code fnsh_0006_001} branches. */
+    protected abstract String erpExportTrnsTypeCd();
+
+    /** Legacy {@code downloadProc.jsp} writes a WeCMS&rarr;ERP 'W' audit row
+     *  for every Transaction History Excel download. */
+    @Override
+    public boolean auditsErpExport() {
+        return true;
+    }
+
+    /** Persist the WeCMS&rarr;ERP 'W' row by copying the generated workbook
+     *  into the ERP-history tenant subtree. Non-blocking — the writer is
+     *  {@code REQUIRES_NEW} + swallow-and-log, matching legacy. */
+    @Override
+    public void recordErpExport(Path workbookFile, String orgFileNm) {
+        erpHistoryWriter.recordExportedFile(erpExportTrnsTypeCd(), workbookFile, orgFileNm);
     }
 
     @Override

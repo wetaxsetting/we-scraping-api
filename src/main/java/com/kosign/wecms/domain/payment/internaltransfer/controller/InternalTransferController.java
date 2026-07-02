@@ -12,6 +12,7 @@ import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransfer
 import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferDownloadService;
 import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService;
 import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService.DownloadResource;
+import com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter;
 import com.kosign.wecms.domain.payment.internaltransfer.service.ScdulPymnTypeCd;
 import com.kosign.wecms.domain.payment.match.dto.PaymentLineMatchCandidateListResponse;
 import com.kosign.wecms.domain.payment.match.dto.PaymentLineMatchRequest;
@@ -106,6 +107,9 @@ public class InternalTransferController {
     private final InternalTransferDispatchService dispatchService;
     private final DomesticPaymentLineMatchService lineMatchService;
     private final InternalTransferDownloadService downloadService;
+    /** ERP_TRNS_HSTR 'W' audit writer for the Scheduled generated-report
+     *  download (code 16 = Internal Scheduled Transfer). */
+    private final ErpTrnsHistoryWriter            erpHistoryWriter;
 
     /* ----------------------------------------------------------------
      *  Read
@@ -282,7 +286,11 @@ public class InternalTransferController {
             @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
             String id,
             @RequestParam(value = "lang", required = false) String lang) {
-        return reportResponse(downloadService.generate(id, lang));
+        // Scheduled list/detail report download → ERP_TRNS_HSTR 'W' / 16
+        // (Internal Scheduled Transfer). Audit the exact downloaded bytes.
+        InternalTransferDownloadService.GeneratedReport report = downloadService.generate(id, lang);
+        erpHistoryWriter.recordExportedBytes("16", report.content(), report.fileName());
+        return reportResponse(report);
     }
 
     /** Shared builder for the generated-report binary response (RFC 5987

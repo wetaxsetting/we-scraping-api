@@ -27,7 +27,10 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** F2 download 'W' audit (code 05) — scoped to dispatched (trnf_yn='Y'). */
+/** Scheduled-side original import-file download ({@code GET /{id}/file} →
+ *  resolveDownload) writes an ERP_TRNS_HSTR 'W' row with the SCHEDULED type
+ *  code 03 (Expense Scheduled Payment), UNCONDITIONALLY (both not-yet-dispatched
+ *  N and dispatched Y). */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class ExpensePaymentResultDownloadAuditTest {
@@ -50,12 +53,12 @@ class ExpensePaymentResultDownloadAuditTest {
         when(sumrRepository.findByBizKeyAndScdulPymnNoAndScdulPymnTypeCd(eq(BIZ_KEY), eq("SP1"), anyString())).thenReturn(Optional.of(master("Y")));
         when(fileResolver.resolveForRead(BIZ_KEY, "save.xlsx")).thenReturn(realFile());
         service.resolveDownload("SP1");
-        verify(erpHistoryWriter, times(1)).recordExportedFile(eq("05"), any(Path.class), eq("orig.xlsx"));
+        verify(erpHistoryWriter, times(1)).recordExportedFile(eq("03"), any(Path.class), eq("orig.xlsx"));
     }
-    @Test void non_dispatched_download_writes_no_row() throws IOException {
+    @Test void non_dispatched_download_writes_one_W_row() throws IOException {
         when(sumrRepository.findByBizKeyAndScdulPymnNoAndScdulPymnTypeCd(eq(BIZ_KEY), eq("SP1"), anyString())).thenReturn(Optional.of(master("N")));
         when(fileResolver.resolveForRead(BIZ_KEY, "save.xlsx")).thenReturn(realFile());
         service.resolveDownload("SP1");
-        verify(erpHistoryWriter, never()).recordExportedFile(anyString(), any(), anyString());
+        verify(erpHistoryWriter, times(1)).recordExportedFile(eq("03"), any(Path.class), eq("orig.xlsx"));
     }
 }

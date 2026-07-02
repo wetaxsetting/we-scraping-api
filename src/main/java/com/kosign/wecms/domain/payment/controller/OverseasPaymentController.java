@@ -21,6 +21,7 @@ import com.kosign.wecms.domain.payment.common.WithdrawalAccountListService;
 import com.kosign.wecms.domain.payment.service.OverseasPaymentDownloadService;
 import com.kosign.wecms.domain.payment.service.OverseasPaymentExcelService;
 import com.kosign.wecms.domain.payment.service.OverseasPaymentExcelService.DownloadResource;
+import com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter;
 import com.kosign.wecms.domain.payment.service.OverseasPaymentService;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
@@ -73,6 +74,10 @@ public class OverseasPaymentController {
     private final WithdrawalAccountListService  withdrawalAccountListService;
     private final ExcelExportService            excelExportService;
     private final OverseasPaymentDownloadService downloadService;
+    /** ERP_TRNS_HSTR 'W' audit writer for the generated-report downloads
+     *  (Scheduled → code 13 = Overseas Payment Request, Result → code 14
+     *  = Overseas Request Result). */
+    private final ErpTrnsHistoryWriter           erpHistoryWriter;
 
     /**
      * Preview the next {@code VO_YYMMDD_NNN} document number for the Request
@@ -481,7 +486,11 @@ public class OverseasPaymentController {
     public ResponseEntity<ByteArrayResource> downloadReport(
             @PathVariable("id") String id,
             @RequestParam(value = "lang", required = false) String lang) {
-        return reportResponse(downloadService.generate(id, lang));
+        // Scheduled list/detail report download → ERP_TRNS_HSTR 'W' / 13
+        // (Overseas Payment Request). Audit the exact downloaded bytes.
+        OverseasPaymentDownloadService.GeneratedReport report = downloadService.generate(id, lang);
+        erpHistoryWriter.recordExportedBytes("13", report.content(), report.fileName());
+        return reportResponse(report);
     }
 
     /**
@@ -498,7 +507,45 @@ public class OverseasPaymentController {
     public ResponseEntity<ByteArrayResource> downloadResultReport(
             @PathVariable("id") String id,
             @RequestParam(value = "lang", required = false) String lang) {
-        return reportResponse(downloadService.generate(id, lang));
+        // Result list-row/detail report download → ERP_TRNS_HSTR 'W' / 14
+        // (Overseas Request Result).
+        OverseasPaymentDownloadService.GeneratedReport report = downloadService.generate(id, lang);
+        erpHistoryWriter.recordExportedBytes("14", report.content(), report.fileName());
+        return reportResponse(report);
+    }
+
+    /**
+     * Toolbar Excel — the legacy 22-column report for ALL batches in the
+     * current Payment Result filter (bulk). Same locale template + column
+     * layout (E+M union) as the per-row {@link #downloadResultReport}, with
+     * every filtered batch appended into one workbook. Replaces the old
+     * from-scratch list export ({@link #exportResult}, {@code GET /result/export})
+     * for the toolbar. Filter params mirror {@link #exportResult}.
+     *
+     * <p>A literal {@code /result/report} path takes precedence over the
+     * {@code /result/{id}} mapping, so {@code report} is never read as an id.
+     */
+    @GetMapping("/result/report")
+    @PreAuthorize("@menuAuthz.canAccess('payment-overseas-result')")
+    public ResponseEntity<ByteArrayResource> downloadResultBulkReport(
+            @RequestParam("from_date")
+            @Pattern(regexp = "^[0-9]{8}$", message = "from_date must be yyyyMMdd")
+            String fromDt,
+            @RequestParam("to_date")
+            @Pattern(regexp = "^[0-9]{8}$", message = "to_date must be yyyyMMdd")
+            String toDt,
+            @RequestParam(value = "keyword", required = false)
+            @Size(max = 100)
+            String keyword,
+            @RequestParam(value = "proc_stat", required = false)
+            @Pattern(regexp = "^[0-9]+(,[0-9]+)*$", message = "proc_stat must be a comma-separated list of digits")
+            String procStat,
+            @RequestParam(value = "lang", required = false) String lang) {
+        java.util.List<String> ids = overseasPaymentService.resultIdsForExport(fromDt, toDt, keyword, procStat);
+        // Bulk Result report download → ERP_TRNS_HSTR 'W' / 14 (Overseas Result).
+        OverseasPaymentDownloadService.GeneratedReport report = downloadService.generateBulk(ids, lang);
+        erpHistoryWriter.recordExportedBytes("14", report.content(), report.fileName());
+        return reportResponse(report);
     }
 
     /** Shared builder for the generated-report binary response (RFC 5987

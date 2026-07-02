@@ -163,15 +163,17 @@ The read IDO `ACCT_TRNS_HSTR_R016` carries an `RMRK_ORG_INFM` LEFT JOIN (`ROI` s
 ## 10. Confirm Workflow
 
 ### Legacy
-`_u002` sets `CNFM_YN='Y'` + confirmer id/name/timestamp; upserts the rcv/pay row (create if absent). **Bug L1:** stores `CnfmByUserId = loginUser.getBizKey()` (company key, not user id) — `u002_act:90,103`.
+`_u002` sets `CNFM_YN='Y'` + confirmer id/name/timestamp; upserts the rcv/pay row (create if absent). Stores `CnfmByUserId = loginUser.getBizKey()` (company key, not user id) — `u002_act:90,103`.
+
+> **Correction (2026-07-02):** the earlier "Bug L1" framing was **wrong**. Storing `BIZ_KEY` in `CNFM_BY_USER_ID` is **legacy-correct and required**, not a bug. `CNFM_BY_USER_ID` is `varchar(20)` in the legacy DDL (schema source of truth); WeCMS VN user ids are emails that can exceed 20 chars (e.g. `wecmshaengsung@gmail.com` = 24). The `BIZ_KEY` (≤ 20) always fits; the login user id does not. The confirmer *identity* for display is carried by `CNFM_BY_USER_NM`; the real user id is preserved in `REG_ID`/`MOD_ID` (`varchar(100)`).
 
 ### Refactor
 - `PUT .../confirm` → `confirm()` ([AccountController.java:293-300](../../src/main/java/com/kosign/wecms/domain/banking/controller/AccountController.java#L293-L300), [TransactionService.java:223-274](../../src/main/java/com/kosign/wecms/domain/banking/service/TransactionService.java#L223-L274)).
-- Upserts (creates rcv/pay row if absent), guards against double-confirm (`WBE_TRANSACTION_ALREADY_CONFIRMED`), sets `CNFM_YN='Y'`, `cnfmByUserId = TenantContext.currentUserId()`, name, UTC timestamp.
-- **Legacy bug L1 is FIXED** — stores the real user id, not the biz_key ([TransactionService.java:266](../../src/main/java/com/kosign/wecms/domain/banking/service/TransactionService.java#L266)).
+- Upserts (creates rcv/pay row if absent), guards against double-confirm (`WBE_TRANSACTION_ALREADY_CONFIRMED`), sets `CNFM_YN='Y'`, `cnfmByUserId = bizKey` (legacy parity), name, UTC timestamp.
+- **History:** an earlier build deviated from legacy and wrote `TenantContext.currentUserId()` into `CNFM_BY_USER_ID`, calling the legacy biz_key write a "fixed bug." That deviation caused a `value too long for type character varying(20)` outage for the HAENGSUNG admin (24-char email) and was **reverted to legacy parity on 2026-07-02** — the confirm write now stamps `bizKey`. Full root cause: [transaction-history-confirm-legacy-audit.md](transaction-history-confirm-legacy-audit.md).
 
 ### Verdict
-- **MATCH (improved)** — behaviorally equivalent and the documented confirmer-id bug is intentionally corrected per the migration guide §6. **Risk: LOW.**
+- **MATCH** — legacy-parity confirmer stamping restored (`CNFM_BY_USER_ID = BIZ_KEY`); migration-safe and within the `varchar(20)` column. **Risk: LOW.**
 
 ---
 

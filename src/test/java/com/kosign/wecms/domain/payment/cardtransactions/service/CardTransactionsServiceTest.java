@@ -19,6 +19,7 @@ import com.kosign.wecms.domain.payment.cardtransactions.dto.UpdateReportingAccou
 import com.kosign.wecms.domain.payment.cardtransactions.entity.CardMstrId;
 import com.kosign.wecms.domain.payment.cardtransactions.entity.CardTrnsHstr;
 import com.kosign.wecms.domain.payment.cardtransactions.repository.BusaDocRcvPayHisRepository;
+import com.kosign.wecms.domain.payment.cardtransactions.repository.MemoInfmRepository;
 import com.kosign.wecms.domain.payment.cardtransactions.repository.CardMstrRepository;
 import com.kosign.wecms.domain.payment.cardtransactions.repository.CardTrnsHstrRepository;
 import com.kosign.wecms.domain.payment.cardtransactions.repository.CardTrnsHstrRepository.LedgerTotalsProjection;
@@ -76,6 +77,7 @@ class CardTransactionsServiceTest {
     @Mock private ApprovalLineApproverRepository   apprLineApproverRepo;
     @Mock private ApprovalBoxFanoutService         approvalBoxFanoutService;
     @Mock private BusaDocRcvPayHisRepository       busaDocRcvPayHisRepo;
+    @Mock private MemoInfmRepository               memoInfmRepo;
 
     @InjectMocks
     private CardTransactionsService service;
@@ -474,6 +476,63 @@ class CardTransactionsServiceTest {
         assertThat(resp.cards().get(0).bankCd()).isEqualTo("11704088");
         assertThat(resp.cards().get(0).bankNm()).isEqualTo("Shinhan Bank VN");
         assertThat(resp.cards().get(0).cardHldrNm()).isEqualTo("LEE JAEHWAN");
+    }
+
+    /* =================================================================
+     *  withdraw approval (audit fix — expt_resol_detl_fk01)
+     * ================================================================= */
+
+    /**
+     * A pending Card approval with EXPT_RESOL_DETL rows (one per card
+     * transaction) must withdraw cleanly: the CARD_TRNS_HSTR stamps are
+     * cleared and the full approval graph is purged through the shared
+     * helper (which deletes EXPT_RESOL_DETL before EXPT_RESOL_MSTR, so
+     * expt_resol_detl_fk01 no longer fails).
+     */
+    @Test
+    void withdrawApproval_pending_clearsCardStampAndPurgesGraph() {
+        com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr mstr =
+                new com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr();
+        mstr.setBizKey(TENANT);
+        mstr.setApprSeqNo("21");
+        mstr.setApprTypeCd("00");   // Pending — withdrawable
+        when(exptResolMstrRepo.findById(
+                new com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId(TENANT, "21")))
+                .thenReturn(Optional.of(mstr));
+
+        CardTrnsHstr c1 = new CardTrnsHstr(); c1.setBizKey(TENANT); c1.setApprSeqNo("21");
+        CardTrnsHstr c2 = new CardTrnsHstr(); c2.setBizKey(TENANT); c2.setApprSeqNo("21");
+        when(cardTrnsRepo.findByBizKeyAndApprSeqNo(TENANT, "21"))
+                .thenReturn(List.of(c1, c2));
+
+        service.withdrawApproval("21");
+
+        assertThat(c1.getApprSeqNo()).isNull();
+        assertThat(c2.getApprSeqNo()).isNull();
+        verify(cardTrnsRepo).saveAll(List.of(c1, c2));
+        verify(approvalBoxFanoutService).purgeApprovalGraph(TENANT, "21", mstr);
+        verify(auditLogService).append(any(AuditLogContext.class));
+    }
+
+    /** Non-pending (Approved) Card approval cannot be withdrawn — nothing
+     *  is cleared, purged, or audited. */
+    @Test
+    void withdrawApproval_nonPending_rejectedNoGraphTouched() {
+        com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr approved =
+                new com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr();
+        approved.setBizKey(TENANT);
+        approved.setApprSeqNo("21");
+        approved.setApprTypeCd("01");   // Approved — immutable
+        when(exptResolMstrRepo.findById(
+                new com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId(TENANT, "21")))
+                .thenReturn(Optional.of(approved));
+
+        assertThatThrownBy(() -> service.withdrawApproval("21"))
+                .isInstanceOf(BusinessException.class);
+
+        verify(approvalBoxFanoutService, never()).purgeApprovalGraph(any(), any(), any());
+        verify(cardTrnsRepo, never()).saveAll(any());
+        verify(auditLogService, never()).append(any());
     }
 
     /* ---------------------------------------------------------------

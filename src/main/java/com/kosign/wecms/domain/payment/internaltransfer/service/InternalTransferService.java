@@ -1448,13 +1448,13 @@ public class InternalTransferService {
         String displayName = master.getOrgFileNm() == null || master.getOrgFileNm().isBlank()
                 ? saveFileNm
                 : master.getOrgFileNm();
-        // F2 — legacy pymn_0010_002_r002 writes an ERP_TRNS_HSTR 'W' audit row
-        // on the Result-page original-file download. Scoped to dispatched batches
-        // (trnf_yn='Y'); non-blocking (REQUIRES_NEW + swallow). See VendorPaymentService.
-        if ("Y".equals(master.getTrnfYn())) {
-            erpHistoryWriter.recordExportedFile(
-                    ERP_TRNS_TYPE_INTERNAL_TRANSFER_RESULT, path, displayName);
-        }
+        // The /{id}/file endpoint serves the Scheduled-side original import-file
+        // download. Per the ERP Transaction History mapping, Scheduled-side
+        // downloads record the SCHEDULED type code (16 = Internal Scheduled
+        // Transfer), UNCONDITIONALLY (both not-yet-dispatched N and dispatched Y).
+        // Non-blocking (REQUIRES_NEW + swallow). See VendorPaymentService.
+        erpHistoryWriter.recordExportedFile(
+                ERP_TRNS_TYPE_INTERNAL_SCHEDULED_TRANSFER, path, displayName);
         return new DownloadResource(path, displayName, saveFileNm, fileSize);
     }
 

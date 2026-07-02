@@ -3,6 +3,7 @@ package com.kosign.wecms.domain.payment.cardtransactions.service;
 import com.kosign.wecms.common.auditlog.service.AuditLogContext;
 import com.kosign.wecms.common.auditlog.service.AuditLogService;
 import com.kosign.wecms.common.exception.BusinessException;
+import com.kosign.wecms.common.memo.MemoScope;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.common.web.SortDirection;
 import com.kosign.wecms.domain.banking.entity.BankInfm;
@@ -204,11 +205,17 @@ public class CardTransactionsService {
      *  EXPT_RESOL_MSTR.appr_seq_no global sequence (#1). */
     private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
 
-    /** Legacy {@code WEB_SVC_ID} value the side panel scopes memos by
-     *  on the Card Transactions page. Slug-based per workspace
-     *  CLAUDE.md "Refactor identifier naming" (the legacy used
-     *  {@code "card_0001_001"}; the refactor swaps to the route slug). */
-    private static final String MEMO_WEB_SVC_ID_CARD = "card-transactions";
+    /** {@code WEB_SVC_ID} value the side panel scopes Card Transactions
+     *  memos by. Sourced from the central {@link MemoScope} registry —
+     *  the raw identifier lives in exactly one place. Memo is a shared
+     *  refactor feature, so the value is the modern Next.js route
+     *  ({@code /payment/corporate-card/card-transactions}), not the legacy
+     *  JEX screen id. Mirrors legacy {@code card_0001_001.ts:1262-1270}. */
+    private static final String MEMO_WEB_SVC_ID_CARD = MemoScope.CARD_TRANSACTIONS.webSvcId();
+
+    /** Default memo sticker color when none supplied — legacy
+     *  {@code getMemoPopup2} default (`val.COLOR ?? 'fileW'`). */
+    private static final String MEMO_DEFAULT_COLOR = "fileW";
 
     /* ----------------------------------------------------------------
      *  List  (legacy card_0001_001_r001)
@@ -264,9 +271,10 @@ public class CardTransactionsService {
         Map<String, String> bankNmByCd = resolveBankNames(entityPage.getContent());
         Map<String, String> docNoByApprSeqNo = resolveDocNos(entityPage.getContent());
         Map<String, List<LinkedDocRef>> linkedDocsByCardSeqNo = resolveLinkedDocs(entityPage.getContent());
+        Map<String, MemoAgg> memoByCardSeqNo = resolveMemoAggregates(entityPage.getContent());
 
         List<CardTransactionRow> rows = entityPage.getContent().stream()
-                .map(e -> toRow(e, bankNmByCd, docNoByApprSeqNo, linkedDocsByCardSeqNo))
+                .map(e -> toRow(e, bankNmByCd, docNoByApprSeqNo, linkedDocsByCardSeqNo, memoByCardSeqNo))
                 .toList();
 
         CardTransactionTotals totals = toTotals(raw);
@@ -310,8 +318,9 @@ public class CardTransactionsService {
         Map<String, String> bankNmByCd = resolveBankNames(page.getContent());
         Map<String, String> docNoByApprSeqNo = resolveDocNos(page.getContent());
         Map<String, List<LinkedDocRef>> linkedDocsByCardSeqNo = resolveLinkedDocs(page.getContent());
+        // Export path — memo icon is not an export column; empty aggregate.
         return page.getContent().stream()
-                .map(e -> toRow(e, bankNmByCd, docNoByApprSeqNo, linkedDocsByCardSeqNo))
+                .map(e -> toRow(e, bankNmByCd, docNoByApprSeqNo, linkedDocsByCardSeqNo, Map.of()))
                 .toList();
     }
 
@@ -338,8 +347,9 @@ public class CardTransactionsService {
         Map<String, String> bankNmByCd = resolveBankNames(entities);
         Map<String, String> docNoByApprSeqNo = resolveDocNos(entities);
         Map<String, List<LinkedDocRef>> linkedDocsByCardSeqNo = resolveLinkedDocs(entities);
+        // Approval-details popup — memo icon not shown there; empty aggregate.
         return entities.stream()
-                .map(e -> toRow(e, bankNmByCd, docNoByApprSeqNo, linkedDocsByCardSeqNo))
+                .map(e -> toRow(e, bankNmByCd, docNoByApprSeqNo, linkedDocsByCardSeqNo, Map.of()))
                 .toList();
     }
 
@@ -833,13 +843,13 @@ public class CardTransactionsService {
         }
         cardTrnsRepo.saveAll(stamped);
 
-        // Bulletin / attachment cleanup (legacy comm_0192_004_d001) — before
-        // the master delete (EXPT_RESOL_FILE FK).
-        approvalNotificationService.cleanupApprovalArtifacts(apprSeqNo.trim());
-
-        // Delete approver rows + master.
-        exptResolApprvrRepo.deleteByBizKeyAndApprSeqNo(bizKey, apprSeqNo.trim());
-        exptResolMstrRepo.delete(mstr);
+        // Delete the full approval object graph child-first (EXPT_RESOL_
+        // PAY_EVID_FILE / FILE+bulletin / DETL / APPR_LINE / APPRVR_INFM /
+        // MSTR-last) through the shared helper. This is what fixes the
+        // expt_resol_detl_fk01 violation — the EXPT_RESOL_DETL rows written
+        // per card transaction at request-approval are now removed before
+        // the master. Mirrors legacy ExptResolMstrDAO.deleteByPk.
+        approvalBoxFanoutService.purgeApprovalGraph(bizKey, apprSeqNo.trim(), mstr);
 
         auditLogService.append(AuditLogContext.builder()
                 .wsvcId(WSVC_ID)
@@ -1280,7 +1290,7 @@ public class CardTransactionsService {
         String userId = requireUserId();
 
         List<MemoInfm> rows = memoInfmRepo
-                .findByBizKeyAndWebSvcIdAndRefNoOrderByRegDtmDescSeqNoDesc(
+                .findByBizKeyAndWebSvcIdAndRefNoOrderByModDtmDescSeqNoDesc(
                         bizKey, MEMO_WEB_SVC_ID_CARD, cardSeqNo.trim());
 
         // Batch resolve author display names — one query for the page.
@@ -1299,7 +1309,7 @@ public class CardTransactionsService {
                 .map(m -> new com.kosign.wecms.domain.payment.cardtransactions.dto.MemoRow(
                         m.getSeqNo(),
                         m.getMemo(),
-                        m.getColor() != null ? m.getColor() : "white",
+                        m.getColor() != null ? m.getColor() : MEMO_DEFAULT_COLOR,
                         m.getRegId(),
                         userNmById.getOrDefault(m.getRegId(), m.getRegId()),
                         m.getRegDtm(),
@@ -1311,11 +1321,17 @@ public class CardTransactionsService {
 
     /**
      * Add a memo to one card transaction. Mirrors legacy
-     * {@code MEMO_INFM_C001} via
+     * {@code comm_0105_001_c002_act.jsp} via
      * {@code wabooks.dao.MemoInfmDAO.create()}. Allocates
      * {@code SEQ_NO} via per-(tenant, page) MAX+1 with a one-shot
      * retry on PK collision (same pattern Card-link / Approval Box
      * use, no new {@code wb_get_next_val} branch).
+     *
+     * <p><b>Row-level color</b> (legacy parity, D2 2026-07-02): after
+     * insert, the chosen color is propagated to <b>every</b> memo on
+     * the same {@code REF_NO} (legacy {@code c002} calls
+     * {@code updateColor} right after the insert). The sticker color
+     * is a property of the card transaction row, not the individual memo.
      */
     @Transactional
     public com.kosign.wecms.domain.payment.cardtransactions.dto.MemoRow createMemo(
@@ -1324,7 +1340,9 @@ public class CardTransactionsService {
         String bizKey = TenantContext.currentBizKey();
         String userId = requireUserId();
         String now    = nowDtm14();
-        String color  = (req.color() == null || req.color().isBlank()) ? "white" : req.color().trim();
+        String color  = (req.color() == null || req.color().isBlank())
+                ? MEMO_DEFAULT_COLOR : req.color().trim();
+        String refNo  = req.refNo().trim();
 
         MemoInfm m;
         try {
@@ -1334,15 +1352,85 @@ public class CardTransactionsService {
             m = insertMemoOnce(bizKey, req, userId, now, color);
         }
 
+        java.math.BigDecimal seqNo = m.getSeqNo();
+        String memoText = m.getMemo();
+        String regDtm   = m.getRegDtm();
+
+        // Row-level color — propagate to the whole thread on this REF_NO.
+        memoInfmRepo.updateColorByRef(bizKey, MEMO_WEB_SVC_ID_CARD, refNo, color);
+
+        String userNm = TenantContext.currentUserNm();
+        return new com.kosign.wecms.domain.payment.cardtransactions.dto.MemoRow(
+                seqNo,
+                memoText,
+                color,
+                userId,
+                userNm != null ? userNm : userId,
+                regDtm,
+                true);
+    }
+
+    /**
+     * Edit one memo's text. Mirrors legacy
+     * {@code comm_0105_001_u002_act.jsp} — <b>author-only</b>
+     * ({@code WBE_MEMO_NOT_AUTHOR} when the request user is not the
+     * memo's {@code REG_ID}), touches {@code MOD_ID / MOD_DTM} so the
+     * edited memo bubbles to the top of the {@code MOD_DTM DESC} list.
+     * Color is untouched (color is row-level, changed via
+     * {@link #updateMemoColor}).
+     */
+    @Transactional
+    public com.kosign.wecms.domain.payment.cardtransactions.dto.MemoRow updateMemo(
+            java.math.BigDecimal seqNo,
+            com.kosign.wecms.domain.payment.cardtransactions.dto.UpdateMemoRequest req) {
+
+        if (req == null) throw new BusinessException("WBE_VALIDATION");
+        String bizKey = TenantContext.currentBizKey();
+        String userId = requireUserId();
+
+        var id = new com.kosign.wecms.domain.payment.cardtransactions.entity.MemoInfmId(
+                bizKey, MEMO_WEB_SVC_ID_CARD, seqNo);
+        MemoInfm m = memoInfmRepo.findById(id)
+                .orElseThrow(() -> new BusinessException("WBE_NOT_FOUND", "memo not found"));
+
+        if (!userId.equals(m.getRegId())) {
+            throw new BusinessException("WBE_MEMO_NOT_AUTHOR");
+        }
+
+        String now = nowDtm14();
+        m.setMemo(req.memo().trim());
+        m.setModId(userId);
+        m.setModDtm(now);
+        memoInfmRepo.save(m);
+
         String userNm = TenantContext.currentUserNm();
         return new com.kosign.wecms.domain.payment.cardtransactions.dto.MemoRow(
                 m.getSeqNo(),
                 m.getMemo(),
-                m.getColor(),
+                m.getColor() != null ? m.getColor() : MEMO_DEFAULT_COLOR,
                 m.getRegId(),
-                userNm != null ? userNm : userId,
+                userNm != null ? userNm : m.getRegId(),
                 m.getRegDtm(),
                 true);
+    }
+
+    /**
+     * Set the row-level sticker color for a card transaction's whole
+     * memo thread. Mirrors legacy {@code comm_0105_001_u003_act.jsp}
+     * ({@code MEMO_INFO_U002}) — color-only bulk update by
+     * {@code (bizKey, webSvcId, refNo)}, <b>no author gate</b> (any
+     * tenant member can recolor the row, matching legacy). Idempotent
+     * when the thread has no memos yet (0 rows updated).
+     */
+    @Transactional
+    public void updateMemoColor(
+            com.kosign.wecms.domain.payment.cardtransactions.dto.UpdateMemoColorRequest req) {
+
+        if (req == null) throw new BusinessException("WBE_VALIDATION");
+        String bizKey = TenantContext.currentBizKey();
+        String color  = (req.color() == null || req.color().isBlank())
+                ? MEMO_DEFAULT_COLOR : req.color().trim();
+        memoInfmRepo.updateColorByRef(bizKey, MEMO_WEB_SVC_ID_CARD, req.refNo().trim(), color);
     }
 
     private MemoInfm insertMemoOnce(
@@ -1350,10 +1438,12 @@ public class CardTransactionsService {
             com.kosign.wecms.domain.payment.cardtransactions.dto.CreateMemoRequest req,
             String userId, String now, String color) {
 
-        java.math.BigDecimal maxSeq = memoInfmRepo.findMaxSeqNoByBizKeyAndWebSvcId(
-                bizKey, MEMO_WEB_SVC_ID_CARD);
-        java.math.BigDecimal nextSeq = (maxSeq == null ? java.math.BigDecimal.ZERO : maxSeq)
-                .add(java.math.BigDecimal.ONE);
+        // SEQ_NO — funnel through the legacy wb_get_next_val('memo_infm','seq_no',
+        // biz_key, web_svc_id) branch, mirroring legacy MemoInfmDAO.create →
+        // SeqHelper.getNextVal. Per-(tenant, screen) MAX+1; the enclosing createMemo
+        // retries once on a PK collision (legacy relies on the same PK to reject a race).
+        String nextText = legacyFunctions.nextMemoInfmSeqNo(bizKey, MEMO_WEB_SVC_ID_CARD);
+        java.math.BigDecimal nextSeq = new java.math.BigDecimal(nextText.trim());
 
         MemoInfm m = new MemoInfm();
         m.setBizKey(bizKey);
@@ -1878,11 +1968,52 @@ public class CardTransactionsService {
         return Sort.by(springDir, primary.get().entityProperty()).and(DEFAULT_SORT);
     }
 
+    /** Per-card memo aggregate for the list grid: how many memos + the
+     *  row-level sticker color (the whole thread shares one color). */
+    private record MemoAgg(int count, String color) {}
+
+    /**
+     * Batch-resolve the memo count + row-level sticker color for a page of
+     * card transactions — one query for the whole page. Scoped by
+     * {@code (BIZ_KEY, WEB_SVC_ID=MemoScope.CARD_TRANSACTIONS, REF_NO IN
+     * cardSeqNos)}. Color is the newest memo's color (by MOD_DTM DESC,
+     * SEQ_NO DESC) — since {@code createMemo} propagates one color across
+     * the whole {@code REF_NO} thread, every memo shares it, so "newest"
+     * just makes the pick deterministic if they ever diverge.
+     */
+    private Map<String, MemoAgg> resolveMemoAggregates(List<CardTrnsHstr> rows) {
+        if (rows.isEmpty()) return Map.of();
+        String bizKey = rows.get(0).getBizKey();
+        List<String> refNos = rows.stream()
+                .map(CardTrnsHstr::getCardSeqNo)
+                .filter(s -> s != null && !s.isBlank())
+                .distinct()
+                .toList();
+        if (refNos.isEmpty()) return Map.of();
+
+        List<MemoInfm> memos = memoInfmRepo.findByBizKeyAndWebSvcIdAndRefNoIn(
+                bizKey, MEMO_WEB_SVC_ID_CARD, refNos);
+        Map<String, MemoAgg> out = new HashMap<>();
+        memos.stream()
+                .collect(java.util.stream.Collectors.groupingBy(MemoInfm::getRefNo))
+                .forEach((ref, list) -> {
+                    String color = list.stream()
+                            .max(java.util.Comparator
+                                    .comparing((MemoInfm m) -> m.getModDtm() == null ? "" : m.getModDtm())
+                                    .thenComparing(m -> m.getSeqNo() == null ? java.math.BigDecimal.ZERO : m.getSeqNo()))
+                            .map(MemoInfm::getColor)
+                            .orElse(null);
+                    out.put(ref, new MemoAgg(list.size(), color != null ? color : MEMO_DEFAULT_COLOR));
+                });
+        return out;
+    }
+
     private CardTransactionRow toRow(
             CardTrnsHstr e,
             Map<String, String> bankNmByCd,
             Map<String, String> docNoByApprSeqNo,
-            Map<String, List<LinkedDocRef>> linkedDocsByCardSeqNo) {
+            Map<String, List<LinkedDocRef>> linkedDocsByCardSeqNo,
+            Map<String, MemoAgg> memoByCardSeqNo) {
         // CardMstr LEFT JOIN columns — Sprint 0 fetches the registry
         // names lazily per (bankCd, cardNo) on a per-page basis. With
         // typical pages of 15 rows and a low-cardinality cards table,
@@ -1927,8 +2058,15 @@ public class CardTransactionsService {
                 e.getUsingType(),
                 e.getAuthCode(),
                 e.getCity(),
-                e.getNote());
+                e.getNote(),
+                // Row-level memo icon (grid): color + count from MEMO_INFM.
+                memoByCardSeqNo.getOrDefault(e.getCardSeqNo(), EMPTY_MEMO_AGG).color(),
+                memoByCardSeqNo.getOrDefault(e.getCardSeqNo(), EMPTY_MEMO_AGG).count());
     }
+
+    /** Shared "no memo" aggregate — null color (grid renders the default
+     *  empty icon) + zero count. Avoids per-row allocation in the mapper. */
+    private static final MemoAgg EMPTY_MEMO_AGG = new MemoAgg(0, null);
 
     /** Batch (APPR_SEQ_NO → DOC_NO) lookup against EXPT_RESOL_MSTR for
      *  the page's set of approval references. One IN-query per ledger

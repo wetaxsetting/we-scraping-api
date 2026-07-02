@@ -851,14 +851,14 @@ public class OverseasPaymentExcelService {
         String displayName = (sumr.getOrgFileNm() == null || sumr.getOrgFileNm().isBlank())
                 ? saveFileNm
                 : sumr.getOrgFileNm();
-        // F2 — legacy pymn_0008_002_r002 writes an ERP_TRNS_HSTR 'W' audit row on
-        // the Overseas Result-page original-file download. The /scheduled/{id}/file
-        // endpoint is shared with the Scheduled detail; scope the RESULT code to
-        // dispatched batches (trnf_yn='Y'). Non-blocking (REQUIRES_NEW + swallow).
-        if ("Y".equals(sumr.getTrnfYn())) {
-            erpHistoryWriter.recordExportedFile(
-                    ERP_TRNS_TYPE_OVERSEAS_RESULT, path, displayName);
-        }
+        // The /scheduled/{id}/file endpoint serves the Scheduled-side original
+        // import-file download. Per the ERP Transaction History mapping,
+        // Scheduled-side downloads record the SCHEDULED type code (13 =
+        // OVERSEAS_PAYMENT_REQUEST, legacy pymn_0007_004_r002), UNCONDITIONALLY
+        // (both not-yet-dispatched N and dispatched Y). Non-blocking
+        // (REQUIRES_NEW + swallow).
+        erpHistoryWriter.recordExportedFile(
+                ERP_TRNS_TYPE_OVERSEAS_REQUEST, path, displayName);
         return new DownloadResource(path, displayName, saveFileNm, fileSize);
     }
 

@@ -5,6 +5,7 @@ import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.banking.entity.AcctTrnsHstr;
+import com.kosign.wecms.domain.banking.entity.AcctTrnsRcvPayInfm;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
 import com.kosign.wecms.domain.banking.repository.AcctTrnsHstrRepository;
 import com.kosign.wecms.domain.banking.repository.AcctTrnsRcvPayInfmRepository;
@@ -154,6 +155,57 @@ class SmartOrganizerServiceTest {
                 .extracting("code")
                 .isEqualTo("WBE_SMART_ORGANIZER_USAGE_DIRECTION_MISMATCH");
         verify(rcvPayRepo, never()).save(any());
+    }
+
+    /* ---- confirmer stamping parity (varchar(20) overflow regression) ---- */
+
+    /**
+     * Legacy parity + regression: the Smart Organizer confirm write stamps
+     * {@code CNFM_BY_USER_ID} with the {@code BIZ_KEY}, not the login user id
+     * (mirrors {@code fnsh_0002_001_u002_act.jsp:90,103}). The column is
+     * {@code varchar(20)}; a 24-char email login (the HAENGSUNG admin
+     * {@code wecmshaengsung@gmail.com}) previously overflowed it and threw
+     * {@code value too long for type character varying(20)} → {@code WBE_DB}.
+     * See docs/audits/transaction-history-confirm-legacy-audit.md §12.
+     */
+    @Test
+    void confirm_stampsBizKeyIntoCnfmByUserId_notLongUserId() {
+        final String hsBiz  = "VN_VNM0004_000014";           // 17 chars — fits varchar(20)
+        final String hsUser = "wecmshaengsung@gmail.com";    // 24 chars — overflowed varchar(20)
+        final String hsNm   = "Admin";
+        TenantContext.set(hsUser, hsNm, hsBiz, LangCd.EN, TenantContext.AUTH_GR_ADMIN);
+
+        AcctTrnsHstr bank = new AcctTrnsHstr();
+        bank.setBizKey(hsBiz);
+        bank.setAcctSeqNo("10");
+        bank.setBankCd(BANK);
+        bank.setAcctNo(ACCT);
+        bank.setTrscDt("20260629");
+        bank.setTrscAmt(new BigDecimal("100"));
+        bank.setInoutDv("1");
+        when(acctTrnsHstrRepo.findById(any())).thenReturn(Optional.of(bank));
+        when(rcvPayRepo.existsByBizKeyAndAcctSeqNoAndCnfmYn(hsBiz, "10", "Y")).thenReturn(false);
+        when(legacy.nextVal(any(), any(), any(), any(), any(), any(), any(), any())).thenReturn("1");
+
+        // Bare confirm — no usage/vas/contact classification (null-safe path).
+        ConfirmResponse res = service.confirm(new ConfirmRequest(BANK, ACCT, List.of(
+                new ConfirmRequest.Row("10", null, null, null, null, null))));
+
+        assertThat(res.confirmedCount()).isEqualTo(1);
+        ArgumentCaptor<AcctTrnsRcvPayInfm> captor = ArgumentCaptor.forClass(AcctTrnsRcvPayInfm.class);
+        verify(rcvPayRepo).save(captor.capture());
+        AcctTrnsRcvPayInfm saved = captor.getValue();
+
+        assertThat(saved.getCnfmYn()).isEqualTo("Y");
+        // Legacy parity: biz_key in CNFM_BY_USER_ID — and it fits varchar(20).
+        assertThat(saved.getCnfmByUserId()).isEqualTo(hsBiz);
+        assertThat(saved.getCnfmByUserId()).isNotEqualTo(hsUser);
+        assertThat(saved.getCnfmByUserId().length()).isLessThanOrEqualTo(20);
+        // Confirm name still preserved via CNFM_BY_USER_NM.
+        assertThat(saved.getCnfmByUserNm()).isEqualTo(hsNm);
+        // Real (long) user id preserved in the varchar(100) audit columns.
+        assertThat(saved.getRegId()).isEqualTo(hsUser);
+        assertThat(saved.getModId()).isEqualTo(hsUser);
     }
 
     /* ---- eligibility now delegates to the repository ------------------- */

@@ -22,12 +22,22 @@ import java.util.List;
  * the refactor DB out-of-band (PO-approved baseline addition); this repository
  * is the only executable call site.
  *
- * <p>The function already orders its output
- * ({@code account_type_order, bank_name_sort, account_number, transaction_seq});
- * the outer {@code ORDER BY} re-asserts it so row order is deterministic
- * regardless of set-function materialization. Columns are aliased to
- * camelCase so the {@link DailyFinancialHsRow} interface projection binds
- * (same convention as {@link DailyCashRecomputeRepository}).
+ * <p>The outer {@code ORDER BY} mirrors the legacy IDO
+ * ({@code IDO.DAILY_FINCL_REPT_R001.xml:54-64}) — <b>currency block first</b>
+ * (VND → USD → KRW), then {@code account_type_order, bank_name_sort,
+ * account_number NULLS LAST, transaction_seq}. The leading currency key is
+ * load-bearing: the function emits {@code CURRENCY_TOTAL} rows with
+ * {@code account_type_order = 999990/999991/999992}, so without it all three
+ * grand-total rows sort to the very end of the stream instead of closing
+ * their own currency section (each TOTAL must render immediately after the
+ * last account group of its currency, per legacy {@code rept_0017_001}).
+ * Columns are aliased to camelCase so the {@link DailyFinancialHsRow}
+ * interface projection binds (same convention as
+ * {@link DailyCashRecomputeRepository}).
+ *
+ * <p>Deliberate divergence from the legacy IDO: the legacy query filters
+ * {@code CURRENCY IN ('VND','USD')}; the refactor keeps KRW (and any other
+ * currency) so the report covers the full account set.
  *
  * <p>{@code p_account_filter} is {@code 'ALL'} or a JSON array of
  * {@code {"BANK_CD":..,"ACCT_NO":..}} objects (verbatim legacy
@@ -60,7 +70,16 @@ public interface DailyFinancialHsReportRepository extends Repository<AcctMstr, A
                    bank_cd_out            AS "bankCdOut",
                    bank_name_sort         AS "bankNameSort"
               FROM fn_get_haengsung_daily_financial_report(:bizKey, :periodDate, :accountFilter)
-             ORDER BY account_type_order, bank_name_sort, account_number, transaction_seq
+             ORDER BY CASE currency
+                          WHEN 'VND' THEN 1
+                          WHEN 'USD' THEN 2
+                          WHEN 'KRW' THEN 3
+                          ELSE 99
+                      END,
+                      account_type_order,
+                      bank_name_sort,
+                      account_number NULLS LAST,
+                      transaction_seq
             """, nativeQuery = true)
     List<DailyFinancialHsRow> fetchReport(
             @Param("bizKey") String bizKey,

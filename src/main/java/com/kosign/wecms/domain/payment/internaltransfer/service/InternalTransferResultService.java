@@ -194,6 +194,40 @@ public class InternalTransferResultService {
         }
     }
 
+    /** Hard cap on the number of batches a single bulk Excel export pulls.
+     *  Far above any realistic filtered result set; a hit is logged so a
+     *  silent truncation never passes unnoticed. */
+    private static final int EXPORT_MAX = 10_000;
+
+    /**
+     * Ordered list of dispatched Transfer-Result batch keys for the current
+     * filter — drives the toolbar bulk Excel export. Uses the SAME predicate,
+     * date-window and ordering as {@link #list} (so the export mirrors what
+     * the user sees on screen) but is not page-capped: it pulls up to
+     * {@link #EXPORT_MAX} batches in one shot.
+     */
+    @Transactional(readOnly = true)
+    public List<String> dispatchedIdsForExport(
+            String fromDate, String toDate, String srchWd, String trnfStts) {
+        validateDateRange(fromDate, toDate);
+        String bizKey  = requireTenant();
+        String fromDtm = (fromDate + "000000").substring(0, 14);
+        String toDtm   = (toDate   + "235959").substring(0, 14);
+        String trnfYnFilter = emptyToNull(trnfStts);
+        // Same TRNF_DTM-desc ordering as the list default so the bulk report
+        // rows appear in the same order as the on-screen grid.
+        Sort sort = Sort.by(Sort.Order.desc("trnfDtm"), Sort.Order.desc("scdulPymnNo"));
+        Page<ScdulPymnSumr> rows = sumrRepository.searchDispatched(
+                bizKey, ScdulPymnTypeCd.INTERNAL.code(),
+                fromDtm, toDtm, emptyToNull(srchWd), trnfYnFilter,
+                PageRequest.of(0, EXPORT_MAX, sort));
+        if (rows.getTotalElements() > EXPORT_MAX) {
+            log.warn("feature=internal-transfer bulk-export truncated bizKey={} total={} cap={}",
+                    bizKey, rows.getTotalElements(), EXPORT_MAX);
+        }
+        return rows.getContent().stream().map(ScdulPymnSumr::getScdulPymnNo).toList();
+    }
+
     @Transactional(readOnly = true)
     public TransferResultDetailResponse detail(String id) {
         String bizKey = requireTenant();

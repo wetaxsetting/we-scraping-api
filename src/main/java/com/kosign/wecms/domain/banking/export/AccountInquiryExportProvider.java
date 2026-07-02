@@ -10,9 +10,12 @@ import com.kosign.wecms.domain.banking.dto.AccountRow;
 import com.kosign.wecms.domain.banking.service.AccountFilter;
 import com.kosign.wecms.domain.banking.service.AccountService;
 import com.kosign.wecms.domain.banking.service.AmountFormatter;
+import com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Pageable;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -77,6 +80,17 @@ public abstract class AccountInquiryExportProvider implements ExportRowProvider 
      *  the frontend `humanizeDatetime`. */
     protected final RelativeTimeFormatter relativeTimeFormatter;
 
+    /**
+     * Shared ERP_TRNS_HSTR writer for the WeCMS&rarr;ERP 'W' export audit.
+     * Field-injected (not constructor) so the VND / FCY subclasses keep
+     * their lean {@code super(accountService, relativeTimeFormatter)}
+     * constructors unchanged — same precedent as
+     * {@code PaymentResultExportProvider}. Spring injects it into the
+     * concrete bean after construction.
+     */
+    @Autowired
+    private ErpTrnsHistoryWriter erpHistoryWriter;
+
     /** Subclass binds the concrete screenId — must match a row set in
      *  {@code SYS_SCR_OPTION_WECMS} or the registry rejects the export
      *  with {@code WBE2010}. */
@@ -87,6 +101,27 @@ public abstract class AccountInquiryExportProvider implements ExportRowProvider 
      *  VND subclass returns {@code "VND"}; FCY subclass returns
      *  {@code "FCY"} (resolved server-side to {@code ccy_cd <> 'VND'}). */
     protected abstract String defaultCurrency();
+
+    /** The 2-char {@code ERP_TRNS_HSTR.TRNS_TYPE_CD} for this screen's
+     *  WeCMS&rarr;ERP export audit row — {@code "09"} Account Inquiry (VND) /
+     *  {@code "10"} Account Inquiry (FCY), legacy {@code downloadProc.jsp}
+     *  {@code fnsh_0001_001} / {@code fnsh_0005_001} branches. */
+    protected abstract String erpExportTrnsTypeCd();
+
+    /** Legacy {@code downloadProc.jsp} writes a WeCMS&rarr;ERP 'W' audit row for
+     *  every Account Inquiry Excel download. */
+    @Override
+    public boolean auditsErpExport() {
+        return true;
+    }
+
+    /** Persist the WeCMS&rarr;ERP 'W' row by copying the generated workbook
+     *  into the ERP-history tenant subtree. Non-blocking — the writer is
+     *  {@code REQUIRES_NEW} + swallow-and-log, matching legacy. */
+    @Override
+    public void recordErpExport(Path workbookFile, String orgFileNm) {
+        erpHistoryWriter.recordExportedFile(erpExportTrnsTypeCd(), workbookFile, orgFileNm);
+    }
 
     @Override
     public Set<String> allowedFieldIds() {

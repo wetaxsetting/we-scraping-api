@@ -3,6 +3,7 @@ package com.kosign.wecms.domain.operation.service;
 import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.domain.auth.entity.BusiInfm;
 import com.kosign.wecms.domain.auth.repository.BusiInfmRepository;
+import com.kosign.wecms.domain.banking.synchistory.entity.ExtTranCallHis;
 import com.kosign.wecms.domain.banking.synchistory.repository.ExtTranCallHisRepository;
 import com.kosign.wecms.domain.einvoice.repository.BusaDocMstrRepository;
 import com.kosign.wecms.domain.operation.client.OsmcGdtClient;
@@ -165,6 +166,33 @@ class OperationStatusBatchServiceTest {
 
         assertThat(updated).isZero();
         verify(oprtSttsInfoRepo, never()).save(any());
+    }
+
+    // ── Audit robustness: long OSMC failure code must not overflow RSLT_CD(10) ──
+
+    @Test
+    void refreshTenant_longOsmcErrorCode_isTruncatedTo10_soAuditRowSurvives() {
+        OprtSttsInfo existing = new OprtSttsInfo();
+        existing.setBizKey(BIZ);
+        existing.setTaxcode("TAX1");
+        existing.setCompanystatus("OLD");
+
+        when(oprtSttsInfoRepo.findAllByBizKey(BIZ)).thenReturn(List.of(existing));
+        when(legacyFunctions.nextExtTranCallHisSeqNo(eq("BI09"), anyString())).thenReturn("13");
+        // GDT unreachable/misconfigured (SIT headless) → client returns a >10-char code.
+        when(osmcClient.lookup(anyList(), anyString()))
+                .thenReturn(new OsmcGdtResult("WBE_OSMC_NOT_CONFIGURED",
+                        "OSMC bridge URL not configured", List.of(), List.of()));
+
+        int updated = service.refreshTenant(BIZ);
+
+        assertThat(updated).isZero();                 // failed lookup → no status update
+        // The audit row must still be written with a RSLT_CD that fits VARCHAR(10),
+        // so the per-tenant tx commits instead of silently rolling back.
+        ArgumentCaptor<ExtTranCallHis> audit = ArgumentCaptor.forClass(ExtTranCallHis.class);
+        verify(extTranCallHisRepo, org.mockito.Mockito.atLeastOnce()).save(audit.capture());
+        assertThat(audit.getValue().getRsltCd()).hasSizeLessThanOrEqualTo(10);
+        assertThat(audit.getValue().getRsltCd()).isEqualTo("WBE_OSMC_N");
     }
 
     // ── F/M tenant filter ──────────────────────────────────────────────────────

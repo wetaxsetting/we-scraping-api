@@ -129,6 +129,15 @@ public class OverseasPaymentDownloadService {
             String bnfcAddr, String ccyCd, BigDecimal amt, String feePayerCd,
             String reportingAcct, String memo) { }
 
+    /** Per-batch header fields repeated on every detail row of the batch. */
+    private record BlockHeader(
+            boolean dispatched, String trnfDtm, String regDtm, String fileNm,
+            String outBankNm, String wdrlActNo, String requestor, String scheduledDate,
+            String approvalStatus, String approvalRef, String approvalTitle) { }
+
+    /** One batch's header + detail lines + its single-currency total. */
+    private record BatchData(BlockHeader hdr, List<Line> lines, String totalCcy, BigDecimal totalAmt) { }
+
     /**
      * Generate the 22-column Overseas Payment download report for one batch.
      *
@@ -143,15 +152,11 @@ public class OverseasPaymentDownloadService {
         String bizKey = requireTenant();
         String lang   = resolveLang(langParam);
 
-        Optional<OvrsPymnSumr> sumrOpt = sumrRepository.findByBizKeyAndOvrsPymnNo(bizKey, ovrsPymnNo);
-        byte[] bytes;
-        if (sumrOpt.isPresent()) {
-            bytes = generateEMode(bizKey, lang, sumrOpt.get());
-        } else {
-            OvrsPymnMstr mstr = ovrsPymnMstrRepository.findByBizKeyAndOvrsPymnNo(bizKey, ovrsPymnNo)
-                    .orElseThrow(() -> new BusinessException("WBE2045"));
-            bytes = generateMMode(bizKey, lang, mstr);
-        }
+        BatchData bd = loadBatch(bizKey, lang, ovrsPymnNo, true);
+        // Single-batch total cell = single-currency (legacy createRow(2) parity).
+        String totalLabel = "Total Amount (" + trim(bd.totalCcy()) + ") : "
+                + formatTotal(bd.totalAmt(), bd.totalCcy());
+        byte[] bytes = render(lang, List.of(bd), totalLabel);
 
         String fileName = "WeCMS_Overseas_Payment_download_" + lang + ".xlsx";
         log.info("feature=overseas-payment report-download bizKey={} ovrsPymnNo={} lang={}",
@@ -159,11 +164,61 @@ public class OverseasPaymentDownloadService {
         return new GeneratedReport(bytes, fileName);
     }
 
+    /**
+     * Bulk variant — the Payment Result toolbar Excel. ONE workbook from the
+     * same locale template as the per-row report, with every listed batch's
+     * detail lines appended into the single sheet (legacy bulk-report parity —
+     * same 22-column layout, E+M union, all filtered rows). The A3:T3 total cell
+     * shows the per-currency grand total across the whole export (the template's
+     * own multi-currency placeholder shape). Unknown / cross-tenant ids are
+     * skipped rather than aborting the export.
+     *
+     * @param ovrsPymnNos ordered batch keys (the filtered result list)
+     * @param langParam   optional UI-locale hint (EN/KO/VI; KM/other → EN)
+     */
+    @Transactional(readOnly = true)
+    public GeneratedReport generateBulk(List<String> ovrsPymnNos, String langParam) {
+        String bizKey = requireTenant();
+        String lang   = resolveLang(langParam);
+        List<String> ids = ovrsPymnNos == null ? List.of() : ovrsPymnNos;
+
+        List<BatchData> blocks = new ArrayList<>(ids.size());
+        for (String id : ids) {
+            BatchData bd = loadBatch(bizKey, lang, id, false);
+            if (bd != null) blocks.add(bd);
+        }
+
+        byte[] bytes = render(lang, blocks, buildMultiCurrencyTotalLabel(blocks));
+        String fileName = "WeCMS_Overseas_Payment_download_" + lang + ".xlsx";
+        log.info("feature=overseas-payment bulk-report-download bizKey={} batches={} lang={}",
+                bizKey, blocks.size(), lang);
+        return new GeneratedReport(bytes, fileName);
+    }
+
+    /**
+     * Resolve one batch into a {@link BatchData} (E-mode {@code OVRS_PYMN_SUMR}
+     * first, else M-mode {@code OVRS_PYMN_MSTR}). When {@code throwIfMissing} is
+     * true (single-batch path) a missing batch throws {@code WBE2045}; when false
+     * (bulk path) it returns {@code null} so the caller skips it.
+     */
+    private BatchData loadBatch(String bizKey, String lang, String ovrsPymnNo, boolean throwIfMissing) {
+        Optional<OvrsPymnSumr> sumrOpt = sumrRepository.findByBizKeyAndOvrsPymnNo(bizKey, ovrsPymnNo);
+        if (sumrOpt.isPresent()) {
+            return loadEMode(bizKey, lang, sumrOpt.get());
+        }
+        Optional<OvrsPymnMstr> mstrOpt = ovrsPymnMstrRepository.findByBizKeyAndOvrsPymnNo(bizKey, ovrsPymnNo);
+        if (mstrOpt.isPresent()) {
+            return loadMMode(bizKey, lang, mstrOpt.get());
+        }
+        if (throwIfMissing) throw new BusinessException("WBE2045");
+        return null;
+    }
+
     /* ----------------------------------------------------------------
      *  E-mode (Excel batch) — OVRS_PYMN_SUMR + OVRS_PYMN_SUMR_DETL
      * ---------------------------------------------------------------- */
 
-    private byte[] generateEMode(String bizKey, String lang, OvrsPymnSumr master) {
+    private BatchData loadEMode(String bizKey, String lang, OvrsPymnSumr master) {
         List<OvrsPymnSumrDetl> details = dtlsRepository
                 .findByBizKeyAndOvrsPymnNoOrderByOvrsPymnDetlNoAsc(bizKey, master.getOvrsPymnNo());
 
@@ -191,17 +246,16 @@ public class OverseasPaymentDownloadService {
                     d.getMemo()));                     // Q — Memo
         }
 
-        return populate(lang, master.getCcyCd(), master.getTotalTranAmt(), dispatched,
-                master.getTrnfDt(), master.getRegDtm(), master.getTitl(),
-                resolveBankNm(master.getOutBankCd()), master.getWdrlActNo(),
-                approval, lines);
+        BlockHeader hdr = buildHeader(lang, dispatched, master.getTrnfDt(), master.getRegDtm(),
+                master.getTitl(), resolveBankNm(master.getOutBankCd()), master.getWdrlActNo(), approval);
+        return new BatchData(hdr, lines, master.getCcyCd(), master.getTotalTranAmt());
     }
 
     /* ----------------------------------------------------------------
      *  M-mode (manual / individual) — OVRS_PYMN_MSTR
      * ---------------------------------------------------------------- */
 
-    private byte[] generateMMode(String bizKey, String lang, OvrsPymnMstr master) {
+    private BatchData loadMMode(String bizKey, String lang, OvrsPymnMstr master) {
         Optional<ExptResolMstr> approval = loadApproval(bizKey, master.getApprSeqNo());
         boolean dispatched = "Y".equalsIgnoreCase(trim(master.getTrnfYn()));
 
@@ -228,23 +282,16 @@ public class OverseasPaymentDownloadService {
         // Withdrawal account for M is the debit-account fields (R006 M branch).
         // OVRS_PYMN_MSTR.TRNF_DT is not mapped on the entity → col A (Transfer
         // Date Time) is left blank for M-mode (it is blank pre-dispatch anyway).
-        return populate(lang, master.getTrnfCcyCd(), master.getTotalTranAmt(), dispatched,
-                null, master.getRegDtm(),
+        BlockHeader hdr = buildHeader(lang, dispatched, null, master.getRegDtm(),
                 // FILE_NM for M = "<BNFC_NM> <BNFC_ACCT_NO>" (legacy R009 M branch).
                 joinNonBlank(master.getBnfcNm(), master.getBnfcAcctNo()),
-                resolveBankNm(master.getDbtAcctCd()), master.getDbtAcctNo(),
-                approval, lines);
+                resolveBankNm(master.getDbtAcctCd()), master.getDbtAcctNo(), approval);
+        return new BatchData(hdr, lines, master.getTrnfCcyCd(), master.getTotalTranAmt());
     }
 
-    /* ----------------------------------------------------------------
-     *  Template populate (shared by both modes)
-     * ---------------------------------------------------------------- */
-
-    private byte[] populate(
-            String lang, String totalCcy, BigDecimal totalAmt, boolean dispatched,
-            String trnfDtm, String regDtm, String fileNm, String outBankNm, String wdrlActNo,
-            Optional<ExptResolMstr> approval, List<Line> lines) {
-
+    private BlockHeader buildHeader(
+            String lang, boolean dispatched, String trnfDtm, String regDtm, String fileNm,
+            String outBankNm, String wdrlActNo, Optional<ExptResolMstr> approval) {
         String requestor = approval.map(ExptResolMstr::getDraftUserNm)
                 .filter(s -> s != null && !s.isBlank())
                 .orElse(null);
@@ -253,7 +300,21 @@ public class OverseasPaymentDownloadService {
                 approvalStatusLabel(approval.map(ExptResolMstr::getApprTypeCd).orElse(null)), lang);
         String approvalRef    = approval.map(ExptResolMstr::getDocNo).orElse(null);
         String approvalTitle  = approval.map(ExptResolMstr::getTitl).orElse(null);
+        return new BlockHeader(dispatched, trnfDtm, regDtm, fileNm, outBankNm, wdrlActNo,
+                requestor, scheduledDate, approvalStatus, approvalRef, approvalTitle);
+    }
 
+    /* ----------------------------------------------------------------
+     *  Template render (shared by single + bulk)
+     * ---------------------------------------------------------------- */
+
+    /**
+     * Load the locale template, write the {@code A3:T3} total label, then append
+     * every block's detail lines from the first data row, preserving template
+     * styles. Shared by {@link #generate} (one block, single-currency total) and
+     * {@link #generateBulk} (N blocks, per-currency grand total).
+     */
+    private byte[] render(String lang, List<BatchData> blocks, String totalLabel) {
         String resourcePath = TEMPLATE_DIR + "WeCMS_Overseas_Payment_download_" + lang + ".xlsx";
         try (InputStream in = new ClassPathResource(resourcePath).getInputStream();
              Workbook wb = WorkbookFactory.create(in);
@@ -262,13 +323,12 @@ public class OverseasPaymentDownloadService {
             Sheet sheet = wb.getSheetAt(0);
 
             // A3:T3 — overwrite the 3-currency template placeholder with the
-            // single-currency total (legacy createRow(2) + setCellValue), reusing
-            // the template cell so its style survives.
+            // computed total (legacy createRow(2) + setCellValue), reusing the
+            // template cell so its style survives.
             Row totalRow = rowAt(sheet, TOTAL_ROW_INDEX);
             Cell totalCell = totalRow.getCell(0);
             if (totalCell == null) totalCell = totalRow.createCell(0);
-            totalCell.setCellValue("Total Amount (" + trim(totalCcy) + ") : "
-                    + formatTotal(totalAmt, totalCcy));
+            totalCell.setCellValue(totalLabel);
 
             // Capture the per-column template style from the first pre-styled
             // data row (index 4) so written cells keep the template's borders /
@@ -295,35 +355,9 @@ public class OverseasPaymentDownloadService {
             amtVnd.setDataFormat(fmt.getFormat("#,##0;-#,##0"));
             amtOther.setDataFormat(fmt.getFormat("#,##0.00;-#,##0.00"));
 
-            for (int i = 0; i < lines.size(); i++) {
-                Line ln = lines.get(i);
-                Row row = rowAt(sheet, FIRST_DATA_ROW_INDEX + i);
-
-                // A–V (0..21) — identical order across EN/KO/VI templates.
-                setText  (row,  0, colStyle, dispatched
-                        ? OverseasPaymentResultExcelWriter.formatDtm(trnfDtm) : "");
-                setText  (row,  1, colStyle, ln.transactionSeq());
-                setText  (row,  2, colStyle, getLocalizedText(
-                        deriveStatusEn(dispatched, ln.procStat(), ln.rsCd()), lang));
-                setText  (row,  3, colStyle, OverseasPaymentResultExcelWriter.formatDtm(regDtm));
-                setText  (row,  4, colStyle, fileNm);
-                setText  (row,  5, colStyle, outBankNm);
-                setText  (row,  6, colStyle, wdrlActNo);
-                setText  (row,  7, colStyle, ln.bnfcNm());
-                setText  (row,  8, colStyle, ln.bnfcBankNm());
-                setText  (row,  9, colStyle, ln.bic());
-                setText  (row, 10, colStyle, ln.bnfcAcctNo());
-                setText  (row, 11, colStyle, ln.bnfcAddr());
-                setText  (row, 12, colStyle, ln.ccyCd());
-                setAmount(row, 13, ln.amt(), isVnd(ln.ccyCd()) ? amtVnd : amtOther);
-                setText  (row, 14, colStyle, getLocalizedText(feePayerLabel(ln.feePayerCd()), lang));
-                setText  (row, 15, colStyle, ln.reportingAcct());
-                setText  (row, 16, colStyle, ln.memo());
-                setText  (row, 17, colStyle, requestor);
-                setText  (row, 18, colStyle, OverseasPaymentResultExcelWriter.formatDate(scheduledDate));
-                setText  (row, 19, colStyle, approvalStatus);
-                setText  (row, 20, colStyle, approvalRef);
-                setText  (row, 21, colStyle, approvalTitle);
+            int rowIdx = FIRST_DATA_ROW_INDEX;
+            for (BatchData bd : blocks) {
+                rowIdx = writeBlockLines(sheet, colStyle, amtVnd, amtOther, lang, rowIdx, bd.hdr(), bd.lines());
             }
 
             wb.write(out);
@@ -332,6 +366,64 @@ public class OverseasPaymentDownloadService {
             throw new UncheckedIOException(
                     "Failed to generate Overseas Payment download report (lang=" + lang + ")", e);
         }
+    }
+
+    /** Write one batch's detail lines into the sheet from {@code startIdx},
+     *  repeating the batch header fields on every row. Returns the next index. */
+    private int writeBlockLines(Sheet sheet, CellStyle[] colStyle, CellStyle amtVnd,
+                                CellStyle amtOther, String lang, int startIdx,
+                                BlockHeader hdr, List<Line> lines) {
+        for (int i = 0; i < lines.size(); i++) {
+            Line ln = lines.get(i);
+            Row row = rowAt(sheet, startIdx + i);
+
+            // A–V (0..21) — identical order across EN/KO/VI templates.
+            setText  (row,  0, colStyle, hdr.dispatched()
+                    ? OverseasPaymentResultExcelWriter.formatDtm(hdr.trnfDtm()) : "");
+            setText  (row,  1, colStyle, ln.transactionSeq());
+            setText  (row,  2, colStyle, getLocalizedText(
+                    deriveStatusEn(hdr.dispatched(), ln.procStat(), ln.rsCd()), lang));
+            setText  (row,  3, colStyle, OverseasPaymentResultExcelWriter.formatDtm(hdr.regDtm()));
+            setText  (row,  4, colStyle, hdr.fileNm());
+            setText  (row,  5, colStyle, hdr.outBankNm());
+            setText  (row,  6, colStyle, hdr.wdrlActNo());
+            setText  (row,  7, colStyle, ln.bnfcNm());
+            setText  (row,  8, colStyle, ln.bnfcBankNm());
+            setText  (row,  9, colStyle, ln.bic());
+            setText  (row, 10, colStyle, ln.bnfcAcctNo());
+            setText  (row, 11, colStyle, ln.bnfcAddr());
+            setText  (row, 12, colStyle, ln.ccyCd());
+            setAmount(row, 13, ln.amt(), isVnd(ln.ccyCd()) ? amtVnd : amtOther);
+            setText  (row, 14, colStyle, getLocalizedText(feePayerLabel(ln.feePayerCd()), lang));
+            setText  (row, 15, colStyle, ln.reportingAcct());
+            setText  (row, 16, colStyle, ln.memo());
+            setText  (row, 17, colStyle, hdr.requestor());
+            setText  (row, 18, colStyle, OverseasPaymentResultExcelWriter.formatDate(hdr.scheduledDate()));
+            setText  (row, 19, colStyle, hdr.approvalStatus());
+            setText  (row, 20, colStyle, hdr.approvalRef());
+            setText  (row, 21, colStyle, hdr.approvalTitle());
+        }
+        return startIdx + lines.size();
+    }
+
+    /**
+     * Per-currency grand-total label for the bulk export — sums every block's
+     * single-currency total grouped by currency, in the template's
+     * {@code "Total Amount (CCY) : amt …"} shape. Insertion order preserved.
+     */
+    private static String buildMultiCurrencyTotalLabel(List<BatchData> blocks) {
+        java.util.Map<String, BigDecimal> byCcy = new java.util.LinkedHashMap<>();
+        for (BatchData bd : blocks) {
+            String ccy = trim(bd.totalCcy());
+            BigDecimal amt = bd.totalAmt() != null ? bd.totalAmt() : BigDecimal.ZERO;
+            byCcy.merge(ccy, amt, BigDecimal::add);
+        }
+        if (byCcy.isEmpty()) return "Total Amount";
+        StringBuilder sb = new StringBuilder("Total Amount");
+        for (Map.Entry<String, BigDecimal> e : byCcy.entrySet()) {
+            sb.append(" (").append(e.getKey()).append(") : ").append(formatTotal(e.getValue(), e.getKey()));
+        }
+        return sb.toString();
     }
 
     /* ----------------------------------------------------------------

@@ -647,14 +647,13 @@ public class ExpensePaymentService {
         String displayName = master.getOrgFileNm() == null || master.getOrgFileNm().isBlank()
                 ? saveFileNm
                 : master.getOrgFileNm();
-        // F2 — legacy pymn_0002_002_r002 (Expense reuses the Vendor view via
-        // SVC_ID) writes an ERP_TRNS_HSTR 'W' audit row on the Result-page
-        // original-file download. Scoped to dispatched batches (trnf_yn='Y');
-        // non-blocking (REQUIRES_NEW + swallow). See VendorPaymentService.
-        if ("Y".equals(master.getTrnfYn())) {
-            erpHistoryWriter.recordExportedFile(
-                    ERP_TRNS_TYPE_EXPENSE_PAYMENT_RESULT, path, displayName);
-        }
+        // The /{id}/file endpoint serves the Scheduled-side original import-file
+        // download. Per the ERP Transaction History mapping, Scheduled-side
+        // downloads record the SCHEDULED type code (03 = Expense Scheduled Payment),
+        // UNCONDITIONALLY (both not-yet-dispatched N and dispatched Y). Non-blocking
+        // (REQUIRES_NEW + swallow). See VendorPaymentService.
+        erpHistoryWriter.recordExportedFile(
+                ERP_TRNS_TYPE_EXPENSE_SCHEDULED_PAYMENT, path, displayName);
         return new DownloadResource(path, displayName, saveFileNm, fileSize);
     }
 

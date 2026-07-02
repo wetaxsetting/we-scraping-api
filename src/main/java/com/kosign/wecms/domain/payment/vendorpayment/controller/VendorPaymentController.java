@@ -26,6 +26,7 @@ import com.kosign.wecms.domain.payment.vendorpayment.service.VendorPaymentDownlo
 import com.kosign.wecms.domain.payment.vendorpayment.service.VendorPaymentResultService;
 import com.kosign.wecms.domain.payment.vendorpayment.service.VendorPaymentService;
 import com.kosign.wecms.domain.payment.vendorpayment.service.VendorPaymentService.DownloadResource;
+import com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Pattern;
@@ -104,6 +105,9 @@ public class VendorPaymentController {
     private final VendorPaymentService            service;
     private final VendorPaymentResultService      resultService;
     private final VendorPaymentDownloadService    downloadService;
+    /** ERP_TRNS_HSTR 'W' audit writer for the generated-report downloads
+     *  (Scheduled → code 02, Result → code 04). */
+    private final ErpTrnsHistoryWriter            erpHistoryWriter;
     private final ExcelExportService              excelExportService;
     private final DomesticPaymentLineMatchService lineMatchService;
 
@@ -181,7 +185,11 @@ public class VendorPaymentController {
             @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
             String id,
             @RequestParam(value = "lang", required = false) String lang) {
-        return reportResponse(downloadService.generate(id, lang));
+        // Scheduled list/detail report download → ERP_TRNS_HSTR 'W' / 02
+        // (Vendor Scheduled Payment). Audit the exact downloaded bytes.
+        VendorPaymentDownloadService.GeneratedReport report = downloadService.generate(id, lang);
+        erpHistoryWriter.recordExportedBytes("02", report.content(), report.fileName());
+        return reportResponse(report);
     }
 
     /**
@@ -235,7 +243,12 @@ public class VendorPaymentController {
             @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
             String id,
             @RequestParam(value = "lang", required = false) String lang) {
-        return reportResponse(downloadService.generate(id, lang));
+        // Result list-row/detail report download → ERP_TRNS_HSTR 'W' / 04
+        // (Vendor Payment Result). Same artifact as the Scheduled download,
+        // recorded with the Result type code.
+        VendorPaymentDownloadService.GeneratedReport report = downloadService.generate(id, lang);
+        erpHistoryWriter.recordExportedBytes("04", report.content(), report.fileName());
+        return reportResponse(report);
     }
 
     /** Shared builder for the generated-report binary response (RFC 5987
@@ -257,14 +270,41 @@ public class VendorPaymentController {
                 .body(body);
     }
 
-    /** Excel export of the Vendor Payment Result list. Provider:
-     *  {@code VendorPaymentResultExportProvider} (CLAUDE.md §13b). */
+    /** Excel export of the Vendor Payment Result list (legacy 7-column summary
+     *  via {@code VendorPaymentResultExportProvider}, CLAUDE.md §13b).
+     *  <b>Deprecated for the toolbar</b> (2026-06-30): the toolbar Excel now
+     *  calls {@link #downloadResultBulkReport} for the full 22-column
+     *  bulk template report (legacy {@code pymn_0002_002_r003} parity).
+     *  Retained for back-compat. */
     @PostMapping("/results/export")
     @PreAuthorize("@menuAuthz.canAccess('payment-vendor-result')")
     public void exportResults(
             @Valid @RequestBody ExcelExportRequest request,
             HttpServletResponse response) {
         excelExportService.exportTo(response, request);
+    }
+
+    /**
+     * Toolbar Excel — the legacy 22-column report for ALL batches in the
+     * current Payment Result filter (bulk). Same locale template + column
+     * layout (incl. Contact Name) as the per-row {@link #downloadResultReport},
+     * with every filtered batch appended into one workbook (legacy
+     * {@code pymn_0002_002_r003} bulk-report parity). Replaces the old
+     * from-scratch 7-column summary for the toolbar.
+     */
+    @GetMapping("/results/report")
+    @PreAuthorize("@menuAuthz.canAccess('payment-vendor-result')")
+    public ResponseEntity<ByteArrayResource> downloadResultBulkReport(
+            @RequestParam("from_date")                           String fromDate,
+            @RequestParam("to_date")                             String toDate,
+            @RequestParam(value = "srch_wd",   required = false) String srchWd,
+            @RequestParam(value = "trnf_stts", required = false) String trnfStts,
+            @RequestParam(value = "lang",      required = false) String lang) {
+        java.util.List<String> ids = resultService.dispatchedIdsForExport(fromDate, toDate, srchWd, trnfStts);
+        // Bulk Result report download → ERP_TRNS_HSTR 'W' / 04 (Vendor Result).
+        VendorPaymentDownloadService.GeneratedReport report = downloadService.generateBulk(ids, lang);
+        erpHistoryWriter.recordExportedBytes("04", report.content(), report.fileName());
+        return reportResponse(report);
     }
 
     /* ----------------------------------------------------------------

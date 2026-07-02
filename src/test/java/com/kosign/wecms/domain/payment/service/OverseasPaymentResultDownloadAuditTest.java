@@ -28,7 +28,10 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** F2 Overseas download 'W' audit (code 14) — scoped to dispatched (trnf_yn='Y'). */
+/** Scheduled-side original import-file download ({@code GET /scheduled/{id}/file}
+ *  → resolveDownload) writes an ERP_TRNS_HSTR 'W' row with the SCHEDULED type
+ *  code 13 (Overseas Payment Request, legacy pymn_0007_004_r002), UNCONDITIONALLY
+ *  (both not-yet-dispatched N and dispatched Y). */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class OverseasPaymentResultDownloadAuditTest {
@@ -51,12 +54,12 @@ class OverseasPaymentResultDownloadAuditTest {
         when(sumrRepository.findByBizKeyAndOvrsPymnNo(BIZ_KEY, "OP1")).thenReturn(Optional.of(master("Y")));
         when(fileResolver.resolveForRead(BIZ_KEY, "save.xlsx")).thenReturn(realFile());
         service.resolveDownload("OP1");
-        verify(erpHistoryWriter, times(1)).recordExportedFile(eq("14"), any(Path.class), eq("orig.xlsx"));
+        verify(erpHistoryWriter, times(1)).recordExportedFile(eq("13"), any(Path.class), eq("orig.xlsx"));
     }
-    @Test void non_dispatched_download_writes_no_row() throws IOException {
+    @Test void non_dispatched_download_writes_W_row_with_request_code_13() throws IOException {
         when(sumrRepository.findByBizKeyAndOvrsPymnNo(BIZ_KEY, "OP1")).thenReturn(Optional.of(master("N")));
         when(fileResolver.resolveForRead(BIZ_KEY, "save.xlsx")).thenReturn(realFile());
         service.resolveDownload("OP1");
-        verify(erpHistoryWriter, never()).recordExportedFile(anyString(), any(), anyString());
+        verify(erpHistoryWriter, times(1)).recordExportedFile(eq("13"), any(Path.class), eq("orig.xlsx"));
     }
 }

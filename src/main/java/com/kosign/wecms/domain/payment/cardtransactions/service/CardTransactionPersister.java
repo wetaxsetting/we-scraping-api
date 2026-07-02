@@ -61,6 +61,23 @@ public class CardTransactionPersister {
         int inserted = 0;
         int skipped  = 0;
         for (NxisasCardUsingEntry tx : scraped) {
+            // Attribution guard (bug fix 2026-07-02) — a single CARD_USING
+            // response can carry transactions for MORE than the requested
+            // card: Coocon returns the whole credential's activity in
+            // cardArr[0], so this per-card persist would otherwise stamp
+            // EVERY registered card's number onto the same merchant row →
+            // one FACEBK transaction duplicated across all 4 registered
+            // cards. Attribute each scraped row to the card it actually
+            // belongs to by its own scraped card number and drop rows that
+            // belong to a different card — they are (or will be) inserted
+            // during THAT card's own loop iteration, so nothing is lost.
+            // Legacy parity: fnsh_0001_001_c001_act.jsp:1327-1330 looks up
+            // CARD_MSTR by `card_no = cardUsing.getCardNum()` and skips
+            // (continue) when the scraped card doesn't match an active card.
+            if (!cardNoMatches(tx.getCardNum(), card.getCardNo())) {
+                skipped++;
+                continue;
+            }
             String trscDt = normYyyymmdd(tx.getUsingDate());
             if (trscDt == null) {
                 // Tx without a date is unusable — Coocon shouldn't
@@ -145,6 +162,31 @@ public class CardTransactionPersister {
 
     private static String blankToNull(String s) {
         return s == null || s.isBlank() ? null : s.trim();
+    }
+
+    /**
+     * True when a scraped transaction belongs to the card this persist
+     * call ran for. Compares the transaction's own scraped card number
+     * ({@code NxisasCardUsingEntry.cardNum}) against the registered
+     * {@code CARD_MSTR.card_no}, ignoring whitespace / hyphens / case
+     * (mask asterisks are kept — both the registry and the scrape store
+     * the same masked {@code 4696********NNNN} form, verified on the
+     * refactor DB 2026-07-02).
+     *
+     * <p>A blank scraped card number falls back to a match: we explicitly
+     * requested this card from Coocon, so an unattributed row is assumed
+     * to be its own. This is the one intentional divergence from legacy's
+     * skip-on-null lookup ({@code fnsh_0001_001_c001_act.jsp:1428}) —
+     * chosen so a Coocon response that ever omits {@code cardNum} degrades
+     * to the prior behaviour instead of silently dropping every row.
+     */
+    static boolean cardNoMatches(String scrapedCardNo, String registeredCardNo) {
+        if (scrapedCardNo == null || scrapedCardNo.isBlank()) return true;
+        return normCardNo(scrapedCardNo).equals(normCardNo(registeredCardNo));
+    }
+
+    private static String normCardNo(String s) {
+        return s == null ? "" : s.replaceAll("[\\s-]", "").toUpperCase();
     }
 
     private static String normYyyymmdd(String raw) {

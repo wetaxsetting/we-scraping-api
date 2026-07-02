@@ -69,6 +69,8 @@ public class ApprovalBoxFanoutService {
     private final ApprovalLineApproverRepository apprLineApproverRepository;
     private final ExptResolDetlRepository       detlRepository;
     private final ExptResolApprLineRepository   apprLineRepository;
+    private final com.kosign.wecms.domain.payment.internaltransfer.repository.ExptResolPayEvidFileRepository
+                                                payEvidFileRepository;
     private final BusiEnvSetInfmRepository      busiEnvSetInfmRepository;
     private final Clock                         clock;
     private final LegacyFunctionRepository      legacyFunctions;
@@ -455,14 +457,53 @@ public class ApprovalBoxFanoutService {
                     "Only Pending or In Progress approvals can be withdrawn");
         }
 
-        // Bulletin / attachment cleanup (legacy comm_0192_004_d001) — runs
-        // BEFORE the master delete so EXPT_RESOL_FILE's FK to EXPT_RESOL_MSTR
-        // is honoured.
-        approvalNotificationService.cleanupApprovalArtifacts(apprSeqNo.trim());
-
-        approverRepository.deleteByBizKeyAndApprSeqNo(bizKey, apprSeqNo.trim());
-        mstrRepository.delete(mstr);
+        purgeApprovalGraph(bizKey, apprSeqNo.trim(), mstr);
         return mstr;
+    }
+
+    /**
+     * Physically delete the full {@code EXPT_RESOL_*} approval object graph
+     * for one approval reference, <b>child rows before the master</b>,
+     * reproducing the legacy {@code ExptResolMstrDAO.deleteByPk} cascade
+     * (JEX {@code comm_0192_004_d001}). Delete order:
+     *
+     * <ol>
+     *   <li>{@code EXPT_RESOL_PAY_EVID_FILE} — FK child (audit F3)</li>
+     *   <li>{@code EXPT_RESOL_FILE} + the bulletin graph, via
+     *       {@link com.kosign.wecms.domain.payment.notification.service.ApprovalNotificationService#cleanupApprovalArtifacts}</li>
+     *   <li>{@code EXPT_RESOL_DETL} — FK child; the row set that caused
+     *       {@code expt_resol_detl_fk01} (audit F1/F2 — the fix)</li>
+     *   <li>{@code EXPT_RESOL_APPR_LINE} — print-header snapshot, no FK but
+     *       hard-deleted for parity / orphan-cleanup (audit F4)</li>
+     *   <li>{@code EXPT_RESOL_APPRVR_INFM} — approver chain</li>
+     *   <li>{@code EXPT_RESOL_MSTR} — parent, last</li>
+     * </ol>
+     *
+     * <p>The three {@code EXPT_RESOL_*} FKs are {@code NO ACTION} (no
+     * {@code ON DELETE CASCADE} — legacy parity); this delete order is what
+     * keeps them satisfied. The {@code @Modifying} child deletes execute
+     * immediately, so they run before the deferred master entity delete
+     * flushes.
+     *
+     * <p><b>Caller responsibilities (NOT done here):</b> the Pending /
+     * In-Progress status guard and the payment-master detach
+     * ({@code SCDUL_PYMN_SUMR} / {@code OVRS_PYMN_SUMR} / {@code CARD_TRNS_HSTR}
+     * {@code APPR_SEQ_NO = NULL}) stay with each withdraw entry point — they
+     * guard on different columns ({@code APPR_TYPE_CD 00/03} vs Overseas
+     * {@code 'P'}) and unlink different master tables. This method only
+     * touches the approval graph. Runs in the caller's transaction.
+     *
+     * @param bizKey    the tenant scope ({@code TenantContext.currentBizKey()}).
+     * @param apprSeqNo the approval sequence number (already trimmed).
+     * @param mstr      the loaded {@link ExptResolMstr} to delete last.
+     */
+    public void purgeApprovalGraph(String bizKey, String apprSeqNo, ExptResolMstr mstr) {
+        payEvidFileRepository.deleteByBizKeyAndApprSeqNo(bizKey, apprSeqNo);
+        approvalNotificationService.cleanupApprovalArtifacts(apprSeqNo);
+        detlRepository.deleteByBizKeyAndApprSeqNo(bizKey, apprSeqNo);
+        apprLineRepository.deleteByBizKeyAndApprSeqNo(bizKey, apprSeqNo);
+        approverRepository.deleteByBizKeyAndApprSeqNo(bizKey, apprSeqNo);
+        mstrRepository.delete(mstr);
     }
 
     /**

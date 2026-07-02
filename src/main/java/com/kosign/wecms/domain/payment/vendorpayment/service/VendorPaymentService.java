@@ -628,17 +628,13 @@ public class VendorPaymentService {
         String displayName = master.getOrgFileNm() == null || master.getOrgFileNm().isBlank()
                 ? saveFileNm
                 : master.getOrgFileNm();
-        // F2 — legacy pymn_0002_002_r002 writes an ERP_TRNS_HSTR 'W' (WeCMS→ERP)
-        // audit row on the Result-page original-file download. The shared /file
-        // endpoint carries no Scheduled-vs-Result context (legacy distinguishes by
-        // SVC_ID), so the RESULT code is scoped to dispatched batches
-        // (trnf_yn='Y' — exactly what the Result list shows; Scheduled-context
-        // downloads are out of this task's scope). Non-blocking: the writer is
-        // REQUIRES_NEW and swallows failures, matching legacy's swallow-and-log.
-        if ("Y".equals(master.getTrnfYn())) {
-            erpHistoryWriter.recordExportedFile(
-                    ERP_TRNS_TYPE_VENDOR_PAYMENT_RESULT, path, displayName);
-        }
+        // The /{id}/file endpoint serves the Scheduled-side original import-file
+        // download. Per the ERP Transaction History mapping, Scheduled-side
+        // downloads record the SCHEDULED type code (02 = Vendor Scheduled Payment),
+        // UNCONDITIONALLY (both not-yet-dispatched N and dispatched Y). Non-blocking:
+        // the writer is REQUIRES_NEW and swallows failures, matching legacy.
+        erpHistoryWriter.recordExportedFile(
+                ERP_TRNS_TYPE_VENDOR_SCHEDULED_PAYMENT, path, displayName);
         return new DownloadResource(path, displayName, saveFileNm, fileSize);
     }
 

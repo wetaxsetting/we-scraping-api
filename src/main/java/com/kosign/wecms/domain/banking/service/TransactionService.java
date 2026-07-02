@@ -308,7 +308,15 @@ public class TransactionService {
             entry.setVasAcctCd(req.vasAcctCd());
         }
         entry.setCnfmYn("Y");
-        entry.setCnfmByUserId(userId);
+        // Legacy parity — fnsh_0002_001_u002_act.jsp:90,103 (VND) and
+        // fnsh_0006_001_u002_act.jsp:91,104 (FCY) stamp CNFM_BY_USER_ID with the
+        // BIZ_KEY, not the login user id. CNFM_BY_USER_ID is varchar(20) in the
+        // legacy DDL (schema source of truth), while WeCMS VN user ids are emails
+        // that can exceed 20 chars (e.g. wecmshaengsung@gmail.com = 24) and would
+        // overflow the column. The confirmer's display name is carried by
+        // CNFM_BY_USER_NM; the real user id is preserved in REG_ID/MOD_ID
+        // (varchar(100)). See docs/audits/transaction-history-confirm-legacy-audit.md.
+        entry.setCnfmByUserId(r.bizKey);
         entry.setCnfmByUserNm(userNm);
         entry.setCnfmDtm(nowDtm);
         entry.setModId(userId);

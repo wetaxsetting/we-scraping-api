@@ -209,6 +209,65 @@ class InternalTransferDownloadServiceTest {
     }
 
     @Test
+    void generateBulk_appends_all_filtered_batches_into_one_template() throws Exception {
+        // Batch 1: SP1 (master() default title "Batch"), 1 detail.
+        stub("SP1", master("Y"), details(1));
+        // Batch 2: SP2, distinct title, 1 detail.
+        ScdulPymnSumr m2 = master("Y");
+        m2.setScdulPymnNo("SP2");
+        m2.setTitl("Batch Two");
+        when(sumrRepository.findByBizKeyAndScdulPymnNoAndScdulPymnTypeCd(eq(BIZ_KEY), eq("SP2"), anyString()))
+                .thenReturn(Optional.of(m2));
+        when(detlRepository.findByBizKeyAndScdulPymnNo(eq(BIZ_KEY), eq("SP2"), any()))
+                .thenReturn(details(1));
+
+        var report = service.generateBulk(List.of("SP1", "SP2"), "EN");
+
+        // Uses the Internal Transfer locale template (NOT the from-scratch
+        // 7-column summary): template filename + title cell + 21-col header.
+        assertThat(report.fileName()).isEqualTo("WeCMS_Internal_Transfer_download_EN.xlsx");
+        try (Workbook wb = open(report.content())) {
+            Sheet sheet = wb.getSheetAt(0);
+            assertThat(sheet.getRow(0).getCell(0).getStringCellValue()).isEqualTo("INTERNAL TRANSFER");
+            assertThat(sheet.getRow(2).getCell(20)).isNotNull(); // col U present
+            assertThat(sheet.getRow(2).getCell(21)).isNull();    // no 22nd column
+            // BOTH batches appended into the single sheet (1 detail each → rows 3, 4).
+            assertThat(str(sheet.getRow(3), 3)).isEqualTo("Batch");     // SP1 File Name (TITL)
+            assertThat(str(sheet.getRow(4), 3)).isEqualTo("Batch Two"); // SP2 File Name (TITL)
+        }
+    }
+
+    /**
+     * Trailing-bordered-rows regression (2026-07-01 template cleanup): the
+     * template ships exactly one styled data row (index 3), so a populated
+     * download must end right after the last written detail — no leftover
+     * pre-styled bordered blank rows below it.
+     */
+    @Test
+    void populated_download_has_no_bordered_rows_below_last_data_row() throws Exception {
+        stub("SP1", master("Y"), details(2)); // 2 details → rows 3, 4
+
+        try (Workbook wb = open(service.generate("SP1", "EN").content())) {
+            Sheet sheet = wb.getSheetAt(0);
+            // Sheet ends at the last written data row (index 4); nothing below.
+            assertThat(sheet.getLastRowNum()).isEqualTo(FIRST_DATA_ROW + 1);
+        }
+    }
+
+    /**
+     * Empty result set (bulk export, no batches): only the single required
+     * style-template data row remains (index 3) — the table ends there, with
+     * no large bordered blank block.
+     */
+    @Test
+    void empty_bulk_export_leaves_only_the_single_style_row() throws Exception {
+        try (Workbook wb = open(service.generateBulk(List.of(), "EN").content())) {
+            Sheet sheet = wb.getSheetAt(0);
+            assertThat(sheet.getLastRowNum()).isEqualTo(FIRST_DATA_ROW);
+        }
+    }
+
+    @Test
     void missing_batch_throws_wbe2060() {
         when(sumrRepository.findByBizKeyAndScdulPymnNoAndScdulPymnTypeCd(eq(BIZ_KEY), eq("NOPE"), anyString()))
                 .thenReturn(Optional.empty());

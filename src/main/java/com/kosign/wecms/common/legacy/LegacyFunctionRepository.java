@@ -195,6 +195,48 @@ public class LegacyFunctionRepository {
     }
 
     /**
+     * Memo (polymorphic) &mdash; allocate the next {@code MEMO_INFM.SEQ_NO}
+     * by delegating to the legacy {@code wb_get_next_val('memo_infm',
+     * 'seq_no', biz_key, web_svc_id)} branch. Mirrors legacy
+     * {@code MemoInfmDAO.create} &rarr; {@code SeqHelper.getNextVal(util,
+     * idoCon, MemoInfm.class, "seq_no", bizKey, webSvcId)} at
+     * {@code WECMS DEV/WECMS/src/wabooks/dao/MemoInfmDAO.java:62}.
+     *
+     * <p>The live JEX branch body is {@code SELECT
+     * COALESCE(MAX(seq_no::numeric), 0) + 1 FROM memo_infm WHERE
+     * biz_key = $3 AND web_svc_id = $4} &mdash; per-(tenant, screen)
+     * {@code MAX+1}. {@code MEMO_INFM} is a single polymorphic table
+     * shared by every memo-enabled screen, discriminated by
+     * {@code WEB_SVC_ID}, so the ceiling is scoped by both keys.
+     * Byte-for-byte identical to the value the former Java-side
+     * {@code findMaxSeqNoByBizKeyAndWebSvcId + 1} produced &mdash; this
+     * retires funnel exception #2 (the earlier "MEMO_INFM not in PROD
+     * active list" premise was wrong; legacy has the branch).
+     *
+     * <p>Concurrency: lock-free {@code MAX+1}, same as legacy. The
+     * caller wraps the call + INSERT in one {@code @Transactional} and
+     * retries once on {@code DataIntegrityViolationException} (PK
+     * {@code (biz_key, web_svc_id, seq_no)} collision) &mdash; equivalent
+     * to legacy, which relies on the same PK to reject a colliding
+     * insert.
+     *
+     * <p>Returns a numeric text token (e.g. {@code "6"}); the caller
+     * parses to {@link java.math.BigDecimal}.
+     *
+     * <p>The {@code memo_infm} branch already exists in the refactor
+     * {@code wb_get_next_val} function (added directly to the live
+     * function; no dedicated Flyway migration).
+     *
+     * <p>Retire plan: drop this method and the {@code memo_infm} branch
+     * once the legacy WeCMS / WABOOKS systems no longer call
+     * {@code wb_get_next_val} for {@code memo_infm} &mdash; see
+     * "Surviving legacy functions" in {@code wecms-api/CLAUDE.md}.
+     */
+    public String nextMemoInfmSeqNo(String bizKey, String webSvcId) {
+        return nextVal("memo_infm", "seq_no", bizKey, webSvcId, null, null, null, null);
+    }
+
+    /**
      * Settings &gt; Contacts &gt; Attachments &mdash; allocate the next
      * per-contact {@code FILE_ID} by delegating to the legacy
      * {@code wb_get_next_val('trco_info_file', 'file_id', trco_key)}

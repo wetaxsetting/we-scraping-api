@@ -173,6 +173,77 @@ public class ErpTrnsHistoryWriter {
     }
 
     /**
+     * Record a WeCMS&rarr;ERP file the user pulled out of WeCMS when the bytes are
+     * generated in-memory rather than copied from a source file — the Payment
+     * Scheduled / Result <b>report</b> downloads ({@code GET /{id}/report},
+     * {@code GET /results/{id}/report}) build the legacy template workbook as a
+     * {@code byte[]} and stream it directly, so there is no source {@link Path} to
+     * hand {@link #recordExportedFile}. This variant writes the exact downloaded
+     * bytes into the ERP-history tenant subtree and inserts the {@code ERP_TYPE='W'}
+     * row, so the file is later downloadable from Settings &gt; ERP Transaction
+     * History (legacy {@code pymn_0002_002_r002}/{@code _r003} {@code saveExcelFile}
+     * parity).
+     *
+     * <p>Same failure stance as {@link #recordExportedFile}: {@code REQUIRES_NEW}
+     * (never enlists in the caller's read-only download transaction) and every
+     * failure caught + WARN-logged, never rethrown — the download proceeds even if
+     * the audit row can't be written.
+     *
+     * @param trnsTypeCd ERP transaction-type code. Scheduled-page report
+     *                   downloads pass the scheduled code ({@code "02"} Vendor,
+     *                   {@code "03"} Expense, {@code "12"} Payroll, {@code "16"}
+     *                   Internal, {@code "13"} Overseas); Result-page report
+     *                   downloads pass the result code ({@code "04"}/{@code "05"}/
+     *                   {@code "06"}/{@code "17"}/{@code "14"}).
+     * @param content    the exact workbook bytes the user is downloading. Written
+     *                   verbatim; no-op (WARN) when null/empty.
+     * @param orgFileNm  filename to preserve in {@code ORG_FILE_NM}.
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    public void recordExportedBytes(String trnsTypeCd, byte[] content, String orgFileNm) {
+        if (trnsTypeCd == null || trnsTypeCd.isBlank()) {
+            log.warn("ERP audit-write (bytes) skipped — trnsTypeCd is blank");
+            return;
+        }
+        if (content == null || content.length == 0) {
+            log.warn("ERP audit-write (bytes) skipped — content is empty (trnsTypeCd={})", trnsTypeCd);
+            return;
+        }
+        String bizKey = TenantContext.currentBizKey();
+        String regId  = TenantContext.currentUserId();
+        if (bizKey == null || regId == null) {
+            log.warn("ERP audit-write (bytes) skipped — TenantContext not populated (trnsTypeCd={})", trnsTypeCd);
+            return;
+        }
+        String resolvedOrgFileNm = (orgFileNm == null || orgFileNm.isBlank())
+                ? "export.xlsx"
+                : orgFileNm;
+        try {
+            String saveFileNm = buildSaveFileNm(resolvedOrgFileNm);
+            Path destDir = fileResolver.tenantDirectory(bizKey);
+            Files.createDirectories(destDir);
+            Path dest = fileResolver.resolve(bizKey, saveFileNm);
+            Files.write(dest, content);
+
+            String regDtm = OffsetDateTime.now(ZoneOffset.UTC).format(REG_DTM_FORMAT);
+            try {
+                insertRow(bizKey, "W", trnsTypeCd, resolvedOrgFileNm, saveFileNm, content.length, regId, regDtm);
+            } catch (DataIntegrityViolationException race) {
+                log.info("ERP audit-write (bytes) seq_no race — retrying once (bizKey={})", bizKey);
+                insertRow(bizKey, "W", trnsTypeCd, resolvedOrgFileNm, saveFileNm, content.length, regId, regDtm);
+            }
+            log.info("ERP audit-write (bytes) committed — bizKey={} trnsTypeCd={} saveFileNm={} size={}",
+                    bizKey, trnsTypeCd, saveFileNm, content.length);
+        } catch (IOException ex) {
+            log.warn("ERP audit-write (bytes) failed bizKey={} trnsTypeCd={} orgFileNm={}",
+                    bizKey, trnsTypeCd, resolvedOrgFileNm, ex);
+        } catch (RuntimeException ex) {
+            log.warn("ERP audit-write (bytes) failed bizKey={} trnsTypeCd={} orgFileNm={}",
+                    bizKey, trnsTypeCd, resolvedOrgFileNm, ex);
+        }
+    }
+
+    /**
      * Record a <b>fileless</b> ERP&rarr;WeCMS import row — the HAENGSUNG Oracle
      * Refresh import has no Excel source file (the batch is pulled straight from
      * the Oracle ERP DB), so {@link #recordUploadedFile} would no-op on the

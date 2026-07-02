@@ -114,11 +114,89 @@ public class ExpensePaymentDownloadService {
     @Transactional(readOnly = true)
     public GeneratedReport generate(String scdulPymnNo, String langParam) {
         String bizKey = requireTenant();
+        String lang = resolveLang(langParam);
+        byte[] bytes = buildWorkbook(lang, bizKey, List.of(scdulPymnNo), true);
+        String fileName = "WeCMS_Expense_Payment_download_" + lang + ".xlsx";
+        log.info("feature=expense-payment report-download bizKey={} scdulPymnNo={} lang={}",
+                bizKey, scdulPymnNo, lang);
+        return new GeneratedReport(bytes, fileName);
+    }
 
-        ScdulPymnSumr master = sumrRepository
+    /**
+     * Bulk variant — the Payment Result toolbar Excel. ONE workbook from the
+     * same locale template as the per-row report, with every listed batch's
+     * detail lines appended into the single sheet (legacy
+     * {@code pymn_0002_002_r003} bulk-report parity — same 22-column layout
+     * incl. Contact Name, all filtered rows). Unknown / cross-tenant ids are
+     * skipped rather than aborting the export.
+     */
+    @Transactional(readOnly = true)
+    public GeneratedReport generateBulk(List<String> scdulPymnNos, String langParam) {
+        String bizKey = requireTenant();
+        String lang = resolveLang(langParam);
+        List<String> ids = scdulPymnNos == null ? List.of() : scdulPymnNos;
+        byte[] bytes = buildWorkbook(lang, bizKey, ids, false);
+        String fileName = "WeCMS_Expense_Payment_download_" + lang + ".xlsx";
+        log.info("feature=expense-payment bulk-report-download bizKey={} batches={} lang={}",
+                bizKey, ids.size(), lang);
+        return new GeneratedReport(bytes, fileName);
+    }
+
+    /** Load the locale template once and append every batch's detail rows
+     *  into the single sheet. Shared by {@link #generate} / {@link #generateBulk}. */
+    private byte[] buildWorkbook(String lang, String bizKey, List<String> ids, boolean throwIfMissing) {
+        String resourcePath = TEMPLATE_DIR + "WeCMS_Expense_Payment_download_" + lang + ".xlsx";
+        try (InputStream in = new ClassPathResource(resourcePath).getInputStream();
+             Workbook wb = WorkbookFactory.create(in);
+             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+
+            Sheet sheet = wb.getSheetAt(0);
+            CellStyle[] colStyle = captureColStyles(sheet);
+            Map<String, String> bankNmCache = new HashMap<>();
+
+            int rowIdx = FIRST_DATA_ROW_INDEX;
+            for (String id : ids) {
+                rowIdx = appendBatch(sheet, colStyle, rowIdx, bizKey, id, bankNmCache, throwIfMissing);
+            }
+
+            wb.write(out);
+            return out.toByteArray();
+        } catch (IOException e) {
+            // Template missing from the jar, or write failure — surfaces as
+            // WBE9999 via the global handler with the stack logged.
+            throw new UncheckedIOException(
+                    "Failed to generate Expense Payment download report (lang=" + lang + ")", e);
+        }
+    }
+
+    /** Capture the per-column cell style from the template's first data row
+     *  (index 3) so every written cell preserves the template formatting. */
+    private static CellStyle[] captureColStyles(Sheet sheet) {
+        CellStyle[] colStyle = new CellStyle[COLUMN_COUNT];
+        Row templateRow = sheet.getRow(FIRST_DATA_ROW_INDEX);
+        if (templateRow != null) {
+            for (int c = 0; c < COLUMN_COUNT; c++) {
+                Cell cell = templateRow.getCell(c);
+                if (cell != null) colStyle[c] = cell.getCellStyle();
+            }
+        }
+        return colStyle;
+    }
+
+    /** Resolve one batch and write its detail lines into the sheet starting
+     *  at {@code startIdx}; returns the next free row index. {@code throwIfMissing}
+     *  true (single) → WBE2060 on a missing batch; false (bulk) → skip. */
+    private int appendBatch(Sheet sheet, CellStyle[] colStyle, int startIdx,
+                            String bizKey, String scdulPymnNo,
+                            Map<String, String> bankNmCache, boolean throwIfMissing) {
+        Optional<ScdulPymnSumr> masterOpt = sumrRepository
                 .findByBizKeyAndScdulPymnNoAndScdulPymnTypeCd(
-                        bizKey, scdulPymnNo, ScdulPymnTypeCd.EXPENSE.code())
-                .orElseThrow(() -> new BusinessException("WBE2060"));
+                        bizKey, scdulPymnNo, ScdulPymnTypeCd.EXPENSE.code());
+        if (masterOpt.isEmpty()) {
+            if (throwIfMissing) throw new BusinessException("WBE2060");
+            return startIdx;
+        }
+        ScdulPymnSumr master = masterOpt.get();
 
         List<ScdulPymnSumrDetl> details = detlRepository.findByBizKeyAndScdulPymnNo(
                 bizKey, scdulPymnNo, ScdulPymnSumrDetlRepository.DETL_NO_NUMERIC_ASC);
@@ -127,12 +205,7 @@ public class ExpensePaymentDownloadService {
         Map<String, DispatchResult> resultByDetlNo =
                 dispatchResultResolver.resolve(master, details);
 
-        String lang = resolveLang(langParam);
         boolean dispatched = "Y".equalsIgnoreCase(trim(master.getTrnfYn()));
-
-        // Per-call bank-name cache so a batch with N lines to the same bank
-        // resolves the name once, not N times (legacy getBankName parity).
-        Map<String, String> bankNmCache = new HashMap<>();
         String outBankNm = resolveBankNm(master.getOutBankCd(), bankNmCache);
         String requestor = approval.map(ExptResolMstr::getDraftUserNm)
                 .filter(s -> s != null && !s.isBlank())
@@ -144,86 +217,40 @@ public class ExpensePaymentDownloadService {
                 .filter(s -> s != null && !s.isBlank())
                 .orElse(master.getTitl());
 
-        byte[] bytes = populate(lang, master, details, resultByDetlNo, dispatched,
-                outBankNm, requestor, scheduledDate, approvalStatus, approvalRef,
-                approvalTitle, bankNmCache);
+        for (int i = 0; i < details.size(); i++) {
+            ScdulPymnSumrDetl d = details.get(i);
+            DispatchResult r = resultByDetlNo.getOrDefault(
+                    d.getScdulPymnDetlNo(), DispatchResult.EMPTY);
+            Row row = rowAt(sheet, startIdx + i);
 
-        String fileName = "WeCMS_Expense_Payment_download_" + lang + ".xlsx";
-        log.info("feature=expense-payment report-download bizKey={} scdulPymnNo={} lang={} lines={}",
-                bizKey, scdulPymnNo, lang, details.size());
-        return new GeneratedReport(bytes, fileName);
-    }
-
-    private byte[] populate(
-            String lang, ScdulPymnSumr master, List<ScdulPymnSumrDetl> details,
-            Map<String, DispatchResult> resultByDetlNo, boolean dispatched,
-            String outBankNm, String requestor, String scheduledDate,
-            String approvalStatus, String approvalRef, String approvalTitle,
-            Map<String, String> bankNmCache) {
-
-        String resourcePath = TEMPLATE_DIR + "WeCMS_Expense_Payment_download_" + lang + ".xlsx";
-        try (InputStream in = new ClassPathResource(resourcePath).getInputStream();
-             Workbook wb = WorkbookFactory.create(in);
-             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-
-            Sheet sheet = wb.getSheetAt(0);
-
-            // Capture the per-column cell style from the template's first
-            // data row (index 3). Reusing these shared CellStyle objects for
-            // every written cell preserves the template's number / date
-            // formats, borders, alignment and fill on all rows, and avoids
-            // the 64k-style limit (legacy parity: write into pre-styled rows).
-            CellStyle[] colStyle = new CellStyle[COLUMN_COUNT];
-            Row templateRow = sheet.getRow(FIRST_DATA_ROW_INDEX);
-            if (templateRow != null) {
-                for (int c = 0; c < COLUMN_COUNT; c++) {
-                    Cell cell = templateRow.getCell(c);
-                    if (cell != null) colStyle[c] = cell.getCellStyle();
-                }
-            }
-
-            for (int i = 0; i < details.size(); i++) {
-                ScdulPymnSumrDetl d = details.get(i);
-                DispatchResult r = resultByDetlNo.getOrDefault(
-                        d.getScdulPymnDetlNo(), DispatchResult.EMPTY);
-                Row row = rowAt(sheet, FIRST_DATA_ROW_INDEX + i);
-
-                // A–V (0..21) — identical order across EN/KO/VI templates.
-                // Expense = Internal Transfer's 21 columns + Contact Name
-                // (TRCO_CMENM) inserted at index 9 (J), shifting K–V by one —
-                // byte-identical layout to Vendor (only template title differs).
-                setText  (row,  0, colStyle, dispatched ? formatDtm14(master.getTrnfDtm()) : "");
-                setText  (row,  1, colStyle, dispatched ? statusLabel(r) : "");
-                setText  (row,  2, colStyle, formatDtm14(master.getRegDtm()));
-                setText  (row,  3, colStyle, master.getTitl());
-                setText  (row,  4, colStyle, outBankNm);
-                setText  (row,  5, colStyle, master.getWdrlActNo());
-                setText  (row,  6, colStyle, d.getTarBankCd());
-                setText  (row,  7, colStyle, resolveBankNm(d.getTarBankCd(), bankNmCache));
-                setText  (row,  8, colStyle, d.getFincMdaNo());
-                setText  (row,  9, colStyle, d.getTrcoCmenm());            // J — Contact Name
-                setText  (row, 10, colStyle, d.getRcptNm());
-                setAmount(row, 11, colStyle, d.getTranAmt());
-                setText  (row, 12, colStyle, d.getTrnfCcyCd());
-                setText  (row, 13, colStyle, d.getTranUsag());
-                setText  (row, 14, colStyle, d.getChartAcctCd());
-                setText  (row, 15, colStyle, d.getNote());
-                setText  (row, 16, colStyle, d.getDocNo());
-                setText  (row, 17, colStyle, requestor);
-                setText  (row, 18, colStyle, formatDate8(scheduledDate));
-                setText  (row, 19, colStyle, approvalStatus);
-                setText  (row, 20, colStyle, approvalRef);
-                setText  (row, 21, colStyle, approvalTitle);
-            }
-
-            wb.write(out);
-            return out.toByteArray();
-        } catch (IOException e) {
-            // Template missing from the jar, or write failure — surfaces as
-            // WBE9999 via the global handler with the stack logged.
-            throw new UncheckedIOException(
-                    "Failed to generate Expense Payment download report (lang=" + lang + ")", e);
+            // A–V (0..21) — identical order across EN/KO/VI templates.
+            // Expense = Internal Transfer's 21 columns + Contact Name
+            // (TRCO_CMENM) inserted at index 9 (J), shifting K–V by one —
+            // byte-identical layout to Vendor (only template title differs).
+            setText  (row,  0, colStyle, dispatched ? formatDtm14(master.getTrnfDtm()) : "");
+            setText  (row,  1, colStyle, dispatched ? statusLabel(r) : "");
+            setText  (row,  2, colStyle, formatDtm14(master.getRegDtm()));
+            setText  (row,  3, colStyle, master.getTitl());
+            setText  (row,  4, colStyle, outBankNm);
+            setText  (row,  5, colStyle, master.getWdrlActNo());
+            setText  (row,  6, colStyle, d.getTarBankCd());
+            setText  (row,  7, colStyle, resolveBankNm(d.getTarBankCd(), bankNmCache));
+            setText  (row,  8, colStyle, d.getFincMdaNo());
+            setText  (row,  9, colStyle, d.getTrcoCmenm());            // J — Contact Name
+            setText  (row, 10, colStyle, d.getRcptNm());
+            setAmount(row, 11, colStyle, d.getTranAmt());
+            setText  (row, 12, colStyle, d.getTrnfCcyCd());
+            setText  (row, 13, colStyle, d.getTranUsag());
+            setText  (row, 14, colStyle, d.getChartAcctCd());
+            setText  (row, 15, colStyle, d.getNote());
+            setText  (row, 16, colStyle, d.getDocNo());
+            setText  (row, 17, colStyle, requestor);
+            setText  (row, 18, colStyle, formatDate8(scheduledDate));
+            setText  (row, 19, colStyle, approvalStatus);
+            setText  (row, 20, colStyle, approvalRef);
+            setText  (row, 21, colStyle, approvalTitle);
         }
+        return startIdx + details.size();
     }
 
     /* ----------------------------------------------------------------- */
