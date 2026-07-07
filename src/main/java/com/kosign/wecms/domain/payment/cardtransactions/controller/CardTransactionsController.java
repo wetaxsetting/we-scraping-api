@@ -720,6 +720,60 @@ public class CardTransactionsController {
     }
 
     /**
+     * List the attachments on one receipt / bill (audit G3/G5). Backs the
+     * Receipt / e-Invoice tab paperclip dropdown. Sourced from
+     * {@code BUSA_DOC_FILE} (legacy IDO {@code BUSA_DOC_MSTR_R034} REC_1).
+     */
+    @GetMapping("/receipts/{doc_id}/files")
+    public ApiResponse<List<com.kosign.wecms.domain.payment.cardtransactions.dto.ReceiptFileRow>> listReceiptFiles(
+            @PathVariable("doc_id") @NotBlank @Size(max = 50) String docId) {
+        return ApiResponse.ok(service.listReceiptFiles(docId));
+    }
+
+    /**
+     * Upload one attachment onto a receipt / bill (multipart field {@code file}).
+     * Persists to {@code BUSA_DOC_FILE} (legacy {@code prch_0005_001_c001} file
+     * insert). 10 MB cap + legacy extension allow-list; multi-file by calling
+     * once per file. Audit G3/G5.
+     */
+    @PostMapping(value = "/receipts/{doc_id}/files",
+            consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ApiResponse<com.kosign.wecms.domain.payment.cardtransactions.dto.ReceiptFileRow> uploadReceiptFile(
+            @PathVariable("doc_id") @NotBlank @Size(max = 50) String docId,
+            @org.springframework.web.bind.annotation.RequestPart("file")
+            org.springframework.web.multipart.MultipartFile file) {
+        return ApiResponse.ok(service.uploadReceiptFile(docId, file));
+    }
+
+    /**
+     * Download one attachment — streams the raw bytes under the original
+     * filename. Tenant scope + path-traversal guard via the shared
+     * {@code SecureFileDownload} primitive. Binary response (not the
+     * {@code ApiResponse} envelope). Legacy {@code prch_0006_001_r002.act}.
+     */
+    @GetMapping("/receipts/{doc_id}/files/{file_id}")
+    public org.springframework.http.ResponseEntity<org.springframework.core.io.InputStreamResource> downloadReceiptFile(
+            @PathVariable("doc_id") @NotBlank @Size(max = 50) String docId,
+            @PathVariable("file_id") @NotBlank @Size(max = 100) String fileId) throws java.io.IOException {
+        var resolved = service.openReceiptFileForDownload(docId, fileId);
+        java.io.InputStream stream = java.nio.file.Files.newInputStream(resolved.path());
+        return com.kosign.wecms.common.file.SecureFileDownload.attachment(
+                new org.springframework.core.io.InputStreamResource(stream),
+                resolved.orgFileNm(), resolved.fileSize());
+    }
+
+    /**
+     * Delete one attachment (DB row + physical file). Tenant-scoped. Audit G3/G5.
+     */
+    @DeleteMapping("/receipts/{doc_id}/files/{file_id}")
+    public ApiResponse<Void> deleteReceiptFile(
+            @PathVariable("doc_id") @NotBlank @Size(max = 50) String docId,
+            @PathVariable("file_id") @NotBlank @Size(max = 100) String fileId) {
+        service.deleteReceiptFile(docId, fileId);
+        return ApiResponse.ok(null);
+    }
+
+    /**
      * List Purpose options for the New Receipt popup's dropdown.
      * Mirrors legacy {@code prch_0011_001.ts:91} USAG combo. Returns
      * {@code USE_USAG_CD} + already-localized {@code usag_nm} per the

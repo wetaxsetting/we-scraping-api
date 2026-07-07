@@ -74,6 +74,7 @@ class BulkReceptionServiceValidationTest {
     @Mock TbFirmBatApiTranRepository firmBatApiTranRepository;
     @Mock DispatchKeyGenerator dispatchKeyGenerator;
     @Mock SftpClient sftpClient;
+    @Mock OperatingHoursService operatingHoursService;
 
     private final EfsCryptoService crypto = new EfsCryptoService();
     private final FixedLengthCodec codec = new FixedLengthCodec();
@@ -92,8 +93,12 @@ class BulkReceptionServiceValidationTest {
                 efsApiClient, crypto, vanApiKeyService, efsProperties, objectMapper,
                 payFileMstRepository, payFileDataRepository, firmConfRepository,
                 firmFileMstRepository, firmFileDataRepository, firmBatApiTranRepository,
-                dispatchKeyGenerator, codec, sftpClient, sftpProperties, validator);
+                dispatchKeyGenerator, codec, sftpClient, sftpProperties, validator,
+                org.mockito.Mockito.mock(com.kosign.wecms.domain.payment.dispatch.alert.OpsAlertService.class),
+                operatingHoursService);
 
+        // Operating-hours gate open by default; validation-fail cases return before it.
+        when(operatingHoursService.evaluateBulk(any(), any())).thenReturn(OperatingHoursDecision.DISPATCH);
         when(payFileMstRepository.save(any())).thenAnswer(i -> i.getArgument(0));
         when(firmFileMstRepository.save(any())).thenAnswer(i -> i.getArgument(0));
         when(firmFileDataRepository.save(any())).thenAnswer(i -> i.getArgument(0));

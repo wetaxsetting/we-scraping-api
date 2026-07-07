@@ -35,6 +35,7 @@ class DepositorInquiryServiceTest {
     @Mock LegacyFunctionRepository legacyFunctionRepository;
     @Mock FirmTranInquiryAuditService auditService;
     @Mock RecipientLookupService recipientLookupService;
+    @Mock com.kosign.wecms.domain.payment.dispatch.alert.OpsAlertService opsAlertService;
     @InjectMocks DepositorInquiryService service;
 
     private static RecipientLookupCommand cmd() {

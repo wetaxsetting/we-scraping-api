@@ -2,6 +2,7 @@ package com.kosign.wecms.domain.payment.dispatch.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kosign.wecms.common.exception.BusinessException;
+import com.kosign.wecms.domain.payment.dispatch.alert.OpsAlertService;
 import com.kosign.wecms.domain.payment.dispatch.constant.FirmBankingResultCd;
 import com.kosign.wecms.domain.payment.dispatch.van.client.EfsApiClient;
 import com.kosign.wecms.domain.payment.dispatch.van.client.EfsProperties;
@@ -76,6 +77,7 @@ public class ResultCheckService {
     private final ObjectMapper objectMapper;
     private final TbFirmTranRepository tbFirmTranRepository;
     private final TbPayTargetRepository tbPayTargetRepository;
+    private final OpsAlertService opsAlertService;
 
     /**
      * Confirm the true outcome of an original transaction via {@code WGVN_EFS_203}.
@@ -212,6 +214,19 @@ public class ResultCheckService {
         //    The C2 write seam reuses the pay-target TRAN_SEQ as the 202 firm-tran PK,
         //    so the link is the shared (BIZ_KEY, TRAN_DT, TRAN_SEQ) triple.
         propagateToPayTarget(row, procStat, dttm14, res.fincMdaOwnerNm());
+
+        // Ops alert (legacy PROCESSING_RESULT_CHECK_BATCH:232 "처리결과조회 Batch" — fires on
+        // every outcome; the :391 "원거래오류" header is used when the original transaction failed).
+        opsAlertService.notify(row.getVanOrgCd(),
+                (success ? "처리결과조회 Batch" : "처리결과조회 Batch 원거래오류")
+                        + "\nID : " + row.getVanOrgCd()
+                        + "\nbank_cd : " + row.getOutBankCd()
+                        + "\nprtn_id : " + row.getBankPrtnId()
+                        + "\nTNO : " + row.getTranSeq()
+                        + "\nORG TNO : " + row.getTranSeq()
+                        + "\n[Result]"
+                        + "\nRC : " + res.orgRespCd()
+                        + "\nRM : " + (res.orgRespMsg() == null ? "" : res.orgRespMsg()));
 
         log.info("result-check: tranSeq={} confirmed orgRespCd={} -> PROC_STAT={}",
                 row.getTranSeq(), res.orgRespCd(), procStat);

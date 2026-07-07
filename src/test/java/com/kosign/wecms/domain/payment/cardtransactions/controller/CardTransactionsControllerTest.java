@@ -114,7 +114,7 @@ class CardTransactionsControllerTest {
                 "1007010", "100", "100",
                 "Lunch", "1390",
                 null,   // apprDocNo
-                "1", "payment.card_transactions.status.1",
+                "1", "Approved",   // stts (raw code) + sttsNm (localized via wb_get_prch_stts_nm)
                 List.of(), List.of(),
                 "lamine@gmail.com", "20251023073754",
                 "lamine@gmail.com", "20251216043342",
@@ -149,7 +149,7 @@ class CardTransactionsControllerTest {
                 .andExpect(jsonPath("$.data.rows[0].bank_cd",          is("11704020")))
                 .andExpect(jsonPath("$.data.rows[0].bank_nm",          is("VietinBank")))
                 .andExpect(jsonPath("$.data.rows[0].card_nick_nm",     is("VTB(5559)")))
-                .andExpect(jsonPath("$.data.rows[0].stts_key",         is("payment.card_transactions.status.1")))
+                .andExpect(jsonPath("$.data.rows[0].stts_nm",          is("Approved")))
                 .andExpect(jsonPath("$.data.rows[0].linked_docs",      is(List.of())))
                 .andExpect(jsonPath("$.data.rows[0].approvers",        is(List.of())))
                 .andExpect(jsonPath("$.data.rows[0].memo_color",       is("fileG")))

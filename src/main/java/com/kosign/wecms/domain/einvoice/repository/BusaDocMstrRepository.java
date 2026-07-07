@@ -150,6 +150,7 @@ public interface BusaDocMstrRepository extends JpaRepository<BusaDocMstr, BusaDo
                AND m.DOC_TYPE     = 'B'
                AND m.HAND_REG_YN  = 'N'
                AND COALESCE(m.PROV_STTS, '') NOT IN ('EE', 'VD')
+               AND COALESCE(m.EINV_INVOICESTATUS, '') NOT IN (:invalidStatuses)
                AND m.ISSU_DT BETWEEN :fromDt AND :toDt
                AND NOT EXISTS (
                    SELECT 1 FROM BUSA_DOC_RCV_PAY_HIS h
@@ -167,6 +168,7 @@ public interface BusaDocMstrRepository extends JpaRepository<BusaDocMstr, BusaDo
                        AND m.DOC_TYPE     = 'B'
                        AND m.HAND_REG_YN  = 'N'
                        AND COALESCE(m.PROV_STTS, '') NOT IN ('EE', 'VD')
+                       AND COALESCE(m.EINV_INVOICESTATUS, '') NOT IN (:invalidStatuses)
                        AND m.ISSU_DT BETWEEN :fromDt AND :toDt
                        AND NOT EXISTS (
                            SELECT 1 FROM BUSA_DOC_RCV_PAY_HIS h
@@ -183,6 +185,7 @@ public interface BusaDocMstrRepository extends JpaRepository<BusaDocMstr, BusaDo
             @Param("fromDt")         String fromDt,
             @Param("toDt")           String toDt,
             @Param("keywordPattern") String keywordPattern,
+            @Param("invalidStatuses") List<String> invalidStatuses,
             Pageable pageable);
 
     /**
@@ -258,6 +261,7 @@ public interface BusaDocMstrRepository extends JpaRepository<BusaDocMstr, BusaDo
                AND m.DOC_ID IN (:docIds)
                AND m.DOC_TYPE IN ('B', 'E')
                AND COALESCE(m.PROV_STTS, '') NOT IN ('EE', 'VD')
+               AND COALESCE(m.EINV_INVOICESTATUS, '') NOT IN (:invalidStatuses)
                AND NOT EXISTS (
                    SELECT 1 FROM BUSA_DOC_RCV_PAY_HIS h
                     WHERE h.BIZ_KEY = m.BIZ_KEY
@@ -266,7 +270,34 @@ public interface BusaDocMstrRepository extends JpaRepository<BusaDocMstr, BusaDo
             nativeQuery = true)
     List<BusaDocMstr> findLinkableByDocIds(
             @Param("bizKey") String bizKey,
-            @Param("docIds") List<String> docIds);
+            @Param("docIds") List<String> docIds,
+            @Param("invalidStatuses") List<String> invalidStatuses);
+
+    /**
+     * Plain fetch of the requested docs (tenant-scoped) with NO eligibility
+     * filter — used by the link save path to diagnose <i>why</i> a requested
+     * doc is not linkable so the caller can return a specific error
+     * (invalid status → {@code WBE_LINK_INVALID_STATUS}, currency mismatch →
+     * {@code WBE_LINK_CURRENCY_MISMATCH}) instead of the generic
+     * {@code WBE_LINK_DOCS_UNAVAILABLE}. Audit findings L1 + L2.
+     */
+    List<BusaDocMstr> findByBizKeyAndDocIdIn(String bizKey, List<String> docIds);
+
+    /**
+     * Reset {@code PROV_STTS} to {@code 'OP'} (open / unpaid) for the given
+     * docs after a card link is removed — mirrors legacy
+     * {@code card_0001_002_u001_act.jsp:111} (audit finding G1). Bulk update;
+     * does not gate the already-linked read path (that keys on
+     * {@code BUSA_DOC_RCV_PAY_HIS} presence, not {@code PROV_STTS}).
+     */
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("UPDATE BusaDocMstr m SET m.provStts = 'OP', m.modId = :modId, m.modDtm = :modDtm " +
+           " WHERE m.bizKey = :bizKey AND m.docId IN :docIds")
+    int resetProvSttsToOpen(
+            @Param("bizKey") String bizKey,
+            @Param("docIds") List<String> docIds,
+            @Param("modId")  String modId,
+            @Param("modDtm") String modDtm);
 
     /**
      * Detail-history popup query — refactor port of

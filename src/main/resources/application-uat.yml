@@ -70,6 +70,8 @@ wecms:
     storage-root: ${WECMS_USER_IMAGE_STORAGE_ROOT}
   erp-transaction-history:
     storage-root: ${WECMS_ERP_TRANSACTION_HISTORY_STORAGE_ROOT}
+  card-transactions:
+    storage-root: ${WECMS_CARD_TRANSACTIONS_STORAGE_ROOT}
   internal-transfer:
     storage-root: ${WECMS_INTERNAL_TRANSFER_STORAGE_ROOT}
   dispatch:
@@ -85,6 +87,9 @@ wecms:
     # ONLY in the env that owns the real-time 202 write path (see Part B).
     result-check:
       cron: ${WECMS_DISPATCH_RESULT_CHECK_CRON}
+    # Ops alert (WGVN_MSG_SEND_001). OFF by default (OpsAlertService.notify is a no-op).
+    alert:
+      enabled: ${WECMS_DISPATCH_ALERT_ENABLED}
     # Inbound EFS callbacks (01301/01302): permitAll + VV crypto + this IP gate.
     callback:
       trust-forwarded-for: true

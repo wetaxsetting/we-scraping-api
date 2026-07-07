@@ -155,11 +155,6 @@ public class CardTransactionsService {
     // the list filter (only start <= end). The earlier MAX_PERIOD_DAYS
     // = 365 constant was a refactor-only addition that has been
     // dropped for legacy parity.
-    /** i18n key prefix for the {@code stts_key} hint emitted alongside
-     *  every row's raw {@code stts} code. The frontend resolves the key
-     *  via {@code t(...)} with fallback to the raw code. */
-    static final String         STTS_KEY_PREFIX = "payment.card_transactions.status.";
-
     private final CardTrnsHstrRepository           cardTrnsRepo;
     private final CardMstrRepository               cardMstrRepo;
     private final BankInfmRepository               bankInfmRepo;
@@ -187,6 +182,16 @@ public class CardTransactionsService {
     /** Reads e-Invoice rows for the Link Card Payments popup's
      *  Expenses tab (legacy {@code card_0001_002_r001}). */
     private final BusaDocMstrRepository            busaDocMstrRepo;
+
+    /** e-Invoice line items — Card-Link e-Invoice tab item dropdown (G2). */
+    private final com.kosign.wecms.domain.einvoice.repository.BusaDocDetlRepository busaDocDetlRepo;
+
+    /** Per-day receipt document-number counter (G7 — sys_doc_id_gen upsert). */
+    private final com.kosign.wecms.domain.payment.cardtransactions.repository.SysDocIdGenRepository sysDocIdGenRepo;
+
+    /** Receipt / e-Invoice attachments (G3/G5 — BUSA_DOC_FILE). */
+    private final com.kosign.wecms.domain.payment.cardtransactions.repository.BusaDocFileRepository busaDocFileRepo;
+    private final CardTransactionsFileResolver cardFileResolver;
     /** Card-link master writes (legacy {@code card_0001_002_c001}). */
     private final CardTrnsRcvPayInfmRepository     cardTrnsRcvPayRepo;
     /** Per-doc card-link writes (legacy {@code card_0001_002_c001}). */
@@ -272,9 +277,10 @@ public class CardTransactionsService {
         Map<String, String> docNoByApprSeqNo = resolveDocNos(entityPage.getContent());
         Map<String, List<LinkedDocRef>> linkedDocsByCardSeqNo = resolveLinkedDocs(entityPage.getContent());
         Map<String, MemoAgg> memoByCardSeqNo = resolveMemoAggregates(entityPage.getContent());
+        Map<String, String> sttsNmByCode = resolvePurchaseStatusNames(entityPage.getContent());
 
         List<CardTransactionRow> rows = entityPage.getContent().stream()
-                .map(e -> toRow(e, bankNmByCd, docNoByApprSeqNo, linkedDocsByCardSeqNo, memoByCardSeqNo))
+                .map(e -> toRow(e, bankNmByCd, docNoByApprSeqNo, linkedDocsByCardSeqNo, memoByCardSeqNo, sttsNmByCode))
                 .toList();
 
         CardTransactionTotals totals = toTotals(raw);
@@ -318,9 +324,10 @@ public class CardTransactionsService {
         Map<String, String> bankNmByCd = resolveBankNames(page.getContent());
         Map<String, String> docNoByApprSeqNo = resolveDocNos(page.getContent());
         Map<String, List<LinkedDocRef>> linkedDocsByCardSeqNo = resolveLinkedDocs(page.getContent());
+        Map<String, String> sttsNmByCode = resolvePurchaseStatusNames(page.getContent());
         // Export path — memo icon is not an export column; empty aggregate.
         return page.getContent().stream()
-                .map(e -> toRow(e, bankNmByCd, docNoByApprSeqNo, linkedDocsByCardSeqNo, Map.of()))
+                .map(e -> toRow(e, bankNmByCd, docNoByApprSeqNo, linkedDocsByCardSeqNo, Map.of(), sttsNmByCode))
                 .toList();
     }
 
@@ -347,9 +354,10 @@ public class CardTransactionsService {
         Map<String, String> bankNmByCd = resolveBankNames(entities);
         Map<String, String> docNoByApprSeqNo = resolveDocNos(entities);
         Map<String, List<LinkedDocRef>> linkedDocsByCardSeqNo = resolveLinkedDocs(entities);
+        Map<String, String> sttsNmByCode = resolvePurchaseStatusNames(entities);
         // Approval-details popup — memo icon not shown there; empty aggregate.
         return entities.stream()
-                .map(e -> toRow(e, bankNmByCd, docNoByApprSeqNo, linkedDocsByCardSeqNo, Map.of()))
+                .map(e -> toRow(e, bankNmByCd, docNoByApprSeqNo, linkedDocsByCardSeqNo, Map.of(), sttsNmByCode))
                 .toList();
     }
 
@@ -1006,23 +1014,60 @@ public class CardTransactionsService {
                 Math.min(Math.max(1, size), 200));
 
         Page<BusaDocMstr> result = busaDocMstrRepo.findLinkableEInvoices(
-                bizKey, fromDt, toDt, keywordPattern, pageable);
+                bizKey, fromDt, toDt, keywordPattern,
+                EInvoiceLinkStatuses.INVALID_LINK_STATUSES, pageable);
+
+        // G2 — batch-fetch line items for the visible page so the item
+        // dropdown populates (legacy REC_2 from BUSA_DOC_DETL). One query,
+        // grouped in memory — no per-row N+1.
+        List<String> docIds = result.getContent().stream()
+                .map(BusaDocMstr::getDocId)
+                .toList();
+        Map<String, List<String>> itemsByDoc = itemsByDoc(bizKey, docIds);
+        Map<String, List<com.kosign.wecms.domain.payment.cardtransactions.dto.ReceiptFileRow>> filesByDoc =
+                filesByDoc(bizKey, docIds);
 
         List<com.kosign.wecms.domain.payment.cardtransactions.dto.LinkableEInvoiceRow> rows = result
                 .getContent()
                 .stream()
-                .map(this::toLinkableEInvoiceRow)
+                .map(m -> toLinkableEInvoiceRow(m,
+                        itemsByDoc.getOrDefault(m.getDocId(), List.of()),
+                        filesByDoc.getOrDefault(m.getDocId(), List.of())))
                 .toList();
 
         return new com.kosign.wecms.domain.payment.cardtransactions.dto.LinkableEInvoiceListResponse(
                 result.getTotalElements(), rows);
     }
 
+    /** Group e-Invoice line-item display names by {@code DOC_ID} for the
+     *  Card-Link item dropdown (G2). Prefers {@code EINV_PRODUCTNAME}
+     *  (the GDT product name legacy renders in REC_2), falls back to
+     *  {@code ITEM_NM}. Blank names are dropped. Empty input → empty map. */
+    private Map<String, List<String>> itemsByDoc(String bizKey, List<String> docIds) {
+        if (docIds == null || docIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, List<String>> byDoc = new java.util.LinkedHashMap<>();
+        for (var d : busaDocDetlRepo.findByBizKeyAndDocIdInOrderByDocIdAscDispOrdAsc(bizKey, docIds)) {
+            String name = (d.getEinvProductname() != null && !d.getEinvProductname().isBlank())
+                    ? d.getEinvProductname()
+                    : d.getItemNm();
+            if (name == null || name.isBlank()) {
+                continue;
+            }
+            byDoc.computeIfAbsent(d.getDocId(), k -> new java.util.ArrayList<>()).add(name);
+        }
+        return byDoc;
+    }
+
     /** Map a {@link BusaDocMstr} entity onto the wire DTO. Picks the
      *  Vietnamese merchant name first ({@code TRCO_CMNM}), falls back
-     *  to the English form ({@code TRCO_CMENM}). */
+     *  to the English form ({@code TRCO_CMENM}). {@code items} is the
+     *  ordered line-item name list for the dropdown (G2); {@code files}
+     *  is the attachment list (G3/G5). */
     private com.kosign.wecms.domain.payment.cardtransactions.dto.LinkableEInvoiceRow
-            toLinkableEInvoiceRow(BusaDocMstr m) {
+            toLinkableEInvoiceRow(BusaDocMstr m, List<String> items,
+                    List<com.kosign.wecms.domain.payment.cardtransactions.dto.ReceiptFileRow> files) {
         String merchNm = (m.getTrcoCmnm() != null && !m.getTrcoCmnm().isBlank())
                 ? m.getTrcoCmnm()
                 : m.getTrcoCmenm();
@@ -1034,7 +1079,33 @@ public class CardTransactionsService {
                 merchNm,
                 m.getTrcoTaxId(),
                 m.getTotlAmt(),
-                m.getTrcoTrscCcyCd());
+                m.getTrcoTrscCcyCd(),
+                items,
+                files.size(),
+                files);
+    }
+
+    /** Group receipt/e-Invoice attachment rows by {@code DOC_ID} for the
+     *  paperclip count + dropdown (G3/G5). One batch query over
+     *  {@code BUSA_DOC_FILE}; empty input → empty map. */
+    private Map<String, List<com.kosign.wecms.domain.payment.cardtransactions.dto.ReceiptFileRow>>
+            filesByDoc(String bizKey, List<String> docIds) {
+        if (docIds == null || docIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, List<com.kosign.wecms.domain.payment.cardtransactions.dto.ReceiptFileRow>> byDoc =
+                new java.util.LinkedHashMap<>();
+        for (var f : busaDocFileRepo.findByBizKeyAndDocIdInOrderByDocIdAscFileIdAsc(bizKey, docIds)) {
+            byDoc.computeIfAbsent(f.getDocId(), k -> new java.util.ArrayList<>())
+                    .add(toReceiptFileRow(f));
+        }
+        return byDoc;
+    }
+
+    private static com.kosign.wecms.domain.payment.cardtransactions.dto.ReceiptFileRow
+            toReceiptFileRow(com.kosign.wecms.domain.payment.cardtransactions.entity.BusaDocFile f) {
+        return new com.kosign.wecms.domain.payment.cardtransactions.dto.ReceiptFileRow(
+                f.getFileId(), f.getOrgFileNm(), f.getFileSize());
     }
 
     /** Escape user-supplied {@code search} for LIKE matching — keeps
@@ -1070,18 +1141,44 @@ public class CardTransactionsService {
         Page<BusaDocMstr> result = busaDocMstrRepo.findLinkableReceipts(
                 bizKey, fromDt, toDt, keywordPattern, pageable);
 
+        Map<String, List<com.kosign.wecms.domain.payment.cardtransactions.dto.ReceiptFileRow>> filesByDoc =
+                filesByDoc(bizKey, result.getContent().stream().map(BusaDocMstr::getDocId).toList());
+
+        // Resolve every group-6 purpose code → localized name in one query
+        // so each row can show "{code} {name}" without an N+1 (same
+        // lang-aware lookup the New Receipt picker + Receipt Detail use).
+        Map<String, String> purposeNames = purposeNamesByCode();
+
         List<com.kosign.wecms.domain.payment.cardtransactions.dto.LinkableReceiptRow> rows = result
                 .getContent()
                 .stream()
-                .map(this::toLinkableReceiptRow)
+                .map(m -> toLinkableReceiptRow(m,
+                        purposeNames.get(m.getBusaUsagCd()),
+                        filesByDoc.getOrDefault(m.getDocId(), List.of())))
                 .toList();
 
         return new com.kosign.wecms.domain.payment.cardtransactions.dto.LinkableReceiptListResponse(
                 result.getTotalElements(), rows);
     }
 
+    /** Resolve group-6 (manual expense) purpose {@code USE_USAG_CD} → localized
+     *  name in one query for the Receipt list. Reuses
+     *  {@link UsagInfmRepository#findActiveByGrpCd} — the same lookup the New
+     *  Receipt picker and Receipt Detail use — so the Receipt tab labels
+     *  purposes without a per-row round-trip. */
+    private Map<String, String> purposeNamesByCode() {
+        LangCd langCd = TenantContext.currentLangCd();
+        String lang = (langCd != null ? langCd : LangCd.EN).name();
+        Map<String, String> byCode = new java.util.LinkedHashMap<>();
+        for (var p : usagInfmRepo.findActiveByGrpCd("6", lang)) {
+            byCode.put(p.getUseUsagCd(), p.getUsagNm());
+        }
+        return byCode;
+    }
+
     private com.kosign.wecms.domain.payment.cardtransactions.dto.LinkableReceiptRow
-            toLinkableReceiptRow(BusaDocMstr m) {
+            toLinkableReceiptRow(BusaDocMstr m, String purposeNm,
+                    List<com.kosign.wecms.domain.payment.cardtransactions.dto.ReceiptFileRow> files) {
         String merchNm = (m.getTrcoCmnm() != null && !m.getTrcoCmnm().isBlank())
                 ? m.getTrcoCmnm()
                 : m.getTrcoCmenm();
@@ -1094,10 +1191,16 @@ public class CardTransactionsService {
                 m.getDocId(),
                 dt,
                 merchNm,
+                // Same source the e-Invoice list uses — TRCO_TAX_ID off the
+                // BUSA_DOC_MSTR row; no extra join.
+                m.getTrcoTaxId(),
                 m.getTotlAmt(),
                 m.getTrcoTrscCcyCd(),
                 m.getBusaUsagCd(),
-                m.getCont());
+                purposeNm,
+                m.getCont(),
+                files.size(),
+                files);
     }
 
     /**
@@ -1122,11 +1225,12 @@ public class CardTransactionsService {
      *       {@code BUSA_DOC_RCV_PAY_HIS} rows, all in one transaction.</li>
      * </ol>
      *
-     * <p>The legacy "update {@code BUSA_DOC_MSTR.PROV_STTS}" step
-     * (legacy {@code updateProvStts}) is deferred — the link state is
-     * authoritative on {@code BUSA_DOC_RCV_PAY_HIS} (NOT EXISTS keeps
-     * linked docs out of the {@code r001/r002} pickers), so the parent
-     * row's provision status isn't on the read path yet.
+     * <p>After the link rows are written, each document's
+     * {@code BUSA_DOC_MSTR.PROV_STTS} is advanced ({@code 'PA'} fully
+     * settled / {@code 'PP'} partial) to mirror legacy
+     * {@code updateProvStts} (audit finding G1). Already-linked exclusion
+     * still keys on {@code BUSA_DOC_RCV_PAY_HIS} presence (NOT EXISTS), so
+     * the status update is reconciliation metadata, not the link gate.
      */
     @Transactional
     public com.kosign.wecms.domain.payment.cardtransactions.dto.LinkExpensesResponse
@@ -1158,12 +1262,45 @@ public class CardTransactionsService {
             throw new BusinessException("WBE_LINK_ALREADY_LINKED");
         }
 
-        // 4) Resolve every doc — drops missing / wrong-tenant / linked /
-        //    rejected ids. Resolved subset must equal request size.
+        // 4) Resolve every doc and re-validate eligibility server-side so a
+        //    stale / hand-crafted request can't bypass the list filters.
         List<String> reqDocIds = req.items().stream()
                 .map(com.kosign.wecms.domain.payment.cardtransactions.dto.LinkExpensesRequest.Item::docId)
                 .toList();
-        List<BusaDocMstr> docs = busaDocMstrRepo.findLinkableByDocIds(bizKey, reqDocIds);
+
+        // 4a) Plain fetch of the requested docs to produce a SPECIFIC error
+        //     (invalid status → L1, currency mismatch → L2) instead of the
+        //     generic "unavailable" envelope.
+        Map<String, BusaDocMstr> reqDocById = new HashMap<>();
+        for (BusaDocMstr d : busaDocMstrRepo.findByBizKeyAndDocIdIn(bizKey, reqDocIds)) {
+            reqDocById.put(d.getDocId(), d);
+        }
+        String cardCcy = normalizeCcy(card.getCcyCd());
+        for (String docId : reqDocIds) {
+            BusaDocMstr d = reqDocById.get(docId);
+            if (d == null) {
+                throw new BusinessException("WBE_LINK_DOCS_UNAVAILABLE");
+            }
+            // L1 — Cancelled / Replaced / Replacement / Adjustment / Adjusted
+            // e-invoices are not linkable (legacy allowed them by omission).
+            if (!EInvoiceLinkStatuses.isLinkable(d.getEinvInvoicestatus())) {
+                throw new BusinessException("WBE_LINK_INVALID_STATUS");
+            }
+            // L2 — the linked document currency must match the card currency.
+            // When either side is blank we can't confirm a mismatch, so we skip
+            // the guard (preserves legacy-imported rows with a null doc ccy);
+            // a concrete VND-vs-USD divergence is rejected.
+            String docCcy = normalizeCcy(d.getTrcoTrscCcyCd());
+            if (!cardCcy.isEmpty() && !docCcy.isEmpty() && !cardCcy.equals(docCcy)) {
+                throw new BusinessException("WBE_LINK_CURRENCY_MISMATCH");
+            }
+        }
+
+        // 4b) Eligibility gate — drops missing / wrong-tenant / already-linked /
+        //     rejected / invalid-status ids. Resolved subset must equal request
+        //     size (defence in depth over 4a for the already-linked / EE-VD case).
+        List<BusaDocMstr> docs = busaDocMstrRepo.findLinkableByDocIds(
+                bizKey, reqDocIds, EInvoiceLinkStatuses.INVALID_LINK_STATUSES);
         if (docs.size() != reqDocIds.size()) {
             throw new BusinessException("WBE_LINK_DOCS_UNAVAILABLE");
         }
@@ -1217,6 +1354,23 @@ public class CardTransactionsService {
             row.setRegId(userId);
             row.setRegDtm(now);
             hisRows.add(row);
+
+            // G1 — advance BUSA_DOC_MSTR.PROV_STTS so the reconciliation
+            // status reflects the link (legacy updateProvStts,
+            // card_0001_002_c001_act.jsp:190 → BusaDocMstrDAO:620-651).
+            // The doc had no prior link (4b gate), so its total settled amount
+            // is exactly this row's dedu_amt: equal to TOTL_AMT → 'PA' (fully
+            // paid), less → 'PP' (partial), more → over-allocated (legacy
+            // WBE1019, cannot occur given the exact-sum guard + one-link rule).
+            BigDecimal totl = doc.getTotlAmt() != null ? doc.getTotlAmt() : BigDecimal.ZERO;
+            int cmp = totl.compareTo(item.deduAmt());
+            if (cmp < 0) {
+                throw new BusinessException("WBE_LINK_OVER_ALLOCATED");
+            }
+            doc.setProvStts(cmp == 0 ? "PA" : "PP");
+            doc.setModId(userId);
+            doc.setModDtm(now);
+            busaDocMstrRepo.save(doc);
         }
         busaDocRcvPayHisRepo.saveAll(hisRows);
 
@@ -1236,6 +1390,12 @@ public class CardTransactionsService {
 
     private static String safe(String v) {
         return v == null ? "" : v;
+    }
+
+    /** Normalise a currency code for the link currency guard (L2):
+     *  trim ({@code CHAR(3)} pads) + upper-case. Null/blank → "". */
+    private static String normalizeCcy(String v) {
+        return v == null ? "" : v.trim().toUpperCase(Locale.ROOT);
     }
 
     /**
@@ -1538,11 +1698,12 @@ public class CardTransactionsService {
      * {@code DOC_ID} so the caller can immediately select it on the
      * Receipt tab.
      *
-     * <p>DOC_ID allocation: timestamp-derived ({@code "R" + yyyyMMddHHmmssSSS
-     * + random suffix}) instead of {@code wb_get_next_val} — manual
-     * receipts have no required legacy format, and this keeps the link
-     * write off the legacy generator. Future MR can swap for a per-tenant
-     * counter if the volume ever justifies one.
+     * <p>DOC_ID allocation: the single {@code wb_get_next_val} funnel over
+     * {@code SYS_DOC_ID_GEN} (V140 #48), legacy {@code R-yyyyMMddNNN} format
+     * (audit finding G7; corrected 2026-07-04 — sys_doc_id_gen, not a
+     * {@code busa_doc_mstr} max). The daily {@code sys_doc_id_gen} row is
+     * upserted with the minted id so same-day receipts keep incrementing,
+     * matching legacy population + keeping JEX → refactor migration clean.
      *
      * <p>Phase D scope this MR: free-text contact + purpose. Phase B
      * picker dialogs against {@code TRCO_INFM} / {@code USAG_INFM} land
@@ -1557,8 +1718,22 @@ public class CardTransactionsService {
         String now    = nowDtm14();
         String ccyCd  = (req.ccyCd() == null || req.ccyCd().isBlank()) ? "VND" : req.ccyCd().trim();
 
-        String docId = "R" + now + String.format("%03d",
-                java.util.concurrent.ThreadLocalRandom.current().nextInt(1000));
+        // G7 — DOC_ID via the single wb_get_next_val funnel over SYS_DOC_ID_GEN
+        // (V140 #48), legacy R-yyyyMMddNNN format (corrected 2026-07-04 per UAT
+        // evidence — sys_doc_id_gen, NOT busa_doc_mstr max). Fails fast if the
+        // branch is somehow absent rather than minting a malformed id.
+        String docId = legacyFunctions.nextSysDocIdGenDocId(bizKey, "E");
+        if (docId == null || docId.isBlank() || docId.length() < 10) {
+            throw new BusinessException("WBE_RECEIPT_DOCID_UNAVAILABLE");
+        }
+        // The #48 branch is a read-only max+1 over the single daily
+        // sys_doc_id_gen row; record the freshly-minted id so the next same-day
+        // receipt increments (matches legacy population — otherwise every
+        // same-day call reads max=NULL → 001 and collides). req_date is taken
+        // from the id's own embedded UTC date (chars 2..9 of "R-yyyyMMddNNN")
+        // so it matches the branch's UTC scope exactly, with no clock skew.
+        String reqDate = docId.substring(2, 10);
+        sysDocIdGenRepo.upsertDailyDocId(bizKey, "E", reqDate, docId);
 
         // TRCO_KEY: real id from the Contacts picker when in Contacts
         // mode; legacy "manual mode" sentinel when free-typed. Mirrors
@@ -1571,6 +1746,13 @@ public class CardTransactionsService {
         m.setBizKey(bizKey);
         m.setDocId(docId);
         m.setDocType("E");
+        // USER_ID must be set: the legacy busa_doc_mstr_log AFTER-INSERT
+        // trigger inserts a USER_TRCO_USE_HIS / USER_USAG_USE_HIS audit row
+        // keyed off new.user_id, allocating SEQ_NO via
+        // wb_get_next_val('user_trco_use_his','seq_no', biz_key, new.user_id).
+        // A null user_id makes that branch's guard fail → NULL SEQ_NO → NOT-NULL
+        // violation on commit. Legacy busa_doc_mstr always carries USER_ID.
+        m.setUserId(userId);
         m.setIssuDt(req.useDt());
         m.setUseDt(req.useDt());
         m.setIssuTaxId(req.taxId() != null ? req.taxId().trim() : "");
@@ -1601,6 +1783,190 @@ public class CardTransactionsService {
         return new com.kosign.wecms.domain.payment.cardtransactions.dto.CreateReceiptResponse(docId);
     }
 
+    // =====================================================================
+    //  Receipt / e-Invoice attachments (audit G3/G5 — BUSA_DOC_FILE).
+    //  Mirrors the Contacts attachment pattern (ContactsFileService) but
+    //  keyed by (biz_key, doc_id); tenant scope is the direct BIZ_KEY on
+    //  BUSA_DOC_FILE + a parent BUSA_DOC_MSTR existence check.
+    // =====================================================================
+
+    /** 10 MB per file — mirrors the container multipart cap + the Contacts rule. */
+    public static final long MAX_RECEIPT_FILE_SIZE_BYTES = 10L * 1024L * 1024L;
+
+    /** Extension allow-list (lower-case, no dot) — same legacy set as Contacts;
+     *  SVG is absent so it is rejected. */
+    private static final java.util.Set<String> ALLOWED_RECEIPT_FILE_EXTENSIONS = java.util.Set.of(
+            "jpg", "jpeg", "png", "gif", "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx");
+
+    /** Controller-facing carrier for a resolved attachment download. */
+    public record ReceiptFileDownload(java.nio.file.Path path, String orgFileNm, long fileSize) { }
+
+    /**
+     * Upload one attachment onto a receipt / bill document. Validates the
+     * parent doc is in the tenant, the filename / size / extension, allocates
+     * {@code FILE_ID} via the {@code busa_doc_file.file_id} funnel, writes the
+     * bytes, and inserts the row. One-shot retry on a PK collision from a
+     * concurrent same-doc upload (funnel is lock-free MAX+1) — decision
+     * 2026-07-04, mirrors {@code ChartOfAccountsService.create} /
+     * {@code ContactsFileService.upload}.
+     */
+    @Transactional
+    public com.kosign.wecms.domain.payment.cardtransactions.dto.ReceiptFileRow
+            uploadReceiptFile(String docId, org.springframework.web.multipart.MultipartFile file) {
+        String bizKey = requireReceiptDoc(docId);
+        String orgFileNm = validateReceiptFilename(file);
+        long size = validateReceiptSize(file);
+        String extension = receiptExtensionOf(orgFileNm);
+        validateReceiptExtension(extension);
+        try {
+            return persistReceiptFile(bizKey, docId, file, orgFileNm, extension, size);
+        } catch (org.springframework.dao.DataIntegrityViolationException ex) {
+            log.warn("BUSA_DOC_FILE.FILE_ID collision on first attempt for docId={}, retrying", docId);
+            return persistReceiptFile(bizKey, docId, file, orgFileNm, extension, size);
+        }
+    }
+
+    private com.kosign.wecms.domain.payment.cardtransactions.dto.ReceiptFileRow persistReceiptFile(
+            String bizKey, String docId, org.springframework.web.multipart.MultipartFile file,
+            String orgFileNm, String extension, long size) {
+
+        String userId = requireUserId();
+        String now    = nowDtm14();
+        String fileId = legacyFunctions.nextBusaDocFileFileId(bizKey, docId);
+        if (fileId == null || fileId.isBlank()) {
+            throw new BusinessException("WBE_RECEIPT_FILE_STORAGE_FAILED");
+        }
+        String saveFileNm = java.util.UUID.randomUUID().toString() + "." + extension;
+
+        java.nio.file.Path tenantRoot = cardFileResolver.tenantRoot(bizKey);
+        java.nio.file.Path destination = cardFileResolver.resolve(bizKey, saveFileNm);
+        try {
+            java.nio.file.Files.createDirectories(tenantRoot);
+            file.transferTo(destination);
+        } catch (java.io.IOException ex) {
+            log.error("Failed to store receipt attachment docId={} fileId={}", docId, fileId, ex);
+            throw new BusinessException("WBE_RECEIPT_FILE_STORAGE_FAILED");
+        }
+
+        com.kosign.wecms.domain.payment.cardtransactions.entity.BusaDocFile row =
+                new com.kosign.wecms.domain.payment.cardtransactions.entity.BusaDocFile();
+        row.setBizKey(bizKey);
+        row.setDocId(docId);
+        row.setFileId(fileId);
+        row.setOrgFileNm(orgFileNm);
+        row.setSaveFileNm(saveFileNm);
+        row.setFileSize(Long.toString(size));
+        row.setRegId(userId);
+        row.setRegDtm(now);
+        try {
+            busaDocFileRepo.save(row);
+        } catch (org.springframework.dao.DataIntegrityViolationException ex) {
+            deleteQuietlyReceiptFile(destination); // don't leak an orphan on the retry path
+            throw ex;
+        }
+        return toReceiptFileRow(row);
+    }
+
+    /** List the attachments on one receipt / bill (tenant-scoped). */
+    @Transactional(readOnly = true)
+    public List<com.kosign.wecms.domain.payment.cardtransactions.dto.ReceiptFileRow>
+            listReceiptFiles(String docId) {
+        String bizKey = requireReceiptDoc(docId);
+        return busaDocFileRepo.findByBizKeyAndDocIdOrderByFileIdAsc(bizKey, docId).stream()
+                .map(CardTransactionsService::toReceiptFileRow)
+                .toList();
+    }
+
+    /** Resolve the physical file behind a {@code (docId, fileId)} for streaming. */
+    @Transactional(readOnly = true)
+    public ReceiptFileDownload openReceiptFileForDownload(String docId, String fileId) {
+        String bizKey = requireReceiptDoc(docId);
+        var row = busaDocFileRepo.findByBizKeyAndDocIdAndFileId(bizKey, docId, fileId)
+                .orElseThrow(() -> new BusinessException("WBE_RECEIPT_FILE_NOT_FOUND"));
+        java.nio.file.Path path = cardFileResolver.resolve(bizKey, row.getSaveFileNm());
+        if (!java.nio.file.Files.isReadable(path) || !java.nio.file.Files.isRegularFile(path)) {
+            throw new BusinessException("WBE_RECEIPT_FILE_UNAVAILABLE");
+        }
+        long bytes;
+        try {
+            bytes = java.nio.file.Files.size(path);
+        } catch (java.io.IOException ex) {
+            throw new BusinessException("WBE_RECEIPT_FILE_UNAVAILABLE");
+        }
+        return new ReceiptFileDownload(path, row.getOrgFileNm(), bytes);
+    }
+
+    /** Delete one attachment (DB row then physical file). */
+    @Transactional
+    public void deleteReceiptFile(String docId, String fileId) {
+        String bizKey = requireReceiptDoc(docId);
+        var row = busaDocFileRepo.findByBizKeyAndDocIdAndFileId(bizKey, docId, fileId)
+                .orElseThrow(() -> new BusinessException("WBE_RECEIPT_FILE_NOT_FOUND"));
+        java.nio.file.Path path = cardFileResolver.resolve(bizKey, row.getSaveFileNm());
+        busaDocFileRepo.deleteByBizKeyAndDocIdAndFileId(bizKey, docId, fileId);
+        deleteQuietlyReceiptFile(path);
+    }
+
+    /** Confirm the parent {@code BUSA_DOC_MSTR} exists in the current tenant
+     *  (receipt or bill); return the tenant biz_key. */
+    private String requireReceiptDoc(String docId) {
+        String bizKey = TenantContext.currentBizKey();
+        if (docId == null || docId.isBlank()
+                || busaDocMstrRepo.findByBizKeyAndDocIdIn(bizKey, List.of(docId)).isEmpty()) {
+            throw new BusinessException("WBE_RECEIPT_FILE_DOC_NOT_FOUND");
+        }
+        return bizKey;
+    }
+
+    private static String validateReceiptFilename(org.springframework.web.multipart.MultipartFile file) {
+        if (file == null || file.getOriginalFilename() == null) {
+            throw new BusinessException("WBE_RECEIPT_FILE_NAME_INVALID");
+        }
+        String name = file.getOriginalFilename();
+        int slash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
+        if (slash >= 0) name = name.substring(slash + 1);
+        name = name.trim();
+        if (name.isEmpty()) {
+            throw new BusinessException("WBE_RECEIPT_FILE_NAME_INVALID");
+        }
+        return name;
+    }
+
+    private static long validateReceiptSize(org.springframework.web.multipart.MultipartFile file) {
+        long size = file.getSize();
+        if (size <= 0) {
+            throw new BusinessException("WBE_RECEIPT_FILE_EMPTY");
+        }
+        if (size > MAX_RECEIPT_FILE_SIZE_BYTES) {
+            throw new BusinessException("WBE_RECEIPT_FILE_TOO_LARGE",
+                    (MAX_RECEIPT_FILE_SIZE_BYTES / (1024 * 1024)) + " MB");
+        }
+        return size;
+    }
+
+    private static String receiptExtensionOf(String filename) {
+        int dot = filename.lastIndexOf('.');
+        if (dot < 0 || dot == filename.length() - 1) {
+            return "";
+        }
+        return filename.substring(dot + 1).toLowerCase(Locale.ROOT);
+    }
+
+    private static void validateReceiptExtension(String extension) {
+        if (extension.isEmpty() || !ALLOWED_RECEIPT_FILE_EXTENSIONS.contains(extension)) {
+            throw new BusinessException("WBE_RECEIPT_FILE_TYPE_NOT_ALLOWED",
+                    String.join(", ", ALLOWED_RECEIPT_FILE_EXTENSIONS));
+        }
+    }
+
+    private static void deleteQuietlyReceiptFile(java.nio.file.Path path) {
+        try {
+            java.nio.file.Files.deleteIfExists(path);
+        } catch (java.io.IOException ex) {
+            log.warn("Failed to delete receipt attachment at {}", path, ex);
+        }
+    }
+
     /**
      * Unlink every expense / receipt previously linked to a card
      * transaction. Mirrors legacy {@code card_0001_002_u001_act.jsp}:
@@ -1611,10 +1977,10 @@ public class CardTransactionsService {
      * raises an error here but the refactor stance is "unlinking
      * something already unlinked is a no-op").
      *
-     * <p>The legacy {@code updateProvStts} reset on {@code BUSA_DOC_MSTR}
-     * is deferred — link state is authoritative on
-     * {@code BUSA_DOC_RCV_PAY_HIS} (NOT EXISTS on the picker queries),
-     * so PROV_STTS doesn't gate the read paths today.
+     * <p>Each previously-linked document's {@code BUSA_DOC_MSTR.PROV_STTS}
+     * is reset to {@code 'OP'} (open / unpaid) after the link rows are
+     * dropped, mirroring legacy {@code card_0001_002_u001_act.jsp:111}
+     * (audit finding G1).
      */
     @Transactional
     public int unlinkExpenses(String cardSeqNo) {
@@ -1624,11 +1990,18 @@ public class CardTransactionsService {
         String bizKey = TenantContext.currentBizKey();
         String trimmed = cardSeqNo.trim();
 
+        // G1 — capture the linked docs BEFORE deleting the link rows so we can
+        // reset their PROV_STTS back to 'OP' (legacy card_0001_002_u001:111).
+        List<String> linkedDocIds = busaDocRcvPayHisRepo.findDocIdsByBizKeyAndRefNo(bizKey, trimmed);
+
         int deletedChildren = busaDocRcvPayHisRepo.deleteByBizKeyAndRefNo(bizKey, trimmed);
         List<CardTrnsRcvPayInfm> masters =
                 cardTrnsRcvPayRepo.findByBizKeyAndCardSeqNo(bizKey, trimmed);
         if (!masters.isEmpty()) {
             cardTrnsRcvPayRepo.deleteAll(masters);
+        }
+        if (!linkedDocIds.isEmpty()) {
+            busaDocMstrRepo.resetProvSttsToOpen(bizKey, linkedDocIds, requireUserId(), nowDtm14());
         }
 
         auditLogService.append(AuditLogContext.builder()
@@ -2013,7 +2386,8 @@ public class CardTransactionsService {
             Map<String, String> bankNmByCd,
             Map<String, String> docNoByApprSeqNo,
             Map<String, List<LinkedDocRef>> linkedDocsByCardSeqNo,
-            Map<String, MemoAgg> memoByCardSeqNo) {
+            Map<String, MemoAgg> memoByCardSeqNo,
+            Map<String, String> sttsNmByCode) {
         // CardMstr LEFT JOIN columns — Sprint 0 fetches the registry
         // names lazily per (bankCd, cardNo) on a per-page basis. With
         // typical pages of 15 rows and a low-cardinality cards table,
@@ -2047,7 +2421,7 @@ public class CardTransactionsService {
                 e.getApprSeqNo(),
                 apprDocNo,
                 e.getPrchStts(),
-                resolveSttsKey(e.getPrchStts()),
+                sttsNmByCode.get(e.getPrchStts()),
                 linkedDocsByCardSeqNo.getOrDefault(e.getCardSeqNo(), List.of()),
                 List.<ApproverRef>of(),        // Phase B placeholder (approvers — separate from linked docs)
                 e.getRegId(),
@@ -2176,14 +2550,30 @@ public class CardTransactionsService {
                 .orElse(bankCd);
     }
 
-    /** {@code payment.card_transactions.status.<code>} when the code is
-     *  non-blank — otherwise null. Frontend renders via {@code t(key)}
-     *  with fallback to the raw code per OQ-3. */
-    private static String resolveSttsKey(String stts) {
-        if (stts == null) return null;
-        String trimmed = stts.trim();
-        if (trimmed.isEmpty()) return null;
-        return STTS_KEY_PREFIX + trimmed;
+    /**
+     * Resolve {@code PRCH_STTS} code &rarr; localized display name once per
+     * distinct code via the legacy {@code wb_get_prch_stts_nm} funnel
+     * ({@link com.kosign.wecms.common.legacy.LegacyFunctionRepository#resolvePurchaseStatusName}),
+     * mirroring the inline call in legacy {@code IDO.CARD_MSTR_R002.xml:73}.
+     * The language comes from the request ({@link TenantContext#currentLangCd()},
+     * defaulting to EN), exactly like legacy {@code LocaleHelper.getLangCd(util)}.
+     *
+     * <p>Request-scoped batching — one funnel call per unique code (there are
+     * only a handful of distinct {@code PRCH_STTS} values), the same pattern
+     * Contacts uses for {@code resolveNapasOrCitadBankName}. A {@code null}
+     * result (unmapped code / KM locale) is cached so the row mapper emits a
+     * null {@code stts_nm} and the cell renders blank — legacy parity.
+     */
+    private Map<String, String> resolvePurchaseStatusNames(List<CardTrnsHstr> rows) {
+        LangCd lang = TenantContext.currentLangCd();
+        String langCd = (lang != null ? lang : LangCd.EN).name();
+        Map<String, String> out = new HashMap<>();
+        for (CardTrnsHstr e : rows) {
+            String code = e.getPrchStts();
+            if (code == null || code.isBlank() || out.containsKey(code)) continue;
+            out.put(code, legacyFunctions.resolvePurchaseStatusName(code, langCd));
+        }
+        return out;
     }
 
     private static String requireUserId() {

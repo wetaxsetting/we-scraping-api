@@ -96,49 +96,35 @@ wecms:
   # Login Credentials
   # =============================================================================
   login-credentials:
-    # GDT (tax-portal) verify-before-save. FALSE on SIT — and NOT flipped to true
-    # like exchange-rate.batch above. The blocker here is NOT DB isolation (so the
-    # isolated refactor DB does not unblock it): the GDT portal requires an
-    # interactive captcha and the challenge-chain (frontend dialog + resume
-    # endpoints) has not landed, so enabling it would make any GDT credential save
-    # that hits a captcha FAIL — worse than legacy. Flip via
-    # WECMS_LOGIN_CREDENTIALS_GDT_VERIFY_ENABLED=true only once the challenge-chain
-    # ships AND SIT has a reachable GDT gateway.
-    # See docs/audits/login-credentials-legacy-vs-refactor-audit.md (G2).
+    # GDT verify-before-save flag. Keep false on SIT (not flipped like exchange-rate
+    # above): blocked by the captcha challenge-chain, not DB isolation. Flip only
+    # once that ships AND SIT has a reachable GDT gateway.
+    # Details: docs/audits/login-credentials-legacy-vs-refactor-audit.md (G2)
     gdt-verify-enabled: ${WECMS_LOGIN_CREDENTIALS_GDT_VERIFY_ENABLED}
   # =============================================================================
   # EFS / Van Center
   # =============================================================================
-  # Firm-banking payment dispatch via the EFS / VAN gateway. DEV gateway per
-  # REST API guide ver 1.2.2 §1.2 (DEV host) + §6 timeouts (connect 3s /
-  # read 20s). Endpoint paths are vendor-fixed and default in EfsProperties;
-  # only enabled + base-url + partner-id are env-specific. The Van Center API
-  # key is NOT held here — it is a per-VAN secret provisioned out-of-band into
-  # TB_VAN_API_INFO (B2) and read via VanApiKeyService. `enabled` defaults
-  # false (mock active) until the partner instance + IP-whitelist are confirmed
-  # (B1 / OQ-PDF-2). WGVN_EFS_204 is NOT configured — absent from guide
-  # ver 1.2.2 (OQ-PDF-1).
+  # Firm-banking payment dispatch via the EFS / VAN gateway. All flags default OFF
+  # (mock active) until the partner instance + IP-whitelist are confirmed. Endpoint
+  # paths (EFS_201/202/203/204/301/302) default in EfsProperties; only enabled +
+  # base-url + partner-id are env-specific. VAN API key is a per-VAN secret in
+  # TB_VAN_API_INFO (not here).
+  # Details: docs/security/required-environment-secrets.md; docs/features/wecms-batch/
   dispatch:
-    # Hand off a committed non-VND File-path dispatch to the 00301 reception flow
-    # (TransferDispatchExecutor → BulkReceptionService.receive, post-commit). Default
-    # false → File-path batches stay PROC_STAT='9' (legacy behaviour) until SFTP (B4)
-    # + EFS (B1/B2) are provisioned. Turn on only with the gateway fully configured.
+    # File-path dispatch → 00301 reception (needs SFTP + EFS).
     auto-receive: ${WECMS_DISPATCH_AUTO_RECEIVE}
-    # Real-time 202 dispatch (port of NAPAS_REAL_TIME_BATCH; VND/API path). Default false
-    # → pay-target rows stay PROC_STAT='9' until VAN keys (B2) + EFS (B1) are provisioned.
+    # Real-time 202 dispatch, VND/API path (needs VAN keys + EFS).
     realtime-dispatch: ${WECMS_DISPATCH_REALTIME_DISPATCH}
-    # Depositor-name inquiry (WGVN_EFS_201; port of WB_00000100). Default false.
+    # Depositor-name inquiry WGVN_EFS_201 (needs VAN keys + EFS).
     recipient-inquiry: ${WECMS_DISPATCH_RECIPIENT_INQUIRY}
-    # Result-check poll (port of PROCESSING_RESULT_CHECK_BATCH). Cron defaults to "-"
-    # (never fire) so the refactor never co-processes live 202 rows on the shared dev
-    # DB; set a cron only in the env that owns the real-time traffic. Runs every minute
-    # when enabled.
+    # Result-check poll. Cron "-" = never fire; set only in the env owning realtime traffic.
     result-check:
       cron: ${WECMS_DISPATCH_RESULT_CHECK_CRON}
-    # Inbound EFS callbacks (01301/01302). Permitted in the security chain (no JWT);
-    # authenticated by the per-VAN VV/EV crypto check + this source-IP allow-list.
-    # allowed-ips empty → no IP restriction (rely on VV crypto) until the gateway IPs
-    # are known (B7). Comma-separated env value, e.g. "42.96.55.18,42.96.55.163".
+    # Ops alert (WGVN_MSG_SEND_001). OFF by default (OpsAlertService.notify is a no-op).
+    alert:
+      enabled: ${WECMS_DISPATCH_ALERT_ENABLED}
+    # Inbound EFS callbacks (01301/01302). Authenticated by VV/EV crypto + this
+    # source-IP allow-list (comma-separated; empty = rely on VV crypto only).
     callback:
       trust-forwarded-for: true
       allowed-ips: ${WECMS_CALLBACK_ALLOWED_IPS}
@@ -148,11 +134,8 @@ wecms:
       partner-id: ${WECMS_EFS_PARTNER_ID}
       connect-timeout-ms: 3000
       read-timeout-ms: 20000
-    # SFTP file channel for the bulk dispatch (00301 upload / 01302 result download).
-    # `enabled` defaults false → MockSftpClient is active (no network I/O) until the
-    # host/key/source-IP-whitelist are provisioned (B4). The private key path points
-    # at a file; the key material itself is NEVER committed (supply via env). Legacy
-    # paths: send=sdata, receive=rdata, move=rdata/success; port 3300.
+    # SFTP bulk-file channel (00301 upload / 01302 result download). OFF = MockSftpClient
+    # (no network I/O). Key material is never committed — supply the key file via env.
     sftp:
       enabled: ${WECMS_SFTP_ENABLED}
       host: ${WECMS_SFTP_HOST}
@@ -232,6 +215,8 @@ wecms:
     storage-root: ${WECMS_USER_IMAGE_STORAGE_ROOT}
   erp-transaction-history:
     storage-root: ${WECMS_ERP_TRANSACTION_HISTORY_STORAGE_ROOT}
+  card-transactions:
+    storage-root: ${WECMS_CARD_TRANSACTIONS_STORAGE_ROOT}
   # internal-transfer is listed last in this section because its YAML key also
   # carries the Banking Cut-off Configuration (next section): Spring binds that
   # under wecms.internal-transfer.cutoff, so it must stay nested under this key.

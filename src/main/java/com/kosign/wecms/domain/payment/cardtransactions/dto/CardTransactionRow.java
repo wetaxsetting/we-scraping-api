@@ -9,10 +9,13 @@ import java.util.List;
  * three refactor adjustments:
  *
  * <ul>
- *   <li>{@code stts_key} (sibling to the raw {@code stts} code) carries
- *       the i18n key the frontend resolves via {@code t(...)}. Replaces
- *       the legacy {@code wb_get_prch_stts_nm} server-side label
- *       rendering — see backend doc §3.4.</li>
+ *   <li>{@code stts_nm} (sibling to the raw {@code stts} code) carries
+ *       the localized purchase-status label resolved server-side via the
+ *       legacy {@code wb_get_prch_stts_nm(PRCH_STTS, LANG_CD)} DB function
+ *       — byte-for-byte legacy parity ({@code IDO.CARD_MSTR_R002.xml:73}).
+ *       Restored 2026-07-04 from the earlier hand-maintained frontend
+ *       i18n table, which had drifted and mislabelled completed rows;
+ *       see {@code docs/audits/card-transactions-status-label-parity-2026-07-04.md}.</li>
  *   <li>{@code linked_docs[]} / {@code approvers[]} are Phase B
  *       placeholders — service emits empty lists until the linked-doc
  *       and approver-chain entities land. See feature doc §11 OQ-1.</li>
@@ -51,7 +54,7 @@ public record CardTransactionRow(
          *  the raw numeric {@code APPR_SEQ_NO}. */
         String           apprDocNo,
         String           stts,
-        String           sttsKey,
+        String           sttsNm,
         List<LinkedDocRef> linkedDocs,
         List<ApproverRef>  approvers,
         String           regId,

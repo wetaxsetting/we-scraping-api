@@ -123,16 +123,9 @@ wecms:
   # Login Credentials
   # =============================================================================
   login-credentials:
-    # When true, GDT (tax-portal) create/update verifies the credential
-    # through the Coocon smart-gateway (pseudo-bank VIETNAM_GDT) BEFORE
-    # persisting — legacy parity (the save action is the login test). Only
-    # a COMPLETED login persists; ERROR or an unsatisfied challenge blocks
-    # the save. Default FALSE: the GDT portal requires an interactive
-    # captcha, so full enablement depends on the GDT challenge-chain
-    # (frontend dialog + resume endpoints) follow-up; until that lands,
-    # turning this on will reject any GDT login that hits a captcha. Local
-    # R&D also has no reachable gateway. See
-    # docs/audits/login-credentials-legacy-vs-refactor-audit.md (G2).
+    # GDT verify-before-save flag. Keep false until the GDT gateway + captcha
+    # resume flow are ready (enabling now rejects any GDT login hitting a captcha).
+    # Details: docs/audits/login-credentials-legacy-vs-refactor-audit.md (G2)
     gdt-verify-enabled: ${WECMS_LOGIN_CREDENTIALS_GDT_VERIFY_ENABLED}
   # NXiSAS local-engine (client-side) GDT module config moved out of YAML
   # 2026-06-16 — the single fixed GDT triple now lives as code constants in
@@ -161,12 +154,11 @@ wecms:
   # =============================================================================
   # EFS / Van Center
   # =============================================================================
-  # Firm-banking payment dispatch via the EFS / VAN gateway. The Van Center API
-  # key is NOT held in config — it is a per-VAN secret in TB_VAN_API_INFO, read
-  # via VanApiKeyService. No dispatch.efs keys are set in this base file: the
-  # endpoint paths default in EfsProperties and the env-specific values
-  # (enabled / base-url / partner-id) are configured per-environment — see
-  # application-sit.yml.
+  # Firm-banking payment dispatch (wecms.dispatch.*) is declared PER-PROFILE
+  # (application-{local,sit,uat,prod}.yml), not here — including the ops-alert flag
+  # (WGVN_MSG_SEND_001; OFF by default, OpsAlertService.notify is a no-op). VAN API key
+  # is a per-VAN secret in TB_VAN_API_INFO (not config); appDiv/grpID are code constants.
+  # Details: docs/features/wecms-batch/msg-api-alert-implementation-plan.md
   # =============================================================================
   # File storage
   # =============================================================================
@@ -213,6 +205,9 @@ wecms:
     storage-root: ${WECMS_USER_IMAGE_STORAGE_ROOT}
   erp-transaction-history:
     storage-root: ${WECMS_ERP_TRANSACTION_HISTORY_STORAGE_ROOT}
+  # Card Transactions receipt / e-Invoice attachments (BUSA_DOC_FILE, audit G3/G5)
+  card-transactions:
+    storage-root: ${WECMS_CARD_TRANSACTIONS_STORAGE_ROOT}
   # internal-transfer is listed last in this section because its YAML key also
   # carries the Banking Cut-off Configuration (next section): Spring binds that
   # under wecms.internal-transfer.cutoff, so it must stay nested under this key.

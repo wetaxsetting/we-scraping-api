@@ -85,10 +85,14 @@ class CardTransactionsServiceLinkExpensesTest {
         BusaDocMstr d1 = new BusaDocMstr();
         d1.setBizKey(BIZ);
         d1.setDocId("DOC1");
+        d1.setTotlAmt(new BigDecimal("120")); // == dedu → PROV_STTS 'PA' (G1)
         BusaDocMstr d2 = new BusaDocMstr();
         d2.setBizKey(BIZ);
         d2.setDocId("DOC2");
-        when(busaDocMstrRepo.findLinkableByDocIds(eq(BIZ), any())).thenReturn(List.of(d1, d2));
+        d2.setTotlAmt(new BigDecimal("80"));  // == dedu → PROV_STTS 'PA' (G1)
+        // 4a plain fetch (status + currency guard) then 4b eligibility gate.
+        when(busaDocMstrRepo.findByBizKeyAndDocIdIn(eq(BIZ), any())).thenReturn(List.of(d1, d2));
+        when(busaDocMstrRepo.findLinkableByDocIds(eq(BIZ), any(), any())).thenReturn(List.of(d1, d2));
         // Per-doc MAX+1 — independent per (biz_key, doc_id); each fresh doc → 1.
         when(legacyFunctions.nextBusaDocRcvPayHisSeqNo(BIZ, "DOC1")).thenReturn("1");
         when(legacyFunctions.nextBusaDocRcvPayHisSeqNo(BIZ, "DOC2")).thenReturn("1");

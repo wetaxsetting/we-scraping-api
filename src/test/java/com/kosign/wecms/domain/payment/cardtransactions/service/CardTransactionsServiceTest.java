@@ -4,6 +4,7 @@ import com.kosign.wecms.common.auditlog.service.AuditLogContext;
 import com.kosign.wecms.common.auditlog.service.AuditLogService;
 import com.kosign.wecms.common.enums.LangCd;
 import com.kosign.wecms.common.exception.BusinessException;
+import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.banking.bankcredentials.repository.BankCertInfoRepository;
 import com.kosign.wecms.domain.banking.entity.BankInfm;
@@ -78,6 +79,7 @@ class CardTransactionsServiceTest {
     @Mock private ApprovalBoxFanoutService         approvalBoxFanoutService;
     @Mock private BusaDocRcvPayHisRepository       busaDocRcvPayHisRepo;
     @Mock private MemoInfmRepository               memoInfmRepo;
+    @Mock private LegacyFunctionRepository         legacyFunctions;
 
     @InjectMocks
     private CardTransactionsService service;
@@ -87,6 +89,12 @@ class CardTransactionsServiceTest {
         TenantContext.set(USER, TENANT, LangCd.EN);
         lenient().when(exptResolMstrRepo.findDocNoByApprSeqNos(any(), any()))
                 .thenReturn(List.of());
+        // Status label resolution now funnels through the legacy
+        // wb_get_prch_stts_nm DB function (legacy IDO.CARD_MSTR_R002:73
+        // parity). Under EN, code "1" → "Approved". Lenient — list tests
+        // with no rows never hit it.
+        lenient().when(legacyFunctions.resolvePurchaseStatusName(eq("1"), eq("EN")))
+                .thenReturn("Approved");
     }
 
     @AfterEach
@@ -132,7 +140,8 @@ class CardTransactionsServiceTest {
         assertThat(first.linkedDocs()).isEmpty();   // Phase B placeholder
         assertThat(first.approvers()).isEmpty();    // Phase B placeholder
         assertThat(first.stts()).isEqualTo("1");
-        assertThat(first.sttsKey()).isEqualTo("payment.card_transactions.status.1");
+        // Localized name resolved server-side via wb_get_prch_stts_nm (EN → "Approved").
+        assertThat(first.sttsNm()).isEqualTo("Approved");
 
         assertThat(res.totals().totalCount()).isEqualTo(1L);
         assertThat(res.totals().totlAmt()).isEqualByComparingTo("799200.000000");

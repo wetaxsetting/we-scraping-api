@@ -82,6 +82,8 @@ class BulkReceptionReceiveTest {
     @Mock DispatchKeyGenerator dispatchKeyGenerator;
     @Mock SftpClient sftpClient;
     @Mock BulkTransferValidator bulkTransferValidator;
+    @Mock com.kosign.wecms.domain.payment.dispatch.alert.OpsAlertService opsAlertService;
+    @Mock OperatingHoursService operatingHoursService;
 
     private final EfsCryptoService crypto = new EfsCryptoService();
     // Spy so split tests can capture the per-file encode(header, lines, trailer) calls
@@ -98,11 +100,14 @@ class BulkReceptionReceiveTest {
                 efsApiClient, crypto, vanApiKeyService, efsProperties, objectMapper,
                 payFileMstRepository, payFileDataRepository, firmConfRepository,
                 firmFileMstRepository, firmFileDataRepository, firmBatApiTranRepository,
-                dispatchKeyGenerator, codec, sftpClient, sftpProperties, bulkTransferValidator);
+                dispatchKeyGenerator, codec, sftpClient, sftpProperties, bulkTransferValidator,
+                opsAlertService, operatingHoursService);
 
         // Pre-flight validation passes by default; the dedicated cases live in
         // BulkReceptionServiceValidationTest.
         when(bulkTransferValidator.validate(any(), any())).thenReturn(Optional.empty());
+        // Operating-hours gate: open by default so the dispatch-path tests proceed.
+        when(operatingHoursService.evaluateBulk(any(), any())).thenReturn(OperatingHoursDecision.DISPATCH);
         when(firmFileMstRepository.save(any())).thenAnswer(i -> i.getArgument(0));
         when(payFileMstRepository.save(any())).thenAnswer(i -> i.getArgument(0));
         when(firmFileDataRepository.save(any())).thenAnswer(i -> i.getArgument(0));
@@ -155,6 +160,61 @@ class BulkReceptionReceiveTest {
         d.setBankChnlDiv("T");
         d.setFincMdaOwnerNm("NGUYEN VAN A");
         return d;
+    }
+
+    /** Common WAIT pay-file + conf + one detail row so receive() reaches the operating-hours gate. */
+    private void stubReadyFile() {
+        when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
+                .thenReturn(Optional.of(payRow(ProcStat.WAIT.code())));
+        when(firmConfRepository.findById(any())).thenReturn(Optional.of(conf("N", 2000)));
+        when(payFileDataRepository.findByBizKeyAndTranDtAndFileSeqNo(BIZ_KEY, TRAN_DT, FILE_SEQ_NO))
+                .thenReturn(List.of(detail(1, "1000.00")));
+    }
+
+    @Test
+    void operatingHoursCutoff_failsFile_alerts_noDispatch() {
+        stubReadyFile();
+        when(operatingHoursService.evaluateBulk(any(), any())).thenReturn(OperatingHoursDecision.CUTOFF);
+
+        service.receive(TRAN_DT, BIZ_KEY, FILE_SEQ_NO);
+
+        ArgumentCaptor<TbPayFileMst> cap = ArgumentCaptor.forClass(TbPayFileMst.class);
+        verify(payFileMstRepository).save(cap.capture());
+        assertEquals(ProcStat.FAIL.code(), cap.getValue().getProcStat());
+        ArgumentCaptor<String> msg = ArgumentCaptor.forClass(String.class);
+        verify(opsAlertService).notify(any(), msg.capture());
+        assertTrue(msg.getValue().startsWith("대량이체 Batch 거래 마감."));
+        // No dispatch: no firm-file built.
+        verify(firmFileMstRepository, never()).save(any());
+    }
+
+    @Test
+    void operatingHoursNoCriteria_failsFile_alerts_noDispatch() {
+        stubReadyFile();
+        when(operatingHoursService.evaluateBulk(any(), any())).thenReturn(OperatingHoursDecision.NO_CRITERIA);
+
+        service.receive(TRAN_DT, BIZ_KEY, FILE_SEQ_NO);
+
+        ArgumentCaptor<TbPayFileMst> cap = ArgumentCaptor.forClass(TbPayFileMst.class);
+        verify(payFileMstRepository).save(cap.capture());
+        assertEquals(ProcStat.FAIL.code(), cap.getValue().getProcStat());
+        assertTrue(cap.getValue().getRsMsg().contains("TB_BATCH_SCHEDULE_INFO"));
+        ArgumentCaptor<String> msg = ArgumentCaptor.forClass(String.class);
+        verify(opsAlertService).notify(any(), msg.capture());
+        assertTrue(msg.getValue().startsWith("대량이체 Batch 수행 기준 없음."));
+        verify(firmFileMstRepository, never()).save(any());
+    }
+
+    @Test
+    void operatingHoursSkip_leavesFile_noAlert_noDispatch() {
+        stubReadyFile();
+        when(operatingHoursService.evaluateBulk(any(), any())).thenReturn(OperatingHoursDecision.SKIP);
+
+        service.receive(TRAN_DT, BIZ_KEY, FILE_SEQ_NO);
+
+        verify(payFileMstRepository, never()).save(any()); // left WAIT, untouched
+        verify(opsAlertService, never()).notify(any(), any());
+        verify(firmFileMstRepository, never()).save(any());
     }
 
     @Test

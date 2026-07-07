@@ -1,6 +1,7 @@
 package com.kosign.wecms.domain.payment.dispatch.service;
 
 import com.kosign.wecms.common.exception.BusinessException;
+import com.kosign.wecms.domain.payment.dispatch.alert.OpsAlertService;
 import com.kosign.wecms.domain.payment.dispatch.constant.FirmBankingResultCd;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmTran;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayTarget;
@@ -93,6 +94,8 @@ public class RealtimeDispatchService {
     private final TbFirmTranRepository firmTranRepository;
     private final RealtimeTransferService realtimeTransferService;
     private final DispatchKeyGenerator dispatchKeyGenerator;
+    private final OpsAlertService opsAlertService;
+    private final OperatingHoursService operatingHoursService;
 
     /**
      * Dispatch one committed {@code TB_PAY_TARGET} row through {@code WGVN_EFS_202}
@@ -104,6 +107,10 @@ public class RealtimeDispatchService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void dispatch(String bizKey, String tranDt, String tranSeq) {
+        // Ops alerts: the 202/204 result alerts (legacy NAPAS_REAL_TIME_BATCH:478/694) fire
+        // below; the batch-terminal cutoff/no-criteria alert (legacy :223) fires from the
+        // operating-hours gate in step 3b.
+
         // 1. Re-read the committed row (legacy R001 selects PROC_STAT='9').
         TbPayTarget pay = payTargetRepository
                 .findByBizKeyAndTranDtAndTranSeq(bizKey, tranDt, tranSeq)
@@ -136,6 +143,31 @@ public class RealtimeDispatchService {
         LocalDateTime now = LocalDateTime.now(ICT);
         String dttm14 = now.format(DTTM14);
         String tranTm = now.format(TM6);
+
+        // 3b. Operating-hours gate (legacy NAPAS_REAL_TIME_BATCH:110-189, TB_BATCH_SCHEDULE_INFO/DTL).
+        //     Runs BEFORE the 204/202. CUTOFF / NO_CRITERIA → FAIL the pay-target + ops alert + return
+        //     (legacy exeErrYN block :191-225). SKIP ('N', before start) → leave WAIT for a later
+        //     run, no write, no alert (legacy silent continue).
+        OperatingHoursDecision oh = operatingHoursService.evaluateRealtime(pay.getOutBankCd(), pay.getAntDivCd());
+        if (oh == OperatingHoursDecision.SKIP) {
+            log.info("realtime-dispatch skipped — outside operating window (before start) bizKey={} tranSeq={}",
+                    bizKey, tranSeq);
+            return;
+        }
+        if (oh == OperatingHoursDecision.CUTOFF || oh == OperatingHoursDecision.NO_CRITERIA) {
+            pay.setProcStat(ProcStat.FAIL.code());
+            pay.setProcDttm(dttm14);
+            payTargetRepository.save(pay);
+            boolean cutoff = oh == OperatingHoursDecision.CUTOFF;
+            log.warn("realtime-dispatch blocked ({}) bizKey={} tranSeq={} — pay-target FAIL",
+                    cutoff ? "cutoff" : "no-criteria", bizKey, tranSeq);
+            opsAlertService.notify(conf.getVanOrgCd(),
+                    (cutoff ? "실시간지급이체 Batch 거래 마감." : "실시간지급이체 Batch 수행 기준 없음.")
+                            + "\nTRAN_SEQ : " + tranSeq
+                            + "\nOUT_BANK_CD : " + pay.getOutBankCd()
+                            + "\nANT_DIV_CD : " + pay.getAntDivCd());
+            return;
+        }
 
         // Legacy applies Vietnamese tone normalization before the 202 (NAPAS_REAL_TIME_BATCH:261-270).
         String ownerNm = VietnameseText.replaceTone(pay.getFincMdaOwnerNm());
@@ -205,6 +237,18 @@ public class RealtimeDispatchService {
             log.warn("realtime-dispatch 202 failed (rc={}) bizKey={} tranSeq={} — FAIL recorded",
                     rc, bizKey, tranSeq);
         }
+
+        // Ops alert (legacy NAPAS_REAL_TIME_BATCH:694 "실시간지급이체 Batch" — 202 result, fires on
+        // every outcome). The firm-tran row now carries the resolved RC/RM (success or FAIL).
+        opsAlertService.notify(conf.getVanOrgCd(),
+                "실시간지급이체 Batch"
+                        + "\nID : " + conf.getVanOrgCd()
+                        + "\nbank_cd : " + pay.getOutBankCd()
+                        + "\nprtn_id : " + conf.getBankPrtnId()
+                        + "\nTNO : " + tranSeq
+                        + "\n[Result]"
+                        + "\nRC : " + firmTran.getRsCd()
+                        + "\nRM : " + (firmTran.getRsMsg() == null ? "" : firmTran.getRsMsg()));
     }
 
     /**
@@ -291,6 +335,16 @@ public class RealtimeDispatchService {
             pay.setProcDttm(fxDttm14);
             payTargetRepository.save(pay);
 
+            // Ops alert (legacy NAPAS_REAL_TIME_BATCH:478 "실시간지급이체 Batch" — 204 FX result).
+            opsAlertService.notify(conf.getVanOrgCd(),
+                    "실시간지급이체 Batch"
+                            + "\nID : " + conf.getVanOrgCd()
+                            + "\nbank_cd : " + pay.getOutBankCd()
+                            + "\nprtn_id : " + conf.getBankPrtnId()
+                            + "\nTNO : " + ccyExcSeq
+                            + "\n[Result]"
+                            + "\nRC : " + fxTran.getRsCd()
+                            + "\nRM : " + (fxTran.getRsMsg() == null ? "" : fxTran.getRsMsg()));
             return fx;
         } catch (BusinessException e) {
             // _U005 failure — 204 row to PROC_STAT='3' with the gateway RC (no FX values on a failed
@@ -302,6 +356,17 @@ public class RealtimeDispatchService {
             fxTran.setRsMsg(e.getCode());
             fxTran.setRsDttm(LocalDateTime.now(ICT).format(DTTM14));
             firmTranRepository.save(fxTran);
+
+            // Ops alert (legacy NAPAS_REAL_TIME_BATCH:478 "실시간지급이체 Batch" — 204 FX result, fail).
+            opsAlertService.notify(conf.getVanOrgCd(),
+                    "실시간지급이체 Batch"
+                            + "\nID : " + conf.getVanOrgCd()
+                            + "\nbank_cd : " + pay.getOutBankCd()
+                            + "\nprtn_id : " + conf.getBankPrtnId()
+                            + "\nTNO : " + ccyExcSeq
+                            + "\n[Result]"
+                            + "\nRC : " + fxTran.getRsCd()
+                            + "\nRM : " + (fxTran.getRsMsg() == null ? "" : fxTran.getRsMsg()));
             return null;
         }
     }

@@ -62,7 +62,8 @@ class ResultCheckPollTest {
     @BeforeEach
     void setUp() {
         service = new ResultCheckService(efsApiClient, crypto, vanApiKeyService, props, mapper,
-                tbFirmTranRepository, tbPayTargetRepository);
+                tbFirmTranRepository, tbPayTargetRepository,
+                org.mockito.Mockito.mock(com.kosign.wecms.domain.payment.dispatch.alert.OpsAlertService.class));
         when(vanApiKeyService.getApiKey(VAN)).thenReturn(TEST_KEY);
         when(tbFirmTranRepository.save(any())).thenAnswer(i -> i.getArgument(0));
         when(tbPayTargetRepository.save(any())).thenAnswer(i -> i.getArgument(0));

@@ -71,6 +71,7 @@ public class EfsProperties {
         m.put(EfsApiClient.EFS_204, "/WGVN_EFS_204.jct"); // Woori FX-rate inquiry (guide v1.2.6 §5.6)
         m.put(EfsApiClient.EFS_301, "/WGVN_EFS_301.jct");
         m.put(EfsApiClient.EFS_302, "/WGVN_EFS_302.jct");
+        m.put(EfsApiClient.EFS_MSG, "/WGVN_MSG_SEND_001.jct"); // ops Slack alert (legacy MsgSendUtil); OFF by default
         return m;
     }
 }

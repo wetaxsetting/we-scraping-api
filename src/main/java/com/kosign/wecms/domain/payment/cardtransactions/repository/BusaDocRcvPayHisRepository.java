@@ -75,4 +75,13 @@ public interface BusaDocRcvPayHisRepository
     int deleteByBizKeyAndRefNo(
             @Param("bizKey")    String bizKey,
             @Param("cardSeqNo") String cardSeqNo);
+
+    /** Distinct {@code DOC_ID}s currently linked to a card transaction —
+     *  read before an unlink so the service can reset each doc's
+     *  {@code BUSA_DOC_MSTR.PROV_STTS} back to {@code 'OP'} (audit finding G1). */
+    @Query("SELECT DISTINCT h.docId FROM BusaDocRcvPayHis h " +
+           " WHERE h.bizKey = :bizKey AND h.refNo = :cardSeqNo")
+    List<String> findDocIdsByBizKeyAndRefNo(
+            @Param("bizKey")    String bizKey,
+            @Param("cardSeqNo") String cardSeqNo);
 }

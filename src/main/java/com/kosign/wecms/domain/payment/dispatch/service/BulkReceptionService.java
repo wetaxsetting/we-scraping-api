@@ -27,6 +27,7 @@ import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileDataReposito
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileMstRepository;
 import com.kosign.wecms.domain.payment.dispatch.sftp.SftpClient;
 import com.kosign.wecms.domain.payment.dispatch.sftp.SftpProperties;
+import com.kosign.wecms.domain.payment.dispatch.alert.OpsAlertService;
 import com.kosign.wecms.domain.payment.dispatch.van.client.EfsApiClient;
 import com.kosign.wecms.domain.payment.dispatch.van.client.EfsProperties;
 import com.kosign.wecms.domain.payment.dispatch.van.client.VanApiKeyService;
@@ -48,9 +49,12 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -123,6 +127,18 @@ public class BulkReceptionService {
     /** Legacy {@code WCConst.NON_PROCESSING} — detail rows start un-processed. */
     private static final String NON_PROCESSING = "N";
 
+    /** Legacy no-INFO-row message (FILE_DEPOSIT_TRANSFER_BATCH1.java:289, verbatim). */
+    private static final String NO_CRITERIA_MSG =
+            "No data to perform bulk transfer batch. Please check TB_BATCH_SCHEDULE_INFO.";
+
+    /**
+     * 1-char {@code ANT_DIV_CD} → operating-hours channel name, per the verified legacy
+     * {@code R005} classification (IDO.TB_PAY_FILE_DATA_R005.xml + entity ANT_DIV_CD length 1).
+     * The DTL table keys on the channel name (legacy {@code operTimeChk(bank, "EBANK")}).
+     */
+    private static final Map<String, String> CHANNEL_BY_ANT_DIV = Map.of(
+            "E", "EBANK", "V", "VCB", "C", "CITAD", "N", "NAPAS", "S", "SWIFT");
+
     private final EfsApiClient efsApiClient;
     private final EfsCryptoService efsCryptoService;
     private final VanApiKeyService vanApiKeyService;
@@ -142,6 +158,8 @@ public class BulkReceptionService {
     /** BATCH1 pre-flight network/currency validator (legacy
      *  FILE_DEPOSIT_TRANSFER_BATCH1:113-266, Gate A). */
     private final BulkTransferValidator bulkTransferValidator;
+    private final OpsAlertService opsAlertService;
+    private final OperatingHoursService operatingHoursService;
 
     /**
      * Request-time bulk reception of one pay-file target: build + upload the
@@ -186,8 +204,8 @@ public class BulkReceptionService {
         //     FILE_DEPOSIT_TRANSFER_BATCH1:113-266, Gate A) — runs BEFORE branch-split,
         //     the PROC_STAT='6' mark, and any TB_FIRM_* / SFTP / EFS work. On failure,
         //     the whole file is marked FAIL ('3') with the legacy RS_MSG and skipped
-        //     (legacy `continue`). NOTE: the operating-hours / cut-off gate (legacy
-        //     :269-447) is intentionally NOT ported (Mr. Kang: DB 24h, inert; pending PO).
+        //     (legacy `continue`). The operating-hours / cut-off gate (legacy :269-447,
+        //     TB_BATCH_SCHEDULE_INFO/DTL) runs next in step 3b.
         BulkValidationCounts counts =
                 payFileDataRepository.aggregateValidationCounts(bizKey, tranDt, fileSeqNo);
         Optional<String> vrfiMsg = bulkTransferValidator.validate(pay, counts);
@@ -197,6 +215,47 @@ public class BulkReceptionService {
             payFileMstRepository.save(pay);
             log.warn("00301 pre-flight validation failed — file marked FAIL bizKey={} fileSeqNo={} reason={}",
                     bizKey, fileSeqNo, vrfiMsg.get());
+            // Ops alert (legacy FILE_DEPOSIT_TRANSFER_BATCH1:249 "이체파일 Batch1 검증 오류 발생").
+            opsAlertService.notify(conf.getVanOrgCd(),
+                    "이체파일 Batch1 검증 오류 발생"
+                            + "\nTRAN_DT : " + tranDt
+                            + "\nBIZ_KEY : " + bizKey
+                            + "\nFILE_SEQ_NO : " + fileSeqNo
+                            + "\nOUT_BANK_CD : " + pay.getOutBankCd()
+                            + "\nBANK_PRTN_ID : " + pay.getBankPrtnId()
+                            + "\nREQ_CNT : " + reqCnt
+                            + "\nVRFIMSG : " + vrfiMsg.get());
+            return;
+        }
+
+        // 3b. Operating-hours gate (legacy FILE_DEPOSIT_TRANSFER_BATCH1:269-448,
+        //     TB_BATCH_SCHEDULE_INFO/DTL, EXE_DIV). Runs BEFORE the PROC_STAT='6' mark.
+        //     CUTOFF / NO_CRITERIA → FAIL the pay-file + ops alert + return (legacy exeErrYN
+        //     block :411-443). SKIP ('N' before start, or bank-uses-network with no matching
+        //     channel) → leave the file WAIT for a later run, no write, no alert (legacy
+        //     silent `continue`). Present channels are the file's distinct 1-char ANT_DIV_CD
+        //     mapped to names via the verified R005 classification (E/V/C/N/S).
+        OperatingHoursDecision oh = operatingHoursService.evaluateBulk(pay.getOutBankCd(), presentChannels(details));
+        if (oh == OperatingHoursDecision.SKIP) {
+            log.info("00301 skipped — outside operating window (before start / channel not open) "
+                    + "bizKey={} fileSeqNo={}", bizKey, fileSeqNo);
+            return;
+        }
+        if (oh == OperatingHoursDecision.CUTOFF || oh == OperatingHoursDecision.NO_CRITERIA) {
+            boolean cutoff = oh == OperatingHoursDecision.CUTOFF;
+            // Legacy leaves vrfi_msg empty for cutoff; sets the "No data…" text for no-criteria.
+            String rsMsg = cutoff ? "" : NO_CRITERIA_MSG;
+            pay.setProcStat(ProcStat.FAIL.code());
+            pay.setRsMsg(rsMsg);
+            payFileMstRepository.save(pay);
+            log.warn("00301 blocked ({}) bizKey={} fileSeqNo={} — pay-file FAIL",
+                    cutoff ? "cutoff" : "no-criteria", bizKey, fileSeqNo);
+            opsAlertService.notify(conf.getVanOrgCd(),
+                    (cutoff ? "대량이체 Batch 거래 마감." : "대량이체 Batch 수행 기준 없음.")
+                            + "\nTRAN_DT : " + tranDt
+                            + "\nBIZ_KEY : " + bizKey
+                            + "\nFILE_SEQ_NO : " + fileSeqNo
+                            + "\nMSG : " + rsMsg);
             return;
         }
 
@@ -238,6 +297,15 @@ public class BulkReceptionService {
                 // pay-file is FAIL, so every remaining sibling would be skipped — stop the batch.
                 log.warn("00301 branch-split aborted after a failed file — pay-file FAIL bizKey={} fileSeqNo={}",
                         bizKey, fileSeqNo);
+                // Ops alert (legacy FILE_DEPOSIT_TRANSFER_BATCH1:751 "이체파일 Batch1 처리중 오류 발생").
+                opsAlertService.notify(conf.getVanOrgCd(),
+                        "이체파일 Batch1 처리중 오류 발생"
+                                + "\nTRAN_DT : " + tranDt
+                                + "\nBIZ_KEY : " + bizKey
+                                + "\nFILE_SEQ_NO : " + fileSeqNo
+                                + "\nOUT_BANK_CD : " + pay.getOutBankCd()
+                                + "\nBANK_PRTN_ID : " + pay.getBankPrtnId()
+                                + "\nREQ_CNT : " + reqCnt);
                 break;
             }
         }
@@ -416,6 +484,28 @@ public class BulkReceptionService {
      * misconfigured limit therefore degrades to the safe single-file path instead of
      * producing an absurd file count.
      */
+    /**
+     * The set of operating-hours channel names present in the file — the distinct
+     * 1-char {@code ANT_DIV_CD} of the detail rows mapped via {@link #CHANNEL_BY_ANT_DIV}
+     * (E/V/C/N/S → EBANK/VCB/CITAD/NAPAS/SWIFT). Unmapped / blank codes are ignored
+     * (legacy {@code ETC_CNT} — not operating-hours-gated). Mirrors the legacy per-channel
+     * {@code count > 0} guards (FILE_DEPOSIT_TRANSFER_BATCH1.java:299/319/339/359/379).
+     */
+    private Set<String> presentChannels(List<TbPayFileData> details) {
+        Set<String> channels = new LinkedHashSet<>();
+        for (TbPayFileData d : details) {
+            String code = d.getAntDivCd();
+            if (code == null) {
+                continue; // Map.of() rejects null-key lookups; blank ANT_DIV_CD = legacy ETC (ungated)
+            }
+            String name = CHANNEL_BY_ANT_DIV.get(code);
+            if (name != null) {
+                channels.add(name);
+            }
+        }
+        return channels;
+    }
+
     private int[] calculateBatchDivision(String branchDiv, int reqCnt, BigDecimal branchLimit) {
         if ("Y".equals(trim(branchDiv)) && branchLimit != null) {
             int limit = branchLimit.intValue();

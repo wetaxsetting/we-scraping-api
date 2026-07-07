@@ -2,6 +2,7 @@ package com.kosign.wecms.domain.payment.dispatch.recipient;
 
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
+import com.kosign.wecms.domain.payment.dispatch.alert.OpsAlertService;
 import com.kosign.wecms.domain.payment.dispatch.constant.FirmBankingResultCd;
 import com.kosign.wecms.domain.payment.dispatch.enums.ProcStat;
 import lombok.RequiredArgsConstructor;
@@ -57,6 +58,7 @@ public class DepositorInquiryService {
     private final LegacyFunctionRepository legacyFunctionRepository;
     private final FirmTranInquiryAuditService auditService;
     private final RecipientLookupService recipientLookupService;
+    private final OpsAlertService opsAlertService;
 
     /**
      * Run one depositor inquiry for the given tenant + resolved firm-banking context.
@@ -89,6 +91,14 @@ public class DepositorInquiryService {
             String owner = result.ownerName();
             auditService.recordResult(tranDt, bizKey, tranSeq, ProcStat.SUCC.code(),
                     FirmBankingResultCd.SUCC, FirmBankingResultCd.MSG_SUCC, owner);
+            // Ops alert (legacy WB_00000100:232 "예금주조회 API" — fires on every outcome).
+            opsAlertService.notify(cmd.vanOrgCd(),
+                    "예금주조회 API"
+                            + "\nID : " + cmd.vanOrgCd()
+                            + "\nTNO : " + tranSeq
+                            + "\n[Result]"
+                            + "\nRC : " + FirmBankingResultCd.SUCC
+                            + "\nRM : " + FirmBankingResultCd.MSG_SUCC);
             if (!StringUtils.hasText(owner)) {
                 // RC=0000 but empty owner — legacy frontend treats this as WBE1143
                 // "Recipient Name not found"; the caller sees empty and skips.
@@ -103,6 +113,13 @@ public class DepositorInquiryService {
                     ? e.getArgs()[0].toString() : FirmBankingResultCd.ETC_ERR;
             auditService.recordResult(tranDt, bizKey, tranSeq, ProcStat.FAIL.code(),
                     rc, e.getCode(), null);
+            opsAlertService.notify(cmd.vanOrgCd(),
+                    "예금주조회 API"
+                            + "\nID : " + cmd.vanOrgCd()
+                            + "\nTNO : " + tranSeq
+                            + "\n[Result]"
+                            + "\nRC : " + rc
+                            + "\nRM : " + (e.getCode() == null ? "" : e.getCode()));
             log.warn("recipient-inquiry gateway error rc={} bizKey={} tarBankCd={}",
                     rc, bizKey, cmd.tarBankCd());
             return Optional.empty();
@@ -111,6 +128,13 @@ public class DepositorInquiryService {
             // input (IllegalArgumentException). Record FAIL and degrade to empty.
             auditService.recordResult(tranDt, bizKey, tranSeq, ProcStat.FAIL.code(),
                     FirmBankingResultCd.ETC_ERR, FirmBankingResultCd.MSG_ETC_ERR, null);
+            opsAlertService.notify(cmd.vanOrgCd(),
+                    "예금주조회 API"
+                            + "\nID : " + cmd.vanOrgCd()
+                            + "\nTNO : " + tranSeq
+                            + "\n[Result]"
+                            + "\nRC : " + FirmBankingResultCd.ETC_ERR
+                            + "\nRM : " + FirmBankingResultCd.MSG_ETC_ERR);
             log.warn("recipient-inquiry infrastructure error bizKey={} tarBankCd={} — {}",
                     bizKey, cmd.tarBankCd(), e.toString());
             return Optional.empty();

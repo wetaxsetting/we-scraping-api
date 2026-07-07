@@ -25,6 +25,7 @@ import com.kosign.wecms.domain.payment.dispatch.repository.TbFirmFileRsltReposit
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileDataRepository;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileMstRepository;
 import com.kosign.wecms.domain.payment.dispatch.service.DispatchKeyGenerator;
+import com.kosign.wecms.domain.payment.dispatch.alert.OpsAlertService;
 import com.kosign.wecms.domain.payment.dispatch.sftp.SftpClient;
 import com.kosign.wecms.domain.payment.dispatch.sftp.SftpProperties;
 import com.kosign.wecms.domain.payment.dispatch.van.client.VanApiKeyService;
@@ -101,6 +102,7 @@ public class BulkExecutionResultService {
     private final TbPayFileMstRepository payFileMstRepository;
     private final TbPayFileDataRepository payFileDataRepository;
     private final ApplicationEventPublisher eventPublisher;
+    private final OpsAlertService opsAlertService;
 
     /**
      * Handle a 01302 execution-result callback.
@@ -135,6 +137,11 @@ public class BulkExecutionResultService {
         // 3. Parse file_nm = {prefix}_{vanOrgCd}_{type}_{fileSeq}_{tranDt}.
         String[] parts = req.fileNm().split("_");
         if (parts.length < 5) {
+            // Ops alert (legacy FILE_DEPOSIT_TRANSFER_BATCH2:280 "이체실행지시 Batch2 API수신 오류 발생").
+            opsAlertService.notify(vanOrgCd,
+                    "이체실행지시 Batch2 API수신 오류 발생"
+                            + "\nFIRM_FILE_NM : " + req.fileNm()
+                            + "\nAPI RM : malformed file_nm");
             throw new BusinessException("WBE_EFS_RESULT_FILE", "malformed file_nm: " + req.fileNm());
         }
         String tranDt = parts[4];

@@ -103,7 +103,8 @@ class BulkExecutionResultServiceTest2 {
                 crypto, vanApiKeyService, objectMapper, sftpClient, sftpProperties, codec,
                 dispatchKeyGenerator, firmFileMstRepository, firmFileDataRepository,
                 firmFileRsltRepository, firmBatApiTranRepository, payFileMstRepository, payFileDataRepository,
-                eventPublisher);
+                eventPublisher,
+                org.mockito.Mockito.mock(com.kosign.wecms.domain.payment.dispatch.alert.OpsAlertService.class));
 
         when(vanApiKeyService.getApiKey(VAN)).thenReturn(TEST_KEY);
         when(dispatchKeyGenerator.nextTranSeq(anyString(), anyString())).thenReturn("1");

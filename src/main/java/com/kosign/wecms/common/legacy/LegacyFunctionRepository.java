@@ -277,19 +277,62 @@ public class LegacyFunctionRepository {
     // "Surviving legacy functions").
     // ------------------------------------------------------------------
 
-    /** Common &gt; Audit Log: AUDIT_LOGS_INFM.AUDIT_LOGS_SEQ_NO — per (biz_key, wsvc_id, lang_cd) MAX+1 (V140 #17). */
+    /**
+     * Common &gt; Audit Log: AUDIT_LOGS_INFM.AUDIT_LOGS_SEQ_NO — whole-table MAX+1.
+     *
+     * <p><b>UAT-compatibility (2026-07-03):</b> this does <em>not</em> delegate to
+     * {@code wb_get_next_val}. The live UAT function scopes its
+     * {@code audit_logs_infm} branch by {@code (biz_key=$3, wsvc_id=$4, lang_cd=$5)},
+     * but {@code AuditLogService} passes {@code (bizKey, refNo, refNo1)} — refNo/refNo1
+     * are record locators, not the stored {@code WSVC_ID}/{@code LANG_CD} — and shares
+     * one {@code seq_no} across the EN/KO/VI/KM locale fan-out. Under the scoped UAT
+     * body the {@code WHERE wsvc_id=refNo} predicate matches no stored row, so it
+     * returns {@code 1} for every event and the 2nd+ event on the same
+     * {@code (biz_key, wsvc_id, lang_cd)} PK collides (audit rows silently dropped).
+     * Allocating a whole-table {@code MAX+1} here — byte-for-logic identical to the
+     * refactor DEV function's {@code #17} body — keeps DEV and UAT behaviour identical
+     * and independent of which {@code wb_get_next_val} is deployed. The {@code wsvcId}
+     * / {@code langCd} params are retained for signature stability (callers unchanged);
+     * they are intentionally not used in the scope, matching legacy DEV.
+     */
     public String nextAuditLogsSeqNo(String bizKey, String wsvcId, String langCd) {
-        return nextVal("audit_logs_infm", "audit_logs_seq_no", bizKey, wsvcId, langCd, null, null, null);
+        Query q = em.createNativeQuery(
+                "SELECT CAST(COALESCE(MAX(audit_logs_seq_no::numeric), 0) + 1 AS text) "
+                        + "FROM audit_logs_infm");
+        Object result = q.getSingleResult();
+        return result != null ? result.toString() : null;
     }
 
     /**
-     * Settings &gt; Purpose Settings: BUSI_USAG_SET_INFM.USE_USAG_CD (V140 #18 / #19).
-     * Pass the {@code usagGrpCd}; an empty / null group routes to the plain
-     * 10-digit {@code 0000000001..} sequence variant. Returns a zero-padded code.
+     * Settings &gt; Purpose Settings: BUSI_USAG_SET_INFM.USE_USAG_CD.
+     *
+     * <p>Pass the {@code usagGrpCd}. A non-blank group delegates to the legacy
+     * {@code wb_get_next_val} grouped branch (present in both DEV and UAT). An
+     * empty / null group produces the plain 10-digit {@code 0000000001..} code.
+     *
+     * <p><b>UAT-compatibility (2026-07-03):</b> the no-group case does <em>not</em>
+     * delegate to {@code wb_get_next_val}. The live UAT function's
+     * {@code use_usag_cd} branch requires {@code $4 (usag_grp_cd)} non-blank; with an
+     * empty group it falls through to {@code ELSE → NULL}, and {@code PurposeSettings}
+     * (which always writes {@code usag_grp_cd = NULL}) would then throw {@code WBE9999}.
+     * The plain 10-digit {@code MAX+1} here is byte-for-logic identical to the refactor
+     * DEV function's {@code #19} body (regex-guarded numeric cast), so DEV and UAT
+     * behave the same regardless of which {@code wb_get_next_val} is deployed. This
+     * mirrors the sibling {@code PurposeSettingsRepository.findMaxDispOrd} Java-side
+     * allocation, which was already moved off the function for the same reason.
      */
     public String nextUseUsagCd(String bizKey, String usagGrpCd) {
-        return nextVal("busi_usag_set_infm", "use_usag_cd", bizKey, usagGrpCd == null ? "" : usagGrpCd,
-                null, null, null, null);
+        if (usagGrpCd != null && !usagGrpCd.isBlank()) {
+            return nextVal("busi_usag_set_infm", "use_usag_cd", bizKey, usagGrpCd,
+                    null, null, null, null);
+        }
+        Query q = em.createNativeQuery(
+                "SELECT COALESCE(LPAD((MAX(use_usag_cd)::numeric + 1)::varchar, 10, '0'), '0000000001') "
+                        + "FROM busi_usag_set_infm "
+                        + "WHERE biz_key = CAST(?1 AS varchar) AND use_usag_cd ~ '^0[0-9]{9}$'");
+        q.setParameter(1, bizKey);
+        Object result = q.getSingleResult();
+        return result != null ? result.toString() : null;
     }
 
     /** Banking &gt; Sync History: EXT_TRAN_CALL_HIS.SEQ_NO — per (svc_id, ref_date) MAX+1 (V140 #21). */
@@ -335,6 +378,54 @@ public class LegacyFunctionRepository {
     /** Payment &gt; Card Transactions: BUSA_DOC_RCV_PAY_HIS.RCV_PAY_HIS_SEQ_NO — per (biz_key, doc_id) MAX+1 (V140 #29). */
     public String nextBusaDocRcvPayHisSeqNo(String bizKey, String docId) {
         return nextVal("busa_doc_rcv_pay_his", "rcv_pay_his_seq_no", bizKey, docId, null, null, null, null);
+    }
+
+    /**
+     * Payment &gt; Card Transactions (New Receipt) document id via
+     * {@code SYS_DOC_ID_GEN} — legacy {@code R-yyyyMMddNNN} format (audit
+     * finding G7; corrected 2026-07-04 per UAT legacy {@code wb_get_next_val}
+     * evidence). Uses the {@code sys_doc_id_gen.doc_id} branch (V140 #48),
+     * <b>not</b> a {@code busa_doc_mstr} max — the branch body is
+     * {@code docType='E' → 'R' || '-' || to_char(timezone('utc',now()),'YYYYMMDD')
+     * || lpad(max(right(doc_id,3))+1, 3)} scoped to
+     * {@code sys_doc_id_gen WHERE biz_key=$3 AND doc_type=$4 AND req_date = UTC YYYYMMDD}.
+     * Example: {@code R-20240523005}.
+     *
+     * <p>The branch is a read-only {@code max+1} over the single daily
+     * {@code sys_doc_id_gen} row (PK {@code (biz_key, doc_type, req_date)}), so
+     * the caller MUST upsert that row's {@code doc_id} to the freshly-minted id
+     * after allocation (see {@code SysDocIdGenRepository.upsertDailyDocId} +
+     * {@code CardTransactionsService.createReceipt}) — otherwise same-day
+     * receipts would all read {@code max=NULL → 001} and collide. This mirrors
+     * the legacy population (334 {@code 'E'} rows on JEX DEV).
+     *
+     * <p>The V140 #48 branch already exists in the refactor function — <b>no DBA
+     * branch script is required for G7</b>. Returns {@code null} only if the
+     * branch is somehow absent, in which case {@code createReceipt} fails fast.
+     *
+     * @param bizKey  tenant scope ($3)
+     * @param docType {@code 'E'} for a manual receipt ($4)
+     */
+    public String nextSysDocIdGenDocId(String bizKey, String docType) {
+        return nextVal("sys_doc_id_gen", "doc_id", bizKey, docType, null, null, null, null);
+    }
+
+    /**
+     * Payment &gt; Card Transactions (receipt / e-Invoice attachments):
+     * {@code BUSA_DOC_FILE.FILE_ID} — per-{@code (biz_key, doc_id)} MAX+1
+     * (audit finding G3/G5). Branch verified applied to the DEV refactor DB
+     * 2026-07-04: body = {@code select coalesce(max(file_id::numeric),0)+1 from
+     * busa_doc_file where biz_key=$3 and doc_id=$4} (verbatim UAT). Mirrors
+     * {@code SeqHelper.getNextVal(BusaDocFile.class, "file_id")} in
+     * {@code prch_0005_001_c001}. Same shape as {@code nextTrcoInfoFileFileId}.
+     * The upload service wraps allocate+insert in a one-shot retry on PK
+     * conflict (concurrent same-doc uploads) — the branch is lock-free MAX+1.
+     *
+     * @param bizKey tenant scope ($3)
+     * @param docId  parent document ($4)
+     */
+    public String nextBusaDocFileFileId(String bizKey, String docId) {
+        return nextVal("busa_doc_file", "file_id", bizKey, docId, null, null, null, null);
     }
 
     /** Banking &gt; Transaction History / Smart Organizer: ACCT_TRNS_RCV_PAY_INFM.RCV_PAY_SEQ_NO — per (biz_key, acct_seq_no) MAX+1 (V140 #14). */
@@ -596,6 +687,51 @@ public class LegacyFunctionRepository {
         q.setParameter(2, langCd);
         Object result = q.getSingleResult();
         return result != null ? result.toString() : null;
+    }
+
+    /**
+     * Payment &gt; Card Transactions &mdash; resolve the localized
+     * purchase-status display name for a {@code CARD_TRNS_HSTR.PRCH_STTS}
+     * code by delegating to the legacy {@code wb_get_prch_stts_nm(
+     * prch_stts, lang_cd)} function. This is the EXACT resolver the
+     * legacy list query uses &mdash; {@code IDO.CARD_MSTR_R002.xml:73}
+     * ({@code wb_get_prch_stts_nm(CTH.PRCH_STTS, :LANG_CD) AS STTS}),
+     * with {@code LANG_CD} bound from {@code LocaleHelper.getLangCd(util)}
+     * in {@code card_0001_001_r001_act.jsp:43}.
+     *
+     * <p>The live JEX body maps {@code '1' → Approved / Chấp nhận / 승인됨},
+     * {@code '2' → Acquired / Hoàn thành / 완료됨},
+     * {@code '9' → Cancelled / Đã hủy / 취소됨}, {@code ELSE → NULL}, with
+     * {@code p_lang_code} compared against {@code 'EN' / 'VI' / 'KO'}
+     * (uppercase). Pass the {@link com.kosign.wecms.common.enums.LangCd}
+     * {@code name()} value ({@code "EN"} / {@code "KO"} / {@code "KM"} /
+     * {@code "VI"}); {@code "KM"} and any unmapped code return {@code NULL}
+     * &mdash; legacy parity (the Status cell renders blank).
+     *
+     * <p>Null-safe: returns {@code null} when {@code prchStts} is null /
+     * blank, short-circuiting before the DB round-trip.
+     *
+     * <p><b>Why the DB function, not a frontend i18n table:</b> the earlier
+     * refactor shipped the code&rarr;label map as a hand-maintained
+     * {@code payment.card_transactions.status.*} i18n table, which drifted
+     * from the DB function and mislabelled completed ({@code '2'}) rows as
+     * "Cancelled". Since UAT/PROD run against the live JEX DB where
+     * {@code wb_get_prch_stts_nm} is authoritative, calling it here gives
+     * byte-for-byte parity and removes the duplicate map. See
+     * {@code docs/audits/card-transactions-status-label-parity-2026-07-04.md}.
+     * Retire when the purchase-status code space is modelled as a refactor
+     * enum &mdash; same window as the other surviving legacy functions.
+     */
+    public String resolvePurchaseStatusName(String prchStts, String langCd) {
+        if (prchStts == null || prchStts.isBlank()) {
+            return null;
+        }
+        Query q = em.createNativeQuery(
+                "SELECT wb_get_prch_stts_nm(CAST(?1 AS varchar), CAST(?2 AS varchar))");
+        q.setParameter(1, prchStts.trim());
+        q.setParameter(2, langCd);
+        Object result = q.getSingleResult();
+        return result != null && !result.toString().isBlank() ? result.toString() : null;
     }
 
     /**

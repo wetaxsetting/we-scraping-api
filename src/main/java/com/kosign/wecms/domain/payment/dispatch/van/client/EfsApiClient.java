@@ -47,6 +47,15 @@ public interface EfsApiClient {
     String EFS_302 = "EFS_302";
 
     /**
+     * {@code WGVN_MSG_SEND_001} — operational Slack alert (legacy {@code MsgSendUtil} /
+     * {@code MSGSendAPIThread}). Not a transfer service: it posts a batch ops
+     * notification to the VAN gateway's message endpoint. Consumed by
+     * {@link com.kosign.wecms.domain.payment.dispatch.alert.OpsAlertService},
+     * gated OFF by default ({@code wecms.dispatch.alert.enabled=false}).
+     */
+    String EFS_MSG = "EFS_MSG";
+
+    /**
      * POST the request envelope (form-urlencoded) to the endpoint resolved from
      * {@code endpointKey} and return the parsed response envelope.
      *

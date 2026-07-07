@@ -1,6 +1,8 @@
 # Legacy-Copied Table Inventory — Refactor DB
 
-**Recorded:** 2026-06-11 · **Count:** 141 tables · **Source:** table list supplied by the team (recorded as-is, not re-verified against the JEX DEV DB this pass).
+**Recorded:** 2026-06-11 · **Count:** 142 tables · **Source:** table list supplied by the team (recorded as-is, not re-verified against the JEX DEV DB this pass).
+
+> **Scope override 2026-07-04 — `busa_doc_file` added (PO decision).** Card Transactions > Link Reference > New Receipt attaches files; legacy IDO `BUSA_DOC_MSTR_R034` `REC_1` reads `BUSA_DOC_FILE` and the receipt download uses `prch_0006_001_r002.act`. `BUSA_DOC_FILE` was originally excluded from the 141-table baseline because it looked empty/unused — but that reflects "no user had attached a file yet," not an unused feature (598 rows on JEX DEV confirm real usage). Per the PO decision relayed by the team lead (2026-07-04), `busa_doc_file` is the **legacy source of truth for receipt/e-invoice attachments** and is added to the baseline as a legacy table (multi-file per document — do **not** collapse to the single-file `BUSA_DOC_MSTR.ORG_FILE_NM`/`SAVE_FILE_NM`/`FILE_SIZE` columns). Same widening precedent as `trco_info_file` (2026-05-13). Implementation of the attachment feature (audit G3/G5) stays **blocked until this inventory entry is confirmed applied** (schema DDL script + entity), then proceeds against `busa_doc_file`.
 
 **This document is the authoritative table baseline for the WeCMS refactor project** — the single source of truth for which tables exist in the refactor database. It **supersedes** the older "PROD Active Table List" ([wecms-api/CLAUDE.md](../../../../wecms-api/CLAUDE.md) §"PROD DB Table Scope for Refactoring") as the canonical baseline; that section is retained only for its derivation method, exclude rules, and per-table data-migration rule. **When the two disagree, this inventory wins.** Governing rules: root [CLAUDE.md](../../../../CLAUDE.md) §"Refactor DB & Legacy-Compatibility Rules".
 
@@ -18,7 +20,7 @@ This is a **snapshot of what physically exists**, distinct from:
 > - **Migration safety is the primary objective** — keep the schema close to legacy so JEX data migrates cleanly.
 > - Schema changes ship as **manual DBA-run SQL** (not auto-applied by Flyway) with a documented run order. See the root CLAUDE.md north-star + rules 2–6.
 
-## Inventory (141)
+## Inventory (142)
 
 ```
 acct_auth_info
@@ -43,6 +45,7 @@ bltb_post_infm_mdph
 bltb_user_new_post_infm
 busa_doc_detl
 busa_doc_detl_his
+busa_doc_file
 busa_doc_mstr
 busa_doc_mstr_his
 busa_doc_rcv_pay_his

@@ -23,13 +23,18 @@ import org.springframework.transaction.annotation.Transactional;
  * refactor mint the same value the JEX system would for the tenant. See
  * {@code wecms-api/CLAUDE.md} §"DB Function / Legacy Function Policy" and the V140 header.
  *
- * <h2>Detail keys are out of scope (MR-2)</h2>
+ * <h2>Detail keys</h2>
  *
- * <p>{@code SCDUL_PYMN_SUMR_DETL.SCDUL_PYMN_NO} is still copied verbatim from the
- * master (FK), and {@code SCDUL_PYMN_DETL_NO} is still a Java per-document line
- * ordinal — those are deliberately unchanged here pending separate PO
- * confirmation (JEX scopes {@code scdul_pymn_detl_no} per tenant; the refactor
- * scopes it per document). V140 branches&nbsp;#37/#38 exist but stay dormant.
+ * <p>{@code SCDUL_PYMN_SUMR_DETL.SCDUL_PYMN_NO} is copied verbatim from the master
+ * (FK). {@code SCDUL_PYMN_DETL_NO} <b>is funnelled</b> through
+ * {@link LegacyFunctionRepository#nextScdulPymnDetlNo} (V140 branch&nbsp;#38 —
+ * per-tenant plain-int {@code MAX+1}), matching the live JEX per-tenant scope: the
+ * four scheduled-payment create flows seed ONCE per document (seed − 1) and then
+ * pre-increment in Java across the detail batch, so the first detail row receives
+ * the per-tenant {@code MAX+1} and subsequent rows continue contiguously — the same
+ * sequence legacy JEX produces by calling {@code wb_get_next_val} per row. Branch
+ * #37 ({@code scdul_pymn_sumr_detl.scdul_pymn_no}) stays dormant (the detail's
+ * {@code SCDUL_PYMN_NO} is the master FK copy, never DB-generated).
  *
  * <h2>Concurrency</h2>
  *

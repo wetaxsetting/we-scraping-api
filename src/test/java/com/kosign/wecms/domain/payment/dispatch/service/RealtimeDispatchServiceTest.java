@@ -58,6 +58,8 @@ class RealtimeDispatchServiceTest {
     @Mock TbFirmTranRepository firmTranRepository;
     @Mock RealtimeTransferService realtimeTransferService;
     @Mock DispatchKeyGenerator dispatchKeyGenerator;
+    @Mock com.kosign.wecms.domain.payment.dispatch.alert.OpsAlertService opsAlertService;
+    @Mock OperatingHoursService operatingHoursService;
 
     private RealtimeDispatchService service;
 
@@ -65,7 +67,11 @@ class RealtimeDispatchServiceTest {
     void setUp() {
         service = new RealtimeDispatchService(
                 payTargetRepository, firmConfRepository, firmTranRepository, realtimeTransferService,
-                dispatchKeyGenerator);
+                dispatchKeyGenerator, opsAlertService, operatingHoursService);
+
+        // Operating-hours gate: open by default so existing dispatch-path tests proceed.
+        when(operatingHoursService.evaluateRealtime(any(), any()))
+                .thenReturn(OperatingHoursDecision.DISPATCH);
 
         TbFirmConf conf = mock(TbFirmConf.class);
         when(conf.getVanOrgCd()).thenReturn("VAN01");
@@ -109,6 +115,51 @@ class RealtimeDispatchServiceTest {
     private void stubWaiting() {
         when(payTargetRepository.findByBizKeyAndTranDtAndTranSeq(BIZ_KEY, TRAN_DT, TRAN_SEQ))
                 .thenReturn(Optional.of(payTarget("9")));
+    }
+
+    @Test
+    void operatingHoursCutoff_failsPayTarget_alerts_noTransfer() {
+        stubWaiting();
+        when(operatingHoursService.evaluateRealtime(any(), any()))
+                .thenReturn(OperatingHoursDecision.CUTOFF);
+
+        service.dispatch(BIZ_KEY, TRAN_DT, TRAN_SEQ);
+
+        ArgumentCaptor<TbPayTarget> payCaptor = ArgumentCaptor.forClass(TbPayTarget.class);
+        verify(payTargetRepository).save(payCaptor.capture());
+        assertEquals("3", payCaptor.getValue().getProcStat()); // PROC_ST_FAIL
+        ArgumentCaptor<String> msg = ArgumentCaptor.forClass(String.class);
+        verify(opsAlertService).notify(any(), msg.capture());
+        assertTrue(msg.getValue().startsWith("실시간지급이체 Batch 거래 마감."));
+        verify(realtimeTransferService, never()).transfer(any());
+        verify(firmTranRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void operatingHoursNoCriteria_failsPayTarget_alerts_noTransfer() {
+        stubWaiting();
+        when(operatingHoursService.evaluateRealtime(any(), any()))
+                .thenReturn(OperatingHoursDecision.NO_CRITERIA);
+
+        service.dispatch(BIZ_KEY, TRAN_DT, TRAN_SEQ);
+
+        ArgumentCaptor<String> msg = ArgumentCaptor.forClass(String.class);
+        verify(opsAlertService).notify(any(), msg.capture());
+        assertTrue(msg.getValue().startsWith("실시간지급이체 Batch 수행 기준 없음."));
+        verify(realtimeTransferService, never()).transfer(any());
+    }
+
+    @Test
+    void operatingHoursSkip_leavesWaiting_noAlert_noTransfer() {
+        stubWaiting();
+        when(operatingHoursService.evaluateRealtime(any(), any()))
+                .thenReturn(OperatingHoursDecision.SKIP);
+
+        service.dispatch(BIZ_KEY, TRAN_DT, TRAN_SEQ);
+
+        verify(realtimeTransferService, never()).transfer(any());
+        verify(opsAlertService, never()).notify(any(), any());
+        verify(payTargetRepository, never()).save(any()); // left WAIT, untouched
     }
 
     @Test

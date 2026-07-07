@@ -66,6 +66,8 @@ wecms:
     storage-root: ${WECMS_USER_IMAGE_STORAGE_ROOT}
   erp-transaction-history:
     storage-root: ${WECMS_ERP_TRANSACTION_HISTORY_STORAGE_ROOT}
+  card-transactions:
+    storage-root: ${WECMS_CARD_TRANSACTIONS_STORAGE_ROOT}
   internal-transfer:
     storage-root: ${WECMS_INTERNAL_TRANSFER_STORAGE_ROOT}
   dispatch:
@@ -74,6 +76,9 @@ wecms:
     recipient-inquiry: ${WECMS_DISPATCH_RECIPIENT_INQUIRY}
     result-check:
       cron: ${WECMS_DISPATCH_RESULT_CHECK_CRON}
+    # Ops alert (WGVN_MSG_SEND_001). OFF by default (OpsAlertService.notify is a no-op).
+    alert:
+      enabled: ${WECMS_DISPATCH_ALERT_ENABLED}
     callback:
       trust-forwarded-for: true
       allowed-ips: ${WECMS_CALLBACK_ALLOWED_IPS}
