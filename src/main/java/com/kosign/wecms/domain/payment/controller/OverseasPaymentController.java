@@ -78,6 +78,9 @@ public class OverseasPaymentController {
      *  (Scheduled → code 13 = Overseas Payment Request, Result → code 14
      *  = Overseas Request Result). */
     private final ErpTrnsHistoryWriter           erpHistoryWriter;
+    /** P2 overseas payment-line ↔ bank-transaction match service (parity with
+     *  the domestic {@code DomesticPaymentLineMatchService}). */
+    private final com.kosign.wecms.domain.payment.match.service.OverseasPaymentLineMatchService overseasLineMatchService;
 
     /**
      * Preview the next {@code VO_YYMMDD_NNN} document number for the Request
@@ -564,5 +567,50 @@ public class OverseasPaymentController {
                 .header("X-Content-Type-Options", "nosniff")
                 .header("Access-Control-Expose-Headers", HttpHeaders.CONTENT_DISPOSITION)
                 .body(body);
+    }
+
+    /* ============================================================
+     * P2 — Overseas payment-line ↔ bank-transaction match
+     * (legacy comm_0197_001 isOversea path). Parity with the domestic
+     * Vendor/Expense/Internal match endpoints.
+     * ============================================================ */
+
+    /** Candidate bank transactions for an overseas payment line
+     *  (legacy {@code comm_0197_001_r001} isOversea). */
+    @GetMapping("/{ovrsPymnNo}/lines/{ovrsPymnDetlNo}/match/candidates")
+    public ApiResponse<com.kosign.wecms.domain.payment.dto.OverseasMatchCandidateListResponse> matchCandidates(
+            @PathVariable("ovrsPymnNo") String ovrsPymnNo,
+            @PathVariable("ovrsPymnDetlNo") String ovrsPymnDetlNo,
+            @RequestParam(value = "srch_wd", required = false) String srchWd) {
+        return ApiResponse.ok(
+                overseasLineMatchService.listCandidates(ovrsPymnNo, ovrsPymnDetlNo, srchWd));
+    }
+
+    /** Match an overseas payment line to a bank transaction
+     *  (legacy {@code comm_0197_001_c001} isOversea). */
+    @PostMapping("/{ovrsPymnNo}/lines/{ovrsPymnDetlNo}/match")
+    public ApiResponse<com.kosign.wecms.domain.payment.dto.OverseasMatchResultResponse> match(
+            @PathVariable("ovrsPymnNo") String ovrsPymnNo,
+            @PathVariable("ovrsPymnDetlNo") String ovrsPymnDetlNo,
+            @Valid @RequestBody
+            com.kosign.wecms.domain.payment.match.dto.PaymentLineMatchRequest req) {
+        return ApiResponse.ok(
+                overseasLineMatchService.match(ovrsPymnNo, ovrsPymnDetlNo, req));
+    }
+
+    /** Unmatch a single overseas payment line (legacy {@code comm_0197_002_u001}). */
+    @DeleteMapping("/{ovrsPymnNo}/lines/{ovrsPymnDetlNo}/match")
+    public ApiResponse<com.kosign.wecms.domain.payment.dto.OverseasMatchResultResponse> unmatch(
+            @PathVariable("ovrsPymnNo") String ovrsPymnNo,
+            @PathVariable("ovrsPymnDetlNo") String ovrsPymnDetlNo) {
+        return ApiResponse.ok(
+                overseasLineMatchService.unmatch(ovrsPymnNo, ovrsPymnDetlNo));
+    }
+
+    /** Unmatch every matched line under an overseas batch (legacy {@code comm_0197_001_u001}). */
+    @DeleteMapping("/{ovrsPymnNo}/matches")
+    public ApiResponse<com.kosign.wecms.domain.payment.dto.OverseasUnmatchAllResponse> unmatchAll(
+            @PathVariable("ovrsPymnNo") String ovrsPymnNo) {
+        return ApiResponse.ok(overseasLineMatchService.unmatchAll(ovrsPymnNo));
     }
 }

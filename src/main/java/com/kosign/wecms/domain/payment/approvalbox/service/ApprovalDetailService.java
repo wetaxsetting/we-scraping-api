@@ -129,7 +129,8 @@ public class ApprovalDetailService {
 
         if (batch != null) {
             return base.withDetail(
-                    batch.outBankCd(), batch.outBankNm(), batch.wdrlActNo(), batch.wdrlCcyCd(), cont);
+                    batch.outBankCd(), batch.outBankNm(), batch.wdrlActNo(), batch.wdrlCcyCd(), cont,
+                    batch.scdulPymnNo(), batch.antDivCd());
         }
         // Overseas (34) lives in OVRS_PYMN_SUMR / OVRS_PYMN_MSTR, not SCDUL —
         // resolve its withdrawal (E-mode summary or M-mode debit account) so the
@@ -138,13 +139,17 @@ public class ApprovalDetailService {
             OverseasPaymentService.ApprovalWithdrawalInfo ow =
                     overseasPaymentService.withdrawalByApprSeqNo(bizKey, resolved).orElse(null);
             if (ow != null) {
+                // Overseas is always SWIFT — the FE forces SWIFT for apprDv 34, so
+                // antDivCd is left null here (no per-line channel lookup needed).
                 return base.withDetail(
-                        ow.outBankCd(), ow.outBankNm(), ow.wdrlActNo(), ow.wdrlCcyCd(), cont);
+                        ow.outBankCd(), ow.outBankNm(), ow.wdrlActNo(), ow.wdrlCcyCd(), cont,
+                        ow.ovrsPymnNo(), null);
             }
         }
         // Card / no sibling batch — still apply POST_CONT; the dialog omits the
-        // withdrawal row when the fields are null (card has none).
-        return base.withDetail(null, null, null, null, cont);
+        // withdrawal row when the fields are null (card has none). No dispatchable
+        // batch → batchNo/antDivCd null (auto-transfer skips; card is excluded anyway).
+        return base.withDetail(null, null, null, null, cont, null, null);
     }
 
     /** Resolve the effective {@code APPR_SEQ_NO}: prefer the explicit value,

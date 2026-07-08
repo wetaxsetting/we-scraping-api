@@ -115,7 +115,8 @@ class BankTransactionSyncServiceLoginGroupingTest {
 
         service = new BankTransactionSyncService(
                 credentialService, gateway, new NxisasBankConfig(), acctRepo, trnsRepo,
-                legacyFn, registry, syncHistoryWriter, statusUpdater);
+                legacyFn, registry, syncHistoryWriter, statusUpdater,
+                mock(com.kosign.wecms.domain.banking.service.AutoMatchService.class));
 
         TenantContext.set(USER_ID, BIZ_KEY, LangCd.EN);
 

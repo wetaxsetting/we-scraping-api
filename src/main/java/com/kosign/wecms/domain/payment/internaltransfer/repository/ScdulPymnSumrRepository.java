@@ -47,6 +47,66 @@ import java.util.Optional;
 public interface ScdulPymnSumrRepository extends JpaRepository<ScdulPymnSumr, ScdulPymnSumrId> {
 
     /**
+     * Auto-match candidate scan (Payroll, master/batch level) — Payroll
+     * batches ({@code SCDUL_PYMN_TYPE_CD='00'}) dispatched
+     * ({@code TRNF_YN='Y'}) on the same withdrawal account, for the same
+     * transfer date and exact <em>batch total</em> amount, not yet matched.
+     * Payroll matches 1:1 at the header level (same rule as the manual
+     * {@code PayrollBankingMatchService}), so the amount compare is against
+     * {@code TOTAL_TRAN_AMT}, not a per-line amount. Payment-success,
+     * transfer-time {@literal <} bank-time, and the exactly-one guard are
+     * applied by {@code AutoMatchService} in Java.
+     */
+    @Query("""
+            SELECT s FROM ScdulPymnSumr s
+             WHERE s.bizKey = :bizKey
+               AND s.wdrlActNo = :acctNo
+               AND s.trnfYn = 'Y'
+               AND s.scdulPymnTypeCd = '00'
+               AND (s.linkMatchYn IS NULL OR s.linkMatchYn <> 'Y')
+               AND s.totalTranAmt = :trscAmt
+               AND s.trnfDtm IS NOT NULL
+               AND LENGTH(s.trnfDtm) >= 8
+               AND SUBSTRING(s.trnfDtm, 1, 8) = :trscDt
+            """)
+    List<ScdulPymnSumr> findPayrollAutoMatchCandidates(
+            @Param("bizKey") String bizKey,
+            @Param("acctNo") String acctNo,
+            @Param("trscDt") String trscDt,
+            @Param("trscAmt") java.math.BigDecimal trscAmt);
+
+    /**
+     * P4 Smart Organizer (banking→payment) payroll candidate scan — the
+     * payroll master/batch branch of legacy {@code OVRS_PYMN_SUMR_DETL_R006}
+     * ({@code comm_0196_001_r001}). Payroll matches 1:1 at the header level
+     * (same as the manual {@code PayrollBankingMatchService} and
+     * {@code AutoMatchService}), so the amount compare is the batch
+     * {@code TOTAL_TRAN_AMT}.
+     *
+     * <p>Unlike {@link #findPayrollAutoMatchCandidates} this branch does
+     * <b>NOT</b> filter by withdrawal account — legacy {@code R006} matches on
+     * date + amount + time + success regardless of account. The transfer-time
+     * floor (#6), payroll dispatch success (#12 — file {@code PROC_STAT='0'} OR
+     * no file master, per the R006 payroll branch), and locked-match exclusion
+     * (#11) are applied in {@code MatchService.listCandidates} in Java.
+     */
+    @Query("""
+            SELECT s FROM ScdulPymnSumr s
+             WHERE s.bizKey = :bizKey
+               AND s.trnfYn = 'Y'
+               AND s.scdulPymnTypeCd = '00'
+               AND (s.linkMatchYn IS NULL OR s.linkMatchYn <> 'Y')
+               AND s.totalTranAmt = :trscAmt
+               AND s.trnfDtm IS NOT NULL
+               AND LENGTH(s.trnfDtm) >= 8
+               AND SUBSTRING(s.trnfDtm, 1, 8) = :trscDt
+            """)
+    List<ScdulPymnSumr> findPayrollBankMatchCandidates(
+            @Param("bizKey") String bizKey,
+            @Param("trscDt") String trscDt,
+            @Param("trscAmt") java.math.BigDecimal trscAmt);
+
+    /**
      * Detail read — single row by composite PK + tenant + payment type.
      * Type-filtering at the repository layer prevents Internal Transfer
      * endpoints from accidentally returning a Vendor / Expense batch

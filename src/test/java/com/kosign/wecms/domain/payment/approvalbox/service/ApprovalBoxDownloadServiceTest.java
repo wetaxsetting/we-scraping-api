@@ -60,7 +60,7 @@ class ApprovalBoxDownloadServiceTest {
                 "1000", docNo, title, fileName, "content", "35", typeLabel, currency,
                 amt, payDate, "u001", draftUserNm, regDtm, apprStts,
                 2L, 1L, "N", List.of(),
-                null, null, null, null, null);
+                null, null, null, null, null, null, null);
     }
 
     private void stubRows(List<ApprovalBoxRow> rows) {

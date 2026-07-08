@@ -59,12 +59,18 @@ spring:
   jpa:
     hibernate:
       ddl-auto: validate
-    # F-06: SQL logging OFF in SIT — SIT runs against the shared DB with real
-    # credentials, so SQL statements / bind values must not reach the logs.
-    # (Matches the -uat / -prod hard rule.) Re-enable locally via `.env` only.
-    show-sql: false
+    # SQL debug logging ENABLED for SIT (2026-07-08, team-lead request) — this
+    # intentionally re-opens the F-06 hardening for SIT only (never UAT/PROD).
+    # SIT runs against the shared dev DB, so the SQL statements + bind values
+    # below WILL carry real business data (account numbers, amounts, names).
+    # Acceptable for short-lived debugging on SIT; do NOT copy to -uat / -prod.
+    # SQL statements themselves are logged via `org.hibernate.SQL=DEBUG` in the
+    # logging block (goes through logback + carries the traceId); `show-sql`
+    # would print to System.out without the traceId, so it stays false.
+    show-sql: true
     properties:
-      hibernate.format_sql: false
+      # Pretty-print the logged SQL (multi-line) so it is readable.
+      hibernate.format_sql: true
 
 wecms:
   # =============================================================================
@@ -305,16 +311,27 @@ haengsung:
 # =============================================================================
 # Logging
 # =============================================================================
-# F-06: SIT carries production-safe logging levels. The DEBUG body-logging
-# filter (RequestResponseLoggingFilter logs at DEBUG) and all SQL statement /
-# bind-value logging are OFF so real credentials + PII never reach SIT logs.
-# Use the `local` profile (or a local `.env`) for verbose debugging.
+# VERBOSE debug logging ENABLED for SIT (2026-07-08, team-lead request).
+# This deliberately re-opens the F-06 logging hardening for SIT ONLY — never
+# copy these levels to application-uat.yml / application-prod.yml.
+#   - com.kosign.wecms=DEBUG        → activity log: every HTTP request/response
+#                                     (method, URI, status, duration, body) via
+#                                     RequestResponseLoggingFilter. Passwords /
+#                                     tokens / cert ciphertext are redacted (F-06);
+#                                     other body fields are NOT.
+#   - org.hibernate.SQL=DEBUG       → the SQL statements Hibernate runs.
+#   - org.hibernate.orm.jdbc.bind=TRACE → the '?' bind values. NOT redacted —
+#                                     logs raw account numbers / amounts / names
+#                                     from the SHARED dev DB. Turn back to WARN
+#                                     once debugging is done.
+# To silence again, revert every level below to the F-06 baseline
+# (com.kosign.wecms=INFO, security=WARN, the rest=WARN, hibernate=info).
 logging:
   level:
-    com.kosign.wecms: INFO
+    com.kosign.wecms: DEBUG
     org.springframework.security: WARN
     org.hibernate: info
-    org.hibernate.SQL: WARN
-    org.springframework.jdbc.core: WARN
-    org.springframework.jdbc.core.StatementCreatorUtils: WARN
-    org.hibernate.orm.jdbc.bind: WARN
+    org.hibernate.SQL: DEBUG
+    org.springframework.jdbc.core: TRACE
+    org.springframework.jdbc.core.StatementCreatorUtils: TRACE
+    org.hibernate.orm.jdbc.bind: TRACE

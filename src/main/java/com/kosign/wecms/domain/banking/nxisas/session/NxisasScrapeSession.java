@@ -147,6 +147,12 @@ public class NxisasScrapeSession {
      *  TRANSACTION + BALANCE all succeeded + audit stamps written). */
     @Setter(AccessLevel.PUBLIC) private int accountsSynced = 0;
 
+    /** Count of newly-inserted debit rows the P1 auto-matcher linked to a
+     *  payment during this batch (0 when the tenant's biz-env {@code 00079}
+     *  gate is off). Surfaced on the COMPLETED response as
+     *  {@code auto_matched_count}. */
+    @Setter(AccessLevel.PUBLIC) private int totalAutoMatched = 0;
+
     /** Per-currency roll-up of the batch — keyed by {@code CCY_CD}
      *  ("USD" / "KRW" / "VND" / …), insertion-ordered so the
      *  {@code COMPLETED} response lists currencies in first-seen order.

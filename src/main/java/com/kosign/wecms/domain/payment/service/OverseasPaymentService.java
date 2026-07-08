@@ -84,6 +84,12 @@ public class OverseasPaymentService {
     /** F2 — WeCMS→ERP ('W') audit code for the Overseas Payment RESULT export
      *  (legacy {@code ErpTypeCd.OVERSEAS_REQUEST_RESULT}). */
     private static final String            ERP_TRNS_TYPE_OVERSEAS_RESULT = "14";
+    /** G1 — deleted-batch ('D') audit code for the Overseas SCHEDULED payment
+     *  (legacy {@code ErpTypeCd.OVERSEAS_PAYMENT_REQUEST} = "13", passed by
+     *  {@code pymn_0007_001_d001_act.jsp:90}). Restores parity with the four
+     *  domestic scheduled modules, which each write an {@code ERP_TYPE='D'}
+     *  row on delete so the batch appears in the ERP "Deleted" tab. */
+    private static final String            ERP_TRNS_TYPE_OVERSEAS_SCHEDULED = "13";
 
     private final OverseasPaymentRepository      paymentRepo;
     /** Emits the PROCESSING lifecycle signal on dispatch (HAENGSUNG Oracle write-back). */
@@ -112,8 +118,13 @@ public class OverseasPaymentService {
      *  (the legacy source of truth), identical to the four scheduled types. */
     private final ApprovalContentLoader          approvalContentLoader;
     private final AuditLogService                auditLogService;
-    /** F2 — shared ERP_TRNS_HSTR writer for the Overseas Result export 'W' row. */
+    /** F2 — shared ERP_TRNS_HSTR writer for the Overseas Result export 'W' row.
+     *  Also G1 — writes the {@code ERP_TYPE='D'} deleted-batch row on
+     *  {@link #deleteDraftBatch}. */
     private final com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter erpHistoryWriter;
+    /** G1 — resolves the uploaded Excel path so a deleted batch's file can be
+     *  preserved into ERP Transaction History (read-fallback aware). */
+    private final com.kosign.wecms.domain.payment.overseas.service.OverseasPaymentFileResolver fileResolver;
     private final BusiInfmRepository             busiInfmRepository;
     private final DocNoGenerator                 docNoGenerator;
     /** Pre-dispatch cut-off window guard. Mirrors legacy
@@ -840,7 +851,12 @@ public class OverseasPaymentService {
      *  null (overseas {@code getDetail} likewise ships the raw code; the
      *  frontend falls back to it) to avoid a separate bank-name resolver here. */
     public record ApprovalWithdrawalInfo(
-            String outBankCd, String outBankNm, String wdrlActNo, String wdrlCcyCd) {}
+            String outBankCd, String outBankNm, String wdrlActNo, String wdrlCcyCd,
+            /** Dispatchable overseas batch id ({@code OVRS_PYMN_SUMR.OVRS_PYMN_NO},
+             *  E-mode). Null for M-mode ({@code OVRS_PYMN_MSTR}) — that path has no
+             *  batch-dispatch endpoint, so the auto-transfer flow falls back to the
+             *  manual Transfer button there. */
+            String ovrsPymnNo) {}
 
     /**
      * Overseas withdrawal account by {@code APPR_SEQ_NO} — E-mode reads
@@ -861,14 +877,17 @@ public class OverseasPaymentService {
         if (sumrOpt.isPresent()) {
             OvrsPymnSumr s = sumrOpt.get();
             return java.util.Optional.of(new ApprovalWithdrawalInfo(
-                    s.getOutBankCd(), null, s.getWdrlActNo(), s.getCcyCd()));
+                    s.getOutBankCd(), null, s.getWdrlActNo(), s.getCcyCd(),
+                    s.getOvrsPymnNo()));
         }
         OvrsPymnMstr m = ovrsPymnMstrRepository
                 .findByBizKeyAndApprSeqNo(bizKey, apprSeqNo)
                 .stream().findFirst().orElse(null);
         if (m != null) {
+            // M-mode has no batch-dispatch endpoint → ovrsPymnNo left null so the
+            // auto-transfer flow falls back to the manual Transfer button.
             return java.util.Optional.of(new ApprovalWithdrawalInfo(
-                    m.getDbtAcctCd(), null, m.getDbtAcctNo(), m.getDbtCcyCd()));
+                    m.getDbtAcctCd(), null, m.getDbtAcctNo(), m.getDbtCcyCd(), null));
         }
         return java.util.Optional.empty();
     }
@@ -1732,7 +1751,9 @@ public class OverseasPaymentService {
      * and pending/approved batches are blocked.
      *
      * @throws BusinessException {@code WBE2045} — batch not found
-     * @throws BusinessException {@code WBE2099} — batch has already been submitted for approval
+     * @throws BusinessException {@code WBE1063} — batch has already been submitted for approval
+     *         (legacy delete-block code, shared across all 5 payment modules)
+     * @throws BusinessException {@code WBE2127} — batch has already been transferred
      */
     @Transactional
     public void deleteDraftBatch(String ovrsPymnNo) {
@@ -1741,17 +1762,51 @@ public class OverseasPaymentService {
                 .orElseThrow(() -> new BusinessException("WBE2045",
                         "overseas payment not found: " + ovrsPymnNo));
 
+        // Approval-requested batches are not deletable. Uses the legacy
+        // delete-block code WBE1063 (pymn_0007_001_d001_act.jsp:83-85),
+        // aligned with the 4 domestic modules (PO decision 2026-07-08).
         if (sumr.getApprSeqNo() != null && !sumr.getApprSeqNo().isBlank()) {
-            throw new BusinessException("WBE2099");
+            throw new BusinessException("WBE1063");
         }
         if ("Y".equals(sumr.getTrnfYn())) {
             throw new BusinessException("WBE2127");
         }
 
+        // G1 — snapshot the uploaded-file metadata BEFORE the row goes away so
+        // the ERP-history writer can copy the Excel and reference it. Mirrors
+        // legacy pymn_0007_001_d001_act.jsp:90 (erpTrnsHisDeleter, ErpType.DELETED)
+        // and the four domestic scheduled modules (e.g. InternalTransferService.delete).
+        String orgFileNm  = sumr.getOrgFileNm();
+        String saveFileNm = sumr.getSaveFileNm();
+
         dtlsRepository.deleteByBizKeyAndOvrsPymnNo(bizKey, ovrsPymnNo);
         dtlsRepository.flush();
         sumrRepository.delete(sumr);
         sumrRepository.flush();
+
+        // Preserve the uploaded Excel in ERP Transaction History so the user can
+        // still download it after the source batch is gone. TRNS_TYPE_CD = "13"
+        // (Overseas Payment Request / Overseas Scheduled Payment); the writer
+        // stamps ERP_TYPE='D' so the row lands in the "Deleted" tab. The writer
+        // is REQUIRES_NEW + swallows its own errors, so an ERP audit-write failure
+        // cannot roll back the delete. No-op when the batch has no uploaded file.
+        if (saveFileNm != null && !saveFileNm.isBlank()) {
+            try {
+                java.nio.file.Path source = fileResolver.resolveForRead(bizKey, saveFileNm);
+                erpHistoryWriter.recordDeletedFile(
+                        ERP_TRNS_TYPE_OVERSEAS_SCHEDULED,
+                        source,
+                        orgFileNm);
+            } catch (RuntimeException ex) {
+                // Defence in depth — resolveForRead throws only on a malformed
+                // saveFileNm that fails the path-composition / traversal guard.
+                // The writer's own try/catch covers everything past that.
+                log.warn(
+                        "feature=overseas-payment ERP history skip "
+                      + "(path resolver rejected) bizKey={} ovrsPymnNo={} saveFileNm={}",
+                        bizKey, ovrsPymnNo, saveFileNm, ex);
+            }
+        }
 
         log.info("feature=overseas-payment delete-draft bizKey={} ovrsPymnNo={}", bizKey, ovrsPymnNo);
     }

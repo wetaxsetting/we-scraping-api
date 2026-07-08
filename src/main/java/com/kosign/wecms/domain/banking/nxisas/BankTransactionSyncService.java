@@ -118,6 +118,11 @@ public class BankTransactionSyncService {
      *  outer-transaction rollback (mirrors legacy c001 which commits the
      *  failure status). */
     private final AcctMstrStatusUpdater statusUpdater;
+    /** P1 auto-matcher — links each newly-scraped withdrawal to its
+     *  outgoing payment (biz-env {@code 00079}-gated; off ⇒ no-op).
+     *  Runs inside this service's transaction so the just-inserted rows
+     *  are visible. See {@code AutoMatchService}. */
+    private final com.kosign.wecms.domain.banking.service.AutoMatchService autoMatchService;
 
     // ─────────────────────────────────────────────────────────────────
     // Public entry points (called from AccountController)
@@ -652,6 +657,20 @@ public class BankTransactionSyncService {
         session.currencyTally(acct.getCcyCd())
                 .addAccount(pr.creditCount, pr.debitCount, pr.creditTotal, pr.debitTotal);
 
+        // P1 AUTO-MATCH — link the just-inserted withdrawals to their
+        // outgoing payment (legacy fnsh_0001_001_c001_act.jsp:1853-2079).
+        // Gated per-tenant by biz-env 00079 inside the service. Wrapped so a
+        // matcher failure never aborts the sync (the transactions are already
+        // persisted); the service also guards each debit individually.
+        try {
+            int autoMatched = autoMatchService.autoMatchNewDebits(
+                    session.getBizKey(), userId, acct.getAcctNo(), pr.newDebits);
+            session.setTotalAutoMatched(session.getTotalAutoMatched() + autoMatched);
+        } catch (Exception amEx) {
+            log.error("BankTransactionSync AUTO-MATCH failed [bank={}, acct={}] — sync continues",
+                    acct.getBankCd(), acct.getAcctNo(), amEx);
+        }
+
         // BALANCE (soft-fail).
         refreshBalance(session, acct);
 
@@ -701,9 +720,10 @@ public class BankTransactionSyncService {
         session.setStatus(NxisasScrapeSession.Status.COMPLETED);
         registry.discard(session.getSessionId());
         String now = OffsetDateTime.now(ZoneOffset.UTC).format(DTM_DISPLAY);
-        log.info("BankTransactionSync completed [bizKey={}, accounts={}, debit={}, credit={}]",
+        log.info("BankTransactionSync completed [bizKey={}, accounts={}, debit={}, credit={}, autoMatched={}]",
                 session.getBizKey(), session.getAccountsSynced(),
-                session.getTotalDebitInserted(), session.getTotalCreditInserted());
+                session.getTotalDebitInserted(), session.getTotalCreditInserted(),
+                session.getTotalAutoMatched());
         NxisasApiLog.event(tid(session), NxisasApiLog.FLOW_BANK_SYNC, "COMPLETE",
                 "success", session.getAccountsSynced(),
                 "debit", session.getTotalDebitInserted(),
@@ -716,7 +736,8 @@ public class BankTransactionSyncService {
                 session.getTotalDebitAmount(),
                 session.getTotalCreditAmount(),
                 now,
-                currencySummariesOf(session));
+                currencySummariesOf(session),
+                session.getTotalAutoMatched());
     }
 
     /** Project the session's per-currency tallies into the wire DTO list,
@@ -762,7 +783,11 @@ public class BankTransactionSyncService {
             int debitCount,
             int creditCount,
             BigDecimal debitTotal,
-            BigDecimal creditTotal) { }
+            BigDecimal creditTotal,
+            /** Newly-INSERTED debit ({@code INOUT_DV='2'}) rows only — the
+             *  auto-matcher's input. Dedup-skipped rows are NOT included (they
+             *  already exist and were matched on a prior sync). */
+            List<AcctTrnsHstr> newDebits) { }
 
     private PersistResult persistEntries(String bizKey, String userId, AcctMstr acct,
                                          List<NxisasTransactionEntry> entries, String nowDb) {
@@ -770,6 +795,7 @@ public class BankTransactionSyncService {
         int credit = 0;
         BigDecimal debitSum  = BigDecimal.ZERO;
         BigDecimal creditSum = BigDecimal.ZERO;
+        List<AcctTrnsHstr> newDebits = new java.util.ArrayList<>();
 
         for (NxisasTransactionEntry e : entries) {
             BigDecimal amt;
@@ -831,8 +857,11 @@ public class BankTransactionSyncService {
             row.setModDtm(nowDb);
 
             trnsRepo.save(row);
+            // Feed only genuinely-new debits to the P1 auto-matcher (credits
+            // and dedup-skipped rows are never outgoing-payment candidates).
+            if ("2".equals(inoutDv)) newDebits.add(row);
         }
-        return new PersistResult(debit, credit, debitSum, creditSum);
+        return new PersistResult(debit, credit, debitSum, creditSum, newDebits);
     }
 
     private void refreshBalance(NxisasScrapeSession session, AcctMstr acct) {

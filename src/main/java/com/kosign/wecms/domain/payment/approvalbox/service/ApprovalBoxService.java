@@ -981,10 +981,11 @@ public class ApprovalBoxService {
                 p.payEndYn(),
                 approvers,
                 // List rows carry no detail-only fields — withdrawal account
-                // (4) + payroll fund type are populated only on the single-row
-                // detail read (ApprovalDetailService.master → withDetail;
-                // findOne → withApprFundTp).
-                null, null, null, null, null);
+                // (4) + payroll fund type + dispatch batch id + first-line
+                // channel are populated only on the single-row detail read
+                // (ApprovalDetailService.master → withDetail; findOne →
+                // withApprFundTp).
+                null, null, null, null, null, null, null);
     }
 
     private static ApprovalBoxApprover toApprover(

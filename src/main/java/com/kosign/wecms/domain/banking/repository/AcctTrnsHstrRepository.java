@@ -146,12 +146,12 @@ public interface AcctTrnsHstrRepository extends JpaRepository<AcctTrnsHstr, Acct
      * </ul>
      *
      * <p>No memo/remark auto-filter (legacy batch path omits it — only the
-     * detail/overseas paths apply it). The legacy optional
-     * {@code TRSC_TM >= transferTime} refinement is intentionally NOT applied
-     * here: it can only narrow an already date+amount+account-pinned set, so
-     * omitting it returns a safe superset (documented Phase-2 simplification).
-     * The popup's date-range picker is non-filtering (legacy parity — the
-     * batch path ignores {@code FROM_DT}/{@code TO_DT}).
+     * detail/overseas paths apply it). P3 parity: the
+     * {@code TRSC_TM >= transferTime} floor IS now applied (legacy
+     * {@code comm_0197_001_r001} {@code putBankingCandidateIdoInSumr}); pass
+     * {@code null} to skip (payment not yet transferred). The popup's
+     * date-range picker is non-filtering (legacy parity — the batch path
+     * ignores {@code FROM_DT}/{@code TO_DT}).
      *
      * <p>{@code keyword} must be passed pre-lowercased and wrapped in
      * {@code %…%}, or {@code null} to skip.
@@ -164,6 +164,9 @@ public interface AcctTrnsHstrRepository extends JpaRepository<AcctTrnsHstr, Acct
                AND h.linkMatchYn = 'N'
                AND h.trscDt = :trscDt
                AND h.trscAmt = :trscAmt
+               AND (:transferTime IS NULL
+                    OR h.trscTm IS NULL OR h.trscTm = ''
+                    OR h.trscTm >= :transferTime)
                AND (:keyword IS NULL
                     OR LOWER(COALESCE(h.bankTrnsShortId, '')) LIKE :keyword
                     OR LOWER(COALESCE(h.rmrk,  '')) LIKE :keyword
@@ -175,6 +178,7 @@ public interface AcctTrnsHstrRepository extends JpaRepository<AcctTrnsHstr, Acct
             @Param("acctNo") String acctNo,
             @Param("trscDt") String trscDt,
             @Param("trscAmt") BigDecimal trscAmt,
+            @Param("transferTime") String transferTime,
             @Param("keyword") String keyword);
 
     /**
@@ -199,9 +203,13 @@ public interface AcctTrnsHstrRepository extends JpaRepository<AcctTrnsHstr, Acct
      * <p>Distinct from {@link #findPayrollMatchCandidates} (header/batch path,
      * no remark filter) — this is the per-line domestic path that carries the
      * {@code TRAN_USAG} remark predicate. No currency filter (legacy parity).
-     * The legacy optional {@code TRSC_TM >= transferTime} refinement is NOT
-     * applied (same documented Phase-2 simplification as the payroll path —
-     * it can only narrow an already date+amount+account-pinned set).
+     *
+     * <p>P3 parity: the {@code TRSC_TM >= transferTime} floor IS now applied
+     * (legacy {@code comm_0197_001_r001} {@code putBankingCandidateIdoIn}:
+     * {@code (TRSC_TM IS NULL OR TRSC_TM = '' OR TRSC_TM >= <local payment time>)}).
+     * {@code transferTime} = the parent batch {@code TRNF_DTM} shifted UTC→VN
+     * local {@code HHmmss} (see {@code MatchCandidateTime}); pass {@code null}
+     * to skip (payment not yet transferred).
      *
      * <p>{@code memo} / {@code keyword} must be passed pre-lowercased and
      * wrapped in {@code %…%}, or {@code null} to skip.
@@ -214,6 +222,9 @@ public interface AcctTrnsHstrRepository extends JpaRepository<AcctTrnsHstr, Acct
                AND h.linkMatchYn = 'N'
                AND h.trscDt = :trscDt
                AND h.trscAmt = :trscAmt
+               AND (:transferTime IS NULL
+                    OR h.trscTm IS NULL OR h.trscTm = ''
+                    OR h.trscTm >= :transferTime)
                AND (:memo IS NULL
                     OR LOWER(COALESCE(h.rmrk,  '')) LIKE :memo
                     OR LOWER(COALESCE(h.rmrk2, '')) LIKE :memo)
@@ -228,6 +239,7 @@ public interface AcctTrnsHstrRepository extends JpaRepository<AcctTrnsHstr, Acct
             @Param("acctNo") String acctNo,
             @Param("trscDt") String trscDt,
             @Param("trscAmt") BigDecimal trscAmt,
+            @Param("transferTime") String transferTime,
             @Param("memo") String memo,
             @Param("keyword") String keyword);
 
@@ -275,16 +287,15 @@ public interface AcctTrnsHstrRepository extends JpaRepository<AcctTrnsHstr, Acct
      * </ul>
      *
      * <p>No currency filter (legacy parity). The legacy optional
-     * {@code TRSC_TM >= transferTime} refinement is intentionally NOT applied
-     * — same documented Phase-2 simplification as the domestic / payroll paths
-     * (it can only narrow an already date+amount+account-pinned set, so
-     * omitting it returns a safe superset).
+     * {@code TRSC_TM >= transferTime} floor IS applied as of P3 (legacy
+     * {@code comm_0197_001_r001} {@code putBankingCandidateIdoInOvrs}), where
+     * {@code transferTime} is the overseas batch {@code TRNF_DT} shifted UTC→VN
+     * local {@code HHmmss} (see {@code MatchCandidateTime}); {@code null} skips it.
      *
      * <p>{@code memo} / {@code keyword} must be passed pre-lowercased and
      * wrapped in {@code %…%}, or {@code null} to skip. A dedicated method
      * (rather than reusing {@code findDomesticDetailMatchCandidates}) keeps the
-     * overseas path independently evolvable (e.g. if the time floor is later
-     * required for overseas only).
+     * overseas path independently evolvable.
      */
     @Query("""
             SELECT h FROM AcctTrnsHstr h
@@ -294,6 +305,9 @@ public interface AcctTrnsHstrRepository extends JpaRepository<AcctTrnsHstr, Acct
                AND h.linkMatchYn = 'N'
                AND h.trscDt = :trscDt
                AND h.trscAmt = :trscAmt
+               AND (:transferTime IS NULL
+                    OR h.trscTm IS NULL OR h.trscTm = ''
+                    OR h.trscTm >= :transferTime)
                AND (:memo IS NULL
                     OR LOWER(COALESCE(h.rmrk,  '')) LIKE :memo
                     OR LOWER(COALESCE(h.rmrk2, '')) LIKE :memo)
@@ -308,6 +322,7 @@ public interface AcctTrnsHstrRepository extends JpaRepository<AcctTrnsHstr, Acct
             @Param("acctNo") String acctNo,
             @Param("trscDt") String trscDt,
             @Param("trscAmt") BigDecimal trscAmt,
+            @Param("transferTime") String transferTime,
             @Param("memo") String memo,
             @Param("keyword") String keyword);
 

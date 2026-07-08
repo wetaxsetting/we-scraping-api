@@ -712,8 +712,10 @@ public class PayrollPaymentService {
         String bizKey = requireTenant();
         ScdulPymnSumr master = loadMaster(bizKey, id);
 
+        // Legacy delete-block code WBE1063 (pymn_0005_001_d001_act.jsp:91-92),
+        // shared across all 5 payment modules (PO decision 2026-07-08).
         if (master.getApprSeqNo() != null && !master.getApprSeqNo().isBlank()) {
-            throw new BusinessException("WBE2062");
+            throw new BusinessException("WBE1063");
         }
 
         String orgFileNm  = master.getOrgFileNm();

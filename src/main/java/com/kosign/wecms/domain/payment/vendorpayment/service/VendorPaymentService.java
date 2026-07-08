@@ -694,7 +694,8 @@ public class VendorPaymentService {
 
     /**
      * Mirrors {@link com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService#delete}.
-     * <p>Rejects when {@code APPR_SEQ_NO} is already set ({@code WBE2062}).
+     * <p>Rejects when {@code APPR_SEQ_NO} is already set ({@code WBE1063} —
+     * the legacy delete-block code, shared across all 5 payment modules).
      */
     @Transactional
     public void delete(String id) {
@@ -702,7 +703,7 @@ public class VendorPaymentService {
         ScdulPymnSumr master = loadMaster(bizKey, id);
 
         if (master.getApprSeqNo() != null && !master.getApprSeqNo().isBlank()) {
-            throw new BusinessException("WBE2062");
+            throw new BusinessException("WBE1063");
         }
 
         // Snapshot the file metadata BEFORE the row goes away so the

@@ -715,12 +715,13 @@ public class ExpensePaymentService {
      * but stamps the Expense type discriminator and Expense audit keys.
      *
      * <p>Rejects when {@code APPR_SEQ_NO} is already set
-     * ({@code WBE2062}) and deletes the master + line rows. Before the
+     * ({@code WBE1063} — the legacy delete-block code, shared across all
+     * 5 payment modules) and deletes the master + line rows. Before the
      * delete, snapshots the file metadata so the ERP-history writer
      * can preserve the original Excel — the user can still download
      * the file from Settings &gt; ERP Transaction History (the row
      * lands in the "Deleted" tab via {@code ERP_TYPE='D'} +
-     * {@code TRNS_TYPE_CD='02'}).
+     * {@code TRNS_TYPE_CD='03'}).
      */
     @Transactional
     public void delete(String id) {
@@ -728,7 +729,7 @@ public class ExpensePaymentService {
         ScdulPymnSumr master = loadMaster(bizKey, id);
 
         if (master.getApprSeqNo() != null && !master.getApprSeqNo().isBlank()) {
-            throw new BusinessException("WBE2062");
+            throw new BusinessException("WBE1063");
         }
 
         // Snapshot the file metadata BEFORE the row goes away so the

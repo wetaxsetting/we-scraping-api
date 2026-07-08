@@ -132,7 +132,29 @@ public record ApprovalBoxRow(
          *  The frontend resolves the localized label (legacy
          *  {@code comm_0195_001.ts:885-898}, incl. the BANK_CD 11704088
          *  override) so the dialog stays presentational. */
-        String apprFundTp
+        String apprFundTp,
+
+        /** Batch id of the sibling payment summary this approval dispatches —
+         *  {@code SCDUL_PYMN_SUMR.SCDUL_PYMN_NO} for the scheduled types
+         *  ({@code 21}/{@code 31}/{@code 32}/{@code 35}) or
+         *  {@code OVRS_PYMN_SUMR.OVRS_PYMN_NO} for overseas ({@code 34}).
+         *  Detail-read only (null on list rows; null for Corporate Card and for
+         *  any approval with no dispatchable batch, e.g. overseas M-mode). The
+         *  auto-transfer-after-full-approval flow uses it as the id for the
+         *  per-module {@code /{id}/dispatch} endpoint — the refactor equivalent
+         *  of legacy {@code comm_0195_001.js}'s
+         *  {@code _scdulPymnNo = data.SCDUL_PYMN_NO || data.OVRS_PYMN_NO}. */
+        String batchNo,
+
+        /** Transfer-network discriminator of the batch's first line
+         *  ({@code SCDUL_PYMN_SUMR_DETL.ANT_DIV_CD} — {@code N/NAPAS/INTER},
+         *  {@code C/CITAD}, {@code S/SWIFT}). Detail-read only (null on list
+         *  rows, Corporate Card, overseas). Lets the auto-transfer window check
+         *  use the real channel instead of inferring it from currency — the
+         *  refactor equivalent of legacy {@code mapTransferType(REC[0].ANT_DIV_CD)}.
+         *  Null → the FE falls back to currency inference (backend re-validates
+         *  the real window on dispatch either way). */
+        String antDivCd
 
 ) {
 
@@ -145,15 +167,18 @@ public record ApprovalBoxRow(
      * regardless of entry point. The list path never calls this — its rows keep
      * null withdrawal fields and the {@code EXPT_RESOL_MSTR.CONT} value.
      * {@code apprFundTp} is preserved (it is enriched separately in
-     * {@code findOne} via {@link #withApprFundTp}).
+     * {@code findOne} via {@link #withApprFundTp}). {@code batchNo} +
+     * {@code antDivCd} are the dispatch batch id and the first-line transfer
+     * channel resolved by the same sibling-batch fetch.
      */
     public ApprovalBoxRow withDetail(String outBankCd, String outBankNm,
-                                     String wdrlActNo, String wdrlCcyCd, String cont) {
+                                     String wdrlActNo, String wdrlCcyCd, String cont,
+                                     String batchNo, String antDivCd) {
         return new ApprovalBoxRow(
                 apprSeqNo, docNo, title, fileName, cont, apprDv, typeLabel, currency,
                 totPayAmt, payDate, draftUserId, draftUserNm, regDtm, apprStts,
                 apprvrTotCnt, apprvrApprTotCnt, payEndYn, approvers,
-                outBankCd, outBankNm, wdrlActNo, wdrlCcyCd, apprFundTp);
+                outBankCd, outBankNm, wdrlActNo, wdrlCcyCd, apprFundTp, batchNo, antDivCd);
     }
 
     /**
@@ -168,6 +193,6 @@ public record ApprovalBoxRow(
                 apprSeqNo, docNo, title, fileName, cont, apprDv, typeLabel, currency,
                 totPayAmt, payDate, draftUserId, draftUserNm, regDtm, apprStts,
                 apprvrTotCnt, apprvrApprTotCnt, payEndYn, approvers,
-                outBankCd, outBankNm, wdrlActNo, wdrlCcyCd, apprFundTp);
+                outBankCd, outBankNm, wdrlActNo, wdrlCcyCd, apprFundTp, batchNo, antDivCd);
     }
 }

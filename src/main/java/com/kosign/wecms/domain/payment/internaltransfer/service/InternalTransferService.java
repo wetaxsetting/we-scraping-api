@@ -453,7 +453,15 @@ public class InternalTransferService {
      */
     public record ApprovalBatchInfo(
             String scdulPymnNo, String outBankCd, String outBankNm,
-            String wdrlActNo, String wdrlCcyCd) {}
+            String wdrlActNo, String wdrlCcyCd,
+            /** Transfer-network discriminator of the batch's FIRST line
+             *  ({@code SCDUL_PYMN_SUMR_DETL.ANT_DIV_CD}) — the exact value the
+             *  dispatch cut-off gate reads ({@code InternalTransferDispatchService}
+             *  {@code TransferNetwork.fromAntDivCd(lines.get(0).getAntDivCd())})
+             *  and that legacy read as {@code data.REC[0].ANT_DIV_CD}. Null when
+             *  the batch has no lines. Lets the FE auto-transfer window check use
+             *  the real channel instead of inferring it from currency. */
+            String antDivCd) {}
 
     @Transactional(readOnly = true)
     public java.util.Optional<ApprovalBatchInfo> approvalBatchByApprSeqNo(
@@ -462,12 +470,22 @@ public class InternalTransferService {
             return java.util.Optional.empty();
         }
         return sumrRepository.findFirstByBizKeyAndApprSeqNo(bizKey, apprSeqNo)
-                .map(m -> new ApprovalBatchInfo(
-                        m.getScdulPymnNo(),
-                        m.getOutBankCd(),
-                        transferLineDetailMapper.resolveBankNm(m.getOutBankCd()),
-                        m.getWdrlActNo(),
-                        m.getWdrlCcyCd()));
+                .map(m -> {
+                    // First-line ANT_DIV_CD — same ordering the dispatch gate uses.
+                    String antDivCd = detlRepository
+                            .findByBizKeyAndScdulPymnNo(bizKey, m.getScdulPymnNo(),
+                                    ScdulPymnSumrDetlRepository.DETL_NO_NUMERIC_ASC)
+                            .stream().findFirst()
+                            .map(ScdulPymnSumrDetl::getAntDivCd)
+                            .orElse(null);
+                    return new ApprovalBatchInfo(
+                            m.getScdulPymnNo(),
+                            m.getOutBankCd(),
+                            transferLineDetailMapper.resolveBankNm(m.getOutBankCd()),
+                            m.getWdrlActNo(),
+                            m.getWdrlCcyCd(),
+                            antDivCd);
+                });
     }
 
     /* ----------------------------------------------------------------
@@ -719,9 +737,11 @@ public class InternalTransferService {
         String bizKey = requireTenant();
         ScdulPymnSumr master = loadMaster(bizKey, id);
 
-        // Reject when the batch is past the draft state.
+        // Reject when the batch is past the draft state. Uses the legacy
+        // delete-block code WBE1063 (pymn_0009_001_d001_act.jsp:91-92) —
+        // the same code across all 5 payment modules (PO decision 2026-07-08).
         if (master.getApprSeqNo() != null && !master.getApprSeqNo().isBlank()) {
-            throw new BusinessException("WBE2062");
+            throw new BusinessException("WBE1063");
         }
 
         // Snapshot the file metadata BEFORE the row goes away so the
@@ -823,11 +843,12 @@ public class InternalTransferService {
         String bizKey = requireTenant();
         ScdulPymnSumr master = loadMaster(bizKey, id);
 
-        // Idempotency guard — re-using the same code as Delete because
-        // the legacy contract is the same: an APPR_SEQ_NO row is not
-        // re-submittable. The frontend disables the Request Approval
-        // button after the first successful submit; this guard catches
-        // the stale-tab case.
+        // Idempotency guard — an APPR_SEQ_NO row is not re-submittable.
+        // Keeps WBE2062 (distinct from the Delete block, which moved to the
+        // legacy WBE1063 on 2026-07-08); this is the request-approval
+        // double-submit case, not a delete. The frontend disables the
+        // Request Approval button after the first successful submit; this
+        // guard catches the stale-tab case.
         if (master.getApprSeqNo() != null && !master.getApprSeqNo().isBlank()) {
             throw new BusinessException("WBE2062");
         }

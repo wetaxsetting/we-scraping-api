@@ -24,10 +24,16 @@ import org.hibernate.type.SqlTypes;
  * {@code OVRS_PYMN_DTLS}. The class name is retained to limit churn; the
  * mapping is the legacy {@code OVRS_PYMN_SUMR_DETL}. This entity maps the
  * subset of columns the overseas-payment flow reads/writes; the remaining
- * JEX columns ({@code pay_file_seq_no}, {@code pay_seq}, {@code erp_*},
- * {@code acct_seq_no}, {@code bank_trns_*}, {@code link_match_yn}) are nullable /
- * defaulted in JEX and intentionally unmapped — Hibernate {@code validate}
- * ignores unmapped DB columns.
+ * JEX columns ({@code pay_file_seq_no}, {@code pay_seq}, {@code erp_*}) are
+ * nullable / defaulted in JEX and intentionally unmapped — Hibernate
+ * {@code validate} ignores unmapped DB columns.
+ *
+ * <p>The banking-match columns ({@code acct_seq_no}, {@code bank_trns_short_id},
+ * {@code bank_trns_full_id}, {@code link_match_yn}) ARE mapped as of P2 — the
+ * overseas payment-line ↔ bank-transaction match
+ * ({@code OverseasPaymentLineMatchService}) reads {@code link_match_yn} /
+ * {@code acct_seq_no} for its guards and stamps all four via native update
+ * (parity with the domestic {@code SCDUL_PYMN_SUMR_DETL} mapping).
  */
 @Entity
 @Table(name = "OVRS_PYMN_SUMR_DETL")
@@ -149,4 +155,23 @@ public class OvrsPymnSumrDetl {
 
     @Column(name = "MOD_DTM", length = 14, nullable = false)
     private String modDtm;
+
+    /* ── Banking-match columns (P2) — mirror SCDUL_PYMN_SUMR_DETL ── */
+
+    @Column(name = "ACCT_SEQ_NO", length = 20)
+    private String acctSeqNo;
+
+    @Column(name = "BANK_TRNS_SHORT_ID", length = 20)
+    private String bankTrnsShortId;
+
+    @Column(name = "BANK_TRNS_FULL_ID", length = 100)
+    private String bankTrnsFullId;
+
+    // Legacy DB column is bpchar(1) (CHAR), like the SCDUL_PYMN_SUMR_DETL twin —
+    // map via @JdbcTypeCode(CHAR) so ddl-auto=validate accepts it (V38 precedent).
+    // P2 added this column without the annotation; it surfaced at boot only once
+    // the app was booted against a DB where the column is CHAR.
+    @JdbcTypeCode(SqlTypes.CHAR)
+    @Column(name = "LINK_MATCH_YN", length = 1)
+    private String linkMatchYn;
 }

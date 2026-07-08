@@ -608,10 +608,12 @@ public class AccountController {
     }
 
     /**
-     * Smart Organizer — list domestic scheduled-payment candidates the
-     * user may match the bank transaction to. Mirrors legacy
-     * {@code comm_0196_002_r001}. Overseas payments are deferred to a
-     * follow-up slice.
+     * Smart Organizer — list the payment candidates the user may match the
+     * bank transaction to. Mirrors legacy {@code comm_0196_001_r001} /
+     * {@code OVRS_PYMN_SUMR_DETL_R006}: domestic non-payroll detail lines,
+     * payroll batch rows, and overseas detail lines that pass the exact
+     * amount / date / transfer-time / transferred / dispatch-success /
+     * unmatched / unlocked filter set (P4 legacy parity).
      */
     @GetMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/match-candidates")
     @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
@@ -620,8 +622,10 @@ public class AccountController {
             @PathVariable("trnsSeqNo") String trnsSeqNo,
             @RequestParam(value = "from",    required = false) String fromDt,
             @RequestParam(value = "to",      required = false) String toDt,
-            @RequestParam(value = "keyword", required = false) String keyword) {
-        return ApiResponse.ok(matchService.listCandidates(acctSeqNo, trnsSeqNo, fromDt, toDt, keyword));
+            @RequestParam(value = "keyword", required = false) String keyword,
+            @RequestParam(value = "match_rmrk_yn", required = false) String matchRmrkYn) {
+        return ApiResponse.ok(
+                matchService.listCandidates(acctSeqNo, trnsSeqNo, fromDt, toDt, keyword, matchRmrkYn));
     }
 
     /**
