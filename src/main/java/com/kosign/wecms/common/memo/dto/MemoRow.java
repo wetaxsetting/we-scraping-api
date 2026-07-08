@@ -1,18 +1,19 @@
-package com.kosign.wecms.domain.payment.cardtransactions.dto;
+package com.kosign.wecms.common.memo.dto;
 
 import java.math.BigDecimal;
 
 /**
  * One memo row on the side-panel list. {@code reg_dtm} is shipped
  * verbatim {@code yyyyMMddHHmmss} so the frontend can render relative
- * timestamps without a second round-trip.
+ * timestamps without a second round-trip. Shared across every
+ * memo-enabled screen (Card Transactions, Transaction History VND/FCY).
  */
 public record MemoRow(
         BigDecimal seqNo,
         String     memo,
-        /** Legacy {@code wabooks.enums.ColorCd} value
-         *  ({@code white / blue / green / yellow / orange / red /
-         *  gray / purple}). Null is treated as {@code white}. */
+        /** Legacy sticker token
+         *  ({@code fileG/fileB/fileY/fileW/fileR/fileP}). Null is
+         *  treated as {@code fileW}. */
         String     color,
         String     regId,
         /** Registrant display name (resolved server-side via
@@ -21,6 +22,6 @@ public record MemoRow(
         String     regNm,
         String     regDtm,
         /** True when the current request user is the memo's author
-         *  (drives the per-row Delete affordance on the side panel). */
+         *  (drives the per-row Edit / Delete affordance on the panel). */
         boolean    canEdit) {
 }

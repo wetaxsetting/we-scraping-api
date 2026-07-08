@@ -184,6 +184,73 @@ public interface CardTrnsHstrRepository extends JpaRepository<CardTrnsHstr, Card
             @Param("linkYn")        String       linkYn);
 
     /**
+     * Per-link-status tab counts over the same date / bank / card / search
+     * filter set as {@link #findLedgerPage}, but <b>without</b> the
+     * {@code linkYn} predicate — so the All / Linked / Unlinked tabs can all
+     * show a count regardless of which tab is currently active. Returns one
+     * row:
+     * <ol>
+     *   <li>{@code allCount} — total rows in the filter</li>
+     *   <li>{@code linkedCount} — rows with a linked doc
+     *       ({@code BUSA_DOC_RCV_PAY_HIS} EXISTS, {@code RCV_PAY_WAY_CD='R'})</li>
+     *   <li>{@code unlinkedCount} — rows without a linked doc</li>
+     * </ol>
+     * The linked predicate is identical to the {@code linkYn='Y'} branch in
+     * {@link #findLedgerPage}, so a tab's count equals the row count that tab
+     * would list. {@code allCount == linkedCount + unlinkedCount}.
+     */
+    @Query("""
+            SELECT
+                COUNT(c) AS allCount,
+                COALESCE(SUM(CASE WHEN EXISTS (SELECT 1 FROM BusaDocRcvPayHis h
+                                                WHERE h.bizKey = c.bizKey
+                                                  AND h.refNo = c.cardSeqNo
+                                                  AND h.rcvPayWayCd = 'R')
+                                  THEN 1 ELSE 0 END), 0) AS linkedCount,
+                COALESCE(SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM BusaDocRcvPayHis h
+                                                    WHERE h.bizKey = c.bizKey
+                                                      AND h.refNo = c.cardSeqNo
+                                                      AND h.rcvPayWayCd = 'R')
+                                  THEN 1 ELSE 0 END), 0) AS unlinkedCount
+              FROM CardTrnsHstr c
+             WHERE c.bizKey = :bizKey
+               AND c.trscDt BETWEEN :fromDt AND :toDt
+               AND (:filterBank = FALSE OR c.bankCd IN :bankCds)
+               AND (:filterCard = FALSE OR c.cardNo IN :cardNos)
+               AND (:srchWdPattern IS NULL
+                    OR LOWER(COALESCE(c.merchNm, '')) LIKE :srchWdPattern
+                    OR EXISTS (SELECT 1 FROM CardMstr m
+                                WHERE m.bizKey = c.bizKey
+                                  AND m.bankCd = c.bankCd
+                                  AND m.cardNo = c.cardNo
+                                  AND (LOWER(COALESCE(m.cardHldrNm, '')) LIKE :srchWdPattern
+                                       OR LOWER(COALESCE(m.cardNm,     '')) LIKE :srchWdPattern
+                                       OR LOWER(COALESCE(m.cardNickNm, '')) LIKE :srchWdPattern)))
+            """)
+    LinkCountsProjection findLinkCounts(
+            @Param("bizKey")        String       bizKey,
+            @Param("fromDt")        String       fromDt,
+            @Param("toDt")          String       toDt,
+            @Param("filterBank")    boolean      filterBank,
+            @Param("bankCds")       List<String> bankCds,
+            @Param("filterCard")    boolean      filterCard,
+            @Param("cardNos")       List<String> cardNos,
+            @Param("srchWdPattern") String       srchWdPattern);
+
+    /**
+     * Interface projection carrying the three tab counts from
+     * {@link #findLinkCounts}. Boxed types — the {@code COALESCE}'d
+     * {@code SUM(CASE ...)} still returns SQL {@code NULL} over an empty
+     * rowset in some dialects; boxing lets Spring's projection adapter map
+     * it without an unbox-of-null failure.
+     */
+    interface LinkCountsProjection {
+        Long getAllCount();
+        Long getLinkedCount();
+        Long getUnlinkedCount();
+    }
+
+    /**
      * Narrow load-by-PK for the patch / put endpoints. Returns
      * {@link Optional#empty()} when the row is missing OR the row's
      * tenant differs from the supplied {@code bizKey} — the service

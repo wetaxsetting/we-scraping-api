@@ -11,6 +11,7 @@ import com.kosign.wecms.common.i18n.MessageResolver;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.ActiveCard;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardListResponse;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTransactionLinkCounts;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTransactionListResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTransactionRow;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTransactionTotals;
@@ -129,6 +130,7 @@ class CardTransactionsControllerTest {
                         new BigDecimal("799200.000000"),
                         1L, new BigDecimal("799200.000000"),
                         0L, BigDecimal.ZERO),
+                new CardTransactionLinkCounts(1L, 1L, 0L),
                 List.of(row));
 
         when(service.list(eq("20250101"), eq("20251231"), any(), any(), any(), any(),
@@ -145,6 +147,9 @@ class CardTransactionsControllerTest {
                 .andExpect(jsonPath("$.data.page_size",                is(15)))
                 .andExpect(jsonPath("$.data.totals.total_count",       is(1)))
                 .andExpect(jsonPath("$.data.totals.totl_appr_req_cnt", is(1)))
+                .andExpect(jsonPath("$.data.link_counts.all",          is(1)))
+                .andExpect(jsonPath("$.data.link_counts.linked",       is(1)))
+                .andExpect(jsonPath("$.data.link_counts.unlinked",     is(0)))
                 .andExpect(jsonPath("$.data.rows[0].card_seq_no",      is("156")))
                 .andExpect(jsonPath("$.data.rows[0].bank_cd",          is("11704020")))
                 .andExpect(jsonPath("$.data.rows[0].bank_nm",          is("VietinBank")))
@@ -180,6 +185,7 @@ class CardTransactionsControllerTest {
                 0, 15, 0L,
                 new CardTransactionTotals(0L, BigDecimal.ZERO, 0L, BigDecimal.ZERO,
                         0L, BigDecimal.ZERO),
+                new CardTransactionLinkCounts(0L, 0L, 0L),
                 List.of());
         when(service.list(any(), any(), any(), any(), any(), any(),
                 any(), any(), anyInt(), anyInt())).thenReturn(empty);

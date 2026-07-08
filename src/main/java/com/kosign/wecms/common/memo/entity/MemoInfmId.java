@@ -1,4 +1,4 @@
-package com.kosign.wecms.domain.payment.cardtransactions.entity;
+package com.kosign.wecms.common.memo.entity;
 
 import lombok.AllArgsConstructor;
 import lombok.EqualsAndHashCode;

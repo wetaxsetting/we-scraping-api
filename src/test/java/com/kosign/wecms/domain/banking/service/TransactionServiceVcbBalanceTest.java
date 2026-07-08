@@ -2,6 +2,7 @@ package com.kosign.wecms.domain.banking.service;
 
 import com.kosign.wecms.common.enums.LangCd;
 import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
+import com.kosign.wecms.common.memo.MemoService;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.auth.repository.UserInfmRepository;
 import com.kosign.wecms.domain.banking.dto.TransactionListResponse;
@@ -69,6 +70,7 @@ class TransactionServiceVcbBalanceTest {
     @Mock UserInfmRepository           userRepo;
     @Mock AccountAccessGuard           accountAccessGuard;
     @Mock LegacyFunctionRepository     legacyFunctions;
+    @Mock MemoService                 memoService;
 
     TransactionService service;
 
@@ -82,7 +84,7 @@ class TransactionServiceVcbBalanceTest {
         service = new TransactionService(
                 txnRepo, rcvPayRepo, chartAcctRepo, purposeRepo, vasAcctRepo,
                 contactRepo, acctRepo, matchLogRepo, scdulPymnSumrRepo, userRepo,
-                accountAccessGuard, legacyFunctions);
+                accountAccessGuard, legacyFunctions, memoService);
         TenantContext.set(USER, USER, BIZ, LangCd.EN, TenantContext.AUTH_GR_ADMIN);
     }
 

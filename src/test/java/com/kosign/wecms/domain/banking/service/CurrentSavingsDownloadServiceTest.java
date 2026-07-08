@@ -104,7 +104,8 @@ class CurrentSavingsDownloadServiceTest {
                                       String vas, String contact, String confirmedBy) {
         return new TransactionRow(
                 "b_a", dt, tm, "1", deposit, withdraw, bal, rmrk, "Y", confirmedBy, dt + tm,
-                "N", chartAcct, "s1", purpose, vas, "tk", contact, "SHORT1", null, null, null);
+                "N", chartAcct, "s1", purpose, vas, "tk", contact, "SHORT1", null, null, null,
+                null, 0);
     }
 
     private static Sheet readSheet(CurrentSavingsDownloadService.GeneratedReport report) throws Exception {

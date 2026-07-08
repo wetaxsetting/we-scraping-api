@@ -2,8 +2,17 @@ package com.kosign.wecms.domain.banking.service;
 
 import com.kosign.wecms.common.enums.InoutDv;
 import com.kosign.wecms.common.exception.BusinessException;
+import com.kosign.wecms.common.memo.MemoAggregate;
+import com.kosign.wecms.common.memo.MemoRefKey;
+import com.kosign.wecms.common.memo.MemoScope;
+import com.kosign.wecms.common.memo.MemoService;
+import com.kosign.wecms.common.memo.dto.MemoListResponse;
+import com.kosign.wecms.common.memo.dto.MemoRow;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.banking.dto.TransactionConfirmRequest;
+import com.kosign.wecms.domain.banking.dto.TransactionMemoColorRequest;
+import com.kosign.wecms.domain.banking.dto.TransactionMemoCreateRequest;
+import com.kosign.wecms.domain.banking.dto.TransactionMemoUpdateRequest;
 import com.kosign.wecms.domain.banking.dto.TransactionContactRequest;
 import com.kosign.wecms.domain.banking.dto.TransactionDetailResponse;
 import com.kosign.wecms.domain.banking.dto.TransactionListResponse;
@@ -16,6 +25,7 @@ import com.kosign.wecms.domain.auth.entity.UserInfm;
 import com.kosign.wecms.domain.auth.repository.UserInfmRepository;
 import com.kosign.wecms.domain.banking.entity.AcctMstr;
 import com.kosign.wecms.domain.banking.entity.AcctTrnsHstr;
+import com.kosign.wecms.domain.banking.entity.AcctTrnsHstrId;
 import com.kosign.wecms.domain.banking.entity.AcctTrnsRcvPayInfm;
 import com.kosign.wecms.domain.banking.entity.BusiMatchLog;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
@@ -107,6 +117,12 @@ public class TransactionService {
     private final UserInfmRepository userRepo;
     private final AccountAccessGuard accountAccessGuard;
     private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
+    /** Shared memo service (legacy {@code comm_0105_001}). Transaction
+     *  History uses the 4-key thread shape
+     *  ({@code REF_NO = BANK_CD}, {@code REF_NO2 = ACCT_NO},
+     *  {@code REF_NO3 = TRSC_DT}, {@code REF_NO4 = ACCT_SEQ_NO}) via
+     *  {@link MemoScope#TRANSACTION_HISTORY_VND} / {@code _FCY}. */
+    private final MemoService memoService;
 
     @Transactional(readOnly = true)
     public TransactionListResponse list(String acctSeqNo, String fromDt, String toDt, String typeFilter) {
@@ -140,6 +156,15 @@ public class TransactionService {
 
         Map<String, MatchInfo> matchInfo = matchInfoBySeq(r.bizKey, rows);
 
+        // Row-level memo icon (grid): count + newest-color per transaction,
+        // keyed by ACCT_SEQ_NO (= MEMO_INFM.REF_NO4). Returned for EVERY row
+        // regardless of confirmation — the frontend gates the icon on confYn
+        // (matches live fnsh_0002_001_osmc_VN.js `if (val.CNFM_BY_USER_ID)`).
+        // Scope derived from the account currency (VND screen ⇔ ccyCd VND).
+        Map<String, MemoAggregate> memoBySeq = memoService.aggregateByRefNo4(
+                memoScopeForCurrency(r.ccyCd), r.bizKey,
+                rows.stream().map(AcctTrnsHstr::getAcctSeqNo).toList());
+
         // TH-01 — Vietcombank running-balance reconstruction. Empty map for
         // every other bank, so the toRow fallback keeps the stored ATH.BAL.
         Map<String, BigDecimal> reconstructedBal = vcbReconstructedBalances(r);
@@ -163,7 +188,8 @@ public class TransactionService {
                         classification.trcoKeyByAcctSeqNo().get(row.getAcctSeqNo()),
                         classification.trcoNmByAcctSeqNo().get(row.getAcctSeqNo()),
                         matchInfo.get(row.getAcctSeqNo()),
-                        reconstructedBal.getOrDefault(row.getAcctSeqNo(), row.getBal())))
+                        reconstructedBal.getOrDefault(row.getAcctSeqNo(), row.getBal()),
+                        memoBySeq.getOrDefault(row.getAcctSeqNo(), MemoAggregate.EMPTY)))
                 .toList();
 
         return new TransactionListResponse(
@@ -301,11 +327,18 @@ public class TransactionService {
             return fresh;
         });
 
+        // Legacy parity — fnsh_0002_001_u002 updates ACCT_TRNS_RCV_PAY_INFM via
+        // IDO.ACCT_TRNS_RCV_PAY_INFM_U001.xml, which guards every classification
+        // column with coalesce(:PARAM, COLUMN): a field the confirm request does
+        // not supply keeps its existing DB value. The frontend confirm sends an
+        // empty body ({}), so req is non-null but its fields are null — apply the
+        // pick ONLY when the request field is non-null so a bare confirm never
+        // wipes a Purpose / VAS / Contact set earlier via the inline pickers.
         if (req != null) {
-            entry.setRcvPayTrcoKey(req.rcvPayTrcoKey());
-            entry.setRcvPayTrcoNm(req.rcvPayTrcoNm());
-            entry.setRcvPayUsagCd(req.rcvPayUsagCd());
-            entry.setVasAcctCd(req.vasAcctCd());
+            if (req.rcvPayTrcoKey() != null) entry.setRcvPayTrcoKey(req.rcvPayTrcoKey());
+            if (req.rcvPayTrcoNm() != null)  entry.setRcvPayTrcoNm(req.rcvPayTrcoNm());
+            if (req.rcvPayUsagCd() != null)  entry.setRcvPayUsagCd(req.rcvPayUsagCd());
+            if (req.vasAcctCd() != null)     entry.setVasAcctCd(req.vasAcctCd());
         }
         entry.setCnfmYn("Y");
         // Legacy parity — fnsh_0002_001_u002_act.jsp:90,103 (VND) and
@@ -1060,7 +1093,8 @@ public class TransactionService {
     private TransactionRow toRow(AcctTrnsHstr r, AcctTrnsRcvPayInfm cnfm,
                                   String useUsagCd, String vasAcctCd,
                                   String rcvPayTrcoKey, String rcvPayTrcoNm,
-                                  MatchInfo match, BigDecimal effectiveBal) {
+                                  MatchInfo match, BigDecimal effectiveBal,
+                                  MemoAggregate memo) {
         boolean isDeposit = InoutDv.IN.code().equals(r.getInoutDv());
         boolean confirmed = cnfm != null;
         BigDecimal amt = r.getTrscAmt();
@@ -1091,8 +1125,87 @@ public class TransactionService {
                 r.getBankTrnsShortId(),
                 match != null ? match.fileName() : null,
                 match != null ? match.matchedAt() : null,
-                match != null ? match.matchedBy() : null
+                match != null ? match.matchedBy() : null,
+                memo != null ? memo.color() : null,
+                memo != null ? memo.count() : 0
         );
+    }
+
+    /* ================================================================
+     *  Memo (side panel) — legacy comm_0105_001, 4-key thread.
+     *  REF_NO = BANK_CD, REF_NO2 = ACCT_NO, REF_NO3 = TRSC_DT,
+     *  REF_NO4 = ACCT_SEQ_NO. WEB_SVC_ID from the explicit VND/FCY scope.
+     * ================================================================ */
+
+    /** List one transaction's memos (newest-first). */
+    @Transactional(readOnly = true)
+    public MemoListResponse listMemos(String acctSeqNo, String trnsSeqNo, String scope) {
+        Resolved r = resolve(acctSeqNo);
+        return memoService.list(memoScopeForParam(scope), memoRefKey(r, trnsSeqNo));
+    }
+
+    /** Add a memo to one transaction. */
+    @Transactional
+    public MemoRow createMemo(String acctSeqNo, String trnsSeqNo, String scope,
+                              TransactionMemoCreateRequest req) {
+        Resolved r = resolve(acctSeqNo);
+        return memoService.create(memoScopeForParam(scope), memoRefKey(r, trnsSeqNo),
+                req.memo(), req.color());
+    }
+
+    /** Edit one memo's text — author-only ({@code WBE_MEMO_NOT_AUTHOR}). */
+    @Transactional
+    public MemoRow updateMemo(String acctSeqNo, String trnsSeqNo, String scope,
+                              BigDecimal seqNo, TransactionMemoUpdateRequest req) {
+        resolve(acctSeqNo); // access guard + tenant
+        return memoService.update(memoScopeForParam(scope), seqNo, req.memo());
+    }
+
+    /** Set the row-level sticker color for one transaction's whole thread. */
+    @Transactional
+    public void updateMemoColor(String acctSeqNo, String trnsSeqNo, String scope,
+                                TransactionMemoColorRequest req) {
+        Resolved r = resolve(acctSeqNo);
+        memoService.updateColor(memoScopeForParam(scope), memoRefKey(r, trnsSeqNo), req.color());
+    }
+
+    /** Delete one memo — author-only ({@code WBE_MEMO_NOT_AUTHOR}). */
+    @Transactional
+    public void deleteMemo(String acctSeqNo, String trnsSeqNo, String scope, BigDecimal seqNo) {
+        resolve(acctSeqNo); // access guard + tenant
+        memoService.delete(memoScopeForParam(scope), seqNo);
+    }
+
+    /**
+     * Build the 4-key memo ref from the transaction row. Loads
+     * {@code ACCT_TRNS_HSTR} by {@code (bizKey, ACCT_SEQ_NO)} and verifies
+     * it belongs to the resolved account (path consistency + tenant safety),
+     * then keys the memo thread exactly as legacy
+     * {@code fnsh_0002_001_osmc_VN.js:885} does — {@code REF_NO = BANK_CD},
+     * {@code REF_NO2 = ACCT_NO}, {@code REF_NO3 = TRSC_DT},
+     * {@code REF_NO4 = ACCT_SEQ_NO}.
+     */
+    private MemoRefKey memoRefKey(Resolved r, String trnsSeqNo) {
+        AcctTrnsHstr row = txnRepo.findById(new AcctTrnsHstrId(r.bizKey, trnsSeqNo))
+                .filter(h -> r.bankCd.equals(h.getBankCd()) && r.acctNo.equals(h.getAcctNo()))
+                .orElseThrow(() -> new BusinessException(CODE_NOT_FOUND));
+        return MemoRefKey.of(row.getBankCd(), row.getAcctNo(), row.getTrscDt(), row.getAcctSeqNo());
+    }
+
+    /** Explicit VND/FCY scope from the frontend → the memo {@code WEB_SVC_ID}. */
+    private static MemoScope memoScopeForParam(String scope) {
+        return "FCY".equalsIgnoreCase(scope)
+                ? MemoScope.TRANSACTION_HISTORY_FCY
+                : MemoScope.TRANSACTION_HISTORY_VND;
+    }
+
+    /** List-enrichment scope, derived from the account currency (a VND
+     *  account is only ever shown on the VND screen). Matches the explicit
+     *  scope the drawer writes under for the same account. */
+    private static MemoScope memoScopeForCurrency(String ccyCd) {
+        return (ccyCd == null || ccyCd.isBlank() || "VND".equalsIgnoreCase(ccyCd.trim()))
+                ? MemoScope.TRANSACTION_HISTORY_VND
+                : MemoScope.TRANSACTION_HISTORY_FCY;
     }
 
     private record Resolved(String bizKey, String bankCd, String acctNo, String ccyCd) { }

@@ -3,7 +3,12 @@ package com.kosign.wecms.domain.payment.cardtransactions.service;
 import com.kosign.wecms.common.auditlog.service.AuditLogContext;
 import com.kosign.wecms.common.auditlog.service.AuditLogService;
 import com.kosign.wecms.common.exception.BusinessException;
+import com.kosign.wecms.common.memo.MemoAggregate;
+import com.kosign.wecms.common.memo.MemoRefKey;
 import com.kosign.wecms.common.memo.MemoScope;
+import com.kosign.wecms.common.memo.MemoService;
+import com.kosign.wecms.common.memo.dto.MemoListResponse;
+import com.kosign.wecms.common.memo.dto.MemoRow;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.common.web.SortDirection;
 import com.kosign.wecms.domain.banking.entity.BankInfm;
@@ -14,15 +19,14 @@ import com.kosign.wecms.domain.einvoice.repository.BusaDocMstrRepository;
 import com.kosign.wecms.common.enums.LangCd;
 import com.kosign.wecms.domain.payment.cardtransactions.entity.BusaDocRcvPayHis;
 import com.kosign.wecms.domain.payment.cardtransactions.entity.CardTrnsRcvPayInfm;
-import com.kosign.wecms.domain.payment.cardtransactions.entity.MemoInfm;
 import com.kosign.wecms.domain.payment.cardtransactions.repository.BusaDocRcvPayHisRepository;
 import com.kosign.wecms.domain.payment.cardtransactions.repository.CardTrnsRcvPayInfmRepository;
-import com.kosign.wecms.domain.payment.cardtransactions.repository.MemoInfmRepository;
 import com.kosign.wecms.domain.payment.cardtransactions.repository.UsagInfmRepository;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.ActiveCard;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.ApproverRef;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardListResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTransactionListFilters;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTransactionLinkCounts;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTransactionListResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTransactionPatchRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTransactionRow;
@@ -198,29 +202,16 @@ public class CardTransactionsService {
     private final BusaDocRcvPayHisRepository       busaDocRcvPayHisRepo;
     /** Purpose dictionary (legacy {@code prch_0011_001} USAG combo). */
     private final UsagInfmRepository               usagInfmRepo;
-    /** Polymorphic memo storage (legacy
-     *  {@code wabooks.dao.MemoInfmDAO} / `MEMO_INFM_C001 / R001 / D001`). */
-    private final MemoInfmRepository               memoInfmRepo;
-    /** Resolves {@code USER_INFM.USER_NM} for memo author display
-     *  names. JpaRepository keyed by {@code USER_ID}. */
-    private final com.kosign.wecms.domain.auth.repository.UserInfmRepository userInfmRepo;
+    /** Shared memo service over the polymorphic {@code MEMO_INFM} table
+     *  (legacy {@code comm_0105_001} behavior). Card Transactions uses
+     *  the single-key shape ({@code REF_NO = CARD_SEQ_NO}) via
+     *  {@link MemoScope#CARD_TRANSACTIONS}. */
+    private final MemoService                      memoService;
 
     /** Single funnel for legacy wb_get_next_val key allocation (V140):
      *  BUSA_DOC_RCV_PAY_HIS.rcv_pay_his_seq_no (#29) + the shared
      *  EXPT_RESOL_MSTR.appr_seq_no global sequence (#1). */
     private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
-
-    /** {@code WEB_SVC_ID} value the side panel scopes Card Transactions
-     *  memos by. Sourced from the central {@link MemoScope} registry —
-     *  the raw identifier lives in exactly one place. Memo is a shared
-     *  refactor feature, so the value is the modern Next.js route
-     *  ({@code /payment/corporate-card/card-transactions}), not the legacy
-     *  JEX screen id. Mirrors legacy {@code card_0001_001.ts:1262-1270}. */
-    private static final String MEMO_WEB_SVC_ID_CARD = MemoScope.CARD_TRANSACTIONS.webSvcId();
-
-    /** Default memo sticker color when none supplied — legacy
-     *  {@code getMemoPopup2} default (`val.COLOR ?? 'fileW'`). */
-    private static final String MEMO_DEFAULT_COLOR = "fileW";
 
     /* ----------------------------------------------------------------
      *  List  (legacy card_0001_001_r001)
@@ -271,12 +262,22 @@ public class CardTransactionsService {
                 filterCard, inParam(f.cardNos()),
                 f.srchWdPattern(), f.linkYn());
 
+        // Per-tab counts — same date/bank/card/search filter, but WITHOUT
+        // the linkYn predicate, so All / Linked / Unlinked all carry a real
+        // count regardless of which tab is active (the grid + totals above
+        // stay scoped to the active tab via f.linkYn()).
+        CardTrnsHstrRepository.LinkCountsProjection linkRaw = cardTrnsRepo.findLinkCounts(
+                bizKey, f.fromDt(), f.toDt(),
+                filterBank, inParam(f.bankCds()),
+                filterCard, inParam(f.cardNos()),
+                f.srchWdPattern());
+
         // Pre-resolve bank names for the rows on this page so the row
         // mapper doesn't fan out one cache hit per row inside the stream.
         Map<String, String> bankNmByCd = resolveBankNames(entityPage.getContent());
         Map<String, String> docNoByApprSeqNo = resolveDocNos(entityPage.getContent());
         Map<String, List<LinkedDocRef>> linkedDocsByCardSeqNo = resolveLinkedDocs(entityPage.getContent());
-        Map<String, MemoAgg> memoByCardSeqNo = resolveMemoAggregates(entityPage.getContent());
+        Map<String, MemoAggregate> memoByCardSeqNo = resolveMemoAggregates(entityPage.getContent());
         Map<String, String> sttsNmByCode = resolvePurchaseStatusNames(entityPage.getContent());
 
         List<CardTransactionRow> rows = entityPage.getContent().stream()
@@ -284,6 +285,7 @@ public class CardTransactionsService {
                 .toList();
 
         CardTransactionTotals totals = toTotals(raw);
+        CardTransactionLinkCounts linkCounts = toLinkCounts(linkRaw);
         log.info("feature=card-transactions list bizKey={} total={} page={} size={}",
                 bizKey, entityPage.getTotalElements(), pageable.getPageNumber(), pageable.getPageSize());
         return new CardTransactionListResponse(
@@ -291,6 +293,7 @@ public class CardTransactionsService {
                 pageable.getPageSize(),
                 entityPage.getTotalElements(),
                 totals,
+                linkCounts,
                 rows);
     }
 
@@ -1443,40 +1446,8 @@ public class CardTransactionsService {
      * <p>Author names resolved in one batch JPA fetch against
      * {@code USER_INFM} keyed by {@code REG_ID}.
      */
-    public com.kosign.wecms.domain.payment.cardtransactions.dto.MemoListResponse
-            listMemos(String cardSeqNo) {
-
-        String bizKey = TenantContext.currentBizKey();
-        String userId = requireUserId();
-
-        List<MemoInfm> rows = memoInfmRepo
-                .findByBizKeyAndWebSvcIdAndRefNoOrderByModDtmDescSeqNoDesc(
-                        bizKey, MEMO_WEB_SVC_ID_CARD, cardSeqNo.trim());
-
-        // Batch resolve author display names — one query for the page.
-        java.util.Set<String> userIds = rows.stream()
-                .map(MemoInfm::getRegId)
-                .filter(java.util.Objects::nonNull)
-                .collect(java.util.stream.Collectors.toSet());
-        Map<String, String> userNmById = new HashMap<>();
-        if (!userIds.isEmpty()) {
-            userInfmRepo.findAllById(userIds).forEach(u -> {
-                if (u.getUserNm() != null) userNmById.put(u.getUserId(), u.getUserNm());
-            });
-        }
-
-        List<com.kosign.wecms.domain.payment.cardtransactions.dto.MemoRow> list = rows.stream()
-                .map(m -> new com.kosign.wecms.domain.payment.cardtransactions.dto.MemoRow(
-                        m.getSeqNo(),
-                        m.getMemo(),
-                        m.getColor() != null ? m.getColor() : MEMO_DEFAULT_COLOR,
-                        m.getRegId(),
-                        userNmById.getOrDefault(m.getRegId(), m.getRegId()),
-                        m.getRegDtm(),
-                        userId.equals(m.getRegId())))
-                .toList();
-        return new com.kosign.wecms.domain.payment.cardtransactions.dto.MemoListResponse(
-                list.size(), list);
+    public MemoListResponse listMemos(String cardSeqNo) {
+        return memoService.list(MemoScope.CARD_TRANSACTIONS, MemoRefKey.single(cardSeqNo.trim()));
     }
 
     /**
@@ -1494,40 +1465,13 @@ public class CardTransactionsService {
      * is a property of the card transaction row, not the individual memo.
      */
     @Transactional
-    public com.kosign.wecms.domain.payment.cardtransactions.dto.MemoRow createMemo(
+    public MemoRow createMemo(
             com.kosign.wecms.domain.payment.cardtransactions.dto.CreateMemoRequest req) {
-
-        String bizKey = TenantContext.currentBizKey();
-        String userId = requireUserId();
-        String now    = nowDtm14();
-        String color  = (req.color() == null || req.color().isBlank())
-                ? MEMO_DEFAULT_COLOR : req.color().trim();
-        String refNo  = req.refNo().trim();
-
-        MemoInfm m;
-        try {
-            m = insertMemoOnce(bizKey, req, userId, now, color);
-        } catch (org.springframework.dao.DataIntegrityViolationException race) {
-            log.info("feature=card-transactions memo seq race retrying once bizKey={}", bizKey);
-            m = insertMemoOnce(bizKey, req, userId, now, color);
-        }
-
-        java.math.BigDecimal seqNo = m.getSeqNo();
-        String memoText = m.getMemo();
-        String regDtm   = m.getRegDtm();
-
-        // Row-level color — propagate to the whole thread on this REF_NO.
-        memoInfmRepo.updateColorByRef(bizKey, MEMO_WEB_SVC_ID_CARD, refNo, color);
-
-        String userNm = TenantContext.currentUserNm();
-        return new com.kosign.wecms.domain.payment.cardtransactions.dto.MemoRow(
-                seqNo,
-                memoText,
-                color,
-                userId,
-                userNm != null ? userNm : userId,
-                regDtm,
-                true);
+        return memoService.create(
+                MemoScope.CARD_TRANSACTIONS,
+                MemoRefKey.single(req.refNo().trim()),
+                req.memo(),
+                req.color());
     }
 
     /**
@@ -1540,38 +1484,12 @@ public class CardTransactionsService {
      * {@link #updateMemoColor}).
      */
     @Transactional
-    public com.kosign.wecms.domain.payment.cardtransactions.dto.MemoRow updateMemo(
+    public MemoRow updateMemo(
             java.math.BigDecimal seqNo,
             com.kosign.wecms.domain.payment.cardtransactions.dto.UpdateMemoRequest req) {
 
         if (req == null) throw new BusinessException("WBE_VALIDATION");
-        String bizKey = TenantContext.currentBizKey();
-        String userId = requireUserId();
-
-        var id = new com.kosign.wecms.domain.payment.cardtransactions.entity.MemoInfmId(
-                bizKey, MEMO_WEB_SVC_ID_CARD, seqNo);
-        MemoInfm m = memoInfmRepo.findById(id)
-                .orElseThrow(() -> new BusinessException("WBE_NOT_FOUND", "memo not found"));
-
-        if (!userId.equals(m.getRegId())) {
-            throw new BusinessException("WBE_MEMO_NOT_AUTHOR");
-        }
-
-        String now = nowDtm14();
-        m.setMemo(req.memo().trim());
-        m.setModId(userId);
-        m.setModDtm(now);
-        memoInfmRepo.save(m);
-
-        String userNm = TenantContext.currentUserNm();
-        return new com.kosign.wecms.domain.payment.cardtransactions.dto.MemoRow(
-                m.getSeqNo(),
-                m.getMemo(),
-                m.getColor() != null ? m.getColor() : MEMO_DEFAULT_COLOR,
-                m.getRegId(),
-                userNm != null ? userNm : m.getRegId(),
-                m.getRegDtm(),
-                true);
+        return memoService.update(MemoScope.CARD_TRANSACTIONS, seqNo, req.memo());
     }
 
     /**
@@ -1587,57 +1505,21 @@ public class CardTransactionsService {
             com.kosign.wecms.domain.payment.cardtransactions.dto.UpdateMemoColorRequest req) {
 
         if (req == null) throw new BusinessException("WBE_VALIDATION");
-        String bizKey = TenantContext.currentBizKey();
-        String color  = (req.color() == null || req.color().isBlank())
-                ? MEMO_DEFAULT_COLOR : req.color().trim();
-        memoInfmRepo.updateColorByRef(bizKey, MEMO_WEB_SVC_ID_CARD, req.refNo().trim(), color);
-    }
-
-    private MemoInfm insertMemoOnce(
-            String bizKey,
-            com.kosign.wecms.domain.payment.cardtransactions.dto.CreateMemoRequest req,
-            String userId, String now, String color) {
-
-        // SEQ_NO — funnel through the legacy wb_get_next_val('memo_infm','seq_no',
-        // biz_key, web_svc_id) branch, mirroring legacy MemoInfmDAO.create →
-        // SeqHelper.getNextVal. Per-(tenant, screen) MAX+1; the enclosing createMemo
-        // retries once on a PK collision (legacy relies on the same PK to reject a race).
-        String nextText = legacyFunctions.nextMemoInfmSeqNo(bizKey, MEMO_WEB_SVC_ID_CARD);
-        java.math.BigDecimal nextSeq = new java.math.BigDecimal(nextText.trim());
-
-        MemoInfm m = new MemoInfm();
-        m.setBizKey(bizKey);
-        m.setWebSvcId(MEMO_WEB_SVC_ID_CARD);
-        m.setSeqNo(nextSeq);
-        m.setMemo(req.memo().trim());
-        m.setColor(color);
-        m.setRefNo(req.refNo().trim());
-        m.setRegId(userId);
-        m.setRegDtm(now);
-        m.setModId(userId);
-        m.setModDtm(now);
-        return memoInfmRepo.save(m);
+        memoService.updateColor(
+                MemoScope.CARD_TRANSACTIONS,
+                MemoRefKey.single(req.refNo().trim()),
+                req.color());
     }
 
     /**
      * Delete one memo. Hard delete (legacy {@code MEMO_INFM_D001}
-     * parity). Only the memo's author can delete it — refactor
-     * stance, slightly tighter than legacy which lets any tenant
-     * member delete. Returns silently when the memo doesn't exist
-     * (idempotent).
+     * parity). Only the memo's author can delete it. Returns silently
+     * when the memo doesn't exist (idempotent). Delegates to the shared
+     * {@link MemoService}.
      */
     @Transactional
     public void deleteMemo(java.math.BigDecimal seqNo) {
-        String bizKey = TenantContext.currentBizKey();
-        String userId = requireUserId();
-        var id = new com.kosign.wecms.domain.payment.cardtransactions.entity.MemoInfmId(
-                bizKey, MEMO_WEB_SVC_ID_CARD, seqNo);
-        memoInfmRepo.findById(id).ifPresent(m -> {
-            if (!userId.equals(m.getRegId())) {
-                throw new BusinessException("WBE_MEMO_NOT_AUTHOR");
-            }
-            memoInfmRepo.delete(m);
-        });
+        memoService.delete(MemoScope.CARD_TRANSACTIONS, seqNo);
     }
 
     public com.kosign.wecms.domain.payment.cardtransactions.dto.ReceiptDetailResponse
@@ -2343,7 +2225,6 @@ public class CardTransactionsService {
 
     /** Per-card memo aggregate for the list grid: how many memos + the
      *  row-level sticker color (the whole thread shares one color). */
-    private record MemoAgg(int count, String color) {}
 
     /**
      * Batch-resolve the memo count + row-level sticker color for a page of
@@ -2354,7 +2235,7 @@ public class CardTransactionsService {
      * the whole {@code REF_NO} thread, every memo shares it, so "newest"
      * just makes the pick deterministic if they ever diverge.
      */
-    private Map<String, MemoAgg> resolveMemoAggregates(List<CardTrnsHstr> rows) {
+    private Map<String, MemoAggregate> resolveMemoAggregates(List<CardTrnsHstr> rows) {
         if (rows.isEmpty()) return Map.of();
         String bizKey = rows.get(0).getBizKey();
         List<String> refNos = rows.stream()
@@ -2362,23 +2243,7 @@ public class CardTransactionsService {
                 .filter(s -> s != null && !s.isBlank())
                 .distinct()
                 .toList();
-        if (refNos.isEmpty()) return Map.of();
-
-        List<MemoInfm> memos = memoInfmRepo.findByBizKeyAndWebSvcIdAndRefNoIn(
-                bizKey, MEMO_WEB_SVC_ID_CARD, refNos);
-        Map<String, MemoAgg> out = new HashMap<>();
-        memos.stream()
-                .collect(java.util.stream.Collectors.groupingBy(MemoInfm::getRefNo))
-                .forEach((ref, list) -> {
-                    String color = list.stream()
-                            .max(java.util.Comparator
-                                    .comparing((MemoInfm m) -> m.getModDtm() == null ? "" : m.getModDtm())
-                                    .thenComparing(m -> m.getSeqNo() == null ? java.math.BigDecimal.ZERO : m.getSeqNo()))
-                            .map(MemoInfm::getColor)
-                            .orElse(null);
-                    out.put(ref, new MemoAgg(list.size(), color != null ? color : MEMO_DEFAULT_COLOR));
-                });
-        return out;
+        return memoService.aggregateBySingleRef(MemoScope.CARD_TRANSACTIONS, bizKey, refNos);
     }
 
     private CardTransactionRow toRow(
@@ -2386,7 +2251,7 @@ public class CardTransactionsService {
             Map<String, String> bankNmByCd,
             Map<String, String> docNoByApprSeqNo,
             Map<String, List<LinkedDocRef>> linkedDocsByCardSeqNo,
-            Map<String, MemoAgg> memoByCardSeqNo,
+            Map<String, MemoAggregate> memoByCardSeqNo,
             Map<String, String> sttsNmByCode) {
         // CardMstr LEFT JOIN columns — Sprint 0 fetches the registry
         // names lazily per (bankCd, cardNo) on a per-page basis. With
@@ -2434,13 +2299,9 @@ public class CardTransactionsService {
                 e.getCity(),
                 e.getNote(),
                 // Row-level memo icon (grid): color + count from MEMO_INFM.
-                memoByCardSeqNo.getOrDefault(e.getCardSeqNo(), EMPTY_MEMO_AGG).color(),
-                memoByCardSeqNo.getOrDefault(e.getCardSeqNo(), EMPTY_MEMO_AGG).count());
+                memoByCardSeqNo.getOrDefault(e.getCardSeqNo(), MemoAggregate.EMPTY).color(),
+                memoByCardSeqNo.getOrDefault(e.getCardSeqNo(), MemoAggregate.EMPTY).count());
     }
-
-    /** Shared "no memo" aggregate — null color (grid renders the default
-     *  empty icon) + zero count. Avoids per-row allocation in the mapper. */
-    private static final MemoAgg EMPTY_MEMO_AGG = new MemoAgg(0, null);
 
     /** Batch (APPR_SEQ_NO → DOC_NO) lookup against EXPT_RESOL_MSTR for
      *  the page's set of approval references. One IN-query per ledger
@@ -2521,6 +2382,17 @@ public class CardTransactionsService {
                 nzero(raw.getTotlApprReqAmt()),
                 nz(raw.getTotlApprNotReqCnt()),
                 nzero(raw.getTotlApprNotReqAmt()));
+    }
+
+    private static CardTransactionLinkCounts toLinkCounts(
+            CardTrnsHstrRepository.LinkCountsProjection raw) {
+        if (raw == null) {
+            return new CardTransactionLinkCounts(0L, 0L, 0L);
+        }
+        return new CardTransactionLinkCounts(
+                nz(raw.getAllCount()),
+                nz(raw.getLinkedCount()),
+                nz(raw.getUnlinkedCount()));
     }
 
     private static long nz(Long v) {

@@ -1,4 +1,4 @@
-package com.kosign.wecms.domain.payment.cardtransactions.dto;
+package com.kosign.wecms.common.memo.dto;
 
 import java.util.List;
 

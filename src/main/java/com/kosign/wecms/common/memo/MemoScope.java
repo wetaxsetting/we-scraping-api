@@ -19,11 +19,12 @@ package com.kosign.wecms.common.memo;
  * History VND/FCY in Phase 2) picks it up automatically. Values must fit
  * {@code MEMO_INFM.WEB_SVC_ID} (varchar(50)).
  *
- * <p>Only {@link #CARD_TRANSACTIONS} is wired today (its value is the
- * modern route). The two Transaction History scopes are provisional
- * placeholders declared ahead of their Phase 2 consumer — they will be
- * set to their modern routes when those screens adopt memo; do not treat
- * their current values as final.
+ * <p>All three scopes carry their modern Next.js route (wired
+ * 2026-07-07). Existing legacy memos written under the old JEX screen
+ * ids ({@code card_0001_001} / {@code fnsh_0002_001} /
+ * {@code fnsh_0006_001}) are migrated to these values by a one-time DBA
+ * SQL script (Card: {@code memo_web_svc_id_card_transactions_20260702.sql};
+ * Transaction History: {@code memo_web_svc_id_transaction_history_20260707.sql}).
  */
 public enum MemoScope {
 
@@ -32,17 +33,16 @@ public enum MemoScope {
      *  {@code card_0001_001}). Fits varchar(50) — 41 chars. */
     CARD_TRANSACTIONS("/payment/corporate-card/card-transactions"),
 
-    /** Current &amp; Savings → Transaction History VND — Phase 2, not yet
-     *  wired. Provisional placeholder (legacy {@code fnsh_0002_001}) —
-     *  set to the modern route when wired; {@code REF_NO = BANK_CD},
+    /** Current &amp; Savings → Transaction History VND (legacy
+     *  {@code fnsh_0002_001}). 4-key thread: {@code REF_NO = BANK_CD},
      *  {@code REF_NO2 = ACCT_NO}, {@code REF_NO3 = TRSC_DT},
-     *  {@code REF_NO4 = ACCT_SEQ_NO}. */
-    TRANSACTION_HISTORY_VND("fnsh_0002_001"),
+     *  {@code REF_NO4 = ACCT_SEQ_NO}. Modern route — 32 chars, fits varchar(50). */
+    TRANSACTION_HISTORY_VND("/banking/transaction-history/vnd"),
 
-    /** Current &amp; Savings → Transaction History FCY — Phase 2, not yet
-     *  wired. Provisional placeholder (legacy {@code fnsh_0006_001}) —
-     *  set to the modern route when wired; same 4-key shape as VND. */
-    TRANSACTION_HISTORY_FCY("fnsh_0006_001");
+    /** Current &amp; Savings → Transaction History FCY (legacy
+     *  {@code fnsh_0006_001}). Same 4-key shape as VND. Kept distinct
+     *  from VND so the two screens' memo threads never collide. */
+    TRANSACTION_HISTORY_FCY("/banking/transaction-history/fcy");
 
     private final String webSvcId;
 

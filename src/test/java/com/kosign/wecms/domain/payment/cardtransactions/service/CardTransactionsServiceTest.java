@@ -19,8 +19,8 @@ import com.kosign.wecms.domain.payment.cardtransactions.dto.PatchPurposeRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.UpdateReportingAccountRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.entity.CardMstrId;
 import com.kosign.wecms.domain.payment.cardtransactions.entity.CardTrnsHstr;
+import com.kosign.wecms.common.memo.MemoService;
 import com.kosign.wecms.domain.payment.cardtransactions.repository.BusaDocRcvPayHisRepository;
-import com.kosign.wecms.domain.payment.cardtransactions.repository.MemoInfmRepository;
 import com.kosign.wecms.domain.payment.cardtransactions.repository.CardMstrRepository;
 import com.kosign.wecms.domain.payment.cardtransactions.repository.CardTrnsHstrRepository;
 import com.kosign.wecms.domain.payment.cardtransactions.repository.CardTrnsHstrRepository.LedgerTotalsProjection;
@@ -78,7 +78,7 @@ class CardTransactionsServiceTest {
     @Mock private ApprovalLineApproverRepository   apprLineApproverRepo;
     @Mock private ApprovalBoxFanoutService         approvalBoxFanoutService;
     @Mock private BusaDocRcvPayHisRepository       busaDocRcvPayHisRepo;
-    @Mock private MemoInfmRepository               memoInfmRepo;
+    @Mock private MemoService                      memoService;
     @Mock private LegacyFunctionRepository         legacyFunctions;
 
     @InjectMocks

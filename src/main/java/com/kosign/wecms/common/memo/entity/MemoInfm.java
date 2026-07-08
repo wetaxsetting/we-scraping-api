@@ -1,4 +1,4 @@
-package com.kosign.wecms.domain.payment.cardtransactions.entity;
+package com.kosign.wecms.common.memo.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -15,19 +15,22 @@ import java.math.BigDecimal;
  * Polymorphic memo / note row. One row per memo, attached to any
  * parent record via {@code (WEB_SVC_ID, REF_NO[, REF_NO2..REF_NO9])}.
  *
- * <p>Mirrors legacy {@code wabooks.entity.MemoInfm}. First refactor
- * consumer is the Card Transactions row icon (legacy
- * {@code card_0001_001.ts:1242-1276}); future Memoable parents
- * (Banking inquiry, Internal Transfer, Project / szon) attach by
- * passing their own {@code WEB_SVC_ID} + parent ids.
+ * <p>Mirrors legacy {@code wabooks.entity.MemoInfm}. Shared refactor
+ * infrastructure (relocated to {@code common/memo} 2026-07-07 when a
+ * second consumer — Transaction History VND/FCY — joined Card
+ * Transactions): Memoable parents attach by passing their own
+ * {@code WEB_SVC_ID} + parent ids.
+ * <ul>
+ *   <li>Card Transactions: single-key — {@code REF_NO = CARD_SEQ_NO}.</li>
+ *   <li>Transaction History VND/FCY: 4-key — {@code REF_NO = BANK_CD},
+ *       {@code REF_NO2 = ACCT_NO}, {@code REF_NO3 = TRSC_DT},
+ *       {@code REF_NO4 = ACCT_SEQ_NO} (legacy {@code fnsh_0002_001} /
+ *       {@code fnsh_0006_001} parity).</li>
+ * </ul>
  *
- * <p>{@code COLOR} stores the legacy {@code wabooks.enums.ColorCd}
- * value verbatim ({@code white / blue / green / yellow / orange /
- * red / gray / purple}). DEV column is {@code varchar(6)} which fits
- * every value.
- *
- * <p>Schema landed in V202; DEV parity verified via
- * {@code postgres_dev_server_jexframe} MCP 2026-05-22.
+ * <p>{@code COLOR} stores the legacy sticker token verbatim
+ * ({@code fileG/fileB/fileY/fileW/fileR/fileP}); {@code fileW} = no color.
+ * DEV column is {@code varchar(6)} which fits every value.
  */
 @Getter
 @Setter

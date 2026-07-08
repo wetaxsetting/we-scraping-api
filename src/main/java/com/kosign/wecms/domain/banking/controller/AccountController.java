@@ -2,7 +2,12 @@ package com.kosign.wecms.domain.banking.controller;
 
 import com.kosign.wecms.common.export.ExcelExportRequest;
 import com.kosign.wecms.common.export.ExcelExportService;
+import com.kosign.wecms.common.memo.dto.MemoListResponse;
+import com.kosign.wecms.common.memo.dto.MemoRow;
 import com.kosign.wecms.common.response.ApiResponse;
+import com.kosign.wecms.domain.banking.dto.TransactionMemoColorRequest;
+import com.kosign.wecms.domain.banking.dto.TransactionMemoCreateRequest;
+import com.kosign.wecms.domain.banking.dto.TransactionMemoUpdateRequest;
 import com.kosign.wecms.domain.banking.dto.AccountListResponse;
 import com.kosign.wecms.domain.banking.dto.AccountLookupListResponse;
 import com.kosign.wecms.domain.banking.dto.RegisterAccountsRequest;
@@ -53,6 +58,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.security.access.prepost.PreAuthorize;
+
+import java.math.BigDecimal;
 
 @RestController
 @RequestMapping("/api/v1/banking")
@@ -383,6 +390,75 @@ public class AccountController {
             @PathVariable("acctSeqNo") String acctSeqNo,
             @PathVariable("trnsSeqNo") String trnsSeqNo) {
         transactionService.undoConfirm(acctSeqNo, trnsSeqNo);
+        return ApiResponse.ok(null);
+    }
+
+    /* ================================================================
+     *  Transaction memo (side panel) — legacy comm_0105_001, reusing the
+     *  shared MemoService. The memo thread is keyed by the 4-key
+     *  BANK_CD/ACCT_NO/TRSC_DT/ACCT_SEQ_NO derived server-side from the
+     *  path; the VND/FCY {@code scope} selects the memo WEB_SVC_ID.
+     * ================================================================ */
+
+    /** List one transaction's memos (newest-first). */
+    @GetMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/memos")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
+    public ApiResponse<MemoListResponse> listTransactionMemos(
+            @PathVariable("acctSeqNo") String acctSeqNo,
+            @PathVariable("trnsSeqNo") String trnsSeqNo,
+            @RequestParam(value = "scope", required = false, defaultValue = "VND")
+            @Pattern(regexp = "^(VND|FCY)$", message = "scope must be VND or FCY") String scope) {
+        return ApiResponse.ok(transactionService.listMemos(acctSeqNo, trnsSeqNo, scope));
+    }
+
+    /** Add a memo to one transaction. */
+    @PostMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/memos")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
+    public ApiResponse<MemoRow> createTransactionMemo(
+            @PathVariable("acctSeqNo") String acctSeqNo,
+            @PathVariable("trnsSeqNo") String trnsSeqNo,
+            @RequestParam(value = "scope", required = false, defaultValue = "VND")
+            @Pattern(regexp = "^(VND|FCY)$", message = "scope must be VND or FCY") String scope,
+            @Valid @RequestBody TransactionMemoCreateRequest request) {
+        return ApiResponse.ok(transactionService.createMemo(acctSeqNo, trnsSeqNo, scope, request));
+    }
+
+    /** Edit one memo's text — author-only. */
+    @PatchMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/memos/{seqNo}")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
+    public ApiResponse<MemoRow> updateTransactionMemo(
+            @PathVariable("acctSeqNo") String acctSeqNo,
+            @PathVariable("trnsSeqNo") String trnsSeqNo,
+            @PathVariable("seqNo") BigDecimal seqNo,
+            @RequestParam(value = "scope", required = false, defaultValue = "VND")
+            @Pattern(regexp = "^(VND|FCY)$", message = "scope must be VND or FCY") String scope,
+            @Valid @RequestBody TransactionMemoUpdateRequest request) {
+        return ApiResponse.ok(transactionService.updateMemo(acctSeqNo, trnsSeqNo, scope, seqNo, request));
+    }
+
+    /** Set the row-level sticker color for one transaction's memo thread. */
+    @PatchMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/memos/color")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
+    public ApiResponse<Void> updateTransactionMemoColor(
+            @PathVariable("acctSeqNo") String acctSeqNo,
+            @PathVariable("trnsSeqNo") String trnsSeqNo,
+            @RequestParam(value = "scope", required = false, defaultValue = "VND")
+            @Pattern(regexp = "^(VND|FCY)$", message = "scope must be VND or FCY") String scope,
+            @Valid @RequestBody TransactionMemoColorRequest request) {
+        transactionService.updateMemoColor(acctSeqNo, trnsSeqNo, scope, request);
+        return ApiResponse.ok(null);
+    }
+
+    /** Delete one memo — author-only. */
+    @DeleteMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/memos/{seqNo}")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
+    public ApiResponse<Void> deleteTransactionMemo(
+            @PathVariable("acctSeqNo") String acctSeqNo,
+            @PathVariable("trnsSeqNo") String trnsSeqNo,
+            @PathVariable("seqNo") BigDecimal seqNo,
+            @RequestParam(value = "scope", required = false, defaultValue = "VND")
+            @Pattern(regexp = "^(VND|FCY)$", message = "scope must be VND or FCY") String scope) {
+        transactionService.deleteMemo(acctSeqNo, trnsSeqNo, scope, seqNo);
         return ApiResponse.ok(null);
     }
 
