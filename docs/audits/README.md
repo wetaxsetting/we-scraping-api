@@ -55,6 +55,7 @@ All **active** unless noted.
 | File | Feature | Purpose |
 |---|---|---|
 | [account-inquiry-fcy-parity-audit.md](account-inquiry-fcy-parity-audit.md) | Banking · Account Inquiry (FCY) | Legacy-vs-refactor parity |
+| [bank-transaction-sync-debit-matched-parity-gap.md](bank-transaction-sync-debit-matched-parity-gap.md) | Banking · Bank Transaction Sync | **Gap** — legacy "Debit Matched {AUTO_MATCHED_CNT}/{debit} Transaction(s)" row (auto-match, env `00079`, `fnsh_0001_001_c001`) missing in refactor UI + wire; implementation plan drafted, **not implemented** (PO decision needed) (2026-07-09) |
 | [cash-flow-exchange-rate-legacy-audit.md](cash-flow-exchange-rate-legacy-audit.md) | Banking · Cash Flow | Exchange-rate legacy flow audit + fix plan — refactor shows static 26.000 vs legacy 26.455 (2026-07-02) |
 | [daily-financial-hs-legacy-audit.md](daily-financial-hs-legacy-audit.md) | Banking · Daily Financial (HS) | Legacy behavior audit + parity plan (2026-07-01) |
 | [daily-financial-hs-final-audit.md](daily-financial-hs-final-audit.md) | Banking · Daily Financial (HS) | **Final closure audit** — scope, fixes, PO-approved divergences (Excel title localization, KRW), validation (2026-07-02) |
