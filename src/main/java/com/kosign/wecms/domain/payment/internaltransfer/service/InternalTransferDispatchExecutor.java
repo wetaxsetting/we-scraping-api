@@ -1,16 +1,23 @@
 package com.kosign.wecms.domain.payment.internaltransfer.service;
 
+import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.banking.entity.AcctMstr;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
+import com.kosign.wecms.domain.payment.dispatch.repository.TbFirmConfRepository;
+import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConf;
+import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConfId;
+import com.kosign.wecms.domain.setting.firmbankingsettings.repository.TbFirmBankCodeRepository;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileData;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileMst;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayTarget;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileDataRepository;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileMstRepository;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayTargetRepository;
+import com.kosign.wecms.domain.payment.dispatch.service.DispatchAutoReceiveRegistrar;
 import com.kosign.wecms.domain.payment.dispatch.service.DispatchKeyGenerator;
+import com.kosign.wecms.domain.payment.dispatch.service.RealtimeDispatchRegistrar;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumr;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrDetl;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +32,7 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -61,18 +69,21 @@ import java.util.List;
  *       {@code isWooriUsdToVnd} else {@code "VND"}; file path → Shinhan
  *       ({@code WDRL_CCY_CD}) / otherwise the line's own {@code TRNF_CCY_CD}.</li>
  *   <li><b>G20 BANK_CHNL_DIV:</b> same-bank → {@code "T"}
- *       ({@code BankChnlDiv.CURRENT_BANK_TRANSFER}); other-bank → {@code "O"}.</li>
+ *       ({@code BankChnlDiv.CURRENT_BANK_TRANSFER}); other-bank → {@code "O"}.
+ *       Same-bank = raw bank-code equality OR same banking group via
+ *       {@code ENG_ABRVAT_NM} (NC-2, below).</li>
  *   <li><b>Shinhan-USD→VND ANT_DIV_CD override:</b> file-path lines get
  *       {@code "C"} (CITAD, same-bank) / {@code "E"} (EBANK, other-bank).</li>
  * </ol>
  *
- * <p><b>Deferred (Need confirmation — NC-2):</b> legacy same-bank detection
- * also matches by {@code ENG_ABRVAT_NM} across the firm-out-bank vs.
- * NAPAS/CITAD code spaces ({@code TB_FIRM_BANK_CODE}). This executor uses
- * <b>raw bank-code equality only</b> (identical to the shared executor's
- * current behavior — no regression). Cross-code-space abbreviation matching
- * is intentionally NOT implemented here to avoid guessing the firm↔NAPAS
- * code mapping; it is documented as a follow-up.
+ * <p><b>NC-2 (implemented):</b> the file-path same-bank detection matches by
+ * raw bank-code equality <b>and</b> by {@code ENG_ABRVAT_NM} group across the
+ * firm-out-bank vs. NAPAS/CITAD code spaces ({@code TB_FIRM_BANK_CODE}, active
+ * rows only) — see {@link #sameBankGroup}. This mirrors legacy
+ * {@code pymn_0009_001_c001:2767-2806} and the same helper in
+ * {@code ExpenseDispatchExecutor} / {@code VendorDispatchExecutor}. (The
+ * VND/API-path {@code ANT_DIV_CD} same-bank check at {@link #resolveApiAntDivCd}
+ * remains raw-code only — out of scope for the file-path NC-2 fix.)
  *
  * <p>Read side is unaffected: {@code BANK_CHNL_DIV} / {@code TRSC_CCY_CD}
  * have no refactor-side reader (the result resolver keys off
@@ -98,6 +109,10 @@ public class InternalTransferDispatchExecutor {
     private static final String TRAN_TP_DEPOSIT          = "1";  // TranTpF.DEPOSIT
     private static final String FINC_MDA_DIV_ACCOUNT     = "A";  // FincMdaDiv.ACCOUNT
 
+    /** Active-bank flag in {@code TB_FIRM_BANK_CODE} (legacy filter
+     *  {@code bank_stas = '1'}). */
+    private static final String BANK_STAS_ACTIVE = "1";
+
     /** G20 fix — same-bank current-bank transfer = "T"
      *  ({@code BankChnlDiv.CURRENT_BANK_TRANSFER}), NOT "C". */
     private static final String BANK_CHNL_DIV_CURRENT_BANK = "T";
@@ -109,8 +124,6 @@ public class InternalTransferDispatchExecutor {
      *  ({@code AntDivCdT}: CITAD="C", EBANK="E"). */
     private static final String ANT_DIV_T_CITAD = "C";
     private static final String ANT_DIV_T_EBANK = "E";
-
-    private static final String BANK_PRTN_ID_PLACEHOLDER = "DEFAULT";
 
     private static final String CCY_VND = "VND";
     private static final String CCY_USD = "USD";
@@ -125,9 +138,17 @@ public class InternalTransferDispatchExecutor {
     private final TbPayFileMstRepository  tbPayFileMstRepository;
     private final TbPayFileDataRepository tbPayFileDataRepository;
     private final AcctMstrRepository      acctMstrRepository;
+    /** {@code ENG_ABRVAT_NM} same-group resolution (legacy {@code TB_FIRM_BANK_CODE}). */
+    private final TbFirmBankCodeRepository tbFirmBankCodeRepository;
+    /** Real {@code BANK_PRTN_ID} source (legacy {@code TB_FIRM_CONF}). */
+    private final TbFirmConfRepository    tbFirmConfRepository;
     private final DispatchKeyGenerator    keyGenerator;
     private final Clock                   clock;
     private final LegacyFunctionRepository legacyFunctions;
+    private final DispatchAutoReceiveRegistrar autoReceiveRegistrar;
+    /** Post-commit real-time 202 hand-off (port of NAPAS_REAL_TIME_BATCH), gated by
+     *  {@code wecms.dispatch.realtime-dispatch}. Used by the VND/API path. */
+    private final RealtimeDispatchRegistrar realtimeDispatchRegistrar;
 
     /**
      * Insert dispatch rows for one Internal-Transfer batch, applying the
@@ -144,8 +165,41 @@ public class InternalTransferDispatchExecutor {
         String dttm14 = nowVn.format(DTM14);
 
         // --- Routing flags (legacy PymnHelper.pymn_0009_001_c001 ~2459-2494) ---
+        RoutingFlags rf = computeRoutingFlags(master, lines, trnfCcyCd);
+        String wdrlCcyCd = rf.wdrlCcyCd();
+
+        // --- G18 path selection ---
+        if (rf.useApiPath()) {
+            writeApiPath(master, lines, bizKey, userId, tranDt, regTm, dttm14, trnfCcyCd,
+                    wdrlCcyCd, rf.isWooriUsdToVnd());
+        } else {
+            writeFilePath(master, lines, bizKey, tranDt, dttm14, trnfCcyCd, wdrlCcyCd,
+                    rf.isShinhanUsdToVnd());
+        }
+    }
+
+    /**
+     * Whether this batch dispatches via the real-time API path
+     * ({@code TB_PAY_TARGET}) rather than the File-SFTP path. Same rule
+     * {@link #execute} applies for routing — exposed so the cut-off
+     * validator can pick the Shinhan CITAD-via-API window (16:30) vs.
+     * the File-SFTP CITAD window (15:30) from a single source of truth.
+     * Read-only — no DB writes.
+     */
+    public boolean usesApiPath(ScdulPymnSumr master, List<ScdulPymnSumrDetl> lines, String trnfCcyCd) {
+        return computeRoutingFlags(master, lines, trnfCcyCd).useApiPath();
+    }
+
+    /** Routing decision + the currency flags {@link #execute} threads
+     *  into the API / File writers. Single computation reused by both
+     *  {@link #execute} and {@link #usesApiPath}. */
+    private record RoutingFlags(
+            boolean useApiPath, boolean isShinhanUsdToVnd, boolean isWooriUsdToVnd, String wdrlCcyCd) { }
+
+    private RoutingFlags computeRoutingFlags(
+            ScdulPymnSumr master, List<ScdulPymnSumrDetl> lines, String trnfCcyCd) {
         String outBankCd = trimToNull(master.getOutBankCd());
-        String wdrlCcyCd = resolveWdrlCcyCd(bizKey, master);
+        String wdrlCcyCd = resolveWdrlCcyCd(master.getBizKey(), master);
         String depoCcyCd = lines.isEmpty() ? null : trimToNull(lines.get(0).getDepoCcyCd());
 
         boolean isWooriUsdToVnd =
@@ -157,19 +211,11 @@ public class InternalTransferDispatchExecutor {
                 eq(outBankCd, shinhanBankCd)
                 && CCY_USD.equalsIgnoreCase(wdrlCcyCd)
                 && CCY_VND.equalsIgnoreCase(depoCcyCd);
-
-        // --- G18 path selection ---
         boolean useApiPath =
                 (CCY_VND.equalsIgnoreCase(trimToNull(trnfCcyCd)) && !isShinhanUsdToVnd)
                 || isWooriUsdToVnd;
 
-        if (useApiPath) {
-            writeApiPath(master, lines, bizKey, userId, tranDt, regTm, dttm14, trnfCcyCd,
-                    wdrlCcyCd, isWooriUsdToVnd);
-        } else {
-            writeFilePath(master, lines, bizKey, tranDt, dttm14, trnfCcyCd, wdrlCcyCd,
-                    isShinhanUsdToVnd);
-        }
+        return new RoutingFlags(useApiPath, isShinhanUsdToVnd, isWooriUsdToVnd, wdrlCcyCd);
     }
 
     /* ───────────────── API path (TB_PAY_TARGET) ───────────────── */
@@ -182,8 +228,10 @@ public class InternalTransferDispatchExecutor {
         // G19 (API side): Woori-USD→VND carries USD, everything else VND.
         String trscCcyCd = isWooriUsdToVnd ? CCY_USD : CCY_VND;
 
+        List<String> tranSeqs = new ArrayList<>(lines.size());
         for (ScdulPymnSumrDetl line : lines) {
             String tranSeq = keyGenerator.nextTranSeq(bizKey, tranDt);
+            tranSeqs.add(tranSeq);
 
             TbPayTarget row = new TbPayTarget();
             row.setTranDt(tranDt);
@@ -215,6 +263,10 @@ public class InternalTransferDispatchExecutor {
 
         log.info("feature=internal-transfer dispatch path=API bizKey={} scdulPymnNo={} lines={} trscCcyCd={} wooriUsdVnd={}",
                 bizKey, master.getScdulPymnNo(), lines.size(), trscCcyCd, isWooriUsdToVnd);
+
+        // Hand off to the real-time 202 flow AFTER this transaction commits
+        // (port of NAPAS_REAL_TIME_BATCH; gated, default-off; per-target isolated).
+        realtimeDispatchRegistrar.registerAfterCommit(bizKey, tranDt, tranSeqs);
     }
 
     /* ───────────────── File path (TB_PAY_FILE_MST + DATA) ───────────────── */
@@ -232,13 +284,18 @@ public class InternalTransferDispatchExecutor {
         mst.setFileSeqNo(fileSeqNo);
         mst.setOutBankCd(master.getOutBankCd());
         mst.setWdrlActNo(master.getWdrlActNo());
-        mst.setBankPrtnId(BANK_PRTN_ID_PLACEHOLDER);
+        // BANK_PRTN_ID — real value from TB_FIRM_CONF (legacy pymn_0009_001_c001:2667).
+        mst.setBankPrtnId(resolveBankPrtnId(bizKey, master));
         mst.setFundTp(FUND_TP_OTHER);
         mst.setTranTp(TRAN_TP_DEPOSIT);
         mst.setProcStat(PROC_STAT_PENDING);
         mst.setReqCnt(master.getTotTrnsCnt());
         mst.setReqAmt(master.getTotalTranAmt());
         mst.setRegDttm(dttm14);
+        // PROC_DTTM is NOT NULL in TB_PAY_FILE_MST_HIS (trigger-written mirror copies
+        // new.proc_dttm). Legacy stamps proc_dttm = reg_dttm on insert; the callback
+        // UPDATE later writes the real processing time.
+        mst.setProcDttm(dttm14);
 
         tbPayFileMstRepository.save(mst);
 
@@ -268,8 +325,11 @@ public class InternalTransferDispatchExecutor {
 
             data.setTranAmt(line.getTranAmt());
 
-            // G20: same-bank current-bank transfer = "T", other-bank = "O".
-            boolean sameBank = sameBank(master.getOutBankCd(), line.getTarBankCd());
+            // G20 + NC-2: same-bank current-bank transfer = "T", other-bank = "O".
+            // "Same bank": raw bank-code equality OR same banking group via
+            // ENG_ABRVAT_NM (legacy pymn_0009_001_c001:2767-2806).
+            boolean sameBank = sameBank(master.getOutBankCd(), line.getTarBankCd())
+                    || sameBankGroup(master.getOutBankCd(), line.getTarBankCd());
             data.setBankChnlDiv(sameBank ? BANK_CHNL_DIV_CURRENT_BANK : BANK_CHNL_DIV_OTHER_BANK);
 
             // Shinhan-USD→VND ANT_DIV_CD override (CITAD same / EBANK other).
@@ -295,6 +355,9 @@ public class InternalTransferDispatchExecutor {
 
         log.info("feature=internal-transfer dispatch path=FILE bizKey={} scdulPymnNo={} lines={} fileSeqNo={} shinhanUsdVnd={}",
                 bizKey, master.getScdulPymnNo(), lines.size(), fileSeqNo, isShinhanUsdToVnd);
+
+        // Hand off to the 00301 reception flow AFTER this transaction commits (gated).
+        autoReceiveRegistrar.registerAfterCommit(tranDt, bizKey, fileSeqNo);
     }
 
     /* ───────────────── Helpers ───────────────── */
@@ -314,6 +377,19 @@ public class InternalTransferDispatchExecutor {
                 .map(AcctMstr::getCcyCd)
                 .map(InternalTransferDispatchExecutor::trimToNull)
                 .orElse(null);
+    }
+
+    /** Real {@code BANK_PRTN_ID} from {@code TB_FIRM_CONF} (PK
+     *  {@code (BIZ_KEY, OUT_BANK_CD, WDRL_ACT_NO)}). Blocks with {@code WBE2089}
+     *  when the row is missing — legacy parity (pymn_0009_001_c001:2667 reads it
+     *  with no null guard and NPE-rolls-back; refactor blocks cleanly, mirroring
+     *  ExpenseDispatchExecutor / VendorDispatchExecutor). */
+    private String resolveBankPrtnId(String bizKey, ScdulPymnSumr master) {
+        return tbFirmConfRepository
+                .findById(new TbFirmConfId(bizKey, master.getOutBankCd(), master.getWdrlActNo()))
+                .map(TbFirmConf::getBankPrtnId)
+                .map(InternalTransferDispatchExecutor::trimToNull)
+                .orElseThrow(() -> new BusinessException("WBE2089"));
     }
 
     /** {@code FINC_MDA_OWNER_NM} is NOT NULL — resolve from the line's
@@ -346,12 +422,31 @@ public class InternalTransferDispatchExecutor {
         return fromLine == null ? ANT_DIV_INTER : fromLine;
     }
 
-    /** Raw bank-code equality. NC-2 (ENG_ABRVAT_NM cross-code-space match)
-     *  is intentionally NOT implemented — see class Javadoc. */
+    /** Raw bank-code equality (first same-bank check). */
     private static boolean sameBank(String outBankCd, String tarBankCd) {
         String a = trimToNull(outBankCd);
         String b = trimToNull(tarBankCd);
         return a != null && a.equals(b);
+    }
+
+    /** NC-2 fix — same banking group by {@code ENG_ABRVAT_NM} across the firm
+     *  out-bank vs. NAPAS/CITAD code spaces (legacy pymn_0009_001_c001:2767-2806;
+     *  mirrors {@code ExpenseDispatchExecutor} / {@code VendorDispatchExecutor}).
+     *  Active rows only ({@code BANK_STAS='1'}). Returns false when either side
+     *  is unresolved — identical degradation to legacy. */
+    private boolean sameBankGroup(String outBankCd, String tarBankCd) {
+        String src = engAbrvatNm(outBankCd);
+        String tar = engAbrvatNm(tarBankCd);
+        return src != null && src.equals(tar);
+    }
+
+    private String engAbrvatNm(String bankCd) {
+        String code = trimToNull(bankCd);
+        if (code == null) return null;
+        return tbFirmBankCodeRepository
+                .findFirstByBankCdAndBankStas(code, BANK_STAS_ACTIVE)
+                .map(b -> trimToNull(b.getEngAbrvatNm()))
+                .orElse(null);
     }
 
     private static boolean eq(String a, String b) {

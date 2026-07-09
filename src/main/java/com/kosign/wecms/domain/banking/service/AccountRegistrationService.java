@@ -1,6 +1,7 @@
 package com.kosign.wecms.domain.banking.service;
 
 import com.kosign.wecms.common.exception.BusinessException;
+import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.auth.repository.UserBusiConnInfmRepository;
 import com.kosign.wecms.domain.auth.repository.UserBusiConnInfmRepository.TenantUserManagementProjection;
@@ -13,6 +14,7 @@ import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
 import com.kosign.wecms.domain.setting.bankaccount.entity.AcctAuthInfo;
 import com.kosign.wecms.domain.setting.bankaccount.entity.BankAccountAuthType;
 import com.kosign.wecms.domain.setting.bankaccount.repository.AcctAuthInfoRepository;
+import com.kosign.wecms.domain.setting.bankaccount.service.WithdrawalBankPolicy;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,6 +22,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -73,6 +76,7 @@ public class AccountRegistrationService {
     private final BankCredentialService credentialService;
     private final AcctAuthInfoRepository acctAuthRepo;
     private final UserBusiConnInfmRepository userBusiRepo;
+    private final LegacyFunctionRepository legacyFunctions;
 
     /**
      * Register the picked accounts under the tenant's
@@ -133,6 +137,20 @@ public class AccountRegistrationService {
                 if (e.bal() != null) {
                     existing.setBal(e.bal());
                 }
+                // Maturity (legacy EXPI_DT) — set only when a valid date
+                // is supplied; never clear an existing value on blank.
+                String expiDt = normalizeExpiDt(e.maturityDate());
+                if (expiDt != null) {
+                    existing.setExpiDt(expiDt);
+                }
+                // VAS (legacy VAS_ACCT_CD / VAS_ACCT_NM) — patch when the
+                // picker sent a value (hidden / omitted for product H).
+                if (e.vasAcctCd() != null) {
+                    existing.setVasAcctCd(blankToNull(e.vasAcctCd()));
+                }
+                if (e.vasAcctNm() != null) {
+                    existing.setVasAcctNm(blankToNull(e.vasAcctNm()));
+                }
                 existing.setBankCertSeq(bankCertSeq);
                 existing.setActvYn("Y");
                 existing.setModId(userId);
@@ -153,6 +171,15 @@ public class AccountRegistrationService {
             row.setCont(blankToNull(e.accountDetails()));
             row.setBal(e.bal() == null ? BigDecimal.ZERO : e.bal());
             row.setRealAmt(BigDecimal.ZERO);
+            // Maturity (legacy EXPI_DT) — normalized yyyyMMdd or null.
+            row.setExpiDt(normalizeExpiDt(e.maturityDate()));
+            // VAS (legacy VAS_ACCT_CD / VAS_ACCT_NM) — null for product H
+            // (the picker hides + omits them). VAS_ACCT_SEQ_NO is left
+            // null: the popup collects free-text code/name, not a
+            // BUSI_VAS_ACCT_INFM seq (legacy only set the seq on the
+            // patch branch when present). See OQ in the feature doc.
+            row.setVasAcctCd(blankToNull(e.vasAcctCd()));
+            row.setVasAcctNm(blankToNull(e.vasAcctNm()));
             row.setBankCertSeq(bankCertSeq);
             // Picker registrations are scraped-not-manual; HAND_REG_YN
             // stays 'N' so the legacy wb_format_acct_nick_nm function
@@ -169,6 +196,14 @@ public class AccountRegistrationService {
         }
 
         if (!newAccounts.isEmpty()) {
+            // Allocate PRN_SEQ (print/display order) for the new rows — legacy
+            // AcctMstrDAO.create() mints it via wb_get_next_val('acct_mstr',
+            // 'prn_seq', bizKey) (per-tenant MAX+1). Seed ONCE then increment in
+            // Java across the batch: the not-yet-flushed rows are invisible to the
+            // MAX+1 read, so a per-row call would hand back the same value. Leaving
+            // PRN_SEQ NULL would break the Account-Inquiry / Bank-Account default
+            // sort and drift from the live JEX DB the refactor shares.
+            assignPrnSeq(bizKey, newAccounts);
             acctMstrRepo.saveAll(newAccounts);
             // Legacy ACCT_AUTH_INFO fan-out — ONLY for the freshly
             // inserted accounts. Existing accounts keep their permission
@@ -193,9 +228,12 @@ public class AccountRegistrationService {
      *
      * <p><b>Refactor adaptation (intentional divergence from legacy):</b>
      * the refactor {@code ACCT_AUTH_INFO} PK carries {@code AUTH_TYPE}
-     * (V/W) where the legacy insert left it implicit. We seed BOTH the
-     * VIEW and WITHDRAWAL kinds per user so the registrant gains full use
-     * and the permission dialog's two kinds both have a row to toggle.
+     * (V/W) where the legacy insert left it implicit. We seed the VIEW kind
+     * for every account, and the WITHDRAWAL kind ONLY for the five
+     * withdrawal-capable banks ({@link WithdrawalBankPolicy}) — matching the
+     * legacy {@code comm_0183} WBE0452 restriction (business decision
+     * 2026-06-16 = keep). A non-whitelisted bank therefore never gets a 'W'
+     * row, consistent with the permission dialog hiding Withdraw for it.
      * Admins short-circuit in Own Account Transfer and are force-selected
      * in the dialog, so their dormant ({@code 'N'}) rows never limit them.
      *
@@ -211,12 +249,15 @@ public class AccountRegistrationService {
         if (users.isEmpty()) {
             return;
         }
-        String[] authTypes = {
-                BankAccountAuthType.VIEW.code(),
-                BankAccountAuthType.WITHDRAWAL.code(),
-        };
         List<AcctAuthInfo> authRows = new ArrayList<>(newAccounts.size() * users.size() * 2);
         for (AcctMstr acct : newAccounts) {
+            // Withdraw (AUTH_TYPE='W') is only legal on the 5 firm-banking
+            // withdrawal banks (legacy comm_0183 WBE0452 rule, business decision
+            // 2026-06-16 = keep). Non-whitelisted banks fan out VIEW only — never
+            // seed a 'W' row the permission dialog could not grant anyway.
+            String[] authTypes = WithdrawalBankPolicy.isWithdrawalAllowed(acct.getBankCd())
+                    ? new String[] { BankAccountAuthType.VIEW.code(), BankAccountAuthType.WITHDRAWAL.code() }
+                    : new String[] { BankAccountAuthType.VIEW.code() };
             for (TenantUserManagementProjection u : users) {
                 String useYn = registrantId.equals(u.getUserId()) ? "Y" : "N";
                 for (String authType : authTypes) {
@@ -238,6 +279,29 @@ public class AccountRegistrationService {
         acctAuthRepo.saveAll(authRows);
         log.info("ACCT_AUTH_INFO fan-out [bizKey={}, registrant={}, accounts={}, users={}, rows={}]",
                 bizKey, registrantId, newAccounts.size(), users.size(), authRows.size());
+    }
+
+    /**
+     * Assign per-tenant {@code PRN_SEQ} to the freshly-built new-account rows.
+     * Seeds once via the funnel ({@code wb_get_next_val('acct_mstr','prn_seq',
+     * bizKey)} = {@code MAX(prn_seq)+1}) and increments in Java across the batch,
+     * mirroring the legacy {@code AcctMstrDAO.create()} per-row allocation while
+     * staying correct under JPA's deferred flush. {@code PRN_SEQ} is
+     * {@code NUMERIC(2,0)} — the same legacy 2-digit ceiling applies on both
+     * systems; no new guard is added (preserve legacy behavior).
+     */
+    private void assignPrnSeq(String bizKey, List<AcctMstr> newAccounts) {
+        String token = legacyFunctions.nextAcctMstrPrnSeq(bizKey);
+        if (token == null || token.isBlank()) {
+            // Function returned nothing (should not happen — the branch exists);
+            // leave PRN_SEQ null rather than guessing. Logged for visibility.
+            log.warn("PRN_SEQ allocation returned null [bizKey={}] — leaving prn_seq unset", bizKey);
+            return;
+        }
+        int seed = Integer.parseInt(token.trim());
+        for (int i = 0; i < newAccounts.size(); i++) {
+            newAccounts.get(i).setPrnSeq(seed + i);
+        }
     }
 
     /** Defaults missing / blank values to {@link #DEFAULT_ACCT_TYPE_CD}
@@ -264,5 +328,32 @@ public class AccountRegistrationService {
         if (raw == null) return null;
         String trimmed = raw.trim();
         return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    /**
+     * Normalize a maturity date to the legacy {@code EXPI_DT} shape
+     * ({@code yyyyMMdd}, {@code VARCHAR(8)}). Accepts {@code yyyyMMdd},
+     * {@code yyyy-MM-dd}, or {@code yyyy/MM/dd} (the gateway field is
+     * free-form); strips separators, validates it is a real 8-digit
+     * date, and returns {@code yyyyMMdd}. Returns {@code null} for blank
+     * input OR any value that is not a clean, valid 8-digit date — so an
+     * unexpected format is never silently stored as garbage (PO rule:
+     * "do not save invalid date format silently").
+     */
+    private static String normalizeExpiDt(String raw) {
+        if (raw == null) return null;
+        String digits = raw.trim().replaceAll("[^0-9]", "");
+        if (digits.length() != 8) {
+            // Blank, or an unrecognized format (e.g. contains a time,
+            // or dd/MM/yyyy ambiguity) → don't persist a wrong value.
+            return null;
+        }
+        try {
+            // BASIC_ISO_DATE == yyyyMMdd; rejects impossible dates.
+            LocalDate.parse(digits, DateTimeFormatter.BASIC_ISO_DATE);
+            return digits;
+        } catch (Exception notADate) {
+            return null;
+        }
     }
 }

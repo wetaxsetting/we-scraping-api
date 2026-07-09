@@ -11,10 +11,12 @@ import com.kosign.wecms.common.i18n.MessageResolver;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.ActiveCard;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardListResponse;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTransactionLinkCounts;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTransactionListResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTransactionRow;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTransactionTotals;
 import com.kosign.wecms.domain.payment.cardtransactions.service.CardTranListR001Service;
+import com.kosign.wecms.domain.payment.cardtransactions.service.CardTransactionScrapeService;
 import com.kosign.wecms.domain.payment.cardtransactions.service.CardTransactionSyncService;
 import com.kosign.wecms.domain.payment.cardtransactions.service.CardTransactionsService;
 import org.junit.jupiter.api.AfterEach;
@@ -58,6 +60,7 @@ class CardTransactionsControllerTest {
     private MockMvc mvc;
     private CardTransactionsService service;
     private CardTransactionSyncService syncService;
+    private CardTransactionScrapeService scrapeService;
     private CardTranListR001Service cardTranListR001Service;
     private ExcelExportService excelExportService;
 
@@ -65,8 +68,11 @@ class CardTransactionsControllerTest {
     void setUp() {
         service = mock(CardTransactionsService.class);
         syncService = mock(CardTransactionSyncService.class);
+        scrapeService = mock(CardTransactionScrapeService.class);
         cardTranListR001Service = mock(CardTranListR001Service.class);
         excelExportService = mock(ExcelExportService.class);
+        var approvalEditService = mock(
+                com.kosign.wecms.domain.payment.approvalbox.service.ApprovalEditService.class);
 
         ObjectMapper mapper = new ObjectMapper()
                 .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
@@ -81,7 +87,7 @@ class CardTransactionsControllerTest {
         GlobalExceptionHandler advice = new GlobalExceptionHandler(messages);
 
         mvc = MockMvcBuilders
-                .standaloneSetup(new CardTransactionsController(service, syncService, cardTranListR001Service, excelExportService))
+                .standaloneSetup(new CardTransactionsController(service, syncService, scrapeService, cardTranListR001Service, approvalEditService, excelExportService))
                 .setMessageConverters(jsonConverter)
                 .setControllerAdvice(advice)
                 .build();
@@ -109,10 +115,14 @@ class CardTransactionsControllerTest {
                 "1007010", "100", "100",
                 "Lunch", "1390",
                 null,   // apprDocNo
-                "1", "payment.card_transactions.status.1",
+                "1", "Approved",   // stts (raw code) + sttsNm (localized via wb_get_prch_stts_nm)
                 List.of(), List.of(),
                 "lamine@gmail.com", "20251023073754",
-                "lamine@gmail.com", "20251216043342");
+                "lamine@gmail.com", "20251216043342",
+                // GAP-CARD-FIELDS — usingType / authCode / city / note
+                "ONLINE", "AUTH123", "HANOI", "client dinner",
+                // Row-level memo icon — color + count.
+                "fileG", 2);
 
         CardTransactionListResponse payload = new CardTransactionListResponse(
                 0, 15, 1L,
@@ -120,6 +130,7 @@ class CardTransactionsControllerTest {
                         new BigDecimal("799200.000000"),
                         1L, new BigDecimal("799200.000000"),
                         0L, BigDecimal.ZERO),
+                new CardTransactionLinkCounts(1L, 1L, 0L),
                 List.of(row));
 
         when(service.list(eq("20250101"), eq("20251231"), any(), any(), any(), any(),
@@ -136,13 +147,18 @@ class CardTransactionsControllerTest {
                 .andExpect(jsonPath("$.data.page_size",                is(15)))
                 .andExpect(jsonPath("$.data.totals.total_count",       is(1)))
                 .andExpect(jsonPath("$.data.totals.totl_appr_req_cnt", is(1)))
+                .andExpect(jsonPath("$.data.link_counts.all",          is(1)))
+                .andExpect(jsonPath("$.data.link_counts.linked",       is(1)))
+                .andExpect(jsonPath("$.data.link_counts.unlinked",     is(0)))
                 .andExpect(jsonPath("$.data.rows[0].card_seq_no",      is("156")))
                 .andExpect(jsonPath("$.data.rows[0].bank_cd",          is("11704020")))
                 .andExpect(jsonPath("$.data.rows[0].bank_nm",          is("VietinBank")))
                 .andExpect(jsonPath("$.data.rows[0].card_nick_nm",     is("VTB(5559)")))
-                .andExpect(jsonPath("$.data.rows[0].stts_key",         is("payment.card_transactions.status.1")))
+                .andExpect(jsonPath("$.data.rows[0].stts_nm",          is("Approved")))
                 .andExpect(jsonPath("$.data.rows[0].linked_docs",      is(List.of())))
-                .andExpect(jsonPath("$.data.rows[0].approvers",        is(List.of())));
+                .andExpect(jsonPath("$.data.rows[0].approvers",        is(List.of())))
+                .andExpect(jsonPath("$.data.rows[0].memo_color",       is("fileG")))
+                .andExpect(jsonPath("$.data.rows[0].memo_count",       is(2)));
     }
 
     @Test
@@ -169,6 +185,7 @@ class CardTransactionsControllerTest {
                 0, 15, 0L,
                 new CardTransactionTotals(0L, BigDecimal.ZERO, 0L, BigDecimal.ZERO,
                         0L, BigDecimal.ZERO),
+                new CardTransactionLinkCounts(0L, 0L, 0L),
                 List.of());
         when(service.list(any(), any(), any(), any(), any(), any(),
                 any(), any(), anyInt(), anyInt())).thenReturn(empty);
@@ -204,7 +221,8 @@ class CardTransactionsControllerTest {
     void cards_happyPathSerialisesSnakeCase() throws Exception {
         CardListResponse payload = new CardListResponse(List.of(
                 new ActiveCard("11704088", "Shinhan Bank VN",
-                        "4696********4372", "", "Shinhan VN(4372)", "LEE JAEHWAN")));
+                        "4696********4372", "", "Shinhan VN(4372)", "LEE JAEHWAN",
+                        "20260619120000")));
         when(service.cards(eq(null))).thenReturn(payload);
 
         mvc.perform(get("/api/v1/payment/card-transactions/cards"))
@@ -212,7 +230,8 @@ class CardTransactionsControllerTest {
                 .andExpect(jsonPath("$.data.cards[0].bank_cd",     is("11704088")))
                 .andExpect(jsonPath("$.data.cards[0].bank_nm",     is("Shinhan Bank VN")))
                 .andExpect(jsonPath("$.data.cards[0].card_no",     is("4696********4372")))
-                .andExpect(jsonPath("$.data.cards[0].card_hldr_nm",is("LEE JAEHWAN")));
+                .andExpect(jsonPath("$.data.cards[0].card_hldr_nm",is("LEE JAEHWAN")))
+                .andExpect(jsonPath("$.data.cards[0].trn_lst_suc_dtm", is("20260619120000")));
     }
 
     /* =================================================================

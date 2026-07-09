@@ -1,9 +1,12 @@
 # `wb_get_next_val` Centralization Audit — FINAL STATUS
 
+> _**Historical one-off audit.** A point-in-time record of a completed verification / remediation — findings are preserved unchanged. For the feature’s current state see its `features/.../refactor-gap-analysis.md`; for context see the [audits index](README.md)._
+
 - **Date:** 2026-06-09
 - **System:** Refactor (wecms-api)
 - **Scope:** Route every in-scope business key / sequence generation through the single `LegacyFunctionRepository` → `wb_get_next_val` funnel, matching the live JEX key-generation so the refactor never mints a colliding key on a shared JEX database.
 - **Authoritative migration:** [`V155__wb_get_next_val_centralize.sql`](../../src/main/resources/db/migration/V155__wb_get_next_val_centralize.sql) (supersedes V140).
+- **Closure (2026-06-24): 100% legacy key-generation parity achieved.** Parity verified against the live legacy function — **no `wb_get_next_val` enhancement required**; all in-scope business keys match legacy (funnel or value-equivalent). The last value gap, `TRCO_ACCT_INFO.trco_acct_key` (OD-1), is now **CLOSED** — `ContactsService` routes through `LegacyFunctionRepository.nextTrcoAcctKey → wb_get_next_val` (backend caller-routing only; no DB function/DDL/schema/migration/config/data change). A **final exhaustive post-OD-1 source sweep** then confirmed **0 Class-D gaps, 0 missing `wb_get_next_val` branches, and no Java business-key generation outside the funnel** — every business key now follows `Service → LegacyFunctionRepository.nextXXX → wb_get_next_val → old DB data`. See [wb-get-next-val-parity-closure-2026-06-24.md](wb-get-next-val-parity-closure-2026-06-24.md) §6.
 
 ---
 
@@ -80,24 +83,28 @@ Search of `src/main` + `src/test` for `wb_get_next_val(`, `createNativeQuery("�
 
 ---
 
-## 4. Documented exceptions (Java-side generation kept by design — do NOT convert)
+## 4. Documented exceptions (not parity gaps)
 
-| # | Site | table.column | Why excluded |
+> **Stale historical notes corrected on 2026-06-24.** The original §4 (preserved in git history) listed `DocNoGenerator` and the payment-key generators (`InternalTransferKeyGenerator` / `OverseasPaymentKeyGenerator` / detail numbering) as Java-side exceptions. Those entries reflected the pre-2026-06-09 state and **no longer represent current status**: `doc_no`, `scdul_pymn_no`, `ovrs_pymn_no`, `scdul_pymn_detl_no`, and `ovrs_pymn_detl_no` are now **funnel-matched or value-equivalent** to legacy (the env-set prefix/date logic for `doc_no` lives **inside** the DB function via `DocNoGenerator → LegacyFunctionRepository.nextDocNo → wb_get_next_val`; the date-prefixed `*_KEY_SEQ` counter-table architecture / OD-2 is **retired**). They have been removed from the exception list below. **The current authoritative status is** [wb-get-next-val-parity-closure-2026-06-24.md](wb-get-next-val-parity-closure-2026-06-24.md).
+
+The following are the only retained exceptions — each is a **non-key field, a value-equivalent computation, or a non-business-key surrogate**, not a parity gap:
+
+| # | Site | table.column | Why it is not a parity gap |
 |---|---|---|---|
-| 1 | `DocNoGenerator` | `expt_resol_mstr.doc_no` | JEX branch is env-set-driven (`BUSI/SYS_ENV_SET_INFM` prefix + date); PO-declined port; no unique constraint (legacy accepts the race) |
-| 2 | `CardTransactionsService.insertMemoOnce` | `memo_infm.seq_no` | `MEMO_INFM` not in the PROD Active Table List |
-| 3 | `OrganizerRuleService.nextDispOrd`, `PurposeSettingsService` disp_ord | `rmrk_org_infm.disp_ord`, `busi_usag_set_infm.disp_ord` | Display-order / UI ordering (the PK `use_usag_cd` IS funneled) |
-| 4 | `ExchangeRateBatchService.findHighestSeqNo` | `bank_exch_rate_infm.seq_no` (Woori round) | Round-probe read, not a row-key allocator (row PK `exch_seq_no` IS funneled) |
-| 5 | `InternalTransferKeyGenerator`, `OverseasPaymentKeyGenerator`, `*PaymentService` detail numbering | `scdul_pymn_no`, `ovrs_pymn_no`, `scdul_pymn_detl_no` | Date-prefixed composite-key architecture via `*_KEY_SEQ` counter tables; different format than JEX plain-int; collision-free (disjoint range). See **Open Decision 2** |
+| 1 | `MemoInfmRepository` (via `CardTransactionsService`) | `memo_infm.seq_no` | **Value-equivalent** to the legacy `wb_get_next_val('memo_infm','seq_no',…)` branch — same `(biz_key, web_svc_id)` `MAX+1` logic; the only difference is location (Java vs DB function), the value is identical. `MEMO_INFM` is also outside the PROD Active Table List. |
+| 2 | `TbFirmFileMstRepository` | `tb_firm_file_mst.file_seq` | Matches legacy IDO `TB_FIRM_FILE_MST_R002` `MAX(FILE_SEQ)+1`. Legacy has **no** `wb_get_next_val` branch for this table — funneling it would *diverge* from legacy, not converge. |
+| 3 | `OrganizerRuleService.nextDispOrd`, `PurposeSettingsService` disp_ord | `rmrk_org_infm.disp_ord`, `busi_usag_set_infm.disp_ord` | Presentation / UI ordering — not a business key. The row PKs (`rmrk_seq_no`, `use_usag_cd`) ARE funneled. |
+| 4 | `ExchangeRateBatchService.findHighestSeqNo` | `bank_exch_rate_infm.seq_no` (Woori round) | Round-probe read, not a row-key allocator. The row PK `exch_seq_no` IS funneled (branch #23). |
+| 5 | Various | `USER_LOGIN_HIS.reg_uid`, `NXSIAS_MODULE_TRAN_LOG_HIS.uuid`, vendor transaction UUIDs (`Tno`), trace IDs, JWT IDs, temporary file names | UUID / log / trace / temp surrogates — **not** legacy `wb_get_next_val` business keys, so no parity gap. |
 
 ---
 
 ## 5. Open decisions (recorded, not actioned)
 
-See [../planning/open-questions/wb-get-next-val-open-decisions.md](../planning/open-questions/wb-get-next-val-open-decisions.md).
+_(Historical `planning/open-questions/` folder removed by project decision; the OD record is retained inline here and in the 2026-06-24 closure doc.)_
 
-- **OD-1 — Contacts `trco_acct_key`:** `ContactsService` accepts `trco_acct_key` from the client request instead of generating it via `wb_get_next_val` (the e-Invoice path to the same table IS funneled, branch #28). Create-vs-update key-contract review. **Do not change now.**
-- **OD-2 — Date-prefixed payment keys:** exception #5 above. PO/architecture decision. **Do not change now.**
+- **OD-1 — Contacts `trco_acct_key`: CLOSED (2026-06-24).** The contacts-create (and update-new) path in `ContactsService` now allocates `trco_acct_key` via `LegacyFunctionRepository.nextTrcoAcctKey(bizKey, trcoKey) → wb_get_next_val('trco_acct_info','trco_acct_key', …)` (branch #28), matching the e-Invoice path. Existing accounts preserve their key on update (existence-checked, not blank-checked); deletes are unchanged; the frontend placeholder key is accepted but never persisted for new accounts. Implemented as **backend caller-routing only** — no DB function/DDL/schema/migration/config/data change. Verified by `ContactsServiceTest`, `ContactsControllerTest`, `compileJava`.
+- **OD-2 — Date-prefixed payment keys: RETIRED / CLOSED (2026-06-24).** The former date-prefixed `*_KEY_SEQ` counter-table architecture was reversed on 2026-06-09; `scdul_pymn_no` / `ovrs_pymn_no` now route through the funnel and the detail numbers (`scdul_pymn_detl_no` / `ovrs_pymn_detl_no`) are funnel-seeded and value-equivalent. The 2026-06-24 closure audit confirms these now match legacy. No open decision remains.
 
 ---
 

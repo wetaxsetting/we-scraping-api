@@ -28,19 +28,20 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Backend MR C — Excel export provider tests. Covers the abstract
- * {@link EInvoiceExportProvider} contract via the concrete
- * {@link SalesEInvoiceExportProvider} subclass:
+ * Excel "Download with List" provider tests — 9-column legacy parity
+ * ({@code SALES E-INVOICE_*.xls}). Covers the abstract
+ * {@link EInvoiceExportProvider} via the concrete
+ * {@link SalesEInvoiceExportProvider}:
  * <ul>
- *   <li>{@code allowedFieldIds} is the 8-column subset (no special CHECKBOX/ETC)</li>
- *   <li>{@code fetch(...)} reuses {@link EInvoiceService#list} with
- *       {@link Pageable#unpaged()} so the export runs against the
- *       full filtered dataset (rule IR-6)</li>
- *   <li>Filter extraction defaults {@code type} when the request omits it</li>
- *   <li>Sort flows through from {@link ExcelSortSpec}</li>
- *   <li>Subheader composition — single CCY / multi CCY / empty</li>
- *   <li>Row map exposes the 8 wire FIELD_IDs plus the BUYER + DATE_TIME
- *       composite cells</li>
+ *   <li>{@code allowedFieldIds} is the 9-column legacy-parity set
+ *       (Date, e-Invoice No., Buyer's Name, Tax Code, Currency, Total,
+ *       Status, Tax, Pre-tax) — buyer name + tax code split into two cells</li>
+ *   <li>{@code fetch(...)} reuses {@link EInvoiceService#list} unpaged (IR-6)</li>
+ *   <li>Filter / sort forwarding</li>
+ *   <li>Subheader = inquiry-period (left) + per-CCY totals (right), the
+ *       legacy {@code {left_title, right_title}} split</li>
+ *   <li>Row map exposes the 9 FIELD_IDs; date is date-only {@code dd-MM-yyyy};
+ *       amounts are raw wire decimals</li>
  * </ul>
  */
 @ExtendWith(MockitoExtension.class)
@@ -56,7 +57,7 @@ class EInvoiceExportProviderTest {
     }
 
     // ------------------------------------------------------------------
-    // Static contract — screenId, allowedFieldIds
+    // Static contract
     // ------------------------------------------------------------------
 
     @Test
@@ -72,16 +73,14 @@ class EInvoiceExportProviderTest {
 
     @Test
     void salesProvider_defaultType_isSALES() {
-        // Indirectly verified via the fetch defaults test below; this
-        // pins the protected method's contract for the subclass binding.
-        ExcelExportRequest req = requestWithFilters(Map.of()); // no type override
-        when(eInvoiceService.list(eq("SALES"), any(), any(), any(),
+        ExcelExportRequest req = requestWithFilters(Map.of());
+        when(eInvoiceService.list(eq("SALES"), any(), any(), any(), any(),
                 any(Pageable.class), any(), any()))
                 .thenReturn(emptyResponse());
 
         provider.fetch(req);
 
-        verify(eInvoiceService).list(eq("SALES"), any(), any(), any(),
+        verify(eInvoiceService).list(eq("SALES"), any(), any(), any(), any(),
                 any(Pageable.class), any(), any());
     }
 
@@ -89,27 +88,27 @@ class EInvoiceExportProviderTest {
     void billProvider_defaultType_isEXPENSE() {
         BillEInvoiceExportProvider bill = new BillEInvoiceExportProvider(eInvoiceService);
         ExcelExportRequest req = requestWithFilters(Map.of());
-        when(eInvoiceService.list(eq("EXPENSE"), any(), any(), any(),
+        when(eInvoiceService.list(eq("EXPENSE"), any(), any(), any(), any(),
                 any(Pageable.class), any(), any()))
                 .thenReturn(emptyResponse());
 
         bill.fetch(req);
 
-        verify(eInvoiceService).list(eq("EXPENSE"), any(), any(), any(),
+        verify(eInvoiceService).list(eq("EXPENSE"), any(), any(), any(), any(),
                 any(Pageable.class), any(), any());
     }
 
     @Test
-    void allowedFieldIds_is8ColumnSubset() {
+    void allowedFieldIds_is9ColumnLegacyParitySet() {
         assertThat(provider.allowedFieldIds())
                 .containsExactlyInAnyOrder(
-                        "DATE_TIME", "INVOICE_NO", "BUYER", "CURRENCY",
+                        "DATE", "INVOICE_NO", "BUYER_NAME", "TAX_CODE", "CURRENCY",
                         "TOTAL", "STATUS", "TAX", "PRETAX")
-                .doesNotContain("CHECKBOX", "ETC");
+                .doesNotContain("CHECKBOX", "ETC", "DATE_TIME", "BUYER");
     }
 
     // ------------------------------------------------------------------
-    // fetch() — argument forwarding to EInvoiceService
+    // fetch() — argument forwarding
     // ------------------------------------------------------------------
 
     @Test
@@ -119,61 +118,45 @@ class EInvoiceExportProviderTest {
                 "to",   "20240131",
                 "keyword", "ADTECH"));
         when(eInvoiceService.list(anyString(), anyString(), anyString(), anyString(),
-                any(Pageable.class), any(), any()))
+                any(), any(Pageable.class), any(), any()))
                 .thenReturn(emptyResponse());
 
         provider.fetch(req);
 
         ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
         verify(eInvoiceService).list(
-                eq("SALES"),
-                eq("20240101"),
-                eq("20240131"),
-                eq("ADTECH"),
-                pageableCaptor.capture(),
-                isNull(),
-                isNull());
-        // Export must be unpaged so the spreadsheet contains every
-        // matching row regardless of which page the user is viewing.
+                eq("SALES"), eq("20240101"), eq("20240131"), eq("ADTECH"),
+                isNull(), pageableCaptor.capture(), isNull(), isNull());
         assertThat(pageableCaptor.getValue().isUnpaged()).isTrue();
     }
 
     @Test
     void fetch_typeFilterOverridesDefault() {
-        // Sales provider with explicit `type=BILL` in filters — the
-        // override wins. Defends against a screenId/type mismatch from
-        // a misbehaving frontend (we don't auto-correct; the wire
-        // value flows through to the service which will resolve it).
         ExcelExportRequest req = requestWithFilters(Map.of(
-                "from", "20240101",
-                "to",   "20240131",
-                "type", "BILL"));
-        when(eInvoiceService.list(eq("BILL"), any(), any(), any(),
+                "from", "20240101", "to", "20240131", "type", "BILL"));
+        when(eInvoiceService.list(eq("BILL"), any(), any(), any(), any(),
                 any(Pageable.class), any(), any()))
                 .thenReturn(emptyResponse());
 
         provider.fetch(req);
 
-        verify(eInvoiceService).list(eq("BILL"), any(), any(), any(),
+        verify(eInvoiceService).list(eq("BILL"), any(), any(), any(), any(),
                 any(Pageable.class), any(), any());
     }
 
     @Test
-    void fetch_blankFilters_passNullToService() {
+    void fetch_statusFilter_flowsToService() {
         ExcelExportRequest req = requestWithFilters(Map.of(
-                "from", "  ",        // blank → null
-                "to",   ""));        // empty → null
-        when(eInvoiceService.list(anyString(), isNull(), isNull(), isNull(),
-                any(Pageable.class), any(), any()))
+                "from", "20240101", "to", "20240131",
+                "status", "Hóa đơn đã bị hủy"));
+        when(eInvoiceService.list(eq("SALES"), anyString(), anyString(), any(),
+                eq("Hóa đơn đã bị hủy"), any(Pageable.class), any(), any()))
                 .thenReturn(emptyResponse());
 
         provider.fetch(req);
 
-        verify(eInvoiceService).list(eq("SALES"), isNull(), isNull(), isNull(),
-                any(Pageable.class), any(), any());
-        // Service then enforces IR-3 (validateDateRange) and rejects
-        // with WBE_VALIDATION — the export thereby inherits the same
-        // required-date-range contract as the list endpoint.
+        verify(eInvoiceService).list(eq("SALES"), eq("20240101"), eq("20240131"),
+                isNull(), eq("Hóa đơn đã bị hủy"), any(Pageable.class), isNull(), isNull());
     }
 
     @Test
@@ -181,37 +164,38 @@ class EInvoiceExportProviderTest {
         ExcelExportRequest req = requestWithFiltersAndSort(
                 Map.of("from", "20240101", "to", "20240131"),
                 new ExcelSortSpec("BUYER", "ASC"));
-        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(),
+        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(), any(),
                 any(Pageable.class), eq("BUYER"), eq("ASC")))
                 .thenReturn(emptyResponse());
 
         provider.fetch(req);
 
         verify(eInvoiceService).list(eq("SALES"), eq("20240101"), eq("20240131"),
-                isNull(), any(Pageable.class), eq("BUYER"), eq("ASC"));
+                isNull(), isNull(), any(Pageable.class), eq("BUYER"), eq("ASC"));
     }
 
     // ------------------------------------------------------------------
-    // Subheader composition — IR-6 totals from full filtered dataset
+    // Subheader — legacy {left=period, right=totals} split
     // ------------------------------------------------------------------
 
     @Test
-    void subheader_emptyResult_isCountOnly() {
+    void subheader_period_isLeftHalf() {
         ExcelExportRequest req = requestWithFilters(Map.of("from", "20240101", "to", "20240131"));
-        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(),
+        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(), any(),
                 any(Pageable.class), any(), any()))
                 .thenReturn(emptyResponse());
 
         ExportFetch fetch = provider.fetch(req);
 
-        assertThat(fetch.rows()).isEmpty();
-        assertThat(fetch.subHeader()).isEqualTo("0 invoice(s)");
+        assertThat(fetch.subHeader()).isEqualTo("Inquiry Period (01-01-2024 ~ 31-01-2024)");
+        // No totals → right half empty.
+        assertThat(fetch.subHeaderRight()).isEmpty();
     }
 
     @Test
-    void subheader_singleCcy_isSingleLine() {
+    void subheader_totals_isRightHalf_singleCcy() {
         ExcelExportRequest req = requestWithFilters(Map.of("from", "20240101", "to", "20240131"));
-        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(),
+        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(), any(),
                 any(Pageable.class), any(), any()))
                 .thenReturn(responseWith(
                         List.of(sampleRow("D1")),
@@ -219,20 +203,15 @@ class EInvoiceExportProviderTest {
 
         ExportFetch fetch = provider.fetch(req);
 
-        assertThat(fetch.rows()).hasSize(1);
-        // VND uses vi-VN locale + ₫ suffix per AmountFormatter rules.
-        assertThat(fetch.subHeader())
-                .doesNotContain("\n")
-                .contains("1 invoice(s)")
-                .contains("Total: 1.000.000₫")
-                .contains("Tax: 100.000₫")
-                .contains("Pre-tax: 900.000₫");
+        // Dot-grouped, zero-decimal, no currency symbol (legacy .xls style).
+        assertThat(fetch.subHeaderRight())
+                .isEqualTo("Total (VND) 1 transaction(s) / 1.000.000");
     }
 
     @Test
-    void subheader_multiCcy_oneLinePerGroup() {
+    void subheader_totals_multiCcy_commaSeparated() {
         ExcelExportRequest req = requestWithFilters(Map.of("from", "20240101", "to", "20240131"));
-        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(),
+        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(), any(),
                 any(Pageable.class), any(), any()))
                 .thenReturn(responseWith(
                         List.of(sampleRow("D1"), sampleRow("D2")),
@@ -242,78 +221,68 @@ class EInvoiceExportProviderTest {
 
         ExportFetch fetch = provider.fetch(req);
 
-        String[] lines = fetch.subHeader().split("\n");
-        assertThat(lines).hasSize(2);
-        // Line 1 — VND (vi-VN, ₫ suffix, 0 fraction digits)
-        assertThat(lines[0])
-                .contains("50 invoice(s)")
-                .contains("Total: 100.000.000₫")
-                .contains("Tax: 10.000.000₫")
-                .contains("Pre-tax: 90.000.000₫");
-        // Line 2 — USD (en-US, $ prefix, 2 fraction digits)
-        assertThat(lines[1])
-                .contains("3 invoice(s)")
-                .contains("Total: $5,000.00")
-                .contains("Tax: $500.00")
-                .contains("Pre-tax: $4,500.00");
+        assertThat(fetch.subHeaderRight())
+                .isEqualTo("Total (VND) 50 transaction(s) / 100.000.000, "
+                        + "Total (USD) 3 transaction(s) / 5.000");
     }
 
     // ------------------------------------------------------------------
-    // Row map — FIELD_ID-keyed cells
+    // Row map — 9 FIELD_ID cells
     // ------------------------------------------------------------------
 
     @Test
-    void rowMap_carriesAll8FieldIds() {
+    void rowMap_carriesAll9FieldIds() {
         ExcelExportRequest req = requestWithFilters(Map.of("from", "20240101", "to", "20240131"));
-        EInvoiceRow row = sampleRow("DOC123");
-        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(),
+        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(), any(),
                 any(Pageable.class), any(), any()))
-                .thenReturn(responseWith(List.of(row), List.of()));
+                .thenReturn(responseWith(List.of(sampleRow("DOC123")), List.of()));
 
-        ExportFetch fetch = provider.fetch(req);
-
-        assertThat(fetch.rows()).hasSize(1);
-        Map<String, Object> cells = fetch.rows().get(0);
+        Map<String, Object> cells = provider.fetch(req).rows().get(0);
         assertThat(cells).containsOnlyKeys(
-                "DATE_TIME", "INVOICE_NO", "BUYER", "CURRENCY",
+                "DATE", "INVOICE_NO", "BUYER_NAME", "TAX_CODE", "CURRENCY",
                 "TOTAL", "STATUS", "TAX", "PRETAX");
     }
 
     @Test
-    void rowMap_dateTimeCell_isSpaceJoinedDateAndTime() {
+    void rowMap_dateCell_isDateOnly_ddMMyyyy() {
         ExcelExportRequest req = requestWithFilters(Map.of("from", "20240101", "to", "20240131"));
-        EInvoiceRow row = sampleRow("DOC123");
-        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(),
+        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(), any(),
                 any(Pageable.class), any(), any()))
-                .thenReturn(responseWith(List.of(row), List.of()));
+                .thenReturn(responseWith(List.of(sampleRow("DOC123")), List.of()));
 
         Map<String, Object> cells = provider.fetch(req).rows().get(0);
-        assertThat(cells.get("DATE_TIME")).isEqualTo("20240115 113950");
+        assertThat(cells.get("DATE")).isEqualTo("15-01-2024");
     }
 
     @Test
-    void rowMap_buyerCell_isNameWithMstSuffix() {
+    void rowMap_buyerNameAndTaxCode_areSeparateCells() {
         ExcelExportRequest req = requestWithFilters(Map.of("from", "20240101", "to", "20240131"));
-        EInvoiceRow row = sampleRow("DOC123");
-        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(),
+        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(), any(),
                 any(Pageable.class), any(), any()))
-                .thenReturn(responseWith(List.of(row), List.of()));
+                .thenReturn(responseWith(List.of(sampleRow("DOC123")), List.of()));
 
         Map<String, Object> cells = provider.fetch(req).rows().get(0);
-        assertThat(cells.get("BUYER"))
-                .isEqualTo("CÔNG TY TNHH ADTECH (MST: 3702351124-003)");
+        assertThat(cells.get("BUYER_NAME")).isEqualTo("CÔNG TY TNHH ADTECH");
+        assertThat(cells.get("TAX_CODE")).isEqualTo("3702351124-003");
+    }
+
+    @Test
+    void rowMap_invoiceNo_usesDispDocId() {
+        ExcelExportRequest req = requestWithFilters(Map.of("from", "20240101", "to", "20240131"));
+        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(), any(),
+                any(Pageable.class), any(), any()))
+                .thenReturn(responseWith(List.of(sampleRow("DOC123")), List.of()));
+
+        Map<String, Object> cells = provider.fetch(req).rows().get(0);
+        assertThat(cells.get("INVOICE_NO")).isEqualTo("DISP-DOC123");
     }
 
     @Test
     void rowMap_amountCells_areRawWireDecimals() {
-        // Writer applies POI's #,##0.## cell-level format on AMOUNT
-        // columns; provider ships raw wire strings so the user can
-        // re-sum the column in Excel.
         ExcelExportRequest req = requestWithFilters(Map.of("from", "20240101", "to", "20240131"));
-        EInvoiceRow row = sampleRow("DOC123");
-        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(),
+        when(eInvoiceService.list(anyString(), anyString(), anyString(), any(), any(),
                 any(Pageable.class), any(), any()))
-                .thenReturn(responseWith(List.of(row), List.of()));
+                .thenReturn(responseWith(List.of(sampleRow("DOC123")), List.of()));
 
         Map<String, Object> cells = provider.fetch(req).rows().get(0);
         assertThat(cells.get("TOTAL")).isEqualTo("1000000");

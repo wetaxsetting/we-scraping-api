@@ -34,7 +34,7 @@ master tables are dimension lookups resolved at read time (R07) and denormalized
 | `V174__smart_organizer_view_setting_seed.sql` | View Setting seed `WEB_SVC_ID='smart-organizer'` |
 
 `ACCT_TRNS_HSTR` and `ACCT_TRNS_RCV_PAY_INFM` are owned by the Transaction History migrations — see
-[transaction-history-vnd/database-mapping.md](../transaction-history-vnd/database-mapping.md).
+[transaction-history-vnd/database-mapping.md](../current-savings-vnd/transaction-history/database-mapping.md).
 
 ## 3. Rule table (`RMRK_ORG_INFM`) column map
 

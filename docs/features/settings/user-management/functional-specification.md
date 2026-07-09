@@ -17,7 +17,7 @@ Server-side support for the Settings → Users admin screen:
 - **Create** a user (profile + password + optional admin flag), linked to the tenant.
 - **Update** profile, optional password reset, admin toggle.
 - **Delete** = per-tenant soft unlink (not a global account delete).
-- **Menu entitlement** read/write (per-user `MENU_AUTH_CD` grants).
+- **Menu entitlement** read/write (per-user grants stored in `USER_MENU_AUTH_INFM.WEB_SVC_ID`).
 - **Avatar** upload / remove / stream.
 - **Check** login-id availability.
 
@@ -31,7 +31,7 @@ this screen, the 5-failure auto-lock counter, password reuse-history enforcement
 | Field | Wire (snake) | Create | Update | Notes |
 |---|---|:---:|:---:|---|
 | Login ID | `user_id` | required | path-only (immutable) | Global PK; uniqueness checked via check-id + create |
-| Password | `user_pw` | required | optional | BCrypt(10) on write; blank on update = keep existing |
+| Password | `user_pw` | required | optional | Written as legacy SHA-256 base64 (`WecmsPasswordEncoder`) for JEX coexistence; blank on update = keep existing |
 | Full name | `user_nm` | required | required | |
 | Email | `eml` | required | required | `@Email` format |
 | Phone | `clph_no` | required | required | Stored plain in refactor (legacy DEV rows are AES-encrypted; read path sanitizes) |
@@ -79,8 +79,8 @@ failure), `WBE2113` (no avatar set), `WBE2114` (file missing).
 6. **Soft per-tenant delete.** `USER_BUSI_CONN_INFM.DEL_YN='Y'` + admin-row delete + `ACCT_AUTH_INFO`
    revoke; the `USER_INFM` master row is preserved.
 7. **Login id is immutable** post-create (PK).
-8. **Password write is one-way** (BCrypt); the API never returns a hash. Detail/list never expose
-   `user_pw`.
+8. **Password write is one-way** (legacy SHA-256 base64, for JEX coexistence); the API never returns
+   a hash. Detail/list never expose `user_pw`.
 9. **Menu entitlement is Y-only, full-set replace** (delete-then-insert).
 
 ## 5. Permission model
@@ -97,7 +97,7 @@ Enforcement is two-layered:
 
 | Layer | Mechanism |
 |---|---|
-| Controller | `@PreAuthorize("@userMgmtAccess.canViewUsers()")` on reads; `@PreAuthorize("hasRole('ADMIN')")` on writes |
+| Controller | `@PreAuthorize("@userMgmtAccess.canViewUsers() and @menuAuthz.canAccess('settings-core-users')")` on reads; `@PreAuthorize("hasRole('ADMIN') and @menuAuthz.canAccess('settings-core-users')")` on writes. The `@menuAuthz` term (F-3 menu-authorization guard, live since 2026-06-06) is stacked on **every** endpoint; for an ADMIN it is satisfied implicitly via the full-tree navigation. |
 | Service (defence-in-depth) | `UserManagementService.requireAdmin()` and `MenuEntitlementService.save()` re-check `TenantContext.currentIsAdmin()` → `AccessDeniedException` **before any DB access** |
 
 `UserManagementAccessPolicy.canViewUsers()` returns `true` immediately for admins, otherwise probes

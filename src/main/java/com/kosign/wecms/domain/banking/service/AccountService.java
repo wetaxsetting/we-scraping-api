@@ -29,10 +29,14 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.kosign.wecms.common.enums.PrdtType;
+
 import java.math.BigDecimal;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -83,35 +87,38 @@ public class AccountService {
      * <ul>
      *   <li>{@link #VND_TYPE_CODES} — DEPOSIT (02), CURRENT_KHR (03),
      *       SAVINGS_KHR (05) — legacy {@code fnsh_0001_001_r001} VND set.</li>
-     *   <li>{@link #USD_TYPE_CODES} — DEPOSIT (02), CURRENT_USD (04),
-     *       SAVINGS_USD (06) — legacy {@code fnsh_0005_001_r001} USD set.</li>
-     *   <li>{@link #KRW_TYPE_CODES} — DEPOSIT (02), CURRENT_KRW (07),
-     *       SAVINGS_KRW (08) — refactor (no JEX twin).</li>
-     *   <li>{@link #FCY_TYPE_CODES} — union of USD + KRW + DEPOSIT.
-     *       Refactor enhancement; no JEX twin.</li>
-     *   <li>{@code ALL} or any other concrete CCY (EUR, JPY, …) ⇒
-     *       {@code null} (no type-code restriction; relies on the
-     *       {@code ccy_cd} predicate alone).</li>
+     *   <li>{@link #FCY_TYPE_CODES} — every non-loan type (02–08). Used
+     *       for the FCY scope ({@code CCY_CD <> 'VND'}) AND for every
+     *       concrete non-VND currency narrow ({@code CCY_CD = 'USD'} /
+     *       {@code 'KRW'} / {@code 'EUR'} / …) — a concrete CCY is just a
+     *       narrow of the FCY scope, so it must admit the same types.
+     *       <b>Why all current/savings codes, not the currency-specific
+     *       04/06/07/08:</b> the legacy per-currency whitelists assumed
+     *       FCY accounts always carry currency-specific type codes
+     *       (USD→04/06, KRW→07/08). That assumption does not hold across
+     *       datasets — the live JEX DB codes <em>every</em> current
+     *       account (VND, USD, KRW alike) as the generic CURRENT_KHR (03)
+     *       / SAVINGS_KHR (05). A currency-specific whitelist therefore
+     *       dropped every type-03/05 foreign account: "All Currency"
+     *       (FCY) rendered them, but narrowing to USD or KRW returned
+     *       "Not Found". Admitting 03/05 is safe — the {@code CCY_CD}
+     *       predicate already isolates the currency, so only genuinely
+     *       matching current/savings accounts pass. Loans (01) stay
+     *       excluded.</li>
      * </ul>
      */
     private static final List<String> VND_TYPE_CODES = List.of(
             AcctTypeCd.DEPOSIT.code(),
             AcctTypeCd.CURRENT_KHR.code(),
             AcctTypeCd.SAVINGS_KHR.code());
-    private static final List<String> USD_TYPE_CODES = List.of(
-            AcctTypeCd.DEPOSIT.code(),
-            AcctTypeCd.CURRENT_USD.code(),
-            AcctTypeCd.SAVINGS_USD.code());
-    private static final List<String> KRW_TYPE_CODES = List.of(
-            AcctTypeCd.DEPOSIT.code(),
-            AcctTypeCd.CURRENT_KRW.code(),
-            AcctTypeCd.SAVINGS_KRW.code());
     private static final List<String> FCY_TYPE_CODES = List.of(
-            AcctTypeCd.DEPOSIT.code(),
-            AcctTypeCd.CURRENT_USD.code(),
-            AcctTypeCd.SAVINGS_USD.code(),
-            AcctTypeCd.CURRENT_KRW.code(),
-            AcctTypeCd.SAVINGS_KRW.code());
+            AcctTypeCd.DEPOSIT.code(),       // 02 — time deposit (currency-agnostic)
+            AcctTypeCd.CURRENT_KHR.code(),   // 03 — generic "current" (currency carried by CCY_CD)
+            AcctTypeCd.CURRENT_USD.code(),   // 04 — USD current
+            AcctTypeCd.SAVINGS_KHR.code(),   // 05 — generic "savings"
+            AcctTypeCd.SAVINGS_USD.code(),   // 06 — USD savings
+            AcctTypeCd.CURRENT_KRW.code(),   // 07 — KRW current
+            AcctTypeCd.SAVINGS_KRW.code());  // 08 — KRW savings
 
     /**
      * Default ORDER BY mirrors the legacy {@code fnsh_0001_001} listing:
@@ -155,23 +162,56 @@ public class AccountService {
             String sortDirection,
             int page,
             int size) {
-        int safeSize = size <= 0 ? DEFAULT_PAGE_SIZE : Math.min(size, MAX_PAGE_SIZE);
-        int safePage = Math.max(0, page);
-        Sort sort = buildSort(AccountSortField.parse(sortField), SortDirection.parse(sortDirection));
-        Pageable pageable = PageRequest.of(safePage, safeSize, sort);
-        return list(filter, sortField, sortDirection, pageable);
+        return list(filter, sortField, sortDirection, (String) null, page, size);
     }
 
     /**
-     * Core list method — every other overload funnels here. Pass {@link
-     * Pageable#unpaged()} for the export path and any caller that needs
-     * the full filtered set.
+     * AI-01 overload — adds {@code asOfDate} ({@code yyyyMMdd}) so the grid can
+     * show legacy as-of-date historical balances ({@code ACCT_MSTR_R004}). A
+     * blank / today / future date yields current balances (unchanged behaviour).
      */
     @Transactional(readOnly = true)
     public AccountListResponse list(
             AccountFilter filter,
             String sortField,
             String sortDirection,
+            String asOfDate,
+            int page,
+            int size) {
+        int safeSize = size <= 0 ? DEFAULT_PAGE_SIZE : Math.min(size, MAX_PAGE_SIZE);
+        int safePage = Math.max(0, page);
+        Sort sort = buildSort(AccountSortField.parse(sortField), SortDirection.parse(sortDirection));
+        Pageable pageable = PageRequest.of(safePage, safeSize, sort);
+        return list(filter, sortField, sortDirection, asOfDate, pageable);
+    }
+
+    /**
+     * Backwards-compatible core entry — every legacy caller (export, unpaged
+     * forms) lands here and runs with current balances ({@code asOfDate = null}).
+     */
+    @Transactional(readOnly = true)
+    public AccountListResponse list(
+            AccountFilter filter,
+            String sortField,
+            String sortDirection,
+            Pageable pageable) {
+        return list(filter, sortField, sortDirection, (String) null, pageable);
+    }
+
+    /**
+     * Core list method — every other overload funnels here. Pass {@link
+     * Pageable#unpaged()} for the export path and any caller that needs
+     * the full filtered set. When {@code asOfDate} is supplied (non-blank),
+     * each displayed row's balance / available-balance is replaced with the
+     * legacy as-of-date value ({@code ACCT_MSTR_R004}); summary-card totals
+     * stay current-balance (legacy {@code ACCT_MSTR_R004_CNT} has no date logic).
+     */
+    @Transactional(readOnly = true)
+    public AccountListResponse list(
+            AccountFilter filter,
+            String sortField,
+            String sortDirection,
+            String asOfDate,
             Pageable pageable) {
         final String bizKey = TenantContext.currentBizKey();
         final ResolvedFilter resolved = resolveFilter(filter == null ? AccountFilter.currencyOnly(null) : filter);
@@ -210,9 +250,27 @@ public class AccountService {
         // distinct bank codes). Load once per list call; rows resolve
         // their certConnYn against an in-memory set keyed by BANK_CD.
         Set<String> connectedBanks = loadConnectedBanks(bizKey);
+
+        // AI-01: when an as-of date is supplied, replace each displayed row's
+        // BAL / REAL_AMT with the legacy as-of-date value (ACCT_MSTR_R004).
+        // Blank/today/future dates return current values from the same query,
+        // so the map is a no-op override then. Computed in one query per call;
+        // the default (no date) path never touches it.
+        Map<String, AsOfBalance> asOf = loadAsOfBalances(bizKey, asOfDate);
         List<AccountRow> rows = page.getContent().stream()
-                .map(a -> toRow(a, connectedBanks))
+                .map(a -> {
+                    AsOfBalance o = asOf.get(a.getBankCd() + "_" + a.getAcctNo());
+                    return o == null
+                            ? toRow(a, connectedBanks)
+                            : toRow(a, connectedBanks, o.bal(), o.realAmt());
+                })
                 .toList();
+
+        // AI-06: PrdtType H summary-card exclusion (legacy tot_dynamic0). Gates
+        // the per-currency aggregate ONLY — the row list above is untouched.
+        boolean excludeMaturedHSavings = PrdtType.fromCode(TenantContext.currentPrdtType())
+                .filter(p -> p == PrdtType.H)
+                .isPresent();
 
         List<CcyAggregate> aggregates = acctRepo.aggregateByCcy(
                 bizKey,
@@ -221,7 +279,8 @@ public class AccountService {
                 resolved.acctTypeCdIn,
                 resolved.bankCd,
                 resolved.keywordPattern,
-                authUserId);
+                authUserId,
+                excludeMaturedHSavings);
 
         BigDecimal balTotal = BigDecimal.ZERO;
         BigDecimal availTotal = BigDecimal.ZERO;
@@ -457,15 +516,22 @@ public class AccountService {
                     ccyEq = upper;
                     acctTypeCdIn = VND_TYPE_CODES;
                 }
-                case "USD" -> {
+                // Any concrete non-VND currency (USD, KRW, EUR, JPY, …) is a
+                // NARROW of the FCY scope: isolate the currency via
+                // ccy_cd = <CCY> and reuse the SAME non-loan type set FCY
+                // uses. The live JEX DB codes foreign current/savings as the
+                // generic 03/05 regardless of currency, so a currency-specific
+                // whitelist (02/04/06 for USD, 02/07/08 for KRW) matched zero
+                // rows and the page rendered "Not Found" even though the
+                // account exists — the same root cause as the original
+                // FCY-empty bug, on the concrete-currency narrow. Using
+                // FCY_TYPE_CODES keeps the concrete-currency result a strict
+                // subset of the All-Currency result for that CCY (the summary
+                // tile and the narrowed list agree).
+                default -> {
                     ccyEq = upper;
-                    acctTypeCdIn = USD_TYPE_CODES;
+                    acctTypeCdIn = FCY_TYPE_CODES;
                 }
-                case "KRW" -> {
-                    ccyEq = upper;
-                    acctTypeCdIn = KRW_TYPE_CODES;
-                }
-                default -> ccyEq = upper; // EUR/JPY/other concrete CCY — no type-code restriction
             }
         }
         String bankCd = blankToNull(filter.bankCd());
@@ -552,7 +618,43 @@ public class AccountService {
         return new HashSet<>(bankCertInfoRepo.findConnectedBankCds(bizKey));
     }
 
+    /** As-of-date balance pair for one account (AI-01). */
+    private record AsOfBalance(BigDecimal bal, BigDecimal realAmt) { }
+
+    /**
+     * AI-01 — build {@code (BANK_CD_ACCT_NO) → as-of balance} for the tenant by
+     * running the legacy {@code ACCT_MSTR_R004} port ({@link
+     * AcctMstrRepository#findAsOfBalances}). Returns an empty map when no
+     * {@code asOfDate} is supplied so the caller keeps current balances and the
+     * query never runs (default list path unchanged).
+     */
+    private Map<String, AsOfBalance> loadAsOfBalances(String bizKey, String asOfDate) {
+        if (asOfDate == null || asOfDate.isBlank()) {
+            return Map.of();
+        }
+        Map<String, AsOfBalance> out = new HashMap<>();
+        for (Object[] r : acctRepo.findAsOfBalances(bizKey, asOfDate)) {
+            String bankCd = (String) r[0];
+            String acctNo = (String) r[1];
+            BigDecimal bal = r[2] == null ? null : (BigDecimal) r[2];
+            BigDecimal realAmt = r[3] == null ? null : (BigDecimal) r[3];
+            out.put(bankCd + "_" + acctNo, new AsOfBalance(bal, realAmt));
+        }
+        return out;
+    }
+
     private AccountRow toRow(AcctMstr a, Set<String> connectedBanks) {
+        return toRow(a, connectedBanks, null, null);
+    }
+
+    /**
+     * Row mapper with optional AI-01 balance overrides. When {@code balOverride}
+     * / {@code realAmtOverride} are non-null they replace the stored
+     * {@code ACCT_MSTR.BAL} / {@code REAL_AMT} (as-of-date display); null keeps
+     * the current snapshot value.
+     */
+    private AccountRow toRow(AcctMstr a, Set<String> connectedBanks,
+                             BigDecimal balOverride, BigDecimal realAmtOverride) {
         String bankNm = bankResolver.resolveBankNm(a.getBankCd());
         // Formatted nickname comes from legacy DB function
         // wb_format_acct_nick_nm via @Formula on AcctMstr (installed
@@ -588,8 +690,8 @@ public class AccountService {
                 bankResolver.resolveAcctTypeKey(a.getAcctTypeCd()),
                 a.getCcyCd().trim(),
                 displayNick,
-                AmountFormatter.wire(a.getBal()),
-                AmountFormatter.wire(a.getRealAmt()),
+                AmountFormatter.wire(balOverride != null ? balOverride : a.getBal()),
+                AmountFormatter.wire(realAmtOverride != null ? realAmtOverride : a.getRealAmt()),
                 a.getAcctBalInqStts(),
                 // FCY-A02 (PO decision 2026-06-06 — supersedes HR-1): the
                 // "Last Update" column on fnsh_0005_001 / fnsh_0001_001

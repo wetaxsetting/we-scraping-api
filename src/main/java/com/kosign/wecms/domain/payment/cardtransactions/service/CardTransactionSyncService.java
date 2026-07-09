@@ -3,14 +3,17 @@ package com.kosign.wecms.domain.payment.cardtransactions.service;
 import com.kosign.wecms.common.auditlog.service.AuditLogContext;
 import com.kosign.wecms.common.auditlog.service.AuditLogService;
 import com.kosign.wecms.common.exception.BusinessException;
-import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.banking.bankcredentials.repository.BankCertInfoRepository;
 import com.kosign.wecms.domain.banking.bankcredentials.service.BankCredentialService;
 import com.kosign.wecms.domain.banking.bankcredentials.service.BankCredentialService.DecryptedCredential;
+import com.kosign.wecms.domain.banking.nxisas.NxisasApiLog;
 import com.kosign.wecms.domain.banking.nxisas.NxisasBankConfig;
+import com.kosign.wecms.domain.banking.nxisas.NxisasCardBanks;
 import com.kosign.wecms.domain.banking.nxisas.NxisasGatewayClient;
 import com.kosign.wecms.domain.banking.nxisas.NxisasGatewayClient.GatewayContinuation;
+import com.kosign.wecms.domain.banking.nxisas.NxisasMask;
+import com.kosign.wecms.domain.banking.nxisas.NxisasResultCodes;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasApiOut;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasCardUsingEntry;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasCardUsingJobInput;
@@ -24,12 +27,9 @@ import com.kosign.wecms.domain.payment.cardtransactions.dto.SyncCardTransactions
 import com.kosign.wecms.domain.payment.cardtransactions.dto.SyncCardTransactionsResponse.SyncGroup;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.SyncCardTransactionsResponse.SyncGroupCard;
 import com.kosign.wecms.domain.payment.cardtransactions.entity.CardMstr;
-import com.kosign.wecms.domain.payment.cardtransactions.entity.CardTrnsHstr;
 import com.kosign.wecms.domain.payment.cardtransactions.repository.CardMstrRepository;
-import com.kosign.wecms.domain.payment.cardtransactions.repository.CardTrnsHstrRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -64,9 +64,10 @@ import java.util.Optional;
  *       the Manage Cards Add-Card flow's re-auth path (Phase B follow-up
  *       can wire a dedicated re-auth dialog if needed).</li>
  *   <li>For each {@code CARD_USING} success, insert resulting rows
- *       into {@code CARD_TRNS_HSTR} with dedup on the (BANK_CD, CARD_NO,
- *       TRSC_DT, AUTH_CODE) natural key (mirrors legacy
- *       {@code IDO.CARD_TRNS_HSTR_CHK}).</li>
+ *       into {@code CARD_TRNS_HSTR} with dedup on the legacy composite
+ *       natural key {@code (BIZ_KEY, CARD_NO, TRSC_DT, TRSC_TM, CCY_CD,
+ *       TRSC_AMT, MERCH_NM, trim(AUTH_CODE))} — byte-for-byte with
+ *       {@code fnsh_0001_001_c001_act.jsp:1335-1357}.</li>
  * </ol>
  *
  * <h2>Concurrency / failure</h2>
@@ -99,22 +100,18 @@ public class CardTransactionSyncService {
      *  every other bank sends {@code "0"} as the default. */
     private static final String WOORI_VN_BANK_CD = "11704020";
 
-    /** Shinhan Vietnam bank code — its CARD_USING response returns
-     *  Vietnamese purchase-status TEXT instead of a short code, so the
-     *  service maps the strings to single-digit codes before persist
-     *  per legacy
-     *  {@code fnsh_0001_001_c001_act.jsp:1378-1402}. */
-    private static final String SHINHAN_VN_BANK_CD = "11704088";
-
     private final CardMstrRepository       cardMstrRepo;
-    private final CardTrnsHstrRepository   cardTrnsRepo;
     private final BankInfmRepository       bankInfmRepo;
     private final BankCertInfoRepository   bankCertInfoRepo;
     private final BankCredentialService    credentialService;
     private final NxisasGatewayClient      gateway;
     private final NxisasBankConfig         bankConfig;
-    private final LegacyFunctionRepository legacyFns;
     private final AuditLogService          auditLogService;
+    /** Shared per-card persist + D5 dedup. Extracted 2026-06-19 so the
+     *  new {@code CardTransactionScrapeService} (session/QNA flow) and
+     *  this deprecated headless path write {@code CARD_TRNS_HSTR}
+     *  identically. */
+    private final CardTransactionPersister cardPersister;
 
     /* ------------------------------------------------------------------
      *  Public entry — POST /api/v1/payment/card-transactions/sync.
@@ -131,6 +128,13 @@ public class CardTransactionSyncService {
         String now    = OffsetDateTime.now(ZoneOffset.UTC).format(DTM14);
         long startedNs = System.nanoTime();
 
+        // Shared NXISAS debug trace id for this Update/sync run. Card sync
+        // has no NxisasScrapeSession (challenges aren't pumped — they
+        // surface as re-auth notices), so we mint a per-run id and use it
+        // across every NxisasApiLog line for the run. flow = CARD_UPDATE_TRANSACTIONS.
+        final String traceId = java.util.UUID.randomUUID().toString();
+        final String FLOW = NxisasApiLog.FLOW_CARD_UPDATE_TRANSACTIONS;
+
         log.info("---------------------------- card-sync :: START ----------------------------");
         log.info("card-sync :: bizKey={} from={} to={} auto={}",
                 bizKey, req.fromDate(), req.toDate(), req.auto());
@@ -143,6 +147,8 @@ public class CardTransactionSyncService {
         if (cards.isEmpty()) {
             log.info("---------------------------- card-sync :: DONE :: no eligible cards ({} ms) ----------------------------",
                     (System.nanoTime() - startedNs) / 1_000_000);
+            NxisasApiLog.event(traceId, FLOW, "COMPLETE",
+                    "success", 0, "attempted", 0, "reason", "NO_ELIGIBLE_CARDS");
             return new SyncCardTransactionsResponse(0, 0, 0, 0, List.of(), List.of());
         }
 
@@ -204,7 +210,7 @@ public class CardTransactionSyncService {
                         .orElse(null);
                 if (resolved == null) {
                     log.warn("card-sync :: orphan card has NO BANK_CERT_INFO for bankCd={} cardNo={} — surfacing as WBE_CARD_SYNC_NO_CREDENTIAL",
-                            c.getBankCd(), c.getCardNo());
+                            c.getBankCd(), NxisasMask.card(c.getCardNo()));
                     unresolvableCards.add(c);
                     continue;
                 }
@@ -213,7 +219,7 @@ public class CardTransactionSyncService {
                 c.setModDtm(now);
                 cardMstrRepo.saveAndFlush(c);
                 log.info("card-sync :: auto-linked orphan card bankCd={} cardNo={} → bankCertSeq={} (persisting on flush)",
-                        c.getBankCd(), c.getCardNo(), resolved);
+                        c.getBankCd(), NxisasMask.card(c.getCardNo()), resolved);
             }
             resolvableCards.add(c);
         }
@@ -247,6 +253,9 @@ public class CardTransactionSyncService {
 
         log.info("---------------------------- card-sync :: orgObj ----------------------------");
         log.info("card-sync :: grouped into {} credential bucket(s)", byCredential.size());
+        NxisasApiLog.event(traceId, FLOW, "START",
+                "cards", cards.size(), "groups", byCredential.size(),
+                "from", effFromDt, "to", effToDt);
 
         for (Map.Entry<BigDecimal, List<CardMstr>> entry : byCredential.entrySet()) {
             BigDecimal credSeqNo = entry.getKey();
@@ -263,9 +272,22 @@ public class CardTransactionSyncService {
             log.info("card-sync :: credential seq_no={} bankCd={} bankNm={} cards={}",
                     credSeqNo, groupBankCd, groupBankNm, group.size());
             for (CardMstr c : group) {
-                log.info("card-sync ::   card_no={} card_nm={}", c.getCardNo(), c.getCardNm());
+                log.info("card-sync ::   card_no={} card_nm={}", NxisasMask.card(c.getCardNo()), c.getCardNm());
             }
             log.info("---------------------------- card-sync :: credential ----------------------------");
+            // Card scraping supports only Shinhan + Woori — tag the flow so
+            // the logs make the two-bank scope explicit and an out-of-scope
+            // bank (only possible via a stale/hand-seeded card row) is
+            // visible rather than silently treated as a card bank.
+            boolean cardBankSupported = NxisasCardBanks.isSupported(groupBankCd);
+            NxisasApiLog.event(traceId, FLOW, "GROUP_START",
+                    "bankCd", groupBankCd, "cardBank", NxisasCardBanks.label(groupBankCd),
+                    "cardBankSupported", cardBankSupported, "cards", group.size());
+            if (!cardBankSupported) {
+                log.warn("card-sync :: UNSUPPORTED card bank in scrape scope bankCd={} (only Shinhan/Woori supported)",
+                        groupBankCd);
+                NxisasApiLog.event(traceId, FLOW, "UNSUPPORTED_CARD_BANK", "bankCd", groupBankCd);
+            }
 
             // 3a. Decrypt credentials. Failure (missing row, wrong
             //     tenant, etc.) → mark every card in this group as
@@ -345,6 +367,8 @@ public class CardTransactionSyncService {
             log.info("card-sync :: LOGIN bankCd={} module={} class={} loginType={}",
                     bankCd, cfg.module(), cfg.category(),
                     loginInput.getLoginType() == null ? "" : loginInput.getLoginType());
+            NxisasApiLog.event(traceId, FLOW, "LOGIN_START",
+                    "bankCd", bankCd, "module", cfg.module(), "class", cfg.category());
 
             NxisasApiOut<NxisasLoginJobResult> loginOut =
                     gateway.login(cfg.module(), cfg.category(), trSeq, loginInput);
@@ -356,6 +380,8 @@ public class CardTransactionSyncService {
                         : loginOut.getCommon().getResultMsg();
                 log.warn("card-sync :: LOGIN FAILED bankCd={} resultCd={} msg={}",
                         bankCd, loginResultCd, msg);
+                NxisasApiLog.event(traceId, FLOW, "ERROR",
+                        "stage", "LOGIN", "scope", "GATEWAY", "bankCd", bankCd, "resultCode", loginResultCd);
                 for (CardMstr c : group) {
                     errors.add(new CardSyncError(
                             c.getBankCd(), resolveBankName(c.getBankCd()), c.getCardNo(),
@@ -378,6 +404,11 @@ public class CardTransactionSyncService {
                 String msg = "bank requires OTP / Q&A / CAPTCHA — finish via Manage Cards";
                 log.warn("card-sync :: LOGIN CHALLENGE bankCd={} callBackFunc={}",
                         bankCd, loginRes.getCallBackFunc());
+                // Card sync does not pump challenges — surfaced as a per-card
+                // re-auth notice (the user finishes via Manage Cards).
+                NxisasApiLog.event(traceId, FLOW, "CHALLENGE_REQUIRED",
+                        "bankCd", bankCd, "callBackFunc", loginRes.getCallBackFunc(),
+                        "outcome", "NEEDS_RE_AUTH");
                 for (CardMstr c : group) {
                     errors.add(new CardSyncError(
                             c.getBankCd(), resolveBankName(c.getBankCd()), c.getCardNo(),
@@ -394,6 +425,8 @@ public class CardTransactionSyncService {
                 continue;
             }
             log.info("card-sync :: LOGIN OK bankCd={}", bankCd);
+            NxisasApiLog.event(traceId, FLOW, "LOGIN_SUCCESS",
+                    "bankCd", bankCd, "sasSessionId", NxisasMask.token(loginOut.getSasSessionID()));
 
             GatewayContinuation cont = GatewayContinuation.from(loginOut);
 
@@ -408,7 +441,10 @@ public class CardTransactionSyncService {
                     cardInput.setCardType("0");
                 }
                 log.info("card-sync :: CARD_USING bankCd={} cardNo={} from={} to={}",
-                        card.getBankCd(), card.getCardNo(), effFromDt, effToDt);
+                        card.getBankCd(), NxisasMask.card(card.getCardNo()), effFromDt, effToDt);
+                NxisasApiLog.event(traceId, FLOW, "CARD_USING_START",
+                        "bankCd", card.getBankCd(), "cardNo", NxisasMask.card(card.getCardNo()),
+                        "from", effFromDt, "to", effToDt);
 
                 String useTrSeq = gateway.newTrSeq();
                 NxisasApiOut<NxisasCardUsingJobResult> useOut;
@@ -418,7 +454,10 @@ public class CardTransactionSyncService {
                 } catch (Exception ex) {
                     String msg = ex.getMessage() == null ? "gateway call failed" : ex.getMessage();
                     log.warn("card-sync :: CARD_USING THREW bankCd={} cardNo={} msg={}",
-                            card.getBankCd(), card.getCardNo(), msg);
+                            card.getBankCd(), NxisasMask.card(card.getCardNo()), msg);
+                    NxisasApiLog.event(traceId, FLOW, "ERROR",
+                            "stage", "CARD_USING", "scope", "TRANSPORT",
+                            "bankCd", card.getBankCd(), "cardNo", NxisasMask.card(card.getCardNo()));
                     errors.add(new CardSyncError(
                             card.getBankCd(), resolveBankName(card.getBankCd()), card.getCardNo(),
                             "WBE_CARD_SYNC_GATEWAY_ERROR", msg));
@@ -434,7 +473,11 @@ public class CardTransactionSyncService {
                             ? "Coocon CARD_USING failed (no envelope)"
                             : useOut.getCommon().getResultMsg();
                     log.warn("card-sync :: CARD_USING FAILED bankCd={} cardNo={} resultCd={} msg={}",
-                            card.getBankCd(), card.getCardNo(), useResultCd, msg);
+                            card.getBankCd(), NxisasMask.card(card.getCardNo()), useResultCd, msg);
+                    NxisasApiLog.event(traceId, FLOW, "ERROR",
+                            "stage", "CARD_USING", "scope", "GATEWAY",
+                            "bankCd", card.getBankCd(), "cardNo", NxisasMask.card(card.getCardNo()),
+                            "resultCode", useResultCd);
                     errors.add(new CardSyncError(
                             card.getBankCd(), resolveBankName(card.getBankCd()), card.getCardNo(),
                             "WBE_CARD_SYNC_GATEWAY_ERROR", msg));
@@ -461,18 +504,21 @@ public class CardTransactionSyncService {
                 }
 
                 log.info("card-sync :: CARD_USING OK bankCd={} cardNo={} scraped={}",
-                        card.getBankCd(), card.getCardNo(), scraped.size());
+                        card.getBankCd(), NxisasMask.card(card.getCardNo()), scraped.size());
 
                 // 3e. Insert with dedup. One inserted row per
                 //     scraped transaction that doesn't already exist;
                 //     dedup hit → skippedCount++ instead.
-                int[] counts = persistScrapedRows(
+                int[] counts = cardPersister.persist(
                         bizKey, userId, now, card, scraped);
                 insertedCount += counts[0];
                 skippedCount  += counts[1];
 
                 log.info("card-sync :: persisted bankCd={} cardNo={} inserted={} skipped={}",
-                        card.getBankCd(), card.getCardNo(), counts[0], counts[1]);
+                        card.getBankCd(), NxisasMask.card(card.getCardNo()), counts[0], counts[1]);
+                NxisasApiLog.event(traceId, FLOW, "CARD_DONE",
+                        "bankCd", card.getBankCd(), "cardNo", NxisasMask.card(card.getCardNo()),
+                        "scraped", scraped.size(), "inserted", counts[0], "skipped", counts[1]);
 
                 // Stamp the last-success on CARD_MSTR so subsequent
                 // syncs default to the post-success window — but
@@ -520,7 +566,7 @@ public class CardTransactionSyncService {
                     credSeqNo, groupBankCd, groupCards.size());
             for (SyncGroupCard gc : groupCards) {
                 log.info("card-sync ::   card_no={} scraped={} inserted={} skipped={} errorCode={}",
-                        gc.cardNo(), gc.scrapedCount(), gc.inserted(), gc.skipped(),
+                        NxisasMask.card(gc.cardNo()), gc.scrapedCount(), gc.inserted(), gc.skipped(),
                         gc.errorCode() == null ? "-" : gc.errorCode());
             }
             log.info("---------------------------- card-sync :: tranList Result(Unit) ----------------------------");
@@ -549,108 +595,13 @@ public class CardTransactionSyncService {
                 bizKey, cardsSucceeded, cardsAttempted, insertedCount, skippedCount,
                 errors.size(), elapsedMs, groups.size());
         log.info("---------------------------- card-sync :: tranList Result ----------------------------");
+        NxisasApiLog.event(traceId, FLOW, "COMPLETE",
+                "success", cardsSucceeded, "attempted", cardsAttempted,
+                "inserted", insertedCount, "skipped", skippedCount,
+                "errors", errors.size(), "durationMs", elapsedMs);
 
         return new SyncCardTransactionsResponse(
                 cardsAttempted, cardsSucceeded, insertedCount, skippedCount, errors, groups);
-    }
-
-    /* ------------------------------------------------------------------
-     *  Insert + dedup
-     * ---------------------------------------------------------------- */
-
-    /** Returns {@code [inserted, skipped]}. */
-    private int[] persistScrapedRows(String bizKey, String userId, String now,
-                                     CardMstr card,
-                                     List<NxisasCardUsingEntry> scraped) {
-        int inserted = 0;
-        int skipped  = 0;
-        for (NxisasCardUsingEntry tx : scraped) {
-            String trscDt = normYyyymmdd(tx.getUsingDate());
-            if (trscDt == null) {
-                // Tx without a date is unusable — Coocon shouldn't
-                // emit this but tolerate it to avoid breaking the
-                // batch on one bad row.
-                continue;
-            }
-            String authCode = blankToNull(tx.getAuthCode());
-            String trscTm   = normHhmmss(tx.getUsingTime());
-            BigDecimal amt  = parseAmount(tx.getUsingAmt());
-
-            // Dedup probe — auth code first (Coocon-stable), then
-            // wider composite when auth code is absent.
-            boolean dup;
-            if (authCode != null) {
-                dup = cardTrnsRepo
-                        .existsByBizKeyAndBankCdAndCardNoAndTrscDtAndAuthCode(
-                                bizKey, card.getBankCd(), card.getCardNo(), trscDt, authCode);
-            } else {
-                dup = cardTrnsRepo
-                        .existsByBizKeyAndBankCdAndCardNoAndTrscDtAndTrscTmAndTrscAmt(
-                                bizKey, card.getBankCd(), card.getCardNo(), trscDt,
-                                trscTm == null ? "" : trscTm,
-                                amt == null ? BigDecimal.ZERO : amt);
-            }
-            if (dup) {
-                skipped++;
-                continue;
-            }
-
-            String seqNo = legacyFns.nextCardSeqNo(bizKey);
-            CardTrnsHstr row = new CardTrnsHstr();
-            row.setBizKey(bizKey);
-            row.setCardSeqNo(seqNo);
-            row.setBankCd(card.getBankCd());
-            row.setCardNo(card.getCardNo());
-            row.setTrscDt(trscDt);
-            row.setTrscTm(trscTm);
-            // Prefer the scraped card name when present (legacy
-            // `cardTrnsHstr.setCardNm(cardUsing.getCardName())`,
-            // fnsh_0001_001_c001_act.jsp:1369); fall back to the
-            // CARD_MSTR row's CARD_NM when Coocon omits the field.
-            String cardNm = tx.getCardName() != null && !tx.getCardName().isBlank()
-                    ? tx.getCardName()
-                    : card.getCardNm();
-            row.setCardNm(truncate(cardNm, 50));
-            row.setMerchNm(truncate(tx.getFranchise(), 50));
-            row.setCcyCd(normCcy(tx.getCurrency()));
-            // Card transactions are always debits — Coocon's
-            // CARD_USING response doesn't carry an inoutDv field, so
-            // stamp '2' (OUT) unconditionally per legacy parity.
-            row.setInoutDv("2");
-            row.setTrscAmt(amt);
-            row.setUsingType(truncate(tx.getUsingType(), 50));
-            row.setPrchStts(truncate(mapPurchaseStatus(card.getBankCd(), tx.getPurchaseStatus()), 50));
-            // Coocon's CARD_USING response doesn't carry a `note`
-            // field — column stays null (legacy parity:
-            // fnsh_0001_001_c001_act.jsp never calls setNote).
-            row.setNote(null);
-            row.setAuthCode(truncate(authCode, 15));
-            row.setCity(truncate(tx.getCity(), 100));
-            row.setRegId(userId);
-            row.setRegDtm(now);
-            row.setModId(userId);
-            row.setModDtm(now);
-            row.setErpSndYn("N");
-
-            try {
-                // saveAndFlush, not save: the next nextCardSeqNo()
-                // call inside this loop is a native SELECT through
-                // wb_get_next_val(...) which Hibernate cannot detect
-                // as touching CARD_TRNS_HSTR, so auto-flush wouldn't
-                // fire. Without an explicit flush, MAX+1 sees the
-                // pre-batch state and every row in the same call gets
-                // the same card_seq_no → PK collision at commit time.
-                cardTrnsRepo.saveAndFlush(row);
-                inserted++;
-            } catch (DataIntegrityViolationException ex) {
-                // Concurrent sync collision — count as skip and move
-                // on. Mirrors the appr_line_no / chart_acct_seq_no
-                // retry-once discipline; here we just skip because
-                // duplicate detection should already have caught it.
-                skipped++;
-            }
-        }
-        return new int[] { inserted, skipped };
     }
 
     /* ------------------------------------------------------------------
@@ -664,11 +615,10 @@ public class CardTransactionSyncService {
     }
 
     private static boolean isGatewayError(String resultCd) {
-        if (resultCd == null || resultCd.isBlank()) return false;
-        if ("00000000".equals(resultCd)) return false;
-        if ("0000".equals(resultCd)) return false;
-        if ("OK".equalsIgnoreCase(resultCd)) return false;
-        return true;
+        // Shared NXISAS result-code policy (also used by BankScrapingService
+        // + BankTransactionSyncService). Identical behaviour to the former
+        // inline copy.
+        return NxisasResultCodes.isGatewayError(resultCd);
     }
 
     /** Detect a challenge-required LOGIN response shape. Coocon
@@ -682,46 +632,6 @@ public class CardTransactionSyncService {
         // Defensive: some adapters omit CallBackfunc but include a
         // populated req on the LOGIN result when a challenge is needed.
         return res.getReq() != null && !res.getReq().isNull();
-    }
-
-    private static String blankToNull(String s) {
-        return s == null || s.isBlank() ? null : s.trim();
-    }
-
-    private static String normYyyymmdd(String raw) {
-        if (raw == null) return null;
-        String digits = raw.replaceAll("\\D+", "");
-        if (digits.length() < 8) return null;
-        return digits.substring(0, 8);
-    }
-
-    private static String normHhmmss(String raw) {
-        if (raw == null) return null;
-        String digits = raw.replaceAll("\\D+", "");
-        if (digits.isEmpty()) return null;
-        return digits.length() > 6 ? digits.substring(0, 6) : digits;
-    }
-
-    private static String normCcy(String raw) {
-        if (raw == null || raw.isBlank()) return "VND";
-        String u = raw.trim().toUpperCase();
-        return u.length() > 3 ? u.substring(0, 3) : u;
-    }
-
-    private static BigDecimal parseAmount(String raw) {
-        if (raw == null || raw.isBlank()) return null;
-        try {
-            // Strip thousand separators / currency symbols.
-            String cleaned = raw.replaceAll("[^0-9.\\-]+", "");
-            return cleaned.isEmpty() ? null : new BigDecimal(cleaned);
-        } catch (NumberFormatException ex) {
-            return null;
-        }
-    }
-
-    private static String truncate(String s, int max) {
-        if (s == null) return null;
-        return s.length() <= max ? s : s.substring(0, max);
     }
 
     /** Per-bank loginType resolver mirroring legacy nxisas_v2.js:944-963.
@@ -739,7 +649,7 @@ public class CardTransactionSyncService {
      *  </ul>
      *
      *  <p>No override for Woori Vietnam ({@value #WOORI_VN_BANK_CD})
-     *  or Shinhan VN ({@value #SHINHAN_VN_BANK_CD}) — they use the
+     *  or Shinhan VN ({@code 11704088}) — they use the
      *  default {@code "ID"} like every other VN bank.
      */
     private static String resolveLoginType(String bankCd, int subSeq, String credLoginType) {
@@ -749,39 +659,6 @@ public class CardTransactionSyncService {
         }
         if ("11704106".equals(bankCd)) return "";              // ABBank test override
         return "ID";
-    }
-
-    /** Per-bank purchase-status normaliser.
-     *
-     *  <p>Shinhan VN ({@value #SHINHAN_VN_BANK_CD}) and Woori VN
-     *  ({@value #WOORI_VN_BANK_CD}) return Vietnamese status TEXT in
-     *  the CARD_USING response (e.g. {@code "Chấp nhận"}). The
-     *  legacy save action at
-     *  {@code fnsh_0001_001_c001_act.jsp:1378-1402} maps those strings
-     *  to single-digit codes ({@code "1"} accepted, {@code "2"}
-     *  completed, {@code "9"} cancelled) so the PRCH_STTS column stays
-     *  short and frontend i18n keys can resolve on the digit. Every
-     *  other bank passes through unchanged.
-     *
-     *  <p>Trims the input before matching — bank responses sometimes
-     *  carry trailing whitespace.
-     */
-    private static String mapPurchaseStatus(String bankCd, String raw) {
-        if (raw == null || raw.isBlank()) return raw;
-        String trimmed = raw.trim();
-        if (SHINHAN_VN_BANK_CD.equals(bankCd)) {
-            switch (trimmed) {
-                case "Chấp nhận":  return "1";
-                case "Hoàn thành": return "2";
-                case "Đã hủy":     return "9";
-                default:           return trimmed;
-            }
-        }
-        if (WOORI_VN_BANK_CD.equals(bankCd)) {
-            if ("Giao dịch được duyệt".equals(trimmed)) return "1";
-            return trimmed;
-        }
-        return trimmed;
     }
 
     /** Fallback default for Auto mode when no card has ever been

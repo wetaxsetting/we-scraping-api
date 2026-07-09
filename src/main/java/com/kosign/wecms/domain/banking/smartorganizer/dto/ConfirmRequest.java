@@ -17,10 +17,13 @@ import java.util.List;
  * <ol>
  *   <li>Loads the corresponding {@code ACCT_TRNS_HSTR} row (404 if
  *       missing in tenant);</li>
- *   <li>Optionally validates {@code useUsagCd} against
- *       {@code BUSI_USAG_SET_INFM} (presence check only — the
- *       legacy USAG_GRP_CD ↔ INOUT_DV rule is retired in refactor
- *       per § OQ-Backend-1);</li>
+ *   <li>Validates {@code useUsagCd} against {@code BUSI_USAG_SET_INFM}:
+ *       it must exist in the tenant AND its {@code USAG_GRP_CD} must
+ *       match the transaction direction (deposit {@code INOUT_DV='1'}
+ *       → group {@code '4'}, withdrawal {@code '2'} → group {@code '6'});
+ *       a mismatch rolls the confirm back with
+ *       {@code WBE_SMART_ORGANIZER_USAGE_DIRECTION_MISMATCH}
+ *       (legacy {@code fnsh_0200_001_c001_act.jsp:96-116} parity);</li>
  *   <li>Optionally validates {@code vasAcctSeqNo} against
  *       {@code BUSI_VAS_ACCT_INFM};</li>
  *   <li>Optionally validates {@code trcoKey} against

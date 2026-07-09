@@ -9,7 +9,7 @@
 
 JEX is **read-only reference**.
 
-> **Phase 2 implementation rules are locked.** See [planning § Phase 2 implementation rules (locked decisions)](../../../planning/addon/sales-e-invoices-plan.md#phase-2-implementation-rules-locked-decisions). Backend implementation is approved to start. The relevant rules for this API: IR-1 (`SALES → 'I'`, `EXPENSE → 'B'` — fix the current `'E'` mapping bug), IR-2 (always-on baseline filters: `PROV_STTS NOT IN ('VD','EE')`, `HAND_REG_YN <> 'Y'`, `BUSA_DOC_DETL` exists, `OP` expansion), IR-3 (`from`/`to` required + `YYYYMMDD` validation), IR-4 (return raw `EINV_INVOICESTATUS`; do NOT port `wb_get_invoice_status` in Phase 2), IR-5 (5-column simplified `keyword` search), IR-6 (multi-currency totals computed unpaged), IR-7 (drop `INV_TYPE` from `EInvoiceRow`/`EInvoiceListResponse`), IR-9 (View Setting endpoints stay global / unchanged; the Sales e-Invoices page does NOT generate Save or Reset traffic — only the lazy-init GET).
+> **Phase 2 implementation rules are locked.** See planning § Phase 2 implementation rules (locked decisions) _(removed — historical `planning/` folder deleted by project decision)_. Backend implementation is approved to start. The relevant rules for this API: IR-1 (`SALES → 'I'`, `EXPENSE → 'B'` — fix the current `'E'` mapping bug), IR-2 (always-on baseline filters: `PROV_STTS NOT IN ('VD','EE')`, `HAND_REG_YN <> 'Y'`, `BUSA_DOC_DETL` exists, `OP` expansion), IR-3 (`from`/`to` required + `YYYYMMDD` validation), IR-4 (return raw `EINV_INVOICESTATUS`; do NOT port `wb_get_invoice_status` in Phase 2), IR-5 (5-column simplified `keyword` search), IR-6 (multi-currency totals computed unpaged), IR-7 (drop `INV_TYPE` from `EInvoiceRow`/`EInvoiceListResponse`), IR-9 (View Setting endpoints stay global / unchanged; the Sales e-Invoices page does NOT generate Save or Reset traffic — only the lazy-init GET).
 
 ---
 
@@ -396,6 +396,6 @@ The Expenses sibling registers a separate `screenId="addon-expenses-einvoices"` 
 - Frontend page: [../../frontend/addon/sales-e-invoices-page.md](../../../../../wecms-web/docs/features/addon-service/sales-e-invoices.md)
 - Database: [../../database/addon/sales-e-invoices-db.md](../../database/addon/sales-e-invoices-db.md)
 - Migration mapping: [../../migration/service-mapping.md](../../migration/service-mapping.md)
-- Implementation plan: [../../planning/addon/sales-e-invoices-plan.md](../../../planning/addon/sales-e-invoices-plan.md)
+- Implementation plan: ../../planning/addon/sales-e-invoices-plan.md _(removed — historical `planning/` folder deleted by project decision)_
 - Legacy WSVC: `WECMS DEV/WECMS_ETC/xml/service/WSVC/WSVC.einv_0001_001_r001.xml`
 - Legacy view: `WECMS DEV/WECMS/web/view/jex/wabooks/einv/einv_0001_001_view.jsp`

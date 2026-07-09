@@ -2,22 +2,65 @@
 
 Feature hubs (menu-level) for the **Payment** domain in the Spring Boot + Next.js refactor, plus the
 single cross-sibling / shared-infrastructure authority for the module (this README absorbed the former
-`_payment-module-overview.md` on 2026-06-02). Each hub documents its menu's sub-items (Scheduled /
-Scheduled Details / Result / Result Details) as **sections within the family hub** (per the approved
-2026-06-01 decision — no per-sub-item split).
+`_payment-module-overview.md` on 2026-06-02). Each module folder carries the standard **9-doc set**:
+`README.md` · `business-flow.md` · `database-mapping.md` · `functional-specification.md` ·
+`interface-specification.md` · `migration-guide.md` · `refactor-gap-analysis.md` ·
+`source-code-index.md` · `test-scenarios.md`.
 
-## Payment menu → docs
+## Payment top menu → docs
 
-| Group | Menu | Feature hub |
+| Top menu | Sub-screens | Module folder (detailed source of truth) | Root summary |
+|---|---|---|---|
+| Approval Box | — | [approval-box/](approval-box/README.md) | [approval-box.md](approval-box.md) |
+| Internal Transfer | Scheduled Transfer · Transfer Result | [internal-transfer/](internal-transfer/README.md) ⭐ baseline | — |
+| Vendor Payment | Scheduled Payment · Payment Result | [vendor-payment/](vendor-payment/README.md) | — |
+| Expense Payment | Scheduled Payment · Payment Result | [expense-payment/](expense-payment/README.md) | — |
+| Payroll | Scheduled Payment · Payment Result | [payroll/](payroll/README.md) | — |
+| Overseas Payment | Scheduled Payment · Payment Result · Exchange Rate Inquiry | [overseas-payment/](overseas-payment/README.md) · [exchange-rate-inquiry/](exchange-rate-inquiry/README.md) | [exchange-rate-inquiry.md](exchange-rate-inquiry.md) |
+| Corporate Card | Card Transactions | [corporate-card/](corporate-card/README.md) | [card-transactions.md](card-transactions.md) |
+
+> **Corporate Card → Card Transactions.** "Corporate Card" is the **menu group**; its screen is **Card
+> Transactions**. The folder is therefore [`corporate-card/`](corporate-card/README.md) (group name) while the
+> flat summary is [`card-transactions.md`](card-transactions.md) (screen name) — same feature, two names by design
+> (backend slug `card-transactions`, frontend route `corporate-card/card-transactions`).
+>
+> Root `.md` files (`approval-box.md`, `card-transactions.md`, `exchange-rate-inquiry.md`) are
+> **high-level summaries only** — the detailed source of truth is the matching module folder.
+> Exchange Rate Inquiry sits under the Overseas Payment menu group; its controller lives in the
+> `domain.banking` package (`ExchangeRateController`, base `/api/v1/banking/exchange-rates`).
+> Shared payment infrastructure (dispatch, dispatch callbacks, validation/blocked-chars, notification
+> BLTB write-side) is indexed in [payment-source-index.md](../../audits/payment-source-index.md) §8.
+
+## Cross-cutting payment features
+- **HAENGSUNG Oracle Integration — master roadmap** (all six Oracle flows, step-by-step): [`../haengsung-oracle-integration-roadmap.md`](../haengsung-oracle-integration-roadmap.md). Start here for the end-to-end plan + recommended order.
+- **HAENGSUNG Payment Refresh** (Vendor / Expense / Payroll / Overseas, `PRDT_TYPE='H'` only — Internal Transfer excluded): [`../haengsung-payment-refresh.md`](../haengsung-payment-refresh.md). Two-datasource (WeCMS Postgres + HAENGSUNG Oracle ERP) import that replaces Excel Upload with Refresh. **Phase 1 (this feature)** = manual Refresh import only.
+- **HAENGSUNG ERP integration — follow-on / separate flows** (deferred; see the Refresh spec §25 scope decision):
+  - **Phase 3** — Approval-status write-back: [`../haengsung-approval-status-writeback.md`](../haengsung-approval-status-writeback.md) (`ErpStatusUpdateHelper`).
+  - **Phase 4** — Dispatch-result write-back: [`../haengsung-dispatch-result-writeback.md`](../haengsung-dispatch-result-writeback.md) (`ERP_0100_004`).
+  - **Separate ERP sync** (not payment): [`../haengsung-exchange-rate-sync.md`](../haengsung-exchange-rate-sync.md) (`ERP_0100_001`) · [`../haengsung-card-account-sync.md`](../haengsung-card-account-sync.md) (`ERP_0100_003`).
+- **HAENGSUNG Oracle Integration — final full audit** (2026-06-29; all 11 flows compared across legacy / API / Web / Oracle DB / WeCMS DB; DB columns + row counts verified): [`../haengsung-oracle-integration-final-audit.md`](../haengsung-oracle-integration-final-audit.md). Verdict: complete + legacy-faithful; one low-severity card-sync source-parity item (F-1) for SIT.
+
+### Payment import strategy — Standard WeCMS vs HAENGSUNG
+
+How each payment module gets its scheduled-payment data into WeCMS depends on the tenant's product type. Standard tenants upload an Excel file on every module; HAENGSUNG (`PRDT_TYPE='H'`) replaces the **Excel Upload** button with a **Refresh** button on four of the five modules, pulling the payment data directly from the external Oracle ERP interface tables (`TB_TRNS_MAST` / `TB_TRNS_DETAIL`) instead of from a manually-uploaded file.
+
+| Payment module | Standard WeCMS | HAENGSUNG (`PRDT_TYPE='H'`) |
 |---|---|---|
-| Approval Management | Approval Box | [approval-box/](approval-box/README.md) (hub + 6-doc set) |
-| Internal Transfer | Scheduled Transfer · Result (+ Details) | [internal-transfer/](internal-transfer/README.md) ⭐ baseline |
-| Vendor Payment | Scheduled · Result (+ Details) | [vendor-payment/](vendor-payment/README.md) |
-| Expense Payment | Scheduled · Result (+ Details) | [expense-payment/](expense-payment/README.md) |
-| Payroll | Scheduled · Result (+ Details) | [payroll/](payroll/README.md) |
-| Overseas Payment | Scheduled · Result (+ Details) | [overseas-payment/](overseas-payment/README.md) |
-| Add-on | Exchange Rate Inquiry | [exchange-rate-inquiry.md](exchange-rate-inquiry.md) (moved from banking 2026-06-01) |
-| Corporate Card | Card Transactions | [card-transactions.md](card-transactions.md) |
+| Internal Transfer | Excel Upload | **Excel Upload** (unchanged — no Refresh) |
+| Vendor Payment | Excel Upload | **Refresh (ERP Import)** |
+| Expense Payment | Excel Upload | **Refresh (ERP Import)** |
+| Payroll | Excel Upload | **Refresh (ERP Import)** |
+| Overseas Payment | Excel Upload | **Refresh (ERP Import)** |
+
+- **Refresh replaces Excel Upload only for the four modules above** (Vendor / Expense / Payroll / Overseas). For those four, the HAENGSUNG scheduled-payment screen renders **Refresh** instead of **Excel Upload**; the button imports payment batches directly from the Oracle ERP interface tables and upserts them as WeCMS drafts identical to an uploaded batch (same `SCDUL_PYMN_SUMR(_DETL)` / `OVRS_PYMN_SUMR(_DETL)` target tables, same downstream approval / dispatch / result flow).
+- **Internal Transfer always uses Excel Upload** for every product type — including HAENGSUNG. It has no Refresh button and no Oracle import path.
+- **Standard (non-`H`) tenants are unaffected** — every module keeps Excel Upload regardless.
+- Full design + Oracle schema / status flow / field mapping: [`../haengsung-payment-refresh.md`](../haengsung-payment-refresh.md). Frontend gating + legacy parity: [`wecms-web/docs/features/payment/haengsung-payment-refresh-frontend-parity.md`](../../../../wecms-web/docs/features/payment/haengsung-payment-refresh-frontend-parity.md).
+
+## Audit (2026-06-23 re-audit)
+- **Doc-vs-code audit:** [payment-docs-audit.md](../../audits/payment-docs-audit.md) — per-module status + corrections made.
+- **Gap analysis:** [payment-gap-analysis.md](../../audits/payment-gap-analysis.md) — remaining gaps (MATCH / APPROVED DEVIATION / DEAD LEGACY / PARTIAL / MISSING).
+- **Source index:** [payment-source-index.md](../../audits/payment-source-index.md) — code ↔ docs ↔ tests map per module.
 
 ## Companion layers (cross-linked, not duplicated)
 - **Business rules:** [`../../business-rules/internal-transfer.md`](../../references/business-rules/internal-transfer.md), [`../../business-rules/card-transactions.md`](../../references/business-rules/card-transactions.md)
@@ -92,10 +135,33 @@ Mirrors `PymnHelper.pymn_0009_001_c001` routing — TB_PAY_TARGET (API path) vs 
 
 | Class | Path | Role |
 |---|---|---|
+| `BlockedCharsRuleController` | [`payment/validation/controller/`](../../../src/main/java/com/kosign/wecms/domain/payment/validation/controller/BlockedCharsRuleController.java) | `GET /api/v1/payment/blocked-chars?bank_cd=&pymn_type=` — read-only rule lookup feeding the FE validator. |
 | `FieldCd` enum | [`payment/validation/FieldCd.java`](../../../src/main/java/com/kosign/wecms/domain/payment/validation/FieldCd.java) | `RMKS` / `RCPT` / `MEMO` / `BENA` / `BEAD` — discriminator for `BLOCKED_CHARS_RULE`. |
 | `PymnType` enum | [`payment/validation/PymnType.java`](../../../src/main/java/com/kosign/wecms/domain/payment/validation/PymnType.java) | `INTR` / `VEND` / `EXPN` / `PAYR` / `OVER` — per-payment-type discriminator for blocked-chars lookup. (Distinct from `ScdulPymnTypeCd`.) |
 | `SpecialCharValidator` | [`payment/validation/SpecialCharValidator.java`](../../../src/main/java/com/kosign/wecms/domain/payment/validation/SpecialCharValidator.java) | Per-`(PymnType, FieldCd)` blocked-chars enforcement. Consumed during Excel parse + create-draft. |
-| `BlockedCharsRule` entity + `BlockedCharsRuleRepository` | [`payment/validation/entity/`](../../../src/main/java/com/kosign/wecms/domain/payment/validation/entity/) + [`payment/validation/repository/`](../../../src/main/java/com/kosign/wecms/domain/payment/validation/repository/) | Schema in V149. |
+| `BlockedCharsRule` entity + `BlockedCharsRuleRepository` | [`payment/validation/entity/`](../../../src/main/java/com/kosign/wecms/domain/payment/validation/entity/) + [`payment/validation/repository/`](../../../src/main/java/com/kosign/wecms/domain/payment/validation/repository/) | Schema + 39-row DEV seed in V149. |
+
+> **Doc status:** MATCH. Parity audit at [`../../audits/special-char-validation-parity-audit-2026-06-10.md`](../../audits/special-char-validation-parity-audit-2026-06-10.md); field-casing audit + per-module Excel-parser sections cover it. One open verification item (OV-1: runtime `BLOCKED_CHARS_RULE` row count) tracked in the bug-reports tree.
+
+### 2.2a `payment/dispatch/callback/` — bank dispatch callback endpoints
+
+Inbound EFS-gateway callbacks for firm-banking dispatch (Phase B). Base path `/api/v1/payment/dispatch/callbacks`.
+
+| Class | Path | Role |
+|---|---|---|
+| `BulkExecutionResultController` | [`payment/dispatch/callback/controller/`](../../../src/main/java/com/kosign/wecms/domain/payment/dispatch/callback/controller/BulkExecutionResultController.java) | `POST /bulk-execution-result` — 01302 execution result ingest → `TB_FIRM_FILE_RSLT` / `_DATA` / `_MST`, `TB_PAY_*`, `TB_FIRM_BAT_API_TRAN`. |
+| `BulkReceptionResultController` | [`payment/dispatch/callback/controller/`](../../../src/main/java/com/kosign/wecms/domain/payment/dispatch/callback/controller/BulkReceptionResultController.java) | `POST /bulk-reception-result` — 01301 reception result + inline 00302 issuance. |
+
+> **Doc status:** MATCH. Both controllers + services are implemented and documented in [`../../audits/wecms-batch-full-legacy-vs-refactor-final-gap-audit.md`](../../audits/wecms-batch-full-legacy-vs-refactor-final-gap-audit.md) and [`../../audits/wecms-batch-tobe-process-audit.md`](../../audits/wecms-batch-tobe-process-audit.md). Open items are operational only (B7 IP-allowlist for external callers; B5 SIT byte-parity) — not missing code.
+
+### 2.2b `payment/notification/` — bulletin / approval-notification (BLTB_* tables)
+
+| Class | Path | Role |
+|---|---|---|
+| `NotificationController` | [`payment/notification/controller/`](../../../src/main/java/com/kosign/wecms/domain/payment/notification/controller/NotificationController.java) | `/api/v1/notifications` — read-side list / unread-count / mark-read / mark-all-read. **Read-side service logic is a stub (HIGH gap).** |
+| `ApprovalNotificationService` | [`payment/notification/service/`](../../../src/main/java/com/kosign/wecms/domain/payment/notification/service/) | **Write-side, fully implemented** — fans out `BLTB_POST_INFM` / `BLTB_USER_NEW_POST_INFM` / `BLTB_NOTI_INFM` / `BLTB_NOTI_CONT_INFM` / `BLTB_COMNT_INFM` on every Payment module's request/approve/reject (Card, Internal Transfer, Vendor, Expense, Payroll, Overseas). |
+
+> **Doc status & memory reconciliation:** memory `project_notification_module_removed.md` says "the NOTIFICATION table + notification module were removed". That is accurate for the **refactor-only `NOTIFICATION` table** (never built). It does NOT mean there is no notification code — the `payment/notification/` package backs approval notifications via the legacy **`BLTB_*` tables** (which are in the active table list). Classification: **code-exists-doc-missing (PARTIAL)** — write-side live + documented in [`../../audits/notification-popup-legacy-vs-refactor-analysis.md`](../../audits/notification-popup-legacy-vs-refactor-analysis.md); read-side `NotificationController`/`NotificationService` is a documented HIGH-priority stub. **Recommendation:** not dead legacy, no PO decision needed on existence — just finish wiring the read-side `NotificationService` per the gap audit; clarify the memory note so the BLTB write-side isn't mistaken for the removed `NOTIFICATION` table.
 
 > **Cut-off-time** validation is currently Internal-Transfer-specific ([`CutoffValidator`](../../../src/main/java/com/kosign/wecms/domain/payment/internaltransfer/service/CutoffValidator.java) under `internaltransfer/service/`). If Vendor / Expense / Payroll need cut-offs, lift to `payment/shared/cutoff/`.
 

@@ -1,5 +1,12 @@
 # Daily Financial — P0 Fix Plan
 
+> **⚠️ Historical record — superseded 2026-06-14.** This plan documents the 2026-06-04 P0 fix, which
+> implemented the gaps via **Strategy B** (Java live-compute over `ACCT_MSTR`/`ACCT_TRNS_HSTR`). That
+> approach was later **replaced**: `ReportService.dailyFinancial` now calls the legacy function
+> **`rept_0015_001_r001_rec1`** directly via `DailyFinancialCmcFunctionRepository` (`ReportService.java:147-225`).
+> The plan below is retained as the decision/implementation record of that earlier pass; for the current
+> design see [README.md](README.md) + [migration-guide.md](migration-guide.md).
+
 **Scope:** P0 items only from [parity-verification-report.md](parity-verification-report.md) §7.
 P1/P2 explicitly out of scope. No UI change unless an API field mismatch forces it.
 No REC2 inline grid, no Excel export, no cash/rcv-pay/loan/time-deposit re-introduction.

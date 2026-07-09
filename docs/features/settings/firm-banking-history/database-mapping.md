@@ -1,7 +1,12 @@
 # Firm Banking History — Database Mapping (Backend)
 
-The source tables, the read-only consolidation view, and the full
+The source tables, the read-only `@Subselect`-backed consolidation entity, and the full
 `legacy column → entity field → DTO field → UI column` mapping. Parent: [README.md](README.md).
+
+> **No DB view.** Despite the historical naming, there is **no** `V_FIRM_BANKING_HISTORY` database
+> view. The five-leg union lives in a Hibernate `@Subselect` on `FirmBankingHistoryView` over the legacy
+> base tables (`project_v_firm_banking_history_subselect.md`). There is no view-creating Flyway
+> migration; `ddl-auto: validate` never looks for a `v_firm_banking_history` relation.
 Schema design detail: [references/database/settings/firm-banking-history-schema.md](../../../references/database/settings/firm-banking-history-schema.md).
 Legacy DB mapping (read-only): [docs/jex/.../database-mapping.md](../../../../../docs/jex/features/firm-banking-history/database-mapping.md).
 
@@ -10,32 +15,44 @@ Legacy DB mapping (read-only): [docs/jex/.../database-mapping.md](../../../../..
 ## 1. Core tables (actual)
 
 All five tables are in the **PROD Active Table List** (wecms-api/CLAUDE.md). The refactor reads them
-through one view; none is written by this feature.
+through one `@Subselect` entity; none is written by this feature.
 
 | Table | Role | Leg | PK (DEV) | Local Flyway | Tenant col |
 |---|---|---|---|---|---|
-| `TB_FIRM_TRAN` | Korean firm-banking gateway calls | `F` | `(TRAN_DT, BIZ_KEY, TRAN_SEQ)` | **V59** (added) | `BIZ_KEY` |
+| `TB_FIRM_TRAN` | Korean firm-banking gateway calls | `F` | `(TRAN_DT, BIZ_KEY, TRAN_SEQ)` | **V104** | `BIZ_KEY` |
 | `NAPAS_REMIT_TRNS_HSTR` | NAPAS scraping remittance transfers | `S` | `(BIZ_KEY, SEQ_NO)` | V13 (present) | `BIZ_KEY` |
 | `EXT_TRAN_CALL_HIS` | Generic scraping balance / transaction / card calls | `S` | `(SVC_ID, REF_DATE, SEQ_NO)` | V16 (present) | `BIZ_KEY` |
-| `NXSIAS_MODULE_TRAN_LOG_HIS` | NXiSAS bridge — GDT e-Invoice + Vietnam business inquiries | `G` / `B` | composite `(BIZ_KEY, REG_DTM, UUID)` declared in V59 | **V59** (added) | `BIZ_KEY` |
-| `TB_FIRM_BANK_CODE` | NAPAS/firm bank-code lookup (used by `wb_get_napas_bank_nm`) | — | — | **V59** (added) | — |
+| `NXSIAS_MODULE_TRAN_LOG_HIS` | NXiSAS bridge — GDT e-Invoice + Vietnam business inquiries | `G` / `B` | composite `(BIZ_KEY, REG_DTM, UUID)` | **V73** | `BIZ_KEY` |
+| `TB_FIRM_BANK_CODE` | NAPAS/firm bank-code lookup (used by `wb_get_napas_bank_nm`) | — | — | **V97** | — |
 
-Supporting Flyway migrations:
+Supporting Flyway migrations (post 2026-06-09 renumber; the old V59/V60/V61/V165 set no longer exists):
 
 | Migration | Purpose |
 |---|---|
-| [V59](../../../../src/main/resources/db/migration/V59__firm_banking_history_source_tables.sql) | Source tables `TB_FIRM_TRAN`, `NXSIAS_MODULE_TRAN_LOG_HIS`, `TB_FIRM_BANK_CODE` |
-| [V60](../../../../src/main/resources/db/migration/V60__firm_banking_history_view_and_fns.sql) | Helper functions `kr_to_vn_time`, `wb_get_napas_bank_nm` (1-arg) + the `V_FIRM_BANKING_HISTORY` view |
-| [V61](../../../../src/main/resources/db/migration/V61__firm_banking_history_demo_seed.sql) | Demo seed (8 `TB_FIRM_TRAN` + 8 NXiSAS rows for the tenant + 2 `TB_FIRM_BANK_CODE` rows) |
-| [V165](../../../../src/main/resources/db/migration/V165__firm_banking_history_view_setting_seed.sql) | View Setting seed (unlocks Excel export — 7 columns) |
+| [V73](../../../../src/main/resources/db/migration/V73__nxsias_module_tran_log_his.sql) | Source table `NXSIAS_MODULE_TRAN_LOG_HIS` |
+| [V97](../../../../src/main/resources/db/migration/V97__tb_firm_bank_code.sql) | Source table `TB_FIRM_BANK_CODE` |
+| [V104](../../../../src/main/resources/db/migration/V104__tb_firm_tran.sql) | Source table `TB_FIRM_TRAN` |
+
+> **No View Setting seed.** Firm Banking History is an **export-only** screen — it renders no View
+> Setting popover, so it is **intentionally NOT seeded** into `SYS_SCR_OPTION_WECMS`. The manual
+> `V156__sys_scr_option_wecms.sql` DBA script explicitly lists `firm-banking-history` in its
+> EXCLUDED set ("backend export provider only; no FE popover"). Export still works: when
+> `ScreenOptionService.load('firm-banking-history', …)` finds no sys rows it throws `WBE2001`, and
+> `ExcelExportService.resolveColumns` catches that, skips the persisted-visibility intersection, and
+> falls back to **request columns ∩ provider allow-list** (memory `project_export_only_screens_no_seed.md`).
+> There is no row in any migration that seeds `web_svc_id = 'firm-banking-history'`.
+
+> The helper functions `kr_to_vn_time` / `wb_get_napas_bank_nm` and the five-leg union are **not**
+> created by a Flyway migration in the refactor — there is no view-creating migration. The `@Subselect`
+> runs the union against the legacy base tables + functions, which exist in the target JEX DB.
 
 ---
 
-## 2. The consolidation view — `V_FIRM_BANKING_HISTORY`
+## 2. The consolidation `@Subselect` — `FirmBankingHistoryView`
 
-A five-leg `UNION ALL` ported byte-for-byte from the legacy `IDO.TB_FIRM_TRAN_R002.xml`. Mapped by
-one `@Immutable` JPA entity — no five-leg fan-out in Java. Columns confirmed against the live
-refactor DB (`information_schema.columns`):
+A five-leg `UNION ALL` ported from the legacy `IDO.TB_FIRM_TRAN_R002.xml`, carried by a Hibernate
+`@Subselect` on one `@Immutable` JPA entity — no DB view, no five-leg fan-out in Java. The columns
+below are the `@Subselect`'s output projection (not a relation in `information_schema`):
 
 | View column | Type | F (`TB_FIRM_TRAN`) | S (`NAPAS_REMIT_TRNS_HSTR`) | S (`EXT_TRAN_CALL_HIS`) | G/B (`NXSIAS_MODULE_TRAN_LOG_HIS`) |
 |---|---|---|---|---|---|
@@ -71,10 +88,10 @@ refactor DB (`information_schema.columns`):
 ## 3. Entity mapping
 
 [`FirmBankingHistoryView`](../../../../src/main/java/com/kosign/wecms/domain/setting/firmbankinghistory/entity/FirmBankingHistoryView.java) —
-`@Entity @Immutable @Table(name = "V_FIRM_BANKING_HISTORY") @IdClass(FirmBankingHistoryViewId.class)`.
+`@Entity @Immutable @Subselect("""…5-leg UNION ALL…""") @Synchronize({…base tables…}) @IdClass(FirmBankingHistoryViewId.class)`.
 
-Composite `@IdClass` = `(bizKey, tarnDtm, svcType, seqNo)` — the view has no real PK, so this tuple
-provides Hibernate cache identity (the natural per-leg identity).
+Composite `@IdClass` = `(bizKey, tarnDtm, svcType, seqNo)` — the `@Subselect` has no real PK, so this
+tuple provides Hibernate cache identity (the natural per-leg identity).
 
 | Entity field | `@Column` | `@Id` |
 |---|---|---|
@@ -91,9 +108,9 @@ provides Hibernate cache identity (the natural per-leg identity).
 | `vanOrgCd` | `VAN_ORG_CD` | |
 
 > The entity declares conventional `length` values on some fields (e.g. `tarnDtm` 14, `reqData`
-> 1000); the live view columns for `tarn_dtm` and `req_data` are unbounded varchar. Read-only `@Immutable`
-> entity over a view → Hibernate `validate` is satisfied and no DML occurs, so the cosmetic length
-> mismatch is inert.
+> 1000); the `@Subselect` projects `tarn_dtm` and `req_data` as unbounded/wide varchar. A read-only
+> `@Immutable` `@Subselect` entity skips schema validation and never issues DML, so the cosmetic
+> length mismatch is inert.
 
 ---
 

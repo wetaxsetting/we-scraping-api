@@ -28,8 +28,11 @@ public interface BusaDocRcvPayHisRepository
      * {@code BUSA_DOC_MSTR} so the service can build the
      * {@code linked_docs[]} array per card without an N+1 fan-out.
      *
-     * <p>Filtered to {@code RCV_PAY_WAY_CD='C'} (Card) so transfer / cash
+     * <p>Filtered to {@code RCV_PAY_WAY_CD='R'} — the legacy
+     * {@code RcvPayWayCd.CARD} value (the enum maps {@code 'C'} to CASH).
+     * Matches legacy {@code IDO.CARD_MSTR_R002.xml:137} so transfer / cash
      * links on the same document don't leak into the card list.
+     * (Was {@code 'C'}; corrected 2026-06-19, audit D1.)
      *
      * <p>Native query (no JPQL JOIN on {@link com.kosign.wecms.domain.einvoice.entity.BusaDocMstr}
      * from this domain — would require pulling that entity into the
@@ -45,7 +48,7 @@ public interface BusaDocRcvPayHisRepository
               JOIN BUSA_DOC_MSTR m
                 ON m.BIZ_KEY = h.BIZ_KEY AND m.DOC_ID = h.DOC_ID
              WHERE h.BIZ_KEY        = :bizKey
-               AND h.RCV_PAY_WAY_CD = 'C'
+               AND h.RCV_PAY_WAY_CD = 'R'
                AND h.REF_NO IN (:cardSeqNos)
              ORDER BY h.REF_NO, h.DOC_ID
             """, nativeQuery = true)
@@ -70,6 +73,15 @@ public interface BusaDocRcvPayHisRepository
            " WHERE h.bizKey = :bizKey " +
            "   AND h.refNo  = :cardSeqNo")
     int deleteByBizKeyAndRefNo(
+            @Param("bizKey")    String bizKey,
+            @Param("cardSeqNo") String cardSeqNo);
+
+    /** Distinct {@code DOC_ID}s currently linked to a card transaction —
+     *  read before an unlink so the service can reset each doc's
+     *  {@code BUSA_DOC_MSTR.PROV_STTS} back to {@code 'OP'} (audit finding G1). */
+    @Query("SELECT DISTINCT h.docId FROM BusaDocRcvPayHis h " +
+           " WHERE h.bizKey = :bizKey AND h.refNo = :cardSeqNo")
+    List<String> findDocIdsByBizKeyAndRefNo(
             @Param("bizKey")    String bizKey,
             @Param("cardSeqNo") String cardSeqNo);
 }

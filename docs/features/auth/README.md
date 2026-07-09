@@ -1,50 +1,48 @@
-# features/auth/
+# features/auth/ — Backend (navigation)
 
-**Cross-cutting system domain** — user authentication for the Spring Boot + Next.js refactor.
+**Cross-cutting system domain** — authentication, authorization, and session management for the Spring
+Boot + Next.js refactor. Not a WeCMS top-menu group (Banking / Payment / Add-on / Settings); it is the
+system feature group every authenticated endpoint depends on.
 
-This is not a WeCMS top-menu group (Banking / Payment / Add-on / Settings). It is a **system feature
-group** that every authenticated screen depends on. It was formalized 2026-06-01 to resolve
-**OQ-DOC-1** (see [`../../planning/open-questions/documentation-follow-up.md`](../../planning/open-questions/documentation-follow-up.md)).
+Standardized 2026-06-23 into **8 per-module folders** (9-file structure each) matching the actual
+implementation. The earlier flat `login-auth.md` is now a [summary](login-auth.md).
 
-## Docs
+## Audit deliverables
 
-| Doc | Scope | Status |
-|---|---|---|
-| [login-auth.md](login-auth.md) | Login / logout / me — JWT issue, tenant resolution, `USER_LOGIN_HIS` audit, password upgrade | Working (backend implemented) |
+| Doc | Purpose |
+|---|---|
+| [auth-docs-audit.md](../../audits/auth-docs-audit.md) | What the audit changed; stale-fact corrections; per-module notes |
+| [auth-gap-analysis.md](../../audits/auth-gap-analysis.md) | Consolidated gap table (MATCH / APPROVED DEVIATION / DEAD LEGACY / PARTIAL / MISSING) |
+| [auth-source-index.md](../../audits/auth-source-index.md) | Every auth source file (BE + FE), grouped by module |
 
-## Scope of this domain
+## Modules
 
-Covered by `login-auth.md`:
+| Module | Scope | Backend surface | Status |
+|---|---|---|---|
+| [login](login/README.md) | Authentication flow, JWT issuance, login history, multi-company resolution | `POST /api/v1/auth/login` | Working |
+| [logout](logout/README.md) | Logout — server-side `jti` revocation + client token clear | `POST /api/v1/auth/logout` | Working |
+| [change-password](change-password/README.md) | Self-service password change, history reuse, SHA-256 | `POST /api/v1/auth/change-password` | Working |
+| [profile](profile/README.md) | Tenant user directory (`comm_0192_001_r001`) | `GET /api/v1/users` | Working |
+| [jwt-authentication](jwt-authentication/README.md) | Token issue/parse/filter/entry-point, claims, TTL | `JwtTokenProvider` + filter chain | Working |
+| [authorization](authorization/README.md) | `@menuAuthz` guard, `@PreAuthorize`, roles, product-type, coverage test | enforcement layer | Working (F-3 complete) |
+| [menu-authorization](menu-authorization/README.md) | Permission codes, grants, resolved navigation tree, entitlement editor | `GET /api/v1/navigation` | Working |
+| [session-management](session-management/README.md) | `/me` bootstrap, stateless model, `TenantContext` lifecycle | `GET /api/v1/auth/me` | Working |
 
-- **Login** — `POST /api/v1/auth/login` (JEX `logn_0001_001_r001`)
-- **Me / session bootstrap** — `GET /api/v1/auth/me` (JEX `logn_0001_001_r002`)
-- **Logout** — `POST /api/v1/auth/logout` (client-side token clear; stub)
-- **JWT** — stateless access token, claims, TTL, filter chain
-- **Authorization** — `authGrCd` (`ROLE_ADMIN` / `ROLE_USER`) derivation, tenant isolation
-- **Session model** — stateless (no server session, no refresh token in current scope)
+## Error codes (auth surface)
+
+`WBI0000` · `WBE1009` (id/pw) · `WBE1010` (inactive) · `WBE1011` (locked) · `WBE1128` (deleted) ·
+`WBE1401` (session expired) · `WBE1003` (access denied) · `WBE2091` · `WBE_CHANGE_PASSWORD_MISMATCH` ·
+`WBE_CHANGE_PASSWORD_REUSED` · `WBE_VALIDATION`.
 
 ## What does NOT live here
 
-- **Permission / role catalogue** — cross-system, lives once at
-  [`../../../../docs/_shared/permission-roles.md`](../../../../docs/_shared/permission-roles.md) (pointer: [`../../permissions.md`](../../permissions.md)).
-- **Security design / filter chain detail** — [`../../references/business-rules/security/README.md`](../../references/business-rules/security/README.md)
-  and the shared [`../../../../docs/security/`](../../../../docs/security/) baseline.
-- **Self-service password change** — a Settings / ProfileMenu item:
-  [`../settings/change-password.md`](../settings/change-password.md).
-- **User administration (CRUD)** — Settings item: [`../settings/users.md`](../settings/users.md).
-- **Bank / GDT login credentials** — *not* user authentication; that is bank-scraping credential
-  management under Settings: [`../settings/login-credentials.md`](../settings/login-credentials.md).
-
-## Related reference
-
-- Sprint plan: [`../../archive/planning/phase-1/task-sprint-0-login-refactor.md`](../../archive/planning/phase-1/task-sprint-0-login-refactor.md)
-- Bootstrap / password strategy: [`../../planning/roadmap/task-plan-common-backend-functional-seahorse.md`](../../planning/roadmap/task-plan-common-backend-functional-seahorse.md)
-- Endpoint index: [`../../references/api-spec/api-mapping.md`](../../references/api-spec/api-mapping.md) · JEX→Spring: [`../../references/migration/service-mapping.md`](../../references/migration/service-mapping.md)
-- JEX functional reference (read-only): [`../../../../docs/jex/features/login-wecms.md`](../../../../docs/jex/features/login-wecms.md), [`../../../../docs/jex/features/login-spring-boot-migration.md`](../../../../docs/jex/features/login-spring-boot-migration.md), [`../../../../docs/jex/api-spec/auth.md`](../../../../docs/jex/api-spec/auth.md)
-- Frontend counterpart: [`../../../../wecms-web/docs/features/auth/login-auth.md`](../../../../wecms-web/docs/features/auth/login-auth.md)
+- **Permission / role catalogue (shared)** — [`../../../../docs/_shared/permission-roles.md`](../../../../docs/_shared/permission-roles.md).
+- **Security baseline (shared)** — [`../../../../docs/security/`](../../../../docs/security/).
+- **User administration CRUD + avatar image** — Settings: [`../settings/user-management/README.md`](../settings/user-management/README.md).
+- **Bank / GDT login credentials** (not user auth) — Settings: [`../settings/login-credentials/README.md`](../settings/login-credentials/README.md).
+- **JEX menu/product-type spec** — [`../../../../docs/jex/features/menu-product-type-management/`](../../../../docs/jex/features/menu-product-type-management/).
 
 ## Naming traceability
 
-Slug `login-auth` matches the frontend counterpart `wecms-web/docs/features/auth/login-auth.md` and
-the `login-auth` references in both mapping files. Per workspace CLAUDE.md, the refactor uses
-kebab-case slugs (`login-auth`), never legacy WSVC ids (`logn_0001_001`).
+Each module slug matches its frontend counterpart at `wecms-web/docs/features/auth/<slug>/`. Refactor uses
+kebab-case slugs, never legacy WSVC ids (`logn_0001_001`).

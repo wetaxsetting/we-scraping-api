@@ -231,6 +231,15 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
      * <p>The keyword predicate matches the same formatted nickname as
      * {@link #findFiltered} so the summary tile counts/totals stay in
      * sync with the table rows when a search is in effect.
+     *
+     * <p>AI-06: PrdtType H summary-card exclusion (legacy
+     * {@code fnsh_0001_001_r001_tot_dynamic0} :505-509, redmine #42633).
+     * For an H tenant, savings/term-deposit accounts (05/06/08) are
+     * excluded from the per-currency summary-card total UNLESS they are
+     * not-yet-matured AND carry a positive balance. Applies ONLY to this
+     * aggregate (the summary cards) — the row list ({@link #findFiltered})
+     * is intentionally left untouched, mirroring legacy where the same
+     * clause is commented out of dynamic0.
      */
     @Query("""
             SELECT new com.kosign.wecms.domain.banking.repository.CcyAggregate(
@@ -259,6 +268,11 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
                                      a.acctNickNm, a.bankCd, a.acctNo, a.handRegYn),
                             ''
                         )) LIKE :keywordPattern ESCAPE '!')
+               AND (:excludeMaturedHSavings = FALSE
+                    OR a.acctTypeCd NOT IN ('05', '06', '08')
+                    OR ((a.expiDt IS NULL
+                         OR FUNCTION('to_date', a.expiDt, 'YYYYMMDD') >= CURRENT_DATE)
+                        AND a.bal > 0))
              GROUP BY a.ccyCd
              ORDER BY a.ccyCd
             """)
@@ -269,7 +283,107 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
             @Param("acctTypeCdIn")    List<String> acctTypeCdIn,
             @Param("bankCd")          String bankCd,
             @Param("keywordPattern")  String keywordPattern,
-            @Param("authUserId")      String authUserId);
+            @Param("authUserId")      String authUserId,
+            @Param("excludeMaturedHSavings") boolean excludeMaturedHSavings);
+
+    /**
+     * AI-01 — as-of-date historical balance per account, a faithful port of
+     * legacy IDO {@code ACCT_MSTR_R004} (the {@code fnsh_0001_001} read list).
+     * Returns {@code (BANK_CD, ACCT_NO, asof_bal, asof_real_amt)} for every
+     * account of the tenant.
+     *
+     * <p>Per {@code ACCT_MSTR_R004.xml:91-217}:
+     * <ul>
+     *   <li>When {@code :asOf} is blank / today / future → the current
+     *       {@code ACCT_MSTR.BAL} / {@code REAL_AMT} (snapshot).</li>
+     *   <li>Otherwise (historical) — Vietcombank {@code 11704004}:
+     *       {@code ACCT_MSTR.BAL − Σ(signed txns after :asOf)} (deposit +,
+     *       withdraw −); other banks: the last {@code ACCT_TRNS_HSTR.BAL}
+     *       with {@code TRSC_DT <= :asOf} (ordered {@code TRSC_DT} desc, then
+     *       numeric {@code ACCT_SEQ_NO} desc), else 0.</li>
+     *   <li>Available balance ({@code REAL_AMT}) mirrors the BAL logic when the
+     *       current {@code REAL_AMT = 0}; otherwise uses {@code REAL_AMT} as the
+     *       VCB base / current value, with the same other-bank ledger fallback.</li>
+     * </ul>
+     *
+     * <p>The date comparison runs in SQL against {@code CURRENT_DATE} exactly as
+     * legacy, so callers may pass today's date and still receive current values.
+     * The service invokes this ONLY when an {@code asOfDate} is supplied; the
+     * default (no date) list path never calls it and is byte-for-byte unchanged.
+     * This drives the per-ROW balance only — legacy summary-card totals
+     * ({@code ACCT_MSTR_R004_CNT}) sum current balances with no date logic, so
+     * the refactor's {@link #aggregateByCcy} is intentionally NOT date-scoped.
+     */
+    @Query(value = """
+            SELECT amr.bank_cd, amr.acct_no,
+              CASE
+                WHEN :asOf IS NULL OR :asOf = '' OR :asOf >= to_char(CURRENT_DATE, 'YYYYMMDD')
+                  THEN COALESCE(amr.bal, 0)
+                ELSE
+                  CASE WHEN amr.bank_cd = '11704004' THEN
+                         COALESCE(amr.bal, 0) - COALESCE((
+                             SELECT SUM(CASE WHEN ath.inout_dv = '1' THEN ath.trsc_amt ELSE -ath.trsc_amt END)
+                               FROM acct_trns_hstr ath
+                              WHERE ath.biz_key = amr.biz_key AND ath.bank_cd = amr.bank_cd
+                                AND ath.acct_no = amr.acct_no AND ath.ccy_cd = amr.ccy_cd
+                                AND ath.trsc_dt > :asOf), 0)
+                       ELSE COALESCE((
+                             SELECT ath.bal FROM acct_trns_hstr ath
+                              WHERE ath.biz_key = amr.biz_key AND ath.bank_cd = amr.bank_cd
+                                AND ath.acct_no = amr.acct_no AND ath.ccy_cd = amr.ccy_cd
+                                AND ath.trsc_dt <= :asOf
+                              ORDER BY ath.trsc_dt DESC, cast(ath.acct_seq_no AS NUMERIC) DESC
+                              LIMIT 1), 0)
+                  END
+              END AS asof_bal,
+              CASE
+                WHEN COALESCE(amr.real_amt, 0) = 0 THEN
+                  CASE
+                    WHEN :asOf IS NULL OR :asOf = '' OR :asOf >= to_char(CURRENT_DATE, 'YYYYMMDD')
+                      THEN COALESCE(amr.bal, 0)
+                    ELSE
+                      CASE WHEN amr.bank_cd = '11704004' THEN
+                             COALESCE(amr.bal, 0) - COALESCE((
+                                 SELECT SUM(CASE WHEN ath.inout_dv = '1' THEN ath.trsc_amt ELSE -ath.trsc_amt END)
+                                   FROM acct_trns_hstr ath
+                                  WHERE ath.biz_key = amr.biz_key AND ath.bank_cd = amr.bank_cd
+                                    AND ath.acct_no = amr.acct_no AND ath.ccy_cd = amr.ccy_cd
+                                    AND ath.trsc_dt > :asOf), 0)
+                           ELSE COALESCE((
+                                 SELECT ath.bal FROM acct_trns_hstr ath
+                                  WHERE ath.biz_key = amr.biz_key AND ath.bank_cd = amr.bank_cd
+                                    AND ath.acct_no = amr.acct_no AND ath.ccy_cd = amr.ccy_cd
+                                    AND ath.trsc_dt <= :asOf
+                                  ORDER BY ath.trsc_dt DESC, cast(ath.acct_seq_no AS NUMERIC) DESC
+                                  LIMIT 1), 0)
+                      END
+                  END
+                ELSE
+                  CASE
+                    WHEN :asOf IS NULL OR :asOf = '' OR :asOf >= to_char(CURRENT_DATE, 'YYYYMMDD')
+                      THEN COALESCE(amr.real_amt, 0)
+                    ELSE
+                      CASE WHEN amr.bank_cd = '11704004' THEN
+                             COALESCE(amr.real_amt, 0) - COALESCE((
+                                 SELECT SUM(CASE WHEN ath.inout_dv = '1' THEN ath.trsc_amt ELSE -ath.trsc_amt END)
+                                   FROM acct_trns_hstr ath
+                                  WHERE ath.biz_key = amr.biz_key AND ath.bank_cd = amr.bank_cd
+                                    AND ath.acct_no = amr.acct_no AND ath.ccy_cd = amr.ccy_cd
+                                    AND ath.trsc_dt > :asOf), 0)
+                           ELSE COALESCE((
+                                 SELECT ath.bal FROM acct_trns_hstr ath
+                                  WHERE ath.biz_key = amr.biz_key AND ath.bank_cd = amr.bank_cd
+                                    AND ath.acct_no = amr.acct_no AND ath.ccy_cd = amr.ccy_cd
+                                    AND ath.trsc_dt <= :asOf
+                                  ORDER BY ath.trsc_dt DESC, cast(ath.acct_seq_no AS NUMERIC) DESC
+                                  LIMIT 1), 0)
+                      END
+                  END
+              END AS asof_real_amt
+              FROM acct_mstr amr
+             WHERE amr.biz_key = :bizKey
+            """, nativeQuery = true)
+    List<Object[]> findAsOfBalances(@Param("bizKey") String bizKey, @Param("asOf") String asOf);
 
     /**
      * Distinct {@code BANK_CD} list for the current tenant + currency
@@ -307,61 +421,56 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
             @Param("authUserId")   String authUserId);
 
     /**
-     * Withdrawal-account lookup for the Payment Internal Transfer
-     * upload dialog (legacy `comm_1001_001`). Returns active
-     * current/savings accounts the current tenant has enrolled in
-     * firm-banking (EXISTS in {@code TB_FIRM_CONF} with {@code
-     * ORG_STAT='1'}).
+     * Firm-banking withdrawal-account lookup for the payment Excel-Upload
+     * dialog (legacy `comm_1001_001`). Returns active current/savings
+     * accounts at the firm-banking banks that the current tenant has
+     * enrolled in firm-banking (EXISTS in {@code TB_FIRM_CONF} with
+     * {@code ORG_STAT='1'}). Module-agnostic — shared by all five payment
+     * consumers via {@code WithdrawalAccountListService}.
      *
      * <p>Mirrors the legacy IDO {@code ACCT_MSTR_R011} via
-     * {@code comm_1001_001_act.jsp:23-65}. The five legacy filters
-     * are:
+     * {@code comm_1001_001_act.jsp:23-65}. The legacy filters applied
+     * here are:
      * <ol>
      *   <li>tenant scope ({@code biz_key})</li>
-     *   <li>firm-banking-capable banks (legacy hardcoded
-     *       {@code bank_cd IN ('11704088', '11704020')}; the
-     *       refactor relaxes this — any bank with a matching
-     *       {@code TB_FIRM_CONF} row qualifies, since the firm-banking
-     *       enrolment table is itself the authoritative "capable"
-     *       indicator)</li>
+     *   <li><b>G1</b> — firm-banking banks
+     *       ({@code bank_cd IN :bankCds}; legacy hardcoded
+     *       {@code ('11704088','11704020')} —
+     *       {@code WithdrawalAccountConstants.WITHDRAWAL_BANK_CDS})</li>
      *   <li>current/savings only ({@code acct_type_cd IN ('03'..'08')})</li>
      *   <li>{@code ACTV_YN = 'Y'}</li>
-     *   <li>EXISTS in {@code TB_FIRM_CONF} with {@code ORG_STAT='1'}
-     *       joined via the {@code NAPAS_BANK_INFO} dictionary</li>
+     *   <li><b>G3</b> — EXISTS in {@code TB_FIRM_CONF} with
+     *       {@code ORG_STAT='1'} joined via the {@code NAPAS_BANK_INFO}
+     *       dictionary</li>
      * </ol>
      *
-     * <p><b>Deferred filter:</b> the legacy also requires EXISTS in
-     * {@code ACCT_AUTH_INFO} with {@code AUTH_TYPE IN ('V','W')} so
-     * only accounts the user has View/Withdraw authority on appear.
-     * That table is not yet migrated in the refactor (workspace
-     * `CLAUDE.md` PROD active list); the filter ports together with
-     * the {@code ACCT_AUTH_INFO} entity in a follow-up. R&D safe:
-     * with a single test tenant the per-user check is a no-op.
+     * <p>The legacy per-user {@code ACCT_AUTH_INFO} {@code AUTH_TYPE IN
+     * ('V','W')} authorization filter (<b>G2</b>) is applied in the
+     * service layer ({@code WithdrawalAccountListService}), not here.
      *
      * <p>Optional {@code ccyCd} filter — legacy carries the parameter
      * but the SQL has it commented out. Honored here when the caller
      * supplies a non-null value so future per-upload-currency
      * narrowing is one-prop change away.
      *
-     * <p><b>R&D fallback (2026-05-14):</b> the strict EXISTS clause is
-     * gated by a "tenant has any firm-banking enrolment at all" check.
-     * When {@code TB_FIRM_CONF} has at least one {@code ORG_STAT='1'}
-     * row for the tenant, the legacy filter applies verbatim. When the
-     * tenant has NO firm-banking enrolment rows yet (the case on the
-     * shared dev DB at 172.168.5.172/wecmsdevdb where seeding requires
-     * write access we don't have), the EXISTS clause is bypassed so the
-     * dropdown still surfaces active current/savings accounts and the
-     * Excel-upload demo can run end-to-end. Once firm-banking is
-     * provisioned for the tenant, strict parity resumes automatically —
-     * no code change needed. Production parity is preserved because any
-     * real WeCMS tenant has firm-banking enrolled before reaching this
-     * screen; the fallback only kicks in for un-provisioned R&D tenants.
+     * <p><b>G3 fallback (2026-05-14):</b> when {@code
+     * allowNoFirmConfigFallback} is {@code true}, the mandatory firm-
+     * banking EXISTS is relaxed by an {@code OR NOT EXISTS (any
+     * ORG_STAT='1' row for the tenant)} escape so an un-provisioned
+     * tenant still surfaces active current/savings accounts (LOCAL R&D
+     * only — the shared dev DB at 172.168.5.172/wecmsdevdb has no
+     * firm-banking enrolment and we lack write access to seed it). The
+     * flag defaults to {@code false} (strict legacy parity) in
+     * SIT/UAT/PROD; it is turned on only in {@code application-local.yml}.
+     * On a provisioned tenant the fallback branch is a no-op, so behavior
+     * is identical regardless of the flag.
      */
     @Query("""
             SELECT a FROM AcctMstr a
              WHERE a.bizKey = :bizKey
                AND a.actvYn = 'Y'
                AND a.acctTypeCd IN ('03','04','05','06','07','08')
+               AND a.bankCd IN :bankCds
                AND (:ccyCd IS NULL OR a.ccyCd = :ccyCd)
                AND (
                     EXISTS (
@@ -373,18 +482,20 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
                             AND nbi.bankCd      = a.bankCd
                             AND tfc.orgStat     = '1'
                         )
-                    OR NOT EXISTS (
+                    OR (:allowNoFirmConfigFallback = TRUE AND NOT EXISTS (
                          SELECT 1
                            FROM TbFirmConf tfc2
                           WHERE tfc2.bizKey  = a.bizKey
                             AND tfc2.orgStat = '1'
-                        )
+                        ))
                    )
              ORDER BY a.bankCd, a.acctNo
             """)
-    List<AcctMstr> findWithdrawalAccounts(
-            @Param("bizKey") String bizKey,
-            @Param("ccyCd")  String ccyCd);
+    List<AcctMstr> findFirmBankingWithdrawalAccounts(
+            @Param("bizKey")                   String bizKey,
+            @Param("ccyCd")                    String ccyCd,
+            @Param("bankCds")                  java.util.Collection<String> bankCds,
+            @Param("allowNoFirmConfigFallback") boolean allowNoFirmConfigFallback);
 
     /* =================================================================
      *  Own Account Transfer (refactor slug: own-account-transfer)

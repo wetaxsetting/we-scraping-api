@@ -89,7 +89,7 @@ public class ScdulPymnSumr {
     /** Linked approval-resolution sequence number (FK to EXPT_RESOL_MSTR).
      *  Null while the batch is still a draft. Once set, the batch is
      *  immutable until dispatch — see delete guard at
-     *  {@code WBE2062}. */
+     *  {@code WBE1063}. */
     @Column(name = "APPR_SEQ_NO", length = 15)
     private String apprSeqNo;
 

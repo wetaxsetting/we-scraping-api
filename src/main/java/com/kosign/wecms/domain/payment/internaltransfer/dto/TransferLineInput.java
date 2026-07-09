@@ -55,7 +55,9 @@ public record TransferLineInput(
         @Size(max = 50)
         String docNo,
 
-        @Size(max = 255)
+        // SCDUL_PYMN_SUMR_DETL.NOTE is VARCHAR(200); legacy
+        // PymnHelper.checkValidStringInMax caps Description at 200.
+        @Size(max = 200)
         String note,
 
         @Size(max = 200)

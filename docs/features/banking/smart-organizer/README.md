@@ -6,7 +6,6 @@
 **View Setting `WEB_SVC_ID`:** `smart-organizer` (V174 seed)
 **Menu permission:** `banking-vnd-inquire-transactions` **OR** `banking-fcy-inquire-transactions` (`@menuAuthz.canAccessAny(...)`)
 **REST base:** `/api/v1/banking/smart-organizer` (eligibility list + confirm) and `/api/v1/banking/smart-organizer/rules` (Organizer Settings rule CRUD)
-**JEX counterpart:** `fnsh_0200_001` (eligibility list + confirm) + `fnsh_0200_002` (Organizer Settings popup) — [docs/jex/features/smart-organizer/](../../../../../docs/jex/features/smart-organizer/README.md)
 **Frontend counterpart:** [wecms-web/docs/features/banking/smart-organizer/](../../../../../wecms-web/docs/features/banking/smart-organizer/README.md)
 
 > **Status — Refactor complete (full-stack).** Eligibility listing (account-scoped, date-range,
@@ -24,8 +23,8 @@
 >
 > This folder is the **primary backend documentation home** for the refactored feature. The older
 > single-file specs under
-> [current-savings-vnd/smart-organizer.md](../current-savings-vnd/smart-organizer.md) and
-> [current-savings-fcy/smart-organizer.md](../current-savings-fcy/smart-organizer.md) predate this
+> [current-savings-vnd/smart-organizer.md](legacy-spec-vnd.md) and
+> [current-savings-fcy/smart-organizer.md](legacy-spec-fcy.md) predate this
 > folder, still carry `Needs Confirmation` markers, and are **preserved + cross-linked but superseded**
 > by this folder.
 
@@ -88,9 +87,9 @@ a client error, never a silent tenant-wide fallback. Non-admin callers must hold
 | **Remediation plan (six blockers, 2026-06-06)** | [docs/jex/audits/smart-organizer-remediation-plan.md](../../../../../docs/jex/audits/smart-organizer-remediation-plan.md) |
 | **R11 account-scope verification (2026-06-06)** | [../../../audits/smart-organizer-r11-verification.md](../../../audits/smart-organizer-r11-verification.md) |
 | JEX functional spec (source of truth) | [docs/jex/features/smart-organizer/](../../../../../docs/jex/features/smart-organizer/README.md) |
-| Older single-file backend spec (VND) | [current-savings-vnd/smart-organizer.md](../current-savings-vnd/smart-organizer.md) |
-| Older single-file backend spec (FCY) | [current-savings-fcy/smart-organizer.md](../current-savings-fcy/smart-organizer.md) |
-| Transaction History (the screen this launches from) | [transaction-history-vnd/README.md](../transaction-history-vnd/README.md) · [transaction-history-fcy/README.md](../transaction-history-fcy/README.md) |
+| Older single-file backend spec (VND) | [current-savings-vnd/smart-organizer.md](legacy-spec-vnd.md) |
+| Older single-file backend spec (FCY) | [current-savings-fcy/smart-organizer.md](legacy-spec-fcy.md) |
+| Transaction History (the screen this launches from) | [transaction-history-vnd/README.md](../current-savings-vnd/transaction-history/README.md) · [transaction-history-fcy/README.md](../current-savings-fcy/transaction-history/README.md) |
 | Banking ERD | [references/database/erd/banking-erd.md](../../../references/database/erd/banking-erd.md) |
 | JEX → Spring service mapping | [references/migration/service-mapping.md](../../../references/migration/service-mapping.md) |
 
@@ -139,3 +138,9 @@ suppressed). Residual non-blocking items (R03 direction is user-selected rather 
 `BUSI_USAG_SET_INFM.USAG_GRP_CD` is unpopulated in the refactor; R07 chart breadcrumb is leaf-name
 only; reorder endpoint exists but the drag-save UI is not yet wired) are tracked in
 [refactor-gap-analysis.md](refactor-gap-analysis.md) §"Open items".
+
+---
+
+## Legacy & Migration Traceability
+
+**JEX counterpart:** `fnsh_0200_001` (eligibility list + confirm) + `fnsh_0200_002` (Organizer Settings popup) — [docs/jex/features/smart-organizer/](../../../../../docs/jex/features/smart-organizer/README.md)

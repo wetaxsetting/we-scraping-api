@@ -113,7 +113,8 @@ POST /api/v1/settings/contacts/export     (ExcelExportRequest)
 errors: WBE2010 (unknown screenId) · WBE2011 (>50k rows) · WBE2013 (no exportable columns)
 ```
 `screen_id` is `settings-contacts-local` (9 cols) or `settings-contacts-overseas` (11 cols). Columns +
-order in [refactor-gap-analysis.md § Export](refactor-gap-analysis.md) and the V247 seed.
+order in [refactor-gap-analysis.md § Export](refactor-gap-analysis.md), defined by the provider
+allow-lists (no live View Setting seed — the old V247 seed was archived 2026-06-09).
 
 ## 8. Excel import (three calls)
 
@@ -171,7 +172,7 @@ DELETE /{trcoKey}/files/{fileId}              → 200, data: null   errors: WBE_
 | `WBE_CONTACTS_FILE_UNAVAILABLE` | 200 | Attachment file missing/unreadable on storage root |
 | `WBE2010` | 200 | Export screenId unknown |
 | `WBE2011` | 200 | Export exceeds 50,000-row cap |
-| `WBE2013` | 200 | Export has no exportable columns after View Setting intersection |
+| `WBE2013` | 200 | Export has no exportable columns after the provider allow-list ∩ request intersection (contacts has no live View Setting seed — the provider allow-list is the column source) |
 | `WBE_VALIDATION` | 200/400 | Bean validation, address disp_ord, empty bulk/import list |
 | `WBE9999` | 500/200 | Unexpected server error (also the per-row import catch-all code) |
 | `WBE1009` | 401 | JWT missing / invalid |

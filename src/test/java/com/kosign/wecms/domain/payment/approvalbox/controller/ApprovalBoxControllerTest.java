@@ -11,6 +11,7 @@ import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxActionResponse;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxBulkApproveResponse;
+import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxFooterTotals;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxListResponse;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxTabCounts;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxService;
@@ -56,7 +57,17 @@ class ApprovalBoxControllerTest {
     @BeforeEach
     void setUp() {
         service = mock(ApprovalBoxService.class);
+        var approvalDetailService = mock(
+                com.kosign.wecms.domain.payment.approvalbox.service.ApprovalDetailService.class);
         ExcelExportService excelExportService = mock(ExcelExportService.class);
+        var approvalAttachmentDownloadService = mock(
+                com.kosign.wecms.domain.payment.internaltransfer.service.ApprovalAttachmentDownloadService.class);
+        var approvalEditService = mock(
+                com.kosign.wecms.domain.payment.approvalbox.service.ApprovalEditService.class);
+        var downloadService = mock(
+                com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxDownloadService.class);
+        var erpHistoryWriter = mock(
+                com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter.class);
 
         mapper = new ObjectMapper()
                 .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
@@ -70,7 +81,7 @@ class ApprovalBoxControllerTest {
         GlobalExceptionHandler advice = new GlobalExceptionHandler(messages);
 
         mvc = MockMvcBuilders
-                .standaloneSetup(new ApprovalBoxController(service, excelExportService))
+                .standaloneSetup(new ApprovalBoxController(service, approvalDetailService, excelExportService, approvalAttachmentDownloadService, approvalEditService, downloadService, erpHistoryWriter))
                 .setMessageConverters(jsonConverter)
                 .setControllerAdvice(advice)
                 .build();
@@ -94,6 +105,7 @@ class ApprovalBoxControllerTest {
                 List.of(),
                 0L,
                 new ApprovalBoxTabCounts(2L, 1L, 3L, 4L),
+                ApprovalBoxFooterTotals.empty(),
                 0, 15, 0);
         when(service.list(eq("20260101"), eq("20260131"),
                 any(), any(), any(), any(), anyInt(), anyInt())).thenReturn(stub);
@@ -108,7 +120,11 @@ class ApprovalBoxControllerTest {
                 .andExpect(jsonPath("$.data.tab_counts.pending").value(2))
                 .andExpect(jsonPath("$.data.tab_counts.in_progress").value(1))
                 .andExpect(jsonPath("$.data.tab_counts.approved").value(3))
-                .andExpect(jsonPath("$.data.tab_counts.rejected").value(4));
+                .andExpect(jsonPath("$.data.tab_counts.rejected").value(4))
+                .andExpect(jsonPath("$.data.footer_totals.total_document_count").value(0))
+                .andExpect(jsonPath("$.data.footer_totals.total_usd_amount").value(0))
+                .andExpect(jsonPath("$.data.footer_totals.total_vnd_amount").value(0))
+                .andExpect(jsonPath("$.data.footer_totals.total_krw_amount").value(0));
     }
 
     @Test

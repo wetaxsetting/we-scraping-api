@@ -1,10 +1,13 @@
 # Contacts — Database Mapping (Backend)
 
-The six tables behind Contacts, the two surviving legacy functions, and the full
-legacy-column → entity-field → DTO-field → UI-field mapping. Schema source: Flyway
-[V112](../../../../src/main/resources/db/migration) (`__contacts_schema.sql`) + V139 (`TRCO_INFO_FILE`)
-+ V117 (`disp_ord` → INTEGER). Column-for-column parity with JEX DEV (verified via the
-`postgres_dev_server_jexframe` MCP).
+The six tables behind Contacts, the surviving legacy functions, and the full
+legacy-column → entity-field → DTO-field → UI-field mapping. Schema source (current per-table Flyway
+scheme after the 2026-06-09 consolidation — one legacy table per file, DDL copied verbatim from the
+live JEX DB): [V112](../../../../src/main/resources/db/migration) `trco_acct_info` · V114
+`trco_addr_infm` · V116 `trco_info_file` · V119 `trco_infm` · V121 `trco_ovrs_infm` · V82
+`pgro_bsac_lnkn_infm`. `DISP_ORD` stays `NUMERIC(10,0)` in these files (mapped via
+`@JdbcTypeCode(NUMERIC)`); there is **no** `disp_ord → INTEGER` hotfix in the current set. Column-for-column
+parity with JEX DEV (verified via the `postgres_dev_server_jexframe` MCP).
 
 ---
 
@@ -28,24 +31,26 @@ legacy-column → entity-field → DTO-field → UI-field mapping. Schema source
 | `TRCO_INQ_YN` | CHAR(1) NN DEFAULT 'Y' | `trcoInqYn` | OQ-3 |
 | `REG_ID/REG_DTM/MOD_ID/MOD_DTM` | VARCHAR(100/14) | audit | reg NN, mod nullable (legacy `VARCHAR(14)` strings, not `BaseEntity`) |
 
-Constraints: PK `trco_infm_pk (TRCO_KEY)` · UK `trco_infm_uk01 (BIZ_KEY, TRCO_NICK_NM)` · CHECK
-`trco_infm_chk01 (TRSC_CCY_CD IN ('VND','USD'))`. Helper indexes beyond DEV: `ix_trco_infm_biz_handkey`,
-`ix_trco_infm_biz_taxid`, `ix_trco_infm_biz_moddtm`. (Columns `TRCO_RPRS_TLPH` / `EML` exist in the
-schema for DEV parity but are **not mapped** on the entity and **not on the wire** — Contacts has no
-Phone/Email feature surface.)
+Constraints: carried over verbatim from the live JEX DDL (PK on `TRCO_KEY` alone; UK / CHECK as DEV
+defines them). The per-table V119 file copies the full DEV column set + keys; the refactor entity maps
+only the Sprint subset. (Columns `TRCO_RPRS_TLPH` / `EML` exist in the schema for DEV parity but are
+**not mapped** on the entity and **not on the wire** — Contacts has no Phone/Email feature surface.)
 
 ### `TRCO_ADDR_INFM` — addresses (PK `(TRCO_KEY, BIZ_KEY, TRCO_ADDR_KEY)`)
 
-`TRCO_BSUN_POST_ADRS VARCHAR(400)` (`trcoBsunPostAdrs`) · `DISP_ORD INTEGER NN` (`dispOrd`;
-1 = current, 2 = old — V117 converted DEV's `NUMERIC(10,0)`) · `ISSU_DT` / `DUE_DT VARCHAR(8) NN`
-(`yyyyMMdd`) · audit cols.
+`TRCO_BSUN_POST_ADRS VARCHAR(400)` (`trcoBsunPostAdrs`) · `DISP_ORD NUMERIC(10,0) NN` (`dispOrd`;
+1 = current, 2 = old — DEV-parity; entity maps it via `@JdbcTypeCode(NUMERIC)`) · `ISSU_DT` /
+`DUE_DT VARCHAR(8) NN` (`yyyyMMdd`) · audit cols.
 
 ### `TRCO_ACCT_INFO` — Local bank accounts (PK `(BIZ_KEY, TRCO_KEY, TRCO_ACCT_KEY)`)
 
-`ACCT_NO VARCHAR(100) NN` (`acctNo`) · `DISP_ORD INTEGER NN DEFAULT 1` (`dispOrd`) · `BANK_NM
-VARCHAR(200)` (`bankNm` — stored display copy) · `NAPAS_BANK_CD VARCHAR(10)` · `CITAD_BANK_CD
+`ACCT_NO VARCHAR(100) NN` (`acctNo`) · `DISP_ORD NUMERIC(10,0) NN` (`dispOrd`; `@JdbcTypeCode(NUMERIC)`) ·
+`BANK_NM VARCHAR(200)` (`bankNm` — stored display copy) · `NAPAS_BANK_CD VARCHAR(10)` · `CITAD_BANK_CD
 VARCHAR(8)` · `ACCT_CCY_CD VARCHAR(3)` · `FINC_MDA_OWNER_NM VARCHAR(150)` (account-owner name) ·
-`OWAC_ADDR VARCHAR(500)` · audit. FK `trco_acct_info_fk01 (TRCO_KEY) → TRCO_INFM`.
+`OWAC_ADDR VARCHAR(500)` · plus the DEV-parity legacy columns `BANK_CD` / `TRCO_NM` / `TRCO_ENM` /
+`OWAC_NM` / `NAPAS_BANK_YN` (present in the table, not mapped on the entity) · audit. FK
+`trco_acct_info_fk01 (TRCO_KEY) → TRCO_INFM`; BEFORE-INSERT/UPDATE trigger `reject_not_existing_bank_cd()`
+on `BANK_CD`.
 
 ### `TRCO_OVRS_INFM` — Overseas beneficiaries (PK `(TRCO_KEY, BIZ_KEY, TRCO_OVRS_KEY)`)
 
@@ -77,12 +82,13 @@ contact to a tenant's group buckets. See [references/database/erd/settings-erd.m
 
 | Function / sequence | Migration | Consumed by |
 |---|---|---|
-| `sq_trco_key` (START 1,000,000) + `wb_get_next_val('trco_infm','trco_key')` branch | V113 | `LegacyFunctionRepository.nextTrcoKey` → `ContactsService.create` (OQ-4) |
+| `sq_trco_key` (START 0) + `wb_get_next_val('trco_infm','trco_key')` branch | sequence in V159, branch in V140 | `LegacyFunctionRepository.nextTrcoKey` → `ContactsService.create` (OQ-4) |
 | `wb_get_next_val('trco_info_file','file_id', trcoKey)` branch | V140 | `ContactsFileService` |
-| `wb_get_napas_bank_nm_or_citad_bank_nm(code, lang)` (reads `tb_firm_bank_code`) | V114 | `LegacyFunctionRepository.resolveNapasOrCitadBankName` → `ContactsService.list/getOne` (OQ-7) |
+| `wb_get_napas_bank_nm_or_citad_bank_nm(code, lang)` (reads `tb_firm_bank_code`) | **not in any refactor migration — expected to pre-exist in the live JEX DB** | `LegacyFunctionRepository.resolveNapasOrCitadBankName` → `ContactsService.list/getOne` (OQ-7) |
 
-Both function bodies are copied verbatim from DEV; retirement plans are in the `wecms-api/CLAUDE.md`
-"Surviving legacy functions" table.
+The `wb_get_next_val` body is copied verbatim from DEV; `wb_get_napas_bank_nm_or_citad_bank_nm` is
+called directly (the refactor runs against the live JEX DB in all envs and does not redefine it).
+Retirement plans are in the `wecms-api/CLAUDE.md` "Surviving legacy functions" table.
 
 ## Column-mapping chain (legacy column → entity field → DTO field → UI field)
 
@@ -116,9 +122,12 @@ Both function bodies are copied verbatim from DEV; retirement plans are in the `
 
 ## Schema deviations from DEV (documented, refactor-only)
 
-- `disp_ord` is `INTEGER` locally (V117) vs DEV `NUMERIC(10,0)` — Hibernate `validate` vs Java
-  `Integer` (same precedent as V35→V36).
-- Helper indexes (`ix_trco_*`) added beyond DEV — extra indexes don't affect parity.
+- `disp_ord` is kept as DEV's `NUMERIC(10,0)` in the current per-table migrations (V112/V114) and the
+  entity maps it via `@JdbcTypeCode(NUMERIC)` against a Java `Integer` field — the earlier local-INTEGER
+  deviation (old V117 hotfix) was retired in the 2026-06-09 consolidation. No deviation here now.
+- Helper indexes (`ix_trco_*`) — the consolidated per-table files copy the live JEX DDL verbatim
+  (incl. triggers, `bpchar`, full column sets); extra local-only helper indexes are not part of the
+  current scheme.
 - `trco_tax_id` length divergence: `ContactCreateRequest` allows `@Size(100)`, `ContactUpdateRequest`
   + DB column cap at 40 — a 41–100-char create passes bean validation then hits the DB constraint
   (logged in [refactor-gap-analysis.md](refactor-gap-analysis.md)).

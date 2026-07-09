@@ -26,9 +26,7 @@ import com.kosign.wecms.domain.banking.smartorganizer.dto.ConfirmResponse;
 import com.kosign.wecms.domain.banking.smartorganizer.dto.EligibleTransactionListResponse;
 import com.kosign.wecms.domain.banking.smartorganizer.dto.EligibleTransactionRow;
 import com.kosign.wecms.domain.banking.smartorganizer.dto.SmartOrganizerSortField;
-import jakarta.persistence.EntityManager;
-import jakarta.persistence.PersistenceContext;
-import jakarta.persistence.Query;
+import com.kosign.wecms.domain.banking.smartorganizer.repository.SmartOrganizerEligibleRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -62,6 +60,10 @@ import java.util.Map;
  *       (1 → RCV, 2 → PAY) AND ({@code MATCH_TYPE = 'E'} AND
  *       {@code RMRK = ATH.RMRK}) OR ({@code MATCH_TYPE != 'E'} AND
  *       {@code ATH.RMRK ILIKE '%' || RMRK || '%'});</li>
+ *   <li>usage-group direction filter (legacy {@code getDynamic1}):
+ *       when the winning rule has a {@code USE_USAG_CD}, that usage's
+ *       {@code USAG_GRP_CD} must match the direction (1 → '4', 2 → '6');
+ *       VAS-only / chart-only rules skip it (Option B);</li>
  *   <li>optional keyword filter on {@code ATH.RMRK} (ILIKE).</li>
  * </ul>
  *
@@ -81,9 +83,6 @@ public class SmartOrganizerService {
     private static final int MAX_PAGE_SIZE = 100;
     private static final int DEFAULT_PAGE_SIZE = 15;
 
-    @PersistenceContext
-    private EntityManager em;
-
     private final AcctTrnsHstrRepository acctTrnsHstrRepo;
     private final AcctTrnsRcvPayInfmRepository rcvPayRepo;
     private final LegacyFunctionRepository legacy;
@@ -96,6 +95,7 @@ public class SmartOrganizerService {
     private final ChartOfAccountRepository chartRepo;
     private final AcctMstrRepository acctMstrRepo;
     private final BankCdResolver bankCdResolver;
+    private final SmartOrganizerEligibleRepository eligibleRepo;
 
     /**
      * Native eligibility query — returns one row per
@@ -125,100 +125,22 @@ public class SmartOrganizerService {
                 SmartOrganizerSortField.parse(sortFieldRaw).orElse(null);
         SortDirection sortDir = SortDirection.parse(sortDirRaw);
 
-        StringBuilder where = new StringBuilder();
-        where.append(" WHERE h.biz_key = :bizKey ");
-        // R11 — restrict to the selected account (BIZ_KEY + BANK_CD + ACCT_NO).
-        where.append("   AND h.bank_cd = :bankCd ");
-        where.append("   AND h.acct_no = :acctNo ");
-        where.append("   AND h.trsc_dt BETWEEN :fromDt AND :toDt ");
-        // Loan / time-deposit accounts excluded (legacy parity).
-        where.append("   AND EXISTS ( ");
-        where.append("       SELECT 1 FROM acct_mstr m ");
-        where.append("        WHERE m.biz_key = h.biz_key ");
-        where.append("          AND m.bank_cd = h.bank_cd ");
-        where.append("          AND m.acct_no = h.acct_no ");
-        where.append("          AND m.acct_type_cd IN ('03','04','05','06') ");
-        where.append("   ) ");
-        // Not yet confirmed.
-        where.append("   AND NOT EXISTS ( ");
-        where.append("       SELECT 1 FROM acct_trns_rcv_pay_infm c ");
-        where.append("        WHERE c.biz_key = h.biz_key ");
-        where.append("          AND c.acct_seq_no = h.acct_seq_no ");
-        where.append("   ) ");
-        if (search != null && !search.isBlank()) {
-            where.append("   AND h.rmrk ILIKE '%' || :search || '%' ");
-        }
+        // Sort column resolved through the whitelist — only the validated SQL
+        // expression is handed to the repository; raw client input never
+        // reaches the ORDER BY.
+        String orderByExpr = sortField != null ? sortField.sqlExpression() : "h.trsc_dt";
 
-        // R01 — reproduce the LEGACY matching precedence (ACCT_TRNS_HSTR_R028.xml:86-93).
-        // By SQL precedence the legacy `... AND (Exact) OR (Contains)` leaves the Contains
-        // arm UNgated by direction, so a Contains rule matches EITHER transaction direction.
-        // We reproduce that quirk by gating the direction predicate on the Exact arm only.
-        // BIZ_KEY is kept AND-ed on BOTH arms — the legacy cross-tenant precedence leak is
-        // deliberately NOT reproduced (tenant-isolation invariant; see remediation plan R01).
-        // Lowest DISP_ORD wins (LIMIT 1); RMRK_SEQ_NO is a deterministic tiebreaker that does
-        // not change the winner when DISP_ORD is unique (the legacy intent).
-        String ruleJoin =
-                " JOIN LATERAL ( " +
-                "   SELECT r.rmrk_seq_no, r.disp_ord, r.match_type, " +
-                "          r.rcv_pay_dv, r.use_usag_cd, r.vas_acct_seq_no, " +
-                "          r.trco_key, r.chart_acct_cd, r.chart_acct_seq_no " +
-                "     FROM rmrk_org_infm r " +
-                "    WHERE r.biz_key = h.biz_key " +
-                "      AND ( ( r.rcv_pay_dv = CASE WHEN h.inout_dv = '1' THEN 'RCV' ELSE 'PAY' END " +
-                "              AND r.match_type = 'E' AND r.rmrk = h.rmrk ) " +
-                "         OR ( r.match_type <> 'E' AND h.rmrk ILIKE '%' || r.rmrk || '%' ) ) " +
-                "    ORDER BY r.disp_ord ASC, r.rmrk_seq_no ASC " +
-                "    LIMIT 1 " +
-                " ) r ON TRUE ";
-
-        // ---- count -----
-        String countSql = "SELECT COUNT(*) FROM acct_trns_hstr h " + ruleJoin + where;
-        Query countQ = em.createNativeQuery(countSql);
-        countQ.setParameter("bizKey", bizKey);
-        countQ.setParameter("bankCd", bankCd);
-        countQ.setParameter("acctNo", acctNo);
-        countQ.setParameter("fromDt", from);
-        countQ.setParameter("toDt", to);
-        if (search != null && !search.isBlank()) countQ.setParameter("search", search.trim());
-        long total = ((Number) countQ.getSingleResult()).longValue();
-
+        long total = eligibleRepo.countEligible(bizKey, bankCd, acctNo, from, to, search);
         if (total == 0) {
             return new EligibleTransactionListResponse(0L, List.of());
         }
 
-        // ---- page -----
-        String orderBy = " ORDER BY " +
-                (sortField != null ? sortField.sqlExpression() : "h.trsc_dt") +
-                " " + (sortDir == SortDirection.ASC ? "ASC" : "DESC") +
-                ", h.acct_seq_no ASC ";
-
-        // R06 (ccy_cd) + R07 (bal) added to the projection; display names are resolved
-        // from the classification codes in resolveRows(...) below.
-        String selectSql =
-                "SELECT h.acct_seq_no, h.bank_cd, h.acct_no, " +
-                "       h.trsc_dt, h.trsc_tm, h.inout_dv, " +
-                "       CASE WHEN h.inout_dv = '1' THEN h.trsc_amt ELSE NULL END AS in_amt, " +
-                "       CASE WHEN h.inout_dv = '2' THEN h.trsc_amt ELSE NULL END AS out_amt, " +
-                "       h.bal, h.ccy_cd, h.rmrk, " +
-                "       r.rmrk_seq_no, r.chart_acct_cd, r.chart_acct_seq_no, " +
-                "       r.use_usag_cd, r.vas_acct_seq_no, r.trco_key " +
-                "  FROM acct_trns_hstr h " + ruleJoin + where + orderBy;
-
         int pageSize = clampPageSize(size);
-        int pageNo = Math.max(1, page);
-
-        Query q = em.createNativeQuery(selectSql);
-        q.setParameter("bizKey", bizKey);
-        q.setParameter("bankCd", bankCd);
-        q.setParameter("acctNo", acctNo);
-        q.setParameter("fromDt", from);
-        q.setParameter("toDt", to);
-        if (search != null && !search.isBlank()) q.setParameter("search", search.trim());
-        q.setFirstResult((pageNo - 1) * pageSize);
-        q.setMaxResults(pageSize);
-
-        @SuppressWarnings("unchecked")
-        List<Object[]> raw = q.getResultList();
+        int pageNo   = Math.max(1, page);
+        List<Object[]> raw = eligibleRepo.pageEligible(
+                bizKey, bankCd, acctNo, from, to, search,
+                orderByExpr, sortDir == SortDirection.ASC,
+                (pageNo - 1) * pageSize, pageSize);
 
         return new EligibleTransactionListResponse(total, resolveRows(bizKey, raw));
     }
@@ -363,14 +285,24 @@ public class SmartOrganizerService {
                 throw new BusinessException("WBE_SMART_ORGANIZER_ALREADY_CONFIRMED");
             }
 
-            // R03 — validate the classification targets exist in the tenant (legacy parity,
-            // c001_act.jsp:96-145). The legacy USAG_GRP_CD↔INOUT_DV direction check degrades
-            // to a presence check here because BUSI_USAG_SET_INFM.USAG_GRP_CD is unpopulated
-            // in the refactor; the rule's stored RCV_PAY_DV carries the direction (plan R03).
+            // R03 — validate the classification targets exist in the tenant AND
+            // enforce the legacy USAG_GRP_CD↔INOUT_DV direction rule
+            // (c001_act.jsp:96-116): a deposit (INOUT_DV '1') requires a group-'4'
+            // (income / RCV) usage, a withdrawal ('2') requires a group-'6'
+            // (expense / PAY) usage; a mismatch rolls the whole confirm back.
+            // USAG_GRP_CD is populated in both JEX DEV (99.99%) and the
+            // refactor/SIT DB, so the prior presence-only degradation is removed.
+            // Directions other than '1'/'2' (e.g. ETC '0') are not validated,
+            // matching legacy which only branches on IN / OUT.
             String useUsagCd = blankToNull(r.useUsagCd());
             if (useUsagCd != null) {
-                purposeRepo.findByBizKeyAndUseUsagCd(bizKey, useUsagCd)
+                BusiUsagSetInfm usage = purposeRepo.findByBizKeyAndUseUsagCd(bizKey, useUsagCd)
                         .orElseThrow(() -> new BusinessException("WBE_SMART_ORGANIZER_USAGE_NOT_FOUND"));
+                String expectedGrp = "1".equals(bank.getInoutDv()) ? "4"
+                        : "2".equals(bank.getInoutDv()) ? "6" : null;
+                if (expectedGrp != null && !expectedGrp.equals(usage.getUsagGrpCd())) {
+                    throw new BusinessException("WBE_SMART_ORGANIZER_USAGE_DIRECTION_MISMATCH");
+                }
             }
             BusiVasAcctInfm vas = null;
             if (r.vasAcctSeqNo() != null) {
@@ -410,7 +342,15 @@ public class SmartOrganizerService {
             c.setVasAcctCd(vas == null ? null : vas.getVasAcctCd());
             c.setVasAcctNm(vas == null ? null : vas.getVasAcctNm());
             c.setCnfmYn("Y");
-            c.setCnfmByUserId(userId);
+            // Legacy parity — the confirm write stamps CNFM_BY_USER_ID with the
+            // BIZ_KEY, not the login user id (fnsh_0002_001_u002_act.jsp:90,103 /
+            // fnsh_0006_001_u002_act.jsp:91,104). CNFM_BY_USER_ID is varchar(20)
+            // in the legacy DDL; WeCMS VN user ids are emails that can exceed 20
+            // chars (e.g. wecmshaengsung@gmail.com = 24) and would overflow the
+            // column. Display name stays in CNFM_BY_USER_NM; the real user id is
+            // preserved in REG_ID/MOD_ID (varchar(100)). Mirrors the Confirm-button
+            // fix — see docs/audits/transaction-history-confirm-legacy-audit.md §12.
+            c.setCnfmByUserId(bizKey);
             c.setCnfmByUserNm(userNm);
             c.setCnfmDtm(nowDtm);
             c.setRegId(userId);

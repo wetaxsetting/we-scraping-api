@@ -195,6 +195,48 @@ public class LegacyFunctionRepository {
     }
 
     /**
+     * Memo (polymorphic) &mdash; allocate the next {@code MEMO_INFM.SEQ_NO}
+     * by delegating to the legacy {@code wb_get_next_val('memo_infm',
+     * 'seq_no', biz_key, web_svc_id)} branch. Mirrors legacy
+     * {@code MemoInfmDAO.create} &rarr; {@code SeqHelper.getNextVal(util,
+     * idoCon, MemoInfm.class, "seq_no", bizKey, webSvcId)} at
+     * {@code WECMS DEV/WECMS/src/wabooks/dao/MemoInfmDAO.java:62}.
+     *
+     * <p>The live JEX branch body is {@code SELECT
+     * COALESCE(MAX(seq_no::numeric), 0) + 1 FROM memo_infm WHERE
+     * biz_key = $3 AND web_svc_id = $4} &mdash; per-(tenant, screen)
+     * {@code MAX+1}. {@code MEMO_INFM} is a single polymorphic table
+     * shared by every memo-enabled screen, discriminated by
+     * {@code WEB_SVC_ID}, so the ceiling is scoped by both keys.
+     * Byte-for-byte identical to the value the former Java-side
+     * {@code findMaxSeqNoByBizKeyAndWebSvcId + 1} produced &mdash; this
+     * retires funnel exception #2 (the earlier "MEMO_INFM not in PROD
+     * active list" premise was wrong; legacy has the branch).
+     *
+     * <p>Concurrency: lock-free {@code MAX+1}, same as legacy. The
+     * caller wraps the call + INSERT in one {@code @Transactional} and
+     * retries once on {@code DataIntegrityViolationException} (PK
+     * {@code (biz_key, web_svc_id, seq_no)} collision) &mdash; equivalent
+     * to legacy, which relies on the same PK to reject a colliding
+     * insert.
+     *
+     * <p>Returns a numeric text token (e.g. {@code "6"}); the caller
+     * parses to {@link java.math.BigDecimal}.
+     *
+     * <p>The {@code memo_infm} branch already exists in the refactor
+     * {@code wb_get_next_val} function (added directly to the live
+     * function; no dedicated Flyway migration).
+     *
+     * <p>Retire plan: drop this method and the {@code memo_infm} branch
+     * once the legacy WeCMS / WABOOKS systems no longer call
+     * {@code wb_get_next_val} for {@code memo_infm} &mdash; see
+     * "Surviving legacy functions" in {@code wecms-api/CLAUDE.md}.
+     */
+    public String nextMemoInfmSeqNo(String bizKey, String webSvcId) {
+        return nextVal("memo_infm", "seq_no", bizKey, webSvcId, null, null, null, null);
+    }
+
+    /**
      * Settings &gt; Contacts &gt; Attachments &mdash; allocate the next
      * per-contact {@code FILE_ID} by delegating to the legacy
      * {@code wb_get_next_val('trco_info_file', 'file_id', trco_key)}
@@ -235,19 +277,62 @@ public class LegacyFunctionRepository {
     // "Surviving legacy functions").
     // ------------------------------------------------------------------
 
-    /** Common &gt; Audit Log: AUDIT_LOGS_INFM.AUDIT_LOGS_SEQ_NO — per (biz_key, wsvc_id, lang_cd) MAX+1 (V140 #17). */
+    /**
+     * Common &gt; Audit Log: AUDIT_LOGS_INFM.AUDIT_LOGS_SEQ_NO — whole-table MAX+1.
+     *
+     * <p><b>UAT-compatibility (2026-07-03):</b> this does <em>not</em> delegate to
+     * {@code wb_get_next_val}. The live UAT function scopes its
+     * {@code audit_logs_infm} branch by {@code (biz_key=$3, wsvc_id=$4, lang_cd=$5)},
+     * but {@code AuditLogService} passes {@code (bizKey, refNo, refNo1)} — refNo/refNo1
+     * are record locators, not the stored {@code WSVC_ID}/{@code LANG_CD} — and shares
+     * one {@code seq_no} across the EN/KO/VI/KM locale fan-out. Under the scoped UAT
+     * body the {@code WHERE wsvc_id=refNo} predicate matches no stored row, so it
+     * returns {@code 1} for every event and the 2nd+ event on the same
+     * {@code (biz_key, wsvc_id, lang_cd)} PK collides (audit rows silently dropped).
+     * Allocating a whole-table {@code MAX+1} here — byte-for-logic identical to the
+     * refactor DEV function's {@code #17} body — keeps DEV and UAT behaviour identical
+     * and independent of which {@code wb_get_next_val} is deployed. The {@code wsvcId}
+     * / {@code langCd} params are retained for signature stability (callers unchanged);
+     * they are intentionally not used in the scope, matching legacy DEV.
+     */
     public String nextAuditLogsSeqNo(String bizKey, String wsvcId, String langCd) {
-        return nextVal("audit_logs_infm", "audit_logs_seq_no", bizKey, wsvcId, langCd, null, null, null);
+        Query q = em.createNativeQuery(
+                "SELECT CAST(COALESCE(MAX(audit_logs_seq_no::numeric), 0) + 1 AS text) "
+                        + "FROM audit_logs_infm");
+        Object result = q.getSingleResult();
+        return result != null ? result.toString() : null;
     }
 
     /**
-     * Settings &gt; Purpose Settings: BUSI_USAG_SET_INFM.USE_USAG_CD (V140 #18 / #19).
-     * Pass the {@code usagGrpCd}; an empty / null group routes to the plain
-     * 10-digit {@code 0000000001..} sequence variant. Returns a zero-padded code.
+     * Settings &gt; Purpose Settings: BUSI_USAG_SET_INFM.USE_USAG_CD.
+     *
+     * <p>Pass the {@code usagGrpCd}. A non-blank group delegates to the legacy
+     * {@code wb_get_next_val} grouped branch (present in both DEV and UAT). An
+     * empty / null group produces the plain 10-digit {@code 0000000001..} code.
+     *
+     * <p><b>UAT-compatibility (2026-07-03):</b> the no-group case does <em>not</em>
+     * delegate to {@code wb_get_next_val}. The live UAT function's
+     * {@code use_usag_cd} branch requires {@code $4 (usag_grp_cd)} non-blank; with an
+     * empty group it falls through to {@code ELSE → NULL}, and {@code PurposeSettings}
+     * (which always writes {@code usag_grp_cd = NULL}) would then throw {@code WBE9999}.
+     * The plain 10-digit {@code MAX+1} here is byte-for-logic identical to the refactor
+     * DEV function's {@code #19} body (regex-guarded numeric cast), so DEV and UAT
+     * behave the same regardless of which {@code wb_get_next_val} is deployed. This
+     * mirrors the sibling {@code PurposeSettingsRepository.findMaxDispOrd} Java-side
+     * allocation, which was already moved off the function for the same reason.
      */
     public String nextUseUsagCd(String bizKey, String usagGrpCd) {
-        return nextVal("busi_usag_set_infm", "use_usag_cd", bizKey, usagGrpCd == null ? "" : usagGrpCd,
-                null, null, null, null);
+        if (usagGrpCd != null && !usagGrpCd.isBlank()) {
+            return nextVal("busi_usag_set_infm", "use_usag_cd", bizKey, usagGrpCd,
+                    null, null, null, null);
+        }
+        Query q = em.createNativeQuery(
+                "SELECT COALESCE(LPAD((MAX(use_usag_cd)::numeric + 1)::varchar, 10, '0'), '0000000001') "
+                        + "FROM busi_usag_set_infm "
+                        + "WHERE biz_key = CAST(?1 AS varchar) AND use_usag_cd ~ '^0[0-9]{9}$'");
+        q.setParameter(1, bizKey);
+        Object result = q.getSingleResult();
+        return result != null ? result.toString() : null;
     }
 
     /** Banking &gt; Sync History: EXT_TRAN_CALL_HIS.SEQ_NO — per (svc_id, ref_date) MAX+1 (V140 #21). */
@@ -295,6 +380,54 @@ public class LegacyFunctionRepository {
         return nextVal("busa_doc_rcv_pay_his", "rcv_pay_his_seq_no", bizKey, docId, null, null, null, null);
     }
 
+    /**
+     * Payment &gt; Card Transactions (New Receipt) document id via
+     * {@code SYS_DOC_ID_GEN} — legacy {@code R-yyyyMMddNNN} format (audit
+     * finding G7; corrected 2026-07-04 per UAT legacy {@code wb_get_next_val}
+     * evidence). Uses the {@code sys_doc_id_gen.doc_id} branch (V140 #48),
+     * <b>not</b> a {@code busa_doc_mstr} max — the branch body is
+     * {@code docType='E' → 'R' || '-' || to_char(timezone('utc',now()),'YYYYMMDD')
+     * || lpad(max(right(doc_id,3))+1, 3)} scoped to
+     * {@code sys_doc_id_gen WHERE biz_key=$3 AND doc_type=$4 AND req_date = UTC YYYYMMDD}.
+     * Example: {@code R-20240523005}.
+     *
+     * <p>The branch is a read-only {@code max+1} over the single daily
+     * {@code sys_doc_id_gen} row (PK {@code (biz_key, doc_type, req_date)}), so
+     * the caller MUST upsert that row's {@code doc_id} to the freshly-minted id
+     * after allocation (see {@code SysDocIdGenRepository.upsertDailyDocId} +
+     * {@code CardTransactionsService.createReceipt}) — otherwise same-day
+     * receipts would all read {@code max=NULL → 001} and collide. This mirrors
+     * the legacy population (334 {@code 'E'} rows on JEX DEV).
+     *
+     * <p>The V140 #48 branch already exists in the refactor function — <b>no DBA
+     * branch script is required for G7</b>. Returns {@code null} only if the
+     * branch is somehow absent, in which case {@code createReceipt} fails fast.
+     *
+     * @param bizKey  tenant scope ($3)
+     * @param docType {@code 'E'} for a manual receipt ($4)
+     */
+    public String nextSysDocIdGenDocId(String bizKey, String docType) {
+        return nextVal("sys_doc_id_gen", "doc_id", bizKey, docType, null, null, null, null);
+    }
+
+    /**
+     * Payment &gt; Card Transactions (receipt / e-Invoice attachments):
+     * {@code BUSA_DOC_FILE.FILE_ID} — per-{@code (biz_key, doc_id)} MAX+1
+     * (audit finding G3/G5). Branch verified applied to the DEV refactor DB
+     * 2026-07-04: body = {@code select coalesce(max(file_id::numeric),0)+1 from
+     * busa_doc_file where biz_key=$3 and doc_id=$4} (verbatim UAT). Mirrors
+     * {@code SeqHelper.getNextVal(BusaDocFile.class, "file_id")} in
+     * {@code prch_0005_001_c001}. Same shape as {@code nextTrcoInfoFileFileId}.
+     * The upload service wraps allocate+insert in a one-shot retry on PK
+     * conflict (concurrent same-doc uploads) — the branch is lock-free MAX+1.
+     *
+     * @param bizKey tenant scope ($3)
+     * @param docId  parent document ($4)
+     */
+    public String nextBusaDocFileFileId(String bizKey, String docId) {
+        return nextVal("busa_doc_file", "file_id", bizKey, docId, null, null, null, null);
+    }
+
     /** Banking &gt; Transaction History / Smart Organizer: ACCT_TRNS_RCV_PAY_INFM.RCV_PAY_SEQ_NO — per (biz_key, acct_seq_no) MAX+1 (V140 #14). */
     public String nextAcctTrnsRcvPaySeqNo(String bizKey, String acctSeqNo) {
         return nextVal("acct_trns_rcv_pay_infm", "rcv_pay_seq_no", bizKey, acctSeqNo, null, null, null, null);
@@ -305,9 +438,88 @@ public class LegacyFunctionRepository {
         return nextVal("acct_trns_hstr", "acct_seq_no", bizKey, null, null, null, null, null);
     }
 
+    /**
+     * Settings &gt; Bank Account (registration): {@code ACCT_MSTR.PRN_SEQ} —
+     * per-tenant {@code MAX(prn_seq)+1} print/display order. Funnels the V140
+     * branch (#47) that was copied VERBATIM from the legacy JEX
+     * {@code wb_get_next_val} body; it mirrors
+     * {@code SeqHelper.getNextVal(util, idoCon, AcctMstr.class, "prn_seq", bizKey)}
+     * invoked by the legacy {@code AcctMstrDAO.create()} (the
+     * {@code fnsh_0101_001_c001} scrape-registration path).
+     *
+     * <p>The V140 branch was previously DORMANT (Option B, 2026-06-10) — wired
+     * here so newly-registered accounts receive a {@code PRN_SEQ} instead of
+     * {@code NULL}, restoring legacy parity and a deterministic Account-Inquiry
+     * / Bank-Account default sort ({@code PRN_SEQ ASC}). No schema change: the
+     * branch already exists in the refactor function.
+     *
+     * <p>Concurrency / batch: this is a lock-free {@code MAX+1} read, so callers
+     * registering several accounts in one transaction seed ONCE and increment in
+     * Java across the batch (the not-yet-flushed rows are invisible to the
+     * function) — the same seed-once pattern used by the file/detail helpers.
+     *
+     * <p>Returns a numeric text token (e.g. {@code "1"}); the caller parses to
+     * {@link Integer}. Retire with the rest of the funnel.
+     */
+    public String nextAcctMstrPrnSeq(String bizKey) {
+        return nextVal("acct_mstr", "prn_seq", bizKey, null, null, null, null, null);
+    }
+
     /** Settings &gt; Contacts / e-Invoice auto-register: TRCO_ACCT_INFO.TRCO_ACCT_KEY — per (biz_key, trco_key) MAX+1 (V140 #31). */
     public String nextTrcoAcctKey(String bizKey, String trcoKey) {
         return nextVal("trco_acct_info", "trco_acct_key", bizKey, trcoKey, null, null, null, null);
+    }
+
+    /**
+     * Settings &gt; Contacts &mdash; allocate the next {@code TRCO_ADDR_KEY}
+     * for an address row by delegating to the legacy
+     * {@code wb_get_next_val('trco_addr_infm', 'trco_addr_key', biz_key, trco_key)}
+     * branch. Mirrors legacy {@code TrcoAddrInfmDAO.create:73}
+     * ({@code SeqHelper.getNextVal(util, idoCon, TrcoAddrInfm.class, "trco_addr_key",
+     * bizKey, trcoKey)}).
+     *
+     * <p>The live JEX branch body is {@code SELECT
+     * COALESCE(MAX(trco_addr_key::numeric), 0) + 1 FROM trco_addr_infm
+     * WHERE biz_key = $3 AND trco_key = $4} &mdash; per-(tenant, contact)
+     * {@code MAX+1}, the same shape as {@link #nextTrcoAcctKey}. Closes the
+     * OD-1 client-key gap (the refactor previously persisted the frontend
+     * placeholder verbatim, risking a PK collision with existing UAT/PROD
+     * rows).
+     *
+     * <p>Concurrency / batch: lock-free {@code MAX+1}, so callers creating
+     * several addresses in one transaction {@code saveAndFlush} between rows
+     * so the next read sees the prior insert (same seed pattern as accounts).
+     *
+     * <p>Returns a numeric text token (e.g. {@code "1"}, {@code "2"}); the
+     * caller stores it verbatim in {@code TRCO_ADDR_INFM.TRCO_ADDR_KEY}.
+     */
+    public String nextTrcoAddrKey(String bizKey, String trcoKey) {
+        return nextVal("trco_addr_infm", "trco_addr_key", bizKey, trcoKey, null, null, null, null);
+    }
+
+    /**
+     * Settings &gt; Contacts &mdash; allocate the next {@code TRCO_OVRS_KEY}
+     * for an overseas-beneficiary row by delegating to the legacy
+     * {@code wb_get_next_val('trco_ovrs_infm', 'trco_ovrs_key', biz_key)}
+     * branch. Mirrors legacy {@code TrcoOvrsInfmDAO.create}
+     * ({@code SeqHelper.getNextVal(util, idoCon, TrcoOvrsInfm.class, "trco_ovrs_key")}).
+     *
+     * <p>The live JEX branch body is {@code SELECT
+     * COALESCE(MAX(trco_ovrs_key::numeric), 0) + 1 FROM trco_ovrs_infm
+     * WHERE biz_key = $3} &mdash; <strong>per-tenant</strong> {@code MAX+1}
+     * (NOT per-contact; the legacy scope is {@code biz_key} only, so
+     * {@code trco_ovrs_key} is unique across the whole tenant). Closes the
+     * OD-1 client-key gap.
+     *
+     * <p>Concurrency / batch: lock-free {@code MAX+1}, so callers creating
+     * several overseas rows in one transaction {@code saveAndFlush} between
+     * rows so the next read sees the prior insert.
+     *
+     * <p>Returns a numeric text token; the caller stores it verbatim in
+     * {@code TRCO_OVRS_INFM.TRCO_OVRS_KEY}.
+     */
+    public String nextTrcoOvrsKey(String bizKey) {
+        return nextVal("trco_ovrs_infm", "trco_ovrs_key", bizKey, null, null, null, null, null);
     }
 
     /** Payment &gt; Overseas: OVRS_PYMN_SUMR_DETL.OVRS_PYMN_DETL_NO — per-tenant MAX+1 over (mstr UNION detl) (V140 #30). */
@@ -334,6 +546,29 @@ public class LegacyFunctionRepository {
     /** Payment &gt; Dispatch: TB_PAY_TARGET.TRAN_SEQ — global {@code firm_seq_no} sequence (V140 #2). */
     public String nextTbPayTargetTranSeq() {
         return nextVal("tb_pay_target", "tran_seq", null, null, null, null, null, null);
+    }
+
+    /**
+     * Payment &gt; Dispatch: {@code TB_FIRM_TRAN.TRAN_SEQ} for the standalone
+     * depositor-inquiry (201) leg (C1). Funnels the pre-existing
+     * {@code wb_get_next_val('tb_firm_tran','tran_seq')} branch (V140 #3), which
+     * draws the SAME global {@code firm_seq_no} sequence as
+     * {@link #nextTbPayTargetTranSeq()} — byte-for-byte identical to legacy
+     * {@code comm.Sequence.getSeq()} ({@code FIRM_SEQ_NO_R001 → nextval('firm_seq_no')},
+     * {@code Sequence.java:21-34}). Unlike the 202 path (which reuses the originating
+     * pay-target {@code TRAN_SEQ} for dedup), the inquiry mints a fresh sequence per
+     * call (legacy WB_00000100 allocates a new {@code inq_seq} every invocation), so no
+     * idempotency dedup is intended for inquiries.
+     *
+     * <p>Returns a numeric text token; the caller stores it verbatim as the
+     * {@code TB_FIRM_TRAN} PK component (10-char varchar).
+     *
+     * <p>Retire plan: same window as the other {@code firm_seq_no} funnel methods —
+     * drop once the legacy WeCMS / WABOOKS systems no longer call
+     * {@code wb_get_next_val} for the firm-transaction sequence.
+     */
+    public String nextTbFirmTranSeq() {
+        return nextVal("tb_firm_tran", "tran_seq", null, null, null, null, null, null);
     }
 
     /** Payment &gt; Dispatch: TB_PAY_FILE_MST.FILE_SEQ_NO — global {@code firm_file_seq_no} sequence (V140 #4). */
@@ -450,6 +685,220 @@ public class LegacyFunctionRepository {
                         "CAST(?1 AS varchar), CAST(?2 AS varchar))");
         q.setParameter(1, code);
         q.setParameter(2, langCd);
+        Object result = q.getSingleResult();
+        return result != null ? result.toString() : null;
+    }
+
+    /**
+     * Payment &gt; Card Transactions &mdash; resolve the localized
+     * purchase-status display name for a {@code CARD_TRNS_HSTR.PRCH_STTS}
+     * code by delegating to the legacy {@code wb_get_prch_stts_nm(
+     * prch_stts, lang_cd)} function. This is the EXACT resolver the
+     * legacy list query uses &mdash; {@code IDO.CARD_MSTR_R002.xml:73}
+     * ({@code wb_get_prch_stts_nm(CTH.PRCH_STTS, :LANG_CD) AS STTS}),
+     * with {@code LANG_CD} bound from {@code LocaleHelper.getLangCd(util)}
+     * in {@code card_0001_001_r001_act.jsp:43}.
+     *
+     * <p>The live JEX body maps {@code '1' → Approved / Chấp nhận / 승인됨},
+     * {@code '2' → Acquired / Hoàn thành / 완료됨},
+     * {@code '9' → Cancelled / Đã hủy / 취소됨}, {@code ELSE → NULL}, with
+     * {@code p_lang_code} compared against {@code 'EN' / 'VI' / 'KO'}
+     * (uppercase). Pass the {@link com.kosign.wecms.common.enums.LangCd}
+     * {@code name()} value ({@code "EN"} / {@code "KO"} / {@code "KM"} /
+     * {@code "VI"}); {@code "KM"} and any unmapped code return {@code NULL}
+     * &mdash; legacy parity (the Status cell renders blank).
+     *
+     * <p>Null-safe: returns {@code null} when {@code prchStts} is null /
+     * blank, short-circuiting before the DB round-trip.
+     *
+     * <p><b>Why the DB function, not a frontend i18n table:</b> the earlier
+     * refactor shipped the code&rarr;label map as a hand-maintained
+     * {@code payment.card_transactions.status.*} i18n table, which drifted
+     * from the DB function and mislabelled completed ({@code '2'}) rows as
+     * "Cancelled". Since UAT/PROD run against the live JEX DB where
+     * {@code wb_get_prch_stts_nm} is authoritative, calling it here gives
+     * byte-for-byte parity and removes the duplicate map. See
+     * {@code docs/audits/card-transactions-status-label-parity-2026-07-04.md}.
+     * Retire when the purchase-status code space is modelled as a refactor
+     * enum &mdash; same window as the other surviving legacy functions.
+     */
+    public String resolvePurchaseStatusName(String prchStts, String langCd) {
+        if (prchStts == null || prchStts.isBlank()) {
+            return null;
+        }
+        Query q = em.createNativeQuery(
+                "SELECT wb_get_prch_stts_nm(CAST(?1 AS varchar), CAST(?2 AS varchar))");
+        q.setParameter(1, prchStts.trim());
+        q.setParameter(2, langCd);
+        Object result = q.getSingleResult();
+        return result != null && !result.toString().isBlank() ? result.toString() : null;
+    }
+
+    /**
+     * Banking &mdash; resolve the SHORT display bank name for a {@code BANK_CD}
+     * by delegating to the legacy {@code wb_get_bank_nm(bank_cd, 's')} function,
+     * with the legacy {@code wb_get_bank_nm(bank_cd)} formal name as the
+     * COALESCE fallback. Returns {@code null} only when neither resolves
+     * (unknown / blank code) so the caller can fall back to the raw code.
+     *
+     * <p>Mirrors the Account Inquiry / Transaction History grid binding:
+     * legacy {@code IDO.ACCT_MSTR_R004.xml:77} ({@code BANK_NM}) and
+     * {@code IDO.ACCT_TRNS_HSTR_R016.xml:31} render {@code wb_get_bank_nm(_,'s')}
+     * in the visible cell (formal {@code wb_get_bank_nm(_)} is the tooltip).
+     * The {@code 's'} branch reads the date-effective short name from
+     * {@code BANK_INFM_DETL} ({@code BANK_DETL_INFO_CD='10'}); the formal
+     * branch reads {@code BANK_INFM.RPRS_BANK_NM}. No new DB object — both
+     * function overloads and {@code BANK_INFM_DETL} already exist in the
+     * refactor DB.
+     *
+     * <p>Retire plan: drop this method (and switch the resolver to a pure
+     * {@code BANK_INFM} read) once the short-name registry is reconciled into
+     * {@code BANK_INFM} &mdash; same window as the other surviving legacy
+     * functions (see {@code wecms-api/CLAUDE.md}).
+     */
+    public String resolveBankNmShort(String bankCd) {
+        if (bankCd == null || bankCd.isBlank()) {
+            return null;
+        }
+        Query q = em.createNativeQuery(
+                "SELECT COALESCE(" +
+                        "NULLIF(wb_get_bank_nm(CAST(:cd AS varchar), 's'), ''), " +
+                        "NULLIF(wb_get_bank_nm(CAST(:cd AS varchar)), ''))");
+        q.setParameter("cd", bankCd);
+        Object result = q.getSingleResult();
+        return result != null ? result.toString() : null;
+    }
+
+    /**
+     * Batch variant of {@link #resolveBankNmShort(String)} for cache warming:
+     * one query resolves the short name (formal fallback) for every
+     * {@code BANK_CD} in {@code BANK_INFM}, returning {@code bankCd → name}.
+     * Avoids an N+1 of per-code function calls at startup.
+     */
+    @SuppressWarnings("unchecked")
+    public java.util.Map<String, String> resolveBankNmShortAll() {
+        Query q = em.createNativeQuery(
+                "SELECT bank_cd, COALESCE(" +
+                        "NULLIF(wb_get_bank_nm(bank_cd, 's'), ''), " +
+                        "NULLIF(wb_get_bank_nm(bank_cd), '')) " +
+                        "FROM bank_infm");
+        java.util.Map<String, String> out = new java.util.HashMap<>();
+        for (Object[] row : (java.util.List<Object[]>) q.getResultList()) {
+            if (row[0] != null && row[1] != null) {
+                out.put(row[0].toString(), row[1].toString());
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Payment &gt; Payroll Payment Result (detail header) &mdash; resolve the
+     * withdrawal-bank display name for an {@code OUT_BANK_CD} via the legacy
+     * {@code wb_get_napas_bank_nm(bank_cd)} single-argument function. This is the
+     * EXACT resolver the legacy detail-header IDO uses
+     * ({@code IDO.SCDUL_PYMN_SUMR_R005.xml:50} —
+     * {@code wb_get_napas_bank_nm(SPS.OUT_BANK_CD) AS OUT_BANK_NM}).
+     *
+     * <p>Distinct from {@link #resolveNapasOrCitadBankName} (the two-arg
+     * NAPAS-or-CITAD variant the per-line Deposit Bank cell uses,
+     * {@code R011.xml:54}). The two functions diverge for some codes &mdash;
+     * e.g. {@code 970424 → "Shinhan VN"} (this fn) vs {@code "ShinhanBank"}
+     * (the or-CITAD fn), {@code 970457 → "Woori VN"} vs {@code "WooriBank"} &mdash;
+     * so the Payroll Result detail header MUST use this overload to match legacy
+     * verbatim (the former {@code TransferLineDetailMapper.resolveBankNm} chain
+     * resolved the header to the or-CITAD names, which mismatched legacy).
+     *
+     * <p>Returns {@code null} for an unknown / blank result so the caller falls
+     * back to the raw {@code OUT_BANK_CD}.
+     */
+    public String resolveNapasBankNm(String bankCd) {
+        if (bankCd == null || bankCd.isBlank()) {
+            return null;
+        }
+        Query q = em.createNativeQuery(
+                "SELECT wb_get_napas_bank_nm(CAST(?1 AS varchar))");
+        q.setParameter(1, bankCd.trim());
+        Object result = q.getSingleResult();
+        return result != null && !result.toString().isBlank() ? result.toString() : null;
+    }
+
+    /**
+     * Payment &gt; Payroll Payment Result (detail rows) &mdash; resolve the
+     * Reporting Account display strings for a set of {@code CHART_ACCT_SEQ_NO}
+     * values, mirroring the legacy detail-rows IDO
+     * ({@code IDO.SCDUL_PYMN_SUMR_R011.xml:70-71}):
+     * <ul>
+     *   <li>{@code wb_get_chart_acct_nm(biz_key, seq_no, cd)} &rarr; the
+     *       primary line, e.g. {@code "Code0011 - SALES TEST"}.</li>
+     *   <li>{@code wb_get_chart_acct_lv_nm(biz_key, seq_no, cd)} &rarr; the
+     *       grey level line, e.g. {@code "REVENUE > SALES"}.</li>
+     * </ul>
+     *
+     * <p>The join + function arguments reproduce the legacy query exactly:
+     * {@code CHART_ACCT_INFM CHAT} keyed by {@code (BIZ_KEY, CHART_ACCT_SEQ_NO)},
+     * passing {@code CHAT.CHART_ACCT_CD} (the chart row's own code) into both
+     * functions. Batched (one query for every line's seq-no) to avoid an N+1.
+     *
+     * <p>Returns {@code seqNo &rarr; [chartAcctNm, chartAcctLevelNm]}; either
+     * element may be {@code null} when the function returns blank. Seq-nos with
+     * no {@code CHART_ACCT_INFM} row are simply absent from the map (caller
+     * renders blank). Both functions already exist in the refactor DB with
+     * legacy-identical signatures &mdash; no new DB object.
+     *
+     * <p>Retire plan: drop this method once the Chart-of-Accounts name/level
+     * resolution is reconciled into a pure-Java walker &mdash; same window as
+     * the other surviving legacy functions (see {@code wecms-api/CLAUDE.md}).
+     */
+    @SuppressWarnings("unchecked")
+    public java.util.Map<String, String[]> resolveChartAcctDisplay(
+            String bizKey, java.util.Collection<String> chartAcctSeqNos) {
+        java.util.List<String> ids = chartAcctSeqNos == null ? java.util.List.of()
+                : chartAcctSeqNos.stream().filter(s -> s != null && !s.isBlank()).distinct().toList();
+        if (bizKey == null || bizKey.isBlank() || ids.isEmpty()) {
+            return java.util.Map.of();
+        }
+        Query q = em.createNativeQuery(
+                "SELECT chat.chart_acct_seq_no, " +
+                        "wb_get_chart_acct_nm(chat.biz_key, chat.chart_acct_seq_no, chat.chart_acct_cd), " +
+                        "wb_get_chart_acct_lv_nm(chat.biz_key, chat.chart_acct_seq_no, chat.chart_acct_cd) " +
+                        "FROM chart_acct_infm chat " +
+                        "WHERE chat.biz_key = CAST(:bizKey AS varchar) " +
+                        "  AND chat.chart_acct_seq_no IN (:seqs)");
+        q.setParameter("bizKey", bizKey);
+        q.setParameter("seqs", ids);
+        java.util.Map<String, String[]> out = new java.util.HashMap<>();
+        for (Object[] row : (java.util.List<Object[]>) q.getResultList()) {
+            if (row[0] != null) {
+                String nm = row[1] != null ? row[1].toString() : null;
+                String lv = row[2] != null ? row[2].toString() : null;
+                out.put(row[0].toString(), new String[] { nm, lv });
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Banking &mdash; resolve the display bank name for ANY bank code
+     * (internal / NAPAS / CITAD) via the legacy {@code wb_get_bank_name_any_code}
+     * function. This is the resolver legacy
+     * {@code IDO.SCDUL_PYMN_SUMR_R002.xml:97} uses for the Scheduled Payment
+     * withdrawal-bank name ({@code OUT_BANK_NM}); the Vendor Payment detail page
+     * routes the master withdrawal bank through here so its "Withdrawal Bank"
+     * matches legacy verbatim (C-2 fix 2026-06-16). Returns {@code null} for an
+     * unknown / blank code so the caller can fall back to the raw code.
+     *
+     * <p>Distinct from {@link #resolveBankNmShort} (Account Inquiry short name)
+     * and {@link #resolveNapasOrCitadBankName} (per-line deposit-bank name) —
+     * those resolvers are unchanged; only the withdrawal-bank master field on
+     * the Vendor Scheduled-Payment detail uses this overload.
+     */
+    public String resolveBankNameAnyCode(String bankCd) {
+        if (bankCd == null || bankCd.isBlank()) {
+            return null;
+        }
+        Query q = em.createNativeQuery(
+                "SELECT wb_get_bank_name_any_code(CAST(?1 AS varchar))");
+        q.setParameter(1, bankCd);
         Object result = q.getSingleResult();
         return result != null ? result.toString() : null;
     }

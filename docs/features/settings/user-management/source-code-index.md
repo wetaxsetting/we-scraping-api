@@ -45,9 +45,10 @@ Package root: `src/main/java/com/kosign/wecms/domain/setting/users/`.
 ### Services
 | File | Responsibility |
 |---|---|
-| `service/UserManagementService.java` | CRUD, admin toggle, self-delete + last-admin guards, BCrypt, phone sanitization, `ACCT_AUTH_INFO` revoke, `requireAdmin()` |
+| `service/UserManagementService.java` | CRUD, admin toggle, self-delete + last-admin guards, legacy SHA-256 password hashing (`WecmsPasswordEncoder`), phone sanitization, `ACCT_AUTH_INFO` revoke, `requireAdmin()` |
 | `service/MenuEntitlementService.java` | Load / delete-then-insert save of `USER_MENU_AUTH_INFM`; race retry |
 | `service/UserImageService.java` | Avatar upload/delete/stream; 2 MB cap; opaque SHA-256 filename; extension allow-list |
+| `service/UserImageResolver.java` · `service/UserImageStorageProperties.java` · `service/UserImageConfig.java` | Avatar storage-path resolution + `@ConfigurationProperties` storage root + bean wiring (support classes for `UserImageService`) |
 | `service/UserManagementAccessPolicy.java` | `@Component("userMgmtAccess")` — `canViewUsers()` (ADMIN or `settings-core-users` grant) |
 
 ### Repositories
@@ -57,7 +58,7 @@ Package root: `src/main/java/com/kosign/wecms/domain/setting/users/`.
 | `domain/auth/repository/UserBusiConnInfmRepository.java` | `findByUserIdAndBizKeyAndDelYn`, `findTenantUsersForManagement` (mgmt grid projection), `countByBizKeyAndDelYn` |
 | `domain/auth/repository/BusiAdmnInfmRepository.java` | `existsByBizKeyAndUserId`, `countByBizKey`, `findAllByBizKey` |
 | `domain/setting/users/repository/UserMenuAuthInfmRepository.java` | `findAllByBizKeyAndUserId`, `existsByBizKeyAndUserIdAndMenuAuthCdAndUseYn`, `deleteAllByBizKeyAndUserId` |
-| `domain/banking/.../AcctAuthInfoRepository.java` | `revokeAllByBizKeyAndUserId` |
+| `domain/setting/bankaccount/repository/AcctAuthInfoRepository.java` | `revokeAllByBizKeyAndUserId` |
 
 ### DTOs (`dto/`)
 `UserCreateRequest`, `UserUpdateRequest`, `MenuEntitlementUpdateRequest` (requests);
@@ -76,10 +77,10 @@ Projections: `TenantUserManagementProjection`, `TenantUserProjection` (on the li
 - `@PreAuthorize` SpEL `@userMgmtAccess.canViewUsers()` / `hasRole('ADMIN')`.
 - `TenantContext.currentIsAdmin()` / `currentBizKey()` / `currentUserId()`.
 - `JwtAuthenticationFilter` populates `ROLE_ADMIN`/`ROLE_USER` from the `authGrCd` claim.
-- `WecmsPasswordEncoder` (BCrypt write, BCrypt/legacy-SHA-256 read).
+- `WecmsPasswordEncoder` (legacy SHA-256 base64 write for JEX coexistence; legacy SHA-256 or BCrypt read; no upgrade).
 
 ### Migration & messages
-- `src/main/resources/db/migration/V126__user_menu_auth_infm.sql`
+- `src/main/resources/db/migration/V131__user_menu_auth_infm.sql`
 - `src/main/resources/messages.properties` (`WBE_USERS_*`, `WBE211x`).
 
 ### Tests
@@ -97,7 +98,7 @@ Detailed in the frontend [component-index](../../../../../wecms-web/docs/feature
 | List | `components/settings/users/UsersListPanel.tsx`, `UserListItem.tsx` |
 | Detail (read-only) | `components/settings/users/UserDetailView.tsx` |
 | Create / Update | `components/settings/users/AddUserInfoForm.tsx`, `EditUserInfoForm.tsx` |
-| Entitlement | `components/settings/users/UserMenuEntitlementPanel.tsx`, `mockMenuEntitlements.ts` |
+| Entitlement | `components/settings/users/UserMenuEntitlementPanel.tsx`, `entitlementTree.ts` |
 | Avatar | `components/settings/users/UserAvatarUpload.tsx`, `UserAvatar.tsx` |
 | API client | `lib/api/userManagement.ts` |
 | Wire types | `lib/types/api.ts` (`ApiUserMgmt*`), `components/settings/users/types.ts` (`SettingsUser`) |

@@ -9,6 +9,7 @@ import com.kosign.wecms.domain.banking.nxisas.dto.SubmitQnaRequest;
 import com.kosign.wecms.domain.banking.nxisas.dto.VerifyCredentialsRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -30,10 +31,22 @@ import java.util.UUID;
  * is a server-issued UUID — the registry binds it to the issuing
  * {@code (bizKey, userId)} pair so it can't be replayed across
  * principals.
+ *
+ * <p><b>Authorization (audit fix, 2026-06-19):</b> the scraping flow is shared
+ * by three legitimate parent screens — the Login Credentials panel and the
+ * Bank Credentials page (verify-before-save + saved-row scrape), the Bank
+ * Account panel (scrape at account registration), and the Corporate Card
+ * add-card flow (verify-before-save). It is therefore gated on
+ * {@code canAccessAny('settings-core-login-credentials',
+ * 'settings-core-bank-account', 'payment-corporate-card-transactions')} — a
+ * user holding ANY of those entitlements may scrape; a user holding none is
+ * denied (403 / {@code WBE1003}); an admin bypasses the per-user grant. Gating
+ * to a single cd would 403 the other two legitimate flows.
  */
 @RestController
 @RequestMapping("/api/v1/banking/scraping")
 @RequiredArgsConstructor
+@PreAuthorize("@menuAuthz.canAccessAny('settings-core-login-credentials', 'settings-core-bank-account', 'payment-corporate-card-transactions')")
 public class BankScrapingController {
 
     private final BankScrapingService service;

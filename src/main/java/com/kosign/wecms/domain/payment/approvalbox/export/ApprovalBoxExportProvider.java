@@ -6,9 +6,11 @@ import com.kosign.wecms.common.export.ExportFetch;
 import com.kosign.wecms.common.export.ExportRowProvider;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxRow;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxService;
+import com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -78,6 +80,9 @@ public class ApprovalBoxExportProvider implements ExportRowProvider {
     );
 
     private final ApprovalBoxService approvalBoxService;
+    /** Shared ERP_TRNS_HSTR writer for the WeCMS&rarr;ERP 'W' export audit
+     *  (legacy {@code downloadProc.jsp:1381}, {@code resl_0001_001} branch). */
+    private final ErpTrnsHistoryWriter erpHistoryWriter;
 
     @Override
     public String screenId() {
@@ -85,6 +90,22 @@ public class ApprovalBoxExportProvider implements ExportRowProvider {
         // and the frontend's `SCREEN_IDS.PAYMENT_APPROVAL_BOX` constant
         // (both are `"approval-box"` — no `payment-` prefix).
         return "approval-box";
+    }
+
+    /** Legacy {@code downloadProc.jsp} writes a WeCMS&rarr;ERP 'W' /
+     *  {@code TRNS_TYPE_CD = "11"} (Approval Result) audit row for every
+     *  Approval Box Excel download. */
+    @Override
+    public boolean auditsErpExport() {
+        return true;
+    }
+
+    /** Persist the WeCMS&rarr;ERP 'W' / {@code "11"} row by copying the
+     *  generated workbook into the ERP-history tenant subtree. Non-blocking —
+     *  the writer is {@code REQUIRES_NEW} + swallow-and-log, matching legacy. */
+    @Override
+    public void recordErpExport(Path workbookFile, String orgFileNm) {
+        erpHistoryWriter.recordExportedFile("11", workbookFile, orgFileNm);
     }
 
     @Override

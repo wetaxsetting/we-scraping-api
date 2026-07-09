@@ -6,7 +6,7 @@
 **Refactor screen ID (proposed):** `addon-operation-status`
 **JEX counterpart:** `aosv_0001_001_r001`
 **Feature spec:** [../../features/addon-service/operation-status-inquiry.md](../../../features/addon-service/operation-status-inquiry.md)
-**Implementation plan:** [../../planning/addon/operation-status-inquiry-plan.md](../../../planning/addon/operation-status-inquiry-plan.md)
+**Implementation plan:** ../../planning/addon/operation-status-inquiry-plan.md _(removed — historical `planning/` folder deleted by project decision)_
 **Status:** Schema is in place (V16); seed in V17. Phase 4 deliverables = View Setting seed migration + (possibly) a column-parity corrective migration after the DEV audit.
 
 JEX is **read-only reference**.
@@ -277,7 +277,7 @@ These are deliberately listed as DB-side questions; cross-link to the planning d
 ## Cross-references
 
 - Feature spec: [../../features/addon-service/operation-status-inquiry.md](../../../features/addon-service/operation-status-inquiry.md)
-- Implementation plan: [../../planning/addon/operation-status-inquiry-plan.md](../../../planning/addon/operation-status-inquiry-plan.md)
+- Implementation plan: ../../planning/addon/operation-status-inquiry-plan.md _(removed — historical `planning/` folder deleted by project decision)_
 - Frontend page design: [../../frontend/addon/operation-status-inquiry-page.md](../../../../../wecms-web/docs/features/addon-service/operation-status-inquiry.md)
 - Backend API: [../../backend/addon/operation-status-inquiry-api.md](../../api-spec/addon/operation-status-inquiry-api.md)
 - Service mapping: [../../migration/service-mapping.md](../../migration/service-mapping.md) → "Add-on Service > Operation Status Inquiry"

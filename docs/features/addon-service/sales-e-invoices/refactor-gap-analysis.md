@@ -61,4 +61,4 @@ None of these block the read/export/scrape feature being considered functionally
 
 ## 4. Open questions
 
-None blocking for the backend read/export/scrape scope. Cross-cutting product decisions (server-side status filter resolution path, accent-fold strategy, per-status totals, product-type gate) are tracked as IR-4 / IR-5 follow-ups in the [planning doc](../../../planning/addon/sales-e-invoices-plan.md). The legacy write flow (`einv_0001_001_u001`) is a separate future scope decision.
+None blocking for the backend read/export/scrape scope. Cross-cutting product decisions (server-side status filter resolution path, accent-fold strategy, per-status totals, product-type gate) are tracked as IR-4 / IR-5 follow-ups in the planning doc _(removed — historical `planning/` folder deleted by project decision)_. The legacy write flow (`einv_0001_001_u001`) is a separate future scope decision.

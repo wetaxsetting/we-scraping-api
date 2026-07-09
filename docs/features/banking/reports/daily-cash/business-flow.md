@@ -1,5 +1,13 @@
 # Daily Cash — Business Flow (Legacy JEX)
 
+> **⚠️ Data-source corrected 2026-06-13 (noted 2026-06-23).** The live read path calls the legacy DB
+> functions **`rept_0900_001_rec1..rec4`** directly via `DailyCashReportFunctionRepository`
+> (`DailyCashReportService.java:24-75` — the documented set-returning exception, same stance as Cash Flow
+> and Daily Financial). The prior **Java live-recompute** (`DailyCashRecomputeRepository` /
+> `CurrencyAccumulator`) is **bypassed / no longer wired** and retained only as a cleanup candidate. Any
+> "live recompute over `ACCT_MSTR` + `ACCT_TRNS_HSTR`" wording below is the **superseded pre-pivot** record
+> (audit history preserved).
+
 End-to-end legacy behavior of the Daily Cash page (`rept_0009_001`). Source-of-truth files cited
 inline as `path:line`.
 

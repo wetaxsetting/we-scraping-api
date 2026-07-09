@@ -51,14 +51,15 @@ cash_0001_001.act
 | File | Role |
 |---|---|
 | [domain/banking/controller/CashFlowReportController.java](../../../../../src/main/java/com/kosign/wecms/domain/banking/controller/CashFlowReportController.java) | `GET /api/v1/banking/reports/cash-flow-report` + `POST .../export`; parses `bankFilters` JSON; clamps `quarter` |
-| [domain/banking/service/CashFlowReportService.java](../../../../../src/main/java/com/kosign/wecms/domain/banking/service/CashFlowReportService.java) | Orchestrator + `validate`; reimplements `get_cashflow_report` |
-| `domain/banking/service/cashflow/PaymentDataAggregator.java` | 4-source UNION + approval gate + bank filter + FX (`applyFilters` / `applyFxOnly`) — **no quarter param** |
-| `domain/banking/service/cashflow/ApprovalStatusResolver.java` | `wb_get_appr_stts` replacement (`appr_type_cd='01'`) |
-| `domain/banking/service/cashflow/FxConverter.java` | per-currency single-round HALF_UP conversion |
-| `domain/banking/service/cashflow/ChartOfAccountsHierarchy.java` | L1 roots + active L2/L3 sets (replaces `wb_get_chart_acct_level_text`) |
-| `domain/banking/service/cashflow/BalanceCalculator.java` | Opening / End / Sales Profit + `INVESTMENT_BALANCE_CONTRIBUTING_CODES` |
-| `domain/banking/service/cashflow/CashFlowRowAssembler.java` | ordered row stream; verbatim `row_type` / `group_cd` / display strings |
-| `domain/banking/service/cashflow/MonthlyAmountAccumulator.java` · `PaymentDataRow.java` | 12-month accumulator · normalized source-row record |
+| [domain/banking/service/CashFlowReportService.java](../../../../../src/main/java/com/kosign/wecms/domain/banking/service/CashFlowReportService.java) | Orchestrator + `validate`; **live path delegates to `CashFlowReportRepository` → `get_cashflow_report` directly (2026-06-13)** |
+| `domain/banking/repository/CashFlowReportRepository.java` | **★ live read source (2026-06-13)** — `search(...)` calls `get_cashflow_report` directly (`CashFlowReportRepository.java:67`); DB helpers `wb_get_chart_acct_level` + `wb_get_chart_acct_level_text` added to the refactor DB |
+| `domain/banking/service/cashflow/PaymentDataAggregator.java` | **retained but off the active path (2026-06-13)** — 4-source UNION + approval gate + bank filter + FX (`applyFilters` / `applyFxOnly`) — **no quarter param** |
+| `domain/banking/service/cashflow/ApprovalStatusResolver.java` | **retained, off active path** — `wb_get_appr_stts` replacement (`appr_type_cd='01'`) |
+| `domain/banking/service/cashflow/FxConverter.java` | **retained, off active path** — per-currency single-round HALF_UP conversion |
+| `domain/banking/service/cashflow/ChartOfAccountsHierarchy.java` | **retained, off active path** — L1 roots + active L2/L3 sets (replaces `wb_get_chart_acct_level_text`) |
+| `domain/banking/service/cashflow/BalanceCalculator.java` | **retained, off active path** — Opening / End / Sales Profit + `INVESTMENT_BALANCE_CONTRIBUTING_CODES` |
+| `domain/banking/service/cashflow/CashFlowRowAssembler.java` | **retained, off active path** — ordered row stream; verbatim `row_type` / `group_cd` / display strings |
+| `domain/banking/service/cashflow/MonthlyAmountAccumulator.java` · `PaymentDataRow.java` | **retained, off active path** — 12-month accumulator · normalized source-row record |
 | [domain/banking/dto/CashFlowReportResponse.java](../../../../../src/main/java/com/kosign/wecms/domain/banking/dto/CashFlowReportResponse.java) | `CashFlowRow` + `MonthlyAmounts` records |
 | `domain/banking/dto/BankFilter.java` | `{bankCd, accountNo}` filter record |
 | [domain/banking/export/CashFlowExcelWriter.java](../../../../../src/main/java/com/kosign/wecms/domain/banking/export/CashFlowExcelWriter.java) | dedicated POI XSSF writer (live `/export` path) |
@@ -97,7 +98,7 @@ Full frontend detail: [wecms-web/docs/features/banking/reports/cash-flow/compone
 | File | Relation |
 |---|---|
 | [README.md](README.md) … [refactor-gap-analysis.md](refactor-gap-analysis.md) | This package |
-| [`../cash-flow.md`](../cash-flow.md) | one-page refactor pointer (retained) |
+| [`../cash-flow.md`](legacy-spec.md) | one-page refactor pointer (retained) |
 | [`docs/features/cash-flow/parity-audit/gap-report.md`](../../../../../../docs/features/cash-flow/parity-audit/gap-report.md) + [final-confirmation.md](../../../../../../docs/features/cash-flow/parity-audit/final-confirmation.md) | **primary parity audit** (kept in place, cross-linked) |
 | [`docs/features/cash-flow/`](../../../../../../docs/features/cash-flow/) | migrated source package (deprecated pointer) |
 | [`docs/refactor-wecms/features/banking/cash-flow-report.md`](../../../../../../docs/refactor-wecms/features/banking/cash-flow-report.md) | deprecated legacy doc tree copy (read-only) |

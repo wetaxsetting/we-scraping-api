@@ -120,6 +120,8 @@ public class EInvoiceController {
             String toDt,
             @RequestParam(value = "keyword", required = false)
             String keyword,
+            @RequestParam(value = "status", required = false)
+            String status,
             @RequestParam(value = "page", required = false, defaultValue = "0")
             int page,
             @RequestParam(value = "size", required = false, defaultValue = "0")
@@ -129,7 +131,7 @@ public class EInvoiceController {
             @RequestParam(value = "sortDirection", required = false)
             String sortDirection) {
         return ApiResponse.ok(service.list(
-                type, fromDt, toDt, keyword, page, size, sortField, sortDirection));
+                type, fromDt, toDt, keyword, status, page, size, sortField, sortDirection));
     }
 
     /**

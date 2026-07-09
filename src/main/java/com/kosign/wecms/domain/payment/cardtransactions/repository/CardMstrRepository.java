@@ -76,6 +76,30 @@ public interface CardMstrRepository extends JpaRepository<CardMstr, CardMstrId> 
             """)
     List<CardMstr> findActiveCardsForSync(@Param("bizKey") String bizKey);
 
+    /** Stamp the last-successful-scrape timestamp after a CARD_USING
+     *  pull returns rows — mirrors legacy
+     *  {@code fnsh_0001_001_c001_act.jsp:1413/1422}
+     *  ({@code cardMstr.setTrnLstSucDtm + patch}) so the next Auto-mode
+     *  sync defaults to "from last success". Used by
+     *  {@code CardTransactionScrapeService} (session flow) which holds
+     *  card keys, not managed entities, across challenge resumes. */
+    @Modifying
+    @Query("""
+            UPDATE CardMstr c
+               SET c.trnLstSucDtm = :dtm,
+                   c.modId        = :modId,
+                   c.modDtm       = :modDtm
+             WHERE c.bizKey = :bizKey
+               AND c.bankCd = :bankCd
+               AND c.cardNo = :cardNo
+            """)
+    int patchTrnLstSucDtm(@Param("bizKey") String bizKey,
+                          @Param("bankCd") String bankCd,
+                          @Param("cardNo") String cardNo,
+                          @Param("dtm")    String dtm,
+                          @Param("modId")  String modId,
+                          @Param("modDtm") String modDtm);
+
     /* ----------------------------------------------------------------
      *  Card Management Setting modal (legacy card_0001_003)
      * ---------------------------------------------------------------- */

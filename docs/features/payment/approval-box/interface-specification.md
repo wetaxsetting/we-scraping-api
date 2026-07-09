@@ -14,6 +14,15 @@ Wire JSON is lowercase snake_case (global Jackson `SNAKE_CASE`). Every endpoint 
 | 7 | POST | `/api/v1/payment/approval-box/bulk-approve` | body `ApprovalBoxBulkApproveRequest` | `ApprovalBoxBulkApproveResponse` |
 | 8 | POST | `/api/v1/payment/approval-box/export` | body `ExcelExportRequest` | XLSX stream (no envelope) |
 
+**Shared Approval-Details-popup support endpoints** (same controller; consumed by the common popup opened from a header notification, not by the main list page):
+
+| # | Method | URI | Request | Response data |
+|---|---|---|---|---|
+| 9 | GET | `/api/v1/payment/approval-box/detail` | query `appr_seq_no` OR `post_seq_no` (+ optional `bltb_cd`) | `ApprovalBoxRow` (`WBE_APPROVAL_DETAIL_NOT_FOUND` when missing/withdrawn/cross-tenant) |
+| 10 | GET | `/api/v1/payment/approval-box/{apprSeqNo}/transactions` | path | `ApprovalTransactionRow[]` (per-line txns for the four scheduled kinds; card/overseas → `[]`) |
+| 11 | GET | `/api/v1/payment/approval-box/{apprSeqNo}/attachments` | path | `ApprovalAttachmentRow[]` (`EXPT_RESOL_FILE` ∪ `EXPT_RESOL_PAY_EVID_FILE`) |
+| 12 | GET | `/api/v1/payment/approval-box/{apprSeqNo}/attachments/{fileId}` | path + optional `fileType` (`EXPT_RESOL_FILE` default / `EXPT_RESOL_PAY_EVID_FILE`) | binary stream (`WBE2069` when missing) |
+
 ---
 
 ## 1. List — `GET /api/v1/payment/approval-box`
@@ -62,6 +71,12 @@ Wire JSON is lowercase snake_case (global Jackson `SNAKE_CASE`). Every endpoint 
   ],
   "total_count": 42,
   "tab_counts": { "pending": 12, "in_progress": 8, "approved": 18, "rejected": 4 },
+  "footer_totals": {
+    "total_document_count": 42,
+    "total_usd_amount": 20.00,
+    "total_vnd_amount": 3600000,
+    "total_krw_amount": 0
+  },
   "page_number": 0,
   "page_size": 15,
   "total_pages": 3
@@ -72,6 +87,9 @@ Wire JSON is lowercase snake_case (global Jackson `SNAKE_CASE`). Every endpoint 
 - `appr_stts` ∈ `P`/`I`/`C`/`R` (derived from `APPR_TYPE_CD`).
 - `apprvr_stts` per approver ∈ `P`/`A`/`R`/`W`/`S`.
 - `tab_counts` ignore the selected `appr_type_cd` (all four chips reflect the same date/keyword/visibility scope).
+- `footer_totals` (`ApprovalBoxFooterTotals`) — the on-screen footer bar. **TAB-UNFILTERED, full result set** (legacy `resl_0001_001` parity), distinct from `total_count` (tab-filtered, drives pagination):
+  - `total_document_count` — tab-unfiltered row count (= sum of the four `tab_counts`).
+  - `total_usd_amount` / `total_vnd_amount` / `total_krw_amount` — per-currency amount sums (JSON numbers; Jackson `BigDecimal`). Each row's amount is bucketed by its resolved `CCY_CD`; card rows (`appr_dv='33'`) use `SUM(CARD_TRNS_HSTR.TRSC_AMT)`. Only USD / VND / KRW are surfaced (the three the footer renders); other currencies are not in the buckets, matching legacy.
 
 ---
 

@@ -33,6 +33,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -59,6 +60,7 @@ public class BankScrapingService {
     private final NxisasGatewayClient gateway;
     private final NxisasSessionRegistry registry;
     private final NxisasBankConfig bankConfig;
+    private final NxisasAcctTypeMappingRepository acctTypeMappingRepo;
 
     public ScrapeSessionResponse start(StartScrapeRequest req) {
         DecryptedCredential cred = credentialService.loadForScraping(req.credentialSeqNo());
@@ -118,6 +120,22 @@ public class BankScrapingService {
      *  dispatches when the bank accepts the login outright (no
      *  challenge): SETUP → ACCT_LIST, CARD_REGISTER → CARD_INFO,
      *  SYNC → owned by BankTransactionSyncService. */
+    /** Map the scrape session mode to the shared NXISAS debug flow label
+     *  (see {@link NxisasApiLog}): SETUP → BANK_SETUP (Login Credentials
+     *  verify), CARD_REGISTER → CARD_MANAGEMENT_SETTING (Card Management
+     *  add-card), SYNC → BANK_SYNC (owned by BankTransactionSyncService,
+     *  not reached here). */
+    private static String flowForMode(NxisasScrapeSession session) {
+        return switch (session.getMode()) {
+            case CARD_REGISTER -> NxisasApiLog.FLOW_CARD_MANAGEMENT_SETTING;
+            case SYNC -> NxisasApiLog.FLOW_BANK_SYNC;
+            case SETUP -> NxisasApiLog.FLOW_BANK_SETUP;
+            // CARD_SYNC sessions are owned by CardTransactionScrapeService
+            // and never reach this service; map it for switch-exhaustiveness.
+            case CARD_SYNC -> NxisasApiLog.FLOW_CARD_UPDATE_TRANSACTIONS;
+        };
+    }
+
     private ScrapeSessionResponse runLogin(String bankCd, String username, String password,
                                            String corporateId, String loginType,
                                            java.math.BigDecimal nxisasGbSeqNo,
@@ -141,7 +159,7 @@ public class BankScrapingService {
         String bankModule = cfg.module();
 
         NxisasScrapeSession session = new NxisasScrapeSession(
-                trSeq, bizKey, userId, credentialSeqNo, bankModule);
+                trSeq, bizKey, userId, credentialSeqNo, bankModule, bankCd);
         session.setBankCategory(cfg.category());
         session.setMode(mode);
 
@@ -153,11 +171,11 @@ public class BankScrapingService {
         // bank-adapter level. Legacy comm_0218_nxisas.ts:512 hardcodes
         // "VNM" for the same reason.
         loginInput.setCountryCode("VNM");
-        // FNSH_0100_001:210 hardcodes "ID" unconditionally — mirror that
-        // default so the field is never omitted from the wire envelope.
-        // A credential row may override with a bank-specific value.
-        loginInput.setLoginType(
-                (loginType != null && !loginType.isBlank()) ? loginType : "ID");
+        // loginType default — an explicit value wins; when blank, ABBANK
+        // sends "" while every other bank defaults to "ID". Centralised in
+        // NxisasBankConfig so this path and BankTransactionSyncService stay
+        // in lockstep (legacy nxisas_fnsh_r001_act.jsp:148-157).
+        loginInput.setLoginType(NxisasBankConfig.defaultLoginType(bankModule, loginType));
         // CERT_INFO_DETL_CON2 in legacy maps to loginPWD1 for banks that
         // use a second password field (FNSH_0100_001:214-216). The same
         // column also carries Agribank's corporate ID — send it on both
@@ -175,6 +193,19 @@ public class BankScrapingService {
             session.setNxisasGbSeqNo(nxisasGbSeqNo.intValue());
         }
 
+        NxisasApiLog.event(session.getSessionId().toString(), flowForMode(session), "LOGIN_START",
+                "bankCd", bankCd, "module", bankModule, "class", session.getBankCategory());
+        // Card Management add-card scrapes only Shinhan + Woori cards —
+        // surface an out-of-scope bank picked in the add-card flow.
+        if (session.getMode() == NxisasScrapeSession.Mode.CARD_REGISTER) {
+            boolean cardBankSupported = NxisasCardBanks.isSupported(bankCd);
+            NxisasApiLog.event(session.getSessionId().toString(), flowForMode(session), "CARD_BANK_SCOPE",
+                    "bankCd", bankCd, "cardBank", NxisasCardBanks.label(bankCd),
+                    "cardBankSupported", cardBankSupported);
+            if (!cardBankSupported) {
+                log.warn("NXISAS card-register on UNSUPPORTED card bank bankCd={} (only Shinhan/Woori supported)", bankCd);
+            }
+        }
         NxisasApiOut<NxisasLoginJobResult> out = gateway.login(bankModule, session.getBankCategory(), trSeq, loginInput);
         NxisasLoginJobResult result = gateway.firstResult(out);
 
@@ -202,6 +233,8 @@ public class BankScrapingService {
             }
             log.info("NXISAS LOGIN rejected by bank adapter [bank={}, code={}, msg={}]",
                     bankModule, bankErrCode, bankErrMsg);
+            NxisasApiLog.event(session.getSessionId().toString(), flowForMode(session), "ERROR",
+                    "stage", "LOGIN", "scope", "BANK", "bankCd", bankCd, "errorCode", bankErrCode);
             return ScrapeSessionResponse.error(session.getSessionId(), bankErrCode, bankErrMsg);
         }
 
@@ -211,6 +244,8 @@ public class BankScrapingService {
             session.setChallengeKind(kind);
             session.setChallengePrompt(result == null ? null : result.challengePrompt());
             registry.register(session);
+            NxisasApiLog.event(session.getSessionId().toString(), flowForMode(session),
+                    "CHALLENGE_REQUIRED", "type", kind, "bankCd", bankCd);
             if (kind == ScrapeChallengeKind.QNA) {
                 List<QnaQuestion> questions = qnaQuestionsFrom(result);
                 return ScrapeSessionResponse.qnaChallenge(
@@ -235,6 +270,8 @@ public class BankScrapingService {
 
         // No challenge: gateway accepted the login outright. Proceed
         // to the per-mode post-login job (ACCT_LIST / CARD_INFO).
+        NxisasApiLog.event(session.getSessionId().toString(), flowForMode(session), "LOGIN_SUCCESS",
+                "bankCd", bankCd, "sasSessionId", NxisasMask.token(session.getSasSessionID()));
         return proceedAfterLogin(session);
     }
 
@@ -251,6 +288,8 @@ public class BankScrapingService {
             throw new BusinessException("WBE9001");
         }
 
+        NxisasApiLog.event(session.getSessionId().toString(), flowForMode(session),
+                "CHALLENGE_SUBMIT", "type", "OTP");
         NxisasOTPJobInput otpInput = new NxisasOTPJobInput();
         otpInput.setRes(req.value());
 
@@ -304,6 +343,8 @@ public class BankScrapingService {
         if (session.getChallengeKind() != ScrapeChallengeKind.QNA) {
             throw new BusinessException("WBE9001");
         }
+        NxisasApiLog.event(session.getSessionId().toString(), flowForMode(session),
+                "CHALLENGE_SUBMIT", "type", "QNA");
 
         NxisasQnaJobInput.QnaResponse res = new NxisasQnaJobInput.QnaResponse();
         res.setQuestion(req.question());
@@ -390,6 +431,8 @@ public class BankScrapingService {
         if (session.getChallengeKind() != ScrapeChallengeKind.CAPTCHA) {
             throw new BusinessException("WBE9001");
         }
+        NxisasApiLog.event(session.getSessionId().toString(), flowForMode(session),
+                "CHALLENGE_SUBMIT", "type", "CAPTCHA");
 
         NxisasCaptchaJobInput captchaInput = new NxisasCaptchaJobInput();
         captchaInput.setRes(req.value());
@@ -550,11 +593,21 @@ public class BankScrapingService {
             return ScrapeSessionResponse.error(session.getSessionId(), resultCd, resultMsg);
         }
 
+        // Map each bank's raw acct-type label → legacy ACCT_TYPE_CD via
+        // NXISAS_ACCT_TYPE_MAPPING (legacy fnsh_0101_001_r001_act.jsp:164-176
+        // parity). Loaded once per scrape; degrades to "no mapping" when the
+        // reference table isn't seeded (acctTypeCd stays null → picker leaves
+        // Account Type blank). The raw acctType is still carried for reference.
+        Map<String, Map<String, String>> acctTypeMappings =
+                acctTypeMappingRepo.loadBankMappings(session.getBankCd());
         List<ScrapedAccount> accounts = result == null || result.getAcctList() == null
                 ? List.of()
                 : result.getAcctList().stream().map(e -> new ScrapedAccount(
                         e.getAcctName(), e.getAcctNum(), e.getAcctType(), e.getCurrency(),
-                        e.getBalance(), e.getAvailableBal(), e.getBranchName(), e.getOpenDate()))
+                        e.getBalance(), e.getAvailableBal(), e.getBranchName(), e.getOpenDate(),
+                        e.getMaturityDate(),
+                        NxisasAcctTypeMappingRepository.resolve(
+                                acctTypeMappings, e.getCurrency(), e.getAcctType())))
                 .toList();
 
         session.setStatus(NxisasScrapeSession.Status.COMPLETED);
@@ -584,11 +637,10 @@ public class BankScrapingService {
      *  flows use them; only an explicit non-success code triggers ERROR.
      *  Null / blank → treat as success (no envelope info to act on). */
     private static boolean isGatewayError(String resultCd) {
-        if (resultCd == null || resultCd.isBlank()) return false;
-        if ("00000000".equals(resultCd)) return false;
-        if ("0000".equalsIgnoreCase(resultCd)) return false;
-        if ("OK".equalsIgnoreCase(resultCd)) return false;
-        return true;
+        // Shared policy — see NxisasResultCodes (also consumed by
+        // BankTransactionSyncService). Behaviour is identical to the former
+        // inline implementation; the logic now lives in one place.
+        return NxisasResultCodes.isGatewayError(resultCd);
     }
 
     private static void storeContinuation(NxisasScrapeSession session, GatewayContinuation cont) {

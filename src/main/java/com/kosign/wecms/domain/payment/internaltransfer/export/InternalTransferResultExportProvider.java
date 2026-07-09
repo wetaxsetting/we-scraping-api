@@ -34,6 +34,11 @@ public class InternalTransferResultExportProvider extends PaymentResultExportPro
     }
 
     @Override
+    protected String erpResultTrnsTypeCd() {
+        return "17"; // legacy ErpTypeCd.INTERNAL_TRANSFER_RESULT
+    }
+
+    @Override
     protected TransferResultListResponse loadList(
             String fromDate, String toDate, String srchWd, String trnfStts,
             String sortField, String sortDirection,

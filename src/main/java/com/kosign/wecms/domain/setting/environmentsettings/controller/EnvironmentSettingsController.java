@@ -7,6 +7,7 @@ import com.kosign.wecms.domain.setting.environmentsettings.service.EnvironmentSe
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Pattern;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -48,6 +49,14 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/settings/environment-settings")
 @RequiredArgsConstructor
 @Validated
+// Authorization (audit fix, 2026-06-19): this generic tenant-flag store is
+// consumed by two settings panels — Preferences (codes 00074 / 00077) and Firm
+// Banking Settings (codes 00078 / 00079). The single GET/PUT pair serves every
+// code, so it cannot be split per-panel by HTTP method; gate on either parent
+// entitlement. A user holding neither is denied (403 / WBE1003); an admin
+// bypasses the per-user grant. Both are product-invariant settings-* codes
+// (the product-tree gate does not apply).
+@PreAuthorize("@menuAuthz.canAccessAny('settings-core-preference', 'settings-firm-banking-settings')")
 public class EnvironmentSettingsController {
 
     /** Five-char zero-padded code (e.g. {@code "00078"}). Legacy

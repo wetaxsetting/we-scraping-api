@@ -1,11 +1,10 @@
 # Settings > Approval Line — Backend Feature (Refactor)
 
-**Status:** ✅ Implemented full-stack — backend (controller + service + 2 repositories + 2 entities + 6 DTOs + V90–V92 schema, with a 13-case unit test) and frontend wired (no mock fallback); legacy parity verified; AL-GAP-01 (drag-and-drop reorder) / AL-GAP-02 (test coverage) / AL-GAP-03 (auth gate) all **RESOLVED**; SIT/UAT verified.
+**Status:** ✅ Implemented full-stack — backend (controller + service + 2 repositories + 2 entities + 6 DTOs + V6/V7 schema + V140 `wb_get_next_val` branch, with a 12-case unit test) and frontend wired (no mock fallback); legacy parity verified; AL-GAP-01 (drag-and-drop reorder) / AL-GAP-02 (test coverage) / AL-GAP-03 (auth gate) all **RESOLVED**; SIT/UAT verified.
 **Module / menu:** Settings → **Approval Line** (Settings modal panel — **no standalone route**)
 **Refactor slug:** `approval-line` (matches the JEX-traceability, backend, and frontend counterparts)
 **Wire base path:** `/api/v1/settings/approval-line` (list · detail · create · update · delete)
 **Menu permission slug:** `settings-core-approval-line`
-**Legacy JEX counterpart:** WSVC family `comm_0222_001` (+ `_r001` / `_d001`), `comm_0222_002` (+ `_c001`), `comm_0222_003` (+ `_r001` / `_u001`). Tables `APPR_LINE_INFM` + `APPR_LINE_INFM_DETL`.
 
 > This folder is the **primary documentation home** for Approval Line on the backend.
 > It consolidates and indexes material that previously lived in a single flat file and in the
@@ -46,12 +45,12 @@ on **both** Create and Update ([functional-specification.md §Display-order rule
 | Endpoints | 5: GET (list) · GET `/{appr_line_no}` (detail) · POST (create) · PUT `/{appr_line_no}` (update) · DELETE `/{appr_line_no}` (delete) |
 | Authority | `@PreAuthorize("@menuAuthz.canAccess('settings-core-approval-line')")` — **class-level** on the controller (F-3 menu-auth rollout, 2026-06-06). No admin-only gate; any tenant user with the menu grant. See the OQ note below. |
 | Tenant scope | `TenantContext.currentBizKey()` — `bizKey` is part of both composite PKs; never from a request param |
-| Tables | `APPR_LINE_INFM` (7 cols) + `APPR_LINE_INFM_DETL` (11 cols) — V90; no FK constraint (DEV parity), cascade is service-layer |
-| Approver cap | **5** — `ApprovalLineConstants.MAX_APPROVERS=5` + bean validation `@Size(max=5)` + service guard → `WBE_APPROVAL_LINE_TOO_MANY_APPROVERS` (legacy `WBW1164` parity) |
+| Tables | `APPR_LINE_INFM` (7 cols) + `APPR_LINE_INFM_DETL` (11 cols) — V6 / V7; no FK constraint (DEV parity), cascade is service-layer |
+| Approver cap | **5** — `ApprovalLineConstants.MAX_APPROVERS=5` + bean validation `@Size(max=5)` + service guard → `WBE_APPROVAL_LINE_TOO_MANY_APPROVERS` (legacy `WBW1164` parity); also pinned at the DB level by `APPRVR_DISP_ORD NUMERIC(1,0)` |
 | Diff-sync (Update) | UPDATE rows in `existing ∩ incoming`, INSERT net-new, DELETE net-removed — one `@Transactional` (mirrors legacy `comm_0222_003_u001_act.jsp:104-194`) |
 | Display order | `APPRVR_DISP_ORD` re-numbered `1..N` from request-array position on **Create AND Update** (stricter than legacy Create which trusts client order — OQ-4) |
 | Tenant-link guard | every `apprvr_id` verified against `USER_BUSI_CONN_INFM` (active link) → `WBE_APPROVAL_LINE_APPROVER_NOT_IN_TENANT` (refactor addition; legacy has no such guard) |
-| PK generation | `wb_get_next_val('appr_line_infm','appr_line_no', biz_key)` → per-tenant `MAX+1` (V91 branch) |
+| PK generation | `wb_get_next_val('appr_line_infm','appr_line_no', biz_key)` → per-tenant `MAX+1` (V140 branch) |
 | Pagination | **none** — load-all (legacy `comm_0222_001_r001` disables pagination; `total_count = rows.size()`) |
 | Audit | **none** — no `AUDIT_LOGS_INFM` write (legacy parity: the five `comm_0222_*` JSPs write no audit rows either; OQ-6 deliberate divergence from `firm-banking-settings` / `contacts`) |
 | View Setting | **not adopted** — legacy panel has no toolbar list-icon button (same precedent as `erp-transaction-history`) |
@@ -72,10 +71,10 @@ com.kosign.wecms.domain.setting.approvalline
 │   ├── ApprovalLineRepository.java              findByBizKey(+Sort) · findBy…NmContainingIgnoreCase
 │   └── ApprovalLineApproverRepository.java       ordered detail/batch loads · bulk delete-by-FK
 ├── entity/
-│   ├── ApprovalLine.java                         @Table(APPR_LINE_INFM), 7 cols, @IdClass
+│   ├── ApprovalLine.java                         @Table(APPR_LINE_INFM), 7 cols, @IdClass; APPR_LINE_NO maps Long via @JdbcTypeCode(NUMERIC) over NUMERIC(15,0)
 │   ├── ApprovalLineId.java                        composite PK { bizKey, apprLineNo }
-│   ├── ApprovalLineApprover.java                  @Table(APPR_LINE_INFM_DETL), 11 cols, @IdClass
-│   └── ApprovalLineApproverId.java                composite PK { bizKey, apprLineNo, apprvrId }
+│   ├── ApprLineInfmDetl.java                      @Table(APPR_LINE_INFM_DETL), 11 cols, @IdClass; APPR_LINE_NO Long + APPRVR_DISP_ORD Integer, both @JdbcTypeCode(NUMERIC)
+│   └── ApprLineInfmDetlId.java                    composite PK { bizKey, apprLineNo, apprvrId }
 ├── dto/
 │   ├── ApprovalLineListResponse.java · ApprovalLineRow.java · ApprovalLineApproverRow.java
 │   ├── ApprovalLineCreateRequest.java · ApprovalLineUpdateRequest.java · ApprovalLineApproverInput.java
@@ -83,11 +82,17 @@ com.kosign.wecms.domain.setting.approvalline
 └── ApprovalLineConstants.java                     SLUG = "approval-line"; MAX_APPROVERS = 5
 ```
 
-> **Class-naming note.** The refactor entity classes are `ApprovalLine` / `ApprovalLineApprover`
-> (slug-derived), **not** the legacy `ApprLineInfm` / `ApprLineInfmDetl` names — only the `@Table` /
-> `@Column` annotations carry the legacy `UPPER_SNAKE` identifiers, per the API naming rule.
+> **Class-naming note.** The master entity is the slug-derived `ApprovalLine` (not the legacy
+> `ApprLineInfm`); the detail entity keeps the legacy name `ApprLineInfmDetl` / `ApprLineInfmDetlId`.
+> The `@Table` / `@Column` annotations carry the legacy `UPPER_SNAKE` identifiers, per the API naming rule.
 
-Flyway: [V90](../../../../src/main/resources/db/migration/V90__approval_line_schema.sql) two-table schema · [V91](../../../../src/main/resources/db/migration/V91__wb_get_next_val_appr_line_infm.sql) `wb_get_next_val` branch · [V92](../../../../src/main/resources/db/migration/V92__approval_line_numeric_to_int_types.sql) `NUMERIC → BIGINT/INTEGER` hotfix.
+Flyway: [V6](../../../../src/main/resources/db/migration/V6__appr_line_infm.sql) `APPR_LINE_INFM` schema · [V7](../../../../src/main/resources/db/migration/V7__appr_line_infm_detl.sql) `APPR_LINE_INFM_DETL` schema · `wb_get_next_val('appr_line_infm','appr_line_no',…)` branch lives in the consolidated [V140](../../../../src/main/resources/db/migration/V140__wb_get_next_val.sql) function. No `NUMERIC → BIGINT/INTEGER` hotfix exists — the columns stay `NUMERIC(15,0)` / `NUMERIC(1,0)` and the entities map onto them via `@JdbcTypeCode(SqlTypes.NUMERIC)`.
+
+---
+
+## Legacy & Migration Traceability
+
+**Legacy JEX counterpart:** WSVC family `comm_0222_001` (+ `_r001` / `_d001`), `comm_0222_002` (+ `_c001`), `comm_0222_003` (+ `_r001` / `_u001`). Tables `APPR_LINE_INFM` + `APPR_LINE_INFM_DETL`.
 
 ---
 
@@ -115,7 +120,7 @@ entry point; deep detail lives here:
   [../approval-line.md](../approval-line.md) — the original ~390-line spec, kept as the deep design narrative.
 - **Business rules / REST design:** [references/business-rules/approval-line.md](../../../references/business-rules/approval-line.md)
 - **JEX → Spring mapping:** [references/migration/approval-line.md](../../../references/migration/approval-line.md) · [jex-analysis](../../../references/migration/jex-analysis/approval-line-add-flow-analysis.md)
-- **Phase plan (archived):** [archive/planning/phase-1/approval-line-plan.md](../../../archive/planning/phase-1/approval-line-plan.md)
+- **Phase plan (archived):** archive/planning/phase-1/approval-line-plan.md _(removed — historical `archive/` folder deleted by project decision)_
 - **JEX legacy spec set (read-only):** [docs/jex/features/approval-line/](../../../../../docs/jex/features/approval-line/README.md) — incl. [refactor-audit.md](../../../../../docs/jex/features/approval-line/refactor-audit.md) (GO status + AL-GAP resolutions)
 - **JEX approval business rules (workflow, has stale WSVC ids):** [docs/jex/business-rules/approval.md](../../../../../docs/jex/business-rules/approval.md)
 - **Frontend feature folder:** [wecms-web/docs/features/settings/approval-line/](../../../../../wecms-web/docs/features/settings/approval-line/README.md)
@@ -128,13 +133,18 @@ entry point; deep detail lives here:
 
 ---
 
-## Open item — authorization annotation vs. its Javadoc / CLAUDE.md note
+## Note — authorization annotation
 
 The controller carries `@PreAuthorize("@menuAuthz.canAccess('settings-core-approval-line')")` at the
 class level ([ApprovalLineController.java](../../../../src/main/java/com/kosign/wecms/domain/setting/approvalline/controller/ApprovalLineController.java)).
 This is the **live, authoritative** gate and matches the F-3 server-side menu-authorization rollout
-(2026-06-06; see `wecms-api/CLAUDE.md` Authority model). Both the method Javadoc ("OQ-5 no
-`@PreAuthorize`") and the `wecms-api/CLAUDE.md` Feature-Status row ("OQ-5 no `@PreAuthorize` admin
-gate") still read as if there is no annotation — those notes are **stale** and predate F-3.
-Documentation here reflects the real annotation; the stale comments are logged as a non-blocking
-cleanup in [refactor-gap-analysis.md](refactor-gap-analysis.md#authorization-parity).
+(2026-06-06; see `wecms-api/CLAUDE.md` Authority model). The controller's own class-level Javadoc now
+fully documents this gate (it no longer reads "OQ-5 no `@PreAuthorize`"). The only stale note that
+remains is the `wecms-api/CLAUDE.md` Feature-Status row ("OQ-5 no `@PreAuthorize` admin gate"); see
+[refactor-gap-analysis.md](refactor-gap-analysis.md#authorization-parity).
+
+The live Javadoc also notes the gate is **stricter than live JEX** for normal users: legacy
+`NORM_USER_ONLY_YN=Y` admitted any authenticated normal user, whereas the refactor requires a
+`USE_YN='Y'` grant for `settings-core-approval-line` in `USER_MENU_AUTH_INFM` (an ADMIN still passes
+unconditionally). This is the intended uniform Settings-module hardening — see
+[refactor-gap-analysis.md](refactor-gap-analysis.md#authorization-parity).

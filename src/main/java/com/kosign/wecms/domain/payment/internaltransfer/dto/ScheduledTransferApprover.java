@@ -15,9 +15,15 @@ package com.kosign.wecms.domain.payment.internaltransfer.dto;
  *                   {@code W}=Waiting, {@code S}=Blocked/Skipped.
  * @param apprDtm    approval datetime ({@code yyyyMMddHHmmss}) — {@code null}
  *                   until the approver acts (the popup renders "-").
+ * @param userImgUrl shared, non-admin avatar URL
+ *                   {@code /api/v1/users/{apprvrId}/image}, or {@code null}
+ *                   when the approver has no stored image. Resolved via
+ *                   {@code UserImageUrlResolver}; the frontend's shared
+ *                   {@code <UserAvatar>} renders the photo (else initials).
  */
 public record ScheduledTransferApprover(
         String apprvrNm,
         String apprvrStts,
-        String apprDtm) {
+        String apprDtm,
+        String userImgUrl) {
 }

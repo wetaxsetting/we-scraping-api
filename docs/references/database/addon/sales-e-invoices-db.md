@@ -8,7 +8,7 @@
 
 JEX is **read-only reference**. Local schema changes go through Flyway only — `spring.jpa.hibernate.ddl-auto = validate`, never `update` / `create`.
 
-> **Phase 2 implementation rules are locked.** See [planning § Phase 2 implementation rules (locked decisions)](../../../planning/addon/sales-e-invoices-plan.md#phase-2-implementation-rules-locked-decisions). The DB-level rules: IR-1 (`SALES → 'I'`, `EXPENSE → 'B'`), IR-2 (always-on baseline filters in service queries), IR-4 (no port of `wb_get_invoice_status` in Phase 2), IR-5 (no port of `wb_get_translate_text` in Phase 2 — search uses plain `LOWER(...) ILIKE`), IR-6 (sibling unpaged aggregation query for `TOTALS[]`), IR-9 (View Setting **seed required**, but management UI is out of scope — page won't generate Save / Reset traffic). The `BUSA_DOC_MSTR` schema is column-for-column DEV; only the Sales-side View Setting seed migration is required for Phase 2.
+> **Phase 2 implementation rules are locked.** See planning § Phase 2 implementation rules (locked decisions) _(removed — historical `planning/` folder deleted by project decision)_. The DB-level rules: IR-1 (`SALES → 'I'`, `EXPENSE → 'B'`), IR-2 (always-on baseline filters in service queries), IR-4 (no port of `wb_get_invoice_status` in Phase 2), IR-5 (no port of `wb_get_translate_text` in Phase 2 — search uses plain `LOWER(...) ILIKE`), IR-6 (sibling unpaged aggregation query for `TOTALS[]`), IR-9 (View Setting **seed required**, but management UI is out of scope — page won't generate Save / Reset traffic). The `BUSA_DOC_MSTR` schema is column-for-column DEV; only the Sales-side View Setting seed migration is required for Phase 2.
 
 ---
 
@@ -258,7 +258,7 @@ ON CONFLICT (WEB_SVC_ID, DYM_AREA_ID, FIELD_ID) DO NOTHING;
 - Frontend page: [../../frontend/addon/sales-e-invoices-page.md](../../../../../wecms-web/docs/features/addon-service/sales-e-invoices.md)
 - Backend API: [../../backend/addon/sales-e-invoices-api.md](../../api-spec/addon/sales-e-invoices-api.md)
 - Migration mapping: [../../migration/service-mapping.md](../../migration/service-mapping.md)
-- Implementation plan: [../../planning/addon/sales-e-invoices-plan.md](../../../planning/addon/sales-e-invoices-plan.md)
+- Implementation plan: ../../planning/addon/sales-e-invoices-plan.md _(removed — historical `planning/` folder deleted by project decision)_
 - DB parity audit (Sprint 1): [../../audits/db-parity-audit-2026-04-30.md](../../audits/db-parity-audit-2026-04-30.md)
 - Schema parity rules: [wecms-api/CLAUDE.md → Legacy Schema Parity Rule](../../../../CLAUDE.md)
 - PROD active table list: [wecms-api/CLAUDE.md → PROD DB Table Scope for Refactoring](../../../../CLAUDE.md)

@@ -1,9 +1,10 @@
 package com.kosign.wecms.domain.payment.cardtransactions.dto;
 
+import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
-import jakarta.validation.constraints.PositiveOrZero;
+import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
@@ -49,8 +50,20 @@ public record CreateReceiptRequest(
          *  free text in Manual mode. */
         @Size(max = 40)
         String taxId,
-        /** Total amount (decimal string on the wire). */
-        @NotNull @PositiveOrZero
+        /**
+         * Total amount (decimal string on the wire). Legacy
+         * {@code prch_0011_001} required a strictly-positive amount
+         * ({@code ValidationHelper.validateAmountOnlyPositive} →
+         * {@code signum()==1}); {@code @Positive} restores that parity
+         * (the earlier {@code @PositiveOrZero} wrongly accepted 0).
+         * {@code @Digits} bounds the value to the physical column
+         * {@code BUSA_DOC_MSTR.TOTL_AMT NUMERIC(20,6)} (14 integer + 6
+         * fractional digits) so an overrun returns {@code WBE_VALIDATION}
+         * instead of a raw DB error. The VND New Receipt path sends
+         * 0-decimal digits; the fractional allowance covers other
+         * currencies that may reuse this endpoint later.
+         */
+        @NotNull @Positive @Digits(integer = 14, fraction = 6)
         BigDecimal amount,
         /** Currency code — picked from contact in Contacts mode,
          *  defaults to {@code "VND"} when blank. */

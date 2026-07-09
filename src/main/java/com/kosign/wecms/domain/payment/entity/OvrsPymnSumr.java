@@ -90,6 +90,34 @@ public class OvrsPymnSumr {
     @Column(name = "PAY_FILE_SEQ_NO", length = 7)
     private String payFileSeqNo;
 
+    /** HAENGSUNG ERP batch date (Oracle {@code TB_TRNS_MAST.FILE_DATE}) —
+     *  half of the dedup key for the HAENGSUNG Oracle Refresh import
+     *  ({@code haengsung-payment-refresh}). Null for ordinary Excel-upload
+     *  batches. DB column already present on {@code OVRS_PYMN_SUMR}; mapped
+     *  2026-06-28 for the Overseas Refresh leg (M-5). */
+    @Column(name = "ERP_FILE_DATE", length = 8)
+    private String erpFileDate;
+
+    /** HAENGSUNG ERP batch number (Oracle {@code TB_TRNS_MAST.FILE_NUM}) —
+     *  the other half of the Refresh-import dedup key. Null for Excel-upload
+     *  batches. */
+    @Column(name = "ERP_FILE_NUM", length = 8)
+    private String erpFileNum;
+
+    /**
+     * HAENGSUNG ERP dispatch-result push flag (legacy
+     * {@code OVRS_PYMN_SUMR.ERP_PROC_CMPL_YN}, CHAR(1) DEFAULT {@code 'N'}).
+     * {@code 'N'} until the dispatch-result write-back (Step 5,
+     * {@code HaengsungDispatchResultWriteBackService}) has pushed the final
+     * result to the Oracle ERP; flipped to {@code 'Y'} only after that Oracle
+     * write succeeds, so the batch is never re-pushed. Null on non-ERP /
+     * Excel-upload batches (the DB default supplies {@code 'N'}); the import
+     * (Step 2) stamps {@code 'N'} explicitly. Mirrors the SCDUL twin
+     * {@code ScdulPymnSumr.erpProcCmplYn}. */
+    @JdbcTypeCode(SqlTypes.CHAR)
+    @Column(name = "ERP_PROC_CMPL_YN", length = 1)
+    private String erpProcCmplYn;
+
     @Column(name = "ORG_FILE_NM", length = 500)
     private String orgFileNm;
 

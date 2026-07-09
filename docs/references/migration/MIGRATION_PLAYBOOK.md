@@ -279,4 +279,4 @@ Pause and ask Sonny or the PO before:
 | Backend design notes format | [backend design notes → business-rules/README.md](../business-rules/README.md) |
 | Frontend design notes format | [frontend design notes → wecms-web/docs/README.md](../../../../wecms-web/docs/README.md) |
 | JEX functional specs (read-only) | [docs/jex/features/](../../../../docs/jex/features/) |
-| Bug reports (cross-system) | [docs/bug-reports/](../../archive/shared-pointers/) |
+| Bug reports (cross-system) | docs/bug-reports/ _(removed — historical `archive/` folder deleted by project decision)_ |

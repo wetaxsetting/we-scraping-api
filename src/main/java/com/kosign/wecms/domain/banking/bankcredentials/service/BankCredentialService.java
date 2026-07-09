@@ -112,10 +112,17 @@ public class BankCredentialService {
     }
 
     private DecryptedCredential toDecrypted(BankCertInfo entity) {
+        // STRICT decrypt for the password: this is the plaintext credential
+        // surface forwarded to the NXiSAS engine for scraping/login. A value
+        // that doesn't decrypt under the legacy key (corrupt / foreign-cipher
+        // blob) yields null rather than the echoed ciphertext, so the engine
+        // is never sent an undecryptable value that the bank rejects with an
+        // opaque institution error. Re-save the credential via Settings >
+        // Login Credentials to cure a null here.
         return new DecryptedCredential(
                 entity.getBankCd(),
                 entity.getCertInfoCon(),
-                crypto.decrypt(entity.getCertInfoDetlCon()),
+                crypto.decryptStrict(entity.getCertInfoDetlCon()),
                 entity.getCertInfoDetlCon2(),
                 entity.getCertInfoDetlCon3(),
                 entity.getNxisasGbSeqNo());

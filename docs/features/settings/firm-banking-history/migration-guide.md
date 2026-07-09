@@ -14,8 +14,8 @@ Legacy migration notes (read-only): [docs/jex/.../migration-guide.md](../../../.
 | Frontend JS | `comm_0221_001.ts` (`loadData` / `fnSelect` / `fnDetails`) | `FirmBankingHistoryPanel.tsx` state + `mapFirmBankingHistoryRow` + `FirmBankingHistoryDetailPopover.tsx` |
 | Read action | `comm_0221_001_r001_act.jsp` | `FirmBankingHistoryController.list` + `FirmBankingHistoryService` |
 | Service wire | `WSVC.comm_0221_001_r001.xml` | `GET /api/v1/settings/firm-banking-history` contract |
-| Data query | `IDO.TB_FIRM_TRAN_R002.xml` (5-leg union) | Postgres view `V_FIRM_BANKING_HISTORY` (Flyway V60) + `FirmBankingHistoryRepository.search()` JPQL |
-| DB helpers | `kr_to_vn_time`, `wb_get_napas_bank_nm`, `wb_get_bank_nm` | ported verbatim (V60; `wb_get_bank_nm` reused from V44) |
+| Data query | `IDO.TB_FIRM_TRAN_R002.xml` (5-leg union) | Hibernate `@Subselect` on `FirmBankingHistoryView` (5-leg union, no DB view) + `FirmBankingHistoryRepository.search()` JPQL |
+| DB helpers | `kr_to_vn_time`, `wb_get_napas_bank_nm`, `wb_get_bank_nm` | called by the `@Subselect`; resolved against the target JEX DB (not created by a refactor Flyway migration) |
 | Frontend `SERVICE_NAME_MAP` | JS object in `comm_0221_001.ts:40-52` | server-owned `FirmBankingServiceNameResolver` + `svc_name_key` on the wire |
 | F-leg enum | `wabooks/enums/TranTp.java` | `common/enums/TranTp.java` (code + `i18nKey`) |
 | `resultMap` (18 codes) | JS object in `comm_0221_001.ts:459-478` | `lib/i18n/scrapingResultCodes.{ts,data.ts}` (frontend) |
@@ -53,24 +53,29 @@ falls back to the raw value when the key is `null`.
 
 ## 4. Architectural decisions
 
-1. **One view, one entity, one query.** JPA does not natively `UNION` heterogeneous entities. Rather
-   than five repositories + Java-side merge (breaks server-side sort/paging) or a 90-line native
-   query string, the five-leg union is a Postgres **view** mapped by one `@Immutable` entity. This
-   keeps byte-for-byte parity with `IDO.TB_FIRM_TRAN_R002` and makes the repository trivial.
-   Trade-off: changing the union is a Flyway migration, not a Java commit — the right friction for
-   parity-critical SQL.
+1. **One `@Subselect`, one entity, one query.** JPA does not natively `UNION` heterogeneous entities.
+   Rather than five repositories + Java-side merge (breaks server-side sort/paging) or a 90-line native
+   query string, the five-leg union is carried by a Hibernate **`@Subselect`** on one `@Immutable`
+   entity over the legacy base tables — there is **no** `V_FIRM_BANKING_HISTORY` DB view (an earlier
+   refactor materialized one, archived; not provisioned — see
+   `project_v_firm_banking_history_subselect.md`). This keeps parity with `IDO.TB_FIRM_TRAN_R002` and
+   makes the repository trivial, while `ddl-auto: validate` never looks for a view relation.
 
 2. **Parity-critical SQL helpers stay in the DB.** `kr_to_vn_time` and `wb_get_napas_bank_nm` are
-   ported verbatim from JEX DEV `pg_proc` (consistent with the V44 decision for `wb_get_bank_nm`),
-   rather than re-implemented in Java, so timezone + bank-name results match the live system.
+   called by the `@Subselect` and resolved against the target JEX DB's existing functions (consistent
+   with the `wb_get_bank_nm` decision), rather than re-implemented in Java, so timezone + bank-name
+   results match the live system.
 
 3. **Server-owned i18n keys, frontend-owned labels.** Following the modernized enum policy, the
    backend emits stable i18n keys (`svc_type_key`, `svc_name_key`); the localized strings live in
    `wecms-web/locales/*.json`. No localized label is baked into a Java enum.
 
-4. **No View Setting popover; export still seeds it.** The list screen has no "Manage Columns"
-   popover (legacy has none). The View Setting seed (V165) exists purely so the shared export
-   pipeline can intersect visible columns — see [§ 4.4 of the detailed spec](../firm-banking-history.md).
+4. **No View Setting popover; no View Setting seed either.** The list screen has no "Manage Columns"
+   popover (legacy has none), and Firm Banking History is **not seeded** into `SYS_SCR_OPTION_WECMS`
+   (the manual `V156__sys_scr_option_wecms.sql` lists it in its EXCLUDED set). The export pipeline does
+   not depend on a seed: `ScreenOptionService.load` throws `WBE2001` for the unseeded screen and
+   `ExcelExportService.resolveColumns` falls back to request columns ∩ the provider allow-list (memory
+   `project_export_only_screens_no_seed.md`). See [§ 4.4 of the detailed spec](../firm-banking-history.md).
 
 5. **Export is net-new.** Legacy has no export for this screen; the refactor adds one through the
    shared `common/export/` pipeline (a refactor enhancement, not a parity port).
@@ -79,16 +84,18 @@ falls back to the raw value when the key is `null`.
 
 ## 5. PROD Active Table scope
 
-All five source tables are in the PROD Active Table List, so each gets an entity-bearing presence in
-the view. The local Flyway migrations (V59) mirror DEV column-for-column per the Legacy Schema
-Parity Rule; the demo seed (V61) copies a ≤30-row slice for tenant `VN_VNM0004_000001` per the Data
-Migration Rule.
+All five source tables are in the PROD Active Table List. The local Flyway migrations mirror DEV
+column-for-column per the Legacy Schema Parity Rule; the demo seed copies a ≤30-row slice for tenant
+`VN_VNM0004_000001` per the Data Migration Rule.
 
-> **Migration set.** The canonical local R&D migrations are V59 (source tables), V60 (view + helper
-> functions), V61 (demo seed), and V165 (View Setting export seed). A separate `V102__firm_banking_history_view.sql`
-> also exists in the migration tree as an alternate/shared view definition; V60 is the one the
-> refactor entity maps against. Some legacy-side docs reference these numbers loosely — V59/V60/V61/V165
-> are the authoritative local set.
+> **Migration set (post 2026-06-09 renumber).** The source-table migrations are **V73**
+> (`NXSIAS_MODULE_TRAN_LOG_HIS`), **V97** (`TB_FIRM_BANK_CODE`), **V104** (`TB_FIRM_TRAN`); plus the
+> existing V13 (`NAPAS_REMIT_TRNS_HSTR`) and V16 (`EXT_TRAN_CALL_HIS`). There is **no View Setting seed**
+> for `firm-banking-history` — it is an export-only screen and `V156__sys_scr_option_wecms.sql`
+> explicitly excludes it (export uses the `WBE2001` → request-cols ∩ allow-list fallback; see §4.4).
+> There is also **no** view-creating migration — the five-leg union is a Hibernate `@Subselect` (§4.1).
+> The earlier V59/V60/V61/V165 numbering (and any `V102__firm_banking_history_view.sql`) no longer
+> exists in the migration tree.
 
 ---
 

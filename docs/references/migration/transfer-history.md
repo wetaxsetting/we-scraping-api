@@ -10,8 +10,8 @@ last_updated: 2026-05-20
 
 Service-by-service mapping for the **Banking > Internal Transfer > Transfer
 History** port. Companion to
-[docs/refactor-wecms/features/banking/transfer-history.md](../../features/banking/own-account-transfer/transfer-history.md)
-and [docs/refactor-wecms/archive/planning/phase-1/transfer-history-plan.md](../../archive/planning/phase-1/transfer-history-plan.md).
+[docs/refactor-wecms/features/banking/transfer-history.md](../../features/banking/internal-transfer-vnd/transfer-history/README.md)
+and docs/refactor-wecms/archive/planning/phase-1/transfer-history-plan.md _(removed — historical `archive/` folder deleted by project decision)_.
 
 Naming and identifier rules per
 [wecms-api/CLAUDE.md § Refactor identifier naming](../../../CLAUDE.md)
@@ -100,7 +100,7 @@ consumer arrives.
 ## 4. What this MR does NOT touch
 
 - The Coocon iSAS-NX engine — its contract is documented in
-  [docs/refactor-wecms/features/banking/transfer-history.md § 3](../../features/banking/own-account-transfer/transfer-history.md)
+  [docs/refactor-wecms/features/banking/transfer-history.md § 3](../../features/banking/internal-transfer-vnd/transfer-history/README.md)
   for context but is ported by the Internal Transfer Register MR. **Spring
   never invokes a `.exe`.**
 - `NAPAS_REMIT_TRNS_HSTR_C001` / `_U001` IDOs (INSERT / settlement) — owned by

@@ -20,6 +20,7 @@ import com.kosign.wecms.domain.setting.contacts.dto.ContactLookupRecipientReques
 import com.kosign.wecms.domain.setting.contacts.dto.ContactLookupRecipientResponse;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactRow;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactUpdateRequest;
+import com.kosign.wecms.domain.setting.contacts.service.ContactsDownloadService;
 import com.kosign.wecms.domain.setting.contacts.service.ContactsFileService;
 import com.kosign.wecms.domain.setting.contacts.service.ContactsFileService.DownloadResource;
 import com.kosign.wecms.domain.setting.contacts.service.ContactsImportService;
@@ -27,12 +28,14 @@ import com.kosign.wecms.domain.setting.contacts.service.ContactsService;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import java.io.IOException;
 import java.util.List;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import lombok.RequiredArgsConstructor;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
@@ -80,6 +83,7 @@ public class ContactsController {
     private final ContactsImportService importService;
     private final ContactsFileService fileService;
     private final ExcelExportService excelExportService;
+    private final ContactsDownloadService downloadService;
 
     /**
      * List managed (non-trashed) contacts for the current tenant.
@@ -186,6 +190,48 @@ public class ContactsController {
             @Valid @RequestBody ExcelExportRequest request,
             HttpServletResponse response) {
         excelExportService.exportTo(response, request);
+    }
+
+    /**
+     * Legacy-parity template-populated Excel download &mdash; the
+     * Settings &rarr; Contacts &rarr; Download &rarr; Local / Overseas
+     * Contacts dropdown. Ports legacy
+     * {@code comm_0184_001_r006_excel_view.jsp}: loads the styled locale
+     * template from the backend classpath, populates one row per bank
+     * account (Local) or per beneficiary (Overseas) preserving all
+     * template formatting, and streams
+     * {@code WeCMS_{Local|Overseas}_Contacts_download_{LANG}.xlsx}.
+     *
+     * <p>Distinct from {@link #export} (the generic
+     * {@code ExcelExportService} grid export, which is retained
+     * unchanged): this is the template-based generated report. Streams
+     * XLSX bytes, so it returns {@code ResponseEntity} rather than the
+     * {@code ApiResponse} envelope (the sanctioned binary-download
+     * exception).
+     *
+     * @param type {@code 'L'} (Local) or {@code 'O'} (Overseas)
+     * @param lang optional UI-locale hint (EN/KO/VI; KM/other → EN). When
+     *             omitted the JWT {@code langCd} is used.
+     */
+    @GetMapping("/report")
+    public ResponseEntity<ByteArrayResource> downloadReport(
+            @RequestParam("type")
+            @Pattern(regexp = "[LO]", message = "type: must be 'L' (Local) or 'O' (Overseas)")
+            String type,
+            @RequestParam(value = "lang", required = false) String lang) {
+        ContactsDownloadService.GeneratedReport report = downloadService.generate(type, lang);
+        ContentDisposition cd = ContentDisposition.builder("attachment")
+                .filename(report.fileName(), StandardCharsets.UTF_8)
+                .build();
+        ByteArrayResource body = new ByteArrayResource(report.content());
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .contentLength(body.contentLength())
+                .header(HttpHeaders.CONTENT_DISPOSITION, cd.toString())
+                .header("X-Content-Type-Options", "nosniff")
+                .header("Access-Control-Expose-Headers", HttpHeaders.CONTENT_DISPOSITION)
+                .body(body);
     }
 
     /**

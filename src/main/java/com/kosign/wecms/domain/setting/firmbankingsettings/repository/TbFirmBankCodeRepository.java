@@ -48,6 +48,26 @@ public interface TbFirmBankCodeRepository extends JpaRepository<TbFirmBankCode, 
     List<TbFirmBankCode> findByAntDivCdInOrderByEngAbrvatNmAscBankCdAsc(Collection<String> antDivCds);
 
     /**
+     * All active rows for one ancillary division. Used by the contacts
+     * bank picker for the NAPAS leg (legacy {@code R002} {@code NAPAS_BKCD}
+     * CTE: {@code BANK_STAS='1' AND ANT_DIV_CD='NAPAS'}). NAPAS rows carry
+     * no branch division, so no {@code BANK_BRANCH_DIV} predicate.
+     */
+    List<TbFirmBankCode> findByAntDivCdAndBankStas(String antDivCd, String bankStas);
+
+    /**
+     * Active headquarters rows for one ancillary division. Used by the
+     * contacts bank picker for the CITAD leg (legacy {@code R002}
+     * {@code CITAD_BKCD} CTE:
+     * {@code BANK_STAS='1' AND BANK_BRANCH_DIV='1' AND ANT_DIV_CD='CITAD'}).
+     * The {@code BANK_BRANCH_DIV='1'} predicate collapses the ~3,000 CITAD
+     * branch rows to one headquarters row per bank — without it the dialog
+     * dropdown repeated each bank once per branch.
+     */
+    List<TbFirmBankCode> findByAntDivCdAndBankBranchDivAndBankStas(
+            String antDivCd, String bankBranchDiv, String bankStas);
+
+    /**
      * Resolve a NAPAS bank code (6-char input) to its registry row.
      * Mirrors legacy {@code PymnHelper#getListTbFirmBankCode} for the
      * NAPAS branch — used by the Internal Transfer Excel parser to
@@ -98,4 +118,31 @@ public interface TbFirmBankCodeRepository extends JpaRepository<TbFirmBankCode, 
      * service side.
      */
     List<TbFirmBankCode> findByEngAbrvatNmIn(Collection<String> engAbrvatNms);
+
+    /**
+     * Resolve the CITAD <b>head-office</b> registry row for a 3-char
+     * {@code CITAD_BANK_CD}, mirroring legacy
+     * {@code PymnHelper#getBankCode} (the CITAD branch at
+     * {@code PymnHelper.java:1237-1251}):
+     * {@code ant_div_cd='CITAD' AND citad_bank_cd=? AND bank_stas='1'
+     * AND bank_branch_div='1'}. A single 3-char CITAD code maps to many
+     * branch {@code BANK_CD} rows; the {@code BANK_BRANCH_DIV='1'}
+     * predicate is what collapses them to the one head-office row whose
+     * 6-digit {@code BANK_CD} legacy persists into
+     * {@code SCDUL_PYMN_SUMR_DETL.TAR_BANK_CD}. Read-only, not
+     * tenant-scoped (the dictionary is global).
+     */
+    Optional<TbFirmBankCode> findFirstByAntDivCdAndCitadBankCdAndBankStasAndBankBranchDiv(
+            String antDivCd, String citadBankCd, String bankStas, String bankBranchDiv);
+
+    /**
+     * Resolve one active registry row by bank code, for the dispatch
+     * File-path same-banking-group check (legacy
+     * {@code PymnHelper.pymn_0001_001_c001:2331-2347}, which reads
+     * {@code TB_FIRM_BANK_CODE} by {@code (bank_cd = ?, bank_stas = '1')} and
+     * compares {@code ENG_ABRVAT_NM} across the out-bank vs. target-bank code
+     * spaces). {@code findFirst} mirrors the legacy {@code getRow} (single
+     * row); read-only, not tenant-scoped (the dictionary is global).
+     */
+    Optional<TbFirmBankCode> findFirstByBankCdAndBankStas(String bankCd, String bankStas);
 }

@@ -58,6 +58,15 @@ Approval Box lists Payment approval documents for the current tenant. Only six p
 
 **Tab counts** (`countTabs`) run the same scope as the list **but ignore `appr_type_cd`**, so the four chips always reflect one date/keyword/visibility combination simultaneously. Counts: `pending` (`00`), `inProgress` (`03`), `approved` (`01`), `rejected` (`02`). (The frontend's "All" tab = sum of the four; "Draft" is not a backend tab.)
 
+**Footer totals** (`footer_totals`, `computeFooterTotals`) — the on-screen footer bar (legacy `resl_0001_001` parity). **Tab-unfiltered, full result set** (`findAmountBasisForTotals` runs the same WHERE as `countTabs` — no `appr_type_cd` predicate, unpaged):
+
+| Field | Rule |
+|---|---|
+| `total_document_count` | Tab-unfiltered row count = `pending + inProgress + approved + rejected` (no extra query — `APPR_TYPE_CD` is NOT NULL ∈ {00,01,02,03}). Distinct from the tab-filtered `total_count` that drives pagination. |
+| `total_usd_amount` / `total_vnd_amount` / `total_krw_amount` | Sum of each row's resolved amount, bucketed by resolved `CCY_CD`. Card rows (`APPR_DV='33'`) contribute `SUM(CARD_TRNS_HSTR.TRSC_AMT)`; other rows the currency-matched master column (KHR fallback). Only USD/VND/KRW surfaced (legacy renders three). |
+
+**Amount resolution** (`resolveAmount`, shared by the row, footer, and Excel export): for `APPR_DV='33'` → `SUM(CARD_TRNS_HSTR.TRSC_AMT)` (legacy IDO R003:62-65; KHR fallback when no card rows); for USD → `TOT_PAY_USD_AMT` (zero-aware) else `TOT_PAY_KHR_AMT`; for VND → `TOT_PAY_VND_AMT` (zero-aware) else `TOT_PAY_KHR_AMT`; otherwise `TOT_PAY_KHR_AMT`.
+
 ---
 
 ## 4. Sort whitelist (`ApprovalBoxSortField`)
@@ -84,9 +93,9 @@ Wire `FIELD_ID` → entity property. Unknown/blank → default sort (no exceptio
 
 | Operation | Preconditions | Effect |
 |---|---|---|
-| **Approve** | master exists in tenant (`WBE2050`); not finalised `01/02` (`WBE2053`); caller is an assigned approver (`WBE2051`); caller's row is `P` (`WBE2052`) | caller `P→A`; if no `P`/`W` left → master `01` + source `C`; else master `03`, promote first `W→P`, source `I` |
-| **Reject** | same as approve | caller `P→R`; all `W→S`; master `02`; source `X` |
-| **Withdraw** | master Pending/In Progress (`00/03`) else `WBE_VALIDATION`; not found → `WBE_NOT_FOUND` | delete chain + master; null source `APPR_SEQ_NO`/`APPR_STTS` (back to Draft) |
+| **Approve** | master exists in tenant (`WBE2050`); not finalised `01/02` (`WBE2053`); caller is an assigned approver (`WBE2051`); caller's row is `P` (`WBE2052`) | caller `P→A`; if no `P`/`W` left → master `01` + stamp `PAY_END_*`; else master `03`, promote first `W→P`. **No source write-back** (SCDUL/OVRS carry no `APPR_STTS` column — status derives on read) |
+| **Reject** | same as approve | caller `P→R`; all `W→S`; master `02`; stamp `PAY_END_*` if all have voted. **No source write-back** |
+| **Withdraw** | master Pending/In Progress (`00/03`) else `WBE_VALIDATION`; not found → `WBE_NOT_FOUND` | delete chain + master; null source `APPR_SEQ_NO` only (back to Draft — there is no `APPR_STTS` column on the source tables) |
 | **Change line** | master Pending/In Progress; `appr_line_no` positive (`WBE_VALIDATION`); picked line has approvers | rebuild chain from template (line 1 `P`, rest `W`); master → `00` |
 | **Bulk approve** | 1..100 ids (`WBE2054`) | per-id `approve`; aggregate `{successes, failures}` |
 
@@ -97,7 +106,7 @@ Approve/reject only ever act on the caller's own approver row — an approver ca
 ## 6. Authorization & tenant scope
 
 - **Menu gate:** class-level `@PreAuthorize("@menuAuthz.canAccess('payment-approval-box')")` on all 8 endpoints (product-tree leaf validity → product gate → admin bypass → per-user `USER_MENU_AUTH_INFM` grant). Unauthorized → `AccessDeniedException` → **403 / `WBE1003`**; no JWT → **401 / `WBE1009`**.
-- **Row visibility (in-query, defence beyond the menu gate):** admin sees every tenant row; a non-admin sees only rows they drafted (`regId = userId`) OR are an assigned approver of (`EXISTS` approver row). Enforced inside both `search` and `countTabs` JPQL. Mirrors legacy Redmine #42046.
+- **Row visibility (in-query, defence beyond the menu gate):** admin sees every tenant row; a non-admin sees a row if **any** of: they drafted the approval (`regId = userId`), they are an assigned approver (`EXISTS` approver row), OR they uploaded the underlying payment batch (`EXISTS` in `SCDUL_PYMN_SUMR` / `OVRS_PYMN_SUMR` / `CARD_TRNS_HSTR` with `reg_id = userId`). Enforced with the **identical** predicate inside `search`, `countTabs`, and `findAmountBasisForTotals` so rows, tab counts, and footer totals share one visibility scope. Mirrors legacy Redmine #42046 (`resl_0001_001_r001_act.jsp:116-162`). The three uploader branches were restored 2026-06-16 (G3) — the upload event can be performed by a different user than the approval requester, so without them an uploader loses sight of their submitted payment.
 - **Identity** comes only from `TenantContext` (signed JWT): `currentBizKey()`, `currentUserId()`, `currentIsAdmin()`. Never from request body/param.
 
 ---

@@ -34,6 +34,12 @@ dependencies {
     // ExcelWorkbookWriter so a 50k-row export stays bounded in heap.
     implementation 'org.apache.poi:poi-ooxml:5.2.5'
 
+    // JSch (maintained mwiede fork, drop-in com.jcraft.jsch package) — SFTP
+    // client for the firm-banking bulk dispatch (port of legacy util.SftpUtil).
+    // Backs JschSftpClient, activated only when wecms.dispatch.sftp.enabled=true
+    // (MockSftpClient is the default in local/test/R&D). B4.
+    implementation 'com.github.mwiede:jsch:0.2.21'
+
     // Coocon iSAS SEED-CBC cipher (com.coocon.securty.util.ISASSeedCBC) —
     // licensed Coocon asset, reused verbatim from the legacy JEX system
     // (WECMS DEV/WECMS/lib/isas1.0.jar) under PO/Coocon approval (B1,
@@ -52,6 +58,15 @@ dependencies {
     // (src/main/resources/db/migration/ — formerly Flyway V210), not at runtime.
     implementation 'net.javacrumbs.shedlock:shedlock-spring:5.16.0'
     implementation 'net.javacrumbs.shedlock:shedlock-provider-jdbc-template:5.16.0'
+
+    // Oracle JDBC (ojdbc11 — JDK 11–21 compatible) for the secondary, optional
+    // HAENGSUNG ERP datasource (haengsung-oracle-integration-roadmap Step 1).
+    // runtimeOnly: no Oracle class is referenced at compile time — the
+    // datasource is driven through JdbcTemplate + the driver-class-name string,
+    // so the driver is needed only on the runtime classpath. The bean is
+    // gated by haengsung.oracle.enabled (default false), so this jar is inert
+    // until the integration is switched on.
+    runtimeOnly 'com.oracle.database.jdbc:ojdbc11:23.4.0.24.05'
 
     compileOnly 'org.projectlombok:lombok'
     developmentOnly 'org.springframework.boot:spring-boot-devtools'

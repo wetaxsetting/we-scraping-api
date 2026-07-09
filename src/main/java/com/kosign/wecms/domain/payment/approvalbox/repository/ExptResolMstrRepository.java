@@ -38,10 +38,15 @@ import java.util.List;
  * callers — Spring's HQL parser evaluates {@code :isAdmin = TRUE} as a
  * scalar predicate without touching the table.
  *
- * <p>Sibling-table joins (BLTB_POST_INFM / OVRS_PYMN_MSTR /
- * SCDUL_PYMN_SUMR / OVRS_PYMN_SUMR / CARD_TRNS_HSTR) are dropped here
- * versus legacy {@code IDO.EXPT_RESOL_MSTR_R003.xml} — those modules
- * own their schema port. See {@code design-backend.md} §13 D1 / D4 / D5.
+ * <p>Sibling-table <em>display</em> joins (BLTB_POST_INFM / OVRS_PYMN_MSTR)
+ * are dropped here versus legacy {@code IDO.EXPT_RESOL_MSTR_R003.xml} —
+ * those modules own their schema port. The sibling-table <em>visibility</em>
+ * EXISTS branches (SCDUL_PYMN_SUMR / OVRS_PYMN_SUMR / CARD_TRNS_HSTR
+ * uploader = current user) ARE applied — restored 2026-06-16 to match
+ * legacy {@code resl_0001_001_r001_act.jsp:116-162} (Redmine #42046), so a
+ * non-admin who uploaded a batch but is neither the approval requester nor
+ * an assigned approver still sees the document. See {@code design-backend.md}
+ * §13 D1 / D4 / D5.
  */
 public interface ExptResolMstrRepository
         extends JpaRepository<ExptResolMstr, ExptResolMstrId> {
@@ -113,17 +118,16 @@ public interface ExptResolMstrRepository
      *       <li>caller submitted the approval request
      *           ({@code erm.regId = :userId}), OR</li>
      *       <li>caller is an assigned approver
-     *           (EXISTS in {@code EXPT_RESOL_APPRVR_INFM}).</li>
+     *           (EXISTS in {@code EXPT_RESOL_APPRVR_INFM}), OR</li>
+     *       <li>caller uploaded the underlying payment batch — EXISTS in
+     *           {@code SCDUL_PYMN_SUMR} / {@code OVRS_PYMN_SUMR} /
+     *           {@code CARD_TRNS_HSTR} with {@code reg_id = :userId}
+     *           (restored 2026-06-16; the upload event can be performed by a
+     *           different user than the approval requester, so without these
+     *           the uploader loses visibility — see Redmine #42046).</li>
      *     </ul>
      *   </li>
      * </ul>
-     *
-     * <p>The "uploader" branches against {@code SCDUL_PYMN_SUMR} /
-     * {@code OVRS_PYMN_SUMR} / {@code CARD_TRNS_HSTR} from the legacy
-     * filter are dropped — those sibling tables aren't owned by this MR.
-     * Per-user visibility still holds via the two preserved branches;
-     * the dropped branches were strictly additive (more rows surfaced)
-     * and reintroduce when the sibling features port.
      */
     @Query("""
            SELECT new com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxProjection(
@@ -150,7 +154,19 @@ public interface ExptResolMstrRepository
                    OR EXISTS (SELECT 1 FROM ExptResolApprvrInfm a
                               WHERE a.bizKey = erm.bizKey
                                 AND a.apprSeqNo = erm.apprSeqNo
-                                AND a.apprvrId = :userId) )
+                                AND a.apprvrId = :userId)
+                   OR EXISTS (SELECT 1 FROM ScdulPymnSumr sps
+                              WHERE sps.bizKey = erm.bizKey
+                                AND sps.apprSeqNo = erm.apprSeqNo
+                                AND sps.regId = :userId)
+                   OR EXISTS (SELECT 1 FROM OvrsPymnSumr ops
+                              WHERE ops.bizKey = erm.bizKey
+                                AND ops.apprSeqNo = erm.apprSeqNo
+                                AND ops.regId = :userId)
+                   OR EXISTS (SELECT 1 FROM CardTrnsHstr cth
+                              WHERE cth.bizKey = erm.bizKey
+                                AND cth.apprSeqNo = erm.apprSeqNo
+                                AND cth.regId = :userId) )
            """)
     Page<ApprovalBoxProjection> search(
             @Param("bizKey")         String bizKey,
@@ -193,9 +209,74 @@ public interface ExptResolMstrRepository
                    OR EXISTS (SELECT 1 FROM ExptResolApprvrInfm a
                               WHERE a.bizKey = erm.bizKey
                                 AND a.apprSeqNo = erm.apprSeqNo
-                                AND a.apprvrId = :userId) )
+                                AND a.apprvrId = :userId)
+                   OR EXISTS (SELECT 1 FROM ScdulPymnSumr sps
+                              WHERE sps.bizKey = erm.bizKey
+                                AND sps.apprSeqNo = erm.apprSeqNo
+                                AND sps.regId = :userId)
+                   OR EXISTS (SELECT 1 FROM OvrsPymnSumr ops
+                              WHERE ops.bizKey = erm.bizKey
+                                AND ops.apprSeqNo = erm.apprSeqNo
+                                AND ops.regId = :userId)
+                   OR EXISTS (SELECT 1 FROM CardTrnsHstr cth
+                              WHERE cth.bizKey = erm.bizKey
+                                AND cth.apprSeqNo = erm.apprSeqNo
+                                AND cth.regId = :userId) )
            """)
     ApprovalBoxTabCounts countTabs(
+            @Param("bizKey")         String bizKey,
+            @Param("userId")         String userId,
+            @Param("isAdmin")        boolean isAdmin,
+            @Param("fromDate")       String fromDate,
+            @Param("toDate")         String toDate,
+            @Param("keywordPattern") String keywordPattern,
+            @Param("keywordLike")    String keywordLike);
+
+    /**
+     * Footer-totals amount basis — one tuple
+     * {@code (APPR_SEQ_NO, APPR_DV, TOT_PAY_KHR_AMT, TOT_PAY_USD_AMT,
+     * TOT_PAY_VND_AMT)} per row matching the date / search / visibility
+     * scope, with the {@code apprTypeCd} tab predicate intentionally
+     * dropped (same scope as {@link #countTabs} → tab-unfiltered).
+     *
+     * <p>The service resolves each row's currency + card-aware amount
+     * (same path as {@code ApprovalBoxService.toRow}) and buckets the
+     * sums by {@code CCY_CD} into the footer's USD / VND / KRW totals —
+     * mirrors legacy {@code IDO.EXPT_RESOL_MSTR_R003_CNT.xml:36-39}
+     * which sums over the same tab-unfiltered set. Bounded by the unpaged
+     * read; the Approval Box is date-range scoped so the set stays small.
+     */
+    @Query("""
+           SELECT erm.apprSeqNo, erm.apprDv, erm.totPayKhrAmt, erm.totPayUsdAmt, erm.totPayVndAmt
+           FROM ExptResolMstr erm
+           WHERE erm.bizKey = :bizKey
+             AND erm.delYn  = 'N'
+             AND erm.apprDv IN ('21','31','32','33','34','35')
+             AND erm.draftDate BETWEEN :fromDate AND :toDate
+             AND (:keywordPattern IS NULL OR
+                  LOWER(erm.docNm) LIKE :keywordLike ESCAPE '!' OR
+                  LOWER(erm.titl)  LIKE :keywordLike ESCAPE '!' OR
+                  LOWER(erm.docNo) LIKE :keywordLike ESCAPE '!')
+             AND ( :isAdmin = TRUE
+                   OR erm.regId = :userId
+                   OR EXISTS (SELECT 1 FROM ExptResolApprvrInfm a
+                              WHERE a.bizKey = erm.bizKey
+                                AND a.apprSeqNo = erm.apprSeqNo
+                                AND a.apprvrId = :userId)
+                   OR EXISTS (SELECT 1 FROM ScdulPymnSumr sps
+                              WHERE sps.bizKey = erm.bizKey
+                                AND sps.apprSeqNo = erm.apprSeqNo
+                                AND sps.regId = :userId)
+                   OR EXISTS (SELECT 1 FROM OvrsPymnSumr ops
+                              WHERE ops.bizKey = erm.bizKey
+                                AND ops.apprSeqNo = erm.apprSeqNo
+                                AND ops.regId = :userId)
+                   OR EXISTS (SELECT 1 FROM CardTrnsHstr cth
+                              WHERE cth.bizKey = erm.bizKey
+                                AND cth.apprSeqNo = erm.apprSeqNo
+                                AND cth.regId = :userId) )
+           """)
+    List<Object[]> findAmountBasisForTotals(
             @Param("bizKey")         String bizKey,
             @Param("userId")         String userId,
             @Param("isAdmin")        boolean isAdmin,

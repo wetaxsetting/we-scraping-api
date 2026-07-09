@@ -5,7 +5,6 @@
 **Package:** `com.kosign.wecms.domain.setting.chartofaccounts`
 **REST base:** `/api/v1/settings/chart-of-accounts`
 **Table:** `CHART_ACCT_INFM`
-**Legacy WSVC (traceability only):** `comm_0223_001` (view + CRUD) · `comm_0223_002` (Excel upload)
 **Status (2026-06-08):** 🟢 **Code-complete for SIT** · 🟡 final closure pending PO ratification only — SIT/UAT verified.
 
 > This folder is the **primary documentation home** for the Chart of Accounts backend feature. It documents the **actual final refactored implementation** (read from source on 2026-06-07/08), not the pre-implementation design intent. Where the design-era docs disagree with shipped code, the shipped behaviour wins and the delta is flagged inline.
@@ -53,9 +52,15 @@ The three roots `ACC-01` (REVENUE), `ACC-02` (EXPENSES), `ACC-03` (INVESTMENT) a
 | Bulk Activate | **Not implemented** (only bulk-deactivate); single-row re-activation via `PUT` status flip. PO-deviation candidate (CA-G1). | `ChartOfAccountsService.java`; audit CA-G1 |
 | Excel **Export** | **Not implemented** for Chart of Accounts — only a static **template download** exists. Account Inquiry is the only wired `common/export` consumer. | `ExcelUploadDialog.tsx:33-37` |
 | Excel **Import** | FE parses + validates (SheetJS); backend `POST /bulk-upload` accepts a JSON array and runs per-row `create()`. | `useExcelUpload.ts`; `ChartOfAccountsService.bulkUpload` |
-| Status | `STTS` `A` (Active) / `I` (Inactive) — distinct from soft-delete `DEL_YN` `N`/`Y` | `ChartOfAccount.java` |
+| Status | `STTS` `A` (Active) / `I` (Inactive) — distinct from soft-delete `DEL_YN` `N`/`Y` | `ChartAcctInfm.java` |
 | Authorization | `@PreAuthorize("@menuAuthz.canAccess('settings-core-chart-of-accounts')")` — **live at runtime** | `ChartOfAccountsController.java:79` |
 | Audit | One `AUDIT_LOGS_INFM` row per Create/Update/Delete, `WSVC_ID = "chart-of-accounts"` (slug) | `ChartOfAccountsService.java`; `ChartOfAccountsConstants.AUDIT_REF_NO` |
+
+---
+
+## Legacy & Migration Traceability
+
+**Legacy WSVC (traceability only):** `comm_0223_001` (view + CRUD) · `comm_0223_002` (Excel upload)
 
 ---
 
@@ -68,4 +73,4 @@ The three roots `ACC-01` (REVENUE), `ACC-02` (EXPENSES), `ACC-03` (INVESTMENT) a
 - **Original design spec (pre-implementation):** [../chart-of-accounts.md](../chart-of-accounts.md) — kept for traceability; superseded by this folder for implementation truth.
 - **Legacy JEX dossier (read-only reference):** [../../../../../docs/jex/features/chart-of-accounts/](../../../../../docs/jex/features/chart-of-accounts/)
 - **Frontend counterpart:** [../../../../../wecms-web/docs/features/settings/chart-of-accounts/](../../../../../wecms-web/docs/features/settings/chart-of-accounts/)
-- **Open questions ledger:** [../../../planning/open-questions/documentation-follow-up.md](../../../planning/open-questions/documentation-follow-up.md) · memory `project-chart-of-accounts-oq-pending`
+- **Open questions ledger:** ../../../planning/open-questions/documentation-follow-up.md _(removed — historical `planning/` folder deleted by project decision)_ · memory `project-chart-of-accounts-oq-pending`

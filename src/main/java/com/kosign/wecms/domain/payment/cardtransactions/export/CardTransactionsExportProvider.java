@@ -6,9 +6,11 @@ import com.kosign.wecms.common.export.ExportFetch;
 import com.kosign.wecms.common.export.ExportRowProvider;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTransactionRow;
 import com.kosign.wecms.domain.payment.cardtransactions.service.CardTransactionsService;
+import com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -58,10 +60,29 @@ public class CardTransactionsExportProvider implements ExportRowProvider {
     );
 
     private final CardTransactionsService service;
+    /** Shared ERP_TRNS_HSTR writer for the WeCMS&rarr;ERP 'W' export audit
+     *  (legacy {@code downloadProc.jsp:1393}, {@code card_0001_001} branch). */
+    private final ErpTrnsHistoryWriter erpHistoryWriter;
 
     @Override
     public String screenId() {
         return "card-transactions";
+    }
+
+    /** Legacy {@code downloadProc.jsp} writes a WeCMS&rarr;ERP 'W' /
+     *  {@code TRNS_TYPE_CD = "07"} (Corporate Card Transactions) audit row
+     *  for every Card Transactions Excel download. */
+    @Override
+    public boolean auditsErpExport() {
+        return true;
+    }
+
+    /** Persist the WeCMS&rarr;ERP 'W' / {@code "07"} row by copying the
+     *  generated workbook into the ERP-history tenant subtree. Non-blocking —
+     *  the writer is {@code REQUIRES_NEW} + swallow-and-log, matching legacy. */
+    @Override
+    public void recordErpExport(Path workbookFile, String orgFileNm) {
+        erpHistoryWriter.recordExportedFile("07", workbookFile, orgFileNm);
     }
 
     @Override

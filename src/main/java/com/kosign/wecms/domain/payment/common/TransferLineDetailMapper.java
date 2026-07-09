@@ -81,10 +81,28 @@ public class TransferLineDetailMapper {
     /** Project one {@link ScdulPymnSumrDetl} row onto the wire DTO,
      *  resolving the two display-only fields. The shared row entity
      *  is used by every Payment module so the projection lives here
-     *  in {@code domain/payment/common/} rather than per-module. */
+     *  in {@code domain/payment/common/} rather than per-module.
+     *
+     *  <p>Vendor / Expense / Internal Transfer store Remarks in
+     *  {@code TRAN_USAG}; this 2-arg form sources Remarks from there
+     *  (their behaviour is unchanged). Payroll stores Remarks in
+     *  {@code WDRL_ACCT_RMRK} (legacy parity, G1) — it calls the 3-arg
+     *  overload below with that column. */
     public TransferLineDetail toLineDetail(
             ScdulPymnSumrDetl d,
             Map<String, ChartAcctInfm> chartByCode) {
+        return toLineDetail(d, chartByCode, d.getTranUsag());
+    }
+
+    /** As {@link #toLineDetail(ScdulPymnSumrDetl, Map)} but with the
+     *  Remarks source column supplied explicitly. Added for Payroll (G1,
+     *  2026-06-29): legacy {@code pymn_0005_*} keeps Remarks in
+     *  {@code WDRL_ACCT_RMRK}, not {@code TRAN_USAG}. Existing callers keep
+     *  using the 2-arg form and are unaffected. */
+    public TransferLineDetail toLineDetail(
+            ScdulPymnSumrDetl d,
+            Map<String, ChartAcctInfm> chartByCode,
+            String remarks) {
         String tarBankNm = resolveBankName(d.getTarBankCd());
         String breadcrumb = buildChartBreadcrumb(d.getChartAcctCd(), chartByCode);
         return new TransferLineDetail(
@@ -94,7 +112,7 @@ public class TransferLineDetailMapper {
                 d.getTarBankCd(),
                 tarBankNm,
                 d.getFincMdaNo(),
-                d.getTranUsag(),
+                remarks,
                 d.getTranAmt(),
                 d.getTrnfCcyCd(),
                 d.getTrcoKey(),

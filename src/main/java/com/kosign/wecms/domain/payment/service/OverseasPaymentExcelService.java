@@ -1,6 +1,7 @@
 package com.kosign.wecms.domain.payment.service;
 
 import com.kosign.wecms.common.exception.BusinessException;
+import com.kosign.wecms.common.i18n.MessageResolver;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.common.tx.TransactionalRetry;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -18,6 +19,8 @@ import com.kosign.wecms.domain.payment.overseas.service.OverseasPaymentKeyGenera
 import com.kosign.wecms.domain.payment.validation.FieldCd;
 import com.kosign.wecms.domain.payment.validation.PymnType;
 import com.kosign.wecms.domain.payment.validation.SpecialCharValidator;
+import com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartAcctInfm;
+import com.kosign.wecms.domain.setting.chartofaccounts.repository.ChartOfAccountRepository;
 import com.kosign.wecms.domain.setting.contacts.entity.TrcoInfm;
 import com.kosign.wecms.domain.setting.contacts.entity.TrcoOvrsInfm;
 import com.kosign.wecms.domain.setting.contacts.repository.TrcoInfmRepository;
@@ -44,7 +47,9 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -80,9 +85,34 @@ public class OverseasPaymentExcelService {
     private final OverseasPaymentFileResolver  fileResolver;
     private final TrcoInfmRepository           contactRepo;
     private final TrcoOvrsInfmRepository       overseasContactRepo;
+    /** Reporting-account (Chart of Accounts) lookup — legacy parity with
+     *  {@code pymn_0007_003_r001_act.jsp#getChartAcctInfm} (validates the
+     *  reporting account against {@code CHART_ACCT_INFM} where
+     *  {@code DEL_YN='N'} and resolves {@code CHART_ACCT_SEQ_NO}). */
+    private final ChartOfAccountRepository     chartOfAccountRepository;
     private final SpecialCharValidator         specialCharValidator;
+    /** Resolves the verbatim legacy WBW1160 mixed-currency text for the inline
+     *  Transfer-Currency cell error (legacy parity). */
+    private final MessageResolver              messageResolver;
+    /** Folds the user-supplied withdrawal bank code (internal {@code BANK_CD}
+     *  e.g. {@code 11704088}) into the canonical NAPAS code ({@code 970424})
+     *  before it lands on {@code OVRS_PYMN_SUMR.OUT_BANK_CD} — the form the
+     *  Transfer/dispatch path keys {@code TB_FIRM_CONF} by. Mirrors legacy
+     *  {@code pymn_0007_003_c001_act.jsp:106-107}. */
+    private final com.kosign.wecms.domain.payment.common.OutBankCdNormalizer outBankCdNormalizer;
     private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
     private final TransactionalRetry           transactionalRetry;
+    /** F2 — shared ERP_TRNS_HSTR writer for the Overseas Result download 'W' row. */
+    private final com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter erpHistoryWriter;
+
+    /** WeCMS&rarr;ERP ('W') audit code for the Overseas Payment RESULT download
+     *  (legacy {@code ErpTypeCd.OVERSEAS_REQUEST_RESULT}). */
+    static final String ERP_TRNS_TYPE_OVERSEAS_RESULT = "14";
+
+    /** ERP&rarr;WeCMS ('E') audit code for the Overseas Payment Excel UPLOAD
+     *  (legacy {@code ErpTypeCd.OVERSEAS_PAYMENT_REQUEST}, written at upload by
+     *  {@code pymn_0007_003_c001_act.jsp:136}). */
+    static final String ERP_TRNS_TYPE_OVERSEAS_REQUEST = "13";
 
     /** Header row index (0-based POI index; row 3 in Excel = index 2). */
     private static final int HEADER_ROW_INDEX   = 2;
@@ -100,6 +130,20 @@ public class OverseasPaymentExcelService {
     private static final int COL_FEE_PAYER          = 3;
     private static final int COL_MEMO               = 4;
     private static final int COL_REPORTING_ACCOUNT  = 5;
+
+    /* Header titles per column, per language — copied verbatim from the legacy
+     * validator (pymn_0007_003_r001_act.jsp:72-97 HEADER_TITLE_EN/KO/VI). The
+     * header check uses {@code startsWith} so the trailing " *" required-marker
+     * variations and minor whitespace differences are tolerated, matching legacy. */
+    private static final String[] HEADER_TITLE_EN = {
+        "Beneficiary", "Transfer Currency", "Transfer Amount", "Fee Payer", "Memo", "Reporting Account"
+    };
+    private static final String[] HEADER_TITLE_KO = {
+        "수취인", "이체통화", "이체 금액", "수수료부담 선택", "메모", "보고계좌"
+    };
+    private static final String[] HEADER_TITLE_VI = {
+        "Người thụ hưởng", "Loại tiền chuyển", "Số tiền chuyển khoản", "Người chịu phí", "Ghi chú", "Tài khoản báo cáo"
+    };
 
     /**
      * Parse and validate an overseas payment Excel file.
@@ -124,6 +168,14 @@ public class OverseasPaymentExcelService {
             List<OverseasPaymentExcelPreviewRow> rows = new ArrayList<>();
             int completed = 0;
             int errored   = 0;
+            // Legacy parity (pymn_0007_003_r001_act.jsp:333-342, WBW1160): a single
+            // upload must carry exactly one transfer currency. Track the first valid
+            // currency seen and flag every later row whose currency differs.
+            String firstCurrency = null;
+            // Tenant + per-code cache for the reporting-account (Chart of Accounts)
+            // existence check (legacy getChartAcctInfm, :388-392 / :106-123).
+            String bizKey = TenantContext.currentBizKey();
+            Map<String, Boolean> reportingAcctCache = new HashMap<>();
 
             // rowIterator() yields only rows that physically exist in the file,
             // so pre-formatted empty rows in the template are never visited.
@@ -147,20 +199,58 @@ public class OverseasPaymentExcelService {
                 List<OverseasPaymentExcelFieldError> errors = new ArrayList<>();
                 validateRequired(currency,        "currency",        errors);
                 // Legacy parity: currency must be exactly 3 chars
-                // (pymn_0007_002_r001_act.jsp:286-303).
+                // (pymn_0007_003_r001_act.jsp:324-345).
                 if (currency != null && !currency.isBlank() && currency.trim().length() != 3) {
                     errors.add(new OverseasPaymentExcelFieldError(
                             "currency", "currency must be 3 characters"));
+                } else if (currency != null && currency.trim().length() == 3) {
+                    // Single-currency-per-upload rule (legacy WBW1160). H2 interim
+                    // behaviour pending PO (Mr. Jung) decision — block mixed currency.
+                    String ccyNorm = currency.trim().toUpperCase();
+                    if (firstCurrency == null) {
+                        firstCurrency = ccyNorm;
+                    } else if (!firstCurrency.equals(ccyNorm)) {
+                        // Verbatim legacy WBW1160 text on the Transfer Currency cell
+                        // (pymn_0007_003_r001_act.jsp:341 → cell error + tooltip).
+                        errors.add(new OverseasPaymentExcelFieldError(
+                                "currency", messageResolver.resolve("WBW1160")));
+                    }
                 }
                 validateAmount(amount,                               errors);
                 validateRequired(feePayer,         "feePayer",        errors);
+                // Legacy parity (pymn_0007_002_r001 validateFeePayer): the Fee
+                // Payer must resolve to a known FEE_PAYER_CD code (B/O/S). Reject
+                // unknown values here so the user sees a preview field error
+                // instead of a CHAR(1) overflow 500 at submit.
+                if (feePayer != null && !feePayer.isBlank()
+                        && normalizeFeePayerCd(feePayer) == null) {
+                    errors.add(new OverseasPaymentExcelFieldError(
+                            "feePayer", "Invalid Fee Payer: " + feePayer));
+                }
                 validateRequired(beneficiaryCode,  "beneficiaryCode", errors);
                 validateRequired(memo,             "memo",            errors);
-                // Legacy parity: memo capped at 200 chars
-                // (pymn_0007_002_r001_act.jsp:322 — checkValidStringInMax).
-                if (memo != null && memo.length() > 200) {
+                // Legacy parity: memo capped at 500 chars
+                // (pymn_0007_003_r001_act.jsp:386 — checkValidStringInMax(..., 500)).
+                // OVRS_PYMN_SUMR_DETL.MEMO is VARCHAR(500), so 500 is the column limit too.
+                if (memo != null && memo.length() > 500) {
                     errors.add(new OverseasPaymentExcelFieldError(
-                            "memo", "memo must be 200 characters or less"));
+                            "memo", "memo must be 500 characters or less"));
+                }
+
+                // Reporting account (optional) — when present, must resolve to a
+                // live CHART_ACCT_INFM row for the tenant (legacy getChartAcctInfm,
+                // pymn_0007_003_r001_act.jsp:388-392 / :106-123, WBE0404).
+                if (reportingAccount != null && !reportingAccount.isBlank() && bizKey != null) {
+                    String code = reportingAccount.trim();
+                    boolean exists = reportingAcctCache.computeIfAbsent(code, c ->
+                            chartOfAccountRepository
+                                    .findByBizKeyAndChartAcctCdAndDelYn(bizKey, c, "N")
+                                    .isPresent());
+                    if (!exists) {
+                        errors.add(new OverseasPaymentExcelFieldError(
+                                "reportingAccount",
+                                "Reporting account is not registered: " + code));
+                    }
                 }
 
                 // Resolve beneficiary detail server-side from
@@ -234,6 +324,20 @@ public class OverseasPaymentExcelService {
         if (header == null || header.getLastCellNum() < MIN_COLUMNS) {
             throw new BusinessException("WBE2042",
                     "Overseas payment template must have at least " + MIN_COLUMNS + " columns");
+        }
+        // Legacy parity (pymn_0007_003_r001_act.jsp#validDefualtHeader, :242-288):
+        // each of the 6 header cells must start with the expected title in one of
+        // the three template languages (EN/KO/VI). Catches a wrong / outdated
+        // template or shifted columns before any data row is parsed.
+        for (int k = 0; k < MIN_COLUMNS; k++) {
+            String title = readCell(header, k);
+            boolean valid = !title.isBlank() && (
+                    title.startsWith(HEADER_TITLE_EN[k])
+                 || title.startsWith(HEADER_TITLE_KO[k])
+                 || title.startsWith(HEADER_TITLE_VI[k]));
+            if (!valid) {
+                throw new BusinessException("WBE2042", "Header Title(" + title + ")");
+            }
         }
     }
 
@@ -462,17 +566,45 @@ public class OverseasPaymentExcelService {
             }
         }
 
+        // H2 interim (legacy WBW1160) — a single batch carries exactly one currency.
+        // Reject the refactor-only "MULTI" sentinel and any mixed-currency payload
+        // defensively. The preview already blocks mixed currency; this guards a stale
+        // or bypassed client. Final mixed-currency behaviour is pending PO (Mr. Jung).
+        if ("MULTI".equalsIgnoreCase(req.ccy_cd())) {
+            throw new BusinessException("WBW1160");
+        }
+        long distinctCcy = req.rows().stream()
+                .map(r -> r.ccy_cd() == null ? "" : r.ccy_cd().trim().toUpperCase())
+                .filter(s -> !s.isEmpty())
+                .distinct()
+                .count();
+        if (distinctCcy > 1) {
+            throw new BusinessException("WBW1160");
+        }
+
         // ── Summary row ──────────────────────────────────────────────────────
         OvrsPymnSumr sumr = new OvrsPymnSumr();
         sumr.setBizKey(bizKey);
         sumr.setOvrsPymnNo(pymnNo);
-        // Legacy OVRS_PYMN_TYPE_CD = "01" (pymn_0007_002_c001_act.jsp:139).
-        sumr.setOvrsPymnTypeCd("01");
+        // Legacy parity (L2-audit gap L3): the Excel-batch create path
+        // pymn_0007_003_c001_act.jsp never sets OVRS_PYMN_TYPE_CD, and the legacy
+        // OvrsPymnSumr(WbUser) constructor does not default it — legacy leaves it NULL.
+        // Verified 2026-06-29 on live JEX: every OVRS_PYMN_SUMR row has
+        // ovrs_pymn_type_cd = NULL. The earlier "01" was sourced from the MANUAL
+        // pymn_0007_002 path, not this Excel batch path; corrected for parity.
+        sumr.setOvrsPymnTypeCd(null);
         sumr.setTitl(req.file_nm());
         sumr.setCcyCd(req.ccy_cd());
         sumr.setTotalTranAmt(serverTotalAmt);
         sumr.setTotTrnsCnt(serverTotTrnsCnt);
-        sumr.setOutBankCd(req.wdrl_bank_cd());
+        // Persist the canonical NAPAS code, NOT the raw account BANK_CD. Legacy
+        // pymn_0007_003_c001_act.jsp:106-107 looks the withdrawal bank up in
+        // NAPAS_BANK_INFO (bank_cd = ? OR napas_bank_cd = ?) and stores
+        // napas_bank_cd. The Transfer/dispatch path keys TB_FIRM_CONF by
+        // OUT_BANK_CD (OverseasDispatchExecutor.resolveBankPrtnId) and that
+        // table is keyed by the NAPAS code (970424), so storing the raw
+        // 11704088 here caused WBE2089 ("firm-banking configuration not found").
+        sumr.setOutBankCd(outBankCdNormalizer.normalize(req.wdrl_bank_cd()));
         // OUT_BANK_NM is not stored on OVRS_PYMN_SUMR in JEX — the withdrawal
         // bank name is derived from OUT_BANK_CD via BANK_INFM in the list/result queries.
         sumr.setWdrlActNo(req.wdrl_acct_no());
@@ -483,6 +615,12 @@ public class OverseasPaymentExcelService {
         sumr.setTrnfYn("N");
         sumr.setRegDtm(nowDtm);
         sumr.setRegId(userId);
+        // Legacy OVRS_PYMN_SUMR has MOD_ID + MOD_DTM NOT NULL; the JEX create
+        // stamps mod_* = reg_* on insert. Mirror that (same as the internal-transfer
+        // ScdulPymnSumr create) — without it the INSERT trips the MOD_ID NOT NULL
+        // constraint, which the key-race retry then misreports as a doc-number race.
+        sumr.setModDtm(nowDtm);
+        sumr.setModId(userId);
 
         // Record the uploaded-file metadata on the summary BEFORE the flush; the
         // physical bytes are written only after the key is proven unique (below) so
@@ -506,6 +644,14 @@ public class OverseasPaymentExcelService {
         // Physical file write happens only after the key is proven unique.
         if (saveFileNm != null) {
             persistUploadedFile(bizKey, saveFileNm, file);
+            // H3 — legacy parity (pymn_0007_003_c001_act.jsp:134-136): write the
+            // ERP_TRNS_HSTR upload row (ErpTypeCd.OVERSEAS_PAYMENT_REQUEST = "13") so
+            // the batch appears in Settings > ERP Transaction History. Non-blocking
+            // (REQUIRES_NEW + swallow) — the upload must not fail on an audit-write error.
+            erpHistoryWriter.recordUploadedFile(
+                    ERP_TRNS_TYPE_OVERSEAS_REQUEST,
+                    fileResolver.resolve(bizKey, saveFileNm),
+                    req.file_nm());
         }
 
         // ── Detail rows ───────────────────────────────────────────────────────
@@ -517,6 +663,8 @@ public class OverseasPaymentExcelService {
         // first row and a contiguous block thereafter.
         long detlNoCursor = Long.parseLong(legacyFunctions.nextOvrsPymnDetlNo(bizKey)) - 1;
         List<OvrsPymnSumrDetl> dtlsList = new ArrayList<>();
+        // Per-beneficiary-code cache for the TRCO_KEY resolution below (L2).
+        Map<String, String> trcoKeyCache = new HashMap<>();
         for (var src : req.rows()) {
             OvrsPymnSumrDetl dtl = new OvrsPymnSumrDetl();
             dtl.setBizKey(bizKey);
@@ -524,9 +672,32 @@ public class OverseasPaymentExcelService {
             dtl.setOvrsPymnDetlNo(Long.toString(++detlNoCursor));
             dtl.setCcyCd(src.ccy_cd());
             dtl.setTrnfAmt(src.trnf_amt());
-            dtl.setFeePayerCd(src.fee_payer_cd());
+            // Map the upload value to the legacy CHAR(1) FEE_PAYER_CD code
+            // (B/O/S). The preview pass already rejected unrecognised values;
+            // a null here means a stale/bypassed client — fail with a clean
+            // validation error rather than overflow the CHAR(1) column (which
+            // the broad key-race catch would otherwise misreport as a race).
+            String feePayerCd = normalizeFeePayerCd(src.fee_payer_cd());
+            if (feePayerCd == null) {
+                throw new BusinessException("WBE_VALIDATION",
+                        "Invalid Fee Payer: " + src.fee_payer_cd());
+            }
+            dtl.setFeePayerCd(feePayerCd);
             dtl.setMemo(nullToEmpty(src.memo()));
-            dtl.setRprtAcctCd(nullIfBlank(src.rprt_acct_cd()));
+            // Reporting account (optional): resolve CHART_ACCT_SEQ_NO so the pair
+            // (CHART_ACCT_CD, CHART_ACCT_SEQ_NO) stays consistent for legacy /
+            // migration parity (legacy c001 sets both — pymn_0007_003_c001_act.jsp:161-162).
+            // A non-blank code that does not resolve means a stale / bypassed client
+            // (the preview already validates it) — fail clean.
+            String rprtCode = nullIfBlank(src.rprt_acct_cd());
+            if (rprtCode != null) {
+                ChartAcctInfm chart = chartOfAccountRepository
+                        .findByBizKeyAndChartAcctCdAndDelYn(bizKey, rprtCode, "N")
+                        .orElseThrow(() -> new BusinessException("WBE_VALIDATION",
+                                "Reporting account is not registered: " + src.rprt_acct_cd()));
+                dtl.setRprtAcctCd(rprtCode);
+                dtl.setChartAcctSeqNo(chart.getChartAcctSeqNo());
+            }
             dtl.setBnfcNm(nullToEmpty(src.bnfc_nm()));
             dtl.setBnfcBankNm(nullToEmpty(src.bnfc_bank_nm()));
             dtl.setBicCd(nullToEmpty(src.bic_cd()));
@@ -535,10 +706,22 @@ public class OverseasPaymentExcelService {
             dtl.setBnfcBankCd(nullToEmpty(src.bic_cd()));
             dtl.setBnfcAcctNo(nullToEmpty(src.bnfc_acct_no()));
             dtl.setBnfcAddr(nullToEmpty(src.bnfc_addr()));
-            // Contact-less Excel upload: no resolved internal TRCO_KEY.
-            // HAND_TRCO_KEY carries the user-facing beneficiary code.
-            dtl.setTrcoKey("");
-            dtl.setHandTrcoKey(nullToEmpty(src.bnfc_code()));
+            // Legacy parity (L2): resolve the internal TRCO_KEY from the beneficiary
+            // code, matching legacy getOverseasContactInfo (pymn_0007_003_r001_act.jsp:138
+            // — recItem.put("TRCO_KEY", trcoInfm.getTrcoKey())) → c001 setTrcoKey
+            // (pymn_0007_003_c001_act.jsp:158). The preview already validated the contact
+            // exists; fall back to "" only if it cannot be resolved (NOT-NULL column).
+            // HAND_TRCO_KEY keeps the user-facing beneficiary code.
+            String handKey = nullToEmpty(src.bnfc_code());
+            String trcoKey = "";
+            if (!handKey.isBlank() && bizKey != null) {
+                trcoKey = trcoKeyCache.computeIfAbsent(handKey.trim(), hk ->
+                        contactRepo.findActiveOverseasByBizKeyAndHandTrcoKey(bizKey, hk)
+                                .map(TrcoInfm::getTrcoKey)
+                                .orElse(""));
+            }
+            dtl.setTrcoKey(trcoKey);
+            dtl.setHandTrcoKey(handKey);
             dtl.setRegDtm(nowDtm);
             dtl.setRegId(userId);
             dtl.setModDtm(nowDtm);
@@ -554,6 +737,32 @@ public class OverseasPaymentExcelService {
 
     private static String nullIfBlank(String s) {
         return (s == null || s.isBlank()) ? null : s;
+    }
+
+    /**
+     * Normalise the upload Fee Payer value to the legacy {@code FEE_PAYER_CD}
+     * single-char code ({@code B}/{@code O}/{@code S}) that
+     * {@code OVRS_PYMN_SUMR_DETL.FEE_PAYER_CD} ({@code CHAR(1)}) stores and that
+     * the dispatch / result paths expect ({@code OverseasDispatchExecutor.mapFeeBurden}
+     * {@code B/O/S → BEN/OUR/SHA}; legacy {@code pymn_0007_002_r001} {@code validateFeePayer}
+     * {@code "Beneficiary Charge"/"Ordering Charge"/"Shared" → B/O/S}).
+     *
+     * <p>Accepts every representation present across the codebase / templates:
+     * the 1-char code, the 3-char SWIFT charge code ({@code BEN}/{@code OUR}/{@code SHA}),
+     * and the full English label. Case-insensitive, whitespace-trimmed. Returns
+     * {@code null} for an unrecognised value so callers raise the validation error
+     * rather than overflow the {@code CHAR(1)} column.
+     */
+    private static String normalizeFeePayerCd(String raw) {
+        if (raw == null) return null;
+        String v = raw.trim();
+        if (v.isEmpty()) return null;
+        return switch (v.toUpperCase()) {
+            case "B", "BEN", "BENEFICIARY CHARGE", "BENEFICIARY CHARGED", "BENEFICIARY" -> "B";
+            case "O", "OUR", "ORDERING CHARGE", "ORDERING" -> "O";
+            case "S", "SHA", "SHARED" -> "S";
+            default -> null;
+        };
     }
 
     /** Coalesce null → "" for JEX NOT-NULL detail columns (the Excel upload
@@ -631,7 +840,7 @@ public class OverseasPaymentExcelService {
             throw new BusinessException("WBE2069");
         }
 
-        Path path = fileResolver.resolve(bizKey, saveFileNm);
+        Path path = fileResolver.resolveForRead(bizKey, saveFileNm);
         if (!Files.isReadable(path) || !Files.isRegularFile(path)) {
             throw new BusinessException("WBE2069");
         }
@@ -642,6 +851,14 @@ public class OverseasPaymentExcelService {
         String displayName = (sumr.getOrgFileNm() == null || sumr.getOrgFileNm().isBlank())
                 ? saveFileNm
                 : sumr.getOrgFileNm();
+        // The /scheduled/{id}/file endpoint serves the Scheduled-side original
+        // import-file download. Per the ERP Transaction History mapping,
+        // Scheduled-side downloads record the SCHEDULED type code (13 =
+        // OVERSEAS_PAYMENT_REQUEST, legacy pymn_0007_004_r002), UNCONDITIONALLY
+        // (both not-yet-dispatched N and dispatched Y). Non-blocking
+        // (REQUIRES_NEW + swallow).
+        erpHistoryWriter.recordExportedFile(
+                ERP_TRNS_TYPE_OVERSEAS_REQUEST, path, displayName);
         return new DownloadResource(path, displayName, saveFileNm, fileSize);
     }
 

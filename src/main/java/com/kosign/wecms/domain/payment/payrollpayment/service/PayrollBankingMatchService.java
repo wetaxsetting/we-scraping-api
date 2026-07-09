@@ -94,12 +94,18 @@ public class PayrollBankingMatchService {
         // Legacy parity: candidates are pinned to the batch's exact PAY_TRAN_DT
         // + total amount on the withdrawal account. The popup's date range is
         // non-filtering (legacy comm_0197_001_r001 ignores FROM_DT/TO_DT).
+        // P3 parity: also apply the TRSC_TM >= transferTime floor — the batch
+        // TRNF_DTM (UTC) shifted to VN-local HHmmss (legacy
+        // putBankingCandidateIdoInSumr). Null when not yet transferred → skipped.
+        String transferTime = com.kosign.wecms.domain.payment.match.service
+                .MatchCandidateTime.localTransferTime(master.getTrnfDtm());
         List<PayrollMatchCandidateRow> candidates = txnRepository
                 .findPayrollMatchCandidates(
                         bizKey,
                         master.getWdrlActNo(),
                         master.getPayTranDt(),
                         master.getTotalTranAmt(),
+                        transferTime,
                         keyword)
                 .stream()
                 .map(PayrollBankingMatchService::toCandidate)

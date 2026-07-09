@@ -60,7 +60,7 @@ Tracks, per live table: which Flyway migration creates it, whether a JPA **entit
 | `TB_FIRM_FILE_RSLT` | V189 | ✅ | — 🔭 |
 | `BLOCKED_CHARS_RULE` | V149 | ✅ | ✅ BlockedCharsRuleRepository |
 
-> The six `TB_BATCH_SCHEDULE_*` / `TB_FIRM_BAT_API_TRAN` / `TB_FIRM_FILE_*` tables have entities (schema parity) but **no repository** — the dispatch write-path that would consume them is not yet ported. See [database-follow-up.md](../../planning/open-questions/database-follow-up.md) context and the dispatch schema doc.
+> The six `TB_BATCH_SCHEDULE_*` / `TB_FIRM_BAT_API_TRAN` / `TB_FIRM_FILE_*` tables have entities (schema parity) but **no repository** — the dispatch write-path that would consume them is not yet ported. See database-follow-up.md _(removed — historical `planning/` folder deleted by project decision)_ context and the dispatch schema doc.
 
 ## Add-on Service — [erd/addon-service-erd.md](erd/addon-service-erd.md)
 
@@ -144,5 +144,5 @@ Tracks, per live table: which Flyway migration creates it, whether a JPA **entit
 ## Related
 
 - ERD set: [erd/README.md](erd/README.md) · Table ownership: [table-ownership.md](table-ownership.md)
-- Open questions: [planning/open-questions/database-follow-up.md](../../planning/open-questions/database-follow-up.md)
+- Open questions: planning/open-questions/database-follow-up.md _(removed — historical `planning/` folder deleted by project decision)_
 - DB reference root: [README.md](README.md)

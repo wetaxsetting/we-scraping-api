@@ -75,6 +75,92 @@ public interface ScdulPymnSumrDetlRepository
     List<ScdulPymnSumrDetl> findUnmatchedForTenant(@Param("bizKey") String bizKey);
 
     /**
+     * P4 Smart Organizer (banking→payment) domestic candidate scan — the
+     * SCDUL non-payroll branch of legacy {@code OVRS_PYMN_SUMR_DETL_R006}
+     * ({@code comm_0196_001_r001}). Given a bank withdrawal's transfer date +
+     * exact amount, returns unmatched Vendor/Expense/Internal-Transfer detail
+     * lines whose parent batch is transferred, for a matching transfer date.
+     *
+     * <p>Unlike {@link #findDomesticAutoMatchCandidates} this branch does
+     * <b>NOT</b> filter by withdrawal account — legacy {@code R006} matches a
+     * bank transaction to a payment purely on date + amount + time + remark +
+     * success, regardless of account (confirmed: the R006 SQL has no account
+     * predicate). It also enforces the header-unmatched check
+     * ({@code COALESCE(S.LINK_MATCH_YN,'N') <> 'Y'}) that the auto-match query
+     * omits, mirroring the R006 SCDUL branch (both header + detail unmatched).
+     *
+     * <p>The remaining legacy predicates — transfer-time floor (#6), per-line
+     * dispatch success (#12), locked-{@code BUSI_MATCH_LOG} exclusion (#11),
+     * and the effective-remark containment (#13) — are applied in
+     * {@code MatchService.listCandidates} in Java (success via
+     * {@code DispatchResultResolver}, time via {@code MatchCandidateTime}),
+     * exactly as {@code AutoMatchService} does for its own candidate scan.
+     * The date predicate mirrors {@link #findDomesticAutoMatchCandidates}
+     * verbatim ({@code SUBSTRING(TRNF_DTM,1,8) = :trscDt}) for cross-query
+     * consistency.
+     */
+    @Query(value = """
+            SELECT d.* FROM SCDUL_PYMN_SUMR_DETL d
+              JOIN SCDUL_PYMN_SUMR s
+                ON s.BIZ_KEY = d.BIZ_KEY AND s.SCDUL_PYMN_NO = d.SCDUL_PYMN_NO
+             WHERE d.BIZ_KEY = :bizKey
+               AND s.SCDUL_PYMN_TYPE_CD <> '00'
+               AND s.TRNF_YN = 'Y'
+               AND COALESCE(d.LINK_MATCH_YN, 'N') <> 'Y'
+               AND COALESCE(s.LINK_MATCH_YN, 'N') <> 'Y'
+               AND d.TRAN_AMT = :trscAmt
+               AND s.TRNF_DTM IS NOT NULL
+               AND LENGTH(s.TRNF_DTM) >= 8
+               AND SUBSTRING(s.TRNF_DTM FROM 1 FOR 8) = :trscDt
+            """, nativeQuery = true)
+    List<ScdulPymnSumrDetl> findDomesticBankMatchCandidates(
+            @Param("bizKey") String bizKey,
+            @Param("trscDt") String trscDt,
+            @Param("trscAmt") java.math.BigDecimal trscAmt);
+
+    /**
+     * Auto-match candidate scan (domestic detail-level) — Vendor
+     * ({@code '01'}), Expense ({@code '02'}) and Internal Transfer
+     * ({@code '03'}) lines whose parent batch was dispatched
+     * ({@code TRNF_YN='Y'}) on the same withdrawal account, for the same
+     * transfer date and exact line amount, and which are not yet matched.
+     * Mirrors the SQL-side predicate of the legacy auto-match candidate
+     * query {@code OVRS_PYMN_SUMR_DETL_R007}
+     * ({@code fnsh_0001_001_c001_act.jsp:1908}) restricted to the domestic
+     * (S-type) branch.
+     *
+     * <p>Native (not JPQL) because {@code SCDUL_PYMN_SUMR_DETL} carries no
+     * mapped association to its parent {@code SCDUL_PYMN_SUMR}, so the
+     * WDRL_ACT_NO / TRNF_YN / TRNF_DTM / type-code predicate has to join the
+     * parent table explicitly. {@code SELECT d.*} maps back to the entity.
+     * The three remaining legacy conditions — payment success, transfer-time
+     * {@literal <} bank-time, and "payment remark contained in bank remark" —
+     * are applied by {@code AutoMatchService} in Java (success via
+     * {@code DispatchResultResolver}; remark via
+     * {@code BankTrnsIdGenerator.cleanRemark}). {@code exactly-one} is enforced
+     * across the domestic + payroll candidate union in the service.
+     */
+    @Query(value = """
+            SELECT d.* FROM SCDUL_PYMN_SUMR_DETL d
+              JOIN SCDUL_PYMN_SUMR s
+                ON s.BIZ_KEY = d.BIZ_KEY AND s.SCDUL_PYMN_NO = d.SCDUL_PYMN_NO
+             WHERE d.BIZ_KEY = :bizKey
+               AND s.WDRL_ACT_NO = :acctNo
+               AND s.TRNF_YN = 'Y'
+               AND s.SCDUL_PYMN_TYPE_CD IN ('01', '02', '03')
+               AND COALESCE(d.LINK_MATCH_YN, 'N') <> 'Y'
+               AND d.TRAN_AMT = :trscAmt
+               AND s.TRNF_DTM IS NOT NULL
+               AND LENGTH(s.TRNF_DTM) >= 8
+               AND SUBSTRING(s.TRNF_DTM FROM 1 FOR 8) = :trscDt
+            """, nativeQuery = true)
+    List<ScdulPymnSumrDetl> findDomesticAutoMatchCandidates(
+            @Param("bizKey") String bizKey,
+            @Param("acctNo") String acctNo,
+            @Param("trscDt") String trscDt,
+            @Param("trscAmt") java.math.BigDecimal trscAmt);
+
+    /**
      * Smart Organizer — set the payment-side match link. Mirrors legacy
      * {@code comm_0196_001_c001_act.jsp} which patches
      * {@code SCDUL_PYMN_SUMR_DETL.LINK_MATCH_YN = 'Y'} plus the

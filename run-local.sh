@@ -20,7 +20,12 @@ if [ -z "${WECMS_DB_PASSWORD:-}" ]; then
     echo "[INFO] WECMS_DB_PASSWORD not set — using default from application-local.yml (password: 1234)"
 fi
 if [ -z "${WECMS_JWT_SECRET:-}" ]; then
-    echo "[INFO] WECMS_JWT_SECRET not set — using default from application-local.yml"
+    # F-01: application-local.yml no longer carries a JWT secret default. Export a
+    # local-only dev secret so `./run-local.sh` still works out of the box. This
+    # value is for developer laptops ONLY — SIT/UAT/PROD must set their own unique
+    # WECMS_JWT_SECRET (and the app fails fast there if it is missing).
+    export WECMS_JWT_SECRET="wecms-local-dev-only-jwt-secret-not-for-any-shared-environment-0123456789"
+    echo "[INFO] WECMS_JWT_SECRET not set — exporting a local-only dev secret (laptop use only)"
 fi
 
 # --- 3. Sanity-check local PostgreSQL is reachable ---

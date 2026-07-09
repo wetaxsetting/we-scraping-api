@@ -9,6 +9,7 @@ import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolApprvrInfmRepository;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprDv;
+import com.kosign.wecms.domain.payment.internaltransfer.service.ApprovalContentLoader;
 import com.kosign.wecms.domain.payment.dto.ChangeApprovalLineRequest;
 import com.kosign.wecms.domain.payment.dto.OverseasApprover;
 import com.kosign.wecms.domain.payment.dto.OverseasCurrencyTotal;
@@ -16,11 +17,17 @@ import com.kosign.wecms.domain.payment.dto.OverseasPaymentDetailResponse;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentDetailRowResponse;
 import com.kosign.wecms.domain.payment.dto.OverseasResultListResponse;
 import com.kosign.wecms.domain.payment.dto.OverseasResultRow;
+import com.kosign.wecms.domain.payment.dto.OverseasMultiApprovalRequest;
 import com.kosign.wecms.domain.payment.dto.OverseasScheduledListResponse;
 import com.kosign.wecms.domain.payment.dto.OverseasScheduledRow;
+import com.kosign.wecms.domain.payment.entity.OvrsPymnMstr;
+import com.kosign.wecms.domain.payment.entity.OvrsPymnMstrId;
 import com.kosign.wecms.domain.payment.entity.OvrsPymnSumrDetl;
 import com.kosign.wecms.domain.payment.entity.OvrsPymnSumr;
+import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnMstrRepository;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalActionRequest;
+import com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalAttachmentRow;
+import com.kosign.wecms.domain.payment.internaltransfer.service.ApprovalAttachmentLoader;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalResponse;
 import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnDtlsRepository;
@@ -74,10 +81,28 @@ public class OverseasPaymentService {
     private static final ZoneId            VIETNAM_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
     private static final DateTimeFormatter DTM_FMT      = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
     private static final String            WSVC_ID      = "overseas-payment";
+    /** F2 — WeCMS→ERP ('W') audit code for the Overseas Payment RESULT export
+     *  (legacy {@code ErpTypeCd.OVERSEAS_REQUEST_RESULT}). */
+    private static final String            ERP_TRNS_TYPE_OVERSEAS_RESULT = "14";
+    /** G1 — deleted-batch ('D') audit code for the Overseas SCHEDULED payment
+     *  (legacy {@code ErpTypeCd.OVERSEAS_PAYMENT_REQUEST} = "13", passed by
+     *  {@code pymn_0007_001_d001_act.jsp:90}). Restores parity with the four
+     *  domestic scheduled modules, which each write an {@code ERP_TYPE='D'}
+     *  row on delete so the batch appears in the ERP "Deleted" tab. */
+    private static final String            ERP_TRNS_TYPE_OVERSEAS_SCHEDULED = "13";
 
     private final OverseasPaymentRepository      paymentRepo;
+    /** Emits the PROCESSING lifecycle signal on dispatch (HAENGSUNG Oracle write-back). */
+    private final org.springframework.context.ApplicationEventPublisher eventPublisher;
     private final OverseasApproverRepository     approverRepo;
     private final OvrsPymnSumrRepository         sumrRepository;
+    /** OVRS_PYMN_MSTR access for the multi-payment ("M" type) Request
+     *  Approval path (legacy {@code OVRS_PYMN_TYPE='M'}) + the Approval
+     *  Details legacy-M-mode detail fallback (GAP-OVS-MODE). */
+    private final OvrsPymnMstrRepository         ovrsPymnMstrRepository;
+    /** Combined approval-attachment loader — UNION of EXPT_RESOL_FILE +
+     *  EXPT_RESOL_PAY_EVID_FILE (GAP-ATT-1 / GAP-OVS-ATT). */
+    private final ApprovalAttachmentLoader       approvalAttachmentLoader;
     private final OvrsPymnDtlsRepository         dtlsRepository;
     private final OverseasDispatchExecutor       dispatchExecutor;
     /** Phase 2 dispatch-result resolver — surfaces PROC_STAT / RS_CD /
@@ -86,7 +111,20 @@ public class OverseasPaymentService {
     private final DispatchResultResolver         dispatchResultResolver;
     private final ExptResolMstrRepository        exptResolMstrRepository;
     private final ExptResolApprvrInfmRepository  exptResolApprvrInfmRepository;
+    /** Shared avatar-URL resolver — maps approver ids → /api/v1/users/{id}/image
+     *  (null when no stored image). Single home for the USER_IMG → URL logic. */
+    private final com.kosign.wecms.domain.auth.service.UserImageUrlResolver userImageUrlResolver;
+    /** Shared Approval Content loader — reads {@code BLTB_POST_INFM.POST_CONT}
+     *  (the legacy source of truth), identical to the four scheduled types. */
+    private final ApprovalContentLoader          approvalContentLoader;
     private final AuditLogService                auditLogService;
+    /** F2 — shared ERP_TRNS_HSTR writer for the Overseas Result export 'W' row.
+     *  Also G1 — writes the {@code ERP_TYPE='D'} deleted-batch row on
+     *  {@link #deleteDraftBatch}. */
+    private final com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter erpHistoryWriter;
+    /** G1 — resolves the uploaded Excel path so a deleted batch's file can be
+     *  preserved into ERP Transaction History (read-fallback aware). */
+    private final com.kosign.wecms.domain.payment.overseas.service.OverseasPaymentFileResolver fileResolver;
     private final BusiInfmRepository             busiInfmRepository;
     private final DocNoGenerator                 docNoGenerator;
     /** Pre-dispatch cut-off window guard. Mirrors legacy
@@ -97,6 +135,16 @@ public class OverseasPaymentService {
     private final com.kosign.wecms.domain.payment.internaltransfer.service.CutoffValidator
                                                  cutoffValidator;
     private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
+    private final com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxFanoutService approvalBoxFanoutService;
+    /** Shared request-approval bulletin / notification writer (BLTB_* tables). */
+    private final com.kosign.wecms.domain.payment.notification.service.ApprovalNotificationService approvalNotificationService;
+    /** H-1: NAPAS bank-code conversion for the OUT_BANK_CD back-stamp
+     *  (legacy comm_0192_001_c005_act.jsp:404-410 updateOverseasPaymentSummary). */
+    private final com.kosign.wecms.domain.payment.common.OutBankCdNormalizer outBankCdNormalizer;
+    /** M-2/M-3 (legacy parity): EXPT_RESOL_MSTR display flags from BUSI_ENV_SET_INFM. */
+    private final com.kosign.wecms.domain.payment.approvalbox.service.ApprovalDisplayFlagsResolver displayFlagsResolver;
+    /** M-1 (legacy parity): shared Request Approval attachment writer (EXPT_RESOL_FILE). */
+    private final com.kosign.wecms.domain.payment.approvalbox.service.ApprovalAttachmentWriter approvalAttachmentWriter;
 
     /**
      * Overseas scheduled-payment list.
@@ -149,9 +197,10 @@ public class OverseasPaymentService {
 
         Map<String, List<Object[]>> approversBySeq =
                 approverRepo.findByApprSeqNos(bizKey, apprSeqNos);
+        Map<String, String> imgUrlByApprvrId = resolveApproverImageUrls(bizKey, approversBySeq);
 
         List<OverseasScheduledRow> rows = rawRows.stream()
-                .map(r -> mapRow(r, approversBySeq))
+                .map(r -> mapRow(r, approversBySeq, imgUrlByApprvrId))
                 .collect(Collectors.toList());
 
         // Currency totals (same filter as the paged query)
@@ -199,7 +248,8 @@ public class OverseasPaymentService {
         Map<String, List<Object[]>> approversBySeq = apprSeqNo != null
                 ? approverRepo.findByApprSeqNos(bizKey, List.of(apprSeqNo))
                 : Map.of();
-        return mapRow(r, approversBySeq);
+        Map<String, String> imgUrlByApprvrId = resolveApproverImageUrls(bizKey, approversBySeq);
+        return mapRow(r, approversBySeq, imgUrlByApprvrId);
     }
 
     // ─── result list ──────────────────────────────────────────────────────────
@@ -208,7 +258,7 @@ public class OverseasPaymentService {
             String fromDt,
             String toDt,
             String keyword,
-            String trnfYn,
+            String procStat,
             int page,
             int size,
             String sortField,
@@ -222,25 +272,51 @@ public class OverseasPaymentService {
         int    pageIndex  = Math.max(0, page);
         int    offset     = pageIndex * pageSize;
         String likePat    = buildLikePattern(keyword);
-        String trnfFilter = (trnfYn != null && !trnfYn.isBlank()) ? trnfYn : null;
-        String orderBy    = buildOrderBy(OverseasResultSortField.parse(sortField), sortDirection, "ops.reg_dtm DESC");
+        // F2 — map the legacy PROC_STAT CSV (checkbox values "0,3" / "6") to the
+        // computed TRNF_STTS letters {C,F,P} the query filters on.
+        List<String> statusLetters = mapProcStatToStatusLetters(procStat);
+        String orderBy    = buildOrderBy(OverseasResultSortField.parse(sortField), sortDirection, "reg_dtm DESC");
 
-        long totalCount = paymentRepo.countResult(bizKey, fromDt, toDt, likePat, trnfFilter);
+        long totalCount = paymentRepo.countResult(bizKey, fromDt, toDt, likePat, statusLetters);
 
         java.util.List<Object[]> rawRows = totalCount == 0
                 ? java.util.List.of()
-                : paymentRepo.findResult(bizKey, fromDt, toDt, likePat, trnfFilter, offset, pageSize, orderBy);
+                : paymentRepo.findResult(bizKey, fromDt, toDt, likePat, statusLetters, offset, pageSize, orderBy);
 
         java.util.List<OverseasResultRow> rows = rawRows.stream()
                 .map(this::mapResultRow)
                 .collect(java.util.stream.Collectors.toList());
 
-        java.util.List<Object[]> rawTotals = paymentRepo.sumResultByCurrency(bizKey, fromDt, toDt, likePat, trnfFilter);
+        // Footer totals — legacy parity: NO status filter (mirrors R005_CNT which
+        // is fed date+keyword only). See OverseasPaymentRepository.sumResultByCurrency.
+        java.util.List<Object[]> rawTotals = paymentRepo.sumResultByCurrency(bizKey, fromDt, toDt, likePat);
         java.util.List<OverseasCurrencyTotal> totals = rawTotals.stream()
                 .map(this::mapTotal)
                 .collect(java.util.stream.Collectors.toList());
 
         return new OverseasResultListResponse(totalCount, pageIndex, pageSize, rows, totals);
+    }
+
+    /**
+     * Maps the legacy {@code PROC_STAT} CSV the Completed / In-Progress checkboxes
+     * send (Completed = {@code "0,3"}, In Progress = {@code "6"}) to the computed
+     * {@code TRNF_STTS} letters the result query filters on. Mirrors legacy
+     * {@code pymn_0008_001_r001_act.jsp} {@code getDynamicStatusFilter}:
+     * {@code 0→C}, {@code 3→F}, {@code 6→P}, {@code 9→P}. Returns {@code null}
+     * (no filter, "all") when blank or no recognised value.
+     */
+    private static List<String> mapProcStatToStatusLetters(String procStat) {
+        if (procStat == null || procStat.isBlank()) return null;
+        java.util.LinkedHashSet<String> letters = new java.util.LinkedHashSet<>();
+        for (String p : procStat.split(",")) {
+            switch (p.trim()) {
+                case "0" -> letters.add("C");
+                case "3" -> letters.add("F");
+                case "6", "9" -> letters.add("P");
+                default -> { /* ignore unrecognised values */ }
+            }
+        }
+        return letters.isEmpty() ? null : new java.util.ArrayList<>(letters);
     }
 
     public OverseasResultRow getResultById(String ovrsPymnNo) {
@@ -252,42 +328,103 @@ public class OverseasPaymentService {
     }
 
     /**
+     * Ordered list of Overseas Payment Result batch keys ({@code OVRS_PYMN_NO})
+     * for the current filter — drives the toolbar bulk template-report export
+     * ({@code OverseasPaymentDownloadService.generateBulk}). Uses the SAME
+     * predicate + ordering as {@link #exportResult} / {@link #listResult}
+     * ({@code findResultForExport}), so the bulk report mirrors what the user
+     * sees on screen. One id per batch (E and M alike); the download service
+     * dispatches each id to its E/M branch.
+     */
+    @Transactional(readOnly = true)
+    public List<String> resultIdsForExport(String fromDt, String toDt, String keyword, String procStat) {
+        if (fromDt == null || fromDt.isBlank()) throw new BusinessException("WBE_VALIDATION", "FROM_DT is required");
+        if (toDt   == null || toDt.isBlank())   throw new BusinessException("WBE_VALIDATION", "TO_DT is required");
+        String bizKey = TenantContext.currentBizKey();
+        List<String> statusLetters = mapProcStatToStatusLetters(procStat);
+        String likePat = buildLikePattern(keyword);
+        return paymentRepo.findResultForExport(bizKey, fromDt, toDt, likePat, statusLetters)
+                .stream()
+                .map(b -> toStr(b[0]))
+                .filter(s -> s != null && !s.isBlank())
+                .toList();
+    }
+
+    /**
      * Streams the Overseas Payment Result XLSX per the WeCMS spec:
      * title row → summary row (USD/VND/KRW totals) → header row → one data row per
      * OVRS_PYMN_DTLS across all matching batches.
      *
      * <p>Mirrors legacy {@code pymn_0007_001} Excel export path.
      */
-    public void exportResult(String fromDt, String toDt, String keyword, String trnfYn,
+    public void exportResult(String fromDt, String toDt, String keyword, String procStat,
                              HttpServletResponse response) throws IOException {
         if (fromDt == null || fromDt.isBlank()) throw new BusinessException("WBE_VALIDATION", "FROM_DT is required");
         if (toDt   == null || toDt.isBlank())   throw new BusinessException("WBE_VALIDATION", "TO_DT is required");
 
         String bizKey    = TenantContext.currentBizKey();
-        String trnfFilter = (trnfYn != null && !trnfYn.isBlank()) ? trnfYn : null;
+        // F2 — same computed-status filter as the list (what you see is what exports).
+        List<String> statusLetters = mapProcStatToStatusLetters(procStat);
         String likePat    = buildLikePattern(keyword);
 
-        List<Object[]> batches = paymentRepo.findResultForExport(bizKey, fromDt, toDt, likePat, trnfFilter);
+        List<Object[]> batches = paymentRepo.findResultForExport(bizKey, fromDt, toDt, likePat, statusLetters);
 
         Map<String, BigDecimal> currencyTotals = new LinkedHashMap<>();
         List<OverseasPaymentResultExcelWriter.ExportRow> exportRows = new ArrayList<>();
 
+        // Index layout matches OverseasPaymentRepository.buildResultSql (reused by
+        // findResultForExport). b[5]=reg_dtm (=TRNF_DT, F1); b[2]=file_nm (=TITL, F4).
         for (Object[] b : batches) {
             String ovrsPymnNo  = toStr(b[0]);
-            String batchRegDtm = toStr(b[5]);
+            String batchRegDtm = toStr(b[5]);   // TRNF_DT → Transfer Date Time
             String draftUserNm = toStr(b[6]);
             String regId       = toStr(b[7]);
             String outBankNm   = toStr(b[8]);
-            String wdrlActNo   = toStr(b[9]);
-            String trnfYnVal   = toStr(b[10]);
-            String docNo       = toStr(b[11]);
-            String apprTitl    = toStr(b[12]);
-            String apprRegDtm  = toStr(b[13]);
-            String apprTypeCd  = toStr(b[14]);
-            String payDate     = toStr(b[15]);
-            String orgFileNm   = toStr(b[2]);
+            String wdrlActNo   = toStr(b[10]);
+            String trnfYnVal   = toStr(b[11]);
+            String docNo       = toStr(b[12]);
+            String apprTitl    = toStr(b[13]);
+            String apprRegDtm  = toStr(b[22]);  // EXPT_RESOL_MSTR.REG_DTM → Request Date/Time
+            String apprTypeCd  = toStr(b[15]);
+            String payDate     = toStr(b[14]);
+            String orgFileNm   = toStr(b[2]);   // file_nm column = OVRS_PYMN_SUMR.ORG_FILE_NM (uploaded file name)
             String requestor   = draftUserNm != null && !draftUserNm.isBlank()
                     ? draftUserNm : OverseasPaymentResultExcelWriter.safe(regId);
+
+            // F3 — M-mode batch: one export line from OVRS_PYMN_MSTR itself
+            // (no OVRS_PYMN_SUMR_DETL child). Mirrors legacy R010 M branch.
+            if ("M".equals(toStr(b[23]))) {
+                for (Object[] m : paymentRepo.findMmodeDetailRows(bizKey, ovrsPymnNo)) {
+                    String rowCcy = toStr(m[2]) != null ? toStr(m[2]) : toStr(b[1]);
+                    BigDecimal amt = toBigDecimal(m[3]);
+                    currencyTotals.merge(rowCcy, amt, BigDecimal::add);
+                    exportRows.add(new OverseasPaymentResultExcelWriter.ExportRow(
+                            OverseasPaymentResultExcelWriter.formatDtm(batchRegDtm),
+                            ovrsPymnNo,
+                            OverseasPaymentResultExcelWriter.mapStatus(trnfYnVal),
+                            OverseasPaymentResultExcelWriter.formatDtm(apprRegDtm),
+                            OverseasPaymentResultExcelWriter.stripExtension(orgFileNm),
+                            OverseasPaymentResultExcelWriter.safe(outBankNm),
+                            OverseasPaymentResultExcelWriter.safe(wdrlActNo),
+                            OverseasPaymentResultExcelWriter.safe(toStr(m[7])),   // bnfcNm
+                            OverseasPaymentResultExcelWriter.safe(toStr(m[8])),   // bnfcBankNm
+                            OverseasPaymentResultExcelWriter.safe(toStr(m[9])),   // bic
+                            OverseasPaymentResultExcelWriter.safe(toStr(m[10])),  // bnfcAcctNo
+                            OverseasPaymentResultExcelWriter.safe(toStr(m[11])),  // bnfcAddr
+                            rowCcy,
+                            amt,
+                            OverseasPaymentResultExcelWriter.mapFeePayer(toStr(m[4])),
+                            OverseasPaymentResultExcelWriter.safe(toStr(m[6])),   // rprtAcct (chart_acct_cd)
+                            OverseasPaymentResultExcelWriter.safe(toStr(m[5])),   // memo
+                            requestor,
+                            OverseasPaymentResultExcelWriter.formatDate(payDate),
+                            OverseasPaymentResultExcelWriter.mapApprovalStatus(apprTypeCd),
+                            OverseasPaymentResultExcelWriter.safe(docNo),
+                            OverseasPaymentResultExcelWriter.safe(apprTitl)
+                    ));
+                }
+                continue;
+            }
 
             List<OvrsPymnSumrDetl> dtls =
                     dtlsRepository.findByBizKeyAndOvrsPymnNoOrderByOvrsPymnDetlNoAsc(bizKey, ovrsPymnNo);
@@ -330,7 +467,28 @@ public class OverseasPaymentService {
         response.setHeader("Content-Disposition", "attachment; filename*=UTF-8''" + encoded);
         response.setHeader("Access-Control-Expose-Headers", "Content-Disposition");
 
-        OverseasPaymentResultExcelWriter.write(currencyTotals, exportRows, response.getOutputStream());
+        // F2 — legacy pymn_0008_002_r003 writes an ERP_TRNS_HSTR 'W' (code 14)
+        // audit row on the Overseas Result export, then serves the file. Tee the
+        // workbook through a temp file so the 'W' row (saved copy) is persisted
+        // before streaming. Non-blocking: recordExportedFile is REQUIRES_NEW +
+        // swallow-and-log, so a failed audit never aborts the download. Response
+        // headers + bytes are unchanged from the prior direct-stream version.
+        java.nio.file.Path temp = java.nio.file.Files.createTempFile("wecms-ovrs-result-export-", ".xlsx");
+        try {
+            try (java.io.OutputStream fileOut = java.nio.file.Files.newOutputStream(temp)) {
+                OverseasPaymentResultExcelWriter.write(currencyTotals, exportRows, fileOut);
+            }
+            erpHistoryWriter.recordExportedFile(ERP_TRNS_TYPE_OVERSEAS_RESULT, temp, fileName);
+            try (java.io.InputStream in = java.nio.file.Files.newInputStream(temp)) {
+                in.transferTo(response.getOutputStream());
+            }
+        } finally {
+            try {
+                java.nio.file.Files.deleteIfExists(temp);
+            } catch (java.io.IOException ignore) {
+                /* temp cleanup is best-effort */
+            }
+        }
     }
 
     // ─── detail + request approval ───────────────────────────────────────────
@@ -354,17 +512,32 @@ public class OverseasPaymentService {
         String bizKey = TenantContext.currentBizKey();
 
         // Primary lookup: treat the id as OVRS_PYMN_NO (internal key).
-        OvrsPymnSumr sumr = sumrRepository.findByBizKeyAndOvrsPymnNo(bizKey, id)
-                .or(() ->
-                    // Fallback: treat the id as DOC_NO (VO_YYMMDD_NNN user-visible key).
-                    // Resolves DOC_NO → APPR_SEQ_NO → OVRS_PYMN_SUMR.
-                    exptResolMstrRepository.findByBizKeyAndDocNoAndDelYn(bizKey, id, "N")
-                            .filter(m -> m.getApprSeqNo() != null)
-                            .flatMap(m -> sumrRepository.findByBizKeyAndApprSeqNo(
-                                    bizKey, m.getApprSeqNo()))
-                )
-                .orElseThrow(() -> new BusinessException("WBE2045",
-                        "overseas payment not found: " + id));
+        java.util.Optional<OvrsPymnSumr> sumrOpt = sumrRepository.findByBizKeyAndOvrsPymnNo(bizKey, id);
+
+        // Fallback: treat the id as DOC_NO (VO_YYMMDD_NNN user-visible key).
+        // Resolves DOC_NO → APPR_SEQ_NO → OVRS_PYMN_SUMR. We keep the resolved
+        // APPR_SEQ_NO so the legacy M-mode fallback (GAP-OVS-MODE) can reuse it.
+        String docFallbackApprSeqNo = null;
+        if (sumrOpt.isEmpty()) {
+            java.util.Optional<ExptResolMstr> mstrByDoc = exptResolMstrRepository
+                    .findByBizKeyAndDocNoAndDelYn(bizKey, id, "N")
+                    .filter(m -> m.getApprSeqNo() != null && !m.getApprSeqNo().isBlank());
+            if (mstrByDoc.isPresent()) {
+                docFallbackApprSeqNo = mstrByDoc.get().getApprSeqNo();
+                sumrOpt = sumrRepository.findByBizKeyAndApprSeqNo(bizKey, docFallbackApprSeqNo);
+            }
+        }
+
+        // GAP-OVS-MODE: the approval may be a legacy "M-mode" record that
+        // lives only in OVRS_PYMN_MSTR (not OVRS_PYMN_SUMR). Instead of
+        // throwing WBE2045 — which crashed the popup for 57% of overseas
+        // approvals in DEV — return a graceful header-only response. Throws
+        // WBE2045 only when the id resolves to nothing in either table.
+        if (sumrOpt.isEmpty()) {
+            return resolveLegacyMmodeOrThrow(bizKey, id, docFallbackApprSeqNo);
+        }
+
+        OvrsPymnSumr sumr = sumrOpt.get();
 
         String ovrsPymnNo = sumr.getOvrsPymnNo();
         List<OvrsPymnSumrDetl> dtlList =
@@ -397,7 +570,10 @@ public class OverseasPaymentService {
                             // transfer flag lives on the master OVRS_PYMN_SUMR.
                             sumr.getTrnfYn() != null ? sumr.getTrnfYn() : "N",
                             r.procStat(), r.procStatKey(), r.procDttm(), r.rsltDttm(),
-                            r.rsCd(), r.rsMsg());
+                            r.rsCd(), r.rsMsg(),
+                            // Transaction Seq — legacy R007 maps PAY_TRAN_SEQ → PAY_FILE_SEQ_NO
+                            // (pymn_0008_002 "Transaction Seq" column).
+                            parsePayTranSeq(d.getPayTranSeq()));
                 })
                 .collect(Collectors.toList());
 
@@ -410,6 +586,15 @@ public class OverseasPaymentService {
             docNo    = mstr != null ? mstr.getDocNo() : null;
             apprStts = mstr != null ? mapApprTypeCd(mstr.getApprTypeCd()) : "P";
         }
+
+        // GAP-OVS-ATT: approval attachments (UNION of EXPT_RESOL_FILE +
+        // EXPT_RESOL_PAY_EVID_FILE) keyed by APPR_SEQ_NO. Previously never
+        // loaded for overseas — the popup showed no attachments.
+        List<ApprovalAttachmentRow> attachments =
+                approvalAttachmentLoader.load(bizKey, sumr.getApprSeqNo());
+
+        // Approval Content — BLTB_POST_INFM.POST_CONT (legacy R010 source).
+        String cont = approvalContentLoader.load(bizKey, sumr.getApprSeqNo());
 
         return new OverseasPaymentDetailResponse(
                 sumr.getOvrsPymnNo(),
@@ -427,9 +612,297 @@ public class OverseasPaymentService {
                 docNo,
                 sumr.getApprSeqNo(),
                 sumr.getOrgFileNm(),
-                null,                       // fileSize
+                sumr.getFileSize(),         // fileSize — OVRS_PYMN_SUMR.FILE_SIZE (was hardcoded null)
                 sumr.getOrgFileNm(),
-                rows);
+                rows,
+                attachments,
+                cont);
+    }
+
+    /**
+     * F3 (2026-06-19): full M-mode (OVRS_PYMN_MSTR) Result detail — a record
+     * that lives in {@code OVRS_PYMN_MSTR} (type 'M', individual/manual) and has
+     * no {@code OVRS_PYMN_SUMR} row. Mirrors legacy R006 (header) + R007 (the
+     * single remittance line). An M-mode payment is one remittance, so the line
+     * table renders exactly one row sourced from the {@code OVRS_PYMN_MSTR} record
+     * itself (no {@code OVRS_PYMN_SUMR_DETL} child); {@code OVRS_PYMN_DETL_NO} is
+     * null (R010 parity). The per-line {@code PROC_STAT}/{@code RS_CD} come from
+     * {@code TB_PAY_FILE_MST}/{@code _DATA}, so the FE derives the result status
+     * the same way it does for E-mode lines. {@code legacyMmode} is now
+     * {@code false} — M-mode is fully supported.
+     *
+     * <p>Header withdrawal bank/account = the debit-account fields
+     * ({@code DBT_ACCT_CD}/{@code DBT_ACCT_NO}/{@code DBT_CCY_CD}) per R006 M branch.
+     *
+     * <p>Throws {@code WBE2045} only when the id resolves to nothing in
+     * {@code OVRS_PYMN_MSTR} either (genuinely not found / wrong tenant).
+     */
+    private OverseasPaymentDetailResponse resolveLegacyMmodeOrThrow(
+            String bizKey, String id, String docFallbackApprSeqNo) {
+
+        // Resolve the single target M record. When id was a DOC_NO the fallback
+        // already gave us its APPR_SEQ_NO (take the first remittance under it);
+        // otherwise id is an OVRS_PYMN_NO that lives only in OVRS_PYMN_MSTR.
+        OvrsPymnMstr target;
+        String apprSeqNo = docFallbackApprSeqNo;
+        if (apprSeqNo != null) {
+            target = ovrsPymnMstrRepository.findByBizKeyAndApprSeqNo(bizKey, apprSeqNo)
+                    .stream().findFirst().orElse(null);
+        } else {
+            target = ovrsPymnMstrRepository.findByBizKeyAndOvrsPymnNo(bizKey, id).orElse(null);
+            if (target != null) apprSeqNo = target.getApprSeqNo();
+        }
+
+        if (target == null) {
+            throw new BusinessException("WBE2045", "overseas payment not found: " + id);
+        }
+
+        ExptResolMstr mstr = (apprSeqNo != null && !apprSeqNo.isBlank())
+                ? exptResolMstrRepository.findById(
+                        new com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId(bizKey, apprSeqNo))
+                        .orElse(null)
+                : null;
+        String docNo    = mstr != null ? mstr.getDocNo() : null;
+        String apprStts = mstr != null ? mapApprTypeCd(mstr.getApprTypeCd()) : "P";
+        String titl     = mstr != null ? mstr.getTitl() : null;
+
+        // F3 — the M remittance line(s) for this OVRS_PYMN_NO (R007 M branch),
+        // carrying PROC_STAT / RS_CD from TB_PAY_FILE so the FE derives status.
+        List<OverseasPaymentDetailRowResponse> rows =
+                paymentRepo.findMmodeDetailRows(bizKey, target.getOvrsPymnNo())
+                        .stream()
+                        .map(this::mapMmodeDetailRow)
+                        .collect(Collectors.toList());
+
+        List<ApprovalAttachmentRow> attachments =
+                approvalAttachmentLoader.load(bizKey, apprSeqNo);
+
+        // R006 M: header total = OPM.TOTAL_TRAN_AMT (fall back to the single
+        // remittance amount when the summary column is null).
+        BigDecimal total = target.getTotalTranAmt() != null ? target.getTotalTranAmt()
+                : (target.getTrnfAmt() != null ? target.getTrnfAmt() : BigDecimal.ZERO);
+
+        log.debug("feature=overseas-payment result-detail M-mode (OVRS_PYMN_MSTR) "
+                + "bizKey={} apprSeqNo={} ovrsPymnNo={} lines={}",
+                bizKey, apprSeqNo, target.getOvrsPymnNo(), rows.size());
+
+        return new OverseasPaymentDetailResponse(
+                target.getOvrsPymnNo(),
+                titl,
+                apprStts,
+                total,
+                target.getTrnfCcyCd(),
+                target.getTotTrnsCnt() != null ? target.getTotTrnsCnt() : rows.size(),
+                mstr != null ? mstr.getRegId() : target.getRegId(),
+                mstr != null ? mstr.getRegDtm() : target.getRegDtm(),
+                target.getModDtm(),
+                // M-mode withdrawal = debit-account fields (R006 M branch).
+                target.getDbtAcctCd(),
+                target.getDbtAcctNo(),
+                target.getDbtCcyCd(),
+                docNo,
+                apprSeqNo,
+                null,                       // fileNm
+                null,                       // fileSize
+                null,                       // orgFileNm
+                rows,
+                attachments,                // legacyMmode=false, notice=null (via convenience ctor)
+                approvalContentLoader.load(bizKey, apprSeqNo));  // Approval Content — BLTB_POST_INFM.POST_CONT
+    }
+
+    /**
+     * Maps one {@link OverseasPaymentRepository#findMmodeDetailRows} row to the
+     * detail-row DTO. {@code ovrsPymnDetlNo} is null (M-mode, R010 parity);
+     * {@code procStatKey} is left null so the FE {@code deriveResultStatus}
+     * resolves the status from the raw {@code proc_stat}/{@code rs_cd} (same path
+     * as an E-mode line whose key isn't yet mapped).
+     */
+    private OverseasPaymentDetailRowResponse mapMmodeDetailRow(Object[] m) {
+        String memo = toStr(m[5]);
+        return new OverseasPaymentDetailRowResponse(
+                null,                                  // ovrsPymnDetlNo (M-mode)
+                toStr(m[1]),                           // bnfcCode = HAND_TRCO_KEY
+                toStr(m[2]),                           // ccyCd (TRNF_CCY_CD)
+                m[3] != null ? toBigDecimal(m[3]) : BigDecimal.ZERO, // trnfAmt
+                toStr(m[4]),                           // feePayerCd
+                memo != null ? memo : "",              // memo
+                toStr(m[6]),                           // rprtAcctCd (CHART_ACCT_CD)
+                toStr(m[7]),                           // bnfcNm
+                toStr(m[8]),                           // bnfcBankNm
+                toStr(m[9]),                           // bicCd (BNFC_BANK_BIC)
+                toStr(m[10]),                          // bnfcAcctNo
+                toStr(m[11]),                          // bnfcAddr
+                toStr(m[12]) != null ? toStr(m[12]) : "N", // trnfYn
+                toStr(m[13]),                          // procStat
+                null,                                  // procStatKey (FE derives from raw)
+                toStr(m[14]),                          // procDttm
+                toStr(m[14]),                          // rsltDttm = procDttm (R007 RSLT_DTTM)
+                toStr(m[15]),                          // rsCd
+                toStr(m[16]),                          // rsMsg
+                null);                                 // trnSeq (M-mode — no PAY_TRAN_SEQ column in findMmodeDetailRows)
+    }
+
+    /**
+     * Parse the legacy {@code OVRS_PYMN_SUMR_DETL.PAY_TRAN_SEQ} varchar into the
+     * {@code Integer} the wire {@code trn_seq} field expects. Null / blank /
+     * non-numeric → null (renders blank in the Result detail "Transaction Seq"
+     * column rather than throwing).
+     */
+    private static Integer parsePayTranSeq(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return Integer.valueOf(raw.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Overseas per-line transactions for one approval, normalized to the shared
+     * {@link com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalTransactionRow}
+     * the Approval Details popup consumes. Resolves by {@code APPR_SEQ_NO}:
+     * E-mode batches live in {@code OVRS_PYMN_SUMR} + {@code OVRS_PYMN_SUMR_DETL};
+     * M-mode (individual/manual) remittances live only in {@code OVRS_PYMN_MSTR}
+     * (one line). Empty when the approval resolves in neither table.
+     *
+     * <p>Field mapping mirrors the per-type Overseas Scheduled page's
+     * {@code detailLineToApprovalTransaction} 1:1 (bic_cd→deposit bank code,
+     * bnfc_bank_nm→deposit bank name, bnfc_nm→recipient, memo→remarks/description,
+     * rprt_acct_cd→reporting account) so the popup renders identically whether
+     * opened from the Scheduled page (per-type fetch) or the shared
+     * {@code CommonApprovalDetailsDialog} (this path, used by the Result page +
+     * Notifications). Backs the {@code APPR_DV='34'} branch in
+     * {@code ApprovalDetailService.transactions}.
+     */
+    @Transactional(readOnly = true)
+    public List<com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalTransactionRow>
+            transactionLinesByApprSeqNo(String bizKey, String apprSeqNo) {
+        if (apprSeqNo == null || apprSeqNo.isBlank()) {
+            return List.of();
+        }
+        // E-mode: OVRS_PYMN_SUMR + OVRS_PYMN_SUMR_DETL.
+        java.util.Optional<OvrsPymnSumr> sumrOpt =
+                sumrRepository.findByBizKeyAndApprSeqNo(bizKey, apprSeqNo);
+        if (sumrOpt.isPresent()) {
+            return dtlsRepository
+                    .findByBizKeyAndOvrsPymnNoOrderByOvrsPymnDetlNoAsc(
+                            bizKey, sumrOpt.get().getOvrsPymnNo())
+                    .stream()
+                    .map(OverseasPaymentService::toApprovalTxnFromDetl)
+                    .collect(Collectors.toList());
+        }
+        // M-mode: OVRS_PYMN_MSTR (single remittance line, R007 M branch).
+        OvrsPymnMstr mstr = ovrsPymnMstrRepository
+                .findByBizKeyAndApprSeqNo(bizKey, apprSeqNo)
+                .stream().findFirst().orElse(null);
+        if (mstr != null) {
+            return paymentRepo.findMmodeDetailRows(bizKey, mstr.getOvrsPymnNo())
+                    .stream()
+                    .map(this::mapMmodeDetailRow)
+                    .map(OverseasPaymentService::toApprovalTxnFromRow)
+                    .collect(Collectors.toList());
+        }
+        return List.of();
+    }
+
+    /** E-mode {@code OVRS_PYMN_SUMR_DETL} → shared {@code ApprovalTransactionRow}. */
+    private static com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalTransactionRow
+            toApprovalTxnFromDetl(OvrsPymnSumrDetl d) {
+        return new com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalTransactionRow(
+                d.getOvrsPymnDetlNo(),
+                d.getBicCd(),                                  // deposit bank code = beneficiary BIC
+                d.getBnfcBankNm(),                             // deposit bank name = beneficiary bank
+                d.getCcyCd(),
+                d.getBnfcAcctNo(),                             // deposit account = beneficiary account
+                d.getTrnfAmt(),
+                d.getBnfcNm(),                                 // recipient = beneficiary name
+                d.getMemo(),                                   // remarks = memo
+                null,                                          // contact name — n/a for overseas
+                d.getMemo(),                                   // description = memo (FE parity)
+                null,                                          // document no — n/a
+                d.getRprtAcctCd(),                             // reporting account
+                null);                                         // reporting breadcrumb
+    }
+
+    /** M-mode row (already mapped to {@link OverseasPaymentDetailRowResponse})
+     *  → shared {@code ApprovalTransactionRow}. */
+    private static com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalTransactionRow
+            toApprovalTxnFromRow(OverseasPaymentDetailRowResponse r) {
+        return new com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalTransactionRow(
+                r.ovrsPymnDetlNo(),
+                r.bicCd(),
+                r.bnfcBankNm(),
+                r.ccyCd(),
+                r.bnfcAcctNo(),
+                r.trnfAmt(),
+                r.bnfcNm(),
+                r.memo(),
+                null,
+                r.memo(),
+                null,
+                r.rprtAcctCd(),
+                null);
+    }
+
+    /** Withdrawal-account fields for the Approval Details popup's General
+     *  Information row, keyed by {@code APPR_SEQ_NO}. {@code outBankNm} is left
+     *  null (overseas {@code getDetail} likewise ships the raw code; the
+     *  frontend falls back to it) to avoid a separate bank-name resolver here. */
+    public record ApprovalWithdrawalInfo(
+            String outBankCd, String outBankNm, String wdrlActNo, String wdrlCcyCd,
+            /** Dispatchable overseas batch id ({@code OVRS_PYMN_SUMR.OVRS_PYMN_NO},
+             *  E-mode). Null for M-mode ({@code OVRS_PYMN_MSTR}) — that path has no
+             *  batch-dispatch endpoint, so the auto-transfer flow falls back to the
+             *  manual Transfer button there. */
+            String ovrsPymnNo) {}
+
+    /**
+     * Overseas withdrawal account by {@code APPR_SEQ_NO} — E-mode reads
+     * {@code OVRS_PYMN_SUMR} (OUT_BANK_CD / WDRL_ACT_NO / CCY_CD); M-mode reads
+     * the {@code OVRS_PYMN_MSTR} debit-account fields (DBT_ACCT_CD / DBT_ACCT_NO
+     * / DBT_CCY_CD), mirroring {@link #getDetail}'s withdrawal mapping for both
+     * modes. Empty when the approval resolves in neither table. Backs the
+     * overseas fallback in {@code ApprovalDetailService.master}.
+     */
+    @Transactional(readOnly = true)
+    public java.util.Optional<ApprovalWithdrawalInfo> withdrawalByApprSeqNo(
+            String bizKey, String apprSeqNo) {
+        if (apprSeqNo == null || apprSeqNo.isBlank()) {
+            return java.util.Optional.empty();
+        }
+        java.util.Optional<OvrsPymnSumr> sumrOpt =
+                sumrRepository.findByBizKeyAndApprSeqNo(bizKey, apprSeqNo);
+        if (sumrOpt.isPresent()) {
+            OvrsPymnSumr s = sumrOpt.get();
+            return java.util.Optional.of(new ApprovalWithdrawalInfo(
+                    s.getOutBankCd(), null, s.getWdrlActNo(), s.getCcyCd(),
+                    s.getOvrsPymnNo()));
+        }
+        OvrsPymnMstr m = ovrsPymnMstrRepository
+                .findByBizKeyAndApprSeqNo(bizKey, apprSeqNo)
+                .stream().findFirst().orElse(null);
+        if (m != null) {
+            // M-mode has no batch-dispatch endpoint → ovrsPymnNo left null so the
+            // auto-transfer flow falls back to the manual Transfer button.
+            return java.util.Optional.of(new ApprovalWithdrawalInfo(
+                    m.getDbtAcctCd(), null, m.getDbtAcctNo(), m.getDbtCcyCd(), null));
+        }
+        return java.util.Optional.empty();
+    }
+
+    /**
+     * Preview the next {@code VO_YYMMDD_NNN} document number for the Request
+     * Approval popup (read-only). Computes via the shared {@link DocNoGenerator}
+     * WITHOUT reserving or persisting anything — the authoritative DOC_NO is
+     * stamped at {@link #requestApproval} submit time. Mirrors
+     * {@link com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService#previewNextDocNo}.
+     */
+    @Transactional(readOnly = true)
+    public com.kosign.wecms.domain.payment.internaltransfer.dto.NextDocNoResponse previewNextDocNo() {
+        return new com.kosign.wecms.domain.payment.internaltransfer.dto.NextDocNoResponse(
+                docNoGenerator.nextDocNo(TenantContext.currentBizKey()));
     }
 
     /**
@@ -442,12 +915,13 @@ public class OverseasPaymentService {
      * (same precedent as expense-payment / vendor-payment Phase A).
      */
     @Transactional
-    public RequestApprovalResponse requestApproval(String ovrsPymnNo, RequestApprovalRequest req) {
+    public RequestApprovalResponse requestApproval(String ovrsPymnNo, RequestApprovalRequest req,
+            java.util.List<org.springframework.web.multipart.MultipartFile> attachments) {
         String bizKey = TenantContext.currentBizKey();
         OvrsPymnSumr sumr = resolveSumr(bizKey, ovrsPymnNo);
 
         if ("Y".equals(sumr.getTrnfYn())) {
-            throw new BusinessException("WBE2095");
+            throw new BusinessException("WBE2127");
         }
 
         String existingStts = deriveApprStts(sumr);
@@ -480,6 +954,10 @@ public class OverseasPaymentService {
             docNo = stampApproval(sumr, apprSeqNo, req);
         }
 
+        // M-1 (legacy parity): persist Request Approval attachments into
+        // EXPT_RESOL_FILE (legacy processFileAttachments / REC1).
+        approvalAttachmentWriter.persist(bizKey, apprSeqNo, attachments);
+
         auditLogService.append(AuditLogContext.builder()
                 .wsvcId(WSVC_ID)
                 .refNo(ovrsPymnNo)
@@ -491,7 +969,219 @@ public class OverseasPaymentService {
         log.info("feature=overseas-payment request-approval bizKey={} ovrsPymnNo={} apprSeqNo={} docNo={} apprLineNo={} approvers={}",
                 bizKey, ovrsPymnNo, apprSeqNo, docNo, req.apprLineNo(), req.approvers().size());
 
+        // Lifecycle signal — request-approval submitted (PENDING). The HAENGSUNG
+        // Oracle write-back listener maps this to TB_TRNS_MAST.LAST_STATUS='10'
+        // (legacy comm_0192_001_c005 → ErpStatusUpdateHelper PENDING). No-op for
+        // non-HAENGSUNG / non-ERP batches (listener guards). apprSeqNo is the
+        // value resolved above (after the one-shot race retry). NOTE: the M-mode
+        // requestApprovalMulti path is intentionally NOT wired — the HAENGSUNG
+        // refresh imports overseas as single AF1 batches (OVRS_PYMN_SUMR), never
+        // M-mode, so its apprSeqNo would not resolve to an ERP-linked summary.
+        eventPublisher.publishEvent(new com.kosign.wecms.domain.payment.approvalbox.event
+                .PaymentApprovalStatusChangedEvent(bizKey, apprSeqNo,
+                com.kosign.wecms.domain.payment.approvalbox.event.PaymentApprovalStatus.PENDING));
+
         return new RequestApprovalResponse(apprSeqNo, docNo);
+    }
+
+    /**
+     * Multi-payment ("M" type) Request Approval — approves a list of
+     * {@code OVRS_PYMN_MSTR} rows under one {@code EXPT_RESOL_MSTR}.
+     *
+     * <p>Mirrors the legacy {@code comm_0192_001_c005} {@code OVRS_PYMN_TYPE='M'}
+     * branch:
+     * <ul>
+     *   <li>{@code createExptResolDetlForOverseas} — one
+     *       {@code EXPT_RESOL_DETL} per payment (DOC_ID = OVRS_PYMN_NO,
+     *       CCY_CD = TRNF_CCY_CD, AMT = TRNF_AMT).</li>
+     *   <li>{@code updateOvrsPymnMstrData} — stamps {@code APPR_SEQ_NO}
+     *       onto every {@code OVRS_PYMN_MSTR} row.</li>
+     * </ul>
+     */
+    @Transactional
+    public RequestApprovalResponse requestApprovalMulti(OverseasMultiApprovalRequest req) {
+        String bizKey = TenantContext.currentBizKey();
+        if (req == null || req.ovrsPymnNos() == null || req.ovrsPymnNos().isEmpty()) {
+            throw new BusinessException("WBE_VALIDATION", "ovrs_pymn_nos is required");
+        }
+        if (req.approvers() == null || req.approvers().isEmpty()) {
+            throw new BusinessException("WBE_VALIDATION", "approvers is required");
+        }
+
+        // Resolve + validate every master row FIRST (legacy
+        // validateOverseasPayment per REC4 item). Reject if already
+        // transferred or already carrying an approval.
+        List<OvrsPymnMstr> masters = new ArrayList<>();
+        // Batch-load all referenced masters in one query, then run the
+        // original per-element checks (in request order) against the map.
+        // Behavior is preserved byte-for-byte: blank → WBE_VALIDATION,
+        // missing → WBE_NOT_FOUND, transferred → WBE2127, approved →
+        // WBE2046, all in the same first-failure order; duplicate input
+        // ids re-check the same row exactly as the prior findById loop.
+        List<OvrsPymnMstrId> ids = new ArrayList<>();
+        for (String no : req.ovrsPymnNos()) {
+            if (no != null && !no.isBlank()) {
+                ids.add(new OvrsPymnMstrId(bizKey, no.trim()));
+            }
+        }
+        Map<String, OvrsPymnMstr> byNo = new LinkedHashMap<>();
+        for (OvrsPymnMstr loaded : ovrsPymnMstrRepository.findAllById(ids)) {
+            byNo.put(loaded.getOvrsPymnNo(), loaded);
+        }
+        for (String no : req.ovrsPymnNos()) {
+            if (no == null || no.isBlank()) {
+                throw new BusinessException("WBE_VALIDATION", "ovrs_pymn_no: blank entry");
+            }
+            OvrsPymnMstr m = byNo.get(no.trim());
+            if (m == null) {
+                throw new BusinessException("WBE_NOT_FOUND", "ovrs_pymn_no: " + no);
+            }
+            if ("Y".equals(m.getTrnfYn())) {
+                throw new BusinessException("WBE2127");
+            }
+            if (m.getApprSeqNo() != null && !m.getApprSeqNo().isBlank()) {
+                throw new BusinessException("WBE2046");
+            }
+            masters.add(m);
+        }
+
+        String apprSeqNo = allocateApprSeqNo(bizKey);
+        String docNo;
+        try {
+            docNo = stampApprovalMulti(masters, apprSeqNo, req);
+        } catch (org.springframework.dao.DataIntegrityViolationException race) {
+            log.info("feature=overseas-payment apprSeqNo race retrying once bizKey={}", bizKey);
+            apprSeqNo = allocateApprSeqNo(bizKey);
+            docNo = stampApprovalMulti(masters, apprSeqNo, req);
+        }
+
+        auditLogService.append(AuditLogContext.builder()
+                .wsvcId(WSVC_ID)
+                .refNo(masters.get(0).getOvrsPymnNo())
+                .refNo1(apprSeqNo)
+                .activityKey("audit.overseas_payment.activity")
+                .detailKey("audit.overseas_payment.request_approval.detail")
+                .build());
+
+        log.info("feature=overseas-payment request-approval-multi bizKey={} count={} apprSeqNo={} docNo={} apprLineNo={} approvers={}",
+                bizKey, masters.size(), apprSeqNo, docNo, req.apprLineNo(), req.approvers().size());
+
+        return new RequestApprovalResponse(apprSeqNo, docNo);
+    }
+
+    /** Writes the master + N details + approver chain + appr-line snapshot,
+     *  then stamps APPR_SEQ_NO on every OVRS_PYMN_MSTR row. Mirrors the
+     *  single-payment {@link #stampApproval} but iterates the master list. */
+    private String stampApprovalMulti(List<OvrsPymnMstr> masters, String apprSeqNo,
+                                      OverseasMultiApprovalRequest req) {
+        String bizKey = masters.get(0).getBizKey();
+        String userId = TenantContext.currentUserId();
+        String userNm = TenantContext.currentUserNm();
+        String nowDtm = ZonedDateTime.now(VIETNAM_ZONE).format(DTM_FMT);
+        String draftDate = nowDtm.substring(0, 8);
+        String draftTime = nowDtm.substring(8, 14);
+
+        // Batch total + representative currency (legacy stores the single
+        // input.TOT_PAY_KHR_AMT; we sum the per-payment TRNF_AMT and pick
+        // the first payment's currency for the column split).
+        BigDecimal total = masters.stream()
+                .map(m -> m.getTrnfAmt() != null ? m.getTrnfAmt() : BigDecimal.ZERO)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        String ccy = masters.get(0).getTrnfCcyCd() != null
+                ? masters.get(0).getTrnfCcyCd().toUpperCase()
+                : "VND";
+
+        // 1. EXPT_RESOL_MSTR (APPR_DV='34', APPR_STS='2', APPR_TYPE_CD='00')
+        ExptResolMstr mstr = new ExptResolMstr();
+        mstr.setBizKey(bizKey);
+        mstr.setApprSeqNo(apprSeqNo);
+        mstr.setApprDv(ApprDv.OVERSEAS.code());
+        mstr.setApprSts("2");
+        mstr.setDraftDate(draftDate);
+        mstr.setDraftTime(draftTime);
+        mstr.setDraftUserId(userId != null ? userId : "");
+        mstr.setDraftUserNm(userNm != null ? userNm : "");
+        mstr.setDraftUserSiteCd(bizKey);
+        String cmpnNm = busiInfmRepository.findById(bizKey)
+                .map(b -> b.getCmpnNm() != null ? b.getCmpnNm() : bizKey)
+                .orElse(bizKey);
+        mstr.setDraftUserSiteNm(cmpnNm);
+        mstr.setHandRegYn("Y");
+        // M-2 (legacy parity): display flags from BUSI_ENV_SET_INFM (00014/16/17/18),
+        // not hardcoded. Mirrors comm_0192_001_c005_act.jsp:316-320.
+        var flags = displayFlagsResolver.resolve(bizKey);
+        mstr.setApprBoxUseYn(flags.apprBoxUseYn());
+        mstr.setApprDatDispYn(flags.apprDatDispYn());
+        mstr.setCmpnLogoDispYn(flags.cmpnLogoDispYn());
+        mstr.setRegDispYn(flags.regDispYn());
+        String titl = req.postTitle() != null ? req.postTitle().trim() : "";
+        mstr.setTitl(titl);
+        String docNo = docNoGenerator.nextDocNo(bizKey);
+        mstr.setDocNo(docNo);
+        mstr.setDocNm(ApprDv.OVERSEAS.docNm());   // L-1 (legacy parity): legacy DOC_NM = apprDv.getLabel()
+        boolean isUsd = "USD".equals(ccy);
+        boolean isVnd = "VND".equals(ccy);
+        mstr.setTotPayKhrAmt(isUsd ? BigDecimal.ZERO : total);
+        mstr.setTotPayUsdAmt(isUsd ? total : BigDecimal.ZERO);
+        mstr.setTotPayVndAmt(isVnd ? total : BigDecimal.ZERO);
+        mstr.setCont(req.postCont() != null && !req.postCont().isBlank() ? req.postCont().trim() : null);
+        mstr.setPayDate(req.payDate() != null && !req.payDate().isBlank() ? req.payDate().trim() : null);
+        mstr.setDelYn("N");
+        mstr.setPayEndYn("N");
+        mstr.setApprTypeCd("00");
+        mstr.setRegId(userId != null ? userId : "");
+        mstr.setRegDtm(nowDtm);
+        mstr.setModId(userId);
+        mstr.setModDtm(nowDtm);
+        exptResolMstrRepository.save(mstr);
+
+        // 2. EXPT_RESOL_APPRVR_INFM — first "P", rest "W"; APPR_LINE_NO set.
+        List<RequestApprovalRequest.ApproverInput> approvers = req.approvers();
+        for (int i = 0; i < approvers.size(); i++) {
+            RequestApprovalRequest.ApproverInput ap = approvers.get(i);
+            ExptResolApprvrInfm row = new ExptResolApprvrInfm();
+            row.setBizKey(bizKey);
+            row.setApprSeqNo(apprSeqNo);
+            row.setApprvrId(ap.apprvrId());
+            row.setApprvrStts(i == 0 ? "P" : "W");
+            row.setApprvrNm(ap.apprvrNm());
+            row.setApprDtm(null);
+            row.setRegId(userId);
+            row.setRegDtm(nowDtm);
+            row.setModId(userId != null ? userId : "");
+            row.setModDtm(nowDtm);
+            row.setReadYn("N");
+            row.setApprvrLineNo(BigDecimal.valueOf(i + 1));
+            row.setApprLineNo(BigDecimal.valueOf(req.apprLineNo()));
+            exptResolApprvrInfmRepository.save(row);
+        }
+
+        // 3. EXPT_RESOL_DETL — one row per payment (legacy
+        //    createExptResolDetlForOverseas: DOC_ID=OVRS_PYMN_NO,
+        //    CCY_CD=TRNF_CCY_CD, AMT=TRNF_AMT).
+        for (OvrsPymnMstr m : masters) {
+            approvalBoxFanoutService.writeResolutionDetail(
+                    apprSeqNo, m.getOvrsPymnNo(), m.getTrnfAmt(), m.getTrnfCcyCd());
+        }
+
+        // 4. EXPT_RESOL_APPR_LINE print-header snapshot (env-gated).
+        approvalBoxFanoutService.writeApprovalLineSnapshot(apprSeqNo);
+
+        // 5. Stamp APPR_SEQ_NO on every OVRS_PYMN_MSTR row (legacy
+        //    updateOvrsPymnMstrData).
+        for (OvrsPymnMstr m : masters) {
+            m.setApprSeqNo(apprSeqNo);
+            m.setModId(userId);
+            m.setModDtm(nowDtm);
+            ovrsPymnMstrRepository.save(m);
+        }
+
+        // 6. Bulletin / notification fan-out (legacy createBulletinPost +
+        // createUserNewPostNotifications + BltbHelper.createNotificationToApprvr).
+        approvalNotificationService.notifyRequestApproval(
+                apprSeqNo, req.postTitle(), req.postCont(), "34", "Oversea Payment");
+
+        return docNo;
     }
 
     /**
@@ -499,8 +1189,8 @@ public class OverseasPaymentService {
      * Flips {@code APPR_STTS} on {@code OVRS_PYMN_SUMR} to {@code "C"} (approved)
      * or {@code "X"} (rejected).
      *
-     * <p>Guards: {@code WBE2094} when no approval request exists yet;
-     * {@code WBE2095} when the batch is already in a final state.
+     * <p>Guards: {@code WBE2126} when no approval request exists yet;
+     * {@code WBE2127} when the batch is already in a final state.
      */
     @Transactional
     public void actOnApproval(String ovrsPymnNo, ApprovalActionRequest req) {
@@ -508,12 +1198,12 @@ public class OverseasPaymentService {
         OvrsPymnSumr sumr = resolveSumr(bizKey, ovrsPymnNo);
 
         if (sumr.getApprSeqNo() == null || sumr.getApprSeqNo().isBlank()) {
-            throw new BusinessException("WBE2094");
+            throw new BusinessException("WBE2126");
         }
 
         if ("Y".equals(sumr.getTrnfYn())) {
             // Batch has already been transferred — approval decision is final
-            throw new BusinessException("WBE2095");
+            throw new BusinessException("WBE2127");
         }
 
         String userId = TenantContext.currentUserId();
@@ -683,6 +1373,11 @@ public class OverseasPaymentService {
         sumr.setModId(userId);
         sumrRepository.save(sumr);
 
+        // Lifecycle signal — dispatched / processing (HAENGSUNG Oracle write-back).
+        eventPublisher.publishEvent(new com.kosign.wecms.domain.payment.approvalbox.event
+                .PaymentApprovalStatusChangedEvent(sumr.getBizKey(), sumr.getApprSeqNo(),
+                com.kosign.wecms.domain.payment.approvalbox.event.PaymentApprovalStatus.PROCESSING));
+
         auditLogService.append(AuditLogContext.builder()
                 .wsvcId(WSVC_ID)
                 .refNo(sumr.getOvrsPymnNo())
@@ -696,12 +1391,20 @@ public class OverseasPaymentService {
     }
 
     /**
-     * Saves the selected reporting account code on a single detail line.
+     * Saves the selected reporting account on a single detail line.
      * Mirrors the legacy inline account-picker save in the scheduled-payment
-     * detail dialog ({@code pymn_0007_001} detail row update).
+     * detail dialog ({@code pymn_0007_001_u001} → patches CHART_ACCT_SEQ_NO +
+     * CHART_ACCT_CD together).
+     *
+     * <p>Both {@code CHART_ACCT_SEQ_NO} and {@code CHART_ACCT_CD} are persisted
+     * as a pair: the seq_no is the {@code CHART_ACCT_INFM} PK identity and the
+     * legacy name-resolver functions key on it, so writing only the code would
+     * leave a stale seq_no and mis-render the account in legacy / shared-DB
+     * screens (migration-safety + coexistence parity).
      */
     @Transactional
-    public void saveReportingAccount(String ovrsPymnNo, String ovrsPymnDetlNo, String rprtAcctCd) {
+    public void saveReportingAccount(String ovrsPymnNo, String ovrsPymnDetlNo,
+                                     String rprtAcctCd, String rprtAcctSeqNo) {
         String bizKey = TenantContext.currentBizKey();
         // Resolve via doc_no fallback so URL like VO_260521_003 works
         String resolvedNo = resolveSumr(bizKey, ovrsPymnNo).getOvrsPymnNo();
@@ -710,12 +1413,14 @@ public class OverseasPaymentService {
                 .orElseThrow(() -> new BusinessException("WBE2045",
                         "detail line not found: " + ovrsPymnNo + " / " + ovrsPymnDetlNo));
 
-        String code = (rprtAcctCd == null || rprtAcctCd.isBlank()) ? null : rprtAcctCd.trim();
+        String code  = (rprtAcctCd == null || rprtAcctCd.isBlank()) ? null : rprtAcctCd.trim();
+        String seqNo = (rprtAcctSeqNo == null || rprtAcctSeqNo.isBlank()) ? null : rprtAcctSeqNo.trim();
         dtl.setRprtAcctCd(code);
+        dtl.setChartAcctSeqNo(seqNo);
         dtlsRepository.save(dtl);
 
-        log.info("feature=overseas-payment reporting-account bizKey={} ovrsPymnNo={} ovrsPymnDetlNo={} rprtAcctCd={}",
-                bizKey, ovrsPymnNo, ovrsPymnDetlNo, code);
+        log.info("feature=overseas-payment reporting-account bizKey={} ovrsPymnNo={} ovrsPymnDetlNo={} rprtAcctCd={} rprtAcctSeqNo={}",
+                bizKey, ovrsPymnNo, ovrsPymnDetlNo, code, seqNo);
     }
 
     /**
@@ -799,6 +1504,20 @@ public class OverseasPaymentService {
         if (req.postTitle() != null && !req.postTitle().isBlank()) {
             sumr.setTitl(req.postTitle().trim());
         }
+        // H-1 (legacy parity, comm_0192_001_c005_act.jsp:404-410
+        // updateOverseasPaymentSummary): persist the withdrawal account the user
+        // selected in the Request Approval popup. OUT_BANK_CD is the
+        // NAPAS-converted code — OutBankCdNormalizer reproduces the legacy
+        // NapasBankInfoDAO "bank_cd = ? OR napas_bank_cd = ?" lookup.
+        if (req.bankCd() != null && !req.bankCd().isBlank()) {
+            sumr.setOutBankCd(outBankCdNormalizer.normalize(req.bankCd()));
+        }
+        if (req.acctNo() != null && !req.acctNo().isBlank()) {
+            sumr.setWdrlActNo(req.acctNo().trim());
+        }
+        if (req.ccyCd() != null && !req.ccyCd().isBlank()) {
+            sumr.setWdrlCcyCd(req.ccyCd().trim());
+        }
         sumr.setModDtm(nowDtm);
         sumr.setModId(userId);
         sumrRepository.save(sumr);
@@ -808,7 +1527,9 @@ public class OverseasPaymentService {
         mstr.setBizKey(bizKey);
         mstr.setApprSeqNo(apprSeqNo);
         mstr.setApprDv(ApprDv.OVERSEAS.code());     // "34"
-        mstr.setApprSts("0");                       // initial pending state
+        // F-4 (legacy parity): legacy comm_0192_001_c005 sets ApprSts.STS_2
+        // ("2" = In Progress) at request time, not "0" (temp save).
+        mstr.setApprSts("2");
         mstr.setDraftDate(draftDate);
         mstr.setDraftTime(draftTime);
         mstr.setDraftUserId(userId != null ? userId : "");
@@ -820,16 +1541,19 @@ public class OverseasPaymentService {
                 .orElse(bizKey);
         mstr.setDraftUserSiteNm(cmpnNm);
         mstr.setHandRegYn("Y");
-        mstr.setApprBoxUseYn("Y");
-        mstr.setApprDatDispYn("N");
-        mstr.setCmpnLogoDispYn("Y");
-        mstr.setRegDispYn("Y");
+        // M-2 (legacy parity): display flags from BUSI_ENV_SET_INFM (00014/16/17/18),
+        // not hardcoded. Mirrors comm_0192_001_c005_act.jsp:316-320.
+        var flags = displayFlagsResolver.resolve(bizKey);
+        mstr.setApprBoxUseYn(flags.apprBoxUseYn());
+        mstr.setApprDatDispYn(flags.apprDatDispYn());
+        mstr.setCmpnLogoDispYn(flags.cmpnLogoDispYn());
+        mstr.setRegDispYn(flags.regDispYn());
         mstr.setTitl(req.postTitle() != null ? req.postTitle().trim() : "");
         // DOC_NO follows the VO_YYMMDD_NNN pattern (mirrors ReslHelper.getDocNo /
         // wb_get_next_val('expt_resol_mstr','doc_no',bizKey) in V25 migration).
         String docNo = docNoGenerator.nextDocNo(bizKey);
         mstr.setDocNo(docNo);
-        mstr.setDocNm(sumr.getTitl() != null ? sumr.getTitl() : sumr.getOvrsPymnNo());
+        mstr.setDocNm(ApprDv.OVERSEAS.docNm());   // L-1 (legacy parity): legacy DOC_NM = apprDv.getLabel()
         // Store amount in the column that matches the payment currency.
         // Column convention (3 currencies supported):
         //   VND → TOT_PAY_KHR_AMT (VN-tenant legacy alias) + TOT_PAY_VND_AMT
@@ -874,6 +1598,22 @@ public class OverseasPaymentService {
             exptResolApprvrInfmRepository.save(row);
         }
 
+        // F-1 (legacy parity): EXPT_RESOL_DETL row — DOC_ID = OVRS_PYMN_NO,
+        // AMT = batch total, CCY_CD = batch currency. Mirrors legacy
+        // comm_0192_001_c005_act.jsp:380 createExptResolDetl_ (single
+        // non-"M" overseas path; the "M" multi-detail branch stays out of
+        // Phase 1 scope — F-7).
+        approvalBoxFanoutService.writeResolutionDetail(
+                apprSeqNo, sumr.getOvrsPymnNo(), sumr.getTotalTranAmt(), sumr.getCcyCd());
+        // F-2 (legacy parity): EXPT_RESOL_APPR_LINE print-header snapshot
+        // (env-gated). Mirrors comm_0192_001_c005_act.jsp:489 createApprovalLines.
+        approvalBoxFanoutService.writeApprovalLineSnapshot(apprSeqNo);
+
+        // Bulletin / notification fan-out (legacy createBulletinPost +
+        // createUserNewPostNotifications + BltbHelper.createNotificationToApprvr).
+        approvalNotificationService.notifyRequestApproval(
+                apprSeqNo, req.postTitle(), req.postCont(), "34", "Oversea Payment");
+
         return docNo;
     }
 
@@ -886,7 +1626,7 @@ public class OverseasPaymentService {
      * {@code APPR_STTS = 'P'} (pending — first approver has not yet acted).
      *
      * @throws BusinessException {@code WBE2045} — batch not found
-     * @throws BusinessException {@code WBE2097} — batch is not in pending state
+     * @throws BusinessException {@code WBE2128} — batch is not in pending state
      */
     @Transactional
     public void changeApprovalLine(String ovrsPymnNo, ChangeApprovalLineRequest req) {
@@ -894,10 +1634,10 @@ public class OverseasPaymentService {
         OvrsPymnSumr sumr = resolveSumr(bizKey, ovrsPymnNo);
 
         if (!"P".equals(deriveApprStts(sumr))) {
-            throw new BusinessException("WBE2097");
+            throw new BusinessException("WBE2128");
         }
         if ("Y".equals(sumr.getTrnfYn())) {
-            throw new BusinessException("WBE2095");
+            throw new BusinessException("WBE2127");
         }
 
         String apprSeqNo = sumr.getApprSeqNo();
@@ -966,22 +1706,21 @@ public class OverseasPaymentService {
             throw new BusinessException("WBE2098");
         }
         if ("Y".equals(sumr.getTrnfYn())) {
-            throw new BusinessException("WBE2095");
+            throw new BusinessException("WBE2127");
         }
 
         String apprSeqNo = sumr.getApprSeqNo();
         String userId    = TenantContext.currentUserId();
         String nowDtm    = ZonedDateTime.now(VIETNAM_ZONE).format(DTM_FMT);
 
-        // Delete approver chain rows
-        List<ExptResolApprvrInfm> existing = exptResolApprvrInfmRepository.findChain(bizKey, apprSeqNo);
-        exptResolApprvrInfmRepository.deleteAll(existing);
-        exptResolApprvrInfmRepository.flush();
-
-        // Delete master approval row
+        // Delete the full approval object graph child-first (EXPT_RESOL_
+        // PAY_EVID_FILE / FILE+bulletin / DETL / APPR_LINE / APPRVR_INFM /
+        // MSTR-last) through the shared helper — the EXPT_RESOL_DETL leg is
+        // what keeps expt_resol_detl_fk01 satisfied. Mirrors legacy
+        // ExptResolMstrDAO.deleteByPk (comm_0192_004_d001).
         exptResolMstrRepository.findById(
                 new com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId(bizKey, apprSeqNo))
-                .ifPresent(exptResolMstrRepository::delete);
+                .ifPresent(mstr -> approvalBoxFanoutService.purgeApprovalGraph(bizKey, apprSeqNo, mstr));
         exptResolMstrRepository.flush();
 
         // Reset the batch to draft state — clearing APPR_SEQ_NO is the reset;
@@ -1012,7 +1751,9 @@ public class OverseasPaymentService {
      * and pending/approved batches are blocked.
      *
      * @throws BusinessException {@code WBE2045} — batch not found
-     * @throws BusinessException {@code WBE2099} — batch has already been submitted for approval
+     * @throws BusinessException {@code WBE1063} — batch has already been submitted for approval
+     *         (legacy delete-block code, shared across all 5 payment modules)
+     * @throws BusinessException {@code WBE2127} — batch has already been transferred
      */
     @Transactional
     public void deleteDraftBatch(String ovrsPymnNo) {
@@ -1021,31 +1762,66 @@ public class OverseasPaymentService {
                 .orElseThrow(() -> new BusinessException("WBE2045",
                         "overseas payment not found: " + ovrsPymnNo));
 
+        // Approval-requested batches are not deletable. Uses the legacy
+        // delete-block code WBE1063 (pymn_0007_001_d001_act.jsp:83-85),
+        // aligned with the 4 domestic modules (PO decision 2026-07-08).
         if (sumr.getApprSeqNo() != null && !sumr.getApprSeqNo().isBlank()) {
-            throw new BusinessException("WBE2099");
+            throw new BusinessException("WBE1063");
         }
         if ("Y".equals(sumr.getTrnfYn())) {
-            throw new BusinessException("WBE2095");
+            throw new BusinessException("WBE2127");
         }
+
+        // G1 — snapshot the uploaded-file metadata BEFORE the row goes away so
+        // the ERP-history writer can copy the Excel and reference it. Mirrors
+        // legacy pymn_0007_001_d001_act.jsp:90 (erpTrnsHisDeleter, ErpType.DELETED)
+        // and the four domestic scheduled modules (e.g. InternalTransferService.delete).
+        String orgFileNm  = sumr.getOrgFileNm();
+        String saveFileNm = sumr.getSaveFileNm();
 
         dtlsRepository.deleteByBizKeyAndOvrsPymnNo(bizKey, ovrsPymnNo);
         dtlsRepository.flush();
         sumrRepository.delete(sumr);
         sumrRepository.flush();
 
+        // Preserve the uploaded Excel in ERP Transaction History so the user can
+        // still download it after the source batch is gone. TRNS_TYPE_CD = "13"
+        // (Overseas Payment Request / Overseas Scheduled Payment); the writer
+        // stamps ERP_TYPE='D' so the row lands in the "Deleted" tab. The writer
+        // is REQUIRES_NEW + swallows its own errors, so an ERP audit-write failure
+        // cannot roll back the delete. No-op when the batch has no uploaded file.
+        if (saveFileNm != null && !saveFileNm.isBlank()) {
+            try {
+                java.nio.file.Path source = fileResolver.resolveForRead(bizKey, saveFileNm);
+                erpHistoryWriter.recordDeletedFile(
+                        ERP_TRNS_TYPE_OVERSEAS_SCHEDULED,
+                        source,
+                        orgFileNm);
+            } catch (RuntimeException ex) {
+                // Defence in depth — resolveForRead throws only on a malformed
+                // saveFileNm that fails the path-composition / traversal guard.
+                // The writer's own try/catch covers everything past that.
+                log.warn(
+                        "feature=overseas-payment ERP history skip "
+                      + "(path resolver rejected) bizKey={} ovrsPymnNo={} saveFileNm={}",
+                        bizKey, ovrsPymnNo, saveFileNm, ex);
+            }
+        }
+
         log.info("feature=overseas-payment delete-draft bizKey={} ovrsPymnNo={}", bizKey, ovrsPymnNo);
     }
 
     // ─── mappers ──────────────────────────────────────────────────────────────
 
-    private OverseasScheduledRow mapRow(Object[] r, Map<String, List<Object[]>> approversBySeq) {
+    private OverseasScheduledRow mapRow(Object[] r, Map<String, List<Object[]>> approversBySeq,
+                                        Map<String, String> imgUrlByApprvrId) {
         String apprSeqNo = (String) r[11];
 
         List<OverseasApprover> approvers = apprSeqNo == null
                 ? List.of()
                 : approversBySeq.getOrDefault(apprSeqNo, List.of())
                         .stream()
-                        .map(this::mapApprover)
+                        .map(a -> mapApprover(a, imgUrlByApprvrId))
                         .collect(Collectors.toList());
 
         Number apprvrTotCnt     = (Number) r[24];
@@ -1081,15 +1857,33 @@ public class OverseasPaymentService {
         );
     }
 
-    private OverseasApprover mapApprover(Object[] r) {
+    private OverseasApprover mapApprover(Object[] r, Map<String, String> imgUrlByApprvrId) {
+        String apprvrId = toStr(r[2]);
         return new OverseasApprover(
-                toStr(r[2]),  // apprvrId
+                apprvrId,     // apprvrId
                 toStr(r[3]),  // apprvrNm
                 toStr(r[4]),  // apprvrStts (CHAR(1))
                 toStr(r[1]),  // apprvrLineNo
                 toStr(r[5]),  // modDtm
-                toStr(r[6])   // regImgUrl
+                // Shared, non-admin avatar URL (/api/v1/users/{id}/image) for
+                // approvers WITH a stored image; null otherwise (the query's
+                // r[6] reg_img_url column stays NULL — resolved in Java here).
+                imgUrlByApprvrId.get(apprvrId)   // regImgUrl
         );
+    }
+
+    /** Collect every approver id across the page's chains and batch-resolve
+     *  their avatar URLs in one query via the shared resolver. */
+    private Map<String, String> resolveApproverImageUrls(
+            String bizKey, Map<String, List<Object[]>> approversBySeq) {
+        java.util.Set<String> ids = new java.util.HashSet<>();
+        for (List<Object[]> chain : approversBySeq.values()) {
+            for (Object[] a : chain) {
+                String id = toStr(a[2]);
+                if (id != null && !id.isBlank()) ids.add(id);
+            }
+        }
+        return userImageUrlResolver.resolveImageUrls(bizKey, ids);
     }
 
     private OverseasCurrencyTotal mapTotal(Object[] r) {
@@ -1118,11 +1912,14 @@ public class OverseasPaymentService {
                 toStr(r[11]),        // trnfYn (CHAR(1) → Character)
                 toStr(r[12]),        // docNo
                 toStr(r[13]),        // titl (approval title)
-                0,                   // successCount — not yet tracked at batch level
-                0,                   // failedCount  — not yet tracked at batch level
+                toInt(r[18]),        // successCount — F2 (PROC_STAT='0' AND RS_CD='0000')
+                toInt(r[19]),        // failedCount  — F2 (PROC_STAT='3' or '0'+RS_CD<>'0000')
                 toStr(r[14]),        // payDate
                 toStr(r[15]),        // apprStts (appr_type_cd)
-                toStr(r[16])         // apprvrNm (NULL — complex join deferred)
+                toStr(r[16]),        // apprvrNm (NULL — complex join deferred)
+                toStr(r[17]),        // apprSeqNo (F4b — OVRS_PYMN_SUMR.APPR_SEQ_NO)
+                toStr(r[21]),        // trnfStts (computed F/P/C — F2)
+                toInt(r[20])         // prsCnt — F2 (tot - error - success)
         );
     }
 

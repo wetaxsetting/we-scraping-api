@@ -120,6 +120,13 @@ public class ExpensePaymentExcelParser {
     private static final int CITAD_LENGTH = 3;
     private static final int NAPAS_LENGTH = 6;
 
+    /** CITAD_BANK_CD sentinel for NAPAS rows — legacy parity
+     *  (PymnHelper.uploadPaymentExcel:1361). */
+    private static final String NAPAS_CITAD_BANK_CD = "000";
+    /** VCB 6-digit bank code — VCB cannot send USD to other banks
+     *  (legacy PymnHelper.uploadPaymentExcel:1460-1465). */
+    private static final String VCB_BANK_CD = "970436";
+
     /** Expected column header text at row 3. Mirrors legacy
      *  {@code PymnHelper#HEADER_TITLE_EN/KO/VI} (lines 94-103). 10
      *  columns — the Contact-Code header at index 7 is the divergence
@@ -154,9 +161,18 @@ public class ExpensePaymentExcelParser {
     /** Cross-bank recipient-name verification — legacy
      *  {@code PymnHelper.ckRecName}. Calls the firm-banking inquiry API
      *  on NAPAS rows and compares the bank-returned
-     *  {@code FINC_MDA_OWNER_NM} against the contact's stored owner
-     *  name. Returns silently when the inquiry service has no firm-
-     *  banking config OR the socket call is not yet implemented. */
+     *  {@code FINC_MDA_OWNER_NM} against the contact's stored owner name.
+     *
+     *  <p><b>Audit G7 — currently a no-op stub.</b>
+     *  {@code FirmBankingInquiryService.inquiryAccount} returns
+     *  {@link java.util.Optional#empty()} until the underlying
+     *  {@code WB_00000100} socket call is wired, so the NAPAS
+     *  recipient-name cross-check below does not run. This matches legacy
+     *  behaviour when the inquiry result is null
+     *  ({@code PymnHelper.ckRecName:1037} "contactInfo == null" silent
+     *  skip). Do not treat the cross-check as active until a working bank
+     *  inquiry implementation exists; do NOT enable it for UAT/PROD
+     *  without that implementation. */
     private final com.kosign.wecms.common.firmbanking.FirmBankingInquiryService
                                            firmBankingInquiryService;
     /** Cross-row consistency guard — single currency per file + single
@@ -164,6 +180,12 @@ public class ExpensePaymentExcelParser {
      *  {@code PymnHelper.java:420-436} + {@code :1261-1297}. */
     private final com.kosign.wecms.domain.payment.common.UploadConsistencyValidator
                                            uploadConsistencyValidator;
+    /** Folds the withdrawal bank's internal BANK_CD to its canonical
+     *  NAPAS code so the VCB-USD guard (audit G6) can compare it against
+     *  {@link #VCB_BANK_CD}. Mirrors the sibling Vendor / Internal
+     *  Transfer parsers. */
+    private final com.kosign.wecms.domain.payment.common.OutBankCdNormalizer
+                                           outBankCdNormalizer;
 
     @Transactional(readOnly = true)
     public ParseExcelResponse parse(MultipartFile file, String bankCd) {
@@ -181,6 +203,14 @@ public class ExpensePaymentExcelParser {
 
             DataFormatter fmt = new DataFormatter();
             validateHeaderRow(sheet, fmt);
+
+            // VCB-USD guard precompute (audit G6; legacy
+            // PymnHelper.uploadPaymentExcel:1460): the withdrawal bank code
+            // arrives in internal BANK_CD form; fold it to its canonical
+            // NAPAS code once so the per-row USD check can compare against
+            // VCB. Mirrors the sibling Vendor / Internal Transfer parsers.
+            boolean withdrawalIsVcb =
+                    VCB_BANK_CD.equals(outBankCdNormalizer.normalize(bankCd));
 
             int lastRow = Math.min(sheet.getLastRowNum(), FIRST_DATA_ROW + MAX_ROWS - 1);
             for (int r = FIRST_DATA_ROW; r <= lastRow; r++) {
@@ -202,7 +232,7 @@ public class ExpensePaymentExcelParser {
                     break;
                 }
 
-                ParsedRow parsed = parseRow(row, fmt, bankCd);
+                ParsedRow parsed = parseRow(row, fmt, bankCd, withdrawalIsVcb);
                 rows.add(parsed.line);
                 if (parsed.hasError) {
                     errCnt++;
@@ -272,7 +302,7 @@ public class ExpensePaymentExcelParser {
     private record ParsedRow(ParsedTransferLine line, boolean hasError) {}
     private record FieldError(String fieldId, String cause) {}
 
-    private ParsedRow parseRow(Row row, DataFormatter fmt, String bankCd) {
+    private ParsedRow parseRow(Row row, DataFormatter fmt, String bankCd, boolean withdrawalIsVcb) {
         String bankCodeIn  = cellString(row, 0, fmt);
         String fincMdaNo   = cellString(row, 1, fmt);
         String tranAmtIn   = cellString(row, 3, fmt);
@@ -334,9 +364,23 @@ public class ExpensePaymentExcelParser {
         }
 
         // Bank Code resolution via TB_FIRM_BANK_CODE.
+        //
+        // `resolvedBankCd` keeps the *typed* code (3-digit for CITAD,
+        // 6-digit for NAPAS) — the deposit-account match and the NAPAS
+        // recipient-name inquiry below both compare against it.
+        //
+        // `resolvedTarBankCd` is what is persisted as
+        // SCDUL_PYMN_SUMR_DETL.TAR_BANK_CD: the 6-digit BANK_CD for both
+        // networks (audit G2 — legacy PymnHelper.getBankCode resolves a
+        // CITAD 3-digit code to its 6-digit BANK_CD; NAPAS passes through).
+        //
+        // `resolvedCitadBankCd` is SCDUL_PYMN_SUMR_DETL.CITAD_BANK_CD
+        // (audit G3 — 3-digit CITAD code for CITAD rows, "000" for NAPAS).
         String resolvedBankCd = null;
         String resolvedBankNm = null;
         String resolvedAntDiv = "";              // empty when bank cell is blank or wrong-length
+        String resolvedTarBankCd   = null;        // G2 — 6-digit BANK_CD sent as TAR_BANK_CD
+        String resolvedCitadBankCd = null;        // G3 — 3-digit CITAD / "000" for NAPAS
         TbFirmBankCode excelBankRow = null;       // kept for bank-identity matching below
         if (isBlank(bankCodeIn)) {
             errors.add(new FieldError(FLD_ANT_DIV_CD, "Bank Code is required"));
@@ -360,12 +404,25 @@ public class ExpensePaymentExcelParser {
                 resolvedBankCd = trimmed;
                 resolvedBankNm = displayName(hit.get());
                 excelBankRow   = hit.get();
+                if ("CITAD".equals(resolvedAntDiv)) {
+                    // G2 — resolve the 3-digit CITAD code to its 6-digit
+                    // BANK_CD; G3 — keep the typed 3-digit as CITAD_BANK_CD.
+                    resolvedTarBankCd   = hit.get().getBankCd();
+                    resolvedCitadBankCd = trimmed;
+                } else {
+                    // NAPAS — TAR_BANK_CD is already the 6-digit code;
+                    // CITAD_BANK_CD sentinel "000".
+                    resolvedTarBankCd   = trimmed;
+                    resolvedCitadBankCd = NAPAS_CITAD_BANK_CD;
+                }
             } else if (resolvedAntDiv.isEmpty()) {
-                resolvedBankCd = trimmed;
-                resolvedBankNm = "";
+                resolvedBankCd    = trimmed;
+                resolvedBankNm    = "";
+                resolvedTarBankCd = trimmed;   // wrong-length — echo typed code on the error row
             } else {
-                resolvedBankCd = trimmed;
-                resolvedBankNm = "";
+                resolvedBankCd    = trimmed;
+                resolvedBankNm    = "";
+                resolvedTarBankCd = trimmed;   // unknown code — echo typed code on the error row
                 errors.add(new FieldError(FLD_ANT_DIV_CD,
                         "Unknown Bank Code: " + trimmed));
             }
@@ -506,6 +563,22 @@ public class ExpensePaymentExcelParser {
             trnfCcyCd = trnfCcyIn.trim().toUpperCase();
         }
 
+        // G6 — VCB-USD → other-bank block (legacy
+        // PymnHelper.uploadPaymentExcel:1460-1465). When the WITHDRAWAL
+        // bank is Vietcombank and the transfer currency is USD, the target
+        // bank must also be Vietcombank — VCB does not support USD
+        // transfers to other banks. Lifted to the parse step so the user
+        // sees the error in the preview (legacy fired it at save); the
+        // dispatch-time re-check in ExpenseDispatchExecutor remains the
+        // authoritative guard. Compared against the RESOLVED 6-digit
+        // TAR_BANK_CD (audit G2), so it must run after bank-code
+        // resolution above. Field/message match the sibling Vendor parser.
+        if (withdrawalIsVcb && "USD".equals(trnfCcyCd)
+                && !VCB_BANK_CD.equals(resolvedTarBankCd)) {
+            errors.add(new FieldError(FLD_TRNF_CCY_CD,
+                    "VCB does not support USD transfer to other banks."));
+        }
+
         // Reporting Account validation — lookup CHART_ACCT_INFM for
         // the current tenant; stamp BOTH chart_acct_cd + seq_no so the
         // saved row carries the seq_no the picker/breadcrumb need.
@@ -562,7 +635,7 @@ public class ExpensePaymentExcelParser {
                 tranAmt,
                 resolvedAntDiv,
                 resolvedRcptNm,                // RCPT_NM — CITAD cross-fill from TRCO_ACCT_INFO.FINC_MDA_OWNER_NM
-                resolvedBankCd,
+                resolvedTarBankCd,             // TAR_BANK_CD — 6-digit BANK_CD (audit G2; CITAD resolved, NAPAS passthrough)
                 resolvedBankNm,
                 emptyToNull(fincMdaNo),
                 emptyToNull(tranUsag),
@@ -572,7 +645,7 @@ public class ExpensePaymentExcelParser {
                 emptyToNull(handTrcoKey),
                 emptyToNull(docNo),
                 emptyToNull(note),
-                null,                          // CITAD_BANK_CD — bank-code resolver detail (Phase 2)
+                resolvedCitadBankCd,           // CITAD_BANK_CD — 3-digit CITAD code / "000" for NAPAS (audit G3)
                 resolvedTrcoCmnm,              // TRCO_CMNM — cross-filled from Contacts master
                 resolvedTrcoCmenm,             // TRCO_CMENM — cross-filled from Contacts master
                 resolvedChartAcctSeqNo,        // CHART_ACCT_SEQ_NO — looked up from CHART_ACCT_INFM

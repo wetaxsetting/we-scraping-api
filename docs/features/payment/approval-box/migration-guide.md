@@ -31,9 +31,10 @@ Maps the legacy JEX `resl` / `comm_0195_001` implementation to the refactor Spri
 | `wb_get_memo_cont` / `wb_get_memo_color` | Dropped (sticky-note memos out of scope) |
 | `wb_get_translate_text(TITL)` (VN translated keyword search) | Dropped (out of scope; keyword matches `docNm`/`titl`/`docNo` only) |
 | `SortHelper.getSortDynamic("resl_0001_001_r001")` | `ApprovalBoxSortField` whitelist + Spring Data `Sort` |
-| Doc-no `SeqHelper`/`SYS_DOC_ID_GEN` | `ApprovalBoxFanoutService.nextDocNo` → `findMaxDocNoSeqByBizKeyAndPrefix` (`VO_YYMMDD_NNN`) |
+| Doc-no `SeqHelper`/`SYS_DOC_ID_GEN` | `LegacyFunctionRepository.nextDocNo` → `wb_get_next_val('expt_resol_mstr','doc_no',…)` (V140 branch #39, env-set-driven `VO_YYMMDD_NNN`). The former Java-side `findMaxDocNoSeqByBizKeyAndPrefix` finder was **removed** in the 2026-06-10 funnel migration. |
+| `SeqHelper` for `APPR_SEQ_NO` | `LegacyFunctionRepository.nextApprSeqNo` → `wb_get_next_val('expt_resol_mstr','appr_seq_no',…)` → global `sq_appr_seq_no` (V140 branch #1, V148). |
 
-No new `wb_*` DB functions were ported — all reimplemented in Java.
+Status derivation (`wb_get_appr_stts`), the type-label DB function, sticky-note memo helpers, and VN translated-keyword search were reimplemented in Java or dropped. **Key generation (`APPR_SEQ_NO` + `DOC_NO`) deliberately funnels through the surviving `wb_get_next_val`** via `LegacyFunctionRepository` per the single-executor funnel rule (`project_wb_get_next_val_funnel.md`) — it is not a new function, and it is the only DB-function dependency on the write path.
 
 ---
 
@@ -86,20 +87,22 @@ Legacy tab counts ignore the selected tab (the action JSP suppresses the `APPR_T
 | D7 | hard-delete cascade across BLTB threads/files on delete | withdraw deletes master + chain, returns source to Draft | refactor doesn't model the discussion-board thread; out-of-scope tables excluded by the PROD active-list rule |
 | D8 | no bulk approve | `POST .../bulk-approve` | refactor addition (per-row independent approve) |
 | D9 | approve/reject owned by `comm_0195_001` popup | dedicated `approve`/`reject` endpoints | clean REST surface |
-| D10 | doc number from `SYS_DOC_ID_GEN` | `VO_YYMMDD_NNN` via `nextDocNo` | per-tenant per-day Java generator; caller doc-no overridden |
+| D10 | doc number from `SYS_DOC_ID_GEN` | `VO_YYMMDD_NNN` via the `wb_get_next_val` funnel (`LegacyFunctionRepository.nextDocNo`, V140 branch #39) | env-set-driven per-tenant per-day key; caller doc-no overridden. (Not a Java MAX+1 generator — that finder was removed 2026-06-10.) |
 
 ---
 
 ## 6. Out-of-scope (excluded by the PROD active-list / scope rules)
 
 - ERP synchronization on approval.
-- Discussion-board thread (`BLTB_*`) creation/deletion that legacy delete cascades over.
-- Approval **comment** notification creation (request/approve/reject notifications ARE implemented).
-- Uploader-visibility branch beyond the implemented requester/approver/admin visibility.
+- Discussion-board thread (`BLTB_*`) full creation/deletion cascade that legacy delete walks over (the approve/reject `BLTB_COMNT_INFM` REMARK + `BLTB_NOTI_*` writes ARE implemented — see below; only the broader discussion-thread cascade is excluded).
 - Sticky-note memos; VN translated keyword search.
+
+**Now in scope (no longer excluded — implemented since the original plan):**
+- Approval **comment** notification creation — `ApprovalNotificationService.notifyApprovalAction` writes the `BLTB_COMNT_INFM` REMARK and `BLTB_NOTI_INFM` / `BLTB_NOTI_CONT_INFM` on request/approve/reject (write-side live; only the notification read-side controller is still a stub — payment-gap CC-1).
+- Uploader-visibility branch — the `SCDUL` / `OVRS` / `CARD` uploader `EXISTS` branches were restored 2026-06-16 (G3); non-admin visibility now = uploader OR requester OR approver, full Redmine #42046 parity.
 
 ---
 
 ## 7. Migration status
 
-✅ **Complete.** Read path (list, tab counts, filters, sort, approver chain), mutation path (approve, reject, bulk-approve, withdraw, change-approval-line), source write-back, audit, notifications, and Excel export are all implemented and verified against the legacy behaviour (SIT/UAT done). The only documented behaviour deltas are the deliberate divergences above and the post-Phase-1 parity fixes in [parity-fixes-2026-06.md](parity-fixes-2026-06.md). See [refactor-gap-analysis.md](refactor-gap-analysis.md) for the area-by-area verdict.
+✅ **Complete.** Read path (list, tab counts, **footer totals**, filters, sort, approver chain), mutation path (approve, reject, bulk-approve, withdraw, change-approval-line), withdraw's source `APPR_SEQ_NO` clear (no `APPR_STTS` write-back — the column does not exist in the legacy JEX schema; status is derived on read), audit, notifications, and Excel export are all implemented and verified against the legacy behaviour (SIT/UAT done, incl. the 2026-06-16 G1–G5 verification). The only documented behaviour deltas are the deliberate divergences above and the post-Phase-1 parity fixes in [parity-fixes-2026-06.md](parity-fixes-2026-06.md). See [refactor-gap-analysis.md](refactor-gap-analysis.md) for the area-by-area verdict + the G1–G5 findings.

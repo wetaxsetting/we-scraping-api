@@ -2,7 +2,7 @@
 
 **Scope:** wecms-api/ (Needs Confirmation) (Spring Boot 3.5.13, Java 21, Flyway, single tenant `VN_VNM0004_000001`).
 **Status:** Plan only — no code changes, no Flyway migrations, no DB writes.
-**Companion plan:** [task-plan-common-backend-functional-seahorse.md](../../planning/roadmap/task-plan-common-backend-functional-seahorse.md) — bootstrap & `wb_get_next_val` strategy, Phase 1/2/3 framing reused below.
+**Companion plan:** task-plan-common-backend-functional-seahorse.md _(removed — historical `planning/` folder deleted by project decision)_ — bootstrap & `wb_get_next_val` strategy, Phase 1/2/3 framing reused below.
 
 ---
 

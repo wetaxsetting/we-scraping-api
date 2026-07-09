@@ -36,7 +36,7 @@ import java.util.List;
  * <pre>{@code
  * Request:
  * {
- *   "ApiKey":    "<wecms.osmc.api-key>",   // r2L7U6KnB4T51VokPlkg in DEV
+ *   "ApiKey":    "<wecms.osmc.api-key>",   // <configured-via-WECMS_OSMC_API_KEY>
  *   "ApiId":     "BI09",                    // from wecms.osmc.api-id
  *   "UniqueKey": "<7-digit seq>",
  *   "Input":     { "search": "<taxCode | [taxCode,...]>" }

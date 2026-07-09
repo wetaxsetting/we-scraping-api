@@ -1,7 +1,7 @@
 # Purpose Settings — JEX → Spring + Next.js mapping
 
 **Refactor slug:** `purpose-settings`
-**Sibling docs:** [feature spec](../../features/settings/purpose.md) · backend design (Needs Confirmation) · [frontend design](../../../../wecms-web/docs/features/settings/purpose.md) · DB schema (Needs Confirmation) · [task plan](../../archive/planning/settings/purpose-settings-task-plan.md).
+**Sibling docs:** [feature spec](../../features/settings/purpose.md) · backend design (Needs Confirmation) · [frontend design](../../../../wecms-web/docs/features/settings/purpose.md) · DB schema (Needs Confirmation) · task plan _(removed — historical `archive/` folder deleted by project decision)_.
 **Mirrors live JEX:** `comm_0187_001_r001` (list), `_r002` (name search — merged into list), `_c001` (create), `_u002` (edit + soft-delete), `_u004` (reorder), `comm_0187_004_c001` (Excel upload). Out of scope: `_u003` (reset to system defaults), `comm_0187_003_*` (Unused / restore).
 
 This document is the JEX-side ↔ refactor-side per-artifact mapping. Phase 1 only — no code.

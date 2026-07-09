@@ -3,6 +3,7 @@ package com.kosign.wecms.domain.payment.internaltransfer.dto;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 import java.util.List;
@@ -61,8 +62,17 @@ public record RequestApprovalRequest(
         @Size(max = 3)
         String ccyCd,
 
-        /** Optional {@code yyyyMMdd}; null / blank skips the column. */
-        @Size(max = 8)
+        /**
+         * Scheduled payment date {@code yyyyMMdd} — <b>required</b> (L-1/L-2
+         * legacy parity: {@code comm_0192_001_c005_act.jsp:126-127}
+         * {@code validateRequired(PAY_DATE)} + {@code validateDate8(PAY_DATE)}
+         * for APPR_DV 21/31/32/34/35). The Corporate Card flow uses a
+         * separate DTO where {@code pay_date} stays optional, matching legacy
+         * {@code card_0001_005_c001_act.jsp:91-93} which only date8-validates
+         * when present.
+         */
+        @NotBlank
+        @Pattern(regexp = "\\d{8}")
         String payDate,
 
         /**

@@ -4,6 +4,7 @@ import com.kosign.wecms.common.export.ExcelExportRequest;
 import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.response.ApiResponse;
 import com.kosign.wecms.domain.payment.dto.ChangeApprovalLineRequest;
+import com.kosign.wecms.domain.payment.dto.OverseasMultiApprovalRequest;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentDetailResponse;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentExcelPreview;
 import com.kosign.wecms.domain.payment.dto.OverseasPaymentExcelUploadRequest;
@@ -16,15 +17,18 @@ import com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalActionReques
 import com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.RequestApprovalResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.WithdrawalAccountRow;
-import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService;
+import com.kosign.wecms.domain.payment.common.WithdrawalAccountListService;
+import com.kosign.wecms.domain.payment.service.OverseasPaymentDownloadService;
 import com.kosign.wecms.domain.payment.service.OverseasPaymentExcelService;
 import com.kosign.wecms.domain.payment.service.OverseasPaymentExcelService.DownloadResource;
+import com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter;
 import com.kosign.wecms.domain.payment.service.OverseasPaymentService;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
@@ -67,8 +71,27 @@ public class OverseasPaymentController {
 
     private final OverseasPaymentService        overseasPaymentService;
     private final OverseasPaymentExcelService   overseasExcelService;
-    private final InternalTransferService       internalTransferService;
+    private final WithdrawalAccountListService  withdrawalAccountListService;
     private final ExcelExportService            excelExportService;
+    private final OverseasPaymentDownloadService downloadService;
+    /** ERP_TRNS_HSTR 'W' audit writer for the generated-report downloads
+     *  (Scheduled → code 13 = Overseas Payment Request, Result → code 14
+     *  = Overseas Request Result). */
+    private final ErpTrnsHistoryWriter           erpHistoryWriter;
+    /** P2 overseas payment-line ↔ bank-transaction match service (parity with
+     *  the domestic {@code DomesticPaymentLineMatchService}). */
+    private final com.kosign.wecms.domain.payment.match.service.OverseasPaymentLineMatchService overseasLineMatchService;
+
+    /**
+     * Preview the next {@code VO_YYMMDD_NNN} document number for the Request
+     * Approval popup (read-only; reserves / persists nothing). Mirrors the
+     * Internal Transfer / Card / Vendor / Expense / Payroll precedent so
+     * Overseas Payment renders the same friendly id format before submit.
+     */
+    @GetMapping("/next-doc-no")
+    public ApiResponse<com.kosign.wecms.domain.payment.internaltransfer.dto.NextDocNoResponse> nextDocNo() {
+        return ApiResponse.ok(overseasPaymentService.previewNextDocNo());
+    }
 
     /**
      * Overseas scheduled-payment list.
@@ -140,11 +163,28 @@ public class OverseasPaymentController {
      * list row transitions to "pending" status. Full {@code EXPT_RESOL_MSTR}
      * write is deferred.
      */
-    @PostMapping("/{id}/request-approval")
+    // M-1 (legacy parity): multipart so Request Approval attachments ride along
+    // (JSON in `request`, files in `attachments`); a no-file submit omits them.
+    @PostMapping(path = "/{id}/request-approval", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResponse<RequestApprovalResponse> requestApproval(
             @PathVariable("id") String id,
-            @Valid @RequestBody RequestApprovalRequest request) {
-        return ApiResponse.ok(overseasPaymentService.requestApproval(id, request));
+            @Valid @RequestPart("request") RequestApprovalRequest request,
+            @RequestPart(value = "attachments", required = false)
+            java.util.List<org.springframework.web.multipart.MultipartFile> attachments) {
+        return ApiResponse.ok(overseasPaymentService.requestApproval(id, request, attachments));
+    }
+
+    /**
+     * Submit a multi-payment ("M" type) overseas approval — approves a
+     * list of {@code OVRS_PYMN_MSTR} rows under one {@code EXPT_RESOL_MSTR}.
+     * Mirrors the legacy {@code comm_0192_001_c005} {@code OVRS_PYMN_TYPE='M'}
+     * branch (one {@code EXPT_RESOL_DETL} per payment +
+     * {@code APPR_SEQ_NO} stamped on every master row).
+     */
+    @PostMapping("/request-approval-multi")
+    public ApiResponse<RequestApprovalResponse> requestApprovalMulti(
+            @Valid @RequestBody OverseasMultiApprovalRequest request) {
+        return ApiResponse.ok(overseasPaymentService.requestApprovalMulti(request));
     }
 
     /**
@@ -233,10 +273,15 @@ public class OverseasPaymentController {
             @Size(max = 100)
             String keyword,
 
-            /** {@code "Y"} = Completed only, {@code "N"} = In Progress only, absent = all. */
-            @RequestParam(value = "trnf_yn", required = false)
-            @Pattern(regexp = "^[YN]$", message = "trnf_yn must be Y or N")
-            String trnfYn,
+            /**
+             * Legacy PROC_STAT CSV (F2) mirroring the Completed / In-Progress
+             * checkboxes: Completed = {@code "0,3"}, In Progress = {@code "6"},
+             * absent = all. The service maps these to the computed TRNF_STTS
+             * (C/F/P) — see {@code IDO.OVRS_PYMN_SUMR_R005}.
+             */
+            @RequestParam(value = "proc_stat", required = false)
+            @Pattern(regexp = "^[0-9]+(,[0-9]+)*$", message = "proc_stat must be a comma-separated list of digits")
+            String procStat,
 
             @RequestParam(value = "page", defaultValue = "0") int page,
             @RequestParam(value = "size", defaultValue = "0") int size,
@@ -244,7 +289,7 @@ public class OverseasPaymentController {
             @RequestParam(value = "sort_field",     required = false) String sortField,
             @RequestParam(value = "sort_direction",  required = false) String sortDirection) {
 
-        return ApiResponse.ok(overseasPaymentService.listResult(fromDt, toDt, keyword, trnfYn, page, size, sortField, sortDirection));
+        return ApiResponse.ok(overseasPaymentService.listResult(fromDt, toDt, keyword, procStat, page, size, sortField, sortDirection));
     }
 
     /**
@@ -276,26 +321,35 @@ public class OverseasPaymentController {
             @Size(max = 100)
             String keyword,
 
-            @RequestParam(value = "trnf_yn", required = false)
-            @Pattern(regexp = "^[YN]$", message = "trnf_yn must be Y or N")
-            String trnfYn,
+            @RequestParam(value = "proc_stat", required = false)
+            @Pattern(regexp = "^[0-9]+(,[0-9]+)*$", message = "proc_stat must be a comma-separated list of digits")
+            String procStat,
 
             HttpServletResponse response) throws IOException {
 
-        overseasPaymentService.exportResult(fromDt, toDt, keyword, trnfYn, response);
+        overseasPaymentService.exportResult(fromDt, toDt, keyword, procStat, response);
     }
 
     /**
      * Assign or clear the reporting account for a single detail line.
-     * Pass {@code rprt_acct_cd: null} to clear the assignment.
+     * Pass {@code rprt_acct_cd: null} (and {@code rprt_acct_seq_no: null}) to
+     * clear the assignment. Both the code and the seq_no are sent together —
+     * {@code CHART_ACCT_SEQ_NO} is the {@code CHART_ACCT_INFM} PK identity, so
+     * the pair must stay consistent (legacy {@code pymn_0007_001_u001} parity).
      */
     @PatchMapping("/{id}/details/{ovrsPymnDetlNo}/reporting-account")
-    @PreAuthorize("@menuAuthz.canAccess('payment-overseas-result')")
+    // Legacy parity: the reporting-account updater pymn_0007_001_u001 lives in the
+    // Payment Request / Scheduled namespace (pymn_0007_001), with the same authority
+    // as the scheduled list/detail — NOT the Result menu (pymn_0008_001). Gate the
+    // save on the Request menu so a user who can open the Scheduled detail page can
+    // also save the reporting account (mirrors the class-level default).
+    @PreAuthorize("@menuAuthz.canAccess('payment-overseas-request')")
     public ApiResponse<Void> saveReportingAccount(
             @PathVariable("id") String id,
             @PathVariable("ovrsPymnDetlNo") String ovrsPymnDetlNo,
             @RequestBody Map<String, String> body) {
-        overseasPaymentService.saveReportingAccount(id, ovrsPymnDetlNo, body.get("rprt_acct_cd"));
+        overseasPaymentService.saveReportingAccount(
+                id, ovrsPymnDetlNo, body.get("rprt_acct_cd"), body.get("rprt_acct_seq_no"));
         return ApiResponse.ok(null);
     }
 
@@ -303,9 +357,10 @@ public class OverseasPaymentController {
      * Firm-banking-capable withdrawal accounts for the overseas payment
      * Excel upload dialog Step 3 ("Withdrawal Bank/Account No." picker).
      *
-     * <p>Mirrors legacy {@code comm_1001_001} — same query as internal
-     * transfer; the upstream service is shared because both features
-     * draw from the same {@code ACCT_MSTR} + {@code TB_FIRM_CONF} join.
+     * <p>Mirrors legacy {@code comm_1001_001} — module-agnostic, so it
+     * delegates to the shared {@link WithdrawalAccountListService} (the
+     * same strict G1/G2/G3 path every payment consumer uses). Overseas no
+     * longer couples to {@code InternalTransferService} for this lookup.
      *
      * @param ccyCd optional currency filter (e.g. {@code "USD"}); omit
      *              for all firm-banking accounts regardless of currency.
@@ -313,7 +368,7 @@ public class OverseasPaymentController {
     @GetMapping("/withdrawal-accounts")
     public ApiResponse<List<WithdrawalAccountRow>> listWithdrawalAccounts(
             @RequestParam(value = "ccy_cd", required = false) String ccyCd) {
-        return ApiResponse.ok(internalTransferService.listWithdrawalAccounts(ccyCd));
+        return ApiResponse.ok(withdrawalAccountListService.list(ccyCd));
     }
 
     /**
@@ -411,5 +466,151 @@ public class OverseasPaymentController {
                 .header("X-Content-Type-Options", "nosniff")
                 .header("Access-Control-Expose-Headers", HttpHeaders.CONTENT_DISPOSITION)
                 .body(new InputStreamResource(stream));
+    }
+
+    /**
+     * Excel Download — the legacy 22-column populated report
+     * (ports {@code pymn_0008_002_r002}). Loads the locale template from the
+     * backend classpath, populates one row per transfer detail preserving all
+     * template styling, and streams
+     * {@code WeCMS_Overseas_Payment_download_{LANG}.xlsx}.
+     *
+     * <p>This is the artifact the Scheduled Payment list-row glyph and detail
+     * file card download — NOT the originally uploaded Excel file (which
+     * {@code GET /scheduled/{id}/file} still serves as the import source). See
+     * {@code docs/audits/overseas-payment-excel-download-audit.md}. Scheduled
+     * scope inherits the class-level {@code payment-overseas-request} authz.
+     *
+     * @param id   batch key ({@code OVRS_PYMN_NO})
+     * @param lang optional UI-locale hint (EN/KO/VI; KM/other → EN). When
+     *             omitted the JWT {@code langCd} is used.
+     */
+    @GetMapping("/{id}/report")
+    public ResponseEntity<ByteArrayResource> downloadReport(
+            @PathVariable("id") String id,
+            @RequestParam(value = "lang", required = false) String lang) {
+        // Scheduled list/detail report download → ERP_TRNS_HSTR 'W' / 13
+        // (Overseas Payment Request). Audit the exact downloaded bytes.
+        OverseasPaymentDownloadService.GeneratedReport report = downloadService.generate(id, lang);
+        erpHistoryWriter.recordExportedBytes("13", report.content(), report.fileName());
+        return reportResponse(report);
+    }
+
+    /**
+     * Excel Download — same generated 22-column report as
+     * {@link #downloadReport}, exposed under the Result namespace so the
+     * {@code payment-overseas-result} menu authorization applies. The Payment
+     * Result list-row glyph and Result detail file card call this endpoint.
+     *
+     * @param id   batch key ({@code OVRS_PYMN_NO})
+     * @param lang optional UI-locale hint (EN/KO/VI; KM/other → EN)
+     */
+    @GetMapping("/result/{id}/report")
+    @PreAuthorize("@menuAuthz.canAccess('payment-overseas-result')")
+    public ResponseEntity<ByteArrayResource> downloadResultReport(
+            @PathVariable("id") String id,
+            @RequestParam(value = "lang", required = false) String lang) {
+        // Result list-row/detail report download → ERP_TRNS_HSTR 'W' / 14
+        // (Overseas Request Result).
+        OverseasPaymentDownloadService.GeneratedReport report = downloadService.generate(id, lang);
+        erpHistoryWriter.recordExportedBytes("14", report.content(), report.fileName());
+        return reportResponse(report);
+    }
+
+    /**
+     * Toolbar Excel — the legacy 22-column report for ALL batches in the
+     * current Payment Result filter (bulk). Same locale template + column
+     * layout (E+M union) as the per-row {@link #downloadResultReport}, with
+     * every filtered batch appended into one workbook. Replaces the old
+     * from-scratch list export ({@link #exportResult}, {@code GET /result/export})
+     * for the toolbar. Filter params mirror {@link #exportResult}.
+     *
+     * <p>A literal {@code /result/report} path takes precedence over the
+     * {@code /result/{id}} mapping, so {@code report} is never read as an id.
+     */
+    @GetMapping("/result/report")
+    @PreAuthorize("@menuAuthz.canAccess('payment-overseas-result')")
+    public ResponseEntity<ByteArrayResource> downloadResultBulkReport(
+            @RequestParam("from_date")
+            @Pattern(regexp = "^[0-9]{8}$", message = "from_date must be yyyyMMdd")
+            String fromDt,
+            @RequestParam("to_date")
+            @Pattern(regexp = "^[0-9]{8}$", message = "to_date must be yyyyMMdd")
+            String toDt,
+            @RequestParam(value = "keyword", required = false)
+            @Size(max = 100)
+            String keyword,
+            @RequestParam(value = "proc_stat", required = false)
+            @Pattern(regexp = "^[0-9]+(,[0-9]+)*$", message = "proc_stat must be a comma-separated list of digits")
+            String procStat,
+            @RequestParam(value = "lang", required = false) String lang) {
+        java.util.List<String> ids = overseasPaymentService.resultIdsForExport(fromDt, toDt, keyword, procStat);
+        // Bulk Result report download → ERP_TRNS_HSTR 'W' / 14 (Overseas Result).
+        OverseasPaymentDownloadService.GeneratedReport report = downloadService.generateBulk(ids, lang);
+        erpHistoryWriter.recordExportedBytes("14", report.content(), report.fileName());
+        return reportResponse(report);
+    }
+
+    /** Shared builder for the generated-report binary response (RFC 5987
+     *  filename, XLSX content type, no-sniff). */
+    private static ResponseEntity<ByteArrayResource> reportResponse(
+            OverseasPaymentDownloadService.GeneratedReport report) {
+        ContentDisposition cd = ContentDisposition.builder("attachment")
+                .filename(report.fileName(), StandardCharsets.UTF_8)
+                .build();
+        ByteArrayResource body = new ByteArrayResource(report.content());
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .contentLength(body.contentLength())
+                .header(HttpHeaders.CONTENT_DISPOSITION, cd.toString())
+                .header("X-Content-Type-Options", "nosniff")
+                .header("Access-Control-Expose-Headers", HttpHeaders.CONTENT_DISPOSITION)
+                .body(body);
+    }
+
+    /* ============================================================
+     * P2 — Overseas payment-line ↔ bank-transaction match
+     * (legacy comm_0197_001 isOversea path). Parity with the domestic
+     * Vendor/Expense/Internal match endpoints.
+     * ============================================================ */
+
+    /** Candidate bank transactions for an overseas payment line
+     *  (legacy {@code comm_0197_001_r001} isOversea). */
+    @GetMapping("/{ovrsPymnNo}/lines/{ovrsPymnDetlNo}/match/candidates")
+    public ApiResponse<com.kosign.wecms.domain.payment.dto.OverseasMatchCandidateListResponse> matchCandidates(
+            @PathVariable("ovrsPymnNo") String ovrsPymnNo,
+            @PathVariable("ovrsPymnDetlNo") String ovrsPymnDetlNo,
+            @RequestParam(value = "srch_wd", required = false) String srchWd) {
+        return ApiResponse.ok(
+                overseasLineMatchService.listCandidates(ovrsPymnNo, ovrsPymnDetlNo, srchWd));
+    }
+
+    /** Match an overseas payment line to a bank transaction
+     *  (legacy {@code comm_0197_001_c001} isOversea). */
+    @PostMapping("/{ovrsPymnNo}/lines/{ovrsPymnDetlNo}/match")
+    public ApiResponse<com.kosign.wecms.domain.payment.dto.OverseasMatchResultResponse> match(
+            @PathVariable("ovrsPymnNo") String ovrsPymnNo,
+            @PathVariable("ovrsPymnDetlNo") String ovrsPymnDetlNo,
+            @Valid @RequestBody
+            com.kosign.wecms.domain.payment.match.dto.PaymentLineMatchRequest req) {
+        return ApiResponse.ok(
+                overseasLineMatchService.match(ovrsPymnNo, ovrsPymnDetlNo, req));
+    }
+
+    /** Unmatch a single overseas payment line (legacy {@code comm_0197_002_u001}). */
+    @DeleteMapping("/{ovrsPymnNo}/lines/{ovrsPymnDetlNo}/match")
+    public ApiResponse<com.kosign.wecms.domain.payment.dto.OverseasMatchResultResponse> unmatch(
+            @PathVariable("ovrsPymnNo") String ovrsPymnNo,
+            @PathVariable("ovrsPymnDetlNo") String ovrsPymnDetlNo) {
+        return ApiResponse.ok(
+                overseasLineMatchService.unmatch(ovrsPymnNo, ovrsPymnDetlNo));
+    }
+
+    /** Unmatch every matched line under an overseas batch (legacy {@code comm_0197_001_u001}). */
+    @DeleteMapping("/{ovrsPymnNo}/matches")
+    public ApiResponse<com.kosign.wecms.domain.payment.dto.OverseasUnmatchAllResponse> unmatchAll(
+            @PathVariable("ovrsPymnNo") String ovrsPymnNo) {
+        return ApiResponse.ok(overseasLineMatchService.unmatchAll(ovrsPymnNo));
     }
 }

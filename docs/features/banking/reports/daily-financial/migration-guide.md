@@ -3,14 +3,22 @@
 Target: a clean Spring Boot rewrite informed by JEX behaviour — **not** a port. No `JexData`, no
 `IDODynamic`, no `_act.jsp` envelope mimicry (per `wecms-api/CLAUDE.md`).
 
-> **Status 2026-06 — the in-PROD read path is implemented via Strategy B and READY FOR SIT.**
-> `ReportService.dailyFinancial` live-computes per-day debit/credit + internal aggregates and the
-> as-of balance from `ACCT_TRNS_HSTR` (+`ACCT_TRNS_RCV_PAY_INFM`), and the per-currency Financial
-> Status (VND/USD/**KRW**). The **Transaction History Details popup** is implemented and UI-aligned to
-> the e-Invoice Latest Inquiry History popup (default page size 10 / options 10·20·50·100). Still
-> P1 / non-blocking: the **§6 Excel export** server-side provider, the inline REC2_1 grid, and the
-> internal-transfer/active-account toggle semantics. Strategy decision (OQ-DF-1) resolved to
-> **Strategy B**. See [README.md §5](README.md#5-sit-readiness-2026-06) +
+> **Status 2026-06-14 — CORRECTED: the read path calls the legacy DB function directly.**
+> `ReportService.dailyFinancial` reads the legacy read-only set-returning function
+> **`rept_0015_001_r001_rec1(biz_key, req_date, req_date2)`** via `DailyFinancialCmcFunctionRepository`
+> and projects its rows onto the wire shape (per-account current+savings ledger + per-currency
+> Financial Status `total = current + saving`). Source of truth: `ReportService.java:147-225` +
+> `repository/DailyFinancialCmcFunctionRepository`.
+> The **Transaction History Details popup** is implemented and UI-aligned to the e-Invoice Latest
+> Inquiry History popup (default page size 10 / options 10·20·50·100). Still P1 / non-blocking: the
+> **§6 Excel export** server-side provider, the inline REC2_1 grid, and the `activeAccountsOnly`
+> (DF-3) / `includeInternalTransfers` (DF-4) toggle widening.
+>
+> **History:** OQ-DF-1 originally weighed *Strategy A* (read materialized summary) vs *Strategy B*
+> (Java live-compute from `ACCT_MSTR`/`ACCT_TRNS_HSTR`). The 2026-06-13/14 pivot **superseded both** —
+> the report now calls `rept_0015_001_r001_rec1` directly (the documented set-returning exception in
+> `wecms-api/CLAUDE.md` §"Legacy report DB functions"). The §3 Strategy A/B analysis below is retained
+> as the pre-pivot decision record, not the current design. See [README.md](README.md) +
 > [refactor-gap-analysis.md](refactor-gap-analysis.md).
 
 ---
@@ -65,7 +73,11 @@ com.kosign.wecms.domain.banking
 └── export/DailyFinancialExportProvider.java  (NEW — common/export pipeline)
 ```
 
-### Two viable read strategies
+### Two viable read strategies (HISTORICAL — superseded 2026-06-14)
+
+> **Superseded.** Neither strategy below is the implemented design. The shipped read path calls the
+> legacy function `rept_0015_001_r001_rec1` directly via `DailyFinancialCmcFunctionRepository`
+> (`ReportService.java:147-225`). The A-vs-B analysis is preserved as the pre-pivot decision record.
 
 **Strategy A — read the materialized summary (recommended for parity).**
 Add Flyway migrations for `DAILY_FINCL_REPT_DAILY_SUMR_DETL` + `DAILY_FINCL_REPT_DAILY_ACCT_TRNS_HSTR_SUMR`
@@ -77,12 +89,13 @@ nightly batch (or a future Spring recompute) to keep the summary fresh.
 **Strategy B — compute live from `ACCT_MSTR` + `ACCT_TRNS_HSTR`.**
 Skip the summary tables entirely: balances from `ACCT_MSTR`; per-account daily debit/credit
 counts+amounts via a grouped query over `ACCT_TRNS_HSTR` for the date; financial-status totals by
-account-type CASE-sum. This is what the current `ReportService.dailyFinancial` partially does. No
-batch dependency; the running balance per transaction comes straight from `ACCT_TRNS_HSTR.BAL`.
+account-type CASE-sum. No batch dependency; the running balance per transaction comes straight from
+`ACCT_TRNS_HSTR.BAL`. *(This was the pre-pivot skeleton; it is no longer the read path.)*
 
-> Recommendation: **Strategy B** for the read path (no batch dependency, all-in-scope tables) — it
-> already matches the implemented skeleton and the working `/transactions` popup. Reserve Strategy A
-> for if/when exact summary-table parity with the legacy nightly aggregation becomes a requirement.
+> **Outcome (2026-06-14):** neither A nor B shipped. The report calls `rept_0015_001_r001_rec1`
+> directly — the legacy function performs the as-of-balance + same-day SND/RCV + internal-split
+> computation, and `ReportService.dailyFinancial` projects its rows. The `/transactions` popup
+> (`dailyFinancialTransactions`) still reads `ACCT_TRNS_HSTR` directly and is unaffected.
 
 ### Filter → query mapping
 
@@ -108,7 +121,14 @@ batch dependency; the running balance per transaction comes straight from `ACCT_
   `AmountFormatter.forDisplay(...)` for any composed summary string.
 - Wire is lowercase snake_case (global Jackson). Java fields camelCase. No `@JsonProperty("UPPER")`.
 
-## 5. Repository / entity design (if Strategy A)
+## 5. Repository / entity design (HISTORICAL — Strategy A only; not shipped)
+
+> **Superseded 2026-06-14.** The shipped design adds **no** summary tables/entities. It reads the
+> legacy set-returning function `rept_0015_001_r001_rec1` through `DailyFinancialCmcFunctionRepository`
+> (a single native-query funnel), the same documented exception used by Daily Cash (`rept_0900_001_rec1..4`),
+> Cash Flow (`get_cashflow_report`), and Daily Financial HS (`fn_get_haengsung_daily_financial_report`)
+> per `wecms-api/CLAUDE.md` §"Legacy report DB functions". The Strategy-A entity/Flyway plan below did
+> not ship and is retained only as the historical alternative.
 
 - Flyway: `V{N}__daily_financial_summary_schema.sql` — `CREATE TABLE IF NOT EXISTS` for the two
   in-scope summary tables, **column-for-column with DEV** (types in
@@ -118,9 +138,11 @@ batch dependency; the running balance per transaction comes straight from `ACCT_
   Add helper index on `(BIZ_KEY, REF_DATE)`.
 - Seed: `V{N+1}__daily_financial_summary_seed.sql` — ≤30 rows for `VN_VNM0004_000001`, real DEV PK
   values, `ON CONFLICT DO NOTHING`.
-- **Do not** add `wb_insert_daily_fincl_*` or `rept_0015_001_r001_rec1/rec3` functions to Flyway
-  (DB-function policy). If summary freshness is needed, port the aggregation as a Java
-  `@Scheduled`/batch service in a later sprint, not a PL/pgSQL function.
+- **Read function `rept_0015_001_r001_rec1` IS relied upon** — it is the shipped read source (called
+  via `DailyFinancialCmcFunctionRepository`), the documented set-returning exception to the
+  no-new-DB-function rule. Do **not** re-express it in Java. The **batch-write** helpers
+  `wb_insert_daily_fincl_*` (and `rec3` cash) remain **not ported** to Spring — the batch owns writes,
+  and the report does not read the materialized summary tables.
 - Repository methods: derived finders constrained on `BIZ_KEY` + `REF_DATE` (+ optional currency),
   returning `Sort`-ordered rows; never concatenate sort input into SQL (use the `common/web/`
   whitelist pattern if header-sort is added).
@@ -146,5 +168,6 @@ without it `ExcelExportService` drops every column with `WBE2013`). Mirror
 
 - Align param names (`asOf`/`currencyScope` vs the stub's `referenceDate`/`currency`) — pick one,
   update both the stub and the frontend in the same MR (full-stack ownership rule).
-- Decide Strategy A vs B with the lead (this is **OQ-DF-1**, see
-  [refactor-gap-analysis.md](refactor-gap-analysis.md)).
+- ~~Decide Strategy A vs B with the lead (**OQ-DF-1**).~~ **Resolved 2026-06-14** — superseded by the
+  direct `rept_0015_001_r001_rec1` call; neither A nor B shipped. See
+  [refactor-gap-analysis.md](refactor-gap-analysis.md).

@@ -2,7 +2,12 @@ package com.kosign.wecms.domain.banking.controller;
 
 import com.kosign.wecms.common.export.ExcelExportRequest;
 import com.kosign.wecms.common.export.ExcelExportService;
+import com.kosign.wecms.common.memo.dto.MemoListResponse;
+import com.kosign.wecms.common.memo.dto.MemoRow;
 import com.kosign.wecms.common.response.ApiResponse;
+import com.kosign.wecms.domain.banking.dto.TransactionMemoColorRequest;
+import com.kosign.wecms.domain.banking.dto.TransactionMemoCreateRequest;
+import com.kosign.wecms.domain.banking.dto.TransactionMemoUpdateRequest;
 import com.kosign.wecms.domain.banking.dto.AccountListResponse;
 import com.kosign.wecms.domain.banking.dto.AccountLookupListResponse;
 import com.kosign.wecms.domain.banking.dto.RegisterAccountsRequest;
@@ -26,13 +31,21 @@ import com.kosign.wecms.domain.banking.nxisas.dto.SubmitQnaRequest;
 import com.kosign.wecms.domain.banking.service.AccountFilter;
 import com.kosign.wecms.domain.banking.service.AccountRegistrationService;
 import com.kosign.wecms.domain.banking.service.AccountService;
+import com.kosign.wecms.domain.banking.service.CurrentSavingsDownloadService;
+import com.kosign.wecms.domain.banking.service.CurrentSavingsScope;
 import com.kosign.wecms.domain.banking.service.MatchService;
 import com.kosign.wecms.domain.banking.service.TransactionService;
+import com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -46,6 +59,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.security.access.prepost.PreAuthorize;
 
+import java.math.BigDecimal;
+
 @RestController
 @RequestMapping("/api/v1/banking")
 @RequiredArgsConstructor
@@ -58,6 +73,14 @@ public class AccountController {
     private final ExcelExportService excelExportService;
     private final AccountRegistrationService accountRegistrationService;
     private final BankTransactionSyncService bankTransactionSyncService;
+    /** PO-requested template-populated Banking Excel Download (Account
+     *  Inquiry + Transaction History, VND + FCY) — see
+     *  {@code docs/audits/current-savings-vnd-excel-download-audit.md} +
+     *  {@code docs/audits/current-savings-fcy-excel-download-audit.md}. */
+    private final CurrentSavingsDownloadService currentSavingsDownloadService;
+    /** Writes the WeCMS&rarr;ERP 'W' audit row for each report download,
+     *  preserving the legacy {@code downloadProc.jsp} side-effect. */
+    private final ErpTrnsHistoryWriter erpHistoryWriter;
 
     /**
      * Deploy
@@ -97,10 +120,13 @@ public class AccountController {
             @RequestParam(value = "keyword",       required = false) String keyword,
             @RequestParam(value = "sortField",     required = false) String sortField,
             @RequestParam(value = "sortDirection", required = false) String sortDirection,
+            // AI-01 — legacy as-of-date historical balance (ACCT_MSTR_R004).
+            // yyyyMMdd; blank / today / future → current balances (legacy parity).
+            @RequestParam(value = "asOfDate",      required = false) String asOfDate,
             @RequestParam(value = "page", defaultValue = "0")  int page,
             @RequestParam(value = "size", defaultValue = "0")  int size) {
         AccountFilter filter = new AccountFilter(currency, bankCd, keyword);
-        return ApiResponse.ok(accountService.list(filter, sortField, sortDirection, page, size));
+        return ApiResponse.ok(accountService.list(filter, sortField, sortDirection, asOfDate, page, size));
     }
 
     /**
@@ -124,6 +150,64 @@ public class AccountController {
             @Valid @RequestBody ExcelExportRequest request,
             HttpServletResponse response) {
         excelExportService.exportTo(response, request);
+    }
+
+    /**
+     * Excel Download for Account Inquiry (VND) — the PO-requested
+     * template-populated {@code .xls} report (legacy {@code fnsh_0001_001}
+     * localized download). Loads the locale template from the backend
+     * classpath, populates one row per account preserving all template
+     * styling, and streams {@code Account Inquiry (VND).xls} /
+     * {@code 계좌조회 (VND).xls} / {@code Tra cứu tài khoản (VND).xls}.
+     *
+     * <p>Dedicated report endpoint — deliberately NOT the generic
+     * {@code POST /accounts/export} (which builds a workbook from scratch
+     * and cannot preserve the template). Preserves the legacy ERP audit
+     * side-effect: WeCMS&rarr;ERP {@code TRNS_TYPE_CD = "09"}.
+     *
+     * @param lang optional UI-locale hint (EN/KO/VI; KM/other → EN); when
+     *             omitted the JWT {@code langCd} is used.
+     */
+    @GetMapping("/accounts/report")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-account-inquiry','banking-fcy-update-inquire')")
+    public ResponseEntity<ByteArrayResource> downloadAccountInquiryReport(
+            @RequestParam(value = "lang", required = false) String lang) {
+        CurrentSavingsDownloadService.GeneratedReport report =
+                currentSavingsDownloadService.generateAccountInquiry(lang);
+        erpHistoryWriter.recordExportedBytes("09", report.content(), report.fileName());
+        return reportResponse(report);
+    }
+
+    /**
+     * Excel Download for Account Inquiry (FCY) — the PO-requested
+     * template-populated {@code .xls} report (legacy {@code fnsh_0005_001}
+     * localized download). Loads the FCY locale template from the backend
+     * classpath, populates one row per account preserving all template
+     * styling, and streams {@code Account Inquiry (FCY).xls} /
+     * {@code 계좌조회 (FCY).xls} / {@code Tra cứu tài khoản (FCY).xls}.
+     *
+     * <p>Dedicated FCY report endpoint — deliberately NOT the generic
+     * {@code POST /accounts/export} and NOT the VND {@code /accounts/report}.
+     * Preserves the legacy ERP audit side-effect: WeCMS&rarr;ERP
+     * {@code TRNS_TYPE_CD = "10"} ({@code fnsh_0005_001} branch).
+     *
+     * @param lang     optional UI-locale hint (EN/KO/VI; KM/other → EN); when
+     *                 omitted the JWT {@code langCd} is used.
+     * @param currency optional on-screen currency-dropdown narrow ({@code FCY}
+     *                 for all foreign currencies, or a concrete CCY such as
+     *                 {@code USD}/{@code KRW}); blank → all FCY accounts. Mirrors
+     *                 the on-screen FCY list scope so download and screen agree.
+     */
+    @GetMapping("/accounts/report-fcy")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-account-inquiry','banking-fcy-update-inquire')")
+    public ResponseEntity<ByteArrayResource> downloadAccountInquiryFcyReport(
+            @RequestParam(value = "lang", required = false) String lang,
+            @RequestParam(value = "currency", required = false) String currency) {
+        CurrentSavingsDownloadService.GeneratedReport report =
+                currentSavingsDownloadService.generateAccountInquiry(
+                        CurrentSavingsScope.FCY, currency, lang);
+        erpHistoryWriter.recordExportedBytes("10", report.content(), report.fileName());
+        return reportResponse(report);
     }
 
     /**
@@ -309,6 +393,75 @@ public class AccountController {
         return ApiResponse.ok(null);
     }
 
+    /* ================================================================
+     *  Transaction memo (side panel) — legacy comm_0105_001, reusing the
+     *  shared MemoService. The memo thread is keyed by the 4-key
+     *  BANK_CD/ACCT_NO/TRSC_DT/ACCT_SEQ_NO derived server-side from the
+     *  path; the VND/FCY {@code scope} selects the memo WEB_SVC_ID.
+     * ================================================================ */
+
+    /** List one transaction's memos (newest-first). */
+    @GetMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/memos")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
+    public ApiResponse<MemoListResponse> listTransactionMemos(
+            @PathVariable("acctSeqNo") String acctSeqNo,
+            @PathVariable("trnsSeqNo") String trnsSeqNo,
+            @RequestParam(value = "scope", required = false, defaultValue = "VND")
+            @Pattern(regexp = "^(VND|FCY)$", message = "scope must be VND or FCY") String scope) {
+        return ApiResponse.ok(transactionService.listMemos(acctSeqNo, trnsSeqNo, scope));
+    }
+
+    /** Add a memo to one transaction. */
+    @PostMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/memos")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
+    public ApiResponse<MemoRow> createTransactionMemo(
+            @PathVariable("acctSeqNo") String acctSeqNo,
+            @PathVariable("trnsSeqNo") String trnsSeqNo,
+            @RequestParam(value = "scope", required = false, defaultValue = "VND")
+            @Pattern(regexp = "^(VND|FCY)$", message = "scope must be VND or FCY") String scope,
+            @Valid @RequestBody TransactionMemoCreateRequest request) {
+        return ApiResponse.ok(transactionService.createMemo(acctSeqNo, trnsSeqNo, scope, request));
+    }
+
+    /** Edit one memo's text — author-only. */
+    @PatchMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/memos/{seqNo}")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
+    public ApiResponse<MemoRow> updateTransactionMemo(
+            @PathVariable("acctSeqNo") String acctSeqNo,
+            @PathVariable("trnsSeqNo") String trnsSeqNo,
+            @PathVariable("seqNo") BigDecimal seqNo,
+            @RequestParam(value = "scope", required = false, defaultValue = "VND")
+            @Pattern(regexp = "^(VND|FCY)$", message = "scope must be VND or FCY") String scope,
+            @Valid @RequestBody TransactionMemoUpdateRequest request) {
+        return ApiResponse.ok(transactionService.updateMemo(acctSeqNo, trnsSeqNo, scope, seqNo, request));
+    }
+
+    /** Set the row-level sticker color for one transaction's memo thread. */
+    @PatchMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/memos/color")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
+    public ApiResponse<Void> updateTransactionMemoColor(
+            @PathVariable("acctSeqNo") String acctSeqNo,
+            @PathVariable("trnsSeqNo") String trnsSeqNo,
+            @RequestParam(value = "scope", required = false, defaultValue = "VND")
+            @Pattern(regexp = "^(VND|FCY)$", message = "scope must be VND or FCY") String scope,
+            @Valid @RequestBody TransactionMemoColorRequest request) {
+        transactionService.updateMemoColor(acctSeqNo, trnsSeqNo, scope, request);
+        return ApiResponse.ok(null);
+    }
+
+    /** Delete one memo — author-only. */
+    @DeleteMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/memos/{seqNo}")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
+    public ApiResponse<Void> deleteTransactionMemo(
+            @PathVariable("acctSeqNo") String acctSeqNo,
+            @PathVariable("trnsSeqNo") String trnsSeqNo,
+            @PathVariable("seqNo") BigDecimal seqNo,
+            @RequestParam(value = "scope", required = false, defaultValue = "VND")
+            @Pattern(regexp = "^(VND|FCY)$", message = "scope must be VND or FCY") String scope) {
+        transactionService.deleteMemo(acctSeqNo, trnsSeqNo, scope, seqNo);
+        return ApiResponse.ok(null);
+    }
+
     /**
      * Assign / change the Reporting Account (chart of accounts) on one
      * bank transaction. Writes {@code CHART_ACCT_CD} +
@@ -455,10 +608,12 @@ public class AccountController {
     }
 
     /**
-     * Smart Organizer — list domestic scheduled-payment candidates the
-     * user may match the bank transaction to. Mirrors legacy
-     * {@code comm_0196_002_r001}. Overseas payments are deferred to a
-     * follow-up slice.
+     * Smart Organizer — list the payment candidates the user may match the
+     * bank transaction to. Mirrors legacy {@code comm_0196_001_r001} /
+     * {@code OVRS_PYMN_SUMR_DETL_R006}: domestic non-payroll detail lines,
+     * payroll batch rows, and overseas detail lines that pass the exact
+     * amount / date / transfer-time / transferred / dispatch-success /
+     * unmatched / unlocked filter set (P4 legacy parity).
      */
     @GetMapping("/accounts/{acctSeqNo}/transactions/{trnsSeqNo}/match-candidates")
     @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
@@ -467,8 +622,10 @@ public class AccountController {
             @PathVariable("trnsSeqNo") String trnsSeqNo,
             @RequestParam(value = "from",    required = false) String fromDt,
             @RequestParam(value = "to",      required = false) String toDt,
-            @RequestParam(value = "keyword", required = false) String keyword) {
-        return ApiResponse.ok(matchService.listCandidates(acctSeqNo, trnsSeqNo, fromDt, toDt, keyword));
+            @RequestParam(value = "keyword", required = false) String keyword,
+            @RequestParam(value = "match_rmrk_yn", required = false) String matchRmrkYn) {
+        return ApiResponse.ok(
+                matchService.listCandidates(acctSeqNo, trnsSeqNo, fromDt, toDt, keyword, matchRmrkYn));
     }
 
     /**
@@ -503,9 +660,13 @@ public class AccountController {
     /**
      * Excel export for Banking &gt; Transaction History. Routes through
      * the shared {@code ExcelExportService} — the body's {@code screenId}
-     * must be {@code "banking-transaction-history"} (V128 seed) and
+     * must be {@code "banking-transaction-history-vnd"} or
+     * {@code "banking-transaction-history-fcy"} (V156 seed; the single
+     * {@code banking-transaction-history} key is retired) and
      * {@code filters.acctSeqNo} is required so the export is scoped to
-     * one account. Mirrors {@code POST /accounts/export}.
+     * one account. The VND / FCY scope also selects the WeCMS&rarr;ERP audit
+     * {@code TRNS_TYPE_CD} ({@code "01"} / {@code "08"}). Mirrors
+     * {@code POST /accounts/export}.
      */
     @PostMapping("/accounts/transactions/export")
     @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
@@ -513,5 +674,90 @@ public class AccountController {
             @Valid @RequestBody ExcelExportRequest request,
             HttpServletResponse response) {
         excelExportService.exportTo(response, request);
+    }
+
+    /**
+     * Excel Download for Transaction History (VND) — the PO-requested
+     * template-populated {@code .xls} report (legacy {@code fnsh_0002_001}
+     * localized download). Loads the locale template, populates one row per
+     * transaction preserving all template styling, and streams
+     * {@code Transaction History (VND).xls} / {@code 거래내역조회 (VND).xls} /
+     * {@code Tra cứu giao dịch (VND).xls}.
+     *
+     * <p>Scoped to one account via {@code acctSeqNo} (the synthetic
+     * {@code BANK_CD_ACCT_NO} identifier). Honours the same filter set as
+     * the on-screen list ({@code from} / {@code to} / {@code type} /
+     * {@code cnfm_yn} / {@code keyword}). Dedicated report endpoint — NOT
+     * the generic {@code POST /accounts/transactions/export}. Preserves the
+     * legacy ERP audit side-effect: WeCMS&rarr;ERP {@code TRNS_TYPE_CD = "01"}.
+     */
+    @GetMapping("/accounts/{acctSeqNo}/transactions/report")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
+    public ResponseEntity<ByteArrayResource> downloadTransactionHistoryReport(
+            @PathVariable("acctSeqNo") String acctSeqNo,
+            @RequestParam(value = "from",     required = false) String fromDt,
+            @RequestParam(value = "to",       required = false) String toDt,
+            @RequestParam(value = "type",     required = false) String type,
+            @RequestParam(value = "cnfm_yn",  required = false) String cnfmYn,
+            @RequestParam(value = "keyword",  required = false) String keyword,
+            @RequestParam(value = "lang",     required = false) String lang) {
+        CurrentSavingsDownloadService.GeneratedReport report =
+                currentSavingsDownloadService.generateTransactionHistory(
+                        acctSeqNo, fromDt, toDt, type, cnfmYn, keyword, lang);
+        erpHistoryWriter.recordExportedBytes("01", report.content(), report.fileName());
+        return reportResponse(report);
+    }
+
+    /**
+     * Excel Download for Transaction History (FCY) — the PO-requested
+     * template-populated {@code .xls} report (legacy {@code fnsh_0006_001}
+     * localized download). Loads the FCY locale template, populates one row per
+     * transaction preserving all template styling, and streams
+     * {@code Transaction History (FCY).xls} / {@code 거래내역조회 (FCY).xls} /
+     * {@code Tra cứu giao dịch (FCY).xls}.
+     *
+     * <p>Scoped to one account via {@code acctSeqNo}; honours the same filter
+     * set as the on-screen list ({@code from} / {@code to} / {@code type} /
+     * {@code cnfm_yn} / {@code keyword}). Dedicated FCY report endpoint — NOT the
+     * generic {@code POST /accounts/transactions/export} and NOT the VND
+     * {@code /accounts/{id}/transactions/report}. Preserves the legacy ERP audit
+     * side-effect: WeCMS&rarr;ERP {@code TRNS_TYPE_CD = "08"} ({@code fnsh_0006_001}).
+     */
+    @GetMapping("/accounts/{acctSeqNo}/transactions/report-fcy")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-inquire-transactions','banking-fcy-inquire-transactions')")
+    public ResponseEntity<ByteArrayResource> downloadTransactionHistoryFcyReport(
+            @PathVariable("acctSeqNo") String acctSeqNo,
+            @RequestParam(value = "from",     required = false) String fromDt,
+            @RequestParam(value = "to",       required = false) String toDt,
+            @RequestParam(value = "type",     required = false) String type,
+            @RequestParam(value = "cnfm_yn",  required = false) String cnfmYn,
+            @RequestParam(value = "keyword",  required = false) String keyword,
+            @RequestParam(value = "lang",     required = false) String lang) {
+        CurrentSavingsDownloadService.GeneratedReport report =
+                currentSavingsDownloadService.generateTransactionHistory(
+                        CurrentSavingsScope.FCY, acctSeqNo, fromDt, toDt, type, cnfmYn, keyword, lang);
+        erpHistoryWriter.recordExportedBytes("08", report.content(), report.fileName());
+        return reportResponse(report);
+    }
+
+    /**
+     * Shared binary-response builder for the template-populated
+     * {@code .xls} report downloads. RFC 5987 UTF-8 filename so the
+     * localized Korean / Vietnamese names round-trip; legacy {@code .xls}
+     * MIME ({@code application/vnd.ms-excel}); {@code nosniff}.
+     */
+    private static ResponseEntity<ByteArrayResource> reportResponse(
+            CurrentSavingsDownloadService.GeneratedReport report) {
+        ContentDisposition cd = ContentDisposition.builder("attachment")
+                .filename(report.fileName(), java.nio.charset.StandardCharsets.UTF_8)
+                .build();
+        ByteArrayResource body = new ByteArrayResource(report.content());
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("application/vnd.ms-excel"))
+                .contentLength(body.contentLength())
+                .header(HttpHeaders.CONTENT_DISPOSITION, cd.toString())
+                .header("X-Content-Type-Options", "nosniff")
+                .header("Access-Control-Expose-Headers", HttpHeaders.CONTENT_DISPOSITION)
+                .body(body);
     }
 }

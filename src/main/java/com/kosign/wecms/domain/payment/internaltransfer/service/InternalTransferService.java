@@ -100,14 +100,15 @@ import java.util.stream.Collectors;
  * applies it as a predicate of every query / write — no method on this
  * service accepts a wire-supplied {@code bizKey}.
  *
- * <h2>Phase A scope</h2>
+ * <h2>Upload flow</h2>
  *
- * <p>{@link #parseExcel(MultipartFile, String)} ships as a local stub
- * — it performs file-shape validation (non-empty, extension allow-list)
- * but does not parse cell contents. {@link #createDraft} accepts a
- * pre-validated row set from the frontend ({@link TransferLineInput})
- * and persists it. Real Apache POI workbook parsing lands in a
- * follow-up MR per backend doc §13.
+ * <p>{@link #parseExcel(MultipartFile, String)} validates the file-shape
+ * envelope (non-empty, extension allow-list, withdrawal bank code present)
+ * then delegates the full Apache POI workbook walk + per-cell validation
+ * to {@link InternalTransferExcelParser} (mirrors legacy
+ * {@code PymnHelper.readExcelFromInternalTransfer}). {@link #createDraft}
+ * accepts the frontend-confirmed success rows ({@link TransferLineInput})
+ * and persists the draft batch into {@code SCDUL_PYMN_SUMR(_DETL)}.
  */
 @Slf4j
 @Service
@@ -132,16 +133,6 @@ public class InternalTransferService {
             "audit.internal_transfer.reject.detail";
     static final String AUDIT_WITHDRAW_APPROVAL_KEY =
             "audit.internal_transfer.withdraw_approval.detail";
-    /** Audit detail key for per-line Re-run action — mirrors legacy
-     *  {@code pymn_0010_002.ts:441-472} (ETC column Re-run button that
-     *  re-fires the dispatch on a transient-failure row). */
-    static final String AUDIT_RERUN_KEY = "audit.internal_transfer.rerun.detail";
-
-    /** Transient bank-side response codes that the legacy live system
-     *  considers retryable. Mirror of
-     *  {@code pymn_0010_002.ts:441} {@code validResponseCode}. */
-    static final java.util.Set<String> RERUN_VALID_RS_CDS =
-            java.util.Set.of("0001", "0002", "0003", "0004", "0005");
 
     static final String AUDIT_CHANGE_APPROVAL_LINE_KEY =
             "audit.internal_transfer.change_approval_line.detail";
@@ -157,6 +148,9 @@ public class InternalTransferService {
      *  {@code settings.erp_transaction_history.type.16} locale entry
      *  ("Internal Scheduled Transfer"). */
     static final String ERP_TRNS_TYPE_INTERNAL_SCHEDULED_TRANSFER = "16";
+    /** WeCMS&rarr;ERP ('W') audit code for the Internal Transfer RESULT download
+     *  (legacy {@code ErpTypeCd.INTERNAL_TRANSFER_RESULT}). */
+    static final String ERP_TRNS_TYPE_INTERNAL_TRANSFER_RESULT = "17";
 
     /** {@code yyyyMMddHHmmss} formatter shared with the audit writer. */
     private static final DateTimeFormatter DTM14 =
@@ -166,8 +160,7 @@ public class InternalTransferService {
 
     private final ScdulPymnSumrRepository      sumrRepository;
     private final ScdulPymnSumrDetlRepository  detlRepository;
-    private final com.kosign.wecms.domain.banking.repository.AcctMstrRepository acctMstrRepository;
-    private final com.kosign.wecms.domain.banking.repository.BankInfmRepository bankInfmRepository;
+    private final com.kosign.wecms.domain.payment.common.WithdrawalAccountListService withdrawalAccountListService;
     private final InternalTransferKeyGenerator keyGenerator;
     private final TransactionalRetry           transactionalRetry;
     private final InternalTransferExcelParser  excelParser;
@@ -180,15 +173,29 @@ public class InternalTransferService {
      *  rows into {@code EXPT_RESOL_MSTR} + {@code EXPT_RESOL_APPRVR_INFM}
      *  so the legacy Approval Box list query sees the request. */
     private final ApprovalBoxFanoutService     approvalBoxFanoutService;
+    /** Shared request-approval bulletin / notification writer (BLTB_* tables). */
+    private final com.kosign.wecms.domain.payment.notification.service.ApprovalNotificationService approvalNotificationService;
     private final InternalTransferFileResolver fileResolver;
     private final AuditLogService              auditLogService;
     private final com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter erpHistoryWriter;
     private final Clock                        clock;
     private final ExptResolMstrRepository       exptResolMstrRepository;
     private final ExptResolApprvrInfmRepository exptResolApprvrInfmRepository;
-    /** Approval-request attachments — written on submit, read on
-     *  detail, streamed on download. See V208. */
+    /** Shared avatar-URL resolver — maps approver ids → /api/v1/users/{id}/image
+     *  (null when no stored image). Single home for the USER_IMG → URL logic. */
+    private final com.kosign.wecms.domain.auth.service.UserImageUrlResolver userImageUrlResolver;
+    /** Approval-request attachments — written on submit (EXPT_RESOL_FILE),
+     *  read on detail. See V208. */
     private final com.kosign.wecms.domain.payment.internaltransfer.repository.ExptResolFileRepository exptResolFileRepository;
+    /** Combined attachment loader — UNION of EXPT_RESOL_FILE +
+     *  EXPT_RESOL_PAY_EVID_FILE (mirrors legacy IDO.EXPT_RESOL_FILE_R002).
+     *  GAP-ATT-1. */
+    private final ApprovalAttachmentLoader approvalAttachmentLoader;
+    private final ApprovalContentLoader approvalContentLoader;
+    /** Shared fileType-routed attachment download resolver — the single
+     *  place that maps a {@code (apprSeqNo, fileId, fileType)} triple to a
+     *  binary path across both legacy attachment tables. */
+    private final ApprovalAttachmentDownloadService approvalAttachmentDownloadService;
     private final DocNoGenerator                docNoGenerator;
     private final BusiInfmRepository            busiInfmRepository;
     /** Shared projector that resolves the per-line bank name +
@@ -200,14 +207,8 @@ public class InternalTransferService {
      *  {@code SCDUL_PYMN_SUMR.OUT_BANK_CD}. Mirrors legacy
      *  {@code PymnHelper.uploadPaymentExcel:1315-1317}. */
     private final com.kosign.wecms.domain.payment.common.OutBankCdNormalizer outBankCdNormalizer;
-    /** Dispatch-table writes for the per-line Re-run action — clears
-     *  {@code RS_CD} so the bank-side daemon re-picks up the row.
-     *  Mirrors the legacy {@code pymn_0010_002.ts:441-472} Re-run popup. */
-    private final com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileDataRepository tbPayFileDataRepository;
-    /** Per-line dispatch-result lookup — shared resolver that hides the
-     *  API vs File path branching. Used here to verify Re-run
-     *  eligibility ({@code RS_CD} ∈ transient set + {@code PROC_DTTM} today). */
-    private final com.kosign.wecms.domain.payment.dispatch.service.DispatchResultResolver dispatchResultResolver;
+    /** M-2/M-3 (legacy parity): EXPT_RESOL_MSTR display flags from BUSI_ENV_SET_INFM. */
+    private final com.kosign.wecms.domain.payment.approvalbox.service.ApprovalDisplayFlagsResolver displayFlagsResolver;
     private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
 
     /* ----------------------------------------------------------------
@@ -258,6 +259,10 @@ public class InternalTransferService {
 
         Map<String, String> docNoByApprSeqNo    = buildDocNoMap(bizKey, rows.getContent());
         Map<String, String> payDateByApprSeqNo  = buildPayDateMap(bizKey, rows.getContent());
+        // Requestor (legacy EXPT_RESOL_MSTR.DRAFT_USER_NM) keyed by APPR_SEQ_NO —
+        // mirrors IDO.SCDUL_PYMN_SUMR_R002.xml which selects ERM.DRAFT_USER_NM
+        // for the list "Requestor" column. Without this the column rendered blank.
+        Map<String, String> draftUserNmByApprSeqNo = buildDraftUserNmMap(bizKey, rows.getContent());
         Map<String, ApproverSummary> approverByApprSeqNo = buildFirstApproverMap(bizKey, rows.getContent());
         // appr_stts derived via the legacy wb_get_appr_stts(...) function over
         // EXPT_RESOL_MSTR (SCDUL_PYMN_SUMR has no APPR_STTS column in legacy JEX)
@@ -265,15 +270,60 @@ public class InternalTransferService {
         Map<String, String> apprSttsByApprSeqNo = legacyFunctions.apprSttsByApprSeqNos(
                 bizKey, rows.getContent().stream().map(ScdulPymnSumr::getApprSeqNo).toList());
         List<ScheduledTransferRow> dtoRows = rows.getContent().stream()
-                .map(s -> toListRow(s, docNoByApprSeqNo, payDateByApprSeqNo, approverByApprSeqNo, apprSttsByApprSeqNo))
+                .map(s -> toListRow(s, docNoByApprSeqNo, payDateByApprSeqNo, approverByApprSeqNo, apprSttsByApprSeqNo, draftUserNmByApprSeqNo))
                 .toList();
-        List<CurrencyTotal> totals = computeCurrencyTotals(rows.getContent());
+        // F-1: footer totals must aggregate the ENTIRE filtered result set
+        // (legacy SCDUL_PYMN_SUMR_R003), not the current page slice. The
+        // aggregate query reuses search()'s exact predicate (incl. the F-2
+        // Not-Requested orphan leg) and ignores pagination.
+        List<CurrencyTotal> totals = mapCurrencyTotals(
+                sumrRepository.searchCurrencyTotals(
+                        bizKey, ScdulPymnTypeCd.INTERNAL.code(),
+                        fromDtm, toDtm,
+                        srchWdPattern,
+                        null,
+                        apprTypeArg));
 
         log.info("feature=internal-transfer list bizKey={} total={} page={} size={}",
                 bizKey, rows.getTotalElements(), page, pageable.getPageSize());
         return new ScheduledTransferListResponse(
                 rows.getTotalElements(), page, pageable.getPageSize(),
                 totals, dtoRows);
+    }
+
+    /* ----------------------------------------------------------------
+     *  Transaction lines by batch — shared read for the Approval Details
+     *  popup (incl. the notification entry point), type-AGNOSTIC.
+     * ---------------------------------------------------------------- */
+
+    /**
+     * Return the per-line transactions of a scheduled-payment batch
+     * ({@code SCDUL_PYMN_SUMR_DETL}) keyed only by {@code SCDUL_PYMN_NO},
+     * with bank names + chart-of-account breadcrumbs already resolved via
+     * {@link com.kosign.wecms.domain.payment.common.TransferLineDetailMapper}.
+     *
+     * <p>Unlike {@link #detail(String)} this does NOT filter on
+     * {@code SCDUL_PYMN_TYPE_CD} — the four scheduled payment kinds
+     * (Internal Transfer / Vendor / Expense / Payroll) all store their
+     * lines in the same table, so one read serves every kind. Consumed by
+     * {@code ApprovalDetailService} (Approval Box / notification popup) to
+     * populate the read-only Transaction Details section. Read-only,
+     * tenant-scoped; returns an empty list when the batch has no lines.
+     */
+    @Transactional(readOnly = true)
+    public List<TransferLineDetail> transactionLinesByBatch(String scdulPymnNo) {
+        if (scdulPymnNo == null || scdulPymnNo.isBlank()) {
+            return List.of();
+        }
+        String bizKey = requireTenant();
+        Map<String, com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartAcctInfm> chartByCode =
+                transferLineDetailMapper.buildChartIndex(bizKey);
+        return detlRepository
+                .findByBizKeyAndScdulPymnNo(bizKey, scdulPymnNo,
+                        ScdulPymnSumrDetlRepository.DETL_NO_NUMERIC_ASC)
+                .stream()
+                .map(d -> transferLineDetailMapper.toLineDetail(d, chartByCode))
+                .toList();
     }
 
     /* ----------------------------------------------------------------
@@ -335,33 +385,20 @@ public class InternalTransferService {
                 .map(ExptResolMstr::getDraftUserNm)
                 .filter(s -> s != null && !s.isBlank())
                 .orElse(null);
-        // Approval Content — EXPT_RESOL_MSTR.CONT (legacy POST_CONT). Null
-        // when the batch has no approval request yet or was submitted with
-        // an empty note; the popup's "Approval Content" section renders
-        // the empty-state placeholder in that case.
-        String cont = apprMstr
-                .map(ExptResolMstr::getCont)
-                .filter(s -> s != null && !s.isBlank())
-                .orElse(null);
+        // Approval Content — legacy BLTB_POST_INFM.POST_CONT (R007), NOT
+        // EXPT_RESOL_MSTR.CONT. The two columns can hold different values on
+        // the live JEX DB (verified) and the legacy popup displays POST_CONT.
+        // Null when the batch has no approval request yet or the note is blank.
+        String cont = approvalContentLoader.load(bizKey, apprSeqNo);
 
-        // Approval-request attachments registered against this batch's
-        // APPR_SEQ_NO. Empty when the batch has not been submitted for
-        // approval yet, or when the user submitted with no files. The
-        // ApprovalDetailsDialog popup renders one chip per row +
-        // streams the binary back via the download endpoint.
+        // Approval attachments registered against this batch's APPR_SEQ_NO —
+        // UNION of EXPT_RESOL_FILE + EXPT_RESOL_PAY_EVID_FILE (mirrors legacy
+        // IDO.EXPT_RESOL_FILE_R002; GAP-ATT-1). Empty when the batch has not
+        // been submitted for approval yet. The ApprovalDetailsDialog popup
+        // renders one chip per row + streams the binary back via the download
+        // endpoint (which routes by the row's fileType).
         java.util.List<com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalAttachmentRow> attachments =
-                master.getApprSeqNo() == null || master.getApprSeqNo().isBlank()
-                        ? java.util.List.of()
-                        : exptResolFileRepository
-                                .findByBizKeyAndApprSeqNoOrderByFileIdAsc(bizKey, master.getApprSeqNo())
-                                .stream()
-                                .map(f -> new com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalAttachmentRow(
-                                        f.getFileId(),
-                                        f.getOrgFileNm(),
-                                        f.getFileSize(),
-                                        f.getRegNm(),
-                                        f.getRegDtm()))
-                                .toList();
+                approvalAttachmentLoader.load(bizKey, master.getApprSeqNo());
 
         return new ScheduledTransferDetailResponse(
                 master.getScdulPymnNo(),
@@ -397,7 +434,58 @@ public class InternalTransferService {
                 master.getFileSize() == null || master.getFileSize().isBlank() ? null : new java.math.BigDecimal(master.getFileSize().trim()),
                 lines,
                 attachments,
-                cont);
+                cont,
+                null);  // appr_fund_tp — Payroll Type only; Internal Transfer has none
+    }
+
+    /**
+     * Withdrawal account + batch key for one approval, resolved from the
+     * sibling {@code SCDUL_PYMN_SUMR} batch by {@code APPR_SEQ_NO}. Carries the
+     * resolved bank display name (same {@code TransferLineDetailMapper} path the
+     * detail popup's withdrawal row uses). Covers the four scheduled kinds that
+     * live in {@code SCDUL_PYMN_SUMR} (Internal Transfer / Vendor / Expense /
+     * Payroll). Empty for Overseas / Card (no SCDUL row) or a missing approval.
+     *
+     * <p>Backs the shared {@code ApprovalDetailService} so the Approval Details
+     * popup opened from a Result page / notification renders the same withdrawal
+     * bank + transaction lines as the per-type Scheduled detail and legacy
+     * {@code comm_0193_001_r001}.
+     */
+    public record ApprovalBatchInfo(
+            String scdulPymnNo, String outBankCd, String outBankNm,
+            String wdrlActNo, String wdrlCcyCd,
+            /** Transfer-network discriminator of the batch's FIRST line
+             *  ({@code SCDUL_PYMN_SUMR_DETL.ANT_DIV_CD}) — the exact value the
+             *  dispatch cut-off gate reads ({@code InternalTransferDispatchService}
+             *  {@code TransferNetwork.fromAntDivCd(lines.get(0).getAntDivCd())})
+             *  and that legacy read as {@code data.REC[0].ANT_DIV_CD}. Null when
+             *  the batch has no lines. Lets the FE auto-transfer window check use
+             *  the real channel instead of inferring it from currency. */
+            String antDivCd) {}
+
+    @Transactional(readOnly = true)
+    public java.util.Optional<ApprovalBatchInfo> approvalBatchByApprSeqNo(
+            String bizKey, String apprSeqNo) {
+        if (apprSeqNo == null || apprSeqNo.isBlank()) {
+            return java.util.Optional.empty();
+        }
+        return sumrRepository.findFirstByBizKeyAndApprSeqNo(bizKey, apprSeqNo)
+                .map(m -> {
+                    // First-line ANT_DIV_CD — same ordering the dispatch gate uses.
+                    String antDivCd = detlRepository
+                            .findByBizKeyAndScdulPymnNo(bizKey, m.getScdulPymnNo(),
+                                    ScdulPymnSumrDetlRepository.DETL_NO_NUMERIC_ASC)
+                            .stream().findFirst()
+                            .map(ScdulPymnSumrDetl::getAntDivCd)
+                            .orElse(null);
+                    return new ApprovalBatchInfo(
+                            m.getScdulPymnNo(),
+                            m.getOutBankCd(),
+                            transferLineDetailMapper.resolveBankNm(m.getOutBankCd()),
+                            m.getWdrlActNo(),
+                            m.getWdrlCcyCd(),
+                            antDivCd);
+                });
     }
 
     /* ----------------------------------------------------------------
@@ -473,7 +561,13 @@ public class InternalTransferService {
         // resolve correctly.
         master.setOutBankCd(outBankCdNormalizer.normalize(req.bankCd()));
         master.setWdrlActNo(req.acctNo());
-        master.setCcyCd(req.ccyCd());
+        // Legacy parity (PymnHelper.uploadPaymentExcel:1317-1320): the two
+        // currency columns hold DIFFERENT values — CCY_CD is the TRANSFER
+        // currency (legacy `setCcyCd(TRNF_CCY_CD)`) and WDRL_CCY_CD is the
+        // WITHDRAWAL-ACCOUNT currency (legacy `setWdrlCcyCd(CCY_CD)`). The
+        // frontend now sends `ccy_cd` = the selected account's currency and
+        // `trnf_ccy_cd` = the batch transfer currency (G3 option (a)).
+        master.setCcyCd(req.trnfCcyCd());
         master.setWdrlCcyCd(req.ccyCd());
         master.setTitl(req.titl());
         master.setTrnfYn(TrnfYn.NOT_TRANSFERRED.code());
@@ -520,6 +614,7 @@ public class InternalTransferService {
                   + "returned null/blank for bizKey=" + bizKey);
         }
         long detlNoCursor = Long.parseLong(detlSeedRaw.trim()) - 1;
+        java.util.List<ScdulPymnSumrDetl> detls = new java.util.ArrayList<>(req.lines().size());
         for (TransferLineInput line : req.lines()) {
             ScdulPymnSumrDetl detl = new ScdulPymnSumrDetl();
             detl.setBizKey(bizKey);
@@ -546,8 +641,9 @@ public class InternalTransferService {
             detl.setRegDtm(now);
             detl.setModId(userId);
             detl.setModDtm(now);
-            detlRepository.save(detl);
+            detls.add(detl);
         }
+        detlRepository.saveAll(detls);
 
         // Preserve the uploaded Excel under ERP Transaction History so
         // the user can later download it from Settings > ERP Transaction
@@ -631,104 +727,6 @@ public class InternalTransferService {
                 bizKey, id, lineId, req.chartAcctCd());
     }
 
-    /* ----------------------------------------------------------------
-     *  Re-run one detail line (legacy pymn_0010_002.ts:441-472)
-     *
-     *  Fires when the user clicks the ETC-column "Re-run" button on a
-     *  dispatched line whose bank-side response is a transient failure
-     *  (RS_CD ∈ {"0001"…"0005"}) AND whose PROC_DTTM is today. Resets
-     *  PROC_STAT='9' + clears the result fields on the matching
-     *  TB_PAY_FILE_DATA row so the bank-side daemon re-picks it up
-     *  on its next sweep.
-     *
-     *  Refactor R&D scope: the actual bank daemon doesn't run locally,
-     *  so a successful Re-run leaves the dispatch row in "pending"
-     *  state until manual intervention. Production parity is in the
-     *  endpoint behaviour, not in the downstream effect.
-     * ---------------------------------------------------------------- */
-
-    @Transactional
-    public void rerun(String scdulPymnNo, String scdulPymnDetlNo) {
-        String bizKey = requireTenant();
-
-        // 1. Master + detail existence + tenant scope.
-        ScdulPymnSumr master = loadMaster(bizKey, scdulPymnNo);
-        ScdulPymnSumrDetl detl = detlRepository
-                .findByBizKeyAndScdulPymnNoAndScdulPymnDetlNo(bizKey, scdulPymnNo, scdulPymnDetlNo)
-                .orElseThrow(() -> new BusinessException("WBE2061"));
-
-        // 2. Both shadow keys + master PAY_FILE_SEQ_NO must be stamped
-        //    — i.e. the line has been through dispatch.
-        String tranDt    = detl.getPayTranDt();
-        String tranSeq   = detl.getPayTranSeq();
-        String fileSeqNo = master.getPayFileSeqNo();
-        if (tranDt == null || tranDt.isBlank()
-                || tranSeq == null || tranSeq.isBlank()
-                || fileSeqNo == null || fileSeqNo.isBlank()) {
-            // WBE2080 — line has no dispatch row yet.
-            throw new BusinessException("WBE2122");
-        }
-
-        // 3. Eligibility via the shared resolver — surfaces the same
-        //    (PROC_STAT / RS_CD / PROC_DTTM / RSLT_DTTM) tuple the
-        //    Result-detail read endpoint serves. Avoids duplicating the
-        //    API/File-path branching here. Mirrors legacy
-        //    pymn_0010_002.ts:441-449 (validResponseCode + executedToday).
-        java.util.Map<String,
-                com.kosign.wecms.domain.payment.dispatch.service.DispatchResult> results =
-                dispatchResultResolver.resolve(master, java.util.List.of(detl));
-        com.kosign.wecms.domain.payment.dispatch.service.DispatchResult result =
-                results.get(scdulPymnDetlNo);
-        if (result == null || result.rsCd() == null
-                || !RERUN_VALID_RS_CDS.contains(result.rsCd())) {
-            // WBE2123 — RS_CD not in transient set (or no result yet).
-            throw new BusinessException("WBE2123");
-        }
-        String procDttm = result.procDttm();
-        if (procDttm == null || procDttm.length() < 8) {
-            throw new BusinessException("WBE2124");
-        }
-        String todayYmd = OffsetDateTime.now(clock)
-                .withOffsetSameInstant(ZoneOffset.UTC)
-                .format(DateTimeFormatter.ofPattern("yyyyMMdd"));
-        if (!todayYmd.equals(procDttm.substring(0, 8))) {
-            // WBE2124 — line was not executed today; can't be re-run.
-            throw new BusinessException("WBE2124");
-        }
-
-        // 4. Clear RS_CD on TB_PAY_FILE_DATA so the bank-side daemon
-        //    re-picks up the row on its next sweep. Other result fields
-        //    (PROC_STAT / PROC_DTTM / RSLT_DTTM / RS_MSG) live on
-        //    TB_PAY_FILE_MST or aren't mapped on the per-line entity —
-        //    R&D scope limits the reset to the per-line RS_CD column
-        //    that the entity exposes.
-        java.math.BigDecimal seq;
-        try {
-            seq = new java.math.BigDecimal(tranSeq);
-        } catch (NumberFormatException ex) {
-            throw new BusinessException("WBE2122");
-        }
-        com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileDataId dataId =
-                new com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileDataId(
-                        tranDt, bizKey, fileSeqNo, seq);
-        tbPayFileDataRepository.findById(dataId).ifPresent(data -> {
-            data.setRsCd(null);
-            tbPayFileDataRepository.save(data);
-        });
-
-        // 5. Audit log.
-        auditLogService.append(AuditLogContext.builder()
-                .wsvcId(WSVC_ID)
-                .refNo(REF_NO)
-                .refNo1(scdulPymnNo)
-                .refNo2(scdulPymnDetlNo)
-                .activityKey(AUDIT_ACTIVITY_KEY)
-                .detailKey(AUDIT_RERUN_KEY)
-                .build());
-
-        log.info("feature=internal-transfer rerun bizKey={} scdulPymnNo={} lineId={} tranDt={} seq={}",
-                bizKey, scdulPymnNo, scdulPymnDetlNo, tranDt, seq);
-    }
 
     /* ----------------------------------------------------------------
      *  Delete draft batch (legacy pymn_0009_001_d001)
@@ -739,9 +737,11 @@ public class InternalTransferService {
         String bizKey = requireTenant();
         ScdulPymnSumr master = loadMaster(bizKey, id);
 
-        // Reject when the batch is past the draft state.
+        // Reject when the batch is past the draft state. Uses the legacy
+        // delete-block code WBE1063 (pymn_0009_001_d001_act.jsp:91-92) —
+        // the same code across all 5 payment modules (PO decision 2026-07-08).
         if (master.getApprSeqNo() != null && !master.getApprSeqNo().isBlank()) {
-            throw new BusinessException("WBE2062");
+            throw new BusinessException("WBE1063");
         }
 
         // Snapshot the file metadata BEFORE the row goes away so the
@@ -843,11 +843,12 @@ public class InternalTransferService {
         String bizKey = requireTenant();
         ScdulPymnSumr master = loadMaster(bizKey, id);
 
-        // Idempotency guard — re-using the same code as Delete because
-        // the legacy contract is the same: an APPR_SEQ_NO row is not
-        // re-submittable. The frontend disables the Request Approval
-        // button after the first successful submit; this guard catches
-        // the stale-tab case.
+        // Idempotency guard — an APPR_SEQ_NO row is not re-submittable.
+        // Keeps WBE2062 (distinct from the Delete block, which moved to the
+        // legacy WBE1063 on 2026-07-08); this is the request-approval
+        // double-submit case, not a delete. The frontend disables the
+        // Request Approval button after the first successful submit; this
+        // guard catches the stale-tab case.
         if (master.getApprSeqNo() != null && !master.getApprSeqNo().isBlank()) {
             throw new BusinessException("WBE2062");
         }
@@ -1002,6 +1003,20 @@ public class InternalTransferService {
         if (req.postTitle() != null && !req.postTitle().isBlank()) {
             master.setTitl(req.postTitle().trim());
         }
+        // H-1 (legacy parity, comm_0192_001_c005_act.jsp:362-371
+        // updateScheduledPaymentSummary): persist the withdrawal account the
+        // user selected in the Request Approval popup. OUT_BANK_CD is the
+        // NAPAS-converted code — OutBankCdNormalizer reproduces the legacy
+        // NapasBankInfoDAO "bank_cd = ? OR napas_bank_cd = ?" lookup.
+        if (req.bankCd() != null && !req.bankCd().isBlank()) {
+            master.setOutBankCd(outBankCdNormalizer.normalize(req.bankCd()));
+        }
+        if (req.acctNo() != null && !req.acctNo().isBlank()) {
+            master.setWdrlActNo(req.acctNo().trim());
+        }
+        if (req.ccyCd() != null && !req.ccyCd().isBlank()) {
+            master.setWdrlCcyCd(req.ccyCd().trim());
+        }
         master.setModDtm(nowDtm);
         if (userId != null) master.setModId(userId);
         sumrRepository.saveAndFlush(master);
@@ -1011,7 +1026,9 @@ public class InternalTransferService {
         mstr.setBizKey(bizKey);
         mstr.setApprSeqNo(apprSeqNo);
         mstr.setApprDv(ApprDv.INTERNAL_TRANSFER.code());
-        mstr.setApprSts("0");
+        // F-4 (legacy parity): legacy comm_0192_001_c005 sets ApprSts.STS_2
+        // ("2" = In Progress) at request time, not "0" (temp save).
+        mstr.setApprSts("2");
         mstr.setDraftDate(draftDate);
         mstr.setDraftTime(draftTime);
         mstr.setDraftUserId(userId != null ? userId : "");
@@ -1022,10 +1039,13 @@ public class InternalTransferService {
                 .orElse(bizKey);
         mstr.setDraftUserSiteNm(cmpnNm);
         mstr.setHandRegYn("Y");
-        mstr.setApprBoxUseYn("Y");
-        mstr.setApprDatDispYn("N");
-        mstr.setCmpnLogoDispYn("Y");
-        mstr.setRegDispYn("Y");
+        // M-2 (legacy parity): display flags from BUSI_ENV_SET_INFM (00014/16/17/18),
+        // not hardcoded. Mirrors comm_0192_001_c005_act.jsp:316-320.
+        var flags = displayFlagsResolver.resolve(bizKey);
+        mstr.setApprBoxUseYn(flags.apprBoxUseYn());
+        mstr.setApprDatDispYn(flags.apprDatDispYn());
+        mstr.setCmpnLogoDispYn(flags.cmpnLogoDispYn());
+        mstr.setRegDispYn(flags.regDispYn());
         mstr.setTitl(req.postTitle() != null ? req.postTitle().trim() : "");
         // Persist the free-text Approval Content into EXPT_RESOL_MSTR.CONT
         // (legacy BLTB_POST_INFM.POST_CONT parity). Without this the
@@ -1036,7 +1056,7 @@ public class InternalTransferService {
                 : null);
         String docNo = docNoGenerator.nextDocNo(bizKey);
         mstr.setDocNo(docNo);
-        mstr.setDocNm(master.getTitl() != null ? master.getTitl() : master.getScdulPymnNo());
+        mstr.setDocNm(ApprDv.INTERNAL_TRANSFER.docNm());   // L-1 (legacy parity): legacy DOC_NM = apprDv.getLabel()
         BigDecimal amt = master.getTotalTranAmt() != null ? master.getTotalTranAmt() : BigDecimal.ZERO;
         String ccy = master.getCcyCd() != null ? master.getCcyCd().toUpperCase() : "VND";
         boolean isUsd = "USD".equals(ccy);
@@ -1083,6 +1103,20 @@ public class InternalTransferService {
             exptResolApprvrInfmRepository.save(row);
         }
 
+        // F-1 (legacy parity): EXPT_RESOL_DETL row — DOC_ID = batch id,
+        // AMT = batch total, CCY_CD = batch currency. Mirrors legacy
+        // comm_0192_001_c005_act.jsp:340 createExptResolDetl.
+        approvalBoxFanoutService.writeResolutionDetail(
+                apprSeqNo, master.getScdulPymnNo(), master.getTotalTranAmt(), master.getCcyCd());
+        // F-2 (legacy parity): EXPT_RESOL_APPR_LINE print-header snapshot
+        // (env-gated). Mirrors comm_0192_001_c005_act.jsp:489 createApprovalLines.
+        approvalBoxFanoutService.writeApprovalLineSnapshot(apprSeqNo);
+
+        // Bulletin / notification fan-out (legacy createBulletinPost +
+        // createUserNewPostNotifications + BltbHelper.createNotificationToApprvr).
+        approvalNotificationService.notifyRequestApproval(
+                apprSeqNo, req.postTitle(), req.postCont(), "35", "Internal Transfer");
+
         return docNo;
     }
 
@@ -1101,11 +1135,11 @@ public class InternalTransferService {
      * <ul>
      *   <li>requires the batch to carry an {@code APPR_SEQ_NO}
      *       (i.e. the user previously hit Request Approval) — else
-     *       {@code WBE2094}.</li>
+     *       {@code WBE2126}.</li>
      *   <li>requires the batch to be still actionable — the current
      *       {@code APPR_STTS} must be null / {@code "P"} / {@code "I"};
      *       any final state ({@code "C"} / {@code "X"}) returns
-     *       {@code WBE2095}.</li>
+     *       {@code WBE2127}.</li>
      *   <li>stamps {@code APPR_STTS = "C"} on Approve, {@code "X"}
      *       on Reject.</li>
      *   <li>writes one audit row keyed by the action (Approve /
@@ -1140,7 +1174,7 @@ public class InternalTransferService {
         // but the inverse condition — Delete rejects rows WITH a seq,
         // approve/reject rejects rows WITHOUT one.
         if (master.getApprSeqNo() == null || master.getApprSeqNo().isBlank()) {
-            throw new BusinessException("WBE2094");
+            throw new BusinessException("WBE2126");
         }
 
         // Guard 2: the batch must still be actionable. Once approved /
@@ -1148,7 +1182,7 @@ public class InternalTransferService {
         // overwrite history. Status derives from EXPT_RESOL_MSTR.APPR_TYPE_CD.
         String current = legacyFunctions.getApprStts(bizKey, master.getApprSeqNo());
         if (APPR_STTS_APPROVED.equals(current) || APPR_STTS_REJECTED.equals(current)) {
-            throw new BusinessException("WBE2095");
+            throw new BusinessException("WBE2127");
         }
 
         // Delegate the approver-chain logic to the approval-box service —
@@ -1203,7 +1237,7 @@ public class InternalTransferService {
             // approval to act on" — so the frontend can surface a
             // single error envelope for every "operates on a request"
             // call.
-            throw new BusinessException("WBE2094");
+            throw new BusinessException("WBE2126");
         }
 
         // Shared cleanup — deletes master + approver rows, enforces the
@@ -1257,7 +1291,7 @@ public class InternalTransferService {
 
         String apprSeqNo = master.getApprSeqNo();
         if (apprSeqNo == null || apprSeqNo.isBlank()) {
-            throw new BusinessException("WBE2094");
+            throw new BusinessException("WBE2126");
         }
 
         approvalBoxFanoutService.changeApprovalLine(apprSeqNo, apprLineNo);
@@ -1294,10 +1328,10 @@ public class InternalTransferService {
      * Step-3 picker in the legacy {@code pymn_0009_002} popup (Figma
      * 1:9972 — "Withdrawal Bank/Account No.").
      *
-     * <p>Mirrors legacy {@code comm_1001_001_act.jsp:23-65} — see the
-     * filter list on {@link com.kosign.wecms.domain.banking.repository.AcctMstrRepository#findWithdrawalAccounts}.
-     * The legacy per-user {@code ACCT_AUTH_INFO} authority filter is
-     * deferred until that table is migrated.
+     * <p>Delegates to the shared
+     * {@link com.kosign.wecms.domain.payment.common.WithdrawalAccountListService}
+     * — legacy {@code comm_1001_001} is module-agnostic, so all five
+     * payment consumers share one strict (G1/G2/G3) implementation.
      *
      * @param ccyCd optional currency filter (matches legacy
      *              {@code CCY_CD} input; {@code null} skips).
@@ -1305,26 +1339,7 @@ public class InternalTransferService {
     @Transactional(readOnly = true)
     public java.util.List<com.kosign.wecms.domain.payment.internaltransfer.dto.WithdrawalAccountRow>
             listWithdrawalAccounts(String ccyCd) {
-        String bizKey = requireTenant();
-        String filter = (ccyCd == null || ccyCd.isBlank()) ? null : ccyCd.trim().toUpperCase();
-        return acctMstrRepository.findWithdrawalAccounts(bizKey, filter).stream()
-                .map(this::toWithdrawalAccountRow)
-                .toList();
-    }
-
-    private com.kosign.wecms.domain.payment.internaltransfer.dto.WithdrawalAccountRow
-            toWithdrawalAccountRow(
-                    com.kosign.wecms.domain.banking.entity.AcctMstr a) {
-        String bankNm = bankInfmRepository.findById(a.getBankCd())
-                .map(com.kosign.wecms.domain.banking.entity.BankInfm::getRprsBankNm)
-                .orElse(a.getBankCd());
-        return new com.kosign.wecms.domain.payment.internaltransfer.dto.WithdrawalAccountRow(
-                a.getBankCd(),
-                bankNm,
-                a.getAcctNo(),
-                a.getAcctTypeCd(),
-                a.getCcyCd(),
-                a.getAcctNickNm());
+        return withdrawalAccountListService.list(ccyCd);
     }
 
     /**
@@ -1454,6 +1469,13 @@ public class InternalTransferService {
         String displayName = master.getOrgFileNm() == null || master.getOrgFileNm().isBlank()
                 ? saveFileNm
                 : master.getOrgFileNm();
+        // The /{id}/file endpoint serves the Scheduled-side original import-file
+        // download. Per the ERP Transaction History mapping, Scheduled-side
+        // downloads record the SCHEDULED type code (16 = Internal Scheduled
+        // Transfer), UNCONDITIONALLY (both not-yet-dispatched N and dispatched Y).
+        // Non-blocking (REQUIRES_NEW + swallow). See VendorPaymentService.
+        erpHistoryWriter.recordExportedFile(
+                ERP_TRNS_TYPE_INTERNAL_SCHEDULED_TRANSFER, path, displayName);
         return new DownloadResource(path, displayName, saveFileNm, fileSize);
     }
 
@@ -1475,6 +1497,23 @@ public class InternalTransferService {
     @Transactional(readOnly = true)
     public DownloadResource resolveApprovalAttachmentDownload(
             String scdulPymnNo, String apprSeqNo, String fileId) {
+        // Default fileType keeps the legacy contract: EXPT_RESOL_FILE.
+        return resolveApprovalAttachmentDownload(
+                scdulPymnNo, apprSeqNo, fileId,
+                com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalAttachmentRow.TYPE_EXPT_RESOL_FILE);
+    }
+
+    /**
+     * fileType-routed variant (GAP-ATT-1). The combined attachment list
+     * unions {@code EXPT_RESOL_FILE} and {@code EXPT_RESOL_PAY_EVID_FILE},
+     * which use different id columns ({@code FILE_ID} vs {@code EVID_FILE_ID}),
+     * so the download must know which table the row came from. {@code fileType}
+     * is the discriminator carried on {@code ApprovalAttachmentRow}; an unknown
+     * / null value falls back to {@code EXPT_RESOL_FILE} (legacy behaviour).
+     */
+    @Transactional(readOnly = true)
+    public DownloadResource resolveApprovalAttachmentDownload(
+            String scdulPymnNo, String apprSeqNo, String fileId, String fileType) {
         String bizKey = requireTenant();
         // Tenant-scope the master lookup first — defends against a
         // caller passing an apprSeqNo from another tenant. The master
@@ -1485,19 +1524,12 @@ public class InternalTransferService {
                 || !master.getApprSeqNo().equals(apprSeqNo)) {
             throw new BusinessException("WBE2069");
         }
-        com.kosign.wecms.domain.payment.internaltransfer.entity.ExptResolFile row =
-                exptResolFileRepository
-                        .findByBizKeyAndApprSeqNoAndFileId(bizKey, apprSeqNo, fileId)
-                        .orElseThrow(() -> new BusinessException("WBE2069"));
-        Path path = fileResolver.resolveApprovalAttachment(
-                bizKey, apprSeqNo, row.getSaveFileNm());
-        if (!Files.isReadable(path) || !Files.isRegularFile(path)) {
-            throw new BusinessException("WBE2069");
-        }
-        long fileSize = row.getFileSize() == null
-                ? path.toFile().length()
-                : Long.parseLong(row.getFileSize());
-        return new DownloadResource(path, row.getOrgFileNm(), row.getSaveFileNm(), fileSize);
+        // Table routing (EXPT_RESOL_FILE vs EXPT_RESOL_PAY_EVID_FILE) + disk
+        // resolution live in the shared service so the logic is identical to
+        // the cross-type Approval Box download endpoint.
+        ApprovalAttachmentDownloadService.DownloadFile f =
+                approvalAttachmentDownloadService.resolve(bizKey, apprSeqNo, fileId, fileType);
+        return new DownloadResource(f.path(), f.orgFileNm(), f.saveFileNm(), f.fileSize());
     }
 
     private String requireTenant() {
@@ -1556,7 +1588,8 @@ public class InternalTransferService {
             Map<String, String> docNoByApprSeqNo,
             Map<String, String> payDateByApprSeqNo,
             Map<String, ApproverSummary> approverByApprSeqNo,
-            Map<String, String> apprSttsByApprSeqNo) {
+            Map<String, String> apprSttsByApprSeqNo,
+            Map<String, String> draftUserNmByApprSeqNo) {
         String apprSeqNo = s.getApprSeqNo();
         boolean hasAppr = apprSeqNo != null && !apprSeqNo.isBlank();
         // doc_no comes from EXPT_RESOL_MSTR.DOC_NO (docNoByApprSeqNo map);
@@ -1579,6 +1612,9 @@ public class InternalTransferService {
         Integer approverCount = appr != null ? appr.count()     : null;
         List<com.kosign.wecms.domain.payment.internaltransfer.dto.ScheduledTransferApprover> approvers =
                 appr != null ? appr.approvers() : null;
+        // Requestor display name (legacy EXPT_RESOL_MSTR.DRAFT_USER_NM); blank
+        // for drafts with no approval request — matches legacy null2void.
+        String draftUserNm = hasAppr ? draftUserNmByApprSeqNo.get(apprSeqNo) : null;
         return new ScheduledTransferRow(
                 s.getScdulPymnNo(),
                 s.getScdulPymnTypeCd(),
@@ -1605,7 +1641,8 @@ public class InternalTransferService {
                 null,      // appr_fund_tp — Payroll-only column
                 approver,
                 approverCount,
-                approvers);
+                approvers,
+                draftUserNm);
     }
 
     /** First approver name + total chain length + the full ordered chain
@@ -1639,6 +1676,30 @@ public class InternalTransferService {
     }
 
     /**
+     * Map {@code APPR_SEQ_NO → EXPT_RESOL_MSTR.DRAFT_USER_NM} (the requestor /
+     * 발의자명) for the rows on the current page. Drives the Scheduled Transfer
+     * list's "Requestor" column — mirrors legacy
+     * {@code IDO.SCDUL_PYMN_SUMR_R002.xml} which selects {@code ERM.DRAFT_USER_NM}
+     * via the {@code LEFT JOIN EXPT_RESOL_MSTR ... ON APPR_SEQ_NO}. One batched
+     * query; empty when no row has been submitted for approval.
+     */
+    private Map<String, String> buildDraftUserNmMap(String bizKey, List<ScdulPymnSumr> rows) {
+        List<String> apprSeqNos = rows.stream()
+                .map(ScdulPymnSumr::getApprSeqNo)
+                .filter(seq -> seq != null && !seq.isBlank())
+                .distinct()
+                .toList();
+        if (apprSeqNos.isEmpty()) return Map.of();
+        return exptResolMstrRepository.findByBizKeyAndApprSeqNoIn(bizKey, apprSeqNos)
+                .stream()
+                .filter(m -> m.getDraftUserNm() != null && !m.getDraftUserNm().isBlank())
+                .collect(java.util.stream.Collectors.toMap(
+                        ExptResolMstr::getApprSeqNo,
+                        ExptResolMstr::getDraftUserNm,
+                        (a, b) -> a));
+    }
+
+    /**
      * Map {@code APPR_SEQ_NO → {first approver name, chain length}} from the
      * {@code EXPT_RESOL_APPRVR_INFM} chain (ordered by {@code APPRVR_LINE_NO}).
      * Drives the Scheduled Transfer list's "Approver" cell — the primary
@@ -1660,14 +1721,17 @@ public class InternalTransferService {
                 String nm = chain.get(0).getApprvrNm();
                 String firstName = (nm != null && !nm.isBlank()) ? nm.trim() : null;
                 // Full ordered chain for the Phase-2 click popup
-                // (name + status + approval datetime). findChain is already
-                // ordered by APPRVR_LINE_NO ASC.
+                // (name + status + approval datetime + avatar URL). findChain
+                // is already ordered by APPRVR_LINE_NO ASC.
+                Map<String, String> imgUrlByApprvrId = userImageUrlResolver.resolveImageUrls(
+                        bizKey, chain.stream().map(a -> a.getApprvrId()).toList());
                 List<com.kosign.wecms.domain.payment.internaltransfer.dto.ScheduledTransferApprover> list =
                         chain.stream()
                                 .map(a -> new com.kosign.wecms.domain.payment.internaltransfer.dto.ScheduledTransferApprover(
                                         a.getApprvrNm(),
                                         a.getApprvrStts(),
-                                        a.getApprDtm()))
+                                        a.getApprDtm(),
+                                        imgUrlByApprvrId.get(a.getApprvrId())))
                                 .toList();
                 out.put(seq, new ApproverSummary(firstName, chain.size(), list));
             }
@@ -1678,23 +1742,22 @@ public class InternalTransferService {
 
     /** Compute per-currency totals on the **page slice** (matches the
      *  visible rows the frontend will paint in the totals footer). */
-    private static List<CurrencyTotal> computeCurrencyTotals(List<ScdulPymnSumr> rows) {
-        Map<String, BigDecimal> amountByCcy = new TreeMap<>();
-        Map<String, BigDecimal> countByCcy  = new TreeMap<>();
-        Map<String, BigDecimal> trnsByCcy   = new TreeMap<>();
-        for (ScdulPymnSumr r : rows) {
-            String ccy = Objects.requireNonNullElse(r.getCcyCd(), "");
-            amountByCcy.merge(ccy, Objects.requireNonNullElse(r.getTotalTranAmt(), BigDecimal.ZERO), BigDecimal::add);
-            countByCcy.merge(ccy, BigDecimal.ONE, BigDecimal::add);
-            trnsByCcy.merge(ccy, Objects.requireNonNullElse(r.getTotTrnsCnt(), BigDecimal.ZERO), BigDecimal::add);
-        }
-        return amountByCcy.entrySet().stream()
-                .sorted(Comparator.comparing(Map.Entry::getKey))
-                .map(e -> new CurrencyTotal(
-                        e.getValue(),
-                        countByCcy.get(e.getKey()),
-                        e.getKey(),
-                        trnsByCcy.get(e.getKey())))
+    /**
+     * Map the {@code [ccyCd, sumAmount, docCount, sumTransactionCount]} rows
+     * from {@link ScdulPymnSumrRepository#searchCurrencyTotals} into the
+     * {@link CurrencyTotal} wire records. The DB aggregate has already summed
+     * across the full filtered set and grouped by currency (F-1); this method
+     * only does the {@code COUNT}-Long → {@code BigDecimal} projection and
+     * null-safety. {@code COALESCE} in the query guarantees non-null amount /
+     * count / ccy, so the defaults here are belt-and-braces.
+     */
+    private static List<CurrencyTotal> mapCurrencyTotals(List<Object[]> aggregated) {
+        return aggregated.stream()
+                .map(r -> new CurrencyTotal(
+                        r[1] == null ? BigDecimal.ZERO : (BigDecimal) r[1],
+                        r[2] == null ? BigDecimal.ZERO : BigDecimal.valueOf(((Number) r[2]).longValue()),
+                        r[0] == null ? "" : (String) r[0],
+                        r[3] == null ? BigDecimal.ZERO : (BigDecimal) r[3]))
                 .toList();
     }
 

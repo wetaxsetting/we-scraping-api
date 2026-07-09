@@ -12,5 +12,11 @@ public record ActiveCard(
         String cardNo,
         String cardNm,
         String cardNickNm,
-        String cardHldrNm) {
+        String cardHldrNm,
+        /** Last successful card-scrape timestamp ({@code CARD_MSTR.TRN_LST_SUC_DTM},
+         *  compact {@code yyyyMMddHHmmss}; null when the card has never been
+         *  synced). The Update Cards popup uses the minimum across active
+         *  cards as the Auto-mode Start Date — parity with how Bank
+         *  Transaction Sync seeds its range from each account's last sync. */
+        String trnLstSucDtm) {
 }

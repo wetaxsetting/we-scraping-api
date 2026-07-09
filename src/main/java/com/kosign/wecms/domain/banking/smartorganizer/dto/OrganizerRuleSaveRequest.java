@@ -15,9 +15,13 @@ import jakarta.validation.constraints.Size;
  *   <li>{@code rmrk}: required, max 500 chars (legacy schema length).</li>
  *   <li>{@code matchType}: required, single char {@code C} (contains)
  *       or {@code E} (exact). Matches legacy {@code MatchType} enum.</li>
- *   <li>{@code rcvPayDv}: required, {@code RCV} or {@code PAY}. Drives
- *       the eligibility query branch on {@code INOUT_DV} (1 → RCV,
- *       2 → PAY).</li>
+ *   <li>{@code rcvPayDv}: optional, {@code RCV} or {@code PAY}. For a
+ *       grouped-usage rule the service <b>derives</b> this from the
+ *       usage's {@code USAG_GRP_CD} (4 → RCV, 6 → PAY) and ignores any
+ *       client value (legacy {@code fnsh_0200_002_c001_act.jsp:103-110}).
+ *       It is honored only for VAS-only / chart-only rules (no
+ *       {@code useUsagCd}). Drives the eligibility query branch on
+ *       {@code INOUT_DV} (1 → RCV, 2 → PAY).</li>
  *   <li>{@code dispOrd}: optional. When omitted the service assigns
  *       {@code MAX(disp_ord)+1} per tenant.</li>
  *   <li>{@code trcoKey} / {@code useUsagCd} / {@code vasAcctSeqNo} /
@@ -36,7 +40,9 @@ public record OrganizerRuleSaveRequest(
         @Pattern(regexp = "^[CE]$", message = "match_type must be 'C' or 'E'")
         String matchType,
 
-        @NotBlank
+        // Optional: derived from the usage group for grouped-usage rules
+        // (service overrides any client value); honored only for VAS-only /
+        // chart-only rules. @Pattern still rejects a malformed non-null value.
         @Pattern(regexp = "^(RCV|PAY)$", message = "rcv_pay_dv must be 'RCV' or 'PAY'")
         String rcvPayDv,
 

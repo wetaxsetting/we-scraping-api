@@ -89,8 +89,14 @@ public final class BankTrnsIdGenerator {
      * abc" as separate strings for the same logical event; the hash
      * must collapse them. Legacy parity at
      * {@code fnsh_0001_001_c001_act.jsp:147}.
+     *
+     * <p>Exposed (2026-07-08) as the single normalisation rule reused by
+     * the auto-match engine ({@code AutoMatchService}) for the
+     * "payment remark contained in bank remark" post-filter, so the hash
+     * key and the remark-match compare against byte-identical normalised
+     * text (P1 requirement §3 — do not fork this rule).
      */
-    private static String cleanRemark(String rmrk) {
+    public static String cleanRemark(String rmrk) {
         if (rmrk == null) return "";
         String t = rmrk.trim();
         if (t.isEmpty()) return "";

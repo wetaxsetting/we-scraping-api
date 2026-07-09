@@ -1,6 +1,8 @@
 package com.kosign.wecms.domain.auth.controller;
 
+import com.kosign.wecms.common.exception.RateLimitExceededException;
 import com.kosign.wecms.common.response.ApiResponse;
+import com.kosign.wecms.common.web.RateLimiter;
 import com.kosign.wecms.domain.auth.dto.ChangePasswordRequest;
 import com.kosign.wecms.domain.auth.dto.LoginRequest;
 import com.kosign.wecms.domain.auth.dto.LoginResponse;
@@ -26,8 +28,14 @@ public class AuthController {
 
     private static final String DEFAULT_LANG = "EN";
 
+    /** F-10: per-IP login rate limit — generous for humans, throttles guessing.
+     *  Complements the per-account 5-failure lockout (LoginLockoutService). */
+    private static final int LOGIN_MAX_PER_WINDOW = 10;
+    private static final int LOGIN_WINDOW_SECONDS  = 60;
+
     private final AuthService authService;
     private final ChangePasswordService changePasswordService;
+    private final RateLimiter rateLimiter;
 
     @PostMapping("/login")
     public ApiResponse<LoginResponse> login(
@@ -35,6 +43,11 @@ public class AuthController {
             @RequestHeader(value = "Accept-Language", required = false) String acceptLanguage,
             HttpServletRequest servletReq) {
         String ip     = clientIp(servletReq);
+        // F-10: throttle repeated login attempts per source IP before any DB work.
+        // Keyed by IP only (not user id) so it never reveals whether an id exists.
+        if (!rateLimiter.tryAcquire("login:" + ip, LOGIN_MAX_PER_WINDOW, LOGIN_WINDOW_SECONDS)) {
+            throw new RateLimitExceededException("WBE_TOO_MANY_REQUESTS");
+        }
         String langCd = resolveLangCd(acceptLanguage);
         return ApiResponse.ok(authService.login(req, ip, langCd));
     }
@@ -52,12 +65,18 @@ public class AuthController {
     }
 
     /**
-     * Sprint 0 logout: JWT is stateless, so the frontend clears the token
-     * locally and calls this endpoint for symmetry + audit. No blacklist,
-     * no refresh-token revocation — those are deferred.
+     * Server-side logout (F-03). The presented access token is revoked by its
+     * {@code jti} so it can no longer authenticate any request (within the
+     * running instance — see {@link com.kosign.wecms.common.security.TokenRevocationService}
+     * for restart / multi-instance limitations). The frontend still clears its
+     * local copy; this endpoint makes the server stop honouring the token too.
+     * Permitted in the security chain, so a token that is already invalid/expired
+     * is simply a no-op.
      */
     @PostMapping("/logout")
-    public ApiResponse<Void> logout() {
+    public ApiResponse<Void> logout(
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
+        authService.logout(authorization);
         return ApiResponse.ok("Logout successful", null);
     }
 

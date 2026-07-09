@@ -10,11 +10,10 @@ import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasForeignExchangeJ
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasForeignExchangeJobResult;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasOutput;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasResult;
+import com.kosign.wecms.common.enums.PrdtType;
 import com.kosign.wecms.domain.banking.repository.BankExchRateInfmRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,25 +31,40 @@ import java.util.Optional;
  * {@code bcs.jex.wabooks.exch.EXCH_0001_001} /
  * {@code EXCH_0010_001} / {@code EXCH_0020_001}. Each legacy job has
  * distinct timing AND distinct persistence semantics; the refactor
- * keeps them as three separate {@code @Scheduled} methods + one
- * shared on-demand entry point.
+ * keeps them as three {@code @Transactional} trigger methods
+ * ({@link #runShinhanFirstTime()}, {@link #runShinhanLastTime()},
+ * {@link #runWoori()}) + one shared on-demand entry point
+ * ({@link #runOnDemand()}).
  *
- * <h2>Schedule (all anchored to {@code Asia/Ho_Chi_Minh})</h2>
+ * <h2>Scheduling — OFF BY DEFAULT (G0)</h2>
+ * <p>This service holds NO {@code @Scheduled} annotations. In the
+ * live-JEX-DB coexistence model the LEGACY JEX batch owns FX collection
+ * into {@code BANK_EXCH_RATE_INFM}; the refactor must not auto-collect or
+ * it would double-write / race the legacy batch against the shared DB.
+ * The {@code @Scheduled} + {@code @SchedulerLock} triggers live on the
+ * gated {@link ExchangeRateBatchScheduler}, which is created ONLY when
+ * {@code wecms.exchange-rate.batch.enabled=true} (absent/false → no FX
+ * job fires). This service bean is always present so
+ * {@link ExchangeRateService#runOnDemand the on-demand path} and DI keep
+ * working regardless of the gate.
+ *
+ * <h2>Schedule when enabled — confirmed against JEX Studio
+ * (all anchored to {@code Asia/Ho_Chi_Minh})</h2>
  * <table>
  *   <tr><th>Job</th><th>Cron (ICT)</th><th>Fires/day</th><th>Window</th></tr>
  *   <tr><td>{@link #runShinhanFirstTime()} (EXCH_0001_001)</td>
- *       <td>{@code 0 30 8 * * ?}</td><td>1</td><td>08:30</td></tr>
+ *       <td>{@code 0 30 8 * * ?}</td><td>1</td><td>08:30 once</td></tr>
  *   <tr><td>{@link #runShinhanLastTime()} (EXCH_0010_001)</td>
- *       <td>{@code 0 30 8-18 * * ?}</td><td>11</td><td>08:30–18:30</td></tr>
+ *       <td>{@code 0 30 8-18 * * ?}</td><td>11</td><td>08:30–18:30 hourly</td></tr>
  *   <tr><td>{@link #runWoori()} (EXCH_0020_001)</td>
- *       <td>{@code 0 0,30 8-19 * * ?}</td><td>23</td><td>08:30–19:30</td></tr>
+ *       <td>{@code 0 30 8 * * ?} + {@code 0 0,30 9-20 * * ?}</td><td>25</td><td>08:30–20:30 every 30 min</td></tr>
  * </table>
  *
- * <p>The {@code zone} attribute on each {@code @Scheduled} fixes the
- * fire time at ICT regardless of host JVM timezone — Docker / Linux
- * containers typically default to UTC. {@code spring.task.scheduling.
- * timezone: Asia/Ho_Chi_Minh} in {@code application.yml} is a
- * belt-and-braces fallback if a method ever drops the attribute.
+ * <p>JEX Studio start/end windows: EXCH_0001_001 08:30:00–08:59:59 (once);
+ * EXCH_0010_001 08:30:05–18:30:00 (hourly); EXCH_0020_001 08:30:00–20:30:00
+ * (every 30 min). The refactor fires EXCH_0010 at 08:30:00 rather than the
+ * legacy 08:30:05 — an accepted, harmless 5-second offset (Spring cron resolves
+ * to the same minute; the batch is idempotent per round).</p>
  *
  * <h2>Persistence semantics (one mode per legacy job)</h2>
  * <ul>
@@ -112,6 +126,18 @@ public class ExchangeRateBatchService {
      *  verbatim — see {@code EXCH_0020_001#execute} line 82 + 96-100. */
     private static final String WOORI_SEQ_PROBE_CCY = "VND";
 
+    // ── Tenant fan-out filter (G1) — verbatim legacy BUSI_INFM_R001 ──────────
+    /** {@code del_yn = 'N'} — exclude soft-deleted companies. */
+    private static final String DEL_YN_NO = "N";
+    /** {@code busi_stts = 'N'} — legacy {@code BusiStts.NORMAL}; excludes
+     *  W (waiting) / S (suspended) / C (closed). */
+    private static final String BUSI_STTS_NORMAL = "N";
+    /** {@code prdt_type IN ('F','M','H')} — the refactor-recognised product
+     *  types (the same set every legacy EXCH job filters on). Sourced from
+     *  {@link PrdtType} so it stays in lock-step with the enum. */
+    private static final List<String> FX_FAN_OUT_PRDT_TYPES =
+            List.of(PrdtType.F.code(), PrdtType.M.code(), PrdtType.H.code());
+
     /** Per-row persistence mode used by the shared persist loop. */
     private enum PersistMode {
         /** EXCH_0001: insert if missing, update if exists. */
@@ -134,10 +160,6 @@ public class ExchangeRateBatchService {
      * Fires once per day at 08:30 ICT. Fetches Shinhan SEQ_NO=1 and
      * UPSERTs per (tenant × counter currency).
      */
-    @Scheduled(cron = "0 30 8 * * ?", zone = VIETNAM_TZ_ID)
-    @SchedulerLock(name = "exch-shinhan-first-time",
-                   lockAtMostFor = "PT10M",
-                   lockAtLeastFor = "PT30S")
     @Transactional
     public void runShinhanFirstTime() {
         log.info("EXCH_0001_001 — Shinhan first-time run starting");
@@ -158,10 +180,6 @@ public class ExchangeRateBatchService {
      *   <li>SEQ_NO=2 — UPSERT (the rolling intra-day capture).</li>
      * </ul>
      */
-    @Scheduled(cron = "0 30 8-18 * * ?", zone = VIETNAM_TZ_ID)
-    @SchedulerLock(name = "exch-shinhan-last-time",
-                   lockAtMostFor = "PT10M",
-                   lockAtLeastFor = "PT30S")
     @Transactional
     public void runShinhanLastTime() {
         log.info("EXCH_0010_001 — Shinhan last-time run starting");
@@ -174,16 +192,17 @@ public class ExchangeRateBatchService {
 
     /**
      * Legacy parity: {@code bcs.jex.wabooks.exch.EXCH_0020_001}.
-     * Fires every 30 minutes in the window 08:30–19:30 ICT (23 fires/day,
-     * matching legacy exactly):
+     * Fires every 30 minutes in the window 08:30–20:30 ICT (25 fires/day,
+     * matching the confirmed JEX Studio schedule: start 08:30:00, end
+     * 20:30:00, every 30 min):
      * <ul>
      *   <li>08:30 — single fire at the start of the window (first cron)</li>
-     *   <li>09:00, 09:30, 10:00, …, 19:00, 19:30 — :00 and :30 of every
-     *       hour from 09 through 19 (second cron, 22 fires)</li>
+     *   <li>09:00, 09:30, 10:00, …, 20:00, 20:30 — :00 and :30 of every
+     *       hour from 09 through 20 (second cron, 24 fires)</li>
      * </ul>
      *
      * <p>The split into two {@code @Scheduled} annotations avoids the
-     * 08:00 fire that a single {@code 0 0,30 8-19 * * ?} pattern would
+     * 08:00 fire that a single {@code 0 0,30 8-20 * * ?} pattern would
      * trigger — that fire is 30 min before the legacy window opens.
      * Spring resolves multiple {@code @Scheduled} annotations on the
      * same method as independent triggers; the body still runs in the
@@ -198,12 +217,20 @@ public class ExchangeRateBatchService {
      *   <li>On success, INSERT one new row per (tenant × counter
      *       currency) with {@code seq_no = nextSeqNo}. No UPDATE path.</li>
      * </ol>
+     *
+     * <p><b>G2 — Woori strategy decision (open).</b> This ports legacy
+     * {@code EXCH_0020_001} (MAX+1, one notification round per run). Legacy
+     * also has a newer combined job {@code EXCH_0030_001} that loops a FIXED
+     * Woori range {@code seq 1..15} with insert-if-missing (a single-run
+     * catch-up of every round). Which job is the live PROD scheduler could
+     * not be confirmed from source (no batch-schedule config was found), and
+     * the live DB (2 Woori rounds/day) is consistent with both. The
+     * fixed-1..15 catch-up is intentionally NOT ported here — porting it
+     * requires PO/ops confirmation that PROD runs EXCH_0030_001. Until then
+     * the MAX+1 behaviour stands; when the FX schedule is enabled at the
+     * legacy cadence (every 30 min) it captures each round as it appears,
+     * which is equivalent unless a run is missed.
      */
-    @Scheduled(cron = "0 30 8 * * ?",       zone = VIETNAM_TZ_ID)
-    @Scheduled(cron = "0 0,30 9-19 * * ?",  zone = VIETNAM_TZ_ID)
-    @SchedulerLock(name = "exch-woori",
-                   lockAtMostFor = "PT10M",
-                   lockAtLeastFor = "PT20S")
     @Transactional
     public void runWoori() {
         log.info("EXCH_0020_001 — Woori run starting");
@@ -337,11 +364,21 @@ public class ExchangeRateBatchService {
 
             for (BusiInfm tenant : tenants) {
                 for (NxisasForeignExchangeEntry rate : rates) {
-                    String ccyCd = rate.getCounterCurrency();
+                    String ccyCd    = rate.getCounterCurrency();   // VND for Shinhan/Woori VN
+                    String refCcyCd = rate.getBaseCurrency();      // USD, KRW, JPY, … — the discriminator
                     try {
+                        // Diagnostic: confirm the discriminator on the wire — ccy should be
+                        // VND (constant) and ref_ccy should differ per currency. If a deployed
+                        // build is stale, the lookup below would be the 5-arg ccy-only form and
+                        // rows would collapse. Enable with logging.level for this class = DEBUG.
+                        log.debug("EXCH persist probe: bank={} date={} seq={} biz_key={} ccy={} ref_ccy={}",
+                                bankCd, inqDate, persistSeqNo, tenant.getBizKey(), ccyCd, refCcyCd);
+                        // Legacy existence/upsert key includes ref_ccy_cd — without it,
+                        // every currency of a round (all ccy_cd='VND') collapses onto one
+                        // logical row. See EXCH_0010_001.java:202.
                         Optional<BankExchRateInfm> existing = bankExchRateInfmRepository
-                                .findByBizKeyAndBankCdAndRefDateAndCcyCdAndSeqNo(
-                                        tenant.getBizKey(), bankCd, inqDate, ccyCd, persistSeqNo);
+                                .findByBizKeyAndBankCdAndRefDateAndRefCcyCdAndCcyCdAndSeqNo(
+                                        tenant.getBizKey(), bankCd, inqDate, refCcyCd, ccyCd, persistSeqNo);
 
                         if (existing.isPresent()) {
                             if (mode == PersistMode.SKIP_IF_EXISTS) {
@@ -353,8 +390,8 @@ public class ExchangeRateBatchService {
                                 // INSERT_NEW always allocates a fresh
                                 // seq_no. Treat as a race / re-run and
                                 // skip rather than throw.
-                                log.warn("EXCH_0020 INSERT_NEW collision on (biz_key={}, bank={}, date={}, ccy={}, seq={}) — skipping",
-                                        tenant.getBizKey(), bankCd, inqDate, ccyCd, persistSeqNo);
+                                log.warn("EXCH_0020 INSERT_NEW collision on (biz_key={}, bank={}, date={}, ref_ccy={}, ccy={}, seq={}) — skipping",
+                                        tenant.getBizKey(), bankCd, inqDate, refCcyCd, ccyCd, persistSeqNo);
                                 skipped++;
                                 continue;
                             }
@@ -373,7 +410,9 @@ public class ExchangeRateBatchService {
                             entity.setCcyCd(ccyCd);
                             // EXCH_SEQ_NO via the single wb_get_next_val funnel
                             // (V140 #32 — per (biz_key, bank_cd, ref_date, ccy_cd)
-                            // MAX+1, matching the live JEX function's scoping).
+                            // MAX+1, matching the live JEX function's scoping). The
+                            // counter is per (biz,bank,date,VND) so it runs continuously
+                            // across rounds: seq_no=1 → 1..12, seq_no=2 → 13..24.
                             entity.setExchSeqNo(legacyFunctions.nextBankExchRateExchSeqNo(
                                     tenant.getBizKey(), bankCd, inqDate, ccyCd));
                             entity.setRegDtm(nowDtm);
@@ -384,8 +423,8 @@ public class ExchangeRateBatchService {
                             inserted++;
                         }
                     } catch (Exception e) {
-                        log.error("EXCH save failure bank={} seqNo={} ccy={} biz_key={}: {}",
-                                bankCd, persistSeqNo, ccyCd, tenant.getBizKey(), e.getMessage());
+                        log.error("EXCH save failure bank={} date={} seq={} ref_ccy={} ccy={} biz_key={}: {}",
+                                bankCd, inqDate, persistSeqNo, refCcyCd, ccyCd, tenant.getBizKey(), e.getMessage());
                         errors++;
                     }
                 }
@@ -447,10 +486,21 @@ public class ExchangeRateBatchService {
     // Helpers
     // ─────────────────────────────────────────────────────────────────
 
+    /**
+     * Active tenants the rates are fanned out to — G1 parity fix.
+     *
+     * <p>Matches the legacy {@code BUSI_INFM_R001} filter used by every
+     * exchange-rate BCS job verbatim:
+     * {@code del_yn = 'N' AND busi_stts = 'N' (NORMAL) AND prdt_type IN ('F','M','H')}.
+     * The previous {@code findAll().filter(delYn != 'Y')} over-included
+     * suspended/closed companies (busi_stts W/S/C), {@code del_yn = NULL}
+     * rows, and non-F/M/H product types — none of which the legacy batch
+     * collects rates for. Filtering is pushed to the DB via the repository
+     * derived query rather than loading every {@code BUSI_INFM} row.
+     */
     private List<BusiInfm> activeTenants() {
-        return busiInfmRepository.findAll().stream()
-                .filter(t -> !"Y".equals(t.getDelYn()))
-                .toList();
+        return busiInfmRepository.findByDelYnAndBusiSttsAndPrdtTypeIn(
+                DEL_YN_NO, BUSI_STTS_NORMAL, FX_FAN_OUT_PRDT_TYPES);
     }
 
     private static String todayIctDate() {

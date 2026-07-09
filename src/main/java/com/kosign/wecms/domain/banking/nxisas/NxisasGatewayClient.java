@@ -272,32 +272,63 @@ public class NxisasGatewayClient {
         String reqJson;
         try {
             reqJson = objectMapper.writeValueAsString(apiIn);
-            log.info("NXISAS request [job={}, trSeq={}]: {}", job, trSeq, reqJson);
         } catch (Exception e) {
             throw new IllegalStateException("Failed to serialize NXISAS request", e);
         }
+        // Verbose, MASKED request body — DEBUG only. The raw envelope carries
+        // the login password / OTP / SAS token; NxisasMask.json redacts them
+        // before anything is written. (Previously the full clear-text JSON
+        // was logged at INFO — fixed here.)
+        if (NxisasApiLog.isDebug()) {
+            try {
+                NxisasApiLog.debug(trSeq, NxisasApiLog.FLOW_GATEWAY, "REQUEST_BODY",
+                        "job", job, "module", module,
+                        "body", NxisasMask.json(objectMapper.readTree(reqJson)));
+            } catch (Exception ignore) {
+                // Debug-only — never let a logging hiccup affect the call.
+            }
+        }
 
         String resJson;
+        long startNs = System.nanoTime();
         try {
             resJson = restClient.post().body(reqJson).retrieve().body(String.class);
         } catch (Exception e) {
+            long durationMs = (System.nanoTime() - startNs) / 1_000_000L;
             audit.record(trSeq, module, "ERROR", job.name(), "TRANSPORT",
                     e.getMessage(), reqJson, job.name());
-            log.warn("NXISAS gateway call failed [job={}, module={}, trSeq={}]: {}",
-                    job, module, trSeq, e.getMessage());
+            NxisasApiLog.event(trSeq, NxisasApiLog.FLOW_GATEWAY, "TRANSPORT_ERROR",
+                    "job", job, "module", module, "class", category,
+                    "durationMs", durationMs, "msg", e.getMessage());
             throw new NxisasTransportException(e);
         }
+        long durationMs = (System.nanoTime() - startNs) / 1_000_000L;
 
         try {
             String json = resJson == null ? "" : resJson;
-            log.info("NXISAS raw response [job={}, trSeq={}]: {}", job, trSeq, json);
             NxisasApiOut<R> apiOut = objectMapper.readValue(json, typeRef);
             String resultCd = apiOut != null && apiOut.getCommon() != null
                     ? apiOut.getCommon().getResultCd() : null;
             String resultMsg = apiOut != null && apiOut.getCommon() != null
                     ? apiOut.getCommon().getResultMsg() : null;
-            log.info("NXISAS parsed [job={}, resultCd={}, sasSessionID={}]",
-                    job, resultCd, apiOut != null ? apiOut.getSasSessionID() : "null");
+            String sas = apiOut == null ? null : apiOut.getSasSessionID();
+            // Gateway-level milestone — safe (no secrets). One line per
+            // job covering module / class / timing / result / session reuse.
+            NxisasApiLog.event(trSeq, NxisasApiLog.FLOW_GATEWAY, "CALL",
+                    "job", job, "module", module, "class", category,
+                    "durationMs", durationMs,
+                    "resultCode", resultCd == null ? "-" : resultCd,
+                    "sasSessionId", NxisasMask.token(sas),
+                    "continuationIn", NxisasMask.present(cont.sasSessionID()));
+            // Verbose, MASKED response body — DEBUG only.
+            if (NxisasApiLog.isDebug()) {
+                try {
+                    NxisasApiLog.debug(trSeq, NxisasApiLog.FLOW_GATEWAY, "RESPONSE_BODY",
+                            "job", job, "body", NxisasMask.json(objectMapper.readTree(json)));
+                } catch (Exception ignore) {
+                    // Debug-only.
+                }
+            }
             audit.record(trSeq, module, "OK", job.name(),
                     resultCd != null ? resultCd : "UNKNOWN",
                     resultMsg, reqJson, job.name());
@@ -305,6 +336,8 @@ public class NxisasGatewayClient {
         } catch (Exception e) {
             audit.record(trSeq, module, "ERROR", job.name(), "PARSE",
                     e.getMessage() + " | body=" + resJson, reqJson, job.name());
+            NxisasApiLog.event(trSeq, NxisasApiLog.FLOW_GATEWAY, "PARSE_ERROR",
+                    "job", job, "module", module, "durationMs", durationMs);
             throw new IllegalStateException("Failed to parse NXISAS response", e);
         }
     }

@@ -6,7 +6,6 @@ import com.kosign.wecms.common.enums.LangCd;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.banking.entity.AcctMstr;
-import com.kosign.wecms.domain.banking.entity.BankInfm;
 import com.kosign.wecms.domain.banking.entity.NapasBankInfo;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.OwnAccountTransferAuditActions;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.OwnAccountTransferConstants;
@@ -16,8 +15,8 @@ import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.response.BalanceRe
 import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.response.NapasBankInfoRow;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.response.SourceAccountListResponse;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
-import com.kosign.wecms.domain.banking.repository.BankInfmRepository;
 import com.kosign.wecms.domain.banking.repository.NapasBankInfoRepository;
+import com.kosign.wecms.domain.banking.service.BankCdResolver;
 import com.kosign.wecms.domain.setting.bankaccount.entity.AcctAuthInfo;
 import com.kosign.wecms.domain.setting.bankaccount.repository.AcctAuthInfoRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -65,7 +64,7 @@ class OwnAccountTransferServiceTest {
 
     @Mock private AcctMstrRepository           acctMstrRepo;
     @Mock private AcctAuthInfoRepository       acctAuthRepo;
-    @Mock private BankInfmRepository           bankInfmRepo;
+    @Mock private BankCdResolver               bankCdResolver;
     @Mock private NapasBankInfoRepository      napasBankInfoRepo;
     @Mock private com.kosign.wecms.domain.banking.repository.NapasRemitTrnsHstrRepository napasRemitTrnsHstrRepo;
     @Mock private AuditLogService              auditLog;
@@ -108,14 +107,16 @@ class OwnAccountTransferServiceTest {
     }
 
     @Test
-    void list_balanceTimestamps_convertedFromUtcToProjectZoneUtcPlus7() {
+    void list_balanceTimestamps_shippedAsRawUtc() {
         // acct_mstr stores ACCT_BAL_LST_INQ_DTM / ACCT_BAL_UPD_DTM as a
         // UTC wall-clock (legacy DateTimeUtils.utcNow() + refactor
-        // utcNow14()). The source-row projection must convert it to the
-        // project display zone (Asia/Ho_Chi_Minh, UTC+7) — mirroring
-        // legacy read-time normalizeResult(..., loginUser) — so the
-        // composer "Last updated time" + main "Last Refresh" don't show
-        // times 7h behind local.
+        // utcNow14()). The source-row projection ships them RAW (no
+        // server-side zone shift) — the frontend owns the single
+        // UTC→Vietnam-local conversion (composer "Last updated time" via
+        // formatUtcDtmByLanguage, main "Last Refresh" via humanizeDatetime,
+        // which parses UTC). This matches AccountService, which also ships
+        // these columns raw; the prior server-side pre-shift double-shifted
+        // the relative-time cell.
         setUpAdmin();
         AcctMstr a = acct(SHINHAN, "0001", new BigDecimal("100.00"), new BigDecimal("90.00"));
         a.setAcctBalLstInqDtm("20260601075200"); // 07:52 UTC
@@ -128,9 +129,9 @@ class OwnAccountTransferServiceTest {
         SourceAccountListResponse resp = service.listSourceAccounts(null, null, null);
 
         assertThat(resp.list()).hasSize(1);
-        // 07:52 UTC → 14:52 (UTC+7), same day.
-        assertThat(resp.list().get(0).acctBalLstInqDtm()).isEqualTo("20260601145200");
-        assertThat(resp.list().get(0).acctBalUpdDtm()).isEqualTo("20260601145200");
+        // Shipped verbatim — no UTC→UTC+7 shift on the server side.
+        assertThat(resp.list().get(0).acctBalLstInqDtm()).isEqualTo("20260601075200");
+        assertThat(resp.list().get(0).acctBalUpdDtm()).isEqualTo("20260601075200");
     }
 
     @Test
@@ -622,10 +623,7 @@ class OwnAccountTransferServiceTest {
     }
 
     private void stubBankName(String bankCd, String name) {
-        BankInfm b = new BankInfm();
-        b.setBankCd(bankCd);
-        b.setRprsBankNm(name);
-        when(bankInfmRepo.findById(bankCd)).thenReturn(Optional.of(b));
+        when(bankCdResolver.resolveBankNm(bankCd)).thenReturn(name);
     }
 
     private void verifyAuditAppended(String expectedAction) {

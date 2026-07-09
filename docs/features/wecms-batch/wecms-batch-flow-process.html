@@ -1,0 +1,826 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WeCMS Batch — Handover & Operational Playbook (JEX → Spring Boot)</title>
+<style>
+  :root{
+    --ink:#1b2733; --muted:#5b6b7b; --faint:#8593a3;
+    --bg:#f4f7fb; --card:#ffffff; --line:#e3e9f1; --line-2:#eef3f9;
+    --navy:#1f4e8c; --navy-d:#163a6b; --blue-soft:#eaf1fb; --accent:#2f6fd0;
+    --green:#1f9d6b; --green-bg:#e7f6ef; --green-bd:#bfe6d3;
+    --amber:#b9770e; --amber-bg:#fdf4e3; --amber-bd:#f0dcae;
+    --red:#c0392b; --red-bg:#fbecea; --red-bd:#f1c9c2;
+    --purple:#7c5cbf; --purple-bg:#f1ecfa;
+    --legacy:#7a6a52; --legacy-bg:#f4f0e8; --legacy-bd:#e3d9c5;
+    --sans:'Inter','Noto Sans KR','Malgun Gothic','Dotum',sans-serif;
+    --mono:ui-monospace,'Cascadia Code','Consolas','Menlo',monospace;
+    --shadow:0 1px 2px rgba(27,39,51,.04),0 4px 14px rgba(27,39,51,.06);
+  }
+  *{box-sizing:border-box;}
+  html{font-size:13px; scroll-behavior:smooth;}
+  body{margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans); font-size:13px; line-height:1.6; letter-spacing:-0.01em; -webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1140px; margin:0 auto; padding:0 28px;}
+  a{color:var(--accent); text-decoration:none;}
+  a:hover{text-decoration:underline;}
+  a:focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:3px;}
+  code,.mono{font-family:var(--mono);}
+  code{background:#eef2f7; color:#33455a; padding:1px 5px; border-radius:4px; font-size:12px;}
+
+  /* header */
+  header.hero{background:linear-gradient(135deg,var(--navy-d),var(--navy)); color:#fff; padding:46px 0 38px;}
+  .hero .kicker{font-family:var(--mono); font-size:11px; letter-spacing:.22em; text-transform:uppercase; color:#aecbf2;}
+  .hero h1{margin:12px 0 4px; font-size:29px; font-weight:800; letter-spacing:-.03em; line-height:1.12;}
+  .hero .sub{font-size:15px; color:#d6e4f7; font-weight:500;}
+  .hero .sub .kr{color:#aecbf2;}
+  .badges{display:flex; flex-wrap:wrap; gap:8px; margin-top:20px;}
+  .badge{display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-weight:600; padding:5px 11px; border-radius:999px; border:1px solid transparent;}
+  .badge::before{content:""; width:7px; height:7px; border-radius:50%; background:currentColor;}
+  .badge.ok{background:rgba(231,246,239,.16); color:#9ff0c8; border-color:rgba(159,240,200,.35);}
+  .badge.info{background:rgba(234,241,251,.16); color:#bcd6f7; border-color:rgba(188,214,247,.35);}
+  .badge.warn{background:rgba(253,244,227,.14); color:#f4cf86; border-color:rgba(244,207,134,.4);}
+  .badge.stop{background:rgba(251,236,234,.14); color:#f3b3a9; border-color:rgba(243,179,169,.4);}
+  .hero-meta{display:flex; flex-wrap:wrap; gap:6px 22px; margin-top:18px; font-family:var(--mono); font-size:11px; color:#aecbf2;}
+
+  /* toc */
+  nav.toc{position:sticky; top:0; z-index:10; background:rgba(255,255,255,.93); backdrop-filter:saturate(140%) blur(6px); border-bottom:1px solid var(--line);}
+  nav.toc .wrap{display:flex; flex-wrap:wrap; gap:2px 3px; padding-top:8px; padding-bottom:8px;}
+  nav.toc a{font-size:11px; color:var(--muted); padding:3px 8px; border-radius:6px; white-space:nowrap;}
+  nav.toc a:hover{background:var(--blue-soft); color:var(--navy); text-decoration:none;}
+
+  /* sections */
+  section{padding:38px 0; border-bottom:1px solid var(--line); scroll-margin-top:48px;}
+  .sec-no{font-family:var(--mono); font-size:11px; font-weight:600; letter-spacing:.16em; color:var(--accent); text-transform:uppercase;}
+  h2{font-size:21px; font-weight:700; letter-spacing:-.02em; margin:7px 0 4px;}
+  h2 .kr{font-size:14px; color:var(--faint); font-weight:500;}
+  h3{font-size:14px; font-weight:700; margin:18px 0 10px;}
+  h4{font-size:12.5px; font-weight:700; margin:0 0 8px; color:var(--navy-d);}
+  p{margin:10px 0; color:#33424f;}
+  .lead{color:var(--muted); max-width:78ch;}
+  ul.clean{margin:8px 0; padding-left:18px; color:#33424f;}
+  ul.clean li{margin:4px 0;}
+
+  .card{background:var(--card); border:1px solid var(--line); border-radius:10px; padding:18px 20px; box-shadow:var(--shadow);}
+  .card + .card{margin-top:14px;}
+  .grid-2{display:grid; grid-template-columns:1fr 1fr; gap:16px;}
+  .grid-3{display:grid; grid-template-columns:repeat(3,1fr); gap:14px;}
+
+  .kpis{display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-top:18px;}
+  .kpi{background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; box-shadow:var(--shadow);}
+  .kpi .n{font-size:24px; font-weight:800; color:var(--navy); letter-spacing:-.03em; line-height:1;}
+  .kpi .l{font-size:11.5px; color:var(--muted); margin-top:7px;}
+
+  /* horizontal & vertical flow */
+  .flow{display:flex; flex-wrap:wrap; align-items:stretch; gap:10px; margin:12px 0;}
+  .flow.tight{gap:6px;}
+  .step{flex:0 1 auto; background:#fff; border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:8px; padding:10px 13px; min-width:118px; box-shadow:var(--shadow);}
+  .step .t{font-weight:600; font-size:12.5px;}
+  .step .d{font-size:11px; color:var(--muted); margin-top:2px;}
+  .step.db{border-left-color:var(--purple);}
+  .step.ext{border-left-color:var(--amber);}
+  .step.ok{border-left-color:var(--green);}
+  .step.fail{border-left-color:var(--red);}
+  .step.legacy{border-left-color:var(--legacy); background:var(--legacy-bg);}
+  .arrow{display:flex; align-items:center; color:var(--faint); font-size:17px; font-weight:700; padding:0 1px;}
+  .flow.vertical{flex-direction:column; align-items:flex-start;}
+  .flow.vertical .arrow{transform:rotate(90deg); padding:1px 0; margin-left:46px;}
+  .flow.vertical .step{min-width:230px;}
+  .legend{display:flex; flex-wrap:wrap; gap:14px; margin-top:12px; font-size:11px; color:var(--muted);}
+  .legend span{display:inline-flex; align-items:center; gap:6px;}
+  .legend i{width:11px; height:11px; border-radius:3px; display:inline-block;}
+
+  /* branch row (success/fail) */
+  .branch{display:flex; flex-wrap:wrap; gap:14px; margin-top:12px;}
+  .branch .lane{flex:1 1 280px; border:1px solid var(--line); border-radius:8px; padding:12px 14px; background:#fff;}
+  .branch .lane.ok{border-top:3px solid var(--green);}
+  .branch .lane.fail{border-top:3px solid var(--red);}
+  .seqcodes{font-family:var(--mono); font-size:13px; font-weight:700; letter-spacing:.04em;}
+
+  /* tables */
+  table{width:100%; border-collapse:collapse; margin:14px 0; font-size:12.5px; background:#fff; border:1px solid var(--line); border-radius:10px; overflow:hidden;}
+  thead th{background:#f1f5fb; color:var(--navy-d); text-align:left; font-weight:700; font-size:11.5px; padding:11px 13px; border-bottom:1px solid var(--line);}
+  tbody td{padding:10px 13px; border-bottom:1px solid var(--line-2); vertical-align:top; color:#33424f;}
+  tbody tr:last-child td{border-bottom:0;}
+  tbody tr:nth-child(even){background:#fafcfe;}
+  td code,th code{background:#eef2f7;}
+  .center{text-align:center;}
+
+  /* inline tags / status chips */
+  .tag{display:inline-block; font-family:var(--mono); font-size:10.5px; font-weight:600; padding:2px 7px; border-radius:5px; border:1px solid;}
+  .tag.g{color:var(--green); background:var(--green-bg); border-color:var(--green-bd);}
+  .tag.a{color:var(--amber); background:var(--amber-bg); border-color:var(--amber-bd);}
+  .tag.r{color:var(--red); background:var(--red-bg); border-color:var(--red-bd);}
+  .tag.b{color:var(--navy); background:var(--blue-soft); border-color:#cfe0f6;}
+  .tag.p{color:var(--purple); background:var(--purple-bg); border-color:#dccff2;}
+  .chip{display:inline-flex; align-items:center; justify-content:center; min-width:26px; font-family:var(--mono); font-weight:700; font-size:12px; padding:2px 8px; border-radius:6px; border:1px solid;}
+  .chip.s9{color:var(--navy); background:var(--blue-soft); border-color:#cfe0f6;}
+  .chip.s6{color:var(--amber); background:var(--amber-bg); border-color:var(--amber-bd);}
+  .chip.s0{color:var(--green); background:var(--green-bg); border-color:var(--green-bd);}
+  .chip.s3{color:var(--red); background:var(--red-bg); border-color:var(--red-bd);}
+
+  /* callouts */
+  .callout{border-radius:10px; padding:13px 16px; margin:16px 0; border:1px solid; display:flex; gap:11px; align-items:flex-start;}
+  .callout .ic{font-size:16px; line-height:1.2;}
+  .callout.warn{background:var(--amber-bg); border-color:var(--amber-bd); color:#7a5208;}
+  .callout.stop{background:var(--red-bg); border-color:var(--red-bd); color:#8c2a1f;}
+  .callout.note{background:var(--blue-soft); border-color:#cfe0f6; color:#1d3f6b;}
+  .callout a{color:inherit; text-decoration:underline;}
+
+  /* checklist */
+  .checklist{column-count:2; column-gap:26px; margin:12px 0;}
+  .checklist label{display:flex; gap:9px; align-items:flex-start; padding:6px 0; break-inside:avoid; font-size:12.5px; color:#33424f;}
+  .checklist input{margin-top:2px; width:15px; height:15px; accent-color:var(--navy); flex-shrink:0;}
+
+  /* EFS integration cards */
+  .efs-grid{display:grid; grid-template-columns:repeat(2,1fr); gap:16px;}
+  .efs-card{background:#fff; border:1px solid var(--line); border-top:3px solid var(--amber); border-radius:10px; padding:15px 17px; box-shadow:var(--shadow);}
+  .efs-card .leg{font-family:var(--mono); font-size:16px; font-weight:800; color:var(--navy-d);}
+  .efs-card .ttl{font-size:12.5px; font-weight:600; color:var(--muted); margin-bottom:8px;}
+  .efs-card dl{display:grid; grid-template-columns:74px 1fr; gap:5px 10px; margin:0; font-size:12px;}
+  .efs-card dt{font-weight:700; color:var(--navy-d);}
+  .efs-card dd{margin:0; color:#33424f;}
+
+  /* sequence diagram */
+  .seq{background:#fff; border:1px solid var(--line); border-radius:10px; padding:6px 18px 12px; box-shadow:var(--shadow);}
+  .seq-step{display:grid; grid-template-columns:30px 1fr; gap:12px; padding:9px 0; border-bottom:1px dashed var(--line-2); align-items:start;}
+  .seq-step:last-child{border-bottom:0;}
+  .seq-step .n{width:24px; height:24px; border-radius:50%; background:var(--navy); color:#fff; font-family:var(--mono); font-size:11px; font-weight:700; display:flex; align-items:center; justify-content:center; margin-top:1px;}
+  .seq-lane{font-family:var(--mono); font-size:11.5px; font-weight:600;}
+  .seq-lane .from{color:var(--navy);} .seq-lane .to{color:var(--amber);} .seq-lane .ar{color:var(--faint); padding:0 4px;}
+  .seq-msg{font-size:12px; color:var(--muted); margin-top:2px;}
+
+  /* decision tree (troubleshooting) */
+  .dtree{display:flex; flex-direction:column; gap:0; margin-top:6px;}
+  .dstep{display:flex; flex-wrap:wrap; align-items:center; gap:10px;}
+  .dcond{background:#fff; border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:8px; padding:9px 13px; font-weight:600; font-size:12.5px; box-shadow:var(--shadow);}
+  .dno{font-size:11.5px; color:var(--red); background:var(--red-bg); border:1px solid var(--red-bd); border-radius:6px; padding:5px 10px;}
+  .dno b{font-family:var(--mono);}
+  .dvert{color:var(--green); font-weight:700; padding:4px 0 4px 18px; font-size:12px;}
+  .dend{background:var(--green-bg); border:1px solid var(--green-bd); color:#13694a; border-radius:8px; padding:9px 13px; font-weight:600; font-size:12.5px; align-self:flex-start;}
+
+  /* source / appendix list */
+  .srclist{list-style:none; margin:8px 0 0; padding:0; columns:2; column-gap:26px;}
+  .srclist li{padding:6px 0; font-size:12.5px; break-inside:avoid;}
+  .srclist .mono{font-size:11px; color:var(--muted); display:block;}
+
+  footer{padding:28px 0 56px; color:var(--faint); font-size:11.5px;}
+  footer .wrap{display:flex; flex-wrap:wrap; gap:6px 18px; justify-content:space-between;}
+
+  @media (max-width:880px){
+    .grid-2,.grid-3,.kpis,.efs-grid{grid-template-columns:1fr;}
+    .checklist,.srclist{column-count:1; columns:1;}
+    .hero h1{font-size:23px;}
+  }
+  @media print{
+    body{background:#fff;}
+    nav.toc{display:none;}
+    header.hero{background:#fff!important; color:var(--ink); border-bottom:2px solid var(--navy);}
+    .hero .kicker,.hero .sub,.hero .sub .kr,.hero-meta{color:var(--muted);}
+    .badge{color:var(--ink)!important; border-color:var(--line)!important; background:#f2f5f9!important;}
+    .card,.kpi,.step,table,.seq,.efs-card{box-shadow:none;}
+    section{padding:16px 0; break-inside:avoid;}
+    a{color:var(--ink); text-decoration:none;}
+    *{-webkit-print-color-adjust:exact; print-color-adjust:exact;}
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ HEADER ============ -->
+<header class="hero">
+  <div class="wrap">
+    <div class="kicker">인수인계 · Handover &amp; Operational Playbook</div>
+    <h1>WeCMS Batch — Firm-Banking Dispatch</h1>
+    <div class="sub">Legacy JEX Batch → Spring Boot Event-Driven Architecture <span class="kr">· 펌뱅킹 디스패치 처리 흐름 인수인계</span></div>
+    <div class="badges">
+      <span class="badge ok">Code-complete</span>
+      <span class="badge info">Backend only</span>
+      <span class="badge warn">Inert by default</span>
+      <span class="badge stop">Not SIT/PROD active unless feature flags enabled</span>
+    </div>
+    <div class="hero-meta">
+      <span>Module: payment · com.kosign.wecms.domain.payment.dispatch</span>
+      <span>Spring Boot 3.5.13 · Java 21</span>
+      <span>Prepared 2026-06-24</span>
+      <span>A developer should understand the whole system from this document without reading source.</span>
+    </div>
+  </div>
+</header>
+
+<!-- ============ TOC ============ -->
+<nav class="toc">
+  <div class="wrap">
+    <a href="#s1">1·Overview</a>
+    <a href="#s2">2·Business Process</a>
+    <a href="#s3">3·Legacy JEX</a>
+    <a href="#s4">4·Spring Arch</a>
+    <a href="#s5">5·Real-time</a>
+    <a href="#s6">6·FX</a>
+    <a href="#s7">7·File Transfer</a>
+    <a href="#s8">8·Callbacks</a>
+    <a href="#s9">9·Result Check</a>
+    <a href="#s10">10·Status Matrix</a>
+    <a href="#s11">11·Database</a>
+    <a href="#s12">12·EFS</a>
+    <a href="#s13">13·Sequence</a>
+    <a href="#s14">14·Config</a>
+    <a href="#s15">15·Deployment</a>
+    <a href="#s16">16·Troubleshooting</a>
+    <a href="#s17">17·Mapping</a>
+    <a href="#s18">18·Appendix</a>
+  </div>
+</nav>
+
+<main class="wrap">
+
+  <!-- ============ 1. EXECUTIVE OVERVIEW ============ -->
+  <section id="s1">
+    <div class="sec-no">01 — Executive Overview</div>
+    <h2>Purpose, scope &amp; status <span class="kr">개요</span></h2>
+    <p class="lead"><b>Purpose.</b> WeCMS Batch is the firm-banking <b>dispatch engine</b> — it delivers a committed WeCMS payment to the bank gateway (Coocon/EFS) and reconciles the outcome: building fixed-length deposit files, encrypting/signing envelopes, transferring over SFTP, processing inbound result callbacks, and writing the per-transfer and per-file audit trail.</p>
+    <p class="lead"><b>Scope.</b> Backend only, inside the single <code>wecms-api</code> deployable — there is no separate batch jar. Covers real-time transfer (EFS 202/204), file/bulk transfer (EFS 301/302 + callbacks), depositor inquiry (EFS 201), and the result-check sweep (EFS 203).</p>
+    <p class="lead"><b>Current status.</b> Code-complete and production-grade, but <b>inert by default</b>: six feature flags default OFF and the mock EFS/SFTP clients <b>throw</b> rather than fake success, so nothing dispatches until infrastructure is provisioned and SIT round-trips pass.</p>
+    <p class="lead"><b>Refactor summary.</b> A polling-based, JEX-runtime-coupled batch farm became event-driven Spring services. Real-time and bulk transfers fire on a Spring <code>afterCommit</code> hook; only the result-check sweep stays a scheduled job.</p>
+    <div class="card" style="margin-top:8px;">
+      <div class="flow vertical">
+        <div class="step legacy"><div class="t">Legacy JEX Batch</div><div class="d">polling · JSP · JexData · IDO</div></div>
+        <div class="arrow">→</div>
+        <div class="step ok"><div class="t">Spring Boot Event-Driven Architecture</div><div class="d">afterCommit · services · callbacks · 1 scheduler</div></div>
+      </div>
+    </div>
+    <div class="kpis">
+      <div class="kpi"><div class="n">5</div><div class="l">legacy batches replaced / absorbed</div></div>
+      <div class="kpi"><div class="n">6</div><div class="l">EFS gateway legs (201–302)</div></div>
+      <div class="kpi"><div class="n">1</div><div class="l">scheduler remaining (ResultCheckJob)</div></div>
+      <div class="kpi"><div class="n">0</div><div class="l">feature flags active by default</div></div>
+    </div>
+  </section>
+
+  <!-- ============ 2. END-TO-END BUSINESS PROCESS ============ -->
+  <section id="s2">
+    <div class="sec-no">02 — End-to-End Business Process</div>
+    <h2>From payment to completion <span class="kr">업무 흐름</span></h2>
+    <div class="card">
+      <div class="flow vertical">
+        <div class="step"><div class="t">Payment Created</div><div class="d">user uploads/enters a payment</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">Approval Complete</div><div class="d">approval line approves</div></div><div class="arrow">→</div>
+        <div class="step db"><div class="t">DB Commit</div><div class="d">payment row committed (PROC_STAT=9)</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">afterCommit Trigger</div><div class="d">*Registrar fires post-commit</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">Dispatch Service</div><div class="d">Realtime or Bulk</div></div><div class="arrow">→</div>
+        <div class="step ext"><div class="t">EFS / SFTP</div><div class="d">gateway transport + crypto</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">Callback</div><div class="d">01301 / 01302 (file path)</div></div><div class="arrow">→</div>
+        <div class="step db"><div class="t">Status Update</div><div class="d">PROC_STAT / PROC_STEP</div></div><div class="arrow">→</div>
+        <div class="step ok"><div class="t">Completed</div><div class="d">success / partial / fail</div></div>
+      </div>
+    </div>
+    <ul class="clean">
+      <li><b>Payment Created → Approval Complete.</b> Owned by the payment modules (internal-transfer, vendor, expense, payroll, overseas). Dispatch does not start until the payment is approved and committed.</li>
+      <li><b>DB Commit → afterCommit.</b> The dispatch trigger is a Spring <code>TransactionSynchronization</code> that runs <i>after</i> the payment transaction commits — never inside its uncommitted state. This is the core change from legacy polling.</li>
+      <li><b>Dispatch Service → EFS/SFTP.</b> Real-time targets call EFS directly; file batches build a fixed-length file, SFTP-upload it, then call EFS 301.</li>
+      <li><b>Callback → Status Update.</b> File completion is driven by inbound gateway callbacks (01301 then 01302); real-time completion is the 202 response (or the 203 result-check sweep for no-response cases).</li>
+    </ul>
+  </section>
+
+  <!-- ============ 3. LEGACY JEX ARCHITECTURE ============ -->
+  <section id="s3">
+    <div class="sec-no">03 — Legacy JEX Architecture</div>
+    <h2>The legacy batch farm <span class="kr">레거시 구조</span></h2>
+    <div class="card">
+      <div class="flow vertical">
+        <div class="step legacy"><div class="t">Scheduler</div><div class="d">external fixed timer</div></div><div class="arrow">→</div>
+        <div class="step legacy"><div class="t">JSP Batch</div><div class="d">status-column scan</div></div><div class="arrow">→</div>
+        <div class="step legacy"><div class="t">JexData</div><div class="d">untyped row container</div></div><div class="arrow">→</div>
+        <div class="step legacy"><div class="t">IDO XML</div><div class="d">XML-defined SQL</div></div><div class="arrow">→</div>
+        <div class="step legacy"><div class="t">Database</div><div class="d">TB_* tables</div></div><div class="arrow">→</div>
+        <div class="step legacy"><div class="t">EFS</div><div class="d">socket transport</div></div><div class="arrow">→</div>
+        <div class="step legacy"><div class="t">Callback JSP</div><div class="d">API1 / API2 _act.jsp</div></div>
+      </div>
+    </div>
+    <table>
+      <thead><tr><th>Legacy program</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td><code>WB_00000100</code></td><td>Depositor-name inquiry (synchronous; <code>IMO.WB_00000100.xml</code>)</td></tr>
+        <tr><td><code>NAPAS_REAL_TIME_BATCH</code></td><td>Poll waiting VND targets, push EFS 202 (+204 FX for Woori non-VND)</td></tr>
+        <tr><td><code>FILE_DEPOSIT_TRANSFER_BATCH1</code></td><td>Build fixed-length file, SFTP upload, request reception (EFS 301)</td></tr>
+        <tr><td><code>FILE_DEPOSIT_TRANSFER_BATCH2</code></td><td>After reception accepted, request execution (EFS 302)</td></tr>
+        <tr><td><code>PROCESSING_RESULT_CHECK_BATCH</code></td><td>Re-poll no-response 202s, reconcile via EFS 203</td></tr>
+      </tbody>
+    </table>
+    <p class="lead">Coupled to the JEX runtime (<code>JexData</code> / <code>JexConnection</code> / <code>JexContext</code>) and helpers <code>PymnHelper</code>, <code>util.SftpUtil</code>, <code>consts.WCConst</code>, <code>Deposit_Header/Data/Trailer</code> — hard to unit-test and observe. The programs lived in a separate JEX batch deployment (not in this workspace).</p>
+  </section>
+
+  <!-- ============ 4. SPRING ARCHITECTURE ============ -->
+  <section id="s4">
+    <div class="sec-no">04 — Spring Architecture</div>
+    <h2>Event-driven services <span class="kr">스프링 구조</span></h2>
+    <div class="card">
+      <div class="flow vertical">
+        <div class="step"><div class="t">afterCommit</div><div class="d">RealtimeDispatchRegistrar · DispatchAutoReceiveRegistrar</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">Dispatch Service</div><div class="d">RealtimeDispatchService · BulkReceptionService</div></div><div class="arrow">→</div>
+        <div class="step db"><div class="t">Repository</div><div class="d">TbFirmTranRepository + payment repos</div></div><div class="arrow">→</div>
+        <div class="step ext"><div class="t">EFS / SFTP</div><div class="d">EfsApiClient · JschSftpClient</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">Callback Controller</div><div class="d">BulkReception/ExecutionResultController</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">Result Service</div><div class="d">BulkReception/ExecutionResultService</div></div><div class="arrow">→</div>
+        <div class="step db"><div class="t">Database</div><div class="d">TB_FIRM_* / TB_PAY_*</div></div>
+      </div>
+      <div class="legend">
+        <span><i style="background:var(--accent)"></i> service / trigger</span>
+        <span><i style="background:var(--purple)"></i> database</span>
+        <span><i style="background:var(--amber)"></i> external (EFS/SFTP)</span>
+        <span><i style="background:var(--green)"></i> terminal status</span>
+        <span><i style="background:var(--legacy)"></i> legacy JEX</span>
+      </div>
+    </div>
+    <table>
+      <thead><tr><th>Layer</th><th>Spring component(s)</th></tr></thead>
+      <tbody>
+        <tr><td>Trigger</td><td><code>RealtimeDispatchRegistrar</code>, <code>DispatchAutoReceiveRegistrar</code></td></tr>
+        <tr><td>Scheduler</td><td><code>ResultCheckJob</code></td></tr>
+        <tr><td>Service</td><td><code>RealtimeDispatchService</code>, <code>RealtimeTransferService</code>, <code>BulkReceptionService</code>, <code>ResultCheckService</code>, <code>FirmBankingInquiryService</code></td></tr>
+        <tr><td>Callback</td><td><code>BulkReceptionResultController</code>, <code>BulkExecutionResultController</code> → <code>BulkReceptionResultService</code>, <code>BulkExecutionResultService</code></td></tr>
+        <tr><td>Gateway</td><td><code>EfsApiClient</code> → <code>RestClientEfsApiClient</code> / <code>MockEfsApiClient</code>; <code>EfsCryptoService</code></td></tr>
+        <tr><td>SFTP</td><td><code>SftpClient</code> → <code>JschSftpClient</code> / <code>MockSftpClient</code></td></tr>
+        <tr><td>Repository</td><td><code>TbFirmTranRepository</code> + payment dispatch repositories</td></tr>
+        <tr><td>File codec</td><td><code>FixedLengthCodec</code> (1000-byte H/D/T)</td></tr>
+        <tr><td>Key gen</td><td><code>DispatchKeyGenerator</code> → <code>LegacyFunctionRepository</code> → <code>wb_get_next_val</code></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ============ 5. REAL-TIME TRANSFER ============ -->
+  <section id="s5">
+    <div class="sec-no">05 — Real-Time Transfer Process</div>
+    <h2>Real-time dispatch <span class="kr">실시간 이체</span></h2>
+    <div class="card">
+      <div class="flow">
+        <div class="step db"><div class="t">TB_PAY_TARGET</div><div class="d">PROC_STAT=9</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">RealtimeDispatchService</div><div class="d">afterCommit, REQUIRES_NEW</div></div><div class="arrow">→</div>
+        <div class="step db"><div class="t">Insert TB_FIRM_TRAN</div><div class="d">PROC_STAT=6</div></div><div class="arrow">→</div>
+        <div class="step ext"><div class="t">EFS 202</div></div><div class="arrow">→</div>
+        <div class="step ok"><div class="t">Result</div></div>
+      </div>
+      <div class="branch">
+        <div class="lane ok"><h4>Success flow</h4><div class="seqcodes"><span class="chip s9">9</span> → <span class="chip s6">6</span> → <span class="chip s0">0</span></div><p style="margin:8px 0 0; font-size:12px; color:var(--muted);">RC <code>0000</code> → both <code>TB_FIRM_TRAN</code> and <code>TB_PAY_TARGET</code> set to <code>0</code> (U002). Balance (<code>BAL_AMT</code>) persisted from the 202 response.</p></div>
+        <div class="lane fail"><h4>Failure flow</h4><div class="seqcodes"><span class="chip s9">9</span> → <span class="chip s6">6</span> → <span class="chip s3">3</span></div><p style="margin:8px 0 0; font-size:12px; color:var(--muted);">Other RC → <code>3</code> FAIL. <code>G999</code> no-definitive-response → EFS 203 recovery; if still unresolved the row stays at <code>6</code> for the result-check sweep.</p></div>
+      </div>
+    </div>
+    <div class="grid-2" style="margin-top:14px;">
+      <div class="card"><h4>Services &amp; repositories</h4><ul class="clean">
+        <li><code>RealtimeDispatchRegistrar</code> — registers the afterCommit hook.</li>
+        <li><code>RealtimeDispatchService.dispatch(bizKey,tranDt,tranSeq)</code> — orchestration + status writes (<code>@Transactional(REQUIRES_NEW)</code>).</li>
+        <li><code>RealtimeTransferService.transfer(...)</code> — EFS 204/202/203 calls.</li>
+        <li><code>TbFirmTranRepository.existsByTranDtAndBizKeyAndTranSeq(...)</code> — idempotency guard.</li>
+      </ul></div>
+      <div class="card"><h4>DB writes &amp; API calls</h4><ul class="clean">
+        <li><code>TB_FIRM_TRAN</code> — insert at <code>PROC_STAT=6</code> (TRAN_TP=202), update to <code>0/3</code>.</li>
+        <li><code>TB_PAY_TARGET</code> — updated to the same terminal value (<code>0/3</code>); FX columns on 204 success.</li>
+        <li><code>TB_FIRM_BAT_API_TRAN</code> — per-leg API audit row.</li>
+        <li>EFS <b>202</b> (transfer), optional <b>204</b> (FX), <b>203</b> (recovery).</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <!-- ============ 6. FX PROCESSING ============ -->
+  <section id="s6">
+    <div class="sec-no">06 — FX Processing Flow</div>
+    <h2>Foreign-currency pre-rate <span class="kr">환율 처리</span></h2>
+    <div class="card">
+      <div class="flow">
+        <div class="step"><div class="t">Foreign Currency?</div><div class="d">Woori (970457) · non-VND</div></div><div class="arrow">→</div>
+        <div class="step ext"><div class="t">YES → EFS 204</div><div class="d">FX rate inquiry</div></div><div class="arrow">→</div>
+        <div class="step db"><div class="t">Save FX Rate</div><div class="d">TRAN_TP=204 row + TB_PAY_TARGET</div></div><div class="arrow">→</div>
+        <div class="step ext"><div class="t">EFS 202 Transfer</div></div>
+      </div>
+      <table>
+        <thead><tr><th>Column</th><th>Meaning</th><th>Written where</th></tr></thead>
+        <tbody>
+          <tr><td><code>DEP_CCY_CD</code></td><td>Deposit currency code</td><td><code>TB_FIRM_TRAN</code> (204 row, U005) + <code>TB_PAY_TARGET</code> (U002)</td></tr>
+          <tr><td><code>APL_EXC_RATE</code></td><td>Applied exchange rate</td><td>same</td></tr>
+          <tr><td><code>WITHD_AMT</code></td><td>Withdrawal amount</td><td>same</td></tr>
+          <tr><td><code>DEP_AMT</code></td><td>Deposit amount</td><td>same</td></tr>
+        </tbody>
+      </table>
+      <p class="lead" style="margin-bottom:0;"><code>RealtimeDispatchService.runFxInquiry()</code> allocates an independent <code>TRAN_SEQ</code>, inserts the <code>TRAN_TP='204'</code> row at <code>PROC_STAT='6'</code>, runs the 204, on success writes the four FX columns to both the 204 row and <code>TB_PAY_TARGET</code>; on failure sets <code>'3'</code> and skips the 202. VND / non-Woori transfers skip this step entirely.</p>
+    </div>
+  </section>
+
+  <!-- ============ 7. FILE TRANSFER ============ -->
+  <section id="s7">
+    <div class="sec-no">07 — File Transfer Process</div>
+    <h2>File / bulk dispatch <span class="kr">파일 이체</span></h2>
+    <div class="card">
+      <div class="flow vertical">
+        <div class="step db"><div class="t">TB_PAY_FILE_MST</div><div class="d">PROC_STAT=9</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">BulkReceptionService.receive()</div><div class="d">afterCommit; load TB_FIRM_CONF</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">Fixed-Length File</div><div class="d">FixedLengthCodec.encode (1000-byte H/D/T)</div></div><div class="arrow">→</div>
+        <div class="step ext"><div class="t">SFTP Upload</div><div class="d">JschSftpClient → remote sdata</div></div><div class="arrow">→</div>
+        <div class="step ext"><div class="t">EFS 301</div><div class="d">reception request</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">01301 Callback</div><div class="d">reconcile + inline EFS 302</div></div><div class="arrow">→</div>
+        <div class="step ext"><div class="t">EFS 302</div><div class="d">execution request (inline)</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">01302 Callback</div><div class="d">download + parse result file</div></div><div class="arrow">→</div>
+        <div class="step ok"><div class="t">Final Status</div><div class="d">PROC_STAT 0/1/3</div></div>
+      </div>
+    </div>
+    <div class="grid-2" style="margin-top:14px;">
+      <div class="card"><h4>Split / branch division</h4><p style="margin:0; font-size:12px; color:var(--muted);">Legacy C5: when <code>TB_FIRM_CONF.BAT_TRAN_BRANCH_DIV='Y'</code> and request count &gt; limit, <code>calculateBatchDivision</code> splits into <code>ceil(reqCnt/limit)</code> files, each with its own round / <code>FIRM_FILE_NM</code> / MST / DATA / SFTP / 301. <code>limit ≤ 0</code> degrades safely to a single file.</p></div>
+      <div class="card"><h4>File generation &amp; SFTP</h4><p style="margin:0; font-size:12px; color:var(--muted);">Detail rows are Vietnamese-tone-normalized (<code>VietnameseText.replaceTone</code>) before encode. SFTP/EFS failure marks the file FAIL and breaks the per-file loop (legacy R004 parity) — never rethrown into the payment tx. The <code>move</code> step (to <code>rdata/success</code>) is best-effort.</p></div>
+    </div>
+  </section>
+
+  <!-- ============ 8. CALLBACK LOGIC ============ -->
+  <section id="s8">
+    <div class="sec-no">08 — Callback Logic</div>
+    <h2>Inbound EFS callbacks <span class="kr">콜백 처리</span></h2>
+    <div class="grid-2">
+      <div class="card">
+        <h4>01301 — Reception (BulkReceptionResultService)</h4>
+        <div class="flow vertical">
+          <div class="step"><div class="t">Callback</div><div class="d">POST /…/bulk-reception-result</div></div><div class="arrow">→</div>
+          <div class="step"><div class="t">Verify EV / VV</div></div><div class="arrow">→</div>
+          <div class="step"><div class="t">Reconcile count / amount</div></div><div class="arrow">→</div>
+          <div class="step db"><div class="t">Update TB_FIRM_FILE_MST</div><div class="d">PROC_STEP 0→1</div></div><div class="arrow">→</div>
+          <div class="step ext"><div class="t">Request EFS 302</div><div class="d">issueExecutionInline()</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <h4>01302 — Execution (BulkExecutionResultService)</h4>
+        <div class="flow vertical">
+          <div class="step"><div class="t">Callback</div><div class="d">POST /…/bulk-execution-result</div></div><div class="arrow">→</div>
+          <div class="step"><div class="t">Verify EV / VV</div></div><div class="arrow">→</div>
+          <div class="step ext"><div class="t">Download Result File (SFTP)</div></div><div class="arrow">→</div>
+          <div class="step"><div class="t">Parse → TB_FIRM_FILE_RSLT</div></div><div class="arrow">→</div>
+          <div class="step db"><div class="t">Update Result</div><div class="d">TB_FIRM_FILE_DATA + TB_PAY_FILE_DATA</div></div><div class="arrow">→</div>
+          <div class="step ok"><div class="t">Finalize Payment</div><div class="d">TB_PAY_FILE_MST 0/1/3</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="callout note"><span class="ic">ℹ</span><div>Both callbacks are <b>VV-verified before decrypt</b>. A count/amount mismatch on 01301 marks the file FAIL (<code>REG_RSLT_CD='9999'</code>) and suppresses the 302. A malformed result file on 01302 <b>throws</b> → tx rollback → replayable at <code>PROC_STEP=2</code>. Controllers are unauthenticated, protected by VV crypto + <code>CallbackIpWhitelistFilter</code> (pre-deploy gate R-03).</div></div>
+  </section>
+
+  <!-- ============ 9. RESULT CHECK SCHEDULER ============ -->
+  <section id="s9">
+    <div class="sec-no">09 — Result Check Scheduler</div>
+    <h2>The only scheduler <span class="kr">결과 조회 스케줄러</span></h2>
+    <div class="card">
+      <div class="flow">
+        <div class="step"><div class="t">ResultCheckJob</div><div class="d">@Scheduled</div></div><div class="arrow">→</div>
+        <div class="step"><div class="t">ShedLock</div><div class="d">single node</div></div><div class="arrow">→</div>
+        <div class="step db"><div class="t">TB_FIRM_TRAN</div><div class="d">TRAN_TP='202' · PROC_STAT='6'</div></div><div class="arrow">→</div>
+        <div class="step ext"><div class="t">EFS 203</div></div><div class="arrow">→</div>
+        <div class="step db"><div class="t">Update Result</div><div class="d">TB_FIRM_TRAN 6→0/3 + TB_PAY_TARGET</div></div>
+      </div>
+    </div>
+    <div class="grid-3" style="margin-top:14px;">
+      <div class="card"><h4>Cron</h4><p style="margin:0; font-size:12px; color:var(--muted);"><code>@Scheduled(cron="${wecms.dispatch.result-check.cron:-}", zone="Asia/Ho_Chi_Minh")</code>. Default <code>"-"</code> = never fires. ~1 min when enabled.</p></div>
+      <div class="card"><h4>Locking</h4><p style="margin:0; font-size:12px; color:var(--muted);"><code>@SchedulerLock(name="ResultCheckJob.run", lockAtMostFor="PT2M", lockAtLeastFor="PT5S")</code>; <code>JdbcTemplateLockProvider</code> (<code>.usingDbTime()</code>) on the <code>shedlock</code> table.</p></div>
+      <div class="card"><h4>Retry behavior</h4><p style="margin:0; font-size:12px; color:var(--muted);">No per-row retry — a still-pending row stays at <code>PROC_STAT='6'</code> and is re-examined next tick. Selects today + &gt; 2 min old.</p></div>
+    </div>
+    <div class="callout warn"><span class="ic">⚠</span><div><b>Disabled by default.</b> Do not enable before SIT validation. Known day-boundary edge case in the same-day + <code>HHmmss</code> filter — apply the timestamp-range fix before enabling the cron in PROD.</div></div>
+  </section>
+
+  <!-- ============ 10. STATUS TRANSITION MATRIX ============ -->
+  <section id="s10">
+    <div class="sec-no">10 — Status Transition Matrix</div>
+    <h2>State machines <span class="kr">상태 전이</span></h2>
+    <div class="grid-3">
+      <div class="card">
+        <h4>TB_PAY_TARGET.PROC_STAT</h4>
+        <table style="margin-top:4px;">
+          <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><span class="chip s9">9</span></td><td>Waiting</td></tr>
+            <tr><td><span class="chip s6">6</span></td><td>Processing (requested)</td></tr>
+            <tr><td><span class="chip s0">0</span></td><td>Success</td></tr>
+            <tr><td><span class="chip s3">3</span></td><td>Fail</td></tr>
+          </tbody>
+        </table>
+        <p class="seqcodes" style="margin:6px 0 0;"><span class="chip s9">9</span>→<span class="chip s6">6</span>→<span class="chip s0">0</span> &nbsp;|&nbsp; <span class="chip s9">9</span>→<span class="chip s6">6</span>→<span class="chip s3">3</span></p>
+      </div>
+      <div class="card">
+        <h4>TB_FIRM_TRAN.PROC_STAT</h4>
+        <table style="margin-top:4px;">
+          <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><span class="chip s6">6</span></td><td>Requested</td></tr>
+            <tr><td><span class="chip s0">0</span></td><td>Success</td></tr>
+            <tr><td><span class="chip s3">3</span></td><td>Fail</td></tr>
+          </tbody>
+        </table>
+        <p class="seqcodes" style="margin:6px 0 0;">insert <span class="chip s6">6</span> → <span class="chip s0">0</span> / <span class="chip s3">3</span></p>
+        <p style="margin:6px 0 0; font-size:11px; color:var(--muted);">Per TRAN_TP 201 / 202 / 204.</p>
+      </div>
+      <div class="card">
+        <h4>TB_FIRM_FILE_MST.PROC_STEP</h4>
+        <table style="margin-top:4px;">
+          <thead><tr><th>Step</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><span class="chip s6">0</span></td><td>REQ (built/uploaded/301)</td></tr>
+            <tr><td><span class="chip s6">1</span></td><td>REQ_RECV (01301 ok)</td></tr>
+            <tr><td><span class="chip s6">2</span></td><td>DEPO_REQ (302 sent)</td></tr>
+            <tr><td><span class="chip s0">3</span></td><td>DEPO_RES_RECV (01302)</td></tr>
+          </tbody>
+        </table>
+        <p class="seqcodes" style="margin:6px 0 0;"><span class="chip s6">0</span>→<span class="chip s6">1</span>→<span class="chip s6">2</span>→<span class="chip s0">3</span></p>
+        <p style="margin:6px 0 0; font-size:11px; color:var(--muted);">Pay-file then finalizes to <span class="chip s0">0</span>/<span class="chip s6">1</span>/<span class="chip s3">3</span>.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 11. DATABASE FLOW ============ -->
+  <section id="s11">
+    <div class="sec-no">11 — Database Flow</div>
+    <h2>Tables &amp; CRUD ownership <span class="kr">데이터 흐름</span></h2>
+    <div class="grid-2">
+      <div class="card"><h4>Real-time</h4>
+        <div class="flow vertical">
+          <div class="step db"><div class="t">TB_PAY_TARGET</div></div><div class="arrow">→</div>
+          <div class="step db"><div class="t">TB_FIRM_TRAN</div></div><div class="arrow">→</div>
+          <div class="step db"><div class="t">TB_FIRM_BAT_API_TRAN</div></div><div class="arrow">→</div>
+          <div class="step ext"><div class="t">EFS</div></div>
+        </div>
+      </div>
+      <div class="card"><h4>File / bulk</h4>
+        <div class="flow vertical">
+          <div class="step db"><div class="t">TB_PAY_FILE_MST</div></div><div class="arrow">→</div>
+          <div class="step db"><div class="t">TB_PAY_FILE_DATA</div></div><div class="arrow">→</div>
+          <div class="step db"><div class="t">TB_FIRM_FILE_MST</div></div><div class="arrow">→</div>
+          <div class="step db"><div class="t">TB_FIRM_FILE_DATA</div></div><div class="arrow">→</div>
+          <div class="step db"><div class="t">TB_FIRM_FILE_RSLT</div></div>
+        </div>
+      </div>
+    </div>
+    <table>
+      <thead><tr><th>Table</th><th>Role</th><th class="center">R</th><th class="center">I</th><th class="center">U</th></tr></thead>
+      <tbody>
+        <tr><td><code>TB_PAY_TARGET</code></td><td>Real-time queue row; PROC_STAT 9→6→0/3</td><td class="center">✔</td><td class="center">—</td><td class="center">✔</td></tr>
+        <tr><td><code>TB_FIRM_TRAN</code></td><td>Per-transfer gateway log (201/202/204)</td><td class="center">✔</td><td class="center">✔</td><td class="center">✔</td></tr>
+        <tr><td><code>TB_PAY_FILE_MST</code></td><td>File-path header; finalized 0/1/3</td><td class="center">✔</td><td class="center">—</td><td class="center">✔</td></tr>
+        <tr><td><code>TB_PAY_FILE_DATA</code></td><td>File-path beneficiary lines; result reflected</td><td class="center">✔</td><td class="center">—</td><td class="center">✔</td></tr>
+        <tr><td><code>TB_FIRM_FILE_MST</code></td><td>Dispatch file header; PROC_STEP 0→3</td><td class="center">✔</td><td class="center">✔</td><td class="center">✔</td></tr>
+        <tr><td><code>TB_FIRM_FILE_DATA</code></td><td>Dispatch detail lines (tone-normalized)</td><td class="center">✔</td><td class="center">✔</td><td class="center">✔</td></tr>
+        <tr><td><code>TB_FIRM_FILE_RSLT</code></td><td>Gateway result rows from 01302</td><td class="center">—</td><td class="center">✔</td><td class="center">—</td></tr>
+        <tr><td><code>TB_FIRM_BAT_API_TRAN</code></td><td>Per-leg API audit (before call + RC)</td><td class="center">—</td><td class="center">✔</td><td class="center">✔</td></tr>
+        <tr><td><code>TB_VAN_API_INFO</code></td><td>Per-VAN API key (throws until seeded — B2)</td><td class="center">✔</td><td class="center">—</td><td class="center">—</td></tr>
+        <tr><td><code>TB_FIRM_CONF</code></td><td>Per-tenant config (owned by settings)</td><td class="center">✔</td><td class="center">—</td><td class="center">—</td></tr>
+      </tbody>
+    </table>
+    <p class="lead" style="margin-bottom:0;">Per-table columns/relationships in <a href="database-schema.md">database-schema.md</a>; DDL parity in <a href="../../references/database/payment/firm-banking-dispatch-schema.md">firm-banking-dispatch-schema.md</a>. (<code>TB_BATCH_SCHEDULE_INFO/_DTL</code> entities exist but are not yet consumed.)</p>
+  </section>
+
+  <!-- ============ 12. EFS INTEGRATION ============ -->
+  <section id="s12">
+    <div class="sec-no">12 — EFS Integration Flow</div>
+    <h2>The six gateway legs <span class="kr">EFS 연동</span></h2>
+    <p class="lead">All legs route through <code>EfsApiClient.send(EFS_xxx, envelope)</code> → <code>/WGVN_EFS_xxx.jct</code>. The request is an AES-256/CBC EV envelope + HMAC-SHA256 VV signature carrying the partner <code>ID</code>; the response carries a result code (<code>FirmBankingResultCd</code>). The real client activates only when <code>efs.enabled=true</code>; otherwise the mock throws.</p>
+    <div class="efs-grid">
+      <div class="efs-card"><div class="leg">EFS 201</div><div class="ttl">Depositor-name inquiry</div>
+        <dl><dt>Purpose</dt><dd>Verify beneficiary account holder name</dd><dt>Request</dt><dd>EV/VV envelope, account + bank</dd><dt>Response</dt><dd>depositor name + RC</dd><dt>Service</dt><dd><code>RecipientLookupService</code></dd><dt>Result</dt><dd><code>TB_FIRM_TRAN</code> TRAN_TP=201 (C001/U002)</dd></dl>
+      </div>
+      <div class="efs-card"><div class="leg">EFS 202</div><div class="ttl">Real-time transfer</div>
+        <dl><dt>Purpose</dt><dd>Execute a single real-time transfer</dd><dt>Request</dt><dd>transfer fields + (FX from 204)</dd><dt>Response</dt><dd>RC + <code>BAL_AMT</code> balance</dd><dt>Service</dt><dd><code>RealtimeTransferService</code></dd><dt>Result</dt><dd><code>TB_FIRM_TRAN</code>/<code>TB_PAY_TARGET</code> → 0/3</dd></dl>
+      </div>
+      <div class="efs-card"><div class="leg">EFS 203</div><div class="ttl">Result inquiry</div>
+        <dl><dt>Purpose</dt><dd>Reconcile a no-response 202</dd><dt>Request</dt><dd>original transfer key</dd><dt>Response</dt><dd>final RC</dd><dt>Service</dt><dd><code>ResultCheckService</code> (+ G999 recovery)</dd><dt>Result</dt><dd><code>TB_FIRM_TRAN</code> 6→0/3</dd></dl>
+      </div>
+      <div class="efs-card"><div class="leg">EFS 204</div><div class="ttl">Woori FX pre-rate</div>
+        <dl><dt>Purpose</dt><dd>Get FX rate before a non-VND Woori transfer</dd><dt>Request</dt><dd>currency pair + amount</dd><dt>Response</dt><dd><code>APL_EXC_RATE</code>, <code>DEP_AMT</code>, …</dd><dt>Service</dt><dd><code>RealtimeDispatchService.runFxInquiry</code></dd><dt>Result</dt><dd><code>TB_FIRM_TRAN</code> TRAN_TP=204 + FX cols</dd></dl>
+      </div>
+      <div class="efs-card"><div class="leg">EFS 301</div><div class="ttl">Bulk reception request</div>
+        <dl><dt>Purpose</dt><dd>Request reception of the uploaded file</dd><dt>Request</dt><dd>file header + aggregate count/amount</dd><dt>Response</dt><dd>accept ack (then 01301 callback)</dd><dt>Service</dt><dd><code>BulkReceptionService</code></dd><dt>Result</dt><dd><code>TB_FIRM_FILE_MST</code> PROC_STEP=0; audit row</dd></dl>
+      </div>
+      <div class="efs-card"><div class="leg">EFS 302</div><div class="ttl">Bulk execution request</div>
+        <dl><dt>Purpose</dt><dd>Request execution after reception accepted</dd><dt>Request</dt><dd>accepted file reference</dd><dt>Response</dt><dd>ack (then 01302 callback)</dd><dt>Service</dt><dd><code>BulkReceptionResultService.issueExecutionInline</code></dd><dt>Result</dt><dd><code>TB_FIRM_FILE_MST</code> PROC_STEP 1→2</dd></dl>
+      </div>
+    </div>
+    <div class="callout note"><span class="ic">ℹ</span><div>Result codes (<code>FirmBankingResultCd</code>): <code>0000</code> SUCC · <code>0001</code> NO_FOUND · <code>9999</code> AMT_ERR · <code>G001/G002</code> input missing · <code>G003</code> ENC_VRFY_ERR · <code>G004</code> DB_ERR · <code>G998</code> TARGET_STAT_ERR · <code>G999</code> ETC_ERR.</div></div>
+  </section>
+
+  <!-- ============ 13. SEQUENCE DIAGRAMS ============ -->
+  <section id="s13">
+    <div class="sec-no">13 — Sequence Diagrams</div>
+    <h2>Ordered interactions <span class="kr">시퀀스</span></h2>
+    <div class="grid-2">
+      <div>
+        <h3 style="margin-top:0;">Real-time sequence</h3>
+        <div class="seq">
+          <div class="seq-step"><div class="n">1</div><div><div class="seq-lane"><span class="from">Payment</span><span class="ar">▸</span><span class="to">afterCommit</span></div><div class="seq-msg">tx commits → registrar fires</div></div></div>
+          <div class="seq-step"><div class="n">2</div><div><div class="seq-lane"><span class="from">Dispatch</span><span class="ar">▸</span><span class="to">DB</span></div><div class="seq-msg">insert TB_FIRM_TRAN @ PROC_STAT=6</div></div></div>
+          <div class="seq-step"><div class="n">3</div><div><div class="seq-lane"><span class="from">Dispatch</span><span class="ar">▸</span><span class="to">EFS</span></div><div class="seq-msg">EFS 204 (FX, optional) → EFS 202 transfer</div></div></div>
+          <div class="seq-step"><div class="n">4</div><div><div class="seq-lane"><span class="from">EFS</span><span class="ar">▸</span><span class="to">Dispatch</span></div><div class="seq-msg">RC 0000 / G999 / other</div></div></div>
+          <div class="seq-step"><div class="n">5</div><div><div class="seq-lane"><span class="from">Dispatch</span><span class="ar">▸</span><span class="to">DB</span></div><div class="seq-msg">update TB_FIRM_TRAN + TB_PAY_TARGET → 0/3</div></div></div>
+        </div>
+      </div>
+      <div>
+        <h3 style="margin-top:0;">File sequence</h3>
+        <div class="seq">
+          <div class="seq-step"><div class="n">1</div><div><div class="seq-lane"><span class="from">File</span><span class="ar">▸</span><span class="to">BulkReception</span></div><div class="seq-msg">afterCommit → build fixed-length file</div></div></div>
+          <div class="seq-step"><div class="n">2</div><div><div class="seq-lane"><span class="from">BulkReception</span><span class="ar">▸</span><span class="to">SFTP/EFS</span></div><div class="seq-msg">SFTP upload → EFS 301</div></div></div>
+          <div class="seq-step"><div class="n">3</div><div><div class="seq-lane"><span class="from">EFS</span><span class="ar">▸</span><span class="to">Callback</span></div><div class="seq-msg">01301 → verify, reconcile, inline EFS 302</div></div></div>
+          <div class="seq-step"><div class="n">4</div><div><div class="seq-lane"><span class="from">EFS</span><span class="ar">▸</span><span class="to">Callback</span></div><div class="seq-msg">01302 → SFTP download + parse result</div></div></div>
+          <div class="seq-step"><div class="n">5</div><div><div class="seq-lane"><span class="from">Callback</span><span class="ar">▸</span><span class="to">DB</span></div><div class="seq-msg">write RSLT, reflect data, finalize TB_PAY_FILE_MST</div></div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 14. CONFIGURATION ============ -->
+  <section id="s14">
+    <div class="sec-no">14 — Configuration</div>
+    <h2>Feature flags <span class="kr">설정</span></h2>
+    <table>
+      <thead><tr><th>Property</th><th>Purpose</th><th>Default</th></tr></thead>
+      <tbody>
+        <tr><td><code>wecms.dispatch.auto-receive</code></td><td>Enable file dispatch trigger</td><td><span class="tag r">false</span></td></tr>
+        <tr><td><code>wecms.dispatch.realtime-dispatch</code></td><td>Enable real-time dispatch</td><td><span class="tag r">false</span></td></tr>
+        <tr><td><code>wecms.dispatch.recipient-inquiry</code></td><td>Enable depositor inquiry (EFS 201)</td><td><span class="tag r">false</span></td></tr>
+        <tr><td><code>wecms.dispatch.result-check.cron</code></td><td>Enable result-check scheduler</td><td><span class="tag r">"-"</span></td></tr>
+        <tr><td><code>wecms.dispatch.efs.enabled</code></td><td>Enable real EFS client (else mock throws)</td><td><span class="tag r">false</span></td></tr>
+        <tr><td><code>wecms.dispatch.sftp.enabled</code></td><td>Enable real SFTP client (else mock throws)</td><td><span class="tag r">false</span></td></tr>
+      </tbody>
+    </table>
+    <div class="callout stop"><span class="ic">⛔</span><div><b>All dispatch features are inert by default.</b> Do not enable in SIT/UAT/PROD without infrastructure validation. Enable EFS + SFTP I/O first (mocks proven to throw), then the triggers, then the cron — one leg at a time. Supporting config: <code>efs.base-url</code>, <code>efs.partner-id</code>, <code>sftp.host/port/private-key-path</code>, <code>callback.allowed-ips</code>. See <a href="deployment-guide.md">deployment-guide.md</a>.</div></div>
+  </section>
+
+  <!-- ============ 15. DEPLOYMENT & ACTIVATION ============ -->
+  <section id="s15">
+    <div class="sec-no">15 — Deployment &amp; Activation</div>
+    <h2>Build &amp; per-environment activation <span class="kr">배포 · 활성화</span></h2>
+    <div class="card">
+      <h4>Build &amp; run</h4>
+      <p style="margin:0; font-size:12px; color:var(--muted);">Spring Boot 3.5.13 · Java 21 · WAR packaging (no separate batch jar). <code>./gradlew build</code> · <code>./gradlew bootRun --args='--spring.profiles.active=local'</code>. SIT/UAT/PROD DB is Flyway-off (<code>ddl-auto: validate</code>) — DDL/seed applied by a DBA by hand.</p>
+    </div>
+    <div class="grid-3" style="margin-top:14px;">
+      <div class="card"><h4>SIT</h4><div class="checklist" style="column-count:1;">
+        <label><input type="checkbox">B1 EFS base-url + partner-id</label>
+        <label><input type="checkbox">B2 TB_VAN_API_INFO seeded</label>
+        <label><input type="checkbox">B4 SFTP host/key/paths</label>
+        <label><input type="checkbox">B7 callback firewall + IP allow-list</label>
+        <label><input type="checkbox">I5 TB_FIRM_CONF rows</label>
+        <label><input type="checkbox">B5 byte-parity verified</label>
+        <label><input type="checkbox">V1–V6 round-trips</label>
+      </div></div>
+      <div class="card"><h4>UAT</h4><div class="checklist" style="column-count:1;">
+        <label><input type="checkbox">All SIT items on UAT gateway</label>
+        <label><input type="checkbox">Shinhan/Woori bank-code override ported</label>
+        <label><input type="checkbox">PO decision on deferred gates</label>
+        <label><input type="checkbox">Coexistence with legacy confirmed</label>
+        <label><input type="checkbox">V1–V6 re-run on UAT</label>
+      </div></div>
+      <div class="card"><h4>PROD</h4><div class="checklist" style="column-count:1;">
+        <label><input type="checkbox">All UAT items green</label>
+        <label><input type="checkbox">Result-check day-boundary fix applied</label>
+        <label><input type="checkbox">Operating-hours/channel-mix (if required)</label>
+        <label><input type="checkbox">Firewall locked to gateway IPs (R-03)</label>
+        <label><input type="checkbox">Monitoring in place</label>
+        <label><input type="checkbox">Enable flags one leg at a time</label>
+      </div></div>
+    </div>
+    <div class="callout warn"><span class="ic">⚠</span><div>Blocking gates before any non-local deploy: <b>R-03</b> (callback network protection) and the <b>Shinhan(970424)/Woori(970457) bank-code override</b>. Authoritative list: <a href="../../audits/wecms-batch-full-legacy-vs-refactor-final-gap-audit.md">final gap audit</a>.</div></div>
+  </section>
+
+  <!-- ============ 16. TROUBLESHOOTING ============ -->
+  <section id="s16">
+    <div class="sec-no">16 — Troubleshooting Flow</div>
+    <h2>Diagnostic decision trees <span class="kr">문제 해결</span></h2>
+    <div class="grid-2">
+      <div class="card">
+        <h4>EFS 202 not triggered</h4>
+        <div class="dtree">
+          <div class="dstep"><div class="dcond">realtime-dispatch enabled?</div><div class="dno">NO → set <b>realtime-dispatch=true</b></div></div>
+          <div class="dvert">↓ YES</div>
+          <div class="dstep"><div class="dcond">efs.enabled = true?</div><div class="dno">NO → mock throws; enable EFS</div></div>
+          <div class="dvert">↓ YES</div>
+          <div class="dstep"><div class="dcond">afterCommit logged?</div><div class="dno">NO → check registrar wiring</div></div>
+          <div class="dvert">↓ YES</div>
+          <div class="dstep"><div class="dcond">TB_FIRM_CONF row exists?</div><div class="dno">NO → seed config (I5)</div></div>
+          <div class="dvert">↓ YES</div>
+          <div class="dstep"><div class="dend">Check TB_PAY_TARGET still = 9 → inspect gateway RC</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <h4>SFTP upload failed</h4>
+        <div class="dtree">
+          <div class="dstep"><div class="dcond">sftp.enabled = true?</div><div class="dno">NO → mock throws; enable SFTP</div></div>
+          <div class="dvert">↓ YES</div>
+          <div class="dstep"><div class="dcond">host / port (3300) reachable?</div><div class="dno">NO → firewall / network</div></div>
+          <div class="dvert">↓ YES</div>
+          <div class="dstep"><div class="dcond">private key present &amp; readable?</div><div class="dno">NO → fix private-key-path (B4)</div></div>
+          <div class="dvert">↓ YES</div>
+          <div class="dstep"><div class="dend">Verify remote upload path (sdata) writable</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <h4>Callback not received</h4>
+        <div class="dtree">
+          <div class="dstep"><div class="dcond">callback URL registered with VAN?</div><div class="dno">NO → register endpoints</div></div>
+          <div class="dvert">↓ YES</div>
+          <div class="dstep"><div class="dcond">inbound firewall open (B7)?</div><div class="dno">NO → open firewall</div></div>
+          <div class="dvert">↓ YES</div>
+          <div class="dstep"><div class="dcond">source IP in allow-list?</div><div class="dno">NO → add to callback.allowed-ips</div></div>
+          <div class="dvert">↓ YES</div>
+          <div class="dstep"><div class="dend">Check EV/VV verify (WBE_EFS_VERIFY_FAILED) + key match</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <h4>Result check / Gateway issue</h4>
+        <div class="dtree">
+          <div class="dstep"><div class="dcond">cron set (not "-")?</div><div class="dno">NO → set a real cron</div></div>
+          <div class="dvert">↓ YES</div>
+          <div class="dstep"><div class="dcond">"ResultCheckJob.run fired" in logs?</div><div class="dno">NO → check ShedLock / @EnableScheduling</div></div>
+          <div class="dvert">↓ YES</div>
+          <div class="dstep"><div class="dcond">PROC_STAT='6' rows &gt; 2 min old?</div><div class="dno">NO → nothing to reconcile</div></div>
+          <div class="dvert">↓ YES</div>
+          <div class="dstep"><div class="dend">Gateway timeout? inspect TB_FIRM_BAT_API_TRAN RC; G999 → 203 recovery</div></div>
+        </div>
+      </div>
+    </div>
+    <p class="lead" style="margin-bottom:0;">Full symptom → root cause → verification → resolution detail (8 issues) in <a href="troubleshooting.md">troubleshooting.md</a>.</p>
+  </section>
+
+  <!-- ============ 17. LEGACY → SPRING MAPPING ============ -->
+  <section id="s17">
+    <div class="sec-no">17 — Legacy → Spring Mapping</div>
+    <h2>Complete component mapping <span class="kr">매핑</span></h2>
+    <table>
+      <thead><tr><th>Legacy type</th><th>Legacy artifact</th><th>Spring component</th><th>Kind</th></tr></thead>
+      <tbody>
+        <tr><td>Batch</td><td><code>WB_00000100</code></td><td><code>FirmBankingInquiryService</code> → <code>RecipientLookupService</code></td><td>Service</td></tr>
+        <tr><td>Batch</td><td><code>NAPAS_REAL_TIME_BATCH</code></td><td><code>RealtimeDispatchService</code> (+ <code>RealtimeTransferService</code>)</td><td>Service</td></tr>
+        <tr><td>Batch</td><td><code>FILE_DEPOSIT_TRANSFER_BATCH1</code></td><td><code>BulkReceptionService</code></td><td>Service</td></tr>
+        <tr><td>Batch</td><td><code>FILE_DEPOSIT_TRANSFER_BATCH2</code></td><td><code>BulkReceptionResultService.issueExecutionInline</code></td><td>Service (absorbed)</td></tr>
+        <tr><td>Batch</td><td><code>PROCESSING_RESULT_CHECK_BATCH</code></td><td><code>ResultCheckJob</code> + <code>ResultCheckService</code></td><td>Scheduler</td></tr>
+        <tr><td>JSP</td><td><code>FILE_DEPOSIT_TRANSFER_API1_act.jsp</code></td><td><code>BulkReceptionResultController</code></td><td>Controller</td></tr>
+        <tr><td>JSP</td><td><code>FILE_DEPOSIT_TRANSFER_API2_act.jsp</code></td><td><code>BulkExecutionResultController</code></td><td>Controller</td></tr>
+        <tr><td>IDO</td><td><code>TB_FIRM_TRAN_R001</code> (IDO XML)</td><td><code>TbFirmTranRepository.findByTranTpAndProcStat</code></td><td>Repository</td></tr>
+        <tr><td>Helper</td><td><code>util.SftpUtil</code></td><td><code>JschSftpClient</code> (JSch)</td><td>Infra</td></tr>
+        <tr><td>Helper</td><td><code>Deposit_Header/Data/Trailer</code></td><td><code>FixedLengthCodec</code></td><td>Infra</td></tr>
+        <tr><td>Helper</td><td><code>consts.WCConst</code></td><td><code>FirmBankingResultCd</code></td><td>Constants</td></tr>
+        <tr><td>Helper</td><td><code>PymnHelper</code> (key gen / bank code)</td><td><code>DispatchKeyGenerator</code> → <code>wb_get_next_val</code></td><td>Service</td></tr>
+        <tr><td>Runtime</td><td><code>JexData</code></td><td>DTO / Entity (typed)</td><td>Model</td></tr>
+        <tr><td>Runtime</td><td><code>JexConnection</code></td><td><code>@Transactional</code></td><td>Tx</td></tr>
+        <tr><td>Runtime</td><td>Gateway socket client</td><td><code>EfsApiClient</code> → <code>RestClientEfsApiClient</code></td><td>Gateway</td></tr>
+      </tbody>
+    </table>
+    <p class="lead" style="margin-bottom:0;">Full mapping with EFS-leg table, deferred items, and status legend: <a href="legacy-jex-mapping.md">legacy-jex-mapping.md</a>.</p>
+  </section>
+
+  <!-- ============ 18. APPENDIX ============ -->
+  <section id="s18" style="border-bottom:none;">
+    <div class="sec-no">18 — Appendix</div>
+    <h2>Reference index <span class="kr">부록</span></h2>
+    <div class="grid-2">
+      <div class="card"><h4>Main classes</h4><ul class="clean" style="font-family:var(--mono); font-size:11.5px;">
+        <li>RealtimeDispatchRegistrar · RealtimeDispatchService · RealtimeTransferService</li>
+        <li>DispatchAutoReceiveRegistrar · BulkReceptionService</li>
+        <li>BulkReceptionResultService · BulkExecutionResultService</li>
+        <li>ResultCheckJob · ResultCheckService</li>
+        <li>FirmBankingInquiryService · RecipientLookupService · DepositorInquiryService</li>
+        <li>EfsApiClient · RestClientEfsApiClient · MockEfsApiClient · EfsCryptoService</li>
+        <li>SftpClient · JschSftpClient · MockSftpClient · FixedLengthCodec</li>
+        <li>DispatchKeyGenerator · VanApiKeyService · CallbackIpWhitelistFilter</li>
+      </ul></div>
+      <div class="card"><h4>Main tables</h4><ul class="clean" style="font-family:var(--mono); font-size:11.5px;">
+        <li>TB_PAY_TARGET · TB_FIRM_TRAN</li>
+        <li>TB_PAY_FILE_MST · TB_PAY_FILE_DATA</li>
+        <li>TB_FIRM_FILE_MST · TB_FIRM_FILE_DATA · TB_FIRM_FILE_RSLT</li>
+        <li>TB_FIRM_BAT_API_TRAN</li>
+        <li>TB_VAN_API_INFO · TB_FIRM_CONF</li>
+        <li>TB_BATCH_SCHEDULE_INFO · TB_BATCH_SCHEDULE_DTL (unconsumed)</li>
+        <li>shedlock (scheduler lock)</li>
+      </ul></div>
+      <div class="card"><h4>Main config keys</h4><ul class="clean" style="font-family:var(--mono); font-size:11.5px;">
+        <li>wecms.dispatch.auto-receive</li>
+        <li>wecms.dispatch.realtime-dispatch</li>
+        <li>wecms.dispatch.recipient-inquiry</li>
+        <li>wecms.dispatch.result-check.cron</li>
+        <li>wecms.dispatch.efs.enabled / base-url / partner-id</li>
+        <li>wecms.dispatch.sftp.enabled / host / port / private-key-path</li>
+        <li>wecms.dispatch.callback.allowed-ips / trust-forwarded-for</li>
+      </ul></div>
+      <div class="card"><h4>Related docs &amp; audits</h4><ul class="clean">
+        <li><a href="README.md">README.md</a> — module overview</li>
+        <li><a href="firm-banking-dispatch.md">firm-banking-dispatch.md</a> — feature guide</li>
+        <li><a href="scheduler-flow.md">scheduler-flow.md</a> — schedulers + ShedLock</li>
+        <li><a href="database-schema.md">database-schema.md</a> — the 10 tables</li>
+        <li><a href="deployment-guide.md">deployment-guide.md</a> — build + activation</li>
+        <li><a href="troubleshooting.md">troubleshooting.md</a> — 8 issues</li>
+        <li><a href="legacy-jex-mapping.md">legacy-jex-mapping.md</a> — full mapping</li>
+        <li><a href="../../references/database/payment/firm-banking-dispatch-schema.md">firm-banking-dispatch-schema.md</a> — DDL parity</li>
+        <li><a href="../../audits/wecms-batch-tobe-process-audit.md">TO-BE process audit</a></li>
+        <li><a href="../../audits/wecms-batch-full-legacy-vs-refactor-final-gap-audit.md">final gap audit</a></li>
+      </ul></div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <span><b>WeCMS Batch — Firm-Banking Dispatch</b> · Handover &amp; Operational Playbook · JEX → Spring Boot</span>
+    <span>Status: code-complete, inert by default · prepared 2026-06-24 · documentation only · verify code claims against current source</span>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -9,11 +9,155 @@
 #     the target DB must be fully migrated out-of-band before the app boots.
 
 spring:
+  # Per-profile env file. On the UAT host the WECMS_DB_* values come from the
+  # process environment (setenv.sh / orchestrator secrets); .env.uat (copy of
+  # .env.uat.example) is the optional convenience for a developer UAT run.
+  config:
+    import: optional:file:./.env.uat[.properties]
+  # Datasource — standardized WECMS_DB_* trio (same structure in every profile).
+  # NO defaults and NO host/credentials committed: a missing value leaves the
+  # ${...} placeholder unresolved and the app fails fast at startup, so UAT can
+  # never silently fall through to a dev DB. The target UAT DB schema must be
+  # pre-migrated out-of-band (Flyway removed 2026-06-10; ddl-auto=validate only
+  # checks mappings). See docs/security/required-environment-secrets.md.
+  datasource:
+    url: ${WECMS_DB_URL}
+    username: ${WECMS_DB_USERNAME}
+    password: ${WECMS_DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
       ddl-auto: validate
     show-sql: false
     open-in-view: false
+
+# Error responses — mirror PROD (this file "Mirrors the PROD profile's hard rules").
+# These control Spring's fallback `/error` page only; the custom GlobalExceptionHandler
+# envelope (status.code / status.message / trace_id) is built independently and is NOT
+# suppressed by these flags — so UAT testers still get WBE codes + messages + trace ids
+# from the API. What these hide is the raw exception message / stacktrace / binding
+# errors on unhandled fall-through faults, which should not be exposed in a pre-prod
+# environment any more than in prod. (Added 2026-06-22 — was previously inheriting the
+# base `include-message: always`, the one place UAT was NOT mirroring prod.)
+server:
+  error:
+    include-message: never
+    include-stacktrace: never
+    include-binding-errors: never
+
+# Firm-banking payment dispatch (EFS / VAN gateway). Every environment-specific
+# value comes from an env var — NO secrets, URLs, IPs, or keys in this file. All
+# switches default OFF so the app boots inert until ops provisions the gateway.
+# (Merged on top of the base application.yml `wecms:` tree.)
+wecms:
+  # File storage roots — REQUIRED on UAT (no default → fail-fast). The base
+  # application.yml defaults these to ./tmp/* which is unsafe for a server (an
+  # ephemeral path). Declared bare here so a missing value aborts startup instead
+  # of silently writing uploads to ./tmp. Set via .env.uat / OS env to real disk.
+  overseas-payment:
+    storage-root: ${WECMS_OVERSEAS_PAYMENT_STORAGE_ROOT}
+  vendor-payment:
+    storage-root: ${WECMS_VENDOR_PAYMENT_STORAGE_ROOT}
+  expense-payment:
+    storage-root: ${WECMS_EXPENSE_PAYMENT_STORAGE_ROOT}
+  payroll:
+    storage-root: ${WECMS_PAYROLL_STORAGE_ROOT}
+  contacts:
+    storage-root: ${WECMS_CONTACTS_STORAGE_ROOT}
+  preferences:
+    storage-root: ${WECMS_PREFERENCES_STORAGE_ROOT}
+  user-image:
+    storage-root: ${WECMS_USER_IMAGE_STORAGE_ROOT}
+  erp-transaction-history:
+    storage-root: ${WECMS_ERP_TRANSACTION_HISTORY_STORAGE_ROOT}
+  card-transactions:
+    storage-root: ${WECMS_CARD_TRANSACTIONS_STORAGE_ROOT}
+  internal-transfer:
+    storage-root: ${WECMS_INTERNAL_TRANSFER_STORAGE_ROOT}
+  dispatch:
+    # 00301 hand-off after a committed File-path dispatch (TransferDispatchExecutor
+    # → BulkReceptionService.receive). Keep false until SFTP+EFS are live.
+    auto-receive: ${WECMS_DISPATCH_AUTO_RECEIVE}
+    # Real-time 202 dispatch (NAPAS_REAL_TIME_BATCH; VND/API path). Default false. Enable
+    # ONLY in the env that owns the real-time 202 write path, once VAN keys (B2) exist.
+    realtime-dispatch: ${WECMS_DISPATCH_REALTIME_DISPATCH}
+    # Depositor-name inquiry (WGVN_EFS_201; port of WB_00000100). Default false.
+    recipient-inquiry: ${WECMS_DISPATCH_RECIPIENT_INQUIRY}
+    # Result-check poll (PROCESSING_RESULT_CHECK_BATCH). "-" = never fire. Enable
+    # ONLY in the env that owns the real-time 202 write path (see Part B).
+    result-check:
+      cron: ${WECMS_DISPATCH_RESULT_CHECK_CRON}
+    # Ops alert (WGVN_MSG_SEND_001). OFF by default (OpsAlertService.notify is a no-op).
+    alert:
+      enabled: ${WECMS_DISPATCH_ALERT_ENABLED}
+    # Inbound EFS callbacks (01301/01302): permitAll + VV crypto + this IP gate.
+    callback:
+      trust-forwarded-for: true
+      allowed-ips: ${WECMS_CALLBACK_ALLOWED_IPS}
+    efs:
+      enabled: ${WECMS_EFS_ENABLED}
+      base-url: ${WECMS_EFS_BASE_URL}
+      partner-id: ${WECMS_EFS_PARTNER_ID}
+      connect-timeout-ms: 3000
+      read-timeout-ms: 20000
+    sftp:
+      enabled: ${WECMS_SFTP_ENABLED}
+      host: ${WECMS_SFTP_HOST}
+      port: ${WECMS_SFTP_PORT}
+      username: ${WECMS_SFTP_USERNAME}
+      private-key-path: ${WECMS_SFTP_KEY_PATH}
+      password: ${WECMS_SFTP_PASSWORD}
+      connect-timeout-ms: 60000
+      local-upload-path: ${WECMS_SFTP_LOCAL_UPLOAD}
+      remote-upload-path: ${WECMS_SFTP_REMOTE_UPLOAD}
+      local-download-path: ${WECMS_SFTP_LOCAL_DOWNLOAD}
+      remote-download-path: ${WECMS_SFTP_REMOTE_DOWNLOAD}
+      remote-move-path: ${WECMS_SFTP_REMOTE_MOVE}
+
+  # Coocon + OSMC: re-declared WITHOUT a default to OVERRIDE the DEV defaults in
+  # the base application.yml. Without these overrides a missing env var would
+  # silently fall through to the DEV gateway/credentials; with no default the
+  # `${VAR}` placeholder fails fast at startup, so UAT never boots against DEV.
+  # smart-api-url + smart-api-key drives both the FX-rate batch and bank-scraping.
+  # UAT host (Sonny, 2026-05-28):
+  #   https://sgw.webcashvietnam.com/domestic/finance/scrap/smart_gateway.jsp
+  # Required env vars:
+  #   WECMS_COOCON_API_KEY · WECMS_COOCON_API_URL · WECMS_COOCON_SMART_API_KEY
+  #   WECMS_COOCON_SMART_API_URL · WECMS_COOCON_UNIQUE_KEY
+  #   WECMS_OSMC_URL · WECMS_OSMC_API_KEY · WECMS_OSMC_API_ID · WECMS_OSMC_UNIQUE_KEY
+  coocon:
+    api-key:       ${WECMS_COOCON_API_KEY}
+    api-url:       ${WECMS_COOCON_API_URL}
+    smart-api-key: ${WECMS_COOCON_SMART_API_KEY}
+    smart-api-url: ${WECMS_COOCON_SMART_API_URL}
+    unique-key:    ${WECMS_COOCON_UNIQUE_KEY}
+  osmc:
+    url:        ${WECMS_OSMC_URL}
+    api-key:    ${WECMS_OSMC_API_KEY}
+    api-id:     ${WECMS_OSMC_API_ID}
+    unique-key: ${WECMS_OSMC_UNIQUE_KEY}
+
+# =============================================================================
+# HAENGSUNG Oracle ERP integration
+# =============================================================================
+# Same property bindings as the base application.yml, declared per-profile for
+# explicit visibility. OFF by default; real values resolve from env vars. No
+# secrets in YAML.
+haengsung:
+  oracle:
+    enabled: ${HAENGSUNG_ORACLE_ENABLED}
+    url: ${HAENGSUNG_ORACLE_URL}
+    username: ${HAENGSUNG_ORACLE_USERNAME}
+    password: ${HAENGSUNG_ORACLE_PASSWORD}
+  scheduled-payment-import:
+    enabled: ${HAENGSUNG_SCHEDULED_IMPORT_ENABLED}
+    cron: ${HAENGSUNG_SCHEDULED_IMPORT_CRON}
+  exchange-rate-sync:
+    enabled: ${HAENGSUNG_EXCHANGE_RATE_SYNC_ENABLED}
+    cron: ${HAENGSUNG_EXCHANGE_RATE_SYNC_CRON}
+  card-account-sync:
+    enabled: ${HAENGSUNG_CARD_ACCOUNT_SYNC_ENABLED}
+    cron: ${HAENGSUNG_CARD_ACCOUNT_SYNC_CRON}
 
 logging:
   level:

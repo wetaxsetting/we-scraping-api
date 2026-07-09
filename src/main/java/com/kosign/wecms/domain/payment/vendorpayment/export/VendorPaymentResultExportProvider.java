@@ -24,6 +24,11 @@ public class VendorPaymentResultExportProvider extends PaymentResultExportProvid
     }
 
     @Override
+    protected String erpResultTrnsTypeCd() {
+        return "04"; // legacy ErpTypeCd.VENDOR_PAYMENT_RESULT
+    }
+
+    @Override
     protected TransferResultListResponse loadList(
             String fromDate, String toDate, String srchWd, String trnfStts,
             String sortField, String sortDirection,

@@ -37,21 +37,27 @@ package com.kosign.wecms.domain.payment.service;
 public enum OverseasResultSortField {
 
     /* Legacy V235 constants ----------------------------------------- */
-    TRAN_DT           ("ops.reg_dtm"),
-    FILE_NM           ("ops.org_file_nm"),
-    SCDUL_PYMN_DETL_NO("ops.tot_trns_cnt"),
-    TRAN_AMT          ("ops.total_tran_amt"),
-    PROC_STAT         ("ops.trnf_yn"),
-    APPR_DOC_NO       ("erm.doc_no"),
+    // sqlExpr values reference the OUTER aliased result projection (see
+    // OverseasPaymentRepository.buildResultSql) — the ORDER BY is appended to
+    // the outermost SELECT whose columns are output aliases, so no table
+    // prefix. F1 (2026-06-19): the Date/Time column is the transfer date
+    // (TRNF_DT) aliased AS reg_dtm, matching legacy R005. PROC_STAT sorts on
+    // the computed TRNF_STTS (F/P/C), not the always-'Y' trnf_yn.
+    TRAN_DT           ("reg_dtm"),
+    FILE_NM           ("file_nm"),
+    SCDUL_PYMN_DETL_NO("tot_trns_cnt"),
+    TRAN_AMT          ("total_tran_amt"),
+    PROC_STAT         ("trnf_stts"),
+    APPR_DOC_NO       ("doc_no"),
     TITL              ("appr_titl"),
 
     /* Pre-V235 backwards-compat constants --------------------------- */
-    REG_DTM       ("ops.reg_dtm"),
-    ORG_FILE_NM   ("ops.org_file_nm"),
-    TOT_TRNS_CNT  ("ops.tot_trns_cnt"),
-    TOTAL_TRAN_AMT("ops.total_tran_amt"),
-    DRAFT_USER_NM ("ops.draft_user_nm"),
-    DOC_NO        ("erm.doc_no"),
+    REG_DTM       ("reg_dtm"),
+    ORG_FILE_NM   ("file_nm"),
+    TOT_TRNS_CNT  ("tot_trns_cnt"),
+    TOTAL_TRAN_AMT("total_tran_amt"),
+    DRAFT_USER_NM ("draft_user_nm"),
+    DOC_NO        ("doc_no"),
     APPR_TITL     ("appr_titl"),
     PAY_DATE      ("pay_date"),
     APPR_STTS     ("appr_stts");

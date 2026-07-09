@@ -2,9 +2,11 @@
 
 All logic here is traced to source. The legacy single source of truth was the PostgreSQL function
 **`get_cashflow_report(...)`** (schema `wecmsvndev` on JEX DEV), invoked by IDO `CASH_FLOW_R001`. The
-refactor **reimplements that function in Java** (`domain/banking/service/cashflow/*`) and never calls
-it. §2 documents the legacy CTE anatomy (the spec); §3–§4 document the financial rules; §5 documents
-the refactor Java pipeline that reproduces them; §6 documents the frontend re-shaping.
+refactor's **live path now calls `get_cashflow_report` directly** (`CashFlowReportService.search` →
+`CashFlowReportRepository`, decision 2026-06-13). The CTE-by-CTE Java pipeline under
+`domain/banking/service/cashflow/*` is **retained but off the active path as of 2026-06-13**. §2 documents
+the legacy CTE anatomy (the spec); §3–§4 document the financial rules; §5 documents the retained Java
+pipeline (off the active path); §6 documents the frontend re-shaping.
 
 ---
 
@@ -200,9 +202,14 @@ Output is a `UNION ALL` of seven row sets, `ORDER BY group_order, sort_order, di
 
 ---
 
-## 5. The refactor Java pipeline (replaces `get_cashflow_report`)
+## 5. The retained refactor Java pipeline (off the active path as of 2026-06-13)
 
-`CashFlowReportService.search(year, quarter, baseCurrency, usdRate, krwRate, bankFilters)`
+> **Off the active path (2026-06-13).** The live path of `CashFlowReportService.search(...)` now delegates
+> to `CashFlowReportRepository` (`CashFlowReportRepository.java:67`), which calls `get_cashflow_report`
+> directly. The Java pipeline described below is **retained but off the active path** — kept as the
+> historical reimplementation record, not the running code.
+
+The retained `CashFlowReportService` Java pipeline orchestrated `search(year, quarter, baseCurrency, usdRate, krwRate, bankFilters)`
 ([CashFlowReportService.java](../../../../../src/main/java/com/kosign/wecms/domain/banking/service/CashFlowReportService.java)):
 
 ```

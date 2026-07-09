@@ -51,5 +51,14 @@ public record TransactionRow(
         /** Matched-by user display name (resolved from
          *  {@code BUSI_MATCH_LOG.MATCHED_BY} via {@code USER_INFM}); null
          *  for unmatched rows. Audit BUG-2 (legacy shows USER_NM, not the id). */
-        String matchedBy
+        String matchedBy,
+        /** Row-level memo sticker color (newest memo's {@code MEMO_INFM.COLOR}
+         *  token — {@code fileG/fileB/fileY/fileW/fileR/fileP}); null when the
+         *  transaction has no memos. Returned for every row regardless of
+         *  confirmation — the frontend gates the icon on {@code confYn}. */
+        String memoColor,
+        /** Number of memos on this transaction's 4-key thread
+         *  ({@code REF_NO..REF_NO4 = BANK_CD/ACCT_NO/TRSC_DT/ACCT_SEQ_NO}).
+         *  Zero when none. */
+        int memoCount
 ) { }

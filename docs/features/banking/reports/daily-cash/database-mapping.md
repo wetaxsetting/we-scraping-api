@@ -1,5 +1,13 @@
 # Daily Cash — Database Mapping
 
+> **⚠️ Data-source corrected 2026-06-13 (noted 2026-06-23).** The live read path calls the legacy DB
+> functions **`rept_0900_001_rec1..rec4`** directly via `DailyCashReportFunctionRepository`
+> (`DailyCashReportService.java:24-75` — the documented set-returning exception, same stance as Cash Flow
+> and Daily Financial). The prior **Java live-recompute** (`DailyCashRecomputeRepository` /
+> `CurrencyAccumulator`) is **bypassed / no longer wired** and retained only as a cleanup candidate. Any
+> "live recompute over `ACCT_MSTR` + `ACCT_TRNS_HSTR`" wording below is the **superseded pre-pivot** record
+> (audit history preserved).
+
 Tables, views, functions, and column mappings for `rept_0009_001`. Column lists are sourced from
 the IDO XML `<out>` blocks, the JEX entities, and the WSVC sub-rules. DB function bodies are not in
 the repo (see Open Questions).
@@ -29,27 +37,33 @@ Producer: batch (delete-by-FK + insert from BCS `REC1`). Entity:
 `wabooks.entity.DailyCashReptDailySumrDetl`. **In the PROD Active Table List.** Refactor entity:
 `com.kosign.wecms.domain.banking.entity.DailyCashReptDailySumrDetl` (6-col composite PK).
 
-> **Data-source change 2026-06-04.** The refactor **no longer reads this snapshot table** for the
-> Daily Cash report. `DailyCashReportService` now does a **live recompute** (legacy `rec1/rec2`
-> parity) via `DailyCashRecomputeRepository.findAccountsAsOf(...)` — a native query over
-> **`ACCT_MSTR` + `ACCT_TRNS_HSTR`** (see "Refactor live-recompute source" below). The snapshot
-> table + entity + `V125` migration are retained (valid PROD-active artifacts; a future batch port
-> may use them) but are no longer on the read path. This matches legacy, which recomputes on every
-> read regardless of whether the nightly batch persisted a row for the date.
+> **Data-source change 2026-06-13.** The refactor **no longer reads this snapshot table** for the
+> Daily Cash report. `DailyCashReportService.search(...)` now **calls the legacy DB functions
+> `rept_0900_001_rec1..4` directly** via `DailyCashReportFunctionRepository`. The earlier Java
+> live-recompute (legacy `rec1/rec2` parity) via `DailyCashRecomputeRepository.findAccountsAsOf(...)` —
+> a native query over **`ACCT_MSTR` + `ACCT_TRNS_HSTR`** (see "Superseded Java-recompute source" below) —
+> is **superseded (2026-06-13)**: `DailyCashRecomputeRepository` is `@Deprecated(forRemoval=true)`, off
+> the active path. The snapshot table + entity + `V125` migration are retained (valid PROD-active
+> artifacts; a future batch port may use them) but are not on the read path. This matches legacy, which
+> calls the same `rec1..4` functions live on every read regardless of whether the nightly batch persisted a row.
 
-#### Refactor live-recompute source (rec1 replication)
+#### Superseded Java-recompute source (off the active path since 2026-06-13; rec1 replication)
 
-| Source table | Role in recompute | In active scope? |
+> The table below documents the **superseded** Java recompute (`DailyCashRecomputeRepository`,
+> `@Deprecated(forRemoval=true)`). The active path calls `rept_0900_001_rec1..4` directly; `rec1`/`rec2`
+> are active, `rec3`/`rec4` (the `CASH_REPY_MSTR` cash source) need data not yet present → `total_cash = 0`.
+
+| Source table | Role in (superseded) recompute | In active scope? |
 |---|---|---|
 | `ACCT_MSTR` | active accounts + master balance + loan/maturity/agreement; `ACTV_YN='Y'`; loan `01` only if `EXPI_DT ≥ refDate` | ✓ |
 | `ACCT_TRNS_HSTR` | as-of balance (latest row `TRSC_DT ≤ refDate`) + same-day debit/credit counts & amounts (`TRSC_DT = refDate`) | ✓ |
 | `CASH_REPY_MSTR` (legacy `rec3/rec4` cash source) | **not ported** — out of PROD active-table scope → `total_cash = 0` | ✗ |
 
-Legacy helper substitutions in the native query: `wb_get_amt(amt, ccy)` → inline
+Legacy helper substitutions in the (superseded) native query: `wb_get_amt(amt, ccy)` → inline
 `ROUND(amt, ccy='VND' ? 0 : 2)`; `wb_get_bank_nm(bank_cd,'s')` → Java `BankCdResolver`.
-Per-type summary aggregation (legacy `rec2`) stays in Java (`CurrencyAccumulator`):
+Per-type summary aggregation (legacy `rec2`) was in Java (`CurrencyAccumulator`):
 `03,04`→demand, `05,06`→savings, `02`→term, `01`→loan, `07/08` ignored, cash=0. **Verified on DEV:
-the recompute's per-type totals equal legacy `rept_0900_001_rec2` for VND/USD/KRW.**
+the recompute's per-type totals equalled legacy `rept_0900_001_rec2` for VND/USD/KRW.**
 
 | Column | Type (refactor entity) | Meaning | PK |
 |---|---|---|---|
@@ -126,13 +140,14 @@ The IDOs wrap each as `SELECT <cols> FROM <fn>(:BIZ_KEY,:REQ_DATE,:REQ_DATE2) WH
 
 ## 5. Refactor data access
 
-> **Active read path = live recompute (2026-06-04).** The current `search` path does **not** read the
-> persisted snapshot. `DailyCashReportService.search(...)` injects only `DailyCashRecomputeRepository`
-> and calls `findAccountsAsOf(bizKey, refDate, ccyExact, ccyExclude)` — a single native query over
-> `ACCT_MSTR` + `ACCT_TRNS_HSTR` (the legacy `rec1` replication, columns in §1 "Refactor live-recompute
-> source"). Confirmed in `DailyCashReportServiceTest` (every stub is on `recomputeRepo.findAccountsAsOf`).
+> **Active read path = direct `rept_0900_001_rec1..4` calls (2026-06-13).** The current `search` path
+> does **not** read the persisted snapshot and **does not** use the Java recompute. `DailyCashReportService.search(...)`
+> calls the legacy DB functions `rept_0900_001_rec1..4` directly via `DailyCashReportFunctionRepository`
+> (the DB functions are the source of truth). `rec1`/`rec2` are active; `rec3`/`rec4` need `CASH_REPY_MSTR`
+> data → `total_cash = 0`; `LST_COLL_DATE` is null. The Java recompute described below is **superseded** —
+> `DailyCashRecomputeRepository` is `@Deprecated(forRemoval=true)`, off the active path.
 
-**Active path — `DailyCashRecomputeRepository.findAccountsAsOf(bizKey, refDate, ccyExact, ccyExclude)`:**
+**Superseded path (off active path since 2026-06-13) — `DailyCashRecomputeRepository.findAccountsAsOf(bizKey, refDate, ccyExact, ccyExclude)`:**
 
 - Native query, returns `List<DailyCashAccountProjection>` (`ccyCd, acctTypeCd, bankCd, acctNo, bal,
   loanNm, expiDt, agmtAmt, sndCnt, sndAmt, rcvCnt, rcvAmt`). Bank name is **not** projected — resolved
@@ -172,8 +187,8 @@ The IDOs wrap each as `SELECT <cols> FROM <fn>(:BIZ_KEY,:REQ_DATE,:REQ_DATE2) WH
 | Table | In active list? | Refactor treatment |
 |---|---|---|
 | `DAILY_CASH_REPT_DAILY_SUMR_DETL` | ✓ | entity + repository (read) |
-| `DAILY_CASH_REPT_DAILY_SUMR` | ✗ | not entity-mapped; summary computed in Java |
-| `DAILY_CASH_REPT_DAILY_CASH_SUMR_DETL` | ✗ | not mapped; cash holdings folded into summary |
+| `DAILY_CASH_REPT_DAILY_SUMR` | ✗ | not entity-mapped; summary comes from legacy `rept_0900_001_rec2` (active path) |
+| `DAILY_CASH_REPT_DAILY_CASH_SUMR_DETL` | ✗ | not mapped; cash from legacy `rec3/rec4` (data-blocked → 0) |
 | `BAT_CALL_HIS` | ✗ (dropped V31) | last-collection lookup not ported |
 | `BANK_INFM` | ✓ | bank-name resolution |
 
@@ -186,8 +201,10 @@ The IDOs wrap each as `SELECT <cols> FROM <fn>(:BIZ_KEY,:REQ_DATE,:REQ_DATE2) WH
    [refactor-parity-verification.md](refactor-parity-verification.md) §1.5: summary buckets `03/04`→NORM,
    `05/06`→SAV, `02`→ACCT, `01`→LOAN; `TOTL_CASH` comes from `cash_repy_mstr` via `rec4→rec3` (out of
    refactor scope → 0); `07/08` excluded from every summary bucket. DEV's `ACCT_TYPE_CD` distribution is
-   `01–07` only (no `08`, no fabricated `11/12/13/21`). The refactor's Java `CurrencyAccumulator` and the
-   `findAccountsAsOf` native query reproduce this exactly (locked by `DailyCashReportServiceTest`).
+   `01–07` only (no `08`, no fabricated `11/12/13/21`). **Update 2026-06-13:** the active path now calls
+   `rept_0900_001_rec1..4` directly (via `DailyCashReportFunctionRepository`), so it uses these function
+   bodies as-is rather than the superseded Java `CurrencyAccumulator` + `findAccountsAsOf` recompute (which
+   reproduced them and remains the historical record, locked by `DailyCashReportServiceTest`).
 2. **Exact column types of `DAILY_CASH_REPT_DAILY_SUMR` / `_CASH_SUMR_DETL`** — taken from JEX
    entities; confirm against DEV `information_schema.columns` if these tables are ever revived in refactor.
 3. **Does PROD's batch actually run `REPT_0900_001`?** If the report query recomputes live, the

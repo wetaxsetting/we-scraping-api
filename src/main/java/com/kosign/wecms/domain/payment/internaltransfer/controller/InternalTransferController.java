@@ -9,8 +9,10 @@ import com.kosign.wecms.domain.payment.internaltransfer.dto.ScheduledTransferDet
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ScheduledTransferListResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.UpdateReportingAccountRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferDispatchService;
+import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferDownloadService;
 import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService;
 import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService.DownloadResource;
+import com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter;
 import com.kosign.wecms.domain.payment.internaltransfer.service.ScdulPymnTypeCd;
 import com.kosign.wecms.domain.payment.match.dto.PaymentLineMatchCandidateListResponse;
 import com.kosign.wecms.domain.payment.match.dto.PaymentLineMatchRequest;
@@ -22,6 +24,7 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
@@ -103,6 +106,10 @@ public class InternalTransferController {
     private final InternalTransferService         service;
     private final InternalTransferDispatchService dispatchService;
     private final DomesticPaymentLineMatchService lineMatchService;
+    private final InternalTransferDownloadService downloadService;
+    /** ERP_TRNS_HSTR 'W' audit writer for the Scheduled generated-report
+     *  download (code 16 = Internal Scheduled Transfer). */
+    private final ErpTrnsHistoryWriter            erpHistoryWriter;
 
     /* ----------------------------------------------------------------
      *  Read
@@ -231,9 +238,16 @@ public class InternalTransferController {
             @PathVariable("fileId")
             @Size(max = 100)
             @Pattern(regexp = "^[A-Za-z0-9_-]+$", message = "fileId: invalid format")
-            String fileId) throws IOException {
+            String fileId,
+            // GAP-ATT-1: which legacy table the attachment row came from
+            // (EXPT_RESOL_FILE vs EXPT_RESOL_PAY_EVID_FILE). Optional —
+            // defaults to EXPT_RESOL_FILE so the legacy URL keeps working.
+            @RequestParam(value = "fileType", required = false)
+            @Pattern(regexp = "^(EXPT_RESOL_FILE|EXPT_RESOL_PAY_EVID_FILE)$",
+                     message = "fileType: invalid value")
+            String fileType) throws IOException {
         DownloadResource resolved = service.resolveApprovalAttachmentDownload(
-                id, apprSeqNo, fileId);
+                id, apprSeqNo, fileId, fileType);
         InputStream stream = Files.newInputStream(resolved.path());
 
         ContentDisposition cd = ContentDisposition.builder("attachment")
@@ -247,6 +261,55 @@ public class InternalTransferController {
                 .header("X-Content-Type-Options", "nosniff")
                 .header("Access-Control-Expose-Headers", HttpHeaders.CONTENT_DISPOSITION)
                 .body(new InputStreamResource(stream));
+    }
+
+    /**
+     * Excel Download — the legacy 21-column populated report
+     * (ports {@code pymn_0009_003_r002}). Loads the locale template from
+     * the backend classpath, populates one row per transfer detail
+     * preserving all template styling, and streams
+     * {@code WeCMS_Internal_Transfer_download_{LANG}.xlsx}.
+     *
+     * <p>This is the artifact the Scheduled Transfer list-row glyph and
+     * detail screen download — NOT the originally uploaded Excel file
+     * (which {@code GET /{id}/file} still serves as the import source).
+     * See {@code docs/audits/internal-transfer-excel-download-audit.md}.
+     *
+     * @param id   batch key
+     * @param lang optional UI-locale hint (EN/KO/VI; KM/other → EN). When
+     *             omitted the JWT {@code langCd} is used.
+     */
+    @GetMapping("/{id}/report")
+    public ResponseEntity<ByteArrayResource> downloadReport(
+            @PathVariable("id")
+            @Size(max = 30)
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id,
+            @RequestParam(value = "lang", required = false) String lang) {
+        // Scheduled list/detail report download → ERP_TRNS_HSTR 'W' / 16
+        // (Internal Scheduled Transfer). Audit the exact downloaded bytes.
+        InternalTransferDownloadService.GeneratedReport report = downloadService.generate(id, lang);
+        erpHistoryWriter.recordExportedBytes("16", report.content(), report.fileName());
+        return reportResponse(report);
+    }
+
+    /** Shared builder for the generated-report binary response (RFC 5987
+     *  filename, XLSX content type, no-sniff). Reused by the Transfer
+     *  Result controller's report endpoint. */
+    static ResponseEntity<ByteArrayResource> reportResponse(
+            InternalTransferDownloadService.GeneratedReport report) {
+        ContentDisposition cd = ContentDisposition.builder("attachment")
+                .filename(report.fileName(), StandardCharsets.UTF_8)
+                .build();
+        ByteArrayResource body = new ByteArrayResource(report.content());
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .contentLength(body.contentLength())
+                .header(HttpHeaders.CONTENT_DISPOSITION, cd.toString())
+                .header("X-Content-Type-Options", "nosniff")
+                .header("Access-Control-Expose-Headers", HttpHeaders.CONTENT_DISPOSITION)
+                .body(body);
     }
 
     /**
@@ -337,25 +400,6 @@ public class InternalTransferController {
      *  Re-run one detail line (legacy pymn_0010_002.ts:441-472)
      * ---------------------------------------------------------------- */
 
-    /**
-     * Re-fire dispatch for a single Transfer Result line whose bank-side
-     * response is a transient failure (RS_CD ∈ {"0001"…"0005"}) AND whose
-     * PROC_DTTM is today. Clears RS_CD on TB_PAY_FILE_DATA so the bank
-     * daemon re-picks the row on its next sweep.
-     */
-    @PostMapping("/{id}/lines/{lineId}/rerun")
-    public ApiResponse<Void> rerun(
-            @PathVariable("id")
-            @Size(max = 30)
-            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
-            String id,
-            @PathVariable("lineId")
-            @Size(max = 20)
-            @Pattern(regexp = SCDUL_PYMN_DETL_NO_PATTERN, message = "lineId: invalid scdul_pymn_detl_no format")
-            String lineId) {
-        service.rerun(id, lineId);
-        return ApiResponse.ok(null);
-    }
 
     /* ----------------------------------------------------------------
      *  Dispatch / Execute Transfer (legacy pymn_0009_001_c001)

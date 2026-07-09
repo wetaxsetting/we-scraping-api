@@ -23,6 +23,7 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -134,6 +135,14 @@ public class TransferDispatchExecutor {
     private final Clock                  clock;
     private final LegacyFunctionRepository legacyFunctions;
 
+    /** Post-commit 00301 hand-off (port of BATCH1), gated by
+     *  {@code wecms.dispatch.auto-receive}. Shared by every File-path executor. */
+    private final DispatchAutoReceiveRegistrar autoReceiveRegistrar;
+
+    /** Post-commit real-time 202 hand-off (port of NAPAS_REAL_TIME_BATCH), gated by
+     *  {@code wecms.dispatch.realtime-dispatch}. Used by the VND/API path. */
+    private final RealtimeDispatchRegistrar realtimeDispatchRegistrar;
+
     /**
      * Insert dispatch rows for one batch. Branch on the request
      * currency: VND → {@link TbPayTarget} (API), else → {@link TbPayFileMst}
@@ -175,8 +184,10 @@ public class TransferDispatchExecutor {
             String dttm14,
             String trnfCcyCd) {
 
+        List<String> tranSeqs = new ArrayList<>(lines.size());
         for (ScdulPymnSumrDetl line : lines) {
             String tranSeq = keyGenerator.nextTranSeq(bizKey, tranDt);
+            tranSeqs.add(tranSeq);
 
             TbPayTarget row = new TbPayTarget();
             row.setTranDt(tranDt);
@@ -212,6 +223,10 @@ public class TransferDispatchExecutor {
 
         log.info("feature=dispatch path=API bizKey={} scdulPymnNo={} lines={} tranDt={}",
                 bizKey, master.getScdulPymnNo(), lines.size(), tranDt);
+
+        // Hand off to the real-time 202 flow AFTER this transaction commits
+        // (port of NAPAS_REAL_TIME_BATCH; gated, default-off; per-target isolated).
+        realtimeDispatchRegistrar.registerAfterCommit(bizKey, tranDt, tranSeqs);
     }
 
     /* ───────────────── Non-VND / File path ───────────────── */
@@ -240,6 +255,10 @@ public class TransferDispatchExecutor {
         mst.setReqCnt(master.getTotTrnsCnt());
         mst.setReqAmt(master.getTotalTranAmt());
         mst.setRegDttm(dttm14);
+        // PROC_DTTM is NOT NULL in TB_PAY_FILE_MST_HIS (trigger-written mirror copies
+        // new.proc_dttm). Legacy stamps proc_dttm = reg_dttm on insert; the callback
+        // UPDATE later writes the real processing time.
+        mst.setProcDttm(dttm14);
 
         tbPayFileMstRepository.save(mst);
 
@@ -303,6 +322,9 @@ public class TransferDispatchExecutor {
 
         log.info("feature=dispatch path=FILE bizKey={} scdulPymnNo={} lines={} tranDt={} fileSeqNo={}",
                 bizKey, master.getScdulPymnNo(), lines.size(), tranDt, fileSeqNo);
+
+        // 3. Hand off to the 00301 reception flow AFTER this transaction commits.
+        autoReceiveRegistrar.registerAfterCommit(tranDt, bizKey, fileSeqNo);
     }
 
     /* ───────────────── Helpers ───────────────── */

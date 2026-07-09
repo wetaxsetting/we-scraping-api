@@ -36,5 +36,10 @@ public record OverseasPaymentDetailRowResponse(
         String  procDttm,
         String  rsltDttm,
         String  rsCd,
-        String  rsMsg
+        String  rsMsg,
+        /** Transaction sequence — {@code OVRS_PYMN_SUMR_DETL.PAY_TRAN_SEQ}
+         *  (legacy R007 {@code PAY_FILE_SEQ_NO}, rendered in the Result detail
+         *  "Transaction Seq" column). Null when the file sequence hasn't been
+         *  assigned yet (e.g. M-mode rows, pre-dispatch). */
+        Integer trnSeq
 ) {}

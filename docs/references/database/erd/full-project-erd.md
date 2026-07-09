@@ -114,5 +114,5 @@ Items flagged by the source audit that a maintainer should verify (do not treat 
 ## Related
 
 - ERD folder index: [README.md](README.md)
-- DB reference root: [`../README.md`](../README.md) · Flyway notes: [`../flyway/`](../flyway/) · Indexing: [`../indexing/`](../indexing/) · Table mapping: [`../table-mapping/`](../table-mapping/)
+- DB reference root: [`../README.md`](../README.md) · Table mapping: [`../table-mapping/`](../table-mapping/)
 - JEX ERD reference: [`../../../../jex/architecture/`](../../../../../docs/jex/architecture/)

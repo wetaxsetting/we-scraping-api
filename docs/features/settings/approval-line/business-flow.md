@@ -119,7 +119,7 @@ ApprovalLineController.update(apprLineNo, @Valid ApprovalLineUpdateRequest)
             existingById has id ? reuse managed row (UPDATE) : new row with reg id/dtm (INSERT)
             always set dispOrd, nm, posi/dept (coalesced ""), modId/modDtm → approverRepo.save(row)
       5. DELETE pass: every existingById entry whose id ∉ incomingIds
-            → approverRepo.deleteById(new ApprovalLineApproverId(bizKey, apprLineNo, id))
+            → approverRepo.deleteById(new ApprLineInfmDetlId(bizKey, apprLineNo, id))
   → return detail(apprLineNo)
 ```
 

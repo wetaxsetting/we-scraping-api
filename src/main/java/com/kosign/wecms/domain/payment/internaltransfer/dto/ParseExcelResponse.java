@@ -8,14 +8,12 @@ import java.util.List;
  * {@code POST /api/v1/payment/internal-transfer/uploads/parse}.
  * Mirrors legacy {@code WSVC.pymn_0009_002_r001.xml:out}.
  *
- * <p>Phase A ships this endpoint as a local stub — it accepts the
- * upload, runs basic file-shape checks ({@code FILE_DATA} present,
- * file size &gt; 0, extension in the allow-list), and returns a
- * placeholder {@code totCnt=0 / errCnt=0 / sucCnt=0 / rows=[]}.
- * Real per-cell parsing (Apache POI workbook walk + per-line
- * validation that mirrors
- * {@code PymnHelper.importDataFromExcelForInternalTransfer}) lands
- * in a follow-up MR per backend doc §13.
+ * <p>{@code totCnt} / {@code sucCnt} / {@code errCnt} are the row
+ * counters produced by {@code InternalTransferExcelParser} (Apache POI
+ * workbook walk + per-cell validation that mirrors
+ * {@code PymnHelper.readExcelFromInternalTransfer}); {@code rows}
+ * carries one {@link ParsedTransferLine} per data row with per-cell
+ * error flags for the preview.
  */
 public record ParseExcelResponse(
         BigDecimal              totCnt,

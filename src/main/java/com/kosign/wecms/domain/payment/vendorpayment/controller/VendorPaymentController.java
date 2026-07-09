@@ -22,9 +22,11 @@ import com.kosign.wecms.domain.payment.match.dto.PaymentLineMatchRequest;
 import com.kosign.wecms.domain.payment.match.dto.PaymentLineMatchResultResponse;
 import com.kosign.wecms.domain.payment.match.dto.PaymentLineUnmatchAllResponse;
 import com.kosign.wecms.domain.payment.match.service.DomesticPaymentLineMatchService;
+import com.kosign.wecms.domain.payment.vendorpayment.service.VendorPaymentDownloadService;
 import com.kosign.wecms.domain.payment.vendorpayment.service.VendorPaymentResultService;
 import com.kosign.wecms.domain.payment.vendorpayment.service.VendorPaymentService;
 import com.kosign.wecms.domain.payment.vendorpayment.service.VendorPaymentService.DownloadResource;
+import com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Pattern;
@@ -36,6 +38,7 @@ import java.nio.file.Files;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
@@ -101,6 +104,10 @@ public class VendorPaymentController {
 
     private final VendorPaymentService            service;
     private final VendorPaymentResultService      resultService;
+    private final VendorPaymentDownloadService    downloadService;
+    /** ERP_TRNS_HSTR 'W' audit writer for the generated-report downloads
+     *  (Scheduled → code 02, Result → code 04). */
+    private final ErpTrnsHistoryWriter            erpHistoryWriter;
     private final ExcelExportService              excelExportService;
     private final DomesticPaymentLineMatchService lineMatchService;
 
@@ -131,6 +138,17 @@ public class VendorPaymentController {
     }
 
     /**
+     * Preview the next {@code VO_YYMMDD_NNN} document number for the Request
+     * Approval popup (read-only; reserves / persists nothing). Mirrors the
+     * Internal Transfer / Card precedent so Vendor Payment renders the same
+     * friendly id format before submit.
+     */
+    @GetMapping("/next-doc-no")
+    public ApiResponse<com.kosign.wecms.domain.payment.internaltransfer.dto.NextDocNoResponse> nextDocNo() {
+        return ApiResponse.ok(service.previewNextDocNo());
+    }
+
+    /**
      * Scheduled Vendor Payment detail. Mirrors legacy
      * {@code pymn_0001_002_r001}.
      */
@@ -141,6 +159,37 @@ public class VendorPaymentController {
             @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
             String id) {
         return ApiResponse.ok(service.detail(id));
+    }
+
+    /**
+     * Excel Download — the legacy 22-column populated report
+     * (ports {@code pymn_0002_002_r002}, Vendor branch / type {@code "01"}).
+     * Loads the locale template from the backend classpath, populates one
+     * row per transfer detail (incl. Contact Name / {@code TRCO_CMENM} at
+     * column J) preserving all template styling, and streams
+     * {@code WeCMS_Vendor_Payment_download_{LANG}.xlsx}.
+     *
+     * <p>This is the artifact the Scheduled Payment list-row glyph and the
+     * Scheduled detail file-card download — NOT the originally uploaded
+     * Excel file (which {@code GET /{id}/file} still serves as the import
+     * source). See {@code docs/audits/vendor-payment-excel-download-audit.md}.
+     *
+     * @param id   batch key
+     * @param lang optional UI-locale hint (EN/KO/VI; KM/other → EN). When
+     *             omitted the JWT {@code langCd} is used.
+     */
+    @GetMapping("/{id}/report")
+    public ResponseEntity<ByteArrayResource> downloadReport(
+            @PathVariable("id")
+            @Size(max = 30)
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id,
+            @RequestParam(value = "lang", required = false) String lang) {
+        // Scheduled list/detail report download → ERP_TRNS_HSTR 'W' / 02
+        // (Vendor Scheduled Payment). Audit the exact downloaded bytes.
+        VendorPaymentDownloadService.GeneratedReport report = downloadService.generate(id, lang);
+        erpHistoryWriter.recordExportedBytes("02", report.content(), report.fileName());
+        return reportResponse(report);
     }
 
     /**
@@ -178,14 +227,84 @@ public class VendorPaymentController {
         return ApiResponse.ok(resultService.detail(id));
     }
 
-    /** Excel export of the Vendor Payment Result list. Provider:
-     *  {@code VendorPaymentResultExportProvider} (CLAUDE.md §13b). */
+    /**
+     * Excel Download — the legacy 22-column report for a Vendor Payment
+     * Result batch. Same artifact as {@link #downloadReport} but routed
+     * through the result-scoped endpoint so {@code payment-vendor-result}
+     * menu authorization applies (the report is per-batch, keyed only by
+     * {@code SCDUL_PYMN_NO}). Drives the Result list-row glyph and the
+     * Result detail file-card download.
+     */
+    @GetMapping("/results/{id}/report")
+    @PreAuthorize("@menuAuthz.canAccess('payment-vendor-result')")
+    public ResponseEntity<ByteArrayResource> downloadResultReport(
+            @PathVariable("id")
+            @Size(max = 30)
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id,
+            @RequestParam(value = "lang", required = false) String lang) {
+        // Result list-row/detail report download → ERP_TRNS_HSTR 'W' / 04
+        // (Vendor Payment Result). Same artifact as the Scheduled download,
+        // recorded with the Result type code.
+        VendorPaymentDownloadService.GeneratedReport report = downloadService.generate(id, lang);
+        erpHistoryWriter.recordExportedBytes("04", report.content(), report.fileName());
+        return reportResponse(report);
+    }
+
+    /** Shared builder for the generated-report binary response (RFC 5987
+     *  filename, XLSX content type, no-sniff). Mirrors the Internal Transfer
+     *  controller's {@code reportResponse}. */
+    private static ResponseEntity<ByteArrayResource> reportResponse(
+            VendorPaymentDownloadService.GeneratedReport report) {
+        ContentDisposition cd = ContentDisposition.builder("attachment")
+                .filename(report.fileName(), StandardCharsets.UTF_8)
+                .build();
+        ByteArrayResource body = new ByteArrayResource(report.content());
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .contentLength(body.contentLength())
+                .header(HttpHeaders.CONTENT_DISPOSITION, cd.toString())
+                .header("X-Content-Type-Options", "nosniff")
+                .header("Access-Control-Expose-Headers", HttpHeaders.CONTENT_DISPOSITION)
+                .body(body);
+    }
+
+    /** Excel export of the Vendor Payment Result list (legacy 7-column summary
+     *  via {@code VendorPaymentResultExportProvider}, CLAUDE.md §13b).
+     *  <b>Deprecated for the toolbar</b> (2026-06-30): the toolbar Excel now
+     *  calls {@link #downloadResultBulkReport} for the full 22-column
+     *  bulk template report (legacy {@code pymn_0002_002_r003} parity).
+     *  Retained for back-compat. */
     @PostMapping("/results/export")
     @PreAuthorize("@menuAuthz.canAccess('payment-vendor-result')")
     public void exportResults(
             @Valid @RequestBody ExcelExportRequest request,
             HttpServletResponse response) {
         excelExportService.exportTo(response, request);
+    }
+
+    /**
+     * Toolbar Excel — the legacy 22-column report for ALL batches in the
+     * current Payment Result filter (bulk). Same locale template + column
+     * layout (incl. Contact Name) as the per-row {@link #downloadResultReport},
+     * with every filtered batch appended into one workbook (legacy
+     * {@code pymn_0002_002_r003} bulk-report parity). Replaces the old
+     * from-scratch 7-column summary for the toolbar.
+     */
+    @GetMapping("/results/report")
+    @PreAuthorize("@menuAuthz.canAccess('payment-vendor-result')")
+    public ResponseEntity<ByteArrayResource> downloadResultBulkReport(
+            @RequestParam("from_date")                           String fromDate,
+            @RequestParam("to_date")                             String toDate,
+            @RequestParam(value = "srch_wd",   required = false) String srchWd,
+            @RequestParam(value = "trnf_stts", required = false) String trnfStts,
+            @RequestParam(value = "lang",      required = false) String lang) {
+        java.util.List<String> ids = resultService.dispatchedIdsForExport(fromDate, toDate, srchWd, trnfStts);
+        // Bulk Result report download → ERP_TRNS_HSTR 'W' / 04 (Vendor Result).
+        VendorPaymentDownloadService.GeneratedReport report = downloadService.generateBulk(ids, lang);
+        erpHistoryWriter.recordExportedBytes("04", report.content(), report.fileName());
+        return reportResponse(report);
     }
 
     /* ----------------------------------------------------------------
@@ -207,15 +326,19 @@ public class VendorPaymentController {
         return ApiResponse.ok(null);
     }
 
-    /** Submit one batch for approval. Legacy {@code comm_0192_001_c005}. */
-    @PostMapping("/{id}/request-approval")
+    /** Submit one batch for approval. Legacy {@code comm_0192_001_c005}.
+     *  M-1: multipart so attachments ride along (JSON in `request`, files in
+     *  `attachments`); a no-file submit omits the `attachments` parts. */
+    @PostMapping(path = "/{id}/request-approval", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResponse<RequestApprovalResponse> requestApproval(
             @PathVariable("id")
             @Size(max = 30)
             @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
             String id,
-            @Valid @RequestBody RequestApprovalRequest req) {
-        return ApiResponse.ok(service.requestApproval(id, req));
+            @Valid @RequestPart("request") RequestApprovalRequest req,
+            @RequestPart(value = "attachments", required = false)
+            java.util.List<org.springframework.web.multipart.MultipartFile> attachments) {
+        return ApiResponse.ok(service.requestApproval(id, req, attachments));
     }
 
     /** Approve / reject the active approval request. Legacy {@code bltb_0001_003_u001}. */
@@ -283,20 +406,6 @@ public class VendorPaymentController {
         return ApiResponse.ok(null);
     }
 
-    /** Re-run one Result-detail line. Legacy `pymn_0002_002.ts:441-472`. */
-    @PostMapping("/{id}/lines/{lineId}/rerun")
-    public ApiResponse<Void> rerun(
-            @PathVariable("id")
-            @Size(max = 30)
-            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
-            String id,
-            @PathVariable("lineId")
-            @Size(max = 20)
-            @Pattern(regexp = SCDUL_PYMN_DETL_NO_PATTERN, message = "lineId: invalid scdul_pymn_detl_no format")
-            String lineId) {
-        service.rerun(id, lineId);
-        return ApiResponse.ok(null);
-    }
 
     /** Execute the dispatch flow. Legacy {@code pymn_0001_001_c001}. */
     @PostMapping("/{id}/dispatch")

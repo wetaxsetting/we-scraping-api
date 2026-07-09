@@ -1,6 +1,7 @@
 package com.kosign.wecms.domain.payment.cardtransactions.dto;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 /**
  * Payment &gt; Card Transactions &mdash; one e-Invoice row eligible to
@@ -40,5 +41,15 @@ public record LinkableEInvoiceRow(
         /** Merchant tax id ({@code MST:} sub-line in Figma). */
         String     merchTaxId,
         BigDecimal totlAmt,
-        String     ccyCd) {
+        String     ccyCd,
+        /** Line-item display names (GDT {@code EINV_PRODUCTNAME}, else
+         *  {@code ITEM_NM}) in display order — the e-Invoice tab's item
+         *  dropdown. Empty when the invoice has no line items (audit
+         *  finding G2). Wire: {@code items}. */
+        List<String> items,
+        /** Attachment count for the paperclip badge (audit G3/G5). */
+        int          fileCount,
+        /** Attachment list for the paperclip dropdown (`BUSA_DOC_FILE` /
+         *  legacy REC_1); empty when none. Wire: {@code files}. */
+        List<ReceiptFileRow> files) {
 }

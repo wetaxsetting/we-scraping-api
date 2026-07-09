@@ -123,12 +123,15 @@ The action builds `IDODynamic` fragments (`act.jsp:207-381`):
                               rept_0015_001.ts renders 4 section groups
 ```
 
-**Refactor data flow (current, 2026-06 — READY FOR SIT for the in-PROD scope):** the refactor
-**skips** the legacy recompute and summary tables and live-computes from in-scope operational tables
-(Strategy B). `ReportService.dailyFinancial` reads `ACCT_MSTR` for account metadata, derives each
-account's **as-of end-of-day balance** and **per-day debit/credit + internal counts/amounts** from
-`ACCT_TRNS_HSTR` (internal split via `ACCT_TRNS_RCV_PAY_INFM` usage codes) for the selected `asOf`
-date, and builds the per-currency Financial Status (VND / USD / KRW; `total = current + saving`). The
+**Refactor data flow (current, 2026-06-14 — READY FOR SIT for the in-PROD scope):** the refactor
+**skips** the legacy nightly recompute and the materialized summary tables, and instead calls the
+legacy read-only function **`rept_0015_001_r001_rec1(biz_key, req_date, req_date2)`** directly via
+`DailyFinancialCmcFunctionRepository`. `ReportService.dailyFinancial` (`ReportService.java:147-225`)
+projects that function's rows — each account's **as-of balance** (latest `BAL ≤ asOf`, else
+`ACCT_MSTR.BAL`) and **per-day debit/credit + internal counts/amounts** (the function computes them;
+internal split is disjoint `INTL_SND`/`INTL_RCV`) — and builds the per-currency Financial Status
+(VND / USD / KRW; `total = current + saving`). *(This replaced the earlier "Strategy B" Java
+live-compute over `ACCT_TRNS_HSTR`/`ACCT_TRNS_RCV_PAY_INFM`.)* The
 **inline** per-account transaction list (REC2_1) is deferred (P1, non-blocker) — the **Transaction
 History Details popup** serves the per-account drilldown, reading `ACCT_TRNS_HSTR` directly
 (`ReportService.dailyFinancialTransactions`) with the UI aligned to the e-Invoice Latest Inquiry

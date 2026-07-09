@@ -1,8 +1,9 @@
 # Contacts — Business Flow (Backend)
 
 End-to-end flow for every Contacts operation, from controller through service / validator /
-repository to the projected response. Tenant scope (`TenantContext.currentBizKey()`) and audit
-(`AUDIT_LOGS_INFM.WSVC_ID = 'contacts'`) are invariants on every write. Controller:
+repository to the projected response. Tenant scope (`TenantContext.currentBizKey()`) is the invariant
+on every write. (Audit is **not** written today — see § Invariants; the `'contacts'` slug is the
+OQ-6-fixed value for any future audit row, not a row written now.) Controller:
 [ContactsController.java](../../../../src/main/java/com/kosign/wecms/domain/setting/contacts/controller/ContactsController.java).
 
 ---
@@ -133,8 +134,9 @@ POST /api/v1/settings/contacts/export   (ExcelExportRequest, screenId = settings
    account = `first(accounts)` → bank/account-no/currency; primary overseas beneficiary =
    `first(overseasBeneficiaries)` → beneficiary fields; address split by `disp_ord` (1 = current,
    2 = old); VALID_DATE = old address `dueDt` reformatted `yyyyMMdd → dd-MM-yyyy`.
-4. `ExcelExportService` intersects requested columns with the provider allow-list AND the persisted
-   View Setting (V247 seed) and streams XLSX.
+4. `ExcelExportService` resolves the columns via the provider allow-list ∩ the requested columns and
+   streams XLSX. There is **no live contacts View Setting seed** (the old V247 export seed was archived
+   2026-06-09), so the allow-list ∩ request is the sole column gate — no `WBE2013`-from-seed path.
 
 ## 8. Supporting reads
 
@@ -150,8 +152,9 @@ POST /api/v1/settings/contacts/export   (ExcelExportRequest, screenId = settings
 ## Invariants
 
 - **Tenant scope** — every query constrains `BIZ_KEY = TenantContext.currentBizKey()`; never on the wire.
-- **Audit** — Create / Update / single + bulk Delete write `AUDIT_LOGS_INFM` with `WSVC_ID='contacts'`
-  (slug, OQ-6), via the global audit aspect. Reads + Excel preflight/resolve do not audit.
+- **Audit** — **not written today.** `ContactsService` does not call `AuditLogService` and no AOP audit
+  aspect targets it, so Create / Update / single + bulk Delete / Import produce no `AUDIT_LOGS_INFM`
+  row. OQ-6 fixes only the slug (`'contacts'`) that such rows would carry once audit writes are wired.
 - **Soft-delete only** — no physical delete; list hard-codes `coalesce(trco_stts,'') <> 'C'`.
 - **Key generation + bank-name resolution** route through the single `LegacyFunctionRepository` funnel
   (OQ-4, OQ-7) — never scattered `@Query(nativeQuery=true)`.

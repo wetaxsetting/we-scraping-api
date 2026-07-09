@@ -46,7 +46,7 @@ Net: once an Internal Transfer batch is rejected, it is **terminal** — the res
 
 ### Refactor behaviour (for comparison)
 
-- `wecms-api`: `InternalTransferService.actOnApproval` delegates reject to `ApprovalBoxService.reject` (master `APPR_TYPE_CD=02`, chain `W→S`), mirrors `SCDUL_PYMN_SUMR.APPR_STTS='X'`, and **does not** clear `APPR_SEQ_NO` or reset the batch — same terminal outcome as legacy. There is **no** re-submit / re-request endpoint.
+- `wecms-api`: `InternalTransferService.actOnApproval` delegates reject to `ApprovalBoxService.reject` (master `EXPT_RESOL_MSTR.APPR_TYPE_CD=02`, chain `W→S`) and **does not** write back to `SCDUL_PYMN_SUMR` (which has no `APPR_STTS` column) nor clear `APPR_SEQ_NO` — the rejected status is re-derived on read via `wb_get_appr_stts` (`'R'`). Same terminal outcome as legacy. There is **no** re-submit / re-request endpoint.
 - `wecms-web`: `ScheduledTransferPage.tsx` renders a kebab **"Re-submit"** entry that opens a warning placeholder (`approval.action.resubmit_not_implemented`) — a refactor-only UI affordance with **no legacy counterpart**; it performs nothing.
 
 ### Classification
@@ -68,7 +68,7 @@ The refactor reproduces the legacy terminal-on-reject behaviour exactly (no re-s
 | Edit reporting account | `pymn_0009_002_u002` | `updateReportingAccount` | **MATCH** (CHART_ACCT existence re-check deferred) |
 | Delete draft | `pymn_0009_001_d001` | `delete` | **MATCH** |
 | Dispatch / Transfer | `pymn_0009_001_c001` + `validateTransferTiming` | `InternalTransferDispatchService` + `InternalTransferDispatchExecutor` + `CutoffValidator` | **MATCH** (no local bank daemon flips `PROC_STAT` — environmental) |
-| Re-run failed line | `pymn_0010_002.ts:441-472` | `rerun` | **MATCH** |
+| Re-run failed line | `pymn_0010_002.ts:441-472` | *(not ported — no endpoint/service/client)* | **DEAD LEGACY** (re-run deprecated by PO; absent on both sides) |
 | Transfer result list / detail | `pymn_0010_001` / `pymn_0010_002` (IDO `SCDUL_PYMN_SUMR_R006`) | `InternalTransferResultService` + `DispatchResultResolver` | **MATCH** |
 | Request approval (+ attachments) | `comm_0194_001` → `comm_0192_001_c005` | `requestApproval` (`EXPT_RESOL_*` fan-out + `EXPT_RESOL_FILE`) | **MATCH** |
 | Approve / Reject | `comm_0195_001` → `bltb_0001_003_u001` | `actOnApproval` → `ApprovalBoxService` | **MATCH** |

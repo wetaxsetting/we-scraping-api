@@ -14,7 +14,7 @@
 > non-blocking divergences (§3) only.
 
 Legacy source-of-truth: [`docs/jex/features/operation-status-inquiry/`](../../../docs/jex/features/operation-status-inquiry/README.md).
-Migration mapping: [migration/operation-status-inquiry.md](../migration/operation-status-inquiry.md).
+Migration mapping: migration/operation-status-inquiry.md _(removed — historical `migration/` folder deleted by project decision)_.
 
 ---
 

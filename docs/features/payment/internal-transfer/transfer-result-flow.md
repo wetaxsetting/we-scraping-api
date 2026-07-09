@@ -1,6 +1,6 @@
 # Flow 3 — Transfer Result
 
-Source-code-verified 2026-06-08. Backend authority: `TransferResultController` + `InternalTransferResultService` + `InternalTransferResultExportProvider`. Frontend detail: [wecms-web/.../internal-transfer/transfer-result-flow.md](../../../../../wecms-web/docs/features/payment/internal-transfer/transfer-result-flow.md).
+Source-code-verified 2026-06-23. Backend authority: `TransferResultController` + `InternalTransferResultService` + `InternalTransferResultExportProvider`. Frontend detail: [wecms-web/.../internal-transfer/transfer-result-flow.md](../../../../../wecms-web/docs/features/payment/internal-transfer/transfer-result-flow.md).
 
 ---
 
@@ -14,8 +14,8 @@ Read-only view of **executed** internal-transfer batches and their per-line bank
 
 | Action | Endpoint | Service |
 |---|---|---|
-| **Search** (date range + keyword + `trnf_stts`) | `GET /api/v1/payment/internal-transfer/results` | `InternalTransferResultService.list` |
-| **Filter** (`trnf_stts` Y/N, paging, sort) | same | `ScdulPymnSumrRepository.searchDispatched` |
+| **Search** (date range on `TRNF_DTM` + keyword + `trnf_stts`) | `GET /api/v1/payment/internal-transfer/results` | `InternalTransferResultService.list` |
+| **Filter** (`trnf_stts` = `C` Completed / `P` In Progress, paging, sort) | same | `ScdulPymnSumrRepository.searchDispatched` |
 | **Detail view** (per-line results + status tab counts) | `GET .../results/{id}` | `detail` |
 | **Download / export** (XLSX) | `POST .../results/export` | shared `ExcelExportService` + `InternalTransferResultExportProvider` |
 
@@ -26,7 +26,7 @@ Gated by `@menuAuthz.canAccess('payment-internal-transfer-result')`.
 ## Backend / API involvement
 
 ### Result list (`list`)
-`@Transactional(readOnly=true)`. Validates date range. Uses **`searchDispatched`** — same scope as Flow 2's `search` but hard-filtered to `TRNF_YN='Y'` (only batches the user actually dispatched; un-dispatched batches in the approval flow are excluded). Optional `trnf_stts` (`Y`/`N`) further narrows. Default sort `REG_DTM DESC, SCDUL_PYMN_NO DESC` (whitelist `InternalTransferResultSortField`). Per-batch (succ, err) counts via `DispatchCountRepository.countByBatch` (degrades to null counts if the dispatch tables are unreachable). Returns `TransferResultListResponse(totalCount, page, size, currencyTotals[], rows[])` (`TransferResultRow` = master + succ/err counts + `TRNF_YN` + `APPR_SEQ_NO` + `ERP_FILE_NUM`).
+`@Transactional(readOnly=true)`. Validates date range. Uses **`searchDispatched`** — hard-filtered to `TRNF_YN='Y'` (only batches the user actually dispatched; un-dispatched batches in the approval flow are excluded). The date window constrains **`TRNF_DTM`** (dispatch datetime), NOT `REG_DTM` (F-1 legacy parity). The wire `trnf_stts` param is forwarded as the `searchDispatched` `procStts` argument — **route-aware dispatch-result status filter** with legacy codes `'C'` Completed / `'P'` In Progress (NOT the old `'Y'`/`'N'`); unknown/blank values degrade to no status filter (C2 fix). Default + tie-break sort **`TRNF_DTM DESC, SCDUL_PYMN_NO DESC`** (whitelist `InternalTransferResultSortField`; F-1 — was `REG_DTM`). Per-batch (succ, err) counts via `DispatchCountRepository.countByBatch` (degrades to empty counts if the dispatch tables are unreachable). Returns `TransferResultListResponse(totalCount, page, size, currencyTotals[], rows[])` (`TransferResultRow` = master + succ/err counts + `TRNF_YN` + `APPR_SEQ_NO` + `DOC_NO` (from `EXPT_RESOL_MSTR.DOC_NO`) + `apprFundTp` (null for Internal Transfer); the wire `reg_dtm` field carries `TRNF_DTM`, and the Approval Title is sourced from `EXPT_RESOL_MSTR.TITL` (F-3), the File Name from `ORG_FILE_NM`). Footer currency totals aggregate the full dispatched set via `searchDispatchedCurrencyTotals` (NOT status-filtered — legacy `SCDUL_PYMN_SUMR_R008` parity).
 
 ### Result detail (`detail`)
 `@Transactional(readOnly=true)`. Loads master (`WBE2060`) + lines. **`DispatchResultResolver.resolve(master, lines)`** reads back the per-line dispatch result from `TB_PAY_TARGET`/`TB_PAY_FILE_MST`/`TB_PAY_FILE_DATA`/`TB_FIRM_TRAN` (API-vs-File path hidden behind the resolver) → `DispatchResult(procStat, procStatKey, procDttm, rsltDttm, rsCd, rsMsg)` per `SCDUL_PYMN_DETL_NO`. Each line → `TransferResultLine` (line fields + resolved bank name + the 6 dispatch-result fields + banking-match read fields `LINK_MATCH_YN`/`ACCT_SEQ_NO`/`BANK_TRNS_FULL_ID`). **Header tab counts** `[success, failed, inProgress]` computed by `countByStatus` over the resolved lines (rule: `procStat='0'`+`rsCd='0000'`→success; `procStat∈{9,1,6}` or both blank→in-progress; else→failed — chip-consistent with frontend `deriveResultStatus.ts`). Requester name from `EXPT_RESOL_MSTR.DRAFT_USER_NM`. Returns `TransferResultDetailResponse` (master + counts + `rows[]`).

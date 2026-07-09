@@ -20,7 +20,11 @@ if "%WECMS_DB_PASSWORD%"=="" (
     echo [INFO] WECMS_DB_PASSWORD not set — using default from application-local.yml (password: 1234)
 )
 if "%WECMS_JWT_SECRET%"=="" (
-    echo [INFO] WECMS_JWT_SECRET not set — using default from application-local.yml
+    REM F-01: application-local.yml no longer carries a JWT secret default. Set a
+    REM local-only dev secret so run-local.bat still works out of the box. Laptop
+    REM use ONLY — SIT/UAT/PROD must set their own unique WECMS_JWT_SECRET.
+    set "WECMS_JWT_SECRET=wecms-local-dev-only-jwt-secret-not-for-any-shared-environment-0123456789"
+    echo [INFO] WECMS_JWT_SECRET not set — using a local-only dev secret ^(laptop use only^)
 )
 
 REM --- 3. Sanity-check local PostgreSQL is reachable ---

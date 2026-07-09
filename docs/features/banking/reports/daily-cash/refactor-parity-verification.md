@@ -1,5 +1,13 @@
 # Daily Cash — Refactor Parity Verification
 
+> **⚠️ Data-source corrected 2026-06-13 (noted 2026-06-23).** The live read path calls the legacy DB
+> functions **`rept_0900_001_rec1..rec4`** directly via `DailyCashReportFunctionRepository`
+> (`DailyCashReportService.java:24-75` — the documented set-returning exception, same stance as Cash Flow
+> and Daily Financial). The prior **Java live-recompute** (`DailyCashRecomputeRepository` /
+> `CurrencyAccumulator`) is **bypassed / no longer wired** and retained only as a cleanup candidate. Any
+> "live recompute over `ACCT_MSTR` + `ACCT_TRNS_HSTR`" wording below is the **superseded pre-pivot** record
+> (audit history preserved).
+
 **Feature:** Banking > Reports > Daily Cash (`rept_0009_001`)
 **Refactor route:** `/banking/reports/daily-cash`
 **Date:** 2026-06-03 · **Re-verified 2026-06-04 (OQ-1 resolved against DEV DB).** · **Post-fix review 2026-06-04.**
@@ -35,9 +43,16 @@ DailyCashClient.tsx
   → GET /api/v1/banking/reports/daily-cash-report           ← slug endpoint (LIVE)
   → DailyCashReportController.search(asOfDate, currency)
   → DailyCashReportService.search(...)
-  → DailyCashReptDailySumrDetlRepository.findRows(...)
-  → table DAILY_CASH_REPT_DAILY_SUMR_DETL
+  → DailyCashReportFunctionRepository                       ← calls legacy DB functions directly (2026-06-13)
+  → fn rept_0900_001_rec1..4(...)                           ← rec1/rec2 active; rec3/rec4 data-blocked
 ```
+
+> **Active source = direct `rept_0900_001_rec1..4` calls (2026-06-13).** Earlier revisions of this doc
+> showed the snapshot read (`DailyCashReptDailySumrDetlRepository.findRows` over
+> `DAILY_CASH_REPT_DAILY_SUMR_DETL`) and then a Java live-recompute (`DailyCashRecomputeRepository.findAccountsAsOf`
+> over `ACCT_MSTR` + `ACCT_TRNS_HSTR`) as the live path — **both are superseded**. The snapshot repo is
+> dormant and `DailyCashRecomputeRepository` is `@Deprecated(forRemoval=true)`. The service now calls the
+> legacy DB functions directly via `DailyCashReportFunctionRepository`.
 
 The older `GET /api/v1/banking/reports/daily-cash` (`ReportController` / `ReportService.dailyCash` / `DailyCashReport` DTO, reading `ACCT_MSTR`) is **NOT** used by this page — it is the V31-era stub. The frontend's `lib/api/banking.fetchDailyCash` wraps that old endpoint but is **not called** by `DailyCashClient`.
 
@@ -166,7 +181,7 @@ sum(case when acct_type_cd =  '01'        then bal else 0 end)  AS totl_loan_amt
 1. **`07` and `08` are in NO summary bucket.** `rec2` only sums `01–06`. The refactor must NOT fold `07`→demand / `08`→savings into summary totals if strict parity is the goal (this refines the earlier fix-plan suggestion). `07` exists in DEV data (19 rows) and is silently excluded from every legacy summary total — and from both detail tables (`osmc.ts` only renders `03/04` and `05/06`).
 2. **`total_cash` cannot be sourced from the detail table at all** — and `cash_repy_mstr` / `DAILY_CASH_REPT_DAILY_CASH_SUMR_DETL` are **not in the refactor PROD active-table list**. So a faithful `total_cash` is out of refactor scope today; it should be `0` (legacy VN view hides the Cash column anyway — §2.8), **never** the sum of `01` (loan) rows.
 
-**Detail (`REC1`) split — also DB-confirmed.** `rept_0900_001_rec1` selects from `acct_mstr` (active accounts; loans `01` only when `expi_dt >= req_date`). The two rendered tables filter it as Current = `03/04`, Savings = `05/06` (matches `osmc.ts:622,748`). The refactor reads the batch-persisted `DAILY_CASH_REPT_DAILY_SUMR_DETL` instead of recomputing — same column shape, same codes.
+**Detail (`REC1`) split — also DB-confirmed.** `rept_0900_001_rec1` selects from `acct_mstr` (active accounts; loans `01` only when `expi_dt >= req_date`). The two rendered tables filter it as Current = `03/04`, Savings = `05/06` (matches `osmc.ts:622,748`). **As of 2026-06-13** the refactor calls `rept_0900_001_rec1` directly (via `DailyCashReportFunctionRepository`) — same column shape, same codes. (Earlier revisions read the batch-persisted snapshot, then Java-recomputed; both superseded.)
 
 ---
 
@@ -219,7 +234,7 @@ Legacy assembles three records (`_act.jsp:213-215`): `REC` (per-currency totals 
 
 | Item | Legacy | Refactor | Status |
 |---|---|---|---|
-| Currency ordering | REC2 IDO `ORDER BY CASE WHEN CCY_CD='VND' THEN 1 ELSE 2 END` (VND-first, `IDO…R006.xml:38-39`); REC1 `ccy_cd desc` (`_act.jsp:66`) | `findRows` `ORDER BY d.ccyCd ASC, d.acctTypeCd ASC, …` (repo `:31`); `LinkedHashMap` preserves first-seen (`DailyCashReportService.java:61`) | ❌ refactor is alphabetical ASC (KHR<USD<VND) — **not VND-first**. (OQ-3) |
+| Currency ordering | REC2 IDO `ORDER BY CASE WHEN CCY_CD='VND' THEN 1 ELSE 2 END` (VND-first, `IDO…R006.xml:38-39`); REC1 `ccy_cd desc` (`_act.jsp:66`) | (historical, superseded path) `findRows` `ORDER BY d.ccyCd ASC, …`; `LinkedHashMap` preserves first-seen | ⚠️ finding recorded against the superseded `findRows` path; re-verify ordering now that the active path calls `rept_0900_001_rec1..4` directly (the function carries the legacy VND-first ORDER BY). (OQ-3) |
 | Server-side number formatting | None (raw strings) (`_act.jsp:200`) | None (raw `BigDecimal`) | ✅ both delegate to client |
 | Empty data | Empty REC/REC1/REC2, no error (`_act.jsp:187-217`) | Empty lists, no error, audit still written (`DailyCashReportService.java:89-113`) | ✅ |
 | `reqDate2` | Always == `reqDate` (single-day; vestigial second param) | Single `refDate` | ✅ |

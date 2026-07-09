@@ -98,5 +98,5 @@ Other dependencies migrated alongside:
 ## Cross-references
 
 - [V44 migration](../../../src/main/resources/db/migration/V44__bank_infm_detl_and_nickname_fns.sql)
-- [Account Inquiry (VND) feature spec](../../features/banking/current-savings-vnd/account-inquiry.md) — first consumer
+- [Account Inquiry (VND) feature spec](../../features/banking/current-savings-vnd/account-inquiry/README.md) — first consumer
 - [Account Inquiry (VND) DB doc](../../references/database/banking/account-inquiry-vnd-db.md) — V44 migration entry

@@ -4,7 +4,13 @@
 **Module / menu:** Settings → Firm Banking → **Firm Banking History**
 **Refactor slug:** `firm-banking-history` (matches the JEX, backend, and frontend counterparts)
 **Wire base path:** `GET /api/v1/settings/firm-banking-history` (+ `POST .../export`)
-**Legacy JEX counterpart:** WSVC `comm_0221_001` (view) + `comm_0221_001_r001` (read API), IDO `TB_FIRM_TRAN_R002`
+
+> **DB-shape note (verify against code):** there is **no** `V_FIRM_BANKING_HISTORY` database view. The
+> five-leg union is carried by a Hibernate `@Subselect` on
+> [`FirmBankingHistoryView`](../../../../src/main/java/com/kosign/wecms/domain/setting/firmbankinghistory/entity/FirmBankingHistoryView.java)
+> over the legacy base tables (`TB_FIRM_TRAN`, `NXSIAS_MODULE_TRAN_LOG_HIS`, `NAPAS_REMIT_TRNS_HSTR`,
+> `EXT_TRAN_CALL_HIS`); see memory `project_v_firm_banking_history_subselect.md`. References below to a
+> "view (Flyway V60)" are stale — that view was archived and never provisioned in the refactor DB.
 
 > This folder is the **primary documentation home** for Firm Banking History on the backend.
 > It consolidates and indexes the material that previously lived in scattered single files; those
@@ -45,13 +51,13 @@ source table.
 |---|---|
 | Endpoint (list) | `GET /api/v1/settings/firm-banking-history` |
 | Endpoint (export) | `POST /api/v1/settings/firm-banking-history/export` (XLSX) |
-| Authority | `@PreAuthorize("hasAnyRole('ADMIN','USER')")` — both are normal company roles (legacy `NORM_USER_ONLY_YN=Y`, `WTA_USER_ALLOW_YN=N` parity) |
+| Authority | `@PreAuthorize("hasAnyRole('ADMIN','USER') and @menuAuthz.canAccess('settings-firm-banking-history')")` — both are normal company roles (legacy `NORM_USER_ONLY_YN=Y`, `WTA_USER_ALLOW_YN=N` parity); the menu-authz term is the F-3 per-menu gate |
 | Required params | `from_date`, `to_date` (`YYYYMMDD`, `from ≤ to`) |
 | Optional params | `svc_type` (F/S/G/B), `keyword` (seq-no ILIKE), `sort_field`, `sort_direction`, `page`, `size` |
 | Backend default page size | `15` (`DEFAULT_PAGE_SIZE`); max `100` (`MAX_PAGE_SIZE`) |
 | Default sort | `TARN_DTM DESC, SEQ_NO DESC` |
 | Tenant scope | `TenantContext.currentBizKey()` on every leg — never from a request param |
-| Data shape | One JPA entity over a read-only view `V_FIRM_BANKING_HISTORY` (Flyway V60) |
+| Data shape | One `@Immutable` JPA entity backed by a Hibernate `@Subselect` (the five-leg union runs over the legacy base tables — there is no `V_FIRM_BANKING_HISTORY` DB view) |
 | Write surface | None (read-only) |
 | Audit log on read | None (intentional residual — see gap analysis) |
 
@@ -68,7 +74,7 @@ com.kosign.wecms.domain.setting.firmbankinghistory
 │   └── FirmBankingServiceNameResolver.java            (svcType, svcNm) → i18n key
 ├── repository/FirmBankingHistoryRepository.java      single JPQL search()
 ├── entity/
-│   ├── FirmBankingHistoryView.java                   @Immutable @Table(V_FIRM_BANKING_HISTORY)
+│   ├── FirmBankingHistoryView.java                   @Immutable @Subselect (5-leg union; no DB view)
 │   └── FirmBankingHistoryViewId.java                 composite @IdClass
 ├── dto/
 │   ├── FirmBankingHistoryRow.java                    12-field record
@@ -86,12 +92,18 @@ Supporting enums (in `common/enums/`): [`TranTp`](../../../../src/main/java/com/
 |---|---|
 | [business-flow.md](business-flow.md) | End-to-end request flow: search → controller → service → repository/view → response → grid → detail popover → export |
 | [functional-specification.md](functional-specification.md) | Search conditions, grid columns, sort/paging behaviour, detail popover, status mapping, loading/empty/error states |
-| [database-mapping.md](database-mapping.md) | The five source tables, the `V_FIRM_BANKING_HISTORY` view, and the full legacy-column → entity-field → DTO-field → UI-column mapping |
+| [database-mapping.md](database-mapping.md) | The five source tables, the `@Subselect` consolidation entity (no DB view), and the full legacy-column → entity-field → DTO-field → UI-column mapping |
 | [interface-specification.md](interface-specification.md) | REST contract — request params, response shape, error envelope, export contract, status-code registry |
 | [source-code-index.md](source-code-index.md) | Legacy ↔ refactor file map (backend + frontend), file:line citations |
 | [migration-guide.md](migration-guide.md) | How each JEX layer (JSP / `_act.jsp` / IDO / WSVC / DB functions) became its Spring counterpart |
 | [test-scenarios.md](test-scenarios.md) | SIT/UAT scenarios + the existing JUnit coverage map |
 | [refactor-gap-analysis.md](refactor-gap-analysis.md) | Final parity review (MATCH / PARTIAL / MISSING) with completion status |
+
+---
+
+## Legacy & Migration Traceability
+
+**Legacy JEX counterpart:** WSVC `comm_0221_001` (view) + `comm_0221_001_r001` (read API), IDO `TB_FIRM_TRAN_R002`
 
 ---
 

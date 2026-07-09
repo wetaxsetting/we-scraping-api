@@ -48,4 +48,12 @@ delete
     or
 update
     on
-    acct_trns_hstr for each row execute function acct_trns_hstr_log();
+    acct_trns_hstr for each row execute procedure acct_trns_hstr_log();
+create trigger sync_to_rept_trigger after
+insert
+    or
+delete
+    or
+update
+    on
+    acct_trns_hstr for each row execute procedure sync_acct_trns_hstr_to_rept();

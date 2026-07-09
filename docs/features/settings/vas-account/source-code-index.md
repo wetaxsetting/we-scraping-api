@@ -50,9 +50,9 @@ truth: [docs/jex/features/vas-account/source-code-index.md](../../../../../docs/
 | DTOs | `src/main/java/com/kosign/wecms/domain/setting/vasaccount/dto/` — `VasAccountListResponse`, `VasAccountRow`, `VasAccountLookupResponse`, `VasAccountLookupRow`, `VasAccountCreateRequest`, `VasAccountUpdateRequest`, `VasAccountExcelPreview`, `VasAccountExcelPreviewRow`, `VasAccountExcelFieldError`, `VasAccountExcelImportRequest`, `VasAccountExcelImportResult` |
 | Enums | `src/main/java/com/kosign/wecms/common/enums/AStts.java`, `VasAcctType.java` |
 | Auth guard | `src/main/java/com/kosign/wecms/domain/navigation/service/MenuAuthorizationGuard.java` (`@Component("menuAuthz")`) |
-| Migrations | `src/main/resources/db/migration/V77__*` (schema), `V78__*` (seed), `V79__*` (View Setting seed) |
+| Migrations | `src/main/resources/db/migration/V37__busi_vas_acct_infm.sql` (schema — `CREATE TABLE` only). **No seed migration and no View Setting seed exist** (`vas-account` is "reserved / audit-slug only" per the V156 `sys_scr_option_wecms` seed header — the popover is not adopted). |
 | i18n | `src/main/resources/messages.properties`, `messages_en.properties` (+ partial ko/vi/km) — `settings.vas_account.*`, `audit.vas_account.*`, `WBE0003`/`WBE2040`/`WBE2041`/`WBE2042`/`WBE2043` |
-| Tests | `src/test/java/com/kosign/wecms/domain/setting/vasaccount/` — `service/VasAccountServiceTest`, `service/VasAccountExcelServiceTest`, `service/VasAccountExportProviderTest`, `service/VasAccountSortFieldTest`, `controller/VasAccountControllerTest`, `VasAccountIntegrationTest` (`@Disabled` — F1) |
+| Tests | `src/test/java/com/kosign/wecms/domain/setting/vasaccount/` — `service/VasAccountServiceTest`, `service/VasAccountExcelServiceTest`, `service/VasAccountSortFieldTest`, `export/VasAccountExportProviderTest`, `controller/VasAccountControllerTest`, `VasAccountIntegrationTest` (`@Disabled` — F1) |
 
 ## 3. Refactor frontend (`wecms-web`)
 

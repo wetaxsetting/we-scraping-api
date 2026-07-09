@@ -14,8 +14,9 @@ Settings modal → Purpose panel
 PurposeSettingsController  ──►  PurposeSettingsService / PurposeExcelService
       │                               │
       │                               ├─ TenantContext.currentBizKey()  (tenant scope, never a param)
-      │                               ├─ PurposeSettingsRepository      (active-scope JPQL + native PK-gen)
-      │                               ├─ PurposeInUseRepository         (v_purpose_in_use exists / bulk lookup)
+      │                               ├─ PurposeSettingsRepository      (active-scope JPQL)
+      │                               ├─ LegacyFunctionRepository       (wb_get_next_val funnel — PK-gen)
+      │                               ├─ PurposeInUseRepository         (VPurposeInUse @Subselect — exists / bulk lookup)
       │                               └─ AuditLogService.append(...)    (Create/Update/Delete/Reorder only)
       ▼
 ApiResponse<...>  (lowercase snake_case envelope)
@@ -49,7 +50,7 @@ GET /api/v1/settings/purpose-settings[?keyword=…]
 ```
 GET /api/v1/settings/purpose-settings/{use_usag_cd}
   → service.detail(useUsagCd)
-      → repo.findByBizKeyAndUseUsagCd(bizKey, useUsagCd)  (or 404)
+      → repo.findByBizKeyAndUseUsagCd(bizKey, useUsagCd)  (or WBE_VALIDATION "not found in this tenant")
       → resolve usedInTransactions from the view
   → PurposeSettingDetail  (flat — no children)
 ```
@@ -65,7 +66,7 @@ POST /api/v1/settings/purpose-settings   body: PurposeSettingCreateRequest
       1. validate hand_use_usag_cd unique among active rows         → WBW1152 on dup
       2. validate use_usag_nm unique among active rows              → WBW1138 on dup
       3. validateParent(parent): must be active level-1, not self   → WBE_VALIDATION
-      4. useUsagCd = repo.nextUseUsagCd(bizKey)                      -- wb_get_next_val branch, 10-digit
+      4. useUsagCd = legacyFunctions.nextUseUsagCd(bizKey, "")       -- wb_get_next_val funnel, 10-digit
       5. dispOrd  = repo.findMaxDispOrd(bizKey).orElse(0) + 1        -- new row sorts last
       6. useYn='Y', bizKey/modId/modDtm stamped from context
       7. repo.save(entity)  (one-shot retry on PK DataIntegrityViolation)
@@ -78,7 +79,7 @@ POST /api/v1/settings/purpose-settings   body: PurposeSettingCreateRequest
 ```
 PUT /api/v1/settings/purpose-settings/{use_usag_cd}   body: PurposeSettingUpdateRequest
   → service.update(useUsagCd, req)  @Transactional
-      1. load row by PK                                             (or 404)
+      1. load row by PK                                             (or WBE_VALIDATION "not found in this tenant")
       2. hand_use_usag_cd: NO duplicate check (legacy parity, OQ-4)
       3. use_usag_nm: unique excluding self                         → WBW1138
       4. parent: active level-1; if assigning a parent to a row that
@@ -94,7 +95,7 @@ PUT /api/v1/settings/purpose-settings/{use_usag_cd}   body: PurposeSettingUpdate
 DELETE /api/v1/settings/purpose-settings/{use_usag_cd}
   → service.delete(useUsagCd)  @Transactional
       1. if repo.hasActiveChildren(bizKey, code)                    → WBE1199  (legacy "has children")
-      2. OQ-5 recursive in-use check:
+      2. OQ-5 recursive in-use check (over the VPurposeInUse @Subselect):
            codes = { code } ∪ repo.findActiveChildCodes(bizKey, code)
            if inUseRepo.existsAnyByBizKeyAndUseUsagCdIn(bizKey, codes) → WBE1199
       3. entity.useYn = 'N'; stamp modId/modDtm; repo.save(entity)   -- SOFT delete, never physical

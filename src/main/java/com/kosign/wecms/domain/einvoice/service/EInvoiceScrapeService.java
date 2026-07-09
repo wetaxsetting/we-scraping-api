@@ -119,6 +119,14 @@ public class EInvoiceScrapeService {
         int updated = 0;
         int skipped = 0;
 
+        // Pass 1 — compute the doc identity + derived fields for every
+        // non-skipped row (skip logic UNCHANGED), collecting doc ids for a
+        // single batch prefetch. This replaces the per-row findById N+1.
+        record ScrapeWork(ScrapedEInvoiceRow row, String checkResult, String base,
+                          String docType, String issuTaxId, String sellerTax,
+                          String provStts, String docId) { }
+        java.util.List<ScrapeWork> work = new java.util.ArrayList<>(req.invoices().size());
+        java.util.List<BusaDocMstrId> ids = new java.util.ArrayList<>(req.invoices().size());
         for (ScrapedEInvoiceRow row : req.invoices()) {
             final String checkResult = trim(row.checkResult());
             final boolean branchA = CHECK_RESULT_BRANCH_A.contains(checkResult);
@@ -146,21 +154,38 @@ public class EInvoiceScrapeService {
             final String provStts = voidSet.contains(trim(row.invoiceStatus()))
                     ? PROV_STTS_VOID : PROV_STTS_OPEN;
 
-            final BusaDocMstrId id = new BusaDocMstrId(bizKey, docId);
-            final BusaDocMstr existing = busaRepo.findById(id).orElse(null);
+            work.add(new ScrapeWork(row, checkResult, base, docType, issuTaxId,
+                    sellerTax, provStts, docId));
+            ids.add(new BusaDocMstrId(bizKey, docId));
+        }
+
+        // Single batch read of all candidate masters.
+        java.util.Map<String, BusaDocMstr> byDocId = new java.util.HashMap<>();
+        for (BusaDocMstr m : busaRepo.findAllById(ids)) {
+            byDocId.put(m.getDocId(), m);
+        }
+
+        // Pass 2 — upsert. byDocId is updated after each row so two input
+        // rows sharing one doc id behave exactly as before (first inserts,
+        // second sees it as existing → update), matching the prior
+        // in-transaction findById-sees-managed-entity semantics.
+        java.util.List<BusaDocMstr> toSave = new java.util.ArrayList<>(work.size());
+        for (ScrapeWork w : work) {
+            final ScrapedEInvoiceRow row = w.row();
+            final BusaDocMstr existing = byDocId.get(w.docId());
             final BusaDocMstr e = existing != null ? existing : new BusaDocMstr();
 
             if (existing == null) {
                 e.setBizKey(bizKey);
-                e.setDocId(docId);
+                e.setDocId(w.docId());
                 e.setRegId(userId);
                 e.setRegDtm(regDtm);
             }
-            e.setDocType(docType);
-            e.setDispDocId(base);
-            e.setIssuTaxId(issuTaxId != null ? issuTaxId : "");
+            e.setDocType(w.docType());
+            e.setDispDocId(w.base());
+            e.setIssuTaxId(w.issuTaxId() != null ? w.issuTaxId() : "");
             e.setTrcoKey(existing != null && existing.getTrcoKey() != null ? existing.getTrcoKey() : "");
-            e.setTrcoTaxId(sellerTax.isEmpty() ? e.getTrcoTaxId() : sellerTax);
+            e.setTrcoTaxId(w.sellerTax().isEmpty() ? e.getTrcoTaxId() : w.sellerTax());
             e.setTrcoCmnm(blankToExisting(row.trcoCmnm(), e.getTrcoCmnm()));
             e.setTrcoTrscCcyCd(blankToExisting(row.currencyCd(), e.getTrcoTrscCcyCd()));
             e.setIssuDt(trim(row.invoiceDate()));
@@ -172,23 +197,25 @@ public class EInvoiceScrapeService {
             e.setEinvInvoiceinfo(row.invoiceInfo());
             e.setEinvInvoicestatus(trim(row.invoiceStatus()));
             e.setEinvInvoicestatusBef(trim(row.invoiceStatus()));
-            e.setEinvCheckresults(checkResult);
+            e.setEinvCheckresults(w.checkResult());
             e.setEinvNumericsymbol(trim(row.numericSymbol()));
             e.setEinvInvoicesymbol(trim(row.invoiceSymbol()));
             e.setEinvTestresults(normalizeTestResult(row.einvTestResults()));
-            e.setProvStts(provStts);
+            e.setProvStts(w.provStts());
             e.setHandRegYn(HAND_REG_NO);
             e.setUserId(userId);
             e.setModId(userId);
             e.setModDtm(regDtm);
 
-            busaRepo.save(e);
             if (existing != null) {
                 updated++;
             } else {
                 saved++;
             }
+            byDocId.put(w.docId(), e);
+            toSave.add(e);
         }
+        busaRepo.saveAll(toSave);
 
         writeAudit(isSales, req, bizKey, userId, regDtm);
 

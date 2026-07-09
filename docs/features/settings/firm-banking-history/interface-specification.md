@@ -97,9 +97,11 @@ All errors are HTTP 200 business envelopes (except framework faults) carrying `t
 
 ## 2. Authority
 
-Class-level `@PreAuthorize("hasAnyRole('ADMIN','USER')")` on the controller (honoured via
-`@EnableMethodSecurity` in `SecurityConfig`). Both endpoints inherit it. Maps the legacy
-`NORM_USER_ONLY_YN=Y` / `WTA_USER_ALLOW_YN=N` flags — see [README § Quick facts](README.md#quick-facts).
+Class-level `@PreAuthorize("hasAnyRole('ADMIN','USER') and @menuAuthz.canAccess('settings-firm-banking-history')")`
+on the controller (honoured via `@EnableMethodSecurity` in `SecurityConfig`). Both endpoints inherit it.
+The role term maps the legacy `NORM_USER_ONLY_YN=Y` / `WTA_USER_ALLOW_YN=N` flags; the
+`@menuAuthz.canAccess('settings-firm-banking-history')` term is the F-3 per-menu authorization gate
+(stacked, not weakening the role check). See [README § Quick facts](README.md#quick-facts).
 
 ---
 
@@ -139,9 +141,9 @@ Body is the shared [`ExcelExportRequest`](../../../../src/main/java/com/kosign/w
 
 Provider: [`FirmBankingHistoryExportProvider`](../../../../src/main/java/com/kosign/wecms/domain/setting/firmbankinghistory/export/FirmBankingHistoryExportProvider.java).
 - `screenId()` → `"firm-banking-history"`.
-- `allowedFieldIds()` → `{ REG_DTM, SVC_TYPE, SVC_NM, SEQ_NO, DEP_BANK_CD, RS_CD, RS_MSG }` (matches the V165 View Setting seed).
+- `allowedFieldIds()` → `{ REG_DTM, SVC_TYPE, SVC_NM, SEQ_NO, DEP_BANK_CD, RS_CD, RS_MSG }`.
 - `fetch(...)` re-runs `FirmBankingHistoryService.listAll(...)` (same filter/sort path, unpaged) and maps each row to a FIELD_ID-keyed map (`REG_DTM←tarn_dtm`, `RS_CD←rslt_cd`, `RS_MSG←rslt_msg`); subheader `"N record(s)"`.
-- Capped at `MAX_ROWS = 50,000` by `ExcelExportService`. Column visibility is intersected with the persisted View Setting (`web_svc_id = 'firm-banking-history'`) as defence-in-depth.
+- Capped at `MAX_ROWS = 50,000` by `ExcelExportService`. This screen is **export-only with no View Setting seed**, so there is no persisted visibility to intersect: `ScreenOptionService.load('firm-banking-history', …)` throws `WBE2001`, which `ExcelExportService.resolveColumns` catches — the emitted column set is then **request columns ∩ the provider allow-list above**.
 
 Export-related error codes (from the shared pipeline): `WBE2010` (unknown screenId), `WBE2011`
 (> 50k rows), `WBE2013` (no exportable columns after intersection).

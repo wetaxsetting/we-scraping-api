@@ -303,6 +303,52 @@ public class BusaDocMstr {
     @Column(name = "ISSU_BSUN_ST", length = 200)
     private String issuBsunSt;
 
+    /* ------------------------------------------------------------------
+     *  Counterparty (TRCO_*) address + seller phone + buyer full name +
+     *  approval ref + doc title — added 2026-06-27 for the 63-column
+     *  "Download Excel with Details" legacy-parity export
+     *  (einv_0001_001_r002_excel / IDO.BUSA_DOC_MSTR_R024). All columns
+     *  verified present in the refactor DB (information_schema), so
+     *  ddl-auto=validate accepts these additive mappings. Populated by
+     *  the scrape intake; null/blank when the GDT payload omits them.
+     * ------------------------------------------------------------------ */
+
+    /** Counterparty business detail address — legacy {@code TRCO_BSUN_DTL_ADRS}.
+     *  Joined with the post/city/state columns into the export's "Seller /
+     *  Address" cell (col 8). */
+    @Column(name = "TRCO_BSUN_DTL_ADRS", length = 200)
+    private String trcoBsunDtlAdrs;
+
+    @Column(name = "TRCO_BSUN_POST_ADRS", length = 200)
+    private String trcoBsunPostAdrs;
+
+    @Column(name = "TRCO_BSUN_CITY", length = 200)
+    private String trcoBsunCity;
+
+    @Column(name = "TRCO_BSUN_ST", length = 200)
+    private String trcoBsunSt;
+
+    /** Issuer representative telephone — legacy {@code ISSU_RPRS_TLPH}.
+     *  Export "Seller / Phone" cell (col 11). */
+    @Column(name = "ISSU_RPRS_TLPH", length = 50)
+    private String issuRprsTlph;
+
+    /** Buyer full name on the GDT invoice — legacy {@code EINV_BUYERFULLNAME}.
+     *  Export "Buyer / Buyer name" cell (col 12). */
+    @Column(name = "EINV_BUYERFULLNAME", length = 300)
+    private String einvBuyerfullname;
+
+    /** Expense-resolution / approval sequence reference — legacy
+     *  {@code APPR_SEQ_NO}. Export "Approval Ref." cell (col 61); null for
+     *  GDT-scraped invoices (matches production, which leaves it blank). */
+    @Column(name = "APPR_SEQ_NO", length = 50)
+    private String apprSeqNo;
+
+    /** Document title — legacy {@code DOC_TITLE}. Export "Description" cell
+     *  (col 55) falls back to this when {@code DOC_TYPE != 'E'}. */
+    @Column(name = "DOC_TITLE", length = 300)
+    private String docTitle;
+
     @Column(name = "REG_ID", length = 100, nullable = false)
     private String regId;
 

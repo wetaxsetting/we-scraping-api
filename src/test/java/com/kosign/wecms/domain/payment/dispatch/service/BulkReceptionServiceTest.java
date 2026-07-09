@@ -47,7 +47,12 @@ class BulkReceptionServiceTest {
     VanApiKeyService vanApiKeyService;
 
     private BulkReceptionService service() {
-        return new BulkReceptionService(efsApiClient, crypto, vanApiKeyService, props, mapper);
+        // issueReception() (the leg under test here) uses only the EFS/crypto deps;
+        // the receive() orchestration deps (repos / key-gen / codec / SFTP) are not
+        // exercised by these tests, so null is fine.
+        return new BulkReceptionService(
+                efsApiClient, crypto, vanApiKeyService, props, mapper,
+                null, null, null, null, null, null, null, null, null, null, null, null, null);
     }
 
     private static BulkReceptionApiCommand cmd() {

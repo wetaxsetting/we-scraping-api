@@ -3,7 +3,7 @@
 **Slug:** `chart-of-accounts`
 **Tree:** [wecms-api/](../../../)
 **Package:** `com.kosign.wecms.domain.setting.chartofaccounts`
-**Related docs:** [feature spec](../../features/settings/chart-of-accounts.md) · [migration map](../migration/chart-of-accounts.md) · [database](../database/chart-of-accounts.md) · [frontend](../../../../wecms-web/docs/features/settings/chart-of-accounts.md) · [plan](../../archive/planning/phase-1/chart-of-accounts-plan.md).
+**Related docs:** [feature spec](../../features/settings/chart-of-accounts.md) · [migration map](../migration/chart-of-accounts.md) · [database](../database/chart-of-accounts.md) · [frontend](../../../../wecms-web/docs/features/settings/chart-of-accounts.md) · plan _(removed — historical `archive/` folder deleted by project decision)_.
 
 This document is the implementation reference for the Spring Boot side. It does not write code — it specifies the package layout, classes, endpoints, payloads, validations, transaction boundaries, and the audit-log + error-handling integration. The matching frontend lives in [wecms-web/components/settings/chart-of-accounts/](../../../../wecms-web/components/settings/chart-of-accounts/) (covered in the [frontend design](../../../../wecms-web/docs/features/settings/chart-of-accounts.md)).
 

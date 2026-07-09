@@ -19,7 +19,7 @@ Legend: **MATCH** = behaves as spec. Run as ADMIN unless the row says otherwise.
 | UM-03 | View user list | GET list | 200; only active links, newest first; `total_count` = active count |
 | UM-04 | View user detail | GET `/{id}` | 200; `UserRowResponse`; password never present |
 | UM-05 | Update profile | PUT changed name/email/phone/position/dept, no `user_pw` | 200; `USER_INFM` updated; password hash unchanged |
-| UM-06 | Update with password reset | PUT with valid `user_pw` | 200; new BCrypt hash stored; login works with new password |
+| UM-06 | Update with password reset | PUT with valid `user_pw` | 200; new legacy SHA-256 base64 hash stored; login works with new password |
 | UM-07 | Promote to admin | PUT `set_as_admin=true` on a non-admin | 200; `BUSI_ADMN_INFM` row inserted |
 | UM-08 | Demote admin (not last) | PUT `set_as_admin=false`, ≥2 admins exist | 200; admin row removed |
 | UM-09 | Activate / deactivate | (Not supported from this screen) | No endpoint — see gap analysis (deferred); status via DBA/auth |

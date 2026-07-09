@@ -116,9 +116,15 @@ public class DomesticPaymentLineMatchService {
         }
         String keyword = isNotBlank(srchWd) ? "%" + srchWd.trim().toLowerCase() + "%" : null;
 
+        // P3 parity — TRSC_TM >= the batch TRNF_DTM (UTC) shifted to VN-local
+        // HHmmss (legacy comm_0197_001_r001 putBankingCandidateIdoIn). Null when
+        // the batch is not yet transferred → the query skips the time floor.
+        String transferTime = MatchCandidateTime.localTransferTime(batch.getTrnfDtm());
+
         List<PaymentLineMatchCandidateRow> rows = new ArrayList<>();
         for (AcctTrnsHstr h : txnRepo.findDomesticDetailMatchCandidates(
-                bizKey, batch.getWdrlActNo(), line.getPayTranDt(), line.getTranAmt(), memo, keyword)) {
+                bizKey, batch.getWdrlActNo(), line.getPayTranDt(), line.getTranAmt(),
+                transferTime, memo, keyword)) {
             rows.add(new PaymentLineMatchCandidateRow(
                     h.getAcctSeqNo(), h.getBankTrnsShortId(), h.getBankTrnsFullId(),
                     h.getTrscDt(), h.getTrscTm(), h.getTrscAmt(),

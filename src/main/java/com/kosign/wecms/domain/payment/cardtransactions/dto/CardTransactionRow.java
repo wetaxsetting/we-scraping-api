@@ -9,10 +9,13 @@ import java.util.List;
  * three refactor adjustments:
  *
  * <ul>
- *   <li>{@code stts_key} (sibling to the raw {@code stts} code) carries
- *       the i18n key the frontend resolves via {@code t(...)}. Replaces
- *       the legacy {@code wb_get_prch_stts_nm} server-side label
- *       rendering — see backend doc §3.4.</li>
+ *   <li>{@code stts_nm} (sibling to the raw {@code stts} code) carries
+ *       the localized purchase-status label resolved server-side via the
+ *       legacy {@code wb_get_prch_stts_nm(PRCH_STTS, LANG_CD)} DB function
+ *       — byte-for-byte legacy parity ({@code IDO.CARD_MSTR_R002.xml:73}).
+ *       Restored 2026-07-04 from the earlier hand-maintained frontend
+ *       i18n table, which had drifted and mislabelled completed rows;
+ *       see {@code docs/audits/card-transactions-status-label-parity-2026-07-04.md}.</li>
  *   <li>{@code linked_docs[]} / {@code approvers[]} are Phase B
  *       placeholders — service emits empty lists until the linked-doc
  *       and approver-chain entities land. See feature doc §11 OQ-1.</li>
@@ -51,11 +54,33 @@ public record CardTransactionRow(
          *  the raw numeric {@code APPR_SEQ_NO}. */
         String           apprDocNo,
         String           stts,
-        String           sttsKey,
+        String           sttsNm,
         List<LinkedDocRef> linkedDocs,
         List<ApproverRef>  approvers,
         String           regId,
         String           regDtm,
         String           modId,
-        String           modDtm) {
+        String           modDtm,
+        /* ---- legacy CARD_TRNS_HSTR_R002 detail fields (GAP-CARD-FIELDS) ----
+         * Surfaced for the Approval Details popup card grid so the refactor
+         * reaches legacy parity. All read straight off the entity (the
+         * columns were already mapped); none are new schema. CARD_TRNS_USAGE_NM
+         * (the resolved usage label) is intentionally NOT included — it needs
+         * the legacy wb_get_usag_nm resolver / a USAG_INFM join; deferred as a
+         * PO decision. The raw cardTrnsUsageCode above is shipped meanwhile. */
+        String           usingType,
+        String           authCode,
+        String           city,
+        /** {@code CARD_TRNS_HSTR.NOTE} — distinct from {@code CONT}
+         *  (the free-form description). Both ship on the wire. */
+        String           note,
+        /** Row-level memo sticker color — the legacy {@code getMemoPopup2}
+         *  token ({@code fileG/fileB/fileY/fileW/fileR/fileP}) of this
+         *  card's memo thread, from {@code MEMO_INFM} scoped by
+         *  {@code (BIZ_KEY, WEB_SVC_ID, REF_NO=CARD_SEQ_NO)}. Null when the
+         *  row has no memo — the grid then renders the default empty icon. */
+        String           memoColor,
+        /** Number of memos on this card transaction (0 = none). Drives the
+         *  memo-icon presence on the list grid. */
+        int              memoCount) {
 }

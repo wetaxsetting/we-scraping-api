@@ -4,6 +4,7 @@ import com.kosign.wecms.domain.payment.dispatch.entity.TbPayTarget;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayTargetId;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface TbPayTargetRepository
@@ -25,4 +26,14 @@ public interface TbPayTargetRepository
      */
     List<TbPayTarget> findByBizKeyAndTranDtAndTranSeqIn(
             String bizKey, String tranDt, Collection<String> tranSeqs);
+
+    /**
+     * Re-read a single committed dispatch row for the after-commit real-time
+     * dispatch (C2). The {@link com.kosign.wecms.domain.payment.dispatch.service.RealtimeDispatchService}
+     * gates on {@code PROC_STAT='9'} so a row already advanced (or absent) is a
+     * safe no-op — mirrors the legacy {@code TB_PAY_TARGET_R001}
+     * {@code WHERE ... PROC_STAT='9'} pickup.
+     */
+    Optional<TbPayTarget> findByBizKeyAndTranDtAndTranSeq(
+            String bizKey, String tranDt, String tranSeq);
 }

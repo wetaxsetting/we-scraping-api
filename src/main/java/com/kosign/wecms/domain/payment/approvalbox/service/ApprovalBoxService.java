@@ -8,6 +8,7 @@ import com.kosign.wecms.common.web.SortDirection;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxActionResponse;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxApprover;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxBulkApproveResponse;
+import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxFooterTotals;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxListResponse;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxProjection;
 import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxRow;
@@ -16,6 +17,8 @@ import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolApprvrInfm;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolApprvrInfmId;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId;
+import com.kosign.wecms.domain.auth.entity.UserBusiConnInfm;
+import com.kosign.wecms.domain.auth.repository.UserBusiConnInfmRepository;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolApprvrInfmRepository;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
 import com.kosign.wecms.domain.payment.internaltransfer.repository.ScdulPymnSumrRepository;
@@ -38,9 +41,11 @@ import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -124,17 +129,43 @@ public class ApprovalBoxService {
     private static final Sort DEFAULT_SORT =
             Sort.by(Sort.Order.desc("regDtm"), Sort.Order.desc("apprSeqNo"));
 
+    /** Corporate Card {@code APPR_DV}. Card approvals take their amount
+     *  from {@code SUM(CARD_TRNS_HSTR.TRSC_AMT)} (legacy
+     *  {@code IDO.EXPT_RESOL_MSTR_R003.xml:62-65}), not the
+     *  {@code EXPT_RESOL_MSTR} amount columns. */
+    private static final String CARD_APPR_DV = "33";
+
     private static final DateTimeFormatter YYYYMMDD =
             DateTimeFormatter.ofPattern("yyyyMMdd");
     private static final DateTimeFormatter DTM14 =
             DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
 
+    /** Shared, non-admin user-image URI template — same value the
+     *  Approval Line + notification paths emit. The streaming endpoint
+     *  is {@code UserController#streamImage} ({@code GET /api/v1/users/{id}/image}). */
+    private static final String USER_IMAGE_URI_TEMPLATE = "/api/v1/users/%s/image";
+
+    /** Active-link sentinel for {@code USER_BUSI_CONN_INFM.DEL_YN}. */
+    private static final String DEL_YN_ACTIVE = "N";
+
     private final ExptResolMstrRepository        masterRepository;
     private final ExptResolApprvrInfmRepository  approverRepository;
+    private final UserBusiConnInfmRepository     userBusiRepo;
     private final OvrsPymnSumrRepository         ovrsPymnSumrRepository;
     private final ScdulPymnSumrRepository        scdulPymnSumrRepository;
+    /** Corporate Card (APPR_DV='33') currency enrichment — the card
+     *  approval has no SCDUL / OVRS row, so its display currency comes
+     *  from CARD_TRNS_HSTR.CCY_CD (GAP — was an unconditional "VND"). */
+    private final com.kosign.wecms.domain.payment.cardtransactions.repository.CardTrnsHstrRepository cardTrnsHstrRepository;
     private final AuditLogService                auditLogService;
     private final ApprovalBoxFanoutService       fanoutService;
+    /** Lifecycle bulletin/notification writer — approve/reject remark +
+     *  notification (legacy parity). */
+    private final com.kosign.wecms.domain.payment.notification.service.ApprovalNotificationService
+                                                 approvalNotificationService;
+    /** Emits APPROVED / REJECTED lifecycle signals consumed by the HAENGSUNG
+     *  Oracle approval-status write-back (the single Oracle-sync subscriber). */
+    private final org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     /* =================================================================
      *  List
@@ -195,10 +226,22 @@ public class ApprovalBoxService {
 
         List<ApprovalBoxRow> rows = mapProjections(bizKey, result.getContent());
 
+        // Footer totals are TAB-UNFILTERED (legacy resl_0001_001 footer bar):
+        // the document count is the tab-unfiltered row count — equal to the sum
+        // of the four tab counts because APPR_TYPE_CD is NOT NULL ∈ {00,01,02,03}
+        // — and the per-currency amount sums span the same full scope, NOT the
+        // tab-filtered page. result.getTotalElements() (tab-filtered) still
+        // drives pagination below.
+        long footerDocumentCount = tabCounts.pending() + tabCounts.inProgress()
+                + tabCounts.approved() + tabCounts.rejected();
+        ApprovalBoxFooterTotals footerTotals = computeFooterTotals(
+                bizKey, userId, isAdmin, fromDt, toDt, keywordPattern, footerDocumentCount);
+
         return new ApprovalBoxListResponse(
                 rows,
                 result.getTotalElements(),
                 tabCounts,
+                footerTotals,
                 result.getNumber(),
                 result.getSize(),
                 result.getTotalPages());
@@ -277,9 +320,60 @@ public class ApprovalBoxService {
             throw new BusinessException("WBE_VALIDATION", "appr_seq_no: is required");
         }
         String bizKey = TenantContext.currentBizKey();
-        return approverRepository.findChain(bizKey, apprSeqNo).stream()
-                .map(ApprovalBoxService::toApprover)
+        List<ExptResolApprvrInfm> chain = approverRepository.findChain(bizKey, apprSeqNo);
+        Map<String, String> imgUrlByApprvrId = resolveImageUrls(
+                bizKey, chain.stream().map(ExptResolApprvrInfm::getApprvrId).toList());
+        return chain.stream()
+                .map(a -> toApprover(a, imgUrlByApprvrId))
                 .toList();
+    }
+
+    /**
+     * Single Approval Box master row by {@code APPR_SEQ_NO} — a reliable
+     * detail lookup (direct {@code EXPT_RESOL_MSTR} PK read), NOT the
+     * keyword {@code srch_wd} list search (which matches {@code DOC_NM} /
+     * {@code DOC_NO} / title and would never match a raw sequence number).
+     * Returns the same {@link ApprovalBoxRow} shape the list emits — built
+     * through {@link #mapProjections} so currency / file-name / approver-chain
+     * resolution stay identical to the list path. Used by
+     * {@code ApprovalDetailService} to back the common Approval Details popup
+     * (notification entry point, etc.). Tenant-scoped; {@code null} when the
+     * approval is missing or belongs to another tenant.
+     */
+    @Transactional(readOnly = true)
+    public ApprovalBoxRow findOne(String apprSeqNo) {
+        if (apprSeqNo == null || apprSeqNo.isBlank()) {
+            return null;
+        }
+        String bizKey = TenantContext.currentBizKey();
+        ExptResolMstr m = masterRepository
+                .findByBizKeyAndApprSeqNoIn(bizKey, List.of(apprSeqNo))
+                .stream()
+                .findFirst()
+                .orElse(null);
+        if (m == null) {
+            return null;
+        }
+
+        // Approver-chain counts mirror the list query's apprvr_tot_cnt /
+        // apprvr_appr_tot_cnt (cosmetic "Approver (n/total)" label); the full
+        // chain itself is re-resolved inside toRow.
+        long total = approverRepository.findChain(bizKey, apprSeqNo).size();
+        long approved = approverRepository.findChain(bizKey, apprSeqNo).stream()
+                .filter(a -> "A".equals(a.getApprvrStts()))
+                .count();
+
+        ApprovalBoxProjection p = new ApprovalBoxProjection(
+                m.getApprSeqNo(), m.getDocNo(), m.getTitl(), m.getApprDv(), m.getDocNm(), m.getCont(),
+                m.getTotPayKhrAmt(), m.getTotPayUsdAmt(), m.getTotPayVndAmt(), m.getPayDate(),
+                m.getDraftUserId(), m.getDraftUserNm(), m.getRegDtm(), m.getApprTypeCd(), m.getPayEndYn(),
+                total, approved);
+
+        ApprovalBoxRow row = mapProjections(bizKey, List.of(p)).stream().findFirst().orElse(null);
+        // Payroll Type (APPR_FUND_TP) — detail-only, sourced from the master
+        // entity here (mapProjections has no access to it). Null for non-payroll;
+        // the frontend renders the row only when kind === payroll.
+        return row == null ? null : row.withApprFundTp(m.getApprFundTp());
     }
 
     /* =================================================================
@@ -332,6 +426,14 @@ public class ApprovalBoxService {
                 ctx.master.getBizKey(), ctx.master.getApprSeqNo(), ctx.userId,
                 ctx.master.getApprTypeCd());
 
+        // Oracle sync signal only on FINAL approval ('01'); an intermediate
+        // multi-approver advance ('03' IN_PROGRESS) has no Oracle mapping.
+        if (ApprTypeCd.APPROVED.equals(ctx.master.getApprTypeCd())) {
+            eventPublisher.publishEvent(new com.kosign.wecms.domain.payment.approvalbox.event
+                    .PaymentApprovalStatusChangedEvent(ctx.master.getBizKey(), ctx.master.getApprSeqNo(),
+                    com.kosign.wecms.domain.payment.approvalbox.event.PaymentApprovalStatus.APPROVED));
+        }
+
         return new ApprovalBoxActionResponse(
                 ctx.master.getApprSeqNo(),
                 deriveApprStts(ctx.master.getApprTypeCd()),
@@ -370,6 +472,10 @@ public class ApprovalBoxService {
 
         log.info("approval-box rejected bizKey={} apprSeqNo={} approverId={}",
                 ctx.master.getBizKey(), ctx.master.getApprSeqNo(), ctx.userId);
+
+        eventPublisher.publishEvent(new com.kosign.wecms.domain.payment.approvalbox.event
+                .PaymentApprovalStatusChangedEvent(ctx.master.getBizKey(), ctx.master.getApprSeqNo(),
+                com.kosign.wecms.domain.payment.approvalbox.event.PaymentApprovalStatus.REJECTED));
 
         return new ApprovalBoxActionResponse(
                 ctx.master.getApprSeqNo(),
@@ -587,12 +693,20 @@ public class ApprovalBoxService {
         long waitingRemaining = approverRepository.countByStatus(
                 ctx.bizKey, ctx.master.getApprSeqNo(), ApprvrStts.WAITING);
 
+        String comntTaskCd;
         if (pendingRemaining == 0 && waitingRemaining == 0) {
             ctx.master.setApprTypeCd(ApprTypeCd.APPROVED);
+            // Legacy parity (comm_0192_010_u001:156-160): stamp PAY_END_*
+            // once every approver has voted.
+            ctx.master.setPayEndYn("Y");
+            ctx.master.setPayEndDtm(nowDtm);
+            ctx.master.setPayEndNm(TenantContext.currentUserNm());
+            comntTaskCd = "R003"; // ComntTaskCd.COMPLETE
         } else {
             ctx.master.setApprTypeCd(ApprTypeCd.IN_PROGRESS);
             // Promote the next waiting approver (by line_no) to PENDING.
             promoteNextWaiting(ctx, nowDtm);
+            comntTaskCd = "R004"; // ComntTaskCd.APPROVED
         }
 
         ctx.master.setModId(ctx.userId);
@@ -602,6 +716,11 @@ public class ApprovalBoxService {
         // No write-back to the payment source table: neither SCDUL_PYMN_SUMR nor
         // OVRS_PYMN_SUMR has an APPR_STTS column in legacy JEX. The list/detail
         // pages derive status on read from EXPT_RESOL_MSTR.APPR_TYPE_CD.
+
+        // Lifecycle parity: BLTB_COMNT_INFM remark + BLTB_NOTI_INFM/CONT to
+        // admins + acted approvers (legacy createNotificationToApprvrAfterRequest).
+        approvalNotificationService.notifyApprovalAction(
+                ctx.master.getApprSeqNo(), ctx.master.getApprDv(), comntTaskCd);
 
         ctx.totalCount    = approverRepository.findChain(
                 ctx.bizKey, ctx.master.getApprSeqNo()).size();
@@ -618,17 +737,35 @@ public class ApprovalBoxService {
         ctx.approverRow.setModDtm(nowDtm);
         approverRepository.save(ctx.approverRow);
 
+        // Legacy parity (comm_0192_010_u002:129-133): PAY_END_* is stamped only
+        // when every approver has now voted. Measured BEFORE the refactor's
+        // W→S cascade (legacy has no cascade, so this matches its
+        // totCnt == totApprCnt + totRjtCnt condition).
+        long pendingRemaining = approverRepository.countByStatus(
+                ctx.bizKey, ctx.master.getApprSeqNo(), ApprvrStts.PENDING);
+        long waitingRemaining = approverRepository.countByStatus(
+                ctx.bizKey, ctx.master.getApprSeqNo(), ApprvrStts.WAITING);
+
         // Downstream cascade: every waiting peer → stopped.
         approverRepository.stopDownstream(
                 ctx.bizKey, ctx.master.getApprSeqNo(), ctx.userId, nowDtm);
 
         ctx.master.setApprTypeCd(ApprTypeCd.REJECTED);
+        if (pendingRemaining == 0 && waitingRemaining == 0) {
+            ctx.master.setPayEndYn("Y");
+            ctx.master.setPayEndDtm(nowDtm);
+            ctx.master.setPayEndNm(TenantContext.currentUserNm());
+        }
         ctx.master.setModId(ctx.userId);
         ctx.master.setModDtm(nowDtm);
         masterRepository.save(ctx.master);
 
         // No write-back: status derives on read from EXPT_RESOL_MSTR.APPR_TYPE_CD
         // (legacy JEX has no APPR_STTS column on SCDUL_PYMN_SUMR / OVRS_PYMN_SUMR).
+
+        // Lifecycle parity: BLTB_COMNT_INFM remark (REJECT) + BLTB_NOTI_INFM/CONT.
+        approvalNotificationService.notifyApprovalAction(
+                ctx.master.getApprSeqNo(), ctx.master.getApprDv(), "R002"); // ComntTaskCd.REJECT
 
         ctx.totalCount    = approverRepository.findChain(
                 ctx.bizKey, ctx.master.getApprSeqNo()).size();
@@ -756,6 +893,11 @@ public class ApprovalBoxService {
                 .collect(Collectors.toList());
         Map<String, String> ccyByApprSeqNo = new HashMap<>();
         Map<String, String> fileNameByApprSeqNo = new HashMap<>();
+        // Corporate Card (APPR_DV='33') amount basis — SUM(CARD_TRNS_HSTR.TRSC_AMT)
+        // per approval. Legacy resl_0001_001 sources the card row amount from
+        // this sum, NOT the EXPT_RESOL_MSTR amount columns (which are 0 for the
+        // current card-creation flow). See toRow / resolveAmount.
+        Map<String, BigDecimal> cardAmtByApprSeqNo = new HashMap<>();
         if (!apprSeqNos.isEmpty()) {
             ovrsPymnSumrRepository.findCcyCdByBizKeyAndApprSeqNos(bizKey, apprSeqNos)
                     .forEach(row -> ccyByApprSeqNo.put((String) row[0], (String) row[1]));
@@ -763,6 +905,18 @@ public class ApprovalBoxService {
             // carry the same apprSeqNo (shouldn't occur, but defensive).
             scdulPymnSumrRepository.findCcyCdByBizKeyAndApprSeqNos(bizKey, apprSeqNos)
                     .forEach(row -> ccyByApprSeqNo.putIfAbsent((String) row[0], (String) row[1]));
+            // Corporate Card (APPR_DV='33') has neither a SCDUL nor an OVRS
+            // row — resolve its currency from CARD_TRNS_HSTR (mirrors legacy
+            // EXPT_RESOL_MSTR_R008). putIfAbsent: card apprSeqNos never appear
+            // in the SCDUL/OVRS maps, so this fills only the card gaps.
+            cardTrnsHstrRepository.findCcyCdByBizKeyAndApprSeqNos(bizKey, apprSeqNos)
+                    .forEach(row -> ccyByApprSeqNo.putIfAbsent((String) row[0], (String) row[1]));
+
+            // Card amount basis (APPR_DV='33') — keyed by apprSeqNo; non-card
+            // approvals never appear in CARD_TRNS_HSTR so the map only carries
+            // card sums (resolveAmount reads it only for APPR_DV='33').
+            cardTrnsHstrRepository.sumTrscAmtByBizKeyAndApprSeqNos(bizKey, apprSeqNos)
+                    .forEach(row -> cardAmtByApprSeqNo.put((String) row[0], toBigDecimal(row[1])));
 
             // File Name — uploaded batch file name. Legacy reads
             // COALESCE(SCDUL.TITL, OVRS.TITL) because it stored the file
@@ -784,41 +938,28 @@ public class ApprovalBoxService {
                     });
         }
         return projections.stream()
-                .map(p -> toRow(bizKey, p, ccyByApprSeqNo, fileNameByApprSeqNo))
+                .map(p -> toRow(bizKey, p, ccyByApprSeqNo, fileNameByApprSeqNo, cardAmtByApprSeqNo))
                 .toList();
     }
 
     private ApprovalBoxRow toRow(String bizKey, ApprovalBoxProjection p,
                                   Map<String, String> ccyByApprSeqNo,
-                                  Map<String, String> fileNameByApprSeqNo) {
-        List<ApprovalBoxApprover> approvers = approverRepository
-                .findChain(bizKey, p.apprSeqNo())
-                .stream()
+                                  Map<String, String> fileNameByApprSeqNo,
+                                  Map<String, BigDecimal> cardAmtByApprSeqNo) {
+        List<ExptResolApprvrInfm> chain = approverRepository.findChain(bizKey, p.apprSeqNo());
+        Map<String, String> imgUrlByApprvrId = resolveImageUrls(
+                bizKey, chain.stream().map(ExptResolApprvrInfm::getApprvrId).toList());
+        List<ApprovalBoxApprover> approvers = chain.stream()
                 .sorted(Comparator.comparing(
                         a -> a.getApprvrLineNo() == null ? BigDecimal.ZERO : a.getApprvrLineNo()))
-                .map(ApprovalBoxService::toApprover)
+                .map(a -> toApprover(a, imgUrlByApprvrId))
                 .toList();
 
-        // Prefer the actual CCY_CD from OVRS_PYMN_SUMR; fall back to "VND" for
-        // payment types whose sibling table hasn't been joined yet.
-        String currency = ccyByApprSeqNo.getOrDefault(p.apprSeqNo(), "VND");
-        if (currency == null || currency.isBlank()) currency = "VND";
-
-        // Pick the amount column that matches the currency, with TOT_PAY_KHR_AMT
-        // as a fallback for legacy records written before the three-column split.
-        // Old code always wrote to KHR regardless of currency; new code writes
-        // to the correct column and sets KHR = 0 for USD rows.
-        BigDecimal khr = p.totPayKhrAmt() != null ? p.totPayKhrAmt() : BigDecimal.ZERO;
-        BigDecimal amt;
-        if ("USD".equalsIgnoreCase(currency)) {
-            BigDecimal usd = p.totPayUsdAmt();
-            amt = (usd != null && usd.compareTo(BigDecimal.ZERO) != 0) ? usd : khr;
-        } else if ("VND".equalsIgnoreCase(currency)) {
-            BigDecimal vnd = p.totPayVndAmt();
-            amt = (vnd != null && vnd.compareTo(BigDecimal.ZERO) != 0) ? vnd : khr;
-        } else {
-            amt = khr;
-        }
+        String currency = resolveCurrency(ccyByApprSeqNo, p.apprSeqNo());
+        BigDecimal amt = resolveAmount(
+                p.apprDv(), p.apprSeqNo(), currency,
+                p.totPayKhrAmt(), p.totPayUsdAmt(), p.totPayVndAmt(),
+                cardAmtByApprSeqNo);
 
         return new ApprovalBoxRow(
                 p.apprSeqNo(),
@@ -838,16 +979,168 @@ public class ApprovalBoxService {
                 p.apprvrTotCnt() == null ? 0L : p.apprvrTotCnt(),
                 p.apprvrApprTotCnt() == null ? 0L : p.apprvrApprTotCnt(),
                 p.payEndYn(),
-                approvers);
+                approvers,
+                // List rows carry no detail-only fields — withdrawal account
+                // (4) + payroll fund type + dispatch batch id + first-line
+                // channel are populated only on the single-row detail read
+                // (ApprovalDetailService.master → withDetail; findOne →
+                // withApprFundTp).
+                null, null, null, null, null, null, null);
     }
 
-    private static ApprovalBoxApprover toApprover(ExptResolApprvrInfm a) {
+    private static ApprovalBoxApprover toApprover(
+            ExptResolApprvrInfm a, Map<String, String> imgUrlByApprvrId) {
         return new ApprovalBoxApprover(
                 a.getApprvrLineNo() == null ? null : a.getApprvrLineNo().intValue(),
                 a.getApprvrId(),
                 a.getApprvrNm(),
                 a.getApprvrStts(),
-                a.getApprDtm());
+                a.getApprDtm(),
+                imgUrlByApprvrId.get(a.getApprvrId()));
+    }
+
+    /**
+     * Resolve {@code user_img_url} for every approver id with a single
+     * batched {@code findAllByUserIdInAndBizKeyAndDelYn}. Returns a map
+     * keyed by {@code apprvrId}; an approver with no stored image is
+     * absent from the map (→ {@code toApprover} ships a null URL and the
+     * frontend renders the initials disc). Mirrors
+     * {@code ApprovalLineService.resolveImageUrls} so both approver
+     * surfaces emit the identical shared {@code /api/v1/users/{id}/image}
+     * URL shape.
+     */
+    private Map<String, String> resolveImageUrls(String bizKey, List<String> apprvrIds) {
+        if (apprvrIds == null || apprvrIds.isEmpty()) return Map.of();
+        Set<String> distinct = new HashSet<>(apprvrIds);
+        List<UserBusiConnInfm> links = userBusiRepo
+                .findAllByUserIdInAndBizKeyAndDelYn(distinct, bizKey, DEL_YN_ACTIVE);
+        Map<String, String> out = new HashMap<>(links.size());
+        for (UserBusiConnInfm link : links) {
+            String image = link.getUserImg();
+            if (image != null && !image.isBlank()) {
+                out.put(link.getUserId(), String.format(USER_IMAGE_URI_TEMPLATE, link.getUserId()));
+            }
+        }
+        return out;
+    }
+
+    /* =================================================================
+     *  Currency + amount resolution — shared by per-row mapping
+     *  ({@link #toRow}) and the footer totals ({@link #computeFooterTotals})
+     *  so the two never drift.
+     * ================================================================= */
+
+    /** Resolve the display currency for an approval: prefer the sibling
+     *  table's {@code CCY_CD} (OVRS / SCDUL / CARD), default {@code "VND"}
+     *  when none is known or it is blank. */
+    private static String resolveCurrency(Map<String, String> ccyByApprSeqNo, String apprSeqNo) {
+        String currency = ccyByApprSeqNo.getOrDefault(apprSeqNo, "VND");
+        return (currency == null || currency.isBlank()) ? "VND" : currency;
+    }
+
+    /**
+     * Resolve the row amount, matching legacy {@code resl_0001_001}.
+     *
+     * <ul>
+     *   <li><b>Card (APPR_DV='33')</b> → {@code SUM(CARD_TRNS_HSTR.TRSC_AMT)}
+     *       from {@code cardAmtByApprSeqNo} (legacy IDO R003:62-65); falls
+     *       back to {@code TOT_PAY_KHR_AMT} only when no card rows exist.</li>
+     *   <li><b>Other types</b> → the currency-matched master column with
+     *       {@code TOT_PAY_KHR_AMT} as the zero-aware fallback (legacy rows
+     *       wrote the amount to KHR regardless of currency; the per-currency
+     *       columns are 0 there).</li>
+     * </ul>
+     */
+    private static BigDecimal resolveAmount(
+            String apprDv, String apprSeqNo, String currency,
+            BigDecimal khrAmt, BigDecimal usdAmt, BigDecimal vndAmt,
+            Map<String, BigDecimal> cardAmtByApprSeqNo) {
+        BigDecimal khr = khrAmt != null ? khrAmt : BigDecimal.ZERO;
+        if (CARD_APPR_DV.equals(apprDv)) {
+            BigDecimal cardSum = cardAmtByApprSeqNo.get(apprSeqNo);
+            return cardSum != null ? cardSum : khr;
+        }
+        if ("USD".equalsIgnoreCase(currency)) {
+            return (usdAmt != null && usdAmt.compareTo(BigDecimal.ZERO) != 0) ? usdAmt : khr;
+        }
+        if ("VND".equalsIgnoreCase(currency)) {
+            return (vndAmt != null && vndAmt.compareTo(BigDecimal.ZERO) != 0) ? vndAmt : khr;
+        }
+        return khr;
+    }
+
+    /** Null-safe numeric coercion for {@code Object[]} JPQL tuple columns
+     *  (a {@code SUM(...)} / {@code COALESCE(...)} may arrive as
+     *  {@code BigDecimal}, {@code Long}, or another {@link Number}). */
+    private static BigDecimal toBigDecimal(Object value) {
+        if (value == null) return BigDecimal.ZERO;
+        if (value instanceof BigDecimal b) return b;
+        if (value instanceof Number n) return new BigDecimal(n.toString());
+        return new BigDecimal(value.toString());
+    }
+
+    /**
+     * Footer totals — document count + per-currency amount sums over the
+     * tab-unfiltered result set (legacy {@code resl_0001_001} footer bar,
+     * {@code IDO.EXPT_RESOL_MSTR_R003_CNT.xml:36-39}). The document count
+     * is supplied by the caller (sum of the four {@code apprTypeCd} tab
+     * counts — {@code apprTypeCd} is NOT NULL ∈ {00,01,02,03}, so it equals
+     * the tab-unfiltered row count without a second count query). Per-row
+     * currency + amount resolution reuses {@link #resolveCurrency} /
+     * {@link #resolveAmount} so the footer matches the on-screen rows
+     * exactly (including the card-amount rule). Only USD / VND / KRW are
+     * surfaced — the three buckets the footer renders.
+     */
+    private ApprovalBoxFooterTotals computeFooterTotals(
+            String bizKey, String userId, boolean isAdmin,
+            String fromDt, String toDt, String keywordPattern,
+            long totalDocumentCount) {
+
+        List<Object[]> basis = masterRepository.findAmountBasisForTotals(
+                bizKey, userId, isAdmin, fromDt, toDt, keywordPattern, keywordPattern);
+        if (basis.isEmpty()) {
+            return new ApprovalBoxFooterTotals(
+                    totalDocumentCount, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
+        }
+
+        List<String> apprSeqNos = basis.stream()
+                .map(r -> (String) r[0])
+                .filter(s -> s != null && !s.isBlank())
+                .distinct()
+                .collect(Collectors.toList());
+
+        Map<String, String> ccyByApprSeqNo = new HashMap<>();
+        Map<String, BigDecimal> cardAmtByApprSeqNo = new HashMap<>();
+        if (!apprSeqNos.isEmpty()) {
+            ovrsPymnSumrRepository.findCcyCdByBizKeyAndApprSeqNos(bizKey, apprSeqNos)
+                    .forEach(row -> ccyByApprSeqNo.put((String) row[0], (String) row[1]));
+            scdulPymnSumrRepository.findCcyCdByBizKeyAndApprSeqNos(bizKey, apprSeqNos)
+                    .forEach(row -> ccyByApprSeqNo.putIfAbsent((String) row[0], (String) row[1]));
+            cardTrnsHstrRepository.findCcyCdByBizKeyAndApprSeqNos(bizKey, apprSeqNos)
+                    .forEach(row -> ccyByApprSeqNo.putIfAbsent((String) row[0], (String) row[1]));
+            cardTrnsHstrRepository.sumTrscAmtByBizKeyAndApprSeqNos(bizKey, apprSeqNos)
+                    .forEach(row -> cardAmtByApprSeqNo.put((String) row[0], toBigDecimal(row[1])));
+        }
+
+        BigDecimal usd = BigDecimal.ZERO;
+        BigDecimal vnd = BigDecimal.ZERO;
+        BigDecimal krw = BigDecimal.ZERO;
+        for (Object[] r : basis) {
+            String apprSeqNo = (String) r[0];
+            String apprDv    = (String) r[1];
+            String currency  = resolveCurrency(ccyByApprSeqNo, apprSeqNo);
+            BigDecimal amt   = resolveAmount(
+                    apprDv, apprSeqNo, currency,
+                    toBigDecimal(r[2]), toBigDecimal(r[3]), toBigDecimal(r[4]),
+                    cardAmtByApprSeqNo);
+            switch (currency.toUpperCase(Locale.ROOT)) {
+                case "USD" -> usd = usd.add(amt);
+                case "VND" -> vnd = vnd.add(amt);
+                case "KRW" -> krw = krw.add(amt);
+                default    -> { /* other currencies not in the 3-bucket footer (legacy parity) */ }
+            }
+        }
+        return new ApprovalBoxFooterTotals(totalDocumentCount, usd, vnd, krw);
     }
 
     /** Plain context holder shared across the approve / reject load +

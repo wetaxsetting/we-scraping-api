@@ -1,5 +1,10 @@
 # Own Account Transfer — Legacy ↔ Refactor Parity Audit
 
+> **⚠️ SUPERSEDED crypto note (2026-06-24).** Statements below that the cert-read path "uses AES-GCM" are
+> **stale**. The bank/GDT credential cipher is now legacy-compatible **pgcrypto AES-256-CBC**
+> (`BankCertCryptoService`, byte-identical to `public.encrypt()`/`decrypt()`); the earlier AES-GCM cipher
+> was retired. See [../../security/remaining-security-risk-register.md](../../security/remaining-security-risk-register.md) (R-1 / F-08).
+
 - **System:** Refactor (wecms-api + wecms-web)
 - **Feature slug:** `own-account-transfer` (legacy JEX `trns_0001_001` main page + `trns_0001_007` transfer popup)
 - **Date:** 2026-06-01

@@ -6,7 +6,7 @@
 **Refactor screen ID (proposed):** `addon-operation-status`
 **JEX counterpart:** `aosv_0001_001_r001` (read) — `aosv_0001_001_u001` (write, OUT of scope)
 **Feature spec:** [../../features/addon-service/operation-status-inquiry.md](../../../features/addon-service/operation-status-inquiry.md)
-**Implementation plan:** [../../planning/addon/operation-status-inquiry-plan.md](../../../planning/addon/operation-status-inquiry-plan.md)
+**Implementation plan:** ../../planning/addon/operation-status-inquiry-plan.md _(removed — historical `planning/` folder deleted by project decision)_
 **Status:** **Phase 1 read endpoint working end-to-end.** Filters / pagination / sort / Excel export pending. Inquire / Update endpoints deferred (no GDT bridge in refactor R&D scope).
 
 JEX is **read-only reference**. This file is the canonical refactor backend design — backend implementation is approved to start subject to the open questions in the planning doc. All references here to "today" mean Sprint 1 stabilisation state; references to "Phase 2 / 4" are the planned extensions.
@@ -192,7 +192,7 @@ If Phase 4 ever decides to filter by canonical key instead of raw substring, the
 2. **Replicate in Java** emitting canonical keys — partially adopted (the `STATUS_CD` derivation is the same idea, simplified to 3 states).
 3. **Replicate in frontend** — rejected: status display would diverge between the page and the Excel export.
 
-The current 3-state Java coercion is the right Phase 2 choice. Match the Sales e-Invoices Phase-2 stance on `wb_get_invoice_status` ([sales-e-invoices-plan.md IR-4](../../../planning/addon/sales-e-invoices-plan.md)) — **do not port the DB function**; replicate frontend-side via mapper or server-side via service.
+The current 3-state Java coercion is the right Phase 2 choice. Match the Sales e-Invoices Phase-2 stance on `wb_get_invoice_status` (sales-e-invoices-plan.md IR-4 _(removed — historical `planning/` folder deleted by project decision)_) — **do not port the DB function**; replicate frontend-side via mapper or server-side via service.
 
 ---
 
@@ -366,7 +366,7 @@ The controller forwards raw query params; the service does the parsing (sort enu
 ## Cross-references
 
 - Feature spec: [../../features/addon-service/operation-status-inquiry.md](../../../features/addon-service/operation-status-inquiry.md)
-- Implementation plan: [../../planning/addon/operation-status-inquiry-plan.md](../../../planning/addon/operation-status-inquiry-plan.md)
+- Implementation plan: ../../planning/addon/operation-status-inquiry-plan.md _(removed — historical `planning/` folder deleted by project decision)_
 - Frontend page design: [../../frontend/addon/operation-status-inquiry-page.md](../../../../../wecms-web/docs/features/addon-service/operation-status-inquiry.md)
 - Database design: [../../database/addon/operation-status-inquiry-db.md](../../database/addon/operation-status-inquiry-db.md)
 - Service mapping: [../../migration/service-mapping.md](../../migration/service-mapping.md) → "Add-on Service > Operation Status Inquiry"

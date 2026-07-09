@@ -15,5 +15,4 @@ Per-table mapping notes: which JEX table the refactor uses, which columns are re
 ## Related
 
 - Feature-level migration mapping: [`../../migration/`](../../migration/)
-- Flyway versions: [`../flyway/`](../flyway/)
 - JEX schema reference: [`../../../jex/architecture/database.md`](../../../../../docs/jex/architecture/)

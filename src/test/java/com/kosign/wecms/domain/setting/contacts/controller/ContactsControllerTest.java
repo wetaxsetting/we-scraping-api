@@ -58,6 +58,7 @@ class ContactsControllerTest {
     private ContactsImportService importService;
     private ContactsFileService fileService;
     private com.kosign.wecms.common.export.ExcelExportService excelExportService;
+    private com.kosign.wecms.domain.setting.contacts.service.ContactsDownloadService downloadService;
 
     @BeforeEach
     void setUp() {
@@ -65,6 +66,7 @@ class ContactsControllerTest {
         importService = mock(ContactsImportService.class);
         fileService = mock(ContactsFileService.class);
         excelExportService = mock(com.kosign.wecms.common.export.ExcelExportService.class);
+        downloadService = mock(com.kosign.wecms.domain.setting.contacts.service.ContactsDownloadService.class);
 
         ObjectMapper mapper = new ObjectMapper()
                 .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
@@ -78,7 +80,7 @@ class ContactsControllerTest {
         GlobalExceptionHandler advice = new GlobalExceptionHandler(messages);
 
         mvc = MockMvcBuilders
-                .standaloneSetup(new ContactsController(service, importService, fileService, excelExportService))
+                .standaloneSetup(new ContactsController(service, importService, fileService, excelExportService, downloadService))
                 .setMessageConverters(jsonConverter)
                 .setControllerAdvice(advice)
                 .build();

@@ -12,20 +12,26 @@ Controller: `UserManagementController` (`domain/setting/users/controller/`).
 
 | # | Method | Path | Auth gate | Request | Response data |
 |---|---|---|---|---|---|
-| 1 | GET | `/api/v1/settings/users` | `@userMgmtAccess.canViewUsers()` | — | `UserListResponse` |
-| 2 | GET | `/api/v1/settings/users/check-id?login_id=` | `hasRole('ADMIN')` | query `login_id` | `CheckLoginIdResponse` |
-| 3 | GET | `/api/v1/settings/users/{user_id}` | `@userMgmtAccess.canViewUsers()` | path | `UserRowResponse` |
-| 4 | POST | `/api/v1/settings/users` | `hasRole('ADMIN')` | `UserCreateRequest` | `UserRowResponse` |
-| 5 | PUT | `/api/v1/settings/users/{user_id}` | `hasRole('ADMIN')` | `UserUpdateRequest` | `UserRowResponse` |
-| 6 | DELETE | `/api/v1/settings/users/{user_id}` | `hasRole('ADMIN')` | path | `Void` |
-| 7 | GET | `/api/v1/settings/users/{user_id}/menu-entitlement` | `hasRole('ADMIN')` | path | `MenuEntitlementResponse` |
-| 8 | PUT | `/api/v1/settings/users/{user_id}/menu-entitlement` | `hasRole('ADMIN')` | `MenuEntitlementUpdateRequest` | `MenuEntitlementResponse` |
-| 9 | POST | `/api/v1/settings/users/{user_id}/image` | `hasRole('ADMIN')` | multipart `file` | `UserRowResponse` |
-| 10 | DELETE | `/api/v1/settings/users/{user_id}/image` | `hasRole('ADMIN')` | path | `UserRowResponse` |
-| 11 | GET | `/api/v1/settings/users/{user_id}/image` | `@userMgmtAccess.canViewUsers()` | path | image bytes (`InputStreamResource`) |
+| 1 | GET | `/api/v1/settings/users` | `@userMgmtAccess.canViewUsers() and @menuAuthz.canAccess('settings-core-users')` | — | `UserListResponse` |
+| 2 | GET | `/api/v1/settings/users/check-id?login_id=` | `hasRole('ADMIN') and @menuAuthz.canAccess('settings-core-users')` | query `login_id` | `CheckLoginIdResponse` |
+| 3 | GET | `/api/v1/settings/users/{user_id}` | `@userMgmtAccess.canViewUsers() and @menuAuthz.canAccess('settings-core-users')` | path | `UserRowResponse` |
+| 4 | POST | `/api/v1/settings/users` | `hasRole('ADMIN') and @menuAuthz.canAccess('settings-core-users')` | `UserCreateRequest` | `UserRowResponse` |
+| 5 | PUT | `/api/v1/settings/users/{user_id}` | `hasRole('ADMIN') and @menuAuthz.canAccess('settings-core-users')` | `UserUpdateRequest` | `UserRowResponse` |
+| 6 | DELETE | `/api/v1/settings/users/{user_id}` | `hasRole('ADMIN') and @menuAuthz.canAccess('settings-core-users')` | path | `Void` |
+| 7 | GET | `/api/v1/settings/users/{user_id}/menu-entitlement` | `hasRole('ADMIN') and @menuAuthz.canAccess('settings-core-users')` | path | `MenuEntitlementResponse` |
+| 8 | PUT | `/api/v1/settings/users/{user_id}/menu-entitlement` | `hasRole('ADMIN') and @menuAuthz.canAccess('settings-core-users')` | `MenuEntitlementUpdateRequest` | `MenuEntitlementResponse` |
+| 9 | POST | `/api/v1/settings/users/{user_id}/image` | `hasRole('ADMIN') and @menuAuthz.canAccess('settings-core-users')` | multipart `file` | `UserRowResponse` |
+| 10 | DELETE | `/api/v1/settings/users/{user_id}/image` | `hasRole('ADMIN') and @menuAuthz.canAccess('settings-core-users')` | path | `UserRowResponse` |
+| 11 | GET | `/api/v1/settings/users/{user_id}/image` | `@userMgmtAccess.canViewUsers() and @menuAuthz.canAccess('settings-core-users')` | path | image bytes (`InputStreamResource`) |
 
 > The earlier plan's `/api/v1/users` base path was never shipped — the live base is
 > `/api/v1/settings/users`.
+>
+> **Every endpoint also stacks `@menuAuthz.canAccess('settings-core-users')`** (the F-3
+> menu-authorization guard, live since 2026-06-06) on top of its read/write gate, so a
+> caller must additionally hold the `settings-core-users` permission in the resolved
+> navigation tree. For an ADMIN the navigation tree is the full product tree, so the
+> `@menuAuthz` term is satisfied implicitly.
 
 ## 2. Request DTOs (Java records → snake_case wire)
 
@@ -137,7 +143,7 @@ Authorization error — viewer attempts a write → **HTTP 403**, `status.code =
 | `WBE2115` | 200 | Uploaded file has no usable filename |
 | `WBE2116` | 200 | Uploaded file empty |
 | `WBE2117` | 200 | Uploaded file exceeds 2 MB (arg = cap) |
-| `WBE2118` | 200 | Extension not in allow-list jpg/jpeg/png/gif/svg (arg = list) |
+| `WBE2118` | 200 | Extension not in allow-list jpg/jpeg/png/gif (arg = list); `svg` is **rejected** (F-02 — inline SVG can carry `<script>`, stored XSS) |
 | `WBE9999` | 500 | Unexpected server fault |
 
 All codes resolve via `messages.properties` / `messages_en.properties`. Envelope + trace-id rules:

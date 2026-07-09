@@ -58,4 +58,40 @@ public interface AuditLogEntryRepository
             String refNo1,
             String wsvcId,
             String langCd);
+
+    /**
+     * Same as {@link #findByBizKeyAndRefNoAndRefNo1AndWsvcIdAndLangCdAndRefNo2IsNullOrderByRegDtmDesc}
+     * but matches a SET of {@code WSVC_ID}s. Used by Login Credentials to
+     * read its refactor slug ({@code login-credentials}) AND the legacy
+     * page ids ({@code comm_0218_001} add/update, {@code comm_0218_004}
+     * delete) in one query, so the history popup shows rows written by the
+     * live JEX system when both run against a shared DB. Writes still use
+     * the slug only (CLAUDE.md identifier rule); this is a read-only union.
+     */
+    List<AuditLogsInfm> findByBizKeyAndRefNoAndRefNo1AndWsvcIdInAndLangCdAndRefNo2IsNullOrderByRegDtmDesc(
+            String bizKey,
+            String refNo,
+            String refNo1,
+            java.util.Collection<String> wsvcIds,
+            String langCd);
+
+    /**
+     * Audit history for a two-locator referenced row across a SET of both
+     * {@code REF_NO}s and {@code WSVC_ID}s, latest-first. Used by Settings &gt;
+     * Bank Account, whose audit rows carry {@code REF_NO IN ('ACCT_MSTR',
+     * 'ACCT_AUTH_INFO')} (metadata edits vs. permission grants) and
+     * {@code REF_NO1 = bankCd}, {@code REF_NO2 = acctNo} — mirroring legacy
+     * {@code comm_0183_004_r001_act.jsp}. The {@code WSVC_ID} set is the
+     * refactor slug ({@code bank-account}) plus the legacy page id
+     * ({@code comm_0183_001}) so the popup shows rows written by the live JEX
+     * system on a shared DB; writes still use the slug only (CLAUDE.md
+     * identifier rule).
+     */
+    List<AuditLogsInfm> findByBizKeyAndRefNoInAndRefNo1AndRefNo2AndWsvcIdInAndLangCdOrderByRegDtmDesc(
+            String bizKey,
+            java.util.Collection<String> refNos,
+            String refNo1,
+            String refNo2,
+            java.util.Collection<String> wsvcIds,
+            String langCd);
 }

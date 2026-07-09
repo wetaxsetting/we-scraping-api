@@ -5,7 +5,6 @@
 **Refactor screen ID / View Setting `WEB_SVC_ID` / audit `WSVC_ID` / export `screenId`:** `approval-box`
 **REST base:** `/api/v1/payment/approval-box`
 **Java package:** `com.kosign.wecms.domain.payment.approvalbox`
-**JEX counterpart (read-only reference):** module `resl` — list `resl_0001_001_r001`, delete `resl_0001_001_d001`, detail/approve/reject popup `comm_0195_001` (menu id `resl_0001_001`)
 **Status:** ✅ **Completed** — list + tab counts + date/keyword filter + sort + approver chain + approve + reject + bulk-approve + withdraw + change-approval-line + Excel export all implemented; controller unit tests present; legacy parity verified; SIT/UAT verification complete.
 
 > This folder is the consolidated, code-accurate home for the **completed** Approval Box backend feature. It supersedes the *status* claims in the older planning/design docs (which were written when only the read path was in scope — the mutation flows that were "deferred" at that time have since shipped). Those design-history docs are kept in place and cross-linked below; the naming-bug finding and JEX inventory they carry remain authoritative.
@@ -50,6 +49,12 @@ The shared write-side fan-out (`ApprovalBoxFanoutService`) is owned by this pack
 
 ---
 
+## Legacy & Migration Traceability
+
+**JEX counterpart (read-only reference):** module `resl` — list `resl_0001_001_r001`, delete `resl_0001_001_d001`, detail/approve/reject popup `comm_0195_001` (menu id `resl_0001_001`)
+
+---
+
 ## Related docs (kept in place — design history & cross-references)
 
 **Design-history docs in this folder (NOT deleted — superseded for *status* only):**
@@ -67,7 +72,7 @@ The shared write-side fan-out (`ApprovalBoxFanoutService`) is owned by this pack
 - Table ownership: [../../../references/database/table-ownership.md](../../../references/database/table-ownership.md)
 - Screen / page mapping: [../../../references/migration/screen-mapping/page-mapping.md](../../../references/migration/screen-mapping/page-mapping.md)
 - Migration playbook: [../../../references/migration/MIGRATION_PLAYBOOK.md](../../../references/migration/MIGRATION_PLAYBOOK.md)
-- Open-questions follow-up: [../../../planning/open-questions/documentation-follow-up.md](../../../planning/open-questions/documentation-follow-up.md)
+- Open-questions follow-up: ../../../planning/open-questions/documentation-follow-up.md _(removed — historical `planning/` folder deleted by project decision)_
 
 **Frontend counterpart:** [../../../../../wecms-web/docs/features/payment/approval-box/README.md](../../../../../wecms-web/docs/features/payment/approval-box/README.md)
 

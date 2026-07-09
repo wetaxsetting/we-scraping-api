@@ -38,7 +38,7 @@ See [refactor-gap-analysis.md](refactor-gap-analysis.md).
 | `parent_use_usag_cd` | string(≤20) | `PARENT_USE_USAG_CD` | `null` = level-1; else parent's `use_usag_cd` |
 | `disp_yn` | `Y`/`N` | `DISP_YN` | On/off toggle for payment dropdown visibility |
 | `disp_ord` | integer | `DISP_ORD` | Per-tenant sort order |
-| `used_in_transactions` | boolean | derived (`v_purpose_in_use`) | recursive: true if the row or any active child is referenced |
+| `used_in_transactions` | boolean | derived (`VPurposeInUse` `@Subselect`) | recursive: true if the row or any active child is referenced |
 | `mod_id` | string | `MOD_ID` | Last editor login id (display only) |
 | `mod_dtm` | string `yyyyMMddHHmmss` | `MOD_DTM` | UTC timestamp, legacy format |
 | `children` | row[] | — | nested level-2 rows (list only; null for level-2) |
@@ -100,7 +100,7 @@ No DB unique constraint on either column (only the PK on `(biz_key, use_usag_cd)
 
 Delete sets `USE_YN='N'` only — never a physical row delete. Blocked with `WBE1199` when **either**:
 1. the row has at least one active child (`hasActiveChildren`), **or**
-2. the row itself OR any active child is referenced by an active transaction — resolved through the `v_purpose_in_use` view (`existsAnyByBizKeyAndUseUsagCdIn` over `{ code } ∪ findActiveChildCodes(code)`).
+2. the row itself OR any active child is referenced by an active transaction — resolved through the `VPurposeInUse` `@Subselect` (`existsAnyByBizKeyAndUseUsagCdIn` over `{ code } ∪ findActiveChildCodes(code)`).
 
 One wire code (`WBE1199`) covers both situations; the localized message reads "cannot delete — this purpose or one of its sub-purposes is in use."
 

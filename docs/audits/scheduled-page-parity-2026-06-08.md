@@ -1,5 +1,7 @@
 # Scheduled-Page Parity — Schedule Date + Requestor (all 5 Payment modules)
 
+> _**Historical one-off audit.** A point-in-time record of a completed verification / remediation — findings are preserved unchanged. For the feature’s current state see its `features/.../refactor-gap-analysis.md`; for context see the [audits index](README.md)._
+
 **Discovered:** 2026-06-08 · **System:** Refactor · **Type:** discovered parity bug + fix
 **Modules:** Internal Transfer · Vendor Payment · Expense Payment · Payroll · Overseas Payment
 **Legacy:** `pymn_0009_001` / `pymn_0001_001` / `pymn_0003_001` / `pymn_0005_001` / `pymn_0007_001` (Scheduled list `_r001`)

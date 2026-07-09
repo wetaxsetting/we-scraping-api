@@ -1,5 +1,13 @@
 # Login & Account-Creation Legacy-Compatibility Audit
 
+> **⚠️ SUPERSEDED (2026-06-24) on the BCrypt findings.** The G1/G2 issues below — "first successful Spring
+> login transparently rewrites `USER_PW` to BCrypt" and "Settings → Users writes BCrypt" — were **resolved**
+> by the 2026-06-10 coexistence rule: login is now **verify-only**, every write path emits the legacy
+> `public.hash()` SHA-256 value, and **no BCrypt is ever written** (`WecmsPasswordEncoder`;
+> `upgradeEncoding()` → false; pinned by `LegacyHashPasswordEncoderTest`). The `PasswordHashService` /
+> bootstrap BCrypt facade referenced below was deleted. Treat the BCrypt-write statements in this
+> dated audit as historical. See [../security/security-remediation-closure-2026-06-24.md](../security/security-remediation-closure-2026-06-24.md) (F-11) for current state.
+
 - **System:** Refactor (Spring Boot `wecms-api`)
 - **Date:** 2026-06-10
 - **DB verified against:** JEX DEV (`wecmsvndevdb`) via read-only `postgres_dev_server_jexframe` MCP

@@ -43,6 +43,8 @@
     "postgres_dev",
     "postgres_local",
     "playwright",
-    "svn"
+    "svn",
+    "postgres_dev_server_jexframe",
+    "postgres_dev_server_refactor"
   ]
 }

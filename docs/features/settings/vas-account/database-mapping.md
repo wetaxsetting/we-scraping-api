@@ -16,12 +16,11 @@ There are **no hierarchy / parent-child / import-staging tables**. The feature i
 table. Downstream tables (`ACCT_MSTR`, `ACCT_TRNS_RCV_PAY_INFM`) reference it by `VAS_ACCT_SEQ_NO` /
 `VAS_ACCT_CD` but are owned by Banking, not by this feature.
 
-> **Verified against the live refactor DB** (`busi_vas_acct_infm`, 13 columns): PK
-> `pk_busi_vas_acct_infm (biz_key, vas_acct_seq_no)`; two helper indexes
-> `ix_busi_vas_acct_infm_biz_cd_del (biz_key, vas_acct_cd, del_yn)` and
-> `ix_busi_vas_acct_infm_biz_del_stts (biz_key, del_yn, stts)`; **no FK, no UNIQUE other than the PK,
-> no CHECK constraint, and no parent / display-order / level / depth column.** Code uniqueness within
-> a tenant is enforced in the service layer (`existsByBizKeyAndVasAcctCdAndDelYn`), not by a DB UNIQUE.
+> **Verified against the refactor migration** (`busi_vas_acct_infm`, 13 columns; V37 `CREATE TABLE`):
+> PK `pk_busi_vas_acct_infm (biz_key, vas_acct_seq_no)`; **no helper indexes, no FK, no UNIQUE other
+> than the PK, no CHECK constraint, and no parent / display-order / level / depth column** (V37 ships
+> the bare DEV-parity table only). Code uniqueness within a tenant is enforced in the service layer
+> (`existsByBizKeyAndVasAcctCdAndDelYn`), not by a DB UNIQUE.
 
 ## 2. `BUSI_VAS_ACCT_INFM` — entity ↔ column mapping
 
@@ -32,7 +31,7 @@ Does **not** extend `BaseEntity` — audit columns are legacy `VARCHAR(14)` stri
 | Legacy column | Type (DEV / local) | Entity field | Notes |
 |---|---|---|---|
 | `BIZ_KEY` | VARCHAR(20) NN | `bizKey` (`@Id`) | tenant; never on the wire |
-| `VAS_ACCT_SEQ_NO` | BIGINT NN (DEV NUMERIC(10,0) — V77 deviation, entity maps `Long`) | `vasAcctSeqNo` (`@Id`) | per-tenant MAX+1 surrogate |
+| `VAS_ACCT_SEQ_NO` | NUMERIC(10,0) NN (V37; entity maps `Long` via `@JdbcTypeCode(SqlTypes.NUMERIC)`) | `vasAcctSeqNo` (`@Id`) | per-tenant MAX+1 surrogate |
 | `VAS_ACCT_CD` | VARCHAR(15) NN | `vasAcctCd` | tenant-unique while `DEL_YN='N'` (service-enforced) |
 | `VAS_ACCT_NM` | VARCHAR(50) NULL | `vasAcctNm` | |
 | `VAS_ACCT_ENM` | VARCHAR(50) NULL | `vasAcctEnm` | English name (optional) |
@@ -73,9 +72,7 @@ Does **not** extend `BaseEntity` — audit columns are legacy `VARCHAR(14)` stri
 
 | Version | Change |
 |---|---|
-| **V77** | `CREATE TABLE BUSI_VAS_ACCT_INFM` — column-for-column with DEV; PK `PK_BUSI_VAS_ACCT_INFM`; helper indexes `IX_..._BIZ_CD_DEL` + `IX_..._BIZ_DEL_STTS`; no UNIQUE / CHECK / FK / trigger (DEV parity). `VAS_ACCT_SEQ_NO` materialised as BIGINT (entity `Long`) — documented deviation from DEV's NUMERIC(10,0). |
-| **V78** | Seed — 5 real DEV rows for `VN_VNM0004_000001` (seqNos 132/149/150/163/164). |
-| **V79** | View Setting seed — `web_svc_id='vas-account'`, `dym_area_id='default'`, columns `VAS_ACCT_CD`/`VAS_ACCT_NM`/`VAS_ACCT_TYPE` (hidden)/`STTS`/`ETC`. `CHECKBOX` intentionally not seeded (no bulk delete — DN-8). |
+| **V37** (`V37__busi_vas_acct_infm.sql`) | `CREATE TABLE busi_vas_acct_infm` — column-for-column with DEV (13 columns); PK `pk_busi_vas_acct_infm (biz_key, vas_acct_seq_no)`; `del_yn DEFAULT 'N'`; no helper indexes, no UNIQUE / CHECK / FK / trigger (bare DEV-parity table). `VAS_ACCT_SEQ_NO` is `NUMERIC(10,0)` (DEV parity); entity maps `Long` via `@JdbcTypeCode(SqlTypes.NUMERIC)`. **This is the only VAS Account migration** — there is no seed migration and no View Setting seed. (The `wb_get_next_val` branch `#25` for `busi_vas_acct_infm.vas_acct_seq_no` lives in **V140**, not in V37.) |
 
 ## 6. Cross-feature reference (read-only)
 

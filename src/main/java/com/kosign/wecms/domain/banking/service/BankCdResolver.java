@@ -1,6 +1,7 @@
 package com.kosign.wecms.domain.banking.service;
 
 import com.kosign.wecms.common.enums.AcctTypeCd;
+import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.domain.banking.entity.BankInfm;
 import com.kosign.wecms.domain.banking.repository.BankInfmRepository;
 import jakarta.annotation.PostConstruct;
@@ -10,7 +11,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Collectors;
 
 /**
  * Resolves BANK_CD → display name and ACCT_TYPE_CD → display label /
@@ -55,6 +55,7 @@ public class BankCdResolver {
     );
 
     private final BankInfmRepository bankInfmRepo;
+    private final LegacyFunctionRepository legacyFunctions;
 
     /**
      * In-memory cache keyed by BANK_CD. The Vietnamese bank registry has
@@ -70,24 +71,42 @@ public class BankCdResolver {
     @PostConstruct
     @Transactional(readOnly = true)
     void warmCache() {
-        nameCache.putAll(bankInfmRepo.findAll().stream()
-                .collect(Collectors.toMap(BankInfm::getBankCd, BankInfm::getRprsBankNm,
-                        (a, b) -> a)));
+        // Cache the legacy SHORT display name (wb_get_bank_nm(cd,'s') with the
+        // formal RPRS_BANK_NM as COALESCE fallback) for every registry bank in
+        // one query — matches the legacy grid binding (BANK_NM = short name).
+        nameCache.putAll(legacyFunctions.resolveBankNmShortAll());
     }
 
+    /**
+     * BANK_CD → displayed bank name. Returns the legacy SHORT name
+     * ({@code wb_get_bank_nm(bank_cd, 's')}, from the date-effective
+     * {@code BANK_INFM_DETL} registry) — e.g. {@code "Shinhan VN"}, not the
+     * formal {@code "Shinhan(Vietnam)"}. Fallback chain mirrors legacy:
+     * short → formal ({@code wb_get_bank_nm(bank_cd)} = {@code RPRS_BANK_NM})
+     * → raw {@code bankCd}. The short→formal step is done inside the funnel's
+     * COALESCE; the resolver adds the final raw-code fallback for codes absent
+     * from the registry.
+     */
     public String resolveBankNm(String bankCd) {
         if (bankCd == null) return "";
         String cached = nameCache.get(bankCd);
         if (cached != null) return cached;
-        // Cache miss — fall back to the DB (a brand-new bank could be
-        // added without the app being restarted). Memoise the answer.
-        return bankInfmRepo.findById(bankCd)
-                .map(BankInfm::getRprsBankNm)
-                .map(nm -> {
-                    nameCache.put(bankCd, nm);
-                    return nm;
-                })
-                .orElse(bankCd);
+        // Cache miss — resolve via the funnel (a brand-new bank could be added
+        // without an app restart). The funnel already falls back short → formal.
+        String resolved = legacyFunctions.resolveBankNmShort(bankCd);
+        if (resolved == null || resolved.isBlank()) {
+            // Final fallback: formal name then the raw code. (Reached only when
+            // the code is unknown to the registry / functions return null.)
+            resolved = bankInfmRepo.findById(bankCd)
+                    .map(BankInfm::getRprsBankNm)
+                    .filter(nm -> !nm.isBlank())
+                    .orElse(null);
+        }
+        if (resolved == null || resolved.isBlank()) {
+            return bankCd; // unknown bank — not cached, retried next time
+        }
+        nameCache.put(bankCd, resolved);
+        return resolved;
     }
 
     /**

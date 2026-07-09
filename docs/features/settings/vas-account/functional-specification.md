@@ -29,7 +29,7 @@ emission on every write.
 | Maximum-depth / circular-reference rules | **N/A** — there is no hierarchy to constrain. (Contrast Chart of Accounts `comm_0223` / `CHART_ACCT_INFM`, which *does* enforce a 4-level cap + cycle guard — a different table, out of scope here.) |
 | Bulk activate / deactivate | **None.** Status is changed one row at a time via the ordinary `PUT … {vasAcctSeqNo}` update. There is no `/status` endpoint and no bulk-status path in JEX or the refactor. |
 | Dedicated activate/deactivate endpoint | **None.** `stts` is a Create/Update field. |
-| Bulk delete | **None** (DN-8). Single soft-delete only. The View Setting seed intentionally omits the `CHECKBOX` special FIELD_ID. |
+| Bulk delete | **None** (DN-8). Single soft-delete only. No `CHECKBOX` special FIELD_ID exists (View Setting is not adopted for this screen — no seed). |
 | Hard delete | **None.** Delete sets `DEL_YN='Y'`; the legacy `IDO.BUSI_VAS_ACCT_INFM_D001` physical-delete query exists but is dead code on both sides. |
 | Backend template-download endpoint | **None.** The Excel template is a static XLSX served by the frontend (`/templates/vas-account/WeCMS_VAS_Accounts_Bulk_Upload_{EN,KO,VI}.xlsx`). |
 
@@ -52,18 +52,26 @@ emission on every write.
 The lookup endpoint (`GET …/lookup`) takes only an optional `search_wd` and returns **active + live**
 rows (`stts='A'`, `del_yn='N'`), capped at `LOOKUP_MAX_ROWS = 500`, ordered by code.
 
-## 3. Grid columns (View Setting `vas-account` / area `default`, seed V79)
+## 3. Grid columns
 
-| FIELD_ID | DISP_ORD | USE_YN | FIX_YN | DISP_YN | SORT_YN | SIZE | Notes |
-|---|---|---|---|---|---|---|---|
-| `VAS_ACCT_CD` | 1 | Y | Y | Y | Y | 185px | Code (locked column). |
-| `VAS_ACCT_NM` | 2 | Y | N | Y | Y | 600px | Name. |
-| `VAS_ACCT_TYPE` | 3 | **N** | N | Y | Y | 140px | Type — hidden by default (opt-in via popover). |
-| `STTS` | 4 | Y | N | Y | Y | 120px | Status. |
-| `ETC` | 99 | Y | Y | N | N | 45px | Row-action column (special FIELD_ID; not in popover). |
+> **View Setting is NOT adopted for `vas-account`.** There is **no `SYS_SCR_OPTION_WECMS` seed** for
+> this screen — the V156 `sys_scr_option_wecms` seed header lists `vas-account` as
+> "reserved / audit-slug only", and the panel renders no View Setting popover (the toolbar list-icon
+> is not shown). The column set below is therefore the **export allow-list** (`VasAccountExportProvider.ALLOWED_FIELD_IDS`)
+> and the columns the frontend `VasAccountTable.tsx` renders — not a persisted seed. The `DISP_ORD` /
+> `USE_YN` / `FIX_YN` / `SIZE` values are descriptive, not stored in any DB row.
 
-`CHECKBOX` is intentionally **not** seeded — there is no row-selection / bulk action. Every
-`SORT_YN='Y'` column has a matching `VasAccountSortField` constant (common-table-sort rule).
+| FIELD_ID | Role in export / table | Notes |
+|---|---|---|
+| `VAS_ACCT_CD` | export + table | Code (rendered bold for prefix-tree parent rows). In `ALLOWED_FIELD_IDS`. |
+| `VAS_ACCT_NM` | export + table | Name. In `ALLOWED_FIELD_IDS`. |
+| `VAS_ACCT_TYPE` | export only | Type — exported as a localized label; the management table does not render a Type column (PO call 2026-05-11). In `ALLOWED_FIELD_IDS`. |
+| `STTS` | export + table | Status pill. In `ALLOWED_FIELD_IDS`. |
+
+The frontend table also prepends a non-data row-action (kebab) column; it is not a View Setting
+`FIELD_ID`. No `CHECKBOX` / `ETC` special FIELD_IDs are seeded — there is no row-selection / bulk
+action. Every column the `VasAccountExportProvider` allow-list exposes has a matching
+`VasAccountSortField` constant (§5).
 
 ## 4. Pagination
 

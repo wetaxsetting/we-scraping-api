@@ -65,6 +65,15 @@ public record TransactionsSyncResponse(
         String debitTotal,
         String lastUpdate,
 
+        /** Per-currency roll-up of the completed batch — one entry per
+         *  distinct {@code CCY_CD} scraped. The popup's per-currency
+         *  result groups ("Bank Accounts (USD)" / "(KRW)") render their
+         *  own account tally + Credit / Debit counts and totals from the
+         *  matching entry instead of repeating the batch aggregate. Null
+         *  for every non-COMPLETED status (dropped from the wire by
+         *  {@code @JsonInclude(NON_NULL)}). */
+        List<CurrencySummary> currencySummaries,
+
         /** ──── *_REQUIRED-only ──── */
         String challengePrompt,
         List<QnaQuestion> qnaQuestions,
@@ -83,7 +92,14 @@ public record TransactionsSyncResponse(
 
         /** ──── ERROR-only ──── */
         String errorCode,
-        String errorMessage
+        String errorMessage,
+
+        /** COMPLETED-only — count of newly-scraped debit rows the P1
+         *  auto-matcher linked to a payment this batch. Null (dropped from
+         *  the wire) on every non-COMPLETED status; {@code 0} when the
+         *  tenant's auto-match biz-env gate ({@code 00079}) is off.
+         *  Additive field — existing frontend clients ignore it. */
+        Integer autoMatchedCount
 ) {
 
     public enum Status {
@@ -97,15 +113,18 @@ public record TransactionsSyncResponse(
     /** Terminal success — every selected account synced. */
     public static TransactionsSyncResponse completed(
             UUID sessionId, int accountsSynced, int debitCount, int creditCount,
-            BigDecimal debitTotal, BigDecimal creditTotal, String lastUpdate) {
+            BigDecimal debitTotal, BigDecimal creditTotal, String lastUpdate,
+            List<CurrencySummary> currencySummaries, int autoMatchedCount) {
         return new TransactionsSyncResponse(
                 sessionId, Status.COMPLETED,
                 accountsSynced, debitCount, creditCount,
                 creditTotal == null ? "0" : creditTotal.toPlainString(),
                 debitTotal  == null ? "0" : debitTotal.toPlainString(),
                 lastUpdate,
+                currencySummaries,
                 null, null, null, null, null,
-                null, null);
+                null, null,
+                autoMatchedCount);
     }
 
     /** OTP challenge — frontend opens the OTP dialog. */
@@ -113,8 +132,10 @@ public record TransactionsSyncResponse(
         return new TransactionsSyncResponse(
                 sessionId, Status.OTP_REQUIRED,
                 null, null, null, null, null, null,
+                null,
                 prompt, null, null, null, null,
-                null, null);
+                null, null,
+                null);
     }
 
     /** QNA challenge — frontend opens the QNA question-picker dialog.
@@ -126,8 +147,10 @@ public record TransactionsSyncResponse(
         return new TransactionsSyncResponse(
                 sessionId, Status.QNA_REQUIRED,
                 null, null, null, null, null, null,
+                null,
                 prompt, questions, null, null, loginId,
-                null, null);
+                null, null,
+                null);
     }
 
     /** CAPTCHA challenge — frontend opens the CAPTCHA dialog. */
@@ -136,8 +159,10 @@ public record TransactionsSyncResponse(
         return new TransactionsSyncResponse(
                 sessionId, Status.CAPTCHA_REQUIRED,
                 null, null, null, null, null, null,
+                null,
                 prompt, null, image, format, null,
-                null, null);
+                null, null,
+                null);
     }
 
     /** Terminal error — frontend tears down with the standard error dialog. */
@@ -145,7 +170,9 @@ public record TransactionsSyncResponse(
         return new TransactionsSyncResponse(
                 sessionId, Status.ERROR,
                 null, null, null, null, null, null,
+                null,
                 null, null, null, null, null,
-                code, message);
+                code, message,
+                null);
     }
 }

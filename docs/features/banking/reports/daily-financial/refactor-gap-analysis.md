@@ -8,6 +8,13 @@ Frontend evidence: `wecms-web/components/banking/reports/daily-financial[-hs]/`.
 > Transaction History Details popup UI are closed (see **Resolved** below). Remaining items are
 > P1 / out-of-scope **non-SIT-blockers**. Full status: [README.md §5](README.md#5-sit-readiness-2026-06)
 > + [parity-verification-report.md](parity-verification-report.md).
+>
+> **Read-path correction (2026-06-14):** the "Resolved" rows below describe the gaps being closed by a
+> **Strategy B** Java live-compute. The shipped read path was subsequently changed to call the legacy
+> function **`rept_0015_001_r001_rec1`** directly (`DailyFinancialCmcFunctionRepository` →
+> `ReportService.dailyFinancial`, `ReportService.java:147-225`); the gaps stay resolved, but the
+> mechanism is the DB function, not `computeDailyAggregates`/`asOfBalance`. DF-3/DF-4 toggles applied
+> on that path. The "live-computed (Strategy B)" wording in the rows below is the pre-pivot record.
 
 ---
 

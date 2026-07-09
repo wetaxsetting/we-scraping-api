@@ -8,10 +8,12 @@ import com.kosign.wecms.domain.payment.dispatch.van.client.EfsProperties;
 import com.kosign.wecms.domain.payment.dispatch.van.client.VanApiKeyService;
 import com.kosign.wecms.domain.payment.dispatch.van.crypto.EfsCryptoService;
 import com.kosign.wecms.domain.payment.dispatch.van.dto.Efs202Response;
+import com.kosign.wecms.domain.payment.dispatch.van.dto.Efs204Response;
 import com.kosign.wecms.domain.payment.dispatch.van.dto.EfsEnvelope;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -19,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -54,10 +57,29 @@ class RealtimeTransferServiceTest {
     }
 
     private static RealtimeTransferCommand cmd() {
+        // Shinhan (970424) + VND → ordinary domestic path, no WGVN_EFS_204 pre-step.
         return new RealtimeTransferCommand(
                 "ORG000001", "970424", "ORG000001", "VND", "1000000", "0",
                 "A", "12345678901111", "970436", "98765432100000",
-                "NGUYEN VAN B", "salary", "NAPAS");
+                "NGUYEN VAN B", "salary", "NAPAS", null);
+    }
+
+    private static RealtimeTransferCommand wooriFxCmd() {
+        // Woori (970457) + non-VND (USD) → triggers the WGVN_EFS_204 FX pre-inquiry.
+        return new RealtimeTransferCommand(
+                "ORG000001", "970457", "ORG000001", "USD", "100", "0",
+                "A", "12345678901111", "970436", "98765432100000",
+                "NGUYEN VAN B", "salary", "NAPAS", "USD");
+    }
+
+    private EfsEnvelope success204() throws Exception {
+        // §5.6 response: apl_exc_rate_itg/dcm, withd_amt_itg/dcm, dep_curren_cd, dep_amt_itg/dcm.
+        String respJson = mapper.writeValueAsString(
+                new Efs204Response("24500", "0", "100", "0", "VND", "2450000", "0"));
+        String ev = crypto.encryptEv(respJson, TEST_KEY, "20240101000000");
+        String vv = crypto.buildVv(respJson, TEST_KEY);
+        return new EfsEnvelope("ORG000001", null, "20240101000000", "TNO-204",
+                ev, vv, "AES", "HmacSHA256", "0000", "OK");
     }
 
     private EfsEnvelope success202(String rc) throws Exception {
@@ -181,11 +203,90 @@ class RealtimeTransferServiceTest {
     void invalid_input_rejected_before_key_lookup_or_gateway_call() {
         RealtimeTransferCommand bad = new RealtimeTransferCommand(
                 "ORG000001", "970424", "ORG000001", "VND", "1000000", "0",
-                "A", "12345678901111", "970436", "  ", null, null, "NAPAS"); // blank tarFincMdaNo
+                "A", "12345678901111", "970436", "  ", null, null, "NAPAS", null); // blank tarFincMdaNo
 
         assertThatThrownBy(() -> service().transfer(bad))
                 .isInstanceOf(IllegalArgumentException.class);
 
         verifyNoInteractions(efsApiClient, vanApiKeyService, resultCheckService);
+    }
+
+    // ── WGVN_EFS_204 Woori FX pre-step (guide v1.2.6 §5.6) ────────────────────
+
+    @Test
+    void woori_non_vnd_runs_204_first_then_feeds_fx_block_into_202() throws Exception {
+        when(vanApiKeyService.getApiKey("ORG000001")).thenReturn(TEST_KEY);
+        when(efsApiClient.send(eq(EfsApiClient.EFS_204), any())).thenReturn(success204());
+        when(efsApiClient.send(eq(EfsApiClient.EFS_202), any())).thenReturn(success202("0000"));
+
+        RealtimeTransferResult result = service().transfer(wooriFxCmd());
+
+        assertThat(result.recovered()).isFalse();
+        assertThat(result.balAmt()).isEqualTo("5000000");
+
+        // 204 runs strictly before 202.
+        InOrder ordered = inOrder(efsApiClient);
+        ArgumentCaptor<EfsEnvelope> env204 = ArgumentCaptor.forClass(EfsEnvelope.class);
+        ArgumentCaptor<EfsEnvelope> env202 = ArgumentCaptor.forClass(EfsEnvelope.class);
+        ordered.verify(efsApiClient).send(eq(EfsApiClient.EFS_204), env204.capture());
+        ordered.verify(efsApiClient).send(eq(EfsApiClient.EFS_202), env202.capture());
+
+        // 204 request mapping (§5.6): withd_acct_no=macct, dep_acct_no=tarFincMdaNo,
+        // tran_amt_itg=amt, withd_curren_cd=USD, tran_curren_cd=transfer currency (legacy parity).
+        String req204 = crypto.decryptEv(env204.getValue().ev(), TEST_KEY);
+        assertThat(req204)
+                .contains("\"bank_cd\":\"970457\"")
+                .contains("\"withd_acct_no\":\"12345678901111\"")
+                .contains("\"withd_curren_cd\":\"USD\"")
+                .contains("\"dep_acct_no\":\"98765432100000\"")
+                .contains("\"tran_amt_itg\":\"100\"")
+                .contains("\"tran_curren_cd\":\"USD\"");
+
+        // 202 request now carries the FX block fed from the 204 response.
+        String req202 = crypto.decryptEv(env202.getValue().ev(), TEST_KEY);
+        assertThat(req202)
+                .contains("\"withd_curren_cd\":\"USD\"")
+                .contains("\"dep_curren_cd\":\"VND\"")
+                .contains("\"apl_exc_rate_itg\":\"24500\"")
+                .contains("\"apl_exc_rate_dcm\":\"0\"")
+                .contains("\"withd_amt_itg\":\"100\"")
+                .contains("\"dep_amt_itg\":\"2450000\"")
+                .contains("\"dep_amt_dcm\":\"0\"");
+
+        verifyNoInteractions(resultCheckService);
+    }
+
+    @Test
+    void woori_204_failure_throws_and_never_sends_202() {
+        when(vanApiKeyService.getApiKey("ORG000001")).thenReturn(TEST_KEY);
+        when(efsApiClient.send(eq(EfsApiClient.EFS_204), any())).thenReturn(bareEnvelope("G001"));
+
+        assertThatThrownBy(() -> service().transfer(wooriFxCmd()))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo("WBE_EFS_GATEWAY_ERROR");
+
+        // No transfer without a confirmed rate (legacy parity: skip the target).
+        verify(efsApiClient, never()).send(eq(EfsApiClient.EFS_202), any());
+        verifyNoInteractions(resultCheckService);
+    }
+
+    @Test
+    void domestic_vnd_transfer_skips_the_204_pre_step() throws Exception {
+        when(vanApiKeyService.getApiKey("ORG000001")).thenReturn(TEST_KEY);
+        when(efsApiClient.send(eq(EfsApiClient.EFS_202), any())).thenReturn(success202("0000"));
+
+        RealtimeTransferResult result = service().transfer(cmd()); // Shinhan + VND
+
+        assertThat(result.recovered()).isFalse();
+        verify(efsApiClient, never()).send(eq(EfsApiClient.EFS_204), any());
+
+        // The FX block is still present on the wire, but empty (legacy param_202 parity).
+        ArgumentCaptor<EfsEnvelope> env202 = ArgumentCaptor.forClass(EfsEnvelope.class);
+        verify(efsApiClient).send(eq(EfsApiClient.EFS_202), env202.capture());
+        String req202 = crypto.decryptEv(env202.getValue().ev(), TEST_KEY);
+        assertThat(req202)
+                .contains("\"dep_curren_cd\":\"\"")
+                .contains("\"apl_exc_rate_itg\":\"\"")
+                .contains("\"withd_amt_itg\":\"\"");
     }
 }

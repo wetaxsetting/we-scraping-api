@@ -31,11 +31,12 @@ import org.hibernate.type.SqlTypes;
  * display fields the bank picker needs ({@code CITAD_BANK_CD},
  * {@code BANK_NM}, {@code ENG_ABRVAT_NM}, {@code BANK_ENG_NM},
  * {@code BANK_STAS}). Hibernate {@code ddl-auto = validate} is fine
- * with the partial subset — the DB still has 8 unmapped columns
+ * with the partial subset — the DB still has unmapped columns
  * ({@code BANK_BRANCH_NM}, {@code BANK_BRANCH_ENG_NM},
- * {@code BANK_BRANCH_DIV}, {@code REG_DTTM}, {@code MOD_DTTM},
- * {@code STANDARD_NAME}, {@code DIRECT_BANK_CODE}), the validator
- * only flags entity columns that are missing from the DB.
+ * {@code REG_DTTM}, {@code MOD_DTTM}, {@code STANDARD_NAME},
+ * {@code DIRECT_BANK_CODE}), the validator only flags entity columns
+ * that are missing from the DB. {@code BANK_BRANCH_DIV} was mapped in
+ * MR-contacts-bankpicker-dedup for the CITAD headquarters filter.
  *
  * <p>The matching {@link com.kosign.wecms.domain.setting.firmbankingsettings.repository.TbFirmBankCodeRepository}
  * is read-only; the dictionary is global (not tenant-scoped — there
@@ -89,11 +90,20 @@ public class TbFirmBankCode {
     @Column(name = "ENG_ABRVAT_NM", length = 300)
     private String engAbrvatNm;
 
-    /** Status flag (`'Y'`/`'N'`). Drives the contacts Add/Edit dialog
-     *  recipient flow: status `'N'` → manual Recipient Name input
-     *  (Lookup hidden); status `'Y'` (or null) → Lookup Recipient
-     *  button visible. */
+    /** Status flag (`'Y'`/`'N'`). Active-bank flag in the legacy
+     *  dictionary (legacy {@code R002} filters {@code BANK_STAS='1'}).
+     *  NOT the recipient-flow discriminator — that is derived from
+     *  NAPAS availability in {@code ContactsService.listBanks()}. */
     @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "BANK_STAS", length = 1)
     private String bankStas;
+
+    /** Bank-branch division. {@code '1'} = headquarters row (one per
+     *  bank), blank = a branch row. The contacts bank picker keeps only
+     *  CITAD {@code '1'} rows (legacy {@code R002} {@code CITAD_BKCD}
+     *  CTE: {@code BANK_BRANCH_DIV = '1'}) so a bank is not repeated
+     *  once per CITAD branch. {@code VARCHAR(1)} in the DB — no
+     *  {@code @JdbcTypeCode(CHAR)}. */
+    @Column(name = "BANK_BRANCH_DIV", length = 1)
+    private String bankBranchDiv;
 }

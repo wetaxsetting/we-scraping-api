@@ -45,7 +45,7 @@ on `BIZ_KEY = currentBizKey()`.
 
 1. **Global uniqueness:** `UserInfmRepository.existsByUserId(userId)` — `USER_INFM.USER_ID` is a
    platform-wide PK; if taken → `WBE_USERS_DUPLICATE_LOGIN_ID`.
-2. **Insert `USER_INFM`:** profile fields + BCrypt(password) (strength 10), `ACTV_YN='Y'`,
+2. **Insert `USER_INFM`:** profile fields + password hashed as legacy SHA-256 base64 (`WecmsPasswordEncoder`, for JEX coexistence), `ACTV_YN='Y'`,
    `LOCK_YN='N'`, `DEL_YN='N'`.
 3. **Insert `USER_BUSI_CONN_INFM`:** `(userId, bizKey)`, `DEL_YN='N'` — the tenant link.
 4. **Optional admin row:** if `set_as_admin=true`, insert `BUSI_ADMN_INFM (bizKey, userId, userNm)`.
@@ -64,7 +64,7 @@ All four steps are one transaction; a PK race on `USER_INFM` surfaces as
 
 1. Load active tenant link → `WBE_USERS_NOT_FOUND` if absent.
 2. Update `USER_INFM` profile fields (`USER_NM`, `EML`, `CLPH_NO`, `POSI_NM`, `DEPT_NM`).
-3. **Optional password:** if `user_pw` non-blank, re-encode with BCrypt and store; blank/absent → keep existing hash.
+3. **Optional password:** if `user_pw` non-blank, re-encode as legacy SHA-256 base64 (`WecmsPasswordEncoder`) and store; blank/absent → keep existing hash.
 4. **Admin toggle** (`set_as_admin`):
    - `true`  + no admin row → insert `BUSI_ADMN_INFM`.
    - `false` + admin row present → **last-admin guard** (`countByBizKey > 1`, else
@@ -89,7 +89,7 @@ Backed by `MenuEntitlementService` over `USER_MENU_AUTH_INFM`. **Y-only storage*
 rows exist; absence means denied.
 
 **Load** (`GET .../{userId}/menu-entitlement`): return every `USE_YN='Y'`
-`MENU_AUTH_CD` for `(bizKey, userId)` as `{ user_id, menu_auth_cds: [...] }`.
+`WEB_SVC_ID` slug for `(bizKey, userId)` as `{ user_id, menu_auth_cds: [...] }`.
 
 **Save** (`PUT .../{userId}/menu-entitlement`, ADMIN-gated): the body carries the **full desired
 set**. `saveInTransaction` does delete-then-insert:
@@ -107,7 +107,7 @@ which menu items a non-admin user sees. Admins bypass entitlement filtering enti
 Backed by `UserImageService`; the file token lives in `USER_BUSI_CONN_INFM.USER_IMG` (per-tenant link).
 
 - **Upload** (`POST .../{userId}/image`, multipart, ADMIN): validate filename / size (≤ 2 MB) /
-  extension (jpg, jpeg, png, gif, svg) → write an opaque SHA-256-named file under the storage root →
+  extension (jpg, jpeg, png, gif; `svg` **rejected** — F-02 stored-XSS) → write an opaque SHA-256-named file under the storage root →
   update `USER_IMG` → delete the previous file. Returns the refreshed `UserRowResponse`.
 - **Delete** (`DELETE .../{userId}/image`, ADMIN): clear `USER_IMG`, delete the disk file (idempotent).
 - **Stream** (`GET .../{userId}/image`, `canViewUsers()`): stream the bytes; `WBE2113` when no avatar
@@ -138,3 +138,9 @@ Backed by `UserImageService`; the file token lives in `USER_BUSI_CONN_INFM.USER_
 A user with **neither** ADMIN nor the `settings-core-users` grant cannot reach the panel at all —
 the frontend renders a placeholder and the read endpoints return 403. See the read-only viewer
 behaviour in the frontend [ui-specification](../../../../../wecms-web/docs/features/settings/user-management/ui-specification.md).
+
+> **Enforcement note.** Every controller method stacks `@menuAuthz.canAccess('settings-core-users')`
+> (the F-3 menu-authorization guard) on top of the read/write gate named in each flow above. The
+> `canViewUsers()` / `requireAdmin()` semantics described per-flow are unchanged — the `@menuAuthz`
+> term is additive and is satisfied implicitly for an ADMIN (full-tree navigation). Exact SpEL per
+> endpoint: [interface-specification §1](interface-specification.md#1-endpoints).

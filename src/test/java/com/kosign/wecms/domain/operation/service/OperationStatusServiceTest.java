@@ -120,7 +120,10 @@ class OperationStatusServiceTest {
         // Blank in → blank persisted (NOT NULL column satisfied, no validation error).
         assertThat(saved.getValue().getRepresentativefirstname()).isEqualTo("");
         assertThat(row.taxcode()).isEqualTo("1201496252-001");
-        assertThat(row.statusCd()).isEqualTo("suspended");
+        // Legacy parity: this exact phrase resolves to the dedicated
+        // "Closed - tax code terminated" status, not the retired 3-state
+        // "suspended" bucket. See OperationStatusService.resolveStatusCd.
+        assertThat(row.statusCd()).isEqualTo("mst_terminated");
     }
 
     @Test

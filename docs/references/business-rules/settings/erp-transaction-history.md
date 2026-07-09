@@ -1,7 +1,7 @@
 # ERP Transaction History — Spring Boot backend design
 
 **Refactor slug:** `erp-transaction-history`
-**Sibling docs:** [feature spec](../../../features/settings/transaction-history.md) · [JEX → Spring mapping](../../migration/erp-transaction-history-mapping.md) · [DB schema](../../database/settings/erp-transaction-history-schema.md) · [frontend design](../../../../../wecms-web/docs/features/settings/transaction-history.md) · [plan](../../../archive/planning/settings/erp-transaction-history-plan.md).
+**Sibling docs:** [feature spec](../../../features/settings/transaction-history.md) · [JEX → Spring mapping](../../migration/erp-transaction-history-mapping.md) · [DB schema](../../database/settings/erp-transaction-history-schema.md) · [frontend design](../../../../../wecms-web/docs/features/settings/transaction-history.md) · plan _(removed — historical `archive/` folder deleted by project decision)_.
 **Mirrors live JEX:** `comm_0219_001_r001` (list + 4 counts) and `comm_0219_001_r002` (download). Upload (`_c001`) and batch writers are out of scope — see feature spec §2.
 
 This document is the design contract for the Phase 2 backend implementation. No Java code is written in Phase 1.

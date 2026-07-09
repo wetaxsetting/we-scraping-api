@@ -8,8 +8,10 @@ import java.util.Optional;
 /**
  * Per-{@code BANK_CD} Coocon adapter config — supplies the
  * NXISAS {@code Module} path and {@code Class} (CORPORATE / COMMON /
- * PERSONAL / DIGIBIZ / CORPORATE_IBANK / CORPORATE_S2B / …) that the
- * gateway requires on every thread.
+ * DIGIBIZ / CORPORATE_IBANK / CORPORATE_S2B / …) that the
+ * gateway requires on every thread. WeCMS is enterprise-only — the
+ * PERSONAL class is not supported (removed 2026-06-16, §16 of the
+ * audit doc).
  *
  * <p>Source of truth: production traffic snapshot from
  * {@code wecmsvndev.nxsias_module_tran_log_his} (2026-05-15). The
@@ -24,12 +26,10 @@ import java.util.Optional;
  * gateway accepted, including the OSMC-resolved values.
  *
  * <p>Defaults below are the {@code SEQ_NO=0} (Corporate by
- * convention) entry per bank. Banks with multiple legitimate
- * Class values per {@code SEQ_NO} (BIDV's CORPORATE_IBANK vs
- * PERSONAL; Vietcom's CORPORATE / DIGIBIZ / PERSONAL; Agribank's
- * CORPORATE / PERSONAL; VP, TP, Techcom) need the sub-type radio
- * to dispatch correctly — that's the Step 5 work tracked in
- * the migration doc.
+ * convention) entry per bank. The only remaining multi-class bank is
+ * Vietcom (CORPORATE default + DigiBiz SME portal at seq 1 →
+ * DIGIBIZ); see {@link #SUB_TYPE_ENTRIES}. The former per-bank
+ * personal sub-types were removed (enterprise-only, §16).
  *
  * <p>Eximbank (11704112) is intentionally registered with a
  * best-guess {@code BANK_Eximbank/CORPORATE} pair — there are no
@@ -45,10 +45,20 @@ public class NxisasBankConfig {
     /**
      * Per-sub-type overrides. Some banks dispatch the same Module to
      * a different Coocon Class depending on the picker's sub-type
-     * radio (e.g. Vietcom: VCB iB@nking → CORPORATE, VCB DigiBiz →
-     * DIGIBIZ, Personal → PERSONAL). Lookup falls through to the
-     * {@code SEQ_NO=0} default in {@link #ENTRIES} when no entry
-     * exists for {@code (bankCd, seqNo)}.
+     * radio. WeCMS supports enterprise / corporate banking only, so the
+     * sole remaining override is Vietcom's DigiBiz SME portal
+     * (seq 1 → DIGIBIZ, an enterprise class); every other sub-type
+     * falls through to the enterprise {@code SEQ_NO=0} default in
+     * {@link #ENTRIES}.
+     *
+     * <p><b>PERSONAL profiles removed 2026-06-16.</b> PO decision: WeCMS
+     * does not support personal scraping classes; the refactor
+     * {@code BANK_CERT_INFO} carries zero credentials with
+     * {@code NXISAS_GB_SEQ_NO IN (1, 2)} (verified — only credential is
+     * bank 11704088 with seq 0). The ten {@code <bankCd>|1} / Vietcom
+     * {@code |2} PERSONAL overrides were deleted; a seq=1/2 lookup for
+     * those banks now resolves the enterprise default. See
+     * docs/audits/bank-profile-enterprise-audit.md §16.
      *
      * <p>Verified against production traffic in
      * {@code wecmsvndev.nxsias_module_tran_log_his} (2026-05-15).
@@ -57,34 +67,11 @@ public class NxisasBankConfig {
      * {@code nxisas_gb_seq_no}.
      */
     private static final Map<String, Entry> SUB_TYPE_ENTRIES = Map.ofEntries(
-            // Vietin VN: Corporate (0) / Personal (1)
-            Map.entry("11704001|1", new Entry("GLOBAL/VNM/BANK_Vietin",  "PERSONAL")),
-            // Techcom: Corporate (0) / Personal (1)
-            Map.entry("11704002|1", new Entry("GLOBAL/VNM/BANK_Techcom", "PERSONAL")),
             // Vietcom: VCB iB@nking (0) → CORPORATE (default in ENTRIES),
-            //         VCB DigiBiz   (1) → DIGIBIZ,
-            //         Personal      (2) → PERSONAL
-            Map.entry("11704004|1", new Entry("GLOBAL/VNM/BANK_Vietcom", "DIGIBIZ")),
-            Map.entry("11704004|2", new Entry("GLOBAL/VNM/BANK_Vietcom", "PERSONAL")),
-            // MB: Corporate (0) / Personal (1)
-            Map.entry("11704007|1", new Entry("GLOBAL/VNM/BANK_MB",      "PERSONAL")),
-            // BIDV: CORPORATE_IBANK (0, default) / Personal (1)
-            Map.entry("11704008|1", new Entry("GLOBAL/VNM/BANK_BIDV",    "PERSONAL")),
-            // Shinhan VN: COMMON (0, default) / Personal (1) — Personal
-            //   class is best-guess since prod hasn't logged it; if
-            //   Coocon rejects it, fall back to COMMON on the gateway
-            //   layer (no per-bank override needed yet).
-            Map.entry("11704088|1", new Entry("GLOBAL/GBL/BANK_Shinhan", "PERSONAL")),
-            // Agribank: Corporate (0) / Personal (1)
-            Map.entry("11704100|1", new Entry("GLOBAL/VNM/BANK_AGRI",    "PERSONAL")),
-            // HD Bank: Corporate (0) / Personal (1)
-            Map.entry("11704101|1", new Entry("GLOBAL/VNM/BANK_HD",      "PERSONAL")),
-            // VP Bank: Corporate (0) / Personal (1)
-            //   default in ENTRIES is PERSONAL (most-frequent prod
-            //   value) — flip Corporate when seq=0 explicitly.
-            Map.entry("11704102|0", new Entry("GLOBAL/VNM/BANK_VP",      "CORPORATE")),
-            // TP Bank: Corporate (0) / Personal (1)
-            Map.entry("11704103|1", new Entry("GLOBAL/VNM/BANK_TP",      "PERSONAL"))
+            //          VCB DigiBiz   (1) → DIGIBIZ (enterprise SME portal).
+            // The Personal sub-type (seq 2) was removed — WeCMS is
+            // enterprise-only; seq=2 now falls through to CORPORATE.
+            Map.entry("11704004|1", new Entry("GLOBAL/VNM/BANK_Vietcom", "DIGIBIZ"))
     );
 
     private static final Map<String, Entry> ENTRIES = Map.ofEntries(
@@ -96,9 +83,8 @@ public class NxisasBankConfig {
             Map.entry("11704004", new Entry("GLOBAL/VNM/BANK_Vietcom",  "CORPORATE")),
             Map.entry("11704007", new Entry("GLOBAL/VNM/BANK_MB",       "CORPORATE")),
             // BIDV: production never uses bare "CORPORATE" — the
-            // bank adapter accepts CORPORATE_IBANK or PERSONAL only.
-            // SEQ_NO=0 default is the iBank flavour (35 calls vs 15
-            // for Personal). Step 5 (sub-type) routes seq=1 → PERSONAL.
+            // CORPORATE_IBANK flavour is the supported enterprise class.
+            // (The legacy personal sub-type was removed — enterprise-only, §16.)
             Map.entry("11704008", new Entry("GLOBAL/VNM/BANK_BIDV",     "CORPORATE_IBANK")),
             Map.entry("11704011", new Entry("GLOBAL/VNM/BANK_ACB",      "CORPORATE")),
             Map.entry("11704012", new Entry("GLOBAL/VNM/BANK_VIB",      "COMMON")),
@@ -121,10 +107,13 @@ public class NxisasBankConfig {
             // values here lifts the gate for the spike.
             Map.entry("11704100", new Entry("GLOBAL/VNM/BANK_AGRI",     "CORPORATE")),
             Map.entry("11704101", new Entry("GLOBAL/VNM/BANK_HD",       "CORPORATE")),
-            // VP Bank: PERSONAL is the dominant Class in production
-            // (6 vs 4 for CORPORATE). Default to PERSONAL until the
-            // sub-type radio (Step 5) makes the choice explicit.
-            Map.entry("11704102", new Entry("GLOBAL/VNM/BANK_VP",       "PERSONAL")),
+            // VP Bank: default CORPORATE. WeCMS is an enterprise cash-
+            // management platform, so a bank's SEQ_NO=0 (Corporate) path
+            // is the only supported profile. (History: was PERSONAL with a
+            // redundant 11704102|0 → CORPORATE override; the §13 VP defect
+            // fix flipped the default to CORPORATE, then §16 removed the
+            // PERSONAL sub-type entirely — docs/audits/bank-profile-enterprise-audit.md.)
+            Map.entry("11704102", new Entry("GLOBAL/VNM/BANK_VP",       "CORPORATE")),
             Map.entry("11704103", new Entry("GLOBAL/VNM/BANK_TP",       "CORPORATE")),
             // SC VN: Module is GLOBAL/GBL/BANK_SC, Class is
             // CORPORATE_S2B (8 calls — only one Class observed).
@@ -162,5 +151,29 @@ public class NxisasBankConfig {
             if (override != null) return Optional.of(override);
         }
         return find(bankCd);
+    }
+
+    /** ABBANK Module — its IB adapter rejects a {@code loginType} of
+     *  {@code "ID"} and expects an empty string instead. */
+    public static final String AB_BANK_MODULE = "GLOBAL/VNM/BANK_AB";
+
+    /**
+     * Resolve the Coocon {@code loginType} for a LOGIN job, centralising
+     * the legacy per-bank quirk so the scraping + sync login paths stay
+     * in lockstep. Mirrors legacy {@code nxisas_fnsh_r001_act.jsp:148-157}:
+     *
+     * <ul>
+     *   <li>An explicit (non-blank) {@code rawLoginType} always wins — a
+     *       credential row may carry a bank-specific value.</li>
+     *   <li>When blank, ABBANK ({@link #AB_BANK_MODULE}) sends {@code ""}
+     *       (its adapter rejects {@code "ID"}); every other bank defaults
+     *       to {@code "ID"} (FNSH_0100_001:210).</li>
+     * </ul>
+     */
+    public static String defaultLoginType(String module, String rawLoginType) {
+        if (rawLoginType != null && !rawLoginType.isBlank()) {
+            return rawLoginType;
+        }
+        return AB_BANK_MODULE.equalsIgnoreCase(module) ? "" : "ID";
     }
 }

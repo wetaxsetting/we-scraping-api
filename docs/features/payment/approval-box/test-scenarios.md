@@ -1,18 +1,36 @@
 # Approval Box — Test Scenarios (Backend)
 
-Covers existing automated tests plus the manual / integration / SIT-UAT matrix. Test file: `src/test/java/com/kosign/wecms/domain/payment/approvalbox/controller/ApprovalBoxControllerTest.java` (MockMvc).
+Covers existing automated tests plus the manual / integration / SIT-UAT matrix. Four test files exist under `src/test/java/com/kosign/wecms/domain/payment/approvalbox/`: the controller MockMvc test plus three service unit tests.
 
 ---
 
-## 1. Existing automated tests (`ApprovalBoxControllerTest`)
+## 1. Existing automated tests
+
+### `controller/ApprovalBoxControllerTest` (MockMvc)
 
 | Test | Asserts |
 |---|---|
+| `list_happyPath_returnsSnakeCaseEnvelope` | List happy path → snake_case `{ status, data }` envelope |
 | `list_missingFromDate_returnsValidationEnvelope` | Missing required `from_date` → `WBE_VALIDATION` envelope (HTTP 200, `status.error=true`) |
-| `bulkApprove_emptyBody_rejectedByBeanValidation` | Empty `appr_seq_nos` → bean-validation rejection (`WBE_VALIDATION` / `WBE2054`) |
-| (list/approvers/approve/reject wiring) | Endpoint routing, path-variable binding, response envelope shape |
+| `approve_returnsActionResponse` | Approve → `ApprovalBoxActionResponse` wiring |
+| `approve_surfacesBusinessCodeFromService` | Service `BusinessException` code surfaces in the envelope |
+| `reject_returnsActionResponse` | Reject → `ApprovalBoxActionResponse` wiring |
+| `bulkApprove_returnsPartialResult` | Bulk approve → `{ successes[], failures[] }` partial result |
+| `bulkApprove_emptyBody_rejectedByBeanValidation` | Empty `appr_seq_nos` → bean-validation rejection |
 
-> Service-layer logic (status transitions, write-back, counts) is exercised through the controller tests + the manual/SIT scenarios below. A dedicated `ApprovalBoxServiceTest` is a recommended follow-up (see [refactor-gap-analysis.md](refactor-gap-analysis.md) Open Questions).
+### `service/ApprovalBoxFanoutServiceTest`
+
+`writeResolutionDetail` (funnel seq; blank-currency→VND / null-amount→0), `writeApprovalLineSnapshot` (env-gated insert + no-op when disabled/unseeded), `fanout` stamps `APPR_STS` In Progress.
+
+### `service/ApprovalAttachmentWriterTest`
+
+`persist` inserts one `EXPT_RESOL_FILE` row per file, no-op when no files, filename path/metacharacter sanitisation.
+
+### `service/ApprovalDisplayFlagsResolverTest`
+
+`resolve` reads each print-flag from the env (case-insensitive `Y`), defaults to `N` when unseeded.
+
+> No dedicated `ApprovalBoxServiceTest` — the core approve/reject status transitions are exercised through `ApprovalBoxControllerTest` + the manual/SIT scenarios below. A Mockito service test (A1/A2/R1 transitions + footer-totals + card-amount) is the recommended follow-up (see [refactor-gap-analysis.md](refactor-gap-analysis.md) caveat 6).
 
 ---
 
@@ -39,7 +57,8 @@ Covers existing automated tests plus the manual / integration / SIT-UAT matrix. 
 | V1 | Admin lists | sees every tenant row |
 | V2 | Non-admin who drafted a doc | sees own drafted rows |
 | V3 | Non-admin who is an assigned approver | sees rows they approve |
-| V4 | Non-admin unrelated to a doc | row not visible (and tab counts exclude it) |
+| V4 | Non-admin unrelated to a doc | row not visible (and tab counts + footer totals exclude it) |
+| V7 | Non-admin who uploaded the batch but isn't requester/approver (G3) | row visible via `SCDUL`/`OVRS`/`CARD` uploader EXISTS branch |
 | V5 | No JWT | 401 / `WBE1009` |
 | V6 | Authenticated but no `payment-approval-box` grant | 403 / `WBE1003` |
 
@@ -47,8 +66,8 @@ Covers existing automated tests plus the manual / integration / SIT-UAT matrix. 
 
 | # | Scenario | Expected |
 |---|---|---|
-| A1 | First of 3 approvers approves | caller `P→A`; master `03` In Progress; next `W→P`; source `APPR_STTS='I'`; response `appr_stts="I"`, counts 1/3 |
-| A2 | Last approver approves | master `01` Approved; source `APPR_STTS='C'`; response `appr_stts="C"`, counts 3/3 |
+| A1 | First of 3 approvers approves | caller `P→A`; master `03` In Progress; next `W→P`; no source write-back (SCDUL/OVRS have no `APPR_STTS` column); response `appr_stts="I"`, counts 1/3 |
+| A2 | Last approver approves | master `01` Approved; no source write-back; response `appr_stts="C"`, counts 3/3 |
 | A3 | Approve when not your turn (`W`) | `WBE2052` |
 | A4 | Approve a doc you're not on | `WBE2051` |
 | A5 | Approve an already-approved/rejected doc | `WBE2053` |
@@ -60,7 +79,7 @@ Covers existing automated tests plus the manual / integration / SIT-UAT matrix. 
 
 | # | Scenario | Expected |
 |---|---|---|
-| R1 | Approver rejects | caller `P→R`; all `W→S`; master `02`; source `APPR_STTS='X'`; response `appr_stts="R"` |
+| R1 | Approver rejects | caller `P→R`; all `W→S`; master `02`; **no source write-back** (SCDUL/OVRS carry no `APPR_STTS` column); `PAY_END_*` stamped if all have voted; response `appr_stts="R"` |
 | R2 | Reject not your turn / not an approver / finalised | `WBE2052` / `WBE2051` / `WBE2053` |
 | R3 | Downstream approvers after reject | cannot act (`S`) — attempting → `WBE2052` |
 
@@ -77,7 +96,7 @@ Covers existing automated tests plus the manual / integration / SIT-UAT matrix. 
 
 | # | Scenario | Expected |
 |---|---|---|
-| W1 | Withdraw a Pending doc | master + chain deleted; source `APPR_SEQ_NO`/`APPR_STTS` nulled (Draft); audit row |
+| W1 | Withdraw a Pending doc | master + chain deleted; source `APPR_SEQ_NO` nulled only (Draft — no `APPR_STTS` column on source); audit row |
 | W2 | Withdraw an Approved/Rejected doc | `WBE_VALIDATION` (only Pending/In-Progress) |
 | W3 | Withdraw unknown | `WBE_NOT_FOUND` |
 | C1 | Change line on a Pending doc to a valid line | chain rebuilt (line 1 `P`, rest `W`); master `00`; audit |
@@ -112,8 +131,24 @@ Covers existing automated tests plus the manual / integration / SIT-UAT matrix. 
 | P2 | Tab counts ignore selected tab | matches legacy `_R003_CNT` suppressing `APPR_TYPE_CD` |
 | P3 | Date filter on `DRAFT_DATE` | matches legacy `draft_date between` |
 | P4 | Approver chain order | `APPRVR_LINE_NO ASC` |
-| P5 | Status derivation | `deriveApprStts` matches `wb_get_appr_stts` (`01→C`,`02→R`,`03→I`,else `P`) |
+| P5 | Status derivation | `deriveApprStts` matches `wb_get_appr_stts` (`01→C`,`02→R`,`03→I`,else `P`). G2-verified: the IDO calls the function with `apprvr_id = reg_id`, so its ELSE-branch is unreachable — Java parity is exact for every persona. |
 | P6 | Overseas backfill | V213 confirms `APPRVR_STTS` consistent with master `01`/`02` |
+
+## 10a. SIT-readiness gaps (G1–G5) — verification scenarios
+
+Scenarios that exercise the 2026-06-16 fixes. Evidence: [refactor-gap-analysis.md §G1–G5](refactor-gap-analysis.md#post-sit-verification--g1g5-findings-2026-06-16), [docs/audits/approval-box-followup-verification.md](../../../../../docs/audits/approval-box-followup-verification.md).
+
+| # | Gap | Scenario | Expected |
+|---|---|---|---|
+| G1-1 | Footer totals | List with >1 page of results | `footer_totals.total_*_amount` reflect the **full** result set, not the page slice |
+| G1-2 | Footer totals | Switch to a non-All tab | `footer_totals` unchanged (tab-unfiltered); `total_count` changes (tab-filtered) |
+| G1-3 | Footer totals | Controller contract test | `data.footer_totals.{total_document_count,total_usd_amount,total_vnd_amount,total_krw_amount}` present (`ApprovalBoxControllerTest`) |
+| G4-1 | Footer doc count | `footer_totals.total_document_count` | equals `pending+inProgress+approved+rejected`; tab-unfiltered |
+| G3-1 | Visibility | Non-admin uploader (`SCDUL`/`OVRS`/`CARD` `reg_id`) who is not requester/approver | document visible in list AND counted in tab chips AND included in footer totals |
+| G3-2 | Visibility | `search` / `countTabs` / `findAmountBasisForTotals` | identical 5-branch visibility predicate (rows, counts, totals agree) |
+| G5-1 | Card amount | `APPR_DV='33'` row with `TOT_PAY_KHR_AMT=0` + card transactions | row amount = `SUM(CARD_TRNS_HSTR.TRSC_AMT)` (e.g. `VO_260206_002` → 289,850), not 0 |
+| G5-2 | Card amount | Footer + Excel export for a card row | both use the same `SUM(TRSC_AMT)` via shared `resolveAmount` |
+| G2-1 | Approver status | Approver views the list | status label + counts identical to admin/requester (document-level `APPR_TYPE_CD`) — confirmed parity, no per-approver divergence |
 
 ## 11. SIT / UAT
 

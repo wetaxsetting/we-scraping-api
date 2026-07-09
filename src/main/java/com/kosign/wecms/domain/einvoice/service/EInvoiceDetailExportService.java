@@ -1,185 +1,162 @@
 package com.kosign.wecms.domain.einvoice.service;
 
 import com.kosign.wecms.common.exception.BusinessException;
-import com.kosign.wecms.common.export.ExcelColumnSpec;
 import com.kosign.wecms.common.export.ExcelExportRequest;
-import com.kosign.wecms.common.export.ExcelWorkbookWriter;
+import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.tenant.TenantContext;
-import com.kosign.wecms.domain.einvoice.dto.EInvoiceListResponse;
-import com.kosign.wecms.domain.einvoice.dto.EInvoiceRow;
 import com.kosign.wecms.domain.einvoice.entity.BusaDocDetl;
+import com.kosign.wecms.domain.einvoice.entity.BusaDocMstr;
 import com.kosign.wecms.domain.einvoice.entity.EinvFeeDetl;
-import com.kosign.wecms.domain.einvoice.entity.EinvTaxDetl;
+import com.kosign.wecms.domain.einvoice.export.EInvoiceDetailWorkbookWriter;
 import com.kosign.wecms.domain.einvoice.repository.BusaDocDetlRepository;
 import com.kosign.wecms.domain.einvoice.repository.EinvFeeDetlRepository;
-import com.kosign.wecms.domain.einvoice.repository.EinvTaxDetlRepository;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.domain.Pageable;
 import org.springframework.http.ContentDisposition;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
+import java.text.DecimalFormat;
+import java.text.DecimalFormatSymbols;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 
 /**
  * "Download Excel with Details" — refactor port of the legacy
- * {@code einv_0001_001_r002_excel} server-side POI generator's
- * detail-expansion behaviour.
+ * {@code einv_0001_001_r002_excel} 63-column full e-Invoice detail
+ * export (production file {@code e_Invoice_EN.xlsx} / IDO
+ * {@code BUSA_DOC_MSTR_R024}).
  *
- * <p>Legacy flattens each invoice into one row per {@code BUSA_DOC_DETL}
- * line item (master columns repeated), via {@code BUSA_DOC_MSTR_R024}
- * (master ⋈ detail ⋈ fee ⋈ tax) into a 63-column bilingual template.
- * The refactor reproduces the <b>essence</b> — master rows expanded with
- * their line / fee / tax children — using the data the refactor actually
- * persists (Scope 1's phase-2 detail-save wrote {@code BUSA_DOC_DETL} /
- * {@code EINV_FEE_DETL} / {@code EINV_TAX_DETL}). A {@code Detail Type}
- * column marks each child row PRODUCT / FEE / TAX.
+ * <p><b>2026-06-27 legacy-parity rewrite.</b> Previously this produced a
+ * scoped 21-column sheet via the shared {@code ExcelWorkbookWriter} and
+ * the slim {@link EInvoiceRow} list DTO. It now:
+ * <ul>
+ *   <li>loads the <b>full {@link BusaDocMstr} master entities</b> for the
+ *       same filter (via {@link EInvoiceService#listMastersForExport}),
+ *       reading the 40+ enrichment columns the list row never carried;</li>
+ *   <li>expands each invoice into <b>one row per {@link BusaDocDetl} line
+ *       item</b> (master / seller / buyer / totals / first-fee values
+ *       repeated), matching the legacy {@code BUSA_DOC_MSTR ⋈ BUSA_DOC_DETL}
+ *       row model;</li>
+ *   <li>delegates layout to the dedicated {@link EInvoiceDetailWorkbookWriter}
+ *       (63-column grouped header, merges, autofilter, sheet name
+ *       {@code "Sales e-Invoice"}) — the shared writer is NOT used and NOT
+ *       modified.</li>
+ * </ul>
  *
- * <p><b>Deliberate scope boundary:</b> the legacy 63-column layout draws
- * heavily on master-enrichment columns the refactor does NOT yet populate
- * (title, bank accounts, signatures, original-invoice relation, mccqt,
- * addresses) — those are out of this scope (no master enrichment). This
- * export carries the master + line/fee/tax columns the refactor has. It
- * does NOT use the legacy pre-built bilingual template; headers are
- * emitted in English (localisation deferred — same limitation noted for
- * the shared list export's backend-trusted headers).
+ * <p><b>Intentionally-blank columns</b> (PO-approved 2026-06-27 — do NOT
+ * port the legacy DB functions in this task):
+ * <ul>
+ *   <li>col 48 <i>Nature of invoice</i> — legacy {@code wb_get_einv_orig(STATUS)};</li>
+ *   <li>col 54 <i>Purpose/Account</i> — legacy {@code wb_get_usag_nm(BUSA_USAG_CD)};</li>
+ *   <li>col 56 <i>Project/site</i> — legacy {@code wb_get_prjt_nm(PRJT_NO)}.</li>
+ * </ul>
+ * <b>Blank in production too</b> (R024 never selects them):
+ * col 57 Payment method ({@code RCV_PAY_WAY_CD}), col 58 Payment term
+ * ({@code PAY_DUE_CD}, commented out in the legacy JSP), col 60 Balance
+ * ({@code BAL}), col 62 Requestor ({@code REG_NM}).
  *
- * <p>Reuses {@link EInvoiceService#list} (unpaged) so the Details export
- * shares the exact filter chain (IR-1/2/3/5/6) with the on-screen list
- * and the "Download with List" export — single query path. The "List"
- * export ({@code EInvoiceExportProvider}) is untouched.
+ * <p><b>Documented divergence:</b> the legacy R024 inner-joins
+ * {@code BUSA_DOC_DETL}, silently dropping invoices with no persisted line
+ * items. To avoid silently losing scraped invoices, this export keeps a
+ * <b>master-only fallback row</b> for such invoices (PO-approved).
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class EInvoiceDetailExportService {
 
-    private static final String DETAIL_TYPE_PRODUCT = "PRODUCT";
-    private static final String DETAIL_TYPE_FEE     = "FEE";
-    private static final String DETAIL_TYPE_TAX     = "TAX";
-    private static final String DETAIL_TYPE_INVOICE = "INVOICE"; // master-only row (no children)
+    /** Legacy discount line marker — item name "Chiet khau thuong mai"
+     *  (trade discount). On such lines the unit-price/supply cells move to
+     *  the discount-ratio/discount-amount columns. */
+    private static final String DISCOUNT_ITEM_NM =
+            "Chiết khấu thương mại";
 
-    /** Fixed Details column set (backend-defined — not View-Setting-driven). */
-    private static final List<ExcelColumnSpec> COLUMNS = List.of(
-            col("INVOICE",        "Invoice No.",          "TEXT"),
-            col("SYMBOL",         "Symbol",               "TEXT"),
-            col("ISSU_DT",        "Issue Date",           "DATE"),
-            col("STATUS",         "Invoice Status",       "TEXT"),
-            col("COUNTERPARTY",   "Counterparty",         "TEXT"),
-            col("CP_TAX_ID",      "Counterparty Tax ID",  "TEXT"),
-            col("CCY",            "Currency",             "TEXT"),
-            col("LINE_TYPE",      "Detail Type",          "TEXT"),
-            col("DISP_ORD",       "No.",                  "NUMBER"),
-            col("LINE_NAME",      "Name",                 "TEXT"),
-            col("UOM",            "Unit",                 "TEXT"),
-            col("QTY",            "Quantity",             "NUMBER"),
-            col("UNIT_PRICE",     "Unit Price",           "AMOUNT"),
-            col("TAX_RATE",       "Tax Rate",             "TEXT"),
-            col("SUPPLY_AMT",     "Supply Amount",        "AMOUNT"),
-            col("DISCOUNT",       "Discount",             "AMOUNT"),
-            col("FEE_AMT",        "Fee",                  "AMOUNT"),
-            col("TAX_AMT",        "Tax Amount",           "AMOUNT"),
-            col("INV_SUPPLY_SUM", "Invoice Supply Total", "AMOUNT"),
-            col("INV_TAX_SUM",    "Invoice Tax Total",    "AMOUNT"),
-            col("INV_TOTAL",      "Invoice Total",        "AMOUNT")
-    );
+    /* Legacy EINV_ORIGINALINVOICE label phrases stripped before splitting
+     * the related-invoice tuple (replacement / adjustment invoices).
+     * Verbatim from einv_0001_001_r002_excel_view.jsp. */
+    private static final String REL_P1 =
+            "Điều chỉnh cho ký hiệu mẫu số hóa đơn";
+    private static final String REL_P2 = "ký hiệu hóa đơn";
+    private static final String REL_P3 = "số hóa đơn";
+    private static final String REL_P4 = "ngày lập";
+    private static final String REL_P5 =
+            "Thay thế cho ký hiệu mẫu số hóa đơn";
+
+    private static final DateTimeFormatter DATE8 = DateTimeFormatter.ofPattern("yyyyMMdd");
+    private static final DateTimeFormatter ISO_DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+    private static final DateTimeFormatter DMY = DateTimeFormatter.ofPattern("dd-MM-yyyy");
 
     private final EInvoiceService eInvoiceService;
     private final BusaDocDetlRepository detlRepo;
     private final EinvFeeDetlRepository feeRepo;
-    private final EinvTaxDetlRepository taxRepo;
-    private final ExcelWorkbookWriter writer;
+    private final EInvoiceDetailWorkbookWriter writer;
 
     public void exportTo(HttpServletResponse response, ExcelExportRequest request) {
         final String bizKey = TenantContext.currentBizKey();
-        Map<String, Object> filters = request.filters() != null ? request.filters() : Map.of();
+        var filters = request.filters() != null ? request.filters() : java.util.Map.<String, Object>of();
         String type    = stringOrNull(filters.get("type"));
         String fromDt  = stringOrNull(filters.get("from"));
         String toDt    = stringOrNull(filters.get("to"));
         String keyword = stringOrNull(filters.get("keyword"));
+        String status  = stringOrNull(filters.get("status"));
 
-        // Same filtered query the list endpoint / List export run (IR-1/2/3/5/6).
-        // Validation (required date range, doc type) happens inside list().
-        EInvoiceListResponse data = eInvoiceService.list(
-                type, fromDt, toDt, keyword, Pageable.unpaged(), null, null);
-        List<EInvoiceRow> masters = data.rows() != null ? data.rows() : List.of();
+        // Full master entities — same filter chain as the list
+        // (IR-1/2/3/4(status)/5/6).
+        List<BusaDocMstr> masters = eInvoiceService.listMastersForExport(
+                type, fromDt, toDt, keyword, status, null, null);
 
-        List<Map<String, Object>> rows = new ArrayList<>();
+        List<Object[]> rows = new ArrayList<>();
         int invoiceCount = 0;
-        int lineCount = 0;
-        for (EInvoiceRow m : masters) {
-            invoiceCount++;
-            String docId = m.docId();
-            List<BusaDocDetl> products = detlRepo.findByBizKeyAndDocIdOrderByDispOrdAsc(bizKey, docId);
-            List<EinvFeeDetl> fees     = feeRepo.findByBizKeyAndDocIdOrderByDispOrdAsc(bizKey, docId);
-            List<EinvTaxDetl> taxes    = taxRepo.findByBizKeyAndDocIdOrderByDispOrdAsc(bizKey, docId);
+        BigDecimal vndTotal = BigDecimal.ZERO;
+        int vndCount = 0;
 
-            boolean any = false;
-            for (BusaDocDetl p : products) {
-                Map<String, Object> r = masterCells(m);
-                r.put("LINE_TYPE",  DETAIL_TYPE_PRODUCT);
-                r.put("DISP_ORD",   p.getDispOrd());
-                r.put("LINE_NAME",  firstNonBlank(p.getEinvProductname(), p.getItemNm()));
-                r.put("UOM",        p.getItemSpec());
-                r.put("QTY",        p.getItemQunt());
-                r.put("UNIT_PRICE", p.getItemUnitAmt());
-                r.put("TAX_RATE",   p.getEinvTaxrate());
-                r.put("SUPPLY_AMT", p.getSplyAmt());
-                r.put("DISCOUNT",   p.getDcAmt());
-                rows.add(r);
-                lineCount++;
-                any = true;
+        for (BusaDocMstr m : masters) {
+            invoiceCount++;
+            if (isVnd(m.getTrcoTrscCcyCd())) {
+                vndCount++;
+                if (m.getTotlAmt() != null) vndTotal = vndTotal.add(m.getTotlAmt());
             }
-            for (EinvFeeDetl f : fees) {
-                Map<String, Object> r = masterCells(m);
-                r.put("LINE_TYPE", DETAIL_TYPE_FEE);
-                r.put("DISP_ORD",  f.getDispOrd());
-                r.put("LINE_NAME", f.getEinvFeename());
-                r.put("FEE_AMT",   f.getEinvFee());
-                rows.add(r);
-                lineCount++;
-                any = true;
+
+            EinvFeeDetl firstFee = firstFee(bizKey, m.getDocId());
+            Object[] base = masterCells(m, firstFee);
+
+            List<BusaDocDetl> items = detlRepo.findByBizKeyAndDocIdOrderByDispOrdAsc(bizKey, m.getDocId());
+            if (items.isEmpty()) {
+                // Master-only fallback (PO-approved divergence from legacy
+                // inner-join, which would drop this invoice).
+                rows.add(base);
+            } else {
+                for (BusaDocDetl d : items) {
+                    rows.add(lineRow(base, d));
+                }
             }
-            for (EinvTaxDetl tx : taxes) {
-                Map<String, Object> r = masterCells(m);
-                r.put("LINE_TYPE",   DETAIL_TYPE_TAX);
-                r.put("DISP_ORD",    tx.getDispOrd());
-                r.put("TAX_RATE",    tx.getEinvTaxrate());
-                r.put("SUPPLY_AMT",  tx.getAmt());
-                r.put("TAX_AMT",     tx.getTaxAmt());
-                rows.add(r);
-                lineCount++;
-                any = true;
-            }
-            if (!any) {
-                // Invoice with no persisted detail yet — still list it so
-                // the export isn't silently missing invoices.
-                Map<String, Object> r = masterCells(m);
-                r.put("LINE_TYPE", DETAIL_TYPE_INVOICE);
-                rows.add(r);
+
+            if (rows.size() > ExcelExportService.MAX_ROWS) {
+                throw new BusinessException("WBE2011", rows.size(), ExcelExportService.MAX_ROWS);
             }
         }
 
-        String subHeader = String.format(Locale.ROOT,
-                "%d invoice(s)  ·  %d detail line(s)", invoiceCount, lineCount);
-        String title = firstNonBlank(request.title(), request.fileName(), "e-Invoice Details");
+        String title  = firstNonBlank(request.title(), request.fileName(), "SALES E-INVOICE");
+        String period = buildPeriod(fromDt, toDt);
+        String totals = buildTotals(vndCount, vndTotal);
         String fileName = sanitizeFileName(firstNonBlank(request.fileName(), "e-Invoice Details"));
 
-        log.info("e-invoice details export: bizKey={} type={} invoices={} lines={}",
-                bizKey, type, invoiceCount, lineCount);
+        log.info("e-invoice details export: bizKey={} type={} invoices={} rows={}",
+                bizKey, type, invoiceCount, rows.size());
 
         configureResponseHeaders(response, fileName);
         try (OutputStream out = response.getOutputStream()) {
-            writer.write(out, title, subHeader, COLUMNS, rows);
+            writer.write(out, title, period, totals, rows);
         } catch (IOException e) {
             log.error("e-invoice details export write failed", e);
             throw new UncheckedIOException(e);
@@ -193,26 +170,182 @@ public class EInvoiceDetailExportService {
 
     /* ------------------------------------------------------------------ */
 
-    /** Master columns repeated on every child row of an invoice. */
-    private static Map<String, Object> masterCells(EInvoiceRow m) {
-        Map<String, Object> r = new HashMap<>();
-        r.put("INVOICE",        m.dispDocId());
-        r.put("SYMBOL",         m.einvInvoicesymbol());
-        r.put("ISSU_DT",        m.issuDt());
-        r.put("STATUS",         m.einvInvoicestatus());
-        r.put("COUNTERPARTY",   m.trcoCmnm());
-        r.put("CP_TAX_ID",      m.trcoTaxId());
-        r.put("CCY",            m.trcoTrscCcyCd());
-        r.put("INV_SUPPLY_SUM", m.splyAmtSum());
-        r.put("INV_TAX_SUM",    m.taxAmtSum());
-        r.put("INV_TOTAL",      m.totlAmt());
+    /** Master + seller + buyer + totals + first-fee cells, repeated on
+     *  every line-item row of an invoice. Line-item cells (23-36) are left
+     *  null here and filled per line by {@link #lineRow}. */
+    private Object[] masterCells(BusaDocMstr m, EinvFeeDetl firstFee) {
+        Object[] r = new Object[EInvoiceDetailWorkbookWriter.COL_COUNT];
+        r[0]  = m.getEinvInvoicestatus();
+        r[1]  = m.getEinvTitle();
+        r[2]  = m.getEinvNumericsymbol();
+        r[3]  = m.getEinvInvoicesymbol();
+        r[4]  = m.getHandDocId();
+        r[5]  = fmtDate(m.getIssuDt(), ISO_DATE);                 // Invoice date → yyyy-MM-dd
+        r[6]  = m.getTrcoCmnm();                                  // Seller block = TRCO_* (counterparty)
+        r[7]  = m.getTrcoTaxId();
+        r[8]  = joinAddr(m.getTrcoBsunDtlAdrs(), m.getTrcoBsunPostAdrs(), m.getTrcoBsunCity(), m.getTrcoBsunSt());
+        r[9]  = m.getEinvSellerbankacc();
+        r[10] = m.getEinvSellerbankname();
+        r[11] = m.getIssuRprsTlph();
+        r[12] = m.getEinvBuyerfullname();                        // Buyer block = ISSU_* / EINV_BUYER*
+        r[13] = m.getIssuCmnm();
+        r[14] = joinAddr(m.getIssuBsunDtlAdrs(), m.getIssuBsunPostAdrs(), m.getIssuBsunCity(), m.getIssuBsunSt());
+        r[15] = m.getIssuTaxId();
+        r[16] = m.getEinvBuyerbankacc();
+        r[17] = m.getEinvBuyerbankname();
+        r[18] = m.getEinvListnumber();
+        r[19] = m.getEinvListdate();
+        r[20] = m.getTrcoTrscCcyCd();
+        r[21] = m.getEinvPaymenttype();
+        r[22] = fmtRate(m.getEinvRate());
+        r[37] = m.getSplyAmtSum();
+        r[38] = m.getTaxAmtSum();
+        if (firstFee != null) {
+            r[39] = firstFee.getEinvFeename();
+            r[40] = firstFee.getEinvFee();
+        }
+        r[41] = m.getTotlDisAmt();
+        r[42] = m.getTotlAmt();
+        r[43] = m.getEinvTotalamtinletter();
+        r[44] = m.getEinvMccqt();
+        r[45] = signDateTime(m.getEinvSellersigndate(), m.getEinvSellersigntime());
+        r[46] = m.getEinvBuyersignby();
+        r[47] = signDateTime(m.getEinvBuyersigndate(), m.getEinvBuyersigntime());
+        // r[48] Nature of invoice — BLANK: legacy wb_get_einv_orig(STATUS) not ported (PO-approved).
+        String[] rel = parseRelated(m.getEinvOriginalInvoice());
+        r[49] = rel[0];   // Related type invoice (legacy uses param1)
+        r[50] = rel[0];   // Related Form No (legacy also uses param1)
+        r[51] = rel[1];   // Related Serial No
+        r[52] = rel[2];   // Related Invoice No
+        r[53] = rel[3];   // Related Invoice Date
+        // r[54] Purpose/Account — BLANK: legacy wb_get_usag_nm(BUSA_USAG_CD) not ported (PO-approved).
+        r[55] = "E".equals(m.getDocType()) ? m.getCont() : m.getDocTitle();   // Description
+        // r[56] Project/site — BLANK: legacy wb_get_prjt_nm(PRJT_NO) not ported (PO-approved).
+        // r[57] Payment method — BLANK: RCV_PAY_WAY_CD not selected by R024 (blank in production).
+        // r[58] Payment term — BLANK: PAY_DUE_CD commented out in legacy JSP (blank in production).
+        r[59] = m.getDueDt();                                    // Due date — raw yyyyMMdd (legacy emits raw)
+        // r[60] Balance — BLANK: BAL not selected by R024 (blank in production).
+        r[61] = m.getApprSeqNo();                                // Approval Ref. (null for scraped invoices)
+        // r[62] Requestor — BLANK: REG_NM not selected by R024 (blank in production).
         return r;
     }
 
-    private static ExcelColumnSpec col(String fieldId, String header, String format) {
-        // align/ccyCd/widthChars left null — writer right-aligns AMOUNT/NUMBER
-        // automatically and auto-measures widths from header + content.
-        return new ExcelColumnSpec(fieldId, header, format, null, null, null);
+    /** Copy the master row and overlay the per-line-item cells (23-36). */
+    private Object[] lineRow(Object[] base, BusaDocDetl d) {
+        Object[] r = base.clone();
+        boolean isDiscount = DISCOUNT_ITEM_NM.equals(d.getItemNm());
+        r[23] = d.getDispOrd();              // Item No.
+        r[24] = d.getItemNm();               // Nature
+        r[25] = d.getItemCd();               // Item code
+        r[26] = d.getEinvProductname();      // Item name
+        r[27] = d.getItemSpec();             // UOM
+        r[28] = d.getItemQunt();             // Quantity
+        r[29] = d.getItemUnitAmt();          // Unit price
+        r[30] = isDiscount ? toText(d.getItemUnitAmt()) : null;   // Discount ratio (text)
+        r[31] = isDiscount ? null : d.getEinvTaxrate();           // Tax rate
+        r[32] = isDiscount ? null : d.getSplyAmt();               // Supply amount
+        r[33] = isDiscount ? d.getSplyAmt() : null;               // Discount amount
+        r[34] = d.getEinvTaxrate();          // VAT rate
+        r[35] = d.getSplyAmt();              // Total Amount by tax rate
+        r[36] = computeVat(d.getSplyAmt(), d.getEinvTaxrate(), isDiscount); // VAT amount by tax rate
+        return r;
+    }
+
+    private EinvFeeDetl firstFee(String bizKey, String docId) {
+        List<EinvFeeDetl> fees = feeRepo.findByBizKeyAndDocIdOrderByDispOrdAsc(bizKey, docId);
+        return fees.isEmpty() ? null : fees.get(0);   // legacy joins EFD where DISP_ORD='1'
+    }
+
+    /** VAT amount per line — {@code SPLY_AMT × parsed(EINV_TAXRATE%)}.
+     *  Non-percentage rates (e.g. {@code KCT} — not subject to tax) → 0
+     *  (matches production). Discount lines → null. Rounded HALF_UP
+     *  (legacy varies rounding by invoice type; simplified per plan). */
+    private static BigDecimal computeVat(BigDecimal splyAmt, String taxRate, boolean isDiscount) {
+        if (isDiscount || splyAmt == null) return null;
+        if (taxRate != null && taxRate.matches("[0-9]+(\\.[0-9]+)?%")) {
+            BigDecimal pct = new BigDecimal(taxRate.replace("%", "")).movePointLeft(2);
+            return splyAmt.multiply(pct).setScale(0, RoundingMode.HALF_UP);
+        }
+        return BigDecimal.ZERO;
+    }
+
+    /** Strip + split {@code EINV_ORIGINALINVOICE} into [type/form, serial,
+     *  invoiceNo, date]. Mirrors the legacy JSP regex-replace + comma split. */
+    private static String[] parseRelated(String orig) {
+        String[] out = new String[4];
+        if (orig == null || orig.isBlank()) return out;
+        String cleaned = orig
+                .replace(REL_P1, "").replace(REL_P5, "")
+                .replace(REL_P2, "").replace(REL_P3, "").replace(REL_P4, "")
+                .replace(" ", "");
+        String[] arr = cleaned.split(",");
+        for (int j = 0; j < arr.length && j < 4; j++) {
+            out[j] = arr[j].isEmpty() ? null : arr[j];
+        }
+        return out;
+    }
+
+    private static String joinAddr(String dtl, String post, String city, String st) {
+        if (post == null || post.isBlank()) return null;   // legacy only emits when POST present
+        return nz(dtl) + nz(post) + ", " + nz(city) + ", " + nz(st);
+    }
+
+    private static String signDateTime(String date8, String time6) {
+        String d = fmtDate(date8, ISO_DATE);
+        String t = fmtTime(time6);
+        if (d.isEmpty() && t.isEmpty()) return "";
+        if (t.isEmpty()) return d;
+        if (d.isEmpty()) return t;
+        return d + " " + t;
+    }
+
+    private static String fmtDate(String raw, DateTimeFormatter out) {
+        if (raw == null) return "";
+        String s = raw.trim();
+        if (s.length() < 8) return s;
+        try {
+            return LocalDate.parse(s.substring(0, 8), DATE8).format(out);
+        } catch (RuntimeException e) {
+            return s;
+        }
+    }
+
+    private static String fmtTime(String raw) {
+        if (raw == null) return "";
+        String s = raw.trim();
+        if (s.length() < 6) return s;
+        return s.substring(0, 2) + ":" + s.substring(2, 4) + ":" + s.substring(4, 6);
+    }
+
+    private static String fmtRate(BigDecimal rate) {
+        if (rate == null) return "";
+        return rate.stripTrailingZeros().toPlainString();
+    }
+
+    private static String buildPeriod(String fromDt, String toDt) {
+        String f = fmtDate(fromDt, DMY);
+        String t = fmtDate(toDt, DMY);
+        if (f.isEmpty() && t.isEmpty()) return "";
+        return "Inquiry Period (" + f + " ~ " + t + ")";
+    }
+
+    private static String buildTotals(int vndCount, BigDecimal vndTotal) {
+        DecimalFormatSymbols sym = new DecimalFormatSymbols(Locale.ROOT);
+        sym.setGroupingSeparator('.');
+        String amt = new DecimalFormat("#,##0", sym).format(vndTotal == null ? BigDecimal.ZERO : vndTotal);
+        return "Total (VND) " + vndCount + " transaction(s)/ " + amt + "₫";
+    }
+
+    private static boolean isVnd(String ccy) {
+        return ccy == null || ccy.isBlank() || "VND".equalsIgnoreCase(ccy.trim());
+    }
+
+    private static String toText(BigDecimal v) {
+        return v == null ? null : v.stripTrailingZeros().toPlainString();
+    }
+
+    private static String nz(String s) {
+        return s == null ? "" : s;
     }
 
     private static void configureResponseHeaders(HttpServletResponse response, String fileName) {

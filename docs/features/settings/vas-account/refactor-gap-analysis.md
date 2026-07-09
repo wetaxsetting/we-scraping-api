@@ -32,7 +32,7 @@ verification checklist.
 | Import (save A/R) | `comm_0217_002_c001` | `POST …/excel/import` | **MATCH** |
 | Import per-cell re-validate | `comm_0217_002_r002` | dropped (no inline cell edit) | **APPROVED DEVIATION** (audit F2) |
 | Export (XLSX) | none | `POST …/export` (shared pipeline) | **APPROVED DEVIATION** (refactor addition; frontend button deferred) |
-| Sequence generation | `SeqHelper.getNextVal` MAX+1 | `VasAcctSeqNoGenerator` MAX+1 (Java) | **MATCH** (no DB function; no retry) |
+| Sequence generation | `SeqHelper.getNextVal` MAX+1 | `VasAcctSeqNoGenerator` → `LegacyFunctionRepository.nextVasAcctSeqNo` (`wb_get_next_val` funnel, V140 #25; per-`BIZ_KEY` MAX+1) | **MATCH** (no retry) |
 | Validation (code/name/status) | length + presence | `@Size`/`@Pattern`/`@NotBlank` + service dup-check | **MATCH** (refactor adds `^[A-Za-z0-9_]+$` code guard — APPROVED) |
 | Audit logging | n/a (legacy `comm_0217_*` wrote none verified) | one `AUDIT_LOGS_INFM` row per write, `wsvc_id='vas-account'` | **APPROVED DEVIATION** (refactor addition, consistent with firm-banking-settings/contacts) |
 | Integration tests | n/a | `@Disabled` (F1) | **PARTIAL** (infra-only; unit/controller/Excel green) |
@@ -50,8 +50,9 @@ verification checklist.
   / format / dup-in-file / dup-in-db, header validation (EN/KO/VI label sets), and the 500-row cap —
   mirroring `comm_0217_002_r001`. Append re-checks DB duplicates; Replace skips the DB-dup check
   because the wipe clears conflicts. Atomic abort on the first invalid row at import time.
-- **Sequence generation parity** — **MATCH.** Both are per-`BIZ_KEY` MAX+1. The refactor moves it to
-  Java (`VasAcctSeqNoGenerator`) instead of the legacy shared `GET_NEXT_VAL` IDO. **Known limitation:**
+- **Sequence generation parity** — **MATCH.** Both are per-`BIZ_KEY` MAX+1. The refactor routes
+  `VasAcctSeqNoGenerator` through `LegacyFunctionRepository.nextVasAcctSeqNo` — the single
+  `wb_get_next_val` funnel (V140 branch #25, copied verbatim from the live JEX function). **Known limitation:**
   no one-shot retry on a concurrent PK collision (surfaces as `WBE_DB`) — a deliberate difference from
   Chart of Accounts, accepted for R&D.
 - **Hierarchy management parity** — **MATCH (N/A — no hierarchy).** No parent column, no display-order

@@ -22,14 +22,18 @@ import java.math.BigDecimal;
  * {@code bizKey} from {@link com.kosign.wecms.common.tenant.TenantContext}.
  *
  * <p>{@code CERT_INFO_DETL_CON}, {@code _CON2}, {@code _CON3} hold
- * the bank-side credential payload. Legacy JEX encrypts via Coocon
- * SEED-CBC ({@code ISASSeedCBC}, packaged inside the
- * {@code isas1.0.jar}) wrapped by a PostgreSQL {@code encrypt(?)} DB
- * function. The refactor switches to JCE AES-GCM in
- * {@link com.kosign.wecms.domain.banking.bankcredentials.service.BankCertCryptoService},
- * so the column carries an AES-GCM base64 ciphertext blob rather than
- * the legacy SEED-CBC payload. Column shape stays VARCHAR(2000) so a
- * future data-migration path stays open.
+ * the bank-side credential payload. The refactor encrypts the password
+ * column with a <b>legacy-compatible, pgcrypto-compatible cipher</b> in
+ * {@link com.kosign.wecms.domain.banking.bankcredentials.service.BankCertCryptoService}:
+ * AES-256-CBC, zero IV, PKCS#5, key = {@code SHA-256(seed)} — byte-identical
+ * to the legacy JEX DB functions {@code public.encrypt()/decrypt()}. The
+ * column therefore carries the same base64 AES-256-CBC ciphertext the live
+ * JEX system reads and writes (true shared-DB coexistence). Column shape
+ * stays VARCHAR(2000).
+ *
+ * <p>(Superseded note: an earlier refactor build used JCE AES-GCM here;
+ * that cipher was mutually unreadable with legacy data and is <b>retired</b>
+ * — do NOT reintroduce AES-GCM while the DB is shared with JEX.)
  *
  * <p>Audit columns are VARCHAR(14)/VARCHAR(100) strings (legacy JEX
  * shape, mirroring {@code ERP_TRNS_HSTR} from V71). The entity does
@@ -68,7 +72,7 @@ public class BankCertInfo {
     @Column(name = "CERT_INFO_CON", length = 2000)
     private String certInfoCon;
 
-    /** AES-GCM ciphertext (base64) of the password. */
+    /** Legacy-compatible AES-256-CBC (pgcrypto {@code encrypt()}) base64 ciphertext of the password. */
     @Column(name = "CERT_INFO_DETL_CON", length = 2000)
     private String certInfoDetlCon;
 

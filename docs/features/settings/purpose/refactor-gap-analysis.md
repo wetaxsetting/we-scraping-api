@@ -66,8 +66,8 @@ of legacy import; column set + parent semantics preserved.
 Soft-delete is **preserved verbatim** (`USE_YN='Y' → 'N'`, never physical) and the legacy
 `hasActiveChildren` → `WBE1199` guard is preserved. The refactor **broadens** `WBE1199` to also block
 deletion when the row OR any active child is referenced by an active transaction (OQ-5 recursive
-guard, via `v_purpose_in_use`). Same wire code, one localized message covering both. **Status: MATCH**
-(legacy behaviour fully preserved) **+ documented strengthening.** The view's transaction-consumer
+guard, via the `VPurposeInUse` `@Subselect`). Same wire code, one localized message covering both. **Status: MATCH**
+(legacy behaviour fully preserved) **+ documented strengthening.** The `@Subselect`'s transaction-consumer
 UNION branch (b) is wired for the parent-child case today; real `PYMN_*`/`TRNS_*`/`EXPS_*` branches
 are added as those entities port — tracked as the OQ-5 follow-up (does not block parity for the
 implemented scope).
@@ -103,7 +103,7 @@ Evidence for closed gaps:
 - **DEAD LEGACY flows** (GAP-1, GAP-2) confirmed unreachable-by-design in the refactor and intentionally excluded.
 
 Residual (non-blocking, tracked):
-1. OQ-5 follow-up — add real transaction-consumer UNION branches to `v_purpose_in_use` as `PYMN_*`/`TRNS_*`/`EXPS_*` entities port.
+1. OQ-5 follow-up — add real transaction-consumer UNION branches to the `VPurposeInUse` `@Subselect` as `PYMN_*`/`TRNS_*`/`EXPS_*` entities port.
 2. Stale controller Javadoc (Authorization Parity note above).
 3. OQ-7 — optional partial unique index on `(hand_use_usag_cd)` / `(use_usag_nm)` (deferred; service-layer guard is authoritative today).
 

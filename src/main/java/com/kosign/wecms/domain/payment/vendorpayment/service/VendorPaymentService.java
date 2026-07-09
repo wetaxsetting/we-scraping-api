@@ -15,8 +15,9 @@ import com.kosign.wecms.domain.payment.approvalbox.dto.ApprovalBoxActionResponse
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprDv;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxFanoutService;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxService;
-import com.kosign.wecms.domain.payment.dispatch.service.TransferDispatchExecutor;
 import com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter;
+import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmBankCode;
+import com.kosign.wecms.domain.setting.firmbankingsettings.repository.TbFirmBankCodeRepository;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ApprovalActionRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.CreateScheduledTransferRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.CreateScheduledTransferResponse;
@@ -43,14 +44,15 @@ import com.kosign.wecms.domain.auth.repository.BusiInfmRepository;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolApprvrInfm;
 import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolApprvrInfmRepository;
-import com.kosign.wecms.domain.payment.internaltransfer.repository.ExptResolFileRepository;
+import com.kosign.wecms.domain.payment.internaltransfer.service.ApprovalAttachmentLoader;
+import com.kosign.wecms.domain.payment.internaltransfer.service.ApprovalContentLoader;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprDv;
 import com.kosign.wecms.domain.payment.service.DocNoGenerator;
 import com.kosign.wecms.domain.payment.internaltransfer.service.CutoffValidator;
-import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferFileResolver;
 import com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferKeyGenerator;
 import com.kosign.wecms.domain.payment.internaltransfer.service.ScdulPymnTypeCd;
+import com.kosign.wecms.domain.payment.internaltransfer.service.CutoffCheck;
 import com.kosign.wecms.domain.payment.internaltransfer.service.TransferNetwork;
 import com.kosign.wecms.domain.payment.internaltransfer.service.TrnfYn;
 import lombok.RequiredArgsConstructor;
@@ -127,15 +129,6 @@ public class VendorPaymentService {
     static final String AUDIT_CREATE_KEY           = "audit.vendor_payment.create.detail";
     static final String AUDIT_WITHDRAW_APPROVAL_KEY =
             "audit.vendor_payment.withdraw_approval.detail";
-    /** Audit detail key for per-line Re-run action (legacy
-     *  `pymn_0002_002.ts` ETC-column Re-run button). */
-    static final String AUDIT_RERUN_KEY = "audit.vendor_payment.rerun.detail";
-
-    /** Transient bank-side response codes that the legacy live system
-     *  considers retryable. Same set as Internal Transfer. */
-    static final java.util.Set<String> RERUN_VALID_RS_CDS =
-            java.util.Set.of("0001", "0002", "0003", "0004", "0005");
-
     static final String AUDIT_CHANGE_APPROVAL_LINE_KEY =
             "audit.vendor_payment.change_approval_line.detail";
 
@@ -145,6 +138,9 @@ public class VendorPaymentService {
      *  ("Vendor Scheduled Payment") — legacy parity with
      *  {@code wabooks.enums.ErpTypeCd.VENDOR_SCHEDULED_PAYMENT}. */
     static final String ERP_TRNS_TYPE_VENDOR_SCHEDULED_PAYMENT = "02";
+    /** WeCMS&rarr;ERP ('W') audit code for the Vendor Payment RESULT download
+     *  (legacy {@code ErpTypeCd.VENDOR_PAYMENT_RESULT}). */
+    static final String ERP_TRNS_TYPE_VENDOR_PAYMENT_RESULT = "04";
 
     /** Approval-status codes returned by the legacy {@code wb_get_appr_stts(...)}
      *  function, used by the approve/reject "already final" guard. {@code "C"} =
@@ -158,17 +154,18 @@ public class VendorPaymentService {
     private static final ZoneId VIETNAM_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
 
     private final ScdulPymnSumrRepository       sumrRepository;
+    /** Emits the PROCESSING lifecycle signal on dispatch (HAENGSUNG Oracle write-back). */
+    private final org.springframework.context.ApplicationEventPublisher eventPublisher;
     private final ScdulPymnSumrDetlRepository   detlRepository;
-    private final AcctMstrRepository            acctMstrRepository;
-    private final BankInfmRepository            bankInfmRepository;
+    private final com.kosign.wecms.domain.payment.common.WithdrawalAccountListService withdrawalAccountListService;
     private final CutoffValidator               cutoffValidator;
     private final VendorPaymentExcelParser      excelParser;
     private final InternalTransferKeyGenerator  keyGenerator;
     private final TransactionalRetry            transactionalRetry;
-    private final InternalTransferFileResolver  fileResolver;
+    private final VendorPaymentFileResolver     fileResolver;
     private final ErpTrnsHistoryWriter          erpHistoryWriter;
     private final AuditLogService               auditLogService;
-    private final TransferDispatchExecutor      dispatchExecutor;
+    private final VendorDispatchExecutor        dispatchExecutor;
     /** Approver-chain authority — see InternalTransferService for the rationale. */
     private final ApprovalBoxService            approvalBoxService;
     /** Shared projector that resolves the per-line bank name +
@@ -178,23 +175,37 @@ public class VendorPaymentService {
      *  before it lands on {@code SCDUL_PYMN_SUMR.OUT_BANK_CD}. Mirrors
      *  legacy {@code PymnHelper.uploadPaymentExcel:1315-1317}. */
     private final com.kosign.wecms.domain.payment.common.OutBankCdNormalizer outBankCdNormalizer;
-    /** Dispatch-table writes for the per-line Re-run action. */
-    private final com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileDataRepository tbPayFileDataRepository;
-    /** Per-line dispatch-result lookup (shared resolver). */
-    private final com.kosign.wecms.domain.payment.dispatch.service.DispatchResultResolver dispatchResultResolver;
+    /** M-2/M-3 (legacy parity): EXPT_RESOL_MSTR display flags from BUSI_ENV_SET_INFM. */
+    private final com.kosign.wecms.domain.payment.approvalbox.service.ApprovalDisplayFlagsResolver displayFlagsResolver;
+    /** M-1 (legacy parity): shared Request Approval attachment writer (EXPT_RESOL_FILE). */
+    private final com.kosign.wecms.domain.payment.approvalbox.service.ApprovalAttachmentWriter approvalAttachmentWriter;
     /** Approval-Box fan-out — see InternalTransferService for rationale. */
     private final ApprovalBoxFanoutService      approvalBoxFanoutService;
+    /** Shared request-approval bulletin / notification writer (BLTB_* tables). */
+    private final com.kosign.wecms.domain.payment.notification.service.ApprovalNotificationService approvalNotificationService;
     private final Clock                         clock;
     private final ExptResolMstrRepository       exptResolMstrRepository;
     private final ExptResolApprvrInfmRepository exptResolApprvrInfmRepository;
+    /** Shared avatar-URL resolver — maps approver ids → /api/v1/users/{id}/image
+     *  (null when no stored image). Single home for the USER_IMG → URL logic. */
+    private final com.kosign.wecms.domain.auth.service.UserImageUrlResolver userImageUrlResolver;
     /** Approval-request attachments ({@code EXPT_RESOL_FILE}) keyed by
      *  {@code APPR_SEQ_NO} — surfaces the Scheduled-detail {@code attachments}
      *  list (consumed by the shared Approval Details popup). Shared
      *  repository; same wiring as {@code InternalTransferService}. */
-    private final ExptResolFileRepository       exptResolFileRepository;
+    private final ApprovalAttachmentLoader      approvalAttachmentLoader;
+    private final ApprovalContentLoader         approvalContentLoader;
     private final DocNoGenerator                docNoGenerator;
     private final BusiInfmRepository            busiInfmRepository;
     private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
+    /** TB_FIRM_BANK_CODE registry — resolves the CITAD head-office 6-digit
+     *  BANK_CD persisted into SCDUL_PYMN_SUMR_DETL.TAR_BANK_CD (legacy
+     *  PymnHelper#getBankCode parity). */
+    private final TbFirmBankCodeRepository      firmBankCodeRepo;
+    /** ACCT_MSTR — resolves the selected withdrawal account's own currency
+     *  for SCDUL_PYMN_SUMR.WDRL_CCY_CD (legacy parity — withdrawal currency
+     *  is independent of the transfer currency). */
+    private final AcctMstrRepository            acctMstrRepository;
 
     /**
      * List Vendor Payment batches for the current tenant in the given
@@ -229,7 +240,7 @@ public class VendorPaymentService {
                 apprTypeArg,
                 pageable);
 
-        Map<String, String> docNoByApprSeqNo = buildDocNoMap(bizKey, rows.getContent());
+        Map<String, ExptResolMstr> apprMstrByApprSeqNo = buildApprMstrMap(bizKey, rows.getContent());
         // G4: Approver column — first approver name + chain length ([N] badge) +
         // full ordered chain (popup). Mirrors InternalTransferService.buildFirstApproverMap.
         Map<String, ApproverSummary> approverByApprSeqNo = buildFirstApproverMap(bizKey, rows.getContent());
@@ -237,7 +248,7 @@ public class VendorPaymentService {
         Map<String, String> apprSttsByApprSeqNo = legacyFunctions.apprSttsByApprSeqNos(
                 bizKey, rows.getContent().stream().map(ScdulPymnSumr::getApprSeqNo).toList());
         List<ScheduledTransferRow> dtoRows = rows.getContent().stream()
-                .map(s -> toListRow(s, docNoByApprSeqNo, approverByApprSeqNo, apprSttsByApprSeqNo))
+                .map(s -> toListRow(s, apprMstrByApprSeqNo, approverByApprSeqNo, apprSttsByApprSeqNo))
                 .toList();
         List<CurrencyTotal> totals = computeCurrencyTotals(rows.getContent());
 
@@ -303,31 +314,26 @@ public class VendorPaymentService {
                         .orElse(null)
                 : null;
 
-        // G5 (Scheduled detail): approval-request attachments from EXPT_RESOL_FILE,
-        // keyed by APPR_SEQ_NO (ordered by FILE_ID). Empty when the batch has no
-        // approval request yet. Byte-identical to InternalTransferService.detail().
-        // The shared Approval Details popup consumes this list; the detail page's
-        // own file card stays the uploaded-Excel file (legacy parity — the legacy
-        // detail page never showed EXPT_RESOL_FILE attachments either).
+        // G5 (Scheduled detail): approval attachments — UNION of EXPT_RESOL_FILE
+        // + EXPT_RESOL_PAY_EVID_FILE (mirrors legacy IDO.EXPT_RESOL_FILE_R002;
+        // GAP-ATT-1), keyed by APPR_SEQ_NO. Empty when the batch has no approval
+        // request yet. The shared Approval Details popup consumes this list; the
+        // detail page's own file card stays the uploaded-Excel file (legacy parity).
         List<ApprovalAttachmentRow> attachments =
-                (apprSeqNo == null || apprSeqNo.isBlank())
-                        ? List.of()
-                        : exptResolFileRepository
-                                .findByBizKeyAndApprSeqNoOrderByFileIdAsc(bizKey, apprSeqNo)
-                                .stream()
-                                .map(f -> new ApprovalAttachmentRow(
-                                        f.getFileId(),
-                                        f.getOrgFileNm(),
-                                        f.getFileSize(),
-                                        f.getRegNm(),
-                                        f.getRegDtm()))
-                                .toList();
+                approvalAttachmentLoader.load(bizKey, apprSeqNo);
+
+        // Approval Content — legacy BLTB_POST_INFM.POST_CONT (R007), NOT
+        // EXPT_RESOL_MSTR.CONT (the two can diverge on the live JEX DB).
+        String cont = approvalContentLoader.load(bizKey, apprSeqNo);
 
         return new ScheduledTransferDetailResponse(
                 master.getScdulPymnNo(),
                 master.getScdulPymnTypeCd(),
                 master.getOutBankCd(),
-                transferLineDetailMapper.resolveBankNm(master.getOutBankCd()),
+                // C-2: withdrawal-bank name via legacy wb_get_bank_name_any_code
+                // (legacy IDO.SCDUL_PYMN_SUMR_R002.xml:97), matching the legacy
+                // OUT_BANK_NM verbatim. Per-line deposit banks keep resolveBankNm.
+                legacyFunctions.resolveBankNameAnyCode(master.getOutBankCd()),
                 master.getWdrlActNo(),
                 master.getTitl(),
                 master.getTotalTranAmt(),
@@ -349,7 +355,9 @@ public class VendorPaymentService {
                 master.getOrgFileNm(),
                 master.getFileSize() == null || master.getFileSize().isBlank() ? null : new java.math.BigDecimal(master.getFileSize().trim()),
                 lines,
-                attachments);
+                attachments,
+                cont,
+                null);   // appr_fund_tp — Payroll-only; null for Vendor
     }
 
     /* ----------------------------------------------------------------
@@ -357,33 +365,16 @@ public class VendorPaymentService {
      * ---------------------------------------------------------------- */
 
     /**
-     * List firm-banking-capable withdrawal accounts the current tenant
-     * may pick as the source of a Vendor Payment batch. Mirrors
-     * {@link com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService#listWithdrawalAccounts}
+     * List firm-banking-capable withdrawal accounts the current tenant +
+     * user may pick as the source of a Vendor Payment batch. Delegates to
+     * the shared
+     * {@link com.kosign.wecms.domain.payment.common.WithdrawalAccountListService}
      * — the lookup is module-agnostic (legacy {@code comm_1001_001} is
-     * shared across every payment type).
+     * shared across every payment type) and strict (G1/G2/G3).
      */
     @Transactional(readOnly = true)
     public List<WithdrawalAccountRow> listWithdrawalAccounts(String ccyCd) {
-        String bizKey = requireTenant();
-        String filter = (ccyCd == null || ccyCd.isBlank())
-                ? null : ccyCd.trim().toUpperCase();
-        return acctMstrRepository.findWithdrawalAccounts(bizKey, filter).stream()
-                .map(this::toWithdrawalAccountRow)
-                .toList();
-    }
-
-    private WithdrawalAccountRow toWithdrawalAccountRow(AcctMstr a) {
-        String bankNm = bankInfmRepository.findById(a.getBankCd())
-                .map(BankInfm::getRprsBankNm)
-                .orElse(a.getBankCd());
-        return new WithdrawalAccountRow(
-                a.getBankCd(),
-                bankNm,
-                a.getAcctNo(),
-                a.getAcctTypeCd(),
-                a.getCcyCd(),
-                a.getAcctNickNm());
+        return withdrawalAccountListService.list(ccyCd);
     }
 
     /* ----------------------------------------------------------------
@@ -426,10 +417,10 @@ public class VendorPaymentService {
      * reused verbatim.
      *
      * <p>The original Excel file is persisted to
-     * {@code <storage-root>/<biz_key>/internal-transfer/<save_file_nm>}
-     * via the same {@link InternalTransferFileResolver} — keeping the
-     * single storage tree per tenant keeps the download path module-
-     * agnostic.
+     * {@code <storage-root>/<biz_key>/vendor-payment/<save_file_nm>}
+     * via {@link VendorPaymentFileResolver}. The storage <em>root</em> is
+     * still shared with the other payment modules (one upload tree per
+     * tenant); only the module subfolder is now Vendor-specific.
      */
     public CreateScheduledTransferResponse createDraft(
             CreateScheduledTransferRequest req,
@@ -473,7 +464,13 @@ public class VendorPaymentService {
         master.setOutBankCd(outBankCdNormalizer.normalize(req.bankCd()));
         master.setWdrlActNo(req.acctNo());
         master.setCcyCd(req.ccyCd());
-        master.setWdrlCcyCd(req.ccyCd());
+        // GAP-4 (legacy parity): WDRL_CCY_CD is the WITHDRAWAL account's own
+        // currency (legacy reads the dropdown's data-ccycd = ACCT_MSTR.CCY_CD),
+        // NOT the transfer currency — the two differ when an account pays in a
+        // different currency. Resolve from ACCT_MSTR by the selected
+        // (bank_cd, acct_no); fall back to the transfer currency only if the
+        // row can't be resolved (defensive — the picker guarantees it exists).
+        master.setWdrlCcyCd(resolveWithdrawalCcyCd(bizKey, req.bankCd(), req.acctNo(), req.ccyCd()));
         master.setTitl(req.titl());
         master.setTrnfYn(TrnfYn.NOT_TRANSFERRED.code());
         master.setErpProcCmplYn("N");
@@ -519,6 +516,7 @@ public class VendorPaymentService {
                   + "returned null/blank for bizKey=" + bizKey);
         }
         long detlNoCursor = Long.parseLong(detlSeedRaw.trim()) - 1;
+        java.util.List<ScdulPymnSumrDetl> detls = new java.util.ArrayList<>(req.lines().size());
         for (TransferLineInput line : req.lines()) {
             ScdulPymnSumrDetl detl = new ScdulPymnSumrDetl();
             detl.setBizKey(bizKey);
@@ -528,14 +526,20 @@ public class VendorPaymentService {
             detl.setTrnfCcyCd(emptyToDefault(line.trnfCcyCd(), req.trnfCcyCd()));
             detl.setAntDivCd(emptyToNull(line.antDivCd()));
             detl.setRcptNm(emptyToNull(line.rcptNm()));
-            detl.setTarBankCd(emptyToNull(line.tarBankCd()));
+            // GAP-1 + GAP-8 (legacy PymnHelper.uploadPaymentExcel parity):
+            // persist the legacy-shaped TAR_BANK_CD (6-digit BANK_CD) +
+            // CITAD_BANK_CD ("000" NAPAS / 3-char CITAD) rather than the raw
+            // user-typed code with a null CITAD_BANK_CD. Resolved here at save
+            // time, exactly as legacy getBankCode + the :1360-1364/:1468 stamps.
+            DetailBankCodes bankCodes = resolveDetailBankCodes(line.antDivCd(), line.tarBankCd());
             detl.setFincMdaNo(line.fincMdaNo());
+            detl.setTarBankCd(bankCodes.tarBankCd());
             detl.setTranUsag(emptyToNull(line.tranUsag()));
             detl.setTrcoKey(emptyToNull(line.trcoKey()));
             detl.setHandTrcoKey(emptyToNull(line.handTrcoKey()));
             detl.setDocNo(emptyToNull(line.docNo()));
             detl.setNote(emptyToNull(line.note()));
-            detl.setCitadBankCd(emptyToNull(line.citadBankCd()));
+            detl.setCitadBankCd(bankCodes.citadBankCd());
             detl.setTrcoCmnm(emptyToNull(line.trcoCmnm()));
             detl.setTrcoCmenm(emptyToNull(line.trcoCmenm()));
             detl.setChartAcctSeqNo(emptyToNull(line.chartAcctSeqNo()));
@@ -545,8 +549,9 @@ public class VendorPaymentService {
             detl.setRegDtm(now);
             detl.setModId(userId);
             detl.setModDtm(now);
-            detlRepository.save(detl);
+            detls.add(detl);
         }
+        detlRepository.saveAll(detls);
 
         // Preserve the uploaded Excel under ERP Transaction History so
         // the user can later download it from Settings > ERP Transaction
@@ -590,11 +595,12 @@ public class VendorPaymentService {
     /**
      * Resolve the physical file behind a Vendor batch's original Excel.
      * Mirrors {@link com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService#resolveDownload}
-     * — the storage tree is shared (the create path persists every
-     * payment-module upload under
-     * {@code <storage-root>/<biz_key>/internal-transfer/<save_file_nm>}),
-     * so the same {@link InternalTransferFileResolver} resolves Vendor
-     * files too.
+     * — the create path persists Vendor uploads under
+     * {@code <storage-root>/<biz_key>/vendor-payment/<save_file_nm>} via
+     * {@link VendorPaymentFileResolver}. The read uses
+     * {@code resolveForRead} so batches whose file predates the
+     * per-module folder split (still under {@code internal-transfer/})
+     * stay downloadable.
      *
      * <ul>
      *   <li>Row not found / wrong tenant → {@code WBE2060}.</li>
@@ -612,7 +618,7 @@ public class VendorPaymentService {
             throw new BusinessException("WBE2069");
         }
 
-        java.nio.file.Path path = fileResolver.resolve(bizKey, saveFileNm);
+        java.nio.file.Path path = fileResolver.resolveForRead(bizKey, saveFileNm);
         if (!Files.isReadable(path) || !Files.isRegularFile(path)) {
             throw new BusinessException("WBE2069");
         }
@@ -622,6 +628,13 @@ public class VendorPaymentService {
         String displayName = master.getOrgFileNm() == null || master.getOrgFileNm().isBlank()
                 ? saveFileNm
                 : master.getOrgFileNm();
+        // The /{id}/file endpoint serves the Scheduled-side original import-file
+        // download. Per the ERP Transaction History mapping, Scheduled-side
+        // downloads record the SCHEDULED type code (02 = Vendor Scheduled Payment),
+        // UNCONDITIONALLY (both not-yet-dispatched N and dispatched Y). Non-blocking:
+        // the writer is REQUIRES_NEW and swallows failures, matching legacy.
+        erpHistoryWriter.recordExportedFile(
+                ERP_TRNS_TYPE_VENDOR_SCHEDULED_PAYMENT, path, displayName);
         return new DownloadResource(path, displayName, saveFileNm, fileSize);
     }
 
@@ -678,82 +691,11 @@ public class VendorPaymentService {
                 bizKey, id, lineId, req.chartAcctCd());
     }
 
-    /**
-     * Delete a draft Vendor Payment batch. Mirrors
-     * {@link com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService#delete}
-     * but stamps the Vendor type discriminator and Vendor audit keys.
-     *
-     * Re-run one detail line — legacy parity with
-     * `pymn_0002_002.ts:441-472`. Same shape as
-     * {@link com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService#rerun}.
-     */
-    @Transactional
-    public void rerun(String scdulPymnNo, String scdulPymnDetlNo) {
-        String bizKey = requireTenant();
-        ScdulPymnSumr master = loadMaster(bizKey, scdulPymnNo);
-        ScdulPymnSumrDetl detl = detlRepository
-                .findByBizKeyAndScdulPymnNoAndScdulPymnDetlNo(bizKey, scdulPymnNo, scdulPymnDetlNo)
-                .orElseThrow(() -> new BusinessException("WBE2061"));
-
-        String tranDt    = detl.getPayTranDt();
-        String tranSeq   = detl.getPayTranSeq();
-        String fileSeqNo = master.getPayFileSeqNo();
-        if (tranDt == null || tranDt.isBlank()
-                || tranSeq == null || tranSeq.isBlank()
-                || fileSeqNo == null || fileSeqNo.isBlank()) {
-            throw new BusinessException("WBE2122");
-        }
-
-        java.util.Map<String,
-                com.kosign.wecms.domain.payment.dispatch.service.DispatchResult> results =
-                dispatchResultResolver.resolve(master, java.util.List.of(detl));
-        com.kosign.wecms.domain.payment.dispatch.service.DispatchResult result =
-                results.get(scdulPymnDetlNo);
-        if (result == null || result.rsCd() == null
-                || !RERUN_VALID_RS_CDS.contains(result.rsCd())) {
-            throw new BusinessException("WBE2123");
-        }
-        String procDttm = result.procDttm();
-        if (procDttm == null || procDttm.length() < 8) {
-            throw new BusinessException("WBE2124");
-        }
-        String todayYmd = java.time.OffsetDateTime.now(clock)
-                .withOffsetSameInstant(java.time.ZoneOffset.UTC)
-                .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd"));
-        if (!todayYmd.equals(procDttm.substring(0, 8))) {
-            throw new BusinessException("WBE2124");
-        }
-
-        java.math.BigDecimal seq;
-        try {
-            seq = new java.math.BigDecimal(tranSeq);
-        } catch (NumberFormatException ex) {
-            throw new BusinessException("WBE2122");
-        }
-        com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileDataId dataId =
-                new com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileDataId(
-                        tranDt, bizKey, fileSeqNo, seq);
-        tbPayFileDataRepository.findById(dataId).ifPresent(data -> {
-            data.setRsCd(null);
-            tbPayFileDataRepository.save(data);
-        });
-
-        auditLogService.append(AuditLogContext.builder()
-                .wsvcId(WSVC_ID)
-                .refNo(REF_NO)
-                .refNo1(scdulPymnNo)
-                .refNo2(scdulPymnDetlNo)
-                .activityKey(AUDIT_ACTIVITY_KEY)
-                .detailKey(AUDIT_RERUN_KEY)
-                .build());
-
-        log.info("feature=vendor-payment rerun bizKey={} scdulPymnNo={} lineId={} tranDt={} seq={}",
-                bizKey, scdulPymnNo, scdulPymnDetlNo, tranDt, seq);
-    }
 
     /**
      * Mirrors {@link com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService#delete}.
-     * <p>Rejects when {@code APPR_SEQ_NO} is already set ({@code WBE2062}).
+     * <p>Rejects when {@code APPR_SEQ_NO} is already set ({@code WBE1063} —
+     * the legacy delete-block code, shared across all 5 payment modules).
      */
     @Transactional
     public void delete(String id) {
@@ -761,7 +703,7 @@ public class VendorPaymentService {
         ScdulPymnSumr master = loadMaster(bizKey, id);
 
         if (master.getApprSeqNo() != null && !master.getApprSeqNo().isBlank()) {
-            throw new BusinessException("WBE2062");
+            throw new BusinessException("WBE1063");
         }
 
         // Snapshot the file metadata BEFORE the row goes away so the
@@ -782,7 +724,7 @@ public class VendorPaymentService {
         // tab. No-op when the batch has no uploaded file.
         if (saveFileNm != null && !saveFileNm.isBlank()) {
             try {
-                java.nio.file.Path source = fileResolver.resolve(bizKey, saveFileNm);
+                java.nio.file.Path source = fileResolver.resolveForRead(bizKey, saveFileNm);
                 erpHistoryWriter.recordDeletedFile(
                         ERP_TRNS_TYPE_VENDOR_SCHEDULED_PAYMENT,
                         source,
@@ -811,6 +753,19 @@ public class VendorPaymentService {
      * ---------------------------------------------------------------- */
 
     /**
+     * Preview the next {@code VO_YYMMDD_NNN} document number for the Request
+     * Approval popup (read-only). Computes via the shared {@link DocNoGenerator}
+     * WITHOUT reserving or persisting anything — the authoritative DOC_NO is
+     * stamped at {@link #requestApproval} submit time. Mirrors
+     * {@link com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService#previewNextDocNo}.
+     */
+    @Transactional(readOnly = true)
+    public com.kosign.wecms.domain.payment.internaltransfer.dto.NextDocNoResponse previewNextDocNo() {
+        return new com.kosign.wecms.domain.payment.internaltransfer.dto.NextDocNoResponse(
+                docNoGenerator.nextDocNo(requireTenant()));
+    }
+
+    /**
      * Submit one batch for approval. Mirrors
      * {@link com.kosign.wecms.domain.payment.internaltransfer.service.InternalTransferService#requestApproval}.
      * Stamps a synthesised {@code APPR_SEQ_NO} via per-tenant MAX+1 and
@@ -818,7 +773,8 @@ public class VendorPaymentService {
      * with the EXPT_RESOL_* port.
      */
     @Transactional
-    public RequestApprovalResponse requestApproval(String id, RequestApprovalRequest req) {
+    public RequestApprovalResponse requestApproval(String id, RequestApprovalRequest req,
+            java.util.List<org.springframework.web.multipart.MultipartFile> attachments) {
         String bizKey = requireTenant();
         ScdulPymnSumr master = loadMaster(bizKey, id);
 
@@ -842,6 +798,10 @@ public class VendorPaymentService {
             docNo = stampApproval(master, apprSeqNo, req);
         }
 
+        // M-1 (legacy parity): persist Request Approval attachments into
+        // EXPT_RESOL_FILE (legacy processFileAttachments / REC1).
+        approvalAttachmentWriter.persist(bizKey, apprSeqNo, attachments);
+
         auditLogService.append(AuditLogContext.builder()
                 .wsvcId(WSVC_ID)
                 .refNo(REF_NO)
@@ -854,6 +814,15 @@ public class VendorPaymentService {
         log.info(
                 "feature=vendor-payment request-approval bizKey={} scdulPymnNo={} apprSeqNo={} apprLineNo={} approvers={}",
                 bizKey, id, apprSeqNo, req.apprLineNo(), req.approvers().size());
+
+        // Lifecycle signal — request-approval submitted (PENDING). The HAENGSUNG
+        // Oracle write-back listener maps this to TB_TRNS_MAST.LAST_STATUS='10'
+        // (legacy comm_0192_001_c005 → ErpStatusUpdateHelper PENDING). No-op for
+        // non-HAENGSUNG / non-ERP batches (listener guards). apprSeqNo is the
+        // value resolved above (after the one-shot race retry).
+        eventPublisher.publishEvent(new com.kosign.wecms.domain.payment.approvalbox.event
+                .PaymentApprovalStatusChangedEvent(bizKey, apprSeqNo,
+                com.kosign.wecms.domain.payment.approvalbox.event.PaymentApprovalStatus.PENDING));
 
         return new RequestApprovalResponse(apprSeqNo, docNo);
     }
@@ -883,6 +852,20 @@ public class VendorPaymentService {
         if (req.postTitle() != null && !req.postTitle().isBlank()) {
             master.setTitl(req.postTitle().trim());
         }
+        // H-1 (legacy parity, comm_0192_001_c005_act.jsp:362-371
+        // updateScheduledPaymentSummary): persist the withdrawal account the
+        // user selected in the Request Approval popup. OUT_BANK_CD is the
+        // NAPAS-converted code — OutBankCdNormalizer reproduces the legacy
+        // NapasBankInfoDAO "bank_cd = ? OR napas_bank_cd = ?" lookup.
+        if (req.bankCd() != null && !req.bankCd().isBlank()) {
+            master.setOutBankCd(outBankCdNormalizer.normalize(req.bankCd()));
+        }
+        if (req.acctNo() != null && !req.acctNo().isBlank()) {
+            master.setWdrlActNo(req.acctNo().trim());
+        }
+        if (req.ccyCd() != null && !req.ccyCd().isBlank()) {
+            master.setWdrlCcyCd(req.ccyCd().trim());
+        }
         master.setModDtm(nowDtm);
         if (userId != null) master.setModId(userId);
         sumrRepository.saveAndFlush(master);
@@ -892,7 +875,9 @@ public class VendorPaymentService {
         mstr.setBizKey(bizKey);
         mstr.setApprSeqNo(apprSeqNo);
         mstr.setApprDv(ApprDv.VENDOR.code());
-        mstr.setApprSts("0");
+        // F-4 (legacy parity): legacy comm_0192_001_c005 sets ApprSts.STS_2
+        // ("2" = In Progress) at request time, not "0" (temp save).
+        mstr.setApprSts("2");
         mstr.setDraftDate(draftDate);
         mstr.setDraftTime(draftTime);
         mstr.setDraftUserId(userId != null ? userId : "");
@@ -903,14 +888,17 @@ public class VendorPaymentService {
                 .orElse(bizKey);
         mstr.setDraftUserSiteNm(cmpnNm);
         mstr.setHandRegYn("Y");
-        mstr.setApprBoxUseYn("Y");
-        mstr.setApprDatDispYn("N");
-        mstr.setCmpnLogoDispYn("Y");
-        mstr.setRegDispYn("Y");
+        // M-2 (legacy parity): display flags from BUSI_ENV_SET_INFM (00014/16/17/18),
+        // not hardcoded. Mirrors comm_0192_001_c005_act.jsp:316-320.
+        var flags = displayFlagsResolver.resolve(bizKey);
+        mstr.setApprBoxUseYn(flags.apprBoxUseYn());
+        mstr.setApprDatDispYn(flags.apprDatDispYn());
+        mstr.setCmpnLogoDispYn(flags.cmpnLogoDispYn());
+        mstr.setRegDispYn(flags.regDispYn());
         mstr.setTitl(req.postTitle() != null ? req.postTitle().trim() : "");
         String docNo = docNoGenerator.nextDocNo(bizKey);
         mstr.setDocNo(docNo);
-        mstr.setDocNm(master.getTitl() != null ? master.getTitl() : master.getScdulPymnNo());
+        mstr.setDocNm(ApprDv.VENDOR.docNm());   // L-1 (legacy parity): legacy DOC_NM = apprDv.getLabel()
         BigDecimal amt = master.getTotalTranAmt() != null ? master.getTotalTranAmt() : BigDecimal.ZERO;
         String ccy = master.getCcyCd() != null ? master.getCcyCd().toUpperCase() : "VND";
         boolean isUsd = "USD".equals(ccy);
@@ -928,9 +916,14 @@ public class VendorPaymentService {
         mstr.setModDtm(nowDtm);
         exptResolMstrRepository.save(mstr);
 
-        // Write doc_no back to SCDUL_PYMN_SUMR so the list query can surface it
-        master.setErpFileNum(docNo);
-        sumrRepository.save(master);
+        // DOC_NO is NOT back-stamped onto SCDUL_PYMN_SUMR — its canonical
+        // home is EXPT_RESOL_MSTR.DOC_NO (written above). The list and detail
+        // views resolve doc_no from EXPT_RESOL_MSTR by APPR_SEQ_NO.
+        // SCDUL_PYMN_SUMR.ERP_FILE_NUM is legacy varchar(8) holding the
+        // 8-digit ERP file sequence number — overloading it with the
+        // {prefix}_{YYMMDD}_{NNN} doc_no overflowed the column (WBE_DB 500)
+        // and drifted from the legacy schema. Left untouched here, matching
+        // InternalTransferService#stampApproval.
 
         // 3. Write EXPT_RESOL_APPRVR_INFM rows — first approver "P" (active), rest "W" (waiting)
         List<RequestApprovalRequest.ApproverInput> approvers = req.approvers();
@@ -952,6 +945,20 @@ public class VendorPaymentService {
             row.setApprLineNo(BigDecimal.valueOf(req.apprLineNo()));
             exptResolApprvrInfmRepository.save(row);
         }
+
+        // F-1 (legacy parity): EXPT_RESOL_DETL row — DOC_ID = batch id,
+        // AMT = batch total, CCY_CD = batch currency. Mirrors legacy
+        // comm_0192_001_c005_act.jsp:340 createExptResolDetl.
+        approvalBoxFanoutService.writeResolutionDetail(
+                apprSeqNo, master.getScdulPymnNo(), master.getTotalTranAmt(), master.getCcyCd());
+        // F-2 (legacy parity): EXPT_RESOL_APPR_LINE print-header snapshot
+        // (env-gated). Mirrors comm_0192_001_c005_act.jsp:489 createApprovalLines.
+        approvalBoxFanoutService.writeApprovalLineSnapshot(apprSeqNo);
+
+        // Bulletin / notification fan-out (legacy createBulletinPost +
+        // createUserNewPostNotifications + BltbHelper.createNotificationToApprvr).
+        approvalNotificationService.notifyRequestApproval(
+                apprSeqNo, req.postTitle(), req.postCont(), "32", "Vendor Payment");
 
         return docNo;
     }
@@ -975,12 +982,12 @@ public class VendorPaymentService {
         ScdulPymnSumr master = loadMaster(bizKey, id);
 
         if (master.getApprSeqNo() == null || master.getApprSeqNo().isBlank()) {
-            throw new BusinessException("WBE2094");
+            throw new BusinessException("WBE2126");
         }
 
         String current = legacyFunctions.getApprStts(bizKey, master.getApprSeqNo());
         if (APPR_STTS_APPROVED.equals(current) || APPR_STTS_REJECTED.equals(current)) {
-            throw new BusinessException("WBE2095");
+            throw new BusinessException("WBE2127");
         }
 
         // Delegate approver-chain logic — multi-approver workflows stay
@@ -1023,13 +1030,14 @@ public class VendorPaymentService {
 
         String apprSeqNo = master.getApprSeqNo();
         if (apprSeqNo == null || apprSeqNo.isBlank()) {
-            throw new BusinessException("WBE2094");
+            throw new BusinessException("WBE2126");
         }
 
         approvalBoxFanoutService.withdrawApproval(apprSeqNo);
 
         master.setApprSeqNo(null);
-        master.setErpFileNum(null);
+        // ERP_FILE_NUM is no longer used to carry doc_no (see stampApproval);
+        // nothing to clear here — its legacy ERP file sequence stays intact.
         master.setModDtm(OffsetDateTime.now(clock).format(DTM14));
         String userId = TenantContext.currentUserId();
         if (userId != null) master.setModId(userId);
@@ -1061,7 +1069,7 @@ public class VendorPaymentService {
 
         String apprSeqNo = master.getApprSeqNo();
         if (apprSeqNo == null || apprSeqNo.isBlank()) {
-            throw new BusinessException("WBE2094");
+            throw new BusinessException("WBE2126");
         }
 
         approvalBoxFanoutService.changeApprovalLine(apprSeqNo, apprLineNo);
@@ -1092,8 +1100,10 @@ public class VendorPaymentService {
      * but stamps the Vendor type discriminator and Vendor audit keys.
      * Cut-off-time gate, {@code TRNF_YN='Y'} stamp on the master,
      * and {@code TB_PAY_TARGET} / {@code TB_PAY_FILE_MST} +
-     * {@code TB_PAY_FILE_DATA} writes via the shared
-     * {@code TransferDispatchExecutor}.
+     * {@code TB_PAY_FILE_DATA} writes via the Vendor-specific
+     * {@link VendorDispatchExecutor} (legacy-parity copy of the
+     * {@code pymn_0001_001_c001} engine — replaces the shared
+     * {@code TransferDispatchExecutor} whose file path diverged from legacy).
      */
     @Transactional
     public void dispatch(String id, DispatchRequest req) {
@@ -1115,7 +1125,16 @@ public class VendorPaymentService {
         TransferNetwork network = lines.isEmpty()
                 ? TransferNetwork.CITAD
                 : TransferNetwork.fromAntDivCd(lines.get(0).getAntDivCd());
-        cutoffValidator.validate(master.getOutBankCd(), network);
+        // Shared executor routes VND via the real-time API path, else File SFTP
+        // (TransferDispatchExecutor.execute). Feed that + the legacy VND→VND
+        // hard-block and ≥500M VCB tier signals into the cut-off check.
+        boolean apiTransport = "VND".equalsIgnoreCase(req.trnfCcyCd());
+        boolean vndToVnd = "VND".equalsIgnoreCase(master.getCcyCd())
+                && "VND".equalsIgnoreCase(master.getWdrlCcyCd());
+        boolean hasLargeTxn = lines.stream().anyMatch(l -> l.getTranAmt() != null
+                && l.getTranAmt().compareTo(CutoffCheck.LARGE_TXN_THRESHOLD) >= 0);
+        cutoffValidator.validate(new CutoffCheck(
+                master.getOutBankCd(), network, apiTransport, vndToVnd, hasLargeTxn));
 
         // Shared dispatcher writes TB_PAY_TARGET (VND) or TB_PAY_FILE_MST
         // + TB_PAY_FILE_DATA (non-VND) inside this @Transactional.
@@ -1126,6 +1145,11 @@ public class VendorPaymentService {
         master.setModId(userId);
         master.setModDtm(now);
         sumrRepository.saveAndFlush(master);
+
+        // Lifecycle signal — dispatched / processing (HAENGSUNG Oracle write-back).
+        eventPublisher.publishEvent(new com.kosign.wecms.domain.payment.approvalbox.event
+                .PaymentApprovalStatusChangedEvent(bizKey, master.getApprSeqNo(),
+                com.kosign.wecms.domain.payment.approvalbox.event.PaymentApprovalStatus.PROCESSING));
 
         auditLogService.append(AuditLogContext.builder()
                 .wsvcId(WSVC_ID)
@@ -1151,7 +1175,15 @@ public class VendorPaymentService {
                 .orElseThrow(() -> new BusinessException("WBE2060"));
     }
 
-    private Map<String, String> buildDocNoMap(String bizKey, List<ScdulPymnSumr> rows) {
+    /**
+     * Map {@code APPR_SEQ_NO → EXPT_RESOL_MSTR} for the rows on the current page,
+     * via a single batched {@code findByBizKeyAndApprSeqNoIn} fetch. The list row
+     * derives its Approval Ref. ({@code DOC_NO}), Requestor ({@code DRAFT_USER_NM},
+     * C-3) and Schedule Date ({@code PAY_DATE}, C-4) from this map — all three
+     * columns come from {@code EXPT_RESOL_MSTR} in legacy
+     * {@code IDO.SCDUL_PYMN_SUMR_R002.xml}, so one fetch backs all three.
+     */
+    private Map<String, ExptResolMstr> buildApprMstrMap(String bizKey, List<ScdulPymnSumr> rows) {
         List<String> apprSeqNos = rows.stream()
                 .map(ScdulPymnSumr::getApprSeqNo)
                 .filter(seq -> seq != null && !seq.isBlank())
@@ -1160,20 +1192,30 @@ public class VendorPaymentService {
         if (apprSeqNos.isEmpty()) return Map.of();
         return exptResolMstrRepository.findByBizKeyAndApprSeqNoIn(bizKey, apprSeqNos)
                 .stream()
-                .filter(m -> m.getDocNo() != null)
                 .collect(java.util.stream.Collectors.toMap(
-                        com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr::getApprSeqNo,
-                        com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr::getDocNo,
+                        ExptResolMstr::getApprSeqNo,
+                        m -> m,
                         (a, b) -> a));
     }
 
     private static ScheduledTransferRow toListRow(ScdulPymnSumr s,
-            Map<String, String> docNoByApprSeqNo,
+            Map<String, ExptResolMstr> apprMstrByApprSeqNo,
             Map<String, ApproverSummary> approverByApprSeqNo,
             Map<String, String> apprSttsByApprSeqNo) {
-        String docNo = s.getApprSeqNo() != null
-                ? docNoByApprSeqNo.getOrDefault(s.getApprSeqNo(), s.getErpFileNum())
+        ExptResolMstr mstr = s.getApprSeqNo() != null
+                ? apprMstrByApprSeqNo.get(s.getApprSeqNo())
+                : null;
+        // Approval Ref. = EXPT_RESOL_MSTR.DOC_NO (legacy R002), fallback ERP_FILE_NUM.
+        String docNo = (mstr != null && mstr.getDocNo() != null)
+                ? mstr.getDocNo()
                 : s.getErpFileNum();
+        // C-3: Requestor = EXPT_RESOL_MSTR.DRAFT_USER_NM (legacy R002 selects it
+        // for the list Requestor column); null for drafts with no approval request.
+        String draftUserNm = (mstr != null && mstr.getDraftUserNm() != null
+                && !mstr.getDraftUserNm().isBlank()) ? mstr.getDraftUserNm() : null;
+        // C-4: Schedule Date = EXPT_RESOL_MSTR.PAY_DATE (legacy R002 지급예정일,
+        // set at Request Approval) — NOT SCDUL_PYMN_SUMR.PAY_TRAN_DT (dispatch date).
+        String payDate = (mstr != null) ? mstr.getPayDate() : null;
         // G4: Approver column — null pre-approval (no APPR_SEQ_NO / no chain),
         // so the shared shell leaves the cell blank exactly like legacy.
         ApproverSummary appr = s.getApprSeqNo() != null
@@ -1201,14 +1243,15 @@ public class VendorPaymentService {
                 s.getTrnfYn(),
                 s.getOutBankCd(),
                 s.getWdrlActNo(),
-                s.getPayTranDt(),
+                payDate,                    // C-4: ERM.PAY_DATE, not SPS.PAY_TRAN_DT
                 s.getOrgFileNm(),
                 docNo,
                 s.getWdrlCcyCd(),
                 null,                       // appr_fund_tp — Payroll-only column
                 approver,
                 approverCount,
-                approvers);
+                approvers,
+                draftUserNm);               // C-3: ERM.DRAFT_USER_NM (Requestor)
     }
 
     /** First approver name + total chain length + the full ordered chain
@@ -1242,9 +1285,12 @@ public class VendorPaymentService {
             if (!chain.isEmpty()) {
                 String nm = chain.get(0).getApprvrNm();
                 String firstName = (nm != null && !nm.isBlank()) ? nm.trim() : null;
+                Map<String, String> imgUrlByApprvrId = userImageUrlResolver.resolveImageUrls(
+                        bizKey, chain.stream().map(a -> a.getApprvrId()).toList());
                 List<ScheduledTransferApprover> list = chain.stream()
                         .map(a -> new ScheduledTransferApprover(
-                                a.getApprvrNm(), a.getApprvrStts(), a.getApprDtm()))
+                                a.getApprvrNm(), a.getApprvrStts(), a.getApprDtm(),
+                                imgUrlByApprvrId.get(a.getApprvrId())))
                         .toList();
                 out.put(seq, new ApproverSummary(firstName, chain.size(), list));
             }
@@ -1325,6 +1371,84 @@ public class VendorPaymentService {
         return v == null ? def : v;
     }
 
+    /** Persisted {@code TAR_BANK_CD} + {@code CITAD_BANK_CD} pair for one
+     *  detail line (legacy {@code PymnHelper.uploadPaymentExcel}). */
+    private record DetailBankCodes(String tarBankCd, String citadBankCd) {}
+
+    /**
+     * Resolve the legacy-shaped {@code TAR_BANK_CD} + {@code CITAD_BANK_CD}
+     * for one detail line, mirroring {@code PymnHelper.uploadPaymentExcel}
+     * ({@code WECMS DEV/.../PymnHelper.java}):
+     *
+     * <ul>
+     *   <li><b>CITAD</b> ({@code :1360-1361}, {@code getBankCode :1237-1251},
+     *       {@code :1450-1451}+{@code :1468}) — {@code TAR_BANK_CD} = the
+     *       6-digit head-office {@code BANK_CD} resolved from
+     *       {@code TB_FIRM_BANK_CODE} (
+     *       {@code ant_div_cd='CITAD' AND citad_bank_cd=<3char>
+     *       AND bank_stas='1' AND bank_branch_div='1'});
+     *       {@code CITAD_BANK_CD} = the 3-char code the user typed.</li>
+     *   <li><b>NAPAS</b> ({@code :1362-1364}, {@code getBankCode :1252-1253})
+     *       — {@code TAR_BANK_CD} = the 6-digit code as-is;
+     *       {@code CITAD_BANK_CD} = {@code "000"}.</li>
+     * </ul>
+     *
+     * <p>The Excel parser already validated the bank code exists, so the
+     * CITAD head-office lookup should resolve; if it somehow returns no
+     * row the typed code is kept (never an empty {@code TAR_BANK_CD}) and
+     * the miss is logged for follow-up. {@code antDivCd} is the
+     * parser-resolved network on the validated line ({@code "CITAD"} /
+     * {@code "NAPAS"}); any other value falls through the NAPAS-shaped
+     * branch.
+     */
+    private DetailBankCodes resolveDetailBankCodes(String antDivCd, String typedBankCd) {
+        String typed = emptyToNull(typedBankCd);
+        if ("CITAD".equals(antDivCd)) {
+            String headOffice = firmBankCodeRepo
+                    .findFirstByAntDivCdAndCitadBankCdAndBankStasAndBankBranchDiv(
+                            "CITAD", typed, "1", "1")
+                    .map(TbFirmBankCode::getBankCd)
+                    .filter(cd -> cd != null && !cd.isBlank())
+                    .orElse(null);
+            if (headOffice == null) {
+                log.warn("feature=vendor-payment CITAD head-office BANK_CD not found "
+                        + "citadBankCd={} — keeping typed code on TAR_BANK_CD", typed);
+                return new DetailBankCodes(typed, typed);
+            }
+            return new DetailBankCodes(headOffice, typed);
+        }
+        // NAPAS (validated path) — TAR_BANK_CD as-is, CITAD_BANK_CD = "000".
+        return new DetailBankCodes(typed, "000");
+    }
+
+    /**
+     * Resolve {@code SCDUL_PYMN_SUMR.WDRL_CCY_CD} = the selected withdrawal
+     * account's own currency (legacy parity — the {@code comm_1001_001}
+     * dropdown carries the account's {@code ACCT_MSTR.CCY_CD} as its
+     * {@code data-ccycd}, which legacy persists verbatim). Looked up by the
+     * selected {@code (BIZ_KEY, BANK_CD, ACCT_NO)} — {@code bankCd} here is
+     * the internal {@code ACCT_MSTR.BANK_CD} the picker returned (not the
+     * NAPAS-normalized {@code OUT_BANK_CD}). Falls back to {@code fallbackCcyCd}
+     * (the transfer currency) only when the row can't be resolved, so the
+     * column is never left null.
+     */
+    private String resolveWithdrawalCcyCd(
+            String bizKey, String bankCd, String acctNo, String fallbackCcyCd) {
+        if (bankCd == null || bankCd.isBlank() || acctNo == null || acctNo.isBlank()) {
+            return fallbackCcyCd;
+        }
+        return acctMstrRepository
+                .findByBizKeyAndBankCdAndAcctNo(bizKey, bankCd.trim(), acctNo.trim())
+                .map(AcctMstr::getCcyCd)
+                .filter(c -> c != null && !c.isBlank())
+                .orElseGet(() -> {
+                    log.warn("feature=vendor-payment withdrawal account not resolved for "
+                            + "WDRL_CCY_CD bizKey={} bankCd={} acctNo={} — using transfer ccy {}",
+                            bizKey, bankCd, acctNo, fallbackCcyCd);
+                    return fallbackCcyCd;
+                });
+    }
+
     /** Path-traversal-safe filename leaf — mirrors Internal Transfer's
      *  {@code sanitiseOriginalFilename}. */
     private static String sanitiseOriginalFilename(String original) {
@@ -1336,10 +1460,10 @@ public class VendorPaymentService {
         return leaf.isBlank() ? "upload.xlsx" : leaf;
     }
 
-    /** Stream the uploaded multipart bytes through the shared
-     *  {@link InternalTransferFileResolver}. The storage root is keyed
-     *  by tenant + the resolver's fixed sub-directory; sharing it across
-     *  payment modules keeps the download path module-agnostic. */
+    /** Stream the uploaded multipart bytes through
+     *  {@link VendorPaymentFileResolver}. The storage root is keyed by
+     *  tenant + the resolver's {@code vendor-payment} sub-directory; the
+     *  root is shared across payment modules, the subfolder is not. */
     private void persistUploadedFile(String bizKey, String saveFileNm, MultipartFile file) {
         Path target = fileResolver.resolve(bizKey, saveFileNm);
         try {

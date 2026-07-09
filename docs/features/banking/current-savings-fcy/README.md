@@ -1,16 +1,18 @@
+> ⚠️ This document is a high-level feature summary.
+> The detailed source of truth is located in: [docs/features/banking/current-savings-fcy/](account-inquiry/README.md)
+
 # Banking → Current & Savings (FCY)
 
 WeCMS menu: **Banking → Current & Savings (FCY)**. Foreign-currency current / savings accounts —
 balance inquiry, transaction ledger, and the Smart Organizer view. The refactor widens the legacy
-USD-only screen to a multi-currency scope (`currency=FCY` or a concrete `currency=<CCY>`).
+USD-only screen to a multi-currency scope. The legacy single-file specs for this group have been
+superseded by the standardized per-module folders below.
 
-## Screens in this group
+## See the authoritative module docs
 
-| Screen | Doc | Status |
-|---|---|---|
-| Account Inquiry (FCY) | [account-inquiry.md](account-inquiry.md) | Implemented |
-| Transaction History (FCY) | [transaction-history.md](transaction-history.md) | Implemented |
-| Smart Organizer (FCY) | [smart-organizer.md](smart-organizer.md) | Backend implemented (shares Smart Organizer controllers/services + V172–V174 with the VND twin) |
+- [account-inquiry/README.md](account-inquiry/README.md) — Account Inquiry (FCY)
+- [transaction-history/README.md](transaction-history/README.md) — Transaction History (FCY)
+- [../smart-organizer/README.md](../smart-organizer/README.md) — Smart Organizer (shared VND/FCY)
 
 ## Related reference docs
 
@@ -21,5 +23,4 @@ USD-only screen to a multi-currency scope (`currency=FCY` or a concrete `currenc
 | JEX → Spring mapping | [references/migration/](../../../references/migration/) |
 | Frontend (Next.js) | [wecms-web/docs/features/banking/](../../../../../wecms-web/docs/features/banking/) |
 
-The VND counterpart is [../current-savings-vnd/](../current-savings-vnd/). FX rates used here come from
-Payment → Add-on → [exchange-rate-inquiry.md](../../payment/exchange-rate-inquiry.md).
+The VND counterpart is [../current-savings-vnd/](../current-savings-vnd/README.md).

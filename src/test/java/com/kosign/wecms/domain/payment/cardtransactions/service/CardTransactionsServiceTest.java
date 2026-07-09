@@ -4,6 +4,7 @@ import com.kosign.wecms.common.auditlog.service.AuditLogContext;
 import com.kosign.wecms.common.auditlog.service.AuditLogService;
 import com.kosign.wecms.common.enums.LangCd;
 import com.kosign.wecms.common.exception.BusinessException;
+import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.banking.bankcredentials.repository.BankCertInfoRepository;
 import com.kosign.wecms.domain.banking.entity.BankInfm;
@@ -18,6 +19,7 @@ import com.kosign.wecms.domain.payment.cardtransactions.dto.PatchPurposeRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.UpdateReportingAccountRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.entity.CardMstrId;
 import com.kosign.wecms.domain.payment.cardtransactions.entity.CardTrnsHstr;
+import com.kosign.wecms.common.memo.MemoService;
 import com.kosign.wecms.domain.payment.cardtransactions.repository.BusaDocRcvPayHisRepository;
 import com.kosign.wecms.domain.payment.cardtransactions.repository.CardMstrRepository;
 import com.kosign.wecms.domain.payment.cardtransactions.repository.CardTrnsHstrRepository;
@@ -45,6 +47,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -75,6 +78,8 @@ class CardTransactionsServiceTest {
     @Mock private ApprovalLineApproverRepository   apprLineApproverRepo;
     @Mock private ApprovalBoxFanoutService         approvalBoxFanoutService;
     @Mock private BusaDocRcvPayHisRepository       busaDocRcvPayHisRepo;
+    @Mock private MemoService                      memoService;
+    @Mock private LegacyFunctionRepository         legacyFunctions;
 
     @InjectMocks
     private CardTransactionsService service;
@@ -84,6 +89,12 @@ class CardTransactionsServiceTest {
         TenantContext.set(USER, TENANT, LangCd.EN);
         lenient().when(exptResolMstrRepo.findDocNoByApprSeqNos(any(), any()))
                 .thenReturn(List.of());
+        // Status label resolution now funnels through the legacy
+        // wb_get_prch_stts_nm DB function (legacy IDO.CARD_MSTR_R002:73
+        // parity). Under EN, code "1" → "Approved". Lenient — list tests
+        // with no rows never hit it.
+        lenient().when(legacyFunctions.resolvePurchaseStatusName(eq("1"), eq("EN")))
+                .thenReturn("Approved");
     }
 
     @AfterEach
@@ -102,10 +113,10 @@ class CardTransactionsServiceTest {
                 new BigDecimal("799200.000000"), "VND", "1", "1390");
         Page<CardTrnsHstr> page = new PageImpl<>(List.of(row), PageRequest.of(0, 15), 1L);
         when(cardTrnsRepo.findLedgerPage(eq(TENANT), eq("20250101"), eq("20251231"),
-                eq(null), eq(null), any(Pageable.class)))
+                eq(false), any(), eq(false), any(), eq(null), eq(null), any(Pageable.class)))
                 .thenReturn(page);
         when(cardTrnsRepo.findLedgerTotals(eq(TENANT), eq("20250101"), eq("20251231"),
-                eq(null), eq(null)))
+                eq(false), any(), eq(false), any(), eq(null), eq(null)))
                 .thenReturn(totals(1L, "799200.000000", 1L, "799200.000000", 0L, "0"));
         when(bankInfmRepo.findById("11704020"))
                 .thenReturn(Optional.of(bankInfm("11704020", "VietinBank")));
@@ -129,7 +140,8 @@ class CardTransactionsServiceTest {
         assertThat(first.linkedDocs()).isEmpty();   // Phase B placeholder
         assertThat(first.approvers()).isEmpty();    // Phase B placeholder
         assertThat(first.stts()).isEqualTo("1");
-        assertThat(first.sttsKey()).isEqualTo("payment.card_transactions.status.1");
+        // Localized name resolved server-side via wb_get_prch_stts_nm (EN → "Approved").
+        assertThat(first.sttsNm()).isEqualTo("Approved");
 
         assertThat(res.totals().totalCount()).isEqualTo(1L);
         assertThat(res.totals().totlAmt()).isEqualByComparingTo("799200.000000");
@@ -140,9 +152,9 @@ class CardTransactionsServiceTest {
     @Test
     void list_emptyTenantPopulatesZeroedTotals() {
         Page<CardTrnsHstr> empty = new PageImpl<>(List.of(), PageRequest.of(0, 15), 0L);
-        when(cardTrnsRepo.findLedgerPage(any(), any(), any(), any(), any(), any(Pageable.class)))
+        when(cardTrnsRepo.findLedgerPage(any(), any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), any(), any(Pageable.class)))
                 .thenReturn(empty);
-        when(cardTrnsRepo.findLedgerTotals(any(), any(), any(), any(), any()))
+        when(cardTrnsRepo.findLedgerTotals(any(), any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), any()))
                 .thenReturn(totals(0L, "0", 0L, "0", 0L, "0"));
 
         CardTransactionListResponse res = service.list(
@@ -151,6 +163,131 @@ class CardTransactionsServiceTest {
         assertThat(res.rows()).isEmpty();
         assertThat(res.totals().totalCount()).isZero();
         assertThat(res.totals().totlAmt()).isEqualByComparingTo(BigDecimal.ZERO);
+    }
+
+    /* =================================================================
+     *  D2 — bank_cd / card_no multi-select filters (audit D2)
+     *  Legacy card_0001_001_r001_act.jsp:72-102 applies
+     *  CTH.bank_cd IN (...) and CTH.card_no IN (...) to the grid AND
+     *  the count. The refactor previously accepted both on the wire but
+     *  dropped them. These tests pin the filters through to BOTH the
+     *  page query and the totals query so grid + dashboard stay in sync.
+     * ================================================================= */
+
+    @Test
+    void list_bankAndCardFilters_passedToPageAndTotals() {
+        Page<CardTrnsHstr> empty = new PageImpl<>(List.of(), PageRequest.of(0, 15), 0L);
+        when(cardTrnsRepo.findLedgerPage(any(), any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), any(), any(Pageable.class)))
+                .thenReturn(empty);
+        when(cardTrnsRepo.findLedgerTotals(any(), any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), any()))
+                .thenReturn(totals(0L, "0", 0L, "0", 0L, "0"));
+
+        service.list("20250101", "20251231", null,
+                List.of("11704020", "11704088"), List.of("407465******5559"),
+                null, null, null, 0, 15);
+
+        // Page query: filterBank=true with the two bank codes, filterCard=true with the one card.
+        ArgumentCaptor<Boolean> fb = ArgumentCaptor.forClass(Boolean.class);
+        ArgumentCaptor<List<String>> banks = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<Boolean> fc = ArgumentCaptor.forClass(Boolean.class);
+        ArgumentCaptor<List<String>> cards = ArgumentCaptor.forClass(List.class);
+        verify(cardTrnsRepo).findLedgerPage(eq(TENANT), eq("20250101"), eq("20251231"),
+                fb.capture(), banks.capture(), fc.capture(), cards.capture(),
+                eq(null), eq(null), any(Pageable.class));
+        assertThat(fb.getValue()).isTrue();
+        assertThat(banks.getValue()).containsExactly("11704020", "11704088");
+        assertThat(fc.getValue()).isTrue();
+        assertThat(cards.getValue()).containsExactly("407465******5559");
+
+        // Totals query must carry the SAME flags + lists so the dashboard
+        // tiles reflect the same filtered set as the grid.
+        verify(cardTrnsRepo).findLedgerTotals(eq(TENANT), eq("20250101"), eq("20251231"),
+                eq(true), eq(List.of("11704020", "11704088")),
+                eq(true), eq(List.of("407465******5559")),
+                eq(null), eq(null));
+    }
+
+    @Test
+    void list_noBankOrCardFilter_passesFalseFlagsAndNonEmptySentinel() {
+        Page<CardTrnsHstr> empty = new PageImpl<>(List.of(), PageRequest.of(0, 15), 0L);
+        when(cardTrnsRepo.findLedgerPage(any(), any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), any(), any(Pageable.class)))
+                .thenReturn(empty);
+        when(cardTrnsRepo.findLedgerTotals(any(), any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), any()))
+                .thenReturn(totals(0L, "0", 0L, "0", 0L, "0"));
+
+        service.list("20250101", "20251231", null, null, null, null, null, null, 0, 15);
+
+        ArgumentCaptor<Boolean> fb = ArgumentCaptor.forClass(Boolean.class);
+        ArgumentCaptor<List<String>> banks = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<Boolean> fc = ArgumentCaptor.forClass(Boolean.class);
+        ArgumentCaptor<List<String>> cards = ArgumentCaptor.forClass(List.class);
+        verify(cardTrnsRepo).findLedgerPage(eq(TENANT), any(), any(),
+                fb.capture(), banks.capture(), fc.capture(), cards.capture(),
+                any(), any(), any(Pageable.class));
+        // Flags off, but the bound IN lists must stay NON-EMPTY so the
+        // generated SQL `IN (?)` is valid (empty IN () is a SQL error).
+        assertThat(fb.getValue()).isFalse();
+        assertThat(fc.getValue()).isFalse();
+        assertThat(banks.getValue()).isNotEmpty();
+        assertThat(cards.getValue()).isNotEmpty();
+    }
+
+    /* =================================================================
+     *  D1 — Linked / Unlinked filter forwards linkYn to page + totals
+     *  (audit D1). The link semantics themselves (EXISTS over
+     *  BUSA_DOC_RCV_PAY_HIS with RCV_PAY_WAY_CD='R') live in the
+     *  repository @Query; here we pin that the normalised linkYn reaches
+     *  BOTH queries so the grid and dashboard agree.
+     * ================================================================= */
+
+    @Test
+    void list_linkYn_forwardedToPageAndTotals() {
+        Page<CardTrnsHstr> empty = new PageImpl<>(List.of(), PageRequest.of(0, 15), 0L);
+        when(cardTrnsRepo.findLedgerPage(any(), any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), any(), any(Pageable.class)))
+                .thenReturn(empty);
+        when(cardTrnsRepo.findLedgerTotals(any(), any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), any()))
+                .thenReturn(totals(0L, "0", 0L, "0", 0L, "0"));
+
+        service.list("20250101", "20251231", null, null, null, "y", null, null, 0, 15);
+
+        // "y" normalises to "Y"; both queries receive it.
+        verify(cardTrnsRepo).findLedgerPage(eq(TENANT), any(), any(),
+                anyBoolean(), any(), anyBoolean(), any(), eq(null), eq("Y"), any(Pageable.class));
+        verify(cardTrnsRepo).findLedgerTotals(eq(TENANT), any(), any(),
+                anyBoolean(), any(), anyBoolean(), any(), eq(null), eq("Y"));
+    }
+
+    @Test
+    void listByApprSeqNo_surfacesLegacyCardDetailFields() {
+        // GAP-CARD-FIELDS — the Approval Details card grid must expose the
+        // legacy CARD_TRNS_HSTR_R002 detail fields (using type / auth code /
+        // city / note) alongside the existing merchant / amount / currency.
+        CardTrnsHstr row = entityRow("156", "11704020", "407465******5559",
+                "20251019", "114140", "GOLDEN LOTUS - TVL",
+                new BigDecimal("799200.000000"), "USD", "1", "1390");
+        row.setUsingType("ONLINE");
+        row.setAuthCode("AUTH123");
+        row.setCity("HANOI");
+        row.setNote("client dinner");
+        when(cardTrnsRepo.findByBizKeyAndApprSeqNo(TENANT, "1390"))
+                .thenReturn(List.of(row));
+        when(bankInfmRepo.findById("11704020"))
+                .thenReturn(Optional.of(bankInfm("11704020", "VietinBank")));
+        when(cardMstrRepo.findById(any(CardMstrId.class)))
+                .thenReturn(Optional.empty());
+
+        List<CardTransactionRow> rows = service.listByApprSeqNo("1390");
+
+        assertThat(rows).hasSize(1);
+        CardTransactionRow r = rows.get(0);
+        assertThat(r.usingType()).isEqualTo("ONLINE");
+        assertThat(r.authCode()).isEqualTo("AUTH123");
+        assertThat(r.city()).isEqualTo("HANOI");
+        assertThat(r.note()).isEqualTo("client dinner");
+        // Existing fields still flow through (currency drives the popup
+        // header currency for Corporate Card per the GAP-CARD-CCY fix).
+        assertThat(r.ccyCd()).isEqualTo("USD");
+        assertThat(r.merchNm()).isEqualTo("GOLDEN LOTUS - TVL");
     }
 
     @Test
@@ -348,6 +485,63 @@ class CardTransactionsServiceTest {
         assertThat(resp.cards().get(0).bankCd()).isEqualTo("11704088");
         assertThat(resp.cards().get(0).bankNm()).isEqualTo("Shinhan Bank VN");
         assertThat(resp.cards().get(0).cardHldrNm()).isEqualTo("LEE JAEHWAN");
+    }
+
+    /* =================================================================
+     *  withdraw approval (audit fix — expt_resol_detl_fk01)
+     * ================================================================= */
+
+    /**
+     * A pending Card approval with EXPT_RESOL_DETL rows (one per card
+     * transaction) must withdraw cleanly: the CARD_TRNS_HSTR stamps are
+     * cleared and the full approval graph is purged through the shared
+     * helper (which deletes EXPT_RESOL_DETL before EXPT_RESOL_MSTR, so
+     * expt_resol_detl_fk01 no longer fails).
+     */
+    @Test
+    void withdrawApproval_pending_clearsCardStampAndPurgesGraph() {
+        com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr mstr =
+                new com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr();
+        mstr.setBizKey(TENANT);
+        mstr.setApprSeqNo("21");
+        mstr.setApprTypeCd("00");   // Pending — withdrawable
+        when(exptResolMstrRepo.findById(
+                new com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId(TENANT, "21")))
+                .thenReturn(Optional.of(mstr));
+
+        CardTrnsHstr c1 = new CardTrnsHstr(); c1.setBizKey(TENANT); c1.setApprSeqNo("21");
+        CardTrnsHstr c2 = new CardTrnsHstr(); c2.setBizKey(TENANT); c2.setApprSeqNo("21");
+        when(cardTrnsRepo.findByBizKeyAndApprSeqNo(TENANT, "21"))
+                .thenReturn(List.of(c1, c2));
+
+        service.withdrawApproval("21");
+
+        assertThat(c1.getApprSeqNo()).isNull();
+        assertThat(c2.getApprSeqNo()).isNull();
+        verify(cardTrnsRepo).saveAll(List.of(c1, c2));
+        verify(approvalBoxFanoutService).purgeApprovalGraph(TENANT, "21", mstr);
+        verify(auditLogService).append(any(AuditLogContext.class));
+    }
+
+    /** Non-pending (Approved) Card approval cannot be withdrawn — nothing
+     *  is cleared, purged, or audited. */
+    @Test
+    void withdrawApproval_nonPending_rejectedNoGraphTouched() {
+        com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr approved =
+                new com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr();
+        approved.setBizKey(TENANT);
+        approved.setApprSeqNo("21");
+        approved.setApprTypeCd("01");   // Approved — immutable
+        when(exptResolMstrRepo.findById(
+                new com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId(TENANT, "21")))
+                .thenReturn(Optional.of(approved));
+
+        assertThatThrownBy(() -> service.withdrawApproval("21"))
+                .isInstanceOf(BusinessException.class);
+
+        verify(approvalBoxFanoutService, never()).purgeApprovalGraph(any(), any(), any());
+        verify(cardTrnsRepo, never()).saveAll(any());
+        verify(auditLogService, never()).append(any());
     }
 
     /* ---------------------------------------------------------------

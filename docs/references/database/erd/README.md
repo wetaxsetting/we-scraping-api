@@ -29,7 +29,6 @@ Diagrammatic + textual ERDs covering the live refactor schema (**80 tables**). C
 
 ## Related
 
-- Flyway migrations: [`../flyway/`](../flyway/)
 - Per-feature schema design: [`../`](../) (one file per feature at the database root + `banking/`, `payment/`, `settings/`, `addon/`)
-- Indexing notes: [`../indexing/`](../indexing/) · Table mapping: [`../table-mapping/`](../table-mapping/)
+- Table mapping: [`../table-mapping/`](../table-mapping/)
 - JEX ERD reference: [`../../../jex/architecture/`](../../../../../docs/jex/architecture/)

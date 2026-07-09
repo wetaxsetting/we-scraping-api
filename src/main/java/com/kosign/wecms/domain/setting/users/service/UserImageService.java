@@ -31,8 +31,10 @@ import java.util.Set;
  * {@link UserManagementService#detail(String)} already reads
  * {@code link.getUserImg()}.
  *
- * <p>Physical files live in a <b>flat</b> layout under
- * {@code <storage-root>/<save_file_nm>}; the save filename is a
+ * <p>Physical files live in a per-tenant subtree under
+ * {@code <storage-root>/<biz_key>/user-image/<save_file_nm>} (2026-06-12;
+ * previously flat directly under the root — reads still fall back there
+ * via {@link UserImageResolver#resolveForRead}); the save filename is a
  * server-generated opaque token (256-bit SHA-256 over
  * {@code bizKey} + {@code userId} + {@code System.currentTimeMillis()}
  * + 16 random bytes from {@link SecureRandom}, base64-url encoded
@@ -58,15 +60,16 @@ public class UserImageService {
     /** 2 MB cap per user avatar — matches the company-logo cap. */
     public static final long MAX_IMAGE_SIZE_BYTES = 2L * 1024L * 1024L;
 
+    // F-02: SVG is NOT allowed. An inline-served SVG can carry <script> and
+    // execute in the WeCMS origin (stored XSS). Raster image formats only.
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of(
-            "jpg", "jpeg", "png", "gif", "svg");
+            "jpg", "jpeg", "png", "gif");
 
     private static final Map<String, String> MIME_BY_EXT = Map.of(
             "jpg",  "image/jpeg",
             "jpeg", "image/jpeg",
             "png",  "image/png",
-            "gif",  "image/gif",
-            "svg",  "image/svg+xml");
+            "gif",  "image/gif");
 
     private static final String DEL_N = "N";
 
@@ -108,9 +111,9 @@ public class UserImageService {
         String previous   = link.getUserImg();
         String saveFileNm = generateOpaqueFilename(bizKey, userId, extension);
 
-        Path destination = resolver.resolve(saveFileNm);
+        Path destination = resolver.resolve(bizKey, saveFileNm);
         try {
-            Files.createDirectories(resolver.root());
+            Files.createDirectories(destination.getParent());
             file.transferTo(destination);
         } catch (IOException ex) {
             log.error("Failed to store user image userId={} bizKey={}", userId, bizKey, ex);
@@ -125,7 +128,7 @@ public class UserImageService {
         userBusiConnRepo.save(link);
 
         if (previous != null && !previous.isBlank() && !previous.equals(saveFileNm)) {
-            deleteQuietly(resolver.resolve(previous));
+            deleteQuietly(resolver.resolveForRead(bizKey, previous));
         }
 
         log.info("user image uploaded userId={} bizKey={} saveFileNm={} sizeBytes={}",
@@ -153,7 +156,7 @@ public class UserImageService {
             link.setUserImg(null);
             link.setModId(actorId);
             userBusiConnRepo.save(link);
-            deleteQuietly(resolver.resolve(previous));
+            deleteQuietly(resolver.resolveForRead(bizKey, previous));
             log.info("user image deleted userId={} bizKey={} saveFileNm={}",
                     userId, bizKey, previous);
         }
@@ -180,7 +183,7 @@ public class UserImageService {
         if (saveFileNm == null || saveFileNm.isBlank()) {
             throw new BusinessException("WBE2113");
         }
-        Path path = resolver.resolve(saveFileNm);
+        Path path = resolver.resolveForRead(bizKey, saveFileNm);
         if (!Files.isReadable(path) || !Files.isRegularFile(path)) {
             log.warn("user image file missing on disk userId={} saveFileNm={}",
                     userId, saveFileNm);

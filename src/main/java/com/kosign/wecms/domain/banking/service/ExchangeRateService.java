@@ -6,6 +6,7 @@ import com.kosign.wecms.domain.banking.dto.ExchangeRateListResponse;
 import com.kosign.wecms.domain.banking.dto.ExchangeRateRow;
 import com.kosign.wecms.domain.banking.entity.BankExchRateInfm;
 import com.kosign.wecms.domain.banking.repository.BankExchRateInfmRepository;
+import com.kosign.wecms.common.tenant.TenantContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -49,7 +50,16 @@ public class ExchangeRateService {
 
     /**
      * Returns one exchange rate row per currency for the requested reference date,
-     * across ALL tenants. Exchange rates are global bank data — no biz_key filter.
+     * scoped to the current tenant.
+     *
+     * <p>Legacy parity ({@code exch_0001_001_r001_act.jsp}): the read filters on
+     * {@code biz_key = }{@link TenantContext#currentBizKey()} and the VND base
+     * currency. {@code BANK_EXCH_RATE_INFM} is physically partitioned per tenant
+     * (BIZ_KEY is part of the PK); the batch fans the same Coocon rates out to
+     * every active company, and each company reads only its own copy. The values
+     * are logically global, but storage and the read contract are tenant-scoped —
+     * a tenant with no rows must see an empty result, never another company's
+     * rates.</p>
      *
      * <p>When {@code seqNo} is supplied (e.g. "1" or "2") only rows for that exact
      * batch round are returned — matching the JEX r001 exact-SEQ_NO filter.</p>
@@ -69,13 +79,14 @@ public class ExchangeRateService {
      */
     public ExchangeRateListResponse list(String refDate, String bankCd, String seqNo,
                                          String sortField, String sortDirection) {
+        String bizKey       = TenantContext.currentBizKey();
         String resolvedDate = resolveDate(refDate);
         String resolvedBank = (bankCd != null && !bankCd.isBlank()) ? bankCd : DEFAULT_BANK_CD;
         boolean hasSeqNo    = seqNo != null && !seqNo.isBlank();
 
-        log.debug("exchange-rates list: bank={} date={} seqNo={}", resolvedBank, resolvedDate, seqNo);
+        log.debug("exchange-rates list: bizKey={} bank={} date={} seqNo={}", bizKey, resolvedBank, resolvedDate, seqNo);
 
-        List<BankExchRateInfm> rows = fetchRows(resolvedBank, resolvedDate, hasSeqNo ? seqNo : null);
+        List<BankExchRateInfm> rows = fetchRows(bizKey, resolvedBank, resolvedDate, hasSeqNo ? seqNo : null);
 
         // When no explicit date was requested and today has no data, trigger the batch
         // synchronously to fetch from Coocon API (on-demand loading for the first caller).
@@ -87,18 +98,18 @@ public class ExchangeRateService {
             log.info("No exchange rates found for today. Triggering on-demand fetch from Coocon API.");
             try {
                 exchangeRateBatchService.runOnDemand();
-                rows = fetchRows(resolvedBank, resolvedDate, hasSeqNo ? seqNo : null);
+                rows = fetchRows(bizKey, resolvedBank, resolvedDate, hasSeqNo ? seqNo : null);
             } catch (Exception e) {
                 log.error("On-demand exchange rate fetch failed", e);
             }
 
             // If still empty (e.g. Coocon is down or no rates yet), fall back to the most recent date
             if (rows.isEmpty()) {
-                String latestDate = exchRateRepo.findLatestRefDateByBankCd(resolvedBank).orElse(null);
+                String latestDate = exchRateRepo.findLatestRefDateByBizKeyAndBankCd(bizKey, resolvedBank).orElse(null);
                 if (latestDate != null && !latestDate.equals(resolvedDate)) {
                     log.debug("exchange-rates fallback to latest available date: {}", latestDate);
                     resolvedDate = latestDate;
-                    rows = fetchRows(resolvedBank, resolvedDate, hasSeqNo ? seqNo : null);
+                    rows = fetchRows(bizKey, resolvedBank, resolvedDate, hasSeqNo ? seqNo : null);
                 }
             }
         }
@@ -112,7 +123,7 @@ public class ExchangeRateService {
         applySort(rateRows, sortField, sortDirection);
 
         List<com.kosign.wecms.domain.banking.dto.ExchangeRateRoundItem> rounds =
-                exchRateRepo.findDistinctRoundsByBankCdAndRefDate(resolvedBank, resolvedDate).stream()
+                exchRateRepo.findDistinctRoundsByBizKeyAndBankCdAndRefDate(bizKey, resolvedBank, resolvedDate).stream()
                         .map(row -> new com.kosign.wecms.domain.banking.dto.ExchangeRateRoundItem(
                                 (String) row[0],
                                 (String) row[1]
@@ -125,24 +136,25 @@ public class ExchangeRateService {
     /**
      * Returns the distinct bank codes (with display names) that have exchange
      * rate data for the authenticated tenant — used to populate the bank selector.
+     * Tenant-scoped; the frontend falls back to its static Shinhan/Woori list
+     * when the tenant has no rows yet.
      */
     public List<ExchangeRateBankItem> listBanks() {
         log.debug("exchange-rates banks");
 
-        return exchRateRepo.findDistinctBankCd().stream()
+        return exchRateRepo.findDistinctBankCdByBizKey(TenantContext.currentBizKey()).stream()
                 .map(code -> new ExchangeRateBankItem(code, bankCdResolver.resolveBankNm(code)))
                 .toList();
     }
 
     /**
-     * Returns the distinct display-currency codes across ALL tenants — used to
-     * populate the full currency list on the frontend so every row appears even
-     * when no rates exist for the selected date/bank.
+     * Returns the distinct display-currency codes for the current tenant — used
+     * to populate the currency list. Tenant-scoped for isolation parity.
      */
     public List<String> listCurrencies() {
         log.debug("exchange-rates currencies");
 
-        return exchRateRepo.findDistinctDisplayCurrency();
+        return exchRateRepo.findDistinctDisplayCurrencyByBizKey(TenantContext.currentBizKey());
     }
 
 
@@ -171,12 +183,13 @@ public class ExchangeRateService {
     /**
      * Delegates to the correct repository query based on whether a {@code seqNo}
      * filter was requested.  {@code null} = no filter (DISTINCT ON latest round).
+     * Both queries are tenant-scoped on {@code bizKey}.
      */
-    private List<BankExchRateInfm> fetchRows(String bankCd, String refDate, String seqNo) {
+    private List<BankExchRateInfm> fetchRows(String bizKey, String bankCd, String refDate, String seqNo) {
         if (seqNo != null) {
-            return exchRateRepo.findLatestPerCurrencyByBankCdAndRefDateAndSeqNo(bankCd, refDate, seqNo);
+            return exchRateRepo.findLatestPerCurrencyByBizKeyAndBankCdAndRefDateAndSeqNo(bizKey, bankCd, refDate, seqNo);
         }
-        return exchRateRepo.findLatestPerCurrencyByBankCdAndRefDate(bankCd, refDate);
+        return exchRateRepo.findLatestPerCurrencyByBizKeyAndBankCdAndRefDate(bizKey, bankCd, refDate);
     }
 
     /**

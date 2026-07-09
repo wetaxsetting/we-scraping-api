@@ -15,7 +15,8 @@ import java.util.Optional;
  *
  * <p>Coverage:
  * <ul>
- *   <li>{@code TRAN_DT} → {@code regDtm} — Date/Time</li>
+ *   <li>{@code TRAN_DT} → {@code trnfDtm} — Date/Time (dispatch datetime;
+ *       matches the displayed value + the date filter window — legacy R007)</li>
  *   <li>{@code FILE_NM} → {@code orgFileNm} — File Name</li>
  *   <li>{@code SCDUL_PYMN_DETL_NO} → {@code totTrnsCnt} — No. of Transactions</li>
  *   <li>{@code TRAN_AMT} → {@code totalTranAmt} — Total Transfer Amount</li>
@@ -41,7 +42,7 @@ import java.util.Optional;
  */
 public enum PayrollPaymentResultSortField implements SortableField {
 
-    TRAN_DT           ("regDtm"),
+    TRAN_DT           ("trnfDtm"),
     FILE_NM           ("orgFileNm"),
     SCDUL_PYMN_DETL_NO("totTrnsCnt"),
     TRAN_AMT          ("totalTranAmt"),

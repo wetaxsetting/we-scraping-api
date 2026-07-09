@@ -7,7 +7,7 @@ SIT/UAT scenario matrix plus the existing automated coverage. Backend unit test:
 
 ---
 
-## Automated coverage map (ApprovalLineServiceTest — 13 cases, all green)
+## Automated coverage map (ApprovalLineServiceTest — 12 cases, all green)
 
 | Test method | Asserts | Closes |
 |---|---|---|

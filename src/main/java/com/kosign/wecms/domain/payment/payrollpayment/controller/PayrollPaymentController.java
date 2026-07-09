@@ -20,9 +20,11 @@ import com.kosign.wecms.domain.payment.payrollpayment.dto.PayrollMatchCandidateL
 import com.kosign.wecms.domain.payment.payrollpayment.dto.PayrollMatchRequest;
 import com.kosign.wecms.domain.payment.payrollpayment.dto.PayrollMatchResultResponse;
 import com.kosign.wecms.domain.payment.payrollpayment.service.PayrollBankingMatchService;
+import com.kosign.wecms.domain.payment.payrollpayment.service.PayrollPaymentDownloadService;
 import com.kosign.wecms.domain.payment.payrollpayment.service.PayrollPaymentResultService;
 import com.kosign.wecms.domain.payment.payrollpayment.service.PayrollPaymentService;
 import com.kosign.wecms.domain.payment.payrollpayment.service.PayrollPaymentService.DownloadResource;
+import com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Pattern;
@@ -34,6 +36,7 @@ import java.nio.file.Files;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
@@ -85,14 +88,28 @@ public class PayrollPaymentController {
      *  page using either identifier. */
     private static final String SCDUL_PYMN_NO_PATTERN = "^([0-9]{1,30}|VO_[0-9]{6}_[0-9]{1,9})$";
 
+    /** Path-segment guard for the Payment <b>Result</b> detail route
+     *  ({@code GET /results/{id}}). Numeric {@code SCDUL_PYMN_NO} only — the
+     *  Result detail service ({@link PayrollPaymentResultService#detail}) looks
+     *  up exclusively by {@code SCDUL_PYMN_NO}, and the legacy Result page
+     *  navigates by {@code SCDUL_PYMN_NO} from {@code sessionStorage} (never by
+     *  {@code DOC_NO}). Unlike the Scheduled route, a {@code DOC_NO} (VO_…) id
+     *  has no fallback here, so it is rejected at the boundary (WBE_VALIDATION)
+     *  rather than 404-ing — the unsupported path no longer looks valid. */
+    static final String RESULT_SCDUL_PYMN_NO_PATTERN = "^[0-9]{1,30}$";
+
     /** Line-id format on {@code SCDUL_PYMN_SUMR_DETL.SCDUL_PYMN_DETL_NO}
      *  — alphanumeric, 1-20 chars (mirrors Internal Transfer). */
     private static final String SCDUL_PYMN_DETL_NO_PATTERN = "^[A-Za-z0-9]{1,20}$";
 
-    private final PayrollPaymentService       service;
-    private final PayrollPaymentResultService resultService;
-    private final PayrollBankingMatchService  matchService;
-    private final ExcelExportService          excelExportService;
+    private final PayrollPaymentService         service;
+    private final PayrollPaymentResultService   resultService;
+    private final PayrollPaymentDownloadService downloadService;
+    /** ERP_TRNS_HSTR 'W' audit writer for the generated-report downloads
+     *  (Scheduled → code 12, Result → code 06). */
+    private final ErpTrnsHistoryWriter          erpHistoryWriter;
+    private final PayrollBankingMatchService    matchService;
+    private final ExcelExportService            excelExportService;
 
     @GetMapping
     public ApiResponse<ScheduledTransferListResponse> list(
@@ -108,6 +125,17 @@ public class PayrollPaymentController {
                 fromDate, toDate, srchWd, apprType, sortField, sortDirection, page, size));
     }
 
+    /**
+     * Preview the next {@code VO_YYMMDD_NNN} document number for the Request
+     * Approval popup (read-only; reserves / persists nothing). Mirrors the
+     * Internal Transfer / Card precedent so Payroll renders the same friendly
+     * id format before submit.
+     */
+    @GetMapping("/next-doc-no")
+    public ApiResponse<com.kosign.wecms.domain.payment.internaltransfer.dto.NextDocNoResponse> nextDocNo() {
+        return ApiResponse.ok(service.previewNextDocNo());
+    }
+
     @GetMapping("/{id}")
     public ApiResponse<ScheduledTransferDetailResponse> detail(
             @PathVariable("id")
@@ -115,6 +143,37 @@ public class PayrollPaymentController {
             @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
             String id) {
         return ApiResponse.ok(service.detail(id));
+    }
+
+    /**
+     * Excel Download — the legacy 20-column populated report
+     * (ports {@code pymn_0006_002_r002}, Payroll type {@code "00"}).
+     * Loads the locale template from the backend classpath, populates one
+     * row per transfer detail (incl. the payroll-specific Payroll Type at
+     * column O) preserving all template styling, and streams
+     * {@code WeCMS_Payroll_download_{LANG}.xlsx}.
+     *
+     * <p>This is the artifact the Scheduled Payment list-row glyph and the
+     * Scheduled detail file-card download — NOT the originally uploaded
+     * Excel file (which {@code GET /{id}/file} still serves as the import
+     * source). See {@code docs/audits/payroll-payment-excel-download-audit.md}.
+     *
+     * @param id   batch key
+     * @param lang optional UI-locale hint (EN/KO/VI; KM/other → EN). When
+     *             omitted the JWT {@code langCd} is used.
+     */
+    @GetMapping("/{id}/report")
+    public ResponseEntity<ByteArrayResource> downloadReport(
+            @PathVariable("id")
+            @Size(max = 30)
+            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id,
+            @RequestParam(value = "lang", required = false) String lang) {
+        // Scheduled list/detail report download → ERP_TRNS_HSTR 'W' / 12
+        // (Payroll Scheduled Payment). Audit the exact downloaded bytes.
+        PayrollPaymentDownloadService.GeneratedReport report = downloadService.generate(id, lang);
+        erpHistoryWriter.recordExportedBytes("12", report.content(), report.fileName());
+        return reportResponse(report);
     }
 
     @GetMapping("/results")
@@ -138,19 +197,87 @@ public class PayrollPaymentController {
     public ApiResponse<TransferResultDetailResponse> resultDetail(
             @PathVariable("id")
             @Size(max = 30)
-            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            @Pattern(regexp = RESULT_SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
             String id) {
         return ApiResponse.ok(resultService.detail(id));
     }
 
-    /** Excel export of the Payroll Payment Result list. Provider:
-     *  {@code PayrollPaymentResultExportProvider} (CLAUDE.md §13b). */
+    /**
+     * Excel Download — the legacy 20-column report for a Payroll Payment
+     * Result batch. Same artifact as {@link #downloadReport} but routed
+     * through the result-scoped endpoint so {@code payment-payroll-result}
+     * menu authorization applies (the report is per-batch, keyed only by
+     * {@code SCDUL_PYMN_NO}). Drives the Result list-row glyph and the
+     * Result detail file-card download.
+     */
+    @GetMapping("/results/{id}/report")
+    @PreAuthorize("@menuAuthz.canAccess('payment-payroll-result')")
+    public ResponseEntity<ByteArrayResource> downloadResultReport(
+            @PathVariable("id")
+            @Size(max = 30)
+            @Pattern(regexp = RESULT_SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
+            String id,
+            @RequestParam(value = "lang", required = false) String lang) {
+        // Result list-row/detail report download → ERP_TRNS_HSTR 'W' / 06
+        // (Payroll Payment Result).
+        PayrollPaymentDownloadService.GeneratedReport report = downloadService.generate(id, lang);
+        erpHistoryWriter.recordExportedBytes("06", report.content(), report.fileName());
+        return reportResponse(report);
+    }
+
+    /** Shared builder for the generated-report binary response (RFC 5987
+     *  filename, XLSX content type, no-sniff). Mirrors the Vendor / Expense /
+     *  Internal Transfer controllers' {@code reportResponse}. */
+    private static ResponseEntity<ByteArrayResource> reportResponse(
+            PayrollPaymentDownloadService.GeneratedReport report) {
+        ContentDisposition cd = ContentDisposition.builder("attachment")
+                .filename(report.fileName(), StandardCharsets.UTF_8)
+                .build();
+        ByteArrayResource body = new ByteArrayResource(report.content());
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .contentLength(body.contentLength())
+                .header(HttpHeaders.CONTENT_DISPOSITION, cd.toString())
+                .header("X-Content-Type-Options", "nosniff")
+                .header("Access-Control-Expose-Headers", HttpHeaders.CONTENT_DISPOSITION)
+                .body(body);
+    }
+
+    /** Excel export of the Payroll Payment Result list (legacy 7-column summary
+     *  via {@code PayrollPaymentResultExportProvider}, CLAUDE.md §13b).
+     *  <b>Deprecated for the toolbar</b> (2026-06-30): the toolbar Excel now
+     *  calls {@link #downloadResultBulkReport} for the full 20-column bulk
+     *  template report. Retained for back-compat. */
     @PostMapping("/results/export")
     @PreAuthorize("@menuAuthz.canAccess('payment-payroll-result')")
     public void exportResults(
             @Valid @RequestBody ExcelExportRequest request,
             HttpServletResponse response) {
         excelExportService.exportTo(response, request);
+    }
+
+    /**
+     * Toolbar Excel — the legacy 20-column report for ALL batches in the
+     * current Payment Result filter (bulk). Same locale template + column
+     * layout (incl. Payroll Type) as the per-row {@link #downloadResultReport},
+     * with every filtered batch appended into one workbook (legacy
+     * {@code pymn_0006_002_r003} bulk-report parity). Replaces the old
+     * from-scratch 7-column summary for the toolbar.
+     */
+    @GetMapping("/results/report")
+    @PreAuthorize("@menuAuthz.canAccess('payment-payroll-result')")
+    public ResponseEntity<ByteArrayResource> downloadResultBulkReport(
+            @RequestParam("from_date")                           String fromDate,
+            @RequestParam("to_date")                             String toDate,
+            @RequestParam(value = "srch_wd",   required = false) String srchWd,
+            @RequestParam(value = "trnf_stts", required = false) String trnfStts,
+            @RequestParam(value = "lang",      required = false) String lang) {
+        java.util.List<String> ids = resultService.dispatchedIdsForExport(fromDate, toDate, srchWd, trnfStts);
+        // Bulk Result report download → ERP_TRNS_HSTR 'W' / 06 (Payroll Result).
+        PayrollPaymentDownloadService.GeneratedReport report = downloadService.generateBulk(ids, lang);
+        erpHistoryWriter.recordExportedBytes("06", report.content(), report.fileName());
+        return reportResponse(report);
     }
 
     /* ----------------------------------------------------------------
@@ -167,14 +294,18 @@ public class PayrollPaymentController {
         return ApiResponse.ok(null);
     }
 
-    @PostMapping("/{id}/request-approval")
+    // M-1 (legacy parity): multipart so Request Approval attachments ride along
+    // (JSON in `request`, files in `attachments`); a no-file submit omits them.
+    @PostMapping(path = "/{id}/request-approval", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResponse<RequestApprovalResponse> requestApproval(
             @PathVariable("id")
             @Size(max = 30)
             @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
             String id,
-            @Valid @RequestBody RequestApprovalRequest req) {
-        return ApiResponse.ok(service.requestApproval(id, req));
+            @Valid @RequestPart("request") RequestApprovalRequest req,
+            @RequestPart(value = "attachments", required = false)
+            java.util.List<org.springframework.web.multipart.MultipartFile> attachments) {
+        return ApiResponse.ok(service.requestApproval(id, req, attachments));
     }
 
     @PostMapping("/{id}/approval-action")
@@ -235,20 +366,6 @@ public class PayrollPaymentController {
         return ApiResponse.ok(null);
     }
 
-    /** Re-run one Result-detail line. Legacy `pymn_0006_002.ts:441-472`. */
-    @PostMapping("/{id}/lines/{lineId}/rerun")
-    public ApiResponse<Void> rerun(
-            @PathVariable("id")
-            @Size(max = 30)
-            @Pattern(regexp = SCDUL_PYMN_NO_PATTERN, message = "id: invalid scdul_pymn_no format")
-            String id,
-            @PathVariable("lineId")
-            @Size(max = 20)
-            @Pattern(regexp = SCDUL_PYMN_DETL_NO_PATTERN, message = "lineId: invalid scdul_pymn_detl_no format")
-            String lineId) {
-        service.rerun(id, lineId);
-        return ApiResponse.ok(null);
-    }
 
     @PostMapping("/{id}/dispatch")
     public ApiResponse<Void> dispatch(
@@ -329,7 +446,24 @@ public class PayrollPaymentController {
         return ApiResponse.ok(service.createDraft(request, fileData));
     }
 
+    /**
+     * Original-upload Excel download — <b>shared</b> by the Payroll Scheduled
+     * detail and the Payroll Result detail (and the Result list row glyph): all
+     * three FE call sites hit this one endpoint
+     * ({@code downloadOriginalPayrollExcel} → {@code GET /{id}/file}).
+     *
+     * <p>Authorization fix (closure-audit D1): without a method-level gate this
+     * inherited the class-level {@code 'payment-payroll-scheduled'}, so a user
+     * granted only the Payroll <b>Result</b> menu got 403 when downloading from
+     * the Result detail. {@code payment-payroll-result} and
+     * {@code payment-payroll-scheduled} are independent, separately-grantable
+     * menu nodes (V243 seed), so the shared endpoint must accept <b>either</b>.
+     * The write-action endpoints (delete / approval / dispatch / match) keep the
+     * class-level {@code scheduled} gate unchanged — only this read-only download
+     * is widened.
+     */
     @GetMapping("/{id}/file")
+    @PreAuthorize("@menuAuthz.canAccess('payment-payroll-result') or @menuAuthz.canAccess('payment-payroll-scheduled')")
     public ResponseEntity<InputStreamResource> downloadFile(
             @PathVariable("id")
             @Size(max = 30)

@@ -1,5 +1,13 @@
 # Daily Cash — Source Code Index
 
+> **⚠️ Data-source corrected 2026-06-13 (noted 2026-06-23).** The live read path calls the legacy DB
+> functions **`rept_0900_001_rec1..rec4`** directly via `DailyCashReportFunctionRepository`
+> (`DailyCashReportService.java:24-75` — the documented set-returning exception, same stance as Cash Flow
+> and Daily Financial). The prior **Java live-recompute** (`DailyCashRecomputeRepository` /
+> `CurrencyAccumulator`) is **bypassed / no longer wired** and retained only as a cleanup candidate. Any
+> "live recompute over `ACCT_MSTR` + `ACCT_TRNS_HSTR`" wording below is the **superseded pre-pivot** record
+> (audit history preserved).
+
 Master index of every file related to the legacy **Daily Cash** (`rept_0009_001`) page and the
 existing refactor. All legacy paths are under `WECMS DEV/` (read-only reference). Refactor paths
 are under `wecms-api/` and `wecms-web/`.

@@ -3,7 +3,7 @@
 **Refactor slug:** `own-account-transfer`
 **Spring package:** `com.kosign.wecms.domain.banking.ownaccounttransfer`
 **Status:** Phase 1 — design only. No code in this phase.
-**Feature spec:** [../../features/banking/own-account-transfer.md](../../../features/banking/own-account-transfer/own-account-transfer.md)
+**Feature spec:** [../../features/banking/own-account-transfer.md](../../../features/banking/internal-transfer-vnd/own-account-transfer/README.md)
 **Migration mapping:** [../../migration/banking/own-account-transfer.md](../../migration/banking/own-account-transfer.md)
 **DB design:** [../../database/banking/own-account-transfer-db.md](../../database/banking/own-account-transfer-db.md)
 

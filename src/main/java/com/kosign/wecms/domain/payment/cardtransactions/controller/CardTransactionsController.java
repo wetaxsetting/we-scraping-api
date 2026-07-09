@@ -3,8 +3,11 @@ package com.kosign.wecms.domain.payment.cardtransactions.controller;
 import com.kosign.wecms.common.export.ExcelExportRequest;
 import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.response.ApiResponse;
+import com.kosign.wecms.domain.banking.nxisas.dto.SubmitChallengeRequest;
+import com.kosign.wecms.domain.banking.nxisas.dto.SubmitQnaRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardListResponse;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.CardSyncSessionResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardManagementListResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTranListPeriodLimitRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTranListPeriodLimitResponse;
@@ -15,9 +18,11 @@ import com.kosign.wecms.domain.payment.cardtransactions.dto.CreateCardsRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CreateCardsResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CreateReceiptRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CreateReceiptResponse;
+import com.kosign.wecms.common.memo.dto.MemoListResponse;
+import com.kosign.wecms.common.memo.dto.MemoRow;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CreateMemoRequest;
-import com.kosign.wecms.domain.payment.cardtransactions.dto.MemoListResponse;
-import com.kosign.wecms.domain.payment.cardtransactions.dto.MemoRow;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.UpdateMemoColorRequest;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.UpdateMemoRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.PurposeOption;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.ReceiptDetailResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.LinkExpensesRequest;
@@ -32,7 +37,10 @@ import com.kosign.wecms.domain.payment.cardtransactions.dto.SyncCardTransactions
 import com.kosign.wecms.domain.payment.cardtransactions.dto.UpdateCardActiveRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.UpdateCardInfoRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.UpdateReportingAccountRequest;
+import com.kosign.wecms.domain.payment.approvalbox.dto.EditApprovalRequest;
+import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalEditService;
 import com.kosign.wecms.domain.payment.cardtransactions.service.CardTranListR001Service;
+import com.kosign.wecms.domain.payment.cardtransactions.service.CardTransactionScrapeService;
 import com.kosign.wecms.domain.payment.cardtransactions.service.CardTransactionSyncService;
 import com.kosign.wecms.domain.payment.cardtransactions.service.CardTransactionsService;
 import jakarta.validation.Valid;
@@ -54,6 +62,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.security.access.prepost.PreAuthorize;
 
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Payment &gt; Card Transactions — four REST endpoints under
@@ -109,9 +118,17 @@ public class CardTransactionsController {
      *  legacy seed values without re-imposing a tighter shape. */
     private static final String CARD_SEQ_NO_PATTERN = "^[0-9]{1,20}$";
 
-    private final CardTransactionsService    service;
-    private final CardTransactionSyncService syncService;
-    private final CardTranListR001Service    cardTranListR001Service;
+    /** Audit-log slug for Corporate Card edits. */
+    private static final String AUDIT_WSVC_ID_CARD = "card-transactions";
+
+    private final CardTransactionsService     service;
+    private final CardTransactionSyncService  syncService;
+    private final CardTransactionScrapeService scrapeService;
+    private final CardTranListR001Service     cardTranListR001Service;
+    /** Shared Approval Details edit command (title / content / approver line /
+     *  attachments) — same code path as the Approval Box edit, audited under
+     *  the card slug. */
+    private final ApprovalEditService         approvalEditService;
     /** Shared Excel writer — orchestrates the
      *  {@link com.kosign.wecms.domain.payment.cardtransactions.export.CardTransactionsExportProvider}
      *  + writes the XLSX response. */
@@ -207,6 +224,28 @@ public class CardTransactionsController {
             @org.springframework.web.bind.annotation.RequestBody
             com.kosign.wecms.domain.payment.cardtransactions.dto.ChangeApprovalLineRequest req) {
         service.changeApprovalLine(apprSeqNo, req != null ? req.apprLineNo() : null);
+        return ApiResponse.ok(null);
+    }
+
+    /**
+     * Edit an in-flight (Pending / In Progress) Corporate Card approval —
+     * title + approval content + approver line + attachment add/remove in one
+     * multipart call. Delegates to the shared {@link ApprovalEditService}
+     * (same edit surface as Approval Box; the card approval IS an
+     * {@code EXPT_RESOL_MSTR} row with {@code APPR_DV='33'}), audited under the
+     * card slug. Mirrors legacy {@code comm_0192_013_u002}.
+     */
+    @PutMapping(value = "/by-approval/{apprSeqNo}/edit",
+                consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ApiResponse<Void> editApproval(
+            @PathVariable("apprSeqNo")
+            @Pattern(regexp = "^[0-9]{1,15}$",
+                     message = "appr_seq_no: invalid format")
+            String apprSeqNo,
+            @Valid @org.springframework.web.bind.annotation.RequestPart("request") EditApprovalRequest request,
+            @org.springframework.web.bind.annotation.RequestPart(value = "attachments", required = false)
+            List<org.springframework.web.multipart.MultipartFile> attachments) {
+        approvalEditService.edit(apprSeqNo, request, attachments, AUDIT_WSVC_ID_CARD);
         return ApiResponse.ok(null);
     }
 
@@ -442,10 +481,66 @@ public class CardTransactionsController {
      * Failures don't abort the run — the orchestrator collects errors
      * and surfaces them all in the response.
      */
+    /**
+     * @deprecated Headless single-shot scrape — aborts QNA/OTP/CAPTCHA-gated
+     *     banks (e.g. Shinhan 11704088) with {@code WBE_CARD_SYNC_NEEDS_RE_AUTH}.
+     *     Superseded 2026-06-19 by the session/challenge-aware
+     *     {@code POST /sync-session} flow (Update button now uses that).
+     *     Retained for the non-challenge fallback path; do not remove
+     *     without PO sign-off.
+     */
+    @Deprecated
     @PostMapping("/sync")
     public ApiResponse<SyncCardTransactionsResponse> sync(
             @Valid @RequestBody SyncCardTransactionsRequest req) {
         return ApiResponse.ok(syncService.sync(req));
+    }
+
+    /* ----------------------------------------------------------------
+     *  Update Cards — session/challenge-aware scrape (Shinhan QNA, etc.)
+     * ---------------------------------------------------------------- */
+
+    /**
+     * Start a Card Transactions Update scrape session. Reuses the shared
+     * NXISAS session/challenge framework (the same one Account Inquiry >
+     * Bank Transaction Sync and Login Credentials use): runs
+     * {@code LOGIN → (QNA/OTP/CAPTCHA?) → CARD_USING} per eligible card
+     * and persists into {@code CARD_TRNS_HSTR}. On a challenge it returns
+     * {@code *_REQUIRED} + a {@code session_id} the frontend echoes back
+     * to the matching resume endpoint below.
+     *
+     * <p>Replaces the headless {@code POST /sync} for the Update button —
+     * that path could not complete QNA-gated banks (Shinhan). See
+     * {@link CardTransactionScrapeService}.
+     */
+    @PostMapping("/sync-session")
+    public ApiResponse<CardSyncSessionResponse> startSyncSession(
+            @Valid @RequestBody SyncCardTransactionsRequest req) {
+        return ApiResponse.ok(scrapeService.start(req));
+    }
+
+    /** Resume a Card Update scrape after a QNA (security-question) answer. */
+    @PostMapping("/sync-session/{sessionId}/qna")
+    public ApiResponse<CardSyncSessionResponse> submitSyncSessionQna(
+            @PathVariable UUID sessionId,
+            @Valid @RequestBody SubmitQnaRequest req) {
+        return ApiResponse.ok(scrapeService.submitQna(sessionId, req));
+    }
+
+    /** Resume a Card Update scrape after an OTP submission. */
+    @PostMapping("/sync-session/{sessionId}/otp")
+    public ApiResponse<CardSyncSessionResponse> submitSyncSessionOtp(
+            @PathVariable UUID sessionId,
+            @Valid @RequestBody SubmitChallengeRequest req) {
+        return ApiResponse.ok(scrapeService.submitOtp(sessionId, req));
+    }
+
+    /** Resume a Card Update scrape after a CAPTCHA submission. */
+    @PostMapping("/sync-session/{sessionId}/captcha")
+    public ApiResponse<CardSyncSessionResponse> submitSyncSessionCaptcha(
+            @PathVariable UUID sessionId,
+            @Valid @RequestBody SubmitChallengeRequest req) {
+        return ApiResponse.ok(scrapeService.submitCaptcha(sessionId, req));
     }
 
     /**
@@ -476,10 +571,15 @@ public class CardTransactionsController {
      * {@code CardTransactionsService#requestApproval} for the
      * EXPT_RESOL_MSTR follow-up note.
      */
-    @PostMapping("/request-approval")
+    // M-1 (legacy parity): multipart so Request Approval attachments ride along
+    // (JSON in `request`, files in `attachments`); a no-file submit omits them.
+    @PostMapping(path = "/request-approval",
+                 consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResponse<RequestApprovalResponse> requestApproval(
-            @Valid @RequestBody RequestApprovalRequest req) {
-        return ApiResponse.ok(service.requestApproval(req));
+            @Valid @org.springframework.web.bind.annotation.RequestPart("request") RequestApprovalRequest req,
+            @org.springframework.web.bind.annotation.RequestPart(value = "attachments", required = false)
+            java.util.List<org.springframework.web.multipart.MultipartFile> attachments) {
+        return ApiResponse.ok(service.requestApproval(req, attachments));
     }
 
     /**
@@ -620,6 +720,60 @@ public class CardTransactionsController {
     }
 
     /**
+     * List the attachments on one receipt / bill (audit G3/G5). Backs the
+     * Receipt / e-Invoice tab paperclip dropdown. Sourced from
+     * {@code BUSA_DOC_FILE} (legacy IDO {@code BUSA_DOC_MSTR_R034} REC_1).
+     */
+    @GetMapping("/receipts/{doc_id}/files")
+    public ApiResponse<List<com.kosign.wecms.domain.payment.cardtransactions.dto.ReceiptFileRow>> listReceiptFiles(
+            @PathVariable("doc_id") @NotBlank @Size(max = 50) String docId) {
+        return ApiResponse.ok(service.listReceiptFiles(docId));
+    }
+
+    /**
+     * Upload one attachment onto a receipt / bill (multipart field {@code file}).
+     * Persists to {@code BUSA_DOC_FILE} (legacy {@code prch_0005_001_c001} file
+     * insert). 10 MB cap + legacy extension allow-list; multi-file by calling
+     * once per file. Audit G3/G5.
+     */
+    @PostMapping(value = "/receipts/{doc_id}/files",
+            consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ApiResponse<com.kosign.wecms.domain.payment.cardtransactions.dto.ReceiptFileRow> uploadReceiptFile(
+            @PathVariable("doc_id") @NotBlank @Size(max = 50) String docId,
+            @org.springframework.web.bind.annotation.RequestPart("file")
+            org.springframework.web.multipart.MultipartFile file) {
+        return ApiResponse.ok(service.uploadReceiptFile(docId, file));
+    }
+
+    /**
+     * Download one attachment — streams the raw bytes under the original
+     * filename. Tenant scope + path-traversal guard via the shared
+     * {@code SecureFileDownload} primitive. Binary response (not the
+     * {@code ApiResponse} envelope). Legacy {@code prch_0006_001_r002.act}.
+     */
+    @GetMapping("/receipts/{doc_id}/files/{file_id}")
+    public org.springframework.http.ResponseEntity<org.springframework.core.io.InputStreamResource> downloadReceiptFile(
+            @PathVariable("doc_id") @NotBlank @Size(max = 50) String docId,
+            @PathVariable("file_id") @NotBlank @Size(max = 100) String fileId) throws java.io.IOException {
+        var resolved = service.openReceiptFileForDownload(docId, fileId);
+        java.io.InputStream stream = java.nio.file.Files.newInputStream(resolved.path());
+        return com.kosign.wecms.common.file.SecureFileDownload.attachment(
+                new org.springframework.core.io.InputStreamResource(stream),
+                resolved.orgFileNm(), resolved.fileSize());
+    }
+
+    /**
+     * Delete one attachment (DB row + physical file). Tenant-scoped. Audit G3/G5.
+     */
+    @DeleteMapping("/receipts/{doc_id}/files/{file_id}")
+    public ApiResponse<Void> deleteReceiptFile(
+            @PathVariable("doc_id") @NotBlank @Size(max = 50) String docId,
+            @PathVariable("file_id") @NotBlank @Size(max = 100) String fileId) {
+        service.deleteReceiptFile(docId, fileId);
+        return ApiResponse.ok(null);
+    }
+
+    /**
      * List Purpose options for the New Receipt popup's dropdown.
      * Mirrors legacy {@code prch_0011_001.ts:91} USAG combo. Returns
      * {@code USE_USAG_CD} + already-localized {@code usag_nm} per the
@@ -656,6 +810,29 @@ public class CardTransactionsController {
     public ApiResponse<MemoRow> createMemo(
             @Valid @RequestBody CreateMemoRequest req) {
         return ApiResponse.ok(service.createMemo(req));
+    }
+
+    /**
+     * Edit one memo's text. Mirrors legacy {@code comm_0105_001_u002}.
+     * Author-only — non-authors get {@code WBE_MEMO_NOT_AUTHOR}.
+     */
+    @PatchMapping("/memos/{seq_no}")
+    public ApiResponse<MemoRow> updateMemo(
+            @PathVariable("seq_no") java.math.BigDecimal seqNo,
+            @Valid @RequestBody UpdateMemoRequest req) {
+        return ApiResponse.ok(service.updateMemo(seqNo, req));
+    }
+
+    /**
+     * Set the row-level sticker color for a card transaction's whole
+     * memo thread. Mirrors legacy {@code comm_0105_001_u003}
+     * ({@code MEMO_INFO_U002}) — color-only, no author gate.
+     */
+    @PatchMapping("/memos/color")
+    public ApiResponse<Void> updateMemoColor(
+            @Valid @RequestBody UpdateMemoColorRequest req) {
+        service.updateMemoColor(req);
+        return ApiResponse.ok(null);
     }
 
     /**

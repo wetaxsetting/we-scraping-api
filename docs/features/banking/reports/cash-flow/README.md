@@ -7,7 +7,7 @@
 > `wecms-web/`). No assumptions; items that could not be confirmed are marked **`Needs Verification`**.
 >
 > **Created 2026-06-04** during the Cash Flow documentation consolidation. It supersedes the
-> one-page Phase-0 stub at [`../cash-flow.md`](../cash-flow.md) (kept as a short pointer) and
+> one-page Phase-0 stub at [`../cash-flow.md`](legacy-spec.md) (kept as a short pointer) and
 > **migrates in** the workspace-root analysis package formerly at
 > [`docs/features/cash-flow/`](../../../../../../docs/features/cash-flow/) (now a deprecated
 > read-only pointer). The frontend counterpart lives at
@@ -17,16 +17,12 @@
 |---|---|
 | Feature slug | `cash-flow-report` (runtime id; file/folder named `cash-flow` to match the menu) |
 | Module | Banking → Reports |
-| Legacy JEX menu | **Cash Flow** (ML `inc_wabook_fnsh_lnb_m013`), WABOOKS **Financial (FNSH)** module |
-| Legacy view service | `cash_0001_001` (`login=Y`, `NORM_USER_ONLY_YN=Y`) |
-| Legacy read APIs | `cash_0001_001_r001` (cash-flow data), `_r002` (exchange rate), `_r003` (bank list) |
-| Legacy calc engine | PL/pgSQL function `get_cashflow_report(...)` on JEX DEV (≈ 90 KB) — **not ported**; reimplemented in Java |
 | Refactor route | `/banking/reports/cash-flow` (Next.js, `(dashboard)` group) |
 | Refactor base URI | `GET /api/v1/banking/reports/cash-flow-report` + `POST .../export` (Spring Boot) |
 | Audit `WSVC_ID` | `cash-flow-report` (slug — never `cash_0001_001`) |
 | View Setting | Seeded (`web_svc_id='cash-flow-report'`, V124) **only to unlock the Excel export visibility filter** — the report page has no toolbar list-icon popover |
 | i18n key prefix | `report.cash_flow.*` (frontend) · `WBE_CASH_FLOW_RATE_REQUIRED` (backend message) |
-| Refactor status | **Complete — real Java aggregation, FE/BE aligned, legacy parity verified** (see §4 Executive summary) |
+| Refactor status | **Live path calls `get_cashflow_report` directly (2026-06-13)**; FE/BE aligned. The earlier Java aggregation pipeline is retained but off the active path. (see §4 Executive summary) |
 
 ---
 
@@ -46,9 +42,10 @@ matrix of cash movement grouped under three fixed Level-1 roots:
 
 In JEX almost **all** of the calculation lived in a single PostgreSQL function,
 `get_cashflow_report(...)`; the JSP/TypeScript layer was a thin caller + hierarchical renderer. **The
-refactor reimplements that function CTE-by-CTE in Java** (`domain/banking/service/cashflow/*`) over
-the four real source tables — it does **not** call the DEV function. That is the single most important
-fact for anyone maintaining this feature; see [business-flow.md](business-flow.md).
+refactor's live path calls `get_cashflow_report` directly** (`CashFlowReportService.search` →
+`CashFlowReportRepository`, decision 2026-06-13). The CTE-by-CTE Java reimplementation under
+`domain/banking/service/cashflow/*` is **retained but off the active path as of 2026-06-13**. That is
+the single most important fact for anyone maintaining this feature; see [business-flow.md](business-flow.md).
 
 ---
 
@@ -57,7 +54,7 @@ fact for anyone maintaining this feature; see [business-flow.md](business-flow.m
 | File | Purpose |
 |---|---|
 | [README.md](README.md) | This file — identity, index, **executive summary** + completion table. |
-| [business-flow.md](business-flow.md) | Request flow, the calculation rules, the legacy `get_cashflow_report` CTE anatomy, and the refactor Java pipeline that replaces it. |
+| [business-flow.md](business-flow.md) | Request flow, the calculation rules, the legacy `get_cashflow_report` CTE anatomy, and the retained (off-active-path) refactor Java pipeline. |
 | [functional-specification.md](functional-specification.md) | Screen behaviour, filters/events, row vocabulary, validation, permissions, ML keys. |
 | [database-mapping.md](database-mapping.md) | Source tables / functions, column lists, the legacy → refactor entity/DTO/UI column map, FX, year/quarter handling. |
 | [interface-specification.md](interface-specification.md) | Legacy WSVC contract (`_r001/_r002/_r003`), the refactor REST contract (search + export), field-by-field map. |
@@ -70,12 +67,12 @@ fact for anyone maintaining this feature; see [business-flow.md](business-flow.m
 
 ## 3. Related documents
 
-- [`../cash-flow.md`](../cash-flow.md) — the one-page refactor feature-spec pointer (superseded in detail by this package; retained).
-- [`../daily-cash/`](../daily-cash/) + [`../daily-financial.md`](../daily-financial.md) — the sibling Banking → Reports screens; same `<ReportLayout>` / no-pagination pattern.
+- [`../cash-flow.md`](legacy-spec.md) — the one-page refactor feature-spec pointer (superseded in detail by this package; retained).
+- [`../daily-cash/`](../daily-cash/) + [`../daily-financial.md`](../daily-financial/README.md) — the sibling Banking → Reports screens; same `<ReportLayout>` / no-pagination pattern.
 - [`../README.md`](../README.md) — Banking → Reports group index.
 - **Parity audit (primary evidence):** [`../../../../../../docs/features/cash-flow/parity-audit/gap-report.md`](../../../../../../docs/features/cash-flow/parity-audit/gap-report.md) + [`final-confirmation.md`](../../../../../../docs/features/cash-flow/parity-audit/final-confirmation.md) — the source-verified 2026-06-04 audit that closed the Critical quarter-filter gap and confirmed READY FOR SIT/UAT. **Kept in place and cross-linked** (not migrated) — it is the canonical parity-audit artifact.
 - **Migrated source package (deprecated):** workspace-root [`docs/features/cash-flow/`](../../../../../../docs/features/cash-flow/) — the original 9-file analysis this folder was built from; now a read-only pointer.
-- **DB function classification:** [`../../../../references/database/db-function-classification.md`](../../../../references/database/db-function-classification.md) — `get_cashflow_report` is the HIGH-priority REPORT function the refactor chose to reimplement in Java.
+- **DB function classification:** [`../../../../references/database/db-function-classification.md`](../../../../references/database/db-function-classification.md) — `get_cashflow_report` is the HIGH-priority REPORT function the refactor's live path now calls directly (2026-06-13); the earlier Java reimplementation is retained but off the active path.
 - Frontend package: [`wecms-web/docs/features/banking/reports/cash-flow/`](../../../../../../wecms-web/docs/features/banking/reports/cash-flow/).
 - Backend rules: [`wecms-api/CLAUDE.md`](../../../../../CLAUDE.md) — §"DB Function / Legacy Function Policy", §"Legacy report DB functions — Sprint 1 stance", §"PROD DB Table Scope", §"Excel export — `common/export/`".
 
@@ -93,14 +90,18 @@ base_currency, usd_rate, krw_rate, bank_filters)`, which unions four transaction
 approval gate, converts currency at the user-supplied flat rate, walks the Chart-of-Accounts
 hierarchy, and emits hierarchy-aware rows.
 
-The refactor implements the read path as a **Java reimplementation** of that function:
-`CashFlowReportService.search(...)` orchestrates `PaymentDataAggregator` (the 4-source union +
-approval gate), `FxConverter` (per-currency rounding), `ChartOfAccountsHierarchy` (L1→L2→L3 walk,
-replacing `wb_get_chart_acct_level_text`), `BalanceCalculator` (Opening / End / Sales-Profit +
-the hardcoded INVESTMENT carve-out), and `CashFlowRowAssembler` (the ordered row stream). The legacy
-function is **never invoked** — confirmed by a workspace grep returning only doc-comment hits.
+The refactor's live read path **calls `get_cashflow_report` directly** (decision 2026-06-13):
+`CashFlowReportService.search(...)` delegates to `CashFlowReportRepository` (`CashFlowReportRepository.java:67`),
+and the DB helpers `wb_get_chart_acct_level` + `wb_get_chart_acct_level_text` were added to the refactor DB.
+The earlier Java pipeline — `PaymentDataAggregator` (the 4-source union + approval gate), `FxConverter`
+(per-currency rounding), `ChartOfAccountsHierarchy` (L1→L2→L3 walk, replacing `wb_get_chart_acct_level_text`),
+`BalanceCalculator` (Opening / End / Sales-Profit + the hardcoded INVESTMENT carve-out), and
+`CashFlowRowAssembler` (the ordered row stream) — is **retained but off the active path as of 2026-06-13**;
+the live path calls `get_cashflow_report` directly.
 
 ### Refactor completion
+
+> **Live path note (2026-06-13):** the table below describes the **retained Java pipeline**, which is now **off the active path** — the live path calls `get_cashflow_report` directly via `CashFlowReportRepository`. The rows are kept as the historical parity record of the (superseded) Java reimplementation.
 
 | Surface | In-scope target | State | Evidence |
 |---|---|---|---|
@@ -147,8 +148,9 @@ function is **never invoked** — confirmed by a workspace grep returning only d
 
 - **Raising factors:** the legacy logic is a ≈ 90 KB PL/pgSQL function (12 CTEs, 4 unioned sources, an
   approval-status helper, a chart-level helper, prior-year recompute, a hardcoded INVESTMENT carve-out,
-  per-currency rounding). Reimplementing it in Java byte-for-byte (Option A) carries real parity risk —
-  hence the mandatory parity-test suite.
+  per-currency rounding). The earlier approach reimplemented it in Java byte-for-byte (Option A), which
+  carried real parity risk — hence the parity-test suite. **As of 2026-06-13 the live path calls
+  `get_cashflow_report` directly**, sidestepping that risk; the Java pipeline is retained but off the active path.
 - **Lowering factors:** the report is read-only (no writes, no batch, no triggers), and the refactor
   reuses already-built entities (`AcctTrnsHstr`, `OvrsPymnMstr`, `ScdulPymnSumr(_Detl)`, `ExptResolMstr`,
   `ChartAcctInfm`) plus the shared export infrastructure. The two Critical parity risks (approval gate,
@@ -160,3 +162,16 @@ function is **never invoked** — confirmed by a workspace grep returning only d
 
 - **Confirmed** — verified against source/DEV/refactor code on disk.
 - **Needs Verification** — inferred or not present in DEV data; must be checked on UAT/PROD or with the PO.
+
+---
+
+## Legacy & Migration Traceability
+
+Legacy JEX source-of-truth mapping for this report (moved from the header metadata table; refactor identity stays up top):
+
+| Field | Value |
+|---|---|
+| Legacy JEX menu | **Cash Flow** (ML `inc_wabook_fnsh_lnb_m013`), WABOOKS **Financial (FNSH)** module |
+| Legacy view service | `cash_0001_001` (`login=Y`, `NORM_USER_ONLY_YN=Y`) |
+| Legacy read APIs | `cash_0001_001_r001` (cash-flow data), `_r002` (exchange rate), `_r003` (bank list) |
+| Legacy calc engine | PL/pgSQL function `get_cashflow_report(...)` on JEX DEV (≈ 90 KB) — **called directly** by the refactor (2026-06-13); the earlier Java reimplementation is retained but off the active path |

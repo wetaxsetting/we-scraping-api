@@ -47,9 +47,10 @@ import java.util.Set;
  * they only mutate a single file column on {@code BUSI_INFM} and the
  * legacy JEX runtime does not audit those flows either.
  *
- * <p>Logo storage: physical files live in a <b>flat</b> layout under
- * {@code <storage-root>/<save_file_nm>} — no per-tenant or per-slug
- * subdirectories. Cross-tenant safety is enforced by the opaque save
+ * <p>Logo storage: physical files live in a per-tenant subtree under
+ * {@code <storage-root>/<biz_key>/preferences/<save_file_nm>} (2026-06-12;
+ * previously flat directly under the root — reads still fall back there
+ * via {@link PreferencesLogoResolver#resolveForRead}). The opaque save
  * filename (256-bit HMAC-SHA-256 over {@code bizKey} +
  * {@code System.currentTimeMillis()} + 16 random bytes, encoded
  * base64-url, with the legacy file extension appended). The hash is
@@ -96,20 +97,20 @@ public class PreferencesService {
     public static final long MAX_LOGO_SIZE_BYTES = 2L * 1024L * 1024L;
 
     /** Allow-list of permitted logo extensions (lower-case, no leading
-     *  dot). Images only. */
+     *  dot). Raster images only. F-02: SVG is excluded — an inline-served
+     *  SVG can carry &lt;script&gt; and execute as stored XSS in the
+     *  WeCMS origin. */
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of(
-            "jpg", "jpeg", "png", "gif", "svg");
+            "jpg", "jpeg", "png", "gif");
 
     /** MIME type emitted on the download response per extension. The
      *  frontend trusts our Content-Type header so we map deterministically
-     *  rather than re-detecting via probeContentType (which Windows
-     *  reports inconsistently for SVG). */
+     *  rather than re-detecting via probeContentType. */
     private static final java.util.Map<String, String> MIME_BY_EXT = java.util.Map.of(
             "jpg",  "image/jpeg",
             "jpeg", "image/jpeg",
             "png",  "image/png",
-            "gif",  "image/gif",
-            "svg",  "image/svg+xml");
+            "gif",  "image/gif");
 
     /** Source of randomness for the opaque save filename. Thread-safe;
      *  one shared instance is sufficient. */
@@ -215,9 +216,9 @@ public class PreferencesService {
         String previous   = row.getCmpnLogo();
         String saveFileNm = generateOpaqueFilename(bizKey, extension);
 
-        Path destination = logoResolver.resolve(saveFileNm);
+        Path destination = logoResolver.resolve(bizKey, saveFileNm);
         try {
-            Files.createDirectories(logoResolver.root());
+            Files.createDirectories(destination.getParent());
             file.transferTo(destination);
         } catch (IOException ex) {
             log.error("Failed to store preferences logo bizKey={}", bizKey, ex);
@@ -232,7 +233,7 @@ public class PreferencesService {
         // user-facing call. An orphaned file is harmless; a stale DB
         // pointer would render a broken image.
         if (previous != null && !previous.isBlank() && !previous.equals(saveFileNm)) {
-            deleteQuietly(logoResolver.resolve(previous));
+            deleteQuietly(logoResolver.resolveForRead(bizKey, previous));
         }
 
         log.info("preferences logo uploaded bizKey={} saveFileNm={} sizeBytes={}",
@@ -257,7 +258,7 @@ public class PreferencesService {
             row.setCmpnLogo(null);
             row.setModId(TenantContext.currentUserId());
             busiInfmRepository.save(row);
-            deleteQuietly(logoResolver.resolve(previous));
+            deleteQuietly(logoResolver.resolveForRead(bizKey, previous));
             log.info("preferences logo deleted bizKey={} saveFileNm={}", bizKey, previous);
         }
         return toResponse(busiInfmRepository.findById(bizKey).orElseThrow(
@@ -279,7 +280,7 @@ public class PreferencesService {
         if (saveFileNm == null || saveFileNm.isBlank()) {
             throw new BusinessException("WBE2082");
         }
-        Path path = logoResolver.resolve(saveFileNm);
+        Path path = logoResolver.resolveForRead(bizKey, saveFileNm);
         if (!Files.isReadable(path) || !Files.isRegularFile(path)) {
             log.warn("preferences logo file missing on disk bizKey={} saveFileNm={}",
                     bizKey, saveFileNm);

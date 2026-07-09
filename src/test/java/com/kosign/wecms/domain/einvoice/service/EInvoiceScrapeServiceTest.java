@@ -180,7 +180,7 @@ class EInvoiceScrapeServiceTest {
         existing.setRegId("olduser");
         existing.setRegDtm("20230101000000");
         existing.setTrcoKey("TRCO-9");
-        when(busaRepo.findById(any(BusaDocMstrId.class))).thenReturn(Optional.of(existing));
+        when(busaRepo.findAllById(any())).thenReturn(List.of(existing));
 
         EInvoiceScrapeResult res = service.saveScrapedInvoices(
                 req("SALES", row("1", "C24TAA", "0000001", "Đã cấp mã hóa đơn", "Hóa đơn mới", "0301")));
@@ -248,9 +248,11 @@ class EInvoiceScrapeServiceTest {
     // ------------------------------------------------------------------
 
     private BusaDocMstr captureSaved() {
-        ArgumentCaptor<BusaDocMstr> cap = ArgumentCaptor.forClass(BusaDocMstr.class);
-        verify(busaRepo).save(cap.capture());
-        return cap.getValue();
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<BusaDocMstr>> cap = ArgumentCaptor.forClass(List.class);
+        verify(busaRepo).saveAll(cap.capture());
+        List<BusaDocMstr> saved = cap.getValue();
+        return saved.get(saved.size() - 1);
     }
 
     private static ScrapedEInvoiceRow row(String numeric, String symbol, String no,

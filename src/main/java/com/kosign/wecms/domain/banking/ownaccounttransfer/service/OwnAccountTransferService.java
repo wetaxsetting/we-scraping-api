@@ -7,7 +7,6 @@ import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.common.web.SortDirection;
 import com.kosign.wecms.domain.banking.entity.AcctMstr;
-import com.kosign.wecms.domain.banking.entity.BankInfm;
 import com.kosign.wecms.domain.banking.entity.NapasBankInfo;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.OwnAccountTransferAuditActions;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.OwnAccountTransferConstants;
@@ -26,7 +25,7 @@ import com.kosign.wecms.domain.banking.bankcredentials.entity.BankCertInfo;
 import com.kosign.wecms.domain.banking.bankcredentials.repository.BankCertInfoRepository;
 import com.kosign.wecms.domain.banking.bankcredentials.service.BankCertCryptoService;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
-import com.kosign.wecms.domain.banking.repository.BankInfmRepository;
+import com.kosign.wecms.domain.banking.service.BankCdResolver;
 import com.kosign.wecms.domain.banking.repository.NapasBankInfoRepository;
 import com.kosign.wecms.domain.banking.repository.NapasRemitTrnsHstrRepository;
 import com.kosign.wecms.domain.setting.bankaccount.entity.AcctAuthInfo;
@@ -39,12 +38,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
-import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -107,25 +103,9 @@ public class OwnAccountTransferService {
     private static final DateTimeFormatter DT_FORMAT =
             DateTimeFormatter.ofPattern("yyyyMMdd");
 
-    /**
-     * Display timezone for balance-refresh timestamps. {@code acct_mstr}
-     * stores {@code ACCT_BAL_LST_INQ_DTM} / {@code ACCT_BAL_UPD_DTM} as a
-     * naive {@code yyyyMMddHHmmss} wall-clock in <b>UTC</b> — both legacy
-     * (JEX {@code DateTimeUtils.utcNow()} at
-     * {@code trns_0001_001_u001_act.jsp:91}) and this service
-     * ({@link #utcNow14()}) write UTC. Legacy converts that stored UTC to
-     * the login user's timezone on read
-     * ({@code DateTimeUtils.normalizeResult(dtm, loginUser)} at
-     * {@code _u001_act.jsp:45}); the refactor mirrors that here with the
-     * project's standard zone (Vietnam / Cambodia, UTC+7 — same
-     * {@code Asia/Ho_Chi_Minh} used by Exchange-Rate / Approval-Box).
-     * Without this, the frontend (which renders the 14-char string as a
-     * wall-clock) showed times 7h behind local. */
-    private static final ZoneId PROJECT_DISPLAY_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
-
     private final AcctMstrRepository           acctMstrRepo;
     private final AcctAuthInfoRepository       acctAuthRepo;
-    private final BankInfmRepository           bankInfmRepo;
+    private final BankCdResolver               bankCdResolver;
     private final NapasBankInfoRepository      napasBankInfoRepo;
     private final NapasRemitTrnsHstrRepository napasRemitTrnsHstrRepo;
     private final BankCertInfoRepository       bankCertInfoRepo;
@@ -807,7 +787,13 @@ public class OwnAccountTransferService {
      *  warning. */
     private SourceAccountRow toSourceRow(AcctMstr a, boolean canTransfer, BankCertInfo cert) {
         final String certInfoCon       = cert == null ? null : cert.getCertInfoCon();
-        final String certInfoDetlCon   = cert == null ? null : decryptOrNull(cert.getCertInfoDetlCon());
+        // Login password → STRICT decrypt: this value becomes loginPWD and
+        // is forwarded to the NXiSAS engine (and on to the bank). A value
+        // that doesn't decrypt under the legacy key (corrupt / foreign
+        // cipher, e.g. a retired-AES-GCM blob) MUST project as null so the
+        // composer's hasSavedBankCert pre-flight blocks the call — never be
+        // echoed to the bank (which rejects it with an opaque 8000FFFF).
+        final String certInfoDetlCon   = cert == null ? null : decryptPasswordOrNull(cert.getCertInfoDetlCon());
         final String certInfoDetlCon2  = cert == null ? null : decryptOrNull(cert.getCertInfoDetlCon2());
         final String nxisasGbSeqNo     = cert == null || cert.getNxisasGbSeqNo() == null
                 ? null
@@ -829,12 +815,17 @@ public class OwnAccountTransferService {
                 a.getCcyCd(),
                 a.getAcctBalInqStts(),
                 a.getAcctBalInqMsg(),
-                // Convert the UTC-stored wall-clock to the project
-                // display zone (UTC+7) — mirrors legacy read-time
-                // `normalizeResult(..., loginUser)`. Drives the composer
-                // "Last updated time" + main-page "Last Refresh" column.
-                toDisplayZone14(a.getAcctBalUpdDtm()),
-                toDisplayZone14(a.getAcctBalLstInqDtm()),
+                // Ship the RAW UTC `yyyyMMddHHmmss` wall-clock — the frontend
+                // owns the single UTC→Vietnam-local conversion (composer
+                // "Last updated time" via `formatUtcDtmByLanguage`, main-page
+                // "Last Refresh" via `humanizeDatetime`, which parses UTC).
+                // This mirrors Account Inquiry (`AccountService`), which also
+                // ships raw UTC for the same `ACCT_BAL_*_DTM` columns. Doing
+                // the shift here as well produced a double-shift on the
+                // relative-time cell (it re-parsed the pre-shifted value as
+                // UTC), so the conversion is now done exactly once, on the FE.
+                a.getAcctBalUpdDtm(),
+                a.getAcctBalLstInqDtm(),
                 a.getBankCertSeq() == null ? null : a.getBankCertSeq().toString(),
                 certInfoCon,
                 certInfoDetlCon,
@@ -886,9 +877,37 @@ public class OwnAccountTransferService {
         }
     }
 
+    /** Strict decrypt for the login password column ({@code CERT_INFO_DETL_CON}).
+     *  Unlike {@link #decryptOrNull(String)} this never echoes an
+     *  undecryptable value — a blob that doesn't decrypt under the legacy
+     *  key (corrupt row, or one written by the retired AES-GCM cipher)
+     *  projects as null so {@code loginPWD} is empty and the composer's
+     *  {@code hasSavedBankCert} pre-flight blocks the engine call. Without
+     *  this, the ciphertext was forwarded to the bank as the password,
+     *  surfacing as an opaque institution error (Shinhan {@code 8000FFFF}).
+     *  Cure for a logged failure: re-save the credential via
+     *  Settings &gt; Login Credentials. */
+    private String decryptPasswordOrNull(String ciphertext) {
+        if (ciphertext == null || ciphertext.isEmpty()) return null;
+        String plain = bankCertCrypto.decryptStrict(ciphertext);
+        if (plain == null) {
+            log.warn("oat source-row login password failed strict decrypt — credential is not "
+                    + "legacy-cipher ciphertext (re-save via Settings > Login Credentials). "
+                    + "Projecting loginPWD as null so the engine is never sent an undecryptable value.");
+        }
+        return plain;
+    }
+
     private String resolveBankName(String bankCd) {
         if (bankCd == null || bankCd.isBlank()) return null;
-        return bankInfmRepo.findById(bankCd).map(BankInfm::getRprsBankNm).orElse(bankCd);
+        // UI display change (REQUESTED — not a parity fix): show the legacy
+        // SHORT bank name wb_get_bank_nm(BANK_CD,'s') (e.g. "Shinhan VN",
+        // "VIETIN") instead of the full RPRS_BANK_NM ("Shinhan(Vietnam)").
+        // BankCdResolver.resolveBankNm wraps wb_get_bank_nm(bank_cd,'s') via
+        // LegacyFunctionRepository and already falls back to the bank code
+        // when no name resolves. Display-only; no transfer/payment logic uses
+        // this value.
+        return bankCdResolver.resolveBankNm(bankCd);
     }
 
     private void appendAudit(String action, String refNo, String refNo1, String refNo2) {
@@ -919,26 +938,6 @@ public class OwnAccountTransferService {
         return OffsetDateTime.now(ZoneOffset.UTC).format(DTM_FORMAT);
     }
 
-    /**
-     * Convert a UTC-stored {@code yyyyMMddHHmmss} wall-clock string to
-     * the {@link #PROJECT_DISPLAY_ZONE} (UTC+7) for display. Mirrors
-     * legacy {@code DateTimeUtils.normalizeResult(dtm, loginUser)} which
-     * converted the UTC-stored {@code ACCT_BAL_LST_INQ_DTM} to the login
-     * user's timezone on read. Null / blank / unparseable input is
-     * returned unchanged so a malformed cell never breaks the list load
-     * and never surfaces as {@code "undefined"} / an exception.
-     */
-    private static String toDisplayZone14(String utc14) {
-        if (utc14 == null || utc14.isBlank()) return utc14;
-        try {
-            return LocalDateTime.parse(utc14, DTM_FORMAT)
-                    .atZone(ZoneOffset.UTC)
-                    .withZoneSameInstant(PROJECT_DISPLAY_ZONE)
-                    .format(DTM_FORMAT);
-        } catch (DateTimeParseException ex) {
-            return utc14;
-        }
-    }
 
     /* ---------- value-type helpers ---------- */
 
