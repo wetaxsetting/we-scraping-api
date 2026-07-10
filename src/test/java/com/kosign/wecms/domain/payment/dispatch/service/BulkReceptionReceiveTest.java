@@ -101,7 +101,9 @@ class BulkReceptionReceiveTest {
                 payFileMstRepository, payFileDataRepository, firmConfRepository,
                 firmFileMstRepository, firmFileDataRepository, firmBatApiTranRepository,
                 dispatchKeyGenerator, codec, sftpClient, sftpProperties, bulkTransferValidator,
-                opsAlertService, operatingHoursService);
+                opsAlertService, operatingHoursService,
+                org.mockito.Mockito.mock(com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard.class),
+                org.mockito.Mockito.mock(com.kosign.wecms.domain.payment.common.OutBankCdNormalizer.class));
 
         // Pre-flight validation passes by default; the dedicated cases live in
         // BulkReceptionServiceValidationTest.

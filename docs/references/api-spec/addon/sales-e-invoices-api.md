@@ -286,7 +286,7 @@ Error code semantics live in `messages*.properties`; never return a raw string m
 
 ## BIZ_KEY / tenant filtering
 
-Every query in this domain is **scoped to the current tenant**, sourced from `TenantContext.currentBizKey()` (populated by `JwtAuthenticationFilter` from the validated JWT). The refactor pin is `wecms.tenant.biz-key = VN_VNM0004_000001` (single-tenant R&D); the property regex rejects `%` so a wildcard tenant filter is impossible by construction.
+Every query in this domain is **scoped to the current tenant**, sourced from `TenantContext.currentBizKey()` (populated by `JwtAuthenticationFilter` from the validated JWT), never from request input — so a `%` wildcard tenant filter is impossible by construction.
 
 Today's call:
 

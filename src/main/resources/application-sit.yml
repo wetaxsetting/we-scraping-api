@@ -1,75 +1,23 @@
-# =============================================================================
-# SIT / shared dev-server profile.
-#
-# Merged 2026-05-26 from:
-#   - server-deployed application-sit.yml (had internal-transfer cutoff
-#     table + show-sql/format_sql for SQL debugging)
-#   - local repo application-sit.yml (had cors + user-image blocks)
-# Also folded in former application-dev.yml content (2026-05-15 — dev was
-# RESERVED/unused; show-sql + format_sql + coocon DEV credentials now live
-# here).
-# =============================================================================
-# This file is TRACKED in Git and carries NO secrets (F-05). Every sensitive value
-# resolves from an env var / the SIT host's setenv.sh / the gitignored .env.sit
-# (copy of .env.sit.example). The committed profile is tracked; only the per-host
-# .env.sit holding real values is gitignored.
-#
-# Targets the shared WeCMS dev DB server at 172.168.5.172:5432/wecmsdevdb
-# (requires office network / VPN reachability). Connection details are
-# duplicated in:
-#   - .mcp.json (postgres_dev_server_refactor entry — Claude's read-only SQL tool)
-#   - run-local.bat / run-local.sh (host:port reachability check)
-# Keep all three in sync if the server moves.
-#
-# Secret values have NO in-file default (F-05): a missing REQUIRED value fails fast
-# at startup. Provide values via the shell / IDE / run-local.bat / the gitignored
-# .env.sit (auto-loaded via spring.config.import) / the SIT host's setenv.sh.
-# Full list + which are required: docs/security/required-environment-secrets.md.
-#
-# Environment variables (DB password, JWT secret, and Coocon keys are REQUIRED — fail-fast):
-#   WECMS_DB_PASSWORD              — PostgreSQL password for `wecmsdev_owner` (required)
-#   WECMS_JWT_SECRET               — HS256 signing secret, 32+ bytes (required)
-#   WECMS_COOCON_*                 — Coocon external API keys / urls (keys required)
-#   WECMS_CRYPTO_LEGACY_CERT_SEED  — legacy cert-cipher seed (default `wabooksvn`; must equal legacy)
-#   WECMS_CORS_ALLOWED_ORIGINS     — comma-separated cross-origin frontends
-#   WECMS_*_STORAGE_ROOT           — per-feature file storage roots
-#   WECMS_SHINHAN_BANK_CD          — internal-transfer cut-off bank code
-#   WECMS_WOORI_BANK_CD            — internal-transfer cut-off bank code
+# SIT / shared dev-server profile (tracked in Git, no secrets).
+# Targets the shared dev DB 172.168.5.172:5432/wecmsdevdb (office network / VPN).
+# All secrets come from OS env / setenv.sh / the gitignored .env.sit.
+# Required env vars: docs/security/required-environment-secrets.md.
 
 spring:
-  # Per-profile env file. Loaded on top of the base ./.env (imported in
-  # application.yml). On the SIT host these come from setenv.sh / OS env; a local
-  # .env.sit (copy of .env.sit.example) can be used for a developer SIT run.
+  # Per-profile env file, loaded on top of the base ./.env.
   config:
     import: optional:file:./.env.sit[.properties]
   datasource:
-    # Standardized WECMS_DB_* trio (same structure in every profile). NO host /
-    # username / password committed here anymore — all three come from env
-    # (.env.sit or OS env). Missing WECMS_DB_URL/USERNAME/PASSWORD → fail-fast.
-    # The previously-committed shared-dev values MUST be rotated by infra/ops —
-    # see docs/security/required-environment-secrets.md.
     url: ${WECMS_DB_URL}
     username: ${WECMS_DB_USERNAME}
     password: ${WECMS_DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
-  # Flyway removed 2026-06-10 — no automatic migration. The shared dev DB is
-  # expected to be already migrated (apply src/main/resources/db/migration/ SQL
-  # by hand). ddl-auto stays `validate` so Hibernate only checks mappings
-  # against the existing schema.
   jpa:
     hibernate:
       ddl-auto: validate
-    # SQL debug logging ENABLED for SIT (2026-07-08, team-lead request) — this
-    # intentionally re-opens the F-06 hardening for SIT only (never UAT/PROD).
-    # SIT runs against the shared dev DB, so the SQL statements + bind values
-    # below WILL carry real business data (account numbers, amounts, names).
-    # Acceptable for short-lived debugging on SIT; do NOT copy to -uat / -prod.
-    # SQL statements themselves are logged via `org.hibernate.SQL=DEBUG` in the
-    # logging block (goes through logback + carries the traceId); `show-sql`
-    # would print to System.out without the traceId, so it stays false.
+    # SQL logging ON for SIT only. It logs real business data — never copy to uat/prod.
     show-sql: true
     properties:
-      # Pretty-print the logged SQL (multi-line) so it is readable.
       hibernate.format_sql: true
 
 wecms:
@@ -77,60 +25,35 @@ wecms:
   # Security (CORS / JWT)
   # =============================================================================
   jwt:
-    # F-01: NO secret default — SIT is a deployed, network-reachable environment
-    # and must never sign tokens with a repo-resident secret. WECMS_JWT_SECRET is
-    # mandatory; a missing (or the retired insecure placeholder) value fails fast
-    # in JwtTokenProvider at startup. Generate one with: openssl rand -hex 64
+    # Required. openssl rand -hex 64
     secret: ${WECMS_JWT_SECRET}
   cors:
-    # No default — the SIT origin set comes from .env.sit / the host env
-    # (setenv.sh), same placeholder shape as UAT/PROD. Sample in .env.sit.example.
     allowed-origins: ${WECMS_CORS_ALLOWED_ORIGINS}
   # =============================================================================
   # Credential cipher (legacy pgcrypto-compatible)
   # =============================================================================
   crypto:
-    # AES-256-CBC (zero-IV, PKCS#5) seed for the BANK_CERT_INFO / GDT_CERT_INFO
-    # password column; SHA-256(seed) is the AES key — byte-identical to the legacy
-    # JEX public.encrypt()/decrypt() DB functions. This is a cross-system
-    # COMPATIBILITY CONSTANT, not an environment-specific value: it MUST be the
-    # same in every profile and equal to the legacy seed, or cert credentials
-    # written by one system cannot be read by the other. Same value as the base
-    # application.yml — declared here only so local and sit stay self-consistent.
+    # Must equal the legacy seed in every profile.
     legacy-cert-seed: ${WECMS_CRYPTO_LEGACY_CERT_SEED}
   # =============================================================================
   # Login Credentials
   # =============================================================================
   login-credentials:
-    # GDT verify-before-save flag. Keep false on SIT (not flipped like exchange-rate
-    # above): blocked by the captcha challenge-chain, not DB isolation. Flip only
-    # once that ships AND SIT has a reachable GDT gateway.
-    # Details: docs/audits/login-credentials-legacy-vs-refactor-audit.md (G2)
     gdt-verify-enabled: ${WECMS_LOGIN_CREDENTIALS_GDT_VERIFY_ENABLED}
   # =============================================================================
-  # EFS / Van Center
+  # EFS / Van Center (firm-banking dispatch)
   # =============================================================================
-  # Firm-banking payment dispatch via the EFS / VAN gateway. All flags default OFF
-  # (mock active) until the partner instance + IP-whitelist are confirmed. Endpoint
-  # paths (EFS_201/202/203/204/301/302) default in EfsProperties; only enabled +
-  # base-url + partner-id are env-specific. VAN API key is a per-VAN secret in
-  # TB_VAN_API_INFO (not here).
-  # Details: docs/security/required-environment-secrets.md; docs/features/wecms-batch/
+  # All flags OFF by default (mock) until SFTP + EFS + VAN are provisioned.
   dispatch:
-    # File-path dispatch → 00301 reception (needs SFTP + EFS).
     auto-receive: ${WECMS_DISPATCH_AUTO_RECEIVE}
-    # Real-time 202 dispatch, VND/API path (needs VAN keys + EFS).
     realtime-dispatch: ${WECMS_DISPATCH_REALTIME_DISPATCH}
-    # Depositor-name inquiry WGVN_EFS_201 (needs VAN keys + EFS).
     recipient-inquiry: ${WECMS_DISPATCH_RECIPIENT_INQUIRY}
-    # Result-check poll. Cron "-" = never fire; set only in the env owning realtime traffic.
+    # Result-check poll. Cron "-" = never fire.
     result-check:
       cron: ${WECMS_DISPATCH_RESULT_CHECK_CRON}
-    # Ops alert (WGVN_MSG_SEND_001). OFF by default (OpsAlertService.notify is a no-op).
     alert:
       enabled: ${WECMS_DISPATCH_ALERT_ENABLED}
-    # Inbound EFS callbacks (01301/01302). Authenticated by VV/EV crypto + this
-    # source-IP allow-list (comma-separated; empty = rely on VV crypto only).
+    # Inbound EFS callbacks. allowed-ips is a source-IP allow-list (empty = none).
     callback:
       trust-forwarded-for: true
       allowed-ips: ${WECMS_CALLBACK_ALLOWED_IPS}
@@ -140,8 +63,7 @@ wecms:
       partner-id: ${WECMS_EFS_PARTNER_ID}
       connect-timeout-ms: 3000
       read-timeout-ms: 20000
-    # SFTP bulk-file channel (00301 upload / 01302 result download). OFF = MockSftpClient
-    # (no network I/O). Key material is never committed — supply the key file via env.
+    # SFTP bulk-file channel. OFF = mock (no network I/O).
     sftp:
       enabled: ${WECMS_SFTP_ENABLED}
       host: ${WECMS_SFTP_HOST}
@@ -158,53 +80,10 @@ wecms:
   # =============================================================================
   # File storage
   # =============================================================================
-  # All upload modules use:
-  #   <storage-root>/<bizKey>/<module-slug>/<file>
-  # Each module overrides its root via its WECMS_*_STORAGE_ROOT env var.
-  #
-  # Payment modules:
-  #   Vendor Payment    -> <storage-root>/<bizKey>/vendor-payment/<file>
-  #   Expense Payment   -> <storage-root>/<bizKey>/expense-payment/<file>
-  #   Payroll           -> <storage-root>/<bizKey>/payroll/<file>
-  #   Overseas Payment  -> <storage-root>/<bizKey>/overseas-payment/<file>
-  #   Internal Transfer -> <storage-root>/<bizKey>/internal-transfer/<file>
-  #
-  # Business files:
-  #   Contacts                -> <storage-root>/<bizKey>/contacts/<file>
-  #   Preferences             -> <storage-root>/<bizKey>/preferences/<file>
-  #   User Image              -> <storage-root>/<bizKey>/user-image/<file>
-  #   ERP Transaction History -> <storage-root>/<bizKey>/erp-transaction-history/<file>
-  #
-  # Vendor Payment / Expense Payment / Payroll now have their own storage-root
-  # keys (added 2026-06-12); each default mirrors the internal-transfer root so
-  # today's layout is unchanged until a key is pointed elsewhere.
-  # overseas-payment, preferences and user-image also fall back to a legacy flat
-  # root for files written before the multi-tenant split.
-  # Most roots default to "C:/WECMS PROJECT/File Data"; internal-transfer and
-  # overseas-payment still default to different roots (flagged inline below).
-  #
-  # TODO (storage-root normalization — UNRESOLVED, do NOT guess): the SIT roots
-  # are inconsistent — internal-transfer / overseas-payment / vendor-payment /
-  # expense-payment / payroll default to "c:/WeCMS/File Data" while contacts /
-  # preferences / user-image / erp-transaction-history default to
-  # "C:/WECMS PROJECT/File Data". The canonical SIT path cannot be confirmed from
-  # config alone: the real SIT host runs on Linux and sets every WECMS_*_STORAGE_ROOT
-  # via externalized env config (setenv.sh under /DATA/src-wecms/...), so these
-  # Windows defaults are fallback-only and likely never used on the SIT box.
-  # ACTION: confirm the real SIT storage root with ops, then either (a) point every
-  # WECMS_*_STORAGE_ROOT env var at it on the host (preferred — config stays env-driven),
-  # or (b) collapse all nine defaults below to that single confirmed path. Until
-  # confirmed, leave the defaults untouched.
+  # Upload layout: <storage-root>/<bizKey>/<module>/<file>. Real SIT host sets
+  # each WECMS_*_STORAGE_ROOT via setenv.sh; these defaults are fallback-only.
   overseas-payment:
-    # storage-root — NON-STANDARD: defaults to "c:/WeCMS/File Data" (aligned
-    # 2026-06-12 with internal-transfer / vendor-payment / expense-payment /
-    # payroll), differs from the "C:/WECMS PROJECT/File Data" used by the
-    # contacts / preferences / user-image / erp-transaction-history modules.
-    # Override via WECMS_OVERSEAS_PAYMENT_STORAGE_ROOT.
     storage-root: ${WECMS_OVERSEAS_PAYMENT_STORAGE_ROOT}
-  # vendor-payment / expense-payment / payroll — own roots; defaults mirror the
-  # (non-standard) internal-transfer root "c:/WeCMS/File Data" so today's layout
-  # is unchanged. Flagged for normalization alongside internal-transfer.
   vendor-payment:
     storage-root: ${WECMS_VENDOR_PAYMENT_STORAGE_ROOT}
   expense-payment:
@@ -216,45 +95,25 @@ wecms:
   preferences:
     storage-root: ${WECMS_PREFERENCES_STORAGE_ROOT}
   user-image:
-    # Save filename is an opaque HMAC token (defence-in-depth on top of
-    # tenant isolation).
     storage-root: ${WECMS_USER_IMAGE_STORAGE_ROOT}
   erp-transaction-history:
     storage-root: ${WECMS_ERP_TRANSACTION_HISTORY_STORAGE_ROOT}
   card-transactions:
     storage-root: ${WECMS_CARD_TRANSACTIONS_STORAGE_ROOT}
-  # internal-transfer is listed last in this section because its YAML key also
-  # carries the Banking Cut-off Configuration (next section): Spring binds that
-  # under wecms.internal-transfer.cutoff, so it must stay nested under this key.
   internal-transfer:
-    # storage-root — NON-STANDARD: defaults to "c:/WeCMS/File Data", differs from
-    # the "C:/WECMS PROJECT/File Data" used by the other modules. Leftover
-    # per-box path from the 2026-05-26 server-config merge (commit a55344a);
-    # flagged for normalization. Override via WECMS_INTERNAL_TRANSFER_STORAGE_ROOT.
     storage-root: ${WECMS_INTERNAL_TRANSFER_STORAGE_ROOT}
 
-    # Banking cut-off windows (wecms.internal-transfer.cutoff) are defined once
-    # in the base application.yml (Shinhan / Woori / VCB incl. CITAD-via-API
-    # 16:30 + VCB ≥500M tier) and inherited here — no SIT override needed. Bank
-    # identity is resolved from TB_FIRM_BANK_CODE.ENG_ABRVAT_NM, so the
-    # WECMS_SHINHAN_BANK_CD / WECMS_WOORI_BANK_CD env vars are no longer consumed.
-
   # =============================================================================
-  # Exchange-rate collection batch (Shinhan + Woori FX scraping)
+  # Exchange-rate collection batch
   # =============================================================================
-  # ON by default on SIT. SIT runs against its OWN isolated refactor DB instance
-  # (separate from the legacy JEX database — same schema/DDL/tables/functions, but
-  # a distinct instance), so the refactor FX batch writing BANK_EXCH_RATE_INFM
-  # cannot double-write or race the legacy JEX batch. SIT therefore genuinely owns
-  # FX collection and exercises the real batch. Set
-  # WECMS_EXCHANGE_RATE_BATCH_ENABLED=false to disable for a one-off run.
+  # ON by default on SIT — SIT owns FX collection on its isolated DB.
   exchange-rate:
     batch:
       enabled: ${WECMS_EXCHANGE_RATE_BATCH_ENABLED}
 
-  # Operation Status Inquiry batch (legacy OPRT_0001_001 seed / OPRT_0010_001 refresh).
-  # OFF by default — the legacy JEX batch still owns OPRT_STTS_INFO on the shared DB.
-  # Crons are PLACEHOLDERS until the JEX batch-admin schedule is confirmed (audit OQ-1).
+  # =============================================================================
+  # Operation Status Inquiry batch
+  # =============================================================================
   operation-status:
     batch:
       enabled: ${WECMS_OPERATION_STATUS_BATCH_ENABLED}
@@ -262,24 +121,14 @@ wecms:
       refresh-cron: ${WECMS_OPERATION_STATUS_BATCH_REFRESH_CRON}
 
   # =============================================================================
-  # Coocon
+  # Coocon + OSMC (from .env.sit / host env)
   # =============================================================================
   coocon:
-    # No values committed here — all come from .env.sit / the host env (setenv.sh),
-    # same placeholder shape as UAT/PROD. .env.sit.example carries the DEV host URLs
-    # as samples; keys are supplied per host (rotate the old keys still in git
-    # history — see docs/security/required-environment-secrets.md). Single source of
-    # truth for BOTH the FX-rate batch AND the bank-scraping flow.
     api-key: ${WECMS_COOCON_API_KEY}
     api-url: ${WECMS_COOCON_API_URL}
     smart-api-key: ${WECMS_COOCON_SMART_API_KEY}
     smart-api-url: ${WECMS_COOCON_SMART_API_URL}
     unique-key: ${WECMS_COOCON_UNIQUE_KEY}
-
-  # --- GDT lookup (OSMC) — same Coocon bigdata gateway as coocon.api-url ---
-  # No values committed; all come from .env.sit / host env. Point osmc.url/api-key
-  # at the DEV bigdata host/key in .env.sit, else the gateway rejects the call with
-  # "등록되지 않은 인증키 입니다" (WBE_OSMC_LOOKUP_FAILED).
   osmc:
     url: ${WECMS_OSMC_URL}
     api-key: ${WECMS_OSMC_API_KEY}
@@ -289,9 +138,7 @@ wecms:
 # =============================================================================
 # HAENGSUNG Oracle ERP integration
 # =============================================================================
-# Same property bindings as the base application.yml, declared per-profile for
-# explicit visibility. OFF by default; real values resolve from env vars on the
-# SIT host. No secrets in YAML.
+# OFF by default; real values from env vars on the SIT host.
 haengsung:
   oracle:
     enabled: ${HAENGSUNG_ORACLE_ENABLED}
@@ -311,21 +158,7 @@ haengsung:
 # =============================================================================
 # Logging
 # =============================================================================
-# VERBOSE debug logging ENABLED for SIT (2026-07-08, team-lead request).
-# This deliberately re-opens the F-06 logging hardening for SIT ONLY — never
-# copy these levels to application-uat.yml / application-prod.yml.
-#   - com.kosign.wecms=DEBUG        → activity log: every HTTP request/response
-#                                     (method, URI, status, duration, body) via
-#                                     RequestResponseLoggingFilter. Passwords /
-#                                     tokens / cert ciphertext are redacted (F-06);
-#                                     other body fields are NOT.
-#   - org.hibernate.SQL=DEBUG       → the SQL statements Hibernate runs.
-#   - org.hibernate.orm.jdbc.bind=TRACE → the '?' bind values. NOT redacted —
-#                                     logs raw account numbers / amounts / names
-#                                     from the SHARED dev DB. Turn back to WARN
-#                                     once debugging is done.
-# To silence again, revert every level below to the F-06 baseline
-# (com.kosign.wecms=INFO, security=WARN, the rest=WARN, hibernate=info).
+# VERBOSE debug logging for SIT only — logs raw SQL + bind values. Never in uat/prod.
 logging:
   level:
     com.kosign.wecms: DEBUG

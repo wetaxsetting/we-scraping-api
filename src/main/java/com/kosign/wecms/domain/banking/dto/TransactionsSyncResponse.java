@@ -99,7 +99,16 @@ public record TransactionsSyncResponse(
          *  the wire) on every non-COMPLETED status; {@code 0} when the
          *  tenant's auto-match biz-env gate ({@code 00079}) is off.
          *  Additive field — existing frontend clients ignore it. */
-        Integer autoMatchedCount
+        Integer autoMatchedCount,
+
+        /** COMPLETED-only — whether the tenant's auto-match gate
+         *  ({@code BUSI_ENV_SET_INFM} setting {@code 00079}) is on. The popup
+         *  renders the per-currency "Debit Matched" row only when this is
+         *  {@code true} (legacy {@code _autoMatchEnv !== "N"} guard) — a
+         *  {@code 0} {@code auto_matched_count} alone can't distinguish
+         *  "disabled" from "enabled but nothing matched". Null (dropped from
+         *  the wire) on every non-COMPLETED status. */
+        Boolean autoMatchEnabled
 ) {
 
     public enum Status {
@@ -114,7 +123,8 @@ public record TransactionsSyncResponse(
     public static TransactionsSyncResponse completed(
             UUID sessionId, int accountsSynced, int debitCount, int creditCount,
             BigDecimal debitTotal, BigDecimal creditTotal, String lastUpdate,
-            List<CurrencySummary> currencySummaries, int autoMatchedCount) {
+            List<CurrencySummary> currencySummaries, int autoMatchedCount,
+            boolean autoMatchEnabled) {
         return new TransactionsSyncResponse(
                 sessionId, Status.COMPLETED,
                 accountsSynced, debitCount, creditCount,
@@ -124,7 +134,8 @@ public record TransactionsSyncResponse(
                 currencySummaries,
                 null, null, null, null, null,
                 null, null,
-                autoMatchedCount);
+                autoMatchedCount,
+                autoMatchEnabled);
     }
 
     /** OTP challenge — frontend opens the OTP dialog. */
@@ -135,7 +146,7 @@ public record TransactionsSyncResponse(
                 null,
                 prompt, null, null, null, null,
                 null, null,
-                null);
+                null, null);
     }
 
     /** QNA challenge — frontend opens the QNA question-picker dialog.
@@ -150,7 +161,7 @@ public record TransactionsSyncResponse(
                 null,
                 prompt, questions, null, null, loginId,
                 null, null,
-                null);
+                null, null);
     }
 
     /** CAPTCHA challenge — frontend opens the CAPTCHA dialog. */
@@ -162,7 +173,7 @@ public record TransactionsSyncResponse(
                 null,
                 prompt, null, image, format, null,
                 null, null,
-                null);
+                null, null);
     }
 
     /** Terminal error — frontend tears down with the standard error dialog. */
@@ -173,6 +184,6 @@ public record TransactionsSyncResponse(
                 null,
                 null, null, null, null, null,
                 code, message,
-                null);
+                null, null);
     }
 }

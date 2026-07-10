@@ -92,4 +92,16 @@ public final class LegacyTextNormalizer {
         }
         return value;
     }
+
+    /**
+     * Full upload-time normalization = {@link #stripCrLf} then
+     * {@link #stripVietnameseTone}, in the same order the parsers apply on the
+     * preview path (CR/LF stripped at cell read, Vietnamese accents stripped
+     * per validated field). Used by the save-path / dispatch enforcement guard
+     * so a direct API call persists the SAME normalized value the upload
+     * preview would have produced. Idempotent. Null-safe.
+     */
+    public static String normalize(String value) {
+        return stripVietnameseTone(stripCrLf(value));
+    }
 }

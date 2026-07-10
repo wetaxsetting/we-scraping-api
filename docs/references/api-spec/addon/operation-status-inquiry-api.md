@@ -51,7 +51,7 @@ The Excel endpoint follows the project-wide [§ Excel export](../../../../CLAUDE
 | `sortField` | `String` | ❌ not accepted | ✅ optional | View Setting `FIELD_ID` — `COMPANY` / `OPERATION_STATUS` / `LAST_UPDATE`. **No `@Pattern` validation** per [§ Common table sort](../../../../CLAUDE.md) — the per-domain enum's lenient `parse(...)` is the validator; unknown values fall back silently to default ORDER BY. |
 | `sortDirection` | `String` | ❌ not accepted | ✅ optional | `ASC` / `DESC`. Lenient parse via [`SortDirection.parse(...)`](../../../../src/main/java/com/kosign/wecms/common/web/SortDirection.java); blank / unknown → null → default ORDER BY. |
 
-**Auth-derived** (not on the wire): `BIZ_KEY` from `TenantContext.currentBizKey()`, populated by [`JwtAuthenticationFilter`](../../../../src/main/java/com/kosign/wecms/common/security/JwtAuthenticationFilter.java) from the validated JWT claim. Endpoint does not accept a `BIZ_KEY` query param — wildcard filters are forbidden by [`TenantProperties`](../../../../src/main/java/com/kosign/wecms/config/TenantProperties.java).
+**Auth-derived** (not on the wire): `BIZ_KEY` from `TenantContext.currentBizKey()`, populated by [`JwtAuthenticationFilter`](../../../../src/main/java/com/kosign/wecms/common/security/JwtAuthenticationFilter.java) from the validated JWT claim. Endpoint does not accept a `BIZ_KEY` query param — a `%` wildcard tenant filter is therefore impossible.
 
 ### `POST /api/v1/addon/operation-status/inquire` request body (proposed)
 
@@ -198,7 +198,7 @@ The current 3-state Java coercion is the right Phase 2 choice. Match the Sales e
 
 ## Tenant filtering
 
-**`BIZ_KEY` is the only always-applied baseline filter.** Source of truth: `TenantContext.currentBizKey()`, populated by [`JwtAuthenticationFilter`](../../../../src/main/java/com/kosign/wecms/common/security/JwtAuthenticationFilter.java) from the validated JWT claim. Wildcard filters (`%`) are rejected by [`TenantProperties`](../../../../src/main/java/com/kosign/wecms/config/TenantProperties.java) — single concrete `BIZ_KEY` only.
+**`BIZ_KEY` is the only always-applied baseline filter.** Source of truth: `TenantContext.currentBizKey()`, populated by [`JwtAuthenticationFilter`](../../../../src/main/java/com/kosign/wecms/common/security/JwtAuthenticationFilter.java) from the validated JWT claim. A `%` wildcard filter is impossible — only the single concrete `BIZ_KEY` from the JWT is ever used.
 
 Repository methods are all `BIZ_KEY`-scoped:
 

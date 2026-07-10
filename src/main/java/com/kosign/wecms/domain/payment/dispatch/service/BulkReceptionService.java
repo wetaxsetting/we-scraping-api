@@ -160,6 +160,9 @@ public class BulkReceptionService {
     private final BulkTransferValidator bulkTransferValidator;
     private final OpsAlertService opsAlertService;
     private final OperatingHoursService operatingHoursService;
+    /** Dispatch-time blocked-char guard + NAPAS→internal bank-code resolver (audit task-44508, P0). */
+    private final com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard blockedCharGuard;
+    private final com.kosign.wecms.domain.payment.common.OutBankCdNormalizer outBankCdNormalizer;
 
     /**
      * Request-time bulk reception of one pay-file target: build + upload the
@@ -360,6 +363,12 @@ public class BulkReceptionService {
         mst.setRegDttm(dttm14);
         firmFileMstRepository.save(mst);
 
+        // P0 (audit task-44508): final blocked-char safety boundary before the
+        // bank file is built. Defense-in-depth on top of the save-path guard.
+        // Rules are keyed on the internal BANK_CD, so resolve the stored NAPAS
+        // OUT_BANK_CD back first.
+        String internalBankCd = outBankCdNormalizer.toInternalBankCd(pay.getOutBankCd());
+
         // Insert TB_FIRM_FILE_DATA rows + build the fixed-length D records (line seq restarts at 1).
         List<DepositData> dataLines = new ArrayList<>(reqCnt);
         int seq = 0;
@@ -386,6 +395,15 @@ public class BulkReceptionService {
             fd.setFincMdaOwnerNm(VietnameseText.replaceTone(d.getFincMdaOwnerNm()));
             fd.setTarAcctRmrk(VietnameseText.replaceTone(d.getTarAcctRmrk()));
             fd.setWdrlAcctRmrk(VietnameseText.replaceTone(d.getWdrlActRmrk()));
+            // P0 (audit task-44508): final blocked-char check on the bank-bound
+            // recipient name + remarks (already tone-stripped above).
+            blockedCharGuard.assertCleanForDispatch(internalBankCd, java.util.List.of(
+                    com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard.field(
+                            com.kosign.wecms.domain.payment.validation.FieldCd.RECIPIENT_NAME, fd.getFincMdaOwnerNm()),
+                    com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard.field(
+                            com.kosign.wecms.domain.payment.validation.FieldCd.REMARKS, fd.getTarAcctRmrk()),
+                    com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard.field(
+                            com.kosign.wecms.domain.payment.validation.FieldCd.REMARKS, fd.getWdrlAcctRmrk())));
             fd.setProcRsltDiv(NON_PROCESSING);
             fd.setRcptBankCntryCd(d.getRcptBankCntryCd());
             fd.setRemitCcyCd(d.getRemitCcyCd());

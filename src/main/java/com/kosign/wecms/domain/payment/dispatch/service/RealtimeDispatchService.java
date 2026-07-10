@@ -96,6 +96,9 @@ public class RealtimeDispatchService {
     private final DispatchKeyGenerator dispatchKeyGenerator;
     private final OpsAlertService opsAlertService;
     private final OperatingHoursService operatingHoursService;
+    /** Dispatch-time blocked-char guard + NAPAS→internal bank-code resolver (audit task-44508, P0). */
+    private final com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard blockedCharGuard;
+    private final com.kosign.wecms.domain.payment.common.OutBankCdNormalizer outBankCdNormalizer;
 
     /**
      * Dispatch one committed {@code TB_PAY_TARGET} row through {@code WGVN_EFS_202}
@@ -172,6 +175,18 @@ public class RealtimeDispatchService {
         // Legacy applies Vietnamese tone normalization before the 202 (NAPAS_REAL_TIME_BATCH:261-270).
         String ownerNm = VietnameseText.replaceTone(pay.getFincMdaOwnerNm());
         String tranUsag = VietnameseText.replaceTone(pay.getTranUsag());
+
+        // P0 (audit task-44508): final blocked-char safety boundary before the
+        // bank request is built. The save-path guard already keeps stored drafts
+        // clean, so this is defense-in-depth — it also protects any row inserted
+        // outside the create services. Rules are keyed on the internal BANK_CD,
+        // so resolve the stored NAPAS OUT_BANK_CD back first.
+        String internalBankCd = outBankCdNormalizer.toInternalBankCd(pay.getOutBankCd());
+        blockedCharGuard.assertCleanForDispatch(internalBankCd, java.util.List.of(
+                com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard.field(
+                        com.kosign.wecms.domain.payment.validation.FieldCd.RECIPIENT_NAME, ownerNm),
+                com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard.field(
+                        com.kosign.wecms.domain.payment.validation.FieldCd.REMARKS, tranUsag)));
 
         String[] amt = splitAmount(pay.getTranAmt());
         RealtimeTransferCommand cmd = new RealtimeTransferCommand(

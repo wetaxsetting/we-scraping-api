@@ -65,6 +65,7 @@ class InternalTransferCreateDraftTest {
     @Mock private LegacyFunctionRepository legacyFunctions;
     @Mock private AuditLogService auditLogService;
     @Mock private OutBankCdNormalizer outBankCdNormalizer;
+    @Mock private com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard blockedCharGuard;
     @Mock private Clock clock;
 
     @InjectMocks private InternalTransferService service;

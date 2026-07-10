@@ -1,84 +1,37 @@
+# DEFAULT / shared profile (tracked in Git, no secrets).
+
 spring:
   application:
     name: wecms-api
-  # Optionally load a local `.env` file as additional configuration.
-  # Use `.env.example` as the template (commit it); copy to `.env` and
-  # fill in real values (`.env` is git-ignored). Keys defined here
-  # override the YAML `${VAR:default}` placeholders. OS env vars still
-  # win over `.env` if both are set.
+  # Optional local .env overrides (template: .env.example). OS env vars win.
   config:
     import: optional:file:./.env[.properties]
   profiles:
-    # Default profile for local IDE runs. The SIT / PROD servers override
-    # this via the SPRING_PROFILES_ACTIVE env var (set on the host), so
-    # changing the default here only affects developer laptops.
-    #
-    # ⚠ DEPLOYMENT RISK (fail-open to DEV): if a SIT/UAT/PROD host launches WITHOUT
-    # SPRING_PROFILES_ACTIVE (or --spring.profiles.active), this default makes the
-    # app silently activate `local` → application-local.yml → the shared DEV DB
-    # (172.168.5.172) with the insecure dev JWT secret and DEV Coocon credentials.
-    # KEPT here (removal would break out-of-the-box IDE runs), but the safer options
-    # are operational, in order of preference:
-    #   1) ALWAYS set SPRING_PROFILES_ACTIVE on every non-local host (deploy guard).
-    #   2) Devs select the `local` profile via IDE/Gradle run-config instead of relying
-    #      on this default (then this line can be removed for true fail-fast everywhere).
-    #   3) If removed: a no-profile boot has no datasource and fails fast — safe for
-    #      servers, but each developer must pass --spring.profiles.active=local.
-    # Do NOT change this line without sign-off — it is an ergonomics-vs-safety tradeoff.
-    #
-    # Why `local` is the right default:
-    #   - application-local.yml carries a 75-byte placeholder for
-    #     wecms.jwt.secret so JwtTokenProvider can boot out of the box.
-    #   - application-sit.yml deliberately has NO default — every
-    #     sensitive value must come from the host env. Starting the IDE
-    #     with profile=sit fails fast with "secret must be at least 32
-    #     bytes" unless ops-style env vars are pre-set.
+    # Default for local runs. Servers MUST set SPRING_PROFILES_ACTIVE, or they
+    # fall through to `local` and the shared DEV DB.
     active: local
   jpa:
     open-in-view: false
     hibernate:
-      # ddl-auto: validate — Hibernate only validates entity mappings against
-      # the existing schema; it never auto-creates or auto-updates tables.
-      # Added to the base 2026-06-07 so every profile inherits the safe default.
+      # Validate entity mappings only; never create or update tables.
       ddl-auto: validate
     properties:
       hibernate.dialect: org.hibernate.dialect.PostgreSQLDialect
       hibernate.jdbc.time_zone: UTC
-  # Flyway removed 2026-06-10. The application no longer auto-migrates any
-  # database. The schema SQL is kept in its original location
-  # (src/main/resources/db/migration/) for reference / version history, but
-  # nothing runs it automatically — apply required SQL manually in the DB.
-  # `ddl-auto: validate` above only validates entity mappings against the
-  # existing schema — the target DB must already be fully migrated or boot
-  # validation fails with "missing column ...".
+  # No Flyway — apply schema SQL manually. validate needs a pre-migrated DB.
   messages:
     basename: messages
     encoding: UTF-8
   servlet:
     multipart:
-      # Settings > Contacts attachments cap — 10 MB per file, 50 MB
-      # per request (matches ContactsFileService.MAX_FILE_SIZE_BYTES).
-      # Container-level guard so an oversized upload is rejected before
-      # the service-layer envelope fires; both layers are needed because
-      # the container 413 path produces a non-WBE response otherwise.
+      # Upload cap: 10 MB per file, 50 MB per request.
       max-file-size: 10MB
       max-request-size: 50MB
 
   task:
     scheduling:
-      # Single-threaded scheduler — Spring Boot's default is also 1,
-      # set explicitly here so it can't drift via auto-config changes.
-      # Single thread guarantees @Scheduled methods on the same bean
-      # never overlap with themselves on the same JVM (cross-JVM
-      # overlap requires ShedLock — not wired today; flagged for any
-      # multi-instance deploy).
-      #
-      # Timezone for cron triggers: NOT settable via Spring property
-      # in Spring Boot 3.x — every @Scheduled annotation that fires
-      # in a specific local-time window MUST carry an explicit
-      # zone = "Asia/Ho_Chi_Minh" (see ExchangeRateBatchService).
-      # Docker / Linux hosts default to UTC; without the `zone`
-      # attribute the FX batches would fire 7 hours late.
+      # Single-threaded scheduler. @Scheduled crons need an explicit
+      # zone = "Asia/Ho_Chi_Minh" (hosts default to UTC).
       pool:
         size: 1
       thread-name-prefix: wecms-scheduler-
@@ -94,101 +47,31 @@ wecms:
   # Security (CORS / JWT)
   # =============================================================================
   jwt:
-    # Required. Fail-fast validated by JwtTokenProvider:
-    #   >= 32 bytes  -> HS256
-    #   >= 64 bytes  -> HS512 (preferred)
-    # Generate with:  openssl rand -hex 64
+    # Required. >=32 bytes (HS256), >=64 bytes (HS512). openssl rand -hex 64
     secret: ${WECMS_JWT_SECRET}
     expires-in-seconds: 3600
     issuer: wecms-api
   cors:
-    # Comma-separated list of allowed cross-origin frontends. Baseline
-    # is local dev only — each profile (application-local.yml etc.)
-    # adds its own environment origins on top.
+    # Comma-separated allowed frontend origins.
     allowed-origins: ${WECMS_CORS_ALLOWED_ORIGINS}
   # =============================================================================
   # Credential cipher (legacy pgcrypto-compatible)
   # =============================================================================
   crypto:
-    # Seed for the AES-256-CBC (zero-IV, PKCS#5) cipher applied to the
-    # BANK_CERT_INFO / GDT_CERT_INFO password column. SHA-256(seed) is the
-    # AES key — byte-identical to the legacy JEX DB functions
-    #   public.encrypt(txt) = encode(encrypt(txt::bytea,
-    #                               digest('wabooksvn','sha256'),'aes'),'base64')
-    # MUST equal the legacy seed for cross-system data compatibility on a
-    # shared JEX DB. Do NOT change unless the legacy DB function changes.
-    # (Replaces the retired AES-GCM `wecms.crypto.cert-key`.)
+    # AES seed for cert columns. Must equal the legacy seed for shared-DB compat.
     legacy-cert-seed: ${WECMS_CRYPTO_LEGACY_CERT_SEED}
   # =============================================================================
   # Login Credentials
   # =============================================================================
   login-credentials:
-    # GDT verify-before-save flag. Keep false until the GDT gateway + captcha
-    # resume flow are ready (enabling now rejects any GDT login hitting a captcha).
-    # Details: docs/audits/login-credentials-legacy-vs-refactor-audit.md (G2)
+    # GDT verify-before-save. Keep false until the GDT gateway is ready.
     gdt-verify-enabled: ${WECMS_LOGIN_CREDENTIALS_GDT_VERIFY_ENABLED}
-  # NXiSAS local-engine (client-side) GDT module config moved out of YAML
-  # 2026-06-16 — the single fixed GDT triple now lives as code constants in
-  # GdtNxisasConfig (mirroring NxisasBankConfig). Served via
-  # GET /api/v1/login-credentials/gdt/engine-config. See
-  # docs/audits/login-credentials-jexadmin-removal-audit.md.
-  tenant:
-    # Dormant config slot. Spring no longer auto-creates company/admin
-    # data at startup — the BootstrapRunner that previously consumed
-    # this property has been removed. Login resolves the active tenant
-    # per user from USER_BUSI_CONN_INFM (multi-company; see AuthService)
-    # and stamps the chosen BIZ_KEY into the signed JWT claim that
-    # JwtAuthenticationFilter reads into TenantContext.
-    #
-    # Operational practice: a DBA creates a new company + first admin
-    # by running the legacy manual setup SQL pattern against the target
-    # database (see Claude Code (AI)/sql/setup_uat_account_*.sql).
-    # Local R&D tenants are seeded via Flyway (V2 / V5 for 000001,
-    # V73 for 000014 = HAENGSUNG ELECTRONICS).
-    #
-    # The value is retained only so TenantProperties stays bindable
-    # and so CompanyBootstrapService.assertConsistent(...) has a
-    # comparison target if anyone ever calls bootstrap programmatically
-    # from a unit test or a future admin API.
-    biz-key: VN_VNM0004_000001
-  # =============================================================================
-  # EFS / Van Center
-  # =============================================================================
-  # Firm-banking payment dispatch (wecms.dispatch.*) is declared PER-PROFILE
-  # (application-{local,sit,uat,prod}.yml), not here — including the ops-alert flag
-  # (WGVN_MSG_SEND_001; OFF by default, OpsAlertService.notify is a no-op). VAN API key
-  # is a per-VAN secret in TB_VAN_API_INFO (not config); appDiv/grpID are code constants.
-  # Details: docs/features/wecms-batch/msg-api-alert-implementation-plan.md
   # =============================================================================
   # File storage
   # =============================================================================
-  # All upload modules use:
-  #   <storage-root>/<bizKey>/<module-slug>/<file>
-  # Each module overrides its root via its WECMS_*_STORAGE_ROOT env var.
-  #
-  # Payment modules:
-  #   Vendor Payment    -> <storage-root>/<bizKey>/vendor-payment/<file>
-  #   Expense Payment   -> <storage-root>/<bizKey>/expense-payment/<file>
-  #   Payroll           -> <storage-root>/<bizKey>/payroll/<file>
-  #   Overseas Payment  -> <storage-root>/<bizKey>/overseas-payment/<file>
-  #   Internal Transfer -> <storage-root>/<bizKey>/internal-transfer/<file>
-  #
-  # Business files:
-  #   Contacts                -> <storage-root>/<bizKey>/contacts/<file>
-  #   Preferences             -> <storage-root>/<bizKey>/preferences/<file>
-  #   User Image              -> <storage-root>/<bizKey>/user-image/<file>
-  #   ERP Transaction History -> <storage-root>/<bizKey>/erp-transaction-history/<file>
-  #
-  # Vendor Payment / Expense Payment / Payroll now have their own storage-root
-  # keys (added 2026-06-12); each default mirrors the internal-transfer root so
-  # today's layout is unchanged until a key is pointed elsewhere.
-  # overseas-payment, preferences and user-image also fall back to a legacy flat
-  # root for files written before the multi-tenant split.
-  # This file holds the CI / unit-test defaults; each profile overrides the roots.
+  # Upload layout: <storage-root>/<bizKey>/<module>/<file>. One root per module.
   overseas-payment:
     storage-root: ${WECMS_OVERSEAS_PAYMENT_STORAGE_ROOT}
-  # vendor-payment / expense-payment / payroll — own roots; defaults mirror the
-  # internal-transfer root so the physical layout is unchanged.
   vendor-payment:
     storage-root: ${WECMS_VENDOR_PAYMENT_STORAGE_ROOT}
   expense-payment:
@@ -200,67 +83,32 @@ wecms:
   preferences:
     storage-root: ${WECMS_PREFERENCES_STORAGE_ROOT}
   user-image:
-    # Save filename is an opaque HMAC token (defence-in-depth on top of
-    # tenant isolation).
     storage-root: ${WECMS_USER_IMAGE_STORAGE_ROOT}
   erp-transaction-history:
     storage-root: ${WECMS_ERP_TRANSACTION_HISTORY_STORAGE_ROOT}
-  # Card Transactions receipt / e-Invoice attachments (BUSA_DOC_FILE, audit G3/G5)
   card-transactions:
     storage-root: ${WECMS_CARD_TRANSACTIONS_STORAGE_ROOT}
-  # internal-transfer is listed last in this section because its YAML key also
-  # carries the Banking Cut-off Configuration (next section): Spring binds that
-  # under wecms.internal-transfer.cutoff, so it must stay nested under this key.
   internal-transfer:
     storage-root: ${WECMS_INTERNAL_TRANSFER_STORAGE_ROOT}
-
-    # ===========================================================================
-    # Banking cut-off configuration
-    # ===========================================================================
-    # Bound under wecms.internal-transfer.cutoff (CutoffProperties prefix), so it
-    # stays nested under internal-transfer — but it is a distinct concern from
-    # file storage. Vietnam-local cut-off windows from legacy
-    # PymnHelper.getCutoffConfig. The bank a window belongs to is resolved at
-    # runtime from TB_FIRM_BANK_CODE.ENG_ABRVAT_NM (ShinhanBank / WooriBank /
-    # Vietcombank) — NOT a hard-coded OUT_BANK_CD; the old shinhan-bank-cd /
-    # woori-bank-cd env keys (88886000 / 11704000) never matched the real firm
-    # codes (970424 / 970457 / 970436) and were removed 2026-06-29.
-    #   citad     = CITAD/EBANK/VCB via File SFTP
-    #   citad-api = CITAD via real-time API (Shinhan only — 16:30, Shinhan Bank
-    #               confirmation 17-Jun-2026; replaces the old 15:30 for the API channel)
-    #   citad-large = VCB ≥500,000,000 VND per-transaction tier (16:30)
-    cutoff:
-      shinhan:
-        napas:     { start: "00:05", end: "23:45" }
-        citad:     { start: "09:00", end: "15:30" }
-        citad-api: { start: "09:00", end: "16:30" }
-        swift:     { start: "09:00", end: "22:00" }
-      woori:
-        napas:     { start: "00:15", end: "23:55" }
-        citad:     { start: "08:30", end: "17:40" }
-        swift:     { start: "08:30", end: "19:10" }
-      vcb:
-        napas:       { start: "00:05", end: "23:45" }
-        citad:       { start: "08:00", end: "15:30" }
-        citad-large: { start: "08:00", end: "16:30" }
+    # Cut-off configuration is DB-only (2026-07-09): windows + large-txn-threshold
+    # live in TB_CUTOFF_CONFIG / TB_CUTOFF_PARAM and are loaded by
+    # CutoffConfigProvider. There is NO application.yml fallback — the app
+    # fails fast at startup if the DB config is incomplete/invalid.
+    # (CutoffConfigProvider's TTL knob defaults to 300000ms in the @Scheduled
+    #  annotation; override via WECMS_* env only if a different cadence is needed.)
 
   # =============================================================================
-  # Exchange-rate collection batch (Shinhan + Woori FX scraping)
+  # Exchange-rate collection batch
   # =============================================================================
-  # OFF BY DEFAULT. In the live-JEX-DB coexistence model the LEGACY JEX batch
-  # owns FX collection into BANK_EXCH_RATE_INFM; the refactor must NOT collect
-  # automatically or it would double-write / race the legacy batch against the
-  # shared DB. Only flip to true in an environment that genuinely owns FX
-  # collection (e.g. a future cut-over). When false/absent, the gated
-  # ExchangeRateBatchScheduler bean is not created, so no FX @Scheduled job
-  # fires; the on-demand path (ExchangeRateService.runOnDemand) is unaffected.
+  # OFF by default. Enable only in the environment that owns FX collection.
   exchange-rate:
     batch:
       enabled: ${WECMS_EXCHANGE_RATE_BATCH_ENABLED}
 
-  # Operation Status Inquiry batch (legacy OPRT_0001_001 seed / OPRT_0010_001 refresh).
-  # OFF by default — the legacy JEX batch still owns OPRT_STTS_INFO on the shared DB.
-  # Crons match the confirmed legacy Batch Admin schedule: once a day at 00:00 ICT.
+  # =============================================================================
+  # Operation Status Inquiry batch
+  # =============================================================================
+  # OFF by default. Crons default to 00:00 ICT daily.
   operation-status:
     batch:
       enabled: ${WECMS_OPERATION_STATUS_BATCH_ENABLED}
@@ -268,113 +116,41 @@ wecms:
       refresh-cron: ${WECMS_OPERATION_STATUS_BATCH_REFRESH_CRON}
 
   # =============================================================================
-  # Coocon
+  # Coocon (bank/card scraping + FX gateway)
   # =============================================================================
   coocon:
-    # Coocon DEV credentials — mirrors <coocon> in VI/jex.wabooks_new.user.xml.
-    # Single source of truth for every Coocon smart-gateway call —
-    # account scraping (LOGIN/OTP/QnA/CAPTCHA/ACCT_LIST/TRANSACTION/
-    # BALANCE), card scraping (CARD_INFO/CARD_USING), and FX-rate
-    # batch (FOREIGN_EXCHANGE). All three flows route through the
-    # unified NxisasGatewayClient, which reads smart-api-url +
-    # smart-api-key. NXISAS is the protocol/job-type family the
-    # Coocon smart-gateway exposes — there is no separate FX-rate
-    # endpoint. Override any field via WECMS_COOCON_* env vars when
-    # testing against a different Coocon environment.
-    # Per-environment smart-gateway hosts (Sonny, 2026-05-28):
-    #   DEV / SIT  → https://dev-sgw.webcashvietnam.com:8443/...
-    #   UAT / PROD → https://sgw.webcashvietnam.com/...           (no port, no 'dev-' prefix)
-    #
-    # F-05 (2026-06-24): the committed DEV vendor-key defaults were REMOVED. The
-    # secret keys are now bare ${VAR} placeholders, so any environment that does
-    # not supply them via env var fails fast at startup (CooconProperties is
-    # @NotBlank-validated and the placeholder is unresolved) instead of silently
-    # falling back to the DEV keys. Non-secret URL / unique-key defaults are kept
-    # (they are not credentials). Local dev still works — the .gitignored
-    # application-local.yml re-declares these with dev defaults. The previously-
-    # committed DEV keys remain in git history and MUST be rotated by infra/ops —
-    # see docs/security/required-environment-secrets.md.
+    # Secret keys required (no default). Set per environment via WECMS_COOCON_*.
     api-key: ${WECMS_COOCON_API_KEY}
     api-url: ${WECMS_COOCON_API_URL}
     smart-api-key: ${WECMS_COOCON_SMART_API_KEY}
     smart-api-url: ${WECMS_COOCON_SMART_API_URL}
     unique-key: ${WECMS_COOCON_UNIQUE_KEY}
-  #
-  # --- GDT lookup (OSMC) ---
+  # =============================================================================
+  # OSMC (GDT lookup — same Coocon gateway)
+  # =============================================================================
   osmc:
-    # GDT (Tổng cục Thuế) business-registration lookup — Coocon bigdata
-    # API (BI09). Legacy call site:
-    # WECMS DEV/.../aosv/aosv_0001_002_r001_act.jsp:98 →
-    # WABOOKSOSMCAPIUtil.callApi("TRCO_TRCO001_00003", ...) →
-    # kr.co.coocon.sgw.RestClient → coocon.api_url. Wire shape pinned by
-    # ApiIn.java / BI08In.java / BI08Out.java
-    # ({ ApiKey, ApiId, UniqueKey, Input: { search } }).
-    # NOTE: application-local.yml / -sit.yml NOW re-declare `osmc` to pin the DEV
-    # bigdata host (dev2.coocon.co.kr:8443) — the GDT lookup is the same Coocon
-    # bigdata endpoint as `coocon.api-url`. The defaults below (PROD host) apply
-    # only when no profile-specific override is present. A GDT call against the
-    # wrong host/key returns "등록되지 않은 인증키 입니다" (WBE_OSMC_LOOKUP_FAILED).
-    # Note OSMC/GDT may still be blocked in local R&D by a Cambodia network/IP
-    # restriction even with the correct key — that is a separate infra concern.
-    # PROD/UAT: `osmc` is re-declared there WITHOUT a default (fail-fast) — supply
-    # via WECMS_OSMC_URL / WECMS_OSMC_API_KEY / WECMS_OSMC_API_ID /
-    # WECMS_OSMC_UNIQUE_KEY env vars.
     url: ${WECMS_OSMC_URL}
-    # F-05: secret default removed — bare placeholder, fail-fast when unset.
     api-key: ${WECMS_OSMC_API_KEY}
     api-id: ${WECMS_OSMC_API_ID}
     unique-key: ${WECMS_OSMC_UNIQUE_KEY}
 
 # =============================================================================
-# HAENGSUNG Oracle ERP integration (Step 1 foundation)
+# HAENGSUNG Oracle ERP integration
 # =============================================================================
-# Secondary, OPTIONAL Oracle datasource for HAENGSUNG (PRDT_TYPE='H') ERP
-# integration — see docs/features/haengsung-oracle-integration-roadmap.md.
-# OFF BY DEFAULT: when `enabled` is false no Oracle bean is created and the app
-# boots against PostgreSQL only. The PostgreSQL datasource stays @Primary; this
-# Oracle datasource is secondary and JdbcTemplate-only (no JPA entities, no
-# Flyway, no Oracle table in the inventory).
-#
-# These are bound here in the base file (with safe defaults) so EVERY profile
-# inherits the OFF default. Real values are supplied per environment via env:
-#   - Local dev SIT run -> the gitignored .env.sit (copy from .env.sit.example).
-#   - Real SIT host     -> OS env via Tomcat bin/setenv.sh (AUTHORITATIVE —
-#                          .env.sit is NOT read on the SIT box, per memory
-#                          reference_sit_server_config_setenv).
-# Credentials are never committed and never logged. When `enabled=true` and any
-# of url/username/password is missing, HaengsungOracleProperties fails fast at
-# startup (naming the missing setting, never its value).
+# Optional secondary Oracle datasource. OFF by default; set values per host.
 haengsung:
   oracle:
     enabled: ${HAENGSUNG_ORACLE_ENABLED}
     url: ${HAENGSUNG_ORACLE_URL}
     username: ${HAENGSUNG_ORACLE_USERNAME}
     password: ${HAENGSUNG_ORACLE_PASSWORD}
-  # Scheduled Oracle payment-import batch (Step 3, legacy ERP_0100_002).
-  # OFF BY DEFAULT: when `enabled` is false the HaengsungScheduledPaymentImportJob
-  # bean is not created and no cron is registered. It also no-ops if the Oracle
-  # feature above is off. When enabled, it reuses the SAME ErpPaymentRefreshService
-  # as the manual Refresh (one import implementation) and runs per HAENGSUNG
-  # company. cron is a Spring cron (ICT); default = every 5 minutes (legacy cadence).
+  # Scheduled Oracle jobs. OFF by default; cron is a Spring cron (ICT).
   scheduled-payment-import:
     enabled: ${HAENGSUNG_SCHEDULED_IMPORT_ENABLED}
     cron: ${HAENGSUNG_SCHEDULED_IMPORT_CRON}
-  # Scheduled Oracle exchange-rate sync (Step 6, legacy ERP_0100_001).
-  # OFF BY DEFAULT: when `enabled` is false the HaengsungExchangeRateSyncJob bean
-  # is not created and no cron is registered. It also no-ops if the Oracle feature
-  # above is off. When enabled it pushes WeCMS BANK_EXCH_RATE_INFM rates into the
-  # Oracle TB_FCY_EXRATE per HAENGSUNG company. cron is a Spring cron (ICT);
-  # default = every 5 minutes (legacy cadence is Jex-Studio-defined, not in source).
   exchange-rate-sync:
     enabled: ${HAENGSUNG_EXCHANGE_RATE_SYNC_ENABLED}
     cron: ${HAENGSUNG_EXCHANGE_RATE_SYNC_CRON}
-  # Scheduled Oracle account-history + card-approval sync (Step 7, legacy ERP_0100_003).
-  # OFF BY DEFAULT: when `enabled` is false the HaengsungCardAccountSyncJob bean is
-  # not created and no cron is registered. It also no-ops if the Oracle feature
-  # above is off. When enabled it pushes WeCMS ACCT_TRNS_HSTR → Oracle
-  # TB_ACCT_HISTORY and CARD_MSTR/CARD_TRNS_HSTR → Oracle TB_CARD_APPROVAL per
-  # HAENGSUNG company. cron is a Spring cron (ICT); default = every 5 minutes
-  # (legacy cadence is Jex-Studio-defined, not in source).
   card-account-sync:
     enabled: ${HAENGSUNG_CARD_ACCOUNT_SYNC_ENABLED}
     cron: ${HAENGSUNG_CARD_ACCOUNT_SYNC_CRON}
@@ -382,22 +158,9 @@ haengsung:
 # =============================================================================
 # Logging
 # =============================================================================
-# Surface the per-request traceId (set by TraceIdFilter into MDC under key
-# `traceId`) in every log line. The `--` placeholder shows when the
-# logger fires outside a request scope (startup, scheduled jobs).
+# Base = production-safe. SQL / bind-value logging lives in local + sit only.
 logging:
   pattern:
     level: "%5p [traceId=%X{traceId:--}]"
-  # Base carries ONLY production-safe logging defaults. SQL-statement logging
-  # and JDBC bind-parameter logging are dev-only concerns and live in
-  # application-local.yml / application-sit.yml (both of which re-declare the
-  # full verbose set), NOT here.
-  #
-  # Why this matters: Spring resolves `logging.level.<logger>` per individual
-  # key, not as an atomic map. -uat / -prod override `org.hibernate.SQL` but do
-  # NOT re-declare `org.springframework.jdbc.core` / `org.hibernate.orm.jdbc.bind`,
-  # so any TRACE value left here would survive the profile merge into UAT/PROD —
-  # logging SQL bind values (PII: account numbers, credentials) in production and
-  # breaking the -uat/-prod "SQL logging OFF" hard rule. (Trimmed 2026-06-22.)
   level:
     org.hibernate: info

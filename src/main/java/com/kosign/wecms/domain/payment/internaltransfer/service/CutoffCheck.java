@@ -40,8 +40,9 @@ public record CutoffCheck(
         boolean vndToVnd,
         boolean hasTxnAtOrAbove500M) {
 
-    /** VCB CITAD per-transaction tier threshold — ≥ 500,000,000 VND
-     *  bumps the cut-off from 15:30 to 16:30 (legacy PymnHelper.java:3239). */
-    public static final java.math.BigDecimal LARGE_TXN_THRESHOLD =
-            new java.math.BigDecimal("500000000");
+    // NOTE: the VCB CITAD ≥500M tier threshold is now config-driven
+    // (wecms.internal-transfer.cutoff.large-txn-threshold → CutoffConfigSnapshot)
+    // and read via CutoffValidator.largeTxnThreshold(). The former hard-coded
+    // LARGE_TXN_THRESHOLD constant was removed 2026-07-09 per the PO directive
+    // that no cut-off value is hard-coded.
 }

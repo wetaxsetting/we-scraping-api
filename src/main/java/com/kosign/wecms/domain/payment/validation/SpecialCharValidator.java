@@ -11,11 +11,10 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -49,9 +48,10 @@ public class SpecialCharValidator {
     private final BlockedCharsRuleRepository ruleRepository;
     private final MessageResolver            messageResolver;
 
-    /** Snapshot of {@code Map<(bankCd|pymnType|fieldCd), Set<Character>>}
-     *  with the instant it was loaded. Refreshed when older than
-     *  {@link #TTL_MS}. */
+    /** Snapshot of {@code Map<(bankCd|pymnType|fieldCd), orderedBlockedChars>}
+     *  with the instant it was loaded. The value is the ordered, deduped
+     *  configured blocked-char string (union of all matching rules). Refreshed
+     *  when older than {@link #TTL_MS}. */
     private final AtomicReference<Snapshot> snapshot = new AtomicReference<>(null);
 
     /**
@@ -73,32 +73,90 @@ public class SpecialCharValidator {
         if (value == null || value.isEmpty()) return Optional.empty();
         if (bankCd == null || bankCd.isBlank()) return Optional.empty();
 
-        Set<Character> blocked = lookup(bankCd.trim(), pymnType.code(), fieldCd.code());
+        String blocked = lookup(bankCd.trim(), pymnType.code(), fieldCd.code());
         if (blocked.isEmpty()) return Optional.empty();
 
-        StringBuilder hit = new StringBuilder();
+        // Detection: does the value contain ANY configured blocked char?
+        // Per-character membership, NOT regex (legacy parity).
+        boolean anyBlocked = false;
         for (int i = 0; i < value.length(); i++) {
-            char c = value.charAt(i);
-            if (blocked.contains(c) && hit.indexOf(String.valueOf(c)) < 0) {
-                if (hit.length() > 0) hit.append(' ');
-                hit.append(c);
-            }
+            if (blocked.indexOf(value.charAt(i)) >= 0) { anyBlocked = true; break; }
         }
-        if (hit.length() == 0) return Optional.empty();
+        if (!anyBlocked) return Optional.empty();
 
+        // Message content = the FULL configured blocked set (ordered, deduped),
+        // NOT only the characters found — legacy parity with
+        // wabooks.validator.SpecialCharValidator:130-132 ("show ALL blocked
+        // chars, not just found ones"). Single space between each character.
+        String display = spaceSeparated(blocked);
         String fieldLabel = messageResolver.resolve("payment.upload.field." + fieldCd.code(), fieldCd.code());
         String message = messageResolver.resolve(
                 "payment.upload.error.blocked_chars",
-                fieldLabel, hit.toString());
+                fieldLabel, display);
         return Optional.of(message);
+    }
+
+    /**
+     * Dispatch-time defense-in-depth (audit task-44508, P0). Does {@code value}
+     * contain any character blocked for {@code (bankCd, fieldCd)} under ANY
+     * payment type? At dispatch the caller only knows the withdrawal bank + the
+     * field being written to the bank file (not the originating payment type),
+     * so this unions the blocked sets across all {@link PymnType}s — a strict
+     * superset of the per-type check (bank+field rules are identical across
+     * types in practice). Returns the localized "{field} must not contain:
+     * {full set}" message, or empty when clean / no rule / blank input.
+     *
+     * @param bankCd the INTERNAL withdrawal {@code BANK_CD} (rules are keyed on
+     *               it — resolve the NAPAS {@code OUT_BANK_CD} first).
+     */
+    public Optional<String> validateAnyType(String bankCd, FieldCd fieldCd, String value) {
+        if (value == null || value.isEmpty()) return Optional.empty();
+        if (bankCd == null || bankCd.isBlank()) return Optional.empty();
+
+        Snapshot s = currentSnapshot();
+        LinkedHashSet<Character> union = new LinkedHashSet<>();
+        for (PymnType t : PymnType.values()) {
+            String chars = s.rules.get(key(bankCd.trim(), t.code(), fieldCd.code()));
+            if (chars != null) {
+                for (int i = 0; i < chars.length(); i++) union.add(chars.charAt(i));
+            }
+        }
+        if (union.isEmpty()) return Optional.empty();
+
+        boolean any = false;
+        for (int i = 0; i < value.length(); i++) {
+            if (union.contains(value.charAt(i))) { any = true; break; }
+        }
+        if (!any) return Optional.empty();
+
+        StringBuilder disp = new StringBuilder(union.size() * 2);
+        for (Character c : union) {
+            if (disp.length() > 0) disp.append(' ');
+            disp.append(c.charValue());
+        }
+        String fieldLabel = messageResolver.resolve("payment.upload.field." + fieldCd.code(), fieldCd.code());
+        return Optional.of(messageResolver.resolve(
+                "payment.upload.error.blocked_chars", fieldLabel, disp.toString()));
+    }
+
+    /** Render an ordered blocked-char string with one space between chars
+     *  (e.g. {@code "@$'\"<>"} → {@code "@ $ ' \" < >"}). */
+    private static String spaceSeparated(String chars) {
+        StringBuilder sb = new StringBuilder(chars.length() * 2);
+        for (int i = 0; i < chars.length(); i++) {
+            if (i > 0) sb.append(' ');
+            sb.append(chars.charAt(i));
+        }
+        return sb.toString();
     }
 
     /* ───────────────── Snapshot ───────────────── */
 
-    private Set<Character> lookup(String bankCd, String pymnTypeCode, String fieldCdCode) {
+    /** Ordered, deduped configured blocked chars for the tuple, or "" when no rule. */
+    private String lookup(String bankCd, String pymnTypeCode, String fieldCdCode) {
         Snapshot s = currentSnapshot();
-        Set<Character> chars = s.rules.get(key(bankCd, pymnTypeCode, fieldCdCode));
-        return chars != null ? chars : Set.of();
+        String chars = s.rules.get(key(bankCd, pymnTypeCode, fieldCdCode));
+        return chars != null ? chars : "";
     }
 
     private Snapshot currentSnapshot() {
@@ -117,13 +175,23 @@ public class SpecialCharValidator {
     private Snapshot loadSnapshot(long now) {
         String today = LocalDate.now(VN_TZ).format(DT8);
         List<BlockedCharsRule> rows = ruleRepository.findActiveRules(today);
-        Map<String, Set<Character>> map = new HashMap<>(rows.size());
+        // Union all rules that share a (bank|type|field) key into one ordered,
+        // deduped char sequence. LinkedHashSet preserves configured order and
+        // dedups; legacy unions the same way (SpecialCharValidator:95-104).
+        Map<String, LinkedHashSet<Character>> acc = new HashMap<>(rows.size());
         for (BlockedCharsRule r : rows) {
-            Set<Character> chars = new HashSet<>(r.getBlockedChars().length());
-            for (int i = 0; i < r.getBlockedChars().length(); i++) {
-                chars.add(r.getBlockedChars().charAt(i));
-            }
-            map.put(key(r.getBankCd(), r.getPymnType(), r.getFieldCd()), chars);
+            String bc = r.getBlockedChars();
+            if (bc == null || bc.isEmpty()) continue;
+            LinkedHashSet<Character> set = acc.computeIfAbsent(
+                    key(r.getBankCd(), r.getPymnType(), r.getFieldCd()),
+                    k -> new LinkedHashSet<>());
+            for (int i = 0; i < bc.length(); i++) set.add(bc.charAt(i));
+        }
+        Map<String, String> map = new HashMap<>(acc.size());
+        for (Map.Entry<String, LinkedHashSet<Character>> e : acc.entrySet()) {
+            StringBuilder sb = new StringBuilder(e.getValue().size());
+            for (Character c : e.getValue()) sb.append(c.charValue());
+            map.put(e.getKey(), sb.toString());
         }
         log.info("feature=special-char-validator snapshot loaded asOf={} rules={}", today, rows.size());
         return new Snapshot(map, now);
@@ -133,5 +201,5 @@ public class SpecialCharValidator {
         return bankCd + "|" + pymnType + "|" + fieldCd;
     }
 
-    private record Snapshot(Map<String, Set<Character>> rules, long loadedAt) {}
+    private record Snapshot(Map<String, String> rules, long loadedAt) {}
 }

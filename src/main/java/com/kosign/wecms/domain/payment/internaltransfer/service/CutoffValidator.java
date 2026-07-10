@@ -17,7 +17,7 @@ import java.util.Locale;
  * Verifies that a dispatch ("Transfer") request happens within the
  * bank's allowed window. Mirrors legacy
  * {@code PymnHelper.validateTransferTiming} + {@code getCutoffConfig}
- * but reads windows from {@link CutoffProperties} rather than hard-coded
+ * but reads windows from {@link CutoffConfigSnapshot} rather than hard-coded
  * constants.
  *
  * <h2>Rules (legacy parity + 17-Jun-2026 Shinhan IMP)</h2>
@@ -59,7 +59,10 @@ public class CutoffValidator {
     /** Active-bank flag in {@code TB_FIRM_BANK_CODE} (legacy {@code bank_stas = '1'}). */
     private static final String BANK_STAS_ACTIVE = "1";
 
-    private final CutoffProperties properties;
+    /** Effective config source — DB rows merged over the application.yml
+     *  fallback (Phase 2). Replaces the direct {@code CutoffConfigSnapshot} bean so
+     *  a runtime DB edit is picked up without a redeploy. */
+    private final CutoffConfigProvider configProvider;
     private final Clock clock;
     /** Brand resolution by {@code ENG_ABRVAT_NM} (legacy {@code TB_FIRM_BANK_CODE}). */
     private final TbFirmBankCodeRepository tbFirmBankCodeRepository;
@@ -77,12 +80,53 @@ public class CutoffValidator {
     }
 
     /**
+     * VCB CITAD per-transaction tier threshold (VND), from
+     * {@link CutoffConfigSnapshot#largeTxnThreshold()}. A batch with any line
+     * ≥ this amount bumps the VCB CITAD cut-off from 15:30 to 16:30.
+     * Config-driven (2026-07-09) — replaces the former hard-coded
+     * {@code CutoffCheck.LARGE_TXN_THRESHOLD} constant. Callers use this so
+     * the threshold lives in exactly one place ({@code application.yml}).
+     */
+    public java.math.BigDecimal largeTxnThreshold() {
+        return configProvider.current().largeTxnThreshold();
+    }
+
+    /**
+     * Whether a <b>VCB-source Internal Transfer</b> is exempt from the
+     * cut-off window entirely (works 24/7, any channel, any day).
+     *
+     * <p>Legacy parity: {@code PymnHelper.validateTransferTiming}
+     * (PymnHelper.java:3225-3233) returns early — skipping every cut-off /
+     * weekend check — when the payment is {@code ScdulPymnTypeCd.INTERNAL}
+     * AND the source bank is VCB. The legacy comment is explicit that this
+     * is a <b>VCB-source</b> rule ("regardless of channel or destination"),
+     * not a strict VCB→VCB same-bank check. Mr. Jung's "VCB→VCB Internal
+     * Transfer is 24/7" clarification is a subset of this and is therefore
+     * satisfied. A strict VCB→VCB narrowing was considered but rejected: an
+     * internal-transfer batch may carry multiple detail lines with mixed
+     * destination banks, so "all destinations are VCB" is ambiguous, and
+     * narrowing would diverge from legacy behaviour (under-bypassing).
+     *
+     * <p>This method is <b>only</b> meaningful for the Internal Transfer
+     * dispatch path — it is named accordingly so the Vendor / Expense /
+     * Payroll / Overseas services (which must keep the normal VCB cut-off,
+     * including the ≥500M tier) never call it. Returns {@code true} iff the
+     * out-bank resolves (via {@code TB_FIRM_BANK_CODE.ENG_ABRVAT_NM}) to VCB.
+     */
+    public boolean isInternalTransferCutoffExempt(String outBankCd) {
+        return resolveBank(outBankCd) == Bank.VCB;
+    }
+
+    /**
      * Validate dispatch timing.
      *
      * @throws BusinessException one of {@code WBE2066} / {@code WBE2067} /
      *                           {@code WBE2068} when the dispatch is rejected.
      */
     public void validate(CutoffCheck ctx) {
+        // Effective config snapshot (DB merged over application.yml). Read once
+        // per validation so a mid-call refresh cannot split the decision.
+        CutoffConfigSnapshot properties = configProvider.current();
         TransferNetwork network = ctx.network() == null ? TransferNetwork.CITAD : ctx.network();
         ZonedDateTime now = ZonedDateTime.now(clock.withZone(VIETNAM_ZONE));
 
@@ -101,14 +145,14 @@ public class CutoffValidator {
             log.debug("feature=internal-transfer cutoff bypass: unknown bank (outBankCd={})", ctx.outBankCd());
             return;
         }
-        CutoffProperties.BankWindows windows = windowsFor(bank);
+        CutoffConfigSnapshot.BankWindows windows = windowsFor(properties, bank);
         if (windows == null) {
             log.debug("feature=internal-transfer cutoff bypass: no windows configured for bank={}", bank);
             return;
         }
 
         // 3. Resolve the (network, transport, tier) window.
-        CutoffProperties.NetworkWindows window = resolveWindow(bank, network, windows, ctx);
+        CutoffConfigSnapshot.NetworkWindows window = resolveWindow(bank, network, windows, ctx);
         if (window == null || window.start() == null || window.end() == null) {
             log.debug("feature=internal-transfer cutoff bypass: no window for bank={} network={} apiTransport={}",
                     bank, network, ctx.apiTransport());
@@ -140,8 +184,8 @@ public class CutoffValidator {
      * Pick the window for {@code (bank, network)}, applying the
      * CITAD-API transport split and the VCB ≥500M tier.
      */
-    private CutoffProperties.NetworkWindows resolveWindow(
-            Bank bank, TransferNetwork network, CutoffProperties.BankWindows windows, CutoffCheck ctx) {
+    private CutoffConfigSnapshot.NetworkWindows resolveWindow(
+            Bank bank, TransferNetwork network, CutoffConfigSnapshot.BankWindows windows, CutoffCheck ctx) {
         switch (network) {
             case NAPAS:
                 return windows.napas();
@@ -192,7 +236,7 @@ public class CutoffValidator {
         return null;
     }
 
-    private CutoffProperties.BankWindows windowsFor(Bank bank) {
+    private CutoffConfigSnapshot.BankWindows windowsFor(CutoffConfigSnapshot properties, Bank bank) {
         return switch (bank) {
             case SHINHAN -> properties.shinhan();
             case WOORI   -> properties.woori();

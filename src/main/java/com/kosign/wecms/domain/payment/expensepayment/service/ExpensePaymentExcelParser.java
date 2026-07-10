@@ -4,6 +4,7 @@ import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ParseExcelResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ParsedTransferLine;
+import com.kosign.wecms.domain.payment.common.LegacyTextNormalizer;
 import com.kosign.wecms.domain.payment.validation.FieldCd;
 import com.kosign.wecms.domain.payment.validation.PymnType;
 import com.kosign.wecms.domain.payment.validation.SpecialCharValidator;
@@ -611,6 +612,12 @@ public class ExpensePaymentExcelParser {
             }
         }
 
+        // F1 (audit task-44508): strip Vietnamese accents from Remarks (Excel)
+        // and the CITAD cross-filled recipient name BEFORE validation and
+        // persistence. Mirrors legacy `PymnHelper:445-446` + `:526-527`.
+        tranUsag       = LegacyTextNormalizer.stripVietnameseTone(tranUsag);
+        resolvedRcptNm = LegacyTextNormalizer.stripVietnameseTone(resolvedRcptNm);
+
         // Special-character checks against BLOCKED_CHARS_RULE. Mirrors
         // legacy `PymnHelper.readExcel:451` (REMARKS / TRAN_USAG cell)
         // and `:540` (CITAD-cross-filled RCPT_NM). Bank-specific —
@@ -730,7 +737,9 @@ public class ExpensePaymentExcelParser {
             }
             return BigDecimal.valueOf(d).stripTrailingZeros().toPlainString();
         }
-        return fmt.formatCellValue(cell).trim();
+        // F2 (audit task-44508): strip embedded CR/LF from EVERY text cell,
+        // mirroring legacy `ExcelUtils.getCell:144`. Tabs preserved.
+        return LegacyTextNormalizer.stripCrLf(fmt.formatCellValue(cell)).trim();
     }
 
     private static boolean isBlank(String s) {

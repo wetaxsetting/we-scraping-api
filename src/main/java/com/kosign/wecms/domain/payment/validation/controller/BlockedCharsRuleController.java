@@ -46,10 +46,21 @@ public class BlockedCharsRuleController {
     private static final ZoneId VN_TZ = ZoneId.of("Asia/Ho_Chi_Minh");
 
     private final BlockedCharsRuleRepository repository;
+    private final com.kosign.wecms.domain.payment.common.OutBankCdNormalizer outBankCdNormalizer;
 
     /**
-     * @param bankCd    withdrawal bank code (8-char internal — same code
-     *                  the parsers pass to {@code SpecialCharValidator})
+     * @param bankCd    withdrawal bank code. Callers pass it in EITHER form:
+     *                  the upload dialog sends the internal {@code BANK_CD}
+     *                  (e.g. {@code 11704088}); the payment detail / approval
+     *                  screens send the payment's stored {@code OUT_BANK_CD},
+     *                  which is the canonical NAPAS code (e.g. {@code 970424}).
+     *                  {@code BLOCKED_CHARS_RULE.BANK_CD} is keyed only on the
+     *                  internal code, so we resolve NAPAS → internal first
+     *                  (audit task-44508 fix — without this the detail /
+     *                  approval tooltips silently returned no rule, which is
+     *                  why the info icons disappeared once the hardcoded
+     *                  frontend fallback was removed). An already-internal code
+     *                  passes through {@code toInternalBankCd} unchanged.
      * @param pymnType  payment type code (e.g. {@code "INTR"} / {@code "VEND"})
      */
     @GetMapping
@@ -57,9 +68,10 @@ public class BlockedCharsRuleController {
             @RequestParam("bank_cd")   String bankCd,
             @RequestParam("pymn_type") String pymnType) {
 
+        String internalBankCd = outBankCdNormalizer.toInternalBankCd(bankCd);
         String asOf = LocalDate.now(VN_TZ).format(DT8);
         List<BlockedCharsRuleRow> rows = repository
-                .findActiveByBankAndPymnType(bankCd, pymnType, asOf)
+                .findActiveByBankAndPymnType(internalBankCd, pymnType, asOf)
                 .stream()
                 .map(BlockedCharsRuleController::toRow)
                 .collect(Collectors.toList());

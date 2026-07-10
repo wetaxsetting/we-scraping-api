@@ -75,12 +75,11 @@
 
 ### `@ConfigurationProperties` (typed config — the preferred pattern per CLAUDE.md)
 
-18 binders, each registered via `@EnableConfigurationProperties` on a `@Configuration` class (or `SecurityConfig`):
+17 binders, each registered via `@EnableConfigurationProperties` on a `@Configuration` class (or `SecurityConfig`):
 
 | Prefix | Record / class | Registered by | Backing YAML |
 |---|---|---|---|
 | `wecms.jwt` | [`JwtProperties`](../../src/main/java/com/kosign/wecms/config/JwtProperties.java) | `SecurityConfig` | base/local/sit |
-| `wecms.tenant` | [`TenantProperties`](../../src/main/java/com/kosign/wecms/config/TenantProperties.java) | `SecurityConfig` | base (**dormant** — see CLAUDE.md) |
 | `wecms.coocon` | [`CooconProperties`](../../src/main/java/com/kosign/wecms/config/CooconProperties.java) | `CooconConfig` | base/local/sit/uat/prod |
 | `wecms.osmc` | [`OsmcProperties`](../../src/main/java/com/kosign/wecms/domain/operation/client/OsmcProperties.java) | `OsmcConfig` | base/uat/prod |
 | `wecms.nxisas` | [`NxisasGatewayProperties`](../../src/main/java/com/kosign/wecms/domain/banking/nxisas/NxisasGatewayProperties.java) | `NxisasConfig` | ❌ **none** — only tuning knobs (`timeoutSeconds`/`sessionIdleSeconds`), code defaults 60s/300s. Gateway URL+key reuse `wecms.coocon.smart-api-*`. |
@@ -108,7 +107,7 @@
 #### `application.yml` (base) — **used**
 - **Purpose:** Shared baseline for every profile. JPA (`open-in-view:false`, `ddl-auto:validate`, PostgreSQL dialect, UTC), `spring.messages` basename/encoding, multipart caps (10 MB/50 MB), single-threaded scheduler, `server.port:8080`, error rendering, the full `wecms.*` tree (jwt, cors, tenant, file-storage roots, internal-transfer cutoff bank codes, coocon, osmc), and the `traceId` logging pattern. **Flyway removed 2026-06-10** — no migration runs; schema is treated as external/pre-migrated.
 - **Referenced by:** all 18 `@ConfigurationProperties` binders + `CorsConfig`/`DispatchAutoReceiveRegistrar` `@Value`s + Spring Boot's auto-config (`spring.*`, `server.*`, `logging.*`).
-- **Notable keys:** `spring.profiles.active=local`, `spring.config.import=optional:file:./.env`, `spring.messages.basename=messages`, `wecms.jwt.secret=${WECMS_JWT_SECRET}` (no default → fail-fast unless a profile/env supplies it), `wecms.tenant.biz-key=VN_VNM0004_000001` (dormant), `wecms.coocon.*` (DEV defaults), `wecms.osmc.*`.
+- **Notable keys:** `spring.profiles.active=local`, `spring.config.import=optional:file:./.env`, `spring.messages.basename=messages`, `wecms.jwt.secret=${WECMS_JWT_SECRET}` (no default → fail-fast unless a profile/env supplies it), `wecms.coocon.*` (DEV defaults), `wecms.osmc.*`.
 
 #### `application-local.yml` — **used** (default profile, git-ignored)
 - **Purpose:** Developer-laptop overlay. Datasource → shared dev DB `172.168.5.172:5432/wecmsdevdb` (user `wecmsdev_owner`, password default baked in), `show-sql:true` + `format_sql:true`, local JWT dev secret default, CORS (localhost:3000 + SIT + Coocon alias), full `wecms.dispatch.*` (EFS/SFTP/callback, all default OFF → mocks active), file-storage roots → `C:/WECMS PROJECT/File Data`, internal-transfer cut-off time tables (Shinhan/Woori NAPAS/CITAD/SWIFT windows), coocon DEV creds, `com.kosign.wecms: DEBUG` logging.
@@ -151,7 +150,7 @@ All five together form **one** Spring i18n bundle (`basename=messages`). `messag
 | **Validation messages** | In `messages.properties`: `WBE_VALIDATION`, `WBE_BAD_REQUEST`, `validation.own_account_transfer.*`, `settings.vas_account.excel.*`, `settings.purpose.excel.*`, `payment.upload.error.blocked_chars`. (Bean-validation `@Pattern`/`@Size` messages resolve through these keys via `GlobalExceptionHandler`.) |
 | **Error messages** | In `messages.properties`: the entire `WBExxxx` / `WBIxxxx` / `WBE_*` code set (auth `WBE1009`–`WBE1128`, export `WBE201x`, feature families `WBE_CHART_OF_ACCOUNTS_*`, `WBE_APPROVAL_LINE_*`, `WBE_OAT_*`, `WBE_EFS_*`, catch-all `WBE9999`, etc.). |
 | **Email / notification templates** | **None.** No template files, no `spring.mail`, no notification module (the refactor-only notification table/package was removed 2026-06-10 — see memory `project_notification_module_removed.md`). |
-| **Business configuration** | In the YAML `wecms.*` tree: banking cut-off windows (`wecms.internal-transfer.cutoff.{shinhan,woori}.{napas,citad,swift}`), cut-off bank codes, internal-transfer routing bank codes (`wecms.internal-transfer.routing.*`, code-default only), tenant `biz-key`, JWT issuer/expiry, file-storage layout per module, dispatch enable flags + timeouts, OAT seed-decrypt feature flag. |
+| **Business configuration** | In the YAML `wecms.*` tree: banking cut-off windows (`wecms.internal-transfer.cutoff.{shinhan,woori}.{napas,citad,swift}`), cut-off bank codes, internal-transfer routing bank codes (`wecms.internal-transfer.routing.*`, code-default only), JWT issuer/expiry, file-storage layout per module, dispatch enable flags + timeouts, OAT seed-decrypt feature flag. |
 
 ---
 

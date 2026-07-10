@@ -5,6 +5,7 @@ import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmBankCode
 import com.kosign.wecms.domain.setting.firmbankingsettings.repository.TbFirmBankCodeRepository;
 import org.junit.jupiter.api.Test;
 
+import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalTime;
@@ -31,21 +32,27 @@ class CutoffValidatorTest {
     private static final String WOORI   = "970457";
     private static final String VCB     = "970436";
 
-    private static CutoffProperties.NetworkWindows win(int h1, int m1, int h2, int m2) {
-        return new CutoffProperties.NetworkWindows(LocalTime.of(h1, m1), LocalTime.of(h2, m2));
+    /** VCB CITAD ≥500M tier threshold — mirrors the base application.yml value. */
+    private static final BigDecimal THRESHOLD = new BigDecimal("500000000");
+
+    private static CutoffConfigSnapshot.NetworkWindows win(int h1, int m1, int h2, int m2) {
+        // warning is FE-only (soft-confirm zone) — the backend gate ignores it,
+        // so the tests leave it null.
+        return new CutoffConfigSnapshot.NetworkWindows(LocalTime.of(h1, m1), LocalTime.of(h2, m2), null);
     }
 
     /** Stable property fixture — mirrors the base application.yml table. */
-    private static final CutoffProperties FIXTURE = new CutoffProperties(
+    private static final CutoffConfigSnapshot FIXTURE = new CutoffConfigSnapshot(
             // shinhan: napas, citad(File SFTP), citadApi(16:30), swift, citadLarge(n/a)
-            new CutoffProperties.BankWindows(
+            new CutoffConfigSnapshot.BankWindows(
                     win(0, 5, 23, 45), win(9, 0, 15, 30), win(9, 0, 16, 30), win(9, 0, 22, 0), null),
             // woori: napas, citad, citadApi(n/a), swift, citadLarge(n/a)
-            new CutoffProperties.BankWindows(
+            new CutoffConfigSnapshot.BankWindows(
                     win(0, 15, 23, 55), win(8, 30, 17, 40), null, win(8, 30, 19, 10), null),
             // vcb: napas, citad(base 15:30), citadApi(n/a), swift(n/a), citadLarge(16:30)
-            new CutoffProperties.BankWindows(
-                    win(0, 5, 23, 45), win(8, 0, 15, 30), null, null, win(8, 0, 16, 30))
+            new CutoffConfigSnapshot.BankWindows(
+                    win(0, 5, 23, 45), win(8, 0, 15, 30), null, null, win(8, 0, 16, 30)),
+            THRESHOLD
     );
 
     /** Build a validator with a fixed clock and a bank repo that resolves
@@ -57,7 +64,13 @@ class CutoffValidatorTest {
         when(repo.findFirstByBankCdAndBankStas(WOORI, "1")).thenReturn(Optional.of(bank("WooriBank")));
         when(repo.findFirstByBankCdAndBankStas(VCB, "1")).thenReturn(Optional.of(bank("Vietcombank")));
         // Any other code resolves to Optional.empty() (Mockito default) → unknown → pass.
-        return new CutoffValidator(FIXTURE, clock, repo);
+        // The validator reads the effective config through CutoffConfigProvider;
+        // mock it to return the fixture snapshot so the validator's decision logic
+        // is exercised in isolation (the provider's DB load + fail-fast validation
+        // is covered by CutoffConfigProviderTest).
+        CutoffConfigProvider provider = mock(CutoffConfigProvider.class);
+        when(provider.current()).thenReturn(FIXTURE);
+        return new CutoffValidator(provider, clock, repo);
     }
 
     private static TbFirmBankCode bank(String engAbrvatNm) {
@@ -201,6 +214,42 @@ class CutoffValidatorTest {
         assertThat(TransferNetwork.fromAntDivCd(null)).isEqualTo(TransferNetwork.CITAD);
         assertThat(TransferNetwork.fromAntDivCd("")).isEqualTo(TransferNetwork.CITAD);
         assertThat(TransferNetwork.fromAntDivCd("XYZ")).isEqualTo(TransferNetwork.CITAD);
+    }
+
+    // ─────────── VCB Internal Transfer 24/7 bypass (legacy PymnHelper:3225-3233) ───────────
+
+    @Test
+    void isInternalTransferCutoffExempt_should_be_true_only_for_vcb_source() {
+        // Time is irrelevant to the exemption check — it resolves the brand only.
+        CutoffValidator v = clockAt("2026-05-16T03:00:00Z"); // Sat, would normally block CITAD
+        assertThat(v.isInternalTransferCutoffExempt(VCB)).isTrue();
+        assertThat(v.isInternalTransferCutoffExempt(SHINHAN)).isFalse();
+        assertThat(v.isInternalTransferCutoffExempt(WOORI)).isFalse();
+        assertThat(v.isInternalTransferCutoffExempt("99999999")).isFalse(); // unknown bank
+        assertThat(v.isInternalTransferCutoffExempt(null)).isFalse();
+    }
+
+    @Test
+    void vcb_still_blocks_past_cutoff_for_non_internal_transfer_callers() {
+        // Guard: the VCB 24/7 exemption is ONLY the internal-transfer path
+        // (isInternalTransferCutoffExempt). The normal validate() path must
+        // still block VCB past its CITAD cut-off — so Vendor/Expense/Payroll,
+        // which call validate() and never the exempt method, are unaffected.
+        // 16:00 Vietnam (09:00Z), no large txn → past VCB base 15:30 → WBE2066.
+        CutoffValidator v = clockAt("2026-05-15T09:00:00Z");
+        assertThatThrownBy(() -> v.validate(
+                new CutoffCheck(VCB, TransferNetwork.CITAD, false, false, false)))
+                .isInstanceOf(BusinessException.class)
+                .extracting(ex -> ((BusinessException) ex).getCode())
+                .isEqualTo("WBE2066");
+    }
+
+    // ─────────── threshold comes from config, not a constant ───────────
+
+    @Test
+    void largeTxnThreshold_should_come_from_config() {
+        CutoffValidator v = clockAt("2026-05-15T10:00:00Z");
+        assertThat(v.largeTxnThreshold()).isEqualByComparingTo(THRESHOLD);
     }
 
     @Test

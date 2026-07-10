@@ -7,11 +7,15 @@ import com.kosign.wecms.domain.banking.repository.AcctTrnsHstrRepository;
 import com.kosign.wecms.domain.banking.repository.BusiMatchLogRepository;
 import com.kosign.wecms.domain.payment.dispatch.service.DispatchResult;
 import com.kosign.wecms.domain.payment.dispatch.service.DispatchResultResolver;
+import com.kosign.wecms.domain.payment.entity.OvrsPymnSumr;
+import com.kosign.wecms.domain.payment.entity.OvrsPymnSumrDetl;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumr;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrDetl;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrId;
 import com.kosign.wecms.domain.payment.internaltransfer.repository.ScdulPymnSumrDetlRepository;
 import com.kosign.wecms.domain.payment.internaltransfer.repository.ScdulPymnSumrRepository;
+import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnDtlsRepository;
+import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnSumrRepository;
 import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.domain.setting.environmentsettings.entity.BusiEnvSetInfmId;
 import com.kosign.wecms.domain.setting.environmentsettings.repository.BusiEnvSetInfmRepository;
@@ -57,10 +61,25 @@ import java.util.Map;
  *       0 or {@literal >}1 ⇒ skip (logged)</li>
  * </ol>
  *
- * <p><b>Scope (P1):</b> domestic scheduled payments — Vendor / Expense /
- * Internal Transfer (detail-level) + Payroll (master/batch-level, 1:1, same
- * as the manual payroll matcher). Overseas is out of scope (deferred, same as
- * the manual side).
+ * <p><b>Scope — strict legacy parity with {@code OVRS_PYMN_SUMR_DETL_R007}:</b>
+ * <ul>
+ *   <li><b>Domestic scheduled — detail-level:</b> Vendor ({@code '01'}),
+ *       Expense ({@code '02'}), Internal Transfer ({@code '03'}) —
+ *       legacy R007 Branch 1 ({@code SCDUL_PYMN_TYPE_CD <> '00'}).</li>
+ *   <li><b>Overseas — detail-level:</b> {@code OVRS_PYMN_SUMR_DETL} —
+ *       legacy R007 Branch 3.</li>
+ *   <li><b>Payroll ({@code SCDUL_PYMN_TYPE_CD = '00'}) is NOT auto-matched.</b>
+ *       Legacy R007 Branch 1 excludes it ({@code <> '00'}) and the legacy
+ *       auto-match block has no payroll code path — payroll is reconciled only
+ *       via the manual Payroll match popup. The refactor therefore never
+ *       queries payroll here and never writes {@code SCDUL_PYMN_SUMR}
+ *       (master/header) through the auto-match flow.</li>
+ * </ul>
+ * Both matched types write {@code LINK_MATCH_YN='Y'} on the <em>detail</em>
+ * table only ({@code SCDUL_PYMN_SUMR_DETL} / {@code OVRS_PYMN_SUMR_DETL}) plus
+ * the bank-side {@code ACCT_TRNS_HSTR} FK — exactly as legacy
+ * {@code fnsh_0001_001_c001_act.jsp:2041-2065} does for {@code PAY_TYPE_CD}
+ * {@code 'S'} / {@code 'O'}.
  *
  * <p><b>Feature gate:</b> runs only when the tenant's business-environment
  * setting {@code 00079} = {@code 'Y'} (legacy biz-env key). Absent / any
@@ -94,13 +113,33 @@ public class AutoMatchService {
     private final BusiMatchLogRepository matchLogRepo;
     private final ScdulPymnSumrRepository sumrRepo;
     private final ScdulPymnSumrDetlRepository detlRepo;
+    private final OvrsPymnSumrRepository ovrsSumrRepo;
+    private final OvrsPymnDtlsRepository ovrsDetlRepo;
     private final DispatchResultResolver dispatchResultResolver;
     private final LegacyFunctionRepository legacyFunctions;
     private final BusiEnvSetInfmRepository envRepo;
 
-    /** One resolved candidate payment for a bank debit. */
-    private record Candidate(boolean masterLevel, String payTrnsId,
-                             String scdulPymnNo, String scdulPymnDetlNo) { }
+    /** Payment family a candidate belongs to — drives the match-write path. */
+    private enum PayType { DOMESTIC, OVERSEAS }
+
+    /**
+     * One resolved candidate payment for a bank debit. {@code type} selects
+     * which detail table the match write targets: {@code DOMESTIC} →
+     * {@code SCDUL_PYMN_SUMR_DETL} (keys {@code scdulPymnNo}/{@code scdulPymnDetlNo});
+     * {@code OVERSEAS} → {@code OVRS_PYMN_SUMR_DETL} (keys
+     * {@code ovrsPymnNo}/{@code ovrsPymnDetlNo}). Payroll is intentionally
+     * absent — legacy does not auto-match it.
+     */
+    private record Candidate(PayType type, String payTrnsId,
+                             String scdulPymnNo, String scdulPymnDetlNo,
+                             String ovrsPymnNo, String ovrsPymnDetlNo) {
+        static Candidate domestic(String payTrnsId, String pymnNo, String detlNo) {
+            return new Candidate(PayType.DOMESTIC, payTrnsId, pymnNo, detlNo, null, null);
+        }
+        static Candidate overseas(String payTrnsId, String pymnNo, String detlNo) {
+            return new Candidate(PayType.OVERSEAS, payTrnsId, null, null, pymnNo, detlNo);
+        }
+    }
 
     /**
      * Attempt to auto-match every newly-inserted debit row for one account.
@@ -144,7 +183,8 @@ public class AutoMatchService {
         String bankTm   = debit.getTrscTm();
         String bankRmrk = debit.getRmrk();
 
-        // Domestic (Vendor / Expense / Internal Transfer) — detail-level.
+        // Domestic (Vendor '01' / Expense '02' / Internal Transfer '03') —
+        // detail-level. Legacy R007 Branch 1 (SCDUL_PYMN_TYPE_CD <> '00').
         for (ScdulPymnSumrDetl d : detlRepo.findDomesticAutoMatchCandidates(
                 bizKey, acctNo, debit.getTrscDt(), debit.getTrscAmt())) {
             ScdulPymnSumr master = sumrRepo.findById(
@@ -154,25 +194,27 @@ public class AutoMatchService {
             if (!remarkContained(bankRmrk, d.getTranUsag())) continue;
             Map<String, DispatchResult> res = dispatchResultResolver.resolve(master, List.of(d));
             if (!isSuccess(res.get(d.getScdulPymnDetlNo()))) continue;
-            candidates.add(new Candidate(false,
+            candidates.add(Candidate.domestic(
                     d.getScdulPymnNo() + PAY_TRNS_ID_SEP + d.getScdulPymnDetlNo(),
                     d.getScdulPymnNo(), d.getScdulPymnDetlNo()));
         }
 
-        // Payroll — master / batch-level (1:1, no remark filter — same as the
-        // manual PayrollBankingMatchService batch path).
-        for (ScdulPymnSumr master : sumrRepo.findPayrollAutoMatchCandidates(
+        // Overseas — detail-level. Legacy R007 Branch 3
+        // (OVRS_PYMN_SUMR_DETL). Overseas has no per-line remark other than
+        // MEMO and the batch TRNF_DT is date-only, so the transfer-time floor
+        // passes trivially (SUBSTRING(TRNF_DT,9,6) = '' — same as legacy).
+        for (OvrsPymnSumrDetl d : ovrsDetlRepo.findOverseasAutoMatchCandidates(
                 bizKey, acctNo, debit.getTrscDt(), debit.getTrscAmt())) {
-            if (!transferTimeBeforeBankTime(master.getTrnfDtm(), bankTm)) continue;
-            List<ScdulPymnSumrDetl> lines = detlRepo.findByBizKeyAndScdulPymnNo(
-                    bizKey, master.getScdulPymnNo(), ScdulPymnSumrDetlRepository.DETL_NO_NUMERIC_ASC);
-            if (lines.isEmpty()) continue;
-            Map<String, DispatchResult> res = dispatchResultResolver.resolve(master, lines);
-            boolean batchSuccess = lines.stream()
-                    .anyMatch(l -> isSuccess(res.get(l.getScdulPymnDetlNo())));
-            if (!batchSuccess) continue;
-            candidates.add(new Candidate(true, master.getScdulPymnNo(),
-                    master.getScdulPymnNo(), null));
+            OvrsPymnSumr master = ovrsSumrRepo.findByBizKeyAndOvrsPymnNo(
+                    bizKey, d.getOvrsPymnNo()).orElse(null);
+            if (master == null) continue;
+            if (!transferTimeBeforeBankTime(master.getTrnfDt(), bankTm)) continue;
+            if (!remarkContained(bankRmrk, d.getMemo())) continue;
+            Map<String, DispatchResult> res = dispatchResultResolver.resolveOverseas(master, List.of(d));
+            if (!isSuccess(res.get(d.getOvrsPymnDetlNo()))) continue;
+            candidates.add(Candidate.overseas(
+                    d.getOvrsPymnNo() + PAY_TRNS_ID_SEP + d.getOvrsPymnDetlNo(),
+                    d.getOvrsPymnNo(), d.getOvrsPymnDetlNo()));
         }
 
         // Exactly one, else skip (0 = no match, 2+ = ambiguous).
@@ -226,40 +268,51 @@ public class AutoMatchService {
         logRow.setModDtm(now);
         matchLogRepo.save(logRow);
 
-        // 2. ACCT_TRNS_HSTR — LINK_MATCH_YN='Y' + payment FK
-        //    (SCDUL_PYMN_DETL_NO null for payroll = header-level).
-        int bankUpdated = txnRepo.markBankRowMatched(
-                bizKey, debit.getAcctSeqNo(), c.scdulPymnNo(), c.scdulPymnDetlNo(), userId, now);
+        // 2. ACCT_TRNS_HSTR — LINK_MATCH_YN='Y' + payment FK. Domestic stamps
+        //    the SCDUL pair; overseas stamps the OVRS pair (nulls the SCDUL
+        //    pair) — mirrors legacy PAY_TYPE_CD 'S' / 'O' branches
+        //    (fnsh_0001_001_c001_act.jsp:2029-2035).
+        int bankUpdated = c.type() == PayType.DOMESTIC
+                ? txnRepo.markBankRowMatched(
+                        bizKey, debit.getAcctSeqNo(), c.scdulPymnNo(), c.scdulPymnDetlNo(), userId, now)
+                : txnRepo.markBankRowMatchedOverseas(
+                        bizKey, debit.getAcctSeqNo(), c.ovrsPymnNo(), c.ovrsPymnDetlNo(), userId, now);
         if (bankUpdated == 0) {
             log.warn("feature=auto-match bank-row-vanished bizKey={} acctSeqNo={}",
                     bizKey, debit.getAcctSeqNo());
             return false;
         }
 
-        // 3. Payment side.
-        if (c.masterLevel()) {
-            ScdulPymnSumr master = sumrRepo.findById(
-                    new ScdulPymnSumrId(bizKey, c.scdulPymnNo())).orElse(null);
-            if (master == null) return false;
-            master.setLinkMatchYn(YES);
-            master.setAcctSeqNo(debit.getAcctSeqNo());
-            master.setBankTrnsShortId(shortId);
-            master.setBankTrnsFullId(fullId);
-            master.setModId(userId);
-            master.setModDtm(now);
-            sumrRepo.save(master);
-        } else {
+        // 3. Payment side — detail table only (legacy never writes the
+        //    SCDUL_PYMN_SUMR / OVRS_PYMN_SUMR master through auto-match).
+        if (c.type() == PayType.DOMESTIC) {
             detlRepo.markDetailMatched(
                     bizKey, c.scdulPymnNo(), c.scdulPymnDetlNo(),
                     debit.getAcctSeqNo(), shortId, fullId, userId, now);
+        } else {
+            ovrsDetlRepo.markOverseasDetailMatched(
+                    bizKey, c.ovrsPymnNo(), c.ovrsPymnDetlNo(),
+                    debit.getAcctSeqNo(), shortId, fullId, userId, now);
         }
 
-        log.info("feature=auto-match matched bizKey={} acctSeqNo={} payTrnsId={} master={}",
-                bizKey, debit.getAcctSeqNo(), c.payTrnsId(), c.masterLevel());
+        log.info("feature=auto-match matched bizKey={} acctSeqNo={} payTrnsId={} type={}",
+                bizKey, debit.getAcctSeqNo(), c.payTrnsId(), c.type());
         return true;
     }
 
     /* ----------------------------------------------------------- helpers -- */
+
+    /**
+     * Public tenant-level gate check — the Bank Transaction Sync popup needs
+     * to know whether auto-match is enabled so it can decide whether to render
+     * the per-currency "Debit Matched" row at all (legacy parity:
+     * {@code _autoMatchEnv !== "N"} in {@code nxisas_tranList_osmc.js:528}).
+     * Single authoritative source ({@code BUSI_ENV_SET_INFM} setting
+     * {@code 00079}) — the frontend never re-checks its own env copy.
+     */
+    public boolean isAutoMatchEnabled(String bizKey) {
+        return isEnabled(bizKey);
+    }
 
     private boolean isEnabled(String bizKey) {
         return envRepo.findById(new BusiEnvSetInfmId(bizKey, ENV_AUTO_MATCH))

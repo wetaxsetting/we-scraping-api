@@ -89,6 +89,7 @@ class EndpointAuthorizationCoverageTest {
             // --- cross-screen reference data / utilities (gating to one cd would break reuse) ---
             "CountryController",         // reference data
             "BlockedCharsRuleController",// payment-compose validation helper
+            "CutoffConfigController",    // cross-module cut-off config (read-only); gating to one cd would break reuse across all 5 payment modules
             // NOTE (audit fix, 2026-06-19): BankScrapingController, BankCredentialController,
             // and EnvironmentSettingsController were REMOVED from this allow-list after being
             // given real @menuAuthz gates (BankCredential → settings-core-login-credentials;

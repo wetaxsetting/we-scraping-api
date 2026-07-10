@@ -71,7 +71,7 @@ All legacy tables above are in the [PROD Active Table List](../../../../CLAUDE.m
 
 | Column | Type | Null | Today on entity | Maps to wire field | Notes |
 |---|---|---|---|---|---|
-| `BIZ_KEY` | `VARCHAR(20)` | NN | ✅ `bizKey` (PK part 1) | (not echoed) | Tenant key. Always pinned to `wecms.tenant.biz-key = VN_VNM0004_000001`. |
+| `BIZ_KEY` | `VARCHAR(20)` | NN | ✅ `bizKey` (PK part 1) | (not echoed) | Tenant key. Sourced from `TenantContext.currentBizKey()` (JWT), never request input. |
 | `DOC_ID` | `VARCHAR(50)` | NN | ✅ `docId` (PK part 2) | `DOC_ID` | Internal document id (legacy `wb_get_next_val('busa_doc_mstr','doc_id',…)`). |
 | `DOC_TYPE` | `VARCHAR(1)` | NN | ✅ `docType` | (not echoed) | **Sales/Bill discriminator** (verified against [`einv_0001_001_r001_act.jsp:268-284`](../../../../../WECMS%20DEV/WECMS/web/WEB-INF/action/jex/wabooks/einv/einv_0001_001_r001_act.jsp) and [`BusaDocType.java`](../../../../../WECMS%20DEV/WECMS/src/wabooks/enums/BusaDocType.java)). `'I'` = `INVOICE` (Sales), `'B'` = `BILL` (Expenses). `'E'` (`EXPENSE`) and `'S'` (`PAYROLLBOOK`) are rejected by the listing service. The refactor wire maps `SALES → 'I'`, `EXPENSE → 'B'` (the current `EInvoiceService.resolveDocType` mapping `EXPENSE → 'E'` is a bug). |
 | `INV_TYPE` | `VARCHAR(1)` | nullable | ✅ `invType` | `INV_TYPE` (legacy WSVC drops it) | **Commercial-vs-Tax classifier** (verified against [`IDO.BUSA_DOC_MSTR_R022.xml:200`](../../../../../WECMS%20DEV/WECMS_ETC/xml/service/IDO/IDO.BUSA_DOC_MSTR_R022.xml)). `'C'` → `Commercial`, anything else → `Tax`. **NOT** `Original`/`Replacement`/`Adjustment` — those are values of `EINV_INVOICESTATUS`. The legacy WSVC `<out>` does not expose `INV_TYPE` and the legacy TS does not render it. The static UI mock's `invoiceType: "Original"` is misnamed — recommend dropping `INV_TYPE` from the refactor wire and surfacing the status sub-line from `EINV_INVOICESTATUS`. |
@@ -160,14 +160,14 @@ Either way, do NOT call this "legacy parity" in the wire contract — it's a ref
 
 ## Tenant filtering — `BIZ_KEY`
 
-Every read on `BUSA_DOC_MSTR` MUST include `BIZ_KEY = ?` in the `WHERE` clause. The local R&D pin is `VN_VNM0004_000001` (single-tenant per [`TenantProperties`](../../../../src/main/java/com/kosign/wecms/config/TenantProperties.java) — the regex rejects `%`).
+Every read on `BUSA_DOC_MSTR` MUST include `BIZ_KEY = ?` in the `WHERE` clause. `BIZ_KEY` comes from `TenantContext.currentBizKey()` (populated by `JwtAuthenticationFilter` from the validated JWT), never from request input.
 
 **Hard rules** (enforced in code review):
 
 - `BusaDocMstrRepository` finder methods MUST take `bizKey` as the first argument.
 - Service-side: `final String bizKey = TenantContext.currentBizKey();` (sourced from the validated JWT claim — never hardcoded).
 - `BIZ_KEY` is part of the **composite primary key** (`@Id` on `bizKey` and `docId` in `BusaDocMstr`), so a JPA `findById(...)` MUST construct a `BusaDocMstrId(bizKey, docId)` — single-arg lookups by `DOC_ID` alone are not supported and shouldn't be written.
-- Tenancy MUST NOT be widened — never `LIKE 'VN_%'`, never `BIZ_KEY IN (...)`, never `BIZ_KEY = '%'`. The `TenantProperties` regex rejects wildcards by construction.
+- Tenancy MUST NOT be widened — never `LIKE 'VN_%'`, never `BIZ_KEY IN (...)`, never `BIZ_KEY = '%'`. Only the single concrete `BIZ_KEY` from `TenantContext.currentBizKey()` is ever used.
 - The export endpoint (planned) inherits the same scope by going through `EInvoiceService.list(...)` rather than calling the repository directly.
 - `BIZ_KEY` is **not echoed** in the wire response — the JWT is the authority and the frontend already has the value in `userStorage`.
 

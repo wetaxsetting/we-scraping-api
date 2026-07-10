@@ -76,8 +76,8 @@ The **composite primary key** `(BIZ_KEY, BANK_CD, ACCT_NO)` means a single index
   - `findByBizKeyAndActvYn(bizKey, actvYn, sort)` — `currency=ALL`
   - `findByBizKeyAndCcyCdAndActvYn(bizKey, ccyCd, actvYn, sort)` — `currency=VND` (this screen)
   - `findByBizKeyAndCcyCdNotAndActvYn(bizKey, ccyCd, actvYn, sort)` — `currency=FCY`
-- `bizKey` is sourced from `TenantContext.currentBizKey()` (set by `JwtAuthenticationFilter`). It is **never** read from request input. The config property `wecms.tenant.biz-key` rejects `%` wildcards.
-- Sprint 1 R&D: single tenant pinned to `BIZ_KEY = VN_VNM0004_000001`.
+- `bizKey` is sourced from `TenantContext.currentBizKey()` (set by `JwtAuthenticationFilter` from the validated JWT). It is **never** read from request input, so a `%` wildcard tenant filter is impossible.
+- Tenant is resolved per user from the JWT; the local R&D DB is seeded with one tenant (`VN_VNM0004_000001`).
 
 ---
 

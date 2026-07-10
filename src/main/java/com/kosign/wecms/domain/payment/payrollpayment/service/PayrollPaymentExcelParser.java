@@ -4,6 +4,7 @@ import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ParseExcelResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ParsedTransferLine;
+import com.kosign.wecms.domain.payment.common.LegacyTextNormalizer;
 import com.kosign.wecms.domain.payment.validation.FieldCd;
 import com.kosign.wecms.domain.payment.validation.PymnType;
 import com.kosign.wecms.domain.payment.validation.SpecialCharValidator;
@@ -240,10 +241,13 @@ public class PayrollPaymentExcelParser {
         String bankCodeIn  = cellString(row, 0, fmt);
         String tarBankNm   = cellString(row, 1, fmt);
         String fincMdaNo   = cellString(row, 2, fmt);
-        String rcptNm      = cellString(row, 3, fmt);
+        // F1 (audit task-44508): strip Vietnamese accents from Recipient Name
+        // and Remarks BEFORE validation and persistence. Mirrors legacy
+        // `pymn_0005_002_r001_act.jsp:305-306` (RCPT_NM) + `:344-345` (REMARKS).
+        String rcptNm      = LegacyTextNormalizer.stripVietnameseTone(cellString(row, 3, fmt));
         String tranAmtIn   = cellString(row, 4, fmt);
         String trnfCcyIn   = cellString(row, 5, fmt);
-        String tranUsag    = cellString(row, 6, fmt);
+        String tranUsag    = LegacyTextNormalizer.stripVietnameseTone(cellString(row, 6, fmt));
         String chartAcctCd = cellString(row, 7, fmt);
 
         List<FieldError> errors = new ArrayList<>();
@@ -424,7 +428,9 @@ public class PayrollPaymentExcelParser {
             }
             return BigDecimal.valueOf(d).stripTrailingZeros().toPlainString();
         }
-        return fmt.formatCellValue(cell).trim();
+        // F2 (audit task-44508): strip embedded CR/LF from EVERY text cell,
+        // mirroring legacy `ExcelUtils.getCell:144`. Tabs preserved.
+        return LegacyTextNormalizer.stripCrLf(fmt.formatCellValue(cell)).trim();
     }
 
     private static boolean isBlank(String s) {

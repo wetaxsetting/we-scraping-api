@@ -91,4 +91,23 @@ public class OutBankCdNormalizer {
                 code);
         return code;
     }
+
+    /**
+     * Reverse of {@link #normalize}: resolve a stored canonical NAPAS
+     * {@code OUT_BANK_CD} back to the internal {@code BANK_CD} that the
+     * {@code BLOCKED_CHARS_RULE} rows are keyed on (audit task-44508 dispatch
+     * guard). Handles both inputs symmetrically — a NAPAS code resolves via the
+     * PK to its {@code BANK_CD}; an already-internal code misses the PK lookup
+     * and is returned unchanged. Blank / unseeded inputs pass through, so the
+     * dispatch guard degrades to a safe no-op rather than throwing.
+     */
+    public String toInternalBankCd(String outBankCd) {
+        if (outBankCd == null || outBankCd.isBlank()) {
+            return outBankCd;
+        }
+        String code = outBankCd.trim();
+        return napasRepo.findById(code)
+                .map(NapasBankInfo::getBankCd)
+                .orElse(code);
+    }
 }

@@ -46,34 +46,14 @@ import java.util.Optional;
  */
 public interface ScdulPymnSumrRepository extends JpaRepository<ScdulPymnSumr, ScdulPymnSumrId> {
 
-    /**
-     * Auto-match candidate scan (Payroll, master/batch level) — Payroll
-     * batches ({@code SCDUL_PYMN_TYPE_CD='00'}) dispatched
-     * ({@code TRNF_YN='Y'}) on the same withdrawal account, for the same
-     * transfer date and exact <em>batch total</em> amount, not yet matched.
-     * Payroll matches 1:1 at the header level (same rule as the manual
-     * {@code PayrollBankingMatchService}), so the amount compare is against
-     * {@code TOTAL_TRAN_AMT}, not a per-line amount. Payment-success,
-     * transfer-time {@literal <} bank-time, and the exactly-one guard are
-     * applied by {@code AutoMatchService} in Java.
-     */
-    @Query("""
-            SELECT s FROM ScdulPymnSumr s
-             WHERE s.bizKey = :bizKey
-               AND s.wdrlActNo = :acctNo
-               AND s.trnfYn = 'Y'
-               AND s.scdulPymnTypeCd = '00'
-               AND (s.linkMatchYn IS NULL OR s.linkMatchYn <> 'Y')
-               AND s.totalTranAmt = :trscAmt
-               AND s.trnfDtm IS NOT NULL
-               AND LENGTH(s.trnfDtm) >= 8
-               AND SUBSTRING(s.trnfDtm, 1, 8) = :trscDt
-            """)
-    List<ScdulPymnSumr> findPayrollAutoMatchCandidates(
-            @Param("bizKey") String bizKey,
-            @Param("acctNo") String acctNo,
-            @Param("trscDt") String trscDt,
-            @Param("trscAmt") java.math.BigDecimal trscAmt);
+    // NOTE: there is intentionally NO payroll auto-match candidate query here.
+    // Legacy auto-match (OVRS_PYMN_SUMR_DETL_R007) excludes payroll
+    // (SCDUL_PYMN_TYPE_CD='00') and has no payroll code path — payroll is
+    // reconciled only via the manual Payroll match popup. Do NOT add a
+    // "findPayrollAutoMatchCandidates" here and wire it into AutoMatchService;
+    // that would diverge from legacy (a former such method was removed
+    // 2026-07-09 for strict parity). Manual payroll match uses
+    // PayrollBankingMatchService + findPayrollBankMatchCandidates (R006).
 
     /**
      * P4 Smart Organizer (banking→payment) payroll candidate scan — the

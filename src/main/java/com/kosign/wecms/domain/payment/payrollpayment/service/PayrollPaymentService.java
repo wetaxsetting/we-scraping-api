@@ -168,6 +168,8 @@ public class PayrollPaymentService {
      *  before it lands on {@code SCDUL_PYMN_SUMR.OUT_BANK_CD}. Mirrors
      *  legacy {@code PymnHelper.uploadPaymentExcel:1315-1317}. */
     private final com.kosign.wecms.domain.payment.common.OutBankCdNormalizer outBankCdNormalizer;
+    /** Authoritative save-path blocked-char enforcement (audit task-44508, P0). */
+    private final com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard blockedCharGuard;
     /** M-2/M-3 (legacy parity): EXPT_RESOL_MSTR display flags from BUSI_ENV_SET_INFM. */
     private final com.kosign.wecms.domain.payment.approvalbox.service.ApprovalDisplayFlagsResolver displayFlagsResolver;
     /** M-1 (legacy parity): shared Request Approval attachment writer (EXPT_RESOL_FILE). */
@@ -436,6 +438,20 @@ public class PayrollPaymentService {
         String userId = TenantContext.currentUserId();
         String now    = OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC).format(DTM14);
 
+        // P0 (audit task-44508): authoritative server-side blocked-char
+        // enforcement BEFORE persistence (Recipient Name + Remarks).
+        for (TransferLineInput line : req.lines()) {
+            blockedCharGuard.assertClean(req.bankCd(),
+                    com.kosign.wecms.domain.payment.validation.PymnType.PAYROLL_PAYMENT,
+                    java.util.List.of(
+                            com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard.field(
+                                    com.kosign.wecms.domain.payment.validation.FieldCd.RECIPIENT_NAME,
+                                    com.kosign.wecms.domain.payment.common.LegacyTextNormalizer.normalize(line.rcptNm())),
+                            com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard.field(
+                                    com.kosign.wecms.domain.payment.validation.FieldCd.REMARKS,
+                                    com.kosign.wecms.domain.payment.common.LegacyTextNormalizer.normalize(line.tranUsag()))));
+        }
+
         String scdulPymnNo = keyGenerator.nextScdulPymnNo(bizKey);
 
         ScdulPymnSumr master = new ScdulPymnSumr();
@@ -507,7 +523,9 @@ public class PayrollPaymentService {
             // AntDivCd.CITAD. Payroll is CITAD-only in the live system; NAPAS
             // payroll support needs a PO decision before relaxing this.
             detl.setAntDivCd("CITAD");
-            detl.setRcptNm(emptyToNull(line.rcptNm()));
+            // Persist normalized (CR/LF + accents stripped) value (audit task-44508, P0).
+            detl.setRcptNm(emptyToNull(
+                    com.kosign.wecms.domain.payment.common.LegacyTextNormalizer.normalize(line.rcptNm())));
             // G2 (legacy parity): resolve the typed CITAD code to the 6-digit
             // internal BANK_CD before persisting (legacy getBankCode CITAD
             // branch, pymn_0005_002_c001_act.jsp:126,162-185).
@@ -533,7 +551,8 @@ public class PayrollPaymentService {
             // copyFrom(recItem) saves it there. The shared wire DTO carries the
             // value in tran_usag, so read it from there and write the legacy
             // column; leave TRAN_USAG null to match legacy payroll rows.
-            detl.setWdrlActRmrk(emptyToNull(line.tranUsag()));
+            detl.setWdrlActRmrk(emptyToNull(
+                    com.kosign.wecms.domain.payment.common.LegacyTextNormalizer.normalize(line.tranUsag())));
             detl.setTrcoKey(emptyToNull(line.trcoKey()));
             detl.setHandTrcoKey(emptyToNull(line.handTrcoKey()));
             detl.setDocNo(emptyToNull(line.docNo()));
@@ -1116,7 +1135,7 @@ public class PayrollPaymentService {
         boolean vndToVnd = "VND".equalsIgnoreCase(master.getCcyCd())
                 && "VND".equalsIgnoreCase(master.getWdrlCcyCd());
         boolean hasLargeTxn = lines.stream().anyMatch(l -> l.getTranAmt() != null
-                && l.getTranAmt().compareTo(CutoffCheck.LARGE_TXN_THRESHOLD) >= 0);
+                && l.getTranAmt().compareTo(cutoffValidator.largeTxnThreshold()) >= 0);
         cutoffValidator.validate(new CutoffCheck(
                 master.getOutBankCd(), network, false, vndToVnd, hasLargeTxn));
 

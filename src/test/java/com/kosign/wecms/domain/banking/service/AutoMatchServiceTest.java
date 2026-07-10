@@ -8,10 +8,14 @@ import com.kosign.wecms.domain.banking.repository.AcctTrnsHstrRepository;
 import com.kosign.wecms.domain.banking.repository.BusiMatchLogRepository;
 import com.kosign.wecms.domain.payment.dispatch.service.DispatchResult;
 import com.kosign.wecms.domain.payment.dispatch.service.DispatchResultResolver;
+import com.kosign.wecms.domain.payment.entity.OvrsPymnSumr;
+import com.kosign.wecms.domain.payment.entity.OvrsPymnSumrDetl;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumr;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrDetl;
 import com.kosign.wecms.domain.payment.internaltransfer.repository.ScdulPymnSumrDetlRepository;
 import com.kosign.wecms.domain.payment.internaltransfer.repository.ScdulPymnSumrRepository;
+import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnDtlsRepository;
+import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnSumrRepository;
 import com.kosign.wecms.domain.setting.environmentsettings.entity.BusiEnvSetInfm;
 import com.kosign.wecms.domain.setting.environmentsettings.repository.BusiEnvSetInfmRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -61,6 +65,8 @@ class AutoMatchServiceTest {
     @Mock BusiMatchLogRepository matchLogRepo;
     @Mock ScdulPymnSumrRepository sumrRepo;
     @Mock ScdulPymnSumrDetlRepository detlRepo;
+    @Mock OvrsPymnSumrRepository ovrsSumrRepo;
+    @Mock OvrsPymnDtlsRepository ovrsDetlRepo;
     @Mock DispatchResultResolver dispatchResultResolver;
     @Mock LegacyFunctionRepository legacyFunctions;
     @Mock BusiEnvSetInfmRepository envRepo;
@@ -73,12 +79,16 @@ class AutoMatchServiceTest {
         when(legacyFunctions.nextBusiMatchLogSeq(anyString())).thenReturn("1001");
         when(txnRepo.markBankRowMatched(anyString(), anyString(), any(), any(), anyString(), anyString()))
                 .thenReturn(1);
+        when(txnRepo.markBankRowMatchedOverseas(anyString(), anyString(), any(), any(),
+                anyString(), anyString())).thenReturn(1);
         when(detlRepo.markDetailMatched(anyString(), anyString(), anyString(), anyString(),
                 anyString(), anyString(), anyString(), anyString())).thenReturn(1);
-        // Default: no domestic / payroll candidates unless a test provides them.
+        when(ovrsDetlRepo.markOverseasDetailMatched(anyString(), anyString(), anyString(), anyString(),
+                anyString(), anyString(), anyString(), anyString())).thenReturn(1);
+        // Default: no domestic / overseas candidates unless a test provides them.
         when(detlRepo.findDomesticAutoMatchCandidates(anyString(), anyString(), anyString(), any()))
                 .thenReturn(List.of());
-        when(sumrRepo.findPayrollAutoMatchCandidates(anyString(), anyString(), anyString(), any()))
+        when(ovrsDetlRepo.findOverseasAutoMatchCandidates(anyString(), anyString(), anyString(), any()))
                 .thenReturn(List.of());
         // No existing match-log rows by default (fresh insert path).
         when(matchLogRepo.findFirstByBizKeyAndBankTrnsShortIdAndPayTrnsIdAndLockedYn(
@@ -255,31 +265,68 @@ class AutoMatchServiceTest {
     }
 
     @Test
-    void payroll_matchesAtMasterLevel_withNullDetailNo() {
+    void payroll_isNotAutoMatched_legacyParity() {
+        // Legacy R007 excludes payroll (SCDUL_PYMN_TYPE_CD='00') and has no
+        // payroll code path — payroll is manual-match-only. The refactor
+        // therefore never queries payroll here; even if a payroll batch shares
+        // the debit's account/date/amount, it must not auto-match, and the
+        // SCDUL_PYMN_SUMR master must never be written through this flow.
         AcctTrnsHstr debit = debit("SEQ1", "103000", "SALARY JUL");
-        ScdulPymnSumr master = master("PR900", "20260708101500");
-        master.setScdulPymnTypeCd("00");
-        when(sumrRepo.findPayrollAutoMatchCandidates(BIZ, ACCT_NO, TRSC_DT, AMT))
-                .thenReturn(List.of(master));
-        ScdulPymnSumrDetl line = detl("PR900", "1", "anything");
-        when(detlRepo.findByBizKeyAndScdulPymnNo(eq(BIZ), eq("PR900"), any()))
-                .thenReturn(List.of(line));
-        when(dispatchResultResolver.resolve(eq(master), any()))
-                .thenReturn(Map.of("1", success()));
-        when(sumrRepo.findById(any())).thenReturn(Optional.of(master));
+
+        int matched = service.autoMatchNewDebits(BIZ, USER, ACCT_NO, List.of(debit));
+
+        assertThat(matched).isZero();
+        verify(matchLogRepo, never()).save(any());
+        verify(sumrRepo, never()).save(any());
+        verify(txnRepo, never()).markBankRowMatched(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void exactlyOneOverseasCandidate_createsAutoMatchLog_andLinksOverseasDetail() {
+        AcctTrnsHstr debit = debit("SEQ1", "103000", "REF SWIFT PAY ACME 999");
+        overseasCandidate("O500", "2", "swift pay acme", "20260708", success());
 
         int matched = service.autoMatchNewDebits(BIZ, USER, ACCT_NO, List.of(debit));
 
         assertThat(matched).isEqualTo(1);
-        // Bank row linked with a NULL detail no (header-level).
-        verify(txnRepo).markBankRowMatched(eq(BIZ), eq("SEQ1"), eq("PR900"),
-                eq((String) null), eq(USER), anyString());
-        // Payment side updated on the summary, not a detail row.
-        verify(sumrRepo).save(master);
-        verify(detlRepo, never()).markDetailMatched(any(), any(), any(), any(), any(), any(), any(), any());
         ArgumentCaptor<BusiMatchLog> cap = ArgumentCaptor.forClass(BusiMatchLog.class);
         verify(matchLogRepo).save(cap.capture());
-        assertThat(cap.getValue().getPayTrnsId()).isEqualTo("PR900");   // master-level key
+        BusiMatchLog log = cap.getValue();
+        assertThat(log.getMatchTypeCd()).isEqualTo("A");
+        assertThat(log.getLockedYn()).isEqualTo("Y");
+        assertThat(log.getPayTrnsId()).isEqualTo("O500_2");
+        // Bank row linked via the OVERSEAS FK path; overseas detail updated.
+        verify(txnRepo).markBankRowMatchedOverseas(eq(BIZ), eq("SEQ1"), eq("O500"), eq("2"),
+                eq(USER), anyString());
+        verify(ovrsDetlRepo).markOverseasDetailMatched(eq(BIZ), eq("O500"), eq("2"), eq("SEQ1"),
+                eq("SHORT_SEQ1"), eq("FULL_SEQ1"), eq(USER), anyString());
+        // Never touches the domestic path or any master/header table.
+        verify(txnRepo, never()).markBankRowMatched(any(), any(), any(), any(), any(), any());
+        verify(detlRepo, never()).markDetailMatched(any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void overseasFailedResult_doesNotMatch() {
+        AcctTrnsHstr debit = debit("SEQ1", "103000", "SWIFT PAY ACME");
+        overseasCandidate("O500", "2", "SWIFT PAY ACME", "20260708", failed());
+
+        int matched = service.autoMatchNewDebits(BIZ, USER, ACCT_NO, List.of(debit));
+
+        assertThat(matched).isZero();
+        verify(matchLogRepo, never()).save(any());
+    }
+
+    @Test
+    void oneDomesticAndOneOverseasCandidate_areAmbiguous_soNoMatch() {
+        // Cross-branch cardinality: 1 domestic + 1 overseas = 2 candidates → skip.
+        AcctTrnsHstr debit = debit("SEQ1", "103000", "PAY ABC");
+        domesticCandidate("P100", "1", "PAY ABC", "20260708101500", success());
+        overseasCandidate("O500", "2", "PAY ABC", "20260708", success());
+
+        int matched = service.autoMatchNewDebits(BIZ, USER, ACCT_NO, List.of(debit));
+
+        assertThat(matched).isZero();
+        verify(matchLogRepo, never()).save(any());
     }
 
     @Test
@@ -321,6 +368,40 @@ class AutoMatchServiceTest {
                 .thenReturn(List.of(d));
         when(sumrRepo.findById(any())).thenReturn(Optional.of(master(pymnNo, trnfDtm)));
         when(dispatchResultResolver.resolve(any(), any())).thenReturn(Map.of(detlNo, result));
+    }
+
+    /** Register a single overseas candidate line + its parent + dispatch result.
+     *  {@code trnfDt} is the overseas batch TRNF_DT — pass an 8-char date so the
+     *  transfer-time floor passes trivially (legacy overseas is date-only). */
+    private void overseasCandidate(String ovrsNo, String detlNo, String memo,
+                                   String trnfDt, DispatchResult result) {
+        OvrsPymnSumrDetl d = ovrsDetl(ovrsNo, detlNo, memo);
+        when(ovrsDetlRepo.findOverseasAutoMatchCandidates(BIZ, ACCT_NO, TRSC_DT, AMT))
+                .thenReturn(List.of(d));
+        when(ovrsSumrRepo.findByBizKeyAndOvrsPymnNo(BIZ, ovrsNo))
+                .thenReturn(Optional.of(ovrsMaster(ovrsNo, trnfDt)));
+        when(dispatchResultResolver.resolveOverseas(any(), any())).thenReturn(Map.of(detlNo, result));
+    }
+
+    private static OvrsPymnSumr ovrsMaster(String ovrsPymnNo, String trnfDt) {
+        OvrsPymnSumr s = new OvrsPymnSumr();
+        s.setBizKey(BIZ);
+        s.setOvrsPymnNo(ovrsPymnNo);
+        s.setWdrlActNo(ACCT_NO);
+        s.setTrnfYn("Y");
+        s.setTrnfDt(trnfDt);
+        return s;
+    }
+
+    private static OvrsPymnSumrDetl ovrsDetl(String ovrsPymnNo, String ovrsPymnDetlNo, String memo) {
+        OvrsPymnSumrDetl d = new OvrsPymnSumrDetl();
+        d.setBizKey(BIZ);
+        d.setOvrsPymnNo(ovrsPymnNo);
+        d.setOvrsPymnDetlNo(ovrsPymnDetlNo);
+        d.setTrnfAmt(AMT);
+        d.setMemo(memo);
+        d.setLinkMatchYn("N");
+        return d;
     }
 
     private static AcctTrnsHstr debit(String seq, String trscTm, String rmrk) {
