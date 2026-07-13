@@ -60,6 +60,8 @@ class RealtimeDispatchServiceTest {
     @Mock DispatchKeyGenerator dispatchKeyGenerator;
     @Mock com.kosign.wecms.domain.payment.dispatch.alert.OpsAlertService opsAlertService;
     @Mock OperatingHoursService operatingHoursService;
+    @Mock com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard blockedCharGuard;
+    @Mock com.kosign.wecms.domain.payment.common.OutBankCdNormalizer outBankCdNormalizer;
 
     private RealtimeDispatchService service;
 
@@ -67,7 +69,8 @@ class RealtimeDispatchServiceTest {
     void setUp() {
         service = new RealtimeDispatchService(
                 payTargetRepository, firmConfRepository, firmTranRepository, realtimeTransferService,
-                dispatchKeyGenerator, opsAlertService, operatingHoursService);
+                dispatchKeyGenerator, opsAlertService, operatingHoursService,
+                blockedCharGuard, outBankCdNormalizer);
 
         // Operating-hours gate: open by default so existing dispatch-path tests proceed.
         when(operatingHoursService.evaluateRealtime(any(), any()))

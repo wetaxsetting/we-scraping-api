@@ -181,6 +181,7 @@ public class NxisasScrapeSession {
         private int successCount = 0;
         private int creditCount = 0;
         private int debitCount = 0;
+        private int autoMatchedCount = 0;
         private BigDecimal creditTotal = BigDecimal.ZERO;
         private BigDecimal debitTotal = BigDecimal.ZERO;
 
@@ -192,9 +193,17 @@ public class NxisasScrapeSession {
             if (debitAmt  != null) this.debitTotal  = this.debitTotal.add(debitAmt);
         }
 
+        /** Fold one account's P1 auto-match result into this currency bucket
+         *  (numerator of the per-currency "Debit Matched" row). Called once
+         *  per fully-processed account, after {@link #addAccount}. */
+        public void addAutoMatched(int autoMatched) {
+            this.autoMatchedCount += autoMatched;
+        }
+
         public int successCount()        { return successCount; }
         public int creditCount()         { return creditCount; }
         public int debitCount()          { return debitCount; }
+        public int autoMatchedCount()    { return autoMatchedCount; }
         public BigDecimal creditTotal()  { return creditTotal; }
         public BigDecimal debitTotal()   { return debitTotal; }
     }

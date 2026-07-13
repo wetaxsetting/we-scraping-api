@@ -1,5 +1,11 @@
 # Special-Character Validation Parity Audit — Payment Uploads (JEX Legacy → Spring/Next.js Refactor)
 
+> ⚠️ **SUPERSEDED (2026-07-10).** The "Post-Implementation Verification — F1, F2, F4 → PASS" roll-up at the bottom of this document is **STALE**. A fresh full audit on 2026-07-10 found that **F1 (Vietnamese tone-strip) and F2 (CR/LF-strip) had REGRESSED** — `LegacyTextNormalizer` had zero callers (dead code) and the five Excel parsers no longer normalized on the upload path. F1/F2/F4 plus several new findings (upload error-message content, upload-preview preventive tooltip, bank-change revalidation, `EFF_FR_DT/EFF_TO_DT` width, server-side save/dispatch enforcement) were re-implemented on 2026-07-10. See the current authoritative documents:
+> - Audit: [`Claude Code (AI)/notes/task-44508-blocked-special-characters-legacy-refactor-audit.md`](../../../Claude%20Code%20(AI)/notes/task-44508-blocked-special-characters-legacy-refactor-audit.md)
+> - Fix report: [`Claude Code (AI)/notes/task-44508-blocked-special-characters-fixes.md`](../../../Claude%20Code%20(AI)/notes/task-44508-blocked-special-characters-fixes.md)
+>
+> The historical evidence below is preserved unchanged for the record — do not treat its "Resolved / Verified" status as current.
+
 > _**Historical one-off audit.** A point-in-time record of a completed verification / remediation — findings are preserved unchanged. For the feature’s current state see its `features/.../refactor-gap-analysis.md`; for context see the [audits index](README.md)._
 
 **System:** Refactor (wecms-api / wecms-web) audited against JEX legacy (source of truth)

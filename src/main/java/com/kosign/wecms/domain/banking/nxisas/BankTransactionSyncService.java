@@ -666,6 +666,11 @@ public class BankTransactionSyncService {
             int autoMatched = autoMatchService.autoMatchNewDebits(
                     session.getBizKey(), userId, acct.getAcctNo(), pr.newDebits);
             session.setTotalAutoMatched(session.getTotalAutoMatched() + autoMatched);
+            // Fold into this account's currency bucket so each BANK ACCOUNTS
+            // ({ccy}) group can render its own "Debit Matched {matched}/{debit}"
+            // numerator (legacy nxisas_tranList_osmc.js:528-534 renders the row
+            // per currency block, not batch-wide).
+            session.currencyTally(acct.getCcyCd()).addAutoMatched(autoMatched);
         } catch (Exception amEx) {
             log.error("BankTransactionSync AUTO-MATCH failed [bank={}, acct={}] — sync continues",
                     acct.getBankCd(), acct.getAcctNo(), amEx);
@@ -728,6 +733,11 @@ public class BankTransactionSyncService {
                 "success", session.getAccountsSynced(),
                 "debit", session.getTotalDebitInserted(),
                 "credit", session.getTotalCreditInserted());
+        // Per-tenant auto-match gate (biz-env 00079). Surfaced so the popup
+        // shows the per-currency "Debit Matched" row only when auto-match is
+        // enabled (legacy `_autoMatchEnv !== "N"` guard) — a 0 count alone
+        // can't distinguish "disabled" from "enabled but nothing matched".
+        boolean autoMatchEnabled = autoMatchService.isAutoMatchEnabled(session.getBizKey());
         return TransactionsSyncResponse.completed(
                 session.getSessionId(),
                 session.getAccountsSynced(),
@@ -737,7 +747,8 @@ public class BankTransactionSyncService {
                 session.getTotalCreditAmount(),
                 now,
                 currencySummariesOf(session),
-                session.getTotalAutoMatched());
+                session.getTotalAutoMatched(),
+                autoMatchEnabled);
     }
 
     /** Project the session's per-currency tallies into the wire DTO list,
@@ -760,7 +771,8 @@ public class BankTransactionSyncService {
                     t.creditCount(),
                     t.creditTotal().toPlainString(),
                     t.debitCount(),
-                    t.debitTotal().toPlainString()));
+                    t.debitTotal().toPlainString(),
+                    t.autoMatchedCount()));
         }
         return out;
     }

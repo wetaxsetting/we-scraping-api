@@ -172,7 +172,7 @@ Same "no 4xx for invalid sort / filter values" rules as Sales — invalid sort s
 
 ## Tenant filtering — `BIZ_KEY`
 
-Identical to Sales. Every query is scoped by `TenantContext.currentBizKey()` (sourced from the validated JWT). Local R&D pin: `wecms.tenant.biz-key = VN_VNM0004_000001`. Wildcards rejected by `TenantProperties` regex.
+Identical to Sales. Every query is scoped by `TenantContext.currentBizKey()` (sourced from the validated JWT), never from request input — so a `%` wildcard tenant filter is impossible.
 
 The same hard rules apply:
 

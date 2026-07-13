@@ -116,16 +116,30 @@ public class InternalTransferDispatchService {
         TransferNetwork network = lines.isEmpty()
                 ? TransferNetwork.CITAD
                 : TransferNetwork.fromAntDivCd(lines.get(0).getAntDivCd());
-        // CITAD-via-API (16:30) vs File-SFTP (15:30) hinges on the same
-        // routing rule the dispatch executor applies; VND→VND drives the
-        // Shinhan CITAD hard-block; ≥500M drives the VCB CITAD tier.
-        boolean apiTransport = dispatchExecutor.usesApiPath(master, lines, req.trnfCcyCd());
-        boolean vndToVnd = "VND".equalsIgnoreCase(master.getCcyCd())
-                && "VND".equalsIgnoreCase(master.getWdrlCcyCd());
-        boolean hasLargeTxn = lines.stream().anyMatch(l -> l.getTranAmt() != null
-                && l.getTranAmt().compareTo(CutoffCheck.LARGE_TXN_THRESHOLD) >= 0);
-        cutoffValidator.validate(new CutoffCheck(
-                master.getOutBankCd(), network, apiTransport, vndToVnd, hasLargeTxn));
+
+        // VCB-source Internal Transfer is exempt from the cut-off entirely
+        // (works 24/7, any channel, any day) — legacy parity with
+        // PymnHelper.validateTransferTiming:3225-3233, which returns early for
+        // an INTERNAL-type payment whose source bank is VCB. This service only
+        // ever handles ScdulPymnTypeCd.INTERNAL (see the master lookup above),
+        // so gating on the VCB source bank alone is the exact legacy behaviour.
+        // Vendor/Expense/Payroll/Overseas run through their own services and are
+        // unaffected — they keep the normal VCB cut-off (incl. the ≥500M tier).
+        if (cutoffValidator.isInternalTransferCutoffExempt(master.getOutBankCd())) {
+            log.info("feature=internal-transfer cutoff bypass: VCB-source internal transfer is 24/7 "
+                    + "(legacy PymnHelper.java:3225-3233) — bizKey={} scdulPymnNo={}", bizKey, id);
+        } else {
+            // CITAD-via-API (16:30) vs File-SFTP (15:30) hinges on the same
+            // routing rule the dispatch executor applies; VND→VND drives the
+            // Shinhan CITAD hard-block; ≥500M drives the VCB CITAD tier.
+            boolean apiTransport = dispatchExecutor.usesApiPath(master, lines, req.trnfCcyCd());
+            boolean vndToVnd = "VND".equalsIgnoreCase(master.getCcyCd())
+                    && "VND".equalsIgnoreCase(master.getWdrlCcyCd());
+            boolean hasLargeTxn = lines.stream().anyMatch(l -> l.getTranAmt() != null
+                    && l.getTranAmt().compareTo(cutoffValidator.largeTxnThreshold()) >= 0);
+            cutoffValidator.validate(new CutoffCheck(
+                    master.getOutBankCd(), network, apiTransport, vndToVnd, hasLargeTxn));
+        }
 
         // Insert dispatch rows (TB_PAY_TARGET for the API path, TB_PAY_FILE_MST
         // + TB_PAY_FILE_DATA for the file path). Uses the Internal-Transfer-

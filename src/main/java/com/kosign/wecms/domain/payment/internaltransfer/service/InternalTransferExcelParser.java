@@ -6,6 +6,7 @@ import com.kosign.wecms.domain.banking.entity.AcctMstr;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ParseExcelResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ParsedTransferLine;
+import com.kosign.wecms.domain.payment.common.LegacyTextNormalizer;
 import com.kosign.wecms.domain.payment.common.OutBankCdNormalizer;
 import com.kosign.wecms.domain.payment.validation.FieldCd;
 import com.kosign.wecms.domain.payment.validation.PymnType;
@@ -324,7 +325,12 @@ public class InternalTransferExcelParser {
         String fincMdaNo   = cellString(row, 1, fmt);
         String tranAmtIn   = cellString(row, 3, fmt);
         String trnfCcyIn   = cellString(row, 4, fmt);
-        String tranUsag    = cellString(row, 5, fmt);
+        // F1 (audit task-44508): remove Vietnamese accents from Remarks BEFORE
+        // validation and BEFORE persistence, mirroring legacy
+        // `PymnHelper:788-789`. Non-Vietnamese / null values pass through
+        // unchanged. Other special characters are preserved (validated, never
+        // replaced with spaces).
+        String tranUsag    = LegacyTextNormalizer.stripVietnameseTone(cellString(row, 5, fmt));
         String chartAcctCd = cellString(row, 6, fmt);
         String note        = cellString(row, 7, fmt);
         String docNo       = cellString(row, 8, fmt);
@@ -488,17 +494,17 @@ public class InternalTransferExcelParser {
             }
         }
 
-        // Special-character check on the cross-filled RCPT_NM. Mirrors
-        // legacy `PymnHelper.readExcelFromInternalTransfer:985` — the
-        // NAPAS branch validates the resolved recipient name against the
-        // BLOCKED_CHARS_RULE table for (bankCd, INTERNAL_TRANSFER,
-        // RECIPIENT_NAME). When no rule is registered the call is a no-op,
-        // so this is safe to land before the rule rows are seeded.
-        if (!isBlank(rcptNm)) {
-            specialCharValidator
-                    .validate(bankCd, PymnType.INTERNAL_TRANSFER, FieldCd.RECIPIENT_NAME, rcptNm)
-                    .ifPresent(msg -> errors.add(new FieldError("RCPT_NM", msg)));
-        }
+        // Internal Transfer recipient name is INTENTIONALLY NOT special-char
+        // validated (audit task-44508, P1 decision). Legacy
+        // `PymnHelper.readExcelFromInternalTransfer` (lines 648-857) validates
+        // REMARKS only; the recipient is the company's OWN account holder name,
+        // system-resolved from `ACCT_MSTR.ACCT_NM` above (curated bank data, not
+        // free Excel text), so legacy never special-char-validates it here.
+        // Validating it (VCB rule 0028 / BIDV rule 0036) would reject
+        // legacy-accepted internal transfers. The INTR/RCPT rows in
+        // BLOCKED_CHARS_RULE are LEFT IN PLACE for possible future use; they are
+        // simply not invoked on this path. If a PO later approves the stricter
+        // behaviour, re-add the validate() call here.
 
         // Note — recipient-name inquiry (ckRecName) is intentionally
         // NOT wired here. Legacy parity:
@@ -618,7 +624,10 @@ public class InternalTransferExcelParser {
             }
             return BigDecimal.valueOf(d).stripTrailingZeros().toPlainString();
         }
-        return fmt.formatCellValue(cell).trim();
+        // F2 (audit task-44508): strip embedded CR/LF from EVERY text cell,
+        // mirroring legacy `ExcelUtils.getCell:144` (`replaceAll("\\r|\\n","")`).
+        // Tabs are preserved (legacy parity). Trim ends after stripping.
+        return LegacyTextNormalizer.stripCrLf(fmt.formatCellValue(cell)).trim();
     }
 
     private static boolean isBlank(String s) {

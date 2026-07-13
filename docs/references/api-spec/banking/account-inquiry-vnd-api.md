@@ -131,9 +131,9 @@ JSON keys are lowercase snake_case via the global Jackson `SNAKE_CASE` naming st
 - `JwtAuthenticationFilter` populates `TenantContext.currentBizKey()` from the JWT claim.
 - `AccountService.list()` reads `TenantContext.currentBizKey()` and passes it to every repository call.
 - `AcctMstrRepository.findByBizKeyAndCcyCdAndActvYn(bizKey, ccyCd, actvYn, sort)` — `BIZ_KEY` is the **first** discriminator on the composite key `(BIZ_KEY, BANK_CD, ACCT_NO)`, so the index is fully exploited.
-- `BIZ_KEY` is **never** accepted from request body or query — it is derived server-side from the authenticated principal. Refactor config rejects `%` wildcards (see `TenantProperties`).
+- `BIZ_KEY` is **never** accepted from request body or query — it is derived server-side from `TenantContext.currentBizKey()` (the authenticated JWT principal), so a `%` wildcard tenant filter is impossible.
 
-Single-tenant R&D: pinned to `BIZ_KEY = VN_VNM0004_000001` via `wecms.tenant.biz-key`.
+Tenant is resolved per user at login from `USER_BUSI_CONN_INFM` and carried in the JWT; the local R&D DB is seeded with one tenant (`VN_VNM0004_000001`).
 
 ---
 

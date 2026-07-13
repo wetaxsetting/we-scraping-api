@@ -167,7 +167,6 @@ public class ErpTrnsHistoryService {
     private final ErpTrnsHstrRepository       repository;
     private final ErpTrnsHistoryFileResolver  fileResolver;
     private final ErpTrnsHistoryMapper        mapper;
-    private final TenantProperties            tenant;
 
     public ErpTrnsHistoryListResponse search(ErpTrnsHistoryListRequest req) {
         String bizKey = TenantContext.currentBizKey();          /* never input */

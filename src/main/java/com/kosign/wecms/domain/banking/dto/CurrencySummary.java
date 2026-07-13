@@ -20,9 +20,18 @@ package com.kosign.wecms.domain.banking.dto;
  * batch finalizes), so a COMPLETED batch means every queued account of
  * every currency synced.
  *
+ * <p>{@code autoMatchedCount} is the numerator of the popup's per-currency
+ * "Debit Matched {matched}/{debit} Transaction(s)" row — the number of this
+ * currency's newly-scraped debit rows the P1 auto-matcher linked to a payment
+ * this batch (legacy {@code AUTO_MATCHED_CNT} from {@code fnsh_0001_001_c001}).
+ * {@code 0} when the tenant's auto-match gate ({@code 00079}) is off OR when
+ * nothing matched — the popup uses the batch-level {@code auto_match_enabled}
+ * flag to decide whether to render the row at all.
+ *
  * <p>Wire shape (global Jackson SNAKE_CASE): {@code ccy_cd},
  * {@code success_count}, {@code failed_count}, {@code credit_count},
- * {@code credit_total}, {@code debit_count}, {@code debit_total}.
+ * {@code credit_total}, {@code debit_count}, {@code debit_total},
+ * {@code auto_matched_count}.
  */
 public record CurrencySummary(
         String ccyCd,
@@ -31,5 +40,6 @@ public record CurrencySummary(
         int creditCount,
         String creditTotal,
         int debitCount,
-        String debitTotal
+        String debitTotal,
+        int autoMatchedCount
 ) { }

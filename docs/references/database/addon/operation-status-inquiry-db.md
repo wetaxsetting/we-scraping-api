@@ -173,7 +173,7 @@ Default ORDER BY: `SEARCHDATETIME DESC, TAXCODE ASC` (secondary key keeps pagina
 
 ## Tenant filtering
 
-`BIZ_KEY` is the **mandatory baseline filter** on every query. Sourced from `TenantContext.currentBizKey()` (populated by `JwtAuthenticationFilter` from the validated JWT). Wildcard filters rejected by `TenantProperties` regex.
+`BIZ_KEY` is the **mandatory baseline filter** on every query. Sourced from `TenantContext.currentBizKey()` (populated by `JwtAuthenticationFilter` from the validated JWT), never from request input — so a `%` wildcard tenant filter is impossible.
 
 ### `OPRT_STTS_INFO` PK ordering
 

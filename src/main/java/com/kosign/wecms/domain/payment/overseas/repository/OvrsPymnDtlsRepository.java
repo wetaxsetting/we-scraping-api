@@ -52,6 +52,43 @@ public interface OvrsPymnDtlsRepository extends JpaRepository<OvrsPymnSumrDetl, 
             @Param("trscDt") String trscDt,
             @Param("trscAmt") java.math.BigDecimal trscAmt);
 
+    /**
+     * Auto-match candidate scan (overseas detail-level) — Branch 3 of the
+     * legacy auto-match candidate query {@code OVRS_PYMN_SUMR_DETL_R007}
+     * ({@code fnsh_0001_001_c001_act.jsp:1908}). Given a scraped bank
+     * withdrawal's account + transfer date + exact amount, returns unmatched
+     * overseas detail lines whose parent batch was dispatched
+     * ({@code TRNF_YN='Y'}) on the same withdrawal account.
+     *
+     * <p>Identical shape to {@link #findOverseasBankMatchCandidates} (the R006
+     * / Smart-Organizer branch) except it ADDS the {@code S.WDRL_ACT_NO} filter
+     * — R007 (auto-match, post-sync) is account-scoped, R006 (manual) is not.
+     * The remaining legacy predicates — dispatch success (via
+     * {@code DispatchResultResolver.resolveOverseas}), transfer-time
+     * {@literal <} bank-time (overseas {@code TRNF_DT} is date-only so this
+     * passes), remark-contained (line {@code MEMO}), and the exactly-one +
+     * locked-{@code BUSI_MATCH_LOG} guards — are applied by
+     * {@code AutoMatchService} in Java, exactly as the domestic branch does.
+     */
+    @Query(value = """
+            SELECT d.* FROM OVRS_PYMN_SUMR_DETL d
+              JOIN OVRS_PYMN_SUMR s
+                ON s.BIZ_KEY = d.BIZ_KEY AND s.OVRS_PYMN_NO = d.OVRS_PYMN_NO
+             WHERE d.BIZ_KEY = :bizKey
+               AND s.WDRL_ACT_NO = :acctNo
+               AND s.TRNF_YN = 'Y'
+               AND COALESCE(d.LINK_MATCH_YN, 'N') <> 'Y'
+               AND d.TRNF_AMT = :trscAmt
+               AND s.TRNF_DT IS NOT NULL
+               AND LENGTH(s.TRNF_DT) >= 8
+               AND SUBSTRING(s.TRNF_DT FROM 1 FOR 8) = :trscDt
+            """, nativeQuery = true)
+    java.util.List<OvrsPymnSumrDetl> findOverseasAutoMatchCandidates(
+            @Param("bizKey") String bizKey,
+            @Param("acctNo") String acctNo,
+            @Param("trscDt") String trscDt,
+            @Param("trscAmt") java.math.BigDecimal trscAmt);
+
     // OVRS_PYMN_DETL_NO allocation now routes through
     // LegacyFunctionRepository.nextOvrsPymnDetlNo (V140 #30 — per-tenant MAX+1
     // over (ovrs_pymn_mstr UNION ovrs_pymn_sumr_detl), verbatim from the live

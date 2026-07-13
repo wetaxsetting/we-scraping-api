@@ -23,7 +23,7 @@ import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWrite
 // ROLE_ADMIN / ROLE_USER authorities from the authGrCd claim, so
 // hasRole('ADMIN') gates take effect immediately (SEC-1).
 @EnableMethodSecurity
-@EnableConfigurationProperties({ JwtProperties.class, TenantProperties.class })
+@EnableConfigurationProperties(JwtProperties.class)
 @RequiredArgsConstructor
 public class SecurityConfig {
 

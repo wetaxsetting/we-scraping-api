@@ -175,6 +175,8 @@ public class ExpensePaymentService {
      *  before it lands on {@code SCDUL_PYMN_SUMR.OUT_BANK_CD}. Mirrors
      *  legacy {@code PymnHelper.uploadPaymentExcel:1315-1317}. */
     private final com.kosign.wecms.domain.payment.common.OutBankCdNormalizer outBankCdNormalizer;
+    /** Authoritative save-path blocked-char enforcement (audit task-44508, P0). */
+    private final com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard blockedCharGuard;
     /** M-2/M-3 (legacy parity): EXPT_RESOL_MSTR display flags from BUSI_ENV_SET_INFM. */
     private final com.kosign.wecms.domain.payment.approvalbox.service.ApprovalDisplayFlagsResolver displayFlagsResolver;
     /** M-1 (legacy parity): shared Request Approval attachment writer (EXPT_RESOL_FILE). */
@@ -450,6 +452,20 @@ public class ExpensePaymentService {
         String userId = TenantContext.currentUserId();
         String now    = OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC).format(DTM14);
 
+        // P0 (audit task-44508): authoritative server-side blocked-char
+        // enforcement BEFORE persistence (Remarks + Recipient Name).
+        for (com.kosign.wecms.domain.payment.internaltransfer.dto.TransferLineInput line : req.lines()) {
+            blockedCharGuard.assertClean(req.bankCd(),
+                    com.kosign.wecms.domain.payment.validation.PymnType.EXPENSE_PAYMENT,
+                    java.util.List.of(
+                            com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard.field(
+                                    com.kosign.wecms.domain.payment.validation.FieldCd.REMARKS,
+                                    com.kosign.wecms.domain.payment.common.LegacyTextNormalizer.normalize(line.tranUsag())),
+                            com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard.field(
+                                    com.kosign.wecms.domain.payment.validation.FieldCd.RECIPIENT_NAME,
+                                    com.kosign.wecms.domain.payment.common.LegacyTextNormalizer.normalize(line.rcptNm()))));
+        }
+
         String scdulPymnNo = keyGenerator.nextScdulPymnNo(bizKey);
 
         ScdulPymnSumr master = new ScdulPymnSumr();
@@ -550,10 +566,13 @@ public class ExpensePaymentService {
             detl.setTranAmt(line.tranAmt());
             detl.setTrnfCcyCd(emptyToDefault(line.trnfCcyCd(), req.trnfCcyCd()));
             detl.setAntDivCd(emptyToNull(line.antDivCd()));
-            detl.setRcptNm(emptyToNull(line.rcptNm()));
+            // Persist normalized (CR/LF + accents stripped) values (audit task-44508, P0).
+            detl.setRcptNm(emptyToNull(
+                    com.kosign.wecms.domain.payment.common.LegacyTextNormalizer.normalize(line.rcptNm())));
             detl.setTarBankCd(emptyToNull(line.tarBankCd()));
             detl.setFincMdaNo(line.fincMdaNo());
-            detl.setTranUsag(emptyToNull(line.tranUsag()));
+            detl.setTranUsag(emptyToNull(
+                    com.kosign.wecms.domain.payment.common.LegacyTextNormalizer.normalize(line.tranUsag())));
             detl.setTrcoKey(trcoKey);
             detl.setHandTrcoKey(handTrcoKey);
             detl.setDocNo(emptyToNull(line.docNo()));
@@ -1166,7 +1185,7 @@ public class ExpensePaymentService {
         boolean vndToVnd = "VND".equalsIgnoreCase(master.getCcyCd())
                 && "VND".equalsIgnoreCase(master.getWdrlCcyCd());
         boolean hasLargeTxn = lines.stream().anyMatch(l -> l.getTranAmt() != null
-                && l.getTranAmt().compareTo(CutoffCheck.LARGE_TXN_THRESHOLD) >= 0);
+                && l.getTranAmt().compareTo(cutoffValidator.largeTxnThreshold()) >= 0);
         cutoffValidator.validate(new CutoffCheck(
                 master.getOutBankCd(), network, apiTransport, vndToVnd, hasLargeTxn));
 

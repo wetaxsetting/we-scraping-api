@@ -95,7 +95,9 @@ class BulkReceptionServiceValidationTest {
                 firmFileMstRepository, firmFileDataRepository, firmBatApiTranRepository,
                 dispatchKeyGenerator, codec, sftpClient, sftpProperties, validator,
                 org.mockito.Mockito.mock(com.kosign.wecms.domain.payment.dispatch.alert.OpsAlertService.class),
-                operatingHoursService);
+                operatingHoursService,
+                org.mockito.Mockito.mock(com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard.class),
+                org.mockito.Mockito.mock(com.kosign.wecms.domain.payment.common.OutBankCdNormalizer.class));
 
         // Operating-hours gate open by default; validation-fail cases return before it.
         when(operatingHoursService.evaluateBulk(any(), any())).thenReturn(OperatingHoursDecision.DISPATCH);

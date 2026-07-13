@@ -16,6 +16,7 @@ import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnDtlsRepositor
 import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnSumrRepository;
 import com.kosign.wecms.domain.payment.overseas.service.OverseasPaymentFileResolver;
 import com.kosign.wecms.domain.payment.overseas.service.OverseasPaymentKeyGenerator;
+import com.kosign.wecms.domain.payment.common.LegacyTextNormalizer;
 import com.kosign.wecms.domain.payment.validation.FieldCd;
 import com.kosign.wecms.domain.payment.validation.PymnType;
 import com.kosign.wecms.domain.payment.validation.SpecialCharValidator;
@@ -100,6 +101,8 @@ public class OverseasPaymentExcelService {
      *  Transfer/dispatch path keys {@code TB_FIRM_CONF} by. Mirrors legacy
      *  {@code pymn_0007_003_c001_act.jsp:106-107}. */
     private final com.kosign.wecms.domain.payment.common.OutBankCdNormalizer outBankCdNormalizer;
+    /** Authoritative save-path blocked-char enforcement (audit task-44508, P0). */
+    private final com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard blockedCharGuard;
     private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
     private final TransactionalRetry           transactionalRetry;
     /** F2 — shared ERP_TRNS_HSTR writer for the Overseas Result download 'W' row. */
@@ -193,7 +196,10 @@ public class OverseasPaymentExcelService {
                 String amount            = readCell(row, COL_AMOUNT);
                 String feePayer          = readCell(row, COL_FEE_PAYER);
                 String beneficiaryCode   = readCell(row, COL_BENEFICIARY_CODE);
-                String memo              = readCell(row, COL_MEMO);
+                // F1 (audit task-44508): strip Vietnamese accents from Memo
+                // BEFORE validation and persistence. Mirrors legacy
+                // `pymn_0007_003_r001_act.jsp:366-367`.
+                String memo              = LegacyTextNormalizer.stripVietnameseTone(readCell(row, COL_MEMO));
                 String reportingAccount  = readCell(row, COL_REPORTING_ACCOUNT);
 
                 List<OverseasPaymentExcelFieldError> errors = new ArrayList<>();
@@ -409,10 +415,13 @@ public class OverseasPaymentExcelService {
         }
 
         TrcoOvrsInfm o = ovrsRows.get(0);
-        String bnfcNm     = trimToNull(o.getBeneName());
+        // F1 (audit task-44508): strip Vietnamese accents from Beneficiary Name
+        // and Address BEFORE validation and persistence. Mirrors legacy
+        // `pymn_0007_003_r001_act.jsp:169-170` (name) + `:191-192` (address).
+        String bnfcNm     = LegacyTextNormalizer.stripVietnameseTone(trimToNull(o.getBeneName()));
         String bicCode    = trimToNull(stripWhitespace(o.getBicCode()));
         String bnfcAcctNo = trimToNull(stripWhitespace(o.getBeneAcctNo()));
-        String bnfcAddr   = trimToNull(o.getBeneAddr());
+        String bnfcAddr   = LegacyTextNormalizer.stripVietnameseTone(trimToNull(o.getBeneAddr()));
         String bnfcBankNm = trimToNull(o.getBeneBankName());
         String bnfcBankCd = trimToNull(stripWhitespace(o.getBeneBankCode()));
 
@@ -473,8 +482,10 @@ public class OverseasPaymentExcelService {
         if (row == null) return "";
         Cell cell = row.getCell(col);
         if (cell == null) return "";
+        // F2 (audit task-44508): strip embedded CR/LF from text cells,
+        // mirroring legacy `ExcelUtils.getCell:144`. Tabs preserved.
         return switch (cell.getCellType()) {
-            case STRING  -> cell.getStringCellValue().trim();
+            case STRING  -> LegacyTextNormalizer.stripCrLf(cell.getStringCellValue()).trim();
             case NUMERIC -> {
                 double d = cell.getNumericCellValue();
                 yield (d == Math.floor(d) && !Double.isInfinite(d))
@@ -486,7 +497,7 @@ public class OverseasPaymentExcelService {
                 try {
                     yield String.valueOf(cell.getNumericCellValue());
                 } catch (Exception ex) {
-                    yield cell.getStringCellValue().trim();
+                    yield LegacyTextNormalizer.stripCrLf(cell.getStringCellValue()).trim();
                 }
             }
             default -> "";
@@ -580,6 +591,23 @@ public class OverseasPaymentExcelService {
                 .count();
         if (distinctCcy > 1) {
             throw new BusinessException("WBW1160");
+        }
+
+        // P0 (audit task-44508): authoritative server-side blocked-char
+        // enforcement BEFORE persistence — Beneficiary Name / Address / Memo,
+        // validated against the withdrawal bank's active rules using the raw
+        // withdrawal BANK_CD (NOT the NAPAS OUT_BANK_CD). A direct API call
+        // that carries a blocked char is rejected here.
+        for (var src : req.rows()) {
+            blockedCharGuard.assertClean(req.wdrl_bank_cd(),
+                    PymnType.OVERSEAS_PAYMENT,
+                    java.util.List.of(
+                            com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard.field(
+                                    FieldCd.BENEFICIARY_NAME, LegacyTextNormalizer.normalize(src.bnfc_nm())),
+                            com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard.field(
+                                    FieldCd.BENEFICIARY_ADDRESS, LegacyTextNormalizer.normalize(src.bnfc_addr())),
+                            com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard.field(
+                                    FieldCd.MEMO, LegacyTextNormalizer.normalize(src.memo()))));
         }
 
         // ── Summary row ──────────────────────────────────────────────────────
@@ -683,7 +711,8 @@ public class OverseasPaymentExcelService {
                         "Invalid Fee Payer: " + src.fee_payer_cd());
             }
             dtl.setFeePayerCd(feePayerCd);
-            dtl.setMemo(nullToEmpty(src.memo()));
+            // Persist normalized (CR/LF + accents stripped) value (audit task-44508, P0).
+            dtl.setMemo(nullToEmpty(LegacyTextNormalizer.normalize(src.memo())));
             // Reporting account (optional): resolve CHART_ACCT_SEQ_NO so the pair
             // (CHART_ACCT_CD, CHART_ACCT_SEQ_NO) stays consistent for legacy /
             // migration parity (legacy c001 sets both — pymn_0007_003_c001_act.jsp:161-162).
@@ -698,14 +727,14 @@ public class OverseasPaymentExcelService {
                 dtl.setRprtAcctCd(rprtCode);
                 dtl.setChartAcctSeqNo(chart.getChartAcctSeqNo());
             }
-            dtl.setBnfcNm(nullToEmpty(src.bnfc_nm()));
+            dtl.setBnfcNm(nullToEmpty(LegacyTextNormalizer.normalize(src.bnfc_nm())));
             dtl.setBnfcBankNm(nullToEmpty(src.bnfc_bank_nm()));
             dtl.setBicCd(nullToEmpty(src.bic_cd()));
             // JEX OVRS_PYMN_SUMR_DETL.BNFC_BANK_CD is NOT NULL and carries the
             // beneficiary bank SWIFT/BIC (same value the BIC column holds).
             dtl.setBnfcBankCd(nullToEmpty(src.bic_cd()));
             dtl.setBnfcAcctNo(nullToEmpty(src.bnfc_acct_no()));
-            dtl.setBnfcAddr(nullToEmpty(src.bnfc_addr()));
+            dtl.setBnfcAddr(nullToEmpty(LegacyTextNormalizer.normalize(src.bnfc_addr())));
             // Legacy parity (L2): resolve the internal TRCO_KEY from the beneficiary
             // code, matching legacy getOverseasContactInfo (pymn_0007_003_r001_act.jsp:138
             // — recItem.put("TRCO_KEY", trcoInfm.getTrcoKey())) → c001 setTrcoKey

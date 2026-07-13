@@ -92,6 +92,7 @@ class PayrollPaymentUploadSaveTest {
     @Mock ApprovalBoxService approvalBoxService;
     @Mock TransferLineDetailMapper transferLineDetailMapper;
     @Mock OutBankCdNormalizer outBankCdNormalizer;
+    @Mock com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard blockedCharGuard;
     @Mock ApprovalDisplayFlagsResolver displayFlagsResolver;
     @Mock ApprovalAttachmentWriter approvalAttachmentWriter;
     @Mock ApprovalBoxFanoutService approvalBoxFanoutService;

@@ -83,7 +83,7 @@ This is the acceptance contract Phase 2 (implementation) and Phase 4 (test) sign
 
 - [x] Repository call constrains on `BIZ_KEY = TenantContext.currentBizKey()`. Verified: `FirmBankingHistoryServiceTest#list_alwaysUsesTenantContextBizKey` (flips `TenantContext` and confirms repo receives the new value).
 - [x] No request param can override the tenant key. *No `biz_key` parameter on the endpoint — the controller signature physically has no way to receive one.*
-- [x] `wecms.tenant.biz-key` config rejects `%` wildcards. *Existing global rule, unchanged.*
+- [x] Tenant scope comes only from `TenantContext.currentBizKey()` (JWT); a `%` wildcard tenant filter is impossible. *Existing global rule.*
 
 ### B.5 Sort
 

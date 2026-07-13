@@ -105,7 +105,7 @@ Same as Sales — **no JOINs** required for the listing page. Every column the l
 
 ## Tenant filtering — `BIZ_KEY`
 
-Identical to Sales. Local R&D pin: `wecms.tenant.biz-key = VN_VNM0004_000001`. Wildcards rejected by `TenantProperties` regex. Composite PK `(BIZ_KEY, DOC_ID)`. Repository finders take `bizKey` as the first argument. `BIZ_KEY` not echoed on the wire.
+Identical to Sales. `BIZ_KEY` is sourced from `TenantContext.currentBizKey()` (set by `JwtAuthenticationFilter` from the validated JWT), never from request input — so a `%` wildcard tenant filter is impossible. Composite PK `(BIZ_KEY, DOC_ID)`. Repository finders take `bizKey` as the first argument. `BIZ_KEY` not echoed on the wire.
 
 See [Sales DB § Tenant filtering — BIZ_KEY](sales-e-invoices-db.md#tenant-filtering--biz_key) for the full hard-rules list.
 

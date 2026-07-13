@@ -61,6 +61,7 @@ class ExpensePaymentCreateDraftTest {
     @Mock private LegacyFunctionRepository legacyFunctions;
     @Mock private AuditLogService auditLogService;
     @Mock private OutBankCdNormalizer outBankCdNormalizer;
+    @Mock private com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard blockedCharGuard;
     @Mock private TrcoInfmRepository contactRepo;
     @Mock private Clock clock;
 

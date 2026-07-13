@@ -115,8 +115,8 @@ No FCY-specific behaviour: the formatter is currency-agnostic.
   - **`findByBizKeyAndCcyCdNotAndActvYn(bizKey, "VND", "Y", sort)`** — wire `currency=FCY` (the FCY-distinguishing call).
   - `findByBizKeyAndCcyCdAndActvYn(bizKey, ccyCd, "Y", sort)` — wire `currency=USD/KRW/EUR/…` (concrete CCY narrow).
   - Filtered variants (`findFiltered`) compose the same predicate selection inside one JPQL with bank / keyword / sort.
-- `bizKey` is sourced from `TenantContext.currentBizKey()` (set by `JwtAuthenticationFilter`). It is **never** read from request input. The config property `wecms.tenant.biz-key` rejects `%` wildcards.
-- Single-tenant R&D: pinned to `BIZ_KEY = VN_VNM0004_000001`.
+- `bizKey` is sourced from `TenantContext.currentBizKey()` (set by `JwtAuthenticationFilter` from the validated JWT). It is **never** read from request input, so a `%` wildcard tenant filter is impossible.
+- Tenant is resolved per user from the JWT; the local R&D DB is seeded with one tenant (`VN_VNM0004_000001`).
 
 ---
 

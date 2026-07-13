@@ -207,6 +207,8 @@ public class InternalTransferService {
      *  {@code SCDUL_PYMN_SUMR.OUT_BANK_CD}. Mirrors legacy
      *  {@code PymnHelper.uploadPaymentExcel:1315-1317}. */
     private final com.kosign.wecms.domain.payment.common.OutBankCdNormalizer outBankCdNormalizer;
+    /** Authoritative save-path blocked-char enforcement (audit task-44508, P0). */
+    private final com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard blockedCharGuard;
     /** M-2/M-3 (legacy parity): EXPT_RESOL_MSTR display flags from BUSI_ENV_SET_INFM. */
     private final com.kosign.wecms.domain.payment.approvalbox.service.ApprovalDisplayFlagsResolver displayFlagsResolver;
     private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
@@ -548,6 +550,21 @@ public class InternalTransferService {
         String userId = TenantContext.currentUserId();
         String now    = OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC).format(DTM14);
 
+        // P0 (audit task-44508): authoritative server-side blocked-char
+        // enforcement BEFORE any persistence — the upload preview is advisory,
+        // so re-validate every line's normalized Remarks against the withdrawal
+        // bank's active rules. A direct API call (or an edited/copied payload)
+        // that carries a blocked char is rejected here with
+        // WBE_PAYMENT_BLOCKED_CHARS. INTR validates REMARKS only (P1 decision);
+        // the recipient name is the company's own-account holder name.
+        for (TransferLineInput line : req.lines()) {
+            blockedCharGuard.assertClean(req.bankCd(),
+                    com.kosign.wecms.domain.payment.validation.PymnType.INTERNAL_TRANSFER,
+                    java.util.List.of(com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard.field(
+                            com.kosign.wecms.domain.payment.validation.FieldCd.REMARKS,
+                            com.kosign.wecms.domain.payment.common.LegacyTextNormalizer.normalize(line.tranUsag()))));
+        }
+
         String scdulPymnNo = keyGenerator.nextScdulPymnNo(bizKey);
 
         ScdulPymnSumr master = new ScdulPymnSumr();
@@ -626,7 +643,11 @@ public class InternalTransferService {
             detl.setRcptNm(emptyToNull(line.rcptNm()));
             detl.setTarBankCd(emptyToNull(line.tarBankCd()));
             detl.setFincMdaNo(line.fincMdaNo());
-            detl.setTranUsag(emptyToNull(line.tranUsag()));
+            // Persist the SAME normalized value the preview/guard validated
+            // (CR/LF + Vietnamese accents stripped) so a direct API call cannot
+            // store an un-normalized Remarks (audit task-44508, P0).
+            detl.setTranUsag(emptyToNull(
+                    com.kosign.wecms.domain.payment.common.LegacyTextNormalizer.normalize(line.tranUsag())));
             detl.setTrcoKey(emptyToNull(line.trcoKey()));
             detl.setHandTrcoKey(emptyToNull(line.handTrcoKey()));
             detl.setDocNo(emptyToNull(line.docNo()));
