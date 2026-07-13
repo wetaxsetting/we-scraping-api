@@ -1,69 +1,73 @@
-# DEFAULT / shared profile (tracked in Git, no secrets).
-
+# =============================================================================
+# Spring configuration
+# Configures profiles, JPA, messaging, uploads, and task scheduling.
+# =============================================================================
 spring:
   application:
     name: wecms-api
-  # Optional local .env overrides (template: .env.example). OS env vars win.
   config:
     import: optional:file:./.env[.properties]
   profiles:
-    # Default for local runs. Servers MUST set SPRING_PROFILES_ACTIVE, or they
-    # fall through to `local` and the shared DEV DB.
     active: local
+
+  # JPA and Hibernate behavior.
   jpa:
     open-in-view: false
     hibernate:
-      # Validate entity mappings only; never create or update tables.
       ddl-auto: validate
     properties:
       hibernate.dialect: org.hibernate.dialect.PostgreSQLDialect
       hibernate.jdbc.time_zone: UTC
-  # No Flyway — apply schema SQL manually. validate needs a pre-migrated DB.
+
+  # Message source.
   messages:
     basename: messages
     encoding: UTF-8
+
+  # Multipart upload limits.
   servlet:
     multipart:
-      # Upload cap: 10 MB per file, 50 MB per request.
       max-file-size: 10MB
       max-request-size: 50MB
 
+  # Task scheduler.
   task:
     scheduling:
-      # Single-threaded scheduler. @Scheduled crons need an explicit
-      # zone = "Asia/Ho_Chi_Minh" (hosts default to UTC).
       pool:
         size: 1
       thread-name-prefix: wecms-scheduler-
 
+# =============================================================================
+# Server configuration
+# Configures the HTTP server port and error response handling.
+# =============================================================================
 server:
   port: 8080
+  # Error response handling.
   error:
     include-message: always
     include-stacktrace: never
 
+# =============================================================================
+# WeCMS application configuration
+# Configures security, integrations, file storage, and application services.
+# =============================================================================
 wecms:
-  # =============================================================================
-  # Security (CORS / JWT)
-  # =============================================================================
+  # JWT authentication.
   jwt:
-    # Required. >=32 bytes (HS256), >=64 bytes (HS512). openssl rand -hex 64
     secret: ${WECMS_JWT_SECRET}
     expires-in-seconds: 3600
     issuer: wecms-api
+
+  # Cross-origin request settings.
   cors:
-    # Comma-separated allowed frontend origins.
     allowed-origins: ${WECMS_CORS_ALLOWED_ORIGINS}
-  # =============================================================================
-  # Credential cipher (legacy pgcrypto-compatible)
-  # =============================================================================
+
+  # Credential encryption.
   crypto:
-    # AES seed for cert columns. Must equal the legacy seed for shared-DB compat.
     legacy-cert-seed: ${WECMS_CRYPTO_LEGACY_CERT_SEED}
-  # =============================================================================
-  # File storage
-  # =============================================================================
-  # Upload layout: <storage-root>/<bizKey>/<module>/<file>. One root per module.
+
+  # File storage roots per upload module.
   overseas-payment:
     storage-root: ${WECMS_OVERSEAS_PAYMENT_STORAGE_ROOT}
   vendor-payment:
@@ -84,44 +88,27 @@ wecms:
     storage-root: ${WECMS_CARD_TRANSACTIONS_STORAGE_ROOT}
   internal-transfer:
     storage-root: ${WECMS_INTERNAL_TRANSFER_STORAGE_ROOT}
-    # Cut-off configuration is DB-only (2026-07-09): windows + large-txn-threshold
-    # live in TB_CUTOFF_CONFIG / TB_CUTOFF_PARAM and are loaded by
-    # CutoffConfigProvider. There is NO application.yml fallback — the app
-    # fails fast at startup if the DB config is incomplete/invalid.
-    # (CutoffConfigProvider's TTL knob defaults to 300000ms in the @Scheduled
-    #  annotation; override via WECMS_* env only if a different cadence is needed.)
 
-  # =============================================================================
-  # Exchange-rate collection batch
-  # =============================================================================
-  # OFF by default. Enable only in the environment that owns FX collection.
+  # Exchange rate collection.
   exchange-rate:
+    # Scheduled collection batch.
     batch:
       enabled: ${WECMS_EXCHANGE_RATE_BATCH_ENABLED}
-
-  # =============================================================================
-  # Operation Status Inquiry batch
-  # =============================================================================
-  # OFF by default. Crons default to 00:00 ICT daily.
+  # Operation status inquiry.
   operation-status:
+    # Scheduled inquiry batch.
     batch:
       enabled: ${WECMS_OPERATION_STATUS_BATCH_ENABLED}
       seed-cron: ${WECMS_OPERATION_STATUS_BATCH_SEED_CRON}
       refresh-cron: ${WECMS_OPERATION_STATUS_BATCH_REFRESH_CRON}
-
-  # =============================================================================
-  # Coocon (bank/card scraping + FX gateway)
-  # =============================================================================
+  # Coocon API integration.
   coocon:
-    # Secret keys required (no default). Set per environment via WECMS_COOCON_*.
     api-key: ${WECMS_COOCON_API_KEY}
     api-url: ${WECMS_COOCON_API_URL}
     smart-api-key: ${WECMS_COOCON_SMART_API_KEY}
     smart-api-url: ${WECMS_COOCON_SMART_API_URL}
     unique-key: ${WECMS_COOCON_UNIQUE_KEY}
-  # =============================================================================
-  # OSMC (GDT lookup — same Coocon gateway)
-  # =============================================================================
+  # OSMC API integration.
   osmc:
     url: ${WECMS_OSMC_URL}
     api-key: ${WECMS_OSMC_API_KEY}
@@ -129,30 +116,33 @@ wecms:
     unique-key: ${WECMS_OSMC_UNIQUE_KEY}
 
 # =============================================================================
-# HAENGSUNG Oracle ERP integration
+# Haengsung ERP integration
+# Configures the Oracle connection and scheduled synchronization jobs.
 # =============================================================================
-# Optional secondary Oracle datasource. OFF by default; set values per host.
 haengsung:
+  # Oracle database connection.
   oracle:
     enabled: ${HAENGSUNG_ORACLE_ENABLED}
     url: ${HAENGSUNG_ORACLE_URL}
     username: ${HAENGSUNG_ORACLE_USERNAME}
     password: ${HAENGSUNG_ORACLE_PASSWORD}
-  # Scheduled Oracle jobs. OFF by default; cron is a Spring cron (ICT).
+  # Scheduled payment import.
   scheduled-payment-import:
     enabled: ${HAENGSUNG_SCHEDULED_IMPORT_ENABLED}
     cron: ${HAENGSUNG_SCHEDULED_IMPORT_CRON}
+  # Exchange rate synchronization.
   exchange-rate-sync:
     enabled: ${HAENGSUNG_EXCHANGE_RATE_SYNC_ENABLED}
     cron: ${HAENGSUNG_EXCHANGE_RATE_SYNC_CRON}
+  # Card and account synchronization.
   card-account-sync:
     enabled: ${HAENGSUNG_CARD_ACCOUNT_SYNC_ENABLED}
     cron: ${HAENGSUNG_CARD_ACCOUNT_SYNC_CRON}
 
 # =============================================================================
-# Logging
+# Application logging
+# Configures the trace log pattern and logging levels.
 # =============================================================================
-# Base = production-safe. SQL / bind-value logging lives in local + sit only.
 logging:
   pattern:
     level: "%5p [traceId=%X{traceId:--}]"
