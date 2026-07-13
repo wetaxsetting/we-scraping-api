@@ -11,8 +11,6 @@ import com.kosign.wecms.domain.banking.bankcredentials.entity.BankCertInfo;
 import com.kosign.wecms.domain.banking.bankcredentials.repository.BankCertInfoRepository;
 import com.kosign.wecms.domain.banking.bankcredentials.service.BankCertCryptoService;
 import com.kosign.wecms.domain.banking.nxisas.BankScrapingService;
-import com.kosign.wecms.domain.banking.nxisas.dto.ScrapeSessionResponse;
-import com.kosign.wecms.domain.banking.nxisas.dto.VerifyCredentialsRequest;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
 import com.kosign.wecms.domain.banking.repository.BankInfmRepository;
 import com.kosign.wecms.domain.banking.service.AccountRegistrationService;
@@ -28,13 +26,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.MockedStatic;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -49,9 +45,19 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Unit tests for the legacy-parity fixes on {@link LoginCredentialsService}:
- * GDT verify-before-persist (flag-gated), hard delete, and the audit
- * dual-read (slug + legacy WSVC ids).
+ * Unit tests for {@link LoginCredentialsService}.
+ *
+ * <p>GDT credentials are verified CLIENT-SIDE by the local NXiSAS.exe engine
+ * (legacy parity — the Save action is the login test, run on the local engine,
+ * not the Coocon server gateway). The backend GDT create/update actions are
+ * therefore pure {@code GDT_CERT_INFO} upserts and must NEVER call
+ * {@link BankScrapingService} / route {@code VIETNAM_GDT} through the Coocon
+ * gateway. The former flag-gated server-side verify (which threw
+ * {@code WBE2093} because {@code VIETNAM_GDT} has no {@code NxisasBankConfig}
+ * entry) was removed 2026-07-13 — see
+ * {@code Claude Code (AI)/notes/gdt-login-credentials-wbe2093-fix.md}.
+ *
+ * <p>Also covers hard delete and the audit dual-read (slug + legacy WSVC ids).
  */
 class LoginCredentialsServiceTest {
 
@@ -111,9 +117,8 @@ class LoginCredentialsServiceTest {
     /* ----------------------------- GDT create ----------------------------- */
 
     @Test
-    @DisplayName("createGdt: verify disabled → persists without calling the gateway")
-    void createGdt_verifyDisabled_persists() {
-        ReflectionTestUtils.setField(service, "gdtVerifyEnabled", false);
+    @DisplayName("createGdt: persists GDT_CERT_INFO (encrypted pw) WITHOUT calling BankScrapingService")
+    void createGdt_persists_withoutBankScraping() {
         when(gdtRepo.findByBizKeyOrderBySeqNoAsc(BIZ)).thenReturn(List.of());
         when(legacyFunctions.nextGdtCertSeqNo(BIZ)).thenReturn("7");
         when(gdtRepo.save(any(GdtCertInfo.class))).thenAnswer(i -> i.getArgument(0));
@@ -121,81 +126,69 @@ class LoginCredentialsServiceTest {
         var resp = service.createGdt(new GdtCredentialRequest("gdtuser", "gdtpw", null));
 
         assertEquals(new BigDecimal("7"), resp.seqNo());
+        // GDT is verified client-side by the local NXiSAS.exe engine — the
+        // backend must NEVER route VIETNAM_GDT through the Coocon gateway.
         verify(bankScrapingService, never()).verify(any());
-        verify(gdtRepo).save(any(GdtCertInfo.class));
+
+        ArgumentCaptor<GdtCertInfo> cap = ArgumentCaptor.forClass(GdtCertInfo.class);
+        verify(gdtRepo).save(cap.capture());
+        assertEquals("gdtuser", cap.getValue().getCertInfoCon());
+        assertEquals("ENC", cap.getValue().getCertInfoDetlCon());   // password encrypted at rest
+        assertEquals("1", cap.getValue().getCertInfoDv());          // legacy CERT_INFO_DV
+        verify(auditLogService).append(any());
     }
 
     @Test
-    @DisplayName("createGdt: verify enabled + COMPLETED → persists")
-    void createGdt_verifyEnabled_completed_persists() {
-        ReflectionTestUtils.setField(service, "gdtVerifyEnabled", true);
-        when(gdtRepo.findByBizKeyOrderBySeqNoAsc(BIZ)).thenReturn(List.of());
-        when(bankScrapingService.verify(any()))
-                .thenReturn(ScrapeSessionResponse.completed(UUID.randomUUID(), List.of()));
-        when(legacyFunctions.nextGdtCertSeqNo(BIZ)).thenReturn("8");
-        when(gdtRepo.save(any(GdtCertInfo.class))).thenAnswer(i -> i.getArgument(0));
-
-        var resp = service.createGdt(new GdtCredentialRequest("gdtuser", "gdtpw", null));
-
-        assertEquals(new BigDecimal("8"), resp.seqNo());
-        ArgumentCaptor<VerifyCredentialsRequest> cap =
-                ArgumentCaptor.forClass(VerifyCredentialsRequest.class);
-        verify(bankScrapingService).verify(cap.capture());
-        assertEquals("VIETNAM_GDT", cap.getValue().bankCd());
-        assertEquals("gdtuser", cap.getValue().loginId());
-        verify(gdtRepo).save(any(GdtCertInfo.class));
-    }
-
-    @Test
-    @DisplayName("createGdt: verify enabled + ERROR → throws, row NOT saved")
-    void createGdt_verifyEnabled_error_notSaved() {
-        ReflectionTestUtils.setField(service, "gdtVerifyEnabled", true);
-        when(gdtRepo.findByBizKeyOrderBySeqNoAsc(BIZ)).thenReturn(List.of());
-        when(bankScrapingService.verify(any()))
-                .thenReturn(ScrapeSessionResponse.error(UUID.randomUUID(), "80004051", "bad creds"));
+    @DisplayName("createGdt: second credential for the same company is blocked (one-per-company)")
+    void createGdt_duplicate_blocked() {
+        GdtCertInfo existing = new GdtCertInfo();
+        existing.setBizKey(BIZ);
+        existing.setSeqNo(new BigDecimal("1"));
+        when(gdtRepo.findByBizKeyOrderBySeqNoAsc(BIZ)).thenReturn(List.of(existing));
 
         BusinessException ex = assertThrows(BusinessException.class,
-                () -> service.createGdt(new GdtCredentialRequest("gdtuser", "wrongpw", null)));
+                () -> service.createGdt(new GdtCredentialRequest("gdtuser", "gdtpw", null)));
 
-        assertEquals("WBE_LOGIN_CREDENTIAL_GDT_VERIFY_FAILED", ex.getCode());
+        assertEquals("WBE_LOGIN_CREDENTIAL_GDT_EXISTS", ex.getCode());
+        verify(bankScrapingService, never()).verify(any());
         verify(gdtRepo, never()).save(any());
         verify(legacyFunctions, never()).nextGdtCertSeqNo(anyString());
         verify(auditLogService, never()).append(any());
     }
 
-    @Test
-    @DisplayName("createGdt: verify enabled + CAPTCHA challenge → throws, row NOT saved")
-    void createGdt_verifyEnabled_challenge_notSaved() {
-        ReflectionTestUtils.setField(service, "gdtVerifyEnabled", true);
-        when(gdtRepo.findByBizKeyOrderBySeqNoAsc(BIZ)).thenReturn(List.of());
-        when(bankScrapingService.verify(any()))
-                .thenReturn(ScrapeSessionResponse.captchaChallenge(
-                        UUID.randomUUID(), "enter captcha", "img", "svg+xml"));
-
-        assertThrows(BusinessException.class,
-                () -> service.createGdt(new GdtCredentialRequest("gdtuser", "gdtpw", null)));
-        verify(gdtRepo, never()).save(any());
-    }
-
     /* ----------------------------- GDT update ----------------------------- */
 
     @Test
-    @DisplayName("updateGdt: verify enabled + ERROR → throws, row NOT updated")
-    void updateGdt_verifyEnabled_error_notSaved() {
-        ReflectionTestUtils.setField(service, "gdtVerifyEnabled", true);
+    @DisplayName("updateGdt: updates login id + re-encrypted password WITHOUT calling BankScrapingService")
+    void updateGdt_persists_withoutBankScraping() {
         GdtCertInfo existing = new GdtCertInfo();
         existing.setBizKey(BIZ);
         existing.setSeqNo(new BigDecimal("3"));
         existing.setCertInfoCon("olduser");
-        existing.setCertInfoDetlCon("ENC");
+        existing.setCertInfoDetlCon("OLD_ENC");
         when(gdtRepo.findByBizKeyAndSeqNo(BIZ, new BigDecimal("3")))
                 .thenReturn(Optional.of(existing));
-        when(bankScrapingService.verify(any()))
-                .thenReturn(ScrapeSessionResponse.error(UUID.randomUUID(), "80004051", "bad"));
+        when(gdtRepo.save(any(GdtCertInfo.class))).thenAnswer(i -> i.getArgument(0));
 
-        assertThrows(BusinessException.class, () -> service.updateGdt(
-                new BigDecimal("3"), new GdtCredentialUpdateRequest(null, "newpw", null)));
+        service.updateGdt(new BigDecimal("3"),
+                new GdtCredentialUpdateRequest("newuser", "newpw", null));
 
+        verify(bankScrapingService, never()).verify(any());
+        assertEquals("newuser", existing.getCertInfoCon());
+        assertEquals("ENC", existing.getCertInfoDetlCon());         // new password re-encrypted
+        verify(gdtRepo).save(existing);
+        verify(auditLogService).append(any());
+    }
+
+    @Test
+    @DisplayName("updateGdt: all-null patch rejected with WBE_VALIDATION (no save)")
+    void updateGdt_allNull_rejected() {
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.updateGdt(new BigDecimal("3"),
+                        new GdtCredentialUpdateRequest(null, null, null)));
+
+        assertEquals("WBE_VALIDATION", ex.getCode());
+        verify(bankScrapingService, never()).verify(any());
         verify(gdtRepo, never()).save(any());
     }
 

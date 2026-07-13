@@ -61,12 +61,6 @@ wecms:
     # AES seed for cert columns. Must equal the legacy seed for shared-DB compat.
     legacy-cert-seed: ${WECMS_CRYPTO_LEGACY_CERT_SEED}
   # =============================================================================
-  # Login Credentials
-  # =============================================================================
-  login-credentials:
-    # GDT verify-before-save. Keep false until the GDT gateway is ready.
-    gdt-verify-enabled: ${WECMS_LOGIN_CREDENTIALS_GDT_VERIFY_ENABLED}
-  # =============================================================================
   # File storage
   # =============================================================================
   # Upload layout: <storage-root>/<bizKey>/<module>/<file>. One root per module.

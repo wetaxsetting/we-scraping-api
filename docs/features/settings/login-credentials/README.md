@@ -84,7 +84,7 @@ a password).
 | Tables | `BANK_CERT_INFO`, `GDT_CERT_INFO` (credentials), `ACCT_MSTR` + `ACCT_AUTH_INFO` (atomic-save fan-out), `AUDIT_LOGS_INFM` (audit), `BANK_INFM_DETL` (bank picker + form-info, read-only) — all in the legacy inventory |
 | Cert crypto | legacy pgcrypto AES-256-CBC, zero IV, PKCS5, base64, key `SHA-256('wabooksvn')` — byte-identical to legacy `encrypt()`/`decrypt()` |
 | PK generation | `wb_get_next_val` via `LegacyFunctionRepository.nextBankCertSeqNo` / `nextGdtCertSeqNo` / `nextAcctMstrPrnSeq` (per-tenant MAX+1) |
-| GDT verify-before-save | server-side via the shared Coocon gateway (pseudo-bank `VIETNAM_GDT`), flag `wecms.login-credentials.gdt-verify-enabled` (default **off**) |
+| GDT verification | **client-side** on the local NXiSAS.exe engine (`bankCd="VIETNAM_GDT"`, module `GLOBAL/VNM/PUBLIC_GDT` via `GET /gdt/engine-config`); backend create/update are pure `GDT_CERT_INFO` upserts. The former server-side Coocon verify was **removed 2026-07-13** (wrongly threw `WBE2093` — GDT is not a Coocon bank). |
 | Bank scraping | server-side Coocon/NXiSAS gateway (`BankScrapingService`); credentials persist only after a `COMPLETED` verify |
 | Audit | Create / Update / Delete write `AUDIT_LOGS_INFM` with `WSVC_ID = 'login-credentials'` (slug); `REF_NO = 'BANK_CERT_INFO'` / `'GDT_CERT_INFO'`, `REF_NO1 = SEQ_NO`. Reads (list / reveal / audit-logs / form-info) do not audit. The audit-history popup READS the slug **plus** legacy `comm_0218_001` / `comm_0218_004` (coexistence). |
 | Wire format | lowercase snake_case (global Jackson `SNAKE_CASE`). Coocon/NXiSAS gateway DTOs keep vendor casing — NOT this slice's contract. |
@@ -163,8 +163,10 @@ entry point; deep detail lives here:
 1. **Stale "AES-GCM" Javadoc** on `BankCertInfo` and `GdtCertInfo` entities — the cipher is legacy
    pgcrypto AES-256-CBC, not AES-GCM (see the cert-crypto note above + the audit). Non-blocking
    doc/comment cleanup; tracked in [refactor-gap-analysis.md](refactor-gap-analysis.md).
-2. **GDT server-side verify-before-save** ships flag-gated **off** (`wecms.login-credentials.gdt-verify-enabled`)
-   pending the GDT captcha challenge-chain; legacy `comm_0218_007.js` always ran the login test on Save.
+2. **GDT verification is client-side (local NXiSAS.exe engine)** — legacy parity (`comm_0218_007.js`
+   ran the login test on the local engine on Save). The obsolete server-side `verifyGdtCredentials`
+   path + `wecms.login-credentials.gdt-verify-enabled` flag were **removed 2026-07-13** (they wrongly
+   threw `WBE2093`); see `Claude Code (AI)/notes/gdt-login-credentials-wbe2093-fix.md`. **Resolved.**
 3. **`VAS_ACCT_SEQ_NO`** is left null on account registration (the popup collects free-text VAS
    code/name, not a `BUSI_VAS_ACCT_INFM` seq) — PO/DBA confirmation pending (operational, not code).
 4. **CAPTCHA / QnA bank challenge** branches surface but full UI wiring is deferred until a real bank

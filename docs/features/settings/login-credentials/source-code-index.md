@@ -59,8 +59,8 @@ Frontend mirror:
   — legacy tables, in [legacy-table-inventory.md](../../../references/database/legacy-table-inventory.md).
 - `wb_get_next_val` branches `bank_cert_info.seq_no` (V140 #23) + `gdt_cert_info.seq_no` (V140 #26) —
   in the funnel.
-- Config: `wecms.crypto.legacy-cert-seed` (default `wabooksvn`), `wecms.login-credentials.gdt-verify-enabled`
-  (default `false`).
+- Config: `wecms.crypto.legacy-cert-seed` (default `wabooksvn`). (`wecms.login-credentials.gdt-verify-enabled`
+  was **removed 2026-07-13** — GDT is verified client-side by the local NXiSAS engine; no server-side verify.)
 
 ### Tests
 

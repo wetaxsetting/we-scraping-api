@@ -159,6 +159,19 @@ class NxisasBankConfigTest {
         assertThat(config.find("99999999", 1)).isEmpty();
     }
 
+    @Test
+    void vietnamGdtIsNotAConfiguredCooconBank() {
+        // GDT is a LOCAL NXiSAS.exe institution, NOT a Coocon server-gateway
+        // bank. VIETNAM_GDT must never carry a NxisasBankConfig Module/Class
+        // (audit: gdt-login-credentials-nxisas-legacy-audit.md). Its absence
+        // here is intentional — a lookup would (correctly) return empty and
+        // any caller routing GDT through the gateway would get WBE2093. The
+        // fix removed that miscall from LoginCredentialsService; this test
+        // guards against re-adding a GDT entry to the bank config.
+        assertThat(config.find("VIETNAM_GDT")).isEmpty();
+        assertThat(config.find("VIETNAM_GDT", 0)).isEmpty();
+    }
+
     // ── defaultLoginType (B-1 ABBANK parity) ─────────────────────────
 
     @Test

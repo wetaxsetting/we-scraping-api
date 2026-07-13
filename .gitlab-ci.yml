@@ -1,12 +1,12 @@
 workflow:
   rules:
-    - if: '$CI_COMMIT_BRANCH == "sit"'
+    - if: '$CI_COMMIT_BRANCH == "sit" || $CI_COMMIT_BRANCH == "uat"'
 stages:
   - "trigger_pipeline"
 trigger_pipeline:
   stage: trigger_pipeline
   trigger:
     include:
-      -  project: '$URL'
-         ref: main
-         file: '$FILE'
+      - project: '$URL'
+        ref: main
+        file: '$FILE'

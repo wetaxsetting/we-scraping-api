@@ -21,7 +21,7 @@ Legacy JEX (`comm_0218_*` + `fnsh_0101_001_c001`, tables `BANK_CERT_INFO` / `GDT
 | **Verify new password** | `comm_0218_nxisas` LOGIN (edit) | `POST .../bank/{seqNo}/verify-update` (no DB write) | **MATCH** |
 | **GDT create/update** | `comm_0218_007_c001` (upsert) | split `POST` / `PUT /login-credentials/gdt` | **MATCH** |
 | **GDT one-per-company** | `comm_0218_003_c001` `WBE0003` | `createGdt` → `WBE_LOGIN_CREDENTIAL_GDT_EXISTS` | **MATCH** |
-| **GDT verify-before-save** | `comm_0218_007.js:43-51` (save = login test, always on) | server-side `verifyGdtCredentials`, **flag-gated off** | **PARTIAL** (GAP-1) |
+| **GDT verify-before-save** | `comm_0218_007.js:43-51` (save = login test, on the **local engine**) | **client-side** local NXiSAS.exe verify before `POST /gdt`; server is a pure upsert | **MATCH** (GAP-1 resolved 2026-07-13) |
 | **Reveal** | `comm_0218_008_r001` (`decrypt = ?`) | `POST .../reveal` + `WBE2091` re-auth | **MATCH** |
 | **Delete** | `comm_0218_001_d001` | `DELETE .../{type}/{seqNo}` + audit | **MATCH** (no account cascade — see below) |
 | **Audit history** | `comm_0218_005` | `GET .../audit-logs`, reads slug + legacy ids | **MATCH** (+ coexistence read union) |
@@ -39,15 +39,20 @@ Legacy JEX (`comm_0218_*` + `fnsh_0101_001_c001`, tables `BANK_CERT_INFO` / `GDT
 
 ## Specially-verified gaps
 
-### GAP-1 — GDT verify-before-save flag-gated off (PARTIAL)
+### GAP-1 — GDT verify-before-save (RESOLVED 2026-07-13)
 
 Legacy `comm_0218_007.js:43-51` runs `callNxisas(['VIETNAM_GDT'])` on every Save and persists only on
-`isSuccess`. The refactor reproduces this server-side (`verifyGdtCredentials` via the shared Coocon
-gateway, pseudo-bank `VIETNAM_GDT`), but ships **flag-gated off** (`wecms.login-credentials.gdt-verify-enabled`,
-default `false`) — local R&D has no reachable gateway, and full enablement awaits the GDT captcha
-challenge-chain. With the flag off, GDT create/update persists without the login test. **Status:
-PARTIAL** — code present, parity restored when the flag flips + captcha chain lands. Owner: backend +
-PO.
+`isSuccess` — the login test runs on the **local NXiSAS.exe engine**, and the server action is a pure
+`GDT_CERT_INFO` upsert. The refactor now matches this exactly: the frontend (`useGdtCredentialValidation`
+→ local engine) verifies before it POSTs `/gdt`; the backend create/update are pure upserts.
+
+The earlier refactor had added a **server-side** `verifyGdtCredentials` that routed the pseudo-bank
+`VIETNAM_GDT` through `BankScrapingService` / the Coocon gateway, flag-gated by
+`wecms.login-credentials.gdt-verify-enabled`. That path was architecturally wrong (GDT is not a Coocon
+bank; `NxisasBankConfig` has no `VIETNAM_GDT` entry) and threw `WBE2093` whenever the flag was enabled
+(observed on SIT). It was **removed 2026-07-13** (method + flag + YAML/env keys + orphaned
+`WBE_LOGIN_CREDENTIAL_GDT_VERIFY_FAILED`). **Status: MATCH.** See
+`Claude Code (AI)/notes/gdt-login-credentials-wbe2093-fix.md`.
 
 ### GAP-2 — Personal-banking discriminator (DEAD LEGACY)
 

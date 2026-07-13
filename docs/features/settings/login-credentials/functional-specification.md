@@ -113,16 +113,19 @@ overwritten (password changes flow through Edit only). A concurrent-insert race 
 `DataIntegrityViolationException` → re-read once → reuse the sibling row, else retry the MAX+1
 allocation once.
 
-### 3.3 GDT one-per-company + verify-before-save
+### 3.3 GDT one-per-company + client-side verification
 
 - **One per company:** `createGdt` blocks a second create with `WBE_LOGIN_CREDENTIAL_GDT_EXISTS`
   (legacy `comm_0218_003_c001` `WBE0003`). Edits go through `updateGdt`.
-- **Verify-before-save (flag-gated):** `verifyGdtCredentials(loginId, password)` runs a Coocon verify
-  on the pseudo-bank `VIETNAM_GDT` through the shared `BankScrapingService`; only a `COMPLETED` login
-  persists, else `WBE_LOGIN_CREDENTIAL_GDT_VERIFY_FAILED`. Controlled by
-  `wecms.login-credentials.gdt-verify-enabled` (default **off** — local R&D has no reachable gateway;
-  full enablement awaits the GDT captcha challenge-chain). On update, re-verify only when `login_id`
-  or `password` changes (effective values; an `extra`-only edit is not re-verified).
+- **Verification is client-side (local NXiSAS.exe engine):** legacy parity — the Save action IS the
+  login test, run in the browser against the locally-installed engine (`bankCd="VIETNAM_GDT"`, module
+  `GLOBAL/VNM/PUBLIC_GDT`, class `COMMON` — served by `GET /gdt/engine-config`). The frontend POSTs
+  `/gdt` only after a successful local-engine login, so `createGdt` / `updateGdt` are pure
+  `GDT_CERT_INFO` upserts. **There is no server-side GDT verify.** The former flag-gated
+  `verifyGdtCredentials` path (`wecms.login-credentials.gdt-verify-enabled` →
+  `BankScrapingService.verify("VIETNAM_GDT")`) was **removed 2026-07-13** — it wrongly threw `WBE2093`
+  because `VIETNAM_GDT` has no `NxisasBankConfig` entry (and correctly must not — GDT is not a Coocon
+  bank). See `Claude Code (AI)/notes/gdt-login-credentials-wbe2093-fix.md`.
 
 ### 3.4 Atomic credential-plus-accounts save (`/bank/register`)
 

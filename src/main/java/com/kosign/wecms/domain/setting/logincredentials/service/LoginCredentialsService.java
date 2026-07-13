@@ -40,7 +40,6 @@ import com.kosign.wecms.domain.setting.logincredentials.dto.RevealResponse;
 import com.kosign.wecms.domain.setting.logincredentials.entity.GdtCertInfo;
 import com.kosign.wecms.domain.setting.logincredentials.repository.GdtCertInfoRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -140,15 +139,6 @@ public class LoginCredentialsService {
     private final BankScrapingService       bankScrapingService;
     private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
     private final com.kosign.wecms.domain.banking.service.AccountRegistrationService accountRegistrationService;
-
-    /** When true, GDT create/update verifies the credential through the
-     *  Coocon gateway (pseudo-bank {@code VIETNAM_GDT}) before persisting
-     *  — legacy parity (the save action is the login test). Field-injected
-     *  (non-final) so it stays out of the {@code @RequiredArgsConstructor}.
-     *  Default false; see {@code wecms.login-credentials.gdt-verify-enabled}
-     *  in application.yml. */
-    @Value("${wecms.login-credentials.gdt-verify-enabled:false}")
-    private boolean gdtVerifyEnabled;
 
     /* -----------------------------------------------------------------
      *  LIST — banking groups + single GDT row
@@ -543,11 +533,17 @@ public class LoginCredentialsService {
         if (!gdtRepo.findByBizKeyOrderBySeqNoAsc(bizKey).isEmpty()) {
             throw new BusinessException("WBE_LOGIN_CREDENTIAL_GDT_EXISTS");
         }
-        // Legacy parity (comm_0218_007.js:43-51): the GDT save action IS
-        // the login test — the row persists only after a successful
-        // VIETNAM_GDT login. Bad credentials never reach the DB. Flag-gated
-        // (off in local R&D / until the GDT captcha challenge-chain lands).
-        verifyGdtCredentials(req.loginId(), req.password());
+        // Legacy parity (comm_0218_007.js:43-51): the GDT "save = login test"
+        // is run CLIENT-SIDE on the local NXiSAS.exe engine (bankCd
+        // "VIETNAM_GDT", module GLOBAL/VNM/PUBLIC_GDT) BEFORE this endpoint is
+        // called — the browser only POSTs here after a successful local-engine
+        // login. GDT is not a Coocon server-gateway bank, so this backend
+        // action is a pure GDT_CERT_INFO upsert (mirrors the legacy
+        // comm_0218_007_c001_act.jsp server action, which is also a pure DB
+        // write). The former server-side re-verify (routing VIETNAM_GDT through
+        // BankScrapingService / NxisasBankConfig) was removed 2026-07-13 — it
+        // wrongly threw WBE2093 because VIETNAM_GDT has no NxisasBankConfig
+        // entry and must never be resolved as a Coocon bank.
         // SEQ_NO via the single wb_get_next_val funnel (V140 #26 — per-tenant MAX+1).
         BigDecimal nextSeq = new BigDecimal(legacyFunctions.nextGdtCertSeqNo(bizKey));
         String now = nowDtm14();
@@ -584,20 +580,12 @@ public class LoginCredentialsService {
         String bizKey = TenantContext.currentBizKey();
         GdtCertInfo entity = gdtRepo.findByBizKeyAndSeqNo(bizKey, seqNo)
                 .orElseThrow(() -> new BusinessException("WBE2090"));
-        // Re-verify whenever the credential itself changes (login id or
-        // password). Use the effective values: a field left null keeps the
-        // stored one. Legacy parity — the save action is the login test.
-        // An `extra`-only edit changes no credential and is not re-verified.
-        if (req.loginId() != null || req.password() != null) {
-            String effLoginId  = req.loginId()  != null ? req.loginId()
-                                                        : entity.getCertInfoCon();
-            // Strict decrypt — when no new password is supplied we verify
-            // with the stored one; an undecryptable blob must fail
-            // verification, not be forwarded to GDT as the password.
-            String effPassword = req.password() != null ? req.password()
-                                                        : crypto.decryptStrict(entity.getCertInfoDetlCon());
-            verifyGdtCredentials(effLoginId, effPassword);
-        }
+        // Credential re-verification on edit is done CLIENT-SIDE by the local
+        // NXiSAS.exe engine before this endpoint is called (legacy parity —
+        // save = login test on the local engine, not the Coocon server
+        // gateway). This backend action is a pure GDT_CERT_INFO update. The
+        // former server-side re-verify (BankScrapingService.verify for the
+        // VIETNAM_GDT pseudo-bank) was removed 2026-07-13 — see createGdt.
         if (req.loginId() != null) entity.setCertInfoCon(req.loginId());
         if (req.password() != null) entity.setCertInfoDetlCon(crypto.encrypt(req.password()));
         if (req.extra() != null)    entity.setCertInfoDetlCon2(req.extra());
@@ -727,41 +715,6 @@ public class LoginCredentialsService {
      *  shape. Used for every REG_DTM / MOD_DTM write on this slice. */
     private static String nowDtm14() {
         return LocalDateTime.now(ZoneOffset.UTC).format(DTM14);
-    }
-
-    /**
-     * Verify a GDT credential through the Coocon gateway before it is
-     * persisted — legacy parity with {@code comm_0218_007.js:43-51}, which
-     * runs {@code _v2nxisas.callNxisas([{bankCd:"VIETNAM_GDT",…}])} and only
-     * saves on {@code isSuccess}. Reuses the same {@link BankScrapingService}
-     * the bank flow uses (the gateway already special-cases
-     * {@code VIETNAM_GDT}); no GDT-specific scraping infrastructure is added.
-     *
-     * <p>No-op when {@link #gdtVerifyEnabled} is false (local R&D has no
-     * reachable gateway; full enablement also awaits the GDT captcha
-     * challenge-chain — see application.yml). When enabled, only a
-     * {@code COMPLETED} login persists; an {@code ERROR} (bad credentials)
-     * or an unsatisfied challenge ({@code CAPTCHA/OTP/QNA_REQUIRED}) throws
-     * {@code WBE_LOGIN_CREDENTIAL_GDT_VERIFY_FAILED} so the row is NOT saved.
-     *
-     * <p>Never persists anything itself — the caller persists only after
-     * this returns normally.
-     */
-    private void verifyGdtCredentials(String loginId, String password) {
-        if (!gdtVerifyEnabled) return;
-        VerifyCredentialsRequest req = new VerifyCredentialsRequest(
-                GDT_PSEUDO_BANK_CD,
-                loginId,
-                password,
-                BigDecimal.ZERO,   // nxisasGbSeqNo — GDT has no sub-type
-                null,              // extra
-                null,              // loginType
-                null               // scrapeKind → ACCT_LIST (login test only)
-        );
-        ScrapeSessionResponse res = bankScrapingService.verify(req);
-        if (res == null || res.status() != ScrapeSessionResponse.Status.COMPLETED) {
-            throw new BusinessException("WBE_LOGIN_CREDENTIAL_GDT_VERIFY_FAILED");
-        }
     }
 
     private void appendAudit(String refNo, String refNo1) {
