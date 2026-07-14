@@ -257,12 +257,15 @@ public class EInvoiceController {
      * the {@code BUSA_DOC_MSTR} invoices it produced.
      *
      * <ul>
-     *   <li>{@code type} — {@code SALES} only (legacy rejects Expense).</li>
+     *   <li>{@code type} — {@code SALES} or {@code EXPENSE} (legacy only
+     *       rejects the distinct {@code 'E'} doc type, never Sales {@code 'I'}
+     *       or Bill {@code 'B'}); the modal's Sales + Expenses View links both
+     *       reach this endpoint.</li>
      *   <li>{@code from} / {@code to} — required {@code YYYYMMDD} issue-date
      *       window (the parent batch's start / end dates).</li>
-     *   <li>{@code mod_dtm} — the batch timestamp (parent row's
-     *       {@code reg_dtm}); matched exactly against
-     *       {@code BUSA_DOC_MSTR.MOD_DTM}.</li>
+     *   <li>{@code mod_dtm} — the batch timestamp (the phase-1
+     *       {@code /scrape-results} {@code mod_dtm}, preserved through phase 2);
+     *       matched exactly against {@code BUSA_DOC_MSTR.MOD_DTM}.</li>
      *   <li>{@code sortField} / {@code sortDirection} — optional; default
      *       {@code ISSU_DT DESC}. Whitelist: {@code DOC_ID}, {@code ISSU_DT},
      *       {@code TRCO_CMNM}, {@code TOTL_AMT}, {@code einv_invoiceStatus}.</li>

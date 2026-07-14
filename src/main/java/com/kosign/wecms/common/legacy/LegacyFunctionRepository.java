@@ -581,6 +581,34 @@ public class LegacyFunctionRepository {
         return nextVal("trco_actv_hstr", "actv_seq", null, null, null, null, null, null);
     }
 
+    /** Add-on &gt; e-Invoice: TRCO_RSPB_INFM.RSPB_KEY — global {@code sq_rspb_key}
+     *  sequence (V140 branch 6b, added 2026-07-14 for D5.3). */
+    public String nextRspbKey() {
+        return nextVal("trco_rspb_infm", "rspb_key", null, null, null, null, null, null);
+    }
+
+    /**
+     * Add-on &gt; e-Invoice: normalise a counterparty company name to its
+     * display nickname via the ported legacy DB function
+     * {@code wb_get_normalized_trco_nick_nm} (V251, D5.2b) — the exact legacy
+     * path (IDO {@code SYS_TRCO_INFM_DIS_NM_R002}:
+     * {@code SELECT wb_get_normalized_trco_nick_nm(:NAME)}), same funnel
+     * pattern as {@link #resolveNapasOrCitadBankName}. Returns {@code null} on
+     * blank input or a null/blank result so the caller keeps the raw name
+     * (legacy {@code getCompanyNickNmBySystem} then falls back to the tax-id
+     * nickname).
+     */
+    public String getNormalizedTrcoNickNm(String name) {
+        if (name == null || name.isBlank()) {
+            return null;
+        }
+        Query q = em.createNativeQuery(
+                "SELECT wb_get_normalized_trco_nick_nm(CAST(?1 AS varchar))");
+        q.setParameter(1, name);
+        Object result = q.getSingleResult();
+        return result != null && !result.toString().isBlank() ? result.toString() : null;
+    }
+
     /**
      * Payment &gt; Scheduled Payment: SCDUL_PYMN_SUMR.SCDUL_PYMN_NO — per-tenant
      * plain-int MAX+1 (V140 #36). Replaces the former date-prefixed

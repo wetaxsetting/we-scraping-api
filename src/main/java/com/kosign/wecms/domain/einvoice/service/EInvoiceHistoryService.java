@@ -91,18 +91,25 @@ public class EInvoiceHistoryService {
      * HAND_REG_YN='N')} and ordered by the legacy {@code SortHelper}
      * whitelist (default {@code issu_dt DESC}).
      *
-     * <p><b>Sales-only</b>: the legacy action rejects Expense
-     * ({@code dt_r001:122-124}). {@link EInvoiceService#resolveDocType}
-     * maps {@code SALES → 'I'}; any non-{@code 'I'} type fails with the
-     * e-Invoice bad-request code (legacy {@code WBE0001} on {@code DOC_TYPE}).
+     * <p><b>Sales AND Expense supported.</b> The legacy action only rejects
+     * {@code DOC_TYPE = 'E'} ({@code BusaDocType.EXPENSE}, {@code dt_r001:122-124});
+     * it serves both {@code 'I'} (Sales invoice, {@code history_credit}) and
+     * {@code 'B'} (Expense bill, {@code history_debit}) — the two View links
+     * the modal renders. {@link EInvoiceService#resolveDocType} maps
+     * {@code SALES → 'I'} and {@code EXPENSE / BILL → 'B'} (never {@code 'E'})
+     * and already throws {@code WBE2002} for an unknown wire type, so no extra
+     * Sales-only guard is needed. (The earlier Sales-only restriction was a
+     * refactor over-tightening — corrected 2026-07-14.)
      *
-     * <p><b>MOD_DTM linkage caveat:</b> phase-1 scrape stamps the same
-     * timestamp onto {@code BUSA_DOC_MSTR.MOD_DTM} and the
-     * {@code EXT_TRAN_CALL_HIS.REG_DTM} audit row, so the History →
-     * Detail drill-down lines up for list-only invoices. The phase-2
-     * detail-save later re-stamps {@code MOD_DTM}; re-aligning the two
-     * phases on a shared batch timestamp belongs to the scrape flow
-     * (out of scope here). Documented in the parity audit.
+     * <p><b>MOD_DTM linkage (resolved 2026-07-14):</b> phase-1 scrape stamps
+     * one timestamp onto {@code BUSA_DOC_MSTR.MOD_DTM} and the
+     * {@code EXT_TRAN_CALL_HIS.REG_DTM} audit row; phase-2 detail-save now
+     * <em>preserves</em> that same batch timestamp (the client forwards the
+     * phase-1 {@code mod_dtm} in {@link EInvoiceDetailScrapeRequest#modDtm()})
+     * instead of minting a fresh one. So the enriched master rows, the audit
+     * row, and the returned batch id all share ONE {@code MOD_DTM} — the
+     * modal "View" and the History → Detail drill-down both select the exact
+     * rows this inquiry produced, whether or not phase 2 ran.
      */
     @Transactional(readOnly = true)
     public EInvoiceDetailHistoryResponse detailHistory(
@@ -110,11 +117,9 @@ public class EInvoiceHistoryService {
             String sortField, String sortDirection) {
         final String bizKey = requireBizKey();
 
+        // resolveDocType throws WBE2002 for unknown types and never returns
+        // 'E'; both 'I' (Sales) and 'B' (Expense/Bill) are valid here.
         final String docType = einvoiceService.resolveDocType(type);
-        if (!"I".equals(docType)) {
-            // Legacy detail-history is Sales-only — reject Expense / Bill.
-            throw new BusinessException("WBE2002");
-        }
         einvoiceService.validateDateRange(fromDt, toDt);
 
         final Sort sort = resolveDetailSort(sortField, sortDirection);

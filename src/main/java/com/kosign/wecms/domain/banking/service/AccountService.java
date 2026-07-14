@@ -465,7 +465,7 @@ public class AccountService {
      * {@code credit_count} / {@code debit_count} are now returned;
      * the popup totals badge stops showing {@code 0}.
      */
-    public TransactionsSyncResponse syncTransactions(TransactionsSyncRequest req) {
+    public com.kosign.wecms.domain.banking.dto.SyncStatusResponse syncTransactions(TransactionsSyncRequest req) {
         return bankSync.start(req);
     }
 

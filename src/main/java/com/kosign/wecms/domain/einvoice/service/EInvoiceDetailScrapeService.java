@@ -20,6 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -55,11 +56,15 @@ import java.util.List;
  * {@code TRCO_ACTV_HSTR} activity row, then stamps the resolved
  * {@code TRCO_KEY} onto the master (legacy {@code c002:333-535,883-909}).
  *
- * <p><b>Still deferred (legacy {@code c002} does more):</b> the OSMC/BI09
- * contact bridge; the representative columns + {@code TRCO_RSPB_INFM};
- * the {@code SYS_TRCO_INFM_DIS_NM} nickname normalisation; the
- * payment-term overdue-days recalculation. Tracked in
- * {@code docs/features/e-invoice/final-parity-audit.md}.
+ * <p><b>Implemented 2026-07-14 (PO-approved legacy parity):</b> the
+ * representative columns + {@code TRCO_RSPB_INFM} (D5.3) and the
+ * {@code SYS_TRCO_INFM_DIS_NM} nickname normalisation (D5.2b) via
+ * {@link EInvoiceTrcoAutoRegistrar}; the payment-term due-date recompute
+ * (D5.4, {@link #applyDueDate}, legacy {@code c002:691-711} — overwrites /
+ * NULLs {@code DUE_DT} on every scrape). <b>Out of scope:</b> only the
+ * OSMC/BI09 contact bridge — legacy {@code comm_0800_001_u001} is
+ * {@code PrdtType.C/D}-gated + external OSMC, inert for WeCMS product-type-F
+ * (D4). See {@code Claude Code (AI)/notes/update-einvoice-*}.
  *
  * <p><b>Runtime caveat (OQ-S1):</b> the upstream scrape leg depends on
  * the local {@code .exe}, licensed per page origin (not on localhost) —
@@ -74,6 +79,9 @@ public class EInvoiceDetailScrapeService {
     private static final String ITEM_CD_DEFAULT = "0000000000"; // legacy :765
     private static final DateTimeFormatter DTM_14 =
             DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
+    /** ISSU_DT / DUE_DT wire format (D5.4). */
+    private static final DateTimeFormatter DATE_8 =
+            DateTimeFormatter.ofPattern("yyyyMMdd");
 
     private final BusaDocMstrRepository masterRepo;
     private final BusaDocDetlRepository detlRepo;
@@ -87,6 +95,13 @@ public class EInvoiceDetailScrapeService {
         final String userId = TenantContext.currentUserId();
         final boolean isSales = "SALES".equalsIgnoreCase(req.type());
         final String regDtm = OffsetDateTime.now(ZoneOffset.UTC).format(DTM_14);
+        // Batch timestamp for MOD_DTM: reuse the phase-1 stamp when the client
+        // forwards it so the master rows keep the SAME batch id as the audit
+        // row + the returned mod_dtm — the modal "View" and the History →
+        // Detail drill-down both key on this. Falls back to a fresh stamp
+        // (legacy behaviour) when the client omits it.
+        final String batchDtm =
+                (req.modDtm() != null && req.modDtm().matches("\\d{14}")) ? req.modDtm() : regDtm;
 
         int detailSaved = 0;
         int detailSkipped = 0;
@@ -105,9 +120,9 @@ public class EInvoiceDetailScrapeService {
             // contact + group-link + bank account + activity-history row,
             // and stamps the resolved TRCO_KEY onto the master. ──
             final BigDecimal totlAmt = EInvoiceScrapeService.parseAmount(row.totalAmt());
-            final String trcoKey = trcoRegistrar.registerCounterparty(
+            final EInvoiceTrcoAutoRegistrar.CounterpartyResult cp = trcoRegistrar.registerCounterparty(
                     isSales, bizKey, userId, regDtm, docId, row, totlAmt);
-            master.setTrcoKey(trcoKey);
+            master.setTrcoKey(cp.trcoKey());
 
             // ── Full master enrichment (Scope 3 — legacy c002:264-687) ──
             // Issuer (ISSU_*) is our own company on the invoice: for SALES
@@ -171,8 +186,11 @@ public class EInvoiceDetailScrapeService {
             BigDecimal disc = EInvoiceScrapeService.parseAmount(row.totalDiscount());
             if (disc != null) master.setTotlDisAmt(disc);
 
+            // ── D5.4 — payment-term due-date recompute (legacy c002:691-711) ──
+            applyDueDate(master, cp.trcoKey(), cp.paymTerm());
+
             master.setModId(userId);
-            master.setModDtm(regDtm);
+            master.setModDtm(batchDtm);
             masterRepo.save(master);
 
             // ── Replace line items / fees / taxes (delete-then-insert) ──
@@ -187,9 +205,9 @@ public class EInvoiceDetailScrapeService {
             detailSaved++;
         }
 
-        log.info("e-invoice detail intake: bizKey={} type={} detailSaved={} skipped={} lineItems={} rslt={}",
-                bizKey, req.type(), detailSaved, detailSkipped, lineItems, req.rsltCd());
-        return new EInvoiceDetailScrapeResult(detailSaved, 0, detailSkipped, lineItems, regDtm);
+        log.info("e-invoice detail intake: bizKey={} type={} detailSaved={} skipped={} lineItems={} batchDtm={} rslt={}",
+                bizKey, req.type(), detailSaved, detailSkipped, lineItems, batchDtm, req.rsltCd());
+        return new EInvoiceDetailScrapeResult(detailSaved, 0, detailSkipped, lineItems, batchDtm);
     }
 
     /* ------------------------------------------------------------------ */
@@ -343,6 +361,41 @@ public class EInvoiceDetailScrapeService {
             master.setIssuBsunCity(clip(last, 200));
         }
         master.setIssuBsunSt("Việt Nam".equalsIgnoreCase(last) ? "Việt Nam" : null);
+    }
+
+    /**
+     * D5.4 — payment-term due-date recompute (legacy {@code c002:691-711},
+     * #40183). For a non-ETC counterparty, a provisioning status that is NOT
+     * {@code PA}/{@code PP} (paid/partly-paid), and a valid {@code ISSU_DT}:
+     * <ul>
+     *   <li>term set → {@code DUE_DT = ISSU_DT + term days};</li>
+     *   <li>term blank → {@code DUE_DT} cleared to {@code null}.</li>
+     * </ul>
+     * <b>Legacy parity (PO-confirmed 2026-07-14):</b> legacy overwrites /
+     * NULLs {@code DUE_DT} on EVERY scrape — it does NOT preserve a
+     * user-edited due date. This reproduces that exactly. Invalid term /
+     * date is defensive-skipped (leaves {@code DUE_DT} untouched).
+     */
+    static void applyDueDate(BusaDocMstr master, String trcoKey, String paymTerm) {
+        if (EInvoiceTrcoAutoRegistrar.ETC_TRCO_KEY.equals(trcoKey)) return;
+        final String prov = trim(master.getProvStts());
+        if ("PA".equals(prov) || "PP".equals(prov)) return;
+        final String issu = trim(master.getIssuDt());
+        if (issu.length() != 8) return;               // legacy: ISSU_DT != null
+        if (isBlank(paymTerm)) {
+            master.setDueDt(null);                    // legacy patch DUE_DT = null
+            return;
+        }
+        try {
+            final int days = Integer.parseInt(paymTerm.trim());
+            master.setDueDt(LocalDate.parse(issu, DATE_8).plusDays(days).format(DATE_8));
+        } catch (RuntimeException e) {
+            // Non-numeric term or unparseable ISSU_DT — leave DUE_DT as-is.
+        }
+    }
+
+    private static boolean isBlank(String s) {
+        return s == null || s.trim().isEmpty();
     }
 
     private static boolean notBlank(String s) {

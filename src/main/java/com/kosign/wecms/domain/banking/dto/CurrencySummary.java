@@ -14,11 +14,15 @@ package com.kosign.wecms.domain.banking.dto;
  * <p>Amounts are strings (matching the rest of the banking wire) to keep
  * VND precision intact across the JS {@code Number} cast. {@code successCount}
  * counts <em>accounts</em> of this currency that synced; {@code creditCount}
- * / {@code debitCount} count <em>transactions</em>. {@code failedCount} is
- * {@code 0} on a {@code COMPLETED} response — the sync orchestrator is
- * fail-fast (any account-level failure returns {@code ERROR} before the
- * batch finalizes), so a COMPLETED batch means every queued account of
- * every currency synced.
+ * / {@code debitCount} count <em>transactions</em>. {@code failedCount} counts
+ * accounts of this currency that failed WITHOUT aborting the batch — today only
+ * account-level {@code LOGIN_CAN} challenge-cancels (legacy per-bank
+ * {@code run_afterLoginFail}): the user quit a QNA/OTP/CAPTCHA for one bank, so
+ * that bank's account(s) fail but the batch continues and still finalizes
+ * COMPLETED. A whole-batch fail-fast (e.g. a TRANSACTION error) instead returns
+ * a FAILED terminal, whose per-currency summary is never read — so a COMPLETED
+ * batch's {@code failedCount} reflects only continue-past LOGIN_CAN failures
+ * ({@code 0} when none were cancelled).
  *
  * <p>{@code autoMatchedCount} is the numerator of the popup's per-currency
  * "Debit Matched {matched}/{debit} Transaction(s)" row — the number of this

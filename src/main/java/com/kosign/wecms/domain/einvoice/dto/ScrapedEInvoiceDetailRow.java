@@ -67,6 +67,16 @@ public record ScrapedEInvoiceDetailRow(
         @Size(max = 2000) String qrCode,
         @Size(max = 40)   String rate,
 
+        /* ---- Business-registration enrichment (D3 / #40477) ----
+         * Filled by the Expense BUSSINESS_REGISTRATION_DETAIL lookup when the
+         * scraped sellerName was blank (legacy runDetailScrapping3): company
+         * name (trcoName), chairman (sellerRpprEnm), accountant (sellerPicName).
+         * Consumed into TRCO_INFM representative columns + TRCO_RSPB_INFM
+         * (D5.3). Null on Sales and when the invoice needed no enrichment. */
+        @Size(max = 100) String sellerRpprEnm,
+        @Size(max = 50)  String sellerPicName,
+        @Size(max = 500) String trcoName,
+
         @Valid List<Product> products,
         @Valid List<Fee> fees,
         @Valid List<Tax> taxes

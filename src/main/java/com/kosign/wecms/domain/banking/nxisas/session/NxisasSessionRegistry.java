@@ -48,10 +48,35 @@ public class NxisasSessionRegistry {
         sessions.remove(sessionId);
     }
 
+    /**
+     * Retention-aware eviction (Phase 2).
+     * <ul>
+     *   <li><b>Terminal</b> sessions (COMPLETED / FAILED / CANCELLED) are kept
+     *       for a retention window measured from {@code terminalAt} (fallback
+     *       {@code lastTouched} for non-SYNC flows that don't stamp it) so the
+     *       frontend's final poll can still read the terminal snapshot, then
+     *       evicted. Removing them prevents any later resume.</li>
+     *   <li><b>Non-terminal</b> sessions (RUNNING / AWAITING_CHALLENGE) are
+     *       evicted only when idle past the same window AND no worker is
+     *       actively running — an abandoned OTP wait eventually expires, but an
+     *       in-flight scrape is never removed out from under its worker.</li>
+     * </ul>
+     * Eviction does not itself LOGOUT the bank session (the registry has no
+     * gateway handle) — the gateway session times out on its own; a user-driven
+     * cancel is the path that sends LOGOUT.
+     */
     @Scheduled(fixedDelay = 60_000L)
     void evictIdle() {
         Duration ttl = Duration.ofSeconds(props.sessionIdleSeconds());
-        Instant cutoff = Instant.now().minus(ttl);
-        sessions.values().removeIf(s -> s.getLastTouched().isBefore(cutoff));
+        Instant now = Instant.now();
+        sessions.values().removeIf(s -> {
+            if (s.isTerminal()) {
+                Instant since = s.getTerminalAt() != null ? s.getTerminalAt() : s.getLastTouched();
+                return since.isBefore(now.minus(ttl));
+            }
+            // Non-terminal — never evict an actively-running segment.
+            if (s.isWorkerRunning()) return false;
+            return s.getLastTouched().isBefore(now.minus(ttl));
+        });
     }
 }

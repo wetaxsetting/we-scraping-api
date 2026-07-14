@@ -1,13 +1,13 @@
 package com.kosign.wecms.domain.banking.nxisas;
 
 import com.kosign.wecms.common.enums.LangCd;
-import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.banking.bankcredentials.service.BankCredentialService;
 import com.kosign.wecms.domain.banking.bankcredentials.service.BankCredentialService.DecryptedCredential;
+import com.kosign.wecms.domain.banking.dto.SyncStatusResponse;
 import com.kosign.wecms.domain.banking.dto.TransactionsSyncRequest;
-import com.kosign.wecms.domain.banking.dto.TransactionsSyncResponse;
 import com.kosign.wecms.domain.banking.entity.AcctMstr;
+import com.kosign.wecms.domain.banking.nxisas.BankTransactionSyncPersistence.PersistResult;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasApiOut;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasBalanceJobResult;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasCommon;
@@ -16,7 +16,6 @@ import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasOutput;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasTransactionJobResult;
 import com.kosign.wecms.domain.banking.nxisas.session.NxisasSessionRegistry;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
-import com.kosign.wecms.domain.banking.repository.AcctTrnsHstrRepository;
 import com.kosign.wecms.domain.banking.synchistory.service.SyncHistoryWriter;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -36,20 +35,11 @@ import static org.mockito.Mockito.when;
 
 /**
  * Service-level proof of the VP Bank sync seqNo-consistency fix
- * (docs/audits/bank-profile-enterprise-audit.md §13).
- *
- * <p>Drives {@link BankTransactionSyncService#start} for a VP Bank account
- * whose credential carries {@code NXISAS_GB_SEQ_NO = 0} and asserts that
- * the gateway's LOGIN, TRANSACTION, and BALANCE calls all receive the SAME
- * Coocon {@code Class} — {@code CORPORATE}. Before the fix, TRANSACTION and
- * BALANCE resolved {@code PERSONAL} via {@code find(bankCd, null)}.
- *
- * <p>Uses the real {@link NxisasBankConfig} (the unit under analysis) and
- * mocks the gateway + collaborators.
- *
- * <p>Also covers B-1 (ABBANK {@code loginType} parity): an ABBANK
- * credential with a blank loginType must send {@code loginType == ""}
- * on the outbound LOGIN.
+ * (docs/audits/bank-profile-enterprise-audit.md §13), adapted to the Phase 2
+ * async model: the scrape runs on the (here inline) executor during
+ * {@code start()}, so the gateway LOGIN / TRANSACTION / BALANCE calls still
+ * carry the SAME Coocon {@code Class} = {@code CORPORATE} for a VP seq-0
+ * credential. Also covers B-1 (ABBANK blank {@code loginType} → {@code ""}).
  */
 @SuppressWarnings({ "unchecked", "rawtypes" })
 class BankTransactionSyncServiceVpProfileTest {
@@ -64,11 +54,10 @@ class BankTransactionSyncServiceVpProfileTest {
     private BankCredentialService credentialService;
     private NxisasGatewayClient gateway;
     private AcctMstrRepository acctRepo;
-    private AcctTrnsHstrRepository trnsRepo;
-    private LegacyFunctionRepository legacyFn;
     private NxisasSessionRegistry registry;
     private SyncHistoryWriter syncHistoryWriter;
     private AcctMstrStatusUpdater statusUpdater;
+    private BankTransactionSyncPersistence persistence;
 
     private BankTransactionSyncService service;
 
@@ -77,16 +66,19 @@ class BankTransactionSyncServiceVpProfileTest {
         credentialService = mock(BankCredentialService.class);
         gateway = mock(NxisasGatewayClient.class);
         acctRepo = mock(AcctMstrRepository.class);
-        trnsRepo = mock(AcctTrnsHstrRepository.class);
-        legacyFn = mock(LegacyFunctionRepository.class);
         registry = mock(NxisasSessionRegistry.class);
         syncHistoryWriter = mock(SyncHistoryWriter.class);
         statusUpdater = mock(AcctMstrStatusUpdater.class);
+        persistence = mock(BankTransactionSyncPersistence.class);
+        when(persistence.persistTransactions(anyString(), anyString(), anyString(), anyString(),
+                anyString(), any(), anyString()))
+                .thenReturn(new PersistResult(0, 0, BigDecimal.ZERO, BigDecimal.ZERO, 0));
 
         service = new BankTransactionSyncService(
-                credentialService, gateway, new NxisasBankConfig(), acctRepo, trnsRepo,
-                legacyFn, registry, syncHistoryWriter, statusUpdater,
-                mock(com.kosign.wecms.domain.banking.service.AutoMatchService.class));
+                credentialService, gateway, new NxisasBankConfig(), acctRepo,
+                syncHistoryWriter, statusUpdater,
+                mock(com.kosign.wecms.domain.banking.service.AutoMatchService.class),
+                registry, persistence, Runnable::run /* inline executor for deterministic tests */);
 
         TenantContext.set(USER_ID, BIZ_KEY, LangCd.EN);
     }
@@ -98,7 +90,6 @@ class BankTransactionSyncServiceVpProfileTest {
 
     @Test
     void vpSeqZeroUsesCorporateForLoginTransactionAndBalance() {
-        // Account + credential: VP Bank, seq 0 (Corporate).
         AcctMstr acct = mock(AcctMstr.class);
         when(acct.getBankCd()).thenReturn(VP_BANK);
         when(acct.getAcctNo()).thenReturn(ACCT_NO);
@@ -110,10 +101,8 @@ class BankTransactionSyncServiceVpProfileTest {
 
         when(credentialService.loadForScrapingByBank(VP_BANK)).thenReturn(
                 new DecryptedCredential(VP_BANK, "vpuser", "vppass", null, "ID", BigDecimal.ZERO));
-
         when(gateway.newTrSeq()).thenReturn("20260616000000");
 
-        // LOGIN — clean (no challenge, no bank-adapter error).
         NxisasApiOut<NxisasLoginJobResult> loginOut = mock(NxisasApiOut.class);
         NxisasCommon common = mock(NxisasCommon.class);
         when(common.getResultCd()).thenReturn(OK);
@@ -122,12 +111,11 @@ class BankTransactionSyncServiceVpProfileTest {
         NxisasOutput loginBankOut = mock(NxisasOutput.class);
         when(loginBankOut.getErrorCode()).thenReturn(OK);
         NxisasLoginJobResult loginResult = mock(NxisasLoginJobResult.class);
-        when(loginResult.getCallBackFunc()).thenReturn(null); // no challenge
+        when(loginResult.getCallBackFunc()).thenReturn(null);
         when(gateway.login(any(), any(), any(), any())).thenReturn(loginOut);
         when(gateway.firstOutput(loginOut)).thenReturn(loginBankOut);
         when(gateway.firstResult(loginOut)).thenReturn(loginResult);
 
-        // TRANSACTION — clean, zero rows.
         NxisasApiOut<NxisasTransactionJobResult> txOut = mock(NxisasApiOut.class);
         when(txOut.getCommon()).thenReturn(common);
         NxisasOutput txBankOut = mock(NxisasOutput.class);
@@ -138,7 +126,6 @@ class BankTransactionSyncServiceVpProfileTest {
         when(gateway.firstOutput(txOut)).thenReturn(txBankOut);
         when(gateway.firstTransactionResult(txOut)).thenReturn(txResult);
 
-        // BALANCE — clean, no balance rows.
         NxisasApiOut<NxisasBalanceJobResult> balOut = mock(NxisasApiOut.class);
         when(balOut.getCommon()).thenReturn(common);
         NxisasOutput balBankOut = mock(NxisasOutput.class);
@@ -151,14 +138,14 @@ class BankTransactionSyncServiceVpProfileTest {
         when(gateway.firstBalanceResult(balOut)).thenReturn(balResult);
 
         TransactionsSyncRequest req = new TransactionsSyncRequest(
-                List.of(new TransactionsSyncRequest.AccountKey(VP_BANK, ACCT_NO)),
-                null, null, null);
+                List.of(new TransactionsSyncRequest.AccountKey(VP_BANK, ACCT_NO)), null, null, null);
 
-        TransactionsSyncResponse resp = service.start(req);
+        SyncStatusResponse resp = service.start(req);
+        // Async: start returns the initial RUNNING snapshot immediately.
+        assertThat(resp.status()).isEqualTo("RUNNING");
 
-        assertThat(resp.status()).isEqualTo(TransactionsSyncResponse.Status.COMPLETED);
-
-        // All three gateway calls must carry Class = CORPORATE for VP seq 0.
+        // The inline worker ran the whole chain — all three gateway calls carry
+        // Class = CORPORATE for VP seq 0.
         org.mockito.ArgumentCaptor<String> loginCat = org.mockito.ArgumentCaptor.forClass(String.class);
         verify(gateway).login(eq(VP_MODULE), loginCat.capture(), anyString(), any());
         assertThat(loginCat.getValue()).isEqualTo("CORPORATE");
@@ -174,9 +161,6 @@ class BankTransactionSyncServiceVpProfileTest {
 
     @Test
     void abbankBlankLoginTypeSendsEmptyStringOnLogin() {
-        // ABBANK (11704106 → GLOBAL/VNM/BANK_AB, COMMON) credential with a
-        // blank loginType. Legacy parity (B-1): the outbound LOGIN must carry
-        // loginType == "", not "ID".
         final String AB_BANK = "11704106";
         final String AB_MODULE = "GLOBAL/VNM/BANK_AB";
 
@@ -189,10 +173,8 @@ class BankTransactionSyncServiceVpProfileTest {
         when(acctRepo.findByBizKeyAndBankCdAndAcctNo(anyString(), anyString(), anyString()))
                 .thenReturn(Optional.of(acct));
 
-        // Credential carries a BLANK loginType (null) — the default kicks in.
         when(credentialService.loadForScrapingByBank(AB_BANK)).thenReturn(
                 new DecryptedCredential(AB_BANK, "abuser", "abpass", null, null, BigDecimal.ZERO));
-
         when(gateway.newTrSeq()).thenReturn("20260617000000");
 
         NxisasApiOut<NxisasLoginJobResult> loginOut = mock(NxisasApiOut.class);
@@ -230,8 +212,7 @@ class BankTransactionSyncServiceVpProfileTest {
         when(gateway.firstBalanceResult(balOut)).thenReturn(balResult);
 
         TransactionsSyncRequest req = new TransactionsSyncRequest(
-                List.of(new TransactionsSyncRequest.AccountKey(AB_BANK, ACCT_NO)),
-                null, null, null);
+                List.of(new TransactionsSyncRequest.AccountKey(AB_BANK, ACCT_NO)), null, null, null);
 
         service.start(req);
 

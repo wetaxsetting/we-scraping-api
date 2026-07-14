@@ -104,6 +104,49 @@ public class TrcoInfm {
     @Column(name = "TRCO_NICK_NM", length = 200)
     private String trcoNickNm;
 
+    /* ---- Business address (legacy {@code TaxInfo.setBsunAddr(WbAddr)}) ----
+     * Mapped 2026-07-14 for the e-Invoice counterparty auto-registration
+     * address parity (D5.1). All four are nullable in DEV; the e-Invoice
+     * registrar is currently the only writer. Contacts CRUD still stores
+     * its address in {@code TRCO_ADDR_INFM} (a separate, single-string
+     * model) &mdash; these columns are the TRCO_INFM-embedded business
+     * address the scrape path fills, mirroring legacy c002. */
+
+    /** Country / state line &mdash; legacy always {@code "Việt Nam"}. */
+    @Column(name = "TRCO_BSUN_ST", length = 200)
+    private String trcoBsunSt;
+
+    /** City / province (legacy composes district + city). */
+    @Column(name = "TRCO_BSUN_CITY", length = 200)
+    private String trcoBsunCity;
+
+    /** Postal / main address line. */
+    @Column(name = "TRCO_BSUN_POST_ADRS", length = 400)
+    private String trcoBsunPostAdrs;
+
+    /** Detail address line (legacy leaves this empty on scrape). */
+    @Column(name = "TRCO_BSUN_DTL_ADRS", length = 400)
+    private String trcoBsunDtlAdrs;
+
+    /* ---- Representative + payment term ----
+     * Mapped 2026-07-14 for the e-Invoice representative persistence (D5.3,
+     * legacy c002:469-502 / #39847) and payment-term due-date recompute
+     * (D5.4, legacy c002:691-711 / #40183). All present in the V112 table. */
+
+    /** Representative — English name (legacy {@code TRCO_RPPR_ENM}). */
+    @Column(name = "TRCO_RPPR_ENM", length = 100)
+    private String trcoRpprEnm;
+
+    /** Representative — local name (legacy {@code TRCO_RPPR_NM}). c002 sets
+     *  both {@code ENM} and {@code NM} to the same registration value. */
+    @Column(name = "TRCO_RPPR_NM", length = 100)
+    private String trcoRpprNm;
+
+    /** Payment term in days (legacy {@code TRCO_PAYM_TERM}, VARCHAR(3)) —
+     *  read-only here; drives {@code BUSA_DOC_MSTR.DUE_DT} recompute (D5.4). */
+    @Column(name = "TRCO_PAYM_TERM", length = 3)
+    private String trcoPaymTerm;
+
     /** Inquiry flag. OQ-3 resolved 2026-05-12: keep the field and
      *  default to {@code 'Y'} on create for legacy parity. Service-
      *  internal only &mdash; never exposed on the wire. TODO drop once

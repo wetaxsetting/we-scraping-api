@@ -1,8 +1,10 @@
 # Legacy-Copied Table Inventory — Refactor DB
 
-**Recorded:** 2026-06-11 · **Count:** 142 tables · **Source:** table list supplied by the team (recorded as-is, not re-verified against the JEX DEV DB this pass).
+**Recorded:** 2026-06-11 · **Count:** 144 tables (the 142-table set — which already included `busa_doc_file`, 2026-07-04 — plus `trco_rspb_infm` & `sys_trco_infm_dis_nm` added 2026-07-14; see scope-override notes) · **Source:** table list supplied by the team (recorded as-is, not re-verified against the JEX DEV DB this pass).
 
 > **Scope override 2026-07-04 — `busa_doc_file` added (PO decision).** Card Transactions > Link Reference > New Receipt attaches files; legacy IDO `BUSA_DOC_MSTR_R034` `REC_1` reads `BUSA_DOC_FILE` and the receipt download uses `prch_0006_001_r002.act`. `BUSA_DOC_FILE` was originally excluded from the 141-table baseline because it looked empty/unused — but that reflects "no user had attached a file yet," not an unused feature (598 rows on JEX DEV confirm real usage). Per the PO decision relayed by the team lead (2026-07-04), `busa_doc_file` is the **legacy source of truth for receipt/e-invoice attachments** and is added to the baseline as a legacy table (multi-file per document — do **not** collapse to the single-file `BUSA_DOC_MSTR.ORG_FILE_NM`/`SAVE_FILE_NM`/`FILE_SIZE` columns). Same widening precedent as `trco_info_file` (2026-05-13). Implementation of the attachment feature (audit G3/G5) stays **blocked until this inventory entry is confirmed applied** (schema DDL script + entity), then proceeds against `busa_doc_file`.
+
+> **Scope override 2026-07-14 — `trco_rspb_infm` + `sys_trco_infm_dis_nm` added (PO decision).** The e-Invoice counterparty auto-registration (`nxisas_einvoice_c002_act.jsp`) persists a responsible-person row into `TRCO_RSPB_INFM` (representative/PIC from the GDT business-registration lookup, #39847) and normalises the counterparty nickname through the DB function `wb_get_normalized_trco_nick_nm`, which reads the global reference table `SYS_TRCO_INFM_DIS_NM` (company-form → abbreviation map). Both were excluded from the original 142-table baseline; per the PO decision relayed by the team lead (2026-07-14, "the refactor must preserve legacy behavior"), both are added to the baseline as legacy tables to close audit gaps D5.3 (representative persistence) and D5.2b (nickname normalization). `TRCO_RSPB_INFM` (`rspb_key` PK, `sq_rspb_key` via the `wb_get_next_val` branch added to V140) ships in **V250**; `SYS_TRCO_INFM_DIS_NM` (global reference — no `BIZ_KEY`; seeded with all 89 DEV rows, the documented exception to the 30-row migration cap for a small global reference table, per the `bank_infm` precedent) + the verbatim-ported `wb_get_normalized_trco_nick_nm` function ship in **V251**. Same widening precedent as `busa_doc_file` (2026-07-04) / `trco_info_file` (2026-05-13). Both are DBA-run scripts (Flyway disabled).
 
 **This document is the authoritative table baseline for the WeCMS refactor project** — the single source of truth for which tables exist in the refactor database. It **supersedes** the older "PROD Active Table List" ([wecms-api/CLAUDE.md](../../../../wecms-api/CLAUDE.md) §"PROD DB Table Scope for Refactoring") as the canonical baseline; that section is retained only for its derivation method, exclude rules, and per-table data-migration rule. **When the two disagree, this inventory wins.** Governing rules: root [CLAUDE.md](../../../../CLAUDE.md) §"Refactor DB & Legacy-Compatibility Rules".
 
@@ -20,7 +22,7 @@ This is a **snapshot of what physically exists**, distinct from:
 > - **Migration safety is the primary objective** — keep the schema close to legacy so JEX data migrates cleanly.
 > - Schema changes ship as **manual DBA-run SQL** (not auto-applied by Flyway) with a documented run order. See the root CLAUDE.md north-star + rules 2–6.
 
-## Inventory (142)
+## Inventory (144)
 
 ```
 acct_auth_info
@@ -123,6 +125,7 @@ sys_doc_id_gen
 sys_dshbrd_infm
 sys_env_set_infm
 sys_scr_option_wecms
+sys_trco_infm_dis_nm
 sys_usag_set_infm
 tb_batch_schedule_dtl
 tb_batch_schedule_info
@@ -151,6 +154,7 @@ trco_infm
 trco_info_file
 trco_mdph
 trco_ovrs_infm
+trco_rspb_infm
 usag_infm
 usag_infm_lang_detl
 user_bltb_conn_infm

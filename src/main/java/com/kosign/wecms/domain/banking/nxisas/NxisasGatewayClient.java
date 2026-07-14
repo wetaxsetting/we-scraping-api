@@ -22,6 +22,7 @@ import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasCommon;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasJob;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasLoginJobInput;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasLoginJobResult;
+import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasLogoutJobInput;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasCaptchaJobInput;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasOTPJobInput;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasOTPJobResult;
@@ -71,6 +72,21 @@ public class NxisasGatewayClient {
     public NxisasApiOut<NxisasLoginJobResult> login(String module, String category, String trSeq,
                                                     NxisasLoginJobInput input) {
         return call(module, category, trSeq, NxisasJob.LOGIN, input, GatewayContinuation.empty(),
+                new TypeReference<NxisasApiOut<NxisasLoginJobResult>>() { });
+    }
+
+    /**
+     * LOGOUT job — close the bank-adapter session held open by a prior
+     * LOGIN. Sent on the live gateway continuation (SAS_SessionID + Common
+     * fields). Best-effort teardown consumed by
+     * {@code BankTransactionSyncService.cancel(...)} — legacy
+     * {@code nxisas_v2.js makeLogOutInput} → {@code CooconiSASNX} parity.
+     * Response reuses the LOGIN result shape; the caller ignores it.
+     */
+    public NxisasApiOut<NxisasLoginJobResult> logout(String module, String category, String trSeq,
+                                                     NxisasLogoutJobInput input,
+                                                     GatewayContinuation cont) {
+        return call(module, category, trSeq, NxisasJob.LOGOUT, input, cont,
                 new TypeReference<NxisasApiOut<NxisasLoginJobResult>>() { });
     }
 
