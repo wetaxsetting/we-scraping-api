@@ -1,5 +1,7 @@
 package com.kosign.wecms.domain.banking.ownaccounttransfer.service;
 
+import com.kosign.wecms.common.nxisas.SeedCbcDecryptService;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kosign.wecms.common.enums.LangCd;
 import com.kosign.wecms.common.tenant.TenantContext;

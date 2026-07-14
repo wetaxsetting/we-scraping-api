@@ -1,4 +1,4 @@
-package com.kosign.wecms.domain.banking.ownaccounttransfer.service;
+package com.kosign.wecms.common.nxisas;
 
 import com.coocon.securty.util.ISASSeedCBC;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -27,10 +27,20 @@ import org.springframework.stereotype.Service;
  * the original ciphertext is kept; if the decrypted text is not JSON it
  * is left as a string node rather than crashing the whole array.
  *
- * <p>This service performs the cipher unconditionally — the
- * {@code wecms.oat.seed-decrypt.enabled} feature flag is evaluated by the
- * caller ({@link OatNxisasService}) which only invokes this service when
- * the flag is on.
+ * <p>This service performs the cipher unconditionally. Feature-flag
+ * gating is the caller's concern:
+ * <ul>
+ *   <li>OAT ({@code OatNxisasService}) invokes it only when
+ *       {@code wecms.oat.seed-decrypt.enabled} is on (VND payloads mostly
+ *       arrive plaintext, so decryption is opt-in there).</li>
+ *   <li>e-Invoice ({@code EInvoiceScrapeDecryptService}) invokes it
+ *       unconditionally — the GDT engine always returns SEED-CBC
+ *       ciphertext, so the two-phase scrape cannot proceed without it.</li>
+ * </ul>
+ *
+ * <p>Promoted to {@code common/nxisas/} on 2026-07-14 when the e-Invoice
+ * scrape became the second consumer (architecture "promote to common on
+ * second consumer" rule).
  */
 @Slf4j
 @Service
