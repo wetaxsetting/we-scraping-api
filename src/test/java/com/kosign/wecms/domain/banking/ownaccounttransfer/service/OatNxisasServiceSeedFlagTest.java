@@ -1,5 +1,7 @@
 package com.kosign.wecms.domain.banking.ownaccounttransfer.service;
 
+import com.kosign.wecms.common.nxisas.SeedCbcDecryptService;
+
 import com.coocon.securty.util.ISASSeedCBC;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;

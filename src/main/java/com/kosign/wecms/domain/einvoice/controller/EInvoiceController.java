@@ -3,6 +3,8 @@ package com.kosign.wecms.domain.einvoice.controller;
 import com.kosign.wecms.common.export.ExcelExportRequest;
 import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.response.ApiResponse;
+import com.kosign.wecms.domain.einvoice.dto.EInvoiceDecryptRequest;
+import com.kosign.wecms.domain.einvoice.dto.EInvoiceDecryptResponse;
 import com.kosign.wecms.domain.einvoice.dto.EInvoiceDetailHistoryResponse;
 import com.kosign.wecms.domain.einvoice.dto.EInvoiceDetailScrapeRequest;
 import com.kosign.wecms.domain.einvoice.dto.EInvoiceDetailScrapeResult;
@@ -13,6 +15,7 @@ import com.kosign.wecms.domain.einvoice.dto.EInvoiceScrapeResult;
 import com.kosign.wecms.domain.einvoice.service.EInvoiceDetailExportService;
 import com.kosign.wecms.domain.einvoice.service.EInvoiceDetailScrapeService;
 import com.kosign.wecms.domain.einvoice.service.EInvoiceHistoryService;
+import com.kosign.wecms.domain.einvoice.service.EInvoiceScrapeDecryptService;
 import com.kosign.wecms.domain.einvoice.service.EInvoiceScrapeService;
 import com.kosign.wecms.domain.einvoice.service.EInvoiceService;
 import jakarta.servlet.http.HttpServletResponse;
@@ -99,6 +102,7 @@ public class EInvoiceController {
 
     private final EInvoiceService service;
     private final EInvoiceScrapeService scrapeService;
+    private final EInvoiceScrapeDecryptService scrapeDecryptService;
     private final EInvoiceDetailScrapeService detailScrapeService;
     private final EInvoiceHistoryService historyService;
     private final ExcelExportService excelExportService;
@@ -177,14 +181,41 @@ public class EInvoiceController {
     }
 
     /**
+     * GDT engine-payload decrypt — refactor port of the legacy
+     * {@code nxisas_decrypt} action for the e-Invoice scrape flow.
+     *
+     * <p>The browser drives the local NXiSAS engine with
+     * {@code nonDecrypt:true} (legacy parity), so each job's
+     * {@code Output.Result} comes back as Coocon SEED-CBC ciphertext. The
+     * frontend posts the raw engine callback array here; the service
+     * SEED-CBC-decrypts every {@code Output.Result} with the licensed
+     * {@code ISASSeedCBC} ({@code libs/isas1.0.jar}) and returns the array
+     * with each result replaced by its parsed plaintext JSON. The browser
+     * then parses the phase-1 {@code invoiceList} (to build the phase-2
+     * INVOICE_DETAIL jobs) and the phase-2 {@code invoiceDetail} (to build
+     * the persist payload).
+     *
+     * <p>Decryption is unconditional — the GDT engine never returns
+     * plaintext, so the scrape cannot proceed without it (OQ-S2 resolved
+     * server-side, 2026-07-14). Tenant is read from the JWT.
+     */
+    @PostMapping("/einvoices/decrypt")
+    @PreAuthorize("@menuAuthz.canAccessAny('addon-einvoices-sales','addon-einvoices-expenses')")
+    public ApiResponse<EInvoiceDecryptResponse> decryptScrape(
+            @Valid @RequestBody EInvoiceDecryptRequest request) {
+        return ApiResponse.ok(scrapeDecryptService.decrypt(request));
+    }
+
+    /**
      * "Update" (scrape) save — refactor port of the legacy
      * {@code nxisas_einvoice_c001} save action.
      *
      * <p>The browser drives the local NXiSAS engine
-     * ({@code LOGIN → INVOICE_LIST → INVOICE_DETAIL}), decrypts the
-     * result client-side (OQ-S2 — the refactor does not bundle Coocon
-     * {@code ISASSeedCBC}), and POSTs the structured invoice rows here.
-     * The service re-validates and persists the accepted rows to
+     * ({@code LOGIN → INVOICE_LIST → INVOICE_DETAIL}), decrypts the engine
+     * {@code Output.Result} server-side via {@link #decryptScrape} (OQ-S2
+     * resolved 2026-07-14 — SEED-CBC through the shared
+     * {@code SeedCbcDecryptService}), and POSTs the structured invoice rows
+     * here. The service re-validates and persists the accepted rows to
      * {@code BUSA_DOC_MSTR} plus one {@code EXT_TRAN_CALL_HIS} audit row.
      *
      * <p>Tenant + user are read from the JWT via {@code TenantContext};
@@ -203,8 +234,9 @@ public class EInvoiceController {
      *
      * <p>After phase 1 ({@link #saveScrapeResults}) persists the invoice
      * list, the browser drives the engine's {@code INVOICE_DETAIL} job per
-     * listed invoice, decrypts the detail client-side (OQ-S2), and POSTs
-     * the structured line-item / fee / tax payloads here. The service
+     * listed invoice, decrypts the detail server-side via {@link #decryptScrape}
+     * (OQ-S2 resolved 2026-07-14), and POSTs the structured line-item / fee
+     * / tax payloads here. The service
      * enriches the existing {@code BUSA_DOC_MSTR} rows and (re)writes
      * {@code BUSA_DOC_DETL} / {@code EINV_FEE_DETL} / {@code EINV_TAX_DETL}.
      *

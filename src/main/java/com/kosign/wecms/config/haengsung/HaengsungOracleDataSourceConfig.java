@@ -11,6 +11,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
@@ -64,6 +65,40 @@ public class HaengsungOracleDataSourceConfig {
     @ConfigurationProperties("spring.datasource.hikari")
     public DataSource dataSource(DataSourceProperties dataSourceProperties) {
         return dataSourceProperties.initializeDataSourceBuilder().build();
+    }
+
+    /**
+     * Primary PostgreSQL {@link JdbcTemplate} — re-declared for the same reason
+     * as the datasource above, but with a sharper consequence.
+     *
+     * <p>Registering {@link #haengsungOracleJdbcTemplate} below makes a
+     * {@code JdbcTemplate} (hence a {@code JdbcOperations}) bean exist. Spring
+     * Boot's {@code JdbcTemplateAutoConfiguration} is
+     * {@code @ConditionalOnMissingBean(JdbcOperations.class)}, so it then backs
+     * off and does <b>not</b> create the primary {@code JdbcTemplate}. Its
+     * companion {@code NamedParameterJdbcTemplate} auto-config is
+     * {@code @ConditionalOnSingleCandidate(JdbcTemplate.class)} — with only the
+     * Oracle template present it would build the primary
+     * {@code NamedParameterJdbcTemplate} on top of the <b>Oracle</b> datasource.
+     * The result: every unqualified {@code JdbcTemplate} /
+     * {@code NamedParameterJdbcTemplate} injection (e.g. the bank-picker /
+     * bank-form repositories) would silently run PostgreSQL SQL against the
+     * Oracle ERP. Declaring these two {@code @Primary} beans, bound to the
+     * primary Postgres datasource, keeps the JDBC template surface on Postgres.
+     * Oracle stays reachable only through the {@code @Qualifier}-scoped
+     * {@link #ORACLE_JDBC_TEMPLATE} bean.
+     */
+    @Bean
+    @Primary
+    public JdbcTemplate jdbcTemplate(@Qualifier("dataSource") DataSource dataSource) {
+        return new JdbcTemplate(dataSource);
+    }
+
+    @Bean
+    @Primary
+    public NamedParameterJdbcTemplate namedParameterJdbcTemplate(
+            @Qualifier("jdbcTemplate") JdbcTemplate jdbcTemplate) {
+        return new NamedParameterJdbcTemplate(jdbcTemplate);
     }
 
     // ---------------------------------------------------------------------
