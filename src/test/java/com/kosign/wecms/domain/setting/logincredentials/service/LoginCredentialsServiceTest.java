@@ -209,6 +209,60 @@ class LoginCredentialsServiceTest {
         verify(auditLogService).append(any(AuditLogContext.class));
     }
 
+    /* ------------------ GDT scraping credential (silent) ------------------- */
+
+    @Test
+    @DisplayName("loadGdtScrapingCredential: returns decrypted login id + password, no password required, no audit write")
+    void loadGdtScrapingCredential_returnsDecrypted() {
+        GdtCertInfo row = new GdtCertInfo();
+        row.setBizKey(BIZ);
+        row.setSeqNo(new BigDecimal("7"));
+        row.setCertInfoCon("gdt-login");
+        row.setCertInfoDetlCon("ENC_PW");
+        when(gdtRepo.findByBizKeyAndSeqNo(BIZ, new BigDecimal("7")))
+                .thenReturn(Optional.of(row));
+        when(crypto.decryptStrict("ENC_PW")).thenReturn("gdt-secret");
+
+        var resp = service.loadGdtScrapingCredential(new BigDecimal("7"));
+
+        assertEquals("gdt-login", resp.loginId());
+        assertEquals("gdt-secret", resp.password());
+        // Silent path — no reveal password-confirmation gate, no audit row
+        // (legacy gdtc_0001_001_r001 wrote none either). This is what makes
+        // it read-only + prompt-free, unlike reveal().
+        verify(auditLogService, never()).append(any());
+    }
+
+    @Test
+    @DisplayName("loadGdtScrapingCredential: unknown / cross-tenant seqNo → WBE2090 (not found), never decrypts")
+    void loadGdtScrapingCredential_unknownSeq_throws() {
+        when(gdtRepo.findByBizKeyAndSeqNo(BIZ, new BigDecimal("99")))
+                .thenReturn(Optional.empty());
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.loadGdtScrapingCredential(new BigDecimal("99")));
+
+        assertEquals("WBE2090", ex.getCode());
+        verify(crypto, never()).decryptStrict(anyString());
+    }
+
+    @Test
+    @DisplayName("loadGdtScrapingCredential: GDT-only — a bank seqNo never resolves through GDT_CERT_INFO")
+    void loadGdtScrapingCredential_bankSeq_notFound() {
+        // The method queries GDT_CERT_INFO exclusively; a seqNo that exists
+        // only in BANK_CERT_INFO is absent from gdtRepo → WBE2090, and the
+        // bank repo is never consulted, so a bank credential can never leak
+        // through this GDT endpoint.
+        when(gdtRepo.findByBizKeyAndSeqNo(BIZ, new BigDecimal("5")))
+                .thenReturn(Optional.empty());
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.loadGdtScrapingCredential(new BigDecimal("5")));
+
+        assertEquals("WBE2090", ex.getCode());
+        verify(bankRepo, never()).findByBizKeyAndSeqNo(anyString(), any());
+    }
+
     /* ----------------------------- audit read ------------------------------ */
 
     @Test

@@ -12,6 +12,7 @@ import com.kosign.wecms.domain.setting.logincredentials.dto.BankCredentialUpdate
 import com.kosign.wecms.domain.setting.logincredentials.dto.CredentialCreateResponse;
 import com.kosign.wecms.domain.setting.logincredentials.dto.GdtCredentialRequest;
 import com.kosign.wecms.domain.setting.logincredentials.dto.GdtEngineConfigResponse;
+import com.kosign.wecms.domain.setting.logincredentials.dto.GdtScrapingCredentialResponse;
 import com.kosign.wecms.domain.setting.logincredentials.dto.GdtCredentialUpdateRequest;
 import com.kosign.wecms.domain.setting.logincredentials.dto.LoginCredentialAuditResponse;
 import com.kosign.wecms.domain.setting.logincredentials.dto.LoginCredentialListResponse;
@@ -188,8 +189,12 @@ public class LoginCredentialsController {
         return ApiResponse.ok(null);
     }
 
-    /** Re-auth + decrypt one credential. The body carries the user's
-     *  own WeCMS login password as a confirmation step. */
+    /** Confirm + decrypt one credential. The body carries the
+     *  <b>credential's own</b> password as a confirmation step (legacy
+     *  {@code comm_0218_008_r001} parity — it is NOT the WeCMS account
+     *  password). A mismatch returns {@code WBE2091}. This is the
+     *  credential-management "view password" feature; the e-Invoice
+     *  scrape uses {@link #gdtScrapingCredential} instead (no re-entry). */
     @PostMapping("/{type}/{seqNo}/reveal")
     public ApiResponse<RevealResponse> reveal(
             @PathVariable String type,
@@ -203,6 +208,21 @@ public class LoginCredentialsController {
             throw new RateLimitExceededException("WBE_TOO_MANY_REQUESTS");
         }
         return ApiResponse.ok(service.reveal(type, seqNo, req.userPassword()));
+    }
+
+    /** Silent GDT scraping-credential fetch for the e-Invoice local-engine
+     *  flow. Returns the decrypted GDT {@code login_id} + {@code password}
+     *  WITHOUT the reveal password-confirmation gate — restoring legacy
+     *  parity ({@code getCertInfo()} → {@code gdtc_0001_001_r001}, which
+     *  fed the stored credential straight to the NXiSAS engine with no
+     *  re-entry). Read-only; tenant-scoped; GDT-only (a bank {@code seqNo}
+     *  is not found here → {@code WBE2090}). Same JWT + menu authz as the
+     *  rest of this controller (the e-Invoice modal already calls the
+     *  sibling list / reveal endpoints). */
+    @GetMapping("/gdt/{seqNo}/scraping-credential")
+    public ApiResponse<GdtScrapingCredentialResponse> gdtScrapingCredential(
+            @PathVariable BigDecimal seqNo) {
+        return ApiResponse.ok(service.loadGdtScrapingCredential(seqNo));
     }
 
     /** Audit history popup — rows latest-first, already localized to

@@ -29,6 +29,7 @@ import com.kosign.wecms.domain.setting.logincredentials.dto.BankCredentialUpdate
 import com.kosign.wecms.domain.setting.logincredentials.dto.CredentialCreateResponse;
 import com.kosign.wecms.domain.setting.logincredentials.dto.GdtCredentialRequest;
 import com.kosign.wecms.domain.setting.logincredentials.dto.GdtEngineConfigResponse;
+import com.kosign.wecms.domain.setting.logincredentials.dto.GdtScrapingCredentialResponse;
 import com.kosign.wecms.domain.setting.logincredentials.dto.GdtCredentialUpdateRequest;
 import com.kosign.wecms.domain.setting.logincredentials.dto.LoginCredentialAccount;
 import com.kosign.wecms.domain.setting.logincredentials.dto.LoginCredentialBankAccount;
@@ -668,6 +669,51 @@ public class LoginCredentialsService {
                 .detailKey("audit.login_credentials.reveal.detail")
                 .build());
         return new RevealResponse(loginId, storedPassword);
+    }
+
+    /* -----------------------------------------------------------------
+     *  GDT SCRAPING CREDENTIAL — silent decrypt for the local engine
+     * ----------------------------------------------------------------- */
+
+    /**
+     * Load the tenant's GDT credential, decrypt it server-side, and hand
+     * the plaintext {@code login_id} + {@code password} to the caller for
+     * the client-side NXiSAS e-Invoice scrape.
+     *
+     * <p><b>No password re-entry.</b> Unlike {@link #reveal} — the
+     * credential-management "view password" feature, which confirms the
+     * credential's own password ({@code WBE2091}) — this path performs no
+     * confirmation. It is the GDT analogue of
+     * {@link com.kosign.wecms.domain.banking.bankcredentials.service.BankCredentialService#loadForScraping(BigDecimal)}
+     * and restores legacy parity: the JEX e-Invoice inquiry fetched the
+     * stored GDT credential silently via {@code getCertInfo()} → WSVC
+     * {@code gdtc_0001_001_r001} and fed it straight to the engine.
+     *
+     * <p>Read-only; makes no DB write (no audit row — legacy
+     * {@code gdtc_0001_001_r001} wrote none either). GDT-only: it queries
+     * {@code GDT_CERT_INFO} exclusively, so a bank {@code SEQ_NO} cannot
+     * be revealed here (it simply isn't found → {@code WBE2090}). Tenant
+     * scope is enforced by {@code findByBizKeyAndSeqNo}; a seqNo from
+     * another {@code BIZ_KEY} surfaces as {@code WBE2090} (not found).
+     *
+     * <p>Security note: the plaintext GDT password crosses the wire (the
+     * engine is client-side; there is no server-side scraper to keep it
+     * in). This matches legacy behaviour; it is intentionally weaker than
+     * the bank/card server-side-only decrypt model. See the audit at
+     * {@code Claude Code (AI)/notes/gdt-einvoice-realtime-inquiry-password-flow-audit.md}.
+     */
+    @Transactional(readOnly = true)
+    public GdtScrapingCredentialResponse loadGdtScrapingCredential(BigDecimal seqNo) {
+        String bizKey = TenantContext.currentBizKey();
+        GdtCertInfo row = gdtRepo.findByBizKeyAndSeqNo(bizKey, seqNo)
+                .orElseThrow(() -> new BusinessException("WBE2090"));
+        // STRICT decrypt — a value that doesn't decrypt under the legacy
+        // key yields null rather than the echoed ciphertext, so the engine
+        // is never handed an undecryptable blob the GDT portal would reject
+        // with an opaque error. Re-save via Settings > Login Credentials to
+        // cure a null here. Same contract as BankCredentialService.
+        String password = crypto.decryptStrict(row.getCertInfoDetlCon());
+        return new GdtScrapingCredentialResponse(row.getCertInfoCon(), password);
     }
 
     /* -----------------------------------------------------------------
