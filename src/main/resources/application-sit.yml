@@ -144,7 +144,7 @@ haengsung:
     cron: ${HAENGSUNG_CARD_ACCOUNT_SYNC_CRON}
 
 # =============================================================================
-# Application logging
+# Application logging.
 # Configures application, security, Hibernate, and SQL logging levels.
 # =============================================================================
 logging:
