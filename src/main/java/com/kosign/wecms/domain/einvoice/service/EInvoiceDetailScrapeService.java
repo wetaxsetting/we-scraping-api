@@ -6,10 +6,13 @@ import com.kosign.wecms.domain.einvoice.dto.EInvoiceDetailScrapeRequest;
 import com.kosign.wecms.domain.einvoice.dto.EInvoiceDetailScrapeResult;
 import com.kosign.wecms.domain.einvoice.dto.ScrapedEInvoiceDetailRow;
 import com.kosign.wecms.domain.einvoice.entity.BusaDocDetl;
+import com.kosign.wecms.domain.einvoice.entity.BusaDocDetlId;
 import com.kosign.wecms.domain.einvoice.entity.BusaDocMstr;
 import com.kosign.wecms.domain.einvoice.entity.BusaDocMstrId;
 import com.kosign.wecms.domain.einvoice.entity.EinvFeeDetl;
+import com.kosign.wecms.domain.einvoice.entity.EinvFeeDetlId;
 import com.kosign.wecms.domain.einvoice.entity.EinvTaxDetl;
+import com.kosign.wecms.domain.einvoice.entity.EinvTaxDetlId;
 import com.kosign.wecms.domain.einvoice.repository.BusaDocDetlRepository;
 import com.kosign.wecms.domain.einvoice.repository.BusaDocMstrRepository;
 import com.kosign.wecms.domain.einvoice.repository.EinvFeeDetlRepository;
@@ -44,10 +47,22 @@ import java.util.List;
  *   <li>{@code EINV_TAX_DETL} ← engine {@code taxArr[]} (legacy {@code :825-865})</li>
  * </ul>
  *
- * <p><b>Idempotency:</b> delete-then-insert per {@code (BIZ_KEY, DOC_ID)}
- * so a re-scrape of the same range is safe (legacy upserts by
- * {@code DISP_ORD}; the refactor replaces the line set wholesale — the
- * same intent, simpler).
+ * <p><b>Idempotency:</b> upsert per {@code (BIZ_KEY, DOC_ID, DISP_ORD)}
+ * so a re-scrape of the same range is safe — find-by-PK then UPDATE or
+ * INSERT, mirroring legacy {@code c002:740-864} exactly. A wholesale
+ * delete-then-insert was tried first but is UNSAFE against the live JEX DB:
+ * each detail table ({@code BUSA_DOC_DETL} / {@code EINV_FEE_DETL} /
+ * {@code EINV_TAX_DETL}) carries an {@code AFTER} trigger logging every
+ * change into a {@code *_HIS} table keyed on
+ * {@code (BIZ_KEY, DOC_ID, DISP_ORD, MOD_DTM)}, where {@code MOD_DTM =
+ * to_char(timezone('utc', now()), 'YYYYMMDDHH24MISS')}. PostgreSQL freezes
+ * {@code now()} at transaction start, so the DELETE's {@code 'D'} history
+ * row and the re-INSERT's {@code 'C'} history row for the same
+ * {@code DISP_ORD} land on an identical {@code MOD_DTM} → duplicate-key on
+ * {@code pk_einv_tax_detl_his}. Upserting keeps it to one DML per
+ * {@code DISP_ORD} per transaction, so each {@code *_HIS} row gets a unique
+ * PK. As in legacy, stale higher-{@code DISP_ORD} rows from a larger prior
+ * scrape are left in place (not deleted).
  *
  * <p><b>Counterparty auto-registration (Scope 4):</b> delegated to
  * {@link EInvoiceTrcoAutoRegistrar} — resolves/creates the
@@ -193,11 +208,16 @@ public class EInvoiceDetailScrapeService {
             master.setModDtm(batchDtm);
             masterRepo.save(master);
 
-            // ── Replace line items / fees / taxes (delete-then-insert) ──
-            detlRepo.deleteByBizKeyAndDocId(bizKey, docId);
-            feeRepo.deleteByBizKeyAndDocId(bizKey, docId);
-            taxRepo.deleteByBizKeyAndDocId(bizKey, docId);
-
+            // ── Upsert line items / fees / taxes by (BIZ_KEY, DOC_ID, DISP_ORD) ──
+            // Legacy parity (c002:740-864): find-by-PK → UPDATE, else INSERT.
+            // A wholesale delete-then-insert is UNSAFE here: each of these
+            // tables carries an AFTER-trigger that logs every row change into
+            // its {@code *_HIS} table with PK (BIZ_KEY, DOC_ID, DISP_ORD,
+            // MOD_DTM), where MOD_DTM = to_char(utc now(), 'YYYYMMDDHH24MISS').
+            // now() is frozen at transaction start, so a DELETE ('D') and a
+            // re-INSERT ('C') of the same disp_ord in one tx collide on the
+            // _HIS PK (dup-key on pk_einv_tax_detl_his). Upserting keeps it to
+            // ONE DML per disp_ord per tx → one _HIS row → unique MOD_DTM.
             lineItems += writeProducts(bizKey, docId, userId, regDtm, row.products());
             writeFees(bizKey, docId, userId, regDtm, row.fees());
             writeTaxes(bizKey, docId, userId, regDtm, row.taxes());
@@ -247,10 +267,17 @@ public class EInvoiceDetailScrapeService {
         int n = 0;
         for (int i = 0; i < products.size(); i++) {
             ScrapedEInvoiceDetailRow.Product p = products.get(i);
-            BusaDocDetl d = new BusaDocDetl();
-            d.setBizKey(bizKey);
-            d.setDocId(docId);
-            d.setDispOrd(p.dispOrd() > 0 ? p.dispOrd() : i + 1);
+            final int dispOrd = p.dispOrd() > 0 ? p.dispOrd() : i + 1;
+            BusaDocDetl d = detlRepo.findById(new BusaDocDetlId(bizKey, docId, dispOrd))
+                    .orElseGet(() -> {
+                        BusaDocDetl fresh = new BusaDocDetl();
+                        fresh.setBizKey(bizKey);
+                        fresh.setDocId(docId);
+                        fresh.setDispOrd(dispOrd);
+                        fresh.setRegId(userId);
+                        fresh.setRegDtm(regDtm);
+                        return fresh;
+                    });
             d.setUserId(userId);
             d.setItemCd(ITEM_CD_DEFAULT);
             d.setItemNm(clip(p.product(), 255));
@@ -261,8 +288,6 @@ public class EInvoiceDetailScrapeService {
             d.setDcAmt(EInvoiceScrapeService.parseAmount(p.discount()));
             d.setEinvProductname(clip(p.productName(), 500));
             d.setEinvTaxrate(clip(p.taxRate(), 10));
-            d.setRegId(userId);
-            d.setRegDtm(regDtm);
             d.setModId(userId);
             d.setModDtm(regDtm);
             detlRepo.save(d);
@@ -276,14 +301,19 @@ public class EInvoiceDetailScrapeService {
         if (fees == null || fees.isEmpty()) return;
         for (int i = 0; i < fees.size(); i++) {
             ScrapedEInvoiceDetailRow.Fee f = fees.get(i);
-            EinvFeeDetl e = new EinvFeeDetl();
-            e.setBizKey(bizKey);
-            e.setDocId(docId);
-            e.setDispOrd(f.dispOrd() > 0 ? f.dispOrd() : i + 1);
+            final int dispOrd = f.dispOrd() > 0 ? f.dispOrd() : i + 1;
+            EinvFeeDetl e = feeRepo.findById(new EinvFeeDetlId(bizKey, docId, dispOrd))
+                    .orElseGet(() -> {
+                        EinvFeeDetl fresh = new EinvFeeDetl();
+                        fresh.setBizKey(bizKey);
+                        fresh.setDocId(docId);
+                        fresh.setDispOrd(dispOrd);
+                        fresh.setRegId(userId);
+                        fresh.setRegDtm(regDtm);
+                        return fresh;
+                    });
             e.setEinvFeename(clip(f.feeName(), 100));
             e.setEinvFee(EInvoiceScrapeService.parseAmount(f.fee()));
-            e.setRegId(userId);
-            e.setRegDtm(regDtm);
             e.setModId(userId);
             e.setModDtm(regDtm);
             feeRepo.save(e);
@@ -295,15 +325,20 @@ public class EInvoiceDetailScrapeService {
         if (taxes == null || taxes.isEmpty()) return;
         for (int i = 0; i < taxes.size(); i++) {
             ScrapedEInvoiceDetailRow.Tax t = taxes.get(i);
-            EinvTaxDetl e = new EinvTaxDetl();
-            e.setBizKey(bizKey);
-            e.setDocId(docId);
-            e.setDispOrd(t.dispOrd() > 0 ? t.dispOrd() : i + 1);
+            final int dispOrd = t.dispOrd() > 0 ? t.dispOrd() : i + 1;
+            EinvTaxDetl e = taxRepo.findById(new EinvTaxDetlId(bizKey, docId, dispOrd))
+                    .orElseGet(() -> {
+                        EinvTaxDetl fresh = new EinvTaxDetl();
+                        fresh.setBizKey(bizKey);
+                        fresh.setDocId(docId);
+                        fresh.setDispOrd(dispOrd);
+                        fresh.setRegId(userId);
+                        fresh.setRegDtm(regDtm);
+                        return fresh;
+                    });
             e.setEinvTaxrate(clip(t.taxRate(), 50));
             e.setAmt(EInvoiceScrapeService.parseAmount(t.amtWithoutTax()));
             e.setTaxAmt(EInvoiceScrapeService.parseAmount(t.taxAmt()));
-            e.setRegId(userId);
-            e.setRegDtm(regDtm);
             e.setModId(userId);
             e.setModDtm(regDtm);
             taxRepo.save(e);
