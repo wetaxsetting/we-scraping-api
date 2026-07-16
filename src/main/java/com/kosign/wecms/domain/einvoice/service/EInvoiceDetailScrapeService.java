@@ -166,6 +166,27 @@ public class EInvoiceDetailScrapeService {
             }
             applyIssuerAddress(master, issuAddr);
 
+            // ── Counterparty (TRCO_*) address + phone + issuer tax id ──
+            // Legacy c002:625-634 copies the resolved contact's BsunAddr +
+            // telNo onto BUSA_DOC_MSTR.TRCO_BSUN_* / TRCO_RPRS_TLPH. The
+            // registrar (D5.1) parses the counterparty address into the
+            // TRCO_INFM contact, but the master was never stamped — so the
+            // View-Details popup (which reads master.TRCO_BSUN_*) showed an
+            // empty seller address on Bills. Counterparty = buyer for a Sale,
+            // seller (supplier) for a Bill.
+            String trcoAddr = isSales ? row.buyerAddr() : row.sellerAddr();
+            applyCounterpartyAddress(master, trcoAddr);
+            // Seller phone → TRCO_RPRS_TLPH (legacy c002:632-634 — sellerPhone
+            // is the counterparty's phone on a Bill; the payload carries no
+            // buyer phone, so Sales leaves it untouched).
+            setIf(row.sellerPhone(), v -> master.setTrcoRprsTlph(clip(v, 50)));
+            // Overwrite the phase-1 ISSU_TAX_ID placeholder ("9999…" for Bills)
+            // with the own-company tax id once the detail provides it
+            // (legacy c002:270 — Bill: own=buyer→buyerTaxCode, Sale:
+            // own=seller→sellerTaxCode). Guarded so a blank never wipes it.
+            String ownTaxId = isSales ? row.sellerTaxCode() : row.buyerTaxCode();
+            setIf(ownTaxId, v -> master.setIssuTaxId(clip(v, 40)));
+
             // EINV_* scalar fields (verbatim from the detail payload).
             setIf(row.invoiceTitle(),      v -> master.setEinvTitle(clip(v, 300)));
             setIf(row.mccqt(),             v -> master.setEinvMccqt(clip(v, 50)));
@@ -396,6 +417,31 @@ public class EInvoiceDetailScrapeService {
             master.setIssuBsunCity(clip(last, 200));
         }
         master.setIssuBsunSt("Việt Nam".equalsIgnoreCase(last) ? "Việt Nam" : null);
+    }
+
+    /**
+     * Stamp the counterparty ({@code TRCO_*}) business-address columns on the
+     * master from the scraped counterparty address, reusing
+     * {@link EInvoiceTrcoAutoRegistrar#parseBusinessAddress} so the master and
+     * the {@code TRCO_INFM} contact carry an identical
+     * {@code [st, city, postAdrs, dtlAdrs]} decomposition. Legacy parity:
+     * {@code c002:625-630} ({@code setTrcoTaxInfo} copies the resolved
+     * contact's {@code BsunAddr} onto {@code BUSA_DOC_MSTR.TRCO_BSUN_*}).
+     *
+     * <p>The decomposition reconstructs cleanly in the View-Details read path:
+     * {@code EInvoiceDetailService} joins {@code [post, dtl, city, st]} with
+     * {@code ", "}, which recomposes the original scraped address. Blank
+     * address → columns left untouched (an empty detail never wipes a good
+     * phase-1 value; matches the {@code setIf} guards). Package-private static
+     * for unit testing (same pattern as {@link #applyDueDate}).
+     */
+    static void applyCounterpartyAddress(BusaDocMstr master, String addr) {
+        if (!notBlank(addr)) return;
+        String[] a = EInvoiceTrcoAutoRegistrar.parseBusinessAddress(addr);
+        master.setTrcoBsunSt(clip(a[0], 200));
+        master.setTrcoBsunCity(clip(a[1], 200));
+        master.setTrcoBsunPostAdrs(clip(a[2], 200));
+        master.setTrcoBsunDtlAdrs(clip(a[3], 200));
     }
 
     /**

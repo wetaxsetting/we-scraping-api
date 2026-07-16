@@ -6,6 +6,7 @@ import com.kosign.wecms.common.response.ApiResponse;
 import com.kosign.wecms.domain.einvoice.dto.EInvoiceDecryptRequest;
 import com.kosign.wecms.domain.einvoice.dto.EInvoiceDecryptResponse;
 import com.kosign.wecms.domain.einvoice.dto.EInvoiceDetailHistoryResponse;
+import com.kosign.wecms.domain.einvoice.dto.EInvoiceDetailResponse;
 import com.kosign.wecms.domain.einvoice.dto.EInvoiceDetailScrapeRequest;
 import com.kosign.wecms.domain.einvoice.dto.EInvoiceDetailScrapeResult;
 import com.kosign.wecms.domain.einvoice.dto.EInvoiceHistoryResponse;
@@ -14,6 +15,7 @@ import com.kosign.wecms.domain.einvoice.dto.EInvoiceScrapeRequest;
 import com.kosign.wecms.domain.einvoice.dto.EInvoiceScrapeResult;
 import com.kosign.wecms.domain.einvoice.service.EInvoiceDetailExportService;
 import com.kosign.wecms.domain.einvoice.service.EInvoiceDetailScrapeService;
+import com.kosign.wecms.domain.einvoice.service.EInvoiceDetailService;
 import com.kosign.wecms.domain.einvoice.service.EInvoiceHistoryService;
 import com.kosign.wecms.domain.einvoice.service.EInvoiceScrapeDecryptService;
 import com.kosign.wecms.domain.einvoice.service.EInvoiceScrapeService;
@@ -25,6 +27,7 @@ import jakarta.validation.constraints.Pattern;
 import lombok.RequiredArgsConstructor;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -107,6 +110,7 @@ public class EInvoiceController {
     private final EInvoiceHistoryService historyService;
     private final ExcelExportService excelExportService;
     private final EInvoiceDetailExportService detailExportService;
+    private final EInvoiceDetailService detailService;
 
     @GetMapping("/einvoices")
     @PreAuthorize("@menuAuthz.canAccessEInvoice(#p0)")
@@ -137,6 +141,40 @@ public class EInvoiceController {
         return ApiResponse.ok(service.list(
                 type, fromDt, toDt, keyword, status, page, size, sortField, sortDirection));
     }
+
+    /**
+     * "View e-Invoice Details" — single-invoice detail for the shared
+     * Sales / Expenses popup. Refactor port of legacy
+     * {@code einv_0002_001_r001} (see
+     * {@code docs/jex/features/view-e-invoice-details.md}).
+     *
+     * <ul>
+     *   <li>{@code {docId}} — path, the {@code DOC_ID}.</li>
+     *   <li>{@code type} — {@code SALES} or {@code EXPENSE}; resolved via
+     *       {@link EInvoiceService#resolveDocType} ({@code 'E'}/{@code 'S'}
+     *       rejected with {@code WBE2002}, mirroring the legacy
+     *       {@code DOC_TYPE='E'} guard).</li>
+     * </ul>
+     * The service resolves the seller / buyer blocks server-side (identity
+     * swaps by doc-type; bank + sign columns don't) and returns line items,
+     * fees, tax breakdown, and totals. Tenant comes from the JWT; the master
+     * is restricted to {@code HAND_REG_YN='N'}. Not found → {@code WBE2019}.
+     */
+    @GetMapping("/einvoices/{docId}")
+    @PreAuthorize("@menuAuthz.canAccessEInvoice(#p1)")
+    public ApiResponse<EInvoiceDetailResponse> detail(
+            @PathVariable("docId") String docId,
+            @RequestParam("type") @NotBlank String type) {
+        return ApiResponse.ok(detailService.getDetail(docId, type));
+    }
+
+    // NOTE: Print + PDF are generated CLIENT-SIDE in wecms-web from the modal's
+    // own <InvoiceDocument> DOM (lib/print printElement + lib/pdf
+    // downloadElementAsPdf), so the modal, Print, and PDF are byte-for-byte
+    // identical. The former server-rendered /pdf + /print endpoints (and
+    // EInvoicePdfService + openhtmltopdf/zxing) were removed 2026-07-15 — a
+    // server template can't reproduce the React/Tailwind modal, and keeping it
+    // would be the duplicate layout the requirement forbids.
 
     /**
      * Per-resource Excel export endpoint (Backend MR C).

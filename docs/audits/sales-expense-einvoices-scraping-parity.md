@@ -175,3 +175,20 @@ Applied filters (legacy source of truth for "search conditions"):
 - **Server-side list filters** (invoice-status / symbol / currency, §3) — still client-side / unported (OQ-S3 / IR-4).
 - **End-to-end runtime verification** — blocked on a licensed engine origin (OQ-S1).
 - **`SEQ_NO` race** — `EXT_TRAN_CALL_HIS` MAX+1 is in-transaction without retry; acceptable for single-user R&D scraping, revisit if concurrent scrapes per `(SVC_ID, REF_DATE)` become real.
+
+---
+
+## 9. Fix 2026-07-15 — counterparty (TRCO) address + issuer tax id stamped on the invoice master
+
+**Symptom.** The "View e-Invoice Details" popup/PDF showed an empty seller `Địa chỉ:` (and a `99999999999999999999` buyer MST) on Expenses/Bill invoices.
+
+**Root cause (refactor divergence from `nxisas_einvoice_c002`).** For a Bill the supplier is the counterparty → `TRCO_*`, own company is the buyer → `ISSU_*` (roles swapped by type at write time — this part matched legacy). But phase-2 (`EInvoiceDetailScrapeService`) wrote **only** the issuer address (`applyIssuerAddress` → `ISSU_BSUN_*`); it never stamped the counterparty address onto `BUSA_DOC_MSTR.TRCO_BSUN_*`. `EInvoiceTrcoAutoRegistrar` (D5.1) parsed the counterparty address into the `TRCO_INFM` *contact*, but the master was never populated — and the detail popup reads the **master** columns. Legacy copies the resolved contact's `BsunAddr` + `telNo` onto the master via `busaDocMstr.setTrcoTaxInfo(...)` (`c002:625-634`). Separately, the phase-1 `ISSU_TAX_ID='99999999999999999999'` Bill placeholder was never overwritten with the buyer's own-company tax id at detail time (legacy `c002:270`).
+
+**Fix (`EInvoiceDetailScrapeService`).** After the issuer block, phase-2 now also:
+1. stamps `TRCO_BSUN_ST/CITY/POST_ADRS/DTL_ADRS` from the counterparty address (`buyerAddr` for Sale / `sellerAddr` for Bill), reusing `EInvoiceTrcoAutoRegistrar.parseBusinessAddress` so master + contact share one `[st, city, postAdrs, dtlAdrs]` decomposition that recomposes cleanly in `EInvoiceDetailService.getDetail`'s `joinAddr`;
+2. sets `TRCO_RPRS_TLPH` from `sellerPhone` (legacy `c002:632-634`);
+3. overwrites `ISSU_TAX_ID` with the own-company tax id (`buyerTaxCode` Bill / `sellerTaxCode` Sale) when the detail provides it, guarded so a blank never wipes the placeholder (legacy `c002:270`).
+
+New `applyCounterpartyAddress` is package-private `static` (same pattern as `applyDueDate`). Test: `EInvoiceCounterpartyAddressTest` (4 cases — full-address reconstruction, short address, blank-noop, null-noop). Verified `./gradlew test --tests einvoice.*` ✅.
+
+**Scope caveats.** Fixes **future** scrapes only — existing rows keep NULL `TRCO_BSUN_*` until re-scraped (the raw GDT payload isn't stored). End-to-end re-scrape needs a licensed engine origin (OQ-S1; not localhost). A legitimately-NULL `TRCO_BSUN` can still occur — like legacy — when the supplier already existed as a contact with no stored address.
