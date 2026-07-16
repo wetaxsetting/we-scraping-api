@@ -89,14 +89,14 @@ class CurrentSavingsDownloadServiceTest {
                                       String nick, String bal, String realAmt,
                                       String inqStts, String updDtm) {
         return new AccountRow(bankCd + "_" + acctNo, bankCd, bankNm, acctNo, "02", typeNm,
-                "bank.acct_type.02", "VND", nick, bal, realAmt, inqStts, updDtm, "N", "Y");
+                "bank.acct_type.02", "VND", nick, bal, realAmt, inqStts, updDtm, null, "N", "Y");
     }
 
     private static AccountRow fcyAccount(String bankCd, String bankNm, String acctNo, String ccy,
                                          String typeNm, String nick, String bal, String realAmt,
                                          String updDtm) {
         return new AccountRow(bankCd + "_" + acctNo, bankCd, bankNm, acctNo, "02", typeNm,
-                "bank.acct_type.02", ccy, nick, bal, realAmt, "Y", updDtm, "N", "Y");
+                "bank.acct_type.02", ccy, nick, bal, realAmt, "Y", updDtm, null, "N", "Y");
     }
 
     private static TransactionRow txn(String dt, String tm, String deposit, String withdraw,

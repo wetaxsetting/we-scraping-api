@@ -10,6 +10,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Sales / Bill e-Invoice list queries. Runs over {@code BUSA_DOC_MSTR}
@@ -352,4 +353,16 @@ public interface BusaDocMstrRepository extends JpaRepository<BusaDocMstr, BusaDo
     List<String> findDistinctTrcoTaxIdByBizKeyAndHandRegYn(
             @Param("bizKey")    String bizKey,
             @Param("handRegYn") String handRegYn);
+
+    /**
+     * Single-invoice lookup for the "View e-Invoice Details" popup — refactor
+     * port of legacy {@code einv_0002_001_r001_act.jsp:121-134}. Tenant +
+     * doc-type scoped, restricted to {@code HAND_REG_YN='N'} (auto-scraped
+     * docs only; hand-registered docs route elsewhere in legacy). The caller
+     * resolves {@code docType} via {@code EInvoiceService.resolveDocType}
+     * (Sales {@code 'I'} / Bill {@code 'B'}; {@code 'E'}/{@code 'S'} rejected
+     * with {@code WBE2002} before this is reached).
+     */
+    Optional<BusaDocMstr> findByBizKeyAndDocIdAndDocTypeAndHandRegYn(
+            String bizKey, String docId, String docType, String handRegYn);
 }

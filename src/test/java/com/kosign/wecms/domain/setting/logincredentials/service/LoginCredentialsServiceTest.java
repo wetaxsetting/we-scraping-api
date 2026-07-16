@@ -13,6 +13,7 @@ import com.kosign.wecms.domain.banking.bankcredentials.service.BankCertCryptoSer
 import com.kosign.wecms.domain.banking.nxisas.BankScrapingService;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
 import com.kosign.wecms.domain.banking.repository.BankInfmRepository;
+import com.kosign.wecms.domain.setting.logincredentials.repository.BankShortNameRepository;
 import com.kosign.wecms.domain.banking.service.AccountRegistrationService;
 import com.kosign.wecms.domain.setting.logincredentials.dto.GdtCredentialRequest;
 import com.kosign.wecms.domain.setting.logincredentials.dto.GdtCredentialUpdateRequest;
@@ -66,6 +67,7 @@ class LoginCredentialsServiceTest {
 
     private BankPickerRepository bankPickerRepo;
     private BankFormInfoRepository bankFormInfoRepo;
+    private BankShortNameRepository bankShortNameRepo;
     private BankCertInfoRepository bankRepo;
     private GdtCertInfoRepository gdtRepo;
     private BankInfmRepository bankInfmRepo;
@@ -84,6 +86,7 @@ class LoginCredentialsServiceTest {
     void setUp() {
         bankPickerRepo = mock(BankPickerRepository.class);
         bankFormInfoRepo = mock(BankFormInfoRepository.class);
+        bankShortNameRepo = mock(BankShortNameRepository.class);
         bankRepo = mock(BankCertInfoRepository.class);
         gdtRepo = mock(GdtCertInfoRepository.class);
         bankInfmRepo = mock(BankInfmRepository.class);
@@ -96,7 +99,7 @@ class LoginCredentialsServiceTest {
         accountRegistrationService = mock(AccountRegistrationService.class);
 
         service = new LoginCredentialsService(
-                bankPickerRepo, bankFormInfoRepo, bankRepo, gdtRepo, bankInfmRepo,
+                bankPickerRepo, bankFormInfoRepo, bankShortNameRepo, bankRepo, gdtRepo, bankInfmRepo,
                 acctMstrRepo, crypto, auditLogService, auditLogReadRepo,
                 bankScrapingService, legacyFunctions, accountRegistrationService);
 
