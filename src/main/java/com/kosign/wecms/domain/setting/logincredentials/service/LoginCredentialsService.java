@@ -24,6 +24,7 @@ import com.kosign.wecms.domain.setting.logincredentials.dto.BankPickerResponse;
 import com.kosign.wecms.domain.setting.logincredentials.dto.BankPickerRow;
 import com.kosign.wecms.domain.setting.logincredentials.repository.BankFormInfoRepository;
 import com.kosign.wecms.domain.setting.logincredentials.repository.BankPickerRepository;
+import com.kosign.wecms.domain.setting.logincredentials.repository.BankShortNameRepository;
 import com.kosign.wecms.domain.setting.logincredentials.dto.BankCredentialCreateRequest;
 import com.kosign.wecms.domain.setting.logincredentials.dto.BankCredentialUpdateRequest;
 import com.kosign.wecms.domain.setting.logincredentials.dto.CredentialCreateResponse;
@@ -130,6 +131,7 @@ public class LoginCredentialsService {
 
     private final BankPickerRepository      bankPickerRepo;
     private final BankFormInfoRepository    bankFormInfoRepo;
+    private final BankShortNameRepository   bankShortNameRepo;
     private final BankCertInfoRepository    bankRepo;
     private final GdtCertInfoRepository     gdtRepo;
     private final BankInfmRepository        bankInfmRepo;
@@ -774,13 +776,27 @@ public class LoginCredentialsService {
     }
 
     /**
-     * Resolve BANK_CD → display name via {@link BankInfmRepository}.
-     * Falls back to the bank code itself when the registry has no
-     * entry. Cross-domain coupling is intentional — every BANK_CD on
-     * disk is sourced from the same registry the Banking module uses,
-     * and {@code BankCdResolver} (in {@code domain.banking.service}) is
-     * package-private so we re-query rather than cross the package
-     * boundary.
+     * Resolve BANK_CD → the Institution-column display name, matching
+     * the legacy list IDO {@code IDO.BANK_CERT_INFO_R007.xml:46} which
+     * projects {@code INST = wb_get_bank_nm(BANK_CD, 's')} — the SHORT
+     * bank name, not the full representative name.
+     *
+     * <p>Resolution order (last wins):
+     * <ol>
+     *   <li>bank code itself — ultimate fallback;
+     *   <li>FULL name {@code BANK_INFM.RPRS_BANK_NM} (legacy
+     *       {@code wb_get_bank_nm(cd,'l')}) — fallback for banks with no
+     *       date-effective short row;
+     *   <li>SHORT name {@code BANK_INFM_DETL} {@code BANK_DETL_INFO_CD='10'},
+     *       date-effective (legacy {@code wb_get_bank_nm(cd,'s')}) — the
+     *       value the legacy {@code comm_0218_001} list actually renders.
+     * </ol>
+     *
+     * <p>Cross-domain coupling for the full name is intentional — every
+     * BANK_CD on disk is sourced from the same registry the Banking
+     * module uses, and {@code BankCdResolver} (in
+     * {@code domain.banking.service}) is package-private so we re-query
+     * rather than cross the package boundary.
      */
     private Map<String, String> resolveBankNames(Iterable<String> bankCds) {
         Map<String, String> out = new HashMap<>();
@@ -789,11 +805,19 @@ public class LoginCredentialsService {
             out.putIfAbsent(code, code);
         }
         if (out.isEmpty()) return out;
+        // Full name — fallback only (used when a bank has no '10' short row).
         for (BankInfm row : bankInfmRepo.findAll()) {
             if (out.containsKey(row.getBankCd())) {
                 out.put(row.getBankCd(), row.getRprsBankNm());
             }
         }
+        // Short name — overlaid last so it wins over the full name,
+        // reproducing legacy wb_get_bank_nm(cd,'s'). Codes without a
+        // date-effective '10' row keep the full-name fallback above.
+        Map<String, String> shortNames = bankShortNameRepo.shortNames(out.keySet());
+        shortNames.forEach((code, nm) -> {
+            if (nm != null && !nm.isBlank()) out.put(code, nm);
+        });
         return out;
     }
 

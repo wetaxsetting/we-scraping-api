@@ -112,6 +112,54 @@ public class BankTransactionSyncService {
     private static final double FRACTION_PERSIST = 0.35;  // 35%  — scraped rows deduped + persisted
     private static final double FRACTION_BALANCE = 0.50;  // 50%  — BALANCE processing started
 
+    // Fixed-Deposit routing — legacy nxisas_tranList_osmc.js:300-361.
+    /** Legacy Fixed-Deposit (Time-Deposit) account-type code (ACCT_MSTR.ACCT_TYPE_CD). */
+    private static final String ACCT_TYPE_FIXED_DEPOSIT = "02";
+    /** VCB — the only FD bank that scrapes BALANCE_FIXED_DEPOSIT +
+     *  TRANSACTION_FIXED_DEPOSIT (nxisas_tranList_osmc.js:301). */
+    private static final String BANK_VCB = "11704004";
+    /** FD banks that scrape BALANCE_FIXED_DEPOSIT only — no
+     *  TRANSACTION_FIXED_DEPOSIT support (nxisas_tranList_osmc.js:323-329):
+     *  Shinhan, ACB, HD, VietinBank, VPBank. */
+    private static final java.util.Set<String> FD_BALANCE_ONLY_BANKS = java.util.Set.of(
+            "11704088", // Shinhan
+            "11704011", // ACB
+            "11704101", // HD
+            "11704001", // Vietin
+            "11704102"  // VP
+    );
+
+    /** Per-account scrape routing derived from {@code ACCT_TYPE_CD} + {@code BANK_CD}. */
+    private enum ScrapeMode {
+        /** Current / Savings — and FD at a non-whitelisted bank: BALANCE + TRANSACTION. */
+        REGULAR,
+        /** VCB Fixed Deposit: BALANCE_FIXED_DEPOSIT + TRANSACTION_FIXED_DEPOSIT. */
+        FD_WITH_TRANSACTION,
+        /** Shinhan/ACB/HD/Vietin/VP Fixed Deposit: BALANCE_FIXED_DEPOSIT only. */
+        FD_BALANCE_ONLY
+    }
+
+    /**
+     * Route one account to its scrape mode — legacy
+     * {@code nxisas_tranList_osmc.js:300-361}. Fixed-Deposit accounts
+     * ({@code ACCT_TYPE_CD "02"}) are gated to a fixed bank whitelist: VCB
+     * scrapes FD balance + FD transactions, the other five whitelisted banks
+     * scrape FD balance only. An FD account at any other bank falls through to
+     * the regular BALANCE + TRANSACTION pair (legacy else-branch at line 340).
+     */
+    private static ScrapeMode scrapeModeFor(AcctMstr acct) {
+        if (!ACCT_TYPE_FIXED_DEPOSIT.equals(acct.getAcctTypeCd())) {
+            return ScrapeMode.REGULAR;
+        }
+        if (BANK_VCB.equals(acct.getBankCd())) {
+            return ScrapeMode.FD_WITH_TRANSACTION;
+        }
+        if (FD_BALANCE_ONLY_BANKS.contains(acct.getBankCd())) {
+            return ScrapeMode.FD_BALANCE_ONLY;
+        }
+        return ScrapeMode.REGULAR;
+    }
+
     private final BankCredentialService credentialService;
     private final NxisasGatewayClient gateway;
     private final NxisasBankConfig bankConfig;
@@ -637,32 +685,49 @@ public class BankTransactionSyncService {
         NxisasBankConfig.Entry cfg = bankConfig.find(bankCd, session.getNxisasGbSeqNo())
                 .orElseThrow(() -> new BusinessException("WBE2093", bankCd));
 
-        // ── TRANSACTION (gateway; no DB tx) ──
-        NxisasTransactionJobInput tIn = new NxisasTransactionJobInput();
-        tIn.setAcctNum(acctNo);
-        tIn.setCurrency(ccy);
-        tIn.setStartDate(startDate);
-        tIn.setEndDate(session.getToDt());
-        if (session.isCancelled()) { markCancelledWorker(session); return false; } // before gateway
-        NxisasApiLog.event(tid(session), NxisasApiLog.FLOW_BANK_SYNC, "TRANSACTION_START",
-                "bankCd", bankCd, "acctNo", NxisasMask.acct(acctNo));
-        String trSeq = gateway.newTrSeq();
-        NxisasApiOut<NxisasTransactionJobResult> tOut = gateway.transaction(
-                cfg.module(), cfg.category(), trSeq, tIn, continuationOf(session));
-        if (session.isCancelled()) { markCancelledWorker(session); return false; } // after gateway
+        // Fixed-Deposit routing — legacy nxisas_tranList_osmc.js:300-361.
+        // VCB FD → FD balance + FD transaction; the five balance-only FD banks
+        // → FD balance, no transaction job; everything else → regular pair.
+        final ScrapeMode mode = scrapeModeFor(acct);
 
-        String txFailCode = scrapeFailureCode(tOut);
-        if (txFailCode != null) {
-            statusUpdater.markFailure(bizKey, bankCd, acctNo, txFailCode, scrapeFailureMsg(tOut), userId, nowDb);
-            NxisasApiLog.event(tid(session), NxisasApiLog.FLOW_BANK_SYNC, "ERROR",
-                    "stage", "TRANSACTION", "scope", "BANK", "bankCd", bankCd, "errorCode", txFailCode);
-            session.completeAccount(false);            // this account processed as a failure
-            failSession(session, "WBE2095", scrapeFailureMsg(tOut)); // fail-fast batch
-            return false;
+        // ── TRANSACTION (gateway; no DB tx) ──
+        // Balance-only FD banks send no transaction job (legacy has no
+        // TRANSACTION_FIXED_DEPOSIT support for them); the account still
+        // completes successfully on the BALANCE leg alone.
+        List<NxisasTransactionEntry> entries;
+        if (mode == ScrapeMode.FD_BALANCE_ONLY) {
+            NxisasApiLog.event(tid(session), NxisasApiLog.FLOW_BANK_SYNC, "TRANSACTION_SKIP",
+                    "bankCd", bankCd, "acctNo", NxisasMask.acct(acctNo), "reason", "FD_BALANCE_ONLY");
+            entries = List.of();
+        } else {
+            NxisasTransactionJobInput tIn = new NxisasTransactionJobInput();
+            tIn.setAcctNum(acctNo);
+            tIn.setCurrency(ccy);
+            tIn.setStartDate(startDate);
+            tIn.setEndDate(session.getToDt());
+            if (session.isCancelled()) { markCancelledWorker(session); return false; } // before gateway
+            NxisasApiLog.event(tid(session), NxisasApiLog.FLOW_BANK_SYNC, "TRANSACTION_START",
+                    "bankCd", bankCd, "acctNo", NxisasMask.acct(acctNo),
+                    "fixedDeposit", mode == ScrapeMode.FD_WITH_TRANSACTION);
+            String trSeq = gateway.newTrSeq();
+            NxisasApiOut<NxisasTransactionJobResult> tOut = mode == ScrapeMode.FD_WITH_TRANSACTION
+                    ? gateway.transactionFixedDeposit(cfg.module(), cfg.category(), trSeq, tIn, continuationOf(session))
+                    : gateway.transaction(cfg.module(), cfg.category(), trSeq, tIn, continuationOf(session));
+            if (session.isCancelled()) { markCancelledWorker(session); return false; } // after gateway
+
+            String txFailCode = scrapeFailureCode(tOut);
+            if (txFailCode != null) {
+                statusUpdater.markFailure(bizKey, bankCd, acctNo, txFailCode, scrapeFailureMsg(tOut), userId, nowDb);
+                NxisasApiLog.event(tid(session), NxisasApiLog.FLOW_BANK_SYNC, "ERROR",
+                        "stage", "TRANSACTION", "scope", "BANK", "bankCd", bankCd, "errorCode", txFailCode);
+                session.completeAccount(false);            // this account processed as a failure
+                failSession(session, "WBE2095", scrapeFailureMsg(tOut)); // fail-fast batch
+                return false;
+            }
+            NxisasTransactionJobResult tResult = gateway.firstTransactionResult(tOut);
+            entries = tResult == null || tResult.getTransaction() == null
+                    ? List.of() : tResult.getTransaction();
         }
-        NxisasTransactionJobResult tResult = gateway.firstTransactionResult(tOut);
-        List<NxisasTransactionEntry> entries = tResult == null || tResult.getTransaction() == null
-                ? List.of() : tResult.getTransaction();
 
         session.enterPhase(NxisasScrapeSession.Phase.PERSISTING_TRANSACTIONS, FRACTION_TX); // 25%
         if (session.isCancelled()) { markCancelledWorker(session); return false; } // before persist
@@ -682,8 +747,9 @@ public class BankTransactionSyncService {
         // ── BALANCE (gateway; no DB tx) → persist stamps (own short tx) ──
         session.enterPhase(NxisasScrapeSession.Phase.REFRESHING_BALANCE, FRACTION_BALANCE); // 50%
         NxisasApiLog.event(tid(session), NxisasApiLog.FLOW_BANK_SYNC, "BALANCE_START",
-                "bankCd", bankCd, "acctNo", NxisasMask.acct(acctNo));
-        Balance bal = fetchBalance(session, acct, cfg);
+                "bankCd", bankCd, "acctNo", NxisasMask.acct(acctNo),
+                "fixedDeposit", mode != ScrapeMode.REGULAR);
+        Balance bal = fetchBalance(session, acct, cfg, mode != ScrapeMode.REGULAR);
         if (session.isCancelled()) { markCancelledWorker(session); return false; } // after gateway
         persistence.persistBalanceAndStamp(bizKey, userId, bankCd, acctNo, nowDb,
                 bal.ok(), bal.code(), bal.msg(), bal.bal(), bal.avail());
@@ -701,13 +767,15 @@ public class BankTransactionSyncService {
     /** Parsed BALANCE result (no DB mutation — that's {@code persistBalanceAndStamp}). */
     private record Balance(boolean ok, String code, String msg, BigDecimal bal, BigDecimal avail) { }
 
-    private Balance fetchBalance(NxisasScrapeSession session, AcctMstr acct, NxisasBankConfig.Entry cfg) {
+    private Balance fetchBalance(NxisasScrapeSession session, AcctMstr acct, NxisasBankConfig.Entry cfg,
+                                 boolean fixedDeposit) {
         NxisasBalanceJobInput in = new NxisasBalanceJobInput();
         in.setAcctNum(acct.getAcctNo());
         in.setCurrency(acct.getCcyCd());
         String trSeq = gateway.newTrSeq();
-        NxisasApiOut<NxisasBalanceJobResult> out = gateway.balance(
-                cfg.module(), cfg.category(), trSeq, in, continuationOf(session));
+        NxisasApiOut<NxisasBalanceJobResult> out = fixedDeposit
+                ? gateway.balanceFixedDeposit(cfg.module(), cfg.category(), trSeq, in, continuationOf(session))
+                : gateway.balance(cfg.module(), cfg.category(), trSeq, in, continuationOf(session));
 
         NxisasOutput<NxisasBalanceJobResult> bankOut = gateway.firstOutput(out);
         String balErr = bankOut == null ? null : bankOut.getErrorCode();

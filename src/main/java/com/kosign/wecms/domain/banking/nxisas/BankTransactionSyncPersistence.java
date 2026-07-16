@@ -187,6 +187,18 @@ public class BankTransactionSyncPersistence {
             acct.setAcctBalInqMsg(null);
             if (bal != null) acct.setBal(bal);
             if (avail != null) acct.setRealAmt(avail);
+            // Stamp TRN_LST_SUC_DTM (transaction last-success) when BOTH the
+            // TRANSACTION and BALANCE jobs succeeded — legacy
+            // fnsh_0001_001_c001_act.jsp:994-1000. This method is only
+            // reached after a successful transaction scrape (the caller
+            // fail-fasts on a transaction failure before fetching balance),
+            // so `balanceOk` here is exactly legacy's "both jobs succeeded"
+            // condition. This is the column the Bank Transaction Sync popup
+            // reads to compute its default scrape window, so stamping it lets
+            // a re-sync open at "since last successful scrape" (floored to 3
+            // months) instead of re-scraping the full 3-month window every
+            // time — legacy nxisas_tranList.getInitStartDate() parity.
+            acct.setTrnLstSucDtm(nowDb);
         } else {
             acct.setAcctBalInqStts(balCode == null || balCode.isBlank() ? "ERROR" : balCode);
             acct.setAcctBalInqMsg(balMsg);

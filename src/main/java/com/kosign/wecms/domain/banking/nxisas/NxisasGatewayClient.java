@@ -239,6 +239,38 @@ public class NxisasGatewayClient {
     }
 
     /**
+     * BALANCE_FIXED_DEPOSIT job — fetch the balance for a Fixed-Deposit
+     * ({@code ACCT_TYPE_CD "02"}) account. Same input/result shape as
+     * {@link #balance} (legacy {@code BalanceFixedDepositInput} carries the
+     * same {@code acctNum}/{@code currency} pair); only the {@code Job}
+     * discriminator differs. Dispatched for every whitelisted FD bank — VCB
+     * and the five balance-only banks alike ({@code nxisas_tranList_osmc.js:305,333}).
+     */
+    public NxisasApiOut<NxisasBalanceJobResult> balanceFixedDeposit(String module, String category, String trSeq,
+                                                                    NxisasBalanceJobInput input,
+                                                                    GatewayContinuation cont) {
+        return call(module, category, trSeq, NxisasJob.BALANCE_FIXED_DEPOSIT, input, cont,
+                new TypeReference<NxisasApiOut<NxisasBalanceJobResult>>() { });
+    }
+
+    /**
+     * TRANSACTION_FIXED_DEPOSIT job — pull the transaction list for a
+     * Fixed-Deposit account over {@code startDate..endDate}. Same
+     * input/result shape as {@link #transaction} (legacy
+     * {@code TransactionFixedDepositInput}); only the {@code Job}
+     * discriminator differs. Dispatched for VCB ({@code 11704004}) FD
+     * accounts only — the other whitelisted FD banks have no transaction-FD
+     * support ({@code nxisas_tranList_osmc.js:312-321}).
+     */
+    public NxisasApiOut<NxisasTransactionJobResult> transactionFixedDeposit(String module, String category,
+                                                                            String trSeq,
+                                                                            NxisasTransactionJobInput input,
+                                                                            GatewayContinuation cont) {
+        return call(module, category, trSeq, NxisasJob.TRANSACTION_FIXED_DEPOSIT, input, cont,
+                new TypeReference<NxisasApiOut<NxisasTransactionJobResult>>() { });
+    }
+
+    /**
      * Gateway continuation context captured from a prior call's response.
      * FNSH_0100_001:249-254 copies these 6 values from the LOGIN response
      * into every subsequent call (OTP, ACCT_LIST) so the gateway can
