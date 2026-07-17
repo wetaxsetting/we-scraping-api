@@ -10,8 +10,6 @@ import com.kosign.wecms.domain.banking.bankcredentials.service.BankCredentialSer
 import com.kosign.wecms.domain.banking.nxisas.NxisasBankConfig;
 import com.kosign.wecms.domain.banking.nxisas.NxisasGatewayClient;
 import com.kosign.wecms.domain.banking.nxisas.NxisasGatewayProperties;
-import com.kosign.wecms.domain.banking.entity.BankInfm;
-import com.kosign.wecms.domain.banking.repository.BankInfmRepository;
 import com.kosign.wecms.domain.banking.nxisas.dto.SubmitQnaRequest;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasApiOut;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasCardUsingCardArr;
@@ -21,7 +19,7 @@ import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasCardUsingJobResu
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasCommon;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasLoginJobResult;
 import com.kosign.wecms.domain.banking.nxisas.session.NxisasSessionRegistry;
-import com.kosign.wecms.domain.payment.cardtransactions.dto.CardSyncSessionResponse;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.CardSyncStatusResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.SyncCardTransactionsRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.entity.CardMstr;
 import com.kosign.wecms.domain.payment.cardtransactions.entity.CardTrnsHstr;
@@ -41,6 +39,7 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.Executor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -52,20 +51,25 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Coverage for the session/challenge-aware Card Transactions Update flow.
+ * Coverage for the async (Phase 2) session/challenge-aware Card Transactions
+ * Update flow. The service now starts a background scrape segment on an
+ * executor and returns a RUNNING snapshot immediately; here the executor is
+ * <b>inline</b> ({@code Runnable::run}) so each segment runs synchronously and
+ * the test reads the settled state via {@link CardTransactionScrapeService#status}.
  *
  * <p>Verifies the audit-fix behaviour: Shinhan's QNA challenge is pumped
- * through the shared session framework, then {@code CARD_USING} runs and
- * rows persist; a wrong answer surfaces an error with no rows; cancelling
- * (never resuming) writes nothing; a non-challenge bank (Woori) completes
- * directly.
+ * through the shared session framework, then {@code CARD_USING} runs and rows
+ * persist; a wrong answer fails the batch with no rows; not resuming (frontend
+ * cancel) writes nothing; a non-challenge bank (Woori) completes directly; the
+ * Auto / manual date window matches Bank Transaction Sync; a universal
+ * {@code /cancel} stops before the next card.
  *
  * <p>Uses a REAL {@link NxisasSessionRegistry} (so a challenge → resume
- * round-trip finds the same session) and a REAL
- * {@link CardTransactionPersister} over mocked repos (so the D5
- * composite-key dedup is exercised, shared with the headless path). The
- * gateway is mocked at its {@code firstResult} / {@code firstOutput} /
- * {@code firstCardUsingResult} seams so the test never touches Coocon.
+ * round-trip finds the same session), a REAL {@link CardTransactionPersister}
+ * over mocked repos (so the D5 composite-key dedup is exercised), and a REAL
+ * {@link CardTransactionScrapePersistence} boundary. The gateway is mocked at
+ * its {@code firstResult} / {@code firstOutput} / {@code firstCardUsingResult}
+ * seams so the test never touches Coocon.
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -86,38 +90,53 @@ class CardTransactionScrapeServiceTest {
     @Mock private NxisasGatewayClient    gateway;
     @Mock private NxisasBankConfig       bankConfig;
     @Mock private AuditLogService        auditLogService;
-    @Mock private BankInfmRepository     bankInfmRepo;
+    @Mock private CardBankNameResolver   bankNameResolver;
 
+    /** Inline executor — runs each scrape segment synchronously so the test can
+     *  read the settled state immediately after start / submit. */
+    private static final Executor INLINE = Runnable::run;
+
+    private NxisasSessionRegistry registry;
     private CardTransactionScrapeService service;
 
     @BeforeEach
     void setUp() {
         TenantContext.set(USER, TENANT, LangCd.EN);
-        NxisasSessionRegistry registry = new NxisasSessionRegistry(new NxisasGatewayProperties(60, 300));
+        registry = new NxisasSessionRegistry(new NxisasGatewayProperties(60, 300));
         CardTransactionPersister persister = new CardTransactionPersister(cardTrnsRepo, legacyFns);
+        CardTransactionScrapePersistence persistence =
+                new CardTransactionScrapePersistence(persister, cardMstrRepo);
         service = new CardTransactionScrapeService(
-                cardMstrRepo, credentialService, gateway, bankConfig, registry, persister,
-                auditLogService, bankInfmRepo);
-        // Bank-name lookup for the challenge dialog header.
-        BankInfm shinhan = new BankInfm();
-        shinhan.setBankCd(SHINHAN_VN);
-        shinhan.setRprsBankNm("Shinhan VN");
-        when(bankInfmRepo.findById(SHINHAN_VN)).thenReturn(Optional.of(shinhan));
-        when(bankInfmRepo.findById(WOORI_VN)).thenReturn(Optional.empty());
+                cardMstrRepo, credentialService, gateway, bankConfig, registry, persistence,
+                auditLogService, bankNameResolver, INLINE);
+        // Short bank-name resolver for the challenge dialog header — card
+        // feature shows "Shinhan VN" (not the long "Shinhan(Vietnam)").
+        when(bankNameResolver.resolve(SHINHAN_VN)).thenReturn("Shinhan VN");
 
         when(gateway.newTrSeq()).thenReturn("TRSEQ");
         when(credentialService.loadForScraping(CERT_SEQ)).thenReturn(
                 new DecryptedCredential(SHINHAN_VN, "loginid", "loginpwd", null, null, null));
         when(bankConfig.find(any(), any()))
                 .thenReturn(Optional.of(new NxisasBankConfig.Entry("BANK_Shinhan", "COMMON")));
-        // Bank-adapter Output check is skipped (null) — challenge / error /
-        // success are all driven via the gateway-envelope result code below.
         when(gateway.firstOutput(any())).thenReturn(null);
     }
 
     @AfterEach
     void tearDown() {
         TenantContext.clear();
+    }
+
+    @Test
+    void start_returnsRunningSnapshotImmediately() {
+        wireCleanWooriScrape("20260619120000");
+        CardSyncStatusResponse start = service.start(
+                new SyncCardTransactionsRequest("20251001", "20251031", false));
+        // The initial snapshot is captured BEFORE the worker runs — RUNNING with
+        // the total-card count already known so the popup can show "0 / N".
+        assertThat(start.status()).isEqualTo("RUNNING");
+        assertThat(start.sessionId()).isNotNull();
+        assertThat(start.totalCards()).isEqualTo(1);
+        assertThat(start.progress()).isZero();
     }
 
     @Test
@@ -130,14 +149,15 @@ class CardTransactionScrapeServiceTest {
         when(gateway.login(any(), any(), any(), any())).thenReturn(loginOut);
         when(gateway.firstResult(loginOut)).thenReturn(qnaChallenge);
 
-        CardSyncSessionResponse start = service.start(
+        CardSyncStatusResponse start = service.start(
                 new SyncCardTransactionsRequest("20251001", "20251031", false));
+        UUID sessionId = start.sessionId();
 
-        assertThat(start.status()).isEqualTo(CardSyncSessionResponse.Status.QNA_REQUIRED);
-        assertThat(start.sessionId()).isNotNull();
-        // Bank name resolved for the Security Question dialog header.
-        assertThat(start.bankName()).isEqualTo("Shinhan VN");
-        // No scrape yet — the bank is still waiting on the answer.
+        // The inline worker already ran to the QNA boundary — read it via status.
+        CardSyncStatusResponse awaiting = service.status(sessionId);
+        assertThat(awaiting.status()).isEqualTo("QNA_REQUIRED");
+        assertThat(awaiting.challenge()).isNotNull();
+        assertThat(awaiting.challenge().bankName()).isEqualTo("Shinhan VN");
         verify(cardTrnsRepo, never()).saveAndFlush(any());
 
         // 2) Submit the answer → login clears → CARD_USING → insert.
@@ -154,14 +174,15 @@ class CardTransactionScrapeServiceTest {
                 .thenReturn(false);
         when(legacyFns.nextCardSeqNo(TENANT)).thenReturn("900");
 
-        UUID sessionId = start.sessionId();
-        CardSyncSessionResponse done = service.submitQna(
+        CardSyncStatusResponse done = service.submitQna(
                 sessionId, new SubmitQnaRequest("hidden-1", "What city?", "Hanoi"));
 
-        assertThat(done.status()).isEqualTo(CardSyncSessionResponse.Status.COMPLETED);
+        assertThat(done.status()).isEqualTo("COMPLETED");
         assertThat(done.cardsSynced()).isEqualTo(1);
         assertThat(done.insertedCount()).isEqualTo(1);
         assertThat(done.skippedCount()).isZero();
+        assertThat(done.progress()).isEqualTo(100);
+        assertThat(done.completedCards()).isEqualTo(1);
 
         // D5 dedup probe + insert ran through the shared persister.
         verify(cardTrnsRepo).existsLegacyScrapeDuplicate(
@@ -171,72 +192,71 @@ class CardTransactionScrapeServiceTest {
     }
 
     @Test
-    void wrongQna_returnsError_noRowsInserted() {
+    void wrongQna_failsBatch_noRowsInserted() {
         when(cardMstrRepo.findActiveCardsForSync(TENANT)).thenReturn(List.of(card(SHINHAN_VN)));
         NxisasApiOut<NxisasLoginJobResult> loginOut = okOut();
         NxisasLoginJobResult qnaChallenge = loginResult("setQNA");
         when(gateway.login(any(), any(), any(), any())).thenReturn(loginOut);
         when(gateway.firstResult(loginOut)).thenReturn(qnaChallenge);
 
-        CardSyncSessionResponse start = service.start(
+        CardSyncStatusResponse start = service.start(
                 new SyncCardTransactionsRequest("20251001", "20251031", false));
-        assertThat(start.status()).isEqualTo(CardSyncSessionResponse.Status.QNA_REQUIRED);
+        assertThat(service.status(start.sessionId()).status()).isEqualTo("QNA_REQUIRED");
 
-        // Wrong answer → gateway rejects (non-OK result code) → ERROR.
+        // Wrong answer → gateway rejects (non-OK result code) → FAILED.
         NxisasApiOut<NxisasLoginJobResult> qnaOut = errOut("80010011", "wrong answer");
         when(gateway.submitQna(any(), any(), any(), any(), any())).thenReturn(qnaOut);
 
-        CardSyncSessionResponse res = service.submitQna(
+        CardSyncStatusResponse res = service.submitQna(
                 start.sessionId(), new SubmitQnaRequest("hidden-1", "What city?", "WRONG"));
 
-        assertThat(res.status()).isEqualTo(CardSyncSessionResponse.Status.ERROR);
+        assertThat(res.status()).isEqualTo("FAILED");
         assertThat(res.errorCode()).isEqualTo("80010011");
         verify(gateway, never()).cardUsing(any(), any(), any(), any(), any());
         verify(cardTrnsRepo, never()).saveAndFlush(any());
     }
 
     @Test
-    void cancelQna_neverResumes_writesNothing() {
+    void cancelWhileAwaitingQna_marksCancelled_writesNothing() {
         when(cardMstrRepo.findActiveCardsForSync(TENANT)).thenReturn(List.of(card(SHINHAN_VN)));
         NxisasApiOut<NxisasLoginJobResult> loginOut = okOut();
         NxisasLoginJobResult qnaChallenge = loginResult("setQNA");
         when(gateway.login(any(), any(), any(), any())).thenReturn(loginOut);
         when(gateway.firstResult(loginOut)).thenReturn(qnaChallenge);
 
-        CardSyncSessionResponse start = service.start(
+        CardSyncStatusResponse start = service.start(
                 new SyncCardTransactionsRequest("20251001", "20251031", false));
+        UUID sessionId = start.sessionId();
+        assertThat(service.status(sessionId).status()).isEqualTo("QNA_REQUIRED");
 
-        // The frontend cancel = never calling a resume endpoint. Nothing
-        // is scraped or persisted; the session idle-evicts.
-        assertThat(start.status()).isEqualTo(CardSyncSessionResponse.Status.QNA_REQUIRED);
+        // Universal cancel — marks CANCELLED, retained so the final poll reads it.
+        CardSyncStatusResponse cancelled = service.cancel(sessionId);
+        assertThat(cancelled.status()).isEqualTo("CANCELLED");
+        assertThat(service.status(sessionId).status()).isEqualTo("CANCELLED");
+
+        // A resume after cancel is refused (WBE2060) and nothing is scraped.
+        assertThatThrownBy(() -> service.submitQna(
+                sessionId, new SubmitQnaRequest("hidden-1", "What city?", "Hanoi")))
+                .isInstanceOf(BusinessException.class)
+                .extracting(b -> ((BusinessException) b).getCode())
+                .isEqualTo("WBE2060");
         verify(gateway, never()).cardUsing(any(), any(), any(), any(), any());
         verify(cardTrnsRepo, never()).saveAndFlush(any());
     }
 
     @Test
     void woori_noChallenge_cardUsingInsertsDirectly() {
-        when(cardMstrRepo.findActiveCardsForSync(TENANT)).thenReturn(List.of(card(WOORI_VN)));
-        when(credentialService.loadForScraping(CERT_SEQ)).thenReturn(
-                new DecryptedCredential(WOORI_VN, "loginid", "loginpwd", null, null, null));
-
-        NxisasApiOut<NxisasLoginJobResult> loginOut = okOut();
-        NxisasLoginJobResult cleanLogin = loginResult(null); // clean login, no challenge
-        when(gateway.login(any(), any(), any(), any())).thenReturn(loginOut);
-        when(gateway.firstResult(loginOut)).thenReturn(cleanLogin);
-
-        NxisasApiOut<NxisasCardUsingJobResult> useOut = okOut();
-        NxisasCardUsingJobResult useResult = cardUsingResult(scrapedEntry());
-        when(gateway.cardUsing(any(), any(), any(), any(), any())).thenReturn(useOut);
-        when(gateway.firstCardUsingResult(useOut)).thenReturn(useResult);
-        when(cardTrnsRepo.existsLegacyScrapeDuplicate(any(), any(), any(), any(), any(), any(), any(), any()))
-                .thenReturn(false);
+        wireCleanWooriScrape(null);
         when(legacyFns.nextCardSeqNo(TENANT)).thenReturn("901");
 
-        CardSyncSessionResponse res = service.start(
+        CardSyncStatusResponse start = service.start(
                 new SyncCardTransactionsRequest("20251001", "20251031", false));
+        // Inline worker ran to COMPLETED — read the terminal snapshot.
+        CardSyncStatusResponse res = service.status(start.sessionId());
 
-        assertThat(res.status()).isEqualTo(CardSyncSessionResponse.Status.COMPLETED);
+        assertThat(res.status()).isEqualTo("COMPLETED");
         assertThat(res.insertedCount()).isEqualTo(1);
+        assertThat(res.progress()).isEqualTo(100);
         verify(cardTrnsRepo).saveAndFlush(any(CardTrnsHstr.class));
         // After a non-empty scrape the last-success cursor advances so the
         // next Update popup opens at "latest updated date ~ today".
@@ -253,7 +273,6 @@ class CardTransactionScrapeServiceTest {
 
         ArgumentCaptor<NxisasCardUsingJobInput> cap = ArgumentCaptor.forClass(NxisasCardUsingJobInput.class);
         verify(gateway).cardUsing(any(), any(), any(), cap.capture(), any());
-        // Auto ignores the wire dates: start = TRN_LST_SUC_DTM[0:8], end = today.
         assertThat(cap.getValue().getStartDate()).isEqualTo("20260619");
         assertThat(cap.getValue().getEndDate()).isEqualTo(todayYyyymmdd());
     }
@@ -282,7 +301,6 @@ class CardTransactionScrapeServiceTest {
 
     @Test
     void noCredential_returnsClearError() {
-        // Card with a null BANK_CERT_SEQ — no lowest-seq fallback (req #6).
         CardMstr orphan = card(SHINHAN_VN);
         orphan.setBankCertSeq(null);
         when(cardMstrRepo.findActiveCardsForSync(TENANT)).thenReturn(List.of(orphan));
@@ -297,9 +315,6 @@ class CardTransactionScrapeServiceTest {
 
     @Test
     void invalidCredential_returnsClearError_noScrape() {
-        // BANK_CERT_SEQ is set but points at a missing / cross-tenant
-        // BANK_CERT_INFO row — pre-validation must surface the clear
-        // re-register error and never start a LOGIN (no partial scrape).
         when(cardMstrRepo.findActiveCardsForSync(TENANT)).thenReturn(List.of(card(SHINHAN_VN)));
         when(credentialService.loadForScraping(CERT_SEQ))
                 .thenThrow(new BusinessException("WBE2050"));
@@ -311,6 +326,20 @@ class CardTransactionScrapeServiceTest {
                 .isEqualTo("WBE_CARD_SYNC_NO_CREDENTIAL");
         verify(gateway, never()).login(any(), any(), any(), any());
         verify(cardTrnsRepo, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void status_unknownSession_isWBE2060() {
+        assertThatThrownBy(() -> service.status(UUID.randomUUID()))
+                .isInstanceOf(BusinessException.class)
+                .extracting(b -> ((BusinessException) b).getCode())
+                .isEqualTo("WBE2060");
+    }
+
+    @Test
+    void cancel_unknownSession_isIdempotentCancelled() {
+        CardSyncStatusResponse res = service.cancel(UUID.randomUUID());
+        assertThat(res.status()).isEqualTo("CANCELLED");
     }
 
     /* ---------------------------------------------------------------- */

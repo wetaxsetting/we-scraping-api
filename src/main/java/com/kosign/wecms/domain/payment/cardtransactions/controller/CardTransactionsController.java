@@ -7,7 +7,7 @@ import com.kosign.wecms.domain.banking.nxisas.dto.SubmitChallengeRequest;
 import com.kosign.wecms.domain.banking.nxisas.dto.SubmitQnaRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardListResponse;
-import com.kosign.wecms.domain.payment.cardtransactions.dto.CardSyncSessionResponse;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.CardSyncStatusResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardManagementListResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTranListPeriodLimitRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.CardTranListPeriodLimitResponse;
@@ -514,14 +514,38 @@ public class CardTransactionsController {
      * {@link CardTransactionScrapeService}.
      */
     @PostMapping("/sync-session")
-    public ApiResponse<CardSyncSessionResponse> startSyncSession(
+    public ApiResponse<CardSyncStatusResponse> startSyncSession(
             @Valid @RequestBody SyncCardTransactionsRequest req) {
         return ApiResponse.ok(scrapeService.start(req));
     }
 
+    /**
+     * Read-only status snapshot for the Update Card Transactions popup's poll
+     * loop (Phase 2). The frontend polls this while the scrape runs to drive a
+     * determinate progress bar + the live "In Progress ( x / N )" counter, and
+     * reads the terminal COMPLETED / FAILED / CANCELLED snapshot from it.
+     */
+    @GetMapping("/sync-session/{sessionId}/status")
+    public ApiResponse<CardSyncStatusResponse> syncSessionStatus(
+            @PathVariable UUID sessionId) {
+        return ApiResponse.ok(scrapeService.status(sessionId));
+    }
+
+    /**
+     * Cancel an in-flight Card Update scrape (universal). Sets the cooperative
+     * cancel flag so the background worker stops before the next card; marks
+     * the session CANCELLED and retains it so the final poll reads the terminal
+     * snapshot. Idempotent + tenant-validated.
+     */
+    @PostMapping("/sync-session/{sessionId}/cancel")
+    public ApiResponse<CardSyncStatusResponse> cancelSyncSession(
+            @PathVariable UUID sessionId) {
+        return ApiResponse.ok(scrapeService.cancel(sessionId));
+    }
+
     /** Resume a Card Update scrape after a QNA (security-question) answer. */
     @PostMapping("/sync-session/{sessionId}/qna")
-    public ApiResponse<CardSyncSessionResponse> submitSyncSessionQna(
+    public ApiResponse<CardSyncStatusResponse> submitSyncSessionQna(
             @PathVariable UUID sessionId,
             @Valid @RequestBody SubmitQnaRequest req) {
         return ApiResponse.ok(scrapeService.submitQna(sessionId, req));
@@ -529,7 +553,7 @@ public class CardTransactionsController {
 
     /** Resume a Card Update scrape after an OTP submission. */
     @PostMapping("/sync-session/{sessionId}/otp")
-    public ApiResponse<CardSyncSessionResponse> submitSyncSessionOtp(
+    public ApiResponse<CardSyncStatusResponse> submitSyncSessionOtp(
             @PathVariable UUID sessionId,
             @Valid @RequestBody SubmitChallengeRequest req) {
         return ApiResponse.ok(scrapeService.submitOtp(sessionId, req));
@@ -537,7 +561,7 @@ public class CardTransactionsController {
 
     /** Resume a Card Update scrape after a CAPTCHA submission. */
     @PostMapping("/sync-session/{sessionId}/captcha")
-    public ApiResponse<CardSyncSessionResponse> submitSyncSessionCaptcha(
+    public ApiResponse<CardSyncStatusResponse> submitSyncSessionCaptcha(
             @PathVariable UUID sessionId,
             @Valid @RequestBody SubmitChallengeRequest req) {
         return ApiResponse.ok(scrapeService.submitCaptcha(sessionId, req));

@@ -68,7 +68,12 @@ import org.hibernate.annotations.Synchronize;
         FROM TB_FIRM_TRAN TFT
         UNION ALL
         SELECT
-            NMTLH.REG_DTM                                                            AS TARN_DTM,
+            (CASE WHEN length(NMTLH.REG_DTM) = 14
+                  THEN to_char((make_timestamp(substr(NMTLH.REG_DTM,1,4)::int, substr(NMTLH.REG_DTM,5,2)::int,
+                                substr(NMTLH.REG_DTM,7,2)::int, substr(NMTLH.REG_DTM,9,2)::int,
+                                substr(NMTLH.REG_DTM,11,2)::int, substr(NMTLH.REG_DTM,13,2)::double precision)
+                                AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYYMMDDHH24MISS')
+                  ELSE NMTLH.REG_DTM END)                                           AS TARN_DTM,
             'G'::VARCHAR(1)                                                          AS SVC_TYPE,
             (CASE WHEN NMTLH.NXISAS_TYPE = 'E-INVOICE_SALES_INQUIRY'
                   THEN 'Sale E-Invoice Inquiry'
@@ -86,7 +91,12 @@ import org.hibernate.annotations.Synchronize;
         WHERE NMTLH.NXISAS_TYPE IN ('E-INVOICE_SALES_INQUIRY', 'E-INVOICE_EXPENSE_INQUIRY')
         UNION ALL
         SELECT
-            NMTLH.REG_DTM                                                            AS TARN_DTM,
+            (CASE WHEN length(NMTLH.REG_DTM) = 14
+                  THEN to_char((make_timestamp(substr(NMTLH.REG_DTM,1,4)::int, substr(NMTLH.REG_DTM,5,2)::int,
+                                substr(NMTLH.REG_DTM,7,2)::int, substr(NMTLH.REG_DTM,9,2)::int,
+                                substr(NMTLH.REG_DTM,11,2)::int, substr(NMTLH.REG_DTM,13,2)::double precision)
+                                AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYYMMDDHH24MISS')
+                  ELSE NMTLH.REG_DTM END)                                           AS TARN_DTM,
             'B'::VARCHAR(1)                                                          AS SVC_TYPE,
             'Vietnam Business Inquiry'::VARCHAR(50)                                  AS SVC_NM,
             NMTLH.UUID::VARCHAR(50)                                                  AS SEQ_NO,
@@ -101,7 +111,12 @@ import org.hibernate.annotations.Synchronize;
         WHERE NMTLH.NXISAS_JOB IN ('BUSSINESS_REGISTRATION_DETAIL', 'BUSSINESS_REGISTRATION_LIST')
         UNION ALL
         SELECT
-            NRTH.REG_DTM                                                             AS TARN_DTM,
+            (CASE WHEN length(NRTH.REG_DTM) = 14
+                  THEN to_char((make_timestamp(substr(NRTH.REG_DTM,1,4)::int, substr(NRTH.REG_DTM,5,2)::int,
+                                substr(NRTH.REG_DTM,7,2)::int, substr(NRTH.REG_DTM,9,2)::int,
+                                substr(NRTH.REG_DTM,11,2)::int, substr(NRTH.REG_DTM,13,2)::double precision)
+                                AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYYMMDDHH24MISS')
+                  ELSE NRTH.REG_DTM END)                                            AS TARN_DTM,
             'S'::VARCHAR(1)                                                          AS SVC_TYPE,
             'Funds Transfer (Scraping)'::VARCHAR(50)                                 AS SVC_NM,
             NRTH.SEQ_NO::VARCHAR(50)                                                 AS SEQ_NO,
@@ -116,7 +131,12 @@ import org.hibernate.annotations.Synchronize;
         FROM NAPAS_REMIT_TRNS_HSTR NRTH
         UNION ALL
         SELECT
-            ETH.REG_DTM                                                              AS TARN_DTM,
+            (CASE WHEN length(ETH.REG_DTM) = 14
+                  THEN to_char((make_timestamp(substr(ETH.REG_DTM,1,4)::int, substr(ETH.REG_DTM,5,2)::int,
+                                substr(ETH.REG_DTM,7,2)::int, substr(ETH.REG_DTM,9,2)::int,
+                                substr(ETH.REG_DTM,11,2)::int, substr(ETH.REG_DTM,13,2)::double precision)
+                                AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYYMMDDHH24MISS')
+                  ELSE ETH.REG_DTM END)                                             AS TARN_DTM,
             'S'::VARCHAR(1)                                                          AS SVC_TYPE,
             (CASE
                 WHEN ETH.SVC_ID = 'BALANCE_INQUIRY'          THEN 'Scraping Balance'
@@ -147,11 +167,18 @@ public class FirmBankingHistoryView {
     @Column(name = "BIZ_KEY", length = 20, nullable = false)
     private String bizKey;
 
-    /** VN-localized timestamp ({@code YYYYMMDDHHMMSS}). For the {@code F}
-     *  leg this is {@code kr_to_vn_time(TRAN_DT || TRAN_TM)}; for every
-     *  other leg it equals the source row's {@code REG_DTM}. Used as
-     *  the date-range filter target via {@code LEFT(TARN_DTM, 8)
-     *  BETWEEN ? AND ?}. */
+    /** VN-localized timestamp ({@code YYYYMMDDHHMMSS}). Every leg is
+     *  normalized to Vietnam wall-clock here so the frontend renders it
+     *  verbatim (no timezone shift): the {@code F} leg via
+     *  {@code kr_to_vn_time(TRAN_DT || TRAN_TM)} (KR→VN), and the
+     *  {@code S}/{@code G}/{@code B} legs by converting their UTC-stored
+     *  {@code REG_DTM} (written by {@code NxisasAuditLogger} /
+     *  {@code EInvoiceScrapeService} / the scrape-audit path with
+     *  {@code now(UTC)}) UTC→VN via
+     *  {@code make_timestamp(...) AT TIME ZONE 'UTC' AT TIME ZONE
+     *  'Asia/Ho_Chi_Minh'}. Also the date-range filter target via
+     *  {@code SUBSTRING(TARN_DTM,1,8) BETWEEN ? AND ?} — converting to VN
+     *  first makes the filter compare against the user's VN date range. */
     @Id
     @Column(name = "TARN_DTM", length = 14)
     private String tarnDtm;

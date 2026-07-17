@@ -7,6 +7,7 @@ import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.banking.bankcredentials.service.BankCredentialService;
 import com.kosign.wecms.domain.banking.bankcredentials.service.BankCredentialService.DecryptedCredential;
+import com.kosign.wecms.domain.banking.nxisas.BankSyncExecutorConfig;
 import com.kosign.wecms.domain.banking.nxisas.NxisasApiLog;
 import com.kosign.wecms.domain.banking.nxisas.NxisasBankConfig;
 import com.kosign.wecms.domain.banking.nxisas.NxisasGatewayClient;
@@ -31,15 +32,13 @@ import com.kosign.wecms.domain.banking.nxisas.session.NxisasScrapeSession;
 import com.kosign.wecms.domain.banking.nxisas.session.NxisasScrapeSession.CardScrapeKey;
 import com.kosign.wecms.domain.banking.nxisas.session.NxisasSessionRegistry;
 import com.kosign.wecms.domain.banking.nxisas.session.ScrapeChallengeKind;
-import com.kosign.wecms.domain.banking.repository.BankInfmRepository;
-import com.kosign.wecms.domain.payment.cardtransactions.dto.CardSyncSessionResponse;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.CardSyncStatusResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.SyncCardTransactionsRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.entity.CardMstr;
 import com.kosign.wecms.domain.payment.cardtransactions.repository.CardMstrRepository;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -49,42 +48,54 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 
 /**
- * Card Transactions &gt; Update orchestrator — the session/challenge-aware
- * card-scrape flow fronted by the Update Cards popup.
+ * Card Transactions &gt; Update orchestrator (Phase 2 — asynchronous,
+ * re-entrant). The card twin of {@code BankTransactionSyncService}: it drives
+ * the per-card {@code LOGIN → (QNA/OTP/CAPTCHA?) → CARD_USING} chain over the
+ * <b>same</b> {@link NxisasScrapeSession} / {@link NxisasSessionRegistry} /
+ * {@link NxisasGatewayClient} infrastructure and reuses the bank scrape's
+ * bounded {@code bankSyncExecutor}.
  *
- * <p>The card twin of {@code BankTransactionSyncService}: it drives the
- * per-card {@code LOGIN → (QNA/OTP/CAPTCHA?) → CARD_USING} chain over the
- * <b>same</b> {@link NxisasScrapeSession} / {@link NxisasSessionRegistry}
- * / {@link NxisasGatewayClient} infrastructure the Account Inquiry sync,
- * Login Credentials verify, and Add-Card flows use. It introduces no new
- * bank-login system — only a new {@code Mode.CARD_SYNC} post-login job
- * ({@code CARD_USING}) and a card-specific persist target
- * ({@code CARD_TRNS_HSTR} via {@link CardTransactionPersister}).
+ * <p>The initial POST validates + registers a tenant-scoped session, schedules
+ * a background scrape <b>segment</b>, and returns a RUNNING snapshot
+ * <b>immediately</b> (the scrape does not run on the request thread). The
+ * frontend then polls {@link #status}. Progress is driven by real backend
+ * stages (0 → 50 → 100 per card) via the shared session's unit-agnostic
+ * progress machinery ({@code totalAccounts} = total cards, one
+ * {@code completeAccount} per card), and never moves backward.
  *
- * <p>This fixes the audit's CONFIRMED_DEFECT: the legacy headless
- * {@code CardTransactionSyncService} aborted QNA-gated banks (Shinhan
- * 11704088) with {@code WBE_CARD_SYNC_NEEDS_RE_AUTH}; this flow pumps the
- * QNA / OTP / CAPTCHA challenge through the existing
- * {@code submit*}-resume pattern and then runs {@code CARD_USING}.
+ * <p><b>Re-entrant state machine (no parked threads).</b> A worker segment runs
+ * only until it reaches a boundary: COMPLETED, FAILED, CANCELLED, or a bank
+ * challenge. On a challenge it persists the gateway continuation + challenge
+ * metadata on the session, sets the matching {@code AWAITING_CHALLENGE} state,
+ * and <b>returns</b> — releasing the worker thread and holding no DB
+ * connection. The resume endpoint transitions the session back to RUNNING and
+ * schedules a fresh segment that continues from the saved continuation,
+ * preserving progress + card counts.
  *
- * <p><b>Credential selection (audit requirement #6):</b> a card is
- * scraped under exactly the credential its {@code CARD_MSTR.BANK_CERT_SEQ}
- * points at. There is NO lowest-{@code SEQ_NO} fallback — a card whose
- * {@code BANK_CERT_SEQ} is null is excluded from the queue; if no card
- * has a credential the start returns {@code WBE_CARD_SYNC_NO_CREDENTIAL}
- * (re-register the card).
+ * <p><b>Transaction boundaries.</b> Coocon gateway calls run outside any DB
+ * transaction; each card's persist is a short {@code @Transactional} call on
+ * {@link CardTransactionScrapePersistence}.
  *
- * <p><b>Session lifecycle (audit requirement #8):</b> same as Account
- * Inquiry sync — the session is discarded from the registry on terminal
- * COMPLETED/ERROR and idle-evicted otherwise. No card-specific LOGOUT
- * job (the reused flow has none).
+ * <p><b>Cancellation.</b> {@link #cancel} (universal from the moment the
+ * session exists) sets a cooperative flag and marks CANCELLED; the worker
+ * checks the flag at every boundary and stops before the next card/phase. The
+ * reused card flow has no LOGOUT job (unlike the bank sync), so cancel does not
+ * send one — the gateway session times out on its own.
+ *
+ * <p><b>Credential selection (audit requirement #6):</b> a card is scraped
+ * under exactly the credential its {@code CARD_MSTR.BANK_CERT_SEQ} points at.
+ * There is NO lowest-{@code SEQ_NO} fallback — a card whose
+ * {@code BANK_CERT_SEQ} is null is excluded; if no card has a credential the
+ * start returns {@code WBE_CARD_SYNC_NO_CREDENTIAL}.
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class CardTransactionScrapeService {
 
     private static final String WSVC_ID           = "card-transactions";
@@ -101,27 +112,53 @@ public class CardTransactionScrapeService {
     private static final DateTimeFormatter DTM_14 = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
     private static final DateTimeFormatter DT_8   = DateTimeFormatter.ofPattern("yyyyMMdd");
 
-    private final CardMstrRepository         cardMstrRepo;
-    private final BankCredentialService      credentialService;
-    private final NxisasGatewayClient        gateway;
-    private final NxisasBankConfig           bankConfig;
-    private final NxisasSessionRegistry      registry;
-    private final CardTransactionPersister   cardPersister;
-    private final AuditLogService            auditLogService;
-    /** Bank-code → display-name resolver for the challenge dialog header
-     *  (so the Security Question popup shows "Shinhan VN", not a code). */
-    private final BankInfmRepository         bankInfmRepo;
+    // Per-card progress fractions (phaseFraction in the overall formula).
+    private static final double FRACTION_START   = 0.00; // 0%  — card processing begins
+    private static final double FRACTION_PERSIST = 0.50; // 50% — CARD_USING scraped, persisting
+
+    private final CardMstrRepository                cardMstrRepo;
+    private final BankCredentialService             credentialService;
+    private final NxisasGatewayClient               gateway;
+    private final NxisasBankConfig                  bankConfig;
+    private final NxisasSessionRegistry             registry;
+    private final CardTransactionScrapePersistence  persistence;
+    private final AuditLogService                   auditLogService;
+    /** Card-feature bank display-name resolver (short name) for the challenge
+     *  dialog header — {@code "Shinhan VN"} rather than {@code "Shinhan(Vietnam)"}. */
+    private final CardBankNameResolver              bankNameResolver;
+    private final Executor                          executor;
+
+    public CardTransactionScrapeService(
+            CardMstrRepository cardMstrRepo,
+            BankCredentialService credentialService,
+            NxisasGatewayClient gateway,
+            NxisasBankConfig bankConfig,
+            NxisasSessionRegistry registry,
+            CardTransactionScrapePersistence persistence,
+            AuditLogService auditLogService,
+            CardBankNameResolver bankNameResolver,
+            @Qualifier(BankSyncExecutorConfig.EXECUTOR) Executor executor) {
+        this.cardMstrRepo = cardMstrRepo;
+        this.credentialService = credentialService;
+        this.gateway = gateway;
+        this.bankConfig = bankConfig;
+        this.registry = registry;
+        this.persistence = persistence;
+        this.auditLogService = auditLogService;
+        this.bankNameResolver = bankNameResolver;
+        this.executor = executor;
+    }
 
     // ─────────────────────────────────────────────────────────────────
     // Public entry points (CardTransactionsController)
     // ─────────────────────────────────────────────────────────────────
 
-    /** Start a Card Update scrape session. Drains the tenant's eligible
-     *  cards through the per-credential LOGIN/CARD_USING loop until the
-     *  queue empties (→ COMPLETED) or a LOGIN stops on a challenge
-     *  (→ {@code *_REQUIRED}). */
-    @Transactional
-    public CardSyncSessionResponse start(SyncCardTransactionsRequest req) {
+    /**
+     * Start a new Card Update scrape. Validates + registers the session,
+     * schedules the background scrape once, and returns the initial RUNNING
+     * snapshot immediately (never runs the scrape on the request thread).
+     */
+    public CardSyncStatusResponse start(SyncCardTransactionsRequest req) {
         if (req == null) throw new BusinessException("WBE_VALIDATION");
         String bizKey = requireBizKey();
         String userId = TenantContext.currentUserId();
@@ -129,7 +166,9 @@ public class CardTransactionScrapeService {
 
         List<CardMstr> cards = cardMstrRepo.findActiveCardsForSync(bizKey);
         if (cards.isEmpty()) {
-            return CardSyncSessionResponse.completed(null, 0, 0, 0);
+            // Nothing to scrape — terminal COMPLETED with zero counts. No
+            // session is registered (the frontend never needs to poll).
+            return CardSyncStatusResponse.completed(null, 0, 0, 0);
         }
 
         // Date window. Auto → from = min(TRN_LST_SUC_DTM[0:8]) across the
@@ -155,13 +194,8 @@ public class CardTransactionScrapeService {
             }
         }
 
-        // Credential lookup — CARD_MSTR.BANK_CERT_SEQ ONLY, exactly the
-        // way Account Inquiry keys off ACCT_MSTR.BANK_CERT_SEQ. There is
-        // NO fallback to the lowest BANK_CERT_INFO.SEQ_NO. A card whose
-        // BANK_CERT_SEQ is null (orphan from the old Add-Card bug) or
-        // invalid (points at a missing / cross-tenant credential row) is
-        // NOT scraped — we fail fast with a clear "re-register" error and
-        // never run a partial scrape.
+        // Credential lookup — CARD_MSTR.BANK_CERT_SEQ ONLY (no fallback). A
+        // card with a null / invalid BANK_CERT_SEQ fails fast (re-register).
         List<CardScrapeKey> eligible = new ArrayList<>(cards.size());
         for (CardMstr c : cards) {
             if (c.getBankCertSeq() == null) {
@@ -172,10 +206,6 @@ public class CardTransactionScrapeService {
             String cardType = WOORI_VN_BANK_CD.equals(c.getBankCd()) ? null : "0";
             eligible.add(new CardScrapeKey(c.getBankCd(), c.getCardNo(), cardType, c.getBankCertSeq()));
         }
-        // Validate every referenced credential resolves BEFORE any LOGIN,
-        // so an INVALID BANK_CERT_SEQ (no BANK_CERT_INFO row / wrong tenant)
-        // surfaces the same clear "re-register" error instead of a partial
-        // scrape or a confusing low-level credential-not-found code.
         for (var seq : eligible.stream().map(CardScrapeKey::bankCertSeq).distinct().toList()) {
             try {
                 credentialService.loadForScraping(seq);
@@ -185,9 +215,8 @@ public class CardTransactionScrapeService {
             }
         }
 
-        // Order so cards sharing a credential (BANK_CERT_SEQ) are
-        // contiguous — lets advance() reuse one LOGIN per credential group
-        // (legacy login-once-per-bank parity).
+        // Order so cards sharing a credential are contiguous (login-once-per
+        // credential).
         LinkedHashMap<String, List<CardScrapeKey>> grouped = new LinkedHashMap<>();
         for (CardScrapeKey k : eligible) {
             grouped.computeIfAbsent(loginGroupKey(k), g -> new ArrayList<>()).add(k);
@@ -201,94 +230,158 @@ public class CardTransactionScrapeService {
         session.setCardsQueue(queue);
         session.setFromDt(fromDt);
         session.setToDt(toDt);
+        session.setTotalAccounts(eligible.size()); // shared unit counter = cards
+        session.setStatus(NxisasScrapeSession.Status.RUNNING);
+        registry.register(session);
 
         NxisasApiLog.event(tid(session), FLOW, "START",
                 "cards", eligible.size(), "groups", grouped.size(),
                 "from", fromDt, "to", toDt);
-        return advance(session, userId, now);
+
+        CardSyncStatusResponse initial = buildSnapshot(session);
+        scheduleWorker(session);
+        return initial;
     }
 
-    /** Resume after a QNA (security-question) answer. */
-    @Transactional
-    public CardSyncSessionResponse submitQna(UUID sessionId, SubmitQnaRequest req) {
-        NxisasScrapeSession session = requireSession(sessionId);
-        assertChallenge(session, ScrapeChallengeKind.QNA);
-        NxisasApiLog.event(tid(session), FLOW, "CHALLENGE_SUBMIT", "type", "QNA");
+    /** Read-only status snapshot for polling. Tenant-validated; no side effects. */
+    public CardSyncStatusResponse status(UUID sessionId) {
+        return buildSnapshot(requireOwnedCardSession(sessionId));
+    }
 
-        NxisasQnaJobInput.QnaResponse res = new NxisasQnaJobInput.QnaResponse();
-        res.setQuestion(req.question());
-        res.setHiddenValue(req.hiddenValue());
-        res.setAnswer(req.answer());
-        NxisasQnaJobInput input = new NxisasQnaJobInput();
-        input.setRes(res);
-
-        NxisasApiOut<NxisasLoginJobResult> out = gateway.submitQna(
-                session.getBankModule(), session.getBankCategory(), gateway.newTrSeq(),
-                input, continuationOf(session));
-        storeContinuation(session, GatewayContinuation.from(out));
-        return handleLoginContinuation(session, out, "QNA");
+    /** Resume after a QNA (security-question) answer — schedules a fresh segment. */
+    public CardSyncStatusResponse submitQna(UUID sessionId, SubmitQnaRequest req) {
+        NxisasScrapeSession session = requireResumableCardSession(sessionId, ScrapeChallengeKind.QNA);
+        if (session.isWorkerRunning()) return buildSnapshot(session); // duplicate resume — idempotent
+        session.setPendingQna(new NxisasScrapeSession.PendingQna(
+                req.question(), req.hiddenValue(), req.answer()));
+        return resume(session, "QNA");
     }
 
     /** Resume after an OTP submission. */
-    @Transactional
-    public CardSyncSessionResponse submitOtp(UUID sessionId, SubmitChallengeRequest req) {
-        NxisasScrapeSession session = requireSession(sessionId);
-        assertChallenge(session, ScrapeChallengeKind.OTP);
-        NxisasApiLog.event(tid(session), FLOW, "CHALLENGE_SUBMIT", "type", "OTP");
-
-        NxisasOTPJobInput input = new NxisasOTPJobInput();
-        input.setRes(req.value());
-
-        NxisasApiOut<NxisasOTPJobResult> out = gateway.submitOtp(
-                session.getBankModule(), session.getBankCategory(), gateway.newTrSeq(),
-                input, continuationOf(session));
-        storeContinuation(session, GatewayContinuation.from(out));
-
-        // OTP responses share the LoginJobResult wire shape — rewrap.
-        NxisasApiOut<NxisasLoginJobResult> wrap = new NxisasApiOut<>();
-        wrap.setCommon(out.getCommon());
-        wrap.setResultList(otpToLoginResults(out));
-        wrap.setSasSessionID(out.getSasSessionID());
-        return handleLoginContinuation(session, wrap, "OTP");
+    public CardSyncStatusResponse submitOtp(UUID sessionId, SubmitChallengeRequest req) {
+        NxisasScrapeSession session = requireResumableCardSession(sessionId, ScrapeChallengeKind.OTP);
+        if (session.isWorkerRunning()) return buildSnapshot(session);
+        session.setPendingOtp(req.value());
+        return resume(session, "OTP");
     }
 
     /** Resume after a CAPTCHA submission. */
-    @Transactional
-    public CardSyncSessionResponse submitCaptcha(UUID sessionId, SubmitChallengeRequest req) {
-        NxisasScrapeSession session = requireSession(sessionId);
-        assertChallenge(session, ScrapeChallengeKind.CAPTCHA);
-        NxisasApiLog.event(tid(session), FLOW, "CHALLENGE_SUBMIT", "type", "CAPTCHA");
+    public CardSyncStatusResponse submitCaptcha(UUID sessionId, SubmitChallengeRequest req) {
+        NxisasScrapeSession session = requireResumableCardSession(sessionId, ScrapeChallengeKind.CAPTCHA);
+        if (session.isWorkerRunning()) return buildSnapshot(session);
+        session.setPendingCaptcha(req.value());
+        return resume(session, "CAPTCHA");
+    }
 
-        NxisasCaptchaJobInput input = new NxisasCaptchaJobInput();
-        input.setRes(req.value());
+    private CardSyncStatusResponse resume(NxisasScrapeSession session, String kind) {
+        session.setStatus(NxisasScrapeSession.Status.RUNNING);
+        NxisasApiLog.event(tid(session), FLOW, "CHALLENGE_SUBMIT", "type", kind);
+        scheduleWorker(session);
+        return buildSnapshot(session);
+    }
 
-        NxisasApiOut<NxisasLoginJobResult> out = gateway.submitCaptcha(
-                session.getBankModule(), session.getBankCategory(), gateway.newTrSeq(),
-                input, continuationOf(session));
-        storeContinuation(session, GatewayContinuation.from(out));
-        return handleLoginContinuation(session, out, "CAPTCHA");
+    /**
+     * Cancel a Card Update scrape (universal — works from the moment the
+     * session exists, during RUNNING, any challenge wait, or resumed
+     * processing). Idempotent + tenant-validated. Sets the cooperative flag +
+     * marks CANCELLED; the session is <b>retained</b> so the frontend's final
+     * poll can read the CANCELLED snapshot (the registry evicts it after the
+     * retention window). The card flow has no LOGOUT job, so cancel sends none.
+     */
+    public CardSyncStatusResponse cancel(UUID sessionId) {
+        String bizKey = requireBizKey();
+        String userId = TenantContext.currentUserId();
+        Optional<NxisasScrapeSession> found = registry.find(sessionId, bizKey, userId);
+        if (found.isEmpty()) {
+            return cancelledSnapshot(sessionId); // idempotent — nothing to cancel
+        }
+        NxisasScrapeSession session = found.get();
+        if (session.getMode() != NxisasScrapeSession.Mode.CARD_SYNC) {
+            return cancelledSnapshot(sessionId); // not ours — no-op
+        }
+        if (session.isTerminal()) {
+            NxisasApiLog.event(tid(session), FLOW, "CANCEL_NOOP_TERMINAL", "status", session.getStatus());
+            return buildSnapshot(session); // terminal wins — never overwrite COMPLETED/FAILED
+        }
+        session.touch();
+        session.requestCancel();
+        NxisasApiLog.event(tid(session), FLOW, "CANCEL_REQUESTED",
+                "status", session.getStatus(), "cardsSynced", session.getSuccessAccounts());
+        if (!session.tryMarkTerminal(NxisasScrapeSession.Status.CANCELLED)) {
+            NxisasApiLog.event(tid(session), FLOW, "CANCEL_LOST_RACE", "status", session.getStatus());
+        }
+        return buildSnapshot(session);
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // Core flow
+    // Background worker (bankSyncExecutor)
     // ─────────────────────────────────────────────────────────────────
 
-    /** Drive the card queue forward — for each pending card, LOGIN
-     *  (reusing the live session for same-credential cards); on a clean
-     *  login run CARD_USING + persist; on a challenge persist state and
-     *  return the {@code *_REQUIRED} response. */
-    private CardSyncSessionResponse advance(NxisasScrapeSession session, String userId, String now) {
+    /** Schedule one worker segment. The {@code workerRunning} CAS guard makes
+     *  this idempotent — a second call while a segment runs is a no-op. */
+    private void scheduleWorker(NxisasScrapeSession session) {
+        if (!session.tryStartWorker()) {
+            return; // a segment is already running/queued for this session
+        }
+        final TenantContext.Principal principal = TenantContext.current();
+        try {
+            executor.execute(() -> runSegment(session, principal));
+        } catch (RejectedExecutionException rex) {
+            session.finishWorker();
+            session.setErrorCode("WBE9999");
+            session.setErrorMessage(null);
+            session.markTerminal(NxisasScrapeSession.Status.FAILED);
+            log.warn("card-update executor saturated — session FAILED [session={}]", session.getSessionId());
+        }
+    }
+
+    /** One background scrape segment. Re-establishes the tenant context (the
+     *  worker runs off the request thread), runs until a boundary, and always
+     *  releases the worker guard + restores the prior tenant context. */
+    private void runSegment(NxisasScrapeSession session, TenantContext.Principal principal) {
+        TenantContext.Principal prev = TenantContext.current();
+        try {
+            if (principal != null) {
+                TenantContext.set(principal.userId(), principal.userNm(), principal.bizKey(),
+                        principal.langCd(), principal.authGrCd(), principal.prdtType());
+            }
+            if (session.isCancelled()) { markCancelledWorker(session); return; }
+            advanceAsync(session);
+        } catch (BusinessException be) {
+            failSession(session, be.getCode(), null);
+        } catch (RuntimeException e) {
+            log.error("card-update worker crashed [session={}]", session.getSessionId(), e);
+            failSession(session, "WBE9999", null);
+        } finally {
+            if (prev != null) {
+                TenantContext.set(prev.userId(), prev.userNm(), prev.bizKey(),
+                        prev.langCd(), prev.authGrCd(), prev.prdtType());
+            } else {
+                TenantContext.clear();
+            }
+            session.finishWorker();
+        }
+    }
+
+    /** Drive the card queue forward within one segment. First resumes a pending
+     *  challenge answer (if any), then processes cards until the queue drains
+     *  (→ finalize / COMPLETED) or a boundary is hit (challenge / error / cancel). */
+    private void advanceAsync(NxisasScrapeSession session) {
+        if (session.hasPendingResume()) {
+            LoginOutcome o = doPendingResume(session);
+            if (o != LoginOutcome.CLEAN) return; // CHALLENGE / ERROR / CANCELLED boundary
+        }
+
         while (!session.getCardsQueue().isEmpty()) {
+            if (session.isCancelled()) { markCancelledWorker(session); return; }
+
             CardScrapeKey key = session.getCardsQueue().peekFirst();
 
-            // Login-once-per-credential reuse — same credential group as
-            // the live LOGIN and the continuation is still good → skip
-            // LOGIN, go straight to CARD_USING.
-            if (loginGroupKey(key).equals(session.getActiveLoginGroupKey())
-                    && hasLiveContinuation(session)) {
+            // Login-once-per-credential reuse.
+            if (loginGroupKey(key).equals(session.getActiveLoginGroupKey()) && hasLiveContinuation(session)) {
                 NxisasApiLog.event(tid(session), FLOW, "SESSION_REUSE",
                         "bankCd", key.bankCd(), "cardNo", NxisasMask.card(key.cardNo()));
-                processOneCard(session, key, userId, now);
+                if (!processOneCardAsync(session, key)) return; // stopped (cancel)
                 session.getCardsQueue().pollFirst();
                 continue;
             }
@@ -313,92 +406,123 @@ public class CardTransactionScrapeService {
                 in.setLoginPwd1(cred.corporateId());
             }
 
+            if (session.isCancelled()) { markCancelledWorker(session); return; } // before gateway
             NxisasApiLog.event(tid(session), FLOW, "LOGIN_START",
                     "bankCd", key.bankCd(), "module", cfg.module(), "class", cfg.category());
             NxisasApiOut<NxisasLoginJobResult> out =
                     gateway.login(cfg.module(), cfg.category(), gateway.newTrSeq(), in);
             storeContinuation(session, GatewayContinuation.from(out));
+            if (session.isCancelled()) { markCancelledWorker(session); return; } // after gateway
 
-            // handleLoginContinuation returns a challenge / error directly,
-            // or — on a clean login — runs CARD_USING for the head card and
-            // recurses through advance() to drain the rest, returning the
-            // terminal COMPLETED. Either way its result is this batch's
-            // result; the queue head waits for a resume call on a challenge.
-            return handleLoginContinuation(session, out, "LOGIN");
+            LoginOutcome o = handleLoginResult(session, out, "LOGIN");
+            if (o != LoginOutcome.CLEAN) return; // CHALLENGE / ERROR boundary
+            // CLEAN → activeLoginGroupKey set; loop again → reuse branch processes head
         }
-        return finalize(session, now);
+
+        finalizeAsync(session);
     }
 
-    /** Inspect a LOGIN-shape response (initial LOGIN or a QNA/OTP/CAPTCHA
-     *  resume). Bank/gateway error → terminal ERROR; challenge → persist +
-     *  {@code *_REQUIRED}; clean → CARD_USING the head card, pop, recurse. */
-    private CardSyncSessionResponse handleLoginContinuation(
-            NxisasScrapeSession session, NxisasApiOut<NxisasLoginJobResult> out, String stage) {
+    private enum LoginOutcome { CLEAN, CHALLENGE, ERROR }
 
-        String userId = session.getUserId();
-        String now    = OffsetDateTime.now(ZoneOffset.UTC).format(DTM_14);
+    /** Do the pending gateway challenge-resume call, clear the secret, then
+     *  classify the result. */
+    private LoginOutcome doPendingResume(NxisasScrapeSession session) {
+        ScrapeChallengeKind kind = session.getPendingResumeKind();
+        String trSeq = gateway.newTrSeq();
+        NxisasApiOut<NxisasLoginJobResult> out;
+        switch (kind) {
+            case OTP -> {
+                NxisasOTPJobInput otpIn = new NxisasOTPJobInput();
+                otpIn.setRes(session.getPendingChallengeValue());
+                NxisasApiOut<NxisasOTPJobResult> otpOut = gateway.submitOtp(
+                        session.getBankModule(), session.getBankCategory(), trSeq, otpIn, continuationOf(session));
+                storeContinuation(session, GatewayContinuation.from(otpOut));
+                out = new NxisasApiOut<>();
+                out.setCommon(otpOut.getCommon());
+                out.setResultList(otpToLoginResults(otpOut));
+                out.setSasSessionID(otpOut.getSasSessionID());
+            }
+            case CAPTCHA -> {
+                NxisasCaptchaJobInput capIn = new NxisasCaptchaJobInput();
+                capIn.setRes(session.getPendingChallengeValue());
+                out = gateway.submitCaptcha(session.getBankModule(), session.getBankCategory(), trSeq,
+                        capIn, continuationOf(session));
+                storeContinuation(session, GatewayContinuation.from(out));
+            }
+            default -> { // QNA
+                NxisasScrapeSession.PendingQna q = session.getPendingQna();
+                NxisasQnaJobInput.QnaResponse res = new NxisasQnaJobInput.QnaResponse();
+                res.setQuestion(q == null ? null : q.question());
+                res.setHiddenValue(q == null ? null : q.hiddenValue());
+                res.setAnswer(q == null ? null : q.answer());
+                NxisasQnaJobInput qnaIn = new NxisasQnaJobInput();
+                qnaIn.setRes(res);
+                out = gateway.submitQna(session.getBankModule(), session.getBankCategory(), trSeq,
+                        qnaIn, continuationOf(session));
+                storeContinuation(session, GatewayContinuation.from(out));
+            }
+        }
+        session.clearPendingResume(); // drop the secret immediately after the call
+        if (session.isCancelled()) { markCancelledWorker(session); return LoginOutcome.ERROR; }
+        return handleLoginResult(session, out, kind.name());
+    }
 
+    /** Classify a LOGIN-shaped response: bank/gateway error → FAILED terminal;
+     *  challenge → AWAITING_CHALLENGE (retained for polling + resume); clean →
+     *  stamp the active login group and return CLEAN. */
+    private LoginOutcome handleLoginResult(NxisasScrapeSession session,
+                                           NxisasApiOut<NxisasLoginJobResult> out, String stage) {
         NxisasOutput<?> bankOut = gateway.firstOutput(out);
         if (bankOut != null && !NxisasResultCodes.isBankAdapterSuccess(bankOut.getErrorCode())) {
             String code = bankOut.getErrorCode();
             String msg  = firstNonBlank(bankOut.getErrorMessage(), bankOut.getDetailMessage());
-            NxisasApiLog.event(tid(session), FLOW, "ERROR",
-                    "stage", stage, "scope", "BANK", "errorCode", code);
-            session.setStatus(NxisasScrapeSession.Status.FAILED);
-            registry.discard(session.getSessionId());
-            return CardSyncSessionResponse.error(session.getSessionId(), code, msg);
+            NxisasApiLog.event(tid(session), FLOW, "ERROR", "stage", stage, "scope", "BANK", "errorCode", code);
+            failSession(session, code, msg);
+            return LoginOutcome.ERROR;
         }
         if (gatewayRejected(out)) {
             String code = out.getCommon().getResultCd();
             String msg  = out.getCommon().getResultMsg();
-            NxisasApiLog.event(tid(session), FLOW, "ERROR",
-                    "stage", stage, "scope", "GATEWAY", "resultCode", code);
-            session.setStatus(NxisasScrapeSession.Status.FAILED);
-            registry.discard(session.getSessionId());
-            return CardSyncSessionResponse.error(session.getSessionId(), code, msg);
+            NxisasApiLog.event(tid(session), FLOW, "ERROR", "stage", stage, "scope", "GATEWAY", "resultCode", code);
+            failSession(session, code, msg);
+            return LoginOutcome.ERROR;
         }
 
         NxisasLoginJobResult result = gateway.firstResult(out);
         ScrapeChallengeKind kind = challengeKindFrom(result);
         if (kind != null) {
-            session.setStatus(NxisasScrapeSession.Status.AWAITING_CHALLENGE);
             session.setChallengeKind(kind);
             session.setChallengePrompt(result == null ? null : result.challengePrompt());
-            registry.register(session);
-            CardScrapeKey head = session.getCardsQueue().peekFirst();
-            String bankName = resolveBankName(head == null ? null : head.bankCd());
-            NxisasApiLog.event(tid(session), FLOW, "CHALLENGE_REQUIRED",
-                    "type", kind, "bankCd", head == null ? "-" : head.bankCd());
-            if (kind == ScrapeChallengeKind.QNA) {
-                return CardSyncSessionResponse.qnaChallenge(
-                        session.getSessionId(), session.getChallengePrompt(),
-                        qnaQuestionsFrom(result), session.getLoginId(), bankName);
-            }
-            if (kind == ScrapeChallengeKind.CAPTCHA) {
-                return CardSyncSessionResponse.captchaChallenge(
-                        session.getSessionId(), session.getChallengePrompt(),
-                        captchaImageFrom(result), captchaImageFormatFor(session.getBankModule()), bankName);
-            }
-            return CardSyncSessionResponse.otpChallenge(
-                    session.getSessionId(), session.getChallengePrompt(), bankName);
+            session.setChallengeQnaQuestions(kind == ScrapeChallengeKind.QNA ? qnaQuestionsFrom(result) : null);
+            session.setChallengeCaptchaImage(kind == ScrapeChallengeKind.CAPTCHA ? captchaImageFrom(result) : null);
+            session.setStatus(NxisasScrapeSession.Status.AWAITING_CHALLENGE);
+            NxisasApiLog.event(tid(session), FLOW, "CHALLENGE_REQUIRED", "type", kind);
+            return LoginOutcome.CHALLENGE;
         }
 
-        // Clean login — this credential group now owns the session.
-        CardScrapeKey key = session.getCardsQueue().peekFirst();
-        session.setActiveLoginGroupKey(loginGroupKey(key));
+        CardScrapeKey head = session.getCardsQueue().peekFirst();
+        if (head != null) session.setActiveLoginGroupKey(loginGroupKey(head));
         NxisasApiLog.event(tid(session), FLOW, "LOGIN_SUCCESS",
-                "stage", stage, "bankCd", key.bankCd(),
-                "sasSessionId", NxisasMask.token(session.getSasSessionID()));
-        processOneCard(session, key, userId, now);
-        session.getCardsQueue().pollFirst();
-        return advance(session, userId, now);
+                "stage", stage, "sasSessionId", NxisasMask.token(session.getSasSessionID()));
+        return LoginOutcome.CLEAN;
     }
 
-    /** CARD_USING + persist for one card. Fail-soft: a CARD_USING-level
-     *  gateway/bank error logs + skips that card (no rows, not counted)
-     *  rather than aborting the whole batch — mirrors the legacy
-     *  per-card error collection in {@code fnsh_0001_001_c001_act.jsp}. */
-    private void processOneCard(NxisasScrapeSession session, CardScrapeKey key, String userId, String now) {
+    /**
+     * CARD_USING + persist for one card, updating real progress (0 → 50 → 100).
+     * Fail-soft: a CARD_USING-level gateway/bank error logs + records the card
+     * as processed-with-failure (counter advances) rather than aborting the
+     * batch — mirrors the legacy per-card error collection in
+     * {@code fnsh_0001_001_c001_act.jsp}. Returns {@code true} to continue the
+     * loop, {@code false} when the segment stopped at a cancel boundary.
+     */
+    private boolean processOneCardAsync(NxisasScrapeSession session, CardScrapeKey key) {
+        String bizKey = session.getBizKey();
+        String userId = session.getUserId();
+        String now    = OffsetDateTime.now(ZoneOffset.UTC).format(DTM_14);
+
+        if (session.isCancelled()) { markCancelledWorker(session); return false; }
+        session.enterPhase(NxisasScrapeSession.Phase.SCRAPING_TRANSACTIONS, FRACTION_START); // 0%
+
         NxisasBankConfig.Entry cfg = bankConfig.find(key.bankCd(), session.getNxisasGbSeqNo())
                 .orElseThrow(() -> new BusinessException("WBE2093", key.bankCd()));
 
@@ -413,6 +537,7 @@ public class CardTransactionScrapeService {
                 "from", session.getFromDt(), "to", session.getToDt());
         NxisasApiOut<NxisasCardUsingJobResult> out = gateway.cardUsing(
                 cfg.module(), cfg.category(), gateway.newTrSeq(), in, continuationOf(session));
+        if (session.isCancelled()) { markCancelledWorker(session); return false; } // after gateway
 
         NxisasOutput<?> bankOut = gateway.firstOutput(out);
         boolean bankOk = bankOut == null || NxisasResultCodes.isBankAdapterSuccess(bankOut.getErrorCode());
@@ -423,7 +548,8 @@ public class CardTransactionScrapeService {
                     "bankCd", key.bankCd(), "cardNo", NxisasMask.card(key.cardNo()), "code", code);
             log.warn("card-update :: CARD_USING failed bankCd={} cardNo={} code={} — skipping card",
                     key.bankCd(), NxisasMask.card(key.cardNo()), code);
-            return;
+            session.completeAccount(false); // processed with failure — counter advances
+            return true;
         }
 
         NxisasCardUsingJobResult res = gateway.firstCardUsingResult(out);
@@ -435,90 +561,167 @@ public class CardTransactionScrapeService {
             scraped = res.getCardArr().get(0).getCardUsing();
         }
 
-        // Reload the managed card so the persister has the registry CARD_NM
-        // fallback + so we can stamp TRN_LST_SUC_DTM (the queue carries
-        // keys, not entities, so they survive challenge resumes).
+        session.enterPhase(NxisasScrapeSession.Phase.PERSISTING_TRANSACTIONS, FRACTION_PERSIST); // 50%
+        if (session.isCancelled()) { markCancelledWorker(session); return false; } // before persist
+
         CardMstr card = new CardMstr();
-        card.setBizKey(session.getBizKey());
+        card.setBizKey(bizKey);
         card.setBankCd(key.bankCd());
         card.setCardNo(key.cardNo());
 
-        int[] counts = cardPersister.persist(session.getBizKey(), userId, now, card, scraped);
+        int[] counts = persistence.persistCard(bizKey, userId, now, card, scraped);
         session.setCardRowsInserted(session.getCardRowsInserted() + counts[0]);
         session.setCardRowsSkipped(session.getCardRowsSkipped() + counts[1]);
-        session.setCardsSynced(session.getCardsSynced() + 1);
 
-        // Advance the per-card cursor only when the scrape actually
-        // returned rows (legacy fnsh_0001_001_c001_act.jsp:1413/1422 —
-        // an empty result holds the cursor so tomorrow re-checks today).
-        if (!scraped.isEmpty()) {
-            cardMstrRepo.patchTrnLstSucDtm(session.getBizKey(), key.bankCd(), key.cardNo(), now, userId, now);
-        }
         NxisasApiLog.event(tid(session), FLOW, "CARD_DONE",
                 "bankCd", key.bankCd(), "cardNo", NxisasMask.card(key.cardNo()),
                 "scraped", scraped.size(), "inserted", counts[0], "skipped", counts[1]);
+        session.completeAccount(true); // → 100% fraction for this card + successCards++
+        return true;
     }
 
-    private CardSyncSessionResponse finalize(NxisasScrapeSession session, String now) {
-        session.setStatus(NxisasScrapeSession.Status.COMPLETED);
-        registry.discard(session.getSessionId());
+    /** Queue drained → terminal COMPLETED (retained for the final poll). */
+    private void finalizeAsync(NxisasScrapeSession session) {
+        if (session.isCancelled()) { markCancelledWorker(session); return; }
+        if (!session.tryMarkTerminal(NxisasScrapeSession.Status.COMPLETED)) {
+            NxisasApiLog.event(tid(session), FLOW, "COMPLETE_SUPPRESSED", "status", session.getStatus());
+            return; // a cancel already won — do not pin progress to 100
+        }
+        session.markProgressComplete();
+        int cardsSynced = session.getSuccessAccounts();
         auditLogService.append(AuditLogContext.builder()
                 .wsvcId(WSVC_ID)
                 .refNo(REF_NO)
                 .activityKey(AUDIT_ACTIVITY)
                 .detailKey(AUDIT_SYNC_DETAIL)
                 .msgArgs(new Object[] {
-                        session.getCardsSynced(), session.getCardsSynced(),
+                        cardsSynced, cardsSynced,
                         session.getCardRowsInserted(), session.getCardRowsSkipped(),
                 })
                 .build());
         NxisasApiLog.event(tid(session), FLOW, "COMPLETE",
-                "cards", session.getCardsSynced(),
+                "cards", cardsSynced,
                 "inserted", session.getCardRowsInserted(),
                 "skipped", session.getCardRowsSkipped());
-        return CardSyncSessionResponse.completed(
-                session.getSessionId(), session.getCardsSynced(),
-                session.getCardRowsInserted(), session.getCardRowsSkipped());
+    }
+
+    private void failSession(NxisasScrapeSession session, String code, String msg) {
+        session.setErrorCode(code);
+        session.setErrorMessage(msg);
+        session.markTerminal(NxisasScrapeSession.Status.FAILED);
+    }
+
+    private void markCancelledWorker(NxisasScrapeSession session) {
+        session.markTerminal(NxisasScrapeSession.Status.CANCELLED);
+        NxisasApiLog.event(tid(session), FLOW, "CANCELLED", "cardsSynced", session.getSuccessAccounts());
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // Session + parsing helpers (duplicated per-orchestrator, mirroring
-    // BankTransactionSyncService — the established codebase pattern).
+    // Snapshot building (status wire shape — NO secrets)
     // ─────────────────────────────────────────────────────────────────
 
-    /** Login-group key — the credential (BANK_CERT_SEQ). All cards under
-     *  one credential reuse a single LOGIN. */
-    private static String loginGroupKey(CardScrapeKey key) {
-        return key.bankCertSeq() == null ? "" : key.bankCertSeq().toPlainString();
+    private CardSyncStatusResponse buildSnapshot(NxisasScrapeSession session) {
+        String wire = wireStatus(session);
+        boolean completed = session.getStatus() == NxisasScrapeSession.Status.COMPLETED;
+
+        CardSyncStatusResponse.Challenge challenge = null;
+        if (session.getStatus() == NxisasScrapeSession.Status.AWAITING_CHALLENGE
+                && session.getChallengeKind() != null) {
+            ScrapeChallengeKind k = session.getChallengeKind();
+            CardScrapeKey head = session.getCardsQueue().peekFirst();
+            String bankName = resolveBankName(head == null ? null : head.bankCd());
+            challenge = new CardSyncStatusResponse.Challenge(
+                    k.name(),
+                    session.getChallengePrompt(),
+                    k == ScrapeChallengeKind.QNA ? session.getChallengeQnaQuestions() : null,
+                    k == ScrapeChallengeKind.CAPTCHA ? session.getChallengeCaptchaImage() : null,
+                    k == ScrapeChallengeKind.CAPTCHA ? captchaImageFormatFor(session.getBankModule()) : null,
+                    session.getLoginId(),
+                    bankName);
+        }
+
+        int cardsSynced = session.getSuccessAccounts();
+        return new CardSyncStatusResponse(
+                session.getSessionId(),
+                wire,
+                session.getProgress(),
+                session.getCurrentPhase() == null ? null : session.getCurrentPhase().name(),
+                session.getCompletedAccounts(),
+                session.getTotalAccounts(),
+                cardsSynced,
+                session.getFailedAccounts(),
+                challenge,
+                completed ? cardsSynced : null,
+                completed ? session.getCardRowsInserted() : null,
+                completed ? session.getCardRowsSkipped() : null,
+                session.getErrorCode(),
+                session.getErrorMessage());
     }
 
-    /** Resolve a bank code to its display name (e.g. {@code "Shinhan VN"})
-     *  for the challenge dialog header — falls back to the code, then null.
-     *  Same lookup the headless {@code CardTransactionSyncService} uses. */
-    private String resolveBankName(String bankCd) {
-        if (bankCd == null) return null;
-        return bankInfmRepo.findById(bankCd)
-                .map(b -> b.getRprsBankNm() == null ? bankCd : b.getRprsBankNm())
-                .orElse(bankCd);
+    private static String wireStatus(NxisasScrapeSession session) {
+        return switch (session.getStatus()) {
+            case RUNNING -> "RUNNING";
+            case COMPLETED -> "COMPLETED";
+            case FAILED -> "FAILED";
+            case CANCELLED -> "CANCELLED";
+            case AWAITING_CHALLENGE -> session.getChallengeKind() == null ? "RUNNING"
+                    : switch (session.getChallengeKind()) {
+                        case OTP -> "OTP_REQUIRED";
+                        case QNA -> "QNA_REQUIRED";
+                        case CAPTCHA -> "CAPTCHA_REQUIRED";
+                    };
+        };
     }
 
-    private NxisasScrapeSession requireSession(UUID sessionId) {
+    private static CardSyncStatusResponse cancelledSnapshot(UUID sessionId) {
+        return new CardSyncStatusResponse(sessionId, "CANCELLED",
+                0, null, 0, 0, 0, 0, null,
+                null, null, null, null, null);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Session lookup + validation
+    // ─────────────────────────────────────────────────────────────────
+
+    /** Tenant-validated CARD_SYNC session for status polling — returns any
+     *  state (incl. terminal) so the frontend can read the final snapshot. */
+    private NxisasScrapeSession requireOwnedCardSession(UUID sessionId) {
         String bizKey = requireBizKey();
         String userId = TenantContext.currentUserId();
         NxisasScrapeSession s = registry.find(sessionId, bizKey, userId)
                 .orElseThrow(() -> new BusinessException("WBE2060"));
         if (s.getMode() != NxisasScrapeSession.Mode.CARD_SYNC) {
-            // A non-card session id was passed to the card resume endpoint.
             throw new BusinessException("WBE2060");
         }
         s.touch();
         return s;
     }
 
-    private static void assertChallenge(NxisasScrapeSession session, ScrapeChallengeKind expected) {
-        if (session.getChallengeKind() != expected) {
+    /** Tenant-validated CARD_SYNC session for a challenge resume — rejects
+     *  cancelled / terminal / expired sessions ({@code WBE2060}) and the wrong
+     *  resume verb ({@code WBE9001}). */
+    private NxisasScrapeSession requireResumableCardSession(UUID sessionId, ScrapeChallengeKind expected) {
+        NxisasScrapeSession s = requireOwnedCardSession(sessionId);
+        if (s.isCancelled() || s.isTerminal()) {
+            throw new BusinessException("WBE2060");
+        }
+        if (s.getChallengeKind() != expected) {
             throw new BusinessException("WBE9001");
         }
+        return s;
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Helpers (mirroring BankTransactionSyncService)
+    // ─────────────────────────────────────────────────────────────────
+
+    private static String loginGroupKey(CardScrapeKey key) {
+        return key.bankCertSeq() == null ? "" : key.bankCertSeq().toPlainString();
+    }
+
+    private String resolveBankName(String bankCd) {
+        if (bankCd == null) return null;
+        return bankNameResolver.resolve(bankCd);
     }
 
     private static boolean hasLiveContinuation(NxisasScrapeSession s) {
@@ -538,10 +741,9 @@ public class CardTransactionScrapeService {
         s.setThreadNo(c.threadNo());
     }
 
-    /** {@code bankModule} is final-via-Lombok on the session; CARD_SYNC
-     *  crosses credentials within one batch, so overwrite it per group
-     *  via reflection (same one-field workaround as
-     *  {@code BankTransactionSyncService}). */
+    /** {@code bankModule} is final-via-Lombok on the session; CARD_SYNC crosses
+     *  credentials within one batch, so overwrite it per group via reflection
+     *  (same one-field workaround as {@code BankTransactionSyncService}). */
     private static void setBankModuleViaReflection(NxisasScrapeSession session, String module) {
         try {
             java.lang.reflect.Field f = NxisasScrapeSession.class.getDeclaredField("bankModule");

@@ -1,8 +1,11 @@
 package com.kosign.wecms.domain.einvoice.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.auth.repository.BusiInfmRepository;
+import com.kosign.wecms.domain.banking.nxisas.audit.entity.NxsiasModuleTranLogHis;
+import com.kosign.wecms.domain.banking.nxisas.audit.NxsiasModuleTranLogHisRepository;
 import com.kosign.wecms.domain.banking.synchistory.entity.ExtTranCallHis;
 import com.kosign.wecms.domain.banking.synchistory.repository.ExtTranCallHisRepository;
 import com.kosign.wecms.domain.einvoice.dto.EInvoiceScrapeRequest;
@@ -20,7 +23,12 @@ import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * Persists GDT e-invoice rows scraped by the local NXiSAS engine.
@@ -66,6 +74,24 @@ public class EInvoiceScrapeService {
      *  replacing the legacy WSVC id {@code nxisas_einvoice_c001}. */
     private static final String WEB_SVC_ID = "addon-einvoices-scrape";
 
+    /* --- NXSIAS_MODULE_TRAN_LOG_HIS per-invoice inquiry-log constants ---
+     * Mirror the legacy {@code nxisas_logging_act.jsp} INVOICE_DETAIL rows
+     * (the leg the Firm Banking History "Vietnam GDT Inquiry" filter reads).
+     * The refactor consolidated the legacy two-call model (logging + save)
+     * into this one intake call, so the per-invoice log is written here. */
+    private static final String NXISAS_CLASS  = "COMMON";
+    private static final String NXISAS_MODULE = "GLOBAL/VNM/PUBLIC_GDT";
+    private static final String NXISAS_JOB    = "INVOICE_DETAIL";
+    private static final String NXISAS_OK      = "00000000";
+    private static final String NXISAS_TYPE_SALES   = "E-INVOICE_SALES_INQUIRY";
+    private static final String NXISAS_TYPE_EXPENSE = "E-INVOICE_EXPENSE_INQUIRY";
+
+    /** Serialises the compact {@code REQ_DATA} JSON. A dedicated instance —
+     *  {@code Map} keys pass through verbatim (the global SNAKE_CASE strategy
+     *  applies to POJO properties, not map keys), so the legacy camelCase
+     *  keys are preserved regardless of app config. */
+    private static final ObjectMapper LOG_JSON = new ObjectMapper();
+
     private static final String PROV_STTS_OPEN  = "OP";
     private static final String PROV_STTS_VOID   = "VD";
     private static final String HAND_REG_NO      = "N";
@@ -105,6 +131,7 @@ public class EInvoiceScrapeService {
     private final BusaDocMstrRepository    busaRepo;
     private final ExtTranCallHisRepository auditRepo;
     private final BusiInfmRepository       busiRepo;
+    private final NxsiasModuleTranLogHisRepository nxisasLogRepo;
     private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
 
     @Transactional
@@ -218,9 +245,10 @@ public class EInvoiceScrapeService {
         busaRepo.saveAll(toSave);
 
         writeAudit(isSales, req, bizKey, userId, regDtm);
+        int logged = writeInquiryLog(isSales, req, bizKey, userId, regDtm);
 
-        log.info("e-invoice scrape intake: bizKey={} type={} saved={} updated={} skipped={} rslt={}",
-                bizKey, req.type(), saved, updated, skipped, req.rsltCd());
+        log.info("e-invoice scrape intake: bizKey={} type={} saved={} updated={} skipped={} logged={} rslt={}",
+                bizKey, req.type(), saved, updated, skipped, logged, req.rsltCd());
         return new EInvoiceScrapeResult(saved, updated, skipped, regDtm);
     }
 
@@ -261,6 +289,82 @@ public class EInvoiceScrapeService {
         h.setStartDate(req.fromDt());
         h.setEndDate(req.toDt());
         auditRepo.save(h);
+    }
+
+    /**
+     * Append one {@code NXSIAS_MODULE_TRAN_LOG_HIS} row per scraped invoice,
+     * mirroring the legacy {@code nxisas_logging_act.jsp} INVOICE_DETAIL rows
+     * ({@code :213-231}) that the Firm Banking History "Vietnam GDT Inquiry"
+     * leg reads ({@code TB_FIRM_TRAN_R002.xml} → {@code FirmBankingHistoryView}
+     * G leg: {@code WHERE NXISAS_TYPE IN ('E-INVOICE_SALES_INQUIRY',
+     * 'E-INVOICE_EXPENSE_INQUIRY')}).
+     *
+     * <p>Legacy writes these in a separate browser-driven logging call; the
+     * refactor consolidated the scrape into this single intake, so the log is
+     * written here, in the same tenant transaction (rolls back with the
+     * invoice save if that fails). Append-only — a re-scrape inserts fresh
+     * rows (random {@code UUID}), matching legacy history semantics.
+     *
+     * <p>One row per invoice with an invoice identity — mirrors legacy's
+     * per-{@code INVOICE_DETAIL} logging, independent of the accept/skip
+     * branch that {@code BUSA_DOC_MSTR} applies. {@code REQ_DATA} carries the
+     * legacy engine {@code Input} shape so the frontend composes the e-Invoice
+     * No. ({@code numericSymbol + invoiceSymbol + '-' + invoiceNo}) exactly as
+     * {@code comm_0221_001.js:258-260} does. Returns the row count logged.
+     */
+    private int writeInquiryLog(boolean isSales, EInvoiceScrapeRequest req,
+                                String bizKey, String userId, String regDtm) {
+        final String type = isSales ? NXISAS_TYPE_SALES : NXISAS_TYPE_EXPENSE;
+        final String invoiceType = isSales ? "1" : "2";
+
+        List<NxsiasModuleTranLogHis> rows = new ArrayList<>(req.invoices().size());
+        for (ScrapedEInvoiceRow row : req.invoices()) {
+            final String invoiceNo = trim(row.invoiceNo());
+            if (invoiceNo.isEmpty()) {
+                // No invoice identity — engine returned a malformed row; the
+                // save path skips it too, so there is nothing to log.
+                continue;
+            }
+            NxsiasModuleTranLogHis h = new NxsiasModuleTranLogHis();
+            h.setUuid(UUID.randomUUID().toString().replace("-", ""));
+            h.setRegDtm(regDtm);
+            h.setBizKey(bizKey);
+            h.setRegId(userId);
+            h.setNxisasClass(NXISAS_CLASS);
+            h.setNxisasModule(NXISAS_MODULE);
+            h.setNxisasJob(NXISAS_JOB);
+            h.setNxisasErrCode(NXISAS_OK);
+            h.setNxisasErrCont(null);
+            h.setReqData(buildReqData(req, row, invoiceType, invoiceNo));
+            h.setNxisasType(type);
+            rows.add(h);
+        }
+        if (!rows.isEmpty()) {
+            nxisasLogRepo.saveAll(rows);
+        }
+        return rows.size();
+    }
+
+    /** Compose the legacy {@code REQ_DATA} JSON for one INVOICE_DETAIL log row
+     *  (matches the engine {@code Input} shape stored by legacy
+     *  {@code nxisas_logging_act.jsp}). */
+    private static String buildReqData(EInvoiceScrapeRequest req, ScrapedEInvoiceRow row,
+                                       String invoiceType, String invoiceNo) {
+        Map<String, String> data = new LinkedHashMap<>();
+        data.put("sellerTaxCode", trim(row.sellerTaxCode()));
+        data.put("endDate", req.toDt());
+        data.put("numericSymbol", trim(row.numericSymbol()));
+        data.put("invoiceType", invoiceType);
+        data.put("invoiceSymbol", trim(row.invoiceSymbol()));
+        data.put("invoiceNo", invoiceNo);
+        data.put("startDate", req.fromDt());
+        try {
+            return LOG_JSON.writeValueAsString(data);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException ex) {
+            // Simple String map — serialization cannot realistically fail;
+            // degrade to no payload rather than aborting the scrape save.
+            return null;
+        }
     }
 
     /** Engine amounts arrive as plain numeric strings; strip grouping
