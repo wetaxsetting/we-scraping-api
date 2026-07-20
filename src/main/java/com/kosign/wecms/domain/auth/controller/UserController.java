@@ -5,6 +5,7 @@ import com.kosign.wecms.domain.auth.dto.TenantUserListResponse;
 import com.kosign.wecms.domain.auth.service.UserDirectoryService;
 import com.kosign.wecms.domain.setting.users.service.UserImageService;
 import com.kosign.wecms.domain.setting.users.service.UserImageService.ImageDownload;
+import com.kosign.wecms.domain.setting.users.service.UserImageService.UserImageResult;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
@@ -14,11 +15,15 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -115,5 +120,37 @@ public class UserController {
                 .cacheControl(CacheControl.maxAge(Duration.ofMinutes(5)).cachePrivate())
                 .header(HttpHeaders.CONTENT_DISPOSITION, "inline")
                 .body(new InputStreamResource(stream));
+    }
+
+    /**
+     * Self-service avatar upload for the <b>signed-in user</b> (header
+     * profile menu &rarr; pencil "edit photo"). Multipart part name is
+     * {@code file}.
+     *
+     * <p>JWT-only, no {@code @PreAuthorize}: the target is always
+     * {@link com.kosign.wecms.common.tenant.TenantContext#currentUserId()},
+     * so a user can only change their OWN photo. An admin changing another
+     * user's photo goes through the ADMIN-gated
+     * {@code POST /api/v1/settings/users/{id}/image}. Mirrors legacy
+     * {@code szon_0012_003_u002_act.jsp} (forces {@code USER_ID} to the
+     * login user for non-admins).
+     *
+     * <p>Service caps at 2 MB and a JPG / JPEG / PNG / GIF allow-list
+     * (SVG rejected, F-02). On success the response carries the refreshed
+     * {@code user_img_url} pointing at the non-admin streaming GET above,
+     * cache-busted so the header avatar refreshes without a manual reload.
+     */
+    @PostMapping(value = "/me/image", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ApiResponse<UserImageResult> uploadMyImage(@RequestPart("file") MultipartFile file) {
+        return ApiResponse.ok(userImageService.uploadForCurrentUser(file));
+    }
+
+    /**
+     * Clear the signed-in user's own avatar. Idempotent — a user with no
+     * avatar set still gets a 200 and a {@code null} {@code user_img_url}.
+     */
+    @DeleteMapping("/me/image")
+    public ApiResponse<UserImageResult> deleteMyImage() {
+        return ApiResponse.ok(userImageService.deleteForCurrentUser());
     }
 }

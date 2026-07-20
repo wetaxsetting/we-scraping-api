@@ -98,7 +98,75 @@ public class UserImageService {
     public UserRowResponse upload(String userId, MultipartFile file) {
         String bizKey  = TenantContext.currentBizKey();
         String actorId = TenantContext.currentUserId();
+        storeImage(bizKey, userId, actorId, file);
+        return userManagementService.detail(userId);
+    }
 
+    /**
+     * Remove the target user's avatar inside the current tenant.
+     * Clears {@code USER_BUSI_CONN_INFM.USER_IMG} and best-effort-
+     * deletes the disk file. Idempotent — calling it on a user with
+     * no avatar set returns the unchanged row.
+     */
+    @Transactional
+    public UserRowResponse delete(String userId) {
+        String bizKey  = TenantContext.currentBizKey();
+        String actorId = TenantContext.currentUserId();
+        clearImage(bizKey, userId, actorId);
+        return userManagementService.detail(userId);
+    }
+
+    /* =================================================================
+     *  Self-service (header profile menu → pencil "edit photo")
+     * ================================================================= */
+
+    /**
+     * Upload the <b>signed-in user's own</b> avatar. The target is always
+     * {@link TenantContext#currentUserId()} — a user can only change their
+     * OWN photo; an admin changing someone else's photo goes through the
+     * ADMIN-gated {@link #upload(String, MultipartFile)}. This mirrors
+     * legacy {@code szon_0012_003_u002_act.jsp}, which forces {@code USER_ID}
+     * to the login user for non-admins.
+     *
+     * <p>Returns {@link UserImageResult} carrying the streaming URL on the
+     * shared <b>non-admin</b> GET ({@code /api/v1/users/{id}/image}) so the
+     * header {@code <UserAvatar>} — a normal USER without the
+     * {@code settings-core-users} grant — can fetch it (the
+     * {@code /settings/users/...} twin is admin-gated). The {@code ?v=}
+     * cache-buster flips on every upload.
+     */
+    @Transactional
+    public UserImageResult uploadForCurrentUser(MultipartFile file) {
+        String bizKey = TenantContext.currentBizKey();
+        String userId = TenantContext.currentUserId();
+        String saveFileNm = storeImage(bizKey, userId, userId, file);
+        return new UserImageResult(selfPublicUrl(userId, saveFileNm));
+    }
+
+    /**
+     * Clear the <b>signed-in user's own</b> avatar. Idempotent — returns a
+     * {@code null} url whether or not a photo was set.
+     */
+    @Transactional
+    public UserImageResult deleteForCurrentUser() {
+        String bizKey = TenantContext.currentBizKey();
+        String userId = TenantContext.currentUserId();
+        clearImage(bizKey, userId, userId);
+        return new UserImageResult(null);
+    }
+
+    /* =================================================================
+     *  Core store / clear — shared by the admin + self-service paths
+     * ================================================================= */
+
+    /**
+     * Validate + persist a new avatar for {@code userId} inside the current
+     * tenant, returning the generated save filename. "Write new before
+     * delete old" ordering means a transient IO failure leaves the previous
+     * image intact rather than blanking the avatar while the DB is in an
+     * inconsistent state.
+     */
+    private String storeImage(String bizKey, String userId, String actorId, MultipartFile file) {
         UserBusiConnInfm link = userBusiConnRepo
                 .findByUserIdAndBizKeyAndDelYn(userId, bizKey, DEL_N)
                 .orElseThrow(() -> new BusinessException("WBE_USERS_NOT_FOUND"));
@@ -133,20 +201,12 @@ public class UserImageService {
 
         log.info("user image uploaded userId={} bizKey={} saveFileNm={} sizeBytes={}",
                 userId, bizKey, saveFileNm, size);
-        return userManagementService.detail(userId);
+        return saveFileNm;
     }
 
-    /**
-     * Remove the target user's avatar inside the current tenant.
-     * Clears {@code USER_BUSI_CONN_INFM.USER_IMG} and best-effort-
-     * deletes the disk file. Idempotent — calling it on a user with
-     * no avatar set returns the unchanged row.
-     */
-    @Transactional
-    public UserRowResponse delete(String userId) {
-        String bizKey  = TenantContext.currentBizKey();
-        String actorId = TenantContext.currentUserId();
-
+    /** Clear {@code USER_BUSI_CONN_INFM.USER_IMG} for {@code userId} and
+     *  best-effort-delete the disk file. Idempotent. */
+    private void clearImage(String bizKey, String userId, String actorId) {
         UserBusiConnInfm link = userBusiConnRepo
                 .findByUserIdAndBizKeyAndDelYn(userId, bizKey, DEL_N)
                 .orElseThrow(() -> new BusinessException("WBE_USERS_NOT_FOUND"));
@@ -160,7 +220,6 @@ public class UserImageService {
             log.info("user image deleted userId={} bizKey={} saveFileNm={}",
                     userId, bizKey, previous);
         }
-        return userManagementService.detail(userId);
     }
 
     /* =================================================================
@@ -203,6 +262,10 @@ public class UserImageService {
     /** Controller-facing carrier for the resolved avatar file. */
     public record ImageDownload(Path path, String contentType, long size) { }
 
+    /** Self-service response — carries the refreshed streaming URL
+     *  ({@code user_img_url} on the wire) for the header profile menu. */
+    public record UserImageResult(String userImgUrl) { }
+
     /** Public URL composer — wire field {@code user_img_url} resolves
      *  to this when the row has a saved filename. Used by the
      *  {@link UserManagementService} mapping path and (eventually) the
@@ -210,6 +273,16 @@ public class UserImageService {
     public static String publicUrl(String userId, String saveFileNm) {
         if (saveFileNm == null || saveFileNm.isBlank()) return null;
         return PUBLIC_URI_PREFIX + userId + PUBLIC_URI_SUFFIX + "?v=" + saveFileNm;
+    }
+
+    /** Self-service streaming URL — resolves to the shared <b>non-admin</b>
+     *  GET ({@code /api/v1/users/{id}/image}) so a USER-role caller can
+     *  fetch their own avatar. The {@link #publicUrl} twin points at the
+     *  ADMIN/{@code settings-core-users}-gated Settings endpoint and would
+     *  403 an ordinary user's header avatar. */
+    public static String selfPublicUrl(String userId, String saveFileNm) {
+        if (saveFileNm == null || saveFileNm.isBlank()) return null;
+        return "/api/v1/users/" + userId + PUBLIC_URI_SUFFIX + "?v=" + saveFileNm;
     }
 
     /* =================================================================
