@@ -1,6 +1,7 @@
 package com.kosign.wecms.domain.setting.purposesettings.controller;
 
 import com.kosign.wecms.common.response.ApiResponse;
+import com.kosign.wecms.domain.setting.purposesettings.dto.DeletedPurposeListResponse;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeExcelImportRequest;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeExcelImportResult;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeExcelPreview;
@@ -80,19 +81,49 @@ public class PurposeSettingsController {
      *  metacharacter abuse before it hits the LIKE expression. */
     private static final String KEYWORD_PATTERN     = "^[\\p{L}\\p{N}\\p{P}\\p{Zs}]{0,100}$";
 
+    /** Tab group filter — {@code '4'} (Banking Deposit) or {@code '6'}
+     *  (Banking Withdrawal). Omitted → historic {@code usag_grp_cd IS
+     *  NULL} scope. */
+    private static final String GROUP_PATTERN       = "^[46]$";
+
     private final PurposeSettingsService service;
     private final PurposeExcelService    excelService;
 
-    /** List all active refactor-scope purposes for the current tenant.
-     *  Optional {@code keyword} performs a case-insensitive substring
-     *  match against {@code use_usag_nm}. */
+    /** List active purposes for the current tenant + tab group.
+     *  {@code group} = {@code '4'} (Banking Deposit) / {@code '6'}
+     *  (Banking Withdrawal); omitted → historic {@code usag_grp_cd IS
+     *  NULL} scope. Optional {@code keyword} performs a case-insensitive
+     *  substring match against {@code use_usag_nm}. */
     @GetMapping
     public ApiResponse<PurposeSettingListResponse> list(
             @RequestParam(value = "keyword", required = false)
             @Size(max = 100)
             @Pattern(regexp = KEYWORD_PATTERN, message = "keyword: invalid format")
-            String keyword) {
-        return ApiResponse.ok(service.list(keyword));
+            String keyword,
+            @RequestParam(value = "usag_grp_cd", required = false)
+            @Pattern(regexp = GROUP_PATTERN, message = "usag_grp_cd: must be 4 or 6")
+            String usagGrpCd) {
+        return ApiResponse.ok(service.list(keyword, usagGrpCd));
+    }
+
+    /** "Deleted Purpose" tab — soft-deleted rows for the current tenant
+     *  across the deposit/withdrawal buckets (+ historic NULL scope).
+     *  Mirrors legacy {@code comm_0187_003_r001}. */
+    @GetMapping("/deleted")
+    public ApiResponse<DeletedPurposeListResponse> listDeleted() {
+        return ApiResponse.ok(service.listDeleted());
+    }
+
+    /** Restore a soft-deleted purpose ({@code use_yn 'N' -> 'Y'}).
+     *  Mirrors legacy {@code comm_0187_003_u001} REC sub-rule. */
+    @PutMapping("/{use_usag_cd}/restore")
+    public ApiResponse<Void> restore(
+            @PathVariable("use_usag_cd")
+            @Size(max = 20)
+            @Pattern(regexp = USE_USAG_CD_PATTERN, message = "use_usag_cd: invalid format")
+            String useUsagCd) {
+        service.restore(useUsagCd);
+        return ApiResponse.ok(null);
     }
 
     /** Detail by system PK. */

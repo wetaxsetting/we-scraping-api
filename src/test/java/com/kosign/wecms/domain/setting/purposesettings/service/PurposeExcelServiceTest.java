@@ -130,7 +130,7 @@ class PurposeExcelServiceTest {
                 new String[]{"BD02", "Withdrawal", "",        ""}));
         MultipartFile file = mockXlsx(bytes);
 
-        when(repo.findActiveForTenant(BIZ, PurposeSettingsService.RESERVED_SYSTEM_CODES, ""))
+        when(repo.findActiveForTenant(BIZ, null, PurposeSettingsService.RESERVED_SYSTEM_CODES, ""))
                 .thenReturn(List.of());
 
         PurposeExcelPreview preview = service.preview(file);
@@ -148,7 +148,7 @@ class PurposeExcelServiceTest {
                 new String[]{"BD01", "Second", "", ""}));
         MultipartFile file = mockXlsx(bytes);
 
-        when(repo.findActiveForTenant(BIZ, PurposeSettingsService.RESERVED_SYSTEM_CODES, ""))
+        when(repo.findActiveForTenant(BIZ, null, PurposeSettingsService.RESERVED_SYSTEM_CODES, ""))
                 .thenReturn(List.of());
 
         PurposeExcelPreview preview = service.preview(file);
@@ -170,7 +170,7 @@ class PurposeExcelServiceTest {
         MultipartFile file = mockXlsx(bytes);
 
         BusiUsagSetInfm existing = entity("0000000007", "P01", "Deposit", /* parent */ null);
-        when(repo.findActiveForTenant(BIZ, PurposeSettingsService.RESERVED_SYSTEM_CODES, ""))
+        when(repo.findActiveForTenant(BIZ, null, PurposeSettingsService.RESERVED_SYSTEM_CODES, ""))
                 .thenReturn(List.of(existing));
 
         PurposeExcelPreview preview = service.preview(file);
@@ -188,7 +188,7 @@ class PurposeExcelServiceTest {
                 new String[]{"BD01-1", "Child",  "", "BD01"}));
         MultipartFile file = mockXlsx(bytes);
 
-        when(repo.findActiveForTenant(BIZ, PurposeSettingsService.RESERVED_SYSTEM_CODES, ""))
+        when(repo.findActiveForTenant(BIZ, null, PurposeSettingsService.RESERVED_SYSTEM_CODES, ""))
                 .thenReturn(List.of());
 
         PurposeExcelPreview preview = service.preview(file);
@@ -204,7 +204,7 @@ class PurposeExcelServiceTest {
         MultipartFile file = mockXlsx(bytes);
 
         BusiUsagSetInfm parent = entity("0000000007", "P01", "Deposit", null);
-        when(repo.findActiveForTenant(BIZ, PurposeSettingsService.RESERVED_SYSTEM_CODES, ""))
+        when(repo.findActiveForTenant(BIZ, null, PurposeSettingsService.RESERVED_SYSTEM_CODES, ""))
                 .thenReturn(List.of(parent));
 
         PurposeExcelPreview preview = service.preview(file);
@@ -219,7 +219,7 @@ class PurposeExcelServiceTest {
                 new String[]{"BD01-1", "Orphan child", "", "ghost"}));
         MultipartFile file = mockXlsx(bytes);
 
-        when(repo.findActiveForTenant(BIZ, PurposeSettingsService.RESERVED_SYSTEM_CODES, ""))
+        when(repo.findActiveForTenant(BIZ, null, PurposeSettingsService.RESERVED_SYSTEM_CODES, ""))
                 .thenReturn(List.of());
 
         PurposeExcelPreview preview = service.preview(file);
@@ -241,7 +241,7 @@ class PurposeExcelServiceTest {
         // form level 3 if accepted as parent.
         BusiUsagSetInfm level1 = entity("0000000007", "P01", "Deposit", null);
         BusiUsagSetInfm level2 = entity("0000000008", "P1.1", "Sale", "0000000007");
-        when(repo.findActiveForTenant(BIZ, PurposeSettingsService.RESERVED_SYSTEM_CODES, ""))
+        when(repo.findActiveForTenant(BIZ, null, PurposeSettingsService.RESERVED_SYSTEM_CODES, ""))
                 .thenReturn(List.of(level1, level2));
 
         PurposeExcelPreview preview = service.preview(file);
@@ -263,7 +263,7 @@ class PurposeExcelServiceTest {
                 new String[]{"BD01", "Investment", "",                 ""}));
         MultipartFile file = mockXlsx(bytes);
 
-        when(repo.findActiveForTenant(BIZ, PurposeSettingsService.RESERVED_SYSTEM_CODES, ""))
+        when(repo.findActiveForTenant(BIZ, null, PurposeSettingsService.RESERVED_SYSTEM_CODES, ""))
                 .thenReturn(List.of());
 
         PurposeExcelPreview preview = service.preview(file);
@@ -289,9 +289,9 @@ class PurposeExcelServiceTest {
                 new PurposeExcelImportRequest.Row("BD01-1", "Child", "",     "BD01"),
                 new PurposeExcelImportRequest.Row("BD01",   "Parent", "",    "")));
 
-        when(repo.findActiveForTenant(BIZ, PurposeSettingsService.RESERVED_SYSTEM_CODES, ""))
+        when(repo.findActiveForTenant(BIZ, null, PurposeSettingsService.RESERVED_SYSTEM_CODES, ""))
                 .thenReturn(List.of());
-        when(repo.findMaxDispOrd(BIZ)).thenReturn(Optional.of(0));
+        when(repo.findMaxDispOrd(BIZ, null)).thenReturn(Optional.of(0));
         when(legacyFunctions.nextUseUsagCd(BIZ, ""))
                 .thenReturn("0000000010")   // root
                 .thenReturn("0000000011");  // child
@@ -319,7 +319,7 @@ class PurposeExcelServiceTest {
                 new PurposeExcelImportRequest.Row("BD01", "First",  "", ""),
                 new PurposeExcelImportRequest.Row("BD01", "Second", "", "")));
 
-        when(repo.findActiveForTenant(BIZ, PurposeSettingsService.RESERVED_SYSTEM_CODES, ""))
+        when(repo.findActiveForTenant(BIZ, null, PurposeSettingsService.RESERVED_SYSTEM_CODES, ""))
                 .thenReturn(List.of());
 
         assertThatThrownBy(() -> service.import_(req))
