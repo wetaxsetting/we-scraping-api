@@ -76,6 +76,13 @@ BEGIN
     when lower($1) = 'trco_actv_hstr' and lower($2) = 'actv_seq' then
         newSeqNo :=  (select nextval('sq_actv_seq'));
 
+    -- 6. Add-on > e-Invoice: TRCO_RSPB_INFM.RSPB_KEY — global responsible-person
+    --     sequence (sq_rspb_key, V153). Added 2026-07-14 for the D5.3
+    --     representative-persistence parity; branch body verbatim from DEV
+    --     wb_get_next_val. CREATE OR REPLACE is idempotent — DBA re-applies V140.
+    when lower($1) = 'trco_rspb_infm' and lower($2) = 'rspb_key' then
+        newSeqNo :=  (select nextval('sq_rspb_key'));
+
     -- 7. Settings > Contacts: TRCO_INFM.TRCO_KEY — global sequence (NOT per-tenant).
     when lower($1) = 'trco_infm' and lower($2) = 'trco_key' then
         newSeqNo :=  (select nextval('sq_trco_key'));

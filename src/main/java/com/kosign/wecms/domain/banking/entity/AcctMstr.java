@@ -186,6 +186,20 @@ public class AcctMstr {
     private String lstLgnSucDtm;
 
     /**
+     * Last successful TRANSACTION-scrape timestamp, {@code yyyyMMddHHmmss}
+     * (legacy {@code TRN_LST_SUC_DTM}). This is the column the Bank
+     * Transaction Sync popup reads to compute its default scrape window:
+     * the earliest {@code TRN_LST_SUC_DTM} across the selected accounts,
+     * floored to 3 months back → today, used as ONE batch window for every
+     * account (legacy {@code nxisas_tranList.getInitStartDate()} +
+     * {@code fnsh_0001_001_r001} parity). Distinct from
+     * {@code ACCT_HIS_LST_INQ_DT} (the "Last Update" display column).
+     * Schema column is the legacy DEV {@code VARCHAR(14) NULL}.
+     */
+    @Column(name = "TRN_LST_SUC_DTM", length = 14)
+    private String trnLstSucDtm;
+
+    /**
      * Manually-assigned print/display order. Legacy {@code fnsh_0001_001}
      * ORDERs Account Inquiry by {@code PRN_SEQ ASC} so users can pin
      * priority accounts to the top of the list. Schema column added in

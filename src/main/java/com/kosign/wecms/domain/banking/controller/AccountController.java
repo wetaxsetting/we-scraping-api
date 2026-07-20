@@ -23,8 +23,8 @@ import com.kosign.wecms.domain.banking.dto.TransactionReportingAccountRequest;
 import com.kosign.wecms.domain.banking.dto.TransactionVasAccountRequest;
 import com.kosign.wecms.domain.banking.dto.TransactionListResponse;
 import com.kosign.wecms.domain.banking.dto.TransactionSummaryResponse;
+import com.kosign.wecms.domain.banking.dto.SyncStatusResponse;
 import com.kosign.wecms.domain.banking.dto.TransactionsSyncRequest;
-import com.kosign.wecms.domain.banking.dto.TransactionsSyncResponse;
 import com.kosign.wecms.domain.banking.nxisas.BankTransactionSyncService;
 import com.kosign.wecms.domain.banking.nxisas.dto.SubmitChallengeRequest;
 import com.kosign.wecms.domain.banking.nxisas.dto.SubmitQnaRequest;
@@ -251,18 +251,31 @@ public class AccountController {
      */
     @PostMapping("/accounts/transactions-sync")
     @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-account-inquiry','banking-fcy-update-inquire')")
-    public ApiResponse<TransactionsSyncResponse> syncTransactions(
+    public ApiResponse<SyncStatusResponse> syncTransactions(
             @Valid @RequestBody TransactionsSyncRequest request) {
+        // Phase 2: returns a RUNNING status snapshot immediately; the scrape
+        // runs on the bounded bankSyncExecutor and the frontend polls /status.
         return ApiResponse.ok(accountService.syncTransactions(request));
     }
 
-    /** Resume a sync after a security-question (QNA) answer. The
-     *  frontend echoes back the {@code session_id} the
-     *  {@code QNA_REQUIRED} response carried plus the chosen
-     *  question + user's answer. */
+    /**
+     * Poll the async sync status (Phase 2). Tenant-validated, read-only, safe
+     * for repeated polling; returns a stable immutable snapshot. Status values:
+     * {@code RUNNING} / {@code COMPLETED} / {@code FAILED} / {@code CANCELLED} /
+     * {@code OTP_REQUIRED} / {@code QNA_REQUIRED} / {@code CAPTCHA_REQUIRED}.
+     */
+    @GetMapping("/accounts/transactions-sync/{sessionId}/status")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-account-inquiry','banking-fcy-update-inquire')")
+    public ApiResponse<SyncStatusResponse> syncStatus(
+            @PathVariable java.util.UUID sessionId) {
+        return ApiResponse.ok(bankTransactionSyncService.status(sessionId));
+    }
+
+    /** Resume a sync after a security-question (QNA) answer — schedules a fresh
+     *  background segment that continues from the saved continuation. */
     @PostMapping("/accounts/transactions-sync/{sessionId}/qna")
     @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-account-inquiry','banking-fcy-update-inquire')")
-    public ApiResponse<TransactionsSyncResponse> submitSyncQna(
+    public ApiResponse<SyncStatusResponse> submitSyncQna(
             @PathVariable java.util.UUID sessionId,
             @Valid @RequestBody SubmitQnaRequest request) {
         return ApiResponse.ok(bankTransactionSyncService.submitQna(sessionId, request));
@@ -271,7 +284,7 @@ public class AccountController {
     /** Resume a sync after an OTP submission. */
     @PostMapping("/accounts/transactions-sync/{sessionId}/otp")
     @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-account-inquiry','banking-fcy-update-inquire')")
-    public ApiResponse<TransactionsSyncResponse> submitSyncOtp(
+    public ApiResponse<SyncStatusResponse> submitSyncOtp(
             @PathVariable java.util.UUID sessionId,
             @Valid @RequestBody SubmitChallengeRequest request) {
         return ApiResponse.ok(bankTransactionSyncService.submitOtp(sessionId, request));
@@ -280,10 +293,43 @@ public class AccountController {
     /** Resume a sync after a CAPTCHA submission. */
     @PostMapping("/accounts/transactions-sync/{sessionId}/captcha")
     @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-account-inquiry','banking-fcy-update-inquire')")
-    public ApiResponse<TransactionsSyncResponse> submitSyncCaptcha(
+    public ApiResponse<SyncStatusResponse> submitSyncCaptcha(
             @PathVariable java.util.UUID sessionId,
             @Valid @RequestBody SubmitChallengeRequest request) {
         return ApiResponse.ok(bankTransactionSyncService.submitCaptcha(sessionId, request));
+    }
+
+    /**
+     * Cancel a sync (Phase 1, universal in Phase 2). The frontend calls this
+     * from the popup's Cancel button / close-while-scraping confirm, echoing
+     * the {@code session_id}. The orchestrator sets the cooperative cancel flag
+     * (halts the scrape before the next account/phase), best-effort LOGOUTs the
+     * bank-adapter session, and marks the session CANCELLED (retained briefly
+     * so the final poll can read it; any later resume is refused). Idempotent +
+     * tenant-validated in the service — a body is not required.
+     */
+    @PostMapping("/accounts/transactions-sync/{sessionId}/cancel")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-account-inquiry','banking-fcy-update-inquire')")
+    public ApiResponse<SyncStatusResponse> cancelSync(
+            @PathVariable java.util.UUID sessionId) {
+        return ApiResponse.ok(bankTransactionSyncService.cancel(sessionId));
+    }
+
+    /**
+     * Cancel the CURRENT 2nd-cert challenge (QNA / OTP / CAPTCHA) — an
+     * account-level operation, NOT a whole-session cancel. The frontend calls
+     * this from the QNA/OTP/CAPTCHA popup's Cancel / X (after the "quit the
+     * inquiry for {bank}?" confirm). The current login group's account(s) are
+     * recorded as {@code LOGIN_CAN} failures and the batch continues with the
+     * next login group, finishing normally with a "Success X / Failed Y"
+     * summary (legacy {@code nxisas_v2.js} `run_afterLoginFail` / WBC1152).
+     * Idempotent + tenant-validated; a body is not required.
+     */
+    @PostMapping("/accounts/transactions-sync/{sessionId}/challenge-cancel")
+    @PreAuthorize("@menuAuthz.canAccessAny('banking-vnd-account-inquiry','banking-fcy-update-inquire')")
+    public ApiResponse<SyncStatusResponse> cancelSyncChallenge(
+            @PathVariable java.util.UUID sessionId) {
+        return ApiResponse.ok(bankTransactionSyncService.cancelChallenge(sessionId));
     }
 
     /**

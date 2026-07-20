@@ -40,6 +40,20 @@ public record EInvoiceDetailScrapeRequest(
         @Size(max = 1000)
         String rsltMsg,
 
+        /**
+         * Phase-1 batch timestamp (the {@code mod_dtm} returned by
+         * {@code /scrape-results}). Optional — when present (14-digit
+         * {@code yyyyMMddHHmmss}) the detail save stamps it onto
+         * {@code BUSA_DOC_MSTR.MOD_DTM} instead of minting a fresh one, so
+         * the phase-1 audit {@code REG_DTM}, the returned batch id, and the
+         * enriched master rows all share ONE batch timestamp. That is what
+         * lets the modal "View" (and the History → Detail drill-down) reliably
+         * select the exact rows this inquiry produced. Blank / omitted →
+         * legacy behaviour (fresh timestamp). {@code @Pattern} skips null.
+         */
+        @Pattern(regexp = "\\d{14}", message = "mod_dtm must be yyyyMMddHHmmss")
+        String modDtm,
+
         @NotNull @Valid
         List<ScrapedEInvoiceDetailRow> details
 ) { }

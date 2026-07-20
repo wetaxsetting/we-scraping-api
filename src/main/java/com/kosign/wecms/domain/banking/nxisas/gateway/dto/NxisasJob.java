@@ -19,6 +19,16 @@ public enum NxisasJob {
     ACCT_LIST("ACCT_LIST"),
     BALANCE("BALANCE"),
     TRANSACTION("TRANSACTION"),
+    /**
+     * Fixed-Deposit (Time-Deposit) balance + transaction jobs — legacy
+     * {@code kr.co.coocon.ibasews.enums.NxisasJob.BALANCE_FIXED_DEPOSIT} /
+     * {@code TRANSACTION_FIXED_DEPOSIT}. Dispatched for {@code ACCT_TYPE_CD "02"}
+     * accounts against a fixed bank whitelist: VCB ({@code 11704004}) scrapes
+     * both; Shinhan/ACB/HD/Vietin/VP scrape {@code BALANCE_FIXED_DEPOSIT} only
+     * (no transaction-FD support). See {@code nxisas_tranList_osmc.js:301-338}.
+     */
+    BALANCE_FIXED_DEPOSIT("BALANCE_FIXED_DEPOSIT"),
+    TRANSACTION_FIXED_DEPOSIT("TRANSACTION_FIXED_DEPOSIT"),
     CARD_INFO("CARD_INFO"),
     CARD_USING("CARD_USING"),
     /**

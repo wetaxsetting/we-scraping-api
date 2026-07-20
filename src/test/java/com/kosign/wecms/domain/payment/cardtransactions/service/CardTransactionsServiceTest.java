@@ -7,8 +7,6 @@ import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.banking.bankcredentials.repository.BankCertInfoRepository;
-import com.kosign.wecms.domain.banking.entity.BankInfm;
-import com.kosign.wecms.domain.banking.repository.BankInfmRepository;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolApprvrInfmRepository;
 import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalBoxFanoutService;
@@ -69,7 +67,7 @@ class CardTransactionsServiceTest {
 
     @Mock private CardTrnsHstrRepository           cardTrnsRepo;
     @Mock private CardMstrRepository               cardMstrRepo;
-    @Mock private BankInfmRepository               bankInfmRepo;
+    @Mock private CardBankNameResolver             cardBankNameResolver;
     @Mock private BankCertInfoRepository           bankCertInfoRepo;
     @Mock private ChartOfAccountRepository         chartAcctRepo;
     @Mock private AuditLogService                  auditLogService;
@@ -118,8 +116,7 @@ class CardTransactionsServiceTest {
         when(cardTrnsRepo.findLedgerTotals(eq(TENANT), eq("20250101"), eq("20251231"),
                 eq(false), any(), eq(false), any(), eq(null), eq(null)))
                 .thenReturn(totals(1L, "799200.000000", 1L, "799200.000000", 0L, "0"));
-        when(bankInfmRepo.findById("11704020"))
-                .thenReturn(Optional.of(bankInfm("11704020", "VietinBank")));
+        when(cardBankNameResolver.resolve("11704020")).thenReturn("VietinBank");
         when(cardMstrRepo.findById(any(CardMstrId.class)))
                 .thenReturn(Optional.empty());
 
@@ -271,8 +268,7 @@ class CardTransactionsServiceTest {
         row.setNote("client dinner");
         when(cardTrnsRepo.findByBizKeyAndApprSeqNo(TENANT, "1390"))
                 .thenReturn(List.of(row));
-        when(bankInfmRepo.findById("11704020"))
-                .thenReturn(Optional.of(bankInfm("11704020", "VietinBank")));
+        when(cardBankNameResolver.resolve("11704020")).thenReturn("VietinBank");
         when(cardMstrRepo.findById(any(CardMstrId.class)))
                 .thenReturn(Optional.empty());
 
@@ -477,8 +473,7 @@ class CardTransactionsServiceTest {
         c.setModDtm("20260101000000");
 
         when(cardMstrRepo.findActiveCards(TENANT, null)).thenReturn(List.of(c));
-        when(bankInfmRepo.findById("11704088"))
-                .thenReturn(Optional.of(bankInfm("11704088", "Shinhan Bank VN")));
+        when(cardBankNameResolver.resolve("11704088")).thenReturn("Shinhan Bank VN");
 
         var resp = service.cards(null);
         assertThat(resp.cards()).hasSize(1);
@@ -601,19 +596,10 @@ class CardTransactionsServiceTest {
         return c;
     }
 
-    private static BankInfm bankInfm(String bankCd, String displayName) {
-        BankInfm b = new BankInfm();
-        b.setBankCd(bankCd);
-        b.setRprsBankNm(displayName);
-        // Whatever other columns BankInfm carries are not exercised by
-        // this test — the resolver only reads bankCd + rprsBankNm.
-        return b;
-    }
-
     // Silences unused-mock warnings when Mockito sees the @Mock declared
     // but only some tests use it.
     @SuppressWarnings("unused")
     private void quietUnused() {
-        lenient().when(bankInfmRepo.findById(any())).thenReturn(Optional.empty());
+        lenient().when(cardBankNameResolver.resolve(any())).thenReturn("");
     }
 }

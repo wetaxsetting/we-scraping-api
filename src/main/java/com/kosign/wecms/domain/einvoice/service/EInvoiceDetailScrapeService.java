@@ -6,10 +6,13 @@ import com.kosign.wecms.domain.einvoice.dto.EInvoiceDetailScrapeRequest;
 import com.kosign.wecms.domain.einvoice.dto.EInvoiceDetailScrapeResult;
 import com.kosign.wecms.domain.einvoice.dto.ScrapedEInvoiceDetailRow;
 import com.kosign.wecms.domain.einvoice.entity.BusaDocDetl;
+import com.kosign.wecms.domain.einvoice.entity.BusaDocDetlId;
 import com.kosign.wecms.domain.einvoice.entity.BusaDocMstr;
 import com.kosign.wecms.domain.einvoice.entity.BusaDocMstrId;
 import com.kosign.wecms.domain.einvoice.entity.EinvFeeDetl;
+import com.kosign.wecms.domain.einvoice.entity.EinvFeeDetlId;
 import com.kosign.wecms.domain.einvoice.entity.EinvTaxDetl;
+import com.kosign.wecms.domain.einvoice.entity.EinvTaxDetlId;
 import com.kosign.wecms.domain.einvoice.repository.BusaDocDetlRepository;
 import com.kosign.wecms.domain.einvoice.repository.BusaDocMstrRepository;
 import com.kosign.wecms.domain.einvoice.repository.EinvFeeDetlRepository;
@@ -20,6 +23,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -43,10 +47,22 @@ import java.util.List;
  *   <li>{@code EINV_TAX_DETL} ← engine {@code taxArr[]} (legacy {@code :825-865})</li>
  * </ul>
  *
- * <p><b>Idempotency:</b> delete-then-insert per {@code (BIZ_KEY, DOC_ID)}
- * so a re-scrape of the same range is safe (legacy upserts by
- * {@code DISP_ORD}; the refactor replaces the line set wholesale — the
- * same intent, simpler).
+ * <p><b>Idempotency:</b> upsert per {@code (BIZ_KEY, DOC_ID, DISP_ORD)}
+ * so a re-scrape of the same range is safe — find-by-PK then UPDATE or
+ * INSERT, mirroring legacy {@code c002:740-864} exactly. A wholesale
+ * delete-then-insert was tried first but is UNSAFE against the live JEX DB:
+ * each detail table ({@code BUSA_DOC_DETL} / {@code EINV_FEE_DETL} /
+ * {@code EINV_TAX_DETL}) carries an {@code AFTER} trigger logging every
+ * change into a {@code *_HIS} table keyed on
+ * {@code (BIZ_KEY, DOC_ID, DISP_ORD, MOD_DTM)}, where {@code MOD_DTM =
+ * to_char(timezone('utc', now()), 'YYYYMMDDHH24MISS')}. PostgreSQL freezes
+ * {@code now()} at transaction start, so the DELETE's {@code 'D'} history
+ * row and the re-INSERT's {@code 'C'} history row for the same
+ * {@code DISP_ORD} land on an identical {@code MOD_DTM} → duplicate-key on
+ * {@code pk_einv_tax_detl_his}. Upserting keeps it to one DML per
+ * {@code DISP_ORD} per transaction, so each {@code *_HIS} row gets a unique
+ * PK. As in legacy, stale higher-{@code DISP_ORD} rows from a larger prior
+ * scrape are left in place (not deleted).
  *
  * <p><b>Counterparty auto-registration (Scope 4):</b> delegated to
  * {@link EInvoiceTrcoAutoRegistrar} — resolves/creates the
@@ -55,11 +71,15 @@ import java.util.List;
  * {@code TRCO_ACTV_HSTR} activity row, then stamps the resolved
  * {@code TRCO_KEY} onto the master (legacy {@code c002:333-535,883-909}).
  *
- * <p><b>Still deferred (legacy {@code c002} does more):</b> the OSMC/BI09
- * contact bridge; the representative columns + {@code TRCO_RSPB_INFM};
- * the {@code SYS_TRCO_INFM_DIS_NM} nickname normalisation; the
- * payment-term overdue-days recalculation. Tracked in
- * {@code docs/features/e-invoice/final-parity-audit.md}.
+ * <p><b>Implemented 2026-07-14 (PO-approved legacy parity):</b> the
+ * representative columns + {@code TRCO_RSPB_INFM} (D5.3) and the
+ * {@code SYS_TRCO_INFM_DIS_NM} nickname normalisation (D5.2b) via
+ * {@link EInvoiceTrcoAutoRegistrar}; the payment-term due-date recompute
+ * (D5.4, {@link #applyDueDate}, legacy {@code c002:691-711} — overwrites /
+ * NULLs {@code DUE_DT} on every scrape). <b>Out of scope:</b> only the
+ * OSMC/BI09 contact bridge — legacy {@code comm_0800_001_u001} is
+ * {@code PrdtType.C/D}-gated + external OSMC, inert for WeCMS product-type-F
+ * (D4). See {@code Claude Code (AI)/notes/update-einvoice-*}.
  *
  * <p><b>Runtime caveat (OQ-S1):</b> the upstream scrape leg depends on
  * the local {@code .exe}, licensed per page origin (not on localhost) —
@@ -74,6 +94,9 @@ public class EInvoiceDetailScrapeService {
     private static final String ITEM_CD_DEFAULT = "0000000000"; // legacy :765
     private static final DateTimeFormatter DTM_14 =
             DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
+    /** ISSU_DT / DUE_DT wire format (D5.4). */
+    private static final DateTimeFormatter DATE_8 =
+            DateTimeFormatter.ofPattern("yyyyMMdd");
 
     private final BusaDocMstrRepository masterRepo;
     private final BusaDocDetlRepository detlRepo;
@@ -87,6 +110,13 @@ public class EInvoiceDetailScrapeService {
         final String userId = TenantContext.currentUserId();
         final boolean isSales = "SALES".equalsIgnoreCase(req.type());
         final String regDtm = OffsetDateTime.now(ZoneOffset.UTC).format(DTM_14);
+        // Batch timestamp for MOD_DTM: reuse the phase-1 stamp when the client
+        // forwards it so the master rows keep the SAME batch id as the audit
+        // row + the returned mod_dtm — the modal "View" and the History →
+        // Detail drill-down both key on this. Falls back to a fresh stamp
+        // (legacy behaviour) when the client omits it.
+        final String batchDtm =
+                (req.modDtm() != null && req.modDtm().matches("\\d{14}")) ? req.modDtm() : regDtm;
 
         int detailSaved = 0;
         int detailSkipped = 0;
@@ -105,9 +135,9 @@ public class EInvoiceDetailScrapeService {
             // contact + group-link + bank account + activity-history row,
             // and stamps the resolved TRCO_KEY onto the master. ──
             final BigDecimal totlAmt = EInvoiceScrapeService.parseAmount(row.totalAmt());
-            final String trcoKey = trcoRegistrar.registerCounterparty(
+            final EInvoiceTrcoAutoRegistrar.CounterpartyResult cp = trcoRegistrar.registerCounterparty(
                     isSales, bizKey, userId, regDtm, docId, row, totlAmt);
-            master.setTrcoKey(trcoKey);
+            master.setTrcoKey(cp.trcoKey());
 
             // ── Full master enrichment (Scope 3 — legacy c002:264-687) ──
             // Issuer (ISSU_*) is our own company on the invoice: for SALES
@@ -135,6 +165,27 @@ public class EInvoiceDetailScrapeService {
                 master.setIssuCmenm(clip(issuName, 200));
             }
             applyIssuerAddress(master, issuAddr);
+
+            // ── Counterparty (TRCO_*) address + phone + issuer tax id ──
+            // Legacy c002:625-634 copies the resolved contact's BsunAddr +
+            // telNo onto BUSA_DOC_MSTR.TRCO_BSUN_* / TRCO_RPRS_TLPH. The
+            // registrar (D5.1) parses the counterparty address into the
+            // TRCO_INFM contact, but the master was never stamped — so the
+            // View-Details popup (which reads master.TRCO_BSUN_*) showed an
+            // empty seller address on Bills. Counterparty = buyer for a Sale,
+            // seller (supplier) for a Bill.
+            String trcoAddr = isSales ? row.buyerAddr() : row.sellerAddr();
+            applyCounterpartyAddress(master, trcoAddr);
+            // Seller phone → TRCO_RPRS_TLPH (legacy c002:632-634 — sellerPhone
+            // is the counterparty's phone on a Bill; the payload carries no
+            // buyer phone, so Sales leaves it untouched).
+            setIf(row.sellerPhone(), v -> master.setTrcoRprsTlph(clip(v, 50)));
+            // Overwrite the phase-1 ISSU_TAX_ID placeholder ("9999…" for Bills)
+            // with the own-company tax id once the detail provides it
+            // (legacy c002:270 — Bill: own=buyer→buyerTaxCode, Sale:
+            // own=seller→sellerTaxCode). Guarded so a blank never wipes it.
+            String ownTaxId = isSales ? row.sellerTaxCode() : row.buyerTaxCode();
+            setIf(ownTaxId, v -> master.setIssuTaxId(clip(v, 40)));
 
             // EINV_* scalar fields (verbatim from the detail payload).
             setIf(row.invoiceTitle(),      v -> master.setEinvTitle(clip(v, 300)));
@@ -171,15 +222,23 @@ public class EInvoiceDetailScrapeService {
             BigDecimal disc = EInvoiceScrapeService.parseAmount(row.totalDiscount());
             if (disc != null) master.setTotlDisAmt(disc);
 
+            // ── D5.4 — payment-term due-date recompute (legacy c002:691-711) ──
+            applyDueDate(master, cp.trcoKey(), cp.paymTerm());
+
             master.setModId(userId);
-            master.setModDtm(regDtm);
+            master.setModDtm(batchDtm);
             masterRepo.save(master);
 
-            // ── Replace line items / fees / taxes (delete-then-insert) ──
-            detlRepo.deleteByBizKeyAndDocId(bizKey, docId);
-            feeRepo.deleteByBizKeyAndDocId(bizKey, docId);
-            taxRepo.deleteByBizKeyAndDocId(bizKey, docId);
-
+            // ── Upsert line items / fees / taxes by (BIZ_KEY, DOC_ID, DISP_ORD) ──
+            // Legacy parity (c002:740-864): find-by-PK → UPDATE, else INSERT.
+            // A wholesale delete-then-insert is UNSAFE here: each of these
+            // tables carries an AFTER-trigger that logs every row change into
+            // its {@code *_HIS} table with PK (BIZ_KEY, DOC_ID, DISP_ORD,
+            // MOD_DTM), where MOD_DTM = to_char(utc now(), 'YYYYMMDDHH24MISS').
+            // now() is frozen at transaction start, so a DELETE ('D') and a
+            // re-INSERT ('C') of the same disp_ord in one tx collide on the
+            // _HIS PK (dup-key on pk_einv_tax_detl_his). Upserting keeps it to
+            // ONE DML per disp_ord per tx → one _HIS row → unique MOD_DTM.
             lineItems += writeProducts(bizKey, docId, userId, regDtm, row.products());
             writeFees(bizKey, docId, userId, regDtm, row.fees());
             writeTaxes(bizKey, docId, userId, regDtm, row.taxes());
@@ -187,9 +246,9 @@ public class EInvoiceDetailScrapeService {
             detailSaved++;
         }
 
-        log.info("e-invoice detail intake: bizKey={} type={} detailSaved={} skipped={} lineItems={} rslt={}",
-                bizKey, req.type(), detailSaved, detailSkipped, lineItems, req.rsltCd());
-        return new EInvoiceDetailScrapeResult(detailSaved, 0, detailSkipped, lineItems, regDtm);
+        log.info("e-invoice detail intake: bizKey={} type={} detailSaved={} skipped={} lineItems={} batchDtm={} rslt={}",
+                bizKey, req.type(), detailSaved, detailSkipped, lineItems, batchDtm, req.rsltCd());
+        return new EInvoiceDetailScrapeResult(detailSaved, 0, detailSkipped, lineItems, batchDtm);
     }
 
     /* ------------------------------------------------------------------ */
@@ -229,10 +288,17 @@ public class EInvoiceDetailScrapeService {
         int n = 0;
         for (int i = 0; i < products.size(); i++) {
             ScrapedEInvoiceDetailRow.Product p = products.get(i);
-            BusaDocDetl d = new BusaDocDetl();
-            d.setBizKey(bizKey);
-            d.setDocId(docId);
-            d.setDispOrd(p.dispOrd() > 0 ? p.dispOrd() : i + 1);
+            final int dispOrd = p.dispOrd() > 0 ? p.dispOrd() : i + 1;
+            BusaDocDetl d = detlRepo.findById(new BusaDocDetlId(bizKey, docId, dispOrd))
+                    .orElseGet(() -> {
+                        BusaDocDetl fresh = new BusaDocDetl();
+                        fresh.setBizKey(bizKey);
+                        fresh.setDocId(docId);
+                        fresh.setDispOrd(dispOrd);
+                        fresh.setRegId(userId);
+                        fresh.setRegDtm(regDtm);
+                        return fresh;
+                    });
             d.setUserId(userId);
             d.setItemCd(ITEM_CD_DEFAULT);
             d.setItemNm(clip(p.product(), 255));
@@ -243,8 +309,6 @@ public class EInvoiceDetailScrapeService {
             d.setDcAmt(EInvoiceScrapeService.parseAmount(p.discount()));
             d.setEinvProductname(clip(p.productName(), 500));
             d.setEinvTaxrate(clip(p.taxRate(), 10));
-            d.setRegId(userId);
-            d.setRegDtm(regDtm);
             d.setModId(userId);
             d.setModDtm(regDtm);
             detlRepo.save(d);
@@ -258,14 +322,19 @@ public class EInvoiceDetailScrapeService {
         if (fees == null || fees.isEmpty()) return;
         for (int i = 0; i < fees.size(); i++) {
             ScrapedEInvoiceDetailRow.Fee f = fees.get(i);
-            EinvFeeDetl e = new EinvFeeDetl();
-            e.setBizKey(bizKey);
-            e.setDocId(docId);
-            e.setDispOrd(f.dispOrd() > 0 ? f.dispOrd() : i + 1);
+            final int dispOrd = f.dispOrd() > 0 ? f.dispOrd() : i + 1;
+            EinvFeeDetl e = feeRepo.findById(new EinvFeeDetlId(bizKey, docId, dispOrd))
+                    .orElseGet(() -> {
+                        EinvFeeDetl fresh = new EinvFeeDetl();
+                        fresh.setBizKey(bizKey);
+                        fresh.setDocId(docId);
+                        fresh.setDispOrd(dispOrd);
+                        fresh.setRegId(userId);
+                        fresh.setRegDtm(regDtm);
+                        return fresh;
+                    });
             e.setEinvFeename(clip(f.feeName(), 100));
             e.setEinvFee(EInvoiceScrapeService.parseAmount(f.fee()));
-            e.setRegId(userId);
-            e.setRegDtm(regDtm);
             e.setModId(userId);
             e.setModDtm(regDtm);
             feeRepo.save(e);
@@ -277,15 +346,20 @@ public class EInvoiceDetailScrapeService {
         if (taxes == null || taxes.isEmpty()) return;
         for (int i = 0; i < taxes.size(); i++) {
             ScrapedEInvoiceDetailRow.Tax t = taxes.get(i);
-            EinvTaxDetl e = new EinvTaxDetl();
-            e.setBizKey(bizKey);
-            e.setDocId(docId);
-            e.setDispOrd(t.dispOrd() > 0 ? t.dispOrd() : i + 1);
+            final int dispOrd = t.dispOrd() > 0 ? t.dispOrd() : i + 1;
+            EinvTaxDetl e = taxRepo.findById(new EinvTaxDetlId(bizKey, docId, dispOrd))
+                    .orElseGet(() -> {
+                        EinvTaxDetl fresh = new EinvTaxDetl();
+                        fresh.setBizKey(bizKey);
+                        fresh.setDocId(docId);
+                        fresh.setDispOrd(dispOrd);
+                        fresh.setRegId(userId);
+                        fresh.setRegDtm(regDtm);
+                        return fresh;
+                    });
             e.setEinvTaxrate(clip(t.taxRate(), 50));
             e.setAmt(EInvoiceScrapeService.parseAmount(t.amtWithoutTax()));
             e.setTaxAmt(EInvoiceScrapeService.parseAmount(t.taxAmt()));
-            e.setRegId(userId);
-            e.setRegDtm(regDtm);
             e.setModId(userId);
             e.setModDtm(regDtm);
             taxRepo.save(e);
@@ -343,6 +417,66 @@ public class EInvoiceDetailScrapeService {
             master.setIssuBsunCity(clip(last, 200));
         }
         master.setIssuBsunSt("Việt Nam".equalsIgnoreCase(last) ? "Việt Nam" : null);
+    }
+
+    /**
+     * Stamp the counterparty ({@code TRCO_*}) business-address columns on the
+     * master from the scraped counterparty address, reusing
+     * {@link EInvoiceTrcoAutoRegistrar#parseBusinessAddress} so the master and
+     * the {@code TRCO_INFM} contact carry an identical
+     * {@code [st, city, postAdrs, dtlAdrs]} decomposition. Legacy parity:
+     * {@code c002:625-630} ({@code setTrcoTaxInfo} copies the resolved
+     * contact's {@code BsunAddr} onto {@code BUSA_DOC_MSTR.TRCO_BSUN_*}).
+     *
+     * <p>The decomposition reconstructs cleanly in the View-Details read path:
+     * {@code EInvoiceDetailService} joins {@code [post, dtl, city, st]} with
+     * {@code ", "}, which recomposes the original scraped address. Blank
+     * address → columns left untouched (an empty detail never wipes a good
+     * phase-1 value; matches the {@code setIf} guards). Package-private static
+     * for unit testing (same pattern as {@link #applyDueDate}).
+     */
+    static void applyCounterpartyAddress(BusaDocMstr master, String addr) {
+        if (!notBlank(addr)) return;
+        String[] a = EInvoiceTrcoAutoRegistrar.parseBusinessAddress(addr);
+        master.setTrcoBsunSt(clip(a[0], 200));
+        master.setTrcoBsunCity(clip(a[1], 200));
+        master.setTrcoBsunPostAdrs(clip(a[2], 200));
+        master.setTrcoBsunDtlAdrs(clip(a[3], 200));
+    }
+
+    /**
+     * D5.4 — payment-term due-date recompute (legacy {@code c002:691-711},
+     * #40183). For a non-ETC counterparty, a provisioning status that is NOT
+     * {@code PA}/{@code PP} (paid/partly-paid), and a valid {@code ISSU_DT}:
+     * <ul>
+     *   <li>term set → {@code DUE_DT = ISSU_DT + term days};</li>
+     *   <li>term blank → {@code DUE_DT} cleared to {@code null}.</li>
+     * </ul>
+     * <b>Legacy parity (PO-confirmed 2026-07-14):</b> legacy overwrites /
+     * NULLs {@code DUE_DT} on EVERY scrape — it does NOT preserve a
+     * user-edited due date. This reproduces that exactly. Invalid term /
+     * date is defensive-skipped (leaves {@code DUE_DT} untouched).
+     */
+    static void applyDueDate(BusaDocMstr master, String trcoKey, String paymTerm) {
+        if (EInvoiceTrcoAutoRegistrar.ETC_TRCO_KEY.equals(trcoKey)) return;
+        final String prov = trim(master.getProvStts());
+        if ("PA".equals(prov) || "PP".equals(prov)) return;
+        final String issu = trim(master.getIssuDt());
+        if (issu.length() != 8) return;               // legacy: ISSU_DT != null
+        if (isBlank(paymTerm)) {
+            master.setDueDt(null);                    // legacy patch DUE_DT = null
+            return;
+        }
+        try {
+            final int days = Integer.parseInt(paymTerm.trim());
+            master.setDueDt(LocalDate.parse(issu, DATE_8).plusDays(days).format(DATE_8));
+        } catch (RuntimeException e) {
+            // Non-numeric term or unparseable ISSU_DT — leave DUE_DT as-is.
+        }
+    }
+
+    private static boolean isBlank(String s) {
+        return s == null || s.trim().isEmpty();
     }
 
     private static boolean notBlank(String s) {

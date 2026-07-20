@@ -1,69 +1,62 @@
-# SIT / shared dev-server profile (tracked in Git, no secrets).
-# Targets the shared dev DB 172.168.5.172:5432/wecmsdevdb (office network / VPN).
-# All secrets come from OS env / setenv.sh / the gitignored .env.sit.
-# Required env vars: docs/security/required-environment-secrets.md.
-
+# =============================================================================
+# SIT Spring configuration
+# Configures environment loading, database access, and JPA behavior.
+# =============================================================================
 spring:
-  # Per-profile env file, loaded on top of the base ./.env.
   config:
     import: optional:file:./.env.sit[.properties]
+  # Database connection.
   datasource:
     url: ${WECMS_DB_URL}
     username: ${WECMS_DB_USERNAME}
     password: ${WECMS_DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
+  # JPA and Hibernate behavior.
   jpa:
     hibernate:
       ddl-auto: validate
-    # SQL logging ON for SIT only. It logs real business data — never copy to uat/prod.
     show-sql: true
     properties:
       hibernate.format_sql: true
 
+# =============================================================================
+# WeCMS application configuration
+# Configures security, integrations, file storage, and application services.
+# =============================================================================
 wecms:
-  # =============================================================================
-  # Security (CORS / JWT)
-  # =============================================================================
+  # JWT authentication.
   jwt:
-    # Required. openssl rand -hex 64
     secret: ${WECMS_JWT_SECRET}
+  # Cross-origin request settings.
   cors:
     allowed-origins: ${WECMS_CORS_ALLOWED_ORIGINS}
-  # =============================================================================
-  # Credential cipher (legacy pgcrypto-compatible)
-  # =============================================================================
+  # Credential encryption.
   crypto:
-    # Must equal the legacy seed in every profile.
     legacy-cert-seed: ${WECMS_CRYPTO_LEGACY_CERT_SEED}
-  # =============================================================================
-  # Login Credentials
-  # =============================================================================
-  login-credentials:
-    gdt-verify-enabled: ${WECMS_LOGIN_CREDENTIALS_GDT_VERIFY_ENABLED}
-  # =============================================================================
-  # EFS / Van Center (firm-banking dispatch)
-  # =============================================================================
-  # All flags OFF by default (mock) until SFTP + EFS + VAN are provisioned.
+
+  # Firm-banking dispatch through EFS and VAN Center.
   dispatch:
     auto-receive: ${WECMS_DISPATCH_AUTO_RECEIVE}
     realtime-dispatch: ${WECMS_DISPATCH_REALTIME_DISPATCH}
     recipient-inquiry: ${WECMS_DISPATCH_RECIPIENT_INQUIRY}
-    # Result-check poll. Cron "-" = never fire.
+    # Dispatch result polling.
     result-check:
       cron: ${WECMS_DISPATCH_RESULT_CHECK_CRON}
+    # Dispatch failure alerts.
     alert:
       enabled: ${WECMS_DISPATCH_ALERT_ENABLED}
-    # Inbound EFS callbacks. allowed-ips is a source-IP allow-list (empty = none).
+    # VAN callback access control.
     callback:
       trust-forwarded-for: true
       allowed-ips: ${WECMS_CALLBACK_ALLOWED_IPS}
+    # EFS API connection.
     efs:
       enabled: ${WECMS_EFS_ENABLED}
       base-url: ${WECMS_EFS_BASE_URL}
       partner-id: ${WECMS_EFS_PARTNER_ID}
       connect-timeout-ms: 3000
       read-timeout-ms: 20000
-    # SFTP bulk-file channel. OFF = mock (no network I/O).
+    # SFTP file transfer.
     sftp:
       enabled: ${WECMS_SFTP_ENABLED}
       host: ${WECMS_SFTP_HOST}
@@ -77,11 +70,8 @@ wecms:
       local-download-path: ${WECMS_SFTP_LOCAL_DOWNLOAD}
       remote-download-path: ${WECMS_SFTP_REMOTE_DOWNLOAD}
       remote-move-path: ${WECMS_SFTP_REMOTE_MOVE}
-  # =============================================================================
-  # File storage
-  # =============================================================================
-  # Upload layout: <storage-root>/<bizKey>/<module>/<file>. Real SIT host sets
-  # each WECMS_*_STORAGE_ROOT via setenv.sh; these defaults are fallback-only.
+
+  # File storage roots per upload module.
   overseas-payment:
     storage-root: ${WECMS_OVERSEAS_PAYMENT_STORAGE_ROOT}
   vendor-payment:
@@ -103,32 +93,26 @@ wecms:
   internal-transfer:
     storage-root: ${WECMS_INTERNAL_TRANSFER_STORAGE_ROOT}
 
-  # =============================================================================
-  # Exchange-rate collection batch
-  # =============================================================================
-  # ON by default on SIT — SIT owns FX collection on its isolated DB.
+  # Exchange rate collection.
   exchange-rate:
+    # Scheduled collection batch.
     batch:
       enabled: ${WECMS_EXCHANGE_RATE_BATCH_ENABLED}
-
-  # =============================================================================
-  # Operation Status Inquiry batch
-  # =============================================================================
+  # Operation status inquiry.
   operation-status:
+    # Scheduled inquiry batch.
     batch:
       enabled: ${WECMS_OPERATION_STATUS_BATCH_ENABLED}
       seed-cron: ${WECMS_OPERATION_STATUS_BATCH_SEED_CRON}
       refresh-cron: ${WECMS_OPERATION_STATUS_BATCH_REFRESH_CRON}
-
-  # =============================================================================
-  # Coocon + OSMC (from .env.sit / host env)
-  # =============================================================================
+  # Coocon API integration.
   coocon:
     api-key: ${WECMS_COOCON_API_KEY}
     api-url: ${WECMS_COOCON_API_URL}
     smart-api-key: ${WECMS_COOCON_SMART_API_KEY}
     smart-api-url: ${WECMS_COOCON_SMART_API_URL}
     unique-key: ${WECMS_COOCON_UNIQUE_KEY}
+  # OSMC API integration.
   osmc:
     url: ${WECMS_OSMC_URL}
     api-key: ${WECMS_OSMC_API_KEY}
@@ -136,29 +120,33 @@ wecms:
     unique-key: ${WECMS_OSMC_UNIQUE_KEY}
 
 # =============================================================================
-# HAENGSUNG Oracle ERP integration
+# Haengsung ERP integration
+# Configures the Oracle connection and scheduled synchronization jobs.
 # =============================================================================
-# OFF by default; real values from env vars on the SIT host.
 haengsung:
+  # Oracle database connection.
   oracle:
     enabled: ${HAENGSUNG_ORACLE_ENABLED}
     url: ${HAENGSUNG_ORACLE_URL}
     username: ${HAENGSUNG_ORACLE_USERNAME}
     password: ${HAENGSUNG_ORACLE_PASSWORD}
+  # Scheduled payment import.
   scheduled-payment-import:
     enabled: ${HAENGSUNG_SCHEDULED_IMPORT_ENABLED}
     cron: ${HAENGSUNG_SCHEDULED_IMPORT_CRON}
+  # Exchange rate synchronization.
   exchange-rate-sync:
     enabled: ${HAENGSUNG_EXCHANGE_RATE_SYNC_ENABLED}
     cron: ${HAENGSUNG_EXCHANGE_RATE_SYNC_CRON}
+  # Card and account synchronization.
   card-account-sync:
     enabled: ${HAENGSUNG_CARD_ACCOUNT_SYNC_ENABLED}
     cron: ${HAENGSUNG_CARD_ACCOUNT_SYNC_CRON}
 
 # =============================================================================
-# Logging
+# Application logging
+# Configures application, security, Hibernate, and SQL logging levels.
 # =============================================================================
-# VERBOSE debug logging for SIT only — logs raw SQL + bind values. Never in uat/prod.
 logging:
   level:
     com.kosign.wecms: DEBUG

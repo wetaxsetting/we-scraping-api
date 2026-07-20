@@ -3,7 +3,10 @@ package com.kosign.wecms.domain.einvoice.controller;
 import com.kosign.wecms.common.export.ExcelExportRequest;
 import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.response.ApiResponse;
+import com.kosign.wecms.domain.einvoice.dto.EInvoiceDecryptRequest;
+import com.kosign.wecms.domain.einvoice.dto.EInvoiceDecryptResponse;
 import com.kosign.wecms.domain.einvoice.dto.EInvoiceDetailHistoryResponse;
+import com.kosign.wecms.domain.einvoice.dto.EInvoiceDetailResponse;
 import com.kosign.wecms.domain.einvoice.dto.EInvoiceDetailScrapeRequest;
 import com.kosign.wecms.domain.einvoice.dto.EInvoiceDetailScrapeResult;
 import com.kosign.wecms.domain.einvoice.dto.EInvoiceHistoryResponse;
@@ -12,7 +15,9 @@ import com.kosign.wecms.domain.einvoice.dto.EInvoiceScrapeRequest;
 import com.kosign.wecms.domain.einvoice.dto.EInvoiceScrapeResult;
 import com.kosign.wecms.domain.einvoice.service.EInvoiceDetailExportService;
 import com.kosign.wecms.domain.einvoice.service.EInvoiceDetailScrapeService;
+import com.kosign.wecms.domain.einvoice.service.EInvoiceDetailService;
 import com.kosign.wecms.domain.einvoice.service.EInvoiceHistoryService;
+import com.kosign.wecms.domain.einvoice.service.EInvoiceScrapeDecryptService;
 import com.kosign.wecms.domain.einvoice.service.EInvoiceScrapeService;
 import com.kosign.wecms.domain.einvoice.service.EInvoiceService;
 import jakarta.servlet.http.HttpServletResponse;
@@ -22,6 +27,7 @@ import jakarta.validation.constraints.Pattern;
 import lombok.RequiredArgsConstructor;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -99,10 +105,12 @@ public class EInvoiceController {
 
     private final EInvoiceService service;
     private final EInvoiceScrapeService scrapeService;
+    private final EInvoiceScrapeDecryptService scrapeDecryptService;
     private final EInvoiceDetailScrapeService detailScrapeService;
     private final EInvoiceHistoryService historyService;
     private final ExcelExportService excelExportService;
     private final EInvoiceDetailExportService detailExportService;
+    private final EInvoiceDetailService detailService;
 
     @GetMapping("/einvoices")
     @PreAuthorize("@menuAuthz.canAccessEInvoice(#p0)")
@@ -133,6 +141,40 @@ public class EInvoiceController {
         return ApiResponse.ok(service.list(
                 type, fromDt, toDt, keyword, status, page, size, sortField, sortDirection));
     }
+
+    /**
+     * "View e-Invoice Details" — single-invoice detail for the shared
+     * Sales / Expenses popup. Refactor port of legacy
+     * {@code einv_0002_001_r001} (see
+     * {@code docs/jex/features/view-e-invoice-details.md}).
+     *
+     * <ul>
+     *   <li>{@code {docId}} — path, the {@code DOC_ID}.</li>
+     *   <li>{@code type} — {@code SALES} or {@code EXPENSE}; resolved via
+     *       {@link EInvoiceService#resolveDocType} ({@code 'E'}/{@code 'S'}
+     *       rejected with {@code WBE2002}, mirroring the legacy
+     *       {@code DOC_TYPE='E'} guard).</li>
+     * </ul>
+     * The service resolves the seller / buyer blocks server-side (identity
+     * swaps by doc-type; bank + sign columns don't) and returns line items,
+     * fees, tax breakdown, and totals. Tenant comes from the JWT; the master
+     * is restricted to {@code HAND_REG_YN='N'}. Not found → {@code WBE2019}.
+     */
+    @GetMapping("/einvoices/{docId}")
+    @PreAuthorize("@menuAuthz.canAccessEInvoice(#p1)")
+    public ApiResponse<EInvoiceDetailResponse> detail(
+            @PathVariable("docId") String docId,
+            @RequestParam("type") @NotBlank String type) {
+        return ApiResponse.ok(detailService.getDetail(docId, type));
+    }
+
+    // NOTE: Print + PDF are generated CLIENT-SIDE in wecms-web from the modal's
+    // own <InvoiceDocument> DOM (lib/print printElement + lib/pdf
+    // downloadElementAsPdf), so the modal, Print, and PDF are byte-for-byte
+    // identical. The former server-rendered /pdf + /print endpoints (and
+    // EInvoicePdfService + openhtmltopdf/zxing) were removed 2026-07-15 — a
+    // server template can't reproduce the React/Tailwind modal, and keeping it
+    // would be the duplicate layout the requirement forbids.
 
     /**
      * Per-resource Excel export endpoint (Backend MR C).
@@ -177,14 +219,41 @@ public class EInvoiceController {
     }
 
     /**
+     * GDT engine-payload decrypt — refactor port of the legacy
+     * {@code nxisas_decrypt} action for the e-Invoice scrape flow.
+     *
+     * <p>The browser drives the local NXiSAS engine with
+     * {@code nonDecrypt:true} (legacy parity), so each job's
+     * {@code Output.Result} comes back as Coocon SEED-CBC ciphertext. The
+     * frontend posts the raw engine callback array here; the service
+     * SEED-CBC-decrypts every {@code Output.Result} with the licensed
+     * {@code ISASSeedCBC} ({@code libs/isas1.0.jar}) and returns the array
+     * with each result replaced by its parsed plaintext JSON. The browser
+     * then parses the phase-1 {@code invoiceList} (to build the phase-2
+     * INVOICE_DETAIL jobs) and the phase-2 {@code invoiceDetail} (to build
+     * the persist payload).
+     *
+     * <p>Decryption is unconditional — the GDT engine never returns
+     * plaintext, so the scrape cannot proceed without it (OQ-S2 resolved
+     * server-side, 2026-07-14). Tenant is read from the JWT.
+     */
+    @PostMapping("/einvoices/decrypt")
+    @PreAuthorize("@menuAuthz.canAccessAny('addon-einvoices-sales','addon-einvoices-expenses')")
+    public ApiResponse<EInvoiceDecryptResponse> decryptScrape(
+            @Valid @RequestBody EInvoiceDecryptRequest request) {
+        return ApiResponse.ok(scrapeDecryptService.decrypt(request));
+    }
+
+    /**
      * "Update" (scrape) save — refactor port of the legacy
      * {@code nxisas_einvoice_c001} save action.
      *
      * <p>The browser drives the local NXiSAS engine
-     * ({@code LOGIN → INVOICE_LIST → INVOICE_DETAIL}), decrypts the
-     * result client-side (OQ-S2 — the refactor does not bundle Coocon
-     * {@code ISASSeedCBC}), and POSTs the structured invoice rows here.
-     * The service re-validates and persists the accepted rows to
+     * ({@code LOGIN → INVOICE_LIST → INVOICE_DETAIL}), decrypts the engine
+     * {@code Output.Result} server-side via {@link #decryptScrape} (OQ-S2
+     * resolved 2026-07-14 — SEED-CBC through the shared
+     * {@code SeedCbcDecryptService}), and POSTs the structured invoice rows
+     * here. The service re-validates and persists the accepted rows to
      * {@code BUSA_DOC_MSTR} plus one {@code EXT_TRAN_CALL_HIS} audit row.
      *
      * <p>Tenant + user are read from the JWT via {@code TenantContext};
@@ -203,8 +272,9 @@ public class EInvoiceController {
      *
      * <p>After phase 1 ({@link #saveScrapeResults}) persists the invoice
      * list, the browser drives the engine's {@code INVOICE_DETAIL} job per
-     * listed invoice, decrypts the detail client-side (OQ-S2), and POSTs
-     * the structured line-item / fee / tax payloads here. The service
+     * listed invoice, decrypts the detail server-side via {@link #decryptScrape}
+     * (OQ-S2 resolved 2026-07-14), and POSTs the structured line-item / fee
+     * / tax payloads here. The service
      * enriches the existing {@code BUSA_DOC_MSTR} rows and (re)writes
      * {@code BUSA_DOC_DETL} / {@code EINV_FEE_DETL} / {@code EINV_TAX_DETL}.
      *
@@ -257,12 +327,15 @@ public class EInvoiceController {
      * the {@code BUSA_DOC_MSTR} invoices it produced.
      *
      * <ul>
-     *   <li>{@code type} — {@code SALES} only (legacy rejects Expense).</li>
+     *   <li>{@code type} — {@code SALES} or {@code EXPENSE} (legacy only
+     *       rejects the distinct {@code 'E'} doc type, never Sales {@code 'I'}
+     *       or Bill {@code 'B'}); the modal's Sales + Expenses View links both
+     *       reach this endpoint.</li>
      *   <li>{@code from} / {@code to} — required {@code YYYYMMDD} issue-date
      *       window (the parent batch's start / end dates).</li>
-     *   <li>{@code mod_dtm} — the batch timestamp (parent row's
-     *       {@code reg_dtm}); matched exactly against
-     *       {@code BUSA_DOC_MSTR.MOD_DTM}.</li>
+     *   <li>{@code mod_dtm} — the batch timestamp (the phase-1
+     *       {@code /scrape-results} {@code mod_dtm}, preserved through phase 2);
+     *       matched exactly against {@code BUSA_DOC_MSTR.MOD_DTM}.</li>
      *   <li>{@code sortField} / {@code sortDirection} — optional; default
      *       {@code ISSU_DT DESC}. Whitelist: {@code DOC_ID}, {@code ISSU_DT},
      *       {@code TRCO_CMNM}, {@code TOTL_AMT}, {@code einv_invoiceStatus}.</li>

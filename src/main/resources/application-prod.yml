@@ -1,35 +1,40 @@
-# PROD profile. RESERVED — not used in the R&D sprint.
-# Hard rules: ddl-auto=validate, SQL logging OFF, no secrets in this file
-# (all sensitive values come from env vars). Schema is pre-migrated manually.
-
+# =============================================================================
+# Production Spring configuration
+# Configures environment loading, database access, and JPA behavior.
+# =============================================================================
 spring:
-  # Per-profile env file; on the host values come from the process env.
   config:
     import: optional:file:./.env.prod[.properties]
-  # No defaults — a missing value fails fast so PROD can't fall through to a dev DB.
+  # Database connection.
   datasource:
     url: ${WECMS_DB_URL}
     username: ${WECMS_DB_USERNAME}
     password: ${WECMS_DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
+  # JPA and Hibernate behavior.
   jpa:
     hibernate:
       ddl-auto: validate
     show-sql: false
     open-in-view: false
 
-# Hide raw exception details on unhandled faults (WBE envelope is unaffected).
+# =============================================================================
+# Server configuration
+# Configures HTTP server error response handling.
+# =============================================================================
 server:
+  # Error response handling.
   error:
     include-message: never
     include-stacktrace: never
     include-binding-errors: never
 
+# =============================================================================
+# WeCMS application configuration
+# Configures file storage, integrations, and firm-banking dispatch.
+# =============================================================================
 wecms:
-  # =============================================================================
-  # File storage
-  # =============================================================================
-  # Required on PROD (no default → fail-fast). Set via env to real disk.
+  # File storage roots per upload module.
   overseas-payment:
     storage-root: ${WECMS_OVERSEAS_PAYMENT_STORAGE_ROOT}
   vendor-payment:
@@ -50,29 +55,30 @@ wecms:
     storage-root: ${WECMS_CARD_TRANSACTIONS_STORAGE_ROOT}
   internal-transfer:
     storage-root: ${WECMS_INTERNAL_TRANSFER_STORAGE_ROOT}
-  # =============================================================================
-  # EFS / Van Center (firm-banking dispatch)
-  # =============================================================================
-  # All flags OFF by default until ops provisions the gateway.
+
+  # Firm-banking dispatch through EFS and VAN Center.
   dispatch:
     auto-receive: ${WECMS_DISPATCH_AUTO_RECEIVE}
     realtime-dispatch: ${WECMS_DISPATCH_REALTIME_DISPATCH}
     recipient-inquiry: ${WECMS_DISPATCH_RECIPIENT_INQUIRY}
-    # Result-check poll. Cron "-" = never fire.
+    # Dispatch result polling.
     result-check:
       cron: ${WECMS_DISPATCH_RESULT_CHECK_CRON}
+    # Dispatch failure alerts.
     alert:
       enabled: ${WECMS_DISPATCH_ALERT_ENABLED}
-    # Inbound EFS callbacks. allowed-ips is a source-IP allow-list.
+    # VAN callback access control.
     callback:
       trust-forwarded-for: true
       allowed-ips: ${WECMS_CALLBACK_ALLOWED_IPS}
+    # EFS API connection.
     efs:
       enabled: ${WECMS_EFS_ENABLED}
       base-url: ${WECMS_EFS_BASE_URL}
       partner-id: ${WECMS_EFS_PARTNER_ID}
       connect-timeout-ms: 3000
       read-timeout-ms: 20000
+    # SFTP file transfer.
     sftp:
       enabled: ${WECMS_SFTP_ENABLED}
       host: ${WECMS_SFTP_HOST}
@@ -86,17 +92,14 @@ wecms:
       local-download-path: ${WECMS_SFTP_LOCAL_DOWNLOAD}
       remote-download-path: ${WECMS_SFTP_REMOTE_DOWNLOAD}
       remote-move-path: ${WECMS_SFTP_REMOTE_MOVE}
-
-  # =============================================================================
-  # Coocon + OSMC
-  # =============================================================================
-  # No defaults — required env vars, so PROD never falls back to the DEV gateway.
+  # Coocon API integration.
   coocon:
     api-key:       ${WECMS_COOCON_API_KEY}
     api-url:       ${WECMS_COOCON_API_URL}
     smart-api-key: ${WECMS_COOCON_SMART_API_KEY}
     smart-api-url: ${WECMS_COOCON_SMART_API_URL}
     unique-key:    ${WECMS_COOCON_UNIQUE_KEY}
+  # OSMC API integration.
   osmc:
     url:        ${WECMS_OSMC_URL}
     api-key:    ${WECMS_OSMC_API_KEY}
@@ -104,25 +107,33 @@ wecms:
     unique-key: ${WECMS_OSMC_UNIQUE_KEY}
 
 # =============================================================================
-# HAENGSUNG Oracle ERP integration
+# Haengsung ERP integration
+# Configures the Oracle connection and scheduled synchronization jobs.
 # =============================================================================
-# OFF by default; real values from env vars.
 haengsung:
+  # Oracle database connection.
   oracle:
     enabled: ${HAENGSUNG_ORACLE_ENABLED}
     url: ${HAENGSUNG_ORACLE_URL}
     username: ${HAENGSUNG_ORACLE_USERNAME}
     password: ${HAENGSUNG_ORACLE_PASSWORD}
+  # Scheduled payment import.
   scheduled-payment-import:
     enabled: ${HAENGSUNG_SCHEDULED_IMPORT_ENABLED}
     cron: ${HAENGSUNG_SCHEDULED_IMPORT_CRON}
+  # Exchange rate synchronization.
   exchange-rate-sync:
     enabled: ${HAENGSUNG_EXCHANGE_RATE_SYNC_ENABLED}
     cron: ${HAENGSUNG_EXCHANGE_RATE_SYNC_CRON}
+  # Card and account synchronization.
   card-account-sync:
     enabled: ${HAENGSUNG_CARD_ACCOUNT_SYNC_ENABLED}
     cron: ${HAENGSUNG_CARD_ACCOUNT_SYNC_CRON}
 
+# =============================================================================
+# Application logging
+# Configures root, application, security, and SQL logging levels.
+# =============================================================================
 logging:
   level:
     root: WARN

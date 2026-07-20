@@ -116,6 +116,10 @@ public record TransactionsSyncResponse(
         CAPTCHA_REQUIRED,
         QNA_REQUIRED,
         COMPLETED,
+        /** User-requested cancellation (Phase 1). The scrape stopped before
+         *  the next account / challenge-resume; already-processed accounts
+         *  stay committed. Frontend resets the popup to idle. */
+        CANCELLED,
         ERROR
     }
 
@@ -172,6 +176,20 @@ public record TransactionsSyncResponse(
                 null, null, null, null, null, null,
                 null,
                 prompt, null, image, format, null,
+                null, null,
+                null, null);
+    }
+
+    /** Terminal cancellation — user stopped the scrape. Carries only the
+     *  {@code sessionId} + {@code CANCELLED} status; the frontend resets the
+     *  popup. Idempotent on the backend (an unknown / already-terminal
+     *  session id resolves to this same shape). */
+    public static TransactionsSyncResponse cancelled(UUID sessionId) {
+        return new TransactionsSyncResponse(
+                sessionId, Status.CANCELLED,
+                null, null, null, null, null, null,
+                null,
+                null, null, null, null, null,
                 null, null,
                 null, null);
     }

@@ -333,6 +333,14 @@ public class BusaDocMstr {
     @Column(name = "ISSU_RPRS_TLPH", length = 50)
     private String issuRprsTlph;
 
+    /** Counterparty representative telephone — legacy {@code TRCO_RPRS_TLPH}.
+     *  Feeds the seller-phone cell of the View e-Invoice Details popup when
+     *  {@code DOC_TYPE='B'} (counterparty is the seller). Column verified
+     *  present in the refactor DB (information_schema), so
+     *  {@code ddl-auto=validate} accepts this additive mapping. */
+    @Column(name = "TRCO_RPRS_TLPH", length = 50)
+    private String trcoRprsTlph;
+
     /** Buyer full name on the GDT invoice — legacy {@code EINV_BUYERFULLNAME}.
      *  Export "Buyer / Buyer name" cell (col 12). */
     @Column(name = "EINV_BUYERFULLNAME", length = 300)

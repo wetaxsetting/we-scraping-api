@@ -24,11 +24,13 @@ import com.kosign.wecms.domain.setting.logincredentials.dto.BankPickerResponse;
 import com.kosign.wecms.domain.setting.logincredentials.dto.BankPickerRow;
 import com.kosign.wecms.domain.setting.logincredentials.repository.BankFormInfoRepository;
 import com.kosign.wecms.domain.setting.logincredentials.repository.BankPickerRepository;
+import com.kosign.wecms.domain.setting.logincredentials.repository.BankShortNameRepository;
 import com.kosign.wecms.domain.setting.logincredentials.dto.BankCredentialCreateRequest;
 import com.kosign.wecms.domain.setting.logincredentials.dto.BankCredentialUpdateRequest;
 import com.kosign.wecms.domain.setting.logincredentials.dto.CredentialCreateResponse;
 import com.kosign.wecms.domain.setting.logincredentials.dto.GdtCredentialRequest;
 import com.kosign.wecms.domain.setting.logincredentials.dto.GdtEngineConfigResponse;
+import com.kosign.wecms.domain.setting.logincredentials.dto.GdtScrapingCredentialResponse;
 import com.kosign.wecms.domain.setting.logincredentials.dto.GdtCredentialUpdateRequest;
 import com.kosign.wecms.domain.setting.logincredentials.dto.LoginCredentialAccount;
 import com.kosign.wecms.domain.setting.logincredentials.dto.LoginCredentialBankAccount;
@@ -40,7 +42,6 @@ import com.kosign.wecms.domain.setting.logincredentials.dto.RevealResponse;
 import com.kosign.wecms.domain.setting.logincredentials.entity.GdtCertInfo;
 import com.kosign.wecms.domain.setting.logincredentials.repository.GdtCertInfoRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -130,6 +131,7 @@ public class LoginCredentialsService {
 
     private final BankPickerRepository      bankPickerRepo;
     private final BankFormInfoRepository    bankFormInfoRepo;
+    private final BankShortNameRepository   bankShortNameRepo;
     private final BankCertInfoRepository    bankRepo;
     private final GdtCertInfoRepository     gdtRepo;
     private final BankInfmRepository        bankInfmRepo;
@@ -140,15 +142,6 @@ public class LoginCredentialsService {
     private final BankScrapingService       bankScrapingService;
     private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
     private final com.kosign.wecms.domain.banking.service.AccountRegistrationService accountRegistrationService;
-
-    /** When true, GDT create/update verifies the credential through the
-     *  Coocon gateway (pseudo-bank {@code VIETNAM_GDT}) before persisting
-     *  — legacy parity (the save action is the login test). Field-injected
-     *  (non-final) so it stays out of the {@code @RequiredArgsConstructor}.
-     *  Default false; see {@code wecms.login-credentials.gdt-verify-enabled}
-     *  in application.yml. */
-    @Value("${wecms.login-credentials.gdt-verify-enabled:false}")
-    private boolean gdtVerifyEnabled;
 
     /* -----------------------------------------------------------------
      *  LIST — banking groups + single GDT row
@@ -543,11 +536,17 @@ public class LoginCredentialsService {
         if (!gdtRepo.findByBizKeyOrderBySeqNoAsc(bizKey).isEmpty()) {
             throw new BusinessException("WBE_LOGIN_CREDENTIAL_GDT_EXISTS");
         }
-        // Legacy parity (comm_0218_007.js:43-51): the GDT save action IS
-        // the login test — the row persists only after a successful
-        // VIETNAM_GDT login. Bad credentials never reach the DB. Flag-gated
-        // (off in local R&D / until the GDT captcha challenge-chain lands).
-        verifyGdtCredentials(req.loginId(), req.password());
+        // Legacy parity (comm_0218_007.js:43-51): the GDT "save = login test"
+        // is run CLIENT-SIDE on the local NXiSAS.exe engine (bankCd
+        // "VIETNAM_GDT", module GLOBAL/VNM/PUBLIC_GDT) BEFORE this endpoint is
+        // called — the browser only POSTs here after a successful local-engine
+        // login. GDT is not a Coocon server-gateway bank, so this backend
+        // action is a pure GDT_CERT_INFO upsert (mirrors the legacy
+        // comm_0218_007_c001_act.jsp server action, which is also a pure DB
+        // write). The former server-side re-verify (routing VIETNAM_GDT through
+        // BankScrapingService / NxisasBankConfig) was removed 2026-07-13 — it
+        // wrongly threw WBE2093 because VIETNAM_GDT has no NxisasBankConfig
+        // entry and must never be resolved as a Coocon bank.
         // SEQ_NO via the single wb_get_next_val funnel (V140 #26 — per-tenant MAX+1).
         BigDecimal nextSeq = new BigDecimal(legacyFunctions.nextGdtCertSeqNo(bizKey));
         String now = nowDtm14();
@@ -584,20 +583,12 @@ public class LoginCredentialsService {
         String bizKey = TenantContext.currentBizKey();
         GdtCertInfo entity = gdtRepo.findByBizKeyAndSeqNo(bizKey, seqNo)
                 .orElseThrow(() -> new BusinessException("WBE2090"));
-        // Re-verify whenever the credential itself changes (login id or
-        // password). Use the effective values: a field left null keeps the
-        // stored one. Legacy parity — the save action is the login test.
-        // An `extra`-only edit changes no credential and is not re-verified.
-        if (req.loginId() != null || req.password() != null) {
-            String effLoginId  = req.loginId()  != null ? req.loginId()
-                                                        : entity.getCertInfoCon();
-            // Strict decrypt — when no new password is supplied we verify
-            // with the stored one; an undecryptable blob must fail
-            // verification, not be forwarded to GDT as the password.
-            String effPassword = req.password() != null ? req.password()
-                                                        : crypto.decryptStrict(entity.getCertInfoDetlCon());
-            verifyGdtCredentials(effLoginId, effPassword);
-        }
+        // Credential re-verification on edit is done CLIENT-SIDE by the local
+        // NXiSAS.exe engine before this endpoint is called (legacy parity —
+        // save = login test on the local engine, not the Coocon server
+        // gateway). This backend action is a pure GDT_CERT_INFO update. The
+        // former server-side re-verify (BankScrapingService.verify for the
+        // VIETNAM_GDT pseudo-bank) was removed 2026-07-13 — see createGdt.
         if (req.loginId() != null) entity.setCertInfoCon(req.loginId());
         if (req.password() != null) entity.setCertInfoDetlCon(crypto.encrypt(req.password()));
         if (req.extra() != null)    entity.setCertInfoDetlCon2(req.extra());
@@ -683,6 +674,51 @@ public class LoginCredentialsService {
     }
 
     /* -----------------------------------------------------------------
+     *  GDT SCRAPING CREDENTIAL — silent decrypt for the local engine
+     * ----------------------------------------------------------------- */
+
+    /**
+     * Load the tenant's GDT credential, decrypt it server-side, and hand
+     * the plaintext {@code login_id} + {@code password} to the caller for
+     * the client-side NXiSAS e-Invoice scrape.
+     *
+     * <p><b>No password re-entry.</b> Unlike {@link #reveal} — the
+     * credential-management "view password" feature, which confirms the
+     * credential's own password ({@code WBE2091}) — this path performs no
+     * confirmation. It is the GDT analogue of
+     * {@link com.kosign.wecms.domain.banking.bankcredentials.service.BankCredentialService#loadForScraping(BigDecimal)}
+     * and restores legacy parity: the JEX e-Invoice inquiry fetched the
+     * stored GDT credential silently via {@code getCertInfo()} → WSVC
+     * {@code gdtc_0001_001_r001} and fed it straight to the engine.
+     *
+     * <p>Read-only; makes no DB write (no audit row — legacy
+     * {@code gdtc_0001_001_r001} wrote none either). GDT-only: it queries
+     * {@code GDT_CERT_INFO} exclusively, so a bank {@code SEQ_NO} cannot
+     * be revealed here (it simply isn't found → {@code WBE2090}). Tenant
+     * scope is enforced by {@code findByBizKeyAndSeqNo}; a seqNo from
+     * another {@code BIZ_KEY} surfaces as {@code WBE2090} (not found).
+     *
+     * <p>Security note: the plaintext GDT password crosses the wire (the
+     * engine is client-side; there is no server-side scraper to keep it
+     * in). This matches legacy behaviour; it is intentionally weaker than
+     * the bank/card server-side-only decrypt model. See the audit at
+     * {@code Claude Code (AI)/notes/gdt-einvoice-realtime-inquiry-password-flow-audit.md}.
+     */
+    @Transactional(readOnly = true)
+    public GdtScrapingCredentialResponse loadGdtScrapingCredential(BigDecimal seqNo) {
+        String bizKey = TenantContext.currentBizKey();
+        GdtCertInfo row = gdtRepo.findByBizKeyAndSeqNo(bizKey, seqNo)
+                .orElseThrow(() -> new BusinessException("WBE2090"));
+        // STRICT decrypt — a value that doesn't decrypt under the legacy
+        // key yields null rather than the echoed ciphertext, so the engine
+        // is never handed an undecryptable blob the GDT portal would reject
+        // with an opaque error. Re-save via Settings > Login Credentials to
+        // cure a null here. Same contract as BankCredentialService.
+        String password = crypto.decryptStrict(row.getCertInfoDetlCon());
+        return new GdtScrapingCredentialResponse(row.getCertInfoCon(), password);
+    }
+
+    /* -----------------------------------------------------------------
      *  AUDIT — history popup
      * ----------------------------------------------------------------- */
 
@@ -729,41 +765,6 @@ public class LoginCredentialsService {
         return LocalDateTime.now(ZoneOffset.UTC).format(DTM14);
     }
 
-    /**
-     * Verify a GDT credential through the Coocon gateway before it is
-     * persisted — legacy parity with {@code comm_0218_007.js:43-51}, which
-     * runs {@code _v2nxisas.callNxisas([{bankCd:"VIETNAM_GDT",…}])} and only
-     * saves on {@code isSuccess}. Reuses the same {@link BankScrapingService}
-     * the bank flow uses (the gateway already special-cases
-     * {@code VIETNAM_GDT}); no GDT-specific scraping infrastructure is added.
-     *
-     * <p>No-op when {@link #gdtVerifyEnabled} is false (local R&D has no
-     * reachable gateway; full enablement also awaits the GDT captcha
-     * challenge-chain — see application.yml). When enabled, only a
-     * {@code COMPLETED} login persists; an {@code ERROR} (bad credentials)
-     * or an unsatisfied challenge ({@code CAPTCHA/OTP/QNA_REQUIRED}) throws
-     * {@code WBE_LOGIN_CREDENTIAL_GDT_VERIFY_FAILED} so the row is NOT saved.
-     *
-     * <p>Never persists anything itself — the caller persists only after
-     * this returns normally.
-     */
-    private void verifyGdtCredentials(String loginId, String password) {
-        if (!gdtVerifyEnabled) return;
-        VerifyCredentialsRequest req = new VerifyCredentialsRequest(
-                GDT_PSEUDO_BANK_CD,
-                loginId,
-                password,
-                BigDecimal.ZERO,   // nxisasGbSeqNo — GDT has no sub-type
-                null,              // extra
-                null,              // loginType
-                null               // scrapeKind → ACCT_LIST (login test only)
-        );
-        ScrapeSessionResponse res = bankScrapingService.verify(req);
-        if (res == null || res.status() != ScrapeSessionResponse.Status.COMPLETED) {
-            throw new BusinessException("WBE_LOGIN_CREDENTIAL_GDT_VERIFY_FAILED");
-        }
-    }
-
     private void appendAudit(String refNo, String refNo1) {
         auditLogService.append(AuditLogContext.builder()
                 .wsvcId(WSVC_ID)
@@ -775,13 +776,27 @@ public class LoginCredentialsService {
     }
 
     /**
-     * Resolve BANK_CD → display name via {@link BankInfmRepository}.
-     * Falls back to the bank code itself when the registry has no
-     * entry. Cross-domain coupling is intentional — every BANK_CD on
-     * disk is sourced from the same registry the Banking module uses,
-     * and {@code BankCdResolver} (in {@code domain.banking.service}) is
-     * package-private so we re-query rather than cross the package
-     * boundary.
+     * Resolve BANK_CD → the Institution-column display name, matching
+     * the legacy list IDO {@code IDO.BANK_CERT_INFO_R007.xml:46} which
+     * projects {@code INST = wb_get_bank_nm(BANK_CD, 's')} — the SHORT
+     * bank name, not the full representative name.
+     *
+     * <p>Resolution order (last wins):
+     * <ol>
+     *   <li>bank code itself — ultimate fallback;
+     *   <li>FULL name {@code BANK_INFM.RPRS_BANK_NM} (legacy
+     *       {@code wb_get_bank_nm(cd,'l')}) — fallback for banks with no
+     *       date-effective short row;
+     *   <li>SHORT name {@code BANK_INFM_DETL} {@code BANK_DETL_INFO_CD='10'},
+     *       date-effective (legacy {@code wb_get_bank_nm(cd,'s')}) — the
+     *       value the legacy {@code comm_0218_001} list actually renders.
+     * </ol>
+     *
+     * <p>Cross-domain coupling for the full name is intentional — every
+     * BANK_CD on disk is sourced from the same registry the Banking
+     * module uses, and {@code BankCdResolver} (in
+     * {@code domain.banking.service}) is package-private so we re-query
+     * rather than cross the package boundary.
      */
     private Map<String, String> resolveBankNames(Iterable<String> bankCds) {
         Map<String, String> out = new HashMap<>();
@@ -790,11 +805,19 @@ public class LoginCredentialsService {
             out.putIfAbsent(code, code);
         }
         if (out.isEmpty()) return out;
+        // Full name — fallback only (used when a bank has no '10' short row).
         for (BankInfm row : bankInfmRepo.findAll()) {
             if (out.containsKey(row.getBankCd())) {
                 out.put(row.getBankCd(), row.getRprsBankNm());
             }
         }
+        // Short name — overlaid last so it wins over the full name,
+        // reproducing legacy wb_get_bank_nm(cd,'s'). Codes without a
+        // date-effective '10' row keep the full-name fallback above.
+        Map<String, String> shortNames = bankShortNameRepo.shortNames(out.keySet());
+        shortNames.forEach((code, nm) -> {
+            if (nm != null && !nm.isBlank()) out.put(code, nm);
+        });
         return out;
     }
 

@@ -465,7 +465,7 @@ public class AccountService {
      * {@code credit_count} / {@code debit_count} are now returned;
      * the popup totals badge stops showing {@code 0}.
      */
-    public TransactionsSyncResponse syncTransactions(TransactionsSyncRequest req) {
+    public com.kosign.wecms.domain.banking.dto.SyncStatusResponse syncTransactions(TransactionsSyncRequest req) {
         return bankSync.start(req);
     }
 
@@ -707,6 +707,10 @@ public class AccountService {
                 // intact (same convention HR-1 used) — only the value
                 // source changed.
                 resolveLastUpdate(a),
+                // TRN_LST_SUC_DTM — the scrape-window source for the Bank
+                // Transaction Sync popup (legacy getInitStartDate()). Kept
+                // separate from the displayed "Last Update" above.
+                a.getTrnLstSucDtm(),
                 handRegYn,
                 certConnYn
         );
@@ -717,7 +721,7 @@ public class AccountService {
      * (fnsh_0005_001 / fnsh_0001_001). Online accounts display
      * {@code ACCT_HIS_LST_INQ_DT} (the transaction-history last-inquiry
      * date); fixed-deposit-only banks ({@code ACCT_TYPE_CD '02'} other
-     * than Sacombank {@code 11704004}) run no TRANSACTION job so the
+     * than VCB / Vietcombank {@code 11704004}) run no TRANSACTION job so the
      * history date is never stamped — those fall back to
      * {@code ACCT_BAL_LST_INQ_DTM}. Mirrors the legacy ViewSetting cell
      * branch at {@code fnsh_0005_001_api_osmc.ts:956-969}

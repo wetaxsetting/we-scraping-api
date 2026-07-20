@@ -210,3 +210,4 @@ A parity verification found the first implementation diverged from legacy on two
 - Legacy action: `WECMS DEV/WECMS/web/WEB-INF/action/jex/wabooks/fnsh/fnsh_0001_001_c001_act.jsp:1852-2083`
 - Legacy candidate IDO: `WECMS_ETC/xml/service/IDO/IDO.OVRS_PYMN_SUMR_DETL_R007.xml`
 - Related refactor match feature: Smart Organizer (`comm_0196_001`) — reuses `BUSI_MATCH_LOG` / `LINK_MATCH_YN`
+- Sibling audit (same popup, account-type routing): [bank-transaction-sync-fixed-deposit-parity.md](bank-transaction-sync-fixed-deposit-parity.md)

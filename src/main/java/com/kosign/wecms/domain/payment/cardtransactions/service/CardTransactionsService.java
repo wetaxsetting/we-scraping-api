@@ -11,9 +11,7 @@ import com.kosign.wecms.common.memo.dto.MemoListResponse;
 import com.kosign.wecms.common.memo.dto.MemoRow;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.common.web.SortDirection;
-import com.kosign.wecms.domain.banking.entity.BankInfm;
 import com.kosign.wecms.domain.banking.bankcredentials.repository.BankCertInfoRepository;
-import com.kosign.wecms.domain.banking.repository.BankInfmRepository;
 import com.kosign.wecms.domain.einvoice.entity.BusaDocMstr;
 import com.kosign.wecms.domain.einvoice.repository.BusaDocMstrRepository;
 import com.kosign.wecms.common.enums.LangCd;
@@ -161,7 +159,7 @@ public class CardTransactionsService {
     // dropped for legacy parity.
     private final CardTrnsHstrRepository           cardTrnsRepo;
     private final CardMstrRepository               cardMstrRepo;
-    private final BankInfmRepository               bankInfmRepo;
+    private final CardBankNameResolver             cardBankNameResolver;
     private final BankCertInfoRepository           bankCertInfoRepo;
     private final ChartOfAccountRepository         chartAcctRepo;
     private final AuditLogService                  auditLogService;
@@ -671,10 +669,10 @@ public class CardTransactionsService {
     }
 
     /** Project one {@link CardMstr} entity into the modal-facing
-     *  {@code CardManagementRow} DTO. {@code BANK_NM} comes from the
-     *  {@link BankInfmRepository} cache (matching the existing
-     *  ledger-render path); raw {@code mod_dtm} ships unchanged so the
-     *  frontend can render "X ago" / locale-formatted timestamps. */
+     *  {@code CardManagementRow} DTO. {@code BANK_NM} comes from
+     *  {@link CardBankNameResolver} (short name, matching the ledger-render
+     *  path); raw {@code mod_dtm} ships unchanged so the frontend can render
+     *  "X ago" / locale-formatted timestamps. */
     private com.kosign.wecms.domain.payment.cardtransactions.dto.CardManagementRow toManagementRow(CardMstr c) {
         return new com.kosign.wecms.domain.payment.cardtransactions.dto.CardManagementRow(
                 c.getBankCd(),
@@ -2411,15 +2409,14 @@ public class CardTransactionsService {
         return by;
     }
 
-    /** Single-bank-code → display-name lookup. {@code BANK_INFM} is a
-     *  small registry; the JPA second-level cache + Hibernate read pool
-     *  handle the per-request load fine without an explicit static
-     *  cache. Returns the raw code when the registry has no entry. */
+    /** Single-bank-code → display-name lookup for the Card Transactions
+     *  feature. Delegates to {@link CardBankNameResolver}, which returns the
+     *  <b>short</b> bank name ({@code "Shinhan VN"}) — a card-feature-only
+     *  divergence from the legacy long name ({@code "Shinhan(Vietnam)"}), see
+     *  that class. Returns the raw code when no name is registered. */
     private String resolveBankName(String bankCd) {
         if (bankCd == null) return "";
-        return bankInfmRepo.findById(bankCd)
-                .map(BankInfm::getRprsBankNm)
-                .orElse(bankCd);
+        return cardBankNameResolver.resolve(bankCd);
     }
 
     /**

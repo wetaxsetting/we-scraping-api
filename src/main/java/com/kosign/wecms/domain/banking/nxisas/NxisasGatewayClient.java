@@ -22,6 +22,7 @@ import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasCommon;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasJob;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasLoginJobInput;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasLoginJobResult;
+import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasLogoutJobInput;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasCaptchaJobInput;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasOTPJobInput;
 import com.kosign.wecms.domain.banking.nxisas.gateway.dto.NxisasOTPJobResult;
@@ -71,6 +72,21 @@ public class NxisasGatewayClient {
     public NxisasApiOut<NxisasLoginJobResult> login(String module, String category, String trSeq,
                                                     NxisasLoginJobInput input) {
         return call(module, category, trSeq, NxisasJob.LOGIN, input, GatewayContinuation.empty(),
+                new TypeReference<NxisasApiOut<NxisasLoginJobResult>>() { });
+    }
+
+    /**
+     * LOGOUT job — close the bank-adapter session held open by a prior
+     * LOGIN. Sent on the live gateway continuation (SAS_SessionID + Common
+     * fields). Best-effort teardown consumed by
+     * {@code BankTransactionSyncService.cancel(...)} — legacy
+     * {@code nxisas_v2.js makeLogOutInput} → {@code CooconiSASNX} parity.
+     * Response reuses the LOGIN result shape; the caller ignores it.
+     */
+    public NxisasApiOut<NxisasLoginJobResult> logout(String module, String category, String trSeq,
+                                                     NxisasLogoutJobInput input,
+                                                     GatewayContinuation cont) {
+        return call(module, category, trSeq, NxisasJob.LOGOUT, input, cont,
                 new TypeReference<NxisasApiOut<NxisasLoginJobResult>>() { });
     }
 
@@ -220,6 +236,38 @@ public class NxisasGatewayClient {
                                                         GatewayContinuation cont) {
         return call(module, category, trSeq, NxisasJob.BALANCE, input, cont,
                 new TypeReference<NxisasApiOut<NxisasBalanceJobResult>>() { });
+    }
+
+    /**
+     * BALANCE_FIXED_DEPOSIT job — fetch the balance for a Fixed-Deposit
+     * ({@code ACCT_TYPE_CD "02"}) account. Same input/result shape as
+     * {@link #balance} (legacy {@code BalanceFixedDepositInput} carries the
+     * same {@code acctNum}/{@code currency} pair); only the {@code Job}
+     * discriminator differs. Dispatched for every whitelisted FD bank — VCB
+     * and the five balance-only banks alike ({@code nxisas_tranList_osmc.js:305,333}).
+     */
+    public NxisasApiOut<NxisasBalanceJobResult> balanceFixedDeposit(String module, String category, String trSeq,
+                                                                    NxisasBalanceJobInput input,
+                                                                    GatewayContinuation cont) {
+        return call(module, category, trSeq, NxisasJob.BALANCE_FIXED_DEPOSIT, input, cont,
+                new TypeReference<NxisasApiOut<NxisasBalanceJobResult>>() { });
+    }
+
+    /**
+     * TRANSACTION_FIXED_DEPOSIT job — pull the transaction list for a
+     * Fixed-Deposit account over {@code startDate..endDate}. Same
+     * input/result shape as {@link #transaction} (legacy
+     * {@code TransactionFixedDepositInput}); only the {@code Job}
+     * discriminator differs. Dispatched for VCB ({@code 11704004}) FD
+     * accounts only — the other whitelisted FD banks have no transaction-FD
+     * support ({@code nxisas_tranList_osmc.js:312-321}).
+     */
+    public NxisasApiOut<NxisasTransactionJobResult> transactionFixedDeposit(String module, String category,
+                                                                            String trSeq,
+                                                                            NxisasTransactionJobInput input,
+                                                                            GatewayContinuation cont) {
+        return call(module, category, trSeq, NxisasJob.TRANSACTION_FIXED_DEPOSIT, input, cont,
+                new TypeReference<NxisasApiOut<NxisasTransactionJobResult>>() { });
     }
 
     /**

@@ -34,6 +34,18 @@ public record AccountRow(
         String acctBalInqStts,
         String acctBalUpdDtm,
         /**
+         * Transaction last-success timestamp ({@code TRN_LST_SUC_DTM},
+         * {@code yyyyMMddHHmmss}) — the source the Bank Transaction Sync
+         * popup uses to compute its default scrape window (earliest across
+         * the selected accounts, floored to 3 months back). Legacy
+         * {@code nxisas_tranList.getInitStartDate()} reads the same column
+         * off {@code fnsh_0001_001_r001}. {@code null} when the account has
+         * never completed a transaction scrape → the popup falls back to
+         * 3-months-back. This is NOT the "Last Update" display value
+         * ({@code acctBalUpdDtm} above, sourced from {@code ACCT_HIS_LST_INQ_DT}).
+         */
+        String trnLstSucDtm,
+        /**
          * Manual-registration flag — verbatim {@code "Y"} / {@code "N"}
          * from {@code ACCT_MSTR.HAND_REG_YN}. Frontend disables the row's
          * checkbox with the {@code account_inquiry.disabled.manual} tooltip

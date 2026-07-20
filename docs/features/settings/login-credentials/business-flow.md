@@ -135,8 +135,9 @@ POST /api/v1/login-credentials/gdt   body: GdtCredentialRequest
   → service.createGdt(req)  @Transactional
       1. one-per-company guard: any existing GDT row → WBE_LOGIN_CREDENTIAL_GDT_EXISTS
          (legacy comm_0218_003_c001 WBE0003 parity)
-      2. verifyGdtCredentials(loginId, password)  — flag-gated (gdtVerifyEnabled, default off):
-           Coocon verify on pseudo-bank VIETNAM_GDT; non-COMPLETED → WBE_LOGIN_CREDENTIAL_GDT_VERIFY_FAILED
+      2. (no server-side verify) — GDT is verified CLIENT-SIDE by the local NXiSAS.exe engine
+         before this endpoint is called; the backend is a pure GDT_CERT_INFO upsert. The former
+         verifyGdtCredentials Coocon path was removed 2026-07-13 (wrongly threw WBE2093).
       3. SEQ_NO via legacyFunctions.nextGdtCertSeqNo(bizKey); CERT_INFO_DETL_CON = crypto.encrypt(password)
       4. save; audit append (CREATE)
   → CredentialCreateResponse { seq_no }
@@ -145,7 +146,7 @@ PUT /api/v1/login-credentials/gdt/{seqNo}   body: GdtCredentialUpdateRequest
   → service.updateGdt(seqNo, req)  @Transactional
       1. all-null patch (loginId/password/extra) → WBE_VALIDATION
       2. load row (or WBE2090)
-      3. if loginId OR password changed → re-verify with effective values (stored password via decryptStrict)
+      3. (no server-side re-verify — client-side local-engine verify happened before the call)
       4. apply non-null fields; password → crypto.encrypt; stamp MOD_*; audit append (UPDATE)
   → 200, data: null
 
