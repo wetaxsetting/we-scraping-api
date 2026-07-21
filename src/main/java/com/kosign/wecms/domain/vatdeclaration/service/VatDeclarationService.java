@@ -57,6 +57,10 @@ public class VatDeclarationService {
     private static final String DEFAULT_ACTIVITY_CD  = "0";
     private static final String DEFAULT_ACTIVITY_NM  = "Hoạt động sản xuất kinh doanh thông thường";
 
+    /** Dashboard display labels (form 01/GTGT under Circular 80/2021/TT-BTC). */
+    private static final String APPLICABLE_CIRCULAR = "80/2021/TT-BTC";
+    private static final String DECL_FORM_NAME      = "01/GTGT";
+
     private final VatDeclarationRepository declRepo;
     private final VatDeclarationIndicatorRepository indicatorRepo;
     private final BusiInfmRepository busiInfmRepo;
@@ -350,16 +354,22 @@ public class VatDeclarationService {
     }
 
     private VatDeclarationRow toRow(VatDeclaration d, VatDeclarationIndicator ind) {
+        String wireType = toWirePeriodType(d.getPeriodType());
         return new VatDeclarationRow(
                 d.getSid(),
-                toWirePeriodType(d.getPeriodType()),
+                wireType,
                 d.getPeriodValue(),
                 d.getPeriodYear(),
-                periodLabel(toWirePeriodType(d.getPeriodType()), d.getPeriodValue(), d.getPeriodYear()),
+                periodLabel(wireType, d.getPeriodValue(), d.getPeriodYear()),
                 d.getSupplNo(),
                 d.getDeclType(),
+                APPLICABLE_CIRCULAR,
+                DECL_FORM_NAME,
+                null,                                            // e-transaction code: no submission flow yet (Phase 2) → FE shows "Not submitted"
                 d.getStatus(),
-                ind == null ? "0" : str(ind.getVatPayableNet()),
+                ind == null ? "0" : str(ind.getPrevCredit()),   // ct22
+                ind == null ? "0" : str(ind.getVatPayableNet()),// ct40
+                ind == null ? "0" : str(ind.getCreditNext()),   // ct43
                 d.getModDtm() == null ? null : d.getModDtm().toString());
     }
 
