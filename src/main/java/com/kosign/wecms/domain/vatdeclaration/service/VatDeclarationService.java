@@ -136,6 +136,10 @@ public class VatDeclarationService {
                 .indicators("{}")
                 .delYn("N")
                 .status(STATUS_DRAFT)
+                .annexBkbrYn(yn(req.annexBkbrYn(), true))       // 01-1/GTGT default ticked
+                .annexBkmvYn(yn(req.annexBkmvYn(), true))       // 01-2/GTGT default ticked
+                .annexAllocYn(yn(req.annexAllocYn(), false))    // 01-6/GTGT off by default
+                .annexReduce8Yn(yn(req.annexReduce8Yn(), false))// 8% reduction off by default
                 .build();
         stampAudit(decl);
         decl = declRepo.save(decl);
@@ -407,5 +411,13 @@ public class VatDeclarationService {
 
     private static String defaultIfBlank(String v, String fallback) {
         return v == null || v.isBlank() ? fallback : v;
+    }
+
+    /** Normalise a wire Y/N annex flag; null/blank → the per-annex default. */
+    private static String yn(String raw, boolean defaultOn) {
+        if (raw == null || raw.isBlank()) {
+            return defaultOn ? "Y" : "N";
+        }
+        return "Y".equalsIgnoreCase(raw.trim()) ? "Y" : "N";
     }
 }

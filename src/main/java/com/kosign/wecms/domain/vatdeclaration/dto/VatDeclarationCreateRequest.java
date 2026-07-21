@@ -17,6 +17,12 @@ public record VatDeclarationCreateRequest(
         String bsnsLineCd,
         String bsnsLineNm,
         String officeCode,
-        String officeName
+        String officeName,
+        // Attached-annex checkboxes (prototype: BKBR/BKMV default ticked).
+        // 'Y'/'N'; null → service default (BKBR/BKMV → Y, ALLOC/REDUCE8 → N).
+        String annexBkbrYn,
+        String annexBkmvYn,
+        String annexAllocYn,
+        String annexReduce8Yn
 ) {
 }

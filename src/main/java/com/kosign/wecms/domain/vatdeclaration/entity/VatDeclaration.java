@@ -224,6 +224,23 @@ public class VatDeclaration extends BaseEntity {
     @Column(name = "STATUS", length = 20, nullable = false)
     private String status;
 
+    // --- Attached-annex flags (create-form checkboxes; prototype has 4) -------
+    /** BKBR 01-1/GTGT — output invoice listing (default ticked in prototype). */
+    @Column(name = "ANNEX_BKBR_YN", length = 1, nullable = false)
+    private String annexBkbrYn;
+
+    /** BKMV 01-2/GTGT — input invoice listing (default ticked in prototype). */
+    @Column(name = "ANNEX_BKMV_YN", length = 1, nullable = false)
+    private String annexBkmvYn;
+
+    /** PL 01-6/GTGT (CSSX) — allocation annex. */
+    @Column(name = "ANNEX_ALLOC_YN", length = 1, nullable = false)
+    private String annexAllocYn;
+
+    /** 8% VAT-reduction annex (Resolution 204/2025/QH15). */
+    @Column(name = "ANNEX_REDUCE8_YN", length = 1, nullable = false)
+    private String annexReduce8Yn;
+
     @Builder
     public VatDeclaration(String bizKey, String periodType, Integer periodValue, Integer periodYear,
                           String formCode, String xmlVer, String activityName, String activityCode,
@@ -238,7 +255,8 @@ public class VatDeclaration extends BaseEntity {
                           String duName, String duTaxCode, String duAddr,
                           String duProvCode, String duProv, String duDistCode, String duDist,
                           String duWardCode, String duWard,
-                          String indicators, String delYn, String status) {
+                          String indicators, String delYn, String status,
+                          String annexBkbrYn, String annexBkmvYn, String annexAllocYn, String annexReduce8Yn) {
         this.bizKey = bizKey;
         this.periodType = periodType;
         this.periodValue = periodValue;
@@ -287,5 +305,9 @@ public class VatDeclaration extends BaseEntity {
         this.indicators = indicators;
         this.delYn = delYn == null ? "N" : delYn;
         this.status = status;
+        this.annexBkbrYn = annexBkbrYn == null ? "N" : annexBkbrYn;
+        this.annexBkmvYn = annexBkmvYn == null ? "N" : annexBkmvYn;
+        this.annexAllocYn = annexAllocYn == null ? "N" : annexAllocYn;
+        this.annexReduce8Yn = annexReduce8Yn == null ? "N" : annexReduce8Yn;
     }
 }
