@@ -261,4 +261,13 @@ class ExpenseDispatchExecutorTest {
         assertThat(c.getValue().getDepCcyCd()).isNull();
         verify(tbPayFileMstRepository, never()).save(any());
     }
+
+    @Test
+    void ownerNm_rawRcptNm_blankPreserved() {
+        // B — legacy raw RCPT_NM, no fallback (PymnHelper:2327).
+        ScdulPymnSumrDetl l = line(SHINHAN, "USD");
+        l.setRcptNm("");
+        executor.execute(master(SHINHAN, "USD"), List.of(l), "USD");
+        assertThat(captureData().getFincMdaOwnerNm()).isEmpty();
+    }
 }

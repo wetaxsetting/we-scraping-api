@@ -221,6 +221,15 @@ class InternalTransferDispatchExecutorBankChnlDivTest {
         verify(tbPayFileDataRepository, never()).save(any());
     }
 
+    @Test
+    void ownerNm_rawRcptNm_blankPreserved() {
+        // B — legacy raw RCPT_NM, no fallback (PymnHelper file path).
+        ScdulPymnSumrDetl l = line(BIDV);
+        l.setRcptNm("");
+        executor.execute(master(BIDV), List.of(l), "USD");
+        assertThat(captureData().getFincMdaOwnerNm()).isEmpty();
+    }
+
     private void firmBank(String bankCd, String engAbrvatNm) {
         TbFirmBankCode b = org.mockito.Mockito.mock(TbFirmBankCode.class);
         when(b.getEngAbrvatNm()).thenReturn(engAbrvatNm);

@@ -5,6 +5,7 @@ import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
+import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileData;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileMst;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbFirmConfRepository;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileDataRepository;
@@ -131,5 +132,20 @@ class PayrollDispatchExecutorBankPrtnIdTest {
 
         verify(tbPayFileMstRepository, never()).save(any());
         verify(tbPayFileDataRepository, never()).save(any());
+    }
+
+    @Test
+    void ownerNm_rawRcptNm_blankPreserved() {
+        // B — legacy raw RCPT_NM, no fallback (pymn_0005_001_c001_act.jsp:206).
+        TbFirmConf conf = org.mockito.Mockito.mock(TbFirmConf.class);
+        when(conf.getBankPrtnId()).thenReturn("PRTN1");
+        when(tbFirmConfRepository.findById(any())).thenReturn(Optional.of(conf));
+        ScdulPymnSumrDetl l = line();
+        l.setRcptNm("");
+        executor.execute(master(), List.of(l), "USD", "0");
+
+        ArgumentCaptor<TbPayFileData> c = ArgumentCaptor.forClass(TbPayFileData.class);
+        verify(tbPayFileDataRepository).save(c.capture());
+        assertThat(c.getValue().getFincMdaOwnerNm()).isEmpty();
     }
 }

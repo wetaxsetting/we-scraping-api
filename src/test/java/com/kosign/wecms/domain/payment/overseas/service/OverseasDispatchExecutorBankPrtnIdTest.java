@@ -210,6 +210,28 @@ class OverseasDispatchExecutorBankPrtnIdTest {
     }
 
     @Test
+    void ownerNm_populated_rawBnfcNm() {
+        // B — legacy raw BNFC_NM (pymn_0007_001_c001_act.jsp:370).
+        stubConf();
+        executor.execute(master(), List.of(line()));
+        ArgumentCaptor<TbPayFileData> c = ArgumentCaptor.forClass(TbPayFileData.class);
+        verify(tbPayFileDataRepository).save(c.capture());
+        assertThat(c.getValue().getFincMdaOwnerNm()).isEqualTo("BENEFICIARY");
+    }
+
+    @Test
+    void ownerNm_rawBnfcNm_blankPreserved() {
+        // B — legacy raw BNFC_NM, no ACCT_MSTR/acctNo/"UNKNOWN" fallback.
+        stubConf();
+        OvrsPymnSumrDetl l = line();
+        l.setBnfcNm("");
+        executor.execute(master(), List.of(l));
+        ArgumentCaptor<TbPayFileData> c = ArgumentCaptor.forClass(TbPayFileData.class);
+        verify(tbPayFileDataRepository).save(c.capture());
+        assertThat(c.getValue().getFincMdaOwnerNm()).isEmpty();
+    }
+
+    @Test
     void dispatch_isBlocked_whenFirmConfAbsent() {
         when(firmBankingSettingRepository.findById(any())).thenReturn(Optional.empty());
 

@@ -179,7 +179,7 @@ public class VendorDispatchExecutor {
             row.setAntDivCd(resolveAntDivCd(master.getOutBankCd(), line));
             row.setTarBankCd(line.getTarBankCd());
             row.setFincMdaNo(line.getFincMdaNo());
-            row.setFincMdaOwnerNm(resolveOwnerNm(bizKey, line));
+            row.setFincMdaOwnerNm(line.getRcptNm());   // B: legacy raw RCPT_NM, no fallback (PymnHelper:2218)
             row.setTranAmt(line.getTranAmt());
             row.setTranUsag(line.getTranUsag());
             row.setProcStat(PROC_STAT_PENDING);
@@ -298,7 +298,7 @@ public class VendorDispatchExecutor {
                 data.setBankChnlDiv(sameBank ? BANK_CHNL_DIV_CURRENT_BANK : BANK_CHNL_DIV_OTHER_BANK);
             }
 
-            data.setFincMdaOwnerNm(resolveOwnerNm(bizKey, line));
+            data.setFincMdaOwnerNm(line.getRcptNm());  // B: legacy raw RCPT_NM (PymnHelper:2327)
             // Legacy :2293-2294 — BOTH remark columns carry TRAN_USAG.
             data.setWdrlActRmrk(line.getTranUsag());
             data.setTarAcctRmrk(line.getTranUsag());

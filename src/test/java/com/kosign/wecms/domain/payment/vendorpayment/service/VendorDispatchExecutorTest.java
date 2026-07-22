@@ -326,4 +326,37 @@ class VendorDispatchExecutorTest {
         assertThat(t.getDepCcyCd()).isNull();
         verify(tbPayFileMstRepository, never()).save(any());  // API path, not file path
     }
+
+    /* ── B — FINC_MDA_OWNER_NM is the raw RCPT_NM, no ACCT_MSTR/acctNo/"UNKNOWN" fallback
+       (legacy PymnHelper:2218 API / :2327 file). Verified vs live legacy (35/101 null-or-blank). ── */
+
+    @Test
+    void ownerNm_populated_passthrough() {
+        executor.execute(master(SHINHAN, "VND"), List.of(line(SHINHAN, "VND")), "VND");
+        assertThat(captureTarget().getFincMdaOwnerNm()).isEqualTo("RECIPIENT");
+    }
+
+    @Test
+    void apiPath_ownerNm_rawRcptNm_blankPreserved() {
+        ScdulPymnSumrDetl l = line(SHINHAN, "VND");
+        l.setRcptNm("");
+        executor.execute(master(SHINHAN, "VND"), List.of(l), "VND");
+        assertThat(captureTarget().getFincMdaOwnerNm()).isEmpty();   // legacy raw blank, no fallback
+    }
+
+    @Test
+    void apiPath_ownerNm_rawRcptNm_nullPreserved() {
+        ScdulPymnSumrDetl l = line(SHINHAN, "VND");
+        l.setRcptNm(null);
+        executor.execute(master(SHINHAN, "VND"), List.of(l), "VND");
+        assertThat(captureTarget().getFincMdaOwnerNm()).isNull();    // legacy raw null, not "UNKNOWN"
+    }
+
+    @Test
+    void filePath_ownerNm_rawRcptNm_blankPreserved() {
+        ScdulPymnSumrDetl l = line(WOORI, "USD");
+        l.setRcptNm("");
+        executor.execute(master(WOORI, "USD"), List.of(l), "USD");
+        assertThat(captureData().getFincMdaOwnerNm()).isEmpty();
+    }
 }

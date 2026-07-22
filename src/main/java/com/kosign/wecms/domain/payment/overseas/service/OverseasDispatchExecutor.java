@@ -259,7 +259,7 @@ public class OverseasDispatchExecutor {
             // carries this value (not 'O' / OTHER_BANK_TRANSFER).
             data.setBankChnlDiv(BANK_CHNL_DIV_OVERSEAS);
 
-            data.setFincMdaOwnerNm(resolveOwnerNm(line));
+            data.setFincMdaOwnerNm(line.getBnfcNm());  // B: legacy raw BNFC_NM, no fallback (pymn_0007_001_c001_act.jsp:370)
             // Originator's name on the SWIFT MT103 (field 50K). Sourced
             // from ACCT_MSTR.ACCT_NM via the NAPAS-code map; nullable
             // when the lookup misses, matching legacy.

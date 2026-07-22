@@ -182,7 +182,7 @@ public class PayrollDispatchExecutor {
                     sameBank(master.getOutBankCd(), line.getTarBankCd())
                             ? BANK_CHNL_DIV_CURRENT_BANK   // "T"
                             : BANK_CHNL_DIV_OTHER_BANK);    // "O"
-            data.setFincMdaOwnerNm(resolveOwnerNm(bizKey, line));
+            data.setFincMdaOwnerNm(line.getRcptNm());  // B: legacy raw RCPT_NM (pymn_0005_001_c001_act.jsp:206)
             // Legacy quirk parity (PymnHelper:2295): WDRL_ACT_RMRK copied into
             // both TAR_ACCT_RMRK and WDRL_ACT_RMRK.
             data.setTarAcctRmrk(line.getWdrlActRmrk());

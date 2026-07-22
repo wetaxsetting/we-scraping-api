@@ -253,7 +253,7 @@ public class InternalTransferDispatchExecutor {
             row.setAntDivCd(resolveApiAntDivCd(master.getOutBankCd(), line));
             row.setTarBankCd(line.getTarBankCd());
             row.setFincMdaNo(line.getFincMdaNo());
-            row.setFincMdaOwnerNm(resolveOwnerNm(bizKey, line));
+            row.setFincMdaOwnerNm(line.getRcptNm());   // B: legacy raw RCPT_NM, no fallback (PymnHelper:2218 pattern)
             row.setTranAmt(line.getTranAmt());
             row.setTranUsag(line.getTranUsag());
             row.setProcStat(PROC_STAT_PENDING);
@@ -353,7 +353,7 @@ public class InternalTransferDispatchExecutor {
                 data.setAntDivCd(line.getAntDivCd());
             }
 
-            data.setFincMdaOwnerNm(resolveOwnerNm(bizKey, line));
+            data.setFincMdaOwnerNm(line.getRcptNm());  // B: legacy raw RCPT_NM (PymnHelper file path)
             // Legacy quirk parity (PymnHelper:2295): WDRL_ACT_RMRK copied into
             // both TAR_ACCT_RMRK and WDRL_ACCT_RMRK.
             data.setTarAcctRmrk(line.getWdrlActRmrk());
