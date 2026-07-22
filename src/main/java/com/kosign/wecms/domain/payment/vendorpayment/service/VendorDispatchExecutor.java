@@ -31,6 +31,7 @@ import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
@@ -141,19 +142,24 @@ public class VendorDispatchExecutor {
     public void execute(ScdulPymnSumr master, List<ScdulPymnSumrDetl> lines, String trnfCcyCd) {
         String bizKey = master.getBizKey();
         String userId = TenantContext.currentUserId();
-        LocalDateTime nowVn = LocalDateTime.now(clock.withZone(VN_TZ));
-        String tranDt = nowVn.format(DT8);
-        String regTm  = nowVn.format(TM6);
-        String dttm14 = nowVn.format(DTM14);
 
         // F1 (audit VCB, legacy PymnHelper.pymn_0001_001_c001:2188, SVN r36803 2026-07-16): ALL VCB
-        // (970436) — VND and USD — dispatches via the File path, not the real-time API. The
-        // isVcbFileTransfer gate pulls VCB VND off the API path (it was previously mis-routed there).
+        // (970436) — VND and USD — dispatches via the File path, not the real-time API.
         boolean isVcbFileTransfer = eq(master.getOutBankCd(), vcbBankCd);
         if (CCY_VND.equalsIgnoreCase(trnfCcyCd) && !isVcbFileTransfer) {
+            // K — legacy parity (PymnHelper:2196,2214): the API-path TB_PAY_TARGET stamps TRAN_DT +
+            // REG_TM from ONE captured UTC 'now' (utcNow), NOT ICT. TRAN_DT is a PK component, so the
+            // same UTC value flows through nextTranSeq / save / registerAfterCommit → the realtime
+            // dispatch lookup. PROC_DTTM stays ICT (legacy gmtNowVanCenter; out of scope for K).
+            LocalDateTime nowUtc = LocalDateTime.now(clock.withZone(ZoneOffset.UTC));
+            String tranDt = nowUtc.format(DT8);
+            String regTm  = nowUtc.format(TM6);
+            String dttm14 = LocalDateTime.now(clock.withZone(VN_TZ)).format(DTM14);
             writeApiPath(master, lines, bizKey, userId, tranDt, regTm, dttm14, trnfCcyCd);
         } else {
-            writeFilePath(master, lines, bizKey, tranDt, dttm14, trnfCcyCd);
+            // File path: legacy TB_PAY_FILE_MST uses server-local LocalDate.now(); refactor keeps ICT.
+            LocalDateTime nowVn = LocalDateTime.now(clock.withZone(VN_TZ));
+            writeFilePath(master, lines, bizKey, nowVn.format(DT8), nowVn.format(DTM14), trnfCcyCd);
         }
     }
 
