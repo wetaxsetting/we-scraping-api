@@ -12,8 +12,16 @@ import com.kosign.wecms.domain.vatdeclaration.dto.VatDeclarationListResponse;
 import com.kosign.wecms.domain.vatdeclaration.dto.VatDeclarationRow;
 import com.kosign.wecms.domain.vatdeclaration.dto.VatDeclarationUpdateRequest;
 import com.kosign.wecms.domain.vatdeclaration.dto.VatIndicatorSet;
+import com.kosign.wecms.domain.vatdeclaration.dto.AnnexInvoiceGroup;
+import com.kosign.wecms.domain.vatdeclaration.dto.AnnexInvoiceListResponse;
+import com.kosign.wecms.domain.vatdeclaration.dto.AnnexRow;
+import com.kosign.wecms.domain.vatdeclaration.dto.AnnexRowCreateRequest;
+import com.kosign.wecms.domain.vatdeclaration.dto.AnnexSummary;
+import com.kosign.wecms.domain.vatdeclaration.entity.AnnexType;
 import com.kosign.wecms.domain.vatdeclaration.entity.VatDeclaration;
+import com.kosign.wecms.domain.vatdeclaration.entity.VatDeclarationAnnexItem;
 import com.kosign.wecms.domain.vatdeclaration.entity.VatDeclarationIndicator;
+import com.kosign.wecms.domain.vatdeclaration.repository.VatDeclarationAnnexItemRepository;
 import com.kosign.wecms.domain.vatdeclaration.repository.VatDeclarationIndicatorRepository;
 import com.kosign.wecms.domain.vatdeclaration.repository.VatDeclarationRepository;
 import lombok.RequiredArgsConstructor;
@@ -24,6 +32,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -63,6 +72,7 @@ public class VatDeclarationService {
 
     private final VatDeclarationRepository declRepo;
     private final VatDeclarationIndicatorRepository indicatorRepo;
+    private final VatDeclarationAnnexItemRepository annexRepo;
     private final BusiInfmRepository busiInfmRepo;
     private final VatIndicatorCalculator calculator;
     private final ObjectMapper objectMapper;
@@ -232,6 +242,147 @@ public class VatDeclarationService {
         decl.setStatus(STATUS_DRAFT);
         decl.setModId(TenantContext.currentUserId());
         return toDetail(decl, loadIndicator(decl));
+    }
+
+    // ---------------------------------------------------------------- helpers
+
+    // ---------------------------------------------------------------- annex
+
+    /**
+     * Annex invoice modal (API #9): rows of one annex type, filtered + paged,
+     * grouped by {@code prodNm} for the accordion. {@code annexType} defaults to
+     * REDUCE8 (the 8% modal); {@code grandTotalReducedAmt} spans the full filtered set.
+     */
+    @Transactional(readOnly = true)
+    public AnnexInvoiceListResponse listAnnexInvoices(Long sid, String annexType, String search,
+                                                      String ioDv, int page, int size) {
+        VatDeclaration decl = load(sid);
+        String type = resolveAnnexType(annexType);
+        int pageSize = size <= 0 ? DEFAULT_PAGE_SIZE : Math.min(size, MAX_PAGE_SIZE);
+
+        String q = search == null ? null : search.trim().toLowerCase();
+        String io = ioDv == null || ioDv.isBlank() ? null : ioDv.trim();
+        List<VatDeclarationAnnexItem> filtered = annexRepo
+                .findByDeclaration_SidAndDeclaration_BizKeyAndAnnexTypeAndDelYnOrderByDispOrdAsc(
+                        decl.getSid(), decl.getBizKey(), type, "N").stream()
+                .filter(a -> io == null || io.equalsIgnoreCase(a.getIoDv()))
+                .filter(a -> q == null || q.isEmpty()
+                        || (a.getProdNm() != null && a.getProdNm().toLowerCase().contains(q))
+                        || (a.getInvNo() != null && a.getInvNo().toLowerCase().contains(q)))
+                .toList();
+
+        BigDecimal grandReduced = filtered.stream().map(a -> nz(a.getReducedAmt()))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        long total = filtered.size();
+
+        int from = Math.max(page, 0) * pageSize;
+        List<VatDeclarationAnnexItem> slice = from >= filtered.size() ? List.of()
+                : filtered.subList(from, Math.min(from + pageSize, filtered.size()));
+
+        Map<String, List<VatDeclarationAnnexItem>> grouped = new LinkedHashMap<>();
+        for (VatDeclarationAnnexItem a : slice) {
+            grouped.computeIfAbsent(a.getProdNm() == null ? "" : a.getProdNm(), k -> new ArrayList<>()).add(a);
+        }
+        List<AnnexInvoiceGroup> groups = new ArrayList<>();
+        for (Map.Entry<String, List<VatDeclarationAnnexItem>> e : grouped.entrySet()) {
+            List<AnnexRow> rows = e.getValue().stream().map(this::toAnnexRow).toList();
+            BigDecimal gs = e.getValue().stream().map(a -> nz(a.getSplyAmt())).reduce(BigDecimal.ZERO, BigDecimal::add);
+            BigDecimal gr = e.getValue().stream().map(a -> nz(a.getReducedAmt())).reduce(BigDecimal.ZERO, BigDecimal::add);
+            groups.add(new AnnexInvoiceGroup(e.getKey(), rows.size(), str(gs), str(gr), rows));
+        }
+        return new AnnexInvoiceListResponse(groups, total, str(grandReduced));
+    }
+
+    /** Add a manual annex row (API #10) — hand_reg_yn='Y', disp_ord = MAX+1. Draft only. */
+    @Transactional
+    public AnnexSummary addAnnexRow(Long sid, AnnexRowCreateRequest req) {
+        VatDeclaration decl = load(sid);
+        assertDraft(decl);
+        String type = resolveAnnexType(req.annexType());
+
+        int nextOrd = annexRepo
+                .findByDeclaration_SidAndDeclaration_BizKeyAndAnnexTypeAndDelYnOrderByDispOrdAsc(
+                        decl.getSid(), decl.getBizKey(), type, "N").stream()
+                .map(a -> a.getDispOrd() == null ? 0 : a.getDispOrd())
+                .max(Integer::compareTo).orElse(0) + 1;
+
+        VatDeclarationAnnexItem item = VatDeclarationAnnexItem.builder()
+                .declaration(decl)
+                .annexType(type)
+                .ioDv(blankToNull(req.ioDv()))
+                .invNo(req.invNo())
+                .invSymbol(req.invSymbol())
+                .invDt(req.invDt())
+                .trcoTaxCode(req.trcoTaxCode())
+                .trcoNm(req.trcoNm())
+                .prodNm(req.prodNm())
+                .splyAmt(dec(req.splyAmt()))
+                .vatRate(dec(req.vatRate()))
+                .vatAmt(dec(req.vatAmt()))
+                .reducedAmt(dec(req.reducedAmt()))
+                .allocRatio(dec(req.allocRatio()))
+                .handRegYn("Y")
+                .dispOrd(nextOrd)
+                .delYn("N")
+                .build();
+        String uid = TenantContext.currentUserId();
+        item.setRegId(uid);
+        item.setModId(uid);
+        annexRepo.save(item);
+        return annexSummary(decl, type);
+    }
+
+    /** Delete one annex row (API #11) — soft delete. Draft only. */
+    @Transactional
+    public AnnexSummary deleteAnnexRow(Long sid, Long id) {
+        VatDeclaration decl = load(sid);
+        assertDraft(decl);
+        VatDeclarationAnnexItem item = annexRepo
+                .findByIdAndDeclaration_BizKeyAndDelYn(id, decl.getBizKey(), "N")
+                .filter(a -> a.getDeclaration().getSid().equals(decl.getSid()))
+                .orElseThrow(() -> new BusinessException("WBE_VAT_DECL_ANNEX_ROW_NOT_FOUND"));
+        item.setDelYn("Y");
+        item.setModId(TenantContext.currentUserId());
+        return annexSummary(decl, item.getAnnexType());
+    }
+
+    private AnnexSummary annexSummary(VatDeclaration decl, String type) {
+        List<VatDeclarationAnnexItem> rows = annexRepo
+                .findByDeclaration_SidAndDeclaration_BizKeyAndAnnexTypeAndDelYnOrderByDispOrdAsc(
+                        decl.getSid(), decl.getBizKey(), type, "N");
+        BigDecimal sply = rows.stream().map(a -> nz(a.getSplyAmt())).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal vat = rows.stream().map(a -> nz(a.getVatAmt())).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal red = rows.stream().map(a -> nz(a.getReducedAmt())).reduce(BigDecimal.ZERO, BigDecimal::add);
+        return new AnnexSummary(type, rows.size(), str(sply), str(red), str(vat));
+    }
+
+    private AnnexRow toAnnexRow(VatDeclarationAnnexItem a) {
+        return new AnnexRow(a.getId(), a.getAnnexType(), a.getIoDv(), a.getSrcDocId(),
+                a.getInvNo(), a.getInvSymbol(), a.getInvDt(), a.getTrcoTaxCode(), a.getTrcoNm(),
+                a.getProdNm(), str(a.getSplyAmt()), str(a.getVatRate()), str(a.getVatAmt()),
+                str(a.getReducedAmt()), str(a.getAllocRatio()), a.getHandRegYn());
+    }
+
+    /** Validate + normalise the annex type; blank defaults to REDUCE8 (8% modal). */
+    private static String resolveAnnexType(String raw) {
+        return AnnexType.fromCode(raw == null || raw.isBlank() ? "REDUCE8" : raw)
+                .map(AnnexType::code)
+                .orElseThrow(() -> new BusinessException("WBE_VALIDATION"));
+    }
+
+    private static BigDecimal dec(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return new BigDecimal(raw.trim());
+        } catch (NumberFormatException e) {
+            throw new BusinessException("WBE_VALIDATION");
+        }
+    }
+
+    private static String blankToNull(String v) {
+        return v == null || v.isBlank() ? null : v.trim();
     }
 
     // ---------------------------------------------------------------- helpers
