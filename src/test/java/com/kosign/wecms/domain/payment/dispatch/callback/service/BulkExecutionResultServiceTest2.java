@@ -104,7 +104,8 @@ class BulkExecutionResultServiceTest2 {
                 dispatchKeyGenerator, firmFileMstRepository, firmFileDataRepository,
                 firmFileRsltRepository, firmBatApiTranRepository, payFileMstRepository, payFileDataRepository,
                 eventPublisher,
-                org.mockito.Mockito.mock(com.kosign.wecms.domain.payment.dispatch.alert.OpsAlertService.class));
+                org.mockito.Mockito.mock(com.kosign.wecms.domain.payment.dispatch.alert.OpsAlertService.class),
+                new DispatchApiTranAuditWriter(firmBatApiTranRepository));
 
         when(vanApiKeyService.getApiKey(VAN)).thenReturn(TEST_KEY);
         when(dispatchKeyGenerator.nextTranSeq(anyString(), anyString())).thenReturn("1");
@@ -195,8 +196,8 @@ class BulkExecutionResultServiceTest2 {
     @Test
     void happyPath_parses_writesResults_advancesStep2to3_andFinalizesPay() throws Exception {
         TbFirmFileMst mst = mst(ProcStep.DEPO_REQ.code(), ProcStat.REQ.code());
-        when(firmFileMstRepository.findByTranDtAndFirmFileNmAndProcStepAndProcStat(
-                TRAN_DT, FILE_NM, ProcStep.DEPO_REQ.code(), ProcStat.REQ.code())).thenReturn(Optional.of(mst));
+        when(firmFileMstRepository.findForExecutionResult(
+                TRAN_DT, FILE_NM, VAN, FILE_SEQ, ProcStep.DEPO_REQ.code(), ProcStat.REQ.code())).thenReturn(Optional.of(mst));
         when(firmFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
                 .thenReturn(List.of(mst)); // same ref — after advance it reads PROC_STAT='0'
         when(firmFileDataRepository.findByTranDtAndFileSeqNoAndFirmFileNmOrderBySeqAsc(TRAN_DT, FILE_SEQ_NO, FILE_NM))
@@ -230,8 +231,9 @@ class BulkExecutionResultServiceTest2 {
 
     @Test
     void noFileAtStep2_isSafeNoOp() throws Exception {
-        when(firmFileMstRepository.findByTranDtAndFirmFileNmAndProcStepAndProcStat(
-                anyString(), anyString(), eq(ProcStep.DEPO_REQ.code()), eq(ProcStat.REQ.code())))
+        when(firmFileMstRepository.findForExecutionResult(
+                anyString(), anyString(), anyString(), anyString(),
+                eq(ProcStep.DEPO_REQ.code()), eq(ProcStat.REQ.code())))
                 .thenReturn(Optional.empty());
 
         service.handle(envelope());
@@ -243,8 +245,8 @@ class BulkExecutionResultServiceTest2 {
 
     @Test
     void malformedResultFile_throws_andDoesNotAdvanceState() throws Exception {
-        when(firmFileMstRepository.findByTranDtAndFirmFileNmAndProcStepAndProcStat(
-                TRAN_DT, FILE_NM, ProcStep.DEPO_REQ.code(), ProcStat.REQ.code()))
+        when(firmFileMstRepository.findForExecutionResult(
+                TRAN_DT, FILE_NM, VAN, FILE_SEQ, ProcStep.DEPO_REQ.code(), ProcStat.REQ.code()))
                 .thenReturn(Optional.of(mst(ProcStep.DEPO_REQ.code(), ProcStat.REQ.code())));
         placeResultFile(new byte[500]); // not a 1000-byte-record multiple → codec rejects
 

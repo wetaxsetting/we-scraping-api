@@ -18,6 +18,10 @@ package com.kosign.wecms.domain.payment.dispatch.service;
  * @param dataCnt    record count ({@code data_cnt})
  * @param dataAmt    total amount, integer part ({@code data_amt})
  * @param dataDcmAmt total amount, decimal portion ({@code data_dcm_amt})
+ * @param tno        gateway {@code TNO} — the allocated {@code TB_FIRM_BAT_API_TRAN.TRAN_SEQ}
+ *                   (A1 / audit X-2). Legacy {@code FILE_DEPOSIT_TRANSFER_BATCH1} sends the
+ *                   reception request's {@code seq} (= its stored {@code TRAN_SEQ}) as the TNO, so
+ *                   the gateway record correlates 1:1 to the audit row — never a UUID.
  */
 public record BulkReceptionApiCommand(
         String vanOrgCd,
@@ -26,6 +30,7 @@ public record BulkReceptionApiCommand(
         String fileNm,
         String dataCnt,
         String dataAmt,
-        String dataDcmAmt
+        String dataDcmAmt,
+        String tno
 ) {
 }

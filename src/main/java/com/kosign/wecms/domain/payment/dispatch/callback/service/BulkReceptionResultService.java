@@ -17,6 +17,7 @@ import com.kosign.wecms.domain.payment.dispatch.van.client.EfsApiClient;
 import com.kosign.wecms.domain.payment.dispatch.van.client.EfsProperties;
 import com.kosign.wecms.domain.payment.dispatch.van.client.VanApiKeyService;
 import com.kosign.wecms.domain.payment.dispatch.van.crypto.EfsCryptoService;
+import com.kosign.wecms.domain.payment.dispatch.van.dto.Efs301Request;
 import com.kosign.wecms.domain.payment.dispatch.van.dto.Efs302Request;
 import com.kosign.wecms.domain.payment.dispatch.van.dto.Efs302Response;
 import com.kosign.wecms.domain.payment.dispatch.van.dto.EfsEnvelope;
@@ -31,7 +32,6 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
-import java.util.UUID;
 
 /**
  * 01301 bulk reception result callback handler — refactor of
@@ -95,7 +95,6 @@ public class BulkReceptionResultService {
     private static final DateTimeFormatter TRAN_DT_FMT = DateTimeFormatter.ofPattern("yyyyMMdd");
     private static final DateTimeFormatter TRAN_TM_FMT = DateTimeFormatter.ofPattern("HHmmss");
     private static final ZoneId ICT = ZoneId.of("Asia/Ho_Chi_Minh");
-    private static final int TNO_MAX = 50;
 
     /** Legacy reception-success token compared in {@code FILE_DEPOSIT_TRANSFER_API1_act.jsp:247}. */
     private static final String RECEPTION_SUCCESS_CD = "BT00"; // TODO(B5): confirm full reception result-code set.
@@ -108,6 +107,8 @@ public class BulkReceptionResultService {
     private final TbFirmFileMstRepository firmFileMstRepository;
     private final TbFirmBatApiTranRepository firmBatApiTranRepository;
     private final DispatchKeyGenerator dispatchKeyGenerator;
+    /** C1 (audit H-3): sibling fail-stop reads/propagates the shared pay-file status. */
+    private final com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileMstRepository payFileMstRepository;
 
     /**
      * Handle a 01301 reception-result callback: decrypt → validate → reconcile →
@@ -118,7 +119,7 @@ public class BulkReceptionResultService {
      * @throws IllegalStateException when the API key is not provisioned (B2)
      */
     @Transactional
-    public void handle(EfsCallbackEnvelope envelope) {
+    public EfsEnvelope handle(EfsCallbackEnvelope envelope) {
         if (envelope == null || !StringUtils.hasText(envelope.id())) {
             throw new IllegalArgumentException("callback envelope ID is required");
         }
@@ -128,7 +129,9 @@ public class BulkReceptionResultService {
         String apiKey = vanApiKeyService.getApiKey(vanOrgCd);
         if (!efsCryptoService.verifyVv(envelope.ev(), envelope.vv(), apiKey)) {
             log.warn("01301 callback VV verification failed vanOrgCd={} tno={}", vanOrgCd, envelope.tno());
-            throw new BusinessException("WBE_EFS_VERIFY_FAILED");
+            // A2 (audit C1): return the EFS G003 acknowledgement (echo EV/VV, no rebuild).
+            return receptionAck(envelope, null, FirmBankingResultCd.ENC_VRFY_ERR,
+                    FirmBankingResultCd.MSG_ENC_VRFY_ERR, false, apiKey);
         }
         BulkReceptionResultRequest req = decode(efsCryptoService.decryptEv(envelope.ev(), apiKey));
 
@@ -148,26 +151,48 @@ public class BulkReceptionResultService {
         if (file == null) {
             log.info("01301 callback ignored — no file at PROC_STEP=0/PROC_STAT=6 (already progressed or unknown) "
                     + "vanOrgCd={} fileNm={}", vanOrgCd, req.fileNm());
-            return;
+            // Idempotent replay / already-processed → success ack (rebuilt EV) so the gateway stops resending.
+            return receptionAck(envelope, req, FirmBankingResultCd.SUCC, FirmBankingResultCd.MSG_SUCC, true, apiKey);
         }
 
         BigDecimal receivedAmt = combineAmount(req.dataAmt(), req.dataDcmAmt());
 
-        // 4. 01301 reception-result audit row.
+        // C1 (audit H-3, legacy 2025.09.10 FILE_DEPOSIT_TRANSFER_API1_act.jsp:173-242): sibling
+        // fail-stop. Before reconciling this split sibling, abort if the shared pay-file
+        // (TB_PAY_FILE_MST) is already FAIL — a prior sibling failed, so executing this one would
+        // move money partially. Write a G998 audit row + mark THIS firm file PROC_STEP='1'/PROC_STAT='3'
+        // (REG_RSLT_CD=G998) and stop: no reception advance, no 00302. Matches legacy R004 CNT>0.
+        if (siblingAlreadyFailed(tranDt, file.getBizKey(), file.getFileSeqNo())) {
+            log.warn("01301 sibling fail-stop (G998) — pay-file already FAIL, aborting fileNm={} bizKey={} fileSeqNo={}",
+                    req.fileNm(), file.getBizKey(), file.getFileSeqNo());
+            writeApiTran(file, tranDt, tranTm, ApiTranTp.BULK_RECEPTION_RESULT.code(),
+                    bigDecimalOrZero(req.dataCnt()), receivedAmt,
+                    req.resultCd(), req.resultMsg(),
+                    FirmBankingResultCd.TARGET_STAT_ERR, FirmBankingResultCd.MSG_TARGET_STAT_ERR,
+                    tranDt + tranTm, envelope.tno());
+            failFile(file, tranDt + tranTm, req.dataCnt(), receivedAmt,
+                    FirmBankingResultCd.TARGET_STAT_ERR, FirmBankingResultCd.MSG_TARGET_STAT_ERR);
+            return receptionAck(envelope, req, FirmBankingResultCd.TARGET_STAT_ERR,
+                    FirmBankingResultCd.MSG_TARGET_STAT_ERR, false, apiKey);
+        }
+
+        // 4. 01301 reception-result audit row. TRAN_SEQ = the VAN callback's TNO (A1 / audit X-2 —
+        //    legacy FILE_DEPOSIT_TRANSFER_API1_act.jsp:200 sets TRAN_SEQ = inputTno).
         boolean receptionSuccess = RECEPTION_SUCCESS_CD.equals(req.resultCd());
         writeApiTran(file, tranDt, tranTm, ApiTranTp.BULK_RECEPTION_RESULT.code(),
                 bigDecimalOrZero(req.dataCnt()), receivedAmt,
                 req.resultCd(), req.resultMsg(),
                 receptionSuccess ? FirmBankingResultCd.SUCC : FirmBankingResultCd.ETC_ERR,
                 receptionSuccess ? FirmBankingResultCd.MSG_SUCC : FirmBankingResultCd.MSG_ETC_ERR,
-                tranDt + tranTm);
+                tranDt + tranTm, envelope.tno());
 
         // 5. Reconcile and advance the file (legacy step 5).
         if (!receptionSuccess) {
             failFile(file, tranDt + tranTm, req.dataCnt(), receivedAmt, req.resultCd(), req.resultMsg());
             log.info("01301 reception failed (result_cd={}) — no 00302 vanOrgCd={} fileNm={}",
                     req.resultCd(), vanOrgCd, req.fileNm());
-            return;
+            // WeCMS processed the callback (recorded the bank's reception failure) → ack 0000, echo EV.
+            return receptionAck(envelope, req, FirmBankingResultCd.SUCC, FirmBankingResultCd.MSG_SUCC, false, apiKey);
         }
         if (isMismatch(req.dataCnt(), receivedAmt, file)) {
             failFile(file, tranDt + tranTm, req.dataCnt(), receivedAmt,
@@ -175,7 +200,8 @@ public class BulkReceptionResultService {
             log.warn("01301 reception count/amount mismatch — no 00302 vanOrgCd={} fileNm={} "
                             + "recvCnt={} reqCnt={} recvAmt={} reqAmt={}",
                     vanOrgCd, req.fileNm(), req.dataCnt(), file.getReqCnt(), receivedAmt, file.getReqAmt());
-            return;
+            // WeCMS detected a count/amount inconsistency → ack 9999 (AMT_ERR), echo EV.
+            return receptionAck(envelope, req, FirmBankingResultCd.AMT_ERR, FirmBankingResultCd.MSG_AMT_ERR, false, apiKey);
         }
 
         // Reception success + totals match → PROC_STEP 0→1, PROC_STAT='6' (ready to execute).
@@ -197,7 +223,8 @@ public class BulkReceptionResultService {
         if (awaitingSiblings) {
             log.info("01301 reception success — deferring 00302, sibling split files still pending "
                     + "vanOrgCd={} fileSeqNo={}", vanOrgCd, file.getFileSeqNo());
-            return;
+            // Reception itself succeeded (00302 merely deferred) → success ack with rebuilt EV.
+            return receptionAck(envelope, req, FirmBankingResultCd.SUCC, FirmBankingResultCd.MSG_SUCC, true, apiKey);
         }
         for (TbFirmFileMst ready : siblings) {
             if (ProcStep.REQ_RECV.code().equals(ready.getProcStep())
@@ -205,6 +232,30 @@ public class BulkReceptionResultService {
                 issueExecutionInline(ready, vanOrgCd, tranDt, tranTm);
             }
         }
+        // A2 (audit C1): 01301 success ack — rebuild EV/VV over the SIX echo fields
+        // {bank_cd, prtn_id, file_nm, data_cnt, data_amt, data_dcm_amt} (legacy
+        // FILE_DEPOSIT_TRANSFER_API1_act.jsp:409-423), RC=0000. NOT the request EV (unlike 01302).
+        return receptionAck(envelope, req, FirmBankingResultCd.SUCC, FirmBankingResultCd.MSG_SUCC, true, apiKey);
+    }
+
+    /**
+     * Build the 01301 EFS acknowledgement (A2). On the reception-success path {@code rebuildEv=true}:
+     * {@code EV}/{@code VV} are freshly built over the six echo fields (legacy API1_act.jsp:409-423);
+     * otherwise the inbound {@code EV}/{@code VV} are echoed. {@code RS_DTIME} is the response time.
+     */
+    private EfsEnvelope receptionAck(EfsCallbackEnvelope in, BulkReceptionResultRequest req,
+                                     String rc, String rm, boolean rebuildEv, String apiKey) {
+        String responseDttm = LocalDateTime.now(ICT).format(RQ_DTIME_FMT);
+        String ev = in.ev();
+        String vv = in.vv();
+        if (rebuildEv && req != null) {
+            String echoJson = serialize(new Efs301Request(
+                    req.bankCd(), req.prtnId(), req.fileNm(), req.dataCnt(), req.dataAmt(), req.dataDcmAmt()));
+            ev = efsCryptoService.encryptEv(echoJson, apiKey, responseDttm);
+            vv = efsCryptoService.buildVv(echoJson, apiKey);
+        }
+        return new EfsEnvelope(in.id(), null, responseDttm, in.tno(), ev, vv,
+                EfsEnvelope.EM_AES, EfsEnvelope.VM_HMAC_SHA256, rc, rm);
     }
 
     /**
@@ -230,14 +281,16 @@ public class BulkReceptionResultService {
         String[] amt = splitAmount(file.getReqAmt());
 
         // Audit BEFORE the call so even a no-response leaves a 00302 marker that blocks re-issue.
+        // 00302 request audit: allocate a fresh TRAN_SEQ (tranSeq=null) — its value is then sent as
+        // the 00302 gateway TNO (A1). This is a request the refactor originates, not a callback echo.
         TbFirmBatApiTran audit = writeApiTran(file, tranDt, tranTm, ApiTranTp.BULK_EXECUTION.code(),
-                file.getReqCnt(), file.getReqAmt(), null, null, null, null, null);
+                file.getReqCnt(), file.getReqAmt(), null, null, null, null, null, null);
 
         try {
             issueExecution(new BulkExecutionApiCommand(
                     file.getVanOrgCd() != null ? file.getVanOrgCd() : vanOrgCd,
                     file.getOutBankCd(), file.getBankPrtnId(), file.getFirmFileNm(),
-                    reqCnt, amt[0], amt[1]));
+                    reqCnt, amt[0], amt[1], audit.getTranSeq()));
 
             // Confirmed → record success + advance PROC_STEP 1→2 (execution requested).
             audit.setRsCd(FirmBankingResultCd.SUCC);
@@ -275,17 +328,48 @@ public class BulkReceptionResultService {
         file.setRegRsltMsg(rsltMsg);
         file.setProcDttm(procDttm);
         firmFileMstRepository.save(file);
+
+        // C2 (audit M-1, legacy FILE_DEPOSIT_TRANSFER_API1_act.jsp:297-310/369-382 U001): a reception
+        // failure must also fail the shared pay-file summary (TB_PAY_FILE_MST PROC_STAT='3'), so the
+        // UI/summary reflect it AND the C1 sibling fail-stop trips for the remaining split files.
+        payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(
+                        file.getTranDt(), file.getBizKey(), file.getFileSeqNo())
+                .ifPresent(pay -> {
+                    pay.setProcStat(ProcStat.FAIL.code());
+                    pay.setRsMsg(rsltMsg); // TB_PAY_FILE_MST has RS_MSG (no RS_CD column) — legacy U001 parity
+                    pay.setProcDttm(procDttm);
+                    payFileMstRepository.save(pay);
+                });
     }
 
-    /** Build + persist a {@code TB_FIRM_BAT_API_TRAN} audit row; returns the managed entity. */
+    /**
+     * C1 sibling fail-stop probe — legacy {@code TB_PAY_FILE_MST_R004} ({@code CNT} of
+     * {@code PROC_STAT='3'} for the {@code (TRAN_DT, BIZ_KEY, FILE_SEQ_NO)} group). The refactor's
+     * pay-file is one row per group, so this is "is the shared pay-file already FAIL?".
+     */
+    private boolean siblingAlreadyFailed(String tranDt, String bizKey, String fileSeqNo) {
+        return payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(tranDt, bizKey, fileSeqNo)
+                .map(pay -> ProcStat.FAIL.code().equals(pay.getProcStat()))
+                .orElse(false);
+    }
+
+    /**
+     * Build + persist a {@code TB_FIRM_BAT_API_TRAN} audit row; returns the managed entity.
+     *
+     * @param tranSeq explicit {@code TRAN_SEQ} (A1): for the 01301 reception-result audit this is
+     *                the VAN callback's TNO (legacy {@code inputTno}); for the 00302 request audit
+     *                it is {@code null} → a fresh {@code TRAN_SEQ} is allocated (which the caller
+     *                then sends as the 00302 gateway TNO).
+     */
     private TbFirmBatApiTran writeApiTran(TbFirmFileMst file, String tranDt, String tranTm, String apiTranTp,
                                           BigDecimal batCnt, BigDecimal batAmt,
                                           String regRsltCd, String regRsltMsg,
-                                          String rsCd, String rsMsg, String rsDttm) {
+                                          String rsCd, String rsMsg, String rsDttm, String tranSeq) {
         TbFirmBatApiTran row = new TbFirmBatApiTran();
         row.setTranDt(tranDt);
         row.setBizKey(file.getBizKey());
-        row.setTranSeq(dispatchKeyGenerator.nextTranSeq(file.getBizKey(), tranDt));
+        row.setTranSeq(StringUtils.hasText(tranSeq)
+                ? tranSeq : dispatchKeyGenerator.nextTranSeq(file.getBizKey(), tranDt));
         row.setApiTranTp(apiTranTp);
         row.setOutBankCd(file.getOutBankCd());
         row.setBankPrtnId(file.getBankPrtnId());
@@ -332,12 +416,13 @@ public class BulkReceptionResultService {
         return new BigDecimal(i + "." + d);
     }
 
-    /** Split a stored amount (scale 2) back into [integer, decimal-portion] for the 00302 request. */
+    /**
+     * Split the stored amount back into [integer, decimal-portion] for the 00302 request,
+     * reproducing legacy {@code StrUtil.BigDecPaser} exactly
+     * (see {@link com.kosign.wecms.domain.payment.dispatch.van.AmountSplitter}).
+     */
     private String[] splitAmount(BigDecimal amt) {
-        BigDecimal a = amt == null ? BigDecimal.ZERO : amt;
-        String itg = a.toBigInteger().toString();
-        String dcm = a.subtract(new BigDecimal(a.toBigInteger())).movePointRight(2).abs().toBigInteger().toString();
-        return new String[] {itg, dcm};
+        return com.kosign.wecms.domain.payment.dispatch.van.AmountSplitter.split(amt);
     }
 
     private BigDecimal bigDecimalOrZero(String value) {
@@ -375,8 +460,10 @@ public class BulkReceptionResultService {
                 cmd.bankCd(), cmd.prtnId(), cmd.fileNm(), cmd.dataCnt(), cmd.dataAmt(), cmd.dataDcmAmt());
         String businessJson = serialize(request);
 
+        // A1 (audit X-2): the envelope TNO is the allocated TB_FIRM_BAT_API_TRAN.TRAN_SEQ (legacy
+        // BATCH2 `seq`), NOT a UUID.
         String rqDtime = LocalDateTime.now(ICT).format(RQ_DTIME_FMT);
-        String tno = newTno(rqDtime);
+        String tno = cmd.tno();
         String ev = efsCryptoService.encryptEv(businessJson, apiKey, rqDtime);
         String vv = efsCryptoService.buildVv(businessJson, apiKey);
         String id = StringUtils.hasText(efsProperties.getPartnerId())
@@ -416,11 +503,9 @@ public class BulkReceptionResultService {
         if (!StringUtils.hasText(cmd.dataCnt())) {
             throw new IllegalArgumentException("dataCnt is required");
         }
-    }
-
-    private String newTno(String rqDtime) {
-        String tno = rqDtime + UUID.randomUUID().toString().replace("-", "");
-        return tno.length() > TNO_MAX ? tno.substring(0, TNO_MAX) : tno;
+        if (!StringUtils.hasText(cmd.tno())) {
+            throw new IllegalArgumentException("tno (TRAN_SEQ) is required");
+        }
     }
 
     private String serialize(Object value) {

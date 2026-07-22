@@ -47,7 +47,9 @@ class ResultCheckServiceTest {
     private ResultCheckService service() {
         // inquire() (the 203 leg under test here) does not touch TB_FIRM_TRAN /
         // TB_PAY_TARGET; the result-check poll (runOnce) is exercised by ResultCheckPollTest.
-        return new ResultCheckService(efsApiClient, crypto, vanApiKeyService, props, mapper, null, null, null);
+        // inquire() uses none of the poll-only collaborators (repos / conf / pacer / legacy fn).
+        return new ResultCheckService(efsApiClient, crypto, vanApiKeyService, props, mapper,
+                null, null, null, null, null, null);
     }
 
     private static ResultCheckInquiryCommand cmd() {

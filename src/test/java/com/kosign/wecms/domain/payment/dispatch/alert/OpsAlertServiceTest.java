@@ -80,7 +80,6 @@ class OpsAlertServiceTest {
         when(vanApiKeyService.getApiKey("VAN01")).thenReturn("0123456789abcdef0123456789abcdef");
         when(efsCryptoService.encryptEv(anyString(), anyString(), anyString())).thenReturn("EV_VALUE");
         when(efsCryptoService.buildVv(anyString(), anyString())).thenReturn("VV_VALUE");
-        when(efsProperties.getPartnerId()).thenReturn("CORP000001");
         when(efsApiClient.send(eq(EfsApiClient.EFS_MSG), any(EfsEnvelope.class)))
                 .thenReturn(new EfsEnvelope(null, null, "20260706120000", "M9999999",
                         null, null, "AES", "HmacSHA256", "0000", "OK"));
@@ -91,7 +90,8 @@ class OpsAlertServiceTest {
         verify(efsApiClient).send(eq(EfsApiClient.EFS_MSG), captor.capture());
         EfsEnvelope sent = captor.getValue();
         assertThat(sent.tno()).isEqualTo("M9999999");
-        assertThat(sent.id()).isEqualTo("CORP000001");
+        // M-12 (audit): the alert-channel envelope ID is ALWAYS the VAN org code, never partnerId.
+        assertThat(sent.id()).isEqualTo("VAN01");
         assertThat(sent.em()).isEqualTo(EfsEnvelope.EM_AES);
         assertThat(sent.vm()).isEqualTo(EfsEnvelope.VM_HMAC_SHA256);
         assertThat(sent.ev()).isEqualTo("EV_VALUE");
@@ -103,7 +103,6 @@ class OpsAlertServiceTest {
     void businessJson_keepsVendorCasing() {
         enable();
         when(vanApiKeyService.getApiKey(anyString())).thenReturn("0123456789abcdef0123456789abcdef");
-        when(efsProperties.getPartnerId()).thenReturn(null);
         ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
         when(efsCryptoService.encryptEv(jsonCaptor.capture(), anyString(), anyString())).thenReturn("EV");
         when(efsCryptoService.buildVv(anyString(), anyString())).thenReturn("VV");
@@ -115,15 +114,18 @@ class OpsAlertServiceTest {
         // Legacy protocol constants + vendor casing (not snake_case), active-profile mode.
         assertThat(json).contains("\"appDiv\":\"0\"");
         assertThat(json).contains("\"grpID\":\"WECMSBATCH\"");
-        assertThat(json).contains("\"content\":\"hello\"");
+        // F3 (audit): the legacy ServerGB [ENV][WAS_NO] marker is appended to the content's
+        // first line — env-mode unset → the active profile ("sit") is the fallback env label.
+        assertThat(json).contains("\"content\":\"hello [sit][]\"");
         assertThat(json).contains("\"mode\":\"sit\"");
     }
 
     @Test
-    void fallsBackToVanOrgCdWhenNoPartnerId() {
+    void envelopeIdIsAlwaysVanOrgCd() {
+        // M-12 (audit): even with a partner-id configured, the alert-channel ID stays the VAN org
+        // code (legacy MSGSendAPIThread:77) — the partner-id is a per-request contract, not this channel.
         enable();
         when(vanApiKeyService.getApiKey(anyString())).thenReturn("0123456789abcdef0123456789abcdef");
-        when(efsProperties.getPartnerId()).thenReturn("");
         when(efsCryptoService.encryptEv(anyString(), anyString(), anyString())).thenReturn("EV");
         when(efsCryptoService.buildVv(anyString(), anyString())).thenReturn("VV");
         when(efsApiClient.send(anyString(), any())).thenReturn(null);

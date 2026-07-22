@@ -29,15 +29,20 @@ import static org.mockito.Mockito.when;
 
 /**
  * Unit tests for {@link RealtimeTransferService} (WGVN_EFS_202). Real
- * {@link EfsCryptoService} with the published TEST key; {@link EfsApiClient},
- * {@link VanApiKeyService}, and {@link ResultCheckService} are stubbed → <b>no
- * live network call, no real key</b>. The {@code G999} test verifies the 202
- * service delegates the recovery to {@link ResultCheckService#inquire}.
+ * {@link EfsCryptoService} with the published TEST key; {@link EfsApiClient} and
+ * {@link VanApiKeyService} are stubbed → <b>no live network call, no real key</b>.
+ *
+ * <p><b>B2 (audit H-4/D2):</b> a 202 {@code G999} / no-response / VV-mismatch is now returned as
+ * a <i>pending</i> result (no synchronous inline 203) so the caller leaves {@code PROC_STAT='6'}
+ * and the scheduled result-check reconciles later. <b>A3 (audit H-5):</b> the 202/204 response VV
+ * is verified before decrypt.
  */
 @ExtendWith(MockitoExtension.class)
 class RealtimeTransferServiceTest {
 
     private static final String TEST_KEY = "webcashvietnam0002TEST$#%$&*$&^!";
+    /** Allocated TRAN_SEQ passed as the gateway TNO (A1 / audit X-2). */
+    private static final String TNO = "0000000123";
 
     private final EfsCryptoService crypto = new EfsCryptoService();
     private final ObjectMapper mapper = new ObjectMapper()
@@ -48,12 +53,10 @@ class RealtimeTransferServiceTest {
     EfsApiClient efsApiClient;
     @Mock
     VanApiKeyService vanApiKeyService;
-    @Mock
-    ResultCheckService resultCheckService;
 
     private RealtimeTransferService service() {
         return new RealtimeTransferService(
-                efsApiClient, crypto, vanApiKeyService, props, mapper, resultCheckService);
+                efsApiClient, crypto, vanApiKeyService, props, mapper);
     }
 
     private static RealtimeTransferCommand cmd() {
@@ -102,13 +105,12 @@ class RealtimeTransferServiceTest {
         when(vanApiKeyService.getApiKey("ORG000001")).thenReturn(TEST_KEY);
         when(efsApiClient.send(eq(EfsApiClient.EFS_202), any())).thenReturn(success202("0000"));
 
-        RealtimeTransferResult result = service().transfer(cmd());
+        RealtimeTransferResult result = service().transfer(cmd(), TNO);
 
-        assertThat(result.recovered()).isFalse();
+        assertThat(result.pending()).isFalse();
         assertThat(result.balAmt()).isEqualTo("5000000");
         assertThat(result.balAmtSign()).isEqualTo("0");
         assertThat(result.fincMdaOwnerNm()).isEqualTo("NGUYEN VAN B");
-        assertThat(result.recovery()).isNull();
 
         ArgumentCaptor<EfsEnvelope> captor = ArgumentCaptor.forClass(EfsEnvelope.class);
         verify(efsApiClient).send(eq(EfsApiClient.EFS_202), captor.capture());
@@ -116,8 +118,8 @@ class RealtimeTransferServiceTest {
 
         assertThat(sent.id()).isEqualTo("ORG000001");
         assertThat(sent.rqDtime()).matches("\\d{14}");
-        assertThat(sent.tno()).isNotBlank();
-        assertThat(sent.tno().length()).isLessThanOrEqualTo(50);
+        // A1 (audit X-2): the envelope TNO is the allocated TRAN_SEQ passed by the caller, NOT a UUID.
+        assertThat(sent.tno()).isEqualTo(TNO);
         assertThat(sent.ev()).isNotBlank();
         assertThat(sent.vv()).isNotBlank();
         assertThat(sent.em()).isEqualTo("AES");
@@ -136,54 +138,69 @@ class RealtimeTransferServiceTest {
                 .contains("\"tar_bank_cd\":\"970436\"")
                 .contains("\"tar_finc_mda_no\":\"98765432100000\"")
                 .contains("\"ant_div_cd\":\"NAPAS\"");
-
-        verifyNoInteractions(resultCheckService); // no recovery on direct success
     }
 
     @Test
-    void g999_delegates_recovery_to_result_check_with_original_tran_locator() throws Exception {
+    void blankTno_rejected_beforeGatewayCall() {
+        // A1: the caller must supply the allocated TRAN_SEQ as the TNO — a blank tno is a bug.
+        when(vanApiKeyService.getApiKey("ORG000001")).thenReturn(TEST_KEY);
+
+        assertThatThrownBy(() -> service().transfer(cmd(), "  "))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        verify(efsApiClient, never()).send(any(), any());
+    }
+
+    @Test
+    void g999_returns_pending_and_does_no_synchronous_203() {
+        // B2: G999 is "no definitive response" → pending; the service must NOT fire a synchronous
+        // 203 (that recovery now belongs to the scheduled ResultCheckService).
         when(vanApiKeyService.getApiKey("ORG000001")).thenReturn(TEST_KEY);
         when(efsApiClient.send(eq(EfsApiClient.EFS_202), any())).thenReturn(bareEnvelope("G999"));
 
-        ResultCheckInquiryResult recovered = new ResultCheckInquiryResult(
-                "20240101", "TNO-ORIG", "101530", "0000", "OK", "12345678901111",
-                "VND", "1000000", "0", "98765432100000", "NGUYEN VAN B", null, null);
-        when(resultCheckService.inquire(any())).thenReturn(recovered);
+        RealtimeTransferResult result = service().transfer(cmd(), TNO);
 
-        RealtimeTransferResult result = service().transfer(cmd());
-
-        assertThat(result.recovered()).isTrue();
-        assertThat(result.recovery()).isSameAs(recovered);
+        assertThat(result.pending()).isTrue();
         assertThat(result.balAmt()).isNull();
-
-        // The 202 request envelope's TNO must be reused as org_tno on the 203 inquiry.
-        ArgumentCaptor<EfsEnvelope> envCaptor = ArgumentCaptor.forClass(EfsEnvelope.class);
-        verify(efsApiClient).send(eq(EfsApiClient.EFS_202), envCaptor.capture());
-        String sentTno = envCaptor.getValue().tno();
-        String sentRqDtime = envCaptor.getValue().rqDtime();
-
-        ArgumentCaptor<ResultCheckInquiryCommand> cmdCaptor =
-                ArgumentCaptor.forClass(ResultCheckInquiryCommand.class);
-        verify(resultCheckService).inquire(cmdCaptor.capture());
-        ResultCheckInquiryCommand inquiry = cmdCaptor.getValue();
-
-        assertThat(inquiry.orgTno()).isEqualTo(sentTno);
-        assertThat(inquiry.orgTranDt()).isEqualTo(sentRqDtime.substring(0, 8));
-        assertThat(inquiry.vanOrgCd()).isEqualTo("ORG000001");
-        assertThat(inquiry.macctNo()).isEqualTo("12345678901111");
-        assertThat(inquiry.bankCd()).isEqualTo("970424");
+        verify(efsApiClient).send(eq(EfsApiClient.EFS_202), any());
+        verify(efsApiClient, never()).send(eq(EfsApiClient.EFS_203), any());
     }
 
     @Test
-    void other_non_0000_rc_throws_business_exception_and_no_recovery() {
+    void noResponse_returnsPending() {
+        // B2: a null gateway response is treated like G999 — pending, not a failure.
+        when(vanApiKeyService.getApiKey("ORG000001")).thenReturn(TEST_KEY);
+        when(efsApiClient.send(eq(EfsApiClient.EFS_202), any())).thenReturn(null);
+
+        RealtimeTransferResult result = service().transfer(cmd(), TNO);
+
+        assertThat(result.pending()).isTrue();
+    }
+
+    @Test
+    void success_rc_0000_withInvalidVv_returnsPending_notTrustedSuccess() throws Exception {
+        // A3: a 0000 response whose VV does not verify must NOT be trusted as a completed transfer.
+        // It is returned as pending (leave '6', let result-check confirm), never decrypted as success.
+        when(vanApiKeyService.getApiKey("ORG000001")).thenReturn(TEST_KEY);
+        EfsEnvelope good = success202("0000");
+        EfsEnvelope tampered = new EfsEnvelope(good.id(), good.rqDtime(), good.rsDtime(), good.tno(),
+                good.ev(), "tampered-vv", good.em(), good.vm(), good.rc(), good.rm());
+        when(efsApiClient.send(eq(EfsApiClient.EFS_202), any())).thenReturn(tampered);
+
+        RealtimeTransferResult result = service().transfer(cmd(), TNO);
+
+        assertThat(result.pending()).isTrue();
+        assertThat(result.balAmt()).isNull();
+    }
+
+    @Test
+    void other_non_0000_rc_throws_business_exception() {
         when(vanApiKeyService.getApiKey("ORG000001")).thenReturn(TEST_KEY);
         when(efsApiClient.send(eq(EfsApiClient.EFS_202), any())).thenReturn(bareEnvelope("G001"));
 
-        assertThatThrownBy(() -> service().transfer(cmd()))
+        assertThatThrownBy(() -> service().transfer(cmd(), TNO))
                 .isInstanceOf(BusinessException.class)
                 .extracting("code").isEqualTo("WBE_EFS_GATEWAY_ERROR");
-
-        verifyNoInteractions(resultCheckService); // G001 is a hard error, not a G999 recovery
     }
 
     @Test
@@ -191,12 +208,11 @@ class RealtimeTransferServiceTest {
         when(vanApiKeyService.getApiKey("ORG000001"))
                 .thenThrow(new IllegalStateException("No TB_VAN_API_INFO.API_KEY provisioned ... B2"));
 
-        assertThatThrownBy(() -> service().transfer(cmd()))
+        assertThatThrownBy(() -> service().transfer(cmd(), TNO))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("B2");
 
         verify(efsApiClient, never()).send(any(), any());
-        verifyNoInteractions(resultCheckService);
     }
 
     @Test
@@ -205,10 +221,10 @@ class RealtimeTransferServiceTest {
                 "ORG000001", "970424", "ORG000001", "VND", "1000000", "0",
                 "A", "12345678901111", "970436", "  ", null, null, "NAPAS", null); // blank tarFincMdaNo
 
-        assertThatThrownBy(() -> service().transfer(bad))
+        assertThatThrownBy(() -> service().transfer(bad, TNO))
                 .isInstanceOf(IllegalArgumentException.class);
 
-        verifyNoInteractions(efsApiClient, vanApiKeyService, resultCheckService);
+        verifyNoInteractions(efsApiClient, vanApiKeyService);
     }
 
     // ── WGVN_EFS_204 Woori FX pre-step (guide v1.2.6 §5.6) ────────────────────
@@ -219,9 +235,9 @@ class RealtimeTransferServiceTest {
         when(efsApiClient.send(eq(EfsApiClient.EFS_204), any())).thenReturn(success204());
         when(efsApiClient.send(eq(EfsApiClient.EFS_202), any())).thenReturn(success202("0000"));
 
-        RealtimeTransferResult result = service().transfer(wooriFxCmd());
+        RealtimeTransferResult result = service().transfer(wooriFxCmd(), TNO);
 
-        assertThat(result.recovered()).isFalse();
+        assertThat(result.pending()).isFalse();
         assertThat(result.balAmt()).isEqualTo("5000000");
 
         // 204 runs strictly before 202.
@@ -252,8 +268,6 @@ class RealtimeTransferServiceTest {
                 .contains("\"withd_amt_itg\":\"100\"")
                 .contains("\"dep_amt_itg\":\"2450000\"")
                 .contains("\"dep_amt_dcm\":\"0\"");
-
-        verifyNoInteractions(resultCheckService);
     }
 
     @Test
@@ -261,13 +275,28 @@ class RealtimeTransferServiceTest {
         when(vanApiKeyService.getApiKey("ORG000001")).thenReturn(TEST_KEY);
         when(efsApiClient.send(eq(EfsApiClient.EFS_204), any())).thenReturn(bareEnvelope("G001"));
 
-        assertThatThrownBy(() -> service().transfer(wooriFxCmd()))
+        assertThatThrownBy(() -> service().transfer(wooriFxCmd(), TNO))
                 .isInstanceOf(BusinessException.class)
                 .extracting("code").isEqualTo("WBE_EFS_GATEWAY_ERROR");
 
         // No transfer without a confirmed rate (legacy parity: skip the target).
         verify(efsApiClient, never()).send(eq(EfsApiClient.EFS_202), any());
-        verifyNoInteractions(resultCheckService);
+    }
+
+    @Test
+    void woori_204_invalidVv_throws_and_never_sends_202() throws Exception {
+        // A3: a 204 response whose VV does not verify is a G003 integrity failure → no 202.
+        when(vanApiKeyService.getApiKey("ORG000001")).thenReturn(TEST_KEY);
+        EfsEnvelope good = success204();
+        EfsEnvelope tampered = new EfsEnvelope(good.id(), good.rqDtime(), good.rsDtime(), good.tno(),
+                good.ev(), "tampered-vv", good.em(), good.vm(), good.rc(), good.rm());
+        when(efsApiClient.send(eq(EfsApiClient.EFS_204), any())).thenReturn(tampered);
+
+        assertThatThrownBy(() -> service().transfer(wooriFxCmd(), TNO))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo("WBE_EFS_GATEWAY_ERROR");
+
+        verify(efsApiClient, never()).send(eq(EfsApiClient.EFS_202), any());
     }
 
     @Test
@@ -275,9 +304,9 @@ class RealtimeTransferServiceTest {
         when(vanApiKeyService.getApiKey("ORG000001")).thenReturn(TEST_KEY);
         when(efsApiClient.send(eq(EfsApiClient.EFS_202), any())).thenReturn(success202("0000"));
 
-        RealtimeTransferResult result = service().transfer(cmd()); // Shinhan + VND
+        RealtimeTransferResult result = service().transfer(cmd(), TNO); // Shinhan + VND
 
-        assertThat(result.recovered()).isFalse();
+        assertThat(result.pending()).isFalse();
         verify(efsApiClient, never()).send(eq(EfsApiClient.EFS_204), any());
 
         // The FX block is still present on the wire, but empty (legacy param_202 parity).

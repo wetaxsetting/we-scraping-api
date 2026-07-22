@@ -20,6 +20,7 @@ import com.kosign.wecms.domain.setting.contacts.repository.PgroBsacLnknInfmRepos
 import com.kosign.wecms.domain.setting.contacts.repository.TrcoAcctInfoRepository;
 import com.kosign.wecms.domain.setting.contacts.repository.TrcoAddrInfmRepository;
 import com.kosign.wecms.domain.setting.contacts.repository.TrcoInfmRepository;
+import com.kosign.wecms.domain.setting.contacts.repository.SwiftBicMstRepository;
 import com.kosign.wecms.domain.setting.contacts.repository.TrcoOvrsInfmRepository;
 import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmBankCode;
 import com.kosign.wecms.domain.setting.firmbankingsettings.repository.TbFirmBankCodeRepository;
@@ -82,6 +83,7 @@ class ContactsServiceTest {
     @Mock TrcoAddrInfmRepository addrRepo;
     @Mock TrcoAcctInfoRepository acctRepo;
     @Mock TrcoOvrsInfmRepository ovrsRepo;
+    @Mock SwiftBicMstRepository swiftBicRepo;
     @Mock TbFirmBankCodeRepository bankCodeRepo;
     @Mock PgroBsacLnknInfmRepository pgroRepo;
     @Mock AcctTrnsRcvPayInfmRepository acctTrnsRcvPayRepo;
@@ -96,7 +98,7 @@ class ContactsServiceTest {
     void setUp() {
         validator = new ContactsValidator(trcoInfmRepo);
         service = new ContactsService(
-                trcoInfmRepo, addrRepo, acctRepo, ovrsRepo, bankCodeRepo,
+                trcoInfmRepo, addrRepo, acctRepo, ovrsRepo, swiftBicRepo, bankCodeRepo,
                 pgroRepo, acctTrnsRcvPayRepo, legacyFn, validator,
                 new com.kosign.wecms.common.firmbanking.FirmBankingInquiryService(
                         firmBankingSettingRepo, depositorInquiryService));
@@ -661,7 +663,7 @@ class ContactsServiceTest {
 
     @Test
     void create_overseas_generatesKeyViaFunnel_ignoringPlaceholder() {
-        OverseasOp o = new OverseasOp("upsert", "TEMP", "Bene", "ACC1", "BIC1", "BankName", "BC", "Addr");
+        OverseasOp o = new OverseasOp("upsert", "TEMP", "Bene", "ACC1", "BIC1", "BankName", "BC", "Addr", "SEOUL");
         ContactCreateRequest req = new ContactCreateRequest(
                 "OVRS1", "Co", "Co EN", null, "O", List.of(), List.of(), List.of(o));
         when(trcoInfmRepo.existsByBizKeyAndHandTrcoKey(BIZ, "OVRS1")).thenReturn(false);
@@ -684,8 +686,8 @@ class ContactsServiceTest {
 
     @Test
     void create_multipleOverseas_generatesDistinctSequentialKeys() {
-        OverseasOp o1 = new OverseasOp("upsert", "T1", "Bene1", "ACC1", "BIC1", "Bank1", "BC1", "Addr1");
-        OverseasOp o2 = new OverseasOp("upsert", "T2", "Bene2", "ACC2", "BIC2", "Bank2", "BC2", "Addr2");
+        OverseasOp o1 = new OverseasOp("upsert", "T1", "Bene1", "ACC1", "BIC1", "Bank1", "BC1", "Addr1", "SEOUL");
+        OverseasOp o2 = new OverseasOp("upsert", "T2", "Bene2", "ACC2", "BIC2", "Bank2", "BC2", "Addr2", "TOKYO");
         ContactCreateRequest req = new ContactCreateRequest(
                 "OVRSM", "Co", "Co EN", null, "O", List.of(), List.of(), List.of(o1, o2));
         when(trcoInfmRepo.existsByBizKeyAndHandTrcoKey(BIZ, "OVRSM")).thenReturn(false);
@@ -709,7 +711,7 @@ class ContactsServiceTest {
     @Test
     void update_existingOverseas_preservesKey_noFunnelCall() {
         TrcoOvrsInfm existing = stubOvrs("21");
-        OverseasOp keep = new OverseasOp("upsert", "21", "Bene", "ACC1", "BIC1", "Bank", "BC", "Addr");
+        OverseasOp keep = new OverseasOp("upsert", "21", "Bene", "ACC1", "BIC1", "Bank", "BC", "Addr", "SEOUL");
         com.kosign.wecms.domain.setting.contacts.dto.ContactUpdateRequest req =
                 new com.kosign.wecms.domain.setting.contacts.dto.ContactUpdateRequest(
                         "C001", "Test Co", "Test Co EN", "1201496252", "O", null,
@@ -730,7 +732,7 @@ class ContactsServiceTest {
 
     @Test
     void update_newPlaceholderOverseas_generatesKey() {
-        OverseasOp added = new OverseasOp("upsert", "OV0202606240001", "Bene", "ACC9", "BIC9", "Bank", "BC", "Addr");
+        OverseasOp added = new OverseasOp("upsert", "OV0202606240001", "Bene", "ACC9", "BIC9", "Bank", "BC", "Addr", "SEOUL");
         com.kosign.wecms.domain.setting.contacts.dto.ContactUpdateRequest req =
                 new com.kosign.wecms.domain.setting.contacts.dto.ContactUpdateRequest(
                         "C001", "Test Co", "Test Co EN", "1201496252", "O", null,
@@ -753,7 +755,7 @@ class ContactsServiceTest {
 
     @Test
     void update_deleteOverseas_unchanged_noFunnelCall() {
-        OverseasOp del = new OverseasOp("delete", "21", null, null, null, null, null, null);
+        OverseasOp del = new OverseasOp("delete", "21", null, null, null, null, null, null, null);
         com.kosign.wecms.domain.setting.contacts.dto.ContactUpdateRequest req =
                 new com.kosign.wecms.domain.setting.contacts.dto.ContactUpdateRequest(
                         "C001", "Test Co", "Test Co EN", "1201496252", "O", null,

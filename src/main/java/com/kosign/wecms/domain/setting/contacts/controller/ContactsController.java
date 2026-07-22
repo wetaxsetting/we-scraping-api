@@ -20,6 +20,7 @@ import com.kosign.wecms.domain.setting.contacts.dto.ContactLookupRecipientReques
 import com.kosign.wecms.domain.setting.contacts.dto.ContactLookupRecipientResponse;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactRow;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactUpdateRequest;
+import com.kosign.wecms.domain.setting.contacts.dto.SwiftBicListResponse;
 import com.kosign.wecms.domain.setting.contacts.service.ContactsDownloadService;
 import com.kosign.wecms.domain.setting.contacts.service.ContactsFileService;
 import com.kosign.wecms.domain.setting.contacts.service.ContactsFileService.DownloadResource;
@@ -315,6 +316,22 @@ public class ContactsController {
     @GetMapping("/banks")
     public ApiResponse<ContactBankListResponse> listBanks() {
         return ApiResponse.ok(service.listBanks());
+    }
+
+    /**
+     * SWIFT BIC search typeahead for the Add / Edit Contact dialog's
+     * Overseas beneficiary block. Mirrors legacy {@code comm_1007_001}
+     * ("Search Swift Bic Code") over {@code SWIFT_BIC_MST}: prefix match
+     * on {@code BIC_CD} (uppercased), ordered, capped at 50 rows. On
+     * selection the client auto-fills the read-only Town Name from the
+     * row's {@code twn_nm}. Global dictionary — not tenant-scoped.
+     *
+     * @param q optional BIC search keyword (blank → first 50 codes).
+     */
+    @GetMapping("/swift-bic")
+    public ApiResponse<SwiftBicListResponse> searchSwiftBic(
+            @RequestParam(value = "q", required = false) String q) {
+        return ApiResponse.ok(service.searchSwiftBic(q));
     }
 
     /**

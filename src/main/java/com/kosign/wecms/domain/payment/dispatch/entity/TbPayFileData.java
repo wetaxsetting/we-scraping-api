@@ -99,4 +99,15 @@ public class TbPayFileData {
 
     @Column(name = "FEE_BRDN_CLS_CD", length = 3)
     private String feeBrdnClsCd;
+
+    /**
+     * Beneficiary town name (legacy {@code BNFC_TOWN_NM}) — a structured recipient-address
+     * component written by the overseas payment save (legacy {@code pymn_0007_001_c001_act.jsp:377})
+     * alongside {@link #rcptUseAddr} (full address). Audit M-11 / E1: this column exists on the
+     * legacy table ({@code varchar(35)}, nullable) but was previously unmapped, so refactor-written
+     * overseas rows silently lost it. <b>DB-only</b> — NOT part of the 1000-byte fixed-length file.
+     * Do not confuse with {@link #rcptUseAddr} ({@code RCPT_USE_ADDR}, the full address).
+     */
+    @Column(name = "RCPT_USE_ADDR_SI", length = 35)
+    private String rcptUseAddrSi;
 }

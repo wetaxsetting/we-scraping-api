@@ -65,6 +65,7 @@ All **active** unless noted.
 | [purpose-refactor-parity-audit.md](purpose-refactor-parity-audit.md) | Settings · Purpose | Parity |
 | [login-credentials-legacy-vs-refactor-audit.md](login-credentials-legacy-vs-refactor-audit.md) | Settings · Login Credentials | Bank/GDT cert + cipher parity (§7) |
 | [login-legacy-compatibility-2026-06-10.md](login-legacy-compatibility-2026-06-10.md) | Auth · Login | Password (SHA-256) coexistence + account-creation parity |
+| [wecms-batch-refactor-parity-audit-2026-07-21.md](wecms-batch-refactor-parity-audit-2026-07-21.md) | Payment · WeCMS Batch (firm-banking dispatch) | Full legacy-vs-refactor parity audit (BATCH1/2, NAPAS realtime+204, result-check, API1/API2 callbacks, support/crypto/codec, data model). Byte layout + crypto + hand-off + 6 dated updates MATCH; **7 HIGH / 12 MED** pre-activation parity gaps (TNO≠TRAN_SEQ, callback ack envelope, sibling fail-stop, 0001 loop, response VV, decimal amount) + **R-1** reliability enhancement (PROC_STAT='9' stranding — event-driven TO-BE is approved, not a parity gap). All dispatch flags OFF by default — latent, not live. |
 | [operation-status-inquiry-parity.md](operation-status-inquiry-parity.md) | Add-on · Operation Status | Parity |
 | [sales-expense-einvoices-scraping-parity.md](sales-expense-einvoices-scraping-parity.md) | Add-on · e-Invoices | Scraping/coexistence parity |
 | [card-transactions-legacy-vs-refactor-audit.md](card-transactions-legacy-vs-refactor-audit.md) | Payment · Corporate Card | Legacy-vs-refactor audit |

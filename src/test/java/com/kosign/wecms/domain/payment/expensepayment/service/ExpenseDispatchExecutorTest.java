@@ -170,6 +170,30 @@ class ExpenseDispatchExecutorTest {
     }
 
     @Test
+    void vcbVnd_otherBank_carriesUploadedAntDivCd_bankChnlDivOther() {
+        // OQ-2 (CONFIRMED file-based VCB; legacy PymnHelper:2573 "VCB VND -> Other : NAPAS/CITAD from upload").
+        ScdulPymnSumrDetl l = line(BIDV, "VND");
+        l.setAntDivCd("NAPAS");
+        executor.execute(master(VCB, "VND"), List.of(l), "VND");
+
+        TbPayFileData d = captureData();
+        assertThat(d.getAntDivCd()).isEqualTo("NAPAS");
+        assertThat(d.getBankChnlDiv()).isEqualTo("O");
+        assertThat(d.getTrscCcyCd()).isEqualTo("VND");
+    }
+
+    @Test
+    void vcbVnd_sameBank_carriesUploadedAntDivCd_bankChnlDivCurrent() {
+        ScdulPymnSumrDetl l = line(VCB, "VND");
+        l.setAntDivCd("CITAD");
+        executor.execute(master(VCB, "VND"), List.of(l), "VND");
+
+        TbPayFileData d = captureData();
+        assertThat(d.getAntDivCd()).isEqualTo("CITAD");
+        assertThat(d.getBankChnlDiv()).isEqualTo("T");
+    }
+
+    @Test
     void vcbUsdOtherBank_isRejected() {
         assertThatThrownBy(() ->
                 executor.execute(master(VCB, "USD"), List.of(line(BIDV, "USD")), "USD"))

@@ -53,5 +53,12 @@ public record OverseasPaymentExcelDetailRow(
         String bnfc_acct_no,
 
         @Size(max = 500)
-        String bnfc_addr
+        String bnfc_addr,
+
+        /** Beneficiary town/city — resolved from the matched contact
+         *  ({@code TRCO_OVRS_INFM.BENE_TOWN_NM}) during preview and
+         *  forwarded here at submit. Persisted to
+         *  {@code OVRS_PYMN_SUMR_DETL.BNFC_TOWN_NM}. */
+        @Size(max = 150)
+        String bnfc_town_nm
 ) {}

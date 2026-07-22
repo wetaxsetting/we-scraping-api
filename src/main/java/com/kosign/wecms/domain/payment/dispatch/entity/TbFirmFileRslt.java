@@ -102,6 +102,15 @@ public class TbFirmFileRslt {
     @Column(name = "RCPT_USE_ADDR", length = 300)
     private String rcptUseAddr;
 
+    /**
+     * Beneficiary town name (legacy {@code BNFC_TOWN_NM}, {@code varchar(35)}) — DB-only sibling
+     * of {@link #rcptUseAddr}, carried from the matching {@code TB_FIRM_FILE_DATA.RCPT_USE_ADDR_SI}
+     * (NOT parsed from the result file, which has no town-name field). Audit M-11 / E1
+     * (column provisioned 2026-07-21).
+     */
+    @Column(name = "RCPT_USE_ADDR_SI", length = 35)
+    private String rcptUseAddrSi;
+
     @Column(name = "FEE_BRDN_CLS_CD", length = 3)
     private String feeBrdnClsCd;
 }

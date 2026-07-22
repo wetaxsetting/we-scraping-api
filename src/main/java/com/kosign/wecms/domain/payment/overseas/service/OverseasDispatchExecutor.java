@@ -124,6 +124,10 @@ public class OverseasDispatchExecutor {
      *  values skip the country-code stamp. */
     private static final int BIC_MIN_LEN_FOR_COUNTRY = 6;
 
+    /** Target column width of {@code RCPT_USE_ADDR_SI} on TB_PAY_FILE_DATA/FIRM_FILE_DATA/RSLT
+     *  (varchar(35)); the source BNFC_TOWN_NM is varchar(150), so cap on write (Item 3). */
+    private static final int RCPT_USE_ADDR_SI_MAX = 35;
+
     /** Maps firm-banking out-bank codes to the NAPAS bank code under
      *  which the originator's withdrawal account is registered in
      *  {@code ACCT_MSTR}. Legacy mirror:
@@ -271,6 +275,14 @@ public class OverseasDispatchExecutor {
             // through unconditionally because legacy does.
             data.setRcptUseAddr(line.getBnfcAddr());
 
+            // Beneficiary town name → RCPT_USE_ADDR_SI (legacy pymn_0007_001_c001_act.jsp:377,
+            // audit M-11/E1). DB-only, not on the fixed-length file. Item 3 (length parity): the
+            // source OVRS_PYMN_SUMR_DETL.BNFC_TOWN_NM / TRCO_OVRS_INFM.BENE_TOWN_NM are varchar(150)
+            // but this target column is varchar(35), so a long SWIFT place name would blow the
+            // insert. Cap to the target width (chars — the value is an ASCII SWIFT-directory place
+            // name, never on the byte-counted fixed-length record). Null/empty pass through verbatim.
+            data.setRcptUseAddrSi(capToColumnWidth(line.getBnfcTownNm(), RCPT_USE_ADDR_SI_MAX));
+
             // Fee burden translation: B/O/S → BEN/OUR/SHA. Anything else
             // ships as null (legacy parity — no `else` branch).
             data.setFeeBrdnClsCd(mapFeeBurden(line.getFeePayerCd()));
@@ -325,6 +337,18 @@ public class OverseasDispatchExecutor {
             case "S" -> "SHA";
             default  -> null;
         };
+    }
+
+    /**
+     * Cap a value to the target column width, preserving null/empty (Item 3 — the 150-char
+     * BNFC_TOWN_NM source vs the 35-char RCPT_USE_ADDR_SI target). Char-based: the value is an
+     * ASCII SWIFT-directory place name and is never emitted on the byte-counted fixed-length file.
+     */
+    private static String capToColumnWidth(String value, int max) {
+        if (value == null || value.length() <= max) {
+            return value;
+        }
+        return value.substring(0, max);
     }
 
     /**

@@ -566,6 +566,7 @@ public class OverseasPaymentService {
                             d.getBicCd(),
                             d.getBnfcAcctNo(),
                             d.getBnfcAddr(),
+                            d.getBnfcTownNm(),
                             // OVRS_PYMN_SUMR_DETL has no per-row trnf_yn; the batch-level
                             // transfer flag lives on the master OVRS_PYMN_SUMR.
                             sumr.getTrnfYn() != null ? sumr.getTrnfYn() : "N",
@@ -732,6 +733,7 @@ public class OverseasPaymentService {
                 toStr(m[9]),                           // bicCd (BNFC_BANK_BIC)
                 toStr(m[10]),                          // bnfcAcctNo
                 toStr(m[11]),                          // bnfcAddr
+                null,                                  // bnfcTownNm (M-mode — findMmodeDetailRows selects no town column; E-mode scheduled batches carry it via getDetail)
                 toStr(m[12]) != null ? toStr(m[12]) : "N", // trnfYn
                 toStr(m[13]),                          // procStat
                 null,                                  // procStatKey (FE derives from raw)
@@ -823,7 +825,10 @@ public class OverseasPaymentService {
                 d.getMemo(),                                   // description = memo (FE parity)
                 null,                                          // document no — n/a
                 d.getRprtAcctCd(),                             // reporting account
-                null);                                         // reporting breadcrumb
+                null,                                          // reporting breadcrumb
+                d.getBnfcAddr(),                               // beneficiary address (overseas col)
+                d.getFeePayerCd(),                             // fee payer (overseas col)
+                d.getBnfcTownNm());                            // town name (overseas col)
     }
 
     /** M-mode row (already mapped to {@link OverseasPaymentDetailRowResponse})
@@ -843,7 +848,10 @@ public class OverseasPaymentService {
                 r.memo(),
                 null,
                 r.rprtAcctCd(),
-                null);
+                null,
+                r.bnfcAddr(),                                  // beneficiary address (overseas col)
+                r.feePayerCd(),                                // fee payer (overseas col)
+                r.bnfcTownNm());                               // town name — null for M-mode (no town col)
     }
 
     /** Withdrawal-account fields for the Approval Details popup's General

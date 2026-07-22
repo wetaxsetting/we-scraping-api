@@ -53,12 +53,12 @@ class BulkReceptionServiceTest {
         return new BulkReceptionService(
                 efsApiClient, crypto, vanApiKeyService, props, mapper,
                 null, null, null, null, null, null, null, null, null, null, null, null, null,
-                null, null);
+                null, null, null);
     }
 
     private static BulkReceptionApiCommand cmd() {
         return new BulkReceptionApiCommand(
-                "ORG000001", "970424", "ORG000001", "FB_20240101_0001.txt", "3", "1500000", "0");
+                "ORG000001", "970424", "ORG000001", "FB_20240101_0001.txt", "3", "1500000", "0", "0000042");
     }
 
     private EfsEnvelope success301(String rc) throws Exception {
@@ -94,8 +94,7 @@ class BulkReceptionServiceTest {
 
         assertThat(sent.id()).isEqualTo("ORG000001");          // partnerId blank → vanOrgCd
         assertThat(sent.rqDtime()).matches("\\d{14}");
-        assertThat(sent.tno()).isNotBlank();
-        assertThat(sent.tno().length()).isLessThanOrEqualTo(50);
+        assertThat(sent.tno()).isEqualTo("0000042"); // A1 (audit X-2): TNO = allocated TRAN_SEQ
         assertThat(sent.ev()).isNotBlank();
         assertThat(sent.vv()).isNotBlank();
         assertThat(sent.em()).isEqualTo("AES");
@@ -139,7 +138,7 @@ class BulkReceptionServiceTest {
     @Test
     void invalid_input_rejected_before_key_lookup_or_gateway_call() {
         BulkReceptionApiCommand bad = new BulkReceptionApiCommand(
-                "ORG000001", "970424", "ORG000001", "  ", "3", "1500000", "0"); // blank fileNm
+                "ORG000001", "970424", "ORG000001", "  ", "3", "1500000", "0", "0000042"); // blank fileNm
 
         assertThatThrownBy(() -> service().issueReception(bad))
                 .isInstanceOf(IllegalArgumentException.class);

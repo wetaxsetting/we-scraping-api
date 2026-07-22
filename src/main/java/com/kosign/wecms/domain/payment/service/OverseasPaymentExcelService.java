@@ -305,6 +305,7 @@ public class OverseasPaymentExcelService {
                         beneficiaryCode, memo, reportingAccount,
                         bnfc.bnfcNm(), bnfc.bicCode(), bnfc.bnfcAcctNo(),
                         bnfc.bnfcAddr(), bnfc.bnfcBankNm(), bnfc.bnfcBankCd(),
+                        bnfc.bnfcTownNm(),
                         valid, errors));
             }
 
@@ -399,6 +400,7 @@ public class OverseasPaymentExcelService {
             errors.add(new OverseasPaymentExcelFieldError("bnfcAcctNo",  "Beneficiary Account No. is missing"));
             errors.add(new OverseasPaymentExcelFieldError("bnfcAddr",    "Beneficiary Address is missing"));
             errors.add(new OverseasPaymentExcelFieldError("bnfcBankNm",  "Beneficiary Bank Name is missing"));
+            errors.add(new OverseasPaymentExcelFieldError("bnfcTownNm",  "Town Name is missing"));
             return ResolvedBeneficiary.EMPTY;
         }
 
@@ -411,6 +413,7 @@ public class OverseasPaymentExcelService {
             errors.add(new OverseasPaymentExcelFieldError("bnfcAcctNo",  "Beneficiary Account No. is missing"));
             errors.add(new OverseasPaymentExcelFieldError("bnfcAddr",    "Beneficiary Address is missing"));
             errors.add(new OverseasPaymentExcelFieldError("bnfcBankNm",  "Beneficiary Bank Name is missing"));
+            errors.add(new OverseasPaymentExcelFieldError("bnfcTownNm",  "Town Name is missing"));
             return ResolvedBeneficiary.EMPTY;
         }
 
@@ -424,14 +427,18 @@ public class OverseasPaymentExcelService {
         String bnfcAddr   = LegacyTextNormalizer.stripVietnameseTone(trimToNull(o.getBeneAddr()));
         String bnfcBankNm = trimToNull(o.getBeneBankName());
         String bnfcBankCd = trimToNull(stripWhitespace(o.getBeneBankCode()));
+        // Town Name — auto-filled on the contact from the SWIFT directory.
+        // Required on upload (legacy pymn_0007_003_r001_act.jsp:216-238).
+        String bnfcTownNm = trimToNull(o.getBeneTownNm());
 
         if (bnfcNm     == null) errors.add(new OverseasPaymentExcelFieldError("bnfcNm",      "Beneficiary Name is missing"));
         if (bicCode    == null) errors.add(new OverseasPaymentExcelFieldError("bicCode",     "BIC Code is missing"));
         if (bnfcAcctNo == null) errors.add(new OverseasPaymentExcelFieldError("bnfcAcctNo",  "Beneficiary Account No. is missing"));
         if (bnfcAddr   == null) errors.add(new OverseasPaymentExcelFieldError("bnfcAddr",    "Beneficiary Address is missing"));
         if (bnfcBankNm == null) errors.add(new OverseasPaymentExcelFieldError("bnfcBankNm",  "Beneficiary Bank Name is missing"));
+        if (bnfcTownNm == null) errors.add(new OverseasPaymentExcelFieldError("bnfcTownNm",  "Town Name is missing"));
 
-        return new ResolvedBeneficiary(bnfcNm, bicCode, bnfcAcctNo, bnfcAddr, bnfcBankNm, bnfcBankCd);
+        return new ResolvedBeneficiary(bnfcNm, bicCode, bnfcAcctNo, bnfcAddr, bnfcBankNm, bnfcBankCd, bnfcTownNm);
     }
 
     private static String trimToNull(String s) {
@@ -445,7 +452,7 @@ public class OverseasPaymentExcelService {
     }
 
     /**
-     * Six-field beneficiary projection used by {@link #resolveBeneficiary}.
+     * Beneficiary projection used by {@link #resolveBeneficiary}.
      * Component values are {@code null} when blank in the master row
      * (the corresponding error has already landed in the row's
      * {@code errors} list).
@@ -456,9 +463,10 @@ public class OverseasPaymentExcelService {
             String bnfcAcctNo,
             String bnfcAddr,
             String bnfcBankNm,
-            String bnfcBankCd) {
+            String bnfcBankCd,
+            String bnfcTownNm) {
         static final ResolvedBeneficiary EMPTY =
-                new ResolvedBeneficiary(null, null, null, null, null, null);
+                new ResolvedBeneficiary(null, null, null, null, null, null, null);
     }
 
     private void validateAmount(String raw, List<OverseasPaymentExcelFieldError> errors) {
@@ -735,6 +743,11 @@ public class OverseasPaymentExcelService {
             dtl.setBnfcBankCd(nullToEmpty(src.bic_cd()));
             dtl.setBnfcAcctNo(nullToEmpty(src.bnfc_acct_no()));
             dtl.setBnfcAddr(nullToEmpty(LegacyTextNormalizer.normalize(src.bnfc_addr())));
+            // Town Name — resolved from the contact during preview, forwarded
+            // here. Feeds dispatch RCPT_USE_ADDR_SI (legacy
+            // pymn_0007_003_c001_act.jsp:157 setBnfcTownNm). SWIFT-directory
+            // ASCII place name; no accent stripping needed.
+            dtl.setBnfcTownNm(nullToEmpty(src.bnfc_town_nm()));
             // Legacy parity (L2): resolve the internal TRCO_KEY from the beneficiary
             // code, matching legacy getOverseasContactInfo (pymn_0007_003_r001_act.jsp:138
             // — recItem.put("TRCO_KEY", trcoInfm.getTrcoKey())) → c001 setTrcoKey

@@ -176,6 +176,23 @@ class InternalTransferDispatchExecutorBankChnlDivTest {
         assertThat(captureData().getBankChnlDiv()).isEqualTo("O");
     }
 
+    @Test
+    void vcbVnd_carriesUploadedAntDivCd_bankChnlDivOther() {
+        // OQ-2 (Mr. Jung 2026-07-16 CONFIRMED file-based VCB; legacy PymnHelper:2573 "VCB VND -> Other
+        // : NAPAS/CITAD from upload"). VCB VND now carries the uploaded code (was null before OQ-2);
+        // VCB USD stays null (same-bank only); non-VCB internal transfers are unchanged.
+        ReflectionTestUtils.setField(executor, "vcbBankCd", VCB);
+        ScdulPymnSumrDetl l = line(BIDV);
+        l.setTrnfCcyCd("VND");
+        l.setDepoCcyCd("VND");
+        l.setAntDivCd("NAPAS");
+        executor.execute(master(VCB), List.of(l), "VND");
+
+        TbPayFileData d = captureData();
+        assertThat(d.getAntDivCd()).isEqualTo("NAPAS");
+        assertThat(d.getBankChnlDiv()).isEqualTo("O");   // VCB->BIDV other-bank
+    }
+
     /* ───────────── BANK_PRTN_ID ───────────── */
 
     @Test

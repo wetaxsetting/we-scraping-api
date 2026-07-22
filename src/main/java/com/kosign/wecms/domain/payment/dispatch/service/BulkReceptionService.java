@@ -38,7 +38,10 @@ import com.kosign.wecms.domain.payment.dispatch.van.dto.EfsEnvelope;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 
 import java.io.IOException;
@@ -55,7 +58,6 @@ import java.util.Optional;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
-import java.util.UUID;
 
 /**
  * Bulk reception — refactor of legacy {@code FILE_DEPOSIT_TRANSFER_BATCH1}.
@@ -82,13 +84,18 @@ import java.util.UUID;
  *       {@code R001} selecting only WAIT + the {@code R004} fail skip).</li>
  * </ul>
  *
- * <h2>Transaction model</h2>
- * One {@code @Transactional} unit. The happy path commits the file-header/detail
- * inserts and leaves the pay row at {@code '6'}. An EFS/SFTP {@link BusinessException}
- * is caught, recorded as a committed FAIL state, and <b>not</b> rethrown — so the
- * failure persists (legacy parity) instead of rolling back to WAIT. (Minor
- * deviation from legacy, documented: legacy ran SFTP/API outside the DB tx; here
- * they run inside it — acceptable for low-volume R&D.)
+ * <h2>Transaction model (Item 2 / audit M-7 — per-split-file commit)</h2>
+ * {@code receive()} is <b>not</b> a single transaction. It runs after the payment commit
+ * (via {@link DispatchAutoReceiveRegistrar}) with no outer transaction; the pre-flight
+ * validation, the operating-hours gate, and the once-before-loop {@code '6'} mark each
+ * commit on their own. <b>Each split file is then built + uploaded + dispatched inside its
+ * own {@code REQUIRES_NEW} transaction</b> ({@link #buildAndDispatchFile} via
+ * {@link #runInNewTransaction}), exactly like the legacy per-file auto-commit. So an
+ * unexpected throw while building split file N can never roll back split files
+ * {@code 1..N-1} that were already committed <b>and already SFTP-uploaded / 00301-dispatched
+ * to the bank</b> (the corruption the single-transaction design risked). A per-file EFS/SFTP
+ * {@link BusinessException} is still caught, recorded as a committed FAIL state, and not
+ * rethrown (legacy parity), which trips the sibling fail-stop for the remaining files.
  *
  * <h2>Branch-split into multiple files (C5, ported 2026-06-13)</h2>
  * When {@code TB_FIRM_CONF.BAT_TRAN_BRANCH_DIV='Y'} and the detail count exceeds
@@ -119,7 +126,6 @@ public class BulkReceptionService {
     private static final DateTimeFormatter DTTM14_FMT = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
     private static final DateTimeFormatter TRAN_TM_FMT = DateTimeFormatter.ofPattern("HHmmss");
     private static final ZoneId ICT = ZoneId.of("Asia/Ho_Chi_Minh");
-    private static final int TNO_MAX = 50;
 
     /** Legacy {@code Deposit_Data} address field is 180 bytes (post-2025.10.29 layout). */
     private static final int RCPT_USE_ADDR_MAX_BYTES = 180;
@@ -163,6 +169,8 @@ public class BulkReceptionService {
     /** Dispatch-time blocked-char guard + NAPAS→internal bank-code resolver (audit task-44508, P0). */
     private final com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard blockedCharGuard;
     private final com.kosign.wecms.domain.payment.common.OutBankCdNormalizer outBankCdNormalizer;
+    /** Item 2 (audit M-7): commits each split file in its own REQUIRES_NEW transaction. */
+    private final PlatformTransactionManager transactionManager;
 
     /**
      * Request-time bulk reception of one pay-file target: build + upload the
@@ -172,7 +180,6 @@ public class BulkReceptionService {
      * @param bizKey    tenant business key
      * @param fileSeqNo bulk file sequence within the tenant/date
      */
-    @Transactional
     public void receive(String tranDt, String bizKey, String fileSeqNo) {
         // 1. Load + validate the pay-file target (legacy R001 selects PROC_STAT='9').
         TbPayFileMst pay = payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(tranDt, bizKey, fileSeqNo)
@@ -294,7 +301,10 @@ public class BulkReceptionService {
             List<TbPayFileData> window = details.subList(from, to);
             String fileSeq = String.format("%03d", baseRound + i);
 
-            boolean ok = buildAndDispatchFile(pay, conf, tranDt, bizKey, fileSeqNo, window, fileSeq, dttm14, tranTm);
+            // Item 2 (audit M-7): commit each split file in its OWN transaction, so a later split's
+            // unexpected throw cannot roll back an already-committed + already-dispatched earlier file.
+            boolean ok = runInNewTransaction(status ->
+                    buildAndDispatchFile(pay, conf, tranDt, bizKey, fileSeqNo, window, fileSeq, dttm14, tranTm));
             if (!ok) {
                 // Legacy parity (R004 skip, added 2025.09.10): once a split file fails the shared
                 // pay-file is FAIL, so every remaining sibling would be skipped — stop the batch.
@@ -407,8 +417,11 @@ public class BulkReceptionService {
             fd.setProcRsltDiv(NON_PROCESSING);
             fd.setRcptBankCntryCd(d.getRcptBankCntryCd());
             fd.setRemitCcyCd(d.getRemitCcyCd());
-            fd.setRcptUseAddr(byteTruncate(VietnameseText.replaceTone(d.getRcptUseAddr()), RCPT_USE_ADDR_MAX_BYTES));
+            fd.setRcptUseAddr(VietnameseText.replaceTone(byteTruncate(d.getRcptUseAddr(), RCPT_USE_ADDR_MAX_BYTES)));
             fd.setFeeBrdnClsCd(d.getFeeBrdnClsCd());
+            // Town name (RCPT_USE_ADDR_SI): DB-only carry from the pay-file line — raw (already
+            // ≤35 chars), NOT tone-stripped/truncated (it is not in the fixed-length file). Audit M-11/E1.
+            fd.setRcptUseAddrSi(d.getRcptUseAddrSi());
             firmFileDataRepository.save(fd);
 
             dataLines.add(new DepositData(
@@ -429,7 +442,7 @@ public class BulkReceptionService {
                     d.getRcptBankCntryCd(),                               // receiptBankCountryCode
                     d.getRemitCcyCd(),                                    // remittanceCurrencyCode
                     d.getFeeBrdnClsCd(),                                  // feeBrdnClsCd
-                    byteTruncate(VietnameseText.replaceTone(d.getRcptUseAddr()), RCPT_USE_ADDR_MAX_BYTES) // rcptUseAddr
+                    VietnameseText.replaceTone(byteTruncate(d.getRcptUseAddr(), RCPT_USE_ADDR_MAX_BYTES)) // rcptUseAddr
             ));
         }
 
@@ -463,7 +476,7 @@ public class BulkReceptionService {
         try {
             issueReception(new BulkReceptionApiCommand(
                     conf.getVanOrgCd(), pay.getOutBankCd(), conf.getBankPrtnId(),
-                    fileName, String.valueOf(reqCnt), amt[0], amt[1]));
+                    fileName, String.valueOf(reqCnt), amt[0], amt[1], audit.getTranSeq()));
 
             audit.setRsCd(FirmBankingResultCd.SUCC);
             audit.setRsMsg(FirmBankingResultCd.MSG_SUCC);
@@ -533,6 +546,17 @@ public class BulkReceptionService {
             }
         }
         return new int[] {1, reqCnt};
+    }
+
+    /**
+     * Run {@code work} in a fresh {@code REQUIRES_NEW} transaction that commits immediately,
+     * independent of any prior/later split file (Item 2). {@code receive()} holds no outer
+     * transaction, so each per-file unit stands alone — legacy per-file auto-commit parity.
+     */
+    private boolean runInNewTransaction(TransactionCallback<Boolean> work) {
+        TransactionTemplate tx = new TransactionTemplate(transactionManager);
+        tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        return Boolean.TRUE.equals(tx.execute(work));
     }
 
     /** Mark both the firm file ({@code PROC_STEP=0/PROC_STAT=3}) and the pay file ({@code '3'}) failed. */
@@ -625,12 +649,12 @@ public class BulkReceptionService {
         return value.substring(0, cut);
     }
 
-    /** Split a scale-2 amount into [integer, decimal-portion] strings for the 00301 request. */
+    /**
+     * Split the amount into [integer, decimal-portion] for the 00301 request, reproducing
+     * legacy {@code StrUtil.BigDecPaser} exactly (see {@link com.kosign.wecms.domain.payment.dispatch.van.AmountSplitter}).
+     */
     private static String[] splitAmount(BigDecimal amt) {
-        BigDecimal a = amt == null ? BigDecimal.ZERO : amt;
-        String itg = a.toBigInteger().toString();
-        String dcm = a.subtract(new BigDecimal(a.toBigInteger())).movePointRight(2).abs().toBigInteger().toString();
-        return new String[] {itg, dcm};
+        return com.kosign.wecms.domain.payment.dispatch.van.AmountSplitter.split(amt);
     }
 
     private static String plain(BigDecimal v) {
@@ -666,8 +690,10 @@ public class BulkReceptionService {
                 cmd.bankCd(), cmd.prtnId(), cmd.fileNm(), cmd.dataCnt(), cmd.dataAmt(), cmd.dataDcmAmt());
         String businessJson = serialize(request, "301");
 
+        // A1 (audit X-2): the envelope TNO is the allocated TB_FIRM_BAT_API_TRAN.TRAN_SEQ (legacy
+        // BATCH1 `seq`), NOT a UUID — the gateway record correlates 1:1 to the audit row.
         String rqDtime = LocalDateTime.now(ICT).format(DTTM14_FMT);
-        String tno = newTno(rqDtime);
+        String tno = cmd.tno();
         String ev = efsCryptoService.encryptEv(businessJson, apiKey, rqDtime);
         String vv = efsCryptoService.buildVv(businessJson, apiKey);
         String id = StringUtils.hasText(efsProperties.getPartnerId())
@@ -707,11 +733,9 @@ public class BulkReceptionService {
         if (!StringUtils.hasText(cmd.dataCnt())) {
             throw new IllegalArgumentException("dataCnt is required");
         }
-    }
-
-    private String newTno(String rqDtime) {
-        String tno = rqDtime + UUID.randomUUID().toString().replace("-", "");
-        return tno.length() > TNO_MAX ? tno.substring(0, TNO_MAX) : tno;
+        if (!StringUtils.hasText(cmd.tno())) {
+            throw new IllegalArgumentException("tno (TRAN_SEQ) is required");
+        }
     }
 
     private String serialize(Object value, String svc) {

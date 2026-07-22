@@ -28,9 +28,12 @@ import com.kosign.wecms.domain.setting.contacts.repository.TrcoAcctInfoRepositor
 import com.kosign.wecms.domain.setting.contacts.repository.TrcoAddrInfmRepository;
 import com.kosign.wecms.domain.setting.contacts.repository.TrcoInfmRepository;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactBankListResponse;
+import com.kosign.wecms.domain.setting.contacts.dto.SwiftBicListResponse;
+import com.kosign.wecms.domain.setting.contacts.dto.SwiftBicRow;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactBankRow;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactLookupRecipientRequest;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactLookupRecipientResponse;
+import com.kosign.wecms.domain.setting.contacts.repository.SwiftBicMstRepository;
 import com.kosign.wecms.domain.setting.contacts.repository.TrcoOvrsInfmRepository;
 import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmBankCode;
 import com.kosign.wecms.domain.setting.firmbankingsettings.repository.TbFirmBankCodeRepository;
@@ -120,6 +123,7 @@ public class ContactsService {
     private final TrcoAddrInfmRepository trcoAddrRepo;
     private final TrcoAcctInfoRepository trcoAcctRepo;
     private final TrcoOvrsInfmRepository trcoOvrsRepo;
+    private final SwiftBicMstRepository swiftBicRepo;
     private final TbFirmBankCodeRepository bankCodeRepo;
     private final PgroBsacLnknInfmRepository pgroRepo;
     private final AcctTrnsRcvPayInfmRepository acctTrnsRcvPayRepo;
@@ -769,7 +773,8 @@ public class ContactsService {
                         o.getBicCode(),
                         o.getBeneBankName(),
                         o.getBeneBankCode(),
-                        o.getBeneAddr()))
+                        o.getBeneAddr(),
+                        o.getBeneTownNm()))
                 .toList();
 
         return new ContactRow(
@@ -848,6 +853,9 @@ public class ContactsService {
         e.setBeneBankName(o.beneBankName());
         e.setBeneBankCode(o.beneBankCode());
         e.setBeneAddr(o.beneAddr());
+        // Auto-filled read-only from the selected BIC's SWIFT directory
+        // entry (SWIFT_BIC_MST.PSTL_ADR_TWN_NM) — legacy comm_0184_002.js.
+        e.setBeneTownNm(o.beneTownNm());
         e.setRegId(userId);
         e.setRegDtm(now);
         e.setModId(userId);
@@ -940,6 +948,27 @@ public class ContactsService {
                         String.CASE_INSENSITIVE_ORDER)
                 .thenComparing(b -> b.bankCd() == null ? "" : b.bankCd()));
         return new ContactBankListResponse(out);
+    }
+
+    /**
+     * Overseas-contact BIC search typeahead. Mirrors legacy
+     * {@code comm_1007_001} ("Search Swift Bic Code") /
+     * {@code IDO.SWIFT_BIC_MST_R002}: uppercases the keyword, matches
+     * {@code BIC_CD LIKE 'kw%'}, orders by {@code BIC_CD}, caps at 50
+     * rows. A blank keyword returns the first 50 codes (legacy initial
+     * list). The SWIFT master carries no bank name, so search is
+     * BIC-only. Global dictionary — not tenant-scoped.
+     *
+     * @param q raw search keyword (may be null / blank); uppercased here.
+     */
+    @Transactional(readOnly = true)
+    public SwiftBicListResponse searchSwiftBic(String q) {
+        String prefix = (q == null) ? "" : q.trim().toUpperCase();
+        List<SwiftBicRow> rows =
+                swiftBicRepo.findTop50ByBicCdStartingWithOrderByBicCdAsc(prefix).stream()
+                        .map(r -> new SwiftBicRow(r.getBicCd(), r.getPstlAdrTwnNm()))
+                        .toList();
+        return new SwiftBicListResponse(rows);
     }
 
     /**

@@ -162,7 +162,7 @@ class ContactsDownloadServiceTest {
                 List.of(addr(1, "Cur OVRS", "20220101", "20220831"),
                         addr(2, "Old OVRS", null, null)),
                 List.of(new ContactOverseasRow("o1", "NGUYEN VAN NAPAS", "180012992264",
-                        "SHBKKRSEXXX", "SHINHAN", "BENE_CD", "Korea")));
+                        "SHBKKRSEXXX", "SHINHAN", "BENE_CD", "Korea", "SEOUL")));
         when(contactsService.listForExport(isNull(), eq("O"))).thenReturn(List.of(c));
 
         var report = downloadService.generate("O", "EN");

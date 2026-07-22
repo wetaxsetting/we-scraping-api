@@ -3,6 +3,7 @@ package com.kosign.wecms.domain.payment.dispatch.callback.controller;
 import com.kosign.wecms.domain.payment.dispatch.callback.dto.EfsCallbackEnvelope;
 import com.kosign.wecms.domain.payment.dispatch.callback.service.BulkExecutionResultService;
 import com.kosign.wecms.domain.payment.dispatch.callback.service.BulkReceptionResultService;
+import com.kosign.wecms.domain.payment.dispatch.van.dto.EfsEnvelope;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -13,8 +14,9 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.doNothing;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -45,9 +47,14 @@ class BulkCallbackRoutingTest {
         ).build();
     }
 
+    private static EfsEnvelope ack() {
+        return new EfsEnvelope("GV00000002", null, "20260608120000", "123",
+                "EV", "VV", "AES", "HmacSHA256", "0000", "OK");
+    }
+
     @Test
     void receptionResult_route_binds_envelope_and_delegates() throws Exception {
-        doNothing().when(bulkReceptionResultService).handle(org.mockito.ArgumentMatchers.any());
+        when(bulkReceptionResultService.handle(any())).thenReturn(ack());
 
         mockMvc.perform(post("/api/v1/payment/dispatch/callbacks/bulk-reception-result")
                         .contentType("application/json")
@@ -66,7 +73,7 @@ class BulkCallbackRoutingTest {
 
     @Test
     void executionResult_route_binds_envelope_and_delegates() throws Exception {
-        doNothing().when(bulkExecutionResultService).handle(org.mockito.ArgumentMatchers.any());
+        when(bulkExecutionResultService.handle(any())).thenReturn(ack());
 
         mockMvc.perform(post("/api/v1/payment/dispatch/callbacks/bulk-execution-result")
                         .contentType("application/json")

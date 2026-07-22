@@ -46,6 +46,20 @@ import java.time.format.DateTimeFormatter;
  * configurable) — see {@code MsgSendUtil.SendMsg}. {@code TNO} is the fixed legacy
  * literal {@code "M9999999"}. Only the enable flag is configuration.
  *
+ * <p><b>Envelope {@code ID} = VAN org code (audit M-12 / H2).</b> Legacy
+ * {@code MSGSendAPIThread:77} always sends {@code vanOrgCd} as the envelope {@code ID}
+ * (never the partner id — that is a per-request contract, distinct from the alert
+ * channel). This is the ID the Slack gateway keys the channel on, so it is sent
+ * verbatim here, unlike the request/callback legs which may use {@code partner-id}.
+ *
+ * <p><b>Environment / server marker (audit F3/F4 / H2).</b> The alert carries the
+ * legacy {@code ServerGB} label {@code [ENV][WAS_NO]} appended to the first content
+ * line (legacy {@code CommUtil.getServerGB}) and the legacy {@code mode} marker in
+ * the business JSON. Both derive from {@code wecms.dispatch.alert.env-mode}
+ * ({@code T}/{@code U}/{@code R} → DEV/UAT/PROD, legacy {@code ENV_MODE}) +
+ * {@code wecms.dispatch.alert.was-no}. When {@code env-mode} is unset (local R&D) the
+ * active Spring profile is used as a safe fallback so nothing is silently blank.
+ *
  * <p>Security: the per-VAN {@code API_KEY} is read from {@code TB_VAN_API_INFO} via
  * {@link VanApiKeyService} — never from config/env. Logging never emits
  * {@code API_KEY}, {@code EV}, {@code VV}, or the message content.
@@ -74,6 +88,18 @@ public class OpsAlertService {
     /** Master gate — OFF by default. The whole subsystem is inert until flipped on. */
     @Value("${wecms.dispatch.alert.enabled:false}")
     private boolean enabled;
+
+    /**
+     * Legacy {@code ENV_MODE} marker ({@code T}=DEV / {@code U}=UAT / {@code R}=PROD).
+     * Drives both the business-JSON {@code mode} field and the {@code ServerGB} label.
+     * Blank (default) → falls back to the active Spring profile (local R&D).
+     */
+    @Value("${wecms.dispatch.alert.env-mode:}")
+    private String envMode;
+
+    /** Legacy {@code WAS_NO} — the server/instance number shown in the {@code ServerGB} label. */
+    @Value("${wecms.dispatch.alert.was-no:}")
+    private String wasNo;
 
     public OpsAlertService(EfsApiClient efsApiClient,
                            EfsCryptoService efsCryptoService,
@@ -108,14 +134,18 @@ public class OpsAlertService {
         try {
             String apiKey = vanApiKeyService.getApiKey(vanOrgCd);
 
-            MsgSendRequest payload = new MsgSendRequest(APP_DIV, GRP_ID, content, resolveMode());
+            // F3 (audit): re-attach the legacy ServerGB [ENV][WAS_NO] marker to the first content
+            // line (legacy CommUtil.getServerGB — "batchname [ENV][WAS_NO]\nfields...").
+            String labelledContent = withServerLabel(content);
+            MsgSendRequest payload = new MsgSendRequest(APP_DIV, GRP_ID, labelledContent, resolveMode());
             String businessJson = objectMapper.writeValueAsString(payload);
 
             String rqDtime = LocalDateTime.now(ICT).format(RQ_DTIME_FMT);
             String ev = efsCryptoService.encryptEv(businessJson, apiKey, rqDtime);
             String vv = efsCryptoService.buildVv(businessJson, apiKey);
-            String id = StringUtils.hasText(efsProperties.getPartnerId())
-                    ? efsProperties.getPartnerId() : vanOrgCd;
+            // M-12 (audit): the alert-channel envelope ID is ALWAYS the VAN org code (legacy
+            // MSGSendAPIThread:77), never the partner id — this is the channel-mapping key.
+            String id = vanOrgCd;
 
             EfsEnvelope request = new EfsEnvelope(
                     id, rqDtime, null, TNO, ev, vv,
@@ -134,9 +164,44 @@ public class OpsAlertService {
         }
     }
 
-    /** Environment marker for the alert body — the active Spring profile, or {@code "-"}. */
+    /**
+     * Legacy {@code mode} marker for the business JSON (legacy {@code MSGSendAPIThread:63}
+     * = {@code ENV_MODE}). Uses the configured {@code env-mode} ({@code T}/{@code U}/{@code R})
+     * when set; otherwise falls back to the active Spring profile (local R&D), or {@code "-"}.
+     */
     private String resolveMode() {
+        if (StringUtils.hasText(envMode)) {
+            return envMode;
+        }
         String[] profiles = environment.getActiveProfiles();
         return profiles.length > 0 ? profiles[0] : "-";
+    }
+
+    /**
+     * Append the legacy {@code ServerGB} label {@code [ENV][WAS_NO]} to the first line of the
+     * content (mirrors {@code CommUtil.getServerGB}: {@code T}→DEV / {@code U}→UAT / {@code R}→PROD,
+     * else the raw mode; {@code WAS_NO} verbatim). Placing it on line 1 matches the legacy
+     * {@code "batchname " + ServerGB + "\n" + fields} shape.
+     */
+    private String withServerLabel(String content) {
+        String label = serverLabel();
+        int nl = content.indexOf('\n');
+        if (nl < 0) {
+            return content + " " + label;
+        }
+        return content.substring(0, nl) + " " + label + content.substring(nl);
+    }
+
+    /** Build the {@code [ENV][WAS_NO]} marker (legacy {@code CommUtil.getServerGB}). */
+    private String serverLabel() {
+        String mode = resolveMode();
+        String env;
+        switch (mode) {
+            case "T" -> env = "DEV";
+            case "U" -> env = "UAT";
+            case "R" -> env = "PROD";
+            default  -> env = mode;
+        }
+        return "[" + env + "][" + (wasNo == null ? "" : wasNo) + "]";
     }
 }

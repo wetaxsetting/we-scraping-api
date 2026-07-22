@@ -1,6 +1,7 @@
 package com.kosign.wecms.domain.payment.dispatch.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConf;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmFileMst;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileData;
@@ -41,6 +42,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -84,6 +86,10 @@ class BulkReceptionReceiveTest {
     @Mock BulkTransferValidator bulkTransferValidator;
     @Mock com.kosign.wecms.domain.payment.dispatch.alert.OpsAlertService opsAlertService;
     @Mock OperatingHoursService operatingHoursService;
+    // Item 2: a mock PlatformTransactionManager makes the per-file REQUIRES_NEW TransactionTemplate
+    // a synchronous pass-through (getTransaction→null, commit/rollback no-op) that still propagates
+    // exceptions — so these unit tests exercise the real per-file orchestration + fail-stop.
+    @Mock org.springframework.transaction.PlatformTransactionManager perFileTxManager;
 
     private final EfsCryptoService crypto = new EfsCryptoService();
     // Spy so split tests can capture the per-file encode(header, lines, trailer) calls
@@ -103,7 +109,8 @@ class BulkReceptionReceiveTest {
                 dispatchKeyGenerator, codec, sftpClient, sftpProperties, bulkTransferValidator,
                 opsAlertService, operatingHoursService,
                 org.mockito.Mockito.mock(com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard.class),
-                org.mockito.Mockito.mock(com.kosign.wecms.domain.payment.common.OutBankCdNormalizer.class));
+                org.mockito.Mockito.mock(com.kosign.wecms.domain.payment.common.OutBankCdNormalizer.class),
+                perFileTxManager);
 
         // Pre-flight validation passes by default; the dedicated cases live in
         // BulkReceptionServiceValidationTest.
@@ -474,5 +481,67 @@ class BulkReceptionReceiveTest {
         // 3 files → 3 EFS 301 calls; each file also SFTP-uploaded.
         verify(spy, times(3)).issueReception(any());
         verify(sftpClient, times(3)).upload(anyString(), anyString());
+    }
+
+    // ------------------------------------------------------------------ Item 2: per-file tx boundary
+
+    /**
+     * Item 2 (audit M-7): a later split's EFS 00301 failure trips the sibling fail-stop —
+     * the earlier file was fully built + dispatched (committed in its own REQUIRES_NEW tx) and
+     * the remaining sibling is never attempted (R004 parity). The earlier file's work is not
+     * undone by the later failure.
+     */
+    @Test
+    void laterSplitFailure_stopsBatch_earlierFileStandsCommitted() {
+        when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
+                .thenReturn(Optional.of(payRow(ProcStat.WAIT.code())));
+        when(firmConfRepository.findById(any())).thenReturn(Optional.of(conf("Y", 2)));
+        when(payFileDataRepository.findByBizKeyAndTranDtAndFileSeqNo(BIZ_KEY, TRAN_DT, FILE_SEQ_NO))
+                .thenReturn(details(5)); // ceil(5/2) = 3 files
+
+        BulkReceptionService spy = spy(service);
+        // File 1 succeeds; file 2's 00301 fails (gateway BusinessException).
+        doReturn(null)
+                .doThrow(new BusinessException("WBE_EFS_GATEWAY_ERROR", "G001"))
+                .when(spy).issueReception(any());
+
+        spy.receive(TRAN_DT, BIZ_KEY, FILE_SEQ_NO);
+
+        // Only files 1 and 2 were attempted — file 3 skipped after the fail-stop.
+        verify(spy, times(2)).issueReception(any());
+        // Both files' MST rows were saved (file 1 committed in its own tx BEFORE file 2 failed).
+        verify(firmFileMstRepository, org.mockito.Mockito.atLeast(2)).save(any());
+        // The shared pay-file ends FAIL (file 2's failBoth).
+        ArgumentCaptor<TbPayFileMst> payCap = ArgumentCaptor.forClass(TbPayFileMst.class);
+        verify(payFileMstRepository, org.mockito.Mockito.atLeastOnce()).save(payCap.capture());
+        assertEquals(ProcStat.FAIL.code(),
+                payCap.getAllValues().get(payCap.getAllValues().size() - 1).getProcStat());
+    }
+
+    /**
+     * Item 2: an UNEXPECTED (non-BusinessException) throw while dispatching a later split
+     * propagates out of {@code receive()} — but only that file's REQUIRES_NEW tx rolls back;
+     * the earlier file's work was already committed in its own tx (asserted here by the earlier
+     * file's MST save having happened before the throw, and file 3 never being attempted).
+     */
+    @Test
+    void unexpectedThrowInLaterSplit_propagates_earlierFileAlreadySaved() {
+        when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
+                .thenReturn(Optional.of(payRow(ProcStat.WAIT.code())));
+        when(firmConfRepository.findById(any())).thenReturn(Optional.of(conf("Y", 2)));
+        when(payFileDataRepository.findByBizKeyAndTranDtAndFileSeqNo(BIZ_KEY, TRAN_DT, FILE_SEQ_NO))
+                .thenReturn(details(5));
+
+        BulkReceptionService spy = spy(service);
+        doReturn(null)
+                .doThrow(new RuntimeException("unexpected codec blowup"))
+                .when(spy).issueReception(any());
+
+        assertThrows(RuntimeException.class, () -> spy.receive(TRAN_DT, BIZ_KEY, FILE_SEQ_NO));
+
+        // File 1's MST was saved before file 2 blew up; file 3 was never attempted (loop aborted
+        // by the propagating throw). With per-file REQUIRES_NEW, file 1 stays committed.
+        verify(spy, times(2)).issueReception(any());
+        verify(firmFileMstRepository, org.mockito.Mockito.atLeast(2)).save(any());
     }
 }

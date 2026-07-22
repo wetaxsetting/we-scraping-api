@@ -133,6 +133,9 @@ public class InternalTransferDispatchExecutor {
     private String wooriBankCd;
     @Value("${wecms.internal-transfer.routing.shinhan-bank-cd:970424}")
     private String shinhanBankCd;
+    /** F1 (audit VCB): all VCB (970436) dispatches via the File path (legacy pymn_0009:2600). */
+    @Value("${wecms.internal-transfer.routing.vcb-bank-cd:970436}")
+    private String vcbBankCd;
 
     private final TbPayTargetRepository   tbPayTargetRepository;
     private final TbPayFileMstRepository  tbPayFileMstRepository;
@@ -211,9 +214,16 @@ public class InternalTransferDispatchExecutor {
                 eq(outBankCd, shinhanBankCd)
                 && CCY_USD.equalsIgnoreCase(wdrlCcyCd)
                 && CCY_VND.equalsIgnoreCase(depoCcyCd);
+        // F1 (audit VCB, legacy PymnHelper.pymn_0009_001_c001:2600, SVN r36803): ALL VCB (970436),
+        // VND and USD, dispatches via the File path — the isVcbFileTransfer gate pulls VCB VND off
+        // the API path. NOTE: the file path's VCB-specific field values (BANK_CHNL_DIV via
+        // ENG_ABRVAT_NM, VND ANT_DIV_CD) are NOT built out here — VCB VND file-field parity is
+        // REQUIRES EXTERNAL CONFIRMATION (Van Center), per the F1 "routing switch only" decision.
+        boolean isVcbFileTransfer = eq(outBankCd, vcbBankCd);
         boolean useApiPath =
-                (CCY_VND.equalsIgnoreCase(trimToNull(trnfCcyCd)) && !isShinhanUsdToVnd)
-                || isWooriUsdToVnd;
+                ((CCY_VND.equalsIgnoreCase(trimToNull(trnfCcyCd)) && !isShinhanUsdToVnd)
+                        || isWooriUsdToVnd)
+                        && !isVcbFileTransfer;
 
         return new RoutingFlags(useApiPath, isShinhanUsdToVnd, isWooriUsdToVnd, wdrlCcyCd);
     }
@@ -335,6 +345,12 @@ public class InternalTransferDispatchExecutor {
             // Shinhan-USD→VND ANT_DIV_CD override (CITAD same / EBANK other).
             if (isShinhanUsdToVnd) {
                 data.setAntDivCd(sameBank ? ANT_DIV_T_CITAD : ANT_DIV_T_EBANK);
+            } else if (eq(master.getOutBankCd(), vcbBankCd) && CCY_VND.equalsIgnoreCase(trnfCcyCd)) {
+                // OQ-2 (Mr. Jung 2026-07-16, CONFIRMED file-based VCB; proven vs legacy PymnHelper:2573
+                // + copyFrom :2840-2843): VCB VND carries the uploaded NAPAS/CITAD network code
+                // ("VCB VND -> Other : NAPAS/CITAD from upload"). VCB USD stays null (same-bank only);
+                // non-VCB internal transfers are unchanged.
+                data.setAntDivCd(line.getAntDivCd());
             }
 
             data.setFincMdaOwnerNm(resolveOwnerNm(bizKey, line));

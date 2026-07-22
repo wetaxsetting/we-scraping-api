@@ -146,7 +146,11 @@ public class VendorDispatchExecutor {
         String regTm  = nowVn.format(TM6);
         String dttm14 = nowVn.format(DTM14);
 
-        if (CCY_VND.equalsIgnoreCase(trnfCcyCd)) {
+        // F1 (audit VCB, legacy PymnHelper.pymn_0001_001_c001:2188, SVN r36803 2026-07-16): ALL VCB
+        // (970436) — VND and USD — dispatches via the File path, not the real-time API. The
+        // isVcbFileTransfer gate pulls VCB VND off the API path (it was previously mis-routed there).
+        boolean isVcbFileTransfer = eq(master.getOutBankCd(), vcbBankCd);
+        if (CCY_VND.equalsIgnoreCase(trnfCcyCd) && !isVcbFileTransfer) {
             writeApiPath(master, lines, bizKey, userId, tranDt, regTm, dttm14, trnfCcyCd);
         } else {
             writeFilePath(master, lines, bizKey, tranDt, dttm14, trnfCcyCd);
@@ -259,7 +263,14 @@ public class VendorDispatchExecutor {
 
             data.setTranAmt(line.getTranAmt());
 
-            // ANT_DIV_CD USD overrides (legacy :2309-2316):
+            // OQ-2 (Mr. Jung 2026-07-16, CONFIRMED file-based VCB; proven vs legacy PymnHelper:2573
+            // + copyFrom :2840-2843): the ANT_DIV_CD base is the uploaded network code. VCB VND keeps
+            // its uploaded NAPAS/CITAD code (legacy "VCB VND -> Other : NAPAS/CITAD from upload"), so
+            // it is seeded here; the USD block below only replaces it for Shinhan/Woori/VCB *USD*.
+            // (Among VND rows, only VCB VND reaches the File path — non-VCB VND takes the API path.)
+            data.setAntDivCd(line.getAntDivCd());
+
+            // ANT_DIV_CD USD overrides (legacy :2309-2316 / :2778-2785):
             //   Shinhan USD -> EBANK ("E"); Woori USD -> VCB ("V"); VCB USD -> null.
             if (CCY_USD.equalsIgnoreCase(lineCcy)) {
                 if (eq(outBank, shinhanBankCd)) {
@@ -275,7 +286,10 @@ public class VendorDispatchExecutor {
             // applied only for the Shinhan / Woori / VCB out-banks.
             if (eq(outBank, shinhanBankCd) || eq(outBank, wooriBankCd) || eq(outBank, vcbBankCd)) {
                 boolean sameBank = eq(outBank, tarBank) || sameBankGroup(outBank, tarBank);
-                if (eq(outBank, vcbBankCd) && !sameBank) {
+                // F1: the VCB->other-bank reject applies to USD only (legacy pymn_0001:2387-2388
+                // `&& "USD".equals(TRNF_CCY_CD)`). VCB VND->other-bank is allowed on the File path; its
+                // fields are CONFIRMED from legacy (BANK_CHNL_DIV=T/O below; ANT_DIV_CD=uploaded above).
+                if (eq(outBank, vcbBankCd) && !sameBank && !CCY_VND.equalsIgnoreCase(trnfCcyCd)) {
                     // Legacy :2349-2353 — WbMessageCode.WBE0000 + literal.
                     throw new BusinessException("WBE2088");
                 }

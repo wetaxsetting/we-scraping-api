@@ -189,6 +189,65 @@ class VendorDispatchExecutorTest {
     }
 
     @Test
+    void vcbVnd_routesToFilePath_notApi() {
+        // F1 (audit VCB, legacy r36803): ALL VCB (970436) — incl. VND — dispatches via the File path,
+        // NOT the real-time API (TB_PAY_TARGET). Previously VCB VND was mis-routed to the API path.
+        executor.execute(master(VCB, "VND"), List.of(line(VCB, "VND")), "VND");
+
+        verify(tbPayFileMstRepository).save(any());          // File path
+        verify(tbPayTargetRepository, never()).save(any());  // NOT the API / real-time path
+    }
+
+    @Test
+    void vcbVnd_otherBank_notRejected_usesFilePath() {
+        // F1: the VCB->other-bank reject is USD-only — VCB VND->other-bank is ALLOWED on the file
+        // path (no WBE2088). Its VND file-field values are CONFIRMED from legacy (see below).
+        executor.execute(master(VCB, "VND"), List.of(line(BIDV, "VND")), "VND");
+
+        verify(tbPayFileMstRepository).save(any());
+        verify(tbPayTargetRepository, never()).save(any());
+    }
+
+    /* ── OQ-2 (Mr. Jung 2026-07-16 CONFIRMED file-based VCB) — VCB VND file-field values,
+       proven vs legacy PymnHelper:2572-2574 / copyFrom :2840-2843 ── */
+
+    @Test
+    void vcbVnd_otherBank_carriesUploadedAntDivCd_bankChnlDivOther() {
+        // Legacy "VCB VND -> Other : BANK_CHNL_DIV='O', NAPAS/CITAD from upload" (PymnHelper:2573).
+        ScdulPymnSumrDetl l = line(BIDV, "VND");
+        l.setAntDivCd("NAPAS");
+        executor.execute(master(VCB, "VND"), List.of(l), "VND");
+
+        TbPayFileData d = captureData();
+        assertThat(d.getAntDivCd()).isEqualTo("NAPAS");   // uploaded code preserved (not null)
+        assertThat(d.getBankChnlDiv()).isEqualTo("O");    // other-bank
+        assertThat(d.getTrscCcyCd()).isEqualTo("VND");    // VCB -> TRNF_CCY_CD
+    }
+
+    @Test
+    void vcbVnd_sameBank_carriesUploadedAntDivCd_bankChnlDivCurrent() {
+        // Legacy "VCB VND -> VCB : BANK_CHNL_DIV='T'" (PymnHelper:2572); ANT_DIV_CD stays the uploaded
+        // copyFrom value (no VCB-VND override — only Shinhan-USD->VND nulls it).
+        ScdulPymnSumrDetl l = line(VCB, "VND");
+        l.setAntDivCd("CITAD");
+        executor.execute(master(VCB, "VND"), List.of(l), "VND");
+
+        TbPayFileData d = captureData();
+        assertThat(d.getAntDivCd()).isEqualTo("CITAD");
+        assertThat(d.getBankChnlDiv()).isEqualTo("T");    // same-bank
+    }
+
+    @Test
+    void vcbUsd_uploadedAntDivCd_isOverriddenToNull() {
+        // The USD override must beat the uploaded base (VCB USD -> VCB USD only; ANT_DIV_CD null).
+        ScdulPymnSumrDetl l = line(VCB, "USD");
+        l.setAntDivCd("CITAD");
+        executor.execute(master(VCB, "USD"), List.of(l), "USD");
+
+        assertThat(captureData().getAntDivCd()).isNull();
+    }
+
+    @Test
     void engAbrvatNmGroupMatch_treatedAsSameBank() {
         String shinhanBranch = "970425";
         TbFirmBankCode out = org.mockito.Mockito.mock(TbFirmBankCode.class);

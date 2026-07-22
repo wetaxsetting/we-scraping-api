@@ -11,4 +11,5 @@ public record ContactOverseasRow(
         String bicCode,
         String beneBankName,
         String beneBankCode,
-        String beneAddr) { }
+        String beneAddr,
+        String beneTownNm) { }
