@@ -304,6 +304,28 @@ class BulkReceptionReceiveTest {
         verify(spy, never()).issueReception(any());
     }
 
+    /** G. FILE_TYPE is used RAW (no trim) in the filename + stored FILE_TYPE (legacy BATCH1:533,548).
+     *  Real data is CHAR(3) exactly-3-char (no padding), so this padded value only demonstrates the
+     *  raw pass-through mechanism — with the old trim() the filename would be "..._WRB_..." instead. */
+    @Test
+    void fileType_isRawNotTrimmed_inFilenameAndMst() {
+        TbFirmConf paddedConf = conf("N", 2000);
+        paddedConf.setFileType("WRB ");   // simulated padded/raw value; legacy carries it verbatim
+        when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
+                .thenReturn(Optional.of(payRow(ProcStat.WAIT.code())));
+        when(firmConfRepository.findById(any())).thenReturn(Optional.of(paddedConf));
+        when(payFileDataRepository.findByBizKeyAndTranDtAndFileSeqNo(BIZ_KEY, TRAN_DT, FILE_SEQ_NO))
+                .thenReturn(List.of(detail(1, "1000.00")));
+        BulkReceptionService spy = spy(service);
+        doReturn(null).when(spy).issueReception(any());
+        spy.receive(TRAN_DT, BIZ_KEY, FILE_SEQ_NO);
+
+        ArgumentCaptor<TbFirmFileMst> mstCap = ArgumentCaptor.forClass(TbFirmFileMst.class);
+        verify(firmFileMstRepository).save(mstCap.capture());
+        assertEquals("WRB ", mstCap.getValue().getFileType());                               // raw, not trimmed
+        assertEquals("S_" + VAN + "_WRB _001_" + TRAN_DT, mstCap.getValue().getFirmFileNm()); // padding carried raw
+    }
+
     // ------------------------------------------------------------------ C5 branch-split
 
     private List<TbPayFileData> details(int n) {
@@ -481,6 +503,53 @@ class BulkReceptionReceiveTest {
         // 3 files → 3 EFS 301 calls; each file also SFTP-uploaded.
         verify(spy, times(3)).issueReception(any());
         verify(sftpClient, times(3)).upload(anyString(), anyString());
+    }
+
+    /** All original SEQ (ORG_SEQ) values grouped per split file, in file save order. */
+    private List<List<Long>> orgSeqsPerFile() {
+        List<List<Long>> out = new ArrayList<>();
+        for (List<TbFirmFileData> rows : capturedDataByFile().values()) {
+            out.add(rows.stream().map(r -> r.getOrgSeq().longValue()).toList());
+        }
+        return out;
+    }
+
+    /** F. Contiguous SEQ 1..5, limit 2 → value-range windows [1,2] [3,4] [5,6]:
+     *  file1 SEQ {1,2}, file2 {3,4}, file3 {5} (legacy START_SEQ/END_SEQ parity). */
+    @Test
+    void split_partitionsBySeqValueRange_contiguous() {
+        when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
+                .thenReturn(Optional.of(payRow(ProcStat.WAIT.code())));
+        when(firmConfRepository.findById(any())).thenReturn(Optional.of(conf("Y", 2)));
+        when(payFileDataRepository.findByBizKeyAndTranDtAndFileSeqNo(BIZ_KEY, TRAN_DT, FILE_SEQ_NO))
+                .thenReturn(details(5)); // SEQ 1..5
+        BulkReceptionService spy = spy(service);
+        doReturn(null).when(spy).issueReception(any());
+        spy.receive(TRAN_DT, BIZ_KEY, FILE_SEQ_NO);
+
+        List<List<Long>> perFile = orgSeqsPerFile();
+        assertEquals(List.of(1L, 2L), perFile.get(0));
+        assertEquals(List.of(3L, 4L), perFile.get(1));
+        assertEquals(List.of(5L), perFile.get(2));
+    }
+
+    /** F. Non-1 starting SEQ {2,3,4}, limit 2 → legacy value-range windows [1,2] [3,4]:
+     *  SEQ 2 → file1, SEQ 3,4 → file2. List-index slicing would instead give {2,3} / {4};
+     *  asserting {2} / {3,4} proves partition is by SEQ VALUE, not by list position. */
+    @Test
+    void split_partitionsBySeqValueRange_notListIndex_nonOneStart() {
+        when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
+                .thenReturn(Optional.of(payRow(ProcStat.WAIT.code())));
+        when(firmConfRepository.findById(any())).thenReturn(Optional.of(conf("Y", 2)));
+        when(payFileDataRepository.findByBizKeyAndTranDtAndFileSeqNo(BIZ_KEY, TRAN_DT, FILE_SEQ_NO))
+                .thenReturn(List.of(detail(2, "2000.00"), detail(3, "3000.00"), detail(4, "4000.00")));
+        BulkReceptionService spy = spy(service);
+        doReturn(null).when(spy).issueReception(any());
+        spy.receive(TRAN_DT, BIZ_KEY, FILE_SEQ_NO);
+
+        List<List<Long>> perFile = orgSeqsPerFile();
+        assertEquals(List.of(2L), perFile.get(0));       // value window [1,2] → only SEQ 2
+        assertEquals(List.of(3L, 4L), perFile.get(1));   // value window [3,4] → SEQ 3,4
     }
 
     // ------------------------------------------------------------------ Item 2: per-file tx boundary

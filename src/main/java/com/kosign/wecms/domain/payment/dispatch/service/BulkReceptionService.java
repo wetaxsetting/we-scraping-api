@@ -296,9 +296,20 @@ public class BulkReceptionService {
 
         // 7. Build + dispatch each split file independently (legacy per-file loop).
         for (int i = 0; i < loopCnt; i++) {
-            int from = i * chunkSize;
-            int to = Math.min(from + chunkSize, reqCnt);
-            List<TbPayFileData> window = details.subList(from, to);
+            // F — legacy parity (FILE_DEPOSIT_TRANSFER_BATCH1:502-528): partition split files by the
+            // SEQ *value* range [startSeq, endSeq] (legacy START_SEQ/END_SEQ, advanced by chunkSize),
+            // NOT by list index. The refactor allocates SEQ as a dense 1..N run so this yields the same
+            // windows as index slicing; for migrated rows with SEQ gaps or a non-1 start it matches
+            // legacy's value-range membership (rows outside every window are simply not sent).
+            long startSeq = (long) i * chunkSize + 1;
+            long endSeq   = (long) (i + 1) * chunkSize;
+            List<TbPayFileData> window = new ArrayList<>();
+            for (TbPayFileData d : details) {
+                long s = d.getSeq().longValue();
+                if (s >= startSeq && s <= endSeq) {
+                    window.add(d);
+                }
+            }
             String fileSeq = String.format("%03d", baseRound + i);
 
             // Item 2 (audit M-7): commit each split file in its OWN transaction, so a later split's
@@ -350,7 +361,11 @@ public class BulkReceptionService {
 
         // Filename S_{VAN}_{TYPE}_{round}_{date} — the per-file round makes each split file's
         // FIRM_FILE_NM (and therefore its MST/DATA primary keys) unique.
-        String fileName = "S_" + conf.getVanOrgCd() + "_" + trim(conf.getFileType()) + "_" + fileSeq + "_" + tranDt;
+        // G — legacy parity (FILE_DEPOSIT_TRANSFER_BATCH1:533,540): FILE_TYPE is used RAW (no trim).
+        // Safe: TB_FIRM_CONF.FILE_TYPE is CHAR(3) with exactly-3-char values (SHB/VCB/WRB) on both
+        // DBs, so raw == trimmed for all real data (no padding). FILE_TYPE is NOT in the 1000-byte
+        // record (not a DepositHeader field), so byte-identity of the file is unaffected.
+        String fileName = "S_" + conf.getVanOrgCd() + "_" + conf.getFileType() + "_" + fileSeq + "_" + tranDt;
 
         // Insert TB_FIRM_FILE_MST at PROC_STEP=0 / PROC_STAT=6.
         TbFirmFileMst mst = new TbFirmFileMst();
@@ -361,7 +376,7 @@ public class BulkReceptionService {
         mst.setOutBankCd(pay.getOutBankCd());
         mst.setBankPrtnId(conf.getBankPrtnId());
         mst.setVanOrgCd(conf.getVanOrgCd());
-        mst.setFileType(trim(conf.getFileType()));
+        mst.setFileType(conf.getFileType());   // G — raw FILE_TYPE (legacy BATCH1:548), no trim
         mst.setWdrlActNo(pay.getWdrlActNo());
         mst.setFundTp(pay.getFundTp());
         mst.setTranTp(pay.getTranTp());
