@@ -162,18 +162,16 @@ public class ExpensePaymentExcelParser {
     /** Cross-bank recipient-name verification — legacy
      *  {@code PymnHelper.ckRecName}. Calls the firm-banking inquiry API
      *  on NAPAS rows and compares the bank-returned
-     *  {@code FINC_MDA_OWNER_NM} against the contact's stored owner name.
+     *  {@code FINC_MDA_OWNER_NM} against the contact's stored owner name;
+     *  flags {@code RCPT_NM} unless a positive match is confirmed.
      *
-     *  <p><b>Audit G7 — currently a no-op stub.</b>
-     *  {@code FirmBankingInquiryService.inquiryAccount} returns
-     *  {@link java.util.Optional#empty()} until the underlying
-     *  {@code WB_00000100} socket call is wired, so the NAPAS
-     *  recipient-name cross-check below does not run. This matches legacy
-     *  behaviour when the inquiry result is null
-     *  ({@code PymnHelper.ckRecName:1037} "contactInfo == null" silent
-     *  skip). Do not treat the cross-check as active until a working bank
-     *  inquiry implementation exists; do NOT enable it for UAT/PROD
-     *  without that implementation. */
+     *  <p><b>Active when {@code wecms.dispatch.recipient-inquiry=true}.</b>
+     *  The cross-check below runs only while that master gate is enabled
+     *  (checked via {@code FirmBankingInquiryService.isRecipientInquiryEnabled()});
+     *  when disabled the inquiry returns {@link java.util.Optional#empty()}
+     *  for every row and the check is skipped entirely rather than flagging
+     *  every NAPAS row. When enabled it mirrors legacy
+     *  {@code PymnHelper.ckRecName} exactly. */
     private final com.kosign.wecms.common.firmbanking.FirmBankingInquiryService
                                            firmBankingInquiryService;
     /** Cross-row consistency guard — single currency per file + single
@@ -459,6 +457,12 @@ public class ExpensePaymentExcelParser {
         // FINC_MDA_OWNER_NM. Populated for BOTH NAPAS and CITAD when a
         // matching contact-account row is found.
         String contactOwnerNmForCheck = null;
+        // True once a TRCO_ACCT_INFO row matched the Excel deposit + bank code.
+        // The legacy ckRecName recipient check only makes sense for a row whose
+        // deposit account resolved (an unregistered-deposit row already carries a
+        // clearer FINC_MDA_NO / ANT_DIV_CD error and legacy's getfincMdaOwnerNm
+        // would find no stored name for it).
+        boolean depositAccountMatched = false;
         if (resolvedTrcoKey != null
                 && resolvedBankCd != null
                 && !resolvedAntDiv.isEmpty()
@@ -496,6 +500,7 @@ public class ExpensePaymentExcelParser {
                     errors.add(new FieldError(FLD_ANT_DIV_CD,
                             "Bank Code does not match the contact's registered account: " + resolvedBankCd));
                 } else {
+                    depositAccountMatched = true;
                     if ("CITAD".equals(resolvedAntDiv)
                             && !isBlank(match.getFincMdaOwnerNm())) {
                         resolvedRcptNm = match.getFincMdaOwnerNm();
@@ -513,31 +518,43 @@ public class ExpensePaymentExcelParser {
         }
 
         // Cross-bank recipient-name verification — legacy
-        // `PymnHelper.ckRecName` (line 860). NAPAS rows call the
+        // `PymnHelper.ckRecName` (lines 964-1017, read=true / Excel-preview
+        // branch). For a NAPAS row whose deposit account matched, call the
         // firm-banking inquiry API and compare the bank-returned
-        // FINC_MDA_OWNER_NM against the contact's stored owner name.
-        // CITAD is skipped (the legacy `showLookup` gate rejects it).
-        // The inquiry returns Optional.empty() until the WB_00000100
-        // socket call is wired, so this block is a no-op today —
-        // matching legacy's "no firm-banking config" silent-skip
-        // (PymnHelper.ckRecName line 1037 "contactInfo == null").
+        // FINC_MDA_OWNER_NM against the contact's stored owner name. Legacy
+        // flags a RCPT_NM error UNLESS a POSITIVE match is confirmed —
+        // stored name non-blank AND bank name non-blank AND equal (ignoring
+        // case). A blank stored name, a blank / unresolved bank name, or a
+        // mismatch all error (legacy lines 1012-1016). CITAD is skipped (the
+        // legacy `showLookup` gate rejects it; CITAD cross-fills RCPT_NM from
+        // TRCO_ACCT_INFO above).
+        //
+        // Gated on the recipient-inquiry master switch (C1,
+        // wecms.dispatch.recipient-inquiry) which has NO legacy counterpart:
+        // when the feature is disabled the inquiry never runs and returns
+        // empty for every row, so we skip the check entirely rather than
+        // flag every NAPAS row. When enabled, behaviour mirrors legacy
+        // exactly — including the no-firm-config edge, where inquiryAccount
+        // returns empty → not confirmed → error (legacy `contactInfo == null`
+        // branch, line 1037-1038).
         if ("NAPAS".equals(resolvedAntDiv)
-                && !isBlank(resolvedBankCd)
-                && !isBlank(fincMdaNo)
-                && contactOwnerNmForCheck != null) {
-            // Capture into a final local for the lambda closure.
-            final String contactOwnerNm = contactOwnerNmForCheck;
-            firmBankingInquiryService
+                && depositAccountMatched
+                && firmBankingInquiryService.isRecipientInquiryEnabled()) {
+            String fromBank = firmBankingInquiryService
                     .inquiryAccount(resolvedBankCd, fincMdaNo)
-                    .ifPresent(bankOwnerNm -> {
-                        String fromBank = bankOwnerNm.trim();
-                        if (!fromBank.isEmpty()
-                                && !fromBank.equalsIgnoreCase(contactOwnerNm)) {
-                            errors.add(new FieldError("RCPT_NM",
-                                    "Recipient name does not match the bank's record: "
-                                            + fromBank));
-                        }
-                    });
+                    .map(String::trim)
+                    .orElse("");
+            String stored = contactOwnerNmForCheck == null
+                    ? "" : contactOwnerNmForCheck.trim();
+            boolean confirmed = !stored.isEmpty()
+                    && !fromBank.isEmpty()
+                    && fromBank.equalsIgnoreCase(stored);
+            if (!confirmed) {
+                // Single generic message (legacy WBE0001 "Recipient Name error",
+                // surfaced in the JEX UI as "Invalid Recipient Name error").
+                // Deliberately does not echo the bank-returned name.
+                errors.add(new FieldError("RCPT_NM", "Invalid Recipient Name error"));
+            }
         }
 
         BigDecimal tranAmt = null;

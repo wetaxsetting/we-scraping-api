@@ -123,6 +123,20 @@ public class FirmBankingInquiryService {
     }
 
     /**
+     * Whether the live WGVN_EFS_201 recipient-inquiry path is switched on
+     * (the C1 master gate {@code wecms.dispatch.recipient-inquiry}). This flag
+     * has <b>no legacy counterpart</b> — legacy always runs the inquiry. Excel
+     * upload parsers consult it so that, when the feature is globally disabled,
+     * they skip recipient-name verification entirely instead of flagging every
+     * NAPAS row (which would happen if the always-empty inquiry result were
+     * treated as a failed name match). When enabled, parsers mirror legacy
+     * {@code PymnHelper.ckRecName} exactly.
+     */
+    public boolean isRecipientInquiryEnabled() {
+        return recipientInquiryEnabled;
+    }
+
+    /**
      * Resolve the account-holder name for the given NAPAS account.
      *
      * @param napasBankCd  6-char NAPAS bank code (required; CITAD has no

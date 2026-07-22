@@ -8,6 +8,8 @@ import com.kosign.wecms.domain.payment.dispatch.enums.ProcStat;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
@@ -67,6 +69,14 @@ public class DepositorInquiryService {
      * @param cmd    the resolved WGVN_EFS_201 inquiry context
      * @return resolved owner name, or {@link Optional#empty()} when unresolved / on error
      */
+    // REQUIRES_NEW: the whole inquiry leg (TRAN_SEQ allocation via wb_get_next_val →
+    // nextval('firm_seq_no'), the C001/U002 audit lifecycle, and the gateway call) is a
+    // committed unit independent of the caller. Callers such as the Excel-upload preview
+    // parsers run in a read-only transaction; without an isolated read-write tx here the
+    // nextval fails with SQLState 25006 ("cannot execute nextval() in a read-only
+    // transaction") and poisons the caller's transaction. Mirrors legacy WB_00000100's
+    // independent beginTransaction…commit units.
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public Optional<String> inquire(String bizKey, RecipientLookupCommand cmd) {
         LocalDateTime now = LocalDateTime.now(ICT);
         String tranDt = now.format(DT8);
