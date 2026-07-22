@@ -83,6 +83,20 @@ public class OvrsPymnMstr {
     @Column(name = "MEMO", length = 500)
     private String memo;
 
+    /** Ordering-customer (sender) name for the M-mode SWIFT MT103 field 50K.
+     *  Legacy pymn_0007_001_c001_act.jsp:223 SENDER_NM = DBT_ACCT_HLDR (finding L). */
+    @Column(name = "DBT_ACCT_HLDR", length = 100)
+    private String dbtAcctHldr;
+
+    /** Dispatch shadow keys (finding L, M-mode) — the Result-detail join reads
+     *  OVRS_PYMN_MSTR ⋈ TB_PAY_FILE_MST via (PAY_TRAN_DT, PAY_FILE_SEQ_NO),
+     *  stamped by {@code OverseasDispatchExecutor.execute(OvrsPymnMstr)}. */
+    @Column(name = "PAY_TRAN_DT", length = 8)
+    private String payTranDt;
+
+    @Column(name = "PAY_FILE_SEQ_NO", length = 7)
+    private String payFileSeqNo;
+
     @Column(name = "APPR_SEQ_NO", length = 15)
     private String apprSeqNo;
 

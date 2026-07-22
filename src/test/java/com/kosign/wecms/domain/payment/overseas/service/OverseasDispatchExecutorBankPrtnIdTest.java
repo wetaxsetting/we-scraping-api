@@ -9,6 +9,7 @@ import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileDataReposito
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileMstRepository;
 import com.kosign.wecms.domain.payment.dispatch.service.DispatchAutoReceiveRegistrar;
 import com.kosign.wecms.domain.payment.dispatch.service.DispatchKeyGenerator;
+import com.kosign.wecms.domain.payment.entity.OvrsPymnMstr;
 import com.kosign.wecms.domain.payment.entity.OvrsPymnSumr;
 import com.kosign.wecms.domain.payment.entity.OvrsPymnSumrDetl;
 import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConf;
@@ -229,6 +230,80 @@ class OverseasDispatchExecutorBankPrtnIdTest {
         ArgumentCaptor<TbPayFileData> c = ArgumentCaptor.forClass(TbPayFileData.class);
         verify(tbPayFileDataRepository).save(c.capture());
         assertThat(c.getValue().getFincMdaOwnerNm()).isEmpty();
+    }
+
+    /* ── L — M-mode dispatch (OVRS_PYMN_TYPE='M', single OVRS_PYMN_MSTR), legacy pymn_0007:146-269 ── */
+
+    private OvrsPymnMstr masterM(String dbtAcctCd) {
+        OvrsPymnMstr m = new OvrsPymnMstr();
+        m.setBizKey(BIZ_KEY);
+        m.setOvrsPymnNo("OV-M-1");
+        m.setDbtAcctCd(dbtAcctCd);       // OUT_BANK_CD
+        m.setDbtAcctNo("700005285299");  // WDRL_ACT_NO
+        m.setDbtCcyCd("USD");            // TRSC_CCY_CD
+        m.setDbtAcctHldr("SENDER CO LTD"); // SENDER_NM (M-mode direct)
+        m.setBnfcBankCd("SHBKKRSEXXX");  // BIC → TAR_BANK_CD + country
+        m.setBnfcAcctNo("0681000001");
+        m.setBnfcNm("BENEFICIARY");
+        m.setTrnfAmt(new BigDecimal("10.00"));
+        m.setTrnfCcyCd("USD");           // REMIT_CCY_CD
+        m.setMemo("invoice-1");
+        m.setBnfcAddr("1 Teheran-ro, Seoul");
+        m.setFeePayerCd("S");            // → SHA
+        m.setTotTrnsCnt(1);
+        m.setTotalTranAmt(new BigDecimal("10.00"));
+        return m;
+    }
+
+    @Test
+    void mMode_writesOneMstAndOneData_withLegacyFieldMapping() {
+        stubConf();
+        executor.execute(masterM(SHINHAN));   // 970424 (not VCB)
+
+        ArgumentCaptor<TbPayFileMst> mstCap = ArgumentCaptor.forClass(TbPayFileMst.class);
+        verify(tbPayFileMstRepository).save(mstCap.capture());
+        TbPayFileMst mst = mstCap.getValue();
+        assertThat(mst.getOutBankCd()).isEqualTo(SHINHAN);          // DBT_ACCT_CD
+        assertThat(mst.getWdrlActNo()).isEqualTo("700005285299");   // DBT_ACCT_NO
+        assertThat(mst.getFundTp()).isEqualTo("S");
+        assertThat(mst.getBankPrtnId()).isEqualTo("PRTN1");
+
+        ArgumentCaptor<TbPayFileData> dataCap = ArgumentCaptor.forClass(TbPayFileData.class);
+        verify(tbPayFileDataRepository).save(dataCap.capture());
+        TbPayFileData d = dataCap.getValue();
+        assertThat(d.getAntDivCd()).isEqualTo("S");                  // SWIFT
+        assertThat(d.getBankChnlDiv()).isEqualTo("S");
+        assertThat(d.getTrscCcyCd()).isEqualTo("USD");              // DBT_CCY_CD (no per-bank branch)
+        assertThat(d.getTarBankCd()).isEqualTo("SHBKKRSEXXX");      // BIC
+        assertThat(d.getFincMdaNo()).isEqualTo("0681000001");
+        assertThat(d.getFincMdaOwnerNm()).isEqualTo("BENEFICIARY"); // raw BNFC_NM (B)
+        assertThat(d.getSenderNm()).isEqualTo("SENDER CO LTD");     // DBT_ACCT_HLDR (M-mode)
+        assertThat(d.getWdrlActRmrk()).isEqualTo("invoice-1");
+        assertThat(d.getTarAcctRmrk()).isEqualTo("invoice-1");
+        assertThat(d.getRcptUseAddr()).isEqualTo("1 Teheran-ro, Seoul");
+        assertThat(d.getRcptUseAddrSi()).isNull();                  // M-mode does NOT set town name
+        assertThat(d.getFeeBrdnClsCd()).isEqualTo("SHA");           // S → SHA
+        assertThat(d.getRcptBankCntryCd()).isEqualTo("KR");        // BIC chars 5-6
+        assertThat(d.getRemitCcyCd()).isEqualTo("USD");
+    }
+
+    @Test
+    void mMode_vcbSource_isBlocked() {
+        // legacy pymn_0007:160-162 — VCB cannot source an overseas remittance.
+        OvrsPymnMstr m = masterM("970436");   // VCB
+        assertThatThrownBy(() -> executor.execute(m))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo("WBE_OVERSEAS_VCB_NOT_SUPPORTED");
+        verify(tbPayFileMstRepository, never()).save(any());
+        verify(tbPayFileDataRepository, never()).save(any());
+    }
+
+    @Test
+    void mMode_missingFirmConf_isBlocked() {
+        when(firmBankingSettingRepository.findById(any())).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> executor.execute(masterM(SHINHAN)))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo("WBE2089");
     }
 
     @Test

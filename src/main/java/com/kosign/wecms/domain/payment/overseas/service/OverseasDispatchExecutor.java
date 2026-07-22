@@ -10,6 +10,7 @@ import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileDataReposito
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileMstRepository;
 import com.kosign.wecms.domain.payment.dispatch.service.DispatchAutoReceiveRegistrar;
 import com.kosign.wecms.domain.payment.dispatch.service.DispatchKeyGenerator;
+import com.kosign.wecms.domain.payment.entity.OvrsPymnMstr;
 import com.kosign.wecms.domain.payment.entity.OvrsPymnSumrDetl;
 import com.kosign.wecms.domain.payment.entity.OvrsPymnSumr;
 import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConf;
@@ -117,6 +118,10 @@ public class OverseasDispatchExecutor {
      *  {@code TRSC_CCY_CD} is sourced from the line's own
      *  {@code TRNF_CCY_CD} (transfer currency) for this bank. */
     private static final String OUT_BANK_CD_WOORI = "970457";
+
+    /** VCB firm-banking out-bank code — VCB cannot be the SOURCE of an overseas
+     *  (SWIFT) remittance (legacy pymn_0007_001_c001_act.jsp:160-162 / :286-288). */
+    private static final String OUT_BANK_CD_VCB = "970436";
 
 
     /** Minimum BIC length needed to extract the 2-char country code
@@ -314,6 +319,93 @@ public class OverseasDispatchExecutor {
                 bizKey, master.getOvrsPymnNo(), lines.size(), tranDt, fileSeqNo);
 
         // Hand off to the 00301 reception flow AFTER this transaction commits (gated).
+        autoReceiveRegistrar.registerAfterCommit(tranDt, bizKey, fileSeqNo);
+    }
+
+    /**
+     * L — M-mode dispatch (legacy {@code pymn_0007_001_c001_act.jsp:146-269},
+     * {@code OVRS_PYMN_TYPE='M'}, single {@code OVRS_PYMN_MSTR}). Produces exactly
+     * ONE {@link TbPayFileMst} + ONE {@link TbPayFileData} from the master and stamps
+     * the master's shadow keys. Runs inside the caller's transaction.
+     *
+     * <p>Legacy-parity deltas vs the S-mode summary path:
+     * <ul>
+     *   <li>{@code OUT_BANK_CD}={@code DBT_ACCT_CD}, {@code WDRL_ACT_NO}={@code DBT_ACCT_NO} (:189-190);</li>
+     *   <li>{@code TRSC_CCY_CD}={@code DBT_CCY_CD} (:211) — no per-bank Shinhan/Woori branch;</li>
+     *   <li>{@code SENDER_NM}={@code DBT_ACCT_HLDR} directly (:223) — NOT the ACCT_MSTR NAPAS lookup;</li>
+     *   <li>{@code RCPT_USE_ADDR_SI} is NOT set — legacy M-mode carries no {@code BNFC_TOWN_NM} (:204-250);</li>
+     *   <li>VCB as source is blocked entirely (:160-162).</li>
+     * </ul>
+     * The S-mode {@link #execute(OvrsPymnSumr, List)} is unchanged.
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void execute(OvrsPymnMstr master) {
+        // VCB overseas block (legacy pymn_0007:160-162) — VCB cannot source an overseas remittance.
+        if (OUT_BANK_CD_VCB.equals(master.getDbtAcctCd())) {
+            throw new BusinessException("WBE_OVERSEAS_VCB_NOT_SUPPORTED");
+        }
+
+        String bizKey = master.getBizKey();
+        LocalDateTime nowVn = LocalDateTime.now(clock.withZone(VN_TZ));
+        String tranDt = nowVn.format(DT8);
+        String dttm14 = nowVn.format(DTM14);
+
+        String fileSeqNo = keyGenerator.nextFileSeqNo(bizKey, tranDt);
+        // Legacy M-mode: OUT_BANK_CD = DBT_ACCT_CD, WDRL_ACT_NO = DBT_ACCT_NO (:189-190).
+        String bankPrtnId = resolveBankPrtnId(bizKey, master.getDbtAcctCd(), master.getDbtAcctNo());
+
+        // 1. Header (one MST) — :184-201.
+        TbPayFileMst mst = new TbPayFileMst();
+        mst.setTranDt(tranDt);
+        mst.setBizKey(bizKey);
+        mst.setFileSeqNo(fileSeqNo);
+        mst.setOutBankCd(master.getDbtAcctCd());
+        mst.setWdrlActNo(master.getDbtAcctNo());
+        mst.setBankPrtnId(bankPrtnId);
+        mst.setFundTp(FUND_TP_OVERSEAS);        // 'S' (:192)
+        mst.setTranTp(TRAN_TP_DISPATCH);
+        mst.setProcStat(PROC_STAT_PENDING);
+        mst.setReqCnt(master.getTotTrnsCnt() == null ? null : new BigDecimal(master.getTotTrnsCnt()));
+        mst.setReqAmt(master.getTotalTranAmt());
+        mst.setRegDttm(dttm14);
+        // A0: PROC_DTTM is NOT NULL in TB_PAY_FILE_MST_HIS (trigger mirror); legacy stamps
+        // proc_dttm = reg_dttm on the initial insert; the callback UPDATE writes the real time.
+        mst.setProcDttm(dttm14);
+        tbPayFileMstRepository.save(mst);
+
+        // Shadow keys on the master (Result-detail join OVRS_PYMN_MSTR ⋈ TB_PAY_FILE_MST).
+        master.setPayTranDt(tranDt);
+        master.setPayFileSeqNo(fileSeqNo);
+
+        // 2. Detail (one DATA from the master) — :203-250.
+        BigDecimal seq = new BigDecimal(legacyFunctions.nextTbPayFileDataSeq(bizKey, fileSeqNo));
+        TbPayFileData data = new TbPayFileData();
+        data.setTranDt(tranDt);
+        data.setBizKey(bizKey);
+        data.setFileSeqNo(fileSeqNo);
+        data.setSeq(seq);
+        data.setAntDivCd(ANT_DIV_CD_SWIFT);                            // :209 SWIFT
+        data.setTrscCcyCd(master.getDbtCcyCd());                       // :211 DBT_CCY_CD (no per-bank branch)
+        data.setTarBankCd(master.getBnfcBankCd());                     // :212 BIC
+        data.setFincMdaDiv(FINC_MDA_DIV_ACCOUNT);                      // :215
+        data.setFincMdaNo(master.getBnfcAcctNo());                    // :213
+        data.setTranAmt(master.getTrnfAmt());                          // :216
+        data.setBankChnlDiv(BANK_CHNL_DIV_OVERSEAS);                   // :222 'S'
+        data.setFincMdaOwnerNm(master.getBnfcNm());                    // :221 B: raw BNFC_NM
+        data.setSenderNm(master.getDbtAcctHldr());                     // :223 SENDER_NM = DBT_ACCT_HLDR (M-mode)
+        data.setWdrlActRmrk(master.getMemo());                        // :219
+        data.setTarAcctRmrk(master.getMemo());                        // :220
+        data.setRcptUseAddr(master.getBnfcAddr());                    // :226
+        // RCPT_USE_ADDR_SI intentionally NOT set — legacy M-mode has no BNFC_TOWN_NM.
+        data.setFeeBrdnClsCd(mapFeeBurden(master.getFeePayerCd()));    // :228-234
+        data.setRcptBankCntryCd(extractCountryCd(master.getBnfcBankCd())); // :245-247
+        data.setRemitCcyCd(master.getTrnfCcyCd());                    // :248
+        data.setProcRsltDiv(PROC_RSLT_DIV_UNPROCESSED);
+        tbPayFileDataRepository.save(data);
+
+        log.info("feature=overseas-payment dispatch path=FILE(M) bizKey={} ovrsPymnNo={} tranDt={} fileSeqNo={}",
+                bizKey, master.getOvrsPymnNo(), tranDt, fileSeqNo);
+
         autoReceiveRegistrar.registerAfterCommit(tranDt, bizKey, fileSeqNo);
     }
 

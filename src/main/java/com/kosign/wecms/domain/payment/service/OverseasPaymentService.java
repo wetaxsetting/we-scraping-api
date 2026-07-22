@@ -55,6 +55,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
@@ -1342,6 +1343,16 @@ public class OverseasPaymentService {
         String userId = TenantContext.currentUserId();
         String nowDtm = ZonedDateTime.now(VIETNAM_ZONE).format(DTM_FMT);
 
+        // L — M-mode (legacy OVRS_PYMN_TYPE='M'): when an OVRS_PYMN_MSTR row exists for this
+        // ovrsPymnNo, dispatch the single-beneficiary master (legacy pymn_0007 M-mode path).
+        // Otherwise fall through to the S-mode summary path below, byte-unchanged. M and S
+        // partition the ovrsPymnNo namespace by OVRS_PYMN_TYPE, so at most one table matches.
+        Optional<OvrsPymnMstr> mstrOpt = ovrsPymnMstrRepository.findByBizKeyAndOvrsPymnNo(bizKey, ovrsPymnNo);
+        if (mstrOpt.isPresent()) {
+            dispatchMaster(mstrOpt.get(), userId, nowDtm);
+            return;
+        }
+
         OvrsPymnSumr sumr = resolveSumr(bizKey, ovrsPymnNo);
 
         if ("Y".equals(sumr.getTrnfYn())) {
@@ -1396,6 +1407,52 @@ public class OverseasPaymentService {
 
         log.info("feature=overseas-payment dispatch bizKey={} ovrsPymnNo={} lines={} ccyCd={}",
                 bizKey, sumr.getOvrsPymnNo(), lines.size(), sumr.getCcyCd());
+    }
+
+    /**
+     * L — M-mode dispatch (legacy {@code pymn_0007} {@code OVRS_PYMN_TYPE='M'}, single
+     * {@code OVRS_PYMN_MSTR}). Same gate + write-back shape as the S-mode {@link #dispatch}
+     * (not-yet-dispatched WBE2064; approved — apprSeqNo present + status 'C', WBE2063; SWIFT
+     * cut-off), then the single-row {@link OverseasDispatchExecutor#execute(OvrsPymnMstr)} +
+     * {@code TRNF_YN='Y'} stamp + lifecycle event + audit. Does not touch the S-mode path.
+     */
+    private void dispatchMaster(OvrsPymnMstr mstr, String userId, String nowDtm) {
+        if ("Y".equals(mstr.getTrnfYn())) {
+            throw new BusinessException("WBE2064");
+        }
+        if (mstr.getApprSeqNo() == null || mstr.getApprSeqNo().isBlank()) {
+            throw new BusinessException("WBE2063");
+        }
+        if (!"C".equals(deriveApprStts(mstr.getBizKey(), mstr.getApprSeqNo()))) {
+            throw new BusinessException("WBE2063");
+        }
+
+        // Cut-off (SWIFT) — legacy parity; the master's OUT_BANK_CD is DBT_ACCT_CD.
+        cutoffValidator.validate(
+                mstr.getDbtAcctCd(),
+                com.kosign.wecms.domain.payment.internaltransfer.service.TransferNetwork.SWIFT);
+
+        dispatchExecutor.execute(mstr);
+
+        mstr.setTrnfYn("Y");
+        mstr.setModDtm(nowDtm);
+        mstr.setModId(userId);
+        ovrsPymnMstrRepository.save(mstr);
+
+        eventPublisher.publishEvent(new com.kosign.wecms.domain.payment.approvalbox.event
+                .PaymentApprovalStatusChangedEvent(mstr.getBizKey(), mstr.getApprSeqNo(),
+                com.kosign.wecms.domain.payment.approvalbox.event.PaymentApprovalStatus.PROCESSING));
+
+        auditLogService.append(AuditLogContext.builder()
+                .wsvcId(WSVC_ID)
+                .refNo(mstr.getOvrsPymnNo())
+                .refNo1(mstr.getApprSeqNo())
+                .activityKey("audit.overseas_payment.activity")
+                .detailKey("audit.overseas_payment.dispatch.detail")
+                .build());
+
+        log.info("feature=overseas-payment dispatch(M) bizKey={} ovrsPymnNo={} outBankCd={}",
+                mstr.getBizKey(), mstr.getOvrsPymnNo(), mstr.getDbtAcctCd());
     }
 
     /**
@@ -1466,13 +1523,19 @@ public class OverseasPaymentService {
      * {@code null} when the batch has no linked approval request.
      */
     private String deriveApprStts(OvrsPymnSumr sumr) {
-        String apprSeqNo = sumr.getApprSeqNo();
+        return deriveApprStts(sumr.getBizKey(), sumr.getApprSeqNo());
+    }
+
+    /** L — apprSeqNo-based approval-status derivation, shared by the S-mode {@code OvrsPymnSumr}
+     *  and the M-mode {@code OvrsPymnMstr} dispatch gate ({@code EXPT_RESOL_MSTR} is the common
+     *  approval table, so both types resolve status identically). */
+    private String deriveApprStts(String bizKey, String apprSeqNo) {
         if (apprSeqNo == null || apprSeqNo.isBlank()) {
             return null;
         }
         return exptResolMstrRepository.findById(
                         new com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstrId(
-                                sumr.getBizKey(), apprSeqNo))
+                                bizKey, apprSeqNo))
                 .map(m -> mapApprTypeCd(m.getApprTypeCd()))
                 .orElse("P");
     }
