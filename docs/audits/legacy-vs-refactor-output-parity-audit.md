@@ -233,17 +233,24 @@ focused tests green after each; **full backend suite: 1904 tests, 0 failures, 0 
 
 ### Final verdict
 
-**All source-derivable findings are aligned to legacy or confirmed already-matching.** Of the 13:
-**11 aligned** (B, C, D, E, F, G, H, I, J, K + L, M), **1 (A0) proven a false finding** (already matches
-legacy; changing it would break inserts), **N already matched**. No item remains as a PO decision.
+**All source-derivable findings are aligned to legacy or confirmed already-matching.**
+
+- **12 findings aligned or implemented: B, C, D, E, F, G, H, I, J, K, L, M.**
+- **A0** was proven to be a **false finding** and already matches actual legacy behaviour, so no code change was required.
+- **N** already matched legacy and required no code change.
 
 Two residuals are **runtime-only (SIT), not source divergences** (§5): gateway acceptance of
 `data_dcm_amt`, the exact bank RC set, VCB-VND file-field acceptance, and the overseas town save-path.
 One **documented coupling** for K: `ResultCheckService` day-basis must go UTC-aware before that
 (disabled-by-default) job is activated. Dispatch remains inert (all flags OFF).
 
-> **`LEGACY OUTPUT PARITY: aligned for all source-derivable findings`** — subject to the SIT-runtime
-> confirmations in §5 (gateway/bank acceptance), which cannot be settled from source.
+> **`LEGACY OUTPUT PARITY CONFIRMED FOR ALL SOURCE-DERIVABLE FINDINGS`**
+> - 12 findings aligned or implemented: B–M
+> - A0 proven false and already matching legacy
+> - N already matching legacy
+> - Full backend suite: 1,904 tests, 0 failures, 0 errors, 20 skipped
+> - Dispatch and external jobs remain disabled by default
+> - Remaining items are SIT/runtime confirmations only, not known source-code parity differences
 
 ---
 

@@ -212,7 +212,7 @@ The observable-output parity findings (5 payment types × 11 dispatch artifacts)
 source-proven, and then **aligned to legacy** on 2026-07-22. Full record + per-finding commits +
 final verdict: [legacy-vs-refactor-output-parity-audit.md](legacy-vs-refactor-output-parity-audit.md) §7.
 
-- **11 findings aligned** (B raw owner-nm · C BAL_AMT integer-only · D 204 no-response→'6' · E 01302
+- **12 findings aligned or implemented** (B raw owner-nm · C BAL_AMT integer-only · D 204 no-response→'6' · E 01302
   audit TRAN_DT=processing date · F split by SEQ value-range · G raw FILE_TYPE · H Vendor/Expense
   WITHD/DEP_CCY_CD null · I IT remarks=TRAN_USAG · J Payroll same-bank group+guard+VCB blocks ·
   K API-rail TRAN_DT/REG_TM=UTC · L Overseas M-mode dispatch · M UAT Shinhan/Woori override).
