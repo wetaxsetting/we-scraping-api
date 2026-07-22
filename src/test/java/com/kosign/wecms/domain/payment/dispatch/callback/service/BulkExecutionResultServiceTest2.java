@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.domain.payment.dispatch.callback.dto.BulkExecutionResultRequest;
 import com.kosign.wecms.domain.payment.dispatch.callback.dto.EfsCallbackEnvelope;
+import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmBatApiTran;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmFileData;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmFileMst;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmFileRslt;
@@ -227,6 +228,38 @@ class BulkExecutionResultServiceTest2 {
         ArgumentCaptor<TbPayFileMst> payCap = ArgumentCaptor.forClass(TbPayFileMst.class);
         verify(payFileMstRepository).save(payCap.capture());
         assertEquals(ProcStat.SUCC.code(), payCap.getValue().getProcStat());
+    }
+
+    @Test
+    void auditRow_tranDt_isProcessingDate_notFilenameDate() throws Exception {
+        // E — legacy API2_act.jsp:85,182: the 01302 audit row's TRAN_DT is the callback PROCESSING
+        // date (today), NOT the result-filename date (parts[4] = "20260602", a past date here).
+        // The file lookup still keys on the filename date (legacy R006 parity, unchanged).
+        TbFirmFileMst mst = mst(ProcStep.DEPO_REQ.code(), ProcStat.REQ.code());
+        when(firmFileMstRepository.findForExecutionResult(
+                TRAN_DT, FILE_NM, VAN, FILE_SEQ, ProcStep.DEPO_REQ.code(), ProcStat.REQ.code())).thenReturn(Optional.of(mst));
+        when(firmFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
+                .thenReturn(List.of(mst));
+        when(firmFileDataRepository.findByTranDtAndFileSeqNoAndFirmFileNmOrderBySeqAsc(TRAN_DT, FILE_SEQ_NO, FILE_NM))
+                .thenReturn(List.of(firmData(1, 10), firmData(2, 20)));
+        when(payFileDataRepository.findByBizKeyAndTranDtAndFileSeqNo(BIZ_KEY, TRAN_DT, FILE_SEQ_NO))
+                .thenReturn(List.of(payData(10), payData(20)));
+        when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
+                .thenReturn(Optional.of(new TbPayFileMst()));
+        placeResultFile(resultFile());
+
+        service.handle(envelope());
+
+        String today = java.time.LocalDate.now(java.time.ZoneId.of("Asia/Ho_Chi_Minh"))
+                .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd"));
+        ArgumentCaptor<TbFirmBatApiTran> auditCap = ArgumentCaptor.forClass(TbFirmBatApiTran.class);
+        verify(firmBatApiTranRepository, org.mockito.Mockito.atLeastOnce()).save(auditCap.capture());
+        TbFirmBatApiTran audit = auditCap.getValue();
+        assertEquals(today, audit.getTranDt());                                 // processing date (today)
+        org.junit.jupiter.api.Assertions.assertNotEquals(TRAN_DT, audit.getTranDt()); // NOT the filename date
+        // File lookup still keyed on the filename date (legacy R006 parity).
+        verify(firmFileMstRepository).findForExecutionResult(
+                TRAN_DT, FILE_NM, VAN, FILE_SEQ, ProcStep.DEPO_REQ.code(), ProcStat.REQ.code());
     }
 
     @Test

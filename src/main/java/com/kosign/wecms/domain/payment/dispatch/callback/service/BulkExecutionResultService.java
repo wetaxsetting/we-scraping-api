@@ -88,6 +88,8 @@ public class BulkExecutionResultService {
 
     private static final DateTimeFormatter DTTM14_FMT = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
     private static final DateTimeFormatter TRAN_TM_FMT = DateTimeFormatter.ofPattern("HHmmss");
+    /** E — 01302 audit row TRAN_DT uses the callback processing date (legacy API2_act.jsp:85 `dt`). */
+    private static final DateTimeFormatter DATE8_FMT = DateTimeFormatter.ofPattern("yyyyMMdd");
     private static final ZoneId ICT = ZoneId.of("Asia/Ho_Chi_Minh");
 
     private final EfsCryptoService efsCryptoService;
@@ -175,10 +177,14 @@ public class BulkExecutionResultService {
         LocalDateTime now = LocalDateTime.now(ICT);
         String dttm14 = now.format(DTTM14_FMT);
         String tranTm = now.format(TRAN_TM_FMT);
+        // E — legacy parity (API2_act.jsp:85,182): the 01302 audit row's TRAN_DT is the callback
+        // PROCESSING date (today), NOT the result-filename date (parts[4]). The filename date stays
+        // the key for the file lookup + the firm/pay-data indexes above (legacy uses it there).
+        String procDt = now.format(DATE8_FMT);
 
         // 5. Audit the 01302 leg.
         BigDecimal batAmt = combineAmount(req.dataAmt(), req.dataDcmAmt());
-        TbFirmBatApiTran audit = writeApiTran(mst, tranDt, tranTm, ApiTranTp.BULK_EXECUTION_RESULT.code(),
+        TbFirmBatApiTran audit = writeApiTran(mst, procDt, tranTm, ApiTranTp.BULK_EXECUTION_RESULT.code(),
                 bigDecimalOrZero(req.dataCnt()), batAmt, envelope.tno());
 
         // 6. SFTP download the bank result file (then best-effort move to the processed dir).
