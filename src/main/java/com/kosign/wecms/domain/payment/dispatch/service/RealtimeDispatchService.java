@@ -353,6 +353,12 @@ public class RealtimeDispatchService {
         try {
             // A1 (audit X-2): the 204 sends its own allocated TRAN_SEQ (ccyExcSeq) as the gateway TNO.
             Efs204Response fx = realtimeTransferService.inquireFxRate(cmd, ccyExcSeq);
+            if (fx == null) {
+                // D — no-response (legacy NAPAS_REAL_TIME_BATCH:358-362 `continue`): leave the 204
+                // row at PROC_STAT='6' (do NOT mark '3', no ops alert) and skip the 202. The 204 row
+                // was already flushed at '6' above; the pay-target is left untouched (legacy skips it).
+                return null;
+            }
 
             BigDecimal aplExcRate = combineAmount(fx.aplExcRateItg(), fx.aplExcRateDcm());
             BigDecimal withdAmt = combineAmount(fx.withdAmtItg(), fx.withdAmtDcm());
@@ -421,7 +427,12 @@ public class RealtimeDispatchService {
             applyPending(firmTran, pay);
             return;
         }
-        firmTran.setBalAmt(combineAmount(result.balAmt(), result.balDcmAmt()));
+        // C — legacy parity (NAPAS_REAL_TIME_BATCH:620): on 202 success BAL_AMT stores the
+        // INTEGER portion only (bal_amt), NOT the combined decimal. There is no BAL_DCM_AMT
+        // column on TB_FIRM_TRAN (DB-verified), so the balance decimal is discarded exactly
+        // as legacy does. (Legacy writes bal_dcm_amt only on the FAIL branch, to a column the
+        // refactor schema does not carry.)
+        firmTran.setBalAmt(integerAmount(result.balAmt()));
         firmTran.setBalAmtSign(result.balAmtSign());
         if (StringUtils.hasText(result.antDivCd())) {
             firmTran.setAntDivCd(result.antDivCd());
@@ -484,5 +495,11 @@ public class RealtimeDispatchService {
         }
         String d = StringUtils.hasText(dcm) ? dcm.trim() : "0";
         return new BigDecimal(itg.trim() + "." + d);
+    }
+
+    /** C — integer-portion-only amount (legacy {@code BAL_AMT} on 202 success is the raw
+     *  {@code bal_amt} string; the decimal portion is dropped). Null/blank → null. */
+    private static BigDecimal integerAmount(String itg) {
+        return StringUtils.hasText(itg) ? new BigDecimal(itg.trim()) : null;
     }
 }

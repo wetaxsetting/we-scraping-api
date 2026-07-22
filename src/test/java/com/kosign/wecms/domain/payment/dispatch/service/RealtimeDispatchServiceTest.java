@@ -170,8 +170,10 @@ class RealtimeDispatchServiceTest {
     @Test
     void directSuccess_writesFirmTranSixThenZero_andPayTargetZero() {
         stubWaiting();
+        // C — balDcmAmt "67" must be DISCARDED: legacy (NAPAS_REAL_TIME_BATCH:620) stores the
+        // bal_amt INTEGER portion only; there is no BAL_DCM_AMT column on TB_FIRM_TRAN.
         when(realtimeTransferService.transfer(any(), any()))
-                .thenReturn(new RealtimeTransferResult(false, "0", "1000000", "00", "Owner From 202", "INTER"));
+                .thenReturn(new RealtimeTransferResult(false, "0", "1000000", "67", "Owner From 202", "INTER"));
 
         service.dispatch(BIZ_KEY, TRAN_DT, TRAN_SEQ);
 
@@ -186,7 +188,7 @@ class RealtimeDispatchServiceTest {
         verify(firmTranRepository).save(upd.capture());
         assertEquals("0", upd.getValue().getProcStat());
         assertEquals("0000", upd.getValue().getRsCd());
-        assertEquals(new BigDecimal("1000000.00"), upd.getValue().getBalAmt());
+        assertEquals(new BigDecimal("1000000"), upd.getValue().getBalAmt());  // C: integer only, .67 discarded
         assertEquals("0", upd.getValue().getBalAmtSign());
 
         ArgumentCaptor<TbPayTarget> pay = ArgumentCaptor.forClass(TbPayTarget.class);
@@ -382,6 +384,30 @@ class RealtimeDispatchServiceTest {
         // 202 skipped (neither overload called); pay-target untouched (legacy `continue`).
         verify(realtimeTransferService, never()).transfer(any(), any());
         verify(realtimeTransferService, never()).transfer(any(), any(), any());
+        verify(payTargetRepository, never()).save(any());
+    }
+
+    /** D — 204 NO-RESPONSE (null envelope): leave the 204 row at PROC_STAT='6' (legacy
+     *  NAPAS_REAL_TIME_BATCH:358-362 `continue`) — do NOT mark it '3', no ops alert — and skip 202. */
+    @Test
+    void woori204NoResponse_leaves204RowAtSix_skips202() {
+        when(payTargetRepository.findByBizKeyAndTranDtAndTranSeq(BIZ_KEY, TRAN_DT, TRAN_SEQ))
+                .thenReturn(Optional.of(wooriUsdPayTarget()));
+        when(realtimeTransferService.inquireFxRate(any(), any())).thenReturn(null); // no-response
+
+        service.dispatch(BIZ_KEY, TRAN_DT, TRAN_SEQ);
+
+        // 204 row was inserted at '6' and never updated (no '3' failure write, no success write).
+        ArgumentCaptor<TbFirmTran> flushed = ArgumentCaptor.forClass(TbFirmTran.class);
+        verify(firmTranRepository, times(1)).saveAndFlush(flushed.capture());
+        assertEquals("204", flushed.getValue().getTranTp());
+        assertEquals("6", flushed.getValue().getProcStat());   // stays REQ, NOT FAIL
+        verify(firmTranRepository, never()).save(any());
+
+        // 202 skipped; no ops alert on no-response (legacy alerts only on the error branch).
+        verify(realtimeTransferService, never()).transfer(any(), any());
+        verify(realtimeTransferService, never()).transfer(any(), any(), any());
+        verify(opsAlertService, never()).notify(any(), any());
         verify(payTargetRepository, never()).save(any());
     }
 

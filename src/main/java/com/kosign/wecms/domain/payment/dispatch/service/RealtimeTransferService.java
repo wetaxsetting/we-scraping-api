@@ -109,7 +109,18 @@ public class RealtimeTransferService {
         // initialises them to "" and always includes them in param_202:553-565).
         // (Direct-call convenience path — the dispatch path pre-fetches the 204 via
         // RealtimeDispatchService.runFxInquiry with its own TRAN_SEQ and calls the 3-arg overload.)
-        Efs204Response fx = isWooriFxTransfer(cmd) ? inquireFxRate(cmd, apiKey, id, tno) : null;
+        Efs204Response fx = null;
+        if (isWooriFxTransfer(cmd)) {
+            fx = inquireFxRate(cmd, apiKey, id, tno);
+            if (fx == null) {
+                // D — 204 no-response on the Woori FX pre-step: legacy skips the 202 (leaves the
+                // transaction for the result-check / re-run). Return pending; never send the 202
+                // with an empty FX block. An explicit non-0000 / VV-fail 204 still throws upstream.
+                log.warn("EFS 204 FX pre-inquiry no-response vanOrgCd={} macct={} — 202 skipped (pending)",
+                        cmd.vanOrgCd(), mask(cmd.macctNo()));
+                return RealtimeTransferResult.ofPending();
+            }
+        }
         return transfer(cmd, fx, tno);
     }
 
@@ -247,9 +258,11 @@ public class RealtimeTransferService {
      * legacy {@code NAPAS_REAL_TIME_BATCH} order. Delegates to the same inquiry body
      * the inline 202 path uses, so the 204 EFS logic is unchanged.
      *
-     * @return the FX response on {@code RC=0000}
-     * @throws BusinessException ({@code WBE_EFS_GATEWAY_ERROR}) on a non-{@code 0000}
-     *                           / no-response 204 (carries the gateway RC as arg[0])
+     * @return the FX response on {@code RC=0000}; {@code null} on a no-response (null
+     *         envelope) 204 — legacy `continue`s and leaves the 204 row at
+     *         {@code PROC_STAT='6'} for a later re-inquiry (finding D)
+     * @throws BusinessException ({@code WBE_EFS_GATEWAY_ERROR}) on an explicit non-{@code 0000}
+     *                           204 response or a VV-verify failure (carries the gateway RC as arg[0])
      */
     public Efs204Response inquireFxRate(RealtimeTransferCommand cmd, String tno) {
         validate(cmd);
@@ -295,9 +308,18 @@ public class RealtimeTransferService {
                 EfsEnvelope.EM_AES, EfsEnvelope.VM_HMAC_SHA256, null, null);
 
         EfsEnvelope response = efsApiClient.send(EfsApiClient.EFS_204, requestEnvelope);
-        String rc = response == null ? null : response.rc();
 
-        if (response == null || !FirmBankingResultCd.isSuccess(rc)) {
+        // D — legacy parity (NAPAS_REAL_TIME_BATCH:358-362): a null / no-response 204 envelope is
+        // NOT a definitive failure. Legacy `continue`s and leaves the 204 row at PROC_STAT='6' for a
+        // later re-inquiry — it does NOT mark it '3'. Signal no-response by returning null; only an
+        // explicit non-0000 response (or a VV-verify failure) is a definitive '3' error.
+        if (response == null) {
+            log.warn("EFS 204 FX inquiry no-response (null envelope) vanOrgCd={} macct={}",
+                    cmd.vanOrgCd(), mask(cmd.macctNo()));
+            return null;
+        }
+        String rc = response.rc();
+        if (!FirmBankingResultCd.isSuccess(rc)) {
             log.warn("EFS 204 FX inquiry failed vanOrgCd={} macct={} acct={} rc={}",
                     cmd.vanOrgCd(), mask(cmd.macctNo()), mask(cmd.tarFincMdaNo()), rc);
             throw new BusinessException("WBE_EFS_GATEWAY_ERROR", rc);
