@@ -354,10 +354,10 @@ public class InternalTransferDispatchExecutor {
             }
 
             data.setFincMdaOwnerNm(line.getRcptNm());  // B: legacy raw RCPT_NM (PymnHelper file path)
-            // Legacy quirk parity (PymnHelper:2295): WDRL_ACT_RMRK copied into
-            // both TAR_ACCT_RMRK and WDRL_ACCT_RMRK.
-            data.setTarAcctRmrk(line.getWdrlActRmrk());
-            data.setWdrlActRmrk(line.getWdrlActRmrk());
+            // I — legacy parity (PymnHelper.pymn_0009_001_c001:2757-2758): Internal Transfer
+            // sources BOTH remark columns from TRAN_USAG (verified by direct source read).
+            data.setTarAcctRmrk(line.getTranUsag());
+            data.setWdrlActRmrk(line.getTranUsag());
             data.setRemitCcyCd(line.getTrnfCcyCd());
             data.setProcRsltDiv(PROC_RSLT_DIV_UNPROCESSED);
 

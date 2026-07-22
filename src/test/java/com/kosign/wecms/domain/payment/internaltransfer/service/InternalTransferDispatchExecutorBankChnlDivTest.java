@@ -230,6 +230,19 @@ class InternalTransferDispatchExecutorBankChnlDivTest {
         assertThat(captureData().getFincMdaOwnerNm()).isEmpty();
     }
 
+    @Test
+    void remarks_bothFromTranUsag_notWdrlActRmrk() {
+        // I — legacy PymnHelper:2757-2758: BOTH remark columns come from TRAN_USAG.
+        ScdulPymnSumrDetl l = line(BIDV);
+        l.setTranUsag("USAGE-X");
+        l.setWdrlActRmrk("WDRL-Y");
+        executor.execute(master(BIDV), List.of(l), "USD");
+
+        TbPayFileData d = captureData();
+        assertThat(d.getWdrlActRmrk()).isEqualTo("USAGE-X");   // TRAN_USAG, not WDRL_ACT_RMRK
+        assertThat(d.getTarAcctRmrk()).isEqualTo("USAGE-X");
+    }
+
     private void firmBank(String bankCd, String engAbrvatNm) {
         TbFirmBankCode b = org.mockito.Mockito.mock(TbFirmBankCode.class);
         when(b.getEngAbrvatNm()).thenReturn(engAbrvatNm);
