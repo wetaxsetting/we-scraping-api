@@ -186,3 +186,20 @@ Verify + record (redacted) in §2 for SIT and UAT: **B1** EFS base-url + partner
 - **Requires external confirmation (remaining):** B1/B2/B4/B7 (per-env provisioning readout), B5 (byte-parity capture), a one-request SIT capture each for OQ-1 (`data_dcm_amt`) and OQ-2 (VCB VND file record) as acceptance evidence, **and the deployed UAT/PROD `WECMS_DB_URL` + `env | grep WECMS_` flag readout** (Ops — the only way to turn the §2 layer-(b) values into confirmed layer-(c) fact).
 - **Legacy coexistence (per-env, refined):** DEV + SIT are **DB-separated from the legacy JEX batch** (verified — different instances / no SIT legacy node), so recovery there is coexistence-safe. **UAT is blocked** until Ops confirms the refactor UAT DB is not the JEX UAT batch DB (rows are indistinguishable across systems). PROD is N/A (refactor not deployed).
 - **Legacy JEX batch is confirmed running (config + DB evidence) in DEV, UAT, PROD; not in SIT** (refactor-only) — see §2.2. Its every-minute polling cadence is unchanged on the JEX side; the refactor's TO-BE event-driven model is independent and, in DEV/SIT, operates on a separate DB.
+
+---
+
+## 2026-07-22 — legacy-output-parity alignment
+
+All source-derivable dispatch-output findings were aligned to legacy (see
+[../audits/legacy-vs-refactor-output-parity-audit.md](../audits/legacy-vs-refactor-output-parity-audit.md) §7;
+full suite 1904 green; flags OFF). Activation-relevant deltas:
+
+- **K:** API-rail `TRAN_DT`/`REG_TM` are now **UTC** (PK-relevant). **Before enabling result-check**, make
+  `ResultCheckService.runOnce` date-selection UTC-aware (or switch to an RQ_DTTM timestamp compare) so the
+  aged-202 scan matches the UTC firm-tran `TRAN_DT` across the midnight boundary.
+- **M:** UAT Shinhan/Woori `PRTN_ID` override is implemented but active **only** under the `uat` profile
+  (`UatShinhanWooriOverride`). Confirm PROD/SIT profiles leave it inert.
+- **L:** Overseas M-mode dispatch is implemented (single `OVRS_PYMN_MSTR`); no new external dependency.
+- External confirmations still pending (unchanged): `data_dcm_amt` gateway form (OQ-1), 01301/01302 RC
+  set (B5), VCB-VND file-field acceptance (Van Center).

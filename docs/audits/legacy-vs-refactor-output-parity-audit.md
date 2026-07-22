@@ -203,8 +203,50 @@ Only facts that depend on the live gateway/bank/callback — the source-side out
 | L | Overseas M-mode dispatch | NOT IMPLEMENTED | Overseas |
 | M | UAT Shinhan/Woori override | NOT IMPLEMENTED | UAT |
 
-Plus `data_dcm_amt` (§4.N) = source **MATCH**. **K** is migration-relevant (PK component). Each is a small, localized change; the PO decides align-vs-keep per item.
+Plus `data_dcm_amt` (§4.N) = source **MATCH**. **K** is migration-relevant (PK component).
 
 ---
 
-*Read-only derivation audit. No source, configuration, test, or SQL was modified — only this report was created. Every `file:line` was read from source in this pass. Legacy: `WECMS DEV/WECMS/src/wabooks/helper/PymnHelper.java`, `.../web/WEB-INF/action/jex/wabooks/pymn/*_act.jsp`, `WECMS_BATCH DEV/source/WECMS_BATCH/WECMS_BATCH/src/batch/*.java`, `.../src/util/StrUtil.java`, `.../web/WEB-INF/action/jex/wecms_batch/api/FILE_DEPOSIT_TRANSFER_API2_act.jsp`. Refactor: `wecms-api/src/main/java/com/kosign/wecms/domain/payment/**`.*
+## 7. Parity implementation pass (2026-07-22) — findings aligned to legacy
+
+Directive: **match latest legacy behaviour** for all source-proven findings. Implemented on branch
+`wecms-ui-fixes` over checkpoint **`245e385`** (rollback point; the pre-existing 2026-07-21 batch fix
+pass + SwiftBic feature were snapshotted there before this pass). Each finding is a focused commit,
+focused tests green after each; **full backend suite: 1904 tests, 0 failures, 0 errors, 20 skipped.**
+
+| ID | Verdict (pre) | Action | Commit | Notes |
+|---|---|---|---|---|
+| **A0** | DIFFERENCE (derived) | **NOT changed — finding was false** | — | Live legacy: 0 null `proc_dttm` in 136 rows; both DBs have an AFTER-INSERT trigger copying `new.proc_dttm` into NOT-NULL `tb_pay_file_mst_his`. Legacy's DAO fills it; null is structurally impossible. The refactor's `setProcDttm(dttm14)` already matches legacy; removing it would break every file-path insert. The derived "legacy null" was an artefact of source-absence (no `setProcDttm` in the JSP), not real behaviour. |
+| **B** | MATCH/DIFF | **Aligned** | `0c0b223` | All 5 executors write raw `RCPT_NM`/`BNFC_NM` (null/blank preserved). File-rail `finc_mda_owner_nm` is NOT NULL + 0 nulls in 344 live rows, so raw is always non-null there in practice. |
+| **C** | DIFFERENCE | **Aligned** | `cdccb78` | `BAL_AMT` = integer part only. **No `bal_dcm_amt` column exists** (JEX + refactor), so the task's expected `BAL_DCM_AMT=67` is unstorable; legacy discards the decimal — followed legacy source. |
+| **D** | DIFFERENCE | **Aligned** | `cdccb78` | 204 null/no-response → 204 row stays `'6'`; explicit non-0000 / VV-fail → `'3'`. |
+| **E** | DIFFERENCE | **Aligned** | `6acfcfb` | 01302 audit `TRAN_DT` = processing date; filename date still keys the file/data lookups. |
+| **F** | DIFFERENCE | **Aligned** | `330e5fb` | Split by SEQ value-range (legacy `START_SEQ/END_SEQ`); identical to index slicing for dense 1..N. |
+| **G** | DIFFERENCE | **Aligned** | `330e5fb` | Raw `FILE_TYPE` (trim removed). Byte-check: not in the 1000-byte record; `TB_FIRM_CONF.FILE_TYPE` is CHAR(3) w/ exactly-3-char values on both DBs → no observable change, no byte-identity conflict. |
+| **H** | DIFFERENCE | **Aligned** | `da4ba2d` | Vendor/Expense API-rail leaves `WITHD_CCY_CD`/`DEP_CCY_CD` null (live legacy: dep 101/101, withd 99/101 null; `_his` has no such columns → safe). |
+| **I** | DIFFERENCE | **Aligned** | `11a0fa6` | Internal Transfer remarks both from `TRAN_USAG`. |
+| **J** | DIFFERENCE | **Aligned** | `09199d1` | Payroll same-bank = raw OR `ENG_ABRVAT_NM` group, guarded to Shinhan/Woori/VCB; VCB VND + VCB USD→other blocked at dispatch. |
+| **K** | DIFFERENCE | **Aligned** | `0d24c50` | API-rail `TRAN_DT`/`REG_TM` = one captured UTC now. Migration-critical (PK). **Coupling:** the 202 firm-tran reuses this UTC `TRAN_DT`, but `ResultCheckService.runOnce` still selects by ICT-today (§6.6 day-boundary item) — **not changed here** (preserve-disabled-jobs constraint); must be made UTC-aware / RQ_DTTM-based before result-check activation. |
+| **L** | NOT IMPLEMENTED | **Implemented** | `319e568` | Overseas M-mode dispatch: `OverseasDispatchExecutor.execute(OvrsPymnMstr)` (exact legacy field map, VCB source block, no `RCPT_USE_ADDR_SI`); `OvrsPymnMstr` shadow-key + `DBT_ACCT_HLDR` mappings (columns already existed — no migration); `dispatch()` routes M when an `OVRS_PYMN_MSTR` exists (S-mode unchanged). |
+| **M** | NOT IMPLEMENTED | **Implemented** | `2e7540e` | UAT-only Shinhan/Woori inquiry `PRTN_ID` override — isolated `UatShinhanWooriOverride` (UAT profile gated), applied at the legacy application point (`FirmBankingInquiryService` inquiry command). Followed legacy `PRTN_ID` mapping (WEBC1/HASU1/000001008/000001020, OUT_BANK_CD unchanged) — the task example transposed a Shinhan PRTN with a Woori PRTN. |
+| **N** | MATCH | No change (already matches) | — | `AmountSplitter` ≡ `BigDecPaser`. |
+
+### Final verdict
+
+**All source-derivable findings are aligned to legacy or confirmed already-matching.** Of the 13:
+**11 aligned** (B, C, D, E, F, G, H, I, J, K + L, M), **1 (A0) proven a false finding** (already matches
+legacy; changing it would break inserts), **N already matched**. No item remains as a PO decision.
+
+Two residuals are **runtime-only (SIT), not source divergences** (§5): gateway acceptance of
+`data_dcm_amt`, the exact bank RC set, VCB-VND file-field acceptance, and the overseas town save-path.
+One **documented coupling** for K: `ResultCheckService` day-basis must go UTC-aware before that
+(disabled-by-default) job is activated. Dispatch remains inert (all flags OFF).
+
+> **`LEGACY OUTPUT PARITY: aligned for all source-derivable findings`** — subject to the SIT-runtime
+> confirmations in §5 (gateway/bank acceptance), which cannot be settled from source.
+
+---
+
+*Sections 0–6 were a read-only derivation audit. Section 7 records the 2026-07-22 implementation pass
+that aligned the refactor to legacy (12 commits on `wecms-ui-fixes` over checkpoint `245e385`; full suite
+1904 green). Every `file:line` in §0–6 was read from source. Legacy: `WECMS DEV/WECMS/src/wabooks/helper/PymnHelper.java`, `.../web/WEB-INF/action/jex/wabooks/pymn/*_act.jsp`, `WECMS_BATCH DEV/source/WECMS_BATCH/WECMS_BATCH/src/batch/*.java`, `.../src/util/StrUtil.java`, `.../web/WEB-INF/action/jex/wecms_batch/api/FILE_DEPOSIT_TRANSFER_API2_act.jsp`. Refactor: `wecms-api/src/main/java/com/kosign/wecms/domain/payment/**`.* Every `file:line` was read from source in this pass. Legacy: `WECMS DEV/WECMS/src/wabooks/helper/PymnHelper.java`, `.../web/WEB-INF/action/jex/wabooks/pymn/*_act.jsp`, `WECMS_BATCH DEV/source/WECMS_BATCH/WECMS_BATCH/src/batch/*.java`, `.../src/util/StrUtil.java`, `.../web/WEB-INF/action/jex/wecms_batch/api/FILE_DEPOSIT_TRANSFER_API2_act.jsp`. Refactor: `wecms-api/src/main/java/com/kosign/wecms/domain/payment/**`.*

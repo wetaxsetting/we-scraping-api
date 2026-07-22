@@ -203,3 +203,23 @@ All code-level items that can be safely completed now are implemented + tested (
 - H-5 (response VV) and X-2 (TNO) were re-verified by hand: `verifyVv` is called in the three inbound-callback/recipient services but not on outbound 202/203/204; `ResultCheckService.newTno` is UUID-based while the 203 recovery uses `getTranSeq()`.
 - H-6 (decimal split) verified by reading both `StrUtil.BigDecPaser` and `BulkReceptionService.splitAmount`.
 - Severities reconcile minor per-area disagreements (e.g. the decimal-split bug was HIGH in the reception audit, LOW in others) toward the higher rating where a money or integration contract is affected.
+
+---
+
+## Addendum — 2026-07-22 legacy-output-parity implementation pass
+
+The observable-output parity findings (5 payment types × 11 dispatch artifacts) were derived,
+source-proven, and then **aligned to legacy** on 2026-07-22. Full record + per-finding commits +
+final verdict: [legacy-vs-refactor-output-parity-audit.md](legacy-vs-refactor-output-parity-audit.md) §7.
+
+- **11 findings aligned** (B raw owner-nm · C BAL_AMT integer-only · D 204 no-response→'6' · E 01302
+  audit TRAN_DT=processing date · F split by SEQ value-range · G raw FILE_TYPE · H Vendor/Expense
+  WITHD/DEP_CCY_CD null · I IT remarks=TRAN_USAG · J Payroll same-bank group+guard+VCB blocks ·
+  K API-rail TRAN_DT/REG_TM=UTC · L Overseas M-mode dispatch · M UAT Shinhan/Woori override).
+- **A0 was a FALSE finding** — legacy fills `TB_PAY_FILE_MST.PROC_DTTM` via its DAO (0 nulls in 136 live
+  rows) + a NOT-NULL `_his` trigger; the refactor already matched. Not changed.
+- **N** (`data_dcm_amt`) already matched.
+- Full backend suite after the pass: **1904 tests, 0 failures, 20 skipped**. Dispatch stays inert (flags OFF).
+- **Activation coupling (K):** the 202 firm-tran now carries a UTC `TRAN_DT`, but `ResultCheckService`
+  still selects aged rows by ICT-today — make it UTC-aware / RQ_DTTM-based before enabling result-check
+  (ties to the day-boundary item). Runtime-only residuals stay in the output-parity audit §5.

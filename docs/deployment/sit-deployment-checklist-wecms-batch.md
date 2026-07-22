@@ -237,3 +237,21 @@ approved integration window with the relevant flag temporarily on.
 
 **Recovery scheduler activation: NO (UAT-gated)** — enable only after Ops confirms the UAT refactor DB is
 not the JEX UAT batch DB (DEV/SIT are DB-separated and safe; see the activation doc §2.2/§4).
+
+---
+
+## 2026-07-22 — legacy-output-parity alignment (pre-SIT)
+
+The dispatch output was aligned to legacy for all source-derivable findings — see
+[../audits/legacy-vs-refactor-output-parity-audit.md](../audits/legacy-vs-refactor-output-parity-audit.md) §7
+(full backend suite 1904 green; dispatch flags remain OFF). SIT items added/affected:
+
+- **K (migration-critical):** API-rail `TB_PAY_TARGET.TRAN_DT`/`REG_TM` now stamped in **UTC** (legacy parity).
+  Before enabling `result-check`, make `ResultCheckService` day-selection **UTC-aware** (or RQ_DTTM-based) —
+  the 202 firm-tran now carries a UTC `TRAN_DT` while the scan still uses ICT-today (day-boundary edge).
+- **M:** UAT Shinhan/Woori inquiry `PRTN_ID` override is now implemented but **UAT-profile-gated only**
+  (`UatShinhanWooriOverride`); verify the SIT/PROD profiles do NOT activate it.
+- **L:** Overseas M-mode (`OVRS_PYMN_TYPE='M'`) dispatch is now implemented; SIT should exercise an
+  M-mode single-beneficiary batch alongside the S-mode summary path.
+- Runtime confirmations unchanged: `data_dcm_amt` gateway acceptance, the 01301/01302 RC set,
+  VCB-VND file-field acceptance (Van Center) — output-parity audit §5.
