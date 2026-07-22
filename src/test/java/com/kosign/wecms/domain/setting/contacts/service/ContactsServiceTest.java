@@ -101,7 +101,9 @@ class ContactsServiceTest {
                 trcoInfmRepo, addrRepo, acctRepo, ovrsRepo, swiftBicRepo, bankCodeRepo,
                 pgroRepo, acctTrnsRcvPayRepo, legacyFn, validator,
                 new com.kosign.wecms.common.firmbanking.FirmBankingInquiryService(
-                        firmBankingSettingRepo, depositorInquiryService));
+                        firmBankingSettingRepo, depositorInquiryService,
+                        new com.kosign.wecms.common.firmbanking.UatShinhanWooriOverride(
+                                new org.springframework.mock.env.MockEnvironment())));
         TenantContext.set(USER, BIZ, LangCd.EN);
     }
 
