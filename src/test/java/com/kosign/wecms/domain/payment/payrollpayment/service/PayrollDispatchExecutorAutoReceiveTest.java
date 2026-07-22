@@ -10,6 +10,7 @@ import com.kosign.wecms.domain.payment.dispatch.service.DispatchKeyGenerator;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumr;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrDetl;
 import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConf;
+import com.kosign.wecms.domain.setting.firmbankingsettings.repository.TbFirmBankCodeRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -43,6 +44,7 @@ class PayrollDispatchExecutorAutoReceiveTest {
     @Mock TbPayFileDataRepository tbPayFileDataRepository;
     @Mock AcctMstrRepository acctMstrRepository;
     @Mock TbFirmConfRepository tbFirmConfRepository;
+    @Mock TbFirmBankCodeRepository tbFirmBankCodeRepository;
     @Mock DispatchKeyGenerator keyGenerator;
     @Mock LegacyFunctionRepository legacyFunctions;
     @Mock DispatchAutoReceiveRegistrar autoReceiveRegistrar;
@@ -55,7 +57,8 @@ class PayrollDispatchExecutorAutoReceiveTest {
     void setUp() {
         executor = new PayrollDispatchExecutor(
                 tbPayFileMstRepository, tbPayFileDataRepository, acctMstrRepository,
-                tbFirmConfRepository, keyGenerator, clock, legacyFunctions, autoReceiveRegistrar);
+                tbFirmConfRepository, tbFirmBankCodeRepository, keyGenerator, clock,
+                legacyFunctions, autoReceiveRegistrar);
 
         TbFirmConf defaultConf = org.mockito.Mockito.mock(TbFirmConf.class);
         when(defaultConf.getBankPrtnId()).thenReturn("PRTN-DEFAULT");
