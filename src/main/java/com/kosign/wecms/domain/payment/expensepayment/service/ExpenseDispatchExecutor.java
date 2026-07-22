@@ -182,8 +182,9 @@ public class ExpenseDispatchExecutor {
             row.setProcDttm(dttm14);
             row.setUserId(userId);
             row.setTrscCcyCd(trnfCcyCd);
-            row.setWithdCcyCd(master.getWdrlCcyCd());
-            row.setDepCcyCd(line.getDepoCcyCd());
+            // H — legacy parity (PymnHelper.pymn_0001_001_c001:2193-2224, shared Vendor/Expense
+            // enqueue): the API-path TB_PAY_TARGET insert leaves WITHD_CCY_CD / DEP_CCY_CD null.
+            // Verified against live legacy data (dep null 101/101, withd null 99/101). Do not re-add.
 
             tbPayTargetRepository.save(row);
 

@@ -7,6 +7,7 @@ import com.kosign.wecms.common.enums.LangCd;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileData;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileMst;
+import com.kosign.wecms.domain.payment.dispatch.entity.TbPayTarget;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbFirmConfRepository;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileDataRepository;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileMstRepository;
@@ -305,5 +306,24 @@ class VendorDispatchExecutorTest {
         TbPayFileMst m = captureMst();
         assertThat(m.getFundTp()).isEqualTo("9");   // FundTp.OTHER
         assertThat(m.getTranTp()).isEqualTo("1");   // TranTpF.DEPOSIT
+    }
+
+    private TbPayTarget captureTarget() {
+        ArgumentCaptor<TbPayTarget> c = ArgumentCaptor.forClass(TbPayTarget.class);
+        verify(tbPayTargetRepository).save(c.capture());
+        return c.getValue();
+    }
+
+    @Test
+    void apiPath_leavesWithdAndDepCcyCdNull() {
+        // H — legacy parity (PymnHelper.pymn_0001_001_c001:2193-2224): the VND/API-path
+        // TB_PAY_TARGET insert must NOT set WITHD_CCY_CD / DEP_CCY_CD (legacy leaves both
+        // null; verified vs live legacy data dep 101/101, withd 99/101).
+        executor.execute(master(SHINHAN, "VND"), List.of(line(SHINHAN, "VND")), "VND");
+
+        TbPayTarget t = captureTarget();
+        assertThat(t.getWithdCcyCd()).isNull();
+        assertThat(t.getDepCcyCd()).isNull();
+        verify(tbPayFileMstRepository, never()).save(any());  // API path, not file path
     }
 }

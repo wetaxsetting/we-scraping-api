@@ -186,8 +186,10 @@ public class VendorDispatchExecutor {
             row.setProcDttm(dttm14);
             row.setUserId(userId);
             row.setTrscCcyCd(trnfCcyCd);
-            row.setWithdCcyCd(master.getWdrlCcyCd());
-            row.setDepCcyCd(line.getDepoCcyCd());
+            // H — legacy parity (PymnHelper.pymn_0001_001_c001:2193-2224): the API-path
+            // TB_PAY_TARGET insert leaves WITHD_CCY_CD / DEP_CCY_CD null. Verified against
+            // live legacy data (dep_ccy_cd null 101/101, withd_ccy_cd null 99/101 — the 2
+            // non-null are the IT Woori-USD->VND case). Do not re-add these setters here.
 
             tbPayTargetRepository.save(row);
 
