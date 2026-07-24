@@ -24,6 +24,11 @@ public record AnnexRow(
         /** 'Y' = hoa don da duoc chot vao mot to khai da khoa. */
         String vatDeclProcYn,
         /** VAT_DECL.SID da chot hoa don nay; null khi chua xu ly. */
-        Long vatDeclSid
+        Long vatDeclSid,
+        /**
+         * Thu tu nhom VAT: KKKNT 1 · 0% 2 · 5% 3 · 8% 4 · 10% 5 · KCT 6 · khac 99.
+         * Rows da duoc backend sap theo field nay nen cung nhom luon lien nhau.
+         */
+        int vatRateOrder
 ) {
 }

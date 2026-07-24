@@ -43,4 +43,7 @@ public interface AnnexInvoiceProjection {
 
     /** Which declaration closed it ({@code VAT_DECL.SID}); null while unprocessed. */
     Long getVatDeclSid();
+
+    /** Rank of the VAT bucket — also the primary sort key, so rates arrive grouped. */
+    int getVatRateOrder();
 }

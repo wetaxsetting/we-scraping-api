@@ -53,6 +53,36 @@ public interface VatAnnexInvoiceRepository extends Repository<VatDeclaration, Lo
                   then replace(d.einv_taxrate, '%', '')::numeric else 0 end)
             """;
 
+    /**
+     * Sort weight deciding the SEQUENCE the VAT buckets appear in — internal to
+     * ordering, never emitted. Fixed 2026-07-24: KKKNT, then the numeric rates
+     * ascending, then KCT; an unrecognised / NULL rate weighs 99 so it lands
+     * last instead of merging into an existing bucket.
+     */
+    String RATE_SEQ = """
+            (case d.einv_taxrate
+                  when 'KKKNT' then 1
+                  when '0%'    then 2
+                  when '5%'    then 3
+                  when '8%'    then 4
+                  when '10%'   then 5
+                  when 'KCT'   then 6
+                  else 99 end)
+            """;
+
+    /**
+     * The {@code vat_rate_order} on the wire: a <b>dense, 1-based</b> rank over
+     * the VAT rates that actually occur in THIS period's filtered set. A period
+     * carrying four rates numbers them 1·2·3·4 — the weights above only decide
+     * which comes first, they are not the number itself, so no gaps appear just
+     * because some rate is absent.
+     *
+     * <p>{@code dense_rank()} is evaluated before {@code OFFSET/LIMIT}, so the
+     * window spans the whole filtered set and a row keeps the same number no
+     * matter which page it is read on.
+     */
+    String RATE_ORDER = "(dense_rank() over (order by " + RATE_SEQ + "))::int";
+
     @Query(value = "select m.doc_id                                as srcDocId,"
             + "        case when m.doc_type = 'I' then 'O' else 'I' end as ioDv,"
             + "        coalesce(m.disp_doc_id, m.doc_id)          as invNo,"
@@ -67,9 +97,10 @@ public interface VatAnnexInvoiceRepository extends Repository<VatDeclaration, Lo
             + "        case when d.einv_taxrate = '8%'"
             + "             then floor(coalesce(d.sply_amt, 0) * 2 / 100) else 0 end as reducedAmt,"
             + "        m.vat_decl_proc_yn                         as vatDeclProcYn,"
-            + "        m.vat_decl_sid                             as vatDeclSid"
+            + "        m.vat_decl_sid                             as vatDeclSid,"
+            + "        " + RATE_ORDER + "                         as vatRateOrder"
             + FROM_WHERE
-            + " order by m.issu_dt, m.doc_id, d.disp_ord"
+            + " order by " + RATE_SEQ + ", m.issu_dt, m.doc_id, d.disp_ord"
             + " offset :offset limit :size",
             nativeQuery = true)
     List<AnnexInvoiceProjection> findRows(@Param("bizKey") String bizKey,

@@ -462,7 +462,7 @@ public class VatDeclarationService {
                 a.getInvNo(), a.getInvSymbol(), a.getInvDt(), a.getTrcoTaxCode(), a.getTrcoNm(),
                 a.getProdNm(), str(a.getSplyAmt()), a.getVatRate(), str(a.getVatAmt()),
                 str(a.getReducedAmt()), null, "N",
-                a.getVatDeclProcYn(), a.getVatDeclSid());
+                a.getVatDeclProcYn(), a.getVatDeclSid(), a.getVatRateOrder());
     }
 
     /** Validate + normalise the annex type; blank defaults to REDUCE8 (8% modal). */
