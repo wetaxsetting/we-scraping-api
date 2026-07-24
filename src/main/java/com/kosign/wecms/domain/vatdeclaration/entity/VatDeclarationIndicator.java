@@ -18,8 +18,8 @@ import lombok.Setter;
 import java.math.BigDecimal;
 
 /**
- * Field-split declaration indicators — {@code TAX_DECLARATION_ITEMS}
- * (logical {@code VAT_DECL_ITEMS}). One row per declaration revision; each
+ * Field-split declaration indicators — {@code VAT_DECL_ITEMS}
+ * . One row per declaration revision; each
  * column maps 1:1 to an HTKK XML tag ({@code ct21}..{@code ct43}) so the XML
  * exporter can bind by name (the header's {@code indicators} JSONB stays the
  * raw snapshot; this table is the queryable projection).
@@ -32,7 +32,7 @@ import java.math.BigDecimal;
 @Setter
 @NoArgsConstructor
 @Entity
-@Table(name = "TAX_DECLARATION_ITEMS")
+@Table(name = "VAT_DECL_ITEMS")
 public class VatDeclarationIndicator extends BaseEntity {
 
     @Id
@@ -157,6 +157,14 @@ public class VatDeclarationIndicator extends BaseEntity {
     @Column(name = "VAT_REFUND_REQ", precision = 20, scale = 6)
     private BigDecimal vatRefundReq;
 
+    /** ct42a — of [42]: input-VAT account 1331 (goods &amp; services). Breakdown only, no formula. */
+    @Column(name = "VAT_REFUND_REQ_1331", precision = 20, scale = 6)
+    private BigDecimal vatRefundReq1331;
+
+    /** ct42b — of [42]: input-VAT account 1332 (fixed assets). Breakdown only, no formula. */
+    @Column(name = "VAT_REFUND_REQ_1332", precision = 20, scale = 6)
+    private BigDecimal vatRefundReq1332;
+
     /** ct43 — deductible VAT carried to the next period ([43] = [41] − [42]). */
     @Column(name = "CREDIT_NEXT", precision = 20, scale = 6)
     private BigDecimal creditNext;
@@ -179,6 +187,7 @@ public class VatDeclarationIndicator extends BaseEntity {
                                    BigDecimal transfVat, BigDecimal vatPayableActivity,
                                    BigDecimal investOffsetVatAmt, BigDecimal vatPayableNet,
                                    BigDecimal vatNotDeducted, BigDecimal vatRefundReq,
+                                   BigDecimal vatRefundReq1331, BigDecimal vatRefundReq1332,
                                    BigDecimal creditNext, String delYn) {
         this.declaration = declaration;
         this.noActivity = noActivity;
@@ -209,6 +218,8 @@ public class VatDeclarationIndicator extends BaseEntity {
         this.vatPayableNet = vatPayableNet;
         this.vatNotDeducted = vatNotDeducted;
         this.vatRefundReq = vatRefundReq;
+        this.vatRefundReq1331 = vatRefundReq1331;
+        this.vatRefundReq1332 = vatRefundReq1332;
         this.creditNext = creditNext;
         this.delYn = delYn == null ? "N" : delYn;
     }

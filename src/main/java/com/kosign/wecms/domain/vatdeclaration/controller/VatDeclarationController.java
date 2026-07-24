@@ -2,8 +2,6 @@ package com.kosign.wecms.domain.vatdeclaration.controller;
 
 import com.kosign.wecms.common.response.ApiResponse;
 import com.kosign.wecms.domain.vatdeclaration.dto.AnnexInvoiceListResponse;
-import com.kosign.wecms.domain.vatdeclaration.dto.AnnexRowCreateRequest;
-import com.kosign.wecms.domain.vatdeclaration.dto.AnnexSummary;
 import com.kosign.wecms.domain.vatdeclaration.dto.VatDeclarationCreateRequest;
 import com.kosign.wecms.domain.vatdeclaration.dto.VatDeclarationDetail;
 import com.kosign.wecms.domain.vatdeclaration.dto.VatDeclarationListResponse;
@@ -89,15 +87,6 @@ public class VatDeclarationController {
         return ApiResponse.ok(service.listAnnexInvoices(sid, annexType, search, ioDv, page, size));
     }
 
-    @PostMapping("/{sid}/annex/rows")
-    public ApiResponse<AnnexSummary> addAnnexRow(@PathVariable("sid") Long sid,
-                                                 @Valid @RequestBody AnnexRowCreateRequest request) {
-        return ApiResponse.ok(service.addAnnexRow(sid, request));
-    }
-
-    @DeleteMapping("/{sid}/annex/rows/{id}")
-    public ApiResponse<AnnexSummary> deleteAnnexRow(@PathVariable("sid") Long sid,
-                                                    @PathVariable("id") Long id) {
-        return ApiResponse.ok(service.deleteAnnexRow(sid, id));
-    }
+    // Add / delete annex row are gone: annex lines are derived from the period's
+    // invoices (BUSA_DOC_MSTR + BUSA_DOC_DETL), so there is nothing to persist.
 }

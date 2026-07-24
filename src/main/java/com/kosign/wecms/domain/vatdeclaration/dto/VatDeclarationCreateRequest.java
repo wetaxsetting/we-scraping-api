@@ -18,11 +18,14 @@ public record VatDeclarationCreateRequest(
         String bsnsLineNm,
         String officeCode,
         String officeName,
-        // Attached-annex checkboxes (prototype: BKBR/BKMV default ticked).
-        // 'Y'/'N'; null → service default (BKBR/BKMV → Y, ALLOC/REDUCE8 → N).
+        // Attached-annex checkboxes — one per prototype `.annexChk` (5 total).
+        // 'Y'/'N'; null → service default (BKBR/BKMV → Y, the rest → N).
         String annexBkbrYn,
         String annexBkmvYn,
+        /** PL 01-6/GTGT (CSSX) — production facility. */
         String annexAllocYn,
+        /** PL 01-6/GTGT (VT cước trả sau) — post-paid telecom. */
+        String annexAllocTeleYn,
         String annexReduce8Yn
 ) {
 }

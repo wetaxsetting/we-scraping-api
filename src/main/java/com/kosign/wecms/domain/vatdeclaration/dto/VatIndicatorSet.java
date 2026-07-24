@@ -34,6 +34,10 @@ public record VatIndicatorSet(
         String ct40,
         String ct41,
         String ct42,
+        /** Of [42]: input-VAT account 1331 (goods &amp; services) — breakdown, no formula. */
+        String ct42a,
+        /** Of [42]: input-VAT account 1332 (fixed assets) — breakdown, no formula. */
+        String ct42b,
         String ct43
 ) {
 }

@@ -20,6 +20,10 @@ public record AnnexRow(
         String vatAmt,
         String reducedAmt,
         String allocRatio,
-        String handRegYn
+        String handRegYn,
+        /** 'Y' = hoa don da duoc chot vao mot to khai da khoa. */
+        String vatDeclProcYn,
+        /** VAT_DECL.SID da chot hoa don nay; null khi chua xu ly. */
+        Long vatDeclSid
 ) {
 }

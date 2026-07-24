@@ -14,14 +14,12 @@ import com.kosign.wecms.domain.vatdeclaration.dto.VatDeclarationUpdateRequest;
 import com.kosign.wecms.domain.vatdeclaration.dto.VatIndicatorSet;
 import com.kosign.wecms.domain.vatdeclaration.dto.AnnexInvoiceGroup;
 import com.kosign.wecms.domain.vatdeclaration.dto.AnnexInvoiceListResponse;
+import com.kosign.wecms.domain.vatdeclaration.dto.AnnexInvoiceProjection;
 import com.kosign.wecms.domain.vatdeclaration.dto.AnnexRow;
-import com.kosign.wecms.domain.vatdeclaration.dto.AnnexRowCreateRequest;
-import com.kosign.wecms.domain.vatdeclaration.dto.AnnexSummary;
 import com.kosign.wecms.domain.vatdeclaration.entity.AnnexType;
 import com.kosign.wecms.domain.vatdeclaration.entity.VatDeclaration;
-import com.kosign.wecms.domain.vatdeclaration.entity.VatDeclarationAnnexItem;
 import com.kosign.wecms.domain.vatdeclaration.entity.VatDeclarationIndicator;
-import com.kosign.wecms.domain.vatdeclaration.repository.VatDeclarationAnnexItemRepository;
+import com.kosign.wecms.domain.vatdeclaration.repository.VatAnnexInvoiceRepository;
 import com.kosign.wecms.domain.vatdeclaration.repository.VatDeclarationIndicatorRepository;
 import com.kosign.wecms.domain.vatdeclaration.repository.VatDeclarationRepository;
 import lombok.RequiredArgsConstructor;
@@ -32,10 +30,13 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
 
 /**
@@ -66,13 +67,48 @@ public class VatDeclarationService {
     private static final String DEFAULT_ACTIVITY_CD  = "0";
     private static final String DEFAULT_ACTIVITY_NM  = "Hoạt động sản xuất kinh doanh thông thường";
 
+    /**
+     * BUSA_DOC_MSTR.DOC_TYPE — output (sales) vs input (purchase) invoices.
+     *
+     * <p>These two are the ONLY types a declaration reads. {@code 'E'} is
+     * deliberately out of scope (decision 2026-07-24): the rows carry an
+     * {@code R-} document id, {@code HAND_REG_YN='Y'}, the tenant itself as
+     * counterparty, a NULL {@code EINV_INVOICESTATUS}, and — decisively — zero
+     * {@code BUSA_DOC_DETL} lines, so they could not contribute an annex line
+     * even if they were let through. Excluding them here makes that explicit
+     * rather than an accident of the join.
+     */
+    private static final String DOC_TYPE_SALES    = "I";
+    private static final String DOC_TYPE_PURCHASE = "B";
+    /** EINV_TAXRATE value carrying the Resolution 204/2025/QH15 reduction. */
+    private static final String RATE_8_PCT = "8%";
+
+    /**
+     * Invoice statuses that must NOT feed a declaration (PO decision 2026-07-24).
+     *
+     * <p>A <b>replacement</b> invoice voids its original outright, so the
+     * superseded row would double-count — it is dropped. A <b>cancelled</b>
+     * invoice never had legal effect. An <b>adjustment</b> pair is deliberately
+     * NOT excluded: the adjustment records only the delta, so the original must
+     * stay counted for the two to add up.
+     *
+     * <p>{@code EINV_INVOICESTATUS} stores the localized Vietnamese label rather
+     * than a code (see CLAUDE.md BLOCKERS), so these strings are the contract.
+     * They are pinned here — never inlined into SQL — and match the frontend's
+     * canonical registry verbatim (wecms-web/lib/api/einvoiceStatus.ts).
+     */
+    private static final List<String> EXCLUDED_INVOICE_STATUSES = List.of(
+            "Hóa đơn đã bị thay thế",   // replaced — superseded by a replacement
+            "Hóa đơn đã bị hủy");       // cancelled
+    private static final DateTimeFormatter YYYYMMDD = DateTimeFormatter.ofPattern("yyyyMMdd");
+
     /** Dashboard display labels (form 01/GTGT under Circular 80/2021/TT-BTC). */
     private static final String APPLICABLE_CIRCULAR = "80/2021/TT-BTC";
     private static final String DECL_FORM_NAME      = "01/GTGT";
 
     private final VatDeclarationRepository declRepo;
     private final VatDeclarationIndicatorRepository indicatorRepo;
-    private final VatDeclarationAnnexItemRepository annexRepo;
+    private final VatAnnexInvoiceRepository annexInvoiceRepo;
     private final BusiInfmRepository busiInfmRepo;
     private final VatIndicatorCalculator calculator;
     private final ObjectMapper objectMapper;
@@ -152,7 +188,8 @@ public class VatDeclarationService {
                 .status(STATUS_DRAFT)
                 .annexBkbrYn(yn(req.annexBkbrYn(), true))       // 01-1/GTGT default ticked
                 .annexBkmvYn(yn(req.annexBkmvYn(), true))       // 01-2/GTGT default ticked
-                .annexAllocYn(yn(req.annexAllocYn(), false))    // 01-6/GTGT off by default
+                .annexAllocYn(yn(req.annexAllocYn(), false))    // 01-6/GTGT CSSX off by default
+                .annexAllocTeleYn(yn(req.annexAllocTeleYn(), false)) // 01-6/GTGT telecom off
                 .annexReduce8Yn(yn(req.annexReduce8Yn(), false))// 8% reduction off by default
                 .build();
         stampAudit(decl);
@@ -177,34 +214,60 @@ public class VatDeclarationService {
         assertDraft(decl);
         VatDeclarationIndicator ind = loadIndicator(decl);
 
-        apply(req.ct21(),  "ct21",  ind::setNoActivity);
-        apply(req.ct23(),  "ct23",  ind::setPurchAmt);
-        apply(req.ct24(),  "ct24",  ind::setPurchAmtVat);
-        apply(req.ct23a(), "ct23a", ind::setImpAmt);
-        apply(req.ct24a(), "ct24a", ind::setImpAmtVat);
-        apply(req.ct26(),  "ct26",  ind::setSalesAmtNondecl);
-        apply(req.ct29(),  "ct29",  ind::setSalesAmt0);
-        apply(req.ct30(),  "ct30",  ind::setSalesAmt5);
-        apply(req.ct32(),  "ct32",  ind::setSalesAmt10);
-        apply(req.ct32a(), "ct32a", ind::setSalesAmtNontax);
-        apply(req.ct33a(), "ct33a", ind::setSalesVatOther);
-        apply(req.ct37(),  "ct37",  ind::setAdjDecrease);
-        apply(req.ct38(),  "ct38",  ind::setAdjIncrease);
-        apply(req.ct39a(), "ct39a", ind::setTransfVat);
-        apply(req.ct40b(), "ct40b", ind::setInvestOffsetVatAmt);
-        apply(req.ct42(),  "ct42",  ind::setVatRefundReq);
+        // Which ct-keys the client actually sent — the calculator needs this to
+        // tell "omitted, derive it" from "user overrode the derived value".
+        Set<String> sent = new HashSet<>();
+        applyFlag(sent, req.ct21(), "ct21", ind::setNoActivity);
+        apply(sent, req.ct22(),  "ct22",  ind::setPrevCredit);
+        apply(sent, req.ct23(),  "ct23",  ind::setPurchAmt);
+        apply(sent, req.ct24(),  "ct24",  ind::setPurchAmtVat);
+        apply(sent, req.ct23a(), "ct23a", ind::setImpAmt);
+        apply(sent, req.ct24a(), "ct24a", ind::setImpAmtVat);
+        apply(sent, req.ct25(),  "ct25",  ind::setDeductVatAmt);
+        apply(sent, req.ct26(),  "ct26",  ind::setSalesAmtNondecl);
+        apply(sent, req.ct29(),  "ct29",  ind::setSalesAmt0);
+        apply(sent, req.ct30(),  "ct30",  ind::setSalesAmt5);
+        apply(sent, req.ct31(),  "ct31",  ind::setSalesAmtVat5);
+        apply(sent, req.ct32(),  "ct32",  ind::setSalesAmt10);
+        apply(sent, req.ct32a(), "ct32a", ind::setSalesAmtNontax);
+        apply(sent, req.ct33(),  "ct33",  ind::setSalesAmtVat10);
+        apply(sent, req.ct33a(), "ct33a", ind::setSalesVatOther);
+        apply(sent, req.ct37(),  "ct37",  ind::setAdjDecrease);
+        apply(sent, req.ct38(),  "ct38",  ind::setAdjIncrease);
+        apply(sent, req.ct39a(), "ct39a", ind::setTransfVat);
+        apply(sent, req.ct40b(), "ct40b", ind::setInvestOffsetVatAmt);
+        apply(sent, req.ct42(),  "ct42",  ind::setVatRefundReq);
+        apply(sent, req.ct42a(), "ct42a", ind::setVatRefundReq1331);
+        apply(sent, req.ct42b(), "ct42b", ind::setVatRefundReq1332);
 
-        calculator.recompute(ind);
+        calculator.recompute(ind, sent);
         ind.setModId(TenantContext.currentUserId());
         decl.setIndicators(snapshotJson(ind));
         decl.setModId(TenantContext.currentUserId());
         return toDetail(decl, ind);
     }
 
+    /**
+     * Soft-deletes a Draft declaration.
+     *
+     * <p>OQ-VAT-6: refused while ANY later period exists — not just a locked one.
+     * K+1 carries a [22] taken from K's [43]; drop K and that figure references a
+     * period that is gone, and K+1 can never be locked afterwards because the
+     * chain check would see a hole. Delete the tail first, newest to oldest.
+     */
     @Transactional
     public void delete(Long sid) {
         VatDeclaration decl = load(sid);
         assertDraft(decl);
+        if (declRepo.existsLaterPeriod(decl.getBizKey(), decl.getPeriodType(),
+                decl.getPeriodYear(), decl.getPeriodValue())) {
+            throw new BusinessException("WBE_VAT_DECL_LATER_PERIOD_EXISTS",
+                    periodLabel(toWirePeriodType(decl.getPeriodType()),
+                            decl.getPeriodValue(), decl.getPeriodYear()));
+        }
+        // Defensive: a Draft row should hold no invoice stamps (lock sets them,
+        // unlock clears them), but never leave markers pointing at a dead row.
+        annexInvoiceRepo.clearProcessed(decl.getBizKey(), decl.getSid());
         indicatorRepo.findByDeclaration_SidAndDeclaration_BizKeyAndDelYn(
                 decl.getSid(), decl.getBizKey(), "N").ifPresent(i -> {
             i.setDelYn("Y");
@@ -217,15 +280,80 @@ public class VatDeclarationService {
     @Transactional
     public VatDeclarationDetail lock(Long sid) {
         VatDeclaration decl = load(sid);
-        assertDraft(decl);
-        VatDeclaration previous = findAdjacent(decl.getBizKey(),
-                toWirePeriodType(decl.getPeriodType()), decl.getPeriodValue(), decl.getPeriodYear(), -1);
-        if (previous != null && !STATUS_LOCKED.equals(previous.getStatus())) {
-            throw new BusinessException("WBE_VAT_DECL_PREV_NOT_LOCKED");
+        if (STATUS_LOCKED.equals(decl.getStatus())) {
+            return toDetail(decl, loadIndicator(decl));   // idempotent toggle
         }
+        VatDeclarationIndicator ind = loadIndicator(decl);
+        assertPreviousPeriodClosed(decl, ind);
+
         decl.setStatus(STATUS_LOCKED);
         decl.setModId(TenantContext.currentUserId());
-        return toDetail(decl, loadIndicator(decl));
+        stampInvoicesProcessed(decl);
+        return toDetail(decl, ind);
+    }
+
+    /**
+     * Closing a declaration stamps the period's invoices as processed
+     * ({@code VAT_DECL_PROC_YN='Y'} + {@code VAT_DECL_SID}) — PO decision
+     * 2026-07-24, marker on the invoice row instead of a link table (V253).
+     *
+     * <p>What it buys: the reverse lookup "which declaration closed this
+     * invoice", and — because a late-arriving invoice is inserted with the
+     * default {@code 'N'} — the ability to list invoices that fall inside an
+     * already-closed period but were never included, which is exactly the set
+     * that needs a supplementary declaration (KHBS).
+     *
+     * <p>Both directions are stamped: an invoice is in the period's scope
+     * whether it feeds BKBR (output) or BKMV (input).
+     */
+    private void stampInvoicesProcessed(VatDeclaration decl) {
+        annexInvoiceRepo.markProcessed(decl.getBizKey(),
+                decl.getFromDt().format(YYYYMMDD), decl.getToDt().format(YYYYMMDD),
+                List.of(DOC_TYPE_SALES, DOC_TYPE_PURCHASE),
+                EXCLUDED_INVOICE_STATUSES, decl.getSid());
+    }
+
+    /**
+     * Lock walks BACKWARD one period: a declaration may only be closed once the
+     * chain behind it is intact, because [22] of this period is [43] of the one
+     * before it.
+     *
+     * <ol>
+     *   <li>K-1 exists → it must be LOCKED
+     *       ({@code WBE_VAT_DECL_PREV_NOT_LOCKED}).</li>
+     *   <li>K-1 missing → fine only when nothing older exists at all (K is the
+     *       tenant's first period). Otherwise the chain has a hole and the
+     *       carry-forward cannot be trusted
+     *       ({@code WBE_VAT_DECL_PREV_MISSING}).</li>
+     *   <li>K-1 exists → this period's [22] must equal K-1's [43]. A drift means
+     *       K-1 was re-opened and edited after K was created, so K's figures are
+     *       stale ({@code WBE_VAT_DECL_PREV_CREDIT_MISMATCH}). Deliberately an
+     *       error, not a silent re-sync: [22] is user-editable, and lock is the
+     *       user asserting the figures are final — the server must not quietly
+     *       change a number the user is signing off.</li>
+     * </ol>
+     */
+    private void assertPreviousPeriodClosed(VatDeclaration decl, VatDeclarationIndicator ind) {
+        String wireType = toWirePeriodType(decl.getPeriodType());
+        VatDeclaration previous = findAdjacent(decl.getBizKey(), wireType,
+                decl.getPeriodValue(), decl.getPeriodYear(), -1);
+
+        if (previous == null) {
+            if (declRepo.existsEarlierPeriod(decl.getBizKey(), decl.getPeriodType(),
+                    decl.getPeriodYear(), decl.getPeriodValue())) {
+                throw new BusinessException("WBE_VAT_DECL_PREV_MISSING",
+                        periodLabel(wireType, decl.getPeriodValue(), decl.getPeriodYear()));
+            }
+            return;   // genuinely the first period — nothing to carry forward
+        }
+        if (!STATUS_LOCKED.equals(previous.getStatus())) {
+            throw new BusinessException("WBE_VAT_DECL_PREV_NOT_LOCKED");
+        }
+        BigDecimal carried = nz(loadIndicator(previous).getCreditNext());   // K-1 [43]
+        if (nz(ind.getPrevCredit()).compareTo(carried) != 0) {              // K   [22]
+            throw new BusinessException("WBE_VAT_DECL_PREV_CREDIT_MISMATCH",
+                    str(ind.getPrevCredit()), str(carried));
+        }
     }
 
     @Transactional
@@ -234,13 +362,19 @@ public class VatDeclarationService {
         if (!STATUS_LOCKED.equals(decl.getStatus())) {
             return toDetail(decl, loadIndicator(decl));
         }
-        VatDeclaration next = findAdjacent(decl.getBizKey(),
-                toWirePeriodType(decl.getPeriodType()), decl.getPeriodValue(), decl.getPeriodYear(), +1);
-        if (next != null && STATUS_LOCKED.equals(next.getStatus())) {
+        // Unlock walks FORWARD: re-opening K lets its [43] change, which
+        // invalidates the [22] of every later period — so no later period may
+        // already be closed. Checking the whole tail, not just K+1, closes the
+        // hole where K+1 is still Draft but K+2 was locked out of order.
+        if (declRepo.existsLaterLockedPeriod(decl.getBizKey(), decl.getPeriodType(),
+                decl.getPeriodYear(), decl.getPeriodValue(), STATUS_LOCKED)) {
             throw new BusinessException("WBE_VAT_DECL_NEXT_LOCKED");
         }
         decl.setStatus(STATUS_DRAFT);
         decl.setModId(TenantContext.currentUserId());
+        // Re-opening releases the invoices it had claimed, so they are free to
+        // be counted again by whichever declaration finally closes them.
+        annexInvoiceRepo.clearProcessed(decl.getBizKey(), decl.getSid());
         return toDetail(decl, loadIndicator(decl));
     }
 
@@ -249,9 +383,18 @@ public class VatDeclarationService {
     // ---------------------------------------------------------------- annex
 
     /**
-     * Annex invoice modal (API #9): rows of one annex type, filtered + paged,
-     * grouped by {@code prodNm} for the accordion. {@code annexType} defaults to
-     * REDUCE8 (the 8% modal); {@code grandTotalReducedAmt} spans the full filtered set.
+     * Annex invoice modal (API #9) — rows are <b>derived from the period's real
+     * invoices</b>, never from a stored annex table.
+     *
+     * <p>Scope comes from the declaration itself: {@code FROM_DT..TO_DT} over
+     * {@code BUSA_DOC_MSTR.ISSU_DT}, plus the direction implied by the annex
+     * type — BKBR reads output invoices ({@code DOC_TYPE 'I'}), BKMV reads input
+     * ones ({@code 'B'}), REDUCE8 reads both but only the 8% lines. The two
+     * 01-6/GTGT allocation annexes have no invoice-derived source and return
+     * empty until their allocation rule is specified.
+     *
+     * <p>Filtering, paging and the reduction total all run in SQL, so a large
+     * period no longer loads every line into memory.
      */
     @Transactional(readOnly = true)
     public AnnexInvoiceListResponse listAnnexInvoices(Long sid, String annexType, String search,
@@ -259,33 +402,32 @@ public class VatDeclarationService {
         VatDeclaration decl = load(sid);
         String type = resolveAnnexType(annexType);
         int pageSize = size <= 0 ? DEFAULT_PAGE_SIZE : Math.min(size, MAX_PAGE_SIZE);
+        long offset = (long) Math.max(page, 0) * pageSize;   // long: page is client input
 
-        String q = search == null ? null : search.trim().toLowerCase();
-        String io = ioDv == null || ioDv.isBlank() ? null : ioDv.trim();
-        List<VatDeclarationAnnexItem> filtered = annexRepo
-                .findByDeclaration_SidAndDeclaration_BizKeyAndAnnexTypeAndDelYnOrderByDispOrdAsc(
-                        decl.getSid(), decl.getBizKey(), type, "N").stream()
-                .filter(a -> io == null || io.equalsIgnoreCase(a.getIoDv()))
-                .filter(a -> q == null || q.isEmpty()
-                        || (a.getProdNm() != null && a.getProdNm().toLowerCase().contains(q))
-                        || (a.getInvNo() != null && a.getInvNo().toLowerCase().contains(q)))
-                .toList();
+        List<String> docTypes = docTypesFor(type, ioDv);
+        if (docTypes.isEmpty()) {
+            return new AnnexInvoiceListResponse(List.of(), 0L, "0");
+        }
+        String rate = AnnexType.REDUCE8.code().equals(type) ? RATE_8_PCT : null;
+        String q = search == null || search.isBlank() ? null : search.trim();
+        String from = decl.getFromDt().format(YYYYMMDD);
+        String to = decl.getToDt().format(YYYYMMDD);
 
-        BigDecimal grandReduced = filtered.stream().map(a -> nz(a.getReducedAmt()))
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        long total = filtered.size();
+        long total = annexInvoiceRepo.countRows(decl.getBizKey(), from, to, docTypes, rate, q,
+                EXCLUDED_INVOICE_STATUSES);
+        BigDecimal grandReduced = nz(annexInvoiceRepo.sumReducedAmt(
+                decl.getBizKey(), from, to, docTypes, rate, q, EXCLUDED_INVOICE_STATUSES));
+        List<AnnexInvoiceProjection> slice = offset >= total ? List.of()
+                : annexInvoiceRepo.findRows(decl.getBizKey(), from, to, docTypes, rate, q,
+                        EXCLUDED_INVOICE_STATUSES, offset, pageSize);
 
-        int from = Math.max(page, 0) * pageSize;
-        List<VatDeclarationAnnexItem> slice = from >= filtered.size() ? List.of()
-                : filtered.subList(from, Math.min(from + pageSize, filtered.size()));
-
-        Map<String, List<VatDeclarationAnnexItem>> grouped = new LinkedHashMap<>();
-        for (VatDeclarationAnnexItem a : slice) {
+        Map<String, List<AnnexInvoiceProjection>> grouped = new LinkedHashMap<>();
+        for (AnnexInvoiceProjection a : slice) {
             grouped.computeIfAbsent(a.getProdNm() == null ? "" : a.getProdNm(), k -> new ArrayList<>()).add(a);
         }
         List<AnnexInvoiceGroup> groups = new ArrayList<>();
-        for (Map.Entry<String, List<VatDeclarationAnnexItem>> e : grouped.entrySet()) {
-            List<AnnexRow> rows = e.getValue().stream().map(this::toAnnexRow).toList();
+        for (Map.Entry<String, List<AnnexInvoiceProjection>> e : grouped.entrySet()) {
+            List<AnnexRow> rows = e.getValue().stream().map(a -> toAnnexRow(a, type)).toList();
             BigDecimal gs = e.getValue().stream().map(a -> nz(a.getSplyAmt())).reduce(BigDecimal.ZERO, BigDecimal::add);
             BigDecimal gr = e.getValue().stream().map(a -> nz(a.getReducedAmt())).reduce(BigDecimal.ZERO, BigDecimal::add);
             groups.add(new AnnexInvoiceGroup(e.getKey(), rows.size(), str(gs), str(gr), rows));
@@ -293,74 +435,38 @@ public class VatDeclarationService {
         return new AnnexInvoiceListResponse(groups, total, str(grandReduced));
     }
 
-    /** Add a manual annex row (API #10) — hand_reg_yn='Y', disp_ord = MAX+1. Draft only. */
-    @Transactional
-    public AnnexSummary addAnnexRow(Long sid, AnnexRowCreateRequest req) {
-        VatDeclaration decl = load(sid);
-        assertDraft(decl);
-        String type = resolveAnnexType(req.annexType());
-
-        int nextOrd = annexRepo
-                .findByDeclaration_SidAndDeclaration_BizKeyAndAnnexTypeAndDelYnOrderByDispOrdAsc(
-                        decl.getSid(), decl.getBizKey(), type, "N").stream()
-                .map(a -> a.getDispOrd() == null ? 0 : a.getDispOrd())
-                .max(Integer::compareTo).orElse(0) + 1;
-
-        VatDeclarationAnnexItem item = VatDeclarationAnnexItem.builder()
-                .declaration(decl)
-                .annexType(type)
-                .ioDv(blankToNull(req.ioDv()))
-                .invNo(req.invNo())
-                .invSymbol(req.invSymbol())
-                .invDt(req.invDt())
-                .trcoTaxCode(req.trcoTaxCode())
-                .trcoNm(req.trcoNm())
-                .prodNm(req.prodNm())
-                .splyAmt(dec(req.splyAmt()))
-                .vatRate(dec(req.vatRate()))
-                .vatAmt(dec(req.vatAmt()))
-                .reducedAmt(dec(req.reducedAmt()))
-                .allocRatio(dec(req.allocRatio()))
-                .handRegYn("Y")
-                .dispOrd(nextOrd)
-                .delYn("N")
-                .build();
-        String uid = TenantContext.currentUserId();
-        item.setRegId(uid);
-        item.setModId(uid);
-        annexRepo.save(item);
-        return annexSummary(decl, type);
+    /**
+     * Which {@code BUSA_DOC_MSTR.DOC_TYPE}s feed this annex, narrowed by the
+     * caller's optional direction filter. Empty = the annex has no invoice
+     * source (the two 01-6/GTGT allocation variants).
+     */
+    private static List<String> docTypesFor(String annexType, String ioDv) {
+        List<String> base;
+        if (AnnexType.BKBR.code().equals(annexType)) {
+            base = List.of(DOC_TYPE_SALES);
+        } else if (AnnexType.BKMV.code().equals(annexType)) {
+            base = List.of(DOC_TYPE_PURCHASE);
+        } else if (AnnexType.REDUCE8.code().equals(annexType)) {
+            base = List.of(DOC_TYPE_SALES, DOC_TYPE_PURCHASE);
+        } else {
+            return List.of();
+        }
+        String io = ioDv == null || ioDv.isBlank() ? null : ioDv.trim().toUpperCase();
+        if (io == null) {
+            return base;
+        }
+        String wanted = "O".equals(io) ? DOC_TYPE_SALES : DOC_TYPE_PURCHASE;
+        return base.contains(wanted) ? List.of(wanted) : List.of();
     }
 
-    /** Delete one annex row (API #11) — soft delete. Draft only. */
-    @Transactional
-    public AnnexSummary deleteAnnexRow(Long sid, Long id) {
-        VatDeclaration decl = load(sid);
-        assertDraft(decl);
-        VatDeclarationAnnexItem item = annexRepo
-                .findByIdAndDeclaration_BizKeyAndDelYn(id, decl.getBizKey(), "N")
-                .filter(a -> a.getDeclaration().getSid().equals(decl.getSid()))
-                .orElseThrow(() -> new BusinessException("WBE_VAT_DECL_ANNEX_ROW_NOT_FOUND"));
-        item.setDelYn("Y");
-        item.setModId(TenantContext.currentUserId());
-        return annexSummary(decl, item.getAnnexType());
-    }
-
-    private AnnexSummary annexSummary(VatDeclaration decl, String type) {
-        List<VatDeclarationAnnexItem> rows = annexRepo
-                .findByDeclaration_SidAndDeclaration_BizKeyAndAnnexTypeAndDelYnOrderByDispOrdAsc(
-                        decl.getSid(), decl.getBizKey(), type, "N");
-        BigDecimal sply = rows.stream().map(a -> nz(a.getSplyAmt())).reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal vat = rows.stream().map(a -> nz(a.getVatAmt())).reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal red = rows.stream().map(a -> nz(a.getReducedAmt())).reduce(BigDecimal.ZERO, BigDecimal::add);
-        return new AnnexSummary(type, rows.size(), str(sply), str(red), str(vat));
-    }
-
-    private AnnexRow toAnnexRow(VatDeclarationAnnexItem a) {
-        return new AnnexRow(a.getId(), a.getAnnexType(), a.getIoDv(), a.getSrcDocId(),
+    private static AnnexRow toAnnexRow(AnnexInvoiceProjection a, String annexType) {
+        // id / allocRatio are null and handRegYn is always 'N': rows are derived
+        // from invoices, so there is nothing manually registered to identify.
+        return new AnnexRow(null, annexType, a.getIoDv(), a.getSrcDocId(),
                 a.getInvNo(), a.getInvSymbol(), a.getInvDt(), a.getTrcoTaxCode(), a.getTrcoNm(),
-                a.getProdNm(), str(a.getSplyAmt()), str(a.getVatRate()), str(a.getVatAmt()),
-                str(a.getReducedAmt()), str(a.getAllocRatio()), a.getHandRegYn());
+                a.getProdNm(), str(a.getSplyAmt()), a.getVatRate(), str(a.getVatAmt()),
+                str(a.getReducedAmt()), null, "N",
+                a.getVatDeclProcYn(), a.getVatDeclSid());
     }
 
     /** Validate + normalise the annex type; blank defaults to REDUCE8 (8% modal). */
@@ -369,6 +475,7 @@ public class VatDeclarationService {
                 .map(AnnexType::code)
                 .orElseThrow(() -> new BusinessException("WBE_VALIDATION"));
     }
+
 
     private static BigDecimal dec(String raw) {
         if (raw == null || raw.isBlank()) {
@@ -454,9 +561,29 @@ public class VatDeclarationService {
         };
     }
 
-    private void apply(String raw, String field, Consumer<BigDecimal> setter) {
+    /** Applies one editable indicator and records that the client sent it. */
+    private void apply(Set<String> sent, String raw, String field, Consumer<BigDecimal> setter) {
         if (raw == null) return;
         setter.accept(parseAmount(raw, field));
+        sent.add(field);
+    }
+
+    /**
+     * [21] is the "no purchase/sale activity in the period" flag, not an amount —
+     * the prototype renders a checkbox. Accepts only {@code 0} / {@code 1}
+     * (also tolerates {@code N} / {@code Y}); stored as 0/1 in the numeric column
+     * so the HTKK XML can emit {@code <ct21>1</ct21>} verbatim.
+     */
+    private void applyFlag(Set<String> sent, String raw, String field, Consumer<BigDecimal> setter) {
+        if (raw == null) return;
+        String v = raw.trim();
+        BigDecimal flag = switch (v.toUpperCase()) {
+            case "1", "Y" -> BigDecimal.ONE;
+            case "0", "N", "" -> BigDecimal.ZERO;
+            default -> throw new BusinessException("WBE_VAT_DECL_INVALID_INDICATOR", field);
+        };
+        setter.accept(flag);
+        sent.add(field);
     }
 
     /** Integer-VND string → BigDecimal; negative / non-integer → business error. */
@@ -496,7 +623,8 @@ public class VatDeclarationService {
         m.put("35", set.ct35());   m.put("36", set.ct36());   m.put("37", set.ct37());
         m.put("38", set.ct38());   m.put("39a", set.ct39a()); m.put("40a", set.ct40a());
         m.put("40b", set.ct40b()); m.put("40", set.ct40());   m.put("41", set.ct41());
-        m.put("42", set.ct42());   m.put("43", set.ct43());
+        m.put("42", set.ct42());   m.put("42a", set.ct42a());
+        m.put("42b", set.ct42b()); m.put("43", set.ct43());
         try {
             return objectMapper.writeValueAsString(m);
         } catch (JsonProcessingException e) {
@@ -559,6 +687,7 @@ public class VatDeclarationService {
                 str(i.getTransfVat()), str(i.getVatPayableActivity()),
                 str(i.getInvestOffsetVatAmt()), str(i.getVatPayableNet()),
                 str(i.getVatNotDeducted()), str(i.getVatRefundReq()),
+                str(i.getVatRefundReq1331()), str(i.getVatRefundReq1332()),
                 str(i.getCreditNext()));
     }
 

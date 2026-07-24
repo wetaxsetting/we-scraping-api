@@ -3,9 +3,14 @@ package com.kosign.wecms.domain.vatdeclaration.entity;
 import java.util.Optional;
 
 /**
- * The four annex types a VAT declaration can carry, confirmed by the PO
- * prototype ({@code VAT_Declaration_Report.html} — create-form checkboxes).
- * Stored verbatim in {@code TAX_DECLARATION_ANNEX_ITEMS.ANNEX_TYPE}.
+ * The five annex types a VAT declaration can carry, matching the PO prototype's
+ * create-form checkboxes one-for-one ({@code VAT_Declaration_Report.html},
+ * {@code .annexChk[data-code]}). Stored verbatim in
+ * {@code TAX_DECLARATION_ANNEX_ITEMS.ANNEX_TYPE}.
+ *
+ * <p>01-6/GTGT ships in two variants that are distinct forms — production
+ * facility (CSSX) and post-paid telecom — so they carry distinct codes rather
+ * than one merged {@code ALLOC}.
  */
 public enum AnnexType {
 
@@ -13,8 +18,10 @@ public enum AnnexType {
     BKBR("BKBR", "01-1/GTGT"),
     /** BKMV 01-2/GTGT — input (purchase) invoice listing. */
     BKMV("BKMV", "01-2/GTGT"),
-    /** PL 01-6/GTGT (CSSX) — allocation annex. */
-    ALLOC("ALLOC", "01-6/GTGT"),
+    /** PL 01-6/GTGT (CSSX) — allocation annex, production facility. */
+    ALLOC_CSSX("ALLOC_CSSX", "01-6/GTGT (CSSX)"),
+    /** PL 01-6/GTGT (VT cước trả sau) — allocation annex, post-paid telecom. */
+    ALLOC_TELE("ALLOC_TELE", "01-6/GTGT (VT)"),
     /** 8% VAT-reduction annex (Resolution 204/2025/QH15). */
     REDUCE8("REDUCE8", "204/2025/QH15");
 

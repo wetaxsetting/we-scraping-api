@@ -30,13 +30,30 @@ public class VatIndicatorCalculator {
     private static final BigDecimal TEN_PCT_DIVISOR  = BigDecimal.valueOf(10);  // ×10% = ÷10
 
     /**
-     * Recomputes every derived indicator in place from the editable fields
-     * ({@code ct21/22/23/24/23a/24a/26/29/30/32/32a/33a/37/38/39a/40b/42}).
+     * Recomputes every derived indicator, deriving the three <b>source</b> cells
+     * ([25] [31] [33]) from their driver — used by the create flow where nothing
+     * is user-supplied yet.
+     */
+    public void recompute(VatDeclarationIndicator ind) {
+        recompute(ind, java.util.Set.of());
+    }
+
+    /**
+     * Recomputes every derived indicator in place from the editable fields.
      *
+     * <p>[25] [31] [33] are <b>source</b> cells, not pure formula cells: the
+     * prototype prefills them from the rate but lets the user override
+     * ({@code propagate()} only re-derives when the driver cell is edited).
+     * So a key present in {@code clientProvided} keeps the value already set on
+     * {@code ind}; otherwise it is derived ([25]=[24], [31]=[30]x5%,
+     * [33]=[32]x10%). The pure formula cells ([27] [28] [34] [35] [36] [40a]
+     * [40] [41] [43]) are always overwritten.
+     *
+     * @param clientProvided ct-keys the client explicitly sent on this request
      * @throws BusinessException {@code WBE_VAT_DECL_INVALID_INDICATOR} when an
      *         input is negative, or the [40b] ≤ [40a] / [42] ≤ [41] caps break.
      */
-    public void recompute(VatDeclarationIndicator ind) {
+    public void recompute(VatDeclarationIndicator ind, java.util.Set<String> clientProvided) {
         BigDecimal ct22  = nz(ind.getPrevCredit());
         BigDecimal ct24  = nz(ind.getPurchAmtVat());
         BigDecimal ct26  = nz(ind.getSalesAmtNondecl());
@@ -54,11 +71,17 @@ public class VatIndicatorCalculator {
         assertNonNegative(ct22, ct24, ct26, ct29, ct30, ct32, ct32a, ct33a,
                 ct37, ct38, ct39a, ct40b, ct42,
                 nz(ind.getNoActivity()), nz(ind.getPurchAmt()),
-                nz(ind.getImpAmt()), nz(ind.getImpAmtVat()));
+                nz(ind.getImpAmt()), nz(ind.getImpAmtVat()),
+                nz(ind.getDeductVatAmt()), nz(ind.getSalesAmtVat5()),
+                nz(ind.getSalesAmtVat10()));
 
-        BigDecimal ct25 = ct24;
-        BigDecimal ct31 = floorDivide(ct30, FIVE_PCT_DIVISOR);
-        BigDecimal ct33 = floorDivide(ct32, TEN_PCT_DIVISOR);
+        // Source cells: keep the client's value when sent, else derive from the rate.
+        BigDecimal ct25 = clientProvided.contains("ct25")
+                ? nz(ind.getDeductVatAmt()) : ct24;
+        BigDecimal ct31 = clientProvided.contains("ct31")
+                ? nz(ind.getSalesAmtVat5()) : floorDivide(ct30, FIVE_PCT_DIVISOR);
+        BigDecimal ct33 = clientProvided.contains("ct33")
+                ? nz(ind.getSalesAmtVat10()) : floorDivide(ct32, TEN_PCT_DIVISOR);
         BigDecimal ct27 = ct29.add(ct30).add(ct32).add(ct32a);
         BigDecimal ct28 = ct31.add(ct33).add(ct33a);
         BigDecimal ct34 = ct26.add(ct27);

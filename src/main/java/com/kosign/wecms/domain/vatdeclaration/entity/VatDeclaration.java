@@ -17,7 +17,7 @@ import org.hibernate.type.SqlTypes;
 import java.time.LocalDate;
 
 /**
- * VAT declaration header — {@code TAX_DECLARATIONS} (logical {@code VAT_DECL}).
+ * VAT declaration header — {@code VAT_DECL} .
  * One row = one declaration for one tax period, carrying the full HTKK
  * 01/GTGT (TT80) XML metadata block (taxpayer, tax office, agent, dependent
  * unit, extension) plus the raw {@code indicators} JSONB snapshot.
@@ -36,7 +36,7 @@ import java.time.LocalDate;
 @Setter
 @NoArgsConstructor
 @Entity
-@Table(name = "TAX_DECLARATIONS")
+@Table(name = "VAT_DECL")
 public class VatDeclaration extends BaseEntity {
 
     @Id
@@ -233,9 +233,13 @@ public class VatDeclaration extends BaseEntity {
     @Column(name = "ANNEX_BKMV_YN", length = 1, nullable = false)
     private String annexBkmvYn;
 
-    /** PL 01-6/GTGT (CSSX) — allocation annex. */
+    /** PL 01-6/GTGT (CSSX) — allocation annex, production facility. */
     @Column(name = "ANNEX_ALLOC_YN", length = 1, nullable = false)
     private String annexAllocYn;
+
+    /** PL 01-6/GTGT (VT cước trả sau) — allocation annex, post-paid telecom. */
+    @Column(name = "ANNEX_ALLOC_TELE_YN", length = 1, nullable = false)
+    private String annexAllocTeleYn;
 
     /** 8% VAT-reduction annex (Resolution 204/2025/QH15). */
     @Column(name = "ANNEX_REDUCE8_YN", length = 1, nullable = false)
@@ -256,7 +260,8 @@ public class VatDeclaration extends BaseEntity {
                           String duProvCode, String duProv, String duDistCode, String duDist,
                           String duWardCode, String duWard,
                           String indicators, String delYn, String status,
-                          String annexBkbrYn, String annexBkmvYn, String annexAllocYn, String annexReduce8Yn) {
+                          String annexBkbrYn, String annexBkmvYn, String annexAllocYn,
+                          String annexAllocTeleYn, String annexReduce8Yn) {
         this.bizKey = bizKey;
         this.periodType = periodType;
         this.periodValue = periodValue;
@@ -308,6 +313,7 @@ public class VatDeclaration extends BaseEntity {
         this.annexBkbrYn = annexBkbrYn == null ? "N" : annexBkbrYn;
         this.annexBkmvYn = annexBkmvYn == null ? "N" : annexBkmvYn;
         this.annexAllocYn = annexAllocYn == null ? "N" : annexAllocYn;
+        this.annexAllocTeleYn = annexAllocTeleYn == null ? "N" : annexAllocTeleYn;
         this.annexReduce8Yn = annexReduce8Yn == null ? "N" : annexReduce8Yn;
     }
 }

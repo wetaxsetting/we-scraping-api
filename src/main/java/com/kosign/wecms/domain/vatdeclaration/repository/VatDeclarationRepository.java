@@ -48,4 +48,61 @@ public interface VatDeclarationRepository extends JpaRepository<VatDeclaration, 
     /** Latest supplement of a period (official L00 + supplements L01..n share the period). */
     Optional<VatDeclaration> findTopByBizKeyAndPeriodTypeAndPeriodValueAndPeriodYearAndDelYnOrderBySupplNoDesc(
             String bizKey, String periodType, Integer periodValue, Integer periodYear, String delYn);
+
+    /**
+     * Any declaration strictly BEFORE this period, same period type.
+     * Lock uses it to tell "first period ever" (nothing earlier — locking is
+     * fine) from "a hole in the chain" (K-1 is missing but older periods exist).
+     */
+    @Query("""
+            select count(d) > 0 from VatDeclaration d
+            where d.bizKey = :bizKey
+              and d.delYn = 'N'
+              and d.periodType = :periodType
+              and (d.periodYear < :year
+                   or (d.periodYear = :year and d.periodValue < :value))
+            """)
+    boolean existsEarlierPeriod(@Param("bizKey") String bizKey,
+                                @Param("periodType") String periodType,
+                                @Param("year") Integer year,
+                                @Param("value") Integer value);
+
+    /**
+     * Any declaration strictly AFTER this period, whatever its status.
+     * Delete uses it (OQ-VAT-6): removing K would leave K+1 carrying a [22] from
+     * a period that no longer exists, and K+1 could then never be locked because
+     * the chain check would see a hole.
+     */
+    @Query("""
+            select count(d) > 0 from VatDeclaration d
+            where d.bizKey = :bizKey
+              and d.delYn = 'N'
+              and d.periodType = :periodType
+              and (d.periodYear > :year
+                   or (d.periodYear = :year and d.periodValue > :value))
+            """)
+    boolean existsLaterPeriod(@Param("bizKey") String bizKey,
+                              @Param("periodType") String periodType,
+                              @Param("year") Integer year,
+                              @Param("value") Integer value);
+
+    /**
+     * Any LOCKED declaration strictly AFTER this period, same period type.
+     * Unlock uses it: re-opening K invalidates the carry-forward of every later
+     * period, so no later period may already be closed — not just K+1.
+     */
+    @Query("""
+            select count(d) > 0 from VatDeclaration d
+            where d.bizKey = :bizKey
+              and d.delYn = 'N'
+              and d.periodType = :periodType
+              and d.status = :lockedStatus
+              and (d.periodYear > :year
+                   or (d.periodYear = :year and d.periodValue > :value))
+            """)
+    boolean existsLaterLockedPeriod(@Param("bizKey") String bizKey,
+                                    @Param("periodType") String periodType,
+                                    @Param("year") Integer year,
+                                    @Param("value") Integer value,
+                                    @Param("lockedStatus") String lockedStatus);
 }
