@@ -380,7 +380,7 @@ public class VatDeclarationService {
 
     // ---------------------------------------------------------------- helpers
 
-    // ---------------------------------------------------------------- annex
+    // ---------------------------------------------------------------- annex----
 
     /**
      * Annex invoice modal (API #9) — rows are <b>derived from the period's real
