@@ -356,8 +356,11 @@ class VatDeclarationLifecycleTest {
 
             var res = service.listAnnexInvoices(SID, "ALLOC_CSSX", null, null, 0, 20);
 
-            assertThat(res.groups()).isEmpty();
+            assertThat(res.rows()).isEmpty();
             assertThat(res.totalCount()).isZero();
+            assertThat(res.totalPages()).isZero();
+            assertThat(res.pageNumber()).isZero();
+            assertThat(res.pageSize()).isEqualTo(20);
             verify(annexInvoiceRepo, never()).countRows(anyString(), anyString(), anyString(),
                     any(), any(), any(), any());
         }

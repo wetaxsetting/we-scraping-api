@@ -12,7 +12,6 @@ import com.kosign.wecms.domain.vatdeclaration.dto.VatDeclarationListResponse;
 import com.kosign.wecms.domain.vatdeclaration.dto.VatDeclarationRow;
 import com.kosign.wecms.domain.vatdeclaration.dto.VatDeclarationUpdateRequest;
 import com.kosign.wecms.domain.vatdeclaration.dto.VatIndicatorSet;
-import com.kosign.wecms.domain.vatdeclaration.dto.AnnexInvoiceGroup;
 import com.kosign.wecms.domain.vatdeclaration.dto.AnnexInvoiceListResponse;
 import com.kosign.wecms.domain.vatdeclaration.dto.AnnexInvoiceProjection;
 import com.kosign.wecms.domain.vatdeclaration.dto.AnnexRow;
@@ -393,20 +392,25 @@ public class VatDeclarationService {
      * 01-6/GTGT allocation annexes have no invoice-derived source and return
      * empty until their allocation rule is specified.
      *
-     * <p>Filtering, paging and the reduction total all run in SQL, so a large
-     * period no longer loads every line into memory.
+     * <p>Flat paged list: {@code rows} + {@code total_count} / {@code page_number}
+     * / {@code page_size} / {@code total_pages}, matching the shape the other
+     * add-on list endpoints already use. Filtering, paging and the reduction
+     * total all run in SQL, so a large period never loads every line into
+     * memory, and {@code grandTotalReducedAmt} spans the FULL filtered set so
+     * the footer stays stable while paging.
      */
     @Transactional(readOnly = true)
     public AnnexInvoiceListResponse listAnnexInvoices(Long sid, String annexType, String search,
                                                       String ioDv, int page, int size) {
         VatDeclaration decl = load(sid);
         String type = resolveAnnexType(annexType);
+        int pageNumber = Math.max(page, 0);
         int pageSize = size <= 0 ? DEFAULT_PAGE_SIZE : Math.min(size, MAX_PAGE_SIZE);
-        long offset = (long) Math.max(page, 0) * pageSize;   // long: page is client input
+        long offset = (long) pageNumber * pageSize;   // long: page is client input
 
         List<String> docTypes = docTypesFor(type, ioDv);
         if (docTypes.isEmpty()) {
-            return new AnnexInvoiceListResponse(List.of(), 0L, "0");
+            return new AnnexInvoiceListResponse(List.of(), 0L, 0, pageNumber, pageSize, "0");
         }
         String rate = AnnexType.REDUCE8.code().equals(type) ? RATE_8_PCT : null;
         String q = search == null || search.isBlank() ? null : search.trim();
@@ -417,22 +421,14 @@ public class VatDeclarationService {
                 EXCLUDED_INVOICE_STATUSES);
         BigDecimal grandReduced = nz(annexInvoiceRepo.sumReducedAmt(
                 decl.getBizKey(), from, to, docTypes, rate, q, EXCLUDED_INVOICE_STATUSES));
-        List<AnnexInvoiceProjection> slice = offset >= total ? List.of()
+        List<AnnexRow> rows = offset >= total ? List.of()
                 : annexInvoiceRepo.findRows(decl.getBizKey(), from, to, docTypes, rate, q,
-                        EXCLUDED_INVOICE_STATUSES, offset, pageSize);
+                                EXCLUDED_INVOICE_STATUSES, offset, pageSize)
+                        .stream().map(a -> toAnnexRow(a, type)).toList();
 
-        Map<String, List<AnnexInvoiceProjection>> grouped = new LinkedHashMap<>();
-        for (AnnexInvoiceProjection a : slice) {
-            grouped.computeIfAbsent(a.getProdNm() == null ? "" : a.getProdNm(), k -> new ArrayList<>()).add(a);
-        }
-        List<AnnexInvoiceGroup> groups = new ArrayList<>();
-        for (Map.Entry<String, List<AnnexInvoiceProjection>> e : grouped.entrySet()) {
-            List<AnnexRow> rows = e.getValue().stream().map(a -> toAnnexRow(a, type)).toList();
-            BigDecimal gs = e.getValue().stream().map(a -> nz(a.getSplyAmt())).reduce(BigDecimal.ZERO, BigDecimal::add);
-            BigDecimal gr = e.getValue().stream().map(a -> nz(a.getReducedAmt())).reduce(BigDecimal.ZERO, BigDecimal::add);
-            groups.add(new AnnexInvoiceGroup(e.getKey(), rows.size(), str(gs), str(gr), rows));
-        }
-        return new AnnexInvoiceListResponse(groups, total, str(grandReduced));
+        int totalPages = (int) ((total + pageSize - 1) / pageSize);
+        return new AnnexInvoiceListResponse(rows, total, totalPages, pageNumber, pageSize,
+                str(grandReduced));
     }
 
     /**
