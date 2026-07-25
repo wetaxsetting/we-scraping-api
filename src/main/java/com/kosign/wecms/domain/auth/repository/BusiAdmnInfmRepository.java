@@ -5,6 +5,7 @@ import com.kosign.wecms.domain.auth.entity.BusiAdmnInfmId;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;
+import java.util.Optional;
 
 public interface BusiAdmnInfmRepository extends JpaRepository<BusiAdmnInfm, BusiAdmnInfmId> {
 
@@ -17,6 +18,15 @@ public interface BusiAdmnInfmRepository extends JpaRepository<BusiAdmnInfm, Busi
      * authoritative source.
      */
     boolean existsByBizKeyAndUserId(String bizKey, String userId);
+
+    /**
+     * The admin row for a single (BIZ_KEY, USER_ID). Used at login finalize:
+     * presence decides authGrCd (ADMIN vs USER) AND supplies {@code USER_NM}
+     * for the BUSI_ADMN_LOGIN_HIS audit row — legacy sources REG_NM from
+     * {@code busiAdmnInfm.getUserNm()}, not USER_INFM
+     * ({@code logn_2001_001_r001_act.jsp:277-278}).
+     */
+    Optional<BusiAdmnInfm> findByBizKeyAndUserId(String bizKey, String userId);
 
     /**
      * Every BUSI_ADMN_INFM row for a user. Used when building the

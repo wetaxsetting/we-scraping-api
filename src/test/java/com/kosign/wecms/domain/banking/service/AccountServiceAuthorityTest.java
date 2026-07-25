@@ -66,11 +66,11 @@ class AccountServiceAuthorityTest {
     void setUp() {
         service = new AccountService(acctRepo, bankResolver, napasRepo, bankCertRepo, bankSync);
         // Common stubs — a single VND account flows through toRow.
-        when(acctRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+        when(acctRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(Pageable.class)))
                 .thenReturn(oneAccountPage());
         when(acctRepo.aggregateByCcy(any(), any(), any(), any(), any(), any(), any(), anyBoolean()))
                 .thenReturn(List.of());
-        when(acctRepo.findDistinctBankCds(any(), any(), any(), any(), any()))
+        when(acctRepo.findDistinctBankCds(any(), any(), any(), any(), any(), anyBoolean()))
                 .thenReturn(List.of());
         when(bankCertRepo.findConnectedBankCds(BIZ)).thenReturn(List.of());
         when(bankResolver.resolveBankNm(any())).thenReturn("Shinhan Bank Vietnam");
@@ -132,7 +132,7 @@ class AccountServiceAuthorityTest {
         // Fixed-deposit-only bank: ACCT_TYPE_CD '02', not Sacombank
         // (11704004). Legacy displays ACCT_BAL_LST_INQ_DTM here because
         // the FD account runs no TRANSACTION job (no history date).
-        when(acctRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+        when(acctRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(Pageable.class)))
                 .thenReturn(fixedDepositOnlyPage());
 
         AccountListResponse res = service.list("VND");
@@ -144,16 +144,16 @@ class AccountServiceAuthorityTest {
     // ── FCY type-code scope (Transaction History / Account Inquiry FCY) ──
 
     /**
-     * Regression for the FCY-empty bug: currency="FCY" must resolve to
-     * {@code CCY_CD <> 'VND'} plus a type-code whitelist that admits the
-     * generic current/savings codes (03/05) as well as the
-     * currency-specific ones (04/06/07/08). The refactor DB codes every
-     * non-VND current account as the generic CURRENT_KHR (03); a
-     * 04/06/07/08-only whitelist matched zero rows and the FCY page
-     * rendered empty. Loans (01) stay excluded.
+     * A1-01 D2 (2026-07-24, approved refactor decision): currency="FCY"
+     * resolves to {@code CCY_CD <> 'VND'} plus the FOREIGN-currency type
+     * whitelist {@code (02,04,06,07,08)}. The local-currency current/savings
+     * codes 03/05 are DELIBERATELY excluded from FCY — legacy
+     * {@code comm_0141_001 getDynamic1} admits only {@code (02,04,06)}; the
+     * refactor extends that with the KRW pair 07/08. (This reverses the
+     * earlier build that admitted 03/05 into FCY.) Loans (01) stay excluded.
      */
     @Test
-    void fcyScope_excludesVnd_andAdmitsGenericCurrentSavingsTypeCodes() {
+    void fcyScope_excludesVnd_andUsesForeignCurrencyTypeWhitelist() {
         TenantContext.set(USER, USER, BIZ, LangCd.EN, TenantContext.AUTH_GR_ADMIN);
 
         service.list("FCY");
@@ -163,24 +163,21 @@ class AccountServiceAuthorityTest {
         ArgumentCaptor<List<String>> types =
                 ArgumentCaptor.forClass((Class<List<String>>) (Class<?>) List.class);
         verify(acctRepo).findFiltered(
-                any(), any(), ccyNot.capture(), types.capture(), any(), any(), any(), any(Pageable.class));
+                any(), any(), ccyNot.capture(), types.capture(), any(), any(), any(), anyBoolean(), any(Pageable.class));
 
         assertThat(ccyNot.getValue()).isEqualTo("VND");
         assertThat(types.getValue())
-                .contains("02", "03", "04", "05", "06", "07", "08")
-                .doesNotContain("01");
+                .containsExactlyInAnyOrder("02", "04", "06", "07", "08");
+        assertThat(types.getValue()).doesNotContain("01", "03", "05");
     }
 
     /**
-     * Regression for the "selecting KRW returns Not Found" bug: a concrete
-     * non-VND currency must resolve to {@code CCY_CD = 'KRW'} with the SAME
-     * generic non-loan type set FCY uses (admits 03/05). The old per-currency
-     * whitelist {@code KRW = {02,07,08}} excluded the generic CURRENT_KHR (03)
-     * that the live JEX DB assigns to every foreign current account, so a real
-     * type-03 KRW account matched zero rows.
+     * A1-01 D2: a concrete non-VND currency (KRW) resolves to
+     * {@code CCY_CD = 'KRW'} with the SAME foreign-currency type set FCY
+     * uses (02,04,06,07,08) — 03/05 stay out of every non-VND scope.
      */
     @Test
-    void fcySelectedKrw_filtersByKrw_withGenericNonLoanTypeCodes() {
+    void fcySelectedKrw_filtersByKrw_withForeignCurrencyTypeCodes() {
         TenantContext.set(USER, USER, BIZ, LangCd.EN, TenantContext.AUTH_GR_ADMIN);
 
         service.list("KRW");
@@ -191,19 +188,18 @@ class AccountServiceAuthorityTest {
         ArgumentCaptor<List<String>> types =
                 ArgumentCaptor.forClass((Class<List<String>>) (Class<?>) List.class);
         verify(acctRepo).findFiltered(
-                any(), ccyEq.capture(), ccyNot.capture(), types.capture(), any(), any(), any(), any(Pageable.class));
+                any(), ccyEq.capture(), ccyNot.capture(), types.capture(), any(), any(), any(), anyBoolean(), any(Pageable.class));
 
         assertThat(ccyEq.getValue()).isEqualTo("KRW");
         assertThat(ccyNot.getValue()).isNull();
         assertThat(types.getValue())
-                .contains("02", "03", "04", "05", "06", "07", "08")
-                .doesNotContain("01");
+                .containsExactlyInAnyOrder("02", "04", "06", "07", "08");
+        assertThat(types.getValue()).doesNotContain("01", "03", "05");
     }
 
-    /** Same fix on the USD narrow — USD foreign accounts are also type-03 in
-     *  the live JEX DB; the old {@code USD = {02,04,06}} whitelist dropped them. */
+    /** Same D2 rule on the USD narrow — foreign-currency type set, no 03/05. */
     @Test
-    void fcySelectedUsd_filtersByUsd_withGenericNonLoanTypeCodes() {
+    void fcySelectedUsd_filtersByUsd_withForeignCurrencyTypeCodes() {
         TenantContext.set(USER, USER, BIZ, LangCd.EN, TenantContext.AUTH_GR_ADMIN);
 
         service.list("USD");
@@ -213,16 +209,16 @@ class AccountServiceAuthorityTest {
         ArgumentCaptor<List<String>> types =
                 ArgumentCaptor.forClass((Class<List<String>>) (Class<?>) List.class);
         verify(acctRepo).findFiltered(
-                any(), ccyEq.capture(), any(), types.capture(), any(), any(), any(), any(Pageable.class));
+                any(), ccyEq.capture(), any(), types.capture(), any(), any(), any(), anyBoolean(), any(Pageable.class));
 
         assertThat(ccyEq.getValue()).isEqualTo("USD");
         assertThat(types.getValue())
-                .contains("02", "03", "04", "05", "06", "07", "08")
-                .doesNotContain("01");
+                .containsExactlyInAnyOrder("02", "04", "06", "07", "08");
+        assertThat(types.getValue()).doesNotContain("01", "03", "05");
     }
 
-    /** VND keeps its own legacy type set (02/03/05) — the concrete-CCY fix
-     *  must not bleed into the VND scope. */
+    /** VND keeps its own legacy local-currency type set (02/03/05) — the
+     *  D2 foreign-currency whitelist must not bleed into the VND scope. */
     @Test
     void vndScope_keepsLegacyVndTypeCodes() {
         TenantContext.set(USER, USER, BIZ, LangCd.EN, TenantContext.AUTH_GR_ADMIN);
@@ -234,7 +230,7 @@ class AccountServiceAuthorityTest {
         ArgumentCaptor<List<String>> types =
                 ArgumentCaptor.forClass((Class<List<String>>) (Class<?>) List.class);
         verify(acctRepo).findFiltered(
-                any(), ccyEq.capture(), any(), types.capture(), any(), any(), any(), any(Pageable.class));
+                any(), ccyEq.capture(), any(), types.capture(), any(), any(), any(), anyBoolean(), any(Pageable.class));
 
         assertThat(ccyEq.getValue()).isEqualTo("VND");
         assertThat(types.getValue())
@@ -291,7 +287,7 @@ class AccountServiceAuthorityTest {
 
     private String capturedFindFilteredAuthUserId() {
         ArgumentCaptor<String> c = ArgumentCaptor.forClass(String.class);
-        verify(acctRepo).findFiltered(any(), any(), any(), any(), any(), any(), c.capture(), any(Pageable.class));
+        verify(acctRepo).findFiltered(any(), any(), any(), any(), any(), any(), c.capture(), anyBoolean(), any(Pageable.class));
         return c.getValue();
     }
 
@@ -309,7 +305,7 @@ class AccountServiceAuthorityTest {
 
     private String capturedDistinctBankAuthUserId() {
         ArgumentCaptor<String> c = ArgumentCaptor.forClass(String.class);
-        verify(acctRepo).findDistinctBankCds(any(), any(), any(), any(), c.capture());
+        verify(acctRepo).findDistinctBankCds(any(), any(), any(), any(), c.capture(), anyBoolean());
         return c.getValue();
     }
 

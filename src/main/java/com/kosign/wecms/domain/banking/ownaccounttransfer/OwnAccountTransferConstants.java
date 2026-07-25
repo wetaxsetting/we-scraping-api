@@ -120,4 +120,11 @@ public final class OwnAccountTransferConstants {
      *  The settlement-confirm flow (a separate batch job) flips this
      *  to {@code Y} when the bank settles; not in this MR. */
     public static final String NRTH_STLM_YN_NO = "N";
+
+    /** {@code NAPAS_REMIT_TRNS_HSTR.TRNS_STLM_YN} settled value —
+     *  excluded by the duplicate-settlement-id guard (legacy
+     *  {@code ValidationHelper.validateTrnsStlmId}: {@code TRNS_STLM_ID
+     *  = ? AND TRNS_STLM_YN <> 'Y'}). Only not-yet-settled rows count
+     *  as a duplicate. */
+    public static final String NRTH_STLM_YN_YES = "Y";
 }

@@ -79,6 +79,7 @@ All **active** unless noted.
 | [expense-payment-excel-upload-audit.md](expense-payment-excel-upload-audit.md) | Payment · Expense · Excel Upload / Refresh | Excel-upload parity + Recipient Name / Lookup Recipient parity (§ added 2026-06-30) |
 | [payroll-payment-excel-upload-audit.md](payroll-payment-excel-upload-audit.md) | Payment · Payroll · Excel Upload / Refresh | Excel-upload parity + Recipient Name / Lookup Recipient parity (§ added 2026-06-30) |
 | [overseas-payment-excel-upload-audit.md](overseas-payment-excel-upload-audit.md) | Payment · Overseas · Excel Upload / Refresh | Excel-upload parity + Recipient Name / Lookup Recipient parity (§ added 2026-06-30) |
+| [payment-excel-upload-crossmodule-verification.md](payment-excel-upload-crossmodule-verification.md) | Payment · all 5 modules · Excel Upload → create batch | **Cross-module verification (2026-07-25)** of the five audits above against current code. Corrects partner-matrix row #24 (legacy also parses server-side with POI — same mechanism, not "different"); 5 divergences found + fixed (payroll & overseas `WDRL_CCY_CD`, overseas `TRNF_DT`, workbook mandatory at save, save-side single-network guard). Read with the per-module audits. |
 
 ## 4. Historical One-Off Audits
 

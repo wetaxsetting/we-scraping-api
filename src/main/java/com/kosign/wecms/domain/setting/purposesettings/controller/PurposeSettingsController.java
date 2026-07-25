@@ -10,6 +10,7 @@ import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeSettingCreateR
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeSettingDetail;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeSettingListResponse;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeSettingUpdateRequest;
+import com.kosign.wecms.domain.setting.purposesettings.dto.RecentPurposesResponse;
 import com.kosign.wecms.domain.setting.purposesettings.service.PurposeExcelService;
 import com.kosign.wecms.domain.setting.purposesettings.service.PurposeSettingsService;
 import jakarta.validation.Valid;
@@ -104,6 +105,15 @@ public class PurposeSettingsController {
             @Pattern(regexp = GROUP_PATTERN, message = "usag_grp_cd: must be 4 or 6")
             String usagGrpCd) {
         return ApiResponse.ok(service.list(keyword, usagGrpCd));
+    }
+
+    /** RECENT quick-pick — the current user's most-recently-used
+     *  purposes (top-3, newest first). Read-only, per-user + per-tenant;
+     *  mirrors legacy {@code comm_0107_001_r002}. Literal path declared
+     *  before {@code /{use_usag_cd}} so it is never captured as a PK. */
+    @GetMapping("/recent")
+    public ApiResponse<RecentPurposesResponse> recent() {
+        return ApiResponse.ok(service.recentPurposes());
     }
 
     /** "Deleted Purpose" tab — soft-deleted rows for the current tenant

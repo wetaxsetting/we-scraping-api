@@ -4,6 +4,8 @@ import com.kosign.wecms.common.auditlog.service.AuditLogContext;
 import com.kosign.wecms.common.auditlog.service.AuditLogService;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
+import com.kosign.wecms.domain.payment.approvalbox.entity.ExptResolMstr;
+import com.kosign.wecms.domain.payment.approvalbox.repository.ExptResolMstrRepository;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.DispatchRequest;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumr;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrDetl;
@@ -73,6 +75,7 @@ public class InternalTransferDispatchService {
     private final CutoffValidator                 cutoffValidator;
     private final AuditLogService                 auditLogService;
     private final InternalTransferDispatchExecutor dispatchExecutor;
+    private final ExptResolMstrRepository         exptResolMstrRepository;
     private final Clock                           clock;
 
     /**
@@ -99,16 +102,26 @@ public class InternalTransferDispatchService {
             throw new BusinessException("WBE2064");
         }
 
-        // Approval not present? Mirrors PymnHelper.pymn_0009_001_c001 lines 2439-2445.
-        if (master.getApprSeqNo() == null || master.getApprSeqNo().isBlank()) {
+        // Approval not present? Mirrors PymnHelper.pymn_0009_001_c001:2497-2504.
+        String apprSeqNo = master.getApprSeqNo();
+        if (apprSeqNo == null || apprSeqNo.isBlank()) {
             throw new BusinessException("WBE2063");
         }
-        // NOTE: EXPT_RESOL_MSTR.APPR_TYPE_CD == '01' check is enforced by
-        // the parallel approval-box flow before the user can press Transfer.
-        // The refactor's authoritative gate is the presence of APPR_SEQ_NO
-        // combined with the Approval Box state machine. A defensive read
-        // against EXPT_RESOL_MSTR can be added when that domain exposes a
-        // shared "isApproved(apprSeqNo)" service.
+        // G1 (legacy parity — PymnHelper.pymn_0009_001_c001:2507-2516): a batch may be
+        // dispatched ONLY when its approval is fully approved, i.e.
+        // EXPT_RESOL_MSTR.APPR_TYPE_CD = '01'. Pending ('00'), rejected ('02'),
+        // and partially-approved ('03') batches all carry an APPR_SEQ_NO but are NOT
+        // approved. The prior refactor behaviour deferred this to the approval-box
+        // flow / UI; a hand-crafted API call could bypass it, so the server-side
+        // assertion is now enforced here to match legacy.
+        String apprTypeCd = exptResolMstrRepository
+                .findByBizKeyAndApprSeqNoIn(bizKey, java.util.List.of(apprSeqNo))
+                .stream().findFirst()
+                .map(ExptResolMstr::getApprTypeCd)
+                .orElse(null);
+        if (!"01".equals(apprTypeCd)) {
+            throw new BusinessException("WBE2063");
+        }
 
         // Cut-off-time validation — read network from the first detail line.
         List<ScdulPymnSumrDetl> lines = detlRepository.findByBizKeyAndScdulPymnNo(

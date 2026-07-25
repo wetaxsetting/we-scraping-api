@@ -20,6 +20,7 @@ import com.kosign.wecms.domain.setting.contacts.dto.ContactLookupRecipientReques
 import com.kosign.wecms.domain.setting.contacts.dto.ContactLookupRecipientResponse;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactRow;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactUpdateRequest;
+import com.kosign.wecms.domain.setting.contacts.dto.RecentContactsResponse;
 import com.kosign.wecms.domain.setting.contacts.dto.SwiftBicListResponse;
 import com.kosign.wecms.domain.setting.contacts.service.ContactsDownloadService;
 import com.kosign.wecms.domain.setting.contacts.service.ContactsFileService;
@@ -110,6 +111,17 @@ public class ContactsController {
             @RequestParam(value = "sort_direction", required = false) String sortDirection) {
         return ApiResponse.ok(
                 service.list(search, trcoType, page, size, sortField, sortDirection));
+    }
+
+    /**
+     * The current user's most-recently-used contacts (top-3, newest
+     * first) for the Contact selector's RECENT quick-pick. Read-only,
+     * per-user + per-tenant — mirrors legacy {@code WABOOKS_MREC_R030}
+     * REC1. Declared before {@code /{trcoKey}} so the literal path wins.
+     */
+    @GetMapping("/recent")
+    public ApiResponse<RecentContactsResponse> recent() {
+        return ApiResponse.ok(service.recentContacts());
     }
 
     /**

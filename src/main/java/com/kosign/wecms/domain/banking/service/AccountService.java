@@ -86,25 +86,29 @@ public class AccountService {
      *
      * <ul>
      *   <li>{@link #VND_TYPE_CODES} — DEPOSIT (02), CURRENT_KHR (03),
-     *       SAVINGS_KHR (05) — legacy {@code fnsh_0001_001_r001} VND set.</li>
-     *   <li>{@link #FCY_TYPE_CODES} — every non-loan type (02–08). Used
-     *       for the FCY scope ({@code CCY_CD <> 'VND'}) AND for every
-     *       concrete non-VND currency narrow ({@code CCY_CD = 'USD'} /
-     *       {@code 'KRW'} / {@code 'EUR'} / …) — a concrete CCY is just a
-     *       narrow of the FCY scope, so it must admit the same types.
-     *       <b>Why all current/savings codes, not the currency-specific
-     *       04/06/07/08:</b> the legacy per-currency whitelists assumed
-     *       FCY accounts always carry currency-specific type codes
-     *       (USD→04/06, KRW→07/08). That assumption does not hold across
-     *       datasets — the live JEX DB codes <em>every</em> current
-     *       account (VND, USD, KRW alike) as the generic CURRENT_KHR (03)
-     *       / SAVINGS_KHR (05). A currency-specific whitelist therefore
-     *       dropped every type-03/05 foreign account: "All Currency"
-     *       (FCY) rendered them, but narrowing to USD or KRW returned
-     *       "Not Found". Admitting 03/05 is safe — the {@code CCY_CD}
-     *       predicate already isolates the currency, so only genuinely
-     *       matching current/savings accounts pass. Loans (01) stay
-     *       excluded.</li>
+     *       SAVINGS_KHR (05). Legacy {@code fnsh_0001_001_r001} /
+     *       {@code comm_0141_001_r001} VND set. (The {@code _KHR} enum
+     *       names are historical: on the live VN dataset these codes are
+     *       the local-currency current/savings types — the DB currency is
+     *       VND, the enum label lags the geography. Do not rename.)</li>
+     *   <li>{@link #FCY_TYPE_CODES} — DEPOSIT (02), CURRENT_USD (04),
+     *       SAVINGS_USD (06), CURRENT_KRW (07), SAVINGS_KRW (08). Used for
+     *       the FCY scope ({@code CCY_CD <> 'VND'}) AND for every concrete
+     *       non-VND currency narrow ({@code CCY_CD = 'USD'} / {@code 'KRW'}
+     *       / {@code 'EUR'} / …).
+     *       <b>A1-01 D2 (2026-07-24, approved refactor decision):</b> the
+     *       local-currency current/savings codes 03/05 are DELIBERATELY
+     *       excluded from the FCY set — legacy {@code comm_0141_001}
+     *       {@code getDynamic1} admits only {@code ('02','04','06')}; the
+     *       refactor extends that with the KRW pair {@code 07/08} to
+     *       support the newer account model, but keeps 03/05 out of FCY.
+     *       An earlier refactor build admitted 03/05 into FCY to surface
+     *       foreign accounts that the live JEX DB codes as generic 03/05;
+     *       the PO reversed that on 2026-07-24 in favour of legacy parity —
+     *       03/05 are local-currency types and belong to the VND scope
+     *       only. Trade-off accepted by the PO: a foreign account
+     *       mis-coded as generic 03/05 will not appear under FCY. Loans
+     *       (01) stay excluded on every scope.</li>
      * </ul>
      */
     private static final List<String> VND_TYPE_CODES = List.of(
@@ -113,9 +117,7 @@ public class AccountService {
             AcctTypeCd.SAVINGS_KHR.code());
     private static final List<String> FCY_TYPE_CODES = List.of(
             AcctTypeCd.DEPOSIT.code(),       // 02 — time deposit (currency-agnostic)
-            AcctTypeCd.CURRENT_KHR.code(),   // 03 — generic "current" (currency carried by CCY_CD)
             AcctTypeCd.CURRENT_USD.code(),   // 04 — USD current
-            AcctTypeCd.SAVINGS_KHR.code(),   // 05 — generic "savings"
             AcctTypeCd.SAVINGS_USD.code(),   // 06 — USD savings
             AcctTypeCd.CURRENT_KRW.code(),   // 07 — KRW current
             AcctTypeCd.SAVINGS_KRW.code());  // 08 — KRW savings
@@ -236,6 +238,18 @@ public class AccountService {
                 ? pageable
                 : applyDefaultSortIfNeeded(pageable, sortField, sortDirection);
 
+        // A1-01 D3 / AI-06: PrdtType H maturity/balance guard. For an H
+        // tenant, savings/term-deposit types (05/06/08) are kept only when
+        // not-yet-matured AND positively-balanced. Legacy comm_0141_001
+        // applies this on the ROW list AND the totals; the refactor now
+        // passes the SAME flag to findFiltered (rows), aggregateByCcy
+        // (totals), and findDistinctBankCds (bank dropdown) so all three
+        // stay in sync. Non-H tenants (incl. null product type) pass false
+        // and the guard is a no-op. Sourced from the signed JWT.
+        boolean excludeMaturedHSavings = PrdtType.fromCode(TenantContext.currentPrdtType())
+                .filter(p -> p == PrdtType.H)
+                .isPresent();
+
         Page<AcctMstr> page = acctRepo.findFiltered(
                 bizKey,
                 resolved.ccyEq,
@@ -244,6 +258,7 @@ public class AccountService {
                 resolved.bankCd,
                 resolved.keywordPattern,
                 authUserId,
+                excludeMaturedHSavings,
                 effective);
 
         // Cert-connection lookup is per-tenant and small (a handful of
@@ -266,12 +281,9 @@ public class AccountService {
                 })
                 .toList();
 
-        // AI-06: PrdtType H summary-card exclusion (legacy tot_dynamic0). Gates
-        // the per-currency aggregate ONLY — the row list above is untouched.
-        boolean excludeMaturedHSavings = PrdtType.fromCode(TenantContext.currentPrdtType())
-                .filter(p -> p == PrdtType.H)
-                .isPresent();
-
+        // Per-currency totals — same excludeMaturedHSavings flag as the
+        // row list above (computed once, pre-findFiltered) so totals and
+        // rows agree for an H tenant.
         List<CcyAggregate> aggregates = acctRepo.aggregateByCcy(
                 bizKey,
                 resolved.ccyEq,
@@ -302,7 +314,7 @@ public class AccountService {
         // must stay stable as the user filters: selecting one bank
         // should not remove the others from the option set.
         List<BankOption> banksAvailable = acctRepo
-                .findDistinctBankCds(bizKey, resolved.ccyEq, resolved.ccyNot, resolved.acctTypeCdIn, authUserId)
+                .findDistinctBankCds(bizKey, resolved.ccyEq, resolved.ccyNot, resolved.acctTypeCdIn, authUserId, excludeMaturedHSavings)
                 .stream()
                 .map(cd -> new BankOption(cd, bankResolver.resolveBankNm(cd)))
                 .toList();
@@ -518,16 +530,13 @@ public class AccountService {
                 }
                 // Any concrete non-VND currency (USD, KRW, EUR, JPY, …) is a
                 // NARROW of the FCY scope: isolate the currency via
-                // ccy_cd = <CCY> and reuse the SAME non-loan type set FCY
-                // uses. The live JEX DB codes foreign current/savings as the
-                // generic 03/05 regardless of currency, so a currency-specific
-                // whitelist (02/04/06 for USD, 02/07/08 for KRW) matched zero
-                // rows and the page rendered "Not Found" even though the
-                // account exists — the same root cause as the original
-                // FCY-empty bug, on the concrete-currency narrow. Using
-                // FCY_TYPE_CODES keeps the concrete-currency result a strict
-                // subset of the All-Currency result for that CCY (the summary
-                // tile and the narrowed list agree).
+                // ccy_cd = <CCY> and reuse the SAME foreign-currency type
+                // set FCY uses (02/04/06/07/08 — A1-01 D2). Keeping the
+                // concrete-currency narrow on FCY_TYPE_CODES makes it a
+                // strict subset of the All-Currency (FCY) result for that
+                // CCY, so the summary tile and the narrowed list agree. The
+                // local-currency codes 03/05 stay out of every non-VND
+                // scope per the D2 decision — see FCY_TYPE_CODES Javadoc.
                 default -> {
                     ccyEq = upper;
                     acctTypeCdIn = FCY_TYPE_CODES;

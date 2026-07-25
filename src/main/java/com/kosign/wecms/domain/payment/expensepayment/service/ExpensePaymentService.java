@@ -177,6 +177,9 @@ public class ExpensePaymentService {
     private final com.kosign.wecms.domain.payment.common.OutBankCdNormalizer outBankCdNormalizer;
     /** Authoritative save-path blocked-char enforcement (audit task-44508, P0). */
     private final com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard blockedCharGuard;
+    /** Save-side re-assertion of the single-network rule (legacy
+     *  {@code PymnHelper.validateUploadedPayments}, {@code WBE1191}). */
+    private final com.kosign.wecms.domain.payment.common.UploadConsistencyValidator uploadConsistencyValidator;
     /** M-2/M-3 (legacy parity): EXPT_RESOL_MSTR display flags from BUSI_ENV_SET_INFM. */
     private final com.kosign.wecms.domain.payment.approvalbox.service.ApprovalDisplayFlagsResolver displayFlagsResolver;
     /** M-1 (legacy parity): shared Request Approval attachment writer (EXPT_RESOL_FILE). */
@@ -425,6 +428,9 @@ public class ExpensePaymentService {
     public CreateScheduledTransferResponse createDraft(
             CreateScheduledTransferRequest req,
             MultipartFile file) {
+        // Legacy parity (pymn_0003_002_c001_act.jsp): the original workbook is
+        // mandatory at save — it backs ORG_FILE_NM + the ERP_TRNS_HSTR upload row.
+        com.kosign.wecms.domain.payment.common.PaymentUploadFileGuard.requireUploadedFile(file);
         // One-shot retry on the SCDUL_PYMN_NO MAX+1 race (wb_get_next_val has no
         // row lock). Each attempt runs in its own transaction via
         // TransactionalRetry.runOnce, so a failed attempt fully rolls back and the
@@ -451,6 +457,14 @@ public class ExpensePaymentService {
         String bizKey = requireTenant();
         String userId = TenantContext.currentUserId();
         String now    = OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC).format(DTM14);
+
+        // Legacy parity (PymnHelper.uploadPaymentExcel:1305 →
+        // validateUploadedPayments:1262-1299, WBE1191): the mixed CITAD/NAPAS guard
+        // runs again at SAVE, not only at parse. Closes the direct-API bypass.
+        uploadConsistencyValidator.assertSingleNetwork(
+                req.lines().stream()
+                        .map(com.kosign.wecms.domain.payment.internaltransfer.dto.TransferLineInput::antDivCd)
+                        .toList());
 
         // P0 (audit task-44508): authoritative server-side blocked-char
         // enforcement BEFORE persistence (Remarks + Recipient Name).

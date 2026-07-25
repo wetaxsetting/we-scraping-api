@@ -13,6 +13,7 @@ import com.kosign.wecms.domain.setting.contacts.dto.ContactAccountRow;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactAddressRow;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactCreateRequest;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactListResponse;
+import com.kosign.wecms.domain.setting.contacts.dto.RecentContactsResponse;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactOverseasRow;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactRow;
 import com.kosign.wecms.domain.setting.contacts.dto.ContactUpdateRequest;
@@ -42,6 +43,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -102,6 +104,10 @@ public class ContactsService {
     public static final int MAX_PAGE_SIZE = 100;
     public static final int DEFAULT_PAGE_SIZE = 15;
 
+    /** RECENT quick-pick length. Matches the legacy contact-recents
+     *  read ({@code WABOOKS_MREC_R030} REC1 — {@code LIMIT 3}). */
+    static final int RECENT_LIMIT = 3;
+
     /** Default ORDER BY when no user sort is supplied. Mirrors legacy
      *  {@code SortHelper.java} (`else if ("comm_0184_001_r001".equals(webSvcId))
      *  { sortItems.add("hand_trco_key:asc"); }`) — alphabetical by
@@ -130,6 +136,28 @@ public class ContactsService {
     private final LegacyFunctionRepository legacyFn;
     private final ContactsValidator validator;
     private final com.kosign.wecms.common.firmbanking.FirmBankingInquiryService firmBankingInquiry;
+
+    /* =================================================================
+     *  Recent quick-pick (read-only)
+     * ================================================================= */
+
+    /**
+     * The current user's most-recently-used contacts (top-3, newest
+     * first) for the Contact selector's RECENT section. Server-side,
+     * read-only — derived from the classification the user applies to
+     * bank transactions ({@code ACCT_TRNS_RCV_PAY_INFM.RCV_PAY_TRCO_KEY},
+     * stamped with {@code MOD_ID}/{@code MOD_DTM} on each pick). Fills as
+     * the user classifies; no localStorage, no new table (PO decision
+     * 2026-07-24 — "derive all 3 recents from ACCT_TRNS_RCV_PAY_INFM").
+     */
+    @Transactional(readOnly = true)
+    public RecentContactsResponse recentContacts() {
+        List<String> keys = acctTrnsRcvPayRepo.findRecentContactKeys(
+                TenantContext.currentBizKey(),
+                TenantContext.currentUserId(),
+                PageRequest.of(0, RECENT_LIMIT));
+        return new RecentContactsResponse(keys);
+    }
 
     /* =================================================================
      *  List + getOne

@@ -35,7 +35,8 @@ The real divergences are concentrated in the **save path** and in **payroll-spec
 | **I1** | INFO | `note` / `doc_no` are hard-nulled in the web `parsedToWire` (`PayrollPaymentUploadDialog.tsx:250-251`) and null in the parser. Payroll's 8-column template has **no** Note / Document No. columns, so legacy never stores them either → **null on both sides = parity** (not a bug). |
 | **I2** | INFO | `trco_key` / `hand_trco_key` / `trco_cmnm` / `trco_cmenm` are dropped on the web save and null in the parser. Payroll has no Contact Code column; legacy stores nothing → **parity** (null both sides). |
 | **I3** | INFO | **Audit log is refactor-only.** Refactor writes `AUDIT_LOGS_INFM` with `WSVC_ID = "payroll-payment"` (slug, `PayrollPaymentService.java:98,528`). Legacy payroll upload writes **no** audit row (only ERP history). This is an additive refactor cross-cutting standard (CLAUDE.md slug rule) — no migration risk. |
-| **I4** | INFO | **At parity:** `SCDUL_PYMN_TYPE_CD = "00"`, ERP `ERP_TRNS_HSTR` `TRNS_TYPE_CD = "12"` (`PAYROLL_SCHEDULED_PAYMENT`), `TRNF_YN = "N"`, single-currency-per-file guard, ChartAcct lookup, positive-amount check, no save-side re-validation (legacy also has none), key generation via `wb_get_next_val`, `OUT_BANK_CD` normalized from the withdrawal bank, `CCY_CD` = first-row transfer currency, `WDRL_CCY_CD` = withdrawal-account currency. |
+| **I4** | INFO | **At parity:** `SCDUL_PYMN_TYPE_CD = "00"`, ERP `ERP_TRNS_HSTR` `TRNS_TYPE_CD = "12"` (`PAYROLL_SCHEDULED_PAYMENT`), `TRNF_YN = "N"`, single-currency-per-file guard, ChartAcct lookup, positive-amount check, no save-side re-validation (legacy also has none), key generation via `wb_get_next_val`, `OUT_BANK_CD` normalized from the withdrawal bank, `CCY_CD` = first-row transfer currency, ~~`WDRL_CCY_CD` = withdrawal-account currency~~. |
+| **I4-a** | **CORRECTION 2026-07-25** | ⚠️ **The `WDRL_CCY_CD` half of I4 was wrong.** The backend wrote `WDRL_CCY_CD = req.ccyCd()` — the **transfer** currency — while legacy `pymn_0005_002_c001_act.jsp:84` writes `input.CCY_CD`, the withdrawal **account's** currency (`ACCT_MSTR.CCY_CD` via the `comm_1001_001` picker). The parity claim held only *because* G10's frontend currency-filter usually makes the two equal; on G10's own documented fallback path ("falls back to the full list when no account matches") they diverge and the column was wrong. **Fixed 2026-07-25** — resolved server-side from `ACCT_MSTR` (`PayrollPaymentService.resolveWithdrawalCcyCd`, mirroring vendor GAP-4), so the column no longer depends on frontend behaviour. See [payment-excel-upload-crossmodule-verification.md](payment-excel-upload-crossmodule-verification.md) §F1. |
 | **T1** | MEDIUM (test) | **No tests** for `PayrollPaymentExcelParser` (header/column/CITAD-NAPAS/guards) or `createDraft`/`doCreateDraft` (master/detail mapping, type code, ERP, audit, key-race). Existing payroll tests cover only dispatch / result / approval-attachment. |
 
 Everything outside G1–G10 is at parity. Note that `CITAD_BANK_CD` being null in the refactor (parser "Phase 2" positional null) is **not** a gap here: legacy payroll save never sets `CITAD_BANK_CD` either, so both are null.
@@ -237,7 +238,7 @@ Method: unzipped each `.xlsx`, extracted `sharedStrings` + `sheet1` rows 1–6 f
 | `OUT_BANK_CD` | `NapasBankInfo.napas_bank_cd` | `OutBankCdNormalizer.normalize` | ✅ |
 | `WDRL_ACT_NO` | `ACCT_NO` | `req.acctNo()` | ✅ |
 | `CCY_CD` | first-row `TRNF_CCY_CD` (fb VND) | `req.ccyCd()` (= first-row ccy from FE) | ✅ |
-| `WDRL_CCY_CD` | `CcyCd.fromValue(CCY_CD)` | `req.ccyCd()` | ✅ (FE sends acct ccy via ccyCd) |
+| `WDRL_CCY_CD` | `CcyCd.fromValue(CCY_CD)` — the withdrawal **account's** currency | `resolveWithdrawalCcyCd(...)` → `ACCT_MSTR.CCY_CD`, falling back to the transfer ccy **(corrected 2026-07-25;** was `req.ccyCd()` = the **transfer** currency**)** | ✅ since 2026-07-25 — see I4-a |
 | `TITL` | filename − ext | filename − ext | ✅ |
 | `TRNF_YN` | `"N"` | `"N"` | ✅ |
 | `TOT_TRNS_CNT` | `REC.size()` | line count | ✅ |
@@ -459,7 +460,8 @@ cd "c:/WECMS PROJECT/wecms-api" && ./gradlew test --tests "*Payroll*"
   - Tracks the parsed file currency (`fileCcyCd`) from the first success row's `trnf_ccy_cd`.
   - **Currency-filters** the withdrawal-account dropdown to accounts whose `ccy_cd` matches the file currency (legacy `comm_1001_001` is currency-filtered). Falls back to the full list only when no account matches, so the picker is never mysteriously empty.
   - **Auto-selects** the matching-currency account after parse; if the current selection's currency differs and a match exists, it switches; if **no** account matches, it **clears** the selection (Save stays disabled) rather than keep an unrelated first account.
-- No backend change: with currency-matching enforced, the FE-sent `ccy_cd` (= file currency) already equals the selected account's currency, so the backend's `WDRL_CCY_CD = ccy_cd` fallback stays correct.
+- ~~No backend change: with currency-matching enforced, the FE-sent `ccy_cd` (= file currency) already equals the selected account's currency, so the backend's `WDRL_CCY_CD = ccy_cd` fallback stays correct.~~
+  **Superseded 2026-07-25 (see I4-a).** This reasoning made the DB column's correctness depend on a frontend invariant, and it does not hold on this very bullet's documented fallback ("falls back to the full list only when no account matches") — there the account currency ≠ file currency and `WDRL_CCY_CD` was written wrong. The backend now resolves the account currency from `ACCT_MSTR` itself, so the column is correct regardless of what the frontend sends.
 
 **Files touched (batch 2):**
 - `wecms-api/.../payrollpayment/service/PayrollPaymentExcelParser.java` — G6.

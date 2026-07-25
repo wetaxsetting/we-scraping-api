@@ -73,6 +73,7 @@ class PurposeSettingsServiceTest {
     @Mock AuditLogService           auditLogService;
     @Mock LegacyFunctionRepository  legacyFunctions;
     @Mock SystemUsageNameRepository sysNameRepo;
+    @Mock com.kosign.wecms.domain.banking.repository.AcctTrnsRcvPayInfmRepository acctTrnsRcvPayRepo;
 
     PurposeSettingsService service;
 
@@ -85,7 +86,7 @@ class PurposeSettingsServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new PurposeSettingsService(repo, inUseRepo, auditLogService, legacyFunctions, sysNameRepo);
+        service = new PurposeSettingsService(repo, inUseRepo, auditLogService, legacyFunctions, sysNameRepo, acctTrnsRcvPayRepo);
         TenantContext.set(USER, USER, BIZ, LangCd.EN);
     }
 

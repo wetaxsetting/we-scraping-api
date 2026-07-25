@@ -45,6 +45,7 @@ class AuthServiceTest {
     @Mock PasswordEncoder passwordEncoder;
     @Mock JwtTokenProvider tokenProvider;
     @Mock LoginHistoryService history;
+    @Mock AdminLoginHistoryService adminHistory;
     @Mock MenuAuthorizationService menuAuthService;
     @Mock LoginLockoutService loginLockout;
 
@@ -68,7 +69,7 @@ class AuthServiceTest {
     void seed() {
         authService = new AuthService(
                 userRepo, userBusiRepo, busiRepo, busiAdmnRepo,
-                passwordEncoder, tokenProvider, history, menuAuthService,
+                passwordEncoder, tokenProvider, history, adminHistory, menuAuthService,
                 new com.kosign.wecms.common.security.TokenRevocationService(),
                 loginLockout);
 
@@ -104,6 +105,17 @@ class AuthServiceTest {
         return b;
     }
 
+    /** Admin master row for (bizKey, ID) with the user's display name — the
+     *  presence of this row means ADMIN, and its USER_NM feeds the
+     *  BUSI_ADMN_LOGIN_HIS audit (legacy busiAdmnInfm.getUserNm()). */
+    private BusiAdmnInfm adminOf(String bizKey) {
+        BusiAdmnInfm a = new BusiAdmnInfm();
+        a.setBizKey(bizKey);
+        a.setUserId(ID);
+        a.setUserNm("Test User");
+        return a;
+    }
+
     // ---------------------------------------------------------------
     // Single-link users — auto-pick the only company.
     // ---------------------------------------------------------------
@@ -114,7 +126,7 @@ class AuthServiceTest {
         when(passwordEncoder.matches(PW, HASH)).thenReturn(true);
         when(userBusiRepo.findAllByUserIdAndDelYn(ID, "N")).thenReturn(List.of(linkA));
         when(busiRepo.findById(BIZ_A)).thenReturn(Optional.of(company(BIZ_A, "WeCMS R&D Tenant", "F")));
-        when(busiAdmnRepo.existsByBizKeyAndUserId(BIZ_A, ID)).thenReturn(true);
+        when(busiAdmnRepo.findByBizKeyAndUserId(BIZ_A, ID)).thenReturn(Optional.of(adminOf(BIZ_A)));
         when(tokenProvider.issue(ID, "Test User", BIZ_A, LANG, TenantContext.AUTH_GR_ADMIN, "F"))
                 .thenReturn("jwt-token-f");
         when(tokenProvider.expiresInSeconds()).thenReturn(3600L);
@@ -140,7 +152,7 @@ class AuthServiceTest {
         when(passwordEncoder.matches(PW, HASH)).thenReturn(true);
         when(userBusiRepo.findAllByUserIdAndDelYn(ID, "N")).thenReturn(List.of(linkB));
         when(busiRepo.findById(BIZ_B)).thenReturn(Optional.of(company(BIZ_B, "HAENGSUNG ELECTRONICS", "H")));
-        when(busiAdmnRepo.existsByBizKeyAndUserId(BIZ_B, ID)).thenReturn(false);
+        when(busiAdmnRepo.findByBizKeyAndUserId(BIZ_B, ID)).thenReturn(Optional.empty());
         when(tokenProvider.issue(ID, "Test User", BIZ_B, LANG, TenantContext.AUTH_GR_USER, "H"))
                 .thenReturn("jwt-token-h");
 
@@ -158,7 +170,7 @@ class AuthServiceTest {
         when(passwordEncoder.matches(PW, HASH)).thenReturn(true);
         when(userBusiRepo.findAllByUserIdAndDelYn(ID, "N")).thenReturn(List.of(linkC));
         when(busiRepo.findById(BIZ_C)).thenReturn(Optional.of(company(BIZ_C, "WeCMS Lumens R&D", "M")));
-        when(busiAdmnRepo.existsByBizKeyAndUserId(BIZ_C, ID)).thenReturn(false);
+        when(busiAdmnRepo.findByBizKeyAndUserId(BIZ_C, ID)).thenReturn(Optional.empty());
         when(tokenProvider.issue(ID, "Test User", BIZ_C, LANG, TenantContext.AUTH_GR_USER, "M"))
                 .thenReturn("jwt-token-m");
 
@@ -173,7 +185,7 @@ class AuthServiceTest {
         when(passwordEncoder.matches(PW, HASH)).thenReturn(true);
         when(userBusiRepo.findAllByUserIdAndDelYn(ID, "N")).thenReturn(List.of(linkA));
         when(busiRepo.findById(BIZ_A)).thenReturn(Optional.of(company(BIZ_A, "Mystery Tenant", null)));
-        when(busiAdmnRepo.existsByBizKeyAndUserId(BIZ_A, ID)).thenReturn(false);
+        when(busiAdmnRepo.findByBizKeyAndUserId(BIZ_A, ID)).thenReturn(Optional.empty());
         when(tokenProvider.issue(ID, "Test User", BIZ_A, LANG, TenantContext.AUTH_GR_USER, null))
                 .thenReturn("jwt-token-null");
 
@@ -191,7 +203,7 @@ class AuthServiceTest {
         when(passwordEncoder.matches(PW, HASH)).thenReturn(true);
         when(userBusiRepo.findAllByUserIdAndDelYn(ID, "N")).thenReturn(List.of(linkA));
         when(busiRepo.findById(BIZ_A)).thenReturn(Optional.of(company(BIZ_A, "Legacy WABOOKS", "W")));
-        when(busiAdmnRepo.existsByBizKeyAndUserId(BIZ_A, ID)).thenReturn(false);
+        when(busiAdmnRepo.findByBizKeyAndUserId(BIZ_A, ID)).thenReturn(Optional.empty());
         when(tokenProvider.issue(ID, "Test User", BIZ_A, LANG, TenantContext.AUTH_GR_USER, "W"))
                 .thenReturn("jwt-token-w");
 
@@ -225,7 +237,7 @@ class AuthServiceTest {
         when(passwordEncoder.matches(PW, legacyHash)).thenReturn(true);
         when(userBusiRepo.findAllByUserIdAndDelYn(ID, "N")).thenReturn(List.of(linkA));
         when(busiRepo.findById(BIZ_A)).thenReturn(Optional.of(company(BIZ_A, "WeCMS R&D Tenant", "F")));
-        when(busiAdmnRepo.existsByBizKeyAndUserId(BIZ_A, ID)).thenReturn(false);
+        when(busiAdmnRepo.findByBizKeyAndUserId(BIZ_A, ID)).thenReturn(Optional.empty());
         when(tokenProvider.issue(ID, "Test User", BIZ_A, LANG, TenantContext.AUTH_GR_USER, "F"))
                 .thenReturn("jwt-token");
 
@@ -237,6 +249,47 @@ class AuthServiceTest {
         verify(userRepo, never()).save(any());
         // Sanity: the stored hash is still the original legacy SHA-256 value.
         assertThat(user.getUserPw()).isEqualTo(legacyHash);
+    }
+
+    // ---------------------------------------------------------------
+    // Gap #9 — admin login-history audit (BUSI_ADMN_LOGIN_HIS).
+    // ---------------------------------------------------------------
+
+    @Test
+    void adminLogin_writesBusiAdmnLoginHis_withLegacyFields() {
+        // Legacy logn_2001_001_r001_act.jsp:270-284 — on a successful WeCMS
+        // login by a company admin, append BUSI_ADMN_LOGIN_HIS with
+        // (BIZ_KEY, REG_ID=userId, REG_NM=BUSI_ADMN_INFM.USER_NM, IP_ADDR).
+        when(userRepo.findById(ID)).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches(PW, HASH)).thenReturn(true);
+        when(userBusiRepo.findAllByUserIdAndDelYn(ID, "N")).thenReturn(List.of(linkA));
+        when(busiRepo.findById(BIZ_A)).thenReturn(Optional.of(company(BIZ_A, "WeCMS R&D Tenant", "F")));
+        when(busiAdmnRepo.findByBizKeyAndUserId(BIZ_A, ID)).thenReturn(Optional.of(adminOf(BIZ_A)));
+        when(tokenProvider.issue(ID, "Test User", BIZ_A, LANG, TenantContext.AUTH_GR_ADMIN, "F"))
+                .thenReturn("jwt-token-f");
+
+        authService.login(new LoginRequest(ID, PW, null), IP, LANG);
+
+        verify(adminHistory).record(BIZ_A, ID, "Test User", IP);
+    }
+
+    @Test
+    void nonAdminLogin_doesNotWriteBusiAdmnLoginHis() {
+        // Legacy writes the admin row ONLY when busiAdmnInfm != null. A plain
+        // USER login must leave BUSI_ADMN_LOGIN_HIS untouched (USER_LOGIN_HIS
+        // still gets its SUCCESS row).
+        when(userRepo.findById(ID)).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches(PW, HASH)).thenReturn(true);
+        when(userBusiRepo.findAllByUserIdAndDelYn(ID, "N")).thenReturn(List.of(linkB));
+        when(busiRepo.findById(BIZ_B)).thenReturn(Optional.of(company(BIZ_B, "HAENGSUNG ELECTRONICS", "H")));
+        when(busiAdmnRepo.findByBizKeyAndUserId(BIZ_B, ID)).thenReturn(Optional.empty());
+        when(tokenProvider.issue(ID, "Test User", BIZ_B, LANG, TenantContext.AUTH_GR_USER, "H"))
+                .thenReturn("jwt-token-h");
+
+        authService.login(new LoginRequest(ID, PW, null), IP, LANG);
+
+        verify(history).record(ID, IP, UserLoginHis.RSLT_SUCCESS, null);
+        verify(adminHistory, never()).record(anyString(), anyString(), any(), anyString());
     }
 
     // ---------------------------------------------------------------
@@ -287,7 +340,7 @@ class AuthServiceTest {
         when(passwordEncoder.matches(PW, HASH)).thenReturn(true);
         when(userBusiRepo.findAllByUserIdAndDelYn(ID, "N")).thenReturn(List.of(linkA, linkB));
         when(busiRepo.findById(BIZ_A)).thenReturn(Optional.of(company(BIZ_A, "WeCMS R&D Tenant", "F")));
-        when(busiAdmnRepo.existsByBizKeyAndUserId(BIZ_A, ID)).thenReturn(true);
+        when(busiAdmnRepo.findByBizKeyAndUserId(BIZ_A, ID)).thenReturn(Optional.of(adminOf(BIZ_A)));
         when(tokenProvider.issue(ID, "Test User", BIZ_A, LANG, TenantContext.AUTH_GR_ADMIN, "F"))
                 .thenReturn("jwt-round-1");
 
@@ -297,7 +350,7 @@ class AuthServiceTest {
 
         // Round 2 — same credentials, picks the H company instead.
         when(busiRepo.findById(BIZ_B)).thenReturn(Optional.of(company(BIZ_B, "HAENGSUNG ELECTRONICS", "H")));
-        when(busiAdmnRepo.existsByBizKeyAndUserId(BIZ_B, ID)).thenReturn(false);
+        when(busiAdmnRepo.findByBizKeyAndUserId(BIZ_B, ID)).thenReturn(Optional.empty());
         when(tokenProvider.issue(ID, "Test User", BIZ_B, LANG, TenantContext.AUTH_GR_USER, "H"))
                 .thenReturn("jwt-round-2");
 

@@ -49,5 +49,8 @@ public class UserLoginHis {
 
     public static final String RSLT_SUCCESS = "SUCCESS";
     public static final String RSLT_FAIL    = "FAIL";
+    /** Legacy parity — logout writes a history row with this result code
+     *  (JEX {@code logn_0002_001_r001_act.jsp:52} → {@code entity.setRsltCd("LOGOUT")}). */
+    public static final String RSLT_LOGOUT  = "LOGOUT";
     public static final String CHNL_PC      = "PC";
 }

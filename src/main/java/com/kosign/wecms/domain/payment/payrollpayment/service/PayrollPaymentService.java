@@ -198,6 +198,13 @@ public class PayrollPaymentService {
      *  6-digit internal BANK_CD on save (legacy {@code getBankCode} CITAD
      *  branch). Same repository the parser uses. */
     private final TbFirmBankCodeRepository      firmBankCodeRepo;
+    /** Resolves the withdrawal account's own currency for
+     *  {@code SCDUL_PYMN_SUMR.WDRL_CCY_CD} (legacy
+     *  {@code pymn_0005_002_c001_act.jsp:84} reads {@code input.CCY_CD}, which the
+     *  legacy withdrawal-account dropdown {@code comm_1001_001} sources from
+     *  {@code ACCT_MSTR.CCY_CD}). Same repository + resolver shape as
+     *  {@code VendorPaymentService.resolveWithdrawalCcyCd}. */
+    private final com.kosign.wecms.domain.banking.repository.AcctMstrRepository acctMstrRepository;
 
     @Transactional(readOnly = true)
     public ScheduledTransferListResponse list(
@@ -411,6 +418,9 @@ public class PayrollPaymentService {
     public CreateScheduledTransferResponse createDraft(
             CreateScheduledTransferRequest req,
             MultipartFile file) {
+        // Legacy parity (pymn_0005_002_c001_act.jsp:48-49): the original workbook is
+        // mandatory at save — it backs ORG_FILE_NM + the ERP_TRNS_HSTR upload row.
+        com.kosign.wecms.domain.payment.common.PaymentUploadFileGuard.requireUploadedFile(file);
         // One-shot retry on the SCDUL_PYMN_NO MAX+1 race (wb_get_next_val has no
         // row lock). Each attempt runs in its own transaction via
         // TransactionalRetry.runOnce, so a failed attempt fully rolls back and the
@@ -464,7 +474,16 @@ public class PayrollPaymentService {
         master.setOutBankCd(outBankCdNormalizer.normalize(req.bankCd()));
         master.setWdrlActNo(req.acctNo());
         master.setCcyCd(req.ccyCd());
-        master.setWdrlCcyCd(req.ccyCd());
+        // Legacy parity (pymn_0005_002_c001_act.jsp:78,84): the two currency
+        // columns hold DIFFERENT values — CCY_CD is the TRANSFER currency (legacy
+        // takes it from the first REC row's TRNF_CCY_CD) while WDRL_CCY_CD is the
+        // WITHDRAWAL ACCOUNT's own currency (legacy `input.CCY_CD`, sourced by the
+        // comm_1001_001 dropdown from ACCT_MSTR.CCY_CD). The payroll frontend sends
+        // ccy_cd = trnf_ccy_cd = the file's batch currency, so reusing it for
+        // WDRL_CCY_CD diverged whenever the account currency differs from the file
+        // currency. Resolve the account currency from ACCT_MSTR instead — same fix
+        // as vendor GAP-4 / expense G4 / internal-transfer G3.
+        master.setWdrlCcyCd(resolveWithdrawalCcyCd(bizKey, req.bankCd(), req.acctNo(), req.ccyCd()));
         master.setTitl(req.titl());
         master.setTrnfYn(TrnfYn.NOT_TRANSFERRED.code());
         master.setErpProcCmplYn("N");
@@ -624,6 +643,32 @@ public class PayrollPaymentService {
                 .map(TbFirmBankCode::getBankCd)
                 .filter(b -> b != null && !b.isBlank())
                 .orElse(code);
+    }
+
+    /**
+     * Legacy parity ({@code pymn_0005_002_c001_act.jsp:84}): resolve the
+     * WITHDRAWAL ACCOUNT's own currency for {@code SCDUL_PYMN_SUMR.WDRL_CCY_CD}.
+     * Legacy reads {@code input.CCY_CD}, which the {@code comm_1001_001}
+     * withdrawal-account dropdown sources from {@code ACCT_MSTR.CCY_CD} — it is
+     * NOT the batch transfer currency. Falls back to the transfer currency when
+     * the account row cannot be resolved (defensive — the picker guarantees it
+     * exists). Mirrors {@code VendorPaymentService.resolveWithdrawalCcyCd}.
+     */
+    private String resolveWithdrawalCcyCd(
+            String bizKey, String bankCd, String acctNo, String fallbackCcyCd) {
+        if (bankCd == null || bankCd.isBlank() || acctNo == null || acctNo.isBlank()) {
+            return fallbackCcyCd;
+        }
+        return acctMstrRepository
+                .findByBizKeyAndBankCdAndAcctNo(bizKey, bankCd.trim(), acctNo.trim())
+                .map(com.kosign.wecms.domain.banking.entity.AcctMstr::getCcyCd)
+                .filter(c -> c != null && !c.isBlank())
+                .orElseGet(() -> {
+                    log.warn("feature=payroll-payment withdrawal account not resolved for "
+                            + "WDRL_CCY_CD bizKey={} bankCd={} acctNo={} — using transfer ccy {}",
+                            bizKey, bankCd, acctNo, fallbackCcyCd);
+                    return fallbackCcyCd;
+                });
     }
 
     /**
@@ -1120,7 +1165,20 @@ public class PayrollPaymentService {
         if (TrnfYn.TRANSFERRED.code().equals(master.getTrnfYn())) {
             throw new BusinessException("WBE2064");
         }
-        if (master.getApprSeqNo() == null || master.getApprSeqNo().isBlank()) {
+        String apprSeqNo = master.getApprSeqNo();
+        if (apprSeqNo == null || apprSeqNo.isBlank()) {
+            throw new BusinessException("WBE2063");
+        }
+        // G1 (legacy parity — pymn_0005_001_c001_act.jsp:122-130): a batch may be
+        // dispatched ONLY when its approval is fully approved, i.e.
+        // EXPT_RESOL_MSTR.APPR_TYPE_CD = '01'. Pending ('00'), rejected ('02'),
+        // and partially-approved ('03') batches all carry an APPR_SEQ_NO but are NOT
+        // approved. One fetch of the approval master serves both this gate and the
+        // APPR_FUND_TP → FUND_TP resolution below.
+        ExptResolMstr apprMstr = exptResolMstrRepository
+                .findByBizKeyAndApprSeqNoIn(bizKey, java.util.List.of(apprSeqNo))
+                .stream().findFirst().orElse(null);
+        if (apprMstr == null || !"01".equals(apprMstr.getApprTypeCd())) {
             throw new BusinessException("WBE2063");
         }
 
@@ -1139,17 +1197,10 @@ public class PayrollPaymentService {
         cutoffValidator.validate(new CutoffCheck(
                 master.getOutBankCd(), network, false, vndToVnd, hasLargeTxn));
 
-        // PR2: resolve Payroll Type (EXPT_RESOL_MSTR.APPR_FUND_TP by APPR_SEQ_NO)
-        // → TB_PAY_FILE_MST.FUND_TP, then dispatch via the Payroll-only
-        // file-route executor (legacy pymn_0005_001_c001 — never TB_PAY_TARGET).
-        String apprFundTp = (master.getApprSeqNo() != null && !master.getApprSeqNo().isBlank())
-                ? exptResolMstrRepository
-                        .findByBizKeyAndApprSeqNoIn(bizKey, java.util.List.of(master.getApprSeqNo()))
-                        .stream()
-                        .findFirst()
-                        .map(ExptResolMstr::getApprFundTp)
-                        .orElse(null)
-                : null;
+        // PR2: resolve Payroll Type (EXPT_RESOL_MSTR.APPR_FUND_TP) → TB_PAY_FILE_MST.FUND_TP
+        // from the approval master already fetched for the G1 gate above (legacy
+        // pymn_0005_001_c001 — never TB_PAY_TARGET).
+        String apprFundTp = apprMstr.getApprFundTp();
         payrollDispatchExecutor.execute(master, lines, req.trnfCcyCd(), apprFundTp);
 
         master.setTrnfYn(TrnfYn.TRANSFERRED.code());

@@ -173,10 +173,36 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
      *       skips.</li>
      * </ul>
      *
-     * <p>Always constrains on {@code BIZ_KEY} (tenant) and {@code
-     * ACTV_YN = 'Y'}. Sort + pagination flow through {@link Pageable}
-     * — pass {@link Pageable#unpaged(Sort)} for the export path so the
-     * full filtered set is returned in one round trip.
+     * <p>Always constrains on {@code BIZ_KEY} (tenant), {@code
+     * ACTV_YN = 'Y'}, and {@code HAND_REG_YN = 'N'}. Sort + pagination
+     * flow through {@link Pageable} — pass {@link Pageable#unpaged(Sort)}
+     * for the export path so the full filtered set is returned in one
+     * round trip.
+     *
+     * <p><b>A1-01 parity fixes (2026-07-24, approved refactor behavior).</b>
+     * Two predicates were added to bring the Account-list query in line
+     * with legacy {@code comm_0141_001_r001} (the Transaction History
+     * bank-account filter, IDO {@code ACCT_MSTR_R014}):
+     * <ul>
+     *   <li><b>D1 — {@code HAND_REG_YN = 'N'}</b> (unconditional): legacy
+     *       {@code getDynamic0}/{@code getDynamic1} force this on both the
+     *       VND and FCY sidebar queries. Hand/manually-registered accounts
+     *       are excluded. This shared query backs BOTH the Transaction
+     *       History sidebar AND the Account Inquiry main table, so — per
+     *       the PO decision on 2026-07-24 — Account Inquiry now also hides
+     *       hand-registered rows. That is a deliberate refactor behavior
+     *       change: legacy {@code fnsh_0001_001} (Account Inquiry) did NOT
+     *       force {@code HAND_REG_YN}. Both refactor screens follow one
+     *       consistent rule.</li>
+     *   <li><b>D3 — PrdtType H maturity/balance guard</b>
+     *       ({@code :excludeMaturedHSavings}): legacy sidebar applies this
+     *       on the ROW list (redmine #42633). For an H tenant, savings /
+     *       term-deposit types (05/06/08) are kept only when not-yet-matured
+     *       ({@code EXPI_DT} null or {@code >= CURRENT_DATE}) AND
+     *       {@code BAL > 0}. The SAME flag drives {@link #aggregateByCcy}
+     *       so summary-card totals and rows stay in sync. Non-H tenants
+     *       pass {@code false} and the guard is a no-op.</li>
+     * </ul>
      *
      * <p><b>Why not match raw columns:</b> the legacy seed leaves
      * {@code ACCT_NICK_NM} NULL for most accounts; the displayed string
@@ -190,6 +216,7 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
             SELECT a FROM AcctMstr a
              WHERE a.bizKey = :bizKey
                AND a.actvYn = 'Y'
+               AND a.handRegYn = 'N'
                AND (:ccyEq  IS NULL OR a.ccyCd = :ccyEq)
                AND (:ccyNot IS NULL OR a.ccyCd <> :ccyNot)
                AND (:acctTypeCdIn IS NULL OR a.acctTypeCd IN :acctTypeCdIn)
@@ -202,6 +229,11 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
                            AND aa.userId = :authUserId
                            AND aa.useYn = 'Y'
                            AND aa.authType = 'V'))
+               AND (:excludeMaturedHSavings = FALSE
+                    OR a.acctTypeCd NOT IN ('05', '06', '08')
+                    OR ((a.expiDt IS NULL
+                         OR FUNCTION('to_date', a.expiDt, 'YYYYMMDD') >= CURRENT_DATE)
+                        AND a.bal > 0))
                AND (:keywordPattern IS NULL
                     OR LOWER(COALESCE(
                             function('wb_format_acct_nick_nm',
@@ -217,6 +249,7 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
             @Param("bankCd")          String bankCd,
             @Param("keywordPattern")  String keywordPattern,
             @Param("authUserId")      String authUserId,
+            @Param("excludeMaturedHSavings") boolean excludeMaturedHSavings,
             Pageable pageable);
 
     /**
@@ -232,14 +265,19 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
      * {@link #findFiltered} so the summary tile counts/totals stay in
      * sync with the table rows when a search is in effect.
      *
-     * <p>AI-06: PrdtType H summary-card exclusion (legacy
-     * {@code fnsh_0001_001_r001_tot_dynamic0} :505-509, redmine #42633).
-     * For an H tenant, savings/term-deposit accounts (05/06/08) are
-     * excluded from the per-currency summary-card total UNLESS they are
-     * not-yet-matured AND carry a positive balance. Applies ONLY to this
-     * aggregate (the summary cards) — the row list ({@link #findFiltered})
-     * is intentionally left untouched, mirroring legacy where the same
-     * clause is commented out of dynamic0.
+     * <p>AI-06 / A1-01-D3: PrdtType H maturity/balance exclusion
+     * (legacy {@code fnsh_0001_001_r001_tot_dynamic0} :505-509 +
+     * {@code comm_0141_001_r001} getDynamic0/1, redmine #42633). For an
+     * H tenant, savings/term-deposit accounts (05/06/08) are excluded
+     * UNLESS they are not-yet-matured AND carry a positive balance.
+     * <b>As of the A1-01 fix (2026-07-24) the SAME guard is applied to
+     * the row list ({@link #findFiltered}) too</b> — the two queries now
+     * share the {@code :excludeMaturedHSavings} flag so summary-card
+     * totals and the visible rows stay in sync. (Previously this was
+     * aggregate-only; the row-list H-guard is the D3 parity fix, mirroring
+     * legacy {@code comm_0141_001} which applies the clause on its row
+     * query.) Includes the {@code HAND_REG_YN = 'N'} predicate so the
+     * totals match the hand-registered exclusion (D1) on the row list.
      */
     @Query("""
             SELECT new com.kosign.wecms.domain.banking.repository.CcyAggregate(
@@ -250,6 +288,7 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
               FROM AcctMstr a
              WHERE a.bizKey = :bizKey
                AND a.actvYn = 'Y'
+               AND a.handRegYn = 'N'
                AND (:ccyEq  IS NULL OR a.ccyCd = :ccyEq)
                AND (:ccyNot IS NULL OR a.ccyCd <> :ccyNot)
                AND (:acctTypeCdIn IS NULL OR a.acctTypeCd IN :acctTypeCdIn)
@@ -393,13 +432,19 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
      * by bank or types in the search box (selecting one bank should not
      * remove the others from the dropdown).
      *
-     * <p>Active accounts only ({@code ACTV_YN = 'Y'}). Ordered by
+     * <p>Active accounts only ({@code ACTV_YN = 'Y'}), and — per the
+     * A1-01 fix (2026-07-24) — mirroring the same {@code HAND_REG_YN = 'N'}
+     * (D1) and PrdtType H maturity/balance guard (D3) the row list
+     * ({@link #findFiltered}) applies, so the dropdown never lists a bank
+     * whose only accounts are hand-registered or matured-H-savings (which
+     * would leave the user with an empty grid on selection). Ordered by
      * {@code BANK_CD} so the frontend renders a deterministic list.
      */
     @Query("""
             SELECT DISTINCT a.bankCd FROM AcctMstr a
              WHERE a.bizKey = :bizKey
                AND a.actvYn = 'Y'
+               AND a.handRegYn = 'N'
                AND (:ccyEq  IS NULL OR a.ccyCd = :ccyEq)
                AND (:ccyNot IS NULL OR a.ccyCd <> :ccyNot)
                AND (:acctTypeCdIn IS NULL OR a.acctTypeCd IN :acctTypeCdIn)
@@ -411,6 +456,11 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
                            AND aa.userId = :authUserId
                            AND aa.useYn = 'Y'
                            AND aa.authType = 'V'))
+               AND (:excludeMaturedHSavings = FALSE
+                    OR a.acctTypeCd NOT IN ('05', '06', '08')
+                    OR ((a.expiDt IS NULL
+                         OR FUNCTION('to_date', a.expiDt, 'YYYYMMDD') >= CURRENT_DATE)
+                        AND a.bal > 0))
              ORDER BY a.bankCd
             """)
     List<String> findDistinctBankCds(
@@ -418,7 +468,8 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
             @Param("ccyEq")        String ccyEq,
             @Param("ccyNot")       String ccyNot,
             @Param("acctTypeCdIn") List<String> acctTypeCdIn,
-            @Param("authUserId")   String authUserId);
+            @Param("authUserId")   String authUserId,
+            @Param("excludeMaturedHSavings") boolean excludeMaturedHSavings);
 
     /**
      * Firm-banking withdrawal-account lookup for the payment Excel-Upload

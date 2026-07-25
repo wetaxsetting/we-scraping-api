@@ -125,6 +125,16 @@ public class VasAccountController {
         return ApiResponse.ok(service.lookup(searchWd));
     }
 
+    /** RECENT quick-pick — the current user's most-recently-used VAS
+     *  codes (top-3, newest first) for the Transaction-History picker.
+     *  Read-only, server-side, derived from {@code ACCT_TRNS_RCV_PAY_INFM}.
+     *  Literal path declared before {@code /{vasAcctSeqNo}} so it is never
+     *  captured as a path variable. */
+    @GetMapping("/recent")
+    public ApiResponse<com.kosign.wecms.domain.setting.vasaccount.dto.RecentVasAccountsResponse> recent() {
+        return ApiResponse.ok(service.recentVas());
+    }
+
     /** Detail by {@code vas_acct_seq_no}. 404-equivalent surfaces as
      *  {@code WBE2040} ("VAS Account not found in this tenant"). */
     @GetMapping("/{vasAcctSeqNo}")

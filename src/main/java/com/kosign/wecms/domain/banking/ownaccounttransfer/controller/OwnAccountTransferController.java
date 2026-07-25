@@ -194,7 +194,10 @@ public class OwnAccountTransferController {
      * {@code WBE_OAT_SOURCE_FORBIDDEN},
      * {@code WBE_OAT_TARGET_NAPAS_UNKNOWN},
      * {@code WBE_OAT_TARGET_BANK_NAPAS_MISMATCH},
-     * {@code WBE_OAT_TARGET_NOT_FOUND}.
+     * {@code WBE_OAT_TARGET_NOT_FOUND},
+     * {@code WBE_OAT_DUPLICATE_BANK_TX_ID} (a not-yet-settled row with
+     * the same {@code bank_tx_id} already exists — legacy
+     * {@code validateTrnsStlmId} parity).
      */
     @PostMapping("/scraping-result")
     public ApiResponse<ScrapingResultResponse> recordScrapingResult(

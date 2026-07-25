@@ -618,6 +618,23 @@ public class OwnAccountTransferService {
             rejectAndAudit(req, "WBE_OAT_TARGET_NOT_FOUND");
         }
 
+        // -- 5b. Duplicate settlement-id guard (legacy parity) -------
+        // Mirrors trns_0002_001_c001_act.jsp:94-99 +
+        // ValidationHelper.validateTrnsStlmId: when the engine returned
+        // a bank settlement id, reject a second intake carrying the same
+        // id that is not yet settled (TRNS_STLM_YN <> 'Y'). Stops a
+        // double-submit / engine-retry from writing a duplicate
+        // NAPAS_REMIT_TRNS_HSTR row. Legacy runs the check only when the
+        // TRS_ID is present, so a blank bankTxId skips the guard.
+        final String bankTxId = req.bankTxId();
+        if (bankTxId != null && !bankTxId.isBlank()
+                && napasRemitTrnsHstrRepo.existsByBizKeyAndTrnsStlmIdAndTrnsStlmYnNot(
+                        bizKey, bankTxId, OwnAccountTransferConstants.NRTH_STLM_YN_YES)) {
+            log.warn("oat scraping-result duplicate bank-tx-id bizKey={} idem={} bankTxId={}",
+                    bizKey, req.idempotencyKey(), bankTxId);
+            rejectAndAudit(req, "WBE_OAT_DUPLICATE_BANK_TX_ID");
+        }
+
         // -- 6. Persist ----------------------------------------------
         final NapasRemitTrnsHstr row = insertHistoryRow(req, bizKey, userId, resolvedTargetBankCd);
 

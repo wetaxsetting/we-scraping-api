@@ -15,6 +15,7 @@ import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeSettingDetail;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeSettingListResponse;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeSettingRow;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeSettingUpdateRequest;
+import com.kosign.wecms.domain.setting.purposesettings.dto.RecentPurposesResponse;
 import com.kosign.wecms.domain.setting.purposesettings.entity.BusiUsagSetInfm;
 import com.kosign.wecms.domain.setting.purposesettings.repository.PurposeInUseRepository;
 import com.kosign.wecms.domain.setting.purposesettings.repository.PurposeSettingsRepository;
@@ -22,6 +23,7 @@ import com.kosign.wecms.domain.setting.purposesettings.repository.SystemUsageNam
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -126,10 +128,42 @@ public class PurposeSettingsService {
     private final AuditLogService            auditLogService;
     private final LegacyFunctionRepository   legacyFunctions;
     private final SystemUsageNameRepository  sysNameRepo;
+    private final com.kosign.wecms.domain.banking.repository.AcctTrnsRcvPayInfmRepository acctTrnsRcvPayRepo;
+
+    /** RECENT quick-pick length, per direction bucket. Matches the
+     *  legacy purpose-recents read ({@code comm_0107_001} — {@code LIMIT 3}). */
+    static final int RECENT_LIMIT = 3;
 
     /* -----------------------------------------------------------------
      *  Read paths
      * ----------------------------------------------------------------- */
+
+    /**
+     * The current user's most-recently-used purposes for the Purpose
+     * selector's RECENT section. Server-side, read-only — derived from
+     * the classification the user applies to bank transactions
+     * ({@code ACCT_TRNS_RCV_PAY_INFM.RCV_PAY_USAG_CD}, stamped with
+     * {@code MOD_ID}/{@code MOD_DTM} on each pick). Fills as the user
+     * classifies; no localStorage, no new table (PO decision 2026-07-24).
+     *
+     * <p>Returns the top-3 grp-4 (Banking Deposit) codes merged with the
+     * top-3 grp-6 (Banking Withdrawal) codes. The Transaction-History
+     * picker is direction-split, so the cell intersects this list with
+     * the row-direction's grp-4/6 options — a deposit row therefore shows
+     * only its grp-4 recents, a withdrawal row only grp-6 (PROD parity).
+     */
+    @Transactional(readOnly = true)
+    public RecentPurposesResponse recentPurposes() {
+        String bizKey = requireBizKey();
+        String userId = TenantContext.currentUserId();
+        var page = PageRequest.of(0, RECENT_LIMIT);
+        List<String> codes = new java.util.ArrayList<>(
+                acctTrnsRcvPayRepo.findRecentPurposeCodesByGroup(bizKey, userId, "4", page));
+        for (String c : acctTrnsRcvPayRepo.findRecentPurposeCodesByGroup(bizKey, userId, "6", page)) {
+            if (!codes.contains(c)) codes.add(c);
+        }
+        return new RecentPurposesResponse(codes);
+    }
 
     /** Backward-compatible entrypoint — historic {@code usag_grp_cd IS
      *  NULL} scope. Kept so existing callers (e.g. {@link #reorder}) and

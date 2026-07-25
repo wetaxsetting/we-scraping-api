@@ -562,6 +562,32 @@ class OwnAccountTransferServiceTest {
         verifyAuditAppended(OwnAccountTransferAuditActions.SCRAPING_RESULT_OK);
     }
 
+    /** Legacy validateTrnsStlmId parity — a second intake carrying a
+     *  bank_tx_id that already exists (unsettled) is rejected as a
+     *  duplicate and nothing is persisted. Mirrors
+     *  trns_0002_001_c001_act.jsp:94-99 (WBE0003 → WBE_OAT_DUPLICATE_BANK_TX_ID). */
+    @Test
+    void scraping_duplicateBankTxId_throwsAndDoesNotPersist() {
+        setUpAdmin();
+        var src = acct(SHINHAN, "0001", new BigDecimal("100"), new BigDecimal("90"));
+        var tgt = acct(SHINHAN, "0002", new BigDecimal("50"),  new BigDecimal("50"));
+        when(acctMstrRepo.findByBizKeyAndBankCdAndAcctNo(TENANT, SHINHAN, "0001"))
+                .thenReturn(java.util.Optional.of(src));
+        when(acctMstrRepo.findByBizKeyAndBankCdAndAcctNo(TENANT, SHINHAN, "0002"))
+                .thenReturn(java.util.Optional.of(tgt));
+        when(napasRemitTrnsHstrRepo.existsByBizKeyAndTrnsStlmIdAndTrnsStlmYnNot(
+                TENANT, "BANKTX777", "Y")).thenReturn(true);
+
+        var dup = req("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "SAME_BANK", SHINHAN, "0001", SHINHAN, null, "0002",
+                "1000", "1000", "BANKTX777", "00000000");
+
+        assertThatThrownBy(() -> service.recordScrapingResult(dup))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo("WBE_OAT_DUPLICATE_BANK_TX_ID");
+        verify(napasRemitTrnsHstrRepo, never()).saveAndFlush(any());
+    }
+
     /** Compact factory for scraping-result request fixtures. */
     private static com.kosign.wecms.domain.banking.ownaccounttransfer.dto.request.ScrapingResultIntakeRequest
             req(String idem, String transferType,

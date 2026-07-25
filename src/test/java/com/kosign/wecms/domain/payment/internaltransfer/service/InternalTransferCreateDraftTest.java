@@ -67,12 +67,21 @@ class InternalTransferCreateDraftTest {
     @Mock private OutBankCdNormalizer outBankCdNormalizer;
     @Mock private com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard blockedCharGuard;
     @Mock private Clock clock;
+    @Mock private com.kosign.wecms.domain.payment.common.UploadConsistencyValidator uploadConsistencyValidator;
+    @Mock private InternalTransferFileResolver fileResolver;
+
+    /** Storage root for the mandatory uploaded workbook (legacy requires the file
+     *  at save — {@code PaymentUploadFileGuard}). */
+    @org.junit.jupiter.api.io.TempDir java.nio.file.Path storageRoot;
 
     @InjectMocks private InternalTransferService service;
 
     @BeforeEach
     void setUp() {
         TenantContext.set(USER_ID, "Tester", BIZ_KEY, LangCd.EN);
+        when(fileResolver.resolve(org.mockito.ArgumentMatchers.anyString(),
+                                  org.mockito.ArgumentMatchers.anyString()))
+                .thenAnswer(inv -> storageRoot.resolve((String) inv.getArgument(1)));
         // Run the supplied action inline (no real REQUIRES_NEW boundary in a unit test).
         when(transactionalRetry.runOnce(any()))
                 .thenAnswer(inv -> ((Supplier<?>) inv.getArgument(0)).get());
@@ -121,7 +130,7 @@ class InternalTransferCreateDraftTest {
                 "VND",                       // trnf_ccy_cd → CCY_CD
                 List.of(line));
 
-        CreateScheduledTransferResponse resp = service.createDraft(req, null);
+        CreateScheduledTransferResponse resp = service.createDraft(req, xlsx());
         assertThat(resp.scdulPymnNo()).isEqualTo("20260629000001");
 
         // Master row.
@@ -159,5 +168,14 @@ class InternalTransferCreateDraftTest {
         assertThat(detl.getFincMdaNo()).isEqualTo("700071152854");
 
         verify(outBankCdNormalizer).normalize("11704020");
+    }
+
+    /** The uploaded workbook is mandatory at save (legacy
+     *  {@code pymn_0009_002_c001} {@code validateRequired(FILE_DATA)}). */
+    private static org.springframework.mock.web.MockMultipartFile xlsx() {
+        return new org.springframework.mock.web.MockMultipartFile(
+                "file_data", "Internal_Transfer_260629.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                new byte[] { 1, 2, 3 });
     }
 }

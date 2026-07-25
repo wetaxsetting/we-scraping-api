@@ -64,12 +64,21 @@ class ExpensePaymentCreateDraftTest {
     @Mock private com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard blockedCharGuard;
     @Mock private TrcoInfmRepository contactRepo;
     @Mock private Clock clock;
+    @Mock private com.kosign.wecms.domain.payment.common.UploadConsistencyValidator uploadConsistencyValidator;
+    @Mock private ExpensePaymentFileResolver fileResolver;
+
+    /** Storage root for the mandatory uploaded workbook (legacy requires the file
+     *  at save — {@code PaymentUploadFileGuard}). */
+    @org.junit.jupiter.api.io.TempDir java.nio.file.Path storageRoot;
 
     @InjectMocks private ExpensePaymentService service;
 
     @BeforeEach
     void setUp() {
         TenantContext.set(USER_ID, "Tester", BIZ_KEY, LangCd.EN);
+        when(fileResolver.resolve(org.mockito.ArgumentMatchers.anyString(),
+                                  org.mockito.ArgumentMatchers.anyString()))
+                .thenAnswer(inv -> storageRoot.resolve((String) inv.getArgument(1)));
         when(transactionalRetry.runOnce(any()))
                 .thenAnswer(inv -> ((Supplier<?>) inv.getArgument(0)).get());
         when(clock.instant()).thenReturn(Instant.parse("2026-06-29T03:00:00Z"));
@@ -101,7 +110,7 @@ class ExpensePaymentCreateDraftTest {
                 "USD",                       // wdrl_ccy_cd (account currency — distinct)
                 List.of(line));
 
-        CreateScheduledTransferResponse resp = service.createDraft(req, null);
+        CreateScheduledTransferResponse resp = service.createDraft(req, xlsx());
         assertThat(resp.scdulPymnNo()).isEqualTo("20260629000001");
 
         ScdulPymnSumr master = captureMaster();
@@ -124,7 +133,7 @@ class ExpensePaymentCreateDraftTest {
                 "Expense_260629", "11704004", "001234567", "VND", "VND",
                 List.of(line("TK001", "C001", "Expense Co VN", "Expense Co EN")));
 
-        service.createDraft(req, null);
+        service.createDraft(req, xlsx());
 
         assertThat(captureMaster().getWdrlCcyCd()).isEqualTo("VND");
     }
@@ -140,7 +149,7 @@ class ExpensePaymentCreateDraftTest {
                 "Expense_260629", "11704004", "001234567", "VND", "VND", "VND",
                 List.of(line(null, "C001", null, null)));
 
-        service.createDraft(req, null);
+        service.createDraft(req, xlsx());
 
         ScdulPymnSumrDetl detl = captureDetail();
         assertThat(detl.getTrcoKey()).isEqualTo("TK999");
@@ -159,12 +168,21 @@ class ExpensePaymentCreateDraftTest {
                 "Expense_260629", "11704004", "001234567", "VND", "VND", "VND",
                 List.of(line(null, "C999", null, null)));
 
-        assertThatThrownBy(() -> service.createDraft(req, null))
+        assertThatThrownBy(() -> service.createDraft(req, xlsx()))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("WBE_VALIDATION");
     }
 
     /* ---------------------------------------------------------------- */
+
+    /** The uploaded workbook is mandatory at save (legacy
+     *  {@code pymn_0003_002_c001} {@code validateRequired(FILE_DATA)}). */
+    private static org.springframework.mock.web.MockMultipartFile xlsx() {
+        return new org.springframework.mock.web.MockMultipartFile(
+                "file_data", "Expense_260629.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                new byte[] { 1, 2, 3 });
+    }
 
     private ScdulPymnSumr captureMaster() {
         ArgumentCaptor<ScdulPymnSumr> c = ArgumentCaptor.forClass(ScdulPymnSumr.class);
