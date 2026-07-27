@@ -333,16 +333,14 @@ class VatDeclarationLifecycleTest {
         void excludesReplacedAndCancelled() {
             VatDeclaration d = decl(SID, VatDeclarationService.STATUS_DRAFT, 2, 2026);
             given(d, ind(d, "0", "0"));
-            when(annexInvoiceRepo.countRows(anyString(), anyString(), anyString(),
-                    any(), any(), any(), any())).thenReturn(0L);
-            when(annexInvoiceRepo.sumReducedAmt(anyString(), anyString(), anyString(),
-                    any(), any(), any(), any())).thenReturn(BigDecimal.ZERO);
+            when(annexInvoiceRepo.groupTotals(anyString(), anyString(), anyString(),
+                    any(), any(), any(), any())).thenReturn(List.of());
 
             service.listAnnexInvoices(SID, "REDUCE8", null, null, 0, 20);
 
             @SuppressWarnings("unchecked")
             ArgumentCaptor<Collection<String>> excluded = ArgumentCaptor.forClass(Collection.class);
-            verify(annexInvoiceRepo).countRows(anyString(), anyString(), anyString(),
+            verify(annexInvoiceRepo).groupTotals(anyString(), anyString(), anyString(),
                     any(), any(), any(), excluded.capture());
             assertThat(excluded.getValue())
                     .containsExactlyInAnyOrder("Hóa đơn đã bị thay thế", "Hóa đơn đã bị hủy");
@@ -361,7 +359,9 @@ class VatDeclarationLifecycleTest {
             assertThat(res.totalPages()).isZero();
             assertThat(res.pageNumber()).isZero();
             assertThat(res.pageSize()).isEqualTo(20);
-            verify(annexInvoiceRepo, never()).countRows(anyString(), anyString(), anyString(),
+            assertThat(res.taxGroups()).isEmpty();
+            assertThat(res.grandTotal().groupCd()).isEqualTo("TOTAL");
+            verify(annexInvoiceRepo, never()).groupTotals(anyString(), anyString(), anyString(),
                     any(), any(), any(), any());
         }
 
@@ -370,16 +370,14 @@ class VatDeclarationLifecycleTest {
         void directionMapsToDocType() {
             VatDeclaration d = decl(SID, VatDeclarationService.STATUS_DRAFT, 2, 2026);
             given(d, ind(d, "0", "0"));
-            when(annexInvoiceRepo.countRows(anyString(), anyString(), anyString(),
-                    any(), any(), any(), any())).thenReturn(0L);
-            when(annexInvoiceRepo.sumReducedAmt(anyString(), anyString(), anyString(),
-                    any(), any(), any(), any())).thenReturn(BigDecimal.ZERO);
+            when(annexInvoiceRepo.groupTotals(anyString(), anyString(), anyString(),
+                    any(), any(), any(), any())).thenReturn(List.of());
 
             @SuppressWarnings("unchecked")
             ArgumentCaptor<Collection<String>> docTypes = ArgumentCaptor.forClass(Collection.class);
 
             service.listAnnexInvoices(SID, "BKBR", null, null, 0, 20);
-            verify(annexInvoiceRepo).countRows(anyString(), anyString(), anyString(),
+            verify(annexInvoiceRepo).groupTotals(anyString(), anyString(), anyString(),
                     docTypes.capture(), any(), any(), any());
             assertThat(docTypes.getValue()).containsExactly("I");   // output / sales
         }

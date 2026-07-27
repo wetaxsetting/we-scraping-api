@@ -16,7 +16,6 @@ import com.kosign.wecms.domain.vatdeclaration.dto.AnnexInvoiceListResponse;
 import com.kosign.wecms.domain.vatdeclaration.dto.AnnexInvoiceProjection;
 import com.kosign.wecms.domain.vatdeclaration.dto.AnnexRow;
 import com.kosign.wecms.domain.vatdeclaration.dto.AnnexTaxGroup;
-import com.kosign.wecms.domain.vatdeclaration.dto.AnnexTotalsResponse;
 import com.kosign.wecms.domain.vatdeclaration.repository.AnnexTaxGroupProjection;
 import com.kosign.wecms.domain.vatdeclaration.entity.AnnexType;
 import com.kosign.wecms.domain.vatdeclaration.entity.VatDeclaration;
@@ -397,10 +396,12 @@ public class VatDeclarationService {
      *
      * <p>Flat paged list: {@code rows} + {@code total_count} / {@code page_number}
      * / {@code page_size} / {@code total_pages}, matching the shape the other
-     * add-on list endpoints already use. Filtering, paging and the reduction
-     * total all run in SQL, so a large period never loads every line into
-     * memory, and {@code grandTotalReducedAmt} spans the FULL filtered set so
-     * the footer stays stable while paging.
+     * add-on list endpoints already use. The footer — per-VAT-rate
+     * {@code taxGroups} + a {@code grandTotal} ("Total Output" row) — is folded
+     * into this response (no separate /totals endpoint). One aggregate pass by
+     * rate feeds the footer AND the paging total / reduction, so a large period
+     * never loads every line into memory, the footer spans the FULL filtered set
+     * (stable while paging), and the sections can never disagree with the rows.
      */
     @Transactional(readOnly = true)
     public AnnexInvoiceListResponse listAnnexInvoices(Long sid, String annexType, String search,
@@ -413,17 +414,29 @@ public class VatDeclarationService {
 
         List<String> docTypes = docTypesFor(type, ioDv);
         if (docTypes.isEmpty()) {
-            return new AnnexInvoiceListResponse(List.of(), 0L, 0, pageNumber, pageSize, "0");
+            return new AnnexInvoiceListResponse(List.of(), 0L, 0, pageNumber, pageSize,
+                    List.of(), grandTotal(0, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO));
         }
         String rate = AnnexType.REDUCE8.code().equals(type) ? RATE_8_PCT : null;
         String q = search == null || search.isBlank() ? null : search.trim();
         String from = decl.getFromDt().format(YYYYMMDD);
         String to = decl.getToDt().format(YYYYMMDD);
 
-        long total = annexInvoiceRepo.countRows(decl.getBizKey(), from, to, docTypes, rate, q,
-                EXCLUDED_INVOICE_STATUSES);
-        BigDecimal grandReduced = nz(annexInvoiceRepo.sumReducedAmt(
-                decl.getBizKey(), from, to, docTypes, rate, q, EXCLUDED_INVOICE_STATUSES));
+        // One GROUP BY einv_taxrate pass yields every section subtotal AND the
+        // paging total (Σ row_count) AND the reduction — no separate count /
+        // sum-reduced query.
+        List<AnnexTaxGroupProjection> raw = annexInvoiceRepo.groupTotals(
+                decl.getBizKey(), from, to, docTypes, rate, q, EXCLUDED_INVOICE_STATUSES);
+        List<AnnexTaxGroup> taxGroups = new ArrayList<>(raw.size());
+        BigDecimal gSply = BigDecimal.ZERO, gRed = BigDecimal.ZERO, gVat = BigDecimal.ZERO;
+        long total = 0;
+        for (AnnexTaxGroupProjection p : raw) {
+            BigDecimal s = nz(p.getTotalSplyAmt()), r = nz(p.getTotalReducedAmt()), v = nz(p.getTotalVatAmt());
+            taxGroups.add(new AnnexTaxGroup(p.getGroupCd(), p.getGroupCd(), p.getRowCount(), str(s), str(r), str(v)));
+            gSply = gSply.add(s); gRed = gRed.add(r); gVat = gVat.add(v); total += p.getRowCount();
+        }
+        AnnexTaxGroup grand = grandTotal(total, gSply, gRed, gVat);
+
         List<AnnexRow> rows = offset >= total ? List.of()
                 : annexInvoiceRepo.findRows(decl.getBizKey(), from, to, docTypes, rate, q,
                                 EXCLUDED_INVOICE_STATUSES, offset, pageSize)
@@ -431,41 +444,7 @@ public class VatDeclarationService {
 
         int totalPages = (int) ((total + pageSize - 1) / pageSize);
         return new AnnexInvoiceListResponse(rows, total, totalPages, pageNumber, pageSize,
-                str(grandReduced));
-    }
-
-    /**
-     * Annex totals (API #9 companion) — per-VAT-rate section subtotals plus one
-     * grand total ("Total Output" row), over the SAME filtered set as
-     * {@link #listAnnexInvoices}. Unpaged: the modal fetches the footer once and
-     * keeps it stable while paging the rows. The grand total is summed in Java
-     * from the section rows rather than re-queried.
-     */
-    @Transactional(readOnly = true)
-    public AnnexTotalsResponse annexTotals(Long sid, String annexType, String search, String ioDv) {
-        VatDeclaration decl = load(sid);
-        String type = resolveAnnexType(annexType);
-        List<String> docTypes = docTypesFor(type, ioDv);
-        if (docTypes.isEmpty()) {
-            return new AnnexTotalsResponse(type, List.of(), grandTotal(0, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO));
-        }
-        String rate = AnnexType.REDUCE8.code().equals(type) ? RATE_8_PCT : null;
-        String q = search == null || search.isBlank() ? null : search.trim();
-        String from = decl.getFromDt().format(YYYYMMDD);
-        String to = decl.getToDt().format(YYYYMMDD);
-
-        List<AnnexTaxGroupProjection> raw = annexInvoiceRepo.groupTotals(
-                decl.getBizKey(), from, to, docTypes, rate, q, EXCLUDED_INVOICE_STATUSES);
-
-        List<AnnexTaxGroup> groups = new ArrayList<>(raw.size());
-        BigDecimal gSply = BigDecimal.ZERO, gRed = BigDecimal.ZERO, gVat = BigDecimal.ZERO;
-        long gRows = 0;
-        for (AnnexTaxGroupProjection p : raw) {
-            BigDecimal s = nz(p.getTotalSplyAmt()), r = nz(p.getTotalReducedAmt()), v = nz(p.getTotalVatAmt());
-            groups.add(new AnnexTaxGroup(p.getGroupCd(), p.getGroupCd(), p.getRowCount(), str(s), str(r), str(v)));
-            gSply = gSply.add(s); gRed = gRed.add(r); gVat = gVat.add(v); gRows += p.getRowCount();
-        }
-        return new AnnexTotalsResponse(type, groups, grandTotal(gRows, gSply, gRed, gVat));
+                taxGroups, grand);
     }
 
     private static AnnexTaxGroup grandTotal(long rows, BigDecimal sply, BigDecimal reduced, BigDecimal vat) {

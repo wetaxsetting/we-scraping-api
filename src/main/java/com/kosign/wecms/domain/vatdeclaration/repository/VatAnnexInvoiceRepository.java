@@ -7,7 +7,6 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.data.repository.Repository;
 import com.kosign.wecms.domain.vatdeclaration.entity.VatDeclaration;
 
-import java.math.BigDecimal;
 import java.util.Collection;
 import java.util.List;
 
@@ -113,16 +112,6 @@ public interface VatAnnexInvoiceRepository extends Repository<VatDeclaration, Lo
                                           @Param("offset") long offset,
                                           @Param("size") int size);
 
-    /** Unpaged row count over the same filter — feeds {@code total_count}. */
-    @Query(value = "select count(*)" + FROM_WHERE, nativeQuery = true)
-    long countRows(@Param("bizKey") String bizKey,
-                   @Param("fromDt") String fromDt,
-                   @Param("toDt") String toDt,
-                   @Param("docTypes") Collection<String> docTypes,
-                   @Param("rate") String rate,
-                   @Param("search") String search,
-                   @Param("excludedStatuses") Collection<String> excludedStatuses);
-
     /**
      * Stamp every invoice of the period as closed into this declaration
      * (PO decision 2026-07-24 — marker lives on the invoice row, see V253).
@@ -157,19 +146,6 @@ public interface VatAnnexInvoiceRepository extends Repository<VatDeclaration, Lo
                and vat_decl_sid = :sid
             """, nativeQuery = true)
     int clearProcessed(@Param("bizKey") String bizKey, @Param("sid") Long sid);
-
-    /** Reduction total over the whole filtered set (not just the page). */
-    @Query(value = "select coalesce(sum(case when d.einv_taxrate = '8%'"
-            + "                              then floor(coalesce(d.sply_amt, 0) * 2 / 100) else 0 end), 0)"
-            + FROM_WHERE,
-            nativeQuery = true)
-    BigDecimal sumReducedAmt(@Param("bizKey") String bizKey,
-                             @Param("fromDt") String fromDt,
-                             @Param("toDt") String toDt,
-                             @Param("docTypes") Collection<String> docTypes,
-                             @Param("rate") String rate,
-                             @Param("search") String search,
-                             @Param("excludedStatuses") Collection<String> excludedStatuses);
 
     /**
      * Per-VAT-rate subtotals over the whole filtered set — one row per

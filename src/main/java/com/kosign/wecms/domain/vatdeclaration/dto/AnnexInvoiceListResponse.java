@@ -13,11 +13,17 @@ import java.util.List;
  *
  * <p>The former accordion grouping was dropped: every row still carries
  * {@code prod_nm}, so a client that wants the product accordion groups the page
- * itself, and the per-group subtotals it used to receive were only ever
- * computed over the same page slice. No information is lost.
+ * itself.
  *
- * <p>{@code grandTotalReducedAmt} is deliberately computed over the FULL
- * filtered set, not the page, so the footer total stays stable while paging.
+ * <p>{@code taxGroups} + {@code grandTotal} are the modal footer, folded into
+ * this response (no separate /totals endpoint). Both are computed over the FULL
+ * filtered set — one aggregate pass by VAT rate — so the section subtotals and
+ * the "Total Output" row stay stable while the rows page. {@code totalCount}
+ * and the grand total are derived from that same aggregate, so the footer and
+ * the rows can never disagree. {@code taxGroups} is ordered into the fixed
+ * 01-1/GTGT section sequence (KKKNT / 0% / 5% / 8% / 10% / KCT, unknown last);
+ * {@code grandTotal.groupCd = "TOTAL"} and its {@code totalReducedAmt} is the
+ * overall reduction (Resolution 204/2025).
  */
 public record AnnexInvoiceListResponse(
         List<AnnexRow> rows,
@@ -25,6 +31,7 @@ public record AnnexInvoiceListResponse(
         int totalPages,
         int pageNumber,
         int pageSize,
-        String grandTotalReducedAmt
+        List<AnnexTaxGroup> taxGroups,
+        AnnexTaxGroup grandTotal
 ) {
 }
