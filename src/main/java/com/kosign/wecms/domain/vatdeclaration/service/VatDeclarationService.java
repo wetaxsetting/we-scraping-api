@@ -666,11 +666,11 @@ public class VatDeclarationService {
                 d.getToDt() == null ? null : d.getToDt().toString(),
                 d.getDeclDt() == null ? null : d.getDeclDt().toString(),
                 toIndicatorSet(ind),
-                d.getAnnexBkbrYn(),
-                d.getAnnexBkmvYn(),
-                d.getAnnexAllocYn(),
-                d.getAnnexAllocTeleYn(),
-                d.getAnnexReduce8Yn()
+                yn(d.getAnnexBkbrYn(), true),
+                yn(d.getAnnexBkmvYn(), true),
+                yn(d.getAnnexAllocYn(), true),
+                yn(d.getAnnexAllocTeleYn(), true),
+                yn(d.getAnnexReduce8Yn(), true)
                 );
     }
 
