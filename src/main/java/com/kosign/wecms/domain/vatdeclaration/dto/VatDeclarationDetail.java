@@ -1,5 +1,7 @@
 package com.kosign.wecms.domain.vatdeclaration.dto;
 
+import jakarta.persistence.Column;
+
 /**
  * Detail view — header + full indicator block. Dates ship as
  * {@code yyyy-MM-dd} strings.
@@ -20,6 +22,11 @@ public record VatDeclarationDetail(
         String fromDt,
         String toDt,
         String declDt,
-        VatIndicatorSet indicators
-) {
+        VatIndicatorSet indicators,
+        String annexBkbrYn,
+        String annexBkmvYn,
+        String annexAllocYn,
+        String annexAllocTeleYn,
+        String annexReduce8Yn
+){
 }

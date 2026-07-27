@@ -665,7 +665,13 @@ public class VatDeclarationService {
                 d.getFromDt() == null ? null : d.getFromDt().toString(),
                 d.getToDt() == null ? null : d.getToDt().toString(),
                 d.getDeclDt() == null ? null : d.getDeclDt().toString(),
-                toIndicatorSet(ind));
+                toIndicatorSet(ind),
+                d.getAnnexBkbrYn(),
+                d.getAnnexBkmvYn(),
+                d.getAnnexAllocYn(),
+                d.getAnnexAllocTeleYn(),
+                d.getAnnexReduce8Yn()
+                );
     }
 
     private static VatIndicatorSet toIndicatorSet(VatDeclarationIndicator i) {
