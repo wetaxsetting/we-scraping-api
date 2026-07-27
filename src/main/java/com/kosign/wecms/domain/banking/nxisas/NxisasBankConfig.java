@@ -31,11 +31,14 @@ import java.util.Optional;
  * DIGIBIZ); see {@link #SUB_TYPE_ENTRIES}. The former per-bank
  * personal sub-types were removed (enterprise-only, §16).
  *
- * <p>Eximbank (11704112) is intentionally registered with a
- * best-guess {@code BANK_Eximbank/CORPORATE} pair — there are no
- * production log rows for it. Once a live login proves the actual
- * values, update this entry from the same {@code
- * nxsias_module_tran_log_his} table.
+ * <p>Eximbank (11704112) has no production log rows, so its pair
+ * comes from the second authoritative source instead: the live
+ * JexAdmin {@code API_CONN_INFM_DETL} dump (2026-06-16), which
+ * carries {@code MODULE = GLOBAL/VNM/BANK_EXIM} and
+ * {@code CLASS = CORPORATE} for {@code BNK_BNK001_11704112}. The
+ * earlier best-guess {@code BANK_Eximbank} was corrected on
+ * 2026-07-27 — see docs/audits/login-credentials-legacy-vs-refactor-audit.md
+ * §"Bank cross-check" item 1.
  */
 @Component
 public class NxisasBankConfig {
@@ -123,10 +126,10 @@ public class NxisasBankConfig {
             // COMMON. 40 production calls.
             Map.entry("11704106", new Entry("GLOBAL/VNM/BANK_AB",       "COMMON")),
             Map.entry("11704108", new Entry("GLOBAL/VNM/BANK_PG",       "CORPORATE")),
-            // Eximbank: no production log rows — best-guess naming
-            // convention (BANK_{Name}/CORPORATE) following the VNM
-            // pattern. Update once a real login surfaces in the log.
-            Map.entry("11704112", new Entry("GLOBAL/VNM/BANK_Eximbank", "CORPORATE"))
+            // Eximbank: no production NXISAS log rows, but the live
+            // JexAdmin API_CONN_INFM_DETL dump (2026-06-16) carries the
+            // authoritative pair — BANK_EXIM (not BANK_Eximbank).
+            Map.entry("11704112", new Entry("GLOBAL/VNM/BANK_EXIM",     "CORPORATE"))
     );
 
     public Optional<Entry> find(String bankCd) {
