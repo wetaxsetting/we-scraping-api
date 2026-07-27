@@ -7,6 +7,7 @@ import com.kosign.wecms.common.enums.LangCd;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileData;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileMst;
+import com.kosign.wecms.domain.payment.dispatch.entity.TbPayTarget;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbFirmConfRepository;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileDataRepository;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileMstRepository;
@@ -170,6 +171,30 @@ class ExpenseDispatchExecutorTest {
     }
 
     @Test
+    void vcbVnd_otherBank_carriesUploadedAntDivCd_bankChnlDivOther() {
+        // OQ-2 (CONFIRMED file-based VCB; legacy PymnHelper:2573 "VCB VND -> Other : NAPAS/CITAD from upload").
+        ScdulPymnSumrDetl l = line(BIDV, "VND");
+        l.setAntDivCd("NAPAS");
+        executor.execute(master(VCB, "VND"), List.of(l), "VND");
+
+        TbPayFileData d = captureData();
+        assertThat(d.getAntDivCd()).isEqualTo("NAPAS");
+        assertThat(d.getBankChnlDiv()).isEqualTo("O");
+        assertThat(d.getTrscCcyCd()).isEqualTo("VND");
+    }
+
+    @Test
+    void vcbVnd_sameBank_carriesUploadedAntDivCd_bankChnlDivCurrent() {
+        ScdulPymnSumrDetl l = line(VCB, "VND");
+        l.setAntDivCd("CITAD");
+        executor.execute(master(VCB, "VND"), List.of(l), "VND");
+
+        TbPayFileData d = captureData();
+        assertThat(d.getAntDivCd()).isEqualTo("CITAD");
+        assertThat(d.getBankChnlDiv()).isEqualTo("T");
+    }
+
+    @Test
     void vcbUsdOtherBank_isRejected() {
         assertThatThrownBy(() ->
                 executor.execute(master(VCB, "USD"), List.of(line(BIDV, "USD")), "USD"))
@@ -222,5 +247,27 @@ class ExpenseDispatchExecutorTest {
 
         verify(tbPayFileMstRepository, never()).save(any());
         verify(tbPayFileDataRepository, never()).save(any());
+    }
+
+    @Test
+    void apiPath_leavesWithdAndDepCcyCdNull() {
+        // H — legacy parity (PymnHelper.pymn_0001_001_c001:2193-2224, shared Vendor/Expense):
+        // the VND/API-path TB_PAY_TARGET insert leaves WITHD_CCY_CD / DEP_CCY_CD null.
+        executor.execute(master(SHINHAN, "VND"), List.of(line(SHINHAN, "VND")), "VND");
+
+        ArgumentCaptor<TbPayTarget> c = ArgumentCaptor.forClass(TbPayTarget.class);
+        verify(tbPayTargetRepository).save(c.capture());
+        assertThat(c.getValue().getWithdCcyCd()).isNull();
+        assertThat(c.getValue().getDepCcyCd()).isNull();
+        verify(tbPayFileMstRepository, never()).save(any());
+    }
+
+    @Test
+    void ownerNm_rawRcptNm_blankPreserved() {
+        // B — legacy raw RCPT_NM, no fallback (PymnHelper:2327).
+        ScdulPymnSumrDetl l = line(SHINHAN, "USD");
+        l.setRcptNm("");
+        executor.execute(master(SHINHAN, "USD"), List.of(l), "USD");
+        assertThat(captureData().getFincMdaOwnerNm()).isEmpty();
     }
 }

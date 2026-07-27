@@ -43,6 +43,10 @@ class FirmBankingInquiryServiceTest {
     @BeforeEach
     void setUp() {
         ReflectionTestUtils.setField(service, "recipientInquiryEnabled", true);
+        // M: real pass-through override (no UAT profile) so the inquiry command is built from the
+        // firm-config values verbatim — the UAT-active behaviour is covered by UatShinhanWooriOverrideTest.
+        ReflectionTestUtils.setField(service, "uatOverride",
+                new UatShinhanWooriOverride(new org.springframework.mock.env.MockEnvironment()));
         TenantContext.set("u1", BIZ_KEY, LangCd.EN);
     }
 

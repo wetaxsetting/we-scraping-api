@@ -4,49 +4,51 @@ import com.kosign.wecms.domain.payment.dispatch.van.dto.Efs202Response;
 
 /**
  * Result of a {@code WGVN_EFS_202} real-time transfer (REST API guide ver 1.2.2
- * §5.4). Two shapes, distinguished by {@link #recovered()}:
+ * §5.4). Two shapes, distinguished by {@link #pending()}:
  *
  * <ul>
- *   <li><b>Direct success</b> ({@code RC=0000}, {@code recovered=false}) — the
- *       balance fields come straight from the decrypted {@link Efs202Response};
- *       {@link #recovery()} is {@code null}.</li>
- *   <li><b>G999 recovery</b> ({@code recovered=true}) — the 202 returned no
- *       definitive response, so the true outcome was confirmed via a follow-up
- *       {@code WGVN_EFS_203} ({@link ResultCheckService#inquire}). The balance
- *       fields are {@code null} and {@link #recovery()} carries the 203 result
- *       (whose {@code org_resp_cd} is the real outcome).</li>
+ *   <li><b>Direct success</b> ({@code RC=0000}, VV-verified, {@code pending=false}) — the
+ *       balance fields come straight from the decrypted {@link Efs202Response}.</li>
+ *   <li><b>Pending / no definitive response</b> ({@code pending=true}) — the 202 returned
+ *       {@code G999}, no response, or an unverifiable ({@code VV}-mismatch) response. Per
+ *       §5.4 this is NOT a failure and must NOT be finalized: the caller leaves both
+ *       {@code TB_FIRM_TRAN} and {@code TB_PAY_TARGET} at {@code PROC_STAT='6'} and the
+ *       scheduled {@link ResultCheckService} confirms the true outcome via a later
+ *       {@code WGVN_EFS_203} inquiry (audit B2 / H-4). The balance fields are {@code null}.
+ *       This replaces the earlier <i>synchronous</i> inline-203 recovery, which risked a
+ *       premature FAIL while the bank was still settling.</li>
  * </ul>
  *
- * <p>This phase (D2/D3) deliberately does NOT translate the outcome into a
- * {@code PROC_STAT} write — that mapping (and the no-response⇒{@code '6'} legacy
- * semantics) lands when the {@code TB_FIRM_TRAN} status seam is wired.
+ * <p>A definite gateway business error (non-{@code 0000}, non-{@code G999}) is surfaced as
+ * {@code WBE_EFS_GATEWAY_ERROR} by {@link RealtimeTransferService}, not represented here.
  *
- * @param recovered      {@code true} when resolved via the {@code G999}→203 recovery path
+ * @param pending        {@code true} = no definitive response (G999 / no-response / VV-fail) → leave '6'
  * @param balAmtSign     {@code bal_amt_sign} balance sign — {@code 0}=+ / {@code 1}=- (direct success only)
  * @param balAmt         {@code bal_amt}      post-transfer balance, integer part (direct success only)
  * @param balDcmAmt      {@code bal_dcm_amt}  balance decimal portion (direct success only)
  * @param fincMdaOwnerNm {@code finc_mda_owner_nm} owner name (direct success only)
  * @param antDivCd       {@code ant_div_cd}   network (direct success only)
- * @param recovery       the confirming 203 result (recovery only); {@code null} on direct success
  */
 public record RealtimeTransferResult(
-        boolean recovered,
+        boolean pending,
         String balAmtSign,
         String balAmt,
         String balDcmAmt,
         String fincMdaOwnerNm,
-        String antDivCd,
-        ResultCheckInquiryResult recovery
+        String antDivCd
 ) {
 
     /** Direct {@code RC=0000} success — map the decrypted 202 response. */
     static RealtimeTransferResult ofTransfer(Efs202Response r) {
         return new RealtimeTransferResult(
-                false, r.balAmtSign(), r.balAmt(), r.balDcmAmt(), r.fincMdaOwnerNm(), r.antDivCd(), null);
+                false, r.balAmtSign(), r.balAmt(), r.balDcmAmt(), r.fincMdaOwnerNm(), r.antDivCd());
     }
 
-    /** {@code RC=G999} resolved via a follow-up 203 inquiry. */
-    static RealtimeTransferResult ofRecovery(ResultCheckInquiryResult recovery) {
-        return new RealtimeTransferResult(true, null, null, null, null, null, recovery);
+    /**
+     * No definitive response ({@code G999} / no-response / {@code VV}-verify failure) — leave the
+     * transaction {@code PROC_STAT='6'} for the scheduled result-check to reconcile (audit B2).
+     */
+    static RealtimeTransferResult ofPending() {
+        return new RealtimeTransferResult(true, null, null, null, null, null);
     }
 }

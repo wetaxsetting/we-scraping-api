@@ -42,6 +42,12 @@ wecms:
     # Dispatch result polling.
     result-check:
       cron: ${WECMS_DISPATCH_RESULT_CHECK_CRON}
+    # R-1 stranded-record recovery safety net (Item 4).
+    # DISABLED by default — keep OFF until legacy-JEX coexistence is resolved (see StrandedRecoveryService).
+    recovery:
+      enabled: ${WECMS_DISPATCH_RECOVERY_ENABLED:false}
+      cron: ${WECMS_DISPATCH_RECOVERY_CRON:-}
+      grace-minutes: ${WECMS_DISPATCH_RECOVERY_GRACE_MINUTES:30}
     # Dispatch failure alerts.
     alert:
       enabled: ${WECMS_DISPATCH_ALERT_ENABLED}

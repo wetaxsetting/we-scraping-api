@@ -212,6 +212,22 @@ public class RealtimeDispatchService {
             }
         }
 
+        // 4b. G2 (audit F2): atomic PROC_STAT '9'→'6' claim — the idempotency guard for the
+        //     event-driven pickup. Runs AFTER the operating-hours gate + 204 FX pre-step (both of
+        //     which legitimately leave the row at WAIT on SKIP / 204-fail and return before here),
+        //     and BEFORE the 202 insert. A duplicate after-commit hand-off that reaches this point
+        //     after the row already left WAIT claims 0 rows and no-ops — so the 202 (and any Woori
+        //     204) never double-runs. The firm-tran-exists guard (step 2) remains as belt-and-braces.
+        int claimed = payTargetRepository.claimForDispatch(bizKey, tranDt, tranSeq, dttm14);
+        if (claimed == 0) {
+            log.info("realtime-dispatch no-op — pay-target already claimed / not WAIT (idempotent) "
+                    + "bizKey={} tranDt={} tranSeq={}", bizKey, tranDt, tranSeq);
+            return;
+        }
+        // Reflect the committed claim on the managed entity so the later outcome write
+        // transitions '6'→final rather than re-deriving from the stale load-time '9'.
+        pay.setProcStat(ProcStat.REQ.code());
+
         // 5. Insert the 202 firm-tran row at PROC_STAT='6' (legacy TB_FIRM_TRAN_C001),
         //    reusing the pay-target TRAN_SEQ as the PK (legacy dep_seq link).
         TbFirmTran firmTran = new TbFirmTran();
@@ -234,6 +250,15 @@ public class RealtimeDispatchService {
         firmTran.setTranUsag(tranUsag);
         firmTran.setRqDttm(dttm14);
         firmTran.setProcStat(ProcStat.REQ.code());
+        // D1 (audit M-8): the 202 row carries WITHD_CCY_CD (always) + the FX columns
+        // (DEP_CCY_CD/APL_EXC_RATE/WITHD_AMT/DEP_AMT) on the Woori path. runFxInquiry already
+        // stamped the FX columns on the pay-target (_U002); copy from there — null on the plain
+        // VND path (legacy 202 C001 leaves them empty there), the four FX values on the Woori path.
+        firmTran.setWithdCcyCd(pay.getWithdCcyCd());
+        firmTran.setDepCcyCd(pay.getDepCcyCd());
+        firmTran.setAplExcRate(pay.getAplExcRate());
+        firmTran.setWithdAmt(pay.getWithdAmt());
+        firmTran.setDepAmt(pay.getDepAmt());
         firmTranRepository.saveAndFlush(firmTran);
 
         // 6. EFS 202 (RealtimeTransferService owns 202 + the G999→203 recovery). The Woori
@@ -241,9 +266,11 @@ public class RealtimeDispatchService {
         //    uses the single-arg call (which fires no 204) — both keep the 202 logic unchanged.
         try {
             RealtimeTransferResult result = (fx != null)
-                    ? realtimeTransferService.transfer(cmd, fx)
-                    : realtimeTransferService.transfer(cmd);
+                    ? realtimeTransferService.transfer(cmd, fx, tranSeq)
+                    : realtimeTransferService.transfer(cmd, tranSeq);
             applyOutcome(firmTran, pay, result);
+            // H2 (audit M-3/D5): NO ops alert on success or pending. Legacy NAPAS_REAL_TIME_BATCH
+            // fires the 202 alert only in the "3-1 입금이체 오류 처리" (failure) branch (:685-694).
         } catch (BusinessException e) {
             // Gateway business error (non-0000, non-G999) → committed FAIL (legacy parity).
             String rc = e.getArgs() != null && e.getArgs().length > 0 && e.getArgs()[0] != null
@@ -251,19 +278,19 @@ public class RealtimeDispatchService {
             applyFail(firmTran, pay, rc, e.getCode());
             log.warn("realtime-dispatch 202 failed (rc={}) bizKey={} tranSeq={} — FAIL recorded",
                     rc, bizKey, tranSeq);
-        }
 
-        // Ops alert (legacy NAPAS_REAL_TIME_BATCH:694 "실시간지급이체 Batch" — 202 result, fires on
-        // every outcome). The firm-tran row now carries the resolved RC/RM (success or FAIL).
-        opsAlertService.notify(conf.getVanOrgCd(),
-                "실시간지급이체 Batch"
-                        + "\nID : " + conf.getVanOrgCd()
-                        + "\nbank_cd : " + pay.getOutBankCd()
-                        + "\nprtn_id : " + conf.getBankPrtnId()
-                        + "\nTNO : " + tranSeq
-                        + "\n[Result]"
-                        + "\nRC : " + firmTran.getRsCd()
-                        + "\nRM : " + (firmTran.getRsMsg() == null ? "" : firmTran.getRsMsg()));
+            // Ops alert — FAILURE ONLY (legacy NAPAS_REAL_TIME_BATCH:685-694 "실시간지급이체 Batch",
+            // inside the transfer-error branch). The firm-tran row carries the resolved FAIL RC/RM.
+            opsAlertService.notify(conf.getVanOrgCd(),
+                    "실시간지급이체 Batch"
+                            + "\nID : " + conf.getVanOrgCd()
+                            + "\nbank_cd : " + pay.getOutBankCd()
+                            + "\nprtn_id : " + conf.getBankPrtnId()
+                            + "\nTNO : " + tranSeq
+                            + "\n[Result]"
+                            + "\nRC : " + firmTran.getRsCd()
+                            + "\nRM : " + (firmTran.getRsMsg() == null ? "" : firmTran.getRsMsg()));
+        }
     }
 
     /**
@@ -324,7 +351,14 @@ public class RealtimeDispatchService {
         firmTranRepository.saveAndFlush(fxTran);
 
         try {
-            Efs204Response fx = realtimeTransferService.inquireFxRate(cmd);
+            // A1 (audit X-2): the 204 sends its own allocated TRAN_SEQ (ccyExcSeq) as the gateway TNO.
+            Efs204Response fx = realtimeTransferService.inquireFxRate(cmd, ccyExcSeq);
+            if (fx == null) {
+                // D — no-response (legacy NAPAS_REAL_TIME_BATCH:358-362 `continue`): leave the 204
+                // row at PROC_STAT='6' (do NOT mark '3', no ops alert) and skip the 202. The 204 row
+                // was already flushed at '6' above; the pay-target is left untouched (legacy skips it).
+                return null;
+            }
 
             BigDecimal aplExcRate = combineAmount(fx.aplExcRateItg(), fx.aplExcRateDcm());
             BigDecimal withdAmt = combineAmount(fx.withdAmtItg(), fx.withdAmtDcm());
@@ -350,16 +384,8 @@ public class RealtimeDispatchService {
             pay.setProcDttm(fxDttm14);
             payTargetRepository.save(pay);
 
-            // Ops alert (legacy NAPAS_REAL_TIME_BATCH:478 "실시간지급이체 Batch" — 204 FX result).
-            opsAlertService.notify(conf.getVanOrgCd(),
-                    "실시간지급이체 Batch"
-                            + "\nID : " + conf.getVanOrgCd()
-                            + "\nbank_cd : " + pay.getOutBankCd()
-                            + "\nprtn_id : " + conf.getBankPrtnId()
-                            + "\nTNO : " + ccyExcSeq
-                            + "\n[Result]"
-                            + "\nRC : " + fxTran.getRsCd()
-                            + "\nRM : " + (fxTran.getRsMsg() == null ? "" : fxTran.getRsMsg()));
+            // H2 (audit M-3/D5): NO ops alert on 204 success — legacy NAPAS_REAL_TIME_BATCH fires
+            // the 204 alert only in the failure ("오류 처리") branch (:465-478), never on success.
             return fx;
         } catch (BusinessException e) {
             // _U005 failure — 204 row to PROC_STAT='3' with the gateway RC (no FX values on a failed
@@ -388,35 +414,46 @@ public class RealtimeDispatchService {
 
     /**
      * Map a {@link RealtimeTransferResult} onto the firm-tran ({@code _U004}) and
-     * pay-target ({@code _U001}) rows. Direct {@code RC=0000} → SUCCESS with the
-     * balance fields; {@code G999} recovery → the confirming 203's {@code orgRespCd}
-     * decides SUCCESS/FAIL.
+     * pay-target ({@code _U001}) rows.
+     * <ul>
+     *   <li><b>pending</b> (202 {@code G999} / no-response / unverifiable response) — NOT
+     *       finalized: both rows stay {@code PROC_STAT='6'} and the scheduled
+     *       {@link ResultCheckService} confirms the true outcome via a later 203 (audit B2 / H-4).</li>
+     *   <li><b>direct success</b> ({@code RC=0000}, VV-verified) — SUCCESS with the balance fields.</li>
+     * </ul>
      */
     private void applyOutcome(TbFirmTran firmTran, TbPayTarget pay, RealtimeTransferResult result) {
-        boolean success;
-        String respCd;
-        String respMsg;
-        String ownerNm;
-
-        if (result.recovered()) {
-            ResultCheckInquiryResult rec = result.recovery();
-            success = FirmBankingResultCd.isSuccess(rec.orgRespCd());
-            respCd = rec.orgRespCd();
-            respMsg = rec.orgRespMsg();
-            ownerNm = rec.fincMdaOwnerNm();
-        } else {
-            success = true; // transfer() only returns a non-recovered result on RC=0000.
-            respCd = FirmBankingResultCd.SUCC;
-            respMsg = FirmBankingResultCd.MSG_SUCC;
-            ownerNm = result.fincMdaOwnerNm();
-            firmTran.setBalAmt(combineAmount(result.balAmt(), result.balDcmAmt()));
-            firmTran.setBalAmtSign(result.balAmtSign());
-            if (StringUtils.hasText(result.antDivCd())) {
-                firmTran.setAntDivCd(result.antDivCd());
-            }
+        if (result.pending()) {
+            applyPending(firmTran, pay);
+            return;
         }
-        writeStatus(firmTran, pay, success ? ProcStat.SUCC.code() : ProcStat.FAIL.code(),
-                respCd, respMsg, ownerNm);
+        // C — legacy parity (NAPAS_REAL_TIME_BATCH:620): on 202 success BAL_AMT stores the
+        // INTEGER portion only (bal_amt), NOT the combined decimal. There is no BAL_DCM_AMT
+        // column on TB_FIRM_TRAN (DB-verified), so the balance decimal is discarded exactly
+        // as legacy does. (Legacy writes bal_dcm_amt only on the FAIL branch, to a column the
+        // refactor schema does not carry.)
+        firmTran.setBalAmt(integerAmount(result.balAmt()));
+        firmTran.setBalAmtSign(result.balAmtSign());
+        if (StringUtils.hasText(result.antDivCd())) {
+            firmTran.setAntDivCd(result.antDivCd());
+        }
+        writeStatus(firmTran, pay, ProcStat.SUCC.code(),
+                FirmBankingResultCd.SUCC, FirmBankingResultCd.MSG_SUCC, result.fincMdaOwnerNm());
+    }
+
+    /**
+     * No definitive 202 response (audit B2 / H-4): leave BOTH the firm-tran and the originating
+     * pay-target at {@code PROC_STAT='6'} (in-progress). The firm-tran was inserted at REQ('6');
+     * the pay-target is stamped '6' here too (legacy {@code TB_PAY_TARGET_U001} no-response rule).
+     * The scheduled {@link ResultCheckService} re-inquires the aged 202/'6' row via 203 and
+     * finalizes {@code 6 → 0/3} later — never finalized synchronously here.
+     */
+    private void applyPending(TbFirmTran firmTran, TbPayTarget pay) {
+        firmTran.setProcStat(ProcStat.REQ.code());
+        firmTranRepository.save(firmTran);
+        pay.setProcStat(ProcStat.REQ.code());
+        pay.setProcDttm(LocalDateTime.now(ICT).format(DTTM14));
+        payTargetRepository.save(pay);
     }
 
     /** Gateway business error → both rows FAIL. */
@@ -443,12 +480,12 @@ public class RealtimeDispatchService {
         payTargetRepository.save(pay);
     }
 
-    /** Split a scale-2 amount into [integer, decimal-portion] strings for the 202 request. */
+    /**
+     * Split the amount into [integer, decimal-portion] for the 202 request, reproducing
+     * legacy {@code StrUtil.BigDecPaser} exactly (see {@link com.kosign.wecms.domain.payment.dispatch.van.AmountSplitter}).
+     */
     private static String[] splitAmount(BigDecimal amt) {
-        BigDecimal a = amt == null ? BigDecimal.ZERO : amt;
-        String itg = a.toBigInteger().toString();
-        String dcm = a.subtract(new BigDecimal(a.toBigInteger())).movePointRight(2).abs().toBigInteger().toString();
-        return new String[] {itg, dcm};
+        return com.kosign.wecms.domain.payment.dispatch.van.AmountSplitter.split(amt);
     }
 
     /** Combine integer + decimal-portion balance strings into one {@link BigDecimal} (null itg → null). */
@@ -458,5 +495,11 @@ public class RealtimeDispatchService {
         }
         String d = StringUtils.hasText(dcm) ? dcm.trim() : "0";
         return new BigDecimal(itg.trim() + "." + d);
+    }
+
+    /** C — integer-portion-only amount (legacy {@code BAL_AMT} on 202 success is the raw
+     *  {@code bal_amt} string; the decimal portion is dropped). Null/blank → null. */
+    private static BigDecimal integerAmount(String itg) {
+        return StringUtils.hasText(itg) ? new BigDecimal(itg.trim()) : null;
     }
 }

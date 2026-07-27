@@ -18,6 +18,9 @@ package com.kosign.wecms.domain.payment.dispatch.callback.service;
  * @param dataCnt    record count ({@code data_cnt})
  * @param dataAmt    total amount, integer part ({@code data_amt})
  * @param dataDcmAmt total amount, decimal portion ({@code data_dcm_amt})
+ * @param tno        gateway {@code TNO} — the allocated {@code TB_FIRM_BAT_API_TRAN.TRAN_SEQ}
+ *                   (A1 / audit X-2). Legacy {@code FILE_DEPOSIT_TRANSFER_BATCH2} sends the
+ *                   execution request's {@code seq} (= its stored {@code TRAN_SEQ}) as the TNO.
  */
 public record BulkExecutionApiCommand(
         String vanOrgCd,
@@ -26,6 +29,7 @@ public record BulkExecutionApiCommand(
         String fileNm,
         String dataCnt,
         String dataAmt,
-        String dataDcmAmt
+        String dataDcmAmt,
+        String tno
 ) {
 }

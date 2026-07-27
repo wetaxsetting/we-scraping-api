@@ -96,6 +96,8 @@ public class FirmBankingInquiryService {
 
     private final FirmBankingSettingRepository firmBankingSettingRepo;
     private final DepositorInquiryService depositorInquiryService;
+    /** M — UAT-only Shinhan/Woori BANK_CD/PRTN_ID override (legacy PymnHelper:917-947). */
+    private final UatShinhanWooriOverride uatOverride;
 
     /**
      * Master gate for the live WGVN_EFS_201 path (C1). Default {@code false} →
@@ -118,6 +120,20 @@ public class FirmBankingInquiryService {
         String bizKey = TenantContext.currentBizKey();
         if (bizKey == null || bizKey.isBlank()) return false;
         return firmBankingSettingRepo.existsByBizKeyAndOrgStat(bizKey, "1");
+    }
+
+    /**
+     * Whether the live WGVN_EFS_201 recipient-inquiry path is switched on
+     * (the C1 master gate {@code wecms.dispatch.recipient-inquiry}). This flag
+     * has <b>no legacy counterpart</b> — legacy always runs the inquiry. Excel
+     * upload parsers consult it so that, when the feature is globally disabled,
+     * they skip recipient-name verification entirely instead of flagging every
+     * NAPAS row (which would happen if the always-empty inquiry result were
+     * treated as a failed name match). When enabled, parsers mirror legacy
+     * {@code PymnHelper.ckRecName} exactly.
+     */
+    public boolean isRecipientInquiryEnabled() {
+        return recipientInquiryEnabled;
     }
 
     /**
@@ -171,14 +187,18 @@ public class FirmBankingInquiryService {
         // TB_FIRM_TRAN C001/U002 audit lifecycle). The REST WGVN_EFS_201 variant
         // replaces the legacy WB_00000100 socket call.
         //
-        // NOTE: the legacy UAT Shinhan/Woori product-type override on
-        // outBankCd / bankPrtnId (PymnHelper.java:916-946) is intentionally NOT
-        // implemented — local-only R&D has no UAT environment. The firm-config
-        // values are used verbatim.
+        // M — legacy UAT Shinhan/Woori product-type override on BANK_CD / PRTN_ID
+        // (PymnHelper.java:917-947). Under the UAT profile only, for a Shinhan/Woori
+        // target bank the outbound PRTN_ID is swapped by product type (F/H); every
+        // other profile / bank / product type passes the firm-config values through
+        // verbatim. Isolated in UatShinhanWooriOverride — request-only, no DB write.
+        UatShinhanWooriOverride.Override ov = uatOverride.resolve(
+                napasBankCd, TenantContext.currentPrdtType(),
+                conf.getOutBankCd(), conf.getBankPrtnId());
         RecipientLookupCommand cmd = new RecipientLookupCommand(
                 conf.getVanOrgCd(),    // ID (VAN_ORG_CD)
-                conf.getOutBankCd(),   // BANK_CD (OUT_BANK_CD)
-                conf.getBankPrtnId(),  // PRTN_ID (BANK_PRTN_ID)
+                ov.bankCd(),           // BANK_CD (OUT_BANK_CD; UAT override else firm-config)
+                ov.prtnId(),           // PRTN_ID (BANK_PRTN_ID; UAT override else firm-config)
                 napasBankCd,           // TAR_BANK_CD
                 "A",                   // TAR_FINC_MDA_DIV — account (CITAD rejected upstream)
                 trimmed,               // TAR_FINC_MDA_NO

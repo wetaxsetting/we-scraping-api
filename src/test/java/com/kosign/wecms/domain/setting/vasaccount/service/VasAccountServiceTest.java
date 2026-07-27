@@ -53,6 +53,7 @@ class VasAccountServiceTest {
     @Mock BusiVasAcctInfmRepository repo;
     @Mock VasAcctSeqNoGenerator seqGen;
     @Mock AuditLogService auditLogService;
+    @Mock com.kosign.wecms.domain.banking.repository.AcctTrnsRcvPayInfmRepository acctTrnsRcvPayRepo;
 
     private VasAccountService service;
 
@@ -61,7 +62,7 @@ class VasAccountServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new VasAccountService(repo, seqGen, auditLogService);
+        service = new VasAccountService(repo, seqGen, auditLogService, acctTrnsRcvPayRepo);
         TenantContext.set(USER, USER, BIZ, LangCd.EN);
     }
 

@@ -39,5 +39,13 @@ public record PurposeSettingCreateRequest(
         /** {@code 'Y'} or {@code 'N'}. Optional; defaults to {@code 'Y'}
          *  when omitted (service-layer fallback). */
         @Pattern(regexp = "^[YN]$", message = "disp_yn: must be Y or N")
-        String dispYn
+        String dispYn,
+
+        /** Target tab group — {@code '4'} (Banking Deposit) or
+         *  {@code '6'} (Banking Withdrawal). Optional; when omitted the
+         *  row lands in the historic refactor {@code usag_grp_cd IS NULL}
+         *  scope (backward compatible). Mirrors legacy
+         *  {@code comm_0187_001_view.jsp} tab {@code data-usag-grp-cd}. */
+        @Pattern(regexp = "^[46]$", message = "usag_grp_cd: must be 4 or 6")
+        String usagGrpCd
 ) { }

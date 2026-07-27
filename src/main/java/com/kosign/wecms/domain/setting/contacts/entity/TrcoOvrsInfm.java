@@ -47,6 +47,14 @@ public class TrcoOvrsInfm {
     @Column(name = "BENE_ADDR", length = 500)
     private String beneAddr;
 
+    /**
+     * Beneficiary town/city name (ISO 20022 {@code cdtrTwnNm}, {@code varchar(150)}). Source of the
+     * overseas payment's {@code OVRS_PYMN_SUMR_DETL.BNFC_TOWN_NM} at save (which then carries to
+     * {@code RCPT_USE_ADDR_SI} through dispatch) — audit M-11 / E1.
+     */
+    @Column(name = "BENE_TOWN_NM", length = 150)
+    private String beneTownNm;
+
     @Column(name = "BENE_BANK_CODE", length = 20)
     private String beneBankCode;
 

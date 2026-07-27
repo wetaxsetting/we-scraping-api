@@ -82,6 +82,8 @@ class RealtimeDispatchServiceTest {
         when(firmConfRepository.findById(any())).thenReturn(Optional.of(conf));
 
         when(firmTranRepository.existsByTranDtAndBizKeyAndTranSeq(any(), any(), any())).thenReturn(false);
+        // G2: the atomic '9'→'6' claim succeeds by default so the dispatch-path tests proceed.
+        when(payTargetRepository.claimForDispatch(any(), any(), any(), any())).thenReturn(1);
         when(firmTranRepository.saveAndFlush(any())).thenAnswer(i -> i.getArgument(0));
         when(firmTranRepository.save(any())).thenAnswer(i -> i.getArgument(0));
         when(payTargetRepository.save(any())).thenAnswer(i -> i.getArgument(0));
@@ -134,7 +136,7 @@ class RealtimeDispatchServiceTest {
         ArgumentCaptor<String> msg = ArgumentCaptor.forClass(String.class);
         verify(opsAlertService).notify(any(), msg.capture());
         assertTrue(msg.getValue().startsWith("실시간지급이체 Batch 거래 마감."));
-        verify(realtimeTransferService, never()).transfer(any());
+        verify(realtimeTransferService, never()).transfer(any(), any());
         verify(firmTranRepository, never()).saveAndFlush(any());
     }
 
@@ -149,7 +151,7 @@ class RealtimeDispatchServiceTest {
         ArgumentCaptor<String> msg = ArgumentCaptor.forClass(String.class);
         verify(opsAlertService).notify(any(), msg.capture());
         assertTrue(msg.getValue().startsWith("실시간지급이체 Batch 수행 기준 없음."));
-        verify(realtimeTransferService, never()).transfer(any());
+        verify(realtimeTransferService, never()).transfer(any(), any());
     }
 
     @Test
@@ -160,7 +162,7 @@ class RealtimeDispatchServiceTest {
 
         service.dispatch(BIZ_KEY, TRAN_DT, TRAN_SEQ);
 
-        verify(realtimeTransferService, never()).transfer(any());
+        verify(realtimeTransferService, never()).transfer(any(), any());
         verify(opsAlertService, never()).notify(any(), any());
         verify(payTargetRepository, never()).save(any()); // left WAIT, untouched
     }
@@ -168,8 +170,10 @@ class RealtimeDispatchServiceTest {
     @Test
     void directSuccess_writesFirmTranSixThenZero_andPayTargetZero() {
         stubWaiting();
-        when(realtimeTransferService.transfer(any()))
-                .thenReturn(new RealtimeTransferResult(false, "0", "1000000", "00", "Owner From 202", "INTER", null));
+        // C — balDcmAmt "67" must be DISCARDED: legacy (NAPAS_REAL_TIME_BATCH:620) stores the
+        // bal_amt INTEGER portion only; there is no BAL_DCM_AMT column on TB_FIRM_TRAN.
+        when(realtimeTransferService.transfer(any(), any()))
+                .thenReturn(new RealtimeTransferResult(false, "0", "1000000", "67", "Owner From 202", "INTER"));
 
         service.dispatch(BIZ_KEY, TRAN_DT, TRAN_SEQ);
 
@@ -184,7 +188,7 @@ class RealtimeDispatchServiceTest {
         verify(firmTranRepository).save(upd.capture());
         assertEquals("0", upd.getValue().getProcStat());
         assertEquals("0000", upd.getValue().getRsCd());
-        assertEquals(new BigDecimal("1000000.00"), upd.getValue().getBalAmt());
+        assertEquals(new BigDecimal("1000000"), upd.getValue().getBalAmt());  // C: integer only, .67 discarded
         assertEquals("0", upd.getValue().getBalAmtSign());
 
         ArgumentCaptor<TbPayTarget> pay = ArgumentCaptor.forClass(TbPayTarget.class);
@@ -196,13 +200,13 @@ class RealtimeDispatchServiceTest {
     @Test
     void commandIsBuiltWithToneNormalizationAndSplitAmount() {
         stubWaiting();
-        when(realtimeTransferService.transfer(any()))
-                .thenReturn(new RealtimeTransferResult(false, "0", "0", "00", "Owner", "INTER", null));
+        when(realtimeTransferService.transfer(any(), any()))
+                .thenReturn(new RealtimeTransferResult(false, "0", "0", "00", "Owner", "INTER"));
 
         service.dispatch(BIZ_KEY, TRAN_DT, TRAN_SEQ);
 
         ArgumentCaptor<RealtimeTransferCommand> cmd = ArgumentCaptor.forClass(RealtimeTransferCommand.class);
-        verify(realtimeTransferService).transfer(cmd.capture());
+        verify(realtimeTransferService).transfer(cmd.capture(), any());
         assertEquals("VAN01", cmd.getValue().vanOrgCd());
         assertEquals("970436", cmd.getValue().bankCd());
         assertEquals("PRTN01", cmd.getValue().prtnId());
@@ -217,7 +221,7 @@ class RealtimeDispatchServiceTest {
     @Test
     void gatewayError_writesFirmTranAndPayTargetFail_withGatewayRc() {
         stubWaiting();
-        when(realtimeTransferService.transfer(any()))
+        when(realtimeTransferService.transfer(any(), any()))
                 .thenThrow(new BusinessException("WBE_EFS_GATEWAY_ERROR", "G998"));
 
         service.dispatch(BIZ_KEY, TRAN_DT, TRAN_SEQ);
@@ -233,40 +237,24 @@ class RealtimeDispatchServiceTest {
     }
 
     @Test
-    void g999RecoveryConfirmedSuccess_marksBothZero() {
+    void pendingResult_leavesBothRowsAt6_forResultCheck() {
+        // B2 (audit H-4/D2): a pending 202 outcome (G999 / no-response / VV-mismatch) is NOT
+        // finalized in dispatch. Both the firm-tran and the pay-target stay PROC_STAT='6'
+        // (in-progress); the scheduled ResultCheckService confirms the true outcome via 203 later.
+        // This replaces the former synchronous G999→203 recovery (which risked a premature FAIL).
         stubWaiting();
-        when(realtimeTransferService.transfer(any()))
-                .thenReturn(new RealtimeTransferResult(true, null, null, null, null, null, recovery("0000")));
+        when(realtimeTransferService.transfer(any(), any()))
+                .thenReturn(RealtimeTransferResult.ofPending());
 
         service.dispatch(BIZ_KEY, TRAN_DT, TRAN_SEQ);
 
         ArgumentCaptor<TbFirmTran> upd = ArgumentCaptor.forClass(TbFirmTran.class);
         verify(firmTranRepository).save(upd.capture());
-        assertEquals("0", upd.getValue().getProcStat());
-        assertEquals("0000", upd.getValue().getRsCd());
-        assertNull(upd.getValue().getBalAmt(), "recovery path carries no balance");
+        assertEquals("6", upd.getValue().getProcStat());
 
         ArgumentCaptor<TbPayTarget> pay = ArgumentCaptor.forClass(TbPayTarget.class);
         verify(payTargetRepository).save(pay.capture());
-        assertEquals("0", pay.getValue().getProcStat());
-        assertEquals("Owner From 203", pay.getValue().getFincMdaOwnerNm());
-    }
-
-    @Test
-    void g999RecoveryConfirmedFail_marksBothFail() {
-        stubWaiting();
-        when(realtimeTransferService.transfer(any()))
-                .thenReturn(new RealtimeTransferResult(true, null, null, null, null, null, recovery("0001")));
-
-        service.dispatch(BIZ_KEY, TRAN_DT, TRAN_SEQ);
-
-        ArgumentCaptor<TbFirmTran> upd = ArgumentCaptor.forClass(TbFirmTran.class);
-        verify(firmTranRepository).save(upd.capture());
-        assertEquals("3", upd.getValue().getProcStat());
-
-        ArgumentCaptor<TbPayTarget> pay = ArgumentCaptor.forClass(TbPayTarget.class);
-        verify(payTargetRepository).save(pay.capture());
-        assertEquals("3", pay.getValue().getProcStat());
+        assertEquals("6", pay.getValue().getProcStat());
     }
 
     @Test
@@ -276,7 +264,7 @@ class RealtimeDispatchServiceTest {
 
         service.dispatch(BIZ_KEY, TRAN_DT, TRAN_SEQ);
 
-        verify(realtimeTransferService, never()).transfer(any());
+        verify(realtimeTransferService, never()).transfer(any(), any());
         verify(firmTranRepository, never()).saveAndFlush(any());
     }
 
@@ -287,7 +275,7 @@ class RealtimeDispatchServiceTest {
 
         service.dispatch(BIZ_KEY, TRAN_DT, TRAN_SEQ);
 
-        verify(realtimeTransferService, never()).transfer(any());
+        verify(realtimeTransferService, never()).transfer(any(), any());
         verify(firmTranRepository, never()).saveAndFlush(any());
     }
 
@@ -298,7 +286,20 @@ class RealtimeDispatchServiceTest {
 
         service.dispatch(BIZ_KEY, TRAN_DT, TRAN_SEQ);
 
-        verify(realtimeTransferService, never()).transfer(any());
+        verify(realtimeTransferService, never()).transfer(any(), any());
+        verify(firmTranRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void g2_claimLost_isNoOp_noTransfer() {
+        // G2 (audit F2): a duplicate/late hand-off that loses the atomic '9'→'6' claim
+        // (another worker already advanced the row) must no-op — no 202 insert, no transfer.
+        stubWaiting();
+        when(payTargetRepository.claimForDispatch(any(), any(), any(), any())).thenReturn(0);
+
+        service.dispatch(BIZ_KEY, TRAN_DT, TRAN_SEQ);
+
+        verify(realtimeTransferService, never()).transfer(any(), any());
         verify(firmTranRepository, never()).saveAndFlush(any());
     }
 
@@ -308,7 +309,7 @@ class RealtimeDispatchServiceTest {
         when(firmConfRepository.findById(any())).thenReturn(Optional.empty());
 
         assertThrows(IllegalStateException.class, () -> service.dispatch(BIZ_KEY, TRAN_DT, TRAN_SEQ));
-        verify(realtimeTransferService, never()).transfer(any());
+        verify(realtimeTransferService, never()).transfer(any(), any());
     }
 
     // ── 204 FX persistence (Woori / non-VND pre-step) ───────────────────────────
@@ -337,9 +338,9 @@ class RealtimeDispatchServiceTest {
     void woori204Success_creates204AuditRow_andUpdatesU005Fields() {
         when(payTargetRepository.findByBizKeyAndTranDtAndTranSeq(BIZ_KEY, TRAN_DT, TRAN_SEQ))
                 .thenReturn(Optional.of(wooriUsdPayTarget()));
-        when(realtimeTransferService.inquireFxRate(any())).thenReturn(fx204());
-        when(realtimeTransferService.transfer(any(), any()))
-                .thenReturn(new RealtimeTransferResult(false, "0", "0", "00", "Owner", "INTER", null));
+        when(realtimeTransferService.inquireFxRate(any(), any())).thenReturn(fx204());
+        when(realtimeTransferService.transfer(any(), any(), any()))
+                .thenReturn(new RealtimeTransferResult(false, "0", "0", "00", "Owner", "INTER"));
 
         service.dispatch(BIZ_KEY, TRAN_DT, TRAN_SEQ);
 
@@ -359,7 +360,7 @@ class RealtimeDispatchServiceTest {
         assertEquals(new BigDecimal("2450000.00"), row204.getDepAmt());
 
         // The 202 still proceeds afterwards (FX fed into it).
-        verify(realtimeTransferService).transfer(any(), any());
+        verify(realtimeTransferService).transfer(any(), any(), any());
     }
 
     /** 2. 204 failure creates/updates a FAILED 204 audit row and skips the 202. */
@@ -367,7 +368,7 @@ class RealtimeDispatchServiceTest {
     void woori204Failure_persistsFailed204Row_andSkips202() {
         when(payTargetRepository.findByBizKeyAndTranDtAndTranSeq(BIZ_KEY, TRAN_DT, TRAN_SEQ))
                 .thenReturn(Optional.of(wooriUsdPayTarget()));
-        when(realtimeTransferService.inquireFxRate(any()))
+        when(realtimeTransferService.inquireFxRate(any(), any()))
                 .thenThrow(new BusinessException("WBE_EFS_GATEWAY_ERROR", "G001"));
 
         service.dispatch(BIZ_KEY, TRAN_DT, TRAN_SEQ);
@@ -381,8 +382,32 @@ class RealtimeDispatchServiceTest {
         assertEquals("G001", row204.getRsCd());
 
         // 202 skipped (neither overload called); pay-target untouched (legacy `continue`).
-        verify(realtimeTransferService, never()).transfer(any());
         verify(realtimeTransferService, never()).transfer(any(), any());
+        verify(realtimeTransferService, never()).transfer(any(), any(), any());
+        verify(payTargetRepository, never()).save(any());
+    }
+
+    /** D — 204 NO-RESPONSE (null envelope): leave the 204 row at PROC_STAT='6' (legacy
+     *  NAPAS_REAL_TIME_BATCH:358-362 `continue`) — do NOT mark it '3', no ops alert — and skip 202. */
+    @Test
+    void woori204NoResponse_leaves204RowAtSix_skips202() {
+        when(payTargetRepository.findByBizKeyAndTranDtAndTranSeq(BIZ_KEY, TRAN_DT, TRAN_SEQ))
+                .thenReturn(Optional.of(wooriUsdPayTarget()));
+        when(realtimeTransferService.inquireFxRate(any(), any())).thenReturn(null); // no-response
+
+        service.dispatch(BIZ_KEY, TRAN_DT, TRAN_SEQ);
+
+        // 204 row was inserted at '6' and never updated (no '3' failure write, no success write).
+        ArgumentCaptor<TbFirmTran> flushed = ArgumentCaptor.forClass(TbFirmTran.class);
+        verify(firmTranRepository, times(1)).saveAndFlush(flushed.capture());
+        assertEquals("204", flushed.getValue().getTranTp());
+        assertEquals("6", flushed.getValue().getProcStat());   // stays REQ, NOT FAIL
+        verify(firmTranRepository, never()).save(any());
+
+        // 202 skipped; no ops alert on no-response (legacy alerts only on the error branch).
+        verify(realtimeTransferService, never()).transfer(any(), any());
+        verify(realtimeTransferService, never()).transfer(any(), any(), any());
+        verify(opsAlertService, never()).notify(any(), any());
         verify(payTargetRepository, never()).save(any());
     }
 
@@ -391,9 +416,9 @@ class RealtimeDispatchServiceTest {
     void woori204Success_updatesPayTargetU002FxFields() {
         when(payTargetRepository.findByBizKeyAndTranDtAndTranSeq(BIZ_KEY, TRAN_DT, TRAN_SEQ))
                 .thenReturn(Optional.of(wooriUsdPayTarget()));
-        when(realtimeTransferService.inquireFxRate(any())).thenReturn(fx204());
-        when(realtimeTransferService.transfer(any(), any()))
-                .thenReturn(new RealtimeTransferResult(false, "0", "0", "00", "Owner", "INTER", null));
+        when(realtimeTransferService.inquireFxRate(any(), any())).thenReturn(fx204());
+        when(realtimeTransferService.transfer(any(), any(), any()))
+                .thenReturn(new RealtimeTransferResult(false, "0", "0", "00", "Owner", "INTER"));
 
         service.dispatch(BIZ_KEY, TRAN_DT, TRAN_SEQ);
 
@@ -411,12 +436,12 @@ class RealtimeDispatchServiceTest {
     @Test
     void vndPath_doesNotCreate204Row() {
         stubWaiting(); // default pay-target is bank 970436 + VND
-        when(realtimeTransferService.transfer(any()))
-                .thenReturn(new RealtimeTransferResult(false, "0", "0", "00", "Owner", "INTER", null));
+        when(realtimeTransferService.transfer(any(), any()))
+                .thenReturn(new RealtimeTransferResult(false, "0", "0", "00", "Owner", "INTER"));
 
         service.dispatch(BIZ_KEY, TRAN_DT, TRAN_SEQ);
 
-        verify(realtimeTransferService, never()).inquireFxRate(any());
+        verify(realtimeTransferService, never()).inquireFxRate(any(), any());
         verify(dispatchKeyGenerator, never()).nextTranSeq(any(), any());
         ArgumentCaptor<TbFirmTran> flushed = ArgumentCaptor.forClass(TbFirmTran.class);
         verify(firmTranRepository, atLeast(1)).saveAndFlush(flushed.capture());
@@ -433,28 +458,28 @@ class RealtimeDispatchServiceTest {
         p.setWithdCcyCd("USD");
         when(payTargetRepository.findByBizKeyAndTranDtAndTranSeq(BIZ_KEY, TRAN_DT, TRAN_SEQ))
                 .thenReturn(Optional.of(p));
-        when(realtimeTransferService.transfer(any()))
-                .thenReturn(new RealtimeTransferResult(false, "0", "0", "00", "Owner", "INTER", null));
+        when(realtimeTransferService.transfer(any(), any()))
+                .thenReturn(new RealtimeTransferResult(false, "0", "0", "00", "Owner", "INTER"));
 
         service.dispatch(BIZ_KEY, TRAN_DT, TRAN_SEQ);
 
-        verify(realtimeTransferService, never()).inquireFxRate(any());
+        verify(realtimeTransferService, never()).inquireFxRate(any(), any());
         verify(dispatchKeyGenerator, never()).nextTranSeq(any(), any());
-        verify(realtimeTransferService).transfer(any()); // 202 still runs via the single-arg path
+        verify(realtimeTransferService).transfer(any(), any()); // 202 still runs via the single-arg path
     }
 
     /** 5. Existing 202 behavior (VND) is unchanged — single-arg transfer, one 202 row, no FX leg. */
     @Test
     void existing202Behavior_unchanged_forVnd() {
         stubWaiting();
-        when(realtimeTransferService.transfer(any()))
-                .thenReturn(new RealtimeTransferResult(false, "0", "1000000", "00", "Owner From 202", "INTER", null));
+        when(realtimeTransferService.transfer(any(), any()))
+                .thenReturn(new RealtimeTransferResult(false, "0", "1000000", "00", "Owner From 202", "INTER"));
 
         service.dispatch(BIZ_KEY, TRAN_DT, TRAN_SEQ);
 
         // No FX leg touched.
-        verify(realtimeTransferService, never()).inquireFxRate(any());
-        verify(realtimeTransferService, never()).transfer(any(), any());
+        verify(realtimeTransferService, never()).inquireFxRate(any(), any());
+        verify(realtimeTransferService, never()).transfer(any(), any(), any());
         verify(dispatchKeyGenerator, never()).nextTranSeq(any(), any());
 
         // Exactly one firm-tran flushed (the 202 row), result mapped to '0'.
@@ -469,20 +494,21 @@ class RealtimeDispatchServiceTest {
 
     @Test
     void splitAmount_handlesWholeNumber() {
-        // 10.00 → amt="10", dcm="0" (no fractional cents)
+        // 10.00 (scale 2) → amt="10", dcm="00" — legacy StrUtil.BigDecPaser keeps the literal
+        // fractional substring after the dot (audit H-6; the old refactor wrongly produced "0").
         TbPayTarget p = payTarget("9");
         p.setTranAmt(new BigDecimal("10.00"));
         when(payTargetRepository.findByBizKeyAndTranDtAndTranSeq(BIZ_KEY, TRAN_DT, TRAN_SEQ))
                 .thenReturn(Optional.of(p));
-        when(realtimeTransferService.transfer(any()))
-                .thenReturn(new RealtimeTransferResult(false, "0", "0", "00", "Owner", "INTER", null));
+        when(realtimeTransferService.transfer(any(), any()))
+                .thenReturn(new RealtimeTransferResult(false, "0", "0", "00", "Owner", "INTER"));
 
         service.dispatch(BIZ_KEY, TRAN_DT, TRAN_SEQ);
 
         ArgumentCaptor<RealtimeTransferCommand> cmd = ArgumentCaptor.forClass(RealtimeTransferCommand.class);
-        verify(realtimeTransferService).transfer(cmd.capture());
+        verify(realtimeTransferService).transfer(cmd.capture(), any());
         assertEquals("10", cmd.getValue().amt());
-        assertEquals("0", cmd.getValue().dcmAmt());
+        assertEquals("00", cmd.getValue().dcmAmt());
         assertTrue(List.of("VND").contains(cmd.getValue().currenCd()));
     }
 }

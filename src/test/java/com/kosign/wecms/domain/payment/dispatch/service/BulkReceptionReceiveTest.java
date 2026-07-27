@@ -1,6 +1,7 @@
 package com.kosign.wecms.domain.payment.dispatch.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConf;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmFileMst;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileData;
@@ -41,6 +42,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -84,6 +86,10 @@ class BulkReceptionReceiveTest {
     @Mock BulkTransferValidator bulkTransferValidator;
     @Mock com.kosign.wecms.domain.payment.dispatch.alert.OpsAlertService opsAlertService;
     @Mock OperatingHoursService operatingHoursService;
+    // Item 2: a mock PlatformTransactionManager makes the per-file REQUIRES_NEW TransactionTemplate
+    // a synchronous pass-through (getTransaction→null, commit/rollback no-op) that still propagates
+    // exceptions — so these unit tests exercise the real per-file orchestration + fail-stop.
+    @Mock org.springframework.transaction.PlatformTransactionManager perFileTxManager;
 
     private final EfsCryptoService crypto = new EfsCryptoService();
     // Spy so split tests can capture the per-file encode(header, lines, trailer) calls
@@ -103,7 +109,8 @@ class BulkReceptionReceiveTest {
                 dispatchKeyGenerator, codec, sftpClient, sftpProperties, bulkTransferValidator,
                 opsAlertService, operatingHoursService,
                 org.mockito.Mockito.mock(com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard.class),
-                org.mockito.Mockito.mock(com.kosign.wecms.domain.payment.common.OutBankCdNormalizer.class));
+                org.mockito.Mockito.mock(com.kosign.wecms.domain.payment.common.OutBankCdNormalizer.class),
+                perFileTxManager);
 
         // Pre-flight validation passes by default; the dedicated cases live in
         // BulkReceptionServiceValidationTest.
@@ -297,6 +304,28 @@ class BulkReceptionReceiveTest {
         verify(spy, never()).issueReception(any());
     }
 
+    /** G. FILE_TYPE is used RAW (no trim) in the filename + stored FILE_TYPE (legacy BATCH1:533,548).
+     *  Real data is CHAR(3) exactly-3-char (no padding), so this padded value only demonstrates the
+     *  raw pass-through mechanism — with the old trim() the filename would be "..._WRB_..." instead. */
+    @Test
+    void fileType_isRawNotTrimmed_inFilenameAndMst() {
+        TbFirmConf paddedConf = conf("N", 2000);
+        paddedConf.setFileType("WRB ");   // simulated padded/raw value; legacy carries it verbatim
+        when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
+                .thenReturn(Optional.of(payRow(ProcStat.WAIT.code())));
+        when(firmConfRepository.findById(any())).thenReturn(Optional.of(paddedConf));
+        when(payFileDataRepository.findByBizKeyAndTranDtAndFileSeqNo(BIZ_KEY, TRAN_DT, FILE_SEQ_NO))
+                .thenReturn(List.of(detail(1, "1000.00")));
+        BulkReceptionService spy = spy(service);
+        doReturn(null).when(spy).issueReception(any());
+        spy.receive(TRAN_DT, BIZ_KEY, FILE_SEQ_NO);
+
+        ArgumentCaptor<TbFirmFileMst> mstCap = ArgumentCaptor.forClass(TbFirmFileMst.class);
+        verify(firmFileMstRepository).save(mstCap.capture());
+        assertEquals("WRB ", mstCap.getValue().getFileType());                               // raw, not trimmed
+        assertEquals("S_" + VAN + "_WRB _001_" + TRAN_DT, mstCap.getValue().getFirmFileNm()); // padding carried raw
+    }
+
     // ------------------------------------------------------------------ C5 branch-split
 
     private List<TbPayFileData> details(int n) {
@@ -474,5 +503,114 @@ class BulkReceptionReceiveTest {
         // 3 files → 3 EFS 301 calls; each file also SFTP-uploaded.
         verify(spy, times(3)).issueReception(any());
         verify(sftpClient, times(3)).upload(anyString(), anyString());
+    }
+
+    /** All original SEQ (ORG_SEQ) values grouped per split file, in file save order. */
+    private List<List<Long>> orgSeqsPerFile() {
+        List<List<Long>> out = new ArrayList<>();
+        for (List<TbFirmFileData> rows : capturedDataByFile().values()) {
+            out.add(rows.stream().map(r -> r.getOrgSeq().longValue()).toList());
+        }
+        return out;
+    }
+
+    /** F. Contiguous SEQ 1..5, limit 2 → value-range windows [1,2] [3,4] [5,6]:
+     *  file1 SEQ {1,2}, file2 {3,4}, file3 {5} (legacy START_SEQ/END_SEQ parity). */
+    @Test
+    void split_partitionsBySeqValueRange_contiguous() {
+        when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
+                .thenReturn(Optional.of(payRow(ProcStat.WAIT.code())));
+        when(firmConfRepository.findById(any())).thenReturn(Optional.of(conf("Y", 2)));
+        when(payFileDataRepository.findByBizKeyAndTranDtAndFileSeqNo(BIZ_KEY, TRAN_DT, FILE_SEQ_NO))
+                .thenReturn(details(5)); // SEQ 1..5
+        BulkReceptionService spy = spy(service);
+        doReturn(null).when(spy).issueReception(any());
+        spy.receive(TRAN_DT, BIZ_KEY, FILE_SEQ_NO);
+
+        List<List<Long>> perFile = orgSeqsPerFile();
+        assertEquals(List.of(1L, 2L), perFile.get(0));
+        assertEquals(List.of(3L, 4L), perFile.get(1));
+        assertEquals(List.of(5L), perFile.get(2));
+    }
+
+    /** F. Non-1 starting SEQ {2,3,4}, limit 2 → legacy value-range windows [1,2] [3,4]:
+     *  SEQ 2 → file1, SEQ 3,4 → file2. List-index slicing would instead give {2,3} / {4};
+     *  asserting {2} / {3,4} proves partition is by SEQ VALUE, not by list position. */
+    @Test
+    void split_partitionsBySeqValueRange_notListIndex_nonOneStart() {
+        when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
+                .thenReturn(Optional.of(payRow(ProcStat.WAIT.code())));
+        when(firmConfRepository.findById(any())).thenReturn(Optional.of(conf("Y", 2)));
+        when(payFileDataRepository.findByBizKeyAndTranDtAndFileSeqNo(BIZ_KEY, TRAN_DT, FILE_SEQ_NO))
+                .thenReturn(List.of(detail(2, "2000.00"), detail(3, "3000.00"), detail(4, "4000.00")));
+        BulkReceptionService spy = spy(service);
+        doReturn(null).when(spy).issueReception(any());
+        spy.receive(TRAN_DT, BIZ_KEY, FILE_SEQ_NO);
+
+        List<List<Long>> perFile = orgSeqsPerFile();
+        assertEquals(List.of(2L), perFile.get(0));       // value window [1,2] → only SEQ 2
+        assertEquals(List.of(3L, 4L), perFile.get(1));   // value window [3,4] → SEQ 3,4
+    }
+
+    // ------------------------------------------------------------------ Item 2: per-file tx boundary
+
+    /**
+     * Item 2 (audit M-7): a later split's EFS 00301 failure trips the sibling fail-stop —
+     * the earlier file was fully built + dispatched (committed in its own REQUIRES_NEW tx) and
+     * the remaining sibling is never attempted (R004 parity). The earlier file's work is not
+     * undone by the later failure.
+     */
+    @Test
+    void laterSplitFailure_stopsBatch_earlierFileStandsCommitted() {
+        when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
+                .thenReturn(Optional.of(payRow(ProcStat.WAIT.code())));
+        when(firmConfRepository.findById(any())).thenReturn(Optional.of(conf("Y", 2)));
+        when(payFileDataRepository.findByBizKeyAndTranDtAndFileSeqNo(BIZ_KEY, TRAN_DT, FILE_SEQ_NO))
+                .thenReturn(details(5)); // ceil(5/2) = 3 files
+
+        BulkReceptionService spy = spy(service);
+        // File 1 succeeds; file 2's 00301 fails (gateway BusinessException).
+        doReturn(null)
+                .doThrow(new BusinessException("WBE_EFS_GATEWAY_ERROR", "G001"))
+                .when(spy).issueReception(any());
+
+        spy.receive(TRAN_DT, BIZ_KEY, FILE_SEQ_NO);
+
+        // Only files 1 and 2 were attempted — file 3 skipped after the fail-stop.
+        verify(spy, times(2)).issueReception(any());
+        // Both files' MST rows were saved (file 1 committed in its own tx BEFORE file 2 failed).
+        verify(firmFileMstRepository, org.mockito.Mockito.atLeast(2)).save(any());
+        // The shared pay-file ends FAIL (file 2's failBoth).
+        ArgumentCaptor<TbPayFileMst> payCap = ArgumentCaptor.forClass(TbPayFileMst.class);
+        verify(payFileMstRepository, org.mockito.Mockito.atLeastOnce()).save(payCap.capture());
+        assertEquals(ProcStat.FAIL.code(),
+                payCap.getAllValues().get(payCap.getAllValues().size() - 1).getProcStat());
+    }
+
+    /**
+     * Item 2: an UNEXPECTED (non-BusinessException) throw while dispatching a later split
+     * propagates out of {@code receive()} — but only that file's REQUIRES_NEW tx rolls back;
+     * the earlier file's work was already committed in its own tx (asserted here by the earlier
+     * file's MST save having happened before the throw, and file 3 never being attempted).
+     */
+    @Test
+    void unexpectedThrowInLaterSplit_propagates_earlierFileAlreadySaved() {
+        when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
+                .thenReturn(Optional.of(payRow(ProcStat.WAIT.code())));
+        when(firmConfRepository.findById(any())).thenReturn(Optional.of(conf("Y", 2)));
+        when(payFileDataRepository.findByBizKeyAndTranDtAndFileSeqNo(BIZ_KEY, TRAN_DT, FILE_SEQ_NO))
+                .thenReturn(details(5));
+
+        BulkReceptionService spy = spy(service);
+        doReturn(null)
+                .doThrow(new RuntimeException("unexpected codec blowup"))
+                .when(spy).issueReception(any());
+
+        assertThrows(RuntimeException.class, () -> spy.receive(TRAN_DT, BIZ_KEY, FILE_SEQ_NO));
+
+        // File 1's MST was saved before file 2 blew up; file 3 was never attempted (loop aborted
+        // by the propagating throw). With per-file REQUIRES_NEW, file 1 stays committed.
+        verify(spy, times(2)).issueReception(any());
+        verify(firmFileMstRepository, org.mockito.Mockito.atLeast(2)).save(any());
     }
 }

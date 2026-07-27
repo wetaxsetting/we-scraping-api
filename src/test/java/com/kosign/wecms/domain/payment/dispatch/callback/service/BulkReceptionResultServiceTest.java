@@ -5,7 +5,9 @@ import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.domain.payment.dispatch.callback.dto.BulkReceptionResultRequest;
 import com.kosign.wecms.domain.payment.dispatch.callback.dto.EfsCallbackEnvelope;
+import com.kosign.wecms.domain.payment.dispatch.constant.FirmBankingResultCd;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmBatApiTran;
+import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileMst;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmFileMst;
 import com.kosign.wecms.domain.payment.dispatch.enums.ApiTranTp;
 import com.kosign.wecms.domain.payment.dispatch.enums.ProcStat;
@@ -83,16 +85,18 @@ class BulkReceptionResultServiceTest {
     TbFirmBatApiTranRepository firmBatApiTranRepository;
     @Mock
     DispatchKeyGenerator dispatchKeyGenerator;
+    @Mock
+    com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileMstRepository payFileMstRepository;
 
     private BulkReceptionResultService service() {
         return new BulkReceptionResultService(efsApiClient, crypto, vanApiKeyService, props, mapper,
-                firmFileMstRepository, firmBatApiTranRepository, dispatchKeyGenerator);
+                firmFileMstRepository, firmBatApiTranRepository, dispatchKeyGenerator, payFileMstRepository);
     }
 
     // ── issueExecution (00302 API request leg) ────────────────────────────────
 
     private static BulkExecutionApiCommand cmd() {
-        return new BulkExecutionApiCommand(VAN_ORG, BANK_CD, PRTN_ID, FILE_NM, "3", "1500000", "0");
+        return new BulkExecutionApiCommand(VAN_ORG, BANK_CD, PRTN_ID, FILE_NM, "3", "1500000", "0", "0000042");
     }
 
     private EfsEnvelope success302(String rc) throws Exception {
@@ -154,7 +158,7 @@ class BulkReceptionResultServiceTest {
     @Test
     void invalid_input_rejected_before_key_lookup_or_gateway_call() {
         BulkExecutionApiCommand bad = new BulkExecutionApiCommand(
-                VAN_ORG, BANK_CD, PRTN_ID, "  ", "3", "1500000", "0"); // blank fileNm
+                VAN_ORG, BANK_CD, PRTN_ID, "  ", "3", "1500000", "0", "0000042"); // blank fileNm
 
         assertThatThrownBy(() -> service().issueExecution(bad))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -214,7 +218,21 @@ class BulkReceptionResultServiceTest {
                 .thenReturn(false);
         when(efsApiClient.send(eq(EfsApiClient.EFS_302), any())).thenReturn(success302("0000"));
 
-        service().handle(callbackOf(receptionReq("BT00", "3", "1500000")));
+        EfsEnvelope ackEnv = service().handle(callbackOf(receptionReq("BT00", "3", "1500000")));
+
+        // A2 (audit C1): 01301 success ack — RC=0000, TNO echoed, EV REBUILT over the six echo
+        // fields (decryptable; not the request EV, not carrying result_cd), VM/EM set.
+        assertThat(ackEnv.rc()).isEqualTo("0000");
+        assertThat(ackEnv.tno()).isEqualTo("TNO-CB");
+        assertThat(ackEnv.em()).isEqualTo("AES");
+        assertThat(ackEnv.vm()).isEqualTo("HmacSHA256");
+        String ackJson = crypto.decryptEv(ackEnv.ev(), TEST_KEY);
+        assertThat(ackJson)
+                .contains("\"bank_cd\":\"" + BANK_CD + "\"")
+                .contains("\"file_nm\":\"" + FILE_NM + "\"")
+                .contains("\"data_cnt\":\"3\"")
+                .doesNotContain("result_cd"); // only the six echo fields
+        assertThat(crypto.verifyVv(ackEnv.ev(), ackEnv.vv(), TEST_KEY)).isTrue();
 
         // 00302 issued exactly once, carrying the requested totals.
         ArgumentCaptor<EfsEnvelope> captor = ArgumentCaptor.forClass(EfsEnvelope.class);
@@ -246,6 +264,54 @@ class BulkReceptionResultServiceTest {
         verify(efsApiClient, never()).send(eq(EfsApiClient.EFS_302), any());
         // Not advanced to execution-requested — stays at reception-success.
         assertThat(file.getProcStep()).isEqualTo(ProcStep.REQ_RECV.code());
+    }
+
+    // ── C1 sibling fail-stop (G998) + C2 pay-file failure propagation (audit H-3 / M-1) ──
+
+    @Test
+    void siblingFailStop_whenPayFileAlreadyFailed_marksG998_noReceptionNoExecution() throws Exception {
+        TbFirmFileMst file = receptionFile();
+        stubReceptionLookup(file);
+        // The shared pay-file is already FAIL (a prior split sibling failed) → C1 fail-stop.
+        TbPayFileMst payFile = new TbPayFileMst();
+        payFile.setProcStat(ProcStat.FAIL.code());
+        when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(anyString(), eq(BIZ_KEY), eq(FILE_SEQ)))
+                .thenReturn(Optional.of(payFile));
+
+        service().handle(callbackOf(receptionReq("BT00", "3", "1500000")));
+
+        // No 00302 — partial money movement prevented.
+        verify(efsApiClient, never()).send(eq(EfsApiClient.EFS_302), any());
+        // This firm file is marked PROC_STEP='1'/PROC_STAT='3' with G998.
+        assertThat(file.getProcStep()).isEqualTo(ProcStep.REQ_RECV.code());
+        assertThat(file.getProcStat()).isEqualTo(ProcStat.FAIL.code());
+        assertThat(file.getRegRsltCd()).isEqualTo(FirmBankingResultCd.TARGET_STAT_ERR); // G998
+        // The G998 01301 audit row is keyed by the callback TNO (A1).
+        ArgumentCaptor<TbFirmBatApiTran> audit = ArgumentCaptor.forClass(TbFirmBatApiTran.class);
+        verify(firmBatApiTranRepository).save(audit.capture());
+        assertThat(audit.getValue().getRsCd()).isEqualTo(FirmBankingResultCd.TARGET_STAT_ERR);
+        assertThat(audit.getValue().getTranSeq()).isEqualTo("TNO-CB");
+    }
+
+    @Test
+    void receptionFailure_propagatesFailToPayFile() throws Exception {
+        TbFirmFileMst file = receptionFile();
+        stubReceptionLookup(file);
+        TbPayFileMst payFile = new TbPayFileMst();
+        payFile.setProcStat(ProcStat.REQ.code()); // in-progress before the failure
+        when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(anyString(), eq(BIZ_KEY), eq(FILE_SEQ)))
+                .thenReturn(Optional.of(payFile));
+        when(payFileMstRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        // result_cd != BT00 → reception failure.
+        service().handle(callbackOf(receptionReq("BT99", "3", "1500000")));
+
+        verify(efsApiClient, never()).send(eq(EfsApiClient.EFS_302), any());
+        assertThat(file.getProcStat()).isEqualTo(ProcStat.FAIL.code()); // firm file FAIL
+        // C2: the shared pay-file summary is also marked FAIL (so the UI reflects it + C1 trips next).
+        ArgumentCaptor<TbPayFileMst> pay = ArgumentCaptor.forClass(TbPayFileMst.class);
+        verify(payFileMstRepository).save(pay.capture());
+        assertThat(pay.getValue().getProcStat()).isEqualTo(ProcStat.FAIL.code());
     }
 
     @Test

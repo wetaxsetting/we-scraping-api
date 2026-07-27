@@ -208,6 +208,10 @@ public class VendorPaymentService {
      *  for SCDUL_PYMN_SUMR.WDRL_CCY_CD (legacy parity — withdrawal currency
      *  is independent of the transfer currency). */
     private final AcctMstrRepository            acctMstrRepository;
+    /** Save-side re-assertion of the single-network rule (legacy
+     *  {@code PymnHelper.validateUploadedPayments}, {@code WBE1191}). Same
+     *  component the parser uses at preview. */
+    private final com.kosign.wecms.domain.payment.common.UploadConsistencyValidator uploadConsistencyValidator;
 
     /**
      * List Vendor Payment batches for the current tenant in the given
@@ -427,6 +431,9 @@ public class VendorPaymentService {
     public CreateScheduledTransferResponse createDraft(
             CreateScheduledTransferRequest req,
             MultipartFile file) {
+        // Legacy parity (pymn_0001_002_c001_act.jsp:54-55): the original workbook is
+        // mandatory at save — it backs ORG_FILE_NM + the ERP_TRNS_HSTR upload row.
+        com.kosign.wecms.domain.payment.common.PaymentUploadFileGuard.requireUploadedFile(file);
         // One-shot retry on the SCDUL_PYMN_NO MAX+1 race (wb_get_next_val has no
         // row lock). Each attempt runs in its own transaction via
         // TransactionalRetry.runOnce, so a failed attempt fully rolls back and the
@@ -453,6 +460,14 @@ public class VendorPaymentService {
         String bizKey = requireTenant();
         String userId = TenantContext.currentUserId();
         String now    = OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC).format(DTM14);
+
+        // Legacy parity (PymnHelper.uploadPaymentExcel:1305 →
+        // validateUploadedPayments:1262-1299, WBE1191): the mixed CITAD/NAPAS guard
+        // runs again at SAVE, not only at parse — legacy re-derives the network from
+        // each row's TAR_BANK_CD length before writing anything. Re-asserting here
+        // closes the direct-API bypass of the parse-time check.
+        uploadConsistencyValidator.assertSingleNetwork(
+                req.lines().stream().map(TransferLineInput::antDivCd).toList());
 
         // P0 (audit task-44508): authoritative server-side blocked-char
         // enforcement BEFORE persistence. Re-validate every line's normalized
@@ -1138,7 +1153,22 @@ public class VendorPaymentService {
         if (TrnfYn.TRANSFERRED.code().equals(master.getTrnfYn())) {
             throw new BusinessException("WBE2064");
         }
-        if (master.getApprSeqNo() == null || master.getApprSeqNo().isBlank()) {
+        String apprSeqNo = master.getApprSeqNo();
+        if (apprSeqNo == null || apprSeqNo.isBlank()) {
+            throw new BusinessException("WBE2063");
+        }
+        // G1 (legacy parity — PymnHelper.pymn_0001_001_c001:2159-2168): a batch may be
+        // dispatched ONLY when its approval is fully approved, i.e.
+        // EXPT_RESOL_MSTR.APPR_TYPE_CD = '01'. Pending ('00'), rejected ('02'),
+        // and partially-approved ('03') batches all carry an APPR_SEQ_NO but are NOT
+        // approved — checking APPR_SEQ_NO presence alone (the prior behaviour)
+        // let an unapproved/rejected batch reach the bank-dispatch tables.
+        String apprTypeCd = exptResolMstrRepository
+                .findByBizKeyAndApprSeqNoIn(bizKey, java.util.List.of(apprSeqNo))
+                .stream().findFirst()
+                .map(ExptResolMstr::getApprTypeCd)
+                .orElse(null);
+        if (!"01".equals(apprTypeCd)) {
             throw new BusinessException("WBE2063");
         }
 

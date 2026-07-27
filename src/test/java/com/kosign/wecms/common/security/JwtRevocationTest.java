@@ -5,10 +5,12 @@ import com.kosign.wecms.domain.auth.repository.BusiAdmnInfmRepository;
 import com.kosign.wecms.domain.auth.repository.BusiInfmRepository;
 import com.kosign.wecms.domain.auth.repository.UserBusiConnInfmRepository;
 import com.kosign.wecms.domain.auth.repository.UserInfmRepository;
+import com.kosign.wecms.domain.auth.service.AdminLoginHistoryService;
 import com.kosign.wecms.domain.auth.service.AuthService;
 import com.kosign.wecms.domain.auth.service.LoginHistoryService;
 import com.kosign.wecms.domain.auth.service.LoginLockoutService;
 import com.kosign.wecms.domain.auth.service.MenuAuthorizationService;
+import com.kosign.wecms.domain.auth.entity.UserLoginHis;
 import com.kosign.wecms.common.tenant.TenantContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -23,6 +25,7 @@ import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 /**
  * F-03 — JWT lifecycle hardening. Exercises the real {@link JwtTokenProvider},
@@ -113,18 +116,22 @@ class JwtRevocationTest {
 
     @Test
     void logout_revokesPresentedToken_soFilterRejectsIt() throws Exception {
+        LoginHistoryService history = mock(LoginHistoryService.class);
         AuthService auth = new AuthService(
                 mock(UserInfmRepository.class), mock(UserBusiConnInfmRepository.class),
                 mock(BusiInfmRepository.class), mock(BusiAdmnInfmRepository.class),
-                mock(PasswordEncoder.class), provider, mock(LoginHistoryService.class),
+                mock(PasswordEncoder.class), provider, history,
+                mock(AdminLoginHistoryService.class),
                 mock(MenuAuthorizationService.class), revocation,
                 mock(LoginLockoutService.class));
 
         String token = issue("u1");
         assertThat(runFilter(token)).isNotNull();                 // logged in
 
-        auth.logout("Bearer " + token);                           // server-side logout
+        auth.logout("Bearer " + token, "10.0.0.1");               // server-side logout
 
         assertThat(runFilter(token)).isNull();                    // token no longer valid
+        // Legacy parity: logout writes a USER_LOGIN_HIS RSLT_CD='LOGOUT' row.
+        verify(history).record("u1", "10.0.0.1", UserLoginHis.RSLT_LOGOUT, null);
     }
 }

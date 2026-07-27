@@ -107,6 +107,11 @@ public class OverseasPaymentExcelService {
     private final TransactionalRetry           transactionalRetry;
     /** F2 — shared ERP_TRNS_HSTR writer for the Overseas Result download 'W' row. */
     private final com.kosign.wecms.domain.setting.erptransactionhistory.service.ErpTrnsHistoryWriter erpHistoryWriter;
+    /** Resolves the withdrawal account's own currency for
+     *  {@code OVRS_PYMN_SUMR.WDRL_CCY_CD} (legacy
+     *  {@code pymn_0007_003_c001_act.jsp:108} reads {@code input.CCY_CD}, sourced by
+     *  the withdrawal-account picker from {@code ACCT_MSTR.CCY_CD}). */
+    private final com.kosign.wecms.domain.banking.repository.AcctMstrRepository acctMstrRepository;
 
     /** WeCMS&rarr;ERP ('W') audit code for the Overseas Payment RESULT download
      *  (legacy {@code ErpTypeCd.OVERSEAS_REQUEST_RESULT}). */
@@ -305,6 +310,7 @@ public class OverseasPaymentExcelService {
                         beneficiaryCode, memo, reportingAccount,
                         bnfc.bnfcNm(), bnfc.bicCode(), bnfc.bnfcAcctNo(),
                         bnfc.bnfcAddr(), bnfc.bnfcBankNm(), bnfc.bnfcBankCd(),
+                        bnfc.bnfcTownNm(),
                         valid, errors));
             }
 
@@ -399,6 +405,7 @@ public class OverseasPaymentExcelService {
             errors.add(new OverseasPaymentExcelFieldError("bnfcAcctNo",  "Beneficiary Account No. is missing"));
             errors.add(new OverseasPaymentExcelFieldError("bnfcAddr",    "Beneficiary Address is missing"));
             errors.add(new OverseasPaymentExcelFieldError("bnfcBankNm",  "Beneficiary Bank Name is missing"));
+            errors.add(new OverseasPaymentExcelFieldError("bnfcTownNm",  "Town Name is missing"));
             return ResolvedBeneficiary.EMPTY;
         }
 
@@ -411,6 +418,7 @@ public class OverseasPaymentExcelService {
             errors.add(new OverseasPaymentExcelFieldError("bnfcAcctNo",  "Beneficiary Account No. is missing"));
             errors.add(new OverseasPaymentExcelFieldError("bnfcAddr",    "Beneficiary Address is missing"));
             errors.add(new OverseasPaymentExcelFieldError("bnfcBankNm",  "Beneficiary Bank Name is missing"));
+            errors.add(new OverseasPaymentExcelFieldError("bnfcTownNm",  "Town Name is missing"));
             return ResolvedBeneficiary.EMPTY;
         }
 
@@ -424,14 +432,18 @@ public class OverseasPaymentExcelService {
         String bnfcAddr   = LegacyTextNormalizer.stripVietnameseTone(trimToNull(o.getBeneAddr()));
         String bnfcBankNm = trimToNull(o.getBeneBankName());
         String bnfcBankCd = trimToNull(stripWhitespace(o.getBeneBankCode()));
+        // Town Name — auto-filled on the contact from the SWIFT directory.
+        // Required on upload (legacy pymn_0007_003_r001_act.jsp:216-238).
+        String bnfcTownNm = trimToNull(o.getBeneTownNm());
 
         if (bnfcNm     == null) errors.add(new OverseasPaymentExcelFieldError("bnfcNm",      "Beneficiary Name is missing"));
         if (bicCode    == null) errors.add(new OverseasPaymentExcelFieldError("bicCode",     "BIC Code is missing"));
         if (bnfcAcctNo == null) errors.add(new OverseasPaymentExcelFieldError("bnfcAcctNo",  "Beneficiary Account No. is missing"));
         if (bnfcAddr   == null) errors.add(new OverseasPaymentExcelFieldError("bnfcAddr",    "Beneficiary Address is missing"));
         if (bnfcBankNm == null) errors.add(new OverseasPaymentExcelFieldError("bnfcBankNm",  "Beneficiary Bank Name is missing"));
+        if (bnfcTownNm == null) errors.add(new OverseasPaymentExcelFieldError("bnfcTownNm",  "Town Name is missing"));
 
-        return new ResolvedBeneficiary(bnfcNm, bicCode, bnfcAcctNo, bnfcAddr, bnfcBankNm, bnfcBankCd);
+        return new ResolvedBeneficiary(bnfcNm, bicCode, bnfcAcctNo, bnfcAddr, bnfcBankNm, bnfcBankCd, bnfcTownNm);
     }
 
     private static String trimToNull(String s) {
@@ -445,7 +457,7 @@ public class OverseasPaymentExcelService {
     }
 
     /**
-     * Six-field beneficiary projection used by {@link #resolveBeneficiary}.
+     * Beneficiary projection used by {@link #resolveBeneficiary}.
      * Component values are {@code null} when blank in the master row
      * (the corresponding error has already landed in the row's
      * {@code errors} list).
@@ -456,9 +468,10 @@ public class OverseasPaymentExcelService {
             String bnfcAcctNo,
             String bnfcAddr,
             String bnfcBankNm,
-            String bnfcBankCd) {
+            String bnfcBankCd,
+            String bnfcTownNm) {
         static final ResolvedBeneficiary EMPTY =
-                new ResolvedBeneficiary(null, null, null, null, null, null);
+                new ResolvedBeneficiary(null, null, null, null, null, null, null);
     }
 
     private void validateAmount(String raw, List<OverseasPaymentExcelFieldError> errors) {
@@ -524,6 +537,10 @@ public class OverseasPaymentExcelService {
      */
     public OverseasPaymentExcelUploadResult submit(OverseasPaymentExcelUploadRequest req,
                                                     MultipartFile file) {
+        // Legacy parity (pymn_0007_003_c001_act.jsp:48 — validateRequired(FULL_PATH)):
+        // the original workbook is mandatory at save — it backs ORG_FILE_NM /
+        // SAVE_FILE_NM and the ERP_TRNS_HSTR upload row ("13").
+        com.kosign.wecms.domain.payment.common.PaymentUploadFileGuard.requireUploadedFile(file);
         // One-shot retry on the OVRS_PYMN_NO MAX+1 race (wb_get_next_val has no
         // row lock — V140 #63). Each attempt runs in its own transaction via
         // TransactionalRetry.runOnce, so a failed attempt fully rolls back and the
@@ -636,10 +653,22 @@ public class OverseasPaymentExcelService {
         // OUT_BANK_NM is not stored on OVRS_PYMN_SUMR in JEX — the withdrawal
         // bank name is derived from OUT_BANK_CD via BANK_INFM in the list/result queries.
         sumr.setWdrlActNo(req.wdrl_acct_no());
+        // Legacy parity (pymn_0007_003_c001_act.jsp:108): WDRL_CCY_CD is the
+        // WITHDRAWAL ACCOUNT's own currency (legacy `input.CCY_CD`, sourced by the
+        // withdrawal-account picker from ACCT_MSTR.CCY_CD) — NOT the batch transfer
+        // currency in CCY_CD. It was previously never set on this path, leaving the
+        // column NULL on every uploaded batch until an unrelated edit populated it.
+        sumr.setWdrlCcyCd(resolveWithdrawalCcyCd(
+                bizKey, req.wdrl_bank_cd(), req.wdrl_acct_no(), req.ccy_cd()));
         sumr.setOrgFileNm(req.file_nm());
-        // Legacy parity (pymn_0007_002_c001_act.jsp:148): stamp upload
-        // timestamp into TRNF_DT so the result-list query has a date anchor.
-        sumr.setTrnfDt(nowDtm);
+        // Legacy parity (pymn_0007_003_c001_act.jsp:97-123): the Excel-batch create
+        // path sets TRNF_YN='N' and leaves TRNF_DT UNSET — it is stamped only at
+        // dispatch (OverseasPaymentService: TRNF_YN='Y' + TRNF_DT=now). The earlier
+        // upload-time stamp here cited pymn_0007_002_c001:148, which is the MANUAL
+        // single-transaction screen, not this Excel batch path — the same wrong-source
+        // mistake already corrected above for OVRS_PYMN_TYPE_CD. Safe to leave null:
+        // every TRNF_DT-filtered query also requires TRNF_YN='Y' (result list +
+        // sumResultByCurrency), while the scheduled/draft list filters on REG_DTM.
         sumr.setTrnfYn("N");
         sumr.setRegDtm(nowDtm);
         sumr.setRegId(userId);
@@ -735,6 +764,11 @@ public class OverseasPaymentExcelService {
             dtl.setBnfcBankCd(nullToEmpty(src.bic_cd()));
             dtl.setBnfcAcctNo(nullToEmpty(src.bnfc_acct_no()));
             dtl.setBnfcAddr(nullToEmpty(LegacyTextNormalizer.normalize(src.bnfc_addr())));
+            // Town Name — resolved from the contact during preview, forwarded
+            // here. Feeds dispatch RCPT_USE_ADDR_SI (legacy
+            // pymn_0007_003_c001_act.jsp:157 setBnfcTownNm). SWIFT-directory
+            // ASCII place name; no accent stripping needed.
+            dtl.setBnfcTownNm(nullToEmpty(src.bnfc_town_nm()));
             // Legacy parity (L2): resolve the internal TRCO_KEY from the beneficiary
             // code, matching legacy getOverseasContactInfo (pymn_0007_003_r001_act.jsp:138
             // — recItem.put("TRCO_KEY", trcoInfm.getTrcoKey())) → c001 setTrcoKey
@@ -811,6 +845,32 @@ public class OverseasPaymentExcelService {
             }
         }
         return true;
+    }
+
+    /**
+     * Legacy parity ({@code pymn_0007_003_c001_act.jsp:108}): resolve the
+     * WITHDRAWAL ACCOUNT's own currency for {@code OVRS_PYMN_SUMR.WDRL_CCY_CD}.
+     * Legacy reads {@code input.CCY_CD}, which the withdrawal-account picker
+     * sources from {@code ACCT_MSTR.CCY_CD} — it is NOT the batch transfer
+     * currency. Falls back to the batch currency when the account row cannot be
+     * resolved (defensive — the picker guarantees it exists). Mirrors
+     * {@code VendorPaymentService.resolveWithdrawalCcyCd}.
+     */
+    private String resolveWithdrawalCcyCd(
+            String bizKey, String bankCd, String acctNo, String fallbackCcyCd) {
+        if (bankCd == null || bankCd.isBlank() || acctNo == null || acctNo.isBlank()) {
+            return fallbackCcyCd;
+        }
+        return acctMstrRepository
+                .findByBizKeyAndBankCdAndAcctNo(bizKey, bankCd.trim(), acctNo.trim())
+                .map(com.kosign.wecms.domain.banking.entity.AcctMstr::getCcyCd)
+                .filter(c -> c != null && !c.isBlank())
+                .orElseGet(() -> {
+                    log.warn("feature=overseas-payment withdrawal account not resolved for "
+                            + "WDRL_CCY_CD bizKey={} bankCd={} acctNo={} — using batch ccy {}",
+                            bizKey, bankCd, acctNo, fallbackCcyCd);
+                    return fallbackCcyCd;
+                });
     }
 
     // -------------------------------------------------------------------------

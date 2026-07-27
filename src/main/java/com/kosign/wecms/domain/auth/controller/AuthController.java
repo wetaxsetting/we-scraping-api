@@ -65,18 +65,21 @@ public class AuthController {
     }
 
     /**
-     * Server-side logout (F-03). The presented access token is revoked by its
-     * {@code jti} so it can no longer authenticate any request (within the
-     * running instance — see {@link com.kosign.wecms.common.security.TokenRevocationService}
-     * for restart / multi-instance limitations). The frontend still clears its
-     * local copy; this endpoint makes the server stop honouring the token too.
+     * Server-side logout (F-03). Mirrors legacy {@code logn_0002_001_r001}:
+     * writes a {@code USER_LOGIN_HIS} {@code RSLT_CD='LOGOUT'} audit row for the
+     * caller, then revokes the presented access token by its {@code jti} so it
+     * can no longer authenticate any request (within the running instance — see
+     * {@link com.kosign.wecms.common.security.TokenRevocationService} for
+     * restart / multi-instance limitations). The frontend still clears its local
+     * copy; this endpoint makes the server stop honouring the token too.
      * Permitted in the security chain, so a token that is already invalid/expired
      * is simply a no-op.
      */
     @PostMapping("/logout")
     public ApiResponse<Void> logout(
-            @RequestHeader(value = "Authorization", required = false) String authorization) {
-        authService.logout(authorization);
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            HttpServletRequest servletReq) {
+        authService.logout(authorization, clientIp(servletReq));
         return ApiResponse.ok("Logout successful", null);
     }
 

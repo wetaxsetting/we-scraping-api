@@ -3,6 +3,8 @@ package com.kosign.wecms.domain.payment.dispatch.repository;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmFileMst;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmFileMstId;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.Optional;
@@ -34,6 +36,25 @@ public interface TbFirmFileMstRepository
     /** Legacy {@code TB_FIRM_FILE_MST_R004} (01301 callback file lookup). */
     Optional<TbFirmFileMst> findByTranDtAndFirmFileNmAndProcStepAndProcStat(
             String tranDt, String firmFileNm, String procStep, String procStat);
+
+    /**
+     * Legacy {@code TB_FIRM_FILE_MST_R006} (01302 execution-result file lookup, v20250910). The bank
+     * returns the result file with a DIFFERENT leading 2-char prefix than the sent {@code S_…} name
+     * (e.g. {@code R_…}), so the match ignores the first two characters —
+     * {@code substring(FIRM_FILE_NM, 3) = substring(:fileNm, 3)} — and is further scoped by
+     * {@code VAN_ORG_CD} + {@code FILE_SEQ} (audit C3/M-2). Without this an exact-name match drops
+     * the result and strands the file at {@code PROC_STEP='2'}.
+     */
+    @Query("select f from TbFirmFileMst f where f.tranDt = :tranDt "
+            + "and substring(f.firmFileNm, 3) = substring(:fileNm, 3) "
+            + "and f.vanOrgCd = :vanOrgCd and f.fileSeq = :fileSeq "
+            + "and f.procStep = :procStep and f.procStat = :procStat")
+    Optional<TbFirmFileMst> findForExecutionResult(@Param("tranDt") String tranDt,
+                                                   @Param("fileNm") String fileNm,
+                                                   @Param("vanOrgCd") String vanOrgCd,
+                                                   @Param("fileSeq") String fileSeq,
+                                                   @Param("procStep") String procStep,
+                                                   @Param("procStat") String procStat);
 
     /** All files for a tenant/date — generic detail/list support. */
     List<TbFirmFileMst> findByTranDtAndBizKey(String tranDt, String bizKey);

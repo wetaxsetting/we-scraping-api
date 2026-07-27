@@ -31,6 +31,7 @@ import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
@@ -141,15 +142,24 @@ public class VendorDispatchExecutor {
     public void execute(ScdulPymnSumr master, List<ScdulPymnSumrDetl> lines, String trnfCcyCd) {
         String bizKey = master.getBizKey();
         String userId = TenantContext.currentUserId();
-        LocalDateTime nowVn = LocalDateTime.now(clock.withZone(VN_TZ));
-        String tranDt = nowVn.format(DT8);
-        String regTm  = nowVn.format(TM6);
-        String dttm14 = nowVn.format(DTM14);
 
-        if (CCY_VND.equalsIgnoreCase(trnfCcyCd)) {
+        // F1 (audit VCB, legacy PymnHelper.pymn_0001_001_c001:2188, SVN r36803 2026-07-16): ALL VCB
+        // (970436) — VND and USD — dispatches via the File path, not the real-time API.
+        boolean isVcbFileTransfer = eq(master.getOutBankCd(), vcbBankCd);
+        if (CCY_VND.equalsIgnoreCase(trnfCcyCd) && !isVcbFileTransfer) {
+            // K — legacy parity (PymnHelper:2196,2214): the API-path TB_PAY_TARGET stamps TRAN_DT +
+            // REG_TM from ONE captured UTC 'now' (utcNow), NOT ICT. TRAN_DT is a PK component, so the
+            // same UTC value flows through nextTranSeq / save / registerAfterCommit → the realtime
+            // dispatch lookup. PROC_DTTM stays ICT (legacy gmtNowVanCenter; out of scope for K).
+            LocalDateTime nowUtc = LocalDateTime.now(clock.withZone(ZoneOffset.UTC));
+            String tranDt = nowUtc.format(DT8);
+            String regTm  = nowUtc.format(TM6);
+            String dttm14 = LocalDateTime.now(clock.withZone(VN_TZ)).format(DTM14);
             writeApiPath(master, lines, bizKey, userId, tranDt, regTm, dttm14, trnfCcyCd);
         } else {
-            writeFilePath(master, lines, bizKey, tranDt, dttm14, trnfCcyCd);
+            // File path: legacy TB_PAY_FILE_MST uses server-local LocalDate.now(); refactor keeps ICT.
+            LocalDateTime nowVn = LocalDateTime.now(clock.withZone(VN_TZ));
+            writeFilePath(master, lines, bizKey, nowVn.format(DT8), nowVn.format(DTM14), trnfCcyCd);
         }
     }
 
@@ -175,15 +185,17 @@ public class VendorDispatchExecutor {
             row.setAntDivCd(resolveAntDivCd(master.getOutBankCd(), line));
             row.setTarBankCd(line.getTarBankCd());
             row.setFincMdaNo(line.getFincMdaNo());
-            row.setFincMdaOwnerNm(resolveOwnerNm(bizKey, line));
+            row.setFincMdaOwnerNm(line.getRcptNm());   // B: legacy raw RCPT_NM, no fallback (PymnHelper:2218)
             row.setTranAmt(line.getTranAmt());
             row.setTranUsag(line.getTranUsag());
             row.setProcStat(PROC_STAT_PENDING);
             row.setProcDttm(dttm14);
             row.setUserId(userId);
             row.setTrscCcyCd(trnfCcyCd);
-            row.setWithdCcyCd(master.getWdrlCcyCd());
-            row.setDepCcyCd(line.getDepoCcyCd());
+            // H — legacy parity (PymnHelper.pymn_0001_001_c001:2193-2224): the API-path
+            // TB_PAY_TARGET insert leaves WITHD_CCY_CD / DEP_CCY_CD null. Verified against
+            // live legacy data (dep_ccy_cd null 101/101, withd_ccy_cd null 99/101 — the 2
+            // non-null are the IT Woori-USD->VND case). Do not re-add these setters here.
 
             tbPayTargetRepository.save(row);
 
@@ -259,7 +271,14 @@ public class VendorDispatchExecutor {
 
             data.setTranAmt(line.getTranAmt());
 
-            // ANT_DIV_CD USD overrides (legacy :2309-2316):
+            // OQ-2 (Mr. Jung 2026-07-16, CONFIRMED file-based VCB; proven vs legacy PymnHelper:2573
+            // + copyFrom :2840-2843): the ANT_DIV_CD base is the uploaded network code. VCB VND keeps
+            // its uploaded NAPAS/CITAD code (legacy "VCB VND -> Other : NAPAS/CITAD from upload"), so
+            // it is seeded here; the USD block below only replaces it for Shinhan/Woori/VCB *USD*.
+            // (Among VND rows, only VCB VND reaches the File path — non-VCB VND takes the API path.)
+            data.setAntDivCd(line.getAntDivCd());
+
+            // ANT_DIV_CD USD overrides (legacy :2309-2316 / :2778-2785):
             //   Shinhan USD -> EBANK ("E"); Woori USD -> VCB ("V"); VCB USD -> null.
             if (CCY_USD.equalsIgnoreCase(lineCcy)) {
                 if (eq(outBank, shinhanBankCd)) {
@@ -275,14 +294,17 @@ public class VendorDispatchExecutor {
             // applied only for the Shinhan / Woori / VCB out-banks.
             if (eq(outBank, shinhanBankCd) || eq(outBank, wooriBankCd) || eq(outBank, vcbBankCd)) {
                 boolean sameBank = eq(outBank, tarBank) || sameBankGroup(outBank, tarBank);
-                if (eq(outBank, vcbBankCd) && !sameBank) {
+                // F1: the VCB->other-bank reject applies to USD only (legacy pymn_0001:2387-2388
+                // `&& "USD".equals(TRNF_CCY_CD)`). VCB VND->other-bank is allowed on the File path; its
+                // fields are CONFIRMED from legacy (BANK_CHNL_DIV=T/O below; ANT_DIV_CD=uploaded above).
+                if (eq(outBank, vcbBankCd) && !sameBank && !CCY_VND.equalsIgnoreCase(trnfCcyCd)) {
                     // Legacy :2349-2353 — WbMessageCode.WBE0000 + literal.
                     throw new BusinessException("WBE2088");
                 }
                 data.setBankChnlDiv(sameBank ? BANK_CHNL_DIV_CURRENT_BANK : BANK_CHNL_DIV_OTHER_BANK);
             }
 
-            data.setFincMdaOwnerNm(resolveOwnerNm(bizKey, line));
+            data.setFincMdaOwnerNm(line.getRcptNm());  // B: legacy raw RCPT_NM (PymnHelper:2327)
             // Legacy :2293-2294 — BOTH remark columns carry TRAN_USAG.
             data.setWdrlActRmrk(line.getTranUsag());
             data.setTarAcctRmrk(line.getTranUsag());

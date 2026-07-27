@@ -99,7 +99,7 @@ class PurposeSettingsControllerTest {
         PurposeSettingRow parent = new PurposeSettingRow(
                 CODE_A, HAND_A, "Deposit", "Deposit purpose",
                 null, "Y", 192, true, "demo", "20260101090000", List.of(child));
-        when(service.list(eq((String) null)))
+        when(service.list((String) null, (String) null))
                 .thenReturn(new PurposeSettingListResponse(List.of(parent)));
 
         mvc.perform(get("/api/v1/settings/purpose-settings"))
@@ -125,12 +125,12 @@ class PurposeSettingsControllerTest {
 
     @Test
     void list_forwardsKeywordQueryParam() throws Exception {
-        when(service.list("Sale")).thenReturn(new PurposeSettingListResponse(List.of()));
+        when(service.list("Sale", null)).thenReturn(new PurposeSettingListResponse(List.of()));
 
         mvc.perform(get("/api/v1/settings/purpose-settings").param("keyword", "Sale"))
                 .andExpect(status().isOk());
 
-        verify(service).list("Sale");
+        verify(service).list("Sale", null);
     }
 
     // ------------------------------------------------------------------

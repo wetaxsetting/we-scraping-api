@@ -1,5 +1,6 @@
 package com.kosign.wecms.domain.payment.dispatch.service;
 
+import com.kosign.wecms.domain.payment.dispatch.constant.FirmBankingResultCd;
 import com.kosign.wecms.domain.payment.dispatch.van.dto.Efs203Response;
 
 /**
@@ -48,5 +49,19 @@ public record ResultCheckInquiryResult(
                 r.orgTranDt(), r.orgTno(), r.orgProcTm(), r.orgRespCd(), r.orgRespMsg(),
                 r.macctNo(), r.currenCd(), r.amt(), r.dcmAmt(), r.tarFincMdaNo(),
                 r.fincMdaOwnerNm(), r.withdAcctRmrk(), r.tarAcctRmrk());
+    }
+
+    /**
+     * A definitive "original transaction not found" result ({@code org_resp_cd=0001}),
+     * built for an EFS 203 whose envelope {@code RC=0001} — the gateway confirmed the
+     * original does not exist (audit H-1 / B1). Carries no decrypted detail payload; the
+     * caller finalizes the original as FAIL (since {@link FirmBankingResultCd#isSuccess}
+     * is false for {@code "0001"}) instead of re-inquiring the row forever.
+     */
+    static ResultCheckInquiryResult notFound(String orgTranDt, String orgTno) {
+        return new ResultCheckInquiryResult(
+                orgTranDt, orgTno, null,
+                FirmBankingResultCd.NO_FOUND, FirmBankingResultCd.MSG_NO_FOUND,
+                null, null, null, null, null, null, null, null);
     }
 }

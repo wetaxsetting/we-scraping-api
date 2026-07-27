@@ -20,7 +20,6 @@ import org.springframework.util.StringUtils;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
-import java.util.UUID;
 
 /**
  * {@code WGVN_EFS_202} — real-time single transfer (REST API guide ver 1.2.2
@@ -44,20 +43,22 @@ import java.util.UUID;
  * (incl. FX block) → serialise (global SNAKE_CASE) → build {@code EV}/{@code VV}
  * ({@link EfsCryptoService}) → POST via {@link EfsApiClient#send EfsApiClient.EFS_202}:
  * <ul>
- *   <li><b>{@code RC=0000}</b> — decrypt + map {@link Efs202Response} → success.</li>
- *   <li><b>{@code RC=G999}</b> (no definitive response) — per §5.4 the caller MUST
- *       confirm the real outcome via {@code WGVN_EFS_203}. Delegates to
- *       {@link ResultCheckService#inquire} using the <i>original</i> transaction
- *       date + {@code TNO} + {@code macct_no}, and returns the 203 result. This is
- *       the legacy "no-response ≠ failure" rule that prevents a double-transfer.</li>
- *   <li><b>other non-{@code 0000}</b> — surfaced as {@code WBE_EFS_GATEWAY_ERROR}.</li>
+ *   <li><b>{@code RC=0000}</b> — verify the response {@code VV} (audit H-5), then decrypt +
+ *       map {@link Efs202Response} → success. A {@code VV}-mismatch is treated as pending
+ *       (see below), never a trusted success.</li>
+ *   <li><b>{@code RC=G999} / no response / {@code VV}-mismatch</b> — no definitive response.
+ *       Per §5.4 this is NOT a failure: returns {@link RealtimeTransferResult#ofPending()}
+ *       so the caller leaves {@code PROC_STAT='6'} and the scheduled {@link ResultCheckService}
+ *       confirms the real outcome via a later {@code WGVN_EFS_203} (audit B2 / H-4). This
+ *       replaces the earlier synchronous inline-203 recovery, which risked a premature FAIL
+ *       and could not distinguish "still settling" from "failed".</li>
+ *   <li><b>other non-{@code 0000}</b> — a definite error, surfaced as {@code WBE_EFS_GATEWAY_ERROR}.</li>
  * </ul>
  *
- * <p><b>No DB status writes in this phase (D2).</b> The legacy no-response⇒
- * {@code PROC_STAT='6'} persistence (and finalisation to {@code '0'}/{@code '3'})
- * lands when the {@code TB_FIRM_TRAN} status seam is wired — out of D2/D3 scope.
- * Logging never emits {@code API_KEY}, {@code EV}, {@code VV}, the decrypted
- * payload, or full account numbers.
+ * <p>The {@code PROC_STAT} write (success/pending/fail) is owned by the caller
+ * ({@link RealtimeDispatchService}); the scheduled result-check owns the eventual
+ * {@code 6 → 0/3} finalisation. Logging never emits {@code API_KEY}, {@code EV},
+ * {@code VV}, the decrypted payload, or full account numbers.
  */
 @Slf4j
 @Service
@@ -66,9 +67,6 @@ public class RealtimeTransferService {
 
     private static final DateTimeFormatter RQ_DTIME_FMT = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
     private static final ZoneId ICT = ZoneId.of("Asia/Ho_Chi_Minh");
-    private static final int TNO_MAX = 50;
-    /** {@code org_tran_dt} is the {@code yyyyMMdd} date part of the request datetime. */
-    private static final int TRAN_DT_LEN = 8;
 
     /**
      * Woori bank code — the only bank for which the {@code WGVN_EFS_204} FX-rate
@@ -84,7 +82,6 @@ public class RealtimeTransferService {
     private final VanApiKeyService vanApiKeyService;
     private final EfsProperties efsProperties;
     private final ObjectMapper objectMapper;
-    private final ResultCheckService resultCheckService;
 
     /**
      * Execute a real-time single transfer.
@@ -97,7 +94,7 @@ public class RealtimeTransferService {
      * @throws BusinessException        ({@code WBE_EFS_GATEWAY_ERROR}) on a
      *                                  non-{@code 0000}, non-{@code G999} result
      */
-    public RealtimeTransferResult transfer(RealtimeTransferCommand cmd) {
+    public RealtimeTransferResult transfer(RealtimeTransferCommand cmd, String tno) {
         validate(cmd);
 
         // Resolve the per-VAN key first — a missing key (B2) must surface here,
@@ -110,8 +107,21 @@ public class RealtimeTransferService {
         // 204 response FX fields populate the 202 FX block; on the ordinary domestic-VND
         // path the FX fields stay empty strings (legacy NAPAS_REAL_TIME_BATCH.java:329-413
         // initialises them to "" and always includes them in param_202:553-565).
-        Efs204Response fx = isWooriFxTransfer(cmd) ? inquireFxRate(cmd, apiKey, id) : null;
-        return transfer(cmd, fx);
+        // (Direct-call convenience path — the dispatch path pre-fetches the 204 via
+        // RealtimeDispatchService.runFxInquiry with its own TRAN_SEQ and calls the 3-arg overload.)
+        Efs204Response fx = null;
+        if (isWooriFxTransfer(cmd)) {
+            fx = inquireFxRate(cmd, apiKey, id, tno);
+            if (fx == null) {
+                // D — 204 no-response on the Woori FX pre-step: legacy skips the 202 (leaves the
+                // transaction for the result-check / re-run). Return pending; never send the 202
+                // with an empty FX block. An explicit non-0000 / VV-fail 204 still throws upstream.
+                log.warn("EFS 204 FX pre-inquiry no-response vanOrgCd={} macct={} — 202 skipped (pending)",
+                        cmd.vanOrgCd(), mask(cmd.macctNo()));
+                return RealtimeTransferResult.ofPending();
+            }
+        }
+        return transfer(cmd, fx, tno);
     }
 
     /**
@@ -125,8 +135,11 @@ public class RealtimeTransferService {
      * {@link #transfer(RealtimeTransferCommand)}; only the source of the FX block
      * differs (caller-supplied vs fetched inline).
      */
-    public RealtimeTransferResult transfer(RealtimeTransferCommand cmd, Efs204Response fx) {
+    public RealtimeTransferResult transfer(RealtimeTransferCommand cmd, Efs204Response fx, String tno) {
         validate(cmd);
+        if (!StringUtils.hasText(tno)) {
+            throw new IllegalArgumentException("tno (TRAN_SEQ) is required");
+        }
 
         String apiKey = vanApiKeyService.getApiKey(cmd.vanOrgCd());
         String id = StringUtils.hasText(efsProperties.getPartnerId())
@@ -149,8 +162,11 @@ public class RealtimeTransferService {
                 fx == null ? "" : nullToEmpty(fx.depAmtDcm()));
         String businessJson = serialize(request);
 
+        // A1 (audit X-2): the envelope TNO is the caller-allocated TRAN_SEQ (the pay-target's
+        // dep_seq / the 202 TB_FIRM_TRAN PK), NOT a UUID — so the scheduled result-check can
+        // reconstruct org_tno from the stored TRAN_SEQ and the gateway correlates the 203 inquiry
+        // to this original transaction (legacy NAPAS_REAL_TIME_BATCH TNO = dep_seq).
         String rqDtime = LocalDateTime.now(ICT).format(RQ_DTIME_FMT);
-        String tno = newTno(rqDtime);
         String ev = efsCryptoService.encryptEv(businessJson, apiKey, rqDtime);
         String vv = efsCryptoService.buildVv(businessJson, apiKey);
 
@@ -161,7 +177,25 @@ public class RealtimeTransferService {
         EfsEnvelope response = efsApiClient.send(EfsApiClient.EFS_202, requestEnvelope);
         String rc = response == null ? null : response.rc();
 
-        if (response != null && FirmBankingResultCd.isSuccess(rc)) {
+        // B2 (audit H-4/D2): no response is NOT a failure. Legacy leaves PROC_STAT='6' and lets the
+        // scheduled PROCESSING_RESULT_CHECK confirm the real outcome later (via 203) — never a
+        // synchronous inline 203 and never a premature FAIL. Return a pending result.
+        if (response == null) {
+            log.warn("EFS 202 no response vanOrgCd={} macct={} tno={} — left pending for result-check",
+                    cmd.vanOrgCd(), mask(cmd.macctNo()), tno);
+            return RealtimeTransferResult.ofPending();
+        }
+
+        if (FirmBankingResultCd.isSuccess(rc)) {
+            // A3 (audit H-5): verify the response VV before decrypting/trusting EV (legacy
+            // SecurityUtil.VerifyMac → G003). A corrupt/tampered "success" cannot be trusted as a
+            // completed transfer; treat it as no-definitive-response (leave '6', let result-check
+            // confirm) rather than risk a double-transfer or a false FAIL.
+            if (!efsCryptoService.verifyVv(response.ev(), response.vv(), apiKey)) {
+                log.warn("EFS 202 response VV verification failed vanOrgCd={} macct={} tno={} — left pending",
+                        cmd.vanOrgCd(), mask(cmd.macctNo()), tno);
+                return RealtimeTransferResult.ofPending();
+            }
             String responseJson = efsCryptoService.decryptEv(response.ev(), apiKey);
             Efs202Response parsed = deserialize(responseJson, Efs202Response.class);
             log.debug("EFS 202 transfer ok vanOrgCd={} macct={} tarBankCd={} acct={} rc={}",
@@ -170,17 +204,14 @@ public class RealtimeTransferService {
         }
 
         if (FirmBankingResultCd.ETC_ERR.equals(rc)) {
-            // §5.4 recovery: G999 is "no definitive response", NOT a failure. Confirm the
-            // true outcome via 203 using the ORIGINAL tran date + TNO + macct (org_tno = the
-            // TNO we just sent). No PROC_STAT write here (D2/D3 scope).
-            log.info("EFS 202 returned G999 vanOrgCd={} macct={} tno={} — confirming via 203",
+            // §5.4: G999 = "no definitive response". Leave PROC_STAT='6'; the scheduled result-check
+            // reconciles via a later 203 (B2 — no synchronous inline 203, which risked a premature FAIL).
+            log.info("EFS 202 returned G999 vanOrgCd={} macct={} tno={} — left pending for result-check",
                     cmd.vanOrgCd(), mask(cmd.macctNo()), tno);
-            ResultCheckInquiryResult recovery = resultCheckService.inquire(new ResultCheckInquiryCommand(
-                    cmd.vanOrgCd(), cmd.bankCd(), cmd.prtnId(),
-                    rqDtime.substring(0, TRAN_DT_LEN), tno, cmd.macctNo()));
-            return RealtimeTransferResult.ofRecovery(recovery);
+            return RealtimeTransferResult.ofPending();
         }
 
+        // Definite gateway business error (non-0000, non-G999) → committed FAIL (legacy parity).
         log.warn("EFS 202 transfer failed vanOrgCd={} macct={} tarBankCd={} acct={} rc={}",
                 cmd.vanOrgCd(), mask(cmd.macctNo()), cmd.tarBankCd(), mask(cmd.tarFincMdaNo()), rc);
         throw new BusinessException("WBE_EFS_GATEWAY_ERROR", rc);
@@ -227,16 +258,21 @@ public class RealtimeTransferService {
      * legacy {@code NAPAS_REAL_TIME_BATCH} order. Delegates to the same inquiry body
      * the inline 202 path uses, so the 204 EFS logic is unchanged.
      *
-     * @return the FX response on {@code RC=0000}
-     * @throws BusinessException ({@code WBE_EFS_GATEWAY_ERROR}) on a non-{@code 0000}
-     *                           / no-response 204 (carries the gateway RC as arg[0])
+     * @return the FX response on {@code RC=0000}; {@code null} on a no-response (null
+     *         envelope) 204 — legacy `continue`s and leaves the 204 row at
+     *         {@code PROC_STAT='6'} for a later re-inquiry (finding D)
+     * @throws BusinessException ({@code WBE_EFS_GATEWAY_ERROR}) on an explicit non-{@code 0000}
+     *                           204 response or a VV-verify failure (carries the gateway RC as arg[0])
      */
-    public Efs204Response inquireFxRate(RealtimeTransferCommand cmd) {
+    public Efs204Response inquireFxRate(RealtimeTransferCommand cmd, String tno) {
         validate(cmd);
+        if (!StringUtils.hasText(tno)) {
+            throw new IllegalArgumentException("tno (TRAN_SEQ) is required");
+        }
         String apiKey = vanApiKeyService.getApiKey(cmd.vanOrgCd());
         String id = StringUtils.hasText(efsProperties.getPartnerId())
                 ? efsProperties.getPartnerId() : cmd.vanOrgCd();
-        return inquireFxRate(cmd, apiKey, id);
+        return inquireFxRate(cmd, apiKey, id, tno);
     }
 
     /**
@@ -251,7 +287,7 @@ public class RealtimeTransferService {
      * (it logs + alerts + skips the target), so the synchronous refactor surfaces
      * {@code WBE_EFS_GATEWAY_ERROR}. No DB status write in this phase (D2/D3 scope).
      */
-    private Efs204Response inquireFxRate(RealtimeTransferCommand cmd, String apiKey, String id) {
+    private Efs204Response inquireFxRate(RealtimeTransferCommand cmd, String apiKey, String id, String tno) {
         Efs204Request request = new Efs204Request(
                 cmd.bankCd(), cmd.prtnId(),
                 cmd.macctNo(),                 // withd_acct_no  ← legacy WDRL_ACT_NO (= 202 macct_no)
@@ -261,8 +297,9 @@ public class RealtimeTransferService {
                 cmd.currenCd());               // tran_curren_cd ← legacy TRSC_CCY_CD (= 202 curren_cd)
         String businessJson = serialize(request);
 
+        // A1 (audit X-2): the 204 envelope TNO is the caller-allocated TRAN_SEQ (legacy ccy_exc_seq),
+        // not a UUID — keeps the gateway record correlated to the 204 TB_FIRM_TRAN row.
         String rqDtime = LocalDateTime.now(ICT).format(RQ_DTIME_FMT);
-        String tno = newTno(rqDtime);
         String ev = efsCryptoService.encryptEv(businessJson, apiKey, rqDtime);
         String vv = efsCryptoService.buildVv(businessJson, apiKey);
 
@@ -271,23 +308,35 @@ public class RealtimeTransferService {
                 EfsEnvelope.EM_AES, EfsEnvelope.VM_HMAC_SHA256, null, null);
 
         EfsEnvelope response = efsApiClient.send(EfsApiClient.EFS_204, requestEnvelope);
-        String rc = response == null ? null : response.rc();
 
-        if (response == null || !FirmBankingResultCd.isSuccess(rc)) {
+        // D — legacy parity (NAPAS_REAL_TIME_BATCH:358-362): a null / no-response 204 envelope is
+        // NOT a definitive failure. Legacy `continue`s and leaves the 204 row at PROC_STAT='6' for a
+        // later re-inquiry — it does NOT mark it '3'. Signal no-response by returning null; only an
+        // explicit non-0000 response (or a VV-verify failure) is a definitive '3' error.
+        if (response == null) {
+            log.warn("EFS 204 FX inquiry no-response (null envelope) vanOrgCd={} macct={}",
+                    cmd.vanOrgCd(), mask(cmd.macctNo()));
+            return null;
+        }
+        String rc = response.rc();
+        if (!FirmBankingResultCd.isSuccess(rc)) {
             log.warn("EFS 204 FX inquiry failed vanOrgCd={} macct={} acct={} rc={}",
                     cmd.vanOrgCd(), mask(cmd.macctNo()), mask(cmd.tarFincMdaNo()), rc);
             throw new BusinessException("WBE_EFS_GATEWAY_ERROR", rc);
+        }
+
+        // A3 (audit H-5): verify the 204 response VV before decrypt (legacy VerifyMac → G003). A
+        // failed rate inquiry must not proceed to the 202 with an unverified rate.
+        if (!efsCryptoService.verifyVv(response.ev(), response.vv(), apiKey)) {
+            log.warn("EFS 204 response VV verification failed vanOrgCd={} macct={}",
+                    cmd.vanOrgCd(), mask(cmd.macctNo()));
+            throw new BusinessException("WBE_EFS_GATEWAY_ERROR", FirmBankingResultCd.ENC_VRFY_ERR);
         }
 
         String responseJson = efsCryptoService.decryptEv(response.ev(), apiKey);
         log.debug("EFS 204 FX inquiry ok vanOrgCd={} macct={} rc={}",
                 cmd.vanOrgCd(), mask(cmd.macctNo()), rc);
         return deserialize(responseJson, Efs204Response.class);
-    }
-
-    private String newTno(String rqDtime) {
-        String tno = rqDtime + UUID.randomUUID().toString().replace("-", "");
-        return tno.length() > TNO_MAX ? tno.substring(0, TNO_MAX) : tno;
     }
 
     /** Legacy parity: FX block fields are sent as empty strings, never null/omitted. */

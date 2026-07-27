@@ -7,6 +7,7 @@ import com.kosign.wecms.common.enums.LangCd;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileData;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileMst;
+import com.kosign.wecms.domain.payment.dispatch.entity.TbPayTarget;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbFirmConfRepository;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileDataRepository;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileMstRepository;
@@ -36,6 +37,7 @@ import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 
@@ -189,6 +191,65 @@ class VendorDispatchExecutorTest {
     }
 
     @Test
+    void vcbVnd_routesToFilePath_notApi() {
+        // F1 (audit VCB, legacy r36803): ALL VCB (970436) — incl. VND — dispatches via the File path,
+        // NOT the real-time API (TB_PAY_TARGET). Previously VCB VND was mis-routed to the API path.
+        executor.execute(master(VCB, "VND"), List.of(line(VCB, "VND")), "VND");
+
+        verify(tbPayFileMstRepository).save(any());          // File path
+        verify(tbPayTargetRepository, never()).save(any());  // NOT the API / real-time path
+    }
+
+    @Test
+    void vcbVnd_otherBank_notRejected_usesFilePath() {
+        // F1: the VCB->other-bank reject is USD-only — VCB VND->other-bank is ALLOWED on the file
+        // path (no WBE2088). Its VND file-field values are CONFIRMED from legacy (see below).
+        executor.execute(master(VCB, "VND"), List.of(line(BIDV, "VND")), "VND");
+
+        verify(tbPayFileMstRepository).save(any());
+        verify(tbPayTargetRepository, never()).save(any());
+    }
+
+    /* ── OQ-2 (Mr. Jung 2026-07-16 CONFIRMED file-based VCB) — VCB VND file-field values,
+       proven vs legacy PymnHelper:2572-2574 / copyFrom :2840-2843 ── */
+
+    @Test
+    void vcbVnd_otherBank_carriesUploadedAntDivCd_bankChnlDivOther() {
+        // Legacy "VCB VND -> Other : BANK_CHNL_DIV='O', NAPAS/CITAD from upload" (PymnHelper:2573).
+        ScdulPymnSumrDetl l = line(BIDV, "VND");
+        l.setAntDivCd("NAPAS");
+        executor.execute(master(VCB, "VND"), List.of(l), "VND");
+
+        TbPayFileData d = captureData();
+        assertThat(d.getAntDivCd()).isEqualTo("NAPAS");   // uploaded code preserved (not null)
+        assertThat(d.getBankChnlDiv()).isEqualTo("O");    // other-bank
+        assertThat(d.getTrscCcyCd()).isEqualTo("VND");    // VCB -> TRNF_CCY_CD
+    }
+
+    @Test
+    void vcbVnd_sameBank_carriesUploadedAntDivCd_bankChnlDivCurrent() {
+        // Legacy "VCB VND -> VCB : BANK_CHNL_DIV='T'" (PymnHelper:2572); ANT_DIV_CD stays the uploaded
+        // copyFrom value (no VCB-VND override — only Shinhan-USD->VND nulls it).
+        ScdulPymnSumrDetl l = line(VCB, "VND");
+        l.setAntDivCd("CITAD");
+        executor.execute(master(VCB, "VND"), List.of(l), "VND");
+
+        TbPayFileData d = captureData();
+        assertThat(d.getAntDivCd()).isEqualTo("CITAD");
+        assertThat(d.getBankChnlDiv()).isEqualTo("T");    // same-bank
+    }
+
+    @Test
+    void vcbUsd_uploadedAntDivCd_isOverriddenToNull() {
+        // The USD override must beat the uploaded base (VCB USD -> VCB USD only; ANT_DIV_CD null).
+        ScdulPymnSumrDetl l = line(VCB, "USD");
+        l.setAntDivCd("CITAD");
+        executor.execute(master(VCB, "USD"), List.of(l), "USD");
+
+        assertThat(captureData().getAntDivCd()).isNull();
+    }
+
+    @Test
     void engAbrvatNmGroupMatch_treatedAsSameBank() {
         String shinhanBranch = "970425";
         TbFirmBankCode out = org.mockito.Mockito.mock(TbFirmBankCode.class);
@@ -246,5 +307,71 @@ class VendorDispatchExecutorTest {
         TbPayFileMst m = captureMst();
         assertThat(m.getFundTp()).isEqualTo("9");   // FundTp.OTHER
         assertThat(m.getTranTp()).isEqualTo("1");   // TranTpF.DEPOSIT
+    }
+
+    private TbPayTarget captureTarget() {
+        ArgumentCaptor<TbPayTarget> c = ArgumentCaptor.forClass(TbPayTarget.class);
+        verify(tbPayTargetRepository).save(c.capture());
+        return c.getValue();
+    }
+
+    @Test
+    void apiPath_leavesWithdAndDepCcyCdNull() {
+        // H — legacy parity (PymnHelper.pymn_0001_001_c001:2193-2224): the VND/API-path
+        // TB_PAY_TARGET insert must NOT set WITHD_CCY_CD / DEP_CCY_CD (legacy leaves both
+        // null; verified vs live legacy data dep 101/101, withd 99/101).
+        executor.execute(master(SHINHAN, "VND"), List.of(line(SHINHAN, "VND")), "VND");
+
+        TbPayTarget t = captureTarget();
+        assertThat(t.getWithdCcyCd()).isNull();
+        assertThat(t.getDepCcyCd()).isNull();
+        verify(tbPayFileMstRepository, never()).save(any());  // API path, not file path
+    }
+
+    /* ── B — FINC_MDA_OWNER_NM is the raw RCPT_NM, no ACCT_MSTR/acctNo/"UNKNOWN" fallback
+       (legacy PymnHelper:2218 API / :2327 file). Verified vs live legacy (35/101 null-or-blank). ── */
+
+    @Test
+    void ownerNm_populated_passthrough() {
+        executor.execute(master(SHINHAN, "VND"), List.of(line(SHINHAN, "VND")), "VND");
+        assertThat(captureTarget().getFincMdaOwnerNm()).isEqualTo("RECIPIENT");
+    }
+
+    @Test
+    void apiPath_ownerNm_rawRcptNm_blankPreserved() {
+        ScdulPymnSumrDetl l = line(SHINHAN, "VND");
+        l.setRcptNm("");
+        executor.execute(master(SHINHAN, "VND"), List.of(l), "VND");
+        assertThat(captureTarget().getFincMdaOwnerNm()).isEmpty();   // legacy raw blank, no fallback
+    }
+
+    @Test
+    void apiPath_ownerNm_rawRcptNm_nullPreserved() {
+        ScdulPymnSumrDetl l = line(SHINHAN, "VND");
+        l.setRcptNm(null);
+        executor.execute(master(SHINHAN, "VND"), List.of(l), "VND");
+        assertThat(captureTarget().getFincMdaOwnerNm()).isNull();    // legacy raw null, not "UNKNOWN"
+    }
+
+    @Test
+    void filePath_ownerNm_rawRcptNm_blankPreserved() {
+        ScdulPymnSumrDetl l = line(WOORI, "USD");
+        l.setRcptNm("");
+        executor.execute(master(WOORI, "USD"), List.of(l), "USD");
+        assertThat(captureData().getFincMdaOwnerNm()).isEmpty();
+    }
+
+    @Test
+    void apiPath_tranDtAndRegTm_areUtc_notIct_nearMidnightBoundary() {
+        // K — legacy PymnHelper:2196,2214 stamps TB_PAY_TARGET TRAN_DT + REG_TM in UTC. Clock at
+        // 20:00 UTC = 03:00 ICT the NEXT day, so the UTC date (20260617) differs from the ICT date
+        // (20260618). TRAN_DT (a PK component) must be the UTC date; REG_TM the UTC time.
+        ReflectionTestUtils.setField(executor, "clock",
+                Clock.fixed(Instant.parse("2026-06-17T20:00:00Z"), ZoneOffset.UTC));
+        executor.execute(master(SHINHAN, "VND"), List.of(line(SHINHAN, "VND")), "VND");
+
+        TbPayTarget t = captureTarget();
+        assertThat(t.getTranDt()).isEqualTo("20260617");   // UTC date, NOT ICT 20260618
+        assertThat(t.getRegTm()).isEqualTo("200000");      // UTC time
     }
 }

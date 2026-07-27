@@ -80,6 +80,14 @@ public class OvrsPymnSumrDetl {
     @Column(name = "BNFC_ADDR", length = 500, nullable = false)
     private String bnfcAddr;
 
+    /**
+     * Beneficiary town/city name (legacy {@code BNFC_TOWN_NM}, {@code varchar(150)}). Feeds
+     * {@code TB_PAY_FILE_DATA.RCPT_USE_ADDR_SI} on overseas dispatch (audit M-11 / E1); the
+     * legacy overseas save reads it at {@code pymn_0007_001_c001_act.jsp:377}.
+     */
+    @Column(name = "BNFC_TOWN_NM", length = 150)
+    private String bnfcTownNm;
+
     @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "FEE_PAYER_CD", length = 1, nullable = false)
     private String feePayerCd;

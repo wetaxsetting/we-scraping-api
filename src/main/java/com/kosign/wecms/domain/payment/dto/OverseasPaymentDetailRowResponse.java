@@ -23,6 +23,11 @@ public record OverseasPaymentDetailRowResponse(
         String  bicCd,
         String  bnfcAcctNo,
         String  bnfcAddr,
+        /** Beneficiary town/city — display-only, read from the saved
+         *  {@code OVRS_PYMN_SUMR_DETL.BNFC_TOWN_NM} (auto-filled from the
+         *  SWIFT directory at Contacts time; no re-lookup here). Legacy
+         *  {@code comm_0194_001} / {@code pymn_0007_004_r001} parity. */
+        String  bnfcTownNm,
         /** {@code "Y"} = transferred (success), {@code "N"} = pending. */
         String  trnfYn,
         /** Phase 2 — dispatch result fields populated from

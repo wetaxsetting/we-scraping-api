@@ -106,6 +106,31 @@ public class TbFirmTran {
     @Column(name = "RS_DTTM", length = 14)
     private String rsDttm;
 
+    // ── 203 processing-result-inquiry audit row (B3 / audit M-4 — legacy TB_FIRM_TRAN_C001/_U003) ──
+    // The scheduled result-check inserts one TRAN_TP='203' ledger row per inquiry that points
+    // back at the original 202 via ORG_TRAN_DT/ORG_TRAN_SEQ and, on success, carries the confirmed
+    // 203 detail (ORG_PROC_TM + the withdrawal/target remarks). All columns already exist in V104.
+
+    /** Original transaction date the 203 inquiry confirms (legacy {@code ORG_TRAN_DT}). {@code varchar(8)}. */
+    @Column(name = "ORG_TRAN_DT", length = 8)
+    private String orgTranDt;
+
+    /** Original transaction sequence the 203 inquiry confirms (legacy {@code ORG_TRAN_SEQ}). {@code varchar(50)}. */
+    @Column(name = "ORG_TRAN_SEQ", length = 50)
+    private String orgTranSeq;
+
+    /** Original processing time returned by the 203 inquiry (legacy {@code ORG_PROC_TM}). {@code varchar(6)}. */
+    @Column(name = "ORG_PROC_TM", length = 6)
+    private String orgProcTm;
+
+    /** Withdrawal-side remark from the 203 inquiry (legacy {@code WDRL_ACCT_RMRK}). {@code varchar(150)}. */
+    @Column(name = "WDRL_ACCT_RMRK", length = 150)
+    private String wdrlAcctRmrk;
+
+    /** Target-side remark from the 203 inquiry (legacy {@code TAR_ACCT_RMRK}). {@code varchar(150)}. */
+    @Column(name = "TAR_ACCT_RMRK", length = 150)
+    private String tarAcctRmrk;
+
     // ── 202 real-time transfer write seam (C2 — TB_FIRM_TRAN_C001 insert / _U004 update) ──
     // All columns already exist in V104; the mappings below are additive (no migration).
 
@@ -154,6 +179,13 @@ public class TbFirmTran {
     // ── 204 FX-inquiry result columns (written by the TRAN_TP='204' row via U005) ──
     // Mirror the same four columns on TB_PAY_TARGET. Populated only on the Woori /
     // non-VND exchange-transfer pre-step (legacy NAPAS_REAL_TIME_BATCH U005).
+
+    /**
+     * Withdrawal currency (legacy {@code WITHD_CCY_CD}, {@code varchar(3)}) — written on the 202
+     * {@code TB_FIRM_TRAN} row (audit D1/M-8; legacy C001 sets it on every transfer, VND included).
+     */
+    @Column(name = "WITHD_CCY_CD", length = 3)
+    private String withdCcyCd;
 
     /** Deposit currency from the 204 FX inquiry ({@code VND}). {@code varchar(3)}. */
     @Column(name = "DEP_CCY_CD", length = 3)

@@ -176,6 +176,23 @@ class InternalTransferDispatchExecutorBankChnlDivTest {
         assertThat(captureData().getBankChnlDiv()).isEqualTo("O");
     }
 
+    @Test
+    void vcbVnd_carriesUploadedAntDivCd_bankChnlDivOther() {
+        // OQ-2 (Mr. Jung 2026-07-16 CONFIRMED file-based VCB; legacy PymnHelper:2573 "VCB VND -> Other
+        // : NAPAS/CITAD from upload"). VCB VND now carries the uploaded code (was null before OQ-2);
+        // VCB USD stays null (same-bank only); non-VCB internal transfers are unchanged.
+        ReflectionTestUtils.setField(executor, "vcbBankCd", VCB);
+        ScdulPymnSumrDetl l = line(BIDV);
+        l.setTrnfCcyCd("VND");
+        l.setDepoCcyCd("VND");
+        l.setAntDivCd("NAPAS");
+        executor.execute(master(VCB), List.of(l), "VND");
+
+        TbPayFileData d = captureData();
+        assertThat(d.getAntDivCd()).isEqualTo("NAPAS");
+        assertThat(d.getBankChnlDiv()).isEqualTo("O");   // VCB->BIDV other-bank
+    }
+
     /* ───────────── BANK_PRTN_ID ───────────── */
 
     @Test
@@ -202,6 +219,28 @@ class InternalTransferDispatchExecutorBankChnlDivTest {
 
         verify(tbPayFileMstRepository, never()).save(any());
         verify(tbPayFileDataRepository, never()).save(any());
+    }
+
+    @Test
+    void ownerNm_rawRcptNm_blankPreserved() {
+        // B — legacy raw RCPT_NM, no fallback (PymnHelper file path).
+        ScdulPymnSumrDetl l = line(BIDV);
+        l.setRcptNm("");
+        executor.execute(master(BIDV), List.of(l), "USD");
+        assertThat(captureData().getFincMdaOwnerNm()).isEmpty();
+    }
+
+    @Test
+    void remarks_bothFromTranUsag_notWdrlActRmrk() {
+        // I — legacy PymnHelper:2757-2758: BOTH remark columns come from TRAN_USAG.
+        ScdulPymnSumrDetl l = line(BIDV);
+        l.setTranUsag("USAGE-X");
+        l.setWdrlActRmrk("WDRL-Y");
+        executor.execute(master(BIDV), List.of(l), "USD");
+
+        TbPayFileData d = captureData();
+        assertThat(d.getWdrlActRmrk()).isEqualTo("USAGE-X");   // TRAN_USAG, not WDRL_ACT_RMRK
+        assertThat(d.getTarAcctRmrk()).isEqualTo("USAGE-X");
     }
 
     private void firmBank(String bankCd, String engAbrvatNm) {

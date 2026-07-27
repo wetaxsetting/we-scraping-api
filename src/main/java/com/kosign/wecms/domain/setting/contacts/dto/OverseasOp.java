@@ -36,4 +36,15 @@ public record OverseasOp(
         String beneBankCode,
 
         @Size(max = 255)
-        String beneAddr) { }
+        String beneAddr,
+
+        /**
+         * Beneficiary town / city — auto-filled read-only on the client
+         * from the selected BIC's SWIFT directory entry
+         * ({@code SWIFT_BIC_MST.PSTL_ADR_TWN_NM}). Persisted to
+         * {@code TRCO_OVRS_INFM.BENE_TOWN_NM} (len 150). The client
+         * enforces "required for Overseas + read-only"; the server stays
+         * lenient (refactor parity stance — see {@code ContactsValidator}).
+         */
+        @Size(max = 150)
+        String beneTownNm) { }

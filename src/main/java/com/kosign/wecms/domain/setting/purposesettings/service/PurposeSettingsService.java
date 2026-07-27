@@ -3,8 +3,11 @@ package com.kosign.wecms.domain.setting.purposesettings.service;
 import com.kosign.wecms.common.auditlog.service.AuditLogContext;
 import com.kosign.wecms.common.auditlog.service.AuditLogService;
 import com.kosign.wecms.common.exception.BusinessException;
+import com.kosign.wecms.common.enums.LangCd;
 import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.common.tenant.TenantContext;
+import com.kosign.wecms.domain.setting.purposesettings.dto.DeletedPurposeListResponse;
+import com.kosign.wecms.domain.setting.purposesettings.dto.DeletedPurposeRow;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeReorderItem;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeReorderRequest;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeSettingCreateRequest;
@@ -12,12 +15,15 @@ import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeSettingDetail;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeSettingListResponse;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeSettingRow;
 import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeSettingUpdateRequest;
+import com.kosign.wecms.domain.setting.purposesettings.dto.RecentPurposesResponse;
 import com.kosign.wecms.domain.setting.purposesettings.entity.BusiUsagSetInfm;
 import com.kosign.wecms.domain.setting.purposesettings.repository.PurposeInUseRepository;
 import com.kosign.wecms.domain.setting.purposesettings.repository.PurposeSettingsRepository;
+import com.kosign.wecms.domain.setting.purposesettings.repository.SystemUsageNameRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -100,6 +106,7 @@ public class PurposeSettingsService {
     private static final String AUDIT_UPDATE_DETAIL_KEY   = "audit.purpose_settings.update.detail";
     private static final String AUDIT_DELETE_DETAIL_KEY   = "audit.purpose_settings.delete.detail";
     private static final String AUDIT_REORDER_DETAIL_KEY  = "audit.purpose_settings.reorder.detail";
+    private static final String AUDIT_RESTORE_DETAIL_KEY   = "audit.purpose_settings.restore.detail";
 
     /** Reserved system codes never surfaced by the list endpoint.
      *  Mirrors {@code comm_0187_001_r001_act.jsp:58-67}. */
@@ -120,14 +127,62 @@ public class PurposeSettingsService {
     private final PurposeInUseRepository     inUseRepo;
     private final AuditLogService            auditLogService;
     private final LegacyFunctionRepository   legacyFunctions;
+    private final SystemUsageNameRepository  sysNameRepo;
+    private final com.kosign.wecms.domain.banking.repository.AcctTrnsRcvPayInfmRepository acctTrnsRcvPayRepo;
+
+    /** RECENT quick-pick length, per direction bucket. Matches the
+     *  legacy purpose-recents read ({@code comm_0107_001} — {@code LIMIT 3}). */
+    static final int RECENT_LIMIT = 3;
 
     /* -----------------------------------------------------------------
      *  Read paths
      * ----------------------------------------------------------------- */
 
+    /**
+     * The current user's most-recently-used purposes for the Purpose
+     * selector's RECENT section. Server-side, read-only — derived from
+     * the classification the user applies to bank transactions
+     * ({@code ACCT_TRNS_RCV_PAY_INFM.RCV_PAY_USAG_CD}, stamped with
+     * {@code MOD_ID}/{@code MOD_DTM} on each pick). Fills as the user
+     * classifies; no localStorage, no new table (PO decision 2026-07-24).
+     *
+     * <p>Returns the top-3 grp-4 (Banking Deposit) codes merged with the
+     * top-3 grp-6 (Banking Withdrawal) codes. The Transaction-History
+     * picker is direction-split, so the cell intersects this list with
+     * the row-direction's grp-4/6 options — a deposit row therefore shows
+     * only its grp-4 recents, a withdrawal row only grp-6 (PROD parity).
+     */
+    @Transactional(readOnly = true)
+    public RecentPurposesResponse recentPurposes() {
+        String bizKey = requireBizKey();
+        String userId = TenantContext.currentUserId();
+        var page = PageRequest.of(0, RECENT_LIMIT);
+        List<String> codes = new java.util.ArrayList<>(
+                acctTrnsRcvPayRepo.findRecentPurposeCodesByGroup(bizKey, userId, "4", page));
+        for (String c : acctTrnsRcvPayRepo.findRecentPurposeCodesByGroup(bizKey, userId, "6", page)) {
+            if (!codes.contains(c)) codes.add(c);
+        }
+        return new RecentPurposesResponse(codes);
+    }
+
+    /** Backward-compatible entrypoint — historic {@code usag_grp_cd IS
+     *  NULL} scope. Kept so existing callers (e.g. {@link #reorder}) and
+     *  any consumer that doesn't care about tabs stay unchanged. */
     @Transactional(readOnly = true)
     public PurposeSettingListResponse list(String keyword) {
+        return list(keyword, null);
+    }
+
+    /**
+     * List active purposes for a tab group. {@code group} is
+     * {@code null} (historic refactor scope), {@code "4"} (Banking
+     * Deposit) or {@code "6"} (Banking Withdrawal) — mirrors legacy
+     * {@code comm_0187_001_r001_act.jsp} {@code USAG_GRP_CD} branch.
+     */
+    @Transactional(readOnly = true)
+    public PurposeSettingListResponse list(String keyword, String group) {
         String bizKey = requireBizKey();
+        String grp    = normalizeGroup(group);
         // Empty-string sentinel — never null. The repository's JPQL
         // checks `:keyword = ''` to short-circuit the LIKE arm so the
         // null parameter never reaches PostgreSQL's LOWER(...) where
@@ -135,13 +190,80 @@ public class PurposeSettingsService {
         // does not exist`. See repository method Javadoc.
         String norm = (keyword == null || keyword.isBlank()) ? "" : keyword.trim();
 
-        List<BusiUsagSetInfm> rows = repo.findActiveForTenant(bizKey, RESERVED_SYSTEM_CODES, norm);
+        List<BusiUsagSetInfm> rows = repo.findActiveForTenant(bizKey, grp, RESERVED_SYSTEM_CODES, norm);
         Set<String> inUse = resolveInUseCodes(bizKey, rows);
+        Map<String, SystemUsageNameRepository.Name> sysNames = resolveSystemNames(rows);
 
-        List<PurposeSettingRow> tree = assembleTree(rows, inUse);
-        log.debug("purpose-settings list bizKey={} rows={} top={} keyword={}",
-                bizKey, rows.size(), tree.size(), norm);
+        List<PurposeSettingRow> tree = assembleTree(rows, inUse, sysNames);
+        log.debug("purpose-settings list bizKey={} group={} rows={} top={} keyword={}",
+                bizKey, grp, rows.size(), tree.size(), norm);
         return new PurposeSettingListResponse(tree);
+    }
+
+    /**
+     * "Deleted Purpose" tab — soft-deleted rows ({@code use_yn = 'N'})
+     * across the deposit/withdrawal buckets plus the historic NULL
+     * scope. Mirrors legacy {@code comm_0187_003_r001} (fetchDataUnused).
+     * Flat list; the frontend renders the Categories column from
+     * {@code usag_grp_cd} and offers Restore per row.
+     */
+    @Transactional(readOnly = true)
+    public DeletedPurposeListResponse listDeleted() {
+        String bizKey = requireBizKey();
+        List<BusiUsagSetInfm> rows = repo.findDeletedForTenant(bizKey, RESERVED_SYSTEM_CODES);
+        Map<String, SystemUsageNameRepository.Name> sysNames = resolveSystemNames(rows);
+        List<DeletedPurposeRow> out = new ArrayList<>(rows.size());
+        for (BusiUsagSetInfm r : rows) {
+            out.add(new DeletedPurposeRow(
+                    r.getUseUsagCd(),
+                    r.getHandUseUsagCd(),
+                    resolveName(sysNames, r.getUseUsagCd(), r.getUseUsagNm()),
+                    resolveCont(sysNames, r.getUseUsagCd(), r.getUseUsagCont()),
+                    r.getUsagGrpCd(),
+                    r.getModId(),
+                    r.getModDtm()));
+        }
+        log.debug("purpose-settings deleted list bizKey={} rows={}", bizKey, out.size());
+        return new DeletedPurposeListResponse(out);
+    }
+
+    /**
+     * Restore a soft-deleted purpose ({@code use_yn = 'N' -> 'Y'}).
+     * Mirrors legacy {@code comm_0187_003_u001} REC sub-rule.
+     */
+    @Transactional
+    public void restore(String useUsagCd) {
+        String bizKey = requireBizKey();
+        String userId = requireUserId();
+        String safe   = requireField("use_usag_cd", useUsagCd);
+
+        BusiUsagSetInfm entity = repo.findByBizKeyAndUseUsagCd(bizKey, safe)
+                .orElseThrow(() -> notFoundDetail(bizKey, safe));
+
+        entity.setUseYn("Y");
+        entity.setModId(userId);
+        entity.setModDtm(nowAsLegacyTs());
+        repo.save(entity);
+
+        auditLogService.append(AuditLogContext.builder()
+                .wsvcId(AUDIT_WSVC_ID)
+                .refNo(REF_NO_BUSI_USAG_SET_INFM)
+                .refNo1(safe)
+                .refNo2(entity.getHandUseUsagCd())
+                .activityKey(AUDIT_ACTIVITY_KEY)
+                .detailKey(AUDIT_RESTORE_DETAIL_KEY)
+                .build());
+
+        log.info("purpose-settings restored bizKey={} useUsagCd={} handCd={}",
+                bizKey, safe, entity.getHandUseUsagCd());
+    }
+
+    /** Normalise a wire group value — blank → {@code null} (historic
+     *  scope); otherwise the trimmed {@code "4"}/{@code "6"} literal. */
+    private static String normalizeGroup(String group) {
+        if (group == null) return null;
+        String t = group.trim();
+        return t.isEmpty() ? null : t;
     }
 
     @Transactional(readOnly = true)
@@ -168,19 +290,22 @@ public class PurposeSettingsService {
         String cont   = trimToNull(req.useUsagCont());
         String parent = trimToNull(req.parentUseUsagCd());
         String dispYn = (req.dispYn() == null) ? DEFAULT_DISP_YN : req.dispYn();
+        // Target tab group — '4' (Deposit) / '6' (Withdrawal) / null
+        // (historic scope). Duplicate + disp_ord scoping follow the group.
+        String group  = normalizeGroup(req.usagGrpCd());
 
         // Legacy parity (WBW1152 / WBW1138): duplicate scope is
-        // (biz_key, usag_grp_cd IS NULL, use_yn = 'Y').
-        if (repo.findActiveByHandCd(bizKey, handCd).isPresent()) {
+        // (biz_key, usag_grp_cd = group, use_yn = 'Y').
+        if (repo.findActiveByHandCd(bizKey, group, handCd).isPresent()) {
             throw new BusinessException("WBW1152");
         }
-        if (repo.findActiveByName(bizKey, name).isPresent()) {
+        if (repo.findActiveByName(bizKey, group, name).isPresent()) {
             throw new BusinessException("WBW1138");
         }
         validateParent(bizKey, parent, /* selfUseUsagCd */ null);
 
-        int nextDispOrd = repo.findMaxDispOrd(bizKey).orElse(0) + 1;
-        BusiUsagSetInfm saved = persistCreate(bizKey, userId, handCd, name, cont, parent, dispYn, nextDispOrd);
+        int nextDispOrd = repo.findMaxDispOrd(bizKey, group).orElse(0) + 1;
+        BusiUsagSetInfm saved = persistCreate(bizKey, userId, handCd, name, cont, parent, dispYn, group, nextDispOrd);
 
         auditLogService.append(AuditLogContext.builder()
                 .wsvcId(AUDIT_WSVC_ID)
@@ -205,13 +330,14 @@ public class PurposeSettingsService {
     private BusiUsagSetInfm persistCreate(
             String bizKey, String userId,
             String handCd, String name, String cont, String parent,
-            String dispYn, int dispOrd) {
+            String dispYn, String group, int dispOrd) {
         DataIntegrityViolationException lastDive = null;
         for (int attempt = 0; attempt < 2; attempt++) {
-            // PK via the single LegacyFunctionRepository funnel (V140 #12b —
-            // empty usag_grp_cd → plain 0000000001.. sequence). Same args the
-            // removed PurposeSettingsRepository.nextUseUsagCd native @Query passed.
-            String useUsagCd = legacyFunctions.nextUseUsagCd(bizKey, "");
+            // PK via the single LegacyFunctionRepository funnel (V140 #12b).
+            // Empty usag_grp_cd → plain 0000000001.. sequence; '4'/'6' →
+            // the legacy deposit/withdrawal branch (mirrors legacy
+            // comm_0187_001_c001 SeqHelper.getNextVal with the group).
+            String useUsagCd = legacyFunctions.nextUseUsagCd(bizKey, group == null ? "" : group);
             if (useUsagCd == null || useUsagCd.isBlank()) {
                 // Defensive: the branch always returns a value when the
                 // function's argument-presence checks pass. A null
@@ -228,7 +354,10 @@ public class PurposeSettingsService {
             entity.setDispYn(dispYn);
             entity.setDispOrd(dispOrd);
             entity.setUseYn("Y");
-            // usagGrpCd intentionally NULL — refactor scope.
+            // Tab group: '4' (Deposit) / '6' (Withdrawal); null keeps the
+            // historic refactor scope. Legacy comm_0187_001 inserts the
+            // active tab's data-usag-grp-cd here.
+            entity.setUsagGrpCd(group);
             entity.setModId(userId);
             entity.setModDtm(nowAsLegacyTs());
             try {
@@ -262,8 +391,10 @@ public class PurposeSettingsService {
                 .orElseThrow(() -> notFoundDetail(bizKey, safe));
 
         // Legacy parity (OQ-4): NO duplicate-handCd check on update.
-        // use_usag_nm uniqueness still applies, excluding self.
-        if (repo.findDuplicateNameExcludingSelf(bizKey, name, safe).isPresent()) {
+        // use_usag_nm uniqueness still applies, excluding self — scoped
+        // to the row's own tab group so a Deposit name can coexist with
+        // the same Withdrawal name (each tab is its own namespace).
+        if (repo.findDuplicateNameExcludingSelf(bizKey, entity.getUsagGrpCd(), name, safe).isPresent()) {
             throw new BusinessException("WBW1138");
         }
         validateParent(bizKey, parent, safe);
@@ -405,6 +536,47 @@ public class PurposeSettingsService {
      *  Internal helpers — tree assembly + validation + mapping
      * ----------------------------------------------------------------- */
 
+    /** Resolve system-master localized names for a row set (legacy
+     *  {@code USAG_INFM_LANG_DETL}). Runs in its own inner transaction;
+     *  a missing master table (partially-migrated dev DB) degrades to an
+     *  empty map so names simply stay blank — no read-path failure. */
+    private Map<String, SystemUsageNameRepository.Name> resolveSystemNames(List<BusiUsagSetInfm> rows) {
+        if (rows.isEmpty()) return Map.of();
+        Set<String> codes = new HashSet<>(rows.size() * 2);
+        for (BusiUsagSetInfm r : rows) codes.add(r.getUseUsagCd());
+        try {
+            return sysNameRepo.resolveByLang(codes, currentLangCode());
+        } catch (Exception e) {
+            log.debug("purpose-settings system name resolve skipped: {}", e.getMessage());
+            return Map.of();
+        }
+    }
+
+    /** Display name = per-business value when present, else the
+     *  system-master localized name. */
+    private static String resolveName(
+            Map<String, SystemUsageNameRepository.Name> sys, String cd, String bizValue) {
+        if (bizValue != null && !bizValue.isBlank()) return bizValue;
+        SystemUsageNameRepository.Name n = sys.get(cd);
+        return n != null ? n.nm() : bizValue;
+    }
+
+    /** Description = per-business value when present, else the
+     *  system-master localized description. */
+    private static String resolveCont(
+            Map<String, SystemUsageNameRepository.Name> sys, String cd, String bizValue) {
+        if (bizValue != null && !bizValue.isBlank()) return bizValue;
+        SystemUsageNameRepository.Name n = sys.get(cd);
+        return n != null ? n.cont() : bizValue;
+    }
+
+    /** Current request language code (EN/KO/VI/KM) for the system-master
+     *  name lookup; defaults to EN. */
+    private static String currentLangCode() {
+        LangCd lang = TenantContext.currentLangCd();
+        return lang == null ? LangCd.EN.name() : lang.name();
+    }
+
     /** Bulk-resolve {@code used_in_transactions} for a row set. One
      *  query against {@code v_purpose_in_use} covers every row. */
     private Set<String> resolveInUseCodes(String bizKey, List<BusiUsagSetInfm> rows) {
@@ -418,7 +590,10 @@ public class PurposeSettingsService {
      *  for the wire. Maintains {@code disp_ord} ordering at each
      *  level. Orphans (level-2 rows whose parent is missing) surface
      *  as top-level rows so they remain reachable. */
-    private List<PurposeSettingRow> assembleTree(List<BusiUsagSetInfm> rows, Set<String> inUse) {
+    private List<PurposeSettingRow> assembleTree(
+            List<BusiUsagSetInfm> rows,
+            Set<String> inUse,
+            Map<String, SystemUsageNameRepository.Name> sysNames) {
         Map<String, PurposeSettingRow> byCode = new LinkedHashMap<>(rows.size() * 2);
         Map<String, List<PurposeSettingRow>> childrenByParent = new HashMap<>();
 
@@ -427,8 +602,11 @@ public class PurposeSettingsService {
             PurposeSettingRow row = new PurposeSettingRow(
                     r.getUseUsagCd(),
                     r.getHandUseUsagCd(),
-                    r.getUseUsagNm(),
-                    r.getUseUsagCont(),
+                    // System-default purposes carry a NULL per-business name;
+                    // fall back to the system-master localized name so the
+                    // grid reads the same as legacy comm_0187_001.
+                    resolveName(sysNames, r.getUseUsagCd(), r.getUseUsagNm()),
+                    resolveCont(sysNames, r.getUseUsagCd(), r.getUseUsagCont()),
                     r.getParentUseUsagCd(),
                     r.getDispYn(),
                     r.getDispOrd(),

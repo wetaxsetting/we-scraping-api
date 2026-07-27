@@ -34,5 +34,14 @@ public record ApprovalTransactionRow(
         String     description,
         String     documentNo,
         String     reportingAccount,
-        String     reportingBreadcrumb
+        String     reportingBreadcrumb,
+        /** Overseas-only beneficiary columns for the Approval Details
+         *  popup's dedicated overseas table (legacy comm_0195_001
+         *  APPR_DV=34). Null for the non-overseas kinds, which render the
+         *  generic layout. {@code bnfcTownNm} auto-filled from the SWIFT
+         *  directory at Contacts time, saved to
+         *  {@code OVRS_PYMN_SUMR_DETL.BNFC_TOWN_NM}. */
+        String     bnfcAddr,
+        String     feePayer,
+        String     bnfcTownNm
 ) { }

@@ -31,6 +31,7 @@ import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
@@ -133,6 +134,9 @@ public class InternalTransferDispatchExecutor {
     private String wooriBankCd;
     @Value("${wecms.internal-transfer.routing.shinhan-bank-cd:970424}")
     private String shinhanBankCd;
+    /** F1 (audit VCB): all VCB (970436) dispatches via the File path (legacy pymn_0009:2600). */
+    @Value("${wecms.internal-transfer.routing.vcb-bank-cd:970436}")
+    private String vcbBankCd;
 
     private final TbPayTargetRepository   tbPayTargetRepository;
     private final TbPayFileMstRepository  tbPayFileMstRepository;
@@ -159,10 +163,6 @@ public class InternalTransferDispatchExecutor {
     public void execute(ScdulPymnSumr master, List<ScdulPymnSumrDetl> lines, String trnfCcyCd) {
         String bizKey = master.getBizKey();
         String userId = TenantContext.currentUserId();
-        LocalDateTime nowVn = LocalDateTime.now(clock.withZone(VN_TZ));
-        String tranDt = nowVn.format(DT8);
-        String regTm  = nowVn.format(TM6);
-        String dttm14 = nowVn.format(DTM14);
 
         // --- Routing flags (legacy PymnHelper.pymn_0009_001_c001 ~2459-2494) ---
         RoutingFlags rf = computeRoutingFlags(master, lines, trnfCcyCd);
@@ -170,11 +170,20 @@ public class InternalTransferDispatchExecutor {
 
         // --- G18 path selection ---
         if (rf.useApiPath()) {
+            // K — legacy parity (PymnHelper:2196,2214): API-path TB_PAY_TARGET TRAN_DT + REG_TM from
+            // ONE captured UTC 'now'. The same UTC TRAN_DT (a PK component) flows to nextTranSeq /
+            // save / registerAfterCommit → the realtime dispatch lookup. PROC_DTTM stays ICT.
+            LocalDateTime nowUtc = LocalDateTime.now(clock.withZone(ZoneOffset.UTC));
+            String tranDt = nowUtc.format(DT8);
+            String regTm  = nowUtc.format(TM6);
+            String dttm14 = LocalDateTime.now(clock.withZone(VN_TZ)).format(DTM14);
             writeApiPath(master, lines, bizKey, userId, tranDt, regTm, dttm14, trnfCcyCd,
                     wdrlCcyCd, rf.isWooriUsdToVnd());
         } else {
-            writeFilePath(master, lines, bizKey, tranDt, dttm14, trnfCcyCd, wdrlCcyCd,
-                    rf.isShinhanUsdToVnd());
+            // File path: legacy TB_PAY_FILE_MST uses server-local LocalDate.now(); refactor keeps ICT.
+            LocalDateTime nowVn = LocalDateTime.now(clock.withZone(VN_TZ));
+            writeFilePath(master, lines, bizKey, nowVn.format(DT8), nowVn.format(DTM14), trnfCcyCd,
+                    wdrlCcyCd, rf.isShinhanUsdToVnd());
         }
     }
 
@@ -211,9 +220,16 @@ public class InternalTransferDispatchExecutor {
                 eq(outBankCd, shinhanBankCd)
                 && CCY_USD.equalsIgnoreCase(wdrlCcyCd)
                 && CCY_VND.equalsIgnoreCase(depoCcyCd);
+        // F1 (audit VCB, legacy PymnHelper.pymn_0009_001_c001:2600, SVN r36803): ALL VCB (970436),
+        // VND and USD, dispatches via the File path — the isVcbFileTransfer gate pulls VCB VND off
+        // the API path. NOTE: the file path's VCB-specific field values (BANK_CHNL_DIV via
+        // ENG_ABRVAT_NM, VND ANT_DIV_CD) are NOT built out here — VCB VND file-field parity is
+        // REQUIRES EXTERNAL CONFIRMATION (Van Center), per the F1 "routing switch only" decision.
+        boolean isVcbFileTransfer = eq(outBankCd, vcbBankCd);
         boolean useApiPath =
-                (CCY_VND.equalsIgnoreCase(trimToNull(trnfCcyCd)) && !isShinhanUsdToVnd)
-                || isWooriUsdToVnd;
+                ((CCY_VND.equalsIgnoreCase(trimToNull(trnfCcyCd)) && !isShinhanUsdToVnd)
+                        || isWooriUsdToVnd)
+                        && !isVcbFileTransfer;
 
         return new RoutingFlags(useApiPath, isShinhanUsdToVnd, isWooriUsdToVnd, wdrlCcyCd);
     }
@@ -243,7 +259,7 @@ public class InternalTransferDispatchExecutor {
             row.setAntDivCd(resolveApiAntDivCd(master.getOutBankCd(), line));
             row.setTarBankCd(line.getTarBankCd());
             row.setFincMdaNo(line.getFincMdaNo());
-            row.setFincMdaOwnerNm(resolveOwnerNm(bizKey, line));
+            row.setFincMdaOwnerNm(line.getRcptNm());   // B: legacy raw RCPT_NM, no fallback (PymnHelper:2218 pattern)
             row.setTranAmt(line.getTranAmt());
             row.setTranUsag(line.getTranUsag());
             row.setProcStat(PROC_STAT_PENDING);
@@ -335,13 +351,19 @@ public class InternalTransferDispatchExecutor {
             // Shinhan-USD→VND ANT_DIV_CD override (CITAD same / EBANK other).
             if (isShinhanUsdToVnd) {
                 data.setAntDivCd(sameBank ? ANT_DIV_T_CITAD : ANT_DIV_T_EBANK);
+            } else if (eq(master.getOutBankCd(), vcbBankCd) && CCY_VND.equalsIgnoreCase(trnfCcyCd)) {
+                // OQ-2 (Mr. Jung 2026-07-16, CONFIRMED file-based VCB; proven vs legacy PymnHelper:2573
+                // + copyFrom :2840-2843): VCB VND carries the uploaded NAPAS/CITAD network code
+                // ("VCB VND -> Other : NAPAS/CITAD from upload"). VCB USD stays null (same-bank only);
+                // non-VCB internal transfers are unchanged.
+                data.setAntDivCd(line.getAntDivCd());
             }
 
-            data.setFincMdaOwnerNm(resolveOwnerNm(bizKey, line));
-            // Legacy quirk parity (PymnHelper:2295): WDRL_ACT_RMRK copied into
-            // both TAR_ACCT_RMRK and WDRL_ACCT_RMRK.
-            data.setTarAcctRmrk(line.getWdrlActRmrk());
-            data.setWdrlActRmrk(line.getWdrlActRmrk());
+            data.setFincMdaOwnerNm(line.getRcptNm());  // B: legacy raw RCPT_NM (PymnHelper file path)
+            // I — legacy parity (PymnHelper.pymn_0009_001_c001:2757-2758): Internal Transfer
+            // sources BOTH remark columns from TRAN_USAG (verified by direct source read).
+            data.setTarAcctRmrk(line.getTranUsag());
+            data.setWdrlActRmrk(line.getTranUsag());
             data.setRemitCcyCd(line.getTrnfCcyCd());
             data.setProcRsltDiv(PROC_RSLT_DIV_UNPROCESSED);
 

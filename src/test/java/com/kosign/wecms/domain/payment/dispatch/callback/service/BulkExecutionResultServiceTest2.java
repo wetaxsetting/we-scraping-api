@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.domain.payment.dispatch.callback.dto.BulkExecutionResultRequest;
 import com.kosign.wecms.domain.payment.dispatch.callback.dto.EfsCallbackEnvelope;
+import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmBatApiTran;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmFileData;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmFileMst;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmFileRslt;
@@ -104,7 +105,8 @@ class BulkExecutionResultServiceTest2 {
                 dispatchKeyGenerator, firmFileMstRepository, firmFileDataRepository,
                 firmFileRsltRepository, firmBatApiTranRepository, payFileMstRepository, payFileDataRepository,
                 eventPublisher,
-                org.mockito.Mockito.mock(com.kosign.wecms.domain.payment.dispatch.alert.OpsAlertService.class));
+                org.mockito.Mockito.mock(com.kosign.wecms.domain.payment.dispatch.alert.OpsAlertService.class),
+                new DispatchApiTranAuditWriter(firmBatApiTranRepository));
 
         when(vanApiKeyService.getApiKey(VAN)).thenReturn(TEST_KEY);
         when(dispatchKeyGenerator.nextTranSeq(anyString(), anyString())).thenReturn("1");
@@ -195,8 +197,8 @@ class BulkExecutionResultServiceTest2 {
     @Test
     void happyPath_parses_writesResults_advancesStep2to3_andFinalizesPay() throws Exception {
         TbFirmFileMst mst = mst(ProcStep.DEPO_REQ.code(), ProcStat.REQ.code());
-        when(firmFileMstRepository.findByTranDtAndFirmFileNmAndProcStepAndProcStat(
-                TRAN_DT, FILE_NM, ProcStep.DEPO_REQ.code(), ProcStat.REQ.code())).thenReturn(Optional.of(mst));
+        when(firmFileMstRepository.findForExecutionResult(
+                TRAN_DT, FILE_NM, VAN, FILE_SEQ, ProcStep.DEPO_REQ.code(), ProcStat.REQ.code())).thenReturn(Optional.of(mst));
         when(firmFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
                 .thenReturn(List.of(mst)); // same ref — after advance it reads PROC_STAT='0'
         when(firmFileDataRepository.findByTranDtAndFileSeqNoAndFirmFileNmOrderBySeqAsc(TRAN_DT, FILE_SEQ_NO, FILE_NM))
@@ -229,9 +231,42 @@ class BulkExecutionResultServiceTest2 {
     }
 
     @Test
+    void auditRow_tranDt_isProcessingDate_notFilenameDate() throws Exception {
+        // E — legacy API2_act.jsp:85,182: the 01302 audit row's TRAN_DT is the callback PROCESSING
+        // date (today), NOT the result-filename date (parts[4] = "20260602", a past date here).
+        // The file lookup still keys on the filename date (legacy R006 parity, unchanged).
+        TbFirmFileMst mst = mst(ProcStep.DEPO_REQ.code(), ProcStat.REQ.code());
+        when(firmFileMstRepository.findForExecutionResult(
+                TRAN_DT, FILE_NM, VAN, FILE_SEQ, ProcStep.DEPO_REQ.code(), ProcStat.REQ.code())).thenReturn(Optional.of(mst));
+        when(firmFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
+                .thenReturn(List.of(mst));
+        when(firmFileDataRepository.findByTranDtAndFileSeqNoAndFirmFileNmOrderBySeqAsc(TRAN_DT, FILE_SEQ_NO, FILE_NM))
+                .thenReturn(List.of(firmData(1, 10), firmData(2, 20)));
+        when(payFileDataRepository.findByBizKeyAndTranDtAndFileSeqNo(BIZ_KEY, TRAN_DT, FILE_SEQ_NO))
+                .thenReturn(List.of(payData(10), payData(20)));
+        when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
+                .thenReturn(Optional.of(new TbPayFileMst()));
+        placeResultFile(resultFile());
+
+        service.handle(envelope());
+
+        String today = java.time.LocalDate.now(java.time.ZoneId.of("Asia/Ho_Chi_Minh"))
+                .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd"));
+        ArgumentCaptor<TbFirmBatApiTran> auditCap = ArgumentCaptor.forClass(TbFirmBatApiTran.class);
+        verify(firmBatApiTranRepository, org.mockito.Mockito.atLeastOnce()).save(auditCap.capture());
+        TbFirmBatApiTran audit = auditCap.getValue();
+        assertEquals(today, audit.getTranDt());                                 // processing date (today)
+        org.junit.jupiter.api.Assertions.assertNotEquals(TRAN_DT, audit.getTranDt()); // NOT the filename date
+        // File lookup still keyed on the filename date (legacy R006 parity).
+        verify(firmFileMstRepository).findForExecutionResult(
+                TRAN_DT, FILE_NM, VAN, FILE_SEQ, ProcStep.DEPO_REQ.code(), ProcStat.REQ.code());
+    }
+
+    @Test
     void noFileAtStep2_isSafeNoOp() throws Exception {
-        when(firmFileMstRepository.findByTranDtAndFirmFileNmAndProcStepAndProcStat(
-                anyString(), anyString(), eq(ProcStep.DEPO_REQ.code()), eq(ProcStat.REQ.code())))
+        when(firmFileMstRepository.findForExecutionResult(
+                anyString(), anyString(), anyString(), anyString(),
+                eq(ProcStep.DEPO_REQ.code()), eq(ProcStat.REQ.code())))
                 .thenReturn(Optional.empty());
 
         service.handle(envelope());
@@ -243,8 +278,8 @@ class BulkExecutionResultServiceTest2 {
 
     @Test
     void malformedResultFile_throws_andDoesNotAdvanceState() throws Exception {
-        when(firmFileMstRepository.findByTranDtAndFirmFileNmAndProcStepAndProcStat(
-                TRAN_DT, FILE_NM, ProcStep.DEPO_REQ.code(), ProcStat.REQ.code()))
+        when(firmFileMstRepository.findForExecutionResult(
+                TRAN_DT, FILE_NM, VAN, FILE_SEQ, ProcStep.DEPO_REQ.code(), ProcStat.REQ.code()))
                 .thenReturn(Optional.of(mst(ProcStep.DEPO_REQ.code(), ProcStat.REQ.code())));
         placeResultFile(new byte[500]); // not a 1000-byte-record multiple → codec rejects
 

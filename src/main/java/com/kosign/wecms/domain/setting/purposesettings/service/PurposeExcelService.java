@@ -229,7 +229,7 @@ public class PurposeExcelService {
             // (2) the live row map so parent lookups can verify level-1.
             List<BusiUsagSetInfm> live = repo.findActiveForTenant(
                     bizKey,
-                    PurposeSettingsService.RESERVED_SYSTEM_CODES,
+                    null, PurposeSettingsService.RESERVED_SYSTEM_CODES,
                     "");
             Set<String> liveCodes = new HashSet<>();
             Set<String> liveRootCodes = new HashSet<>();
@@ -375,7 +375,7 @@ public class PurposeExcelService {
 
         // Re-run validation against the LIVE state.
         List<BusiUsagSetInfm> live = repo.findActiveForTenant(
-                bizKey, PurposeSettingsService.RESERVED_SYSTEM_CODES, "");
+                bizKey, null, PurposeSettingsService.RESERVED_SYSTEM_CODES, "");
         Set<String> liveCodes = new HashSet<>();
         Set<String> liveRootCodes = new HashSet<>();
         Map<String, BusiUsagSetInfm> liveByHandCd = new HashMap<>();
@@ -445,7 +445,7 @@ public class PurposeExcelService {
 
         // Roots first.
         int inserted = 0;
-        int maxDispOrd = repo.findMaxDispOrd(bizKey).orElse(0);
+        int maxDispOrd = repo.findMaxDispOrd(bizKey, null).orElse(0);
         for (PurposeExcelImportRequest.Row row : req.rows()) {
             String parent = row.parentUseUsagCd();
             if (parent != null && !parent.trim().isEmpty()) continue;

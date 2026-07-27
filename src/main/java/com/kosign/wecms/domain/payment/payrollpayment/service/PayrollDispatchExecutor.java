@@ -16,8 +16,10 @@ import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumr;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrDetl;
 import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConf;
 import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConfId;
+import com.kosign.wecms.domain.setting.firmbankingsettings.repository.TbFirmBankCodeRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -96,11 +98,26 @@ public class PayrollDispatchExecutor {
     /** Cross-bank routing flag — legacy {@code BankChnlDiv.OTHER_BANK_TRANSFER} = "O". */
     private static final String BANK_CHNL_DIV_OTHER_BANK = "O";
 
+    /** Active-bank flag in {@code TB_FIRM_BANK_CODE} (legacy filter {@code bank_stas='1'}). */
+    private static final String BANK_STAS_ACTIVE = "1";
+    private static final String CCY_VND = "VND";
+
+    /** Firm-banking out-bank codes (config-overridable; same defaults as the
+     *  Vendor / Expense / Internal Transfer executors). */
+    @Value("${wecms.internal-transfer.routing.shinhan-bank-cd:970424}")
+    private String shinhanBankCd;
+    @Value("${wecms.internal-transfer.routing.woori-bank-cd:970457}")
+    private String wooriBankCd;
+    @Value("${wecms.internal-transfer.routing.vcb-bank-cd:970436}")
+    private String vcbBankCd;
+
     private final TbPayFileMstRepository  tbPayFileMstRepository;
     private final TbPayFileDataRepository tbPayFileDataRepository;
     private final AcctMstrRepository      acctMstrRepository;
     /** Real {@code BANK_PRTN_ID} source (legacy {@code TB_FIRM_CONF}). */
     private final TbFirmConfRepository    tbFirmConfRepository;
+    /** {@code ENG_ABRVAT_NM} same-group resolution (legacy {@code TB_FIRM_BANK_CODE}). */
+    private final TbFirmBankCodeRepository tbFirmBankCodeRepository;
     private final DispatchKeyGenerator    keyGenerator;
     private final Clock                   clock;
     private final LegacyFunctionRepository legacyFunctions;
@@ -178,11 +195,24 @@ public class PayrollDispatchExecutor {
             // routing (that is Internal Transfer's per-bank rule, not Payroll's).
             data.setTrscCcyCd(trnfCcyCd);
             data.setTranAmt(line.getTranAmt());
-            data.setBankChnlDiv(
-                    sameBank(master.getOutBankCd(), line.getTarBankCd())
-                            ? BANK_CHNL_DIV_CURRENT_BANK   // "T"
-                            : BANK_CHNL_DIV_OTHER_BANK);    // "O"
-            data.setFincMdaOwnerNm(resolveOwnerNm(bizKey, line));
+            // J — legacy parity (pymn_0005_001_c001_act.jsp:179-182, 230-263):
+            //   * VCB VND payroll is blocked entirely; VCB USD only to a VCB (same-bank) target.
+            //   * BANK_CHNL_DIV is set ONLY for Shinhan / Woori / VCB out-banks; same-bank =
+            //     raw bank-code equality OR same ENG_ABRVAT_NM group (TB_FIRM_BANK_CODE, active).
+            //   * Any other out-bank leaves BANK_CHNL_DIV unset (legacy has no else branch).
+            String outBank = master.getOutBankCd();
+            String tarBank = line.getTarBankCd();
+            if (eq(outBank, vcbBankCd) && CCY_VND.equalsIgnoreCase(line.getTrnfCcyCd())) {
+                throw new BusinessException("WBE_PAYROLL_VCB_VND_NOT_SUPPORTED");   // legacy :179-182
+            }
+            if (eq(outBank, shinhanBankCd) || eq(outBank, wooriBankCd) || eq(outBank, vcbBankCd)) {
+                boolean sameBank = eq(outBank, tarBank) || sameBankGroup(outBank, tarBank);
+                if (eq(outBank, vcbBankCd) && !sameBank) {
+                    throw new BusinessException("WBE_PAYROLL_VCB_USD_OTHER_BANK");  // legacy :249-252
+                }
+                data.setBankChnlDiv(sameBank ? BANK_CHNL_DIV_CURRENT_BANK : BANK_CHNL_DIV_OTHER_BANK);
+            }
+            data.setFincMdaOwnerNm(line.getRcptNm());  // B: legacy raw RCPT_NM (pymn_0005_001_c001_act.jsp:206)
             // Legacy quirk parity (PymnHelper:2295): WDRL_ACT_RMRK copied into
             // both TAR_ACCT_RMRK and WDRL_ACT_RMRK.
             data.setTarAcctRmrk(line.getWdrlActRmrk());
@@ -237,8 +267,31 @@ public class PayrollDispatchExecutor {
         return acctNo != null && !acctNo.isBlank() ? acctNo : "UNKNOWN";
     }
 
-    private static boolean sameBank(String outBankCd, String tarBankCd) {
-        return outBankCd != null && outBankCd.equals(tarBankCd);
+    private static boolean eq(String a, String b) {
+        return a != null && a.equals(b);
+    }
+
+    private static String trimToNull(String v) {
+        if (v == null) return null;
+        String t = v.trim();
+        return t.isEmpty() ? null : t;
+    }
+
+    /** Same banking group by {@code ENG_ABRVAT_NM} (legacy pymn_0005:236-245). Active
+     *  rows only ({@code BANK_STAS='1'}); false when either side is unresolved. */
+    private boolean sameBankGroup(String outBankCd, String tarBankCd) {
+        String src = engAbrvatNm(outBankCd);
+        String tar = engAbrvatNm(tarBankCd);
+        return src != null && src.equals(tar);
+    }
+
+    private String engAbrvatNm(String bankCd) {
+        String code = trimToNull(bankCd);
+        if (code == null) return null;
+        return tbFirmBankCodeRepository
+                .findFirstByBankCdAndBankStas(code, BANK_STAS_ACTIVE)
+                .map(b -> trimToNull(b.getEngAbrvatNm()))
+                .orElse(null);
     }
 
     /** Real {@code BANK_PRTN_ID} from {@code TB_FIRM_CONF} (PK

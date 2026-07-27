@@ -61,11 +61,11 @@ class AccountServiceAsOfAndHExclusionTest {
     @BeforeEach
     void setUp() {
         service = new AccountService(acctRepo, bankResolver, napasRepo, bankCertRepo, bankSync);
-        when(acctRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+        when(acctRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(Pageable.class)))
                 .thenReturn(oneAccountPage());
         when(acctRepo.aggregateByCcy(any(), any(), any(), any(), any(), any(), any(), anyBoolean()))
                 .thenReturn(List.of());
-        when(acctRepo.findDistinctBankCds(any(), any(), any(), any(), any())).thenReturn(List.of());
+        when(acctRepo.findDistinctBankCds(any(), any(), any(), any(), any(), anyBoolean())).thenReturn(List.of());
         when(bankCertRepo.findConnectedBankCds(BIZ)).thenReturn(List.of());
         when(bankResolver.resolveBankNm(any())).thenReturn("Shinhan VN");
         when(bankResolver.resolveAcctTypeNm(any())).thenReturn("Current");
@@ -104,6 +104,65 @@ class AccountServiceAsOfAndHExclusionTest {
         service.list("VND");
 
         assertThat(capturedAggregateHFlag()).isFalse();
+    }
+
+    // ── A1-01 D3: PrdtType H maturity/balance guard on the ROW list ────
+    // (previously the flag reached only the aggregate; the A1-01 fix
+    //  applies the SAME guard to findFiltered so rows + totals agree.)
+
+    @Test
+    void hTenant_passesExcludeMaturedHSavingsTrue_toRowList() {
+        TenantContext.set(USER, USER, BIZ, LangCd.EN, TenantContext.AUTH_GR_ADMIN, "H");
+
+        service.list("VND");
+
+        assertThat(capturedRowHFlag()).isTrue();
+    }
+
+    @Test
+    void fTenant_passesExcludeMaturedHSavingsFalse_toRowList() {
+        TenantContext.set(USER, USER, BIZ, LangCd.EN, TenantContext.AUTH_GR_ADMIN, "F");
+
+        service.list("VND");
+
+        assertThat(capturedRowHFlag()).isFalse();
+    }
+
+    @Test
+    void hTenant_passesExcludeMaturedHSavingsTrue_toBankDropdown() {
+        TenantContext.set(USER, USER, BIZ, LangCd.EN, TenantContext.AUTH_GR_ADMIN, "H");
+
+        service.list("VND");
+
+        ArgumentCaptor<Boolean> c = ArgumentCaptor.forClass(Boolean.class);
+        verify(acctRepo).findDistinctBankCds(any(), any(), any(), any(), any(), c.capture());
+        assertThat(c.getValue()).isTrue();
+    }
+
+    // ── A1-01 D2: currency → ACCT_TYPE_CD whitelist passed to the row list
+
+    @Test
+    void vndScope_passesLocalCurrencyTypeWhitelist_toRowList() {
+        TenantContext.set(USER, USER, BIZ, LangCd.EN, TenantContext.AUTH_GR_ADMIN, "F");
+
+        service.list("VND");
+
+        // Local currency: DEPOSIT (02), CURRENT_KHR (03), SAVINGS_KHR (05).
+        assertThat(capturedRowTypeWhitelist()).containsExactlyInAnyOrder("02", "03", "05");
+    }
+
+    @Test
+    void fcyScope_passesForeignCurrencyTypeWhitelist_excludes03And05() {
+        TenantContext.set(USER, USER, BIZ, LangCd.EN, TenantContext.AUTH_GR_ADMIN, "F");
+
+        service.list("FCY");
+
+        // Foreign currency: DEPOSIT (02), CURRENT_USD (04), SAVINGS_USD (06),
+        // CURRENT_KRW (07), SAVINGS_KRW (08). 03/05 are local-currency types
+        // and are DELIBERATELY excluded from FCY (A1-01 D2).
+        List<String> fcy = capturedRowTypeWhitelist();
+        assertThat(fcy).containsExactlyInAnyOrder("02", "04", "06", "07", "08");
+        assertThat(fcy).doesNotContain("03", "05");
     }
 
     // ── AI-01: as-of-date row balance override ─────────────────────────
@@ -146,6 +205,19 @@ class AccountServiceAsOfAndHExclusionTest {
     private boolean capturedAggregateHFlag() {
         ArgumentCaptor<Boolean> c = ArgumentCaptor.forClass(Boolean.class);
         verify(acctRepo).aggregateByCcy(any(), any(), any(), any(), any(), any(), any(), c.capture());
+        return c.getValue();
+    }
+
+    private boolean capturedRowHFlag() {
+        ArgumentCaptor<Boolean> c = ArgumentCaptor.forClass(Boolean.class);
+        verify(acctRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), c.capture(), any(Pageable.class));
+        return c.getValue();
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<String> capturedRowTypeWhitelist() {
+        ArgumentCaptor<List<String>> c = ArgumentCaptor.forClass(List.class);
+        verify(acctRepo).findFiltered(any(), any(), any(), c.capture(), any(), any(), any(), anyBoolean(), any(Pageable.class));
         return c.getValue();
     }
 

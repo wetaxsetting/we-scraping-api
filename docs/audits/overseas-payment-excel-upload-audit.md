@@ -5,6 +5,17 @@
 > **Date:** 2026-06-29 (audit) · fixes applied + verified 2026-06-29
 > **Status:** Fixes implemented and verified (see §0). H2 closed by PO. WBW1160 message + UI parity confirmed.
 > **Method:** Analyze → Compare with Legacy → Explain Root Cause → Explain Impact → Document → Approve → Implement → Verify
+>
+> **Follow-up 2026-07-25 — two further divergences found and fixed** by the cross-module
+> pass in [payment-excel-upload-crossmodule-verification.md](payment-excel-upload-crossmodule-verification.md) §3:
+> **F2** `OVRS_PYMN_SUMR.WDRL_CCY_CD` was never set on the upload path (legacy
+> `pymn_0007_003_c001_act.jsp:108` sets it from `input.CCY_CD`) — now resolved from
+> `ACCT_MSTR`; **F3** `TRNF_DT` was stamped at draft creation citing `pymn_0007_002_c001`
+> (the **manual** screen, not this Excel path) — stamp removed, legacy leaves it unset
+> until dispatch. Plus **F4**, the workbook is now mandatory at save (legacy
+> `validateRequired(FULL_PATH)`). Both F2/F3 stem from citing the `pymn_0007_002_*`
+> manual-entry family instead of `pymn_0007_003_*` — the same wrong-source mistake this
+> audit already corrected once for `OVRS_PYMN_TYPE_CD`.
 
 ---
 

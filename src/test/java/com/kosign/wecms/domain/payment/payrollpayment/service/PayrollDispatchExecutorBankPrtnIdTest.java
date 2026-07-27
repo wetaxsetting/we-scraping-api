@@ -5,15 +5,20 @@ import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
+import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileData;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileMst;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbFirmConfRepository;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileDataRepository;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileMstRepository;
 import com.kosign.wecms.domain.payment.dispatch.service.DispatchAutoReceiveRegistrar;
 import com.kosign.wecms.domain.payment.dispatch.service.DispatchKeyGenerator;
+import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileData;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumr;
 import com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumrDetl;
+import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmBankCode;
 import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConf;
+import com.kosign.wecms.domain.setting.firmbankingsettings.repository.TbFirmBankCodeRepository;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -52,11 +57,16 @@ class PayrollDispatchExecutorBankPrtnIdTest {
 
     private static final String BIZ     = "VN_VNM0004_000001";
     private static final String SHINHAN = "970424";
+    private static final String SHINHAN_BRANCH = "970425";
+    private static final String WOORI   = "970457";
+    private static final String VCB     = "970436";
+    private static final String BIDV    = "970418";
 
     @Mock private TbPayFileMstRepository       tbPayFileMstRepository;
     @Mock private TbPayFileDataRepository      tbPayFileDataRepository;
     @Mock private AcctMstrRepository           acctMstrRepository;
     @Mock private TbFirmConfRepository         tbFirmConfRepository;
+    @Mock private TbFirmBankCodeRepository     tbFirmBankCodeRepository;
     @Mock private DispatchKeyGenerator         keyGenerator;
     @Mock private LegacyFunctionRepository     legacyFunctions;
     @Mock private DispatchAutoReceiveRegistrar autoReceiveRegistrar;
@@ -71,6 +81,9 @@ class PayrollDispatchExecutorBankPrtnIdTest {
     void setUp() {
         TenantContext.set("tester", "tester", BIZ,
                 LangCd.EN, TenantContext.AUTH_GR_USER, "F");
+        ReflectionTestUtils.setField(executor, "shinhanBankCd", SHINHAN);
+        ReflectionTestUtils.setField(executor, "wooriBankCd", WOORI);
+        ReflectionTestUtils.setField(executor, "vcbBankCd", VCB);
         when(keyGenerator.nextFileSeqNo(any(), any())).thenReturn("1");
         when(legacyFunctions.nextTbPayFileDataSeq(any(), any())).thenReturn("1");
     }
@@ -130,6 +143,108 @@ class PayrollDispatchExecutorBankPrtnIdTest {
                 .extracting("code").isEqualTo("WBE2089");
 
         verify(tbPayFileMstRepository, never()).save(any());
+        verify(tbPayFileDataRepository, never()).save(any());
+    }
+
+    @Test
+    void ownerNm_rawRcptNm_blankPreserved() {
+        // B — legacy raw RCPT_NM, no fallback (pymn_0005_001_c001_act.jsp:206).
+        TbFirmConf conf = org.mockito.Mockito.mock(TbFirmConf.class);
+        when(conf.getBankPrtnId()).thenReturn("PRTN1");
+        when(tbFirmConfRepository.findById(any())).thenReturn(Optional.of(conf));
+        ScdulPymnSumrDetl l = line();
+        l.setRcptNm("");
+        executor.execute(master(), List.of(l), "USD", "0");
+
+        ArgumentCaptor<TbPayFileData> c = ArgumentCaptor.forClass(TbPayFileData.class);
+        verify(tbPayFileDataRepository).save(c.capture());
+        assertThat(c.getValue().getFincMdaOwnerNm()).isEmpty();
+    }
+
+    /* ── J — BANK_CHNL_DIV parity (pymn_0005_001_c001_act.jsp:179-182, 230-263):
+       guarded to Shinhan/Woori/VCB; same-bank = raw code OR ENG_ABRVAT_NM group;
+       VCB VND blocked; VCB USD->other blocked. ── */
+
+    private void stubConf() {
+        TbFirmConf conf = org.mockito.Mockito.mock(TbFirmConf.class);
+        when(conf.getBankPrtnId()).thenReturn("PRTN1");
+        when(tbFirmConfRepository.findById(any())).thenReturn(Optional.of(conf));
+    }
+
+    private void firmBank(String bankCd, String engAbrvatNm) {
+        TbFirmBankCode b = org.mockito.Mockito.mock(TbFirmBankCode.class);
+        when(b.getEngAbrvatNm()).thenReturn(engAbrvatNm);
+        when(tbFirmBankCodeRepository.findFirstByBankCdAndBankStas(bankCd, "1"))
+                .thenReturn(Optional.of(b));
+    }
+
+    private ScdulPymnSumr masterOut(String outBank) {
+        ScdulPymnSumr m = master();
+        m.setOutBankCd(outBank);
+        return m;
+    }
+
+    private ScdulPymnSumrDetl lineTar(String tarBank, String ccy) {
+        ScdulPymnSumrDetl d = line();
+        d.setTarBankCd(tarBank);
+        d.setTrnfCcyCd(ccy);
+        return d;
+    }
+
+    private TbPayFileData captureData() {
+        ArgumentCaptor<TbPayFileData> c = ArgumentCaptor.forClass(TbPayFileData.class);
+        verify(tbPayFileDataRepository).save(c.capture());
+        return c.getValue();
+    }
+
+    @Test
+    void sameRawBankCode_currentBank_T() {
+        stubConf();
+        executor.execute(masterOut(SHINHAN), List.of(lineTar(SHINHAN, "USD")), "USD", "0");
+        assertThat(captureData().getBankChnlDiv()).isEqualTo("T");
+    }
+
+    @Test
+    void engAbrvatNmGroupMatch_currentBank_T() {
+        stubConf();
+        firmBank(SHINHAN, "SHB");
+        firmBank(SHINHAN_BRANCH, "SHB");
+        executor.execute(masterOut(SHINHAN), List.of(lineTar(SHINHAN_BRANCH, "USD")), "USD", "0");
+        assertThat(captureData().getBankChnlDiv()).isEqualTo("T");
+    }
+
+    @Test
+    void differentGroup_otherBank_O() {
+        stubConf();
+        executor.execute(masterOut(SHINHAN), List.of(lineTar(BIDV, "USD")), "USD", "0");
+        assertThat(captureData().getBankChnlDiv()).isEqualTo("O");
+    }
+
+    @Test
+    void unsupportedOutBank_bankChnlDivUnset() {
+        // Non Shinhan/Woori/VCB out-bank: legacy has no BANK_CHNL_DIV else branch -> left null.
+        stubConf();
+        executor.execute(masterOut(BIDV), List.of(lineTar(BIDV, "USD")), "USD", "0");
+        assertThat(captureData().getBankChnlDiv()).isNull();
+    }
+
+    @Test
+    void vcbVnd_blocked() {
+        stubConf();
+        assertThatThrownBy(() ->
+                executor.execute(masterOut(VCB), List.of(lineTar(VCB, "VND")), "VND", "0"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo("WBE_PAYROLL_VCB_VND_NOT_SUPPORTED");
+        verify(tbPayFileDataRepository, never()).save(any());
+    }
+
+    @Test
+    void vcbUsdOtherBank_blocked() {
+        stubConf();
+        assertThatThrownBy(() ->
+                executor.execute(masterOut(VCB), List.of(lineTar(BIDV, "USD")), "USD", "0"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo("WBE_PAYROLL_VCB_USD_OTHER_BANK");
         verify(tbPayFileDataRepository, never()).save(any());
     }
 }

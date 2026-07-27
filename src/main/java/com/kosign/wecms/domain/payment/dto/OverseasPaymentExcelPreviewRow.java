@@ -49,6 +49,10 @@ public record OverseasPaymentExcelPreviewRow(
         String bnfcBankNm,
         /** Beneficiary bank code (cross-filled from {@code TRCO_OVRS_INFM.BENE_BANK_CODE}). */
         String bnfcBankCd,
+        /** Beneficiary town/city (cross-filled from {@code TRCO_OVRS_INFM.BENE_TOWN_NM},
+         *  itself auto-filled from the SWIFT directory). Required on upload
+         *  (legacy {@code pymn_0007_003_r001_act.jsp:216-238}). */
+        String bnfcTownNm,
         /** {@code true} when {@link #errors} is empty. */
         boolean valid,
         /** Per-field validation errors; empty for valid rows. */

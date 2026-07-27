@@ -275,6 +275,9 @@ public class ApprovalDetailService {
                 d.tranUsag(),
                 d.docNo(),
                 d.chartAcctCd(),
-                d.chartAcctBreadcrumb());
+                d.chartAcctBreadcrumb(),
+                null,            // bnfcAddr — overseas-only column
+                null,            // feePayer — overseas-only column
+                null);           // bnfcTownNm — overseas-only column
     }
 }

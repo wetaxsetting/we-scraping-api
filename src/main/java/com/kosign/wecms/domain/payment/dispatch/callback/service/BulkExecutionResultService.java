@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.domain.payment.dispatch.callback.dto.BulkExecutionResultRequest;
 import com.kosign.wecms.domain.payment.dispatch.callback.dto.EfsCallbackEnvelope;
+import com.kosign.wecms.domain.payment.dispatch.van.dto.EfsEnvelope;
 import com.kosign.wecms.domain.payment.dispatch.callback.event.PaymentDispatchResultFinalizedEvent;
 import com.kosign.wecms.domain.payment.dispatch.constant.FirmBankingResultCd;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmBatApiTran;
@@ -72,11 +73,13 @@ import java.util.Map;
  * ignored, and {@code PROC_STEP 2→3} is reached only after every row is parsed
  * and written.
  *
- * <p><b>Deviation from legacy (documented):</b> legacy committed the 01302 audit
- * row outside the parse transaction so it survived a parse failure. Here the audit
- * shares the single transaction, so a parse failure rolls the audit back too — the
- * trade-off keeps the handler a single clean atomic unit. The MST state (the thing
- * that must not corrupt) is protected either way.
+ * <p><b>Audit-row durability (G1 / audit M-7):</b> legacy commits the 01302 audit row
+ * outside the parse transaction so it survives a parse failure. The audit insert here is
+ * therefore routed through {@link DispatchApiTranAuditWriter} in a {@code REQUIRES_NEW}
+ * transaction that commits immediately; a later download/parse failure rolls back the
+ * result-file work (MST stays at {@code PROC_STEP='2'}, replayable) but the audit trail
+ * persists — legacy parity. The success RS update runs only on the happy path, in this
+ * handler's own transaction (merge of the now-detached row).
  */
 @Slf4j
 @Service
@@ -85,6 +88,8 @@ public class BulkExecutionResultService {
 
     private static final DateTimeFormatter DTTM14_FMT = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
     private static final DateTimeFormatter TRAN_TM_FMT = DateTimeFormatter.ofPattern("HHmmss");
+    /** E — 01302 audit row TRAN_DT uses the callback processing date (legacy API2_act.jsp:85 `dt`). */
+    private static final DateTimeFormatter DATE8_FMT = DateTimeFormatter.ofPattern("yyyyMMdd");
     private static final ZoneId ICT = ZoneId.of("Asia/Ho_Chi_Minh");
 
     private final EfsCryptoService efsCryptoService;
@@ -103,6 +108,8 @@ public class BulkExecutionResultService {
     private final TbPayFileDataRepository payFileDataRepository;
     private final ApplicationEventPublisher eventPublisher;
     private final OpsAlertService opsAlertService;
+    /** G1 (audit M-7): writes the 01302 audit row in its own REQUIRES_NEW tx so it survives a parse rollback. */
+    private final DispatchApiTranAuditWriter apiTranAuditWriter;
 
     /**
      * Handle a 01302 execution-result callback.
@@ -113,7 +120,7 @@ public class BulkExecutionResultService {
      * @throws IllegalStateException when the API key is not provisioned (B2)
      */
     @Transactional
-    public void handle(EfsCallbackEnvelope envelope) {
+    public EfsEnvelope handle(EfsCallbackEnvelope envelope) {
         if (envelope == null || !StringUtils.hasText(envelope.id())) {
             throw new IllegalArgumentException("callback envelope ID is required");
         }
@@ -123,7 +130,9 @@ public class BulkExecutionResultService {
         String apiKey = vanApiKeyService.getApiKey(vanOrgCd);
         if (!efsCryptoService.verifyVv(envelope.ev(), envelope.vv(), apiKey)) {
             log.warn("01302 callback VV verification failed vanOrgCd={} tno={}", vanOrgCd, envelope.tno());
-            throw new BusinessException("WBE_EFS_VERIFY_FAILED");
+            // A2 (audit C1): return the EFS G003 acknowledgement (RC/RM only — 01302 echoes the
+            // request EV/VV verbatim, legacy API2_act.jsp copyDomain), not an internal error body.
+            return ack(envelope, FirmBankingResultCd.ENC_VRFY_ERR, FirmBankingResultCd.MSG_ENC_VRFY_ERR);
         }
         BulkExecutionResultRequest req = decode(efsCryptoService.decryptEv(envelope.ev(), apiKey));
 
@@ -142,19 +151,25 @@ public class BulkExecutionResultService {
                     "이체실행지시 Batch2 API수신 오류 발생"
                             + "\nFIRM_FILE_NM : " + req.fileNm()
                             + "\nAPI RM : malformed file_nm");
-            throw new BusinessException("WBE_EFS_RESULT_FILE", "malformed file_nm: " + req.fileNm());
+            // A2: acknowledge with the general error RC (validation failure, before any DB work).
+            return ack(envelope, FirmBankingResultCd.ETC_ERR, FirmBankingResultCd.MSG_ETC_ERR);
         }
         String tranDt = parts[4];
 
         // 4. Look up the execution-requested file (legacy R006): PROC_STEP='2'/PROC_STAT='6'.
+        //    C3 (audit M-2): match by substring(FIRM_FILE_NM,3) + VAN_ORG_CD + FILE_SEQ — the bank's
+        //    result file carries a different leading 2-char prefix than the sent S_ name, so an
+        //    exact-name match would drop the result and strand the file at PROC_STEP='2'.
+        //    parts = {prefix, vanOrgCd, type, fileSeq, tranDt}.
         TbFirmFileMst mst = firmFileMstRepository
-                .findByTranDtAndFirmFileNmAndProcStepAndProcStat(
-                        tranDt, req.fileNm(), ProcStep.DEPO_REQ.code(), ProcStat.REQ.code())
+                .findForExecutionResult(tranDt, req.fileNm(), parts[1], parts[3],
+                        ProcStep.DEPO_REQ.code(), ProcStat.REQ.code())
                 .orElse(null);
         if (mst == null) {
             log.info("01302 callback ignored — no file at PROC_STEP=2/PROC_STAT=6 (already processed or unknown) "
                     + "vanOrgCd={} fileNm={}", vanOrgCd, req.fileNm());
-            return;
+            // Idempotent replay / already-processed → acknowledge success so the gateway stops resending.
+            return ack(envelope, FirmBankingResultCd.SUCC, FirmBankingResultCd.MSG_SUCC);
         }
         String bizKey = mst.getBizKey();
         String fileSeqNo = mst.getFileSeqNo();
@@ -162,11 +177,15 @@ public class BulkExecutionResultService {
         LocalDateTime now = LocalDateTime.now(ICT);
         String dttm14 = now.format(DTTM14_FMT);
         String tranTm = now.format(TRAN_TM_FMT);
+        // E — legacy parity (API2_act.jsp:85,182): the 01302 audit row's TRAN_DT is the callback
+        // PROCESSING date (today), NOT the result-filename date (parts[4]). The filename date stays
+        // the key for the file lookup + the firm/pay-data indexes above (legacy uses it there).
+        String procDt = now.format(DATE8_FMT);
 
         // 5. Audit the 01302 leg.
         BigDecimal batAmt = combineAmount(req.dataAmt(), req.dataDcmAmt());
-        TbFirmBatApiTran audit = writeApiTran(mst, tranDt, tranTm, ApiTranTp.BULK_EXECUTION_RESULT.code(),
-                bigDecimalOrZero(req.dataCnt()), batAmt);
+        TbFirmBatApiTran audit = writeApiTran(mst, procDt, tranTm, ApiTranTp.BULK_EXECUTION_RESULT.code(),
+                bigDecimalOrZero(req.dataCnt()), batAmt, envelope.tno());
 
         // 6. SFTP download the bank result file (then best-effort move to the processed dir).
         String localPath = downloadResultFile(req.fileNm());
@@ -182,6 +201,7 @@ public class BulkExecutionResultService {
             int seq = parseInt(line.seq());
             String procRsltDiv = blankTo(line.processingResult(), "N");
             String rsCd = trim(line.responseCode());
+            TbFirmFileData fd = firmDataBySeq.get(seq);
 
             TbFirmFileRslt rslt = new TbFirmFileRslt();
             rslt.setTranDt(tranDt);
@@ -206,10 +226,12 @@ public class BulkExecutionResultService {
             rslt.setRemitCcyCd(trimOrNull(line.remittanceCurrencyCode()));
             rslt.setRcptUseAddr(trim(line.rcptUseAddr()));
             rslt.setFeeBrdnClsCd(trimOrNull(line.feeBrdnClsCd()));
+            // Town name (RCPT_USE_ADDR_SI): not present in the result file — carry from the matching
+            // TB_FIRM_FILE_DATA row (audit M-11/E1). Null when the line has no firm-data match.
+            rslt.setRcptUseAddrSi(fd != null ? fd.getRcptUseAddrSi() : null);
             firmFileRsltRepository.save(rslt);
 
             // Reflect onto TB_FIRM_FILE_DATA + then TB_PAY_FILE_DATA (legacy U001 chain via ORG_SEQ).
-            TbFirmFileData fd = firmDataBySeq.get(seq);
             if (fd != null) {
                 fd.setProcRsltDiv(procRsltDiv);
                 fd.setRsCd(rsCd);
@@ -248,6 +270,20 @@ public class BulkExecutionResultService {
 
         log.info("01302 execution result processed fileNm={} bizKey={} lines={}",
                 req.fileNm(), bizKey, parsed.lines().size());
+        // A2: EFS success acknowledgement. 01302 is RC/RM-only — the request EV/VV/ID/TNO/EM/VM are
+        // echoed verbatim (legacy FILE_DEPOSIT_TRANSFER_API2_act.jsp copyDomain + setResult), NOT
+        // re-encrypted (the load-bearing 01301↔01302 asymmetry).
+        return ack(envelope, FirmBankingResultCd.SUCC, FirmBankingResultCd.MSG_SUCC);
+    }
+
+    /**
+     * Build the 01302 EFS acknowledgement envelope (A2). Per legacy {@code API2_act.jsp}, 01302
+     * echoes the inbound {@code ID/RQ_DTIME/TNO/EV/VV/EM/VM} verbatim and sets only {@code RC}/{@code RM}
+     * — it does NOT rebuild {@code EV}/{@code VV} (unlike 01301).
+     */
+    private EfsEnvelope ack(EfsCallbackEnvelope in, String rc, String rm) {
+        return new EfsEnvelope(in.id(), in.rqDtime(), null, in.tno(),
+                in.ev(), in.vv(), in.em(), in.vm(), rc, rm);
     }
 
     /**
@@ -350,11 +386,17 @@ public class BulkExecutionResultService {
     }
 
     private TbFirmBatApiTran writeApiTran(TbFirmFileMst file, String tranDt, String tranTm,
-                                          String apiTranTp, BigDecimal batCnt, BigDecimal batAmt) {
+                                          String apiTranTp, BigDecimal batCnt, BigDecimal batAmt,
+                                          String callbackTno) {
         TbFirmBatApiTran row = new TbFirmBatApiTran();
         row.setTranDt(tranDt);
         row.setBizKey(file.getBizKey());
-        row.setTranSeq(dispatchKeyGenerator.nextTranSeq(file.getBizKey(), tranDt));
+        // A1 (audit X-2 / D6): the 01302 audit row is keyed by the VAN callback's TNO (legacy
+        // FILE_DEPOSIT_TRANSFER_API2_act.jsp:185 — TRAN_SEQ = input.getString("TNO")), so it
+        // reconciles to the gateway transaction id. Fall back to a generated seq only if the
+        // callback omitted the TNO (defensive — legacy relied on it always being present).
+        row.setTranSeq(StringUtils.hasText(callbackTno)
+                ? callbackTno : dispatchKeyGenerator.nextTranSeq(file.getBizKey(), tranDt));
         row.setApiTranTp(apiTranTp);
         row.setOutBankCd(file.getOutBankCd());
         row.setBankPrtnId(file.getBankPrtnId());
@@ -362,7 +404,10 @@ public class BulkExecutionResultService {
         row.setFirmFileNm(file.getFirmFileNm());
         row.setBatCnt(batCnt == null ? BigDecimal.ZERO : batCnt);
         row.setBatAmt(batAmt == null ? BigDecimal.ZERO : batAmt);
-        return firmBatApiTranRepository.save(row);
+        // G1 (audit M-7): commit the audit row in its own transaction so a later parse/download
+        // failure (which rolls back handle()) does not erase it — legacy API2 commits it before
+        // the parse tx. The success RS_CD/RS_MSG update at step 11 stays in the caller's tx.
+        return apiTranAuditWriter.saveInNewTransaction(row);
     }
 
     private void requireField(String value, String name) {

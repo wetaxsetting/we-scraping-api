@@ -76,6 +76,10 @@ class PayrollPaymentUploadSaveTest {
     private static final String VCB_NAPAS      = "970436";  // Vietcombank
     private static final String CITAD_SHINHAN     = "616";
     private static final String CITAD_SHINHAN_CD6 = "01616001";
+    private static final String WDRL_BANK_CD      = "11704004";
+    private static final String WDRL_ACCT_NO      = "123456789";
+    /** Withdrawal account's own currency — deliberately ≠ the files' transfer currency. */
+    private static final String WDRL_ACCOUNT_CCY  = "USD";
 
     @Mock ScdulPymnSumrRepository sumrRepository;
     @Mock ApplicationEventPublisher eventPublisher;
@@ -106,6 +110,11 @@ class PayrollPaymentUploadSaveTest {
     @Mock BusiInfmRepository busiInfmRepository;
     @Mock LegacyFunctionRepository legacyFunctions;
     @Mock TbFirmBankCodeRepository firmBankCodeRepo;
+    @Mock com.kosign.wecms.domain.banking.repository.AcctMstrRepository acctMstrRepository;
+
+    /** Storage root for the mandatory uploaded workbook (legacy requires the file
+     *  at save — {@code PaymentUploadFileGuard}). */
+    @org.junit.jupiter.api.io.TempDir java.nio.file.Path storageRoot;
 
     @InjectMocks PayrollPaymentService service;
 
@@ -124,6 +133,23 @@ class PayrollPaymentUploadSaveTest {
         // CITAD 616 → 6-digit BANK_CD 01616001 (legacy getBankCode CITAD branch).
         when(firmBankCodeRepo.findFirstByAntDivCdAndCitadBankCd("CITAD", CITAD_SHINHAN))
                 .thenReturn(Optional.of(citad(CITAD_SHINHAN_CD6)));
+        // The withdrawal account pays in USD while the test files transfer VND —
+        // the exact case where WDRL_CCY_CD must NOT be the transfer currency
+        // (legacy pymn_0005_002_c001_act.jsp:84 reads ACCT_MSTR.CCY_CD).
+        when(acctMstrRepository.findByBizKeyAndBankCdAndAcctNo(
+                TEST_BIZ_KEY, WDRL_BANK_CD, WDRL_ACCT_NO))
+                .thenReturn(Optional.of(acct(WDRL_ACCOUNT_CCY)));
+        when(fileResolver.resolve(anyString(), anyString()))
+                .thenAnswer(inv -> storageRoot.resolve((String) inv.getArgument(1)));
+    }
+
+    /** The uploaded workbook is mandatory at save (legacy
+     *  {@code pymn_0005_002_c001} {@code validateRequired(FILE_DATA)}). */
+    private static org.springframework.mock.web.MockMultipartFile xlsx() {
+        return new org.springframework.mock.web.MockMultipartFile(
+                "file_data", "Payroll_Dec.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                new byte[] { 1, 2, 3 });
     }
 
     @AfterEach
@@ -135,7 +161,7 @@ class PayrollPaymentUploadSaveTest {
 
     @Test
     void persists_remarks_to_wdrl_acct_rmrk_forces_citad_and_resolves_bank_code() {
-        service.createDraft(req("VND", CITAD_SHINHAN, "Webcash VN salary"), null);
+        service.createDraft(req("VND", CITAD_SHINHAN, "Webcash VN salary"), xlsx());
 
         ScdulPymnSumrDetl saved = captureSavedDetail();
         // G1 — Remarks land in WDRL_ACCT_RMRK; TRAN_USAG stays null.
@@ -147,13 +173,49 @@ class PayrollPaymentUploadSaveTest {
         assertThat(saved.getTarBankCd()).isEqualTo(CITAD_SHINHAN_CD6);
     }
 
+    /**
+     * Legacy parity (pymn_0005_002_c001_act.jsp:78,84): {@code CCY_CD} is the
+     * TRANSFER currency, {@code WDRL_CCY_CD} is the WITHDRAWAL ACCOUNT's own
+     * currency from {@code ACCT_MSTR}. The payroll frontend sends
+     * {@code ccy_cd = trnf_ccy_cd}, so the two columns must still differ when the
+     * account pays in another currency.
+     */
+    @Test
+    void wdrl_ccy_cd_is_the_withdrawal_account_currency_not_the_transfer_currency() {
+        service.createDraft(req("VND", CITAD_SHINHAN, null), xlsx());
+
+        ArgumentCaptor<com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumr> captor =
+                ArgumentCaptor.forClass(
+                        com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumr.class);
+        verify(sumrRepository).saveAndFlush(captor.capture());
+        com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumr master = captor.getValue();
+
+        assertThat(master.getCcyCd()).isEqualTo("VND");                 // transfer currency
+        assertThat(master.getWdrlCcyCd()).isEqualTo(WDRL_ACCOUNT_CCY);  // ACCT_MSTR.CCY_CD
+    }
+
+    /** Defensive fallback: unresolvable account → keep the transfer currency. */
+    @Test
+    void wdrl_ccy_cd_falls_back_to_transfer_currency_when_account_not_resolved() {
+        when(acctMstrRepository.findByBizKeyAndBankCdAndAcctNo(anyString(), anyString(), anyString()))
+                .thenReturn(Optional.empty());
+
+        service.createDraft(req("VND", CITAD_SHINHAN, null), xlsx());
+
+        ArgumentCaptor<com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumr> captor =
+                ArgumentCaptor.forClass(
+                        com.kosign.wecms.domain.payment.internaltransfer.entity.ScdulPymnSumr.class);
+        verify(sumrRepository).saveAndFlush(captor.capture());
+        assertThat(captor.getValue().getWdrlCcyCd()).isEqualTo("VND");
+    }
+
     // ---- G4 — VCB prohibitions ------------------------------------------
 
     @Test
     void blocks_vcb_vnd_payroll() {
         when(outBankCdNormalizer.normalize(anyString())).thenReturn(VCB_NAPAS);
 
-        assertThatThrownBy(() -> service.createDraft(req("VND", CITAD_SHINHAN, null), null))
+        assertThatThrownBy(() -> service.createDraft(req("VND", CITAD_SHINHAN, null), xlsx()))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getCode())
                 .isEqualTo("WBE_PAYROLL_VCB_VND_NOT_SUPPORTED");
@@ -163,7 +225,7 @@ class PayrollPaymentUploadSaveTest {
     void blocks_vcb_usd_to_non_vcb_target() {
         when(outBankCdNormalizer.normalize(anyString())).thenReturn(VCB_NAPAS);
         // CITAD 616 resolves to 01616001 (≠ VCB) → blocked.
-        assertThatThrownBy(() -> service.createDraft(req("USD", CITAD_SHINHAN, null), null))
+        assertThatThrownBy(() -> service.createDraft(req("USD", CITAD_SHINHAN, null), xlsx()))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getCode())
                 .isEqualTo("WBE_PAYROLL_VCB_USD_OTHER_BANK");
@@ -176,7 +238,7 @@ class PayrollPaymentUploadSaveTest {
         when(firmBankCodeRepo.findFirstByAntDivCdAndCitadBankCd("CITAD", VCB_NAPAS))
                 .thenReturn(Optional.empty());
 
-        service.createDraft(req("USD", VCB_NAPAS, null), null);
+        service.createDraft(req("USD", VCB_NAPAS, null), xlsx());
 
         ScdulPymnSumrDetl saved = captureSavedDetail();
         assertThat(saved.getTarBankCd()).isEqualTo(VCB_NAPAS);
@@ -190,6 +252,16 @@ class PayrollPaymentUploadSaveTest {
         ArgumentCaptor<ScdulPymnSumrDetl> captor = ArgumentCaptor.forClass(ScdulPymnSumrDetl.class);
         verify(detlRepository).save(captor.capture());
         return captor.getValue();
+    }
+
+    private static com.kosign.wecms.domain.banking.entity.AcctMstr acct(String ccyCd) {
+        com.kosign.wecms.domain.banking.entity.AcctMstr a =
+                new com.kosign.wecms.domain.banking.entity.AcctMstr();
+        a.setBizKey(TEST_BIZ_KEY);
+        a.setBankCd(WDRL_BANK_CD);
+        a.setAcctNo(WDRL_ACCT_NO);
+        a.setCcyCd(ccyCd);
+        return a;
     }
 
     private static TbFirmBankCode citad(String bankCd6) {
@@ -216,6 +288,6 @@ class PayrollPaymentUploadSaveTest {
                 ccy,                    // trnfCcyCd
                 null);                  // depoCcyCd
         return new CreateScheduledTransferRequest(
-                "Payroll Dec", "11704004", "123456789", ccy, ccy, null, List.of(line));
+                "Payroll Dec", WDRL_BANK_CD, WDRL_ACCT_NO, ccy, ccy, null, List.of(line));
     }
 }

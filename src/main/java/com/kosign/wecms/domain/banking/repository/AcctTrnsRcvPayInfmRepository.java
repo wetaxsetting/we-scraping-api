@@ -2,7 +2,10 @@ package com.kosign.wecms.domain.banking.repository;
 
 import com.kosign.wecms.domain.banking.entity.AcctTrnsRcvPayInfm;
 import com.kosign.wecms.domain.banking.entity.AcctTrnsRcvPayInfmId;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 
@@ -60,4 +63,73 @@ public interface AcctTrnsRcvPayInfmRepository extends JpaRepository<AcctTrnsRcvP
      * transitions to {@code 'C'}.
      */
     boolean existsByBizKeyAndRcvPayTrcoKey(String bizKey, String rcvPayTrcoKey);
+
+    /* =================================================================
+     *  Transaction-History picker RECENT quick-picks (server-side).
+     *
+     *  Derived from the classification the user actually applies to bank
+     *  transactions — `ACCT_TRNS_RCV_PAY_INFM` carries the picked
+     *  `RCV_PAY_USAG_CD` / `RCV_PAY_TRCO_KEY` / `VAS_ACCT_CD` and stamps
+     *  `MOD_ID` / `MOD_DTM` (= the classifying user + time) on every pick
+     *  (see TransactionService.updatePurpose/Contact/VasAccount). So
+     *  "recently used by this user" = the most-recent distinct value the
+     *  user set, newest first. No localStorage, no new table, no writes
+     *  to the shared USER_*_USE_HIS tables (PO decision 2026-07-24).
+     *  `REG_DTM`/`MOD_DTM` are VARCHAR(14) yyyyMMddHHmmss, so lexical DESC
+     *  is chronological DESC. Pass `PageRequest.of(0, limit)` for top-N.
+     * ================================================================= */
+
+    /** Recent distinct contact keys the user assigned, newest first. */
+    @Query("""
+            select r.rcvPayTrcoKey
+              from AcctTrnsRcvPayInfm r
+             where r.bizKey = :bizKey
+               and (r.modId = :userId or r.regId = :userId)
+               and coalesce(r.rcvPayTrcoKey, '') <> ''
+             group by r.rcvPayTrcoKey
+             order by max(coalesce(r.modDtm, r.regDtm)) desc
+            """)
+    List<String> findRecentContactKeys(
+            @Param("bizKey") String bizKey,
+            @Param("userId") String userId,
+            Pageable pageable);
+
+    /** Recent distinct VAS-account codes the user assigned, newest first. */
+    @Query("""
+            select r.vasAcctCd
+              from AcctTrnsRcvPayInfm r
+             where r.bizKey = :bizKey
+               and (r.modId = :userId or r.regId = :userId)
+               and coalesce(r.vasAcctCd, '') <> ''
+             group by r.vasAcctCd
+             order by max(coalesce(r.modDtm, r.regDtm)) desc
+            """)
+    List<String> findRecentVasCodes(
+            @Param("bizKey") String bizKey,
+            @Param("userId") String userId,
+            Pageable pageable);
+
+    /** Recent distinct purpose codes the user assigned within one
+     *  {@code USAG_GRP_CD} bucket (4 = Banking Deposit / 6 = Banking
+     *  Withdrawal), newest first. Joined to {@code BUSI_USAG_SET_INFM}
+     *  so the RECENT list on a deposit row carries only grp-4 codes and
+     *  a withdrawal row only grp-6 — matching the direction-scoped picker
+     *  options (PROD parity). */
+    @Query("""
+            select r.rcvPayUsagCd
+              from AcctTrnsRcvPayInfm r, BusiUsagSetInfm u
+             where r.bizKey = :bizKey
+               and u.bizKey = r.bizKey
+               and u.useUsagCd = r.rcvPayUsagCd
+               and u.usagGrpCd = :group
+               and (r.modId = :userId or r.regId = :userId)
+               and coalesce(r.rcvPayUsagCd, '') <> ''
+             group by r.rcvPayUsagCd
+             order by max(coalesce(r.modDtm, r.regDtm)) desc
+            """)
+    List<String> findRecentPurposeCodesByGroup(
+            @Param("bizKey") String bizKey,
+            @Param("userId") String userId,
+            @Param("group") String group,
+            Pageable pageable);
 }

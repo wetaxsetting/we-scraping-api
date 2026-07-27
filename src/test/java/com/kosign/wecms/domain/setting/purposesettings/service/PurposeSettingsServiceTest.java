@@ -16,6 +16,7 @@ import com.kosign.wecms.domain.setting.purposesettings.dto.PurposeSettingUpdateR
 import com.kosign.wecms.domain.setting.purposesettings.entity.BusiUsagSetInfm;
 import com.kosign.wecms.domain.setting.purposesettings.repository.PurposeInUseRepository;
 import com.kosign.wecms.domain.setting.purposesettings.repository.PurposeSettingsRepository;
+import com.kosign.wecms.domain.setting.purposesettings.repository.SystemUsageNameRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -71,6 +72,8 @@ class PurposeSettingsServiceTest {
     @Mock PurposeInUseRepository    inUseRepo;
     @Mock AuditLogService           auditLogService;
     @Mock LegacyFunctionRepository  legacyFunctions;
+    @Mock SystemUsageNameRepository sysNameRepo;
+    @Mock com.kosign.wecms.domain.banking.repository.AcctTrnsRcvPayInfmRepository acctTrnsRcvPayRepo;
 
     PurposeSettingsService service;
 
@@ -83,7 +86,7 @@ class PurposeSettingsServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new PurposeSettingsService(repo, inUseRepo, auditLogService, legacyFunctions);
+        service = new PurposeSettingsService(repo, inUseRepo, auditLogService, legacyFunctions, sysNameRepo, acctTrnsRcvPayRepo);
         TenantContext.set(USER, USER, BIZ, LangCd.EN);
     }
 
@@ -100,7 +103,7 @@ class PurposeSettingsServiceTest {
     void list_assemblesLevel2RowsUnderParents() {
         BusiUsagSetInfm parent = level1(CODE_A, "BD01", "Business Dev");
         BusiUsagSetInfm child  = level2(CODE_B, "BD01-01", "Sales", CODE_A);
-        when(repo.findActiveForTenant(BIZ, PurposeSettingsService.RESERVED_SYSTEM_CODES, ""))
+        when(repo.findActiveForTenant(BIZ, null, PurposeSettingsService.RESERVED_SYSTEM_CODES, ""))
                 .thenReturn(List.of(parent, child));
         when(inUseRepo.findInUseCodes(eq(BIZ), any())).thenReturn(Set.of(CODE_A));
 
@@ -117,21 +120,21 @@ class PurposeSettingsServiceTest {
 
     @Test
     void list_appliesKeywordTrim() {
-        when(repo.findActiveForTenant(eq(BIZ), eq(PurposeSettingsService.RESERVED_SYSTEM_CODES),
+        when(repo.findActiveForTenant(eq(BIZ), any(), eq(PurposeSettingsService.RESERVED_SYSTEM_CODES),
                 eq("Sale"))).thenReturn(List.of());
         // Empty rows ⇒ resolveInUseCodes short-circuits and never calls
         // inUseRepo, so no need to stub findInUseCodes here.
 
         service.list("   Sale   ");
 
-        verify(repo).findActiveForTenant(BIZ, PurposeSettingsService.RESERVED_SYSTEM_CODES, "Sale");
+        verify(repo).findActiveForTenant(BIZ, null, PurposeSettingsService.RESERVED_SYSTEM_CODES, "Sale");
     }
 
     @Test
     void list_missingTenant_throwsWBE9999() {
         TenantContext.clear();
         assertBusinessCode("WBE9999", () -> service.list(null));
-        verify(repo, never()).findActiveForTenant(anyString(), any(), anyString());
+        verify(repo, never()).findActiveForTenant(anyString(), any(), any(), anyString());
     }
 
     // ------------------------------------------------------------------
@@ -171,11 +174,11 @@ class PurposeSettingsServiceTest {
     @Test
     void create_persistsRow_andAppendsAuditWithSlugWsvcId() {
         PurposeSettingCreateRequest req = new PurposeSettingCreateRequest(
-                "BD02", "Operating Expenses", "Day to day spend", null, "Y");
+                "BD02", "Operating Expenses", "Day to day spend", null, "Y", null);
 
-        when(repo.findActiveByHandCd(BIZ, "BD02")).thenReturn(Optional.empty());
-        when(repo.findActiveByName(BIZ, "Operating Expenses")).thenReturn(Optional.empty());
-        when(repo.findMaxDispOrd(BIZ)).thenReturn(Optional.of(192));
+        when(repo.findActiveByHandCd(BIZ, null, "BD02")).thenReturn(Optional.empty());
+        when(repo.findActiveByName(BIZ, null, "Operating Expenses")).thenReturn(Optional.empty());
+        when(repo.findMaxDispOrd(BIZ, null)).thenReturn(Optional.of(192));
         when(legacyFunctions.nextUseUsagCd(BIZ, "")).thenReturn("0000000010");
         when(repo.saveAndFlush(any(BusiUsagSetInfm.class))).thenAnswer(inv -> inv.getArgument(0));
         // Create's post-write echo passes `false` directly for
@@ -211,8 +214,8 @@ class PurposeSettingsServiceTest {
     @Test
     void create_duplicateHandCd_throwsWBW1152() {
         PurposeSettingCreateRequest req = new PurposeSettingCreateRequest(
-                "BD02", "Operating Expenses", null, null, null);
-        when(repo.findActiveByHandCd(BIZ, "BD02"))
+                "BD02", "Operating Expenses", null, null, null, null);
+        when(repo.findActiveByHandCd(BIZ, null, "BD02"))
                 .thenReturn(Optional.of(level1("x", "BD02", "Old")));
 
         assertBusinessCode("WBW1152", () -> service.create(req));
@@ -222,9 +225,9 @@ class PurposeSettingsServiceTest {
     @Test
     void create_duplicateName_throwsWBW1138() {
         PurposeSettingCreateRequest req = new PurposeSettingCreateRequest(
-                "BD02", "Operating Expenses", null, null, null);
-        when(repo.findActiveByHandCd(BIZ, "BD02")).thenReturn(Optional.empty());
-        when(repo.findActiveByName(BIZ, "Operating Expenses"))
+                "BD02", "Operating Expenses", null, null, null, null);
+        when(repo.findActiveByHandCd(BIZ, null, "BD02")).thenReturn(Optional.empty());
+        when(repo.findActiveByName(BIZ, null, "Operating Expenses"))
                 .thenReturn(Optional.of(level1("x", "OLD", "Operating Expenses")));
 
         assertBusinessCode("WBW1138", () -> service.create(req));
@@ -234,9 +237,9 @@ class PurposeSettingsServiceTest {
     @Test
     void create_parentNotFound_throwsWBE_VALIDATION() {
         PurposeSettingCreateRequest req = new PurposeSettingCreateRequest(
-                "BD02", "Operating Expenses", null, "ghost", "Y");
-        when(repo.findActiveByHandCd(BIZ, "BD02")).thenReturn(Optional.empty());
-        when(repo.findActiveByName(BIZ, "Operating Expenses")).thenReturn(Optional.empty());
+                "BD02", "Operating Expenses", null, "ghost", "Y", null);
+        when(repo.findActiveByHandCd(BIZ, null, "BD02")).thenReturn(Optional.empty());
+        when(repo.findActiveByName(BIZ, null, "Operating Expenses")).thenReturn(Optional.empty());
         when(repo.findByBizKeyAndUseUsagCd(BIZ, "ghost")).thenReturn(Optional.empty());
 
         assertBusinessCode("WBE_VALIDATION", () -> service.create(req));
@@ -245,9 +248,9 @@ class PurposeSettingsServiceTest {
     @Test
     void create_parentIsLevel2_throwsWBE_VALIDATION() {
         PurposeSettingCreateRequest req = new PurposeSettingCreateRequest(
-                "BD02", "Operating Expenses", null, CODE_B, "Y");
-        when(repo.findActiveByHandCd(BIZ, "BD02")).thenReturn(Optional.empty());
-        when(repo.findActiveByName(BIZ, "Operating Expenses")).thenReturn(Optional.empty());
+                "BD02", "Operating Expenses", null, CODE_B, "Y", null);
+        when(repo.findActiveByHandCd(BIZ, null, "BD02")).thenReturn(Optional.empty());
+        when(repo.findActiveByName(BIZ, null, "Operating Expenses")).thenReturn(Optional.empty());
         when(repo.findByBizKeyAndUseUsagCd(BIZ, CODE_B))
                 .thenReturn(Optional.of(level2(CODE_B, "BD01-01", "Sales", CODE_A)));
 
@@ -257,10 +260,10 @@ class PurposeSettingsServiceTest {
     @Test
     void create_retriesOncePastPkCollision() {
         PurposeSettingCreateRequest req = new PurposeSettingCreateRequest(
-                "BD02", "Operating Expenses", null, null, "Y");
-        when(repo.findActiveByHandCd(BIZ, "BD02")).thenReturn(Optional.empty());
-        when(repo.findActiveByName(BIZ, "Operating Expenses")).thenReturn(Optional.empty());
-        when(repo.findMaxDispOrd(BIZ)).thenReturn(Optional.of(0));
+                "BD02", "Operating Expenses", null, null, "Y", null);
+        when(repo.findActiveByHandCd(BIZ, null, "BD02")).thenReturn(Optional.empty());
+        when(repo.findActiveByName(BIZ, null, "Operating Expenses")).thenReturn(Optional.empty());
+        when(repo.findMaxDispOrd(BIZ, null)).thenReturn(Optional.of(0));
         when(legacyFunctions.nextUseUsagCd(BIZ, "")).thenReturn("0000000001", "0000000002");
         when(repo.saveAndFlush(any(BusiUsagSetInfm.class)))
                 .thenThrow(new DataIntegrityViolationException("pk collision"))
@@ -276,10 +279,10 @@ class PurposeSettingsServiceTest {
     @Test
     void create_pkCollisionTwice_throwsWBE9999() {
         PurposeSettingCreateRequest req = new PurposeSettingCreateRequest(
-                "BD02", "Operating Expenses", null, null, "Y");
-        when(repo.findActiveByHandCd(BIZ, "BD02")).thenReturn(Optional.empty());
-        when(repo.findActiveByName(BIZ, "Operating Expenses")).thenReturn(Optional.empty());
-        when(repo.findMaxDispOrd(BIZ)).thenReturn(Optional.of(0));
+                "BD02", "Operating Expenses", null, null, "Y", null);
+        when(repo.findActiveByHandCd(BIZ, null, "BD02")).thenReturn(Optional.empty());
+        when(repo.findActiveByName(BIZ, null, "Operating Expenses")).thenReturn(Optional.empty());
+        when(repo.findMaxDispOrd(BIZ, null)).thenReturn(Optional.of(0));
         when(legacyFunctions.nextUseUsagCd(BIZ, "")).thenReturn("0000000001", "0000000002");
         when(repo.saveAndFlush(any(BusiUsagSetInfm.class)))
                 .thenThrow(new DataIntegrityViolationException("pk collision"));
@@ -299,7 +302,7 @@ class PurposeSettingsServiceTest {
                 "P01-RENAMED", "Deposit (renamed)", "New cont", null, "N");
 
         when(repo.findByBizKeyAndUseUsagCd(BIZ, CODE_A)).thenReturn(Optional.of(existing));
-        when(repo.findDuplicateNameExcludingSelf(BIZ, "Deposit (renamed)", CODE_A))
+        when(repo.findDuplicateNameExcludingSelf(BIZ, null, "Deposit (renamed)", CODE_A))
                 .thenReturn(Optional.empty());
         when(repo.save(existing)).thenReturn(existing);
         when(inUseRepo.findInUseCodes(eq(BIZ), any())).thenReturn(Set.of()); // used by post-write echo
@@ -311,7 +314,7 @@ class PurposeSettingsServiceTest {
         assertThat(out.dispYn()).isEqualTo("N");
 
         // OQ-4 — legacy parity: NO findActiveByHandCd call on update.
-        verify(repo, never()).findActiveByHandCd(anyString(), anyString());
+        verify(repo, never()).findActiveByHandCd(anyString(), any(), anyString());
     }
 
     @Test
@@ -321,7 +324,7 @@ class PurposeSettingsServiceTest {
                 HAND_A, "Sales", null, null, null);
 
         when(repo.findByBizKeyAndUseUsagCd(BIZ, CODE_A)).thenReturn(Optional.of(existing));
-        when(repo.findDuplicateNameExcludingSelf(BIZ, "Sales", CODE_A))
+        when(repo.findDuplicateNameExcludingSelf(BIZ, null, "Sales", CODE_A))
                 .thenReturn(Optional.of(level2("other", "X", "Sales", CODE_A)));
 
         assertBusinessCode("WBW1138", () -> service.update(CODE_A, req));
@@ -335,7 +338,7 @@ class PurposeSettingsServiceTest {
                 HAND_A, NAME_A, null, CODE_B, null);
 
         when(repo.findByBizKeyAndUseUsagCd(BIZ, CODE_A)).thenReturn(Optional.of(existing));
-        when(repo.findDuplicateNameExcludingSelf(BIZ, NAME_A, CODE_A)).thenReturn(Optional.empty());
+        when(repo.findDuplicateNameExcludingSelf(BIZ, null, NAME_A, CODE_A)).thenReturn(Optional.empty());
         when(repo.findByBizKeyAndUseUsagCd(BIZ, CODE_B))
                 .thenReturn(Optional.of(level1(CODE_B, "BD02", "Other")));
         when(repo.hasActiveChildren(BIZ, CODE_A)).thenReturn(true);
@@ -351,7 +354,7 @@ class PurposeSettingsServiceTest {
                 HAND_A, NAME_A, null, CODE_A, null);
 
         when(repo.findByBizKeyAndUseUsagCd(BIZ, CODE_A)).thenReturn(Optional.of(existing));
-        when(repo.findDuplicateNameExcludingSelf(BIZ, NAME_A, CODE_A)).thenReturn(Optional.empty());
+        when(repo.findDuplicateNameExcludingSelf(BIZ, null, NAME_A, CODE_A)).thenReturn(Optional.empty());
 
         assertBusinessCode("WBE_VALIDATION", () -> service.update(CODE_A, req));
     }

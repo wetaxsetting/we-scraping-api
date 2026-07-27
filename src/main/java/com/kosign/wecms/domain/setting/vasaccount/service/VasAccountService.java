@@ -120,6 +120,29 @@ public class VasAccountService {
     private final BusiVasAcctInfmRepository repository;
     private final VasAcctSeqNoGenerator     seqGen;
     private final AuditLogService           auditLogService;
+    private final com.kosign.wecms.domain.banking.repository.AcctTrnsRcvPayInfmRepository acctTrnsRcvPayRepo;
+
+    /** RECENT quick-pick length for the Transaction-History VAS picker. */
+    private static final int RECENT_LIMIT = 3;
+
+    /**
+     * The current user's most-recently-used VAS-account codes (top-3,
+     * newest first) for the Transaction-History VAS picker's RECENT
+     * section. Server-side, read-only — derived from the classification
+     * the user applies to bank transactions
+     * ({@code ACCT_TRNS_RCV_PAY_INFM.VAS_ACCT_CD}, stamped with
+     * {@code MOD_ID}/{@code MOD_DTM} on each pick). Fills as the user
+     * classifies; no localStorage, no new table (PO decision 2026-07-24 —
+     * "derive all 3 recents from ACCT_TRNS_RCV_PAY_INFM").
+     */
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
+    public com.kosign.wecms.domain.setting.vasaccount.dto.RecentVasAccountsResponse recentVas() {
+        java.util.List<String> codes = acctTrnsRcvPayRepo.findRecentVasCodes(
+                requireBizKey(),
+                TenantContext.currentUserId(),
+                org.springframework.data.domain.PageRequest.of(0, RECENT_LIMIT));
+        return new com.kosign.wecms.domain.setting.vasaccount.dto.RecentVasAccountsResponse(codes);
+    }
 
     /* =================================================================
      *  List

@@ -46,6 +46,7 @@ class EInvoiceScrapeServiceTest {
     @Mock BusaDocMstrRepository    busaRepo;
     @Mock ExtTranCallHisRepository auditRepo;
     @Mock BusiInfmRepository       busiRepo;
+    @Mock com.kosign.wecms.domain.banking.nxisas.audit.NxsiasModuleTranLogHisRepository nxisasLogRepo;
     @Mock com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
 
     private EInvoiceScrapeService service;
@@ -58,7 +59,7 @@ class EInvoiceScrapeServiceTest {
 
     @BeforeEach
     void seed() {
-        service = new EInvoiceScrapeService(busaRepo, auditRepo, busiRepo, legacyFunctions);
+        service = new EInvoiceScrapeService(busaRepo, auditRepo, busiRepo, nxisasLogRepo, legacyFunctions);
         TenantContext.set(USER, BIZ, LangCd.EN);
         lenient().when(busaRepo.findById(any(BusaDocMstrId.class))).thenReturn(Optional.empty());
         lenient().when(legacyFunctions.nextExtTranCallHisSeqNo(anyString(), anyString())).thenReturn("1");

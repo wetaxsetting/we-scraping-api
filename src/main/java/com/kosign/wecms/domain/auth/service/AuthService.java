@@ -110,6 +110,7 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider tokenProvider;
     private final LoginHistoryService history;
+    private final AdminLoginHistoryService adminHistory;
     private final MenuAuthorizationService menuAuthService;
     private final TokenRevocationService tokenRevocation;
     private final LoginLockoutService loginLockout;
@@ -219,10 +220,26 @@ public class AuthService {
         String taxId    = busi != null ? busi.getTaxId() : null;
 
         // Authority for the resolved company. ADMIN if and only if the
-        // user has a BUSI_ADMN_INFM row for this BIZ_KEY.
-        String authGrCd = busiAdmnRepo.existsByBizKeyAndUserId(selectedLink.getBizKey(), userId)
+        // user has a BUSI_ADMN_INFM row for this BIZ_KEY. Fetch the row (not a
+        // boolean probe) so its USER_NM can feed the admin login-history audit.
+        BusiAdmnInfm busiAdmn = busiAdmnRepo
+                .findByBizKeyAndUserId(selectedLink.getBizKey(), userId)
+                .orElse(null);
+        String authGrCd = busiAdmn != null
                 ? TenantContext.AUTH_GR_ADMIN
                 : TenantContext.AUTH_GR_USER;
+
+        // Gap #9 — admin login-history audit (legacy BUSI_ADMN_LOGIN_HIS).
+        // Legacy writes this row on a successful WeCMS-channel login when the
+        // user is a company admin (logn_2001_001_r001_act.jsp:270-284,
+        // `busiAdmnInfm != null && ChnlType.TYPE_C`). The refactor IS the WeCMS
+        // customer channel, so the channel test is implicit; the admin test is
+        // the BUSI_ADMN_INFM presence just resolved. Written in THIS transaction
+        // (not REQUIRES_NEW) so it commits with the login, mirroring legacy.
+        // REG_NM comes from BUSI_ADMN_INFM.USER_NM (legacy busiAdmnInfm.getUserNm()).
+        if (busiAdmn != null) {
+            adminHistory.record(selectedLink.getBizKey(), userId, busiAdmn.getUserNm(), ipAddr);
+        }
 
         String token = tokenProvider.issue(
                 user.getUserId(), user.getUserNm(),
@@ -325,28 +342,51 @@ public class AuthService {
     }
 
     /**
-     * F-03 — server-side logout. Revoke the presented access token by its
-     * {@code jti} so it is rejected on every subsequent request (see
-     * {@link com.kosign.wecms.common.security.JwtAuthenticationFilter}). The
-     * token has already been validated by the filter on the way in; we re-parse
-     * only to read the {@code jti} + {@code exp}. Best-effort: an
-     * already-invalid/expired token has nothing to revoke and is ignored.
+     * Server-side logout. Reproduces the two side effects of legacy JEX
+     * {@code logn_0002_001_r001_act.jsp} (lines 47-56):
+     *
+     * <ol>
+     *   <li><b>Audit row</b> — write a {@code USER_LOGIN_HIS} row with
+     *       {@code RSLT_CD='LOGOUT'} for the logged-in user (legacy
+     *       {@code UserLoginHisDAO.create}), in its own {@code REQUIRES_NEW} tx
+     *       just like the SUCCESS/FAIL rows on login.</li>
+     *   <li><b>Invalidate the credential (F-03)</b> — revoke the presented
+     *       access token by its {@code jti} so it is rejected on every
+     *       subsequent request (see
+     *       {@link com.kosign.wecms.common.security.JwtAuthenticationFilter}).
+     *       This is the JWT equivalent of legacy {@code session.invalidate()} —
+     *       and closes the hole legacy left, since its stateless JWT fallback
+     *       was unrevocable.</li>
+     * </ol>
+     *
+     * <p>The token has already been validated by the filter on the way in; we
+     * re-parse only to read the {@code sub} (for the audit row) + {@code jti} /
+     * {@code exp} (for revocation). Best-effort: an already-invalid/expired
+     * token has no logged-in user to audit and nothing to revoke, so it is
+     * ignored.
      *
      * <p>Revocation is in-process only (see {@link TokenRevocationService} for
      * the documented restart / multi-instance limitations).
      */
-    public void logout(String authorizationHeader) {
+    public void logout(String authorizationHeader, String ipAddr) {
         if (authorizationHeader == null || !authorizationHeader.startsWith("Bearer ")) {
             return;
         }
         String token = authorizationHeader.substring("Bearer ".length());
         try {
             Claims claims = tokenProvider.parse(token).getPayload();
+            // Legacy parity (logn_0002_001_r001_act.jsp:47-53): audit the logout
+            // before invalidating the credential. userId is the token subject.
+            String userId = claims.getSubject();
+            if (userId != null) {
+                history.record(userId, ipAddr, UserLoginHis.RSLT_LOGOUT, null);
+            }
+            // F-03: invalidate the credential server-side (≈ legacy session.invalidate()).
             if (claims.getId() != null && claims.getExpiration() != null) {
                 tokenRevocation.revokeToken(claims.getId(), claims.getExpiration().toInstant());
             }
         } catch (JwtException ignored) {
-            // Token already invalid / expired — nothing to revoke.
+            // Token already invalid / expired — no user to audit, nothing to revoke.
         }
     }
 
