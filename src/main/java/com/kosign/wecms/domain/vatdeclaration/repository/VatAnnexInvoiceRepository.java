@@ -130,7 +130,7 @@ public interface VatAnnexInvoiceRepository extends Repository<VatDeclaration, Lo
      * later period can never steal an earlier period's invoices.
      *
      * @return how many invoices were stamped
-     */
+     **/
     @Modifying
     @Query(value = """
             update busa_doc_mstr
