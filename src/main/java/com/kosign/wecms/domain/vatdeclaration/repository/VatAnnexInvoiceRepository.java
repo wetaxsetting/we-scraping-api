@@ -170,4 +170,29 @@ public interface VatAnnexInvoiceRepository extends Repository<VatDeclaration, Lo
                              @Param("rate") String rate,
                              @Param("search") String search,
                              @Param("excludedStatuses") Collection<String> excludedStatuses);
+
+    /**
+     * Per-VAT-rate subtotals over the whole filtered set — one row per
+     * {@code EINV_TAXRATE} bucket, ordered into the fixed 01-1/GTGT section
+     * sequence ({@link #RATE_SEQ}). Same {@code FROM_WHERE} chain as the row
+     * list, so the section footers and the rows always reconcile. The grand
+     * total is the caller's sum of these rows — no separate query.
+     */
+    @Query(value = "select d.einv_taxrate                                       as groupCd,"
+            + "        count(*)                                                 as rowCount,"
+            + "        coalesce(sum(coalesce(d.sply_amt, 0)), 0)                as totalSplyAmt,"
+            + "        coalesce(sum(floor(coalesce(d.sply_amt, 0) * " + RATE_PCT + " / 100)), 0) as totalVatAmt,"
+            + "        coalesce(sum(case when d.einv_taxrate = '8%'"
+            + "                          then floor(coalesce(d.sply_amt, 0) * 2 / 100) else 0 end), 0) as totalReducedAmt"
+            + FROM_WHERE
+            + " group by d.einv_taxrate"
+            + " order by " + RATE_SEQ,
+            nativeQuery = true)
+    List<AnnexTaxGroupProjection> groupTotals(@Param("bizKey") String bizKey,
+                                              @Param("fromDt") String fromDt,
+                                              @Param("toDt") String toDt,
+                                              @Param("docTypes") Collection<String> docTypes,
+                                              @Param("rate") String rate,
+                                              @Param("search") String search,
+                                              @Param("excludedStatuses") Collection<String> excludedStatuses);
 }

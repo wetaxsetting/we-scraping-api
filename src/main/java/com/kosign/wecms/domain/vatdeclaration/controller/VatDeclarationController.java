@@ -2,6 +2,7 @@ package com.kosign.wecms.domain.vatdeclaration.controller;
 
 import com.kosign.wecms.common.response.ApiResponse;
 import com.kosign.wecms.domain.vatdeclaration.dto.AnnexInvoiceListResponse;
+import com.kosign.wecms.domain.vatdeclaration.dto.AnnexTotalsResponse;
 import com.kosign.wecms.domain.vatdeclaration.dto.VatDeclarationCreateRequest;
 import com.kosign.wecms.domain.vatdeclaration.dto.VatDeclarationDetail;
 import com.kosign.wecms.domain.vatdeclaration.dto.VatDeclarationListResponse;
@@ -85,6 +86,20 @@ public class VatDeclarationController {
             @RequestParam(value = "page", defaultValue = "0") int page,
             @RequestParam(value = "size", defaultValue = "20") int size) {
         return ApiResponse.ok(service.listAnnexInvoices(sid, annexType, search, ioDv, page, size));
+    }
+
+    /**
+     * Section subtotals + grand total for the annex modal footer — same filter
+     * as {@code /annex/invoices}, fetched once (unpaged) so the "Total group"
+     * lines and the "Total Output" row stay stable while the rows page.
+     */
+    @GetMapping("/{sid}/annex/totals")
+    public ApiResponse<AnnexTotalsResponse> annexTotals(
+            @PathVariable("sid") Long sid,
+            @RequestParam(value = "annex_type", required = false) String annexType,
+            @RequestParam(value = "search", required = false) String search,
+            @RequestParam(value = "io_dv", required = false) String ioDv) {
+        return ApiResponse.ok(service.annexTotals(sid, annexType, search, ioDv));
     }
 
     // Add / delete annex row are gone: annex lines are derived from the period's

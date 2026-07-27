@@ -15,6 +15,9 @@ import com.kosign.wecms.domain.vatdeclaration.dto.VatIndicatorSet;
 import com.kosign.wecms.domain.vatdeclaration.dto.AnnexInvoiceListResponse;
 import com.kosign.wecms.domain.vatdeclaration.dto.AnnexInvoiceProjection;
 import com.kosign.wecms.domain.vatdeclaration.dto.AnnexRow;
+import com.kosign.wecms.domain.vatdeclaration.dto.AnnexTaxGroup;
+import com.kosign.wecms.domain.vatdeclaration.dto.AnnexTotalsResponse;
+import com.kosign.wecms.domain.vatdeclaration.repository.AnnexTaxGroupProjection;
 import com.kosign.wecms.domain.vatdeclaration.entity.AnnexType;
 import com.kosign.wecms.domain.vatdeclaration.entity.VatDeclaration;
 import com.kosign.wecms.domain.vatdeclaration.entity.VatDeclarationIndicator;
@@ -429,6 +432,44 @@ public class VatDeclarationService {
         int totalPages = (int) ((total + pageSize - 1) / pageSize);
         return new AnnexInvoiceListResponse(rows, total, totalPages, pageNumber, pageSize,
                 str(grandReduced));
+    }
+
+    /**
+     * Annex totals (API #9 companion) — per-VAT-rate section subtotals plus one
+     * grand total ("Total Output" row), over the SAME filtered set as
+     * {@link #listAnnexInvoices}. Unpaged: the modal fetches the footer once and
+     * keeps it stable while paging the rows. The grand total is summed in Java
+     * from the section rows rather than re-queried.
+     */
+    @Transactional(readOnly = true)
+    public AnnexTotalsResponse annexTotals(Long sid, String annexType, String search, String ioDv) {
+        VatDeclaration decl = load(sid);
+        String type = resolveAnnexType(annexType);
+        List<String> docTypes = docTypesFor(type, ioDv);
+        if (docTypes.isEmpty()) {
+            return new AnnexTotalsResponse(type, List.of(), grandTotal(0, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO));
+        }
+        String rate = AnnexType.REDUCE8.code().equals(type) ? RATE_8_PCT : null;
+        String q = search == null || search.isBlank() ? null : search.trim();
+        String from = decl.getFromDt().format(YYYYMMDD);
+        String to = decl.getToDt().format(YYYYMMDD);
+
+        List<AnnexTaxGroupProjection> raw = annexInvoiceRepo.groupTotals(
+                decl.getBizKey(), from, to, docTypes, rate, q, EXCLUDED_INVOICE_STATUSES);
+
+        List<AnnexTaxGroup> groups = new ArrayList<>(raw.size());
+        BigDecimal gSply = BigDecimal.ZERO, gRed = BigDecimal.ZERO, gVat = BigDecimal.ZERO;
+        long gRows = 0;
+        for (AnnexTaxGroupProjection p : raw) {
+            BigDecimal s = nz(p.getTotalSplyAmt()), r = nz(p.getTotalReducedAmt()), v = nz(p.getTotalVatAmt());
+            groups.add(new AnnexTaxGroup(p.getGroupCd(), p.getGroupCd(), p.getRowCount(), str(s), str(r), str(v)));
+            gSply = gSply.add(s); gRed = gRed.add(r); gVat = gVat.add(v); gRows += p.getRowCount();
+        }
+        return new AnnexTotalsResponse(type, groups, grandTotal(gRows, gSply, gRed, gVat));
+    }
+
+    private static AnnexTaxGroup grandTotal(long rows, BigDecimal sply, BigDecimal reduced, BigDecimal vat) {
+        return new AnnexTaxGroup("TOTAL", null, rows, str(sply), str(reduced), str(vat));
     }
 
     /**
