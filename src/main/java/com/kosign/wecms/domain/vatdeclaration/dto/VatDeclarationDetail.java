@@ -27,6 +27,18 @@ public record VatDeclarationDetail(
         String annexBkmvYn,
         String annexAllocYn,
         String annexAllocTeleYn,
-        String annexReduce8Yn
+        String annexReduce8Yn,
+
+        // Header [06]–[11A]: tax agent + dependent unit (agent_ctr_dt = yyyy-MM-dd)
+        String agentNm,
+        String agentTaxCode,
+        String agentCtrNo,
+        String agentCtrDt,
+        String duNm,
+        String duTaxCode,
+        String duAddr,
+        String duProv,
+        String duDist,
+        String duWard
 ){
 }

@@ -3,6 +3,7 @@ package com.kosign.wecms.domain.vatdeclaration.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kosign.wecms.common.exception.BusinessException;
+import com.kosign.wecms.common.export.ExcelExportService;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.auth.entity.BusiInfm;
 import com.kosign.wecms.domain.auth.repository.BusiInfmRepository;
@@ -16,6 +17,9 @@ import com.kosign.wecms.domain.vatdeclaration.dto.AnnexInvoiceListResponse;
 import com.kosign.wecms.domain.vatdeclaration.dto.AnnexInvoiceProjection;
 import com.kosign.wecms.domain.vatdeclaration.dto.AnnexRow;
 import com.kosign.wecms.domain.vatdeclaration.dto.AnnexTaxGroup;
+import com.kosign.wecms.domain.vatdeclaration.export.VatExportFile;
+import com.kosign.wecms.domain.vatdeclaration.export.VatPdfExporter;
+import com.kosign.wecms.domain.vatdeclaration.export.VatXmlExporter;
 import com.kosign.wecms.domain.vatdeclaration.repository.AnnexTaxGroupProjection;
 import com.kosign.wecms.domain.vatdeclaration.entity.AnnexType;
 import com.kosign.wecms.domain.vatdeclaration.entity.VatDeclaration;
@@ -113,6 +117,8 @@ public class VatDeclarationService {
     private final BusiInfmRepository busiInfmRepo;
     private final VatIndicatorCalculator calculator;
     private final ObjectMapper objectMapper;
+    private final VatXmlExporter xmlExporter;
+    private final VatPdfExporter pdfExporter;
 
     @Transactional(readOnly = true)
     public VatDeclarationListResponse list(Integer year, String status, int page, int size) {
@@ -241,11 +247,36 @@ public class VatDeclarationService {
         apply(sent, req.ct42a(), "ct42a", ind::setVatRefundReq1331);
         apply(sent, req.ct42b(), "ct42b", ind::setVatRefundReq1332);
 
+        // Header [06]–[11A] — tax agent + dependent unit. null = leave unchanged
+        // (Save Draft posts the whole form; a partial payload keeps prior values).
+        if (req.agentNm()      != null) decl.setAgentName(blankToNull(req.agentNm()));
+        if (req.agentTaxCode() != null) decl.setAgentTaxCode(blankToNull(req.agentTaxCode()));
+        if (req.agentCtrNo()   != null) decl.setAgentCtrNo(blankToNull(req.agentCtrNo()));
+        if (req.agentCtrDt()   != null) decl.setAgentCtrDt(parseDate(req.agentCtrDt()));
+        if (req.duNm()         != null) decl.setDuName(blankToNull(req.duNm()));
+        if (req.duTaxCode()    != null) decl.setDuTaxCode(blankToNull(req.duTaxCode()));
+        if (req.duAddr()       != null) decl.setDuAddr(blankToNull(req.duAddr()));
+        if (req.duProv()       != null) decl.setDuProv(blankToNull(req.duProv()));
+        if (req.duDist()       != null) decl.setDuDist(blankToNull(req.duDist()));
+        if (req.duWard()       != null) decl.setDuWard(blankToNull(req.duWard()));
+
         calculator.recompute(ind, sent);
         ind.setModId(TenantContext.currentUserId());
         decl.setIndicators(snapshotJson(ind));
         decl.setModId(TenantContext.currentUserId());
         return toDetail(decl, ind);
+    }
+
+    /** Wire {@code yyyy-MM-dd} → LocalDate; blank → null; invalid → WBE_VALIDATION. */
+    private static LocalDate parseDate(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return LocalDate.parse(raw.trim());
+        } catch (java.time.format.DateTimeParseException e) {
+            throw new BusinessException("WBE_VALIDATION");
+        }
     }
 
     /**
@@ -449,6 +480,58 @@ public class VatDeclarationService {
 
     private static AnnexTaxGroup grandTotal(long rows, BigDecimal sply, BigDecimal reduced, BigDecimal vat) {
         return new AnnexTaxGroup("TOTAL", null, rows, str(sply), str(reduced), str(vat));
+    }
+
+    // ---------------------------------------------------------------- export
+
+    /**
+     * All annex rows (unpaged) for the Excel export provider — same derived
+     * data path + filters as {@link #listAnnexInvoices}. Bounded by the shared
+     * export cap so a huge period can't exhaust heap.
+     */
+    @Transactional(readOnly = true)
+    public List<AnnexRow> annexRowsForExport(Long sid, String annexType, String search, String ioDv) {
+        VatDeclaration decl = load(sid);
+        String type = resolveAnnexType(annexType);
+        List<String> docTypes = docTypesFor(type, ioDv);
+        if (docTypes.isEmpty()) {
+            return List.of();
+        }
+        String rate = AnnexType.REDUCE8.code().equals(type) ? RATE_8_PCT : null;
+        String q = search == null || search.isBlank() ? null : search.trim();
+        String from = decl.getFromDt().format(YYYYMMDD);
+        String to = decl.getToDt().format(YYYYMMDD);
+        return annexInvoiceRepo.findRows(decl.getBizKey(), from, to, docTypes, rate, q,
+                        EXCLUDED_INVOICE_STATUSES, 0L, ExcelExportService.MAX_ROWS)
+                .stream().map(a -> toAnnexRow(a, type)).toList();
+    }
+
+    /**
+     * HTKK XML export (API #12) — locked declarations only (OQ-VAT-7).
+     * Draft → {@code WBE_VAT_DECL_NOT_LOCKED}.
+     */
+    @Transactional(readOnly = true)
+    public VatExportFile exportXml(Long sid) {
+        VatDeclaration decl = load(sid);
+        assertLocked(decl);
+        return xmlExporter.build(decl, loadIndicator(decl));
+    }
+
+    /**
+     * A4 PDF export (API #14) — locked declarations only (OQ-VAT-7).
+     * Draft → {@code WBE_VAT_DECL_NOT_LOCKED}.
+     */
+    @Transactional(readOnly = true)
+    public VatExportFile exportPdf(Long sid) {
+        VatDeclaration decl = load(sid);
+        assertLocked(decl);
+        return pdfExporter.build(decl, loadIndicator(decl));
+    }
+
+    private static void assertLocked(VatDeclaration decl) {
+        if (!STATUS_LOCKED.equals(decl.getStatus())) {
+            throw new BusinessException("WBE_VAT_DECL_NOT_LOCKED");
+        }
     }
 
     /**
@@ -690,7 +773,17 @@ public class VatDeclarationService {
                 yn(d.getAnnexBkmvYn(), true),
                 yn(d.getAnnexAllocYn(), true),
                 yn(d.getAnnexAllocTeleYn(), true),
-                yn(d.getAnnexReduce8Yn(), true)
+                yn(d.getAnnexReduce8Yn(), true),
+                d.getAgentName(),
+                d.getAgentTaxCode(),
+                d.getAgentCtrNo(),
+                d.getAgentCtrDt() == null ? null : d.getAgentCtrDt().toString(),
+                d.getDuName(),
+                d.getDuTaxCode(),
+                d.getDuAddr(),
+                d.getDuProv(),
+                d.getDuDist(),
+                d.getDuWard()
                 );
     }
 

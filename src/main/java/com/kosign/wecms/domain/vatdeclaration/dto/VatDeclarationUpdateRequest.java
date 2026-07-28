@@ -41,6 +41,21 @@ public record VatDeclarationUpdateRequest(
         String ct40b,
         String ct42,
         String ct42a,
-        String ct42b
+        String ct42b,
+
+        // --- Header [06]–[11A]: tax agent + dependent unit ---------------------
+        // A {@code null} field leaves the stored value unchanged (same
+        // omitted-vs-sent contract as the indicators); a blank string clears it.
+        // {@code agentCtrDt} is wire {@code yyyy-MM-dd}.
+        String agentNm,       // [06] Tax Agent Name
+        String agentTaxCode,  // [07] Agent Tax Code
+        String agentCtrNo,    // [08] Tax Agent Contract No.
+        String agentCtrDt,    //      Contract Date (yyyy-MM-dd)
+        String duNm,          // [09] Dependent Unit / business location in another province
+        String duTaxCode,     // [10] Tax Code / business location code
+        String duAddr,        // [11] Business address in another province
+        String duProv,        // [11C] Province / City
+        String duDist,        // [11B] District
+        String duWard         // [11A] Ward / Commune
 ) {
 }

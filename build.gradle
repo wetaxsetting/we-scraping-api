@@ -34,6 +34,12 @@ dependencies {
     // ExcelWorkbookWriter so a 50k-row export stays bounded in heap.
     implementation 'org.apache.poi:poi-ooxml:5.2.5'
 
+    // OpenPDF (LGPL / MPL — commercial-safe, iText-4 fork) — PDF producer for
+    // the VAT Declaration A4 print export (GET /addon/vat-declarations/{sid}/
+    // export/pdf). Chosen over iText 5+ (AGPL) per OQ-VAT-8. Vietnamese
+    // diacritics need an embedded Unicode TTF (see VatPdfExporter font loader).
+    implementation 'com.github.librepdf:openpdf:1.3.35'
+
     // JSch (maintained mwiede fork, drop-in com.jcraft.jsch package) — SFTP
     // client for the firm-banking bulk dispatch (port of legacy util.SftpUtil).
     // Backs JschSftpClient, activated only when wecms.dispatch.sftp.enabled=true
