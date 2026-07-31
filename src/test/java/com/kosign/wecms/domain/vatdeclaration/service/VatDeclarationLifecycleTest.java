@@ -1,0 +1,385 @@
+package com.kosign.wecms.domain.vatdeclaration.service;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.kosign.wecms.common.enums.LangCd;
+import com.kosign.wecms.common.exception.BusinessException;
+import com.kosign.wecms.common.tenant.TenantContext;
+import com.kosign.wecms.domain.auth.repository.BusiInfmRepository;
+import com.kosign.wecms.domain.vatdeclaration.entity.VatDeclaration;
+import com.kosign.wecms.domain.vatdeclaration.entity.VatDeclarationIndicator;
+import com.kosign.wecms.domain.vatdeclaration.repository.VatAnnexInvoiceRepository;
+import com.kosign.wecms.domain.vatdeclaration.repository.VatDeclarationIndicatorRepository;
+import com.kosign.wecms.domain.vatdeclaration.repository.VatDeclarationRepository;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.Spy;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.Collection;
+import java.util.List;
+import java.util.Optional;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+/**
+ * Lifecycle coverage for {@link VatDeclarationService} — the guards that keep
+ * the period chain consistent. Pins:
+ *
+ * <ul>
+ *   <li>lock walks BACKWARD: previous period locked, no hole in the chain,
+ *       [22] still agreeing with the previous [43];</li>
+ *   <li>unlock walks FORWARD: nothing later may already be locked;</li>
+ *   <li>delete refuses while ANY later period exists (OQ-VAT-6);</li>
+ *   <li>lock/unlock are idempotent toggles;</li>
+ *   <li>the invoice marker is stamped on lock and released on unlock, and the
+ *       replaced / cancelled statuses never reach any invoice query.</li>
+ * </ul>
+ */
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+class VatDeclarationLifecycleTest {
+
+    private static final String BIZ = "VN_VNM0004_000001";
+    private static final String USER = "tester";
+    private static final long SID = 12L;
+
+    @Mock private VatDeclarationRepository declRepo;
+    @Mock private VatDeclarationIndicatorRepository indicatorRepo;
+    @Mock private VatAnnexInvoiceRepository annexInvoiceRepo;
+    @Mock private BusiInfmRepository busiInfmRepo;
+    @Spy  private VatIndicatorCalculator calculator = new VatIndicatorCalculator();
+    @Spy  private ObjectMapper objectMapper = new ObjectMapper();
+
+    @InjectMocks private VatDeclarationService service;
+
+    @BeforeEach
+    void setUp() {
+        TenantContext.set(USER, "Tester", BIZ, LangCd.EN);
+    }
+
+    @AfterEach
+    void tearDown() {
+        TenantContext.clear();
+    }
+
+    /** Quarter-2/2026 declaration in the given status. */
+    private static VatDeclaration decl(long sid, String status, int periodValue, int year) {
+        VatDeclaration d = VatDeclaration.builder()
+                .bizKey(BIZ).periodType("quarter").periodValue(periodValue).periodYear(year)
+                .formCode("842").xmlVer("2.6.8").activityName("x").activityCode("0")
+                .acctItem("1701").period("Q" + periodValue + "/" + year).supplNo(0).declType("C")
+                .tpName("CTY").tpTaxCode("0301234567").tpProv("").periodKind("Q")
+                .fromDt(LocalDate.of(year, (periodValue - 1) * 3 + 1, 1))
+                .toDt(LocalDate.of(year, periodValue * 3, 30))
+                .officeCode("").officeName("").declDt(LocalDate.now())
+                .indicators("{}").delYn("N").status(status)
+                .annexBkbrYn("Y").annexBkmvYn("Y").annexAllocYn("N")
+                .annexAllocTeleYn("N").annexReduce8Yn("N")
+                .build();
+        d.setSid(sid);
+        return d;
+    }
+
+    private static VatDeclarationIndicator ind(VatDeclaration owner, String prevCredit, String creditNext) {
+        VatDeclarationIndicator i = VatDeclarationIndicator.builder()
+                .declaration(owner)
+                .prevCredit(new BigDecimal(prevCredit))
+                .creditNext(new BigDecimal(creditNext))
+                .delYn("N")
+                .build();
+        return i;
+    }
+
+    private void given(VatDeclaration d, VatDeclarationIndicator i) {
+        when(declRepo.findBySidAndBizKeyAndDelYn(d.getSid(), BIZ, "N")).thenReturn(Optional.of(d));
+        when(indicatorRepo.findByDeclaration_SidAndDeclaration_BizKeyAndDelYn(d.getSid(), BIZ, "N"))
+                .thenReturn(Optional.of(i));
+    }
+
+    /** No K-1 row in the repository for the period before this one. */
+    private void noPreviousRow() {
+        when(declRepo.findTopByBizKeyAndPeriodTypeAndPeriodValueAndPeriodYearAndDelYnOrderBySupplNoDesc(
+                anyString(), anyString(), anyInt(), anyInt(), anyString()))
+                .thenReturn(Optional.empty());
+    }
+
+    @Nested
+    @DisplayName("lock — walks backward")
+    class Lock {
+
+        @Test
+        @DisplayName("first period ever: no K-1 and nothing earlier → locks")
+        void firstPeriodLocks() {
+            VatDeclaration d = decl(SID, VatDeclarationService.STATUS_DRAFT, 1, 2026);
+            given(d, ind(d, "0", "0"));
+            noPreviousRow();
+            when(declRepo.existsEarlierPeriod(BIZ, "quarter", 2026, 1)).thenReturn(false);
+
+            service.lock(SID);
+
+            assertThat(d.getStatus()).isEqualTo(VatDeclarationService.STATUS_LOCKED);
+        }
+
+        @Test
+        @DisplayName("hole in the chain: K-1 missing but older periods exist → refused")
+        void gapInChainRefused() {
+            VatDeclaration d = decl(SID, VatDeclarationService.STATUS_DRAFT, 3, 2026);
+            given(d, ind(d, "0", "0"));
+            noPreviousRow();
+            when(declRepo.existsEarlierPeriod(BIZ, "quarter", 2026, 3)).thenReturn(true);
+
+            assertThatThrownBy(() -> service.lock(SID))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("WBE_VAT_DECL_PREV_MISSING");
+            assertThat(d.getStatus()).isEqualTo(VatDeclarationService.STATUS_DRAFT);
+        }
+
+        @Test
+        @DisplayName("K-1 still Draft → refused")
+        void previousStillDraftRefused() {
+            VatDeclaration d = decl(SID, VatDeclarationService.STATUS_DRAFT, 2, 2026);
+            VatDeclaration prev = decl(11L, VatDeclarationService.STATUS_DRAFT, 1, 2026);
+            given(d, ind(d, "0", "0"));
+            when(declRepo.findTopByBizKeyAndPeriodTypeAndPeriodValueAndPeriodYearAndDelYnOrderBySupplNoDesc(
+                    BIZ, "quarter", 1, 2026, "N")).thenReturn(Optional.of(prev));
+
+            assertThatThrownBy(() -> service.lock(SID))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("WBE_VAT_DECL_PREV_NOT_LOCKED");
+        }
+
+        @Test
+        @DisplayName("[22] drifted from the previous [43] → refused")
+        void carryForwardMismatchRefused() {
+            VatDeclaration d = decl(SID, VatDeclarationService.STATUS_DRAFT, 2, 2026);
+            VatDeclaration prev = decl(11L, VatDeclarationService.STATUS_LOCKED, 1, 2026);
+            given(d, ind(d, "5000000", "0"));                       // K  [22] = 5,000,000
+            when(declRepo.findTopByBizKeyAndPeriodTypeAndPeriodValueAndPeriodYearAndDelYnOrderBySupplNoDesc(
+                    BIZ, "quarter", 1, 2026, "N")).thenReturn(Optional.of(prev));
+            when(indicatorRepo.findByDeclaration_SidAndDeclaration_BizKeyAndDelYn(11L, BIZ, "N"))
+                    .thenReturn(Optional.of(ind(prev, "0", "7000000")));   // K-1 [43] = 7,000,000
+
+            assertThatThrownBy(() -> service.lock(SID))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("WBE_VAT_DECL_PREV_CREDIT_MISMATCH");
+            assertThat(d.getStatus()).isEqualTo(VatDeclarationService.STATUS_DRAFT);
+        }
+
+        @Test
+        @DisplayName("[22] equal to the previous [43] → locks and stamps the invoices")
+        void carryForwardMatchLocksAndStamps() {
+            VatDeclaration d = decl(SID, VatDeclarationService.STATUS_DRAFT, 2, 2026);
+            VatDeclaration prev = decl(11L, VatDeclarationService.STATUS_LOCKED, 1, 2026);
+            given(d, ind(d, "7000000", "0"));
+            when(declRepo.findTopByBizKeyAndPeriodTypeAndPeriodValueAndPeriodYearAndDelYnOrderBySupplNoDesc(
+                    BIZ, "quarter", 1, 2026, "N")).thenReturn(Optional.of(prev));
+            when(indicatorRepo.findByDeclaration_SidAndDeclaration_BizKeyAndDelYn(11L, BIZ, "N"))
+                    .thenReturn(Optional.of(ind(prev, "0", "7000000")));
+
+            service.lock(SID);
+
+            assertThat(d.getStatus()).isEqualTo(VatDeclarationService.STATUS_LOCKED);
+            verify(annexInvoiceRepo).markProcessed(eq(BIZ), eq("20260401"), eq("20260630"),
+                    any(), any(), eq(SID));
+        }
+
+        @Test
+        @DisplayName("already locked → idempotent, no re-stamp")
+        void alreadyLockedIsIdempotent() {
+            VatDeclaration d = decl(SID, VatDeclarationService.STATUS_LOCKED, 2, 2026);
+            given(d, ind(d, "0", "0"));
+
+            service.lock(SID);
+
+            assertThat(d.getStatus()).isEqualTo(VatDeclarationService.STATUS_LOCKED);
+            verify(annexInvoiceRepo, never()).markProcessed(anyString(), anyString(), anyString(),
+                    any(), any(), anyLong());
+        }
+
+        @Test
+        @DisplayName("the stamp never touches replaced / cancelled invoices")
+        void stampExcludesReplacedAndCancelled() {
+            VatDeclaration d = decl(SID, VatDeclarationService.STATUS_DRAFT, 1, 2026);
+            given(d, ind(d, "0", "0"));
+            noPreviousRow();
+            when(declRepo.existsEarlierPeriod(BIZ, "quarter", 2026, 1)).thenReturn(false);
+
+            service.lock(SID);
+
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<Collection<String>> excluded = ArgumentCaptor.forClass(Collection.class);
+            verify(annexInvoiceRepo).markProcessed(anyString(), anyString(), anyString(),
+                    any(), excluded.capture(), anyLong());
+            assertThat(excluded.getValue())
+                    .containsExactlyInAnyOrder("Hóa đơn đã bị thay thế", "Hóa đơn đã bị hủy")
+                    .doesNotContain("Hóa đơn đã bị điều chỉnh");   // adjustment pairs stay
+        }
+    }
+
+    @Nested
+    @DisplayName("unlock — walks forward")
+    class Unlock {
+
+        @Test
+        @DisplayName("a later period is already locked → refused")
+        void laterLockedRefused() {
+            VatDeclaration d = decl(SID, VatDeclarationService.STATUS_LOCKED, 2, 2026);
+            given(d, ind(d, "0", "0"));
+            when(declRepo.existsLaterLockedPeriod(BIZ, "quarter", 2026, 2,
+                    VatDeclarationService.STATUS_LOCKED)).thenReturn(true);
+
+            assertThatThrownBy(() -> service.unlock(SID))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("WBE_VAT_DECL_NEXT_LOCKED");
+            assertThat(d.getStatus()).isEqualTo(VatDeclarationService.STATUS_LOCKED);
+        }
+
+        @Test
+        @DisplayName("nothing later locked → re-opens and releases the invoices")
+        void unlocksAndReleases() {
+            VatDeclaration d = decl(SID, VatDeclarationService.STATUS_LOCKED, 2, 2026);
+            given(d, ind(d, "0", "0"));
+            when(declRepo.existsLaterLockedPeriod(BIZ, "quarter", 2026, 2,
+                    VatDeclarationService.STATUS_LOCKED)).thenReturn(false);
+
+            service.unlock(SID);
+
+            assertThat(d.getStatus()).isEqualTo(VatDeclarationService.STATUS_DRAFT);
+            verify(annexInvoiceRepo).clearProcessed(BIZ, SID);
+        }
+
+        @Test
+        @DisplayName("already draft → idempotent, no release")
+        void alreadyDraftIsIdempotent() {
+            VatDeclaration d = decl(SID, VatDeclarationService.STATUS_DRAFT, 2, 2026);
+            given(d, ind(d, "0", "0"));
+
+            service.unlock(SID);
+
+            assertThat(d.getStatus()).isEqualTo(VatDeclarationService.STATUS_DRAFT);
+            verify(annexInvoiceRepo, never()).clearProcessed(anyString(), anyLong());
+        }
+    }
+
+    @Nested
+    @DisplayName("delete — OQ-VAT-6")
+    class Delete {
+
+        @Test
+        @DisplayName("a later period exists → refused, row untouched")
+        void laterPeriodBlocksDelete() {
+            VatDeclaration d = decl(SID, VatDeclarationService.STATUS_DRAFT, 2, 2026);
+            given(d, ind(d, "0", "0"));
+            when(declRepo.existsLaterPeriod(BIZ, "quarter", 2026, 2)).thenReturn(true);
+
+            assertThatThrownBy(() -> service.delete(SID))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("WBE_VAT_DECL_LATER_PERIOD_EXISTS");
+            assertThat(d.getDelYn()).isEqualTo("N");
+        }
+
+        @Test
+        @DisplayName("newest period → soft-deletes header and indicator")
+        void newestPeriodDeletes() {
+            VatDeclaration d = decl(SID, VatDeclarationService.STATUS_DRAFT, 2, 2026);
+            VatDeclarationIndicator i = ind(d, "0", "0");
+            given(d, i);
+            when(declRepo.existsLaterPeriod(BIZ, "quarter", 2026, 2)).thenReturn(false);
+
+            service.delete(SID);
+
+            assertThat(d.getDelYn()).isEqualTo("Y");
+            assertThat(i.getDelYn()).isEqualTo("Y");
+        }
+
+        @Test
+        @DisplayName("a locked declaration is never deletable")
+        void lockedNotDeletable() {
+            VatDeclaration d = decl(SID, VatDeclarationService.STATUS_LOCKED, 2, 2026);
+            given(d, ind(d, "0", "0"));
+
+            assertThatThrownBy(() -> service.delete(SID))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("WBE_VAT_DECL_LOCKED");
+        }
+    }
+
+    @Nested
+    @DisplayName("annex listing — status filter")
+    class AnnexFilter {
+
+        @Test
+        @DisplayName("replaced / cancelled are excluded from every invoice query")
+        void excludesReplacedAndCancelled() {
+            VatDeclaration d = decl(SID, VatDeclarationService.STATUS_DRAFT, 2, 2026);
+            given(d, ind(d, "0", "0"));
+            when(annexInvoiceRepo.groupTotals(anyString(), anyString(), anyString(),
+                    any(), any(), any(), any())).thenReturn(List.of());
+
+            service.listAnnexInvoices(SID, "REDUCE8", null, null, 0, 20);
+
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<Collection<String>> excluded = ArgumentCaptor.forClass(Collection.class);
+            verify(annexInvoiceRepo).groupTotals(anyString(), anyString(), anyString(),
+                    any(), any(), any(), excluded.capture());
+            assertThat(excluded.getValue())
+                    .containsExactlyInAnyOrder("Hóa đơn đã bị thay thế", "Hóa đơn đã bị hủy");
+        }
+
+        @Test
+        @DisplayName("the two 01-6/GTGT allocation annexes have no invoice source → empty")
+        void allocationAnnexesReturnEmpty() {
+            VatDeclaration d = decl(SID, VatDeclarationService.STATUS_DRAFT, 2, 2026);
+            given(d, ind(d, "0", "0"));
+
+            var res = service.listAnnexInvoices(SID, "ALLOC_CSSX", null, null, 0, 20);
+
+            assertThat(res.rows()).isEmpty();
+            assertThat(res.totalCount()).isZero();
+            assertThat(res.totalPages()).isZero();
+            assertThat(res.pageNumber()).isZero();
+            assertThat(res.pageSize()).isEqualTo(20);
+            assertThat(res.taxGroups()).isEmpty();
+            assertThat(res.grandTotal().groupCd()).isEqualTo("TOTAL");
+            verify(annexInvoiceRepo, never()).groupTotals(anyString(), anyString(), anyString(),
+                    any(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("BKBR reads output invoices, BKMV reads input ones")
+        void directionMapsToDocType() {
+            VatDeclaration d = decl(SID, VatDeclarationService.STATUS_DRAFT, 2, 2026);
+            given(d, ind(d, "0", "0"));
+            when(annexInvoiceRepo.groupTotals(anyString(), anyString(), anyString(),
+                    any(), any(), any(), any())).thenReturn(List.of());
+
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<Collection<String>> docTypes = ArgumentCaptor.forClass(Collection.class);
+
+            service.listAnnexInvoices(SID, "BKBR", null, null, 0, 20);
+            verify(annexInvoiceRepo).groupTotals(anyString(), anyString(), anyString(),
+                    docTypes.capture(), any(), any(), any());
+            assertThat(docTypes.getValue()).containsExactly("I");   // output / sales
+        }
+    }
+}
