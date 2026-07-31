@@ -32,7 +32,7 @@ import java.util.Optional;
 
 /**
  * Shared dispatch executor for Overseas Payment batches. Mirrors
- * {@link com.kosign.wecms.domain.payment.dispatch.service.TransferDispatchExecutor}
+ * {@code TransferDispatchExecutor} (deleted 2026-07-28, F-3)
  * but speaks the {@code OVRS_PYMN_*} schema (different table family
  * from {@code SCDUL_PYMN_*}) and always uses the File path — Overseas
  * remittances go through the SWIFT / international wire rail, never the
@@ -269,9 +269,20 @@ public class OverseasDispatchExecutor {
             // from ACCT_MSTR.ACCT_NM via the NAPAS-code map; nullable
             // when the lookup misses, matching legacy.
             data.setSenderNm(senderNm);
-            // MEMO copies into BOTH remark slots — legacy parity (lines 358-359).
+            // MEMO copies into BOTH remark slots — legacy parity
+            // (pymn_0007_001_c001_act.jsp:368-369).
             // The dispatch daemon picks the one its bank-side adapter cares
             // about; the refactor's job is just to keep both populated.
+            //
+            // ⚠ KNOWN UNFIXED WIDTH DEFECT — inherited from legacy, NOT a refactor regression.
+            // OVRS_PYMN_SUMR_DETL.MEMO is varchar(500); TAR_ACCT_RMRK / WDRL_ACCT_RMRK are
+            // varchar(150). Neither legacy nor this line truncates, so a memo over 150 characters
+            // fails the TB_PAY_FILE_DATA insert with SQLSTATE 22001 and the whole dispatch aborts.
+            // Verified on JEX DEV 2026-07-30: 2 of 37 non-null memos already exceed it (381 and 190
+            // chars, both ASCII), so dispatching either payment fails today — on legacy too.
+            // NOT truncated here on purpose: silently cutting a user's memo is a data decision, and
+            // matching legacy byte-for-byte is the standing rule. Awaiting a PO call.
+            // See docs/bug-reports/overseas-memo-width-truncation-gap.md.
             data.setWdrlActRmrk(line.getMemo());
             data.setTarAcctRmrk(line.getMemo());
 
@@ -393,6 +404,9 @@ public class OverseasDispatchExecutor {
         data.setBankChnlDiv(BANK_CHNL_DIV_OVERSEAS);                   // :222 'S'
         data.setFincMdaOwnerNm(master.getBnfcNm());                    // :221 B: raw BNFC_NM
         data.setSenderNm(master.getDbtAcctHldr());                     // :223 SENDER_NM = DBT_ACCT_HLDR (M-mode)
+        // ⚠ Same inherited width defect as the D-mode path above (varchar(500) MEMO into two
+        // varchar(150) columns, no truncation on either side). Legacy :219-220 is identical.
+        // See docs/bug-reports/overseas-memo-width-truncation-gap.md.
         data.setWdrlActRmrk(master.getMemo());                        // :219
         data.setTarAcctRmrk(master.getMemo());                        // :220
         data.setRcptUseAddr(master.getBnfcAddr());                    // :226

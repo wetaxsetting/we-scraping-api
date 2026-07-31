@@ -9,6 +9,7 @@ import com.kosign.wecms.domain.payment.dispatch.repository.TbFirmConfRepository;
 import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConf;
 import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConfId;
 import com.kosign.wecms.domain.setting.firmbankingsettings.repository.TbFirmBankCodeRepository;
+import com.kosign.wecms.domain.payment.dispatch.constant.AntDivChannel;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileData;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileMst;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayTarget;
@@ -121,10 +122,9 @@ public class InternalTransferDispatchExecutor {
 
     /** API-path same-bank tag ({@code AntDivCd.INTER}). */
     private static final String ANT_DIV_INTER = "INTER";
-    /** File-path ANT_DIV_CD for the Shinhan-USD→VND special case
-     *  ({@code AntDivCdT}: CITAD="C", EBANK="E"). */
-    private static final String ANT_DIV_T_CITAD = "C";
-    private static final String ANT_DIV_T_EBANK = "E";
+    // File-path 1-char channel codes now come from the shared AntDivChannel.CODE_* vocabulary
+    // (F-2/F-5, 2026-07-28) — the former local ANT_DIV_T_CITAD / ANT_DIV_T_EBANK constants were
+    // duplicate mappings and were removed rather than extended.
 
     private static final String CCY_VND = "VND";
     private static final String CCY_USD = "USD";
@@ -220,7 +220,7 @@ public class InternalTransferDispatchExecutor {
                 eq(outBankCd, shinhanBankCd)
                 && CCY_USD.equalsIgnoreCase(wdrlCcyCd)
                 && CCY_VND.equalsIgnoreCase(depoCcyCd);
-        // F1 (audit VCB, legacy PymnHelper.pymn_0009_001_c001:2600, SVN r36803): ALL VCB (970436),
+        // F1 (audit VCB, legacy PymnHelper.pymn_0009_001_c001:2600, SVN r36822): ALL VCB (970436),
         // VND and USD, dispatches via the File path — the isVcbFileTransfer gate pulls VCB VND off
         // the API path. NOTE: the file path's VCB-specific field values (BANK_CHNL_DIV via
         // ENG_ABRVAT_NM, VND ANT_DIV_CD) are NOT built out here — VCB VND file-field parity is
@@ -341,6 +341,29 @@ public class InternalTransferDispatchExecutor {
 
             data.setTranAmt(line.getTranAmt());
 
+            // F-2 (2026-07-28) — legacy ANT_DIV_CD FIRST PASS, ported from
+            // PymnHelper.pymn_0009_001_c001:2779-2786. This block was missing entirely; Vendor and
+            // Expense have always had it (VendorDispatchExecutor:283-289 / ExpenseDispatchExecutor:276-284),
+            // so Internal Transfer was the only file path writing NULL where legacy writes a channel.
+            //
+            // Legacy conditions on the PER-DETAIL TRNF_CCY_CD (not the batch parameter) — verbatim:
+            //   Shinhan 970424 + detail USD -> EBANK 'E'
+            //   Woori   970457 + detail USD -> VCB   'V'
+            //   VCB     970436 + detail USD -> null  (legacy sets it explicitly at :2783-2785; this
+            //                                        path never assigns ANT_DIV_CD, so it is ALREADY
+            //                                        null — no branch is added, per the parity rule
+            //                                        that only differing non-null legacy values are
+            //                                        implemented)
+            // isShinhanUsdToVnd is NOT caught here: its detail TRNF_CCY_CD is 'VND' (legacy note at
+            // :2775-2777). It is handled by the second pass below.
+            if (CCY_USD.equalsIgnoreCase(trimToNull(line.getTrnfCcyCd()))) {
+                if (eq(master.getOutBankCd(), shinhanBankCd)) {
+                    data.setAntDivCd(AntDivChannel.CODE_EBANK);          // legacy :2779-2780
+                } else if (eq(master.getOutBankCd(), wooriBankCd)) {
+                    data.setAntDivCd(AntDivChannel.CODE_VCB);            // legacy :2781-2782
+                }
+            }
+
             // G20 + NC-2: same-bank current-bank transfer = "T", other-bank = "O".
             // "Same bank": raw bank-code equality OR same banking group via
             // ENG_ABRVAT_NM (legacy pymn_0009_001_c001:2767-2806).
@@ -348,15 +371,31 @@ public class InternalTransferDispatchExecutor {
                     || sameBankGroup(master.getOutBankCd(), line.getTarBankCd());
             data.setBankChnlDiv(sameBank ? BANK_CHNL_DIV_CURRENT_BANK : BANK_CHNL_DIV_OTHER_BANK);
 
-            // Shinhan-USD→VND ANT_DIV_CD override (CITAD same / EBANK other).
+            // Shinhan-USD→VND ANT_DIV_CD second pass (legacy :2831-2855).
+            //
+            // F-5 (2026-07-28) — same-bank is NULL, not CITAD. Legacy code at :2846-2848 is an
+            // explicit `setAntDivCd(null)`, justified in its own comment: per
+            // sFTP_Firm_Banking_Form_Layout_File v2.1 (Sheet1 "File ebank USD -> VND same bank")
+            // scfm_intf_t is empty, and Shinhan (Mr. Kang 2026-05-12) confirmed a DB null renders as a
+            // 1-byte space in the BLS file. The refactor previously wrote 'C' because the legacy
+            // *comment block* at :2801-2804 claims "Same bank -> CITAD" — that comment contradicts the
+            // code directly beneath it. The CODE is authoritative; the comment is stale.
+            // Other-bank -> EBANK 'E' matches legacy (:2852-2854) and is unchanged.
             if (isShinhanUsdToVnd) {
-                data.setAntDivCd(sameBank ? ANT_DIV_T_CITAD : ANT_DIV_T_EBANK);
+                data.setAntDivCd(sameBank ? null : AntDivChannel.CODE_EBANK);
             } else if (eq(master.getOutBankCd(), vcbBankCd) && CCY_VND.equalsIgnoreCase(trnfCcyCd)) {
                 // OQ-2 (Mr. Jung 2026-07-16, CONFIRMED file-based VCB; proven vs legacy PymnHelper:2573
                 // + copyFrom :2840-2843): VCB VND carries the uploaded NAPAS/CITAD network code
                 // ("VCB VND -> Other : NAPAS/CITAD from upload"). VCB USD stays null (same-bank only);
                 // non-VCB internal transfers are unchanged.
-                data.setAntDivCd(line.getAntDivCd());
+                //
+                // F-4 (2026-07-28, Option A — legacy-faithful): bpchar(5) source -> bpchar(1) target.
+                // A raw copy of "NAPAS"/"CITAD" makes PostgreSQL reject the INSERT with `value too long
+                // for type character(1)` (SQLSTATE 22001) — proven via bpchar('CITAD'::bpchar, 5, false),
+                // the assignment-coercion function INSERT uses. Legacy narrows via copyFrom ->
+                // AntDivCdT.fromValue (1-char only), so a long name becomes NULL. Do NOT swap in
+                // toStorageCode (= AntDivCdT.parse): that is Payroll's contract and would change routing.
+                data.setAntDivCd(AntDivChannel.toStorageCodeStrict(line.getAntDivCd()));
             }
 
             data.setFincMdaOwnerNm(line.getRcptNm());  // B: legacy raw RCPT_NM (PymnHelper file path)

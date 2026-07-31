@@ -15,8 +15,11 @@ import java.math.BigDecimal;
 
 /**
  * API-path dispatch row. One row per detail line of a VND batch
- * dispatched through {@link
- * com.kosign.wecms.domain.payment.dispatch.service.TransferDispatchExecutor}.
+ * dispatched through the per-module dispatch executors
+ * ({@code InternalTransferDispatchExecutor} / {@code VendorDispatchExecutor} /
+ * {@code ExpenseDispatchExecutor} / {@code PayrollDispatchExecutor}).
+ * (The formerly-shared {@code TransferDispatchExecutor} was deleted 2026-07-28 —
+ * it had no production consumer; see {@code docs/reports/dead-code-architecture-review.md} §5.1.)
  *
  * <p>Schema parity with {@code wecmsvndev.tb_pay_target}; not all columns
  * are written on insert — values default to NULL on the wire when the

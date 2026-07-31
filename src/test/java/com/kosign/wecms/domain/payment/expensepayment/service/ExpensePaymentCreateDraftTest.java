@@ -62,6 +62,10 @@ class ExpensePaymentCreateDraftTest {
     @Mock private AuditLogService auditLogService;
     @Mock private OutBankCdNormalizer outBankCdNormalizer;
     @Mock private com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard blockedCharGuard;
+    /** C-14: the REAL guard (spied so @InjectMocks wires it), so these save-path tests actually
+     *  exercise the wire-width enforcement rather than silently passing a no-op mock. */
+    @org.mockito.Spy private com.kosign.wecms.domain.payment.common.PaymentWireWidthGuard wireWidthGuard =
+            com.kosign.wecms.domain.payment.common.WireWidthGuards.real();
     @Mock private TrcoInfmRepository contactRepo;
     @Mock private Clock clock;
     @Mock private com.kosign.wecms.domain.payment.common.UploadConsistencyValidator uploadConsistencyValidator;

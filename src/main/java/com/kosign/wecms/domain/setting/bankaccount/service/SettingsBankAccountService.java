@@ -93,6 +93,8 @@ public class SettingsBankAccountService {
     private static final List<String> AUDIT_REF_NOS = List.of("ACCT_MSTR", "ACCT_AUTH_INFO");
 
     private final AcctMstrRepository acctRepo;
+    /** C-14 / FIX B: non-blocking ACCT_NM check against the firm-banking SENDER_NAME wire field. */
+    private final com.kosign.wecms.domain.payment.overseas.service.OverseasSenderNameGuard senderNameGuard;
     private final BankCdResolver bankCdResolver;
     private final BusiVasAcctInfmRepository vasAcctRepo;
     private final AcctAuthInfoRepository acctAuthRepo;
@@ -363,6 +365,12 @@ public class SettingsBankAccountService {
             row.setCcyCd(item.currency());
             row.setAcctNickNm(item.nickname());
             row.setAcctNm(item.acctNm());
+            // C-14 / FIX B — WARN only, never reject. ACCT_NM is Coocon-supplied (this whole path is
+            // HAND_REG_YN='N', i.e. scraped), so the user has nothing to correct here. Overseas payments
+            // from an account whose holder name cannot be carried by the 150-byte SENDER_NAME slot are
+            // rejected at overseas creation/dispatch instead; this warning is what makes the condition
+            // visible before that happens.
+            senderNameGuard.warnIfUnsendable(req.bankCd(), item.acctNo(), item.acctNm());
             row.setCont(item.description());
             row.setActvYn("Y");
             row.setHandRegYn("N");  // scraped, not manually registered

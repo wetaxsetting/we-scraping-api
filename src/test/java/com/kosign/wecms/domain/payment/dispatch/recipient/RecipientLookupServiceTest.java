@@ -37,7 +37,7 @@ class RecipientLookupServiceTest {
     private final EfsCryptoService crypto = new EfsCryptoService();
     private final ObjectMapper mapper = new ObjectMapper()
             .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
-    private final EfsProperties props = new EfsProperties(); // partnerId blank → ID = vanOrgCd
+    private final EfsProperties props = new EfsProperties(); // D-2: envelope ID is always TB_FIRM_CONF.VAN_ORG_CD (legacy-verified)
 
     @Mock
     EfsApiClient efsApiClient;
@@ -77,7 +77,7 @@ class RecipientLookupServiceTest {
         verify(efsApiClient).send(eq(EfsApiClient.EFS_201), captor.capture());
         EfsEnvelope sent = captor.getValue();
 
-        assertThat(sent.id()).isEqualTo("ORG000001");          // partnerId blank → vanOrgCd
+        assertThat(sent.id()).isEqualTo("ORG000001");          // D-2 legacy parity: envelope ID == VAN_ORG_CD
         assertThat(sent.rqDtime()).matches("\\d{14}");
         assertThat(sent.tno()).isNotBlank();
         assertThat(sent.tno().length()).isLessThanOrEqualTo(50);

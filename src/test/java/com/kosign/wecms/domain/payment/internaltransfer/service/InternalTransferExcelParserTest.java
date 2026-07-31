@@ -67,7 +67,8 @@ class InternalTransferExcelParserTest {
      *  change across every test. */
     private InternalTransferExcelParser newParser() {
         return new InternalTransferExcelParser(
-                repo, specialCharValidator, uploadConsistencyValidator,
+                repo, specialCharValidator, com.kosign.wecms.domain.payment.common.WireWidthGuards.real(),
+                uploadConsistencyValidator,
                 chartAcctRepository, acctMstrRepository, outBankCdNormalizer);
     }
 

@@ -7,6 +7,8 @@ import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ParseExcelResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ParsedTransferLine;
 import com.kosign.wecms.domain.payment.common.LegacyTextNormalizer;
+import com.kosign.wecms.domain.payment.common.PaymentWireWidthGuard;
+import com.kosign.wecms.domain.payment.common.WireField;
 import com.kosign.wecms.domain.payment.common.OutBankCdNormalizer;
 import com.kosign.wecms.domain.payment.validation.FieldCd;
 import com.kosign.wecms.domain.payment.validation.PymnType;
@@ -153,6 +155,8 @@ public class InternalTransferExcelParser {
 
     private final TbFirmBankCodeRepository firmBankCodeRepo;
     private final SpecialCharValidator     specialCharValidator;
+    /** C-14: fixed-length wire-slot width guard for the bank-bound name & memo fields. */
+    private final PaymentWireWidthGuard    wireWidthGuard;
     /** Cross-row consistency guard — single currency per file + single
      *  network per file + VND/USD whitelist. Mirrors legacy
      *  {@code PymnHelper.java:420-436} + {@code :1261-1297}. */
@@ -365,6 +369,15 @@ public class InternalTransferExcelParser {
             errors.add(new FieldError("DOC_NO",
                     "Document No. must not exceed " + DOC_NO_MAX_LEN + " characters"));
         }
+
+        // C-14: the CHARACTER caps above are the DB column widths; this is the separate BYTE cap of
+        // the bank's fixed-length record. TRAN_USAG feeds both 210-byte memo fields, and text that
+        // survives tone-stripping (Korean/CJK) is 3 UTF-8 bytes per character — so 200 characters
+        // pass every check above and still overflow the slot. No RECEIVER_NAME check on this path:
+        // Internal Transfer has no recipient-name column (legacy does not carry one — audit F4), and
+        // FINC_MDA_OWNER_NM is cross-filled server-side at dispatch.
+        wireWidthGuard.check(WireField.DEPOSIT_ACCOUNT_MEMO, tranUsag)
+                .ifPresent(msg -> errors.add(new FieldError("TRAN_USAG", msg)));
 
         if (isBlank(fincMdaNo)) {
             errors.add(new FieldError(FLD_FINC_MDA_NO, "Deposit No. is required"));
@@ -627,7 +640,11 @@ public class InternalTransferExcelParser {
         // F2 (audit task-44508): strip embedded CR/LF from EVERY text cell,
         // mirroring legacy `ExcelUtils.getCell:144` (`replaceAll("\\r|\\n","")`).
         // Tabs are preserved (legacy parity). Trim ends after stripping.
-        return LegacyTextNormalizer.stripCrLf(fmt.formatCellValue(cell)).trim();
+        // C-14: NFC first. replaceTone maps precomposed code points only, so a decomposed accent
+        // would survive tone-stripping and reach the fixed-length codec at full UTF-8 width.
+        // See LegacyTextNormalizer.toNfc.
+        return LegacyTextNormalizer.stripCrLf(
+                LegacyTextNormalizer.toNfc(fmt.formatCellValue(cell))).trim();
     }
 
     private static boolean isBlank(String s) {

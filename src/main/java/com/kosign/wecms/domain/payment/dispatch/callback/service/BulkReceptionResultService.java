@@ -7,6 +7,7 @@ import com.kosign.wecms.domain.payment.dispatch.callback.dto.EfsCallbackEnvelope
 import com.kosign.wecms.domain.payment.dispatch.constant.FirmBankingResultCd;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmBatApiTran;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmFileMst;
+import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmFileMstId;
 import com.kosign.wecms.domain.payment.dispatch.enums.ApiTranTp;
 import com.kosign.wecms.domain.payment.dispatch.enums.ProcStat;
 import com.kosign.wecms.domain.payment.dispatch.enums.ProcStep;
@@ -25,6 +26,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
@@ -44,15 +47,16 @@ import java.util.List;
  * <b>inline</b>. There is <b>no periodic recovery scheduler</b> — a lost callback
  * or a 00302 that never confirms is a monitoring / manual-operations concern.
  *
- * <p>Flow ({@link #handle}, one transaction):
+ * <p>Flow ({@link #handle}, one transaction up to the barrier — see the transaction note below):
  * <ol>
  *   <li>resolve the per-VAN key by {@code envelope.id()}, verify {@code VV},
  *       decrypt {@code EV} → {@link BulkReceptionResultRequest};</li>
  *   <li>validate the individual required fields (legacy step 3);</li>
  *   <li>look up the file at {@code (TRAN_DT=today, FIRM_FILE_NM, PROC_STEP='0',
- *       PROC_STAT='6')} (legacy {@code R004}). <b>A file not in that state is a
- *       no-op</b> — a duplicate callback (file already at step '1'/'2') or an
- *       unknown file is safely ignored, never re-executed;</li>
+ *       PROC_STAT='6')} (legacy {@code R004}). Nothing in that state is <b>not</b> a
+ *       single outcome — {@link #handleUnmatchedCallback} distinguishes a genuine
+ *       replay (ack success) from an unknown file or an unexpected state (retryable
+ *       error, so the gateway resends);</li>
  *   <li>write the {@code 01301} audit row ({@code TB_FIRM_BAT_API_TRAN});</li>
  *   <li>reconcile {@code result_cd} + received {@code data_cnt}/{@code data_amt}
  *       vs requested {@code REQ_CNT}/{@code REQ_AMT}:
@@ -67,17 +71,70 @@ import java.util.List;
  *   <li><b>split-file gate</b> (legacy {@code R003}): a single request may be
  *       split into several bank files; 00302 is held until every sibling of the
  *       same {@code FILE_SEQ_NO} has been received. When the last sibling arrives,
- *       00302 is issued for each reception-success sibling — group issue, inline,
- *       no sweep.</li>
+ *       00302 is issued for each reception-success sibling — group issue, no sweep.</li>
  * </ol>
  *
+ * <h2>Transaction boundaries — where legacy's per-row commit went</h2>
+ * The 00302 fan-out does <b>not</b> run inside {@link #handle}'s transaction. It is registered on
+ * {@code afterCommit} and each sibling is then issued in its own transaction by
+ * {@link BulkExecutionInlineTxService#issueOne}. Three properties depend on that, all of which legacy
+ * got for free from BATCH2 being a separate process reading committed rows and committing per row
+ * ({@code FILE_DEPOSIT_TRANSFER_BATCH2}: {@code beginTransaction:238}, {@code commit:260-263} success
+ * / {@code :317-320} error):
+ * <ul>
+ *   <li><b>Durability per sibling.</b> Each file's transition commits the moment its result is known,
+ *       instead of all N transitions riding on one commit at the end of the callback.</li>
+ *   <li><b>Failure isolation.</b> A throw while issuing sibling 3 cannot undo siblings 1–2 — including
+ *       siblings whose 00302 already reached the bank. In one transaction it could, and did.</li>
+ *   <li><b>No N HTTP calls with a DB connection held.</b> The reception work is committed and the
+ *       connection released before the first gateway call.</li>
+ * </ul>
+ * {@code afterCommit} rather than a per-sibling {@code REQUIRES_NEW} called from inside {@code handle}:
+ * a nested transaction cannot see this callback's own uncommitted {@code PROC_STEP 0→1} advance, so it
+ * would re-read the file as {@code '0'/'6'} and skip it. Committing first is also legacy's actual
+ * ordering.
+ *
+ * <h3>Known residual: {@code afterCommit} is not durable</h3>
+ * The hook is an in-JVM callback, not a persisted outbox. If the process dies between the commit and the
+ * hook running, the reception advance is durable but the 00302 was never sent, so every ready sibling
+ * sits at {@code PROC_STEP='1' / PROC_STAT='6'} with <b>no {@code TB_FIRM_BAT_API_TRAN} 00302 row</b> —
+ * and nothing re-drives it:
+ * <ul>
+ *   <li>there is no recovery sweep (K9 Option A, "Recovery Scheduler", was offered to Mr. Kang on
+ *       2026-07-29 and <b>declined</b> — do not add one here or elsewhere without reopening K9);</li>
+ *   <li>a gateway retry of the 01301 does not help either. The file is now past {@code PROC_STEP='0'},
+ *       so {@code R004} misses and {@link #handleUnmatchedCallback} classifies the retry as a genuine
+ *       replay and answers {@code RC=0000} — correctly, by its own rule: the reception <i>was</i>
+ *       processed. It has no way to know the fan-out that should have followed did not happen.</li>
+ * </ul>
+ *
+ * <p>This is the accepted trade, not an oversight: the alternative — re-driving on the 01301 retry —
+ * risks sending 00302 twice for a file whose first instruction may already have reached the bank, and
+ * duplicate execution of a bulk payment is a far worse failure than a stranded one. Stranding is
+ * visible and manually recoverable; a double transfer is neither.
+ *
+ * <p><b>Detection</b> is {@code StuckPayFileMonitorService}'s firm-file sweep, whose selection
+ * ({@link com.kosign.wecms.domain.payment.dispatch.repository.TbFirmFileMstRepository#findStrandedBulkExecutionFiles})
+ * is exactly this state — {@code PROC_STEP='1'/PROC_STAT='6'} older than the age threshold — and which
+ * classifies it {@code BULK_EXECUTION_NOT_ISSUED} (no 00302 row) as distinct from
+ * {@code BULK_EXECUTION_UNCONFIRMED} (a 00302 row exists but the bank never confirmed). The two need
+ * opposite manual actions, and this residual produces the first.
+ *
  * <p><b>Idempotency.</b> The {@code 01301 → 00302} step never double-executes:
- * (a) the {@code PROC_STEP='0'} lookup means a duplicate callback finds nothing to
- * process, and (b) before each 00302 the {@code TB_FIRM_BAT_API_TRAN} ledger is
- * probed ({@link TbFirmBatApiTranRepository#existsByTranDtAndBizKeyAndFirmFileNmAndApiTranTp})
- * — a file that already has a 00302 row is skipped. The 00302 audit row is written
- * <b>before</b> the gateway call, so even a no-response leaves a marker that blocks
- * any re-issue.
+ * (a) the {@code PROC_STEP='0'} lookup means a duplicate callback finds no file to advance, and
+ * (b) before each 00302 the {@code TB_FIRM_BAT_API_TRAN} ledger is probed
+ * ({@link TbFirmBatApiTranRepository#existsByBizKeyAndFirmFileNmAndApiTranTp}) — a file that
+ * already has a 00302 row is skipped. That probe only works if the marker is durable, so the 00302
+ * audit row is written through {@link DispatchApiTranAuditWriter#saveInNewTransaction} — a committed
+ * transaction of its own — <b>before</b> the gateway call. Written in the caller's transaction instead
+ * (as it was), the marker rolled back with any later failure and a gateway retry re-sent 00302 to the
+ * bank.
+ *
+ * <p>The probe carries <b>no date predicate</b> (FIX D). It used to key on the callback-clock
+ * {@code TRAN_DT}, which made the guard blind across an ICT midnight — the very rollover this class's
+ * FIX A already had to fix on the lookup leg. The date this class passes to
+ * {@link #scheduleExecutionFanOut} is still the callback clock, and still correct: it dates the audit
+ * row, it no longer keys the guard.
  *
  * <p><b>Crypto note (B2):</b> the inbound envelope is verified/decrypted here with
  * the real {@link EfsCryptoService} + the per-VAN key from {@link VanApiKeyService}.
@@ -96,6 +153,9 @@ public class BulkReceptionResultService {
     private static final DateTimeFormatter TRAN_TM_FMT = DateTimeFormatter.ofPattern("HHmmss");
     private static final ZoneId ICT = ZoneId.of("Asia/Ho_Chi_Minh");
 
+    /** FIX A — guards the {@code FIRM_FILE_NM} date token; see {@link #tranDtFromFileNm}. */
+    private static final java.util.regex.Pattern DT8_DIGITS = java.util.regex.Pattern.compile("\\d{8}");
+
     /** Legacy reception-success token compared in {@code FILE_DEPOSIT_TRANSFER_API1_act.jsp:247}. */
     private static final String RECEPTION_SUCCESS_CD = "BT00"; // TODO(B5): confirm full reception result-code set.
 
@@ -107,8 +167,21 @@ public class BulkReceptionResultService {
     private final TbFirmFileMstRepository firmFileMstRepository;
     private final TbFirmBatApiTranRepository firmBatApiTranRepository;
     private final DispatchKeyGenerator dispatchKeyGenerator;
+    /** Legacy {@code MsgSendUtil.SendMsg} on the 00302 failure branch (BATCH2 {@code :266-280}). */
+    private final com.kosign.wecms.domain.payment.dispatch.alert.OpsAlertService opsAlertService;
     /** C1 (audit H-3): sibling fail-stop reads/propagates the shared pay-file status. */
     private final com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileMstRepository payFileMstRepository;
+    /**
+     * Per-sibling 00302 issuance, each in its own {@code REQUIRES_NEW} transaction — a separate bean
+     * because a self-invocation would bypass the proxy and inherit this handler's transaction, which is
+     * the exact boundary the fan-out has to escape.
+     */
+    private final BulkExecutionInlineTxService bulkExecutionInlineTxService;
+    /**
+     * Writes a {@code TB_FIRM_BAT_API_TRAN} row in its own committed transaction. Used on the
+     * unmatched-callback path so a discarded 01301 is still auditable.
+     */
+    private final DispatchApiTranAuditWriter apiTranAuditWriter;
 
     /**
      * Handle a 01301 reception-result callback: decrypt → validate → reconcile →
@@ -142,18 +215,39 @@ public class BulkReceptionResultService {
         String tranDt = now.format(TRAN_DT_FMT);
         String tranTm = now.format(TRAN_TM_FMT);
 
+        // FIX A — the LOOKUP date comes from the FILE NAME, not from this clock.
+        //
+        // `tranDt` above is "today in ICT at CALLBACK time". The row's TRAN_DT was stamped at FILE
+        // BUILD time. Those are the same value only when the callback lands on the same ICT calendar
+        // day as the build. A file built at 23:58 whose 01301 arrives at 00:02 misses the lookup, and
+        // because handleUnmatchedCallback filtered on the same clock-derived date, every gateway retry
+        // missed identically — the file stayed at PROC_STEP='0'/PROC_STAT='6' forever.
+        //
+        // FIRM_FILE_NM is S_{VAN}_{TYPE}_{round}_{TRAN_DT} (BulkReceptionService:513), so the name
+        // carries the authoritative date. This is the same idiom BulkExecutionResultService:147-157
+        // already uses on the 01302 leg; the 01301 leg was the outlier.
+        //
+        // DELIBERATE IMPROVEMENT ON LEGACY, NOT PARITY. Legacy has the identical defect:
+        // FILE_DEPOSIT_TRANSFER_API1_act.jsp:55 sets `procDt = DateTime.getInstance().getDate("YYYYMMDD")`
+        // and uses it as the TRAN_DT key at :152. Do not "restore parity" here.
+        //
+        // Scope is deliberately narrow — see the two dates below.
+        String lookupTranDt = tranDtFromFileNm(req.fileNm(), tranDt, vanOrgCd, envelope.tno());
+
         // 3. Look up the reception-requested file (legacy R004). PROC_STEP guard:
         //    a duplicate callback (file already advanced) finds nothing → safe no-op.
         TbFirmFileMst file = firmFileMstRepository
                 .findByTranDtAndFirmFileNmAndProcStepAndProcStat(
-                        tranDt, req.fileNm(), ProcStep.REQ.code(), ProcStat.REQ.code())
+                        lookupTranDt, req.fileNm(), ProcStep.REQ.code(), ProcStat.REQ.code())
                 .orElse(null);
         if (file == null) {
-            log.info("01301 callback ignored — no file at PROC_STEP=0/PROC_STAT=6 (already progressed or unknown) "
-                    + "vanOrgCd={} fileNm={}", vanOrgCd, req.fileNm());
-            // Idempotent replay / already-processed → success ack (rebuilt EV) so the gateway stops resending.
-            return receptionAck(envelope, req, FirmBankingResultCd.SUCC, FirmBankingResultCd.MSG_SUCC, true, apiKey);
+            return handleUnmatchedCallback(envelope, req, vanOrgCd, lookupTranDt, tranDt, tranTm, apiKey);
         }
+
+        // From here the row is in hand, so its OWN TRAN_DT is authoritative for every sibling / pay-file
+        // lookup — mirroring legacy :177, which switches from procDt to
+        // idoOutFFMR001.getString("TRAN_DT") the moment the file row is resolved.
+        String rowTranDt = file.getTranDt();
 
         BigDecimal receivedAmt = combineAmount(req.dataAmt(), req.dataDcmAmt());
 
@@ -162,7 +256,7 @@ public class BulkReceptionResultService {
         // (TB_PAY_FILE_MST) is already FAIL — a prior sibling failed, so executing this one would
         // move money partially. Write a G998 audit row + mark THIS firm file PROC_STEP='1'/PROC_STAT='3'
         // (REG_RSLT_CD=G998) and stop: no reception advance, no 00302. Matches legacy R004 CNT>0.
-        if (siblingAlreadyFailed(tranDt, file.getBizKey(), file.getFileSeqNo())) {
+        if (siblingAlreadyFailed(rowTranDt, file.getBizKey(), file.getFileSeqNo())) {
             log.warn("01301 sibling fail-stop (G998) — pay-file already FAIL, aborting fileNm={} bizKey={} fileSeqNo={}",
                     req.fileNm(), file.getBizKey(), file.getFileSeqNo());
             writeApiTran(file, tranDt, tranTm, ApiTranTp.BULK_RECEPTION_RESULT.code(),
@@ -217,7 +311,7 @@ public class BulkReceptionResultService {
         // 6. Split-file gate + inline 00302 (absorbs BATCH2). Hold until every sibling of the
         //    same FILE_SEQ_NO has been received; then issue 00302 for each reception-success sibling.
         List<TbFirmFileMst> siblings = firmFileMstRepository
-                .findByTranDtAndBizKeyAndFileSeqNo(tranDt, file.getBizKey(), file.getFileSeqNo());
+                .findByTranDtAndBizKeyAndFileSeqNo(rowTranDt, file.getBizKey(), file.getFileSeqNo());
         boolean awaitingSiblings = siblings.stream()
                 .anyMatch(f -> ProcStep.REQ.code().equals(f.getProcStep()));
         if (awaitingSiblings) {
@@ -226,12 +320,16 @@ public class BulkReceptionResultService {
             // Reception itself succeeded (00302 merely deferred) → success ack with rebuilt EV.
             return receptionAck(envelope, req, FirmBankingResultCd.SUCC, FirmBankingResultCd.MSG_SUCC, true, apiKey);
         }
-        for (TbFirmFileMst ready : siblings) {
-            if (ProcStep.REQ_RECV.code().equals(ready.getProcStep())
-                    && ProcStat.REQ.code().equals(ready.getProcStat())) {
-                issueExecutionInline(ready, vanOrgCd, tranDt, tranTm);
-            }
-        }
+        // Barrier released: every sibling has reported. Issue 00302 for each reception-success sibling
+        // AFTER this transaction commits, one transaction per sibling (see the class Javadoc's
+        // "Transaction boundaries" section for why the fan-out cannot run in here).
+        List<TbFirmFileMstId> ready = siblings.stream()
+                .filter(f -> ProcStep.REQ_RECV.code().equals(f.getProcStep())
+                        && ProcStat.REQ.code().equals(f.getProcStat()))
+                .map(f -> new TbFirmFileMstId(
+                        f.getTranDt(), f.getBizKey(), f.getFileSeqNo(), f.getFirmFileNm()))
+                .toList();
+        scheduleExecutionFanOut(ready, vanOrgCd, tranDt, tranTm);
         // A2 (audit C1): 01301 success ack — rebuild EV/VV over the SIX echo fields
         // {bank_cd, prtn_id, file_nm, data_cnt, data_amt, data_dcm_amt} (legacy
         // FILE_DEPOSIT_TRANSFER_API1_act.jsp:409-423), RC=0000. NOT the request EV (unlike 01302).
@@ -259,62 +357,252 @@ public class BulkReceptionResultService {
     }
 
     /**
-     * Issue {@code 00302} for one reception-success file, idempotently, and advance
-     * it to {@code PROC_STEP='2'} (execution requested) on a confirmed response.
-     * Mirrors {@code FILE_DEPOSIT_TRANSFER_BATCH2}: audit-before-call, then update.
+     * Register the 00302 fan-out for {@code afterCommit}, one transaction per sibling.
      *
-     * <p>A {@code 00302} that already has a {@code TB_FIRM_BAT_API_TRAN} row is
-     * skipped (idempotency). A no-response / gateway failure is caught, recorded on
-     * the audit row, and leaves the file at {@code PROC_STEP='1'} for manual
-     * recovery — it never rolls back the reception-success state and never throws
-     * out of the 01301 callback.
+     * <p>See the class Javadoc's "Transaction boundaries" section for why the fan-out cannot run inside
+     * {@link #handle}'s transaction. In short: legacy BATCH2 committed per row, so each file's
+     * transition was durable the moment its result was known and one file's failure could not undo
+     * another's. Issuing N gateway calls inside one transaction lost both properties, and held a DB
+     * connection across all N.
+     *
+     * <p><b>The no-transaction fallback is deliberate and loud.</b> {@code handle} is
+     * {@code @Transactional}, so in the running application there is always a synchronization to
+     * register on ({@code BulkReceptionResultTransactionBoundaryTest} asserts that the proxied path
+     * does, so a future refactor cannot drop the annotation unnoticed). A caller without one (a unit
+     * test constructing the service directly, or some future non-transactional entry point) would
+     * otherwise get no 00302 at all, and a stranded payment is a worse outcome than a missing commit
+     * barrier — so the fan-out runs immediately and says so at WARN.
+     *
+     * <p>Running immediately is also not a correctness compromise: with no synchronization active there
+     * is no transaction, so every repository write {@code handle} just performed has already
+     * auto-committed. There is no barrier left to lose — only the guarantee that the writes and the
+     * gateway calls are ordered by an explicit commit rather than by having each write commit on its own.
      */
-    private void issueExecutionInline(TbFirmFileMst file, String vanOrgCd, String tranDt, String tranTm) {
-        if (firmBatApiTranRepository.existsByTranDtAndBizKeyAndFirmFileNmAndApiTranTp(
-                tranDt, file.getBizKey(), file.getFirmFileNm(), ApiTranTp.BULK_EXECUTION.code())) {
-            log.info("00302 already issued for fileNm={} (idempotent skip) bizKey={}",
-                    file.getFirmFileNm(), file.getBizKey());
+    private void scheduleExecutionFanOut(List<TbFirmFileMstId> ready, String vanOrgCd,
+                                         String tranDt, String tranTm) {
+        if (ready.isEmpty()) {
             return;
         }
-
-        String reqCnt = file.getReqCnt() == null ? "0" : file.getReqCnt().toBigInteger().toString();
-        String[] amt = splitAmount(file.getReqAmt());
-
-        // Audit BEFORE the call so even a no-response leaves a 00302 marker that blocks re-issue.
-        // 00302 request audit: allocate a fresh TRAN_SEQ (tranSeq=null) — its value is then sent as
-        // the 00302 gateway TNO (A1). This is a request the refactor originates, not a callback echo.
-        TbFirmBatApiTran audit = writeApiTran(file, tranDt, tranTm, ApiTranTp.BULK_EXECUTION.code(),
-                file.getReqCnt(), file.getReqAmt(), null, null, null, null, null, null);
-
-        try {
-            issueExecution(new BulkExecutionApiCommand(
-                    file.getVanOrgCd() != null ? file.getVanOrgCd() : vanOrgCd,
-                    file.getOutBankCd(), file.getBankPrtnId(), file.getFirmFileNm(),
-                    reqCnt, amt[0], amt[1], audit.getTranSeq()));
-
-            // Confirmed → record success + advance PROC_STEP 1→2 (execution requested).
-            audit.setRsCd(FirmBankingResultCd.SUCC);
-            audit.setRsMsg(FirmBankingResultCd.MSG_SUCC);
-            audit.setRsDttm(tranDt + tranTm);
-            firmBatApiTranRepository.save(audit);
-
-            file.setProcStep(ProcStep.DEPO_REQ.code());
-            file.setProcDttm(tranDt + tranTm);
-            firmFileMstRepository.save(file);
-            log.info("00302 execution issued inline fileNm={} bizKey={} -> PROC_STEP=2",
-                    file.getFirmFileNm(), file.getBizKey());
-        } catch (BusinessException e) {
-            // No-response / gateway error: keep PROC_STEP=1, record the result, do NOT rethrow.
-            // Recovery is monitoring / manual operations (Mr. Kang, K9) — no automatic re-issue.
-            String rc = e.getArgs() != null && e.getArgs().length > 0 && e.getArgs()[0] != null
-                    ? e.getArgs()[0].toString() : FirmBankingResultCd.ETC_ERR;
-            audit.setRsCd(rc);
-            audit.setRsMsg(e.getCode());
-            audit.setRsDttm(tranDt + tranTm);
-            firmBatApiTranRepository.save(audit);
-            log.warn("00302 execution NOT confirmed (rc={}) — file left at PROC_STEP=1 for manual recovery "
-                    + "fileNm={} bizKey={}", rc, file.getFirmFileNm(), file.getBizKey());
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            log.warn("01301 handled with no active transaction — issuing {} 00302 request(s) immediately, "
+                    + "with no commit barrier (expected only for non-transactional callers)", ready.size());
+            fanOutExecution(ready, vanOrgCd, tranDt, tranTm);
+            return;
         }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                fanOutExecution(ready, vanOrgCd, tranDt, tranTm);
+            }
+        });
+    }
+
+    /**
+     * Issue 00302 for each ready sibling — each in its own transaction, each isolated from the others.
+     *
+     * <p>{@link BulkExecutionInlineTxService#issueOne} records every <i>expected</i> failure on the
+     * audit row and the file status itself, so reaching the catch here means something escaped even
+     * that (and took its own transaction down with it). Legacy's equivalent is BATCH2's per-row
+     * {@code continue}: abandon that sibling to monitoring, keep going. Rethrowing would be worse than
+     * useless — this runs after commit, so there is nothing left to roll back and the exception would
+     * surface on a callback WeCMS has already acknowledged.
+     */
+    private void fanOutExecution(List<TbFirmFileMstId> ready, String vanOrgCd,
+                                 String tranDt, String tranTm) {
+        for (TbFirmFileMstId id : ready) {
+            try {
+                bulkExecutionInlineTxService.issueOne(id, vanOrgCd, tranDt, tranTm, this::issueExecution);
+            } catch (RuntimeException e) {
+                log.error("00302 fan-out failed unexpectedly for fileNm={} bizKey={} fileSeqNo={} — "
+                                + "sibling abandoned for monitoring, remaining siblings continue",
+                        id.getFirmFileNm(), id.getBizKey(), id.getFileSeqNo(), e);
+            }
+        }
+    }
+
+    /**
+     * A 01301 callback whose {@code R004} lookup ({@code PROC_STEP='0'/PROC_STAT='6'}) matched nothing.
+     *
+     * <p>That lookup returning empty covers <b>three different situations</b>, and the handler used to
+     * answer all three with {@code RC=0000} and a rebuilt {@code EV} — the strongest "stop resending"
+     * signal the protocol has — while persisting nothing and logging at {@code info}. It is the correct
+     * answer for exactly one of them:
+     * <ol>
+     *   <li><b>a row with this {@code FIRM_FILE_NM} exists at a later {@code PROC_STEP}</b>
+     *       ({@code '1'}/{@code '2'}/{@code '3'}) → a genuine replay of a callback WeCMS already
+     *       processed. Keep the success ack: resending cannot help and the work is done;</li>
+     *   <li><b>no row with this {@code FIRM_FILE_NM} in any state</b> → WeCMS has no record of the file
+     *       the bank is reporting on. That is not "already processed", it is a lookup that should have
+     *       matched (a callback that crossed midnight so {@code TRAN_DT} differs, a reception row not
+     *       yet committed, a name mismatch, the wrong environment). Acking {@code 0000} tells the
+     *       gateway to stop, and the reception result is then <b>lost with nothing recorded anywhere</b>.
+     *       Answer a retryable error so the gateway resends;</li>
+     *   <li><b>a row exists but in an unexpected state</b> (e.g. still {@code PROC_STEP='0'} with
+     *       {@code PROC_STAT} other than {@code '6'}) → also not a completed replay; retryable.</li>
+     * </ol>
+     *
+     * <p><b>Audit on every callback, not only the processed ones.</b> In cases 1 and 3 the
+     * {@code TB_FIRM_BAT_API_TRAN} row is written through
+     * {@link DispatchApiTranAuditWriter#saveInNewTransaction}, so a discarded callback stays
+     * reconstructable and — being {@code REQUIRES_NEW} — survives even if this transaction later rolls
+     * back.
+     *
+     * <p>Case 2 <b>cannot</b> be audited that way: {@code BIZ_KEY} is part of
+     * {@code TB_FIRM_BAT_API_TRAN}'s primary key and is {@code NOT NULL}, and an unmatched callback
+     * resolves no tenant (it carries {@code bank_cd} and {@code prtn_id}, never {@code BIZ_KEY}).
+     * Inventing a placeholder tenant to satisfy the PK would put a fabricated {@code BIZ_KEY} into the
+     * payment ledger, which is worse than not recording the row. So case 2 escalates through
+     * {@link OpsAlertService#notify} instead — it needs no DB row, and the condition warrants a push
+     * rather than a log line, because an unmatched callback means the gateway is retrying against a file
+     * WeCMS cannot find and only an operator can work out why (wrong environment, a reception row that
+     * never committed, a {@code TRAN_DT} that rolled over). The {@code error} log carrying
+     * {@code ID} / {@code TNO} / {@code file_nm} / {@code RC} remains the detail record.
+     */
+    /**
+     * @param lookupTranDt the FILE-NAME-derived date (FIX A) — the key for every row lookup here. Using
+     *                     the callback clock instead was what made the rollover unrecoverable: the
+     *                     primary lookup missed, this fallback filtered on the same wrong date, and so
+     *                     every gateway retry produced the identical UNMATCHED error.
+     * @param tranDt       the CALLBACK-CLOCK date — used only for the audit row's {@code TRAN_DT} and,
+     *                     with {@code tranTm}, for {@code RS_DTTM}. Kept clock-derived deliberately:
+     *                     legacy stamps both from {@code procDt} ({@code API1_act.jsp:197,211}), and
+     *                     splicing the filename date onto a callback-time clock would manufacture a
+     *                     timestamp for a day that never happened.
+     */
+    private EfsEnvelope handleUnmatchedCallback(EfsCallbackEnvelope envelope, BulkReceptionResultRequest req,
+                                                String vanOrgCd, String lookupTranDt,
+                                                String tranDt, String tranTm, String apiKey) {
+        List<TbFirmFileMst> byName =
+                firmFileMstRepository.findByTranDtAndFirmFileNm(lookupTranDt, req.fileNm());
+
+        if (byName.isEmpty()) {
+            // Case 2 — nothing processed and no tenant to attribute an audit row to. Error level: this
+            // is a reception result WeCMS could not match, not a routine duplicate.
+            // Report the date the query ACTUALLY used (the filename-derived one) plus the callback
+            // clock date, so an operator can see immediately whether the two disagree — that
+            // disagreement is the rollover signature and it used to be invisible in this log line.
+            log.error("01301 callback UNMATCHED — no TB_FIRM_FILE_MST row for lookupTranDt={} fileNm={} in "
+                            + "any state (callbackClockDt={}); answering RC={} so the gateway resends. "
+                            + "vanOrgCd={} tno={} (no audit row is possible: TB_FIRM_BAT_API_TRAN.BIZ_KEY "
+                            + "is a NOT NULL PK column and an unmatched callback resolves no tenant)",
+                    lookupTranDt, req.fileNm(), tranDt, FirmBankingResultCd.ETC_ERR,
+                    vanOrgCd, envelope.tno());
+            // Escalate instead of auditing: no DB row is possible here (see the method Javadoc), and the
+            // gateway will keep retrying until someone works out why the file cannot be found.
+            // OpsAlertService is @Async and a no-op unless wecms.dispatch.alert.enabled=true.
+            if (vanOrgCd != null && !vanOrgCd.isBlank()) {
+                opsAlertService.notify(vanOrgCd,
+                        "접수결과 수신요청 API — unmatched callback (no TB_FIRM_FILE_MST row)."
+                                + "\nTRAN_DT (lookup, from file name) : " + lookupTranDt
+                                + "\nTRAN_DT (callback clock) : " + tranDt
+                                + "\nFIRM_FILE_NM : " + req.fileNm()
+                                + "\nID : " + vanOrgCd
+                                + "\nTNO : " + envelope.tno()
+                                + "\nAPI RC : " + FirmBankingResultCd.ETC_ERR
+                                + "\nThe gateway will retry. No audit row could be written "
+                                + "(TB_FIRM_BAT_API_TRAN.BIZ_KEY is NOT NULL and no tenant is resolvable).");
+            }
+            return receptionAck(envelope, req, FirmBankingResultCd.ETC_ERR,
+                    FirmBankingResultCd.MSG_ETC_ERR, false, apiKey);
+        }
+
+        // FIX J — AMBIGUOUS NAME. More than one file carries this FIRM_FILE_NM, so "which file is this
+        // callback about?" has no answer, and the checks below would answer it by accident:
+        //   * `byName.get(0)` picks a row arbitrarily (the query has no ORDER BY), and
+        //   * `anyMatch` lets ANY row's progress decide the acknowledgement.
+        // Combined, a callback genuinely meant for row Y — sitting in an unexpected state — is acked
+        // RC=0000 on the strength of row X having advanced. RC=0000 is the strongest "stop resending"
+        // signal there is, so Y's reception result is consumed and lost, with no retry and no record.
+        // That is the exact failure C-2 exists to prevent (it separated "replay" from "unknown" from
+        // "unexpected state" precisely because the three need opposite acknowledgements); the multi-row
+        // case slipped through because C-2 reasoned about one row.
+        //
+        // So: do not classify at all. Answer retryable, escalate, and let a human disambiguate.
+        //
+        // The gateway will keep resending and the condition is deterministic — two rows will keep
+        // matching — so this is an unbounded retry until someone acts. That is deliberate and is the
+        // lesser evil: a retrying callback is recoverable the moment the ambiguity is resolved, whereas
+        // a wrongly-acked one is gone. It is the same trade the R004 lookup already makes when two rows
+        // match at '0'/'6' (Spring Data raises IncorrectResultSizeDataAccessException, which CallbackAck
+        // maps to G004). The alert below is what makes it actionable rather than a silent loop.
+        //
+        // NOT audited, on purpose. TB_FIRM_BAT_API_TRAN.BIZ_KEY is a NOT NULL PK column and the two rows
+        // may belong to different tenants, so writing the row would mean guessing a tenant for a payment
+        // ledger entry. That is the same objection this method already records for the no-row case
+        // ("inventing a placeholder tenant … is worse than not recording the row"), and an arbitrary
+        // guess is not better than an invented value. The error log + ops alert carry the record.
+        if (byName.size() > 1) {
+            String rows = byName.stream()
+                    .map(f -> "{fileSeqNo=" + f.getFileSeqNo()
+                            + ", bizKey=" + f.getBizKey()
+                            + ", bankPrtnId=" + f.getBankPrtnId()
+                            + ", outBankCd=" + f.getOutBankCd()
+                            + ", procStep=" + f.getProcStep()
+                            + ", procStat=" + f.getProcStat() + "}")
+                    .collect(java.util.stream.Collectors.joining(", "));
+            log.error("01301 callback AMBIGUOUS — {} TB_FIRM_FILE_MST rows share fileNm={} on tranDt={}; "
+                            + "refusing to classify from another row's state. Answering RC={} so the "
+                            + "gateway resends. vanOrgCd={} tno={} rows=[{}] (no audit row written: "
+                            + "TB_FIRM_BAT_API_TRAN.BIZ_KEY is a NOT NULL PK column and the tenant is "
+                            + "ambiguous). The callback's prtn_id={} is the field that would "
+                            + "disambiguate — see the FIRM_FILE_NM naming decision.",
+                    byName.size(), req.fileNm(), lookupTranDt, FirmBankingResultCd.ETC_ERR,
+                    vanOrgCd, envelope.tno(), rows, req.prtnId());
+            if (vanOrgCd != null && !vanOrgCd.isBlank()) {
+                opsAlertService.notify(vanOrgCd,
+                        "접수결과 수신요청 API — ambiguous FIRM_FILE_NM (multiple files share one name)."
+                                + "\nTRAN_DT (lookup, from file name) : " + lookupTranDt
+                                + "\nFIRM_FILE_NM : " + req.fileNm()
+                                + "\nMATCHING_ROWS : " + byName.size()
+                                + "\nROWS : " + rows
+                                + "\nCALLBACK prtn_id : " + req.prtnId()
+                                + "\nID : " + vanOrgCd
+                                + "\nTNO : " + envelope.tno()
+                                + "\nAPI RC : " + FirmBankingResultCd.ETC_ERR
+                                + "\nThe gateway will retry until the ambiguity is resolved. Do NOT "
+                                + "advance either row without establishing which file the bank means.");
+            }
+            return receptionAck(envelope, req, FirmBankingResultCd.ETC_ERR,
+                    FirmBankingResultCd.MSG_ETC_ERR, false, apiKey);
+        }
+
+        // Exactly one row from here — `get(0)` is unambiguous and `anyMatch` degenerates to that row.
+        TbFirmFileMst known = byName.get(0);
+        boolean alreadyProgressed = byName.stream()
+                .anyMatch(f -> isPastReceptionRequest(f.getProcStep()));
+        BigDecimal receivedAmt = combineAmount(req.dataAmt(), req.dataDcmAmt());
+        String rc = alreadyProgressed ? FirmBankingResultCd.SUCC : FirmBankingResultCd.ETC_ERR;
+        String rm = alreadyProgressed ? FirmBankingResultCd.MSG_SUCC : FirmBankingResultCd.MSG_ETC_ERR;
+
+        // Audit the discarded callback (REQUIRES_NEW — durable regardless of this transaction's fate).
+        apiTranAuditWriter.saveInNewTransaction(buildApiTran(known, tranDt, tranTm,
+                ApiTranTp.BULK_RECEPTION_RESULT.code(),
+                bigDecimalOrZero(req.dataCnt()), receivedAmt,
+                req.resultCd(), req.resultMsg(), rc, rm, tranDt + tranTm, envelope.tno()));
+
+        if (alreadyProgressed) {
+            log.info("01301 callback replay — fileNm={} is already at PROC_STEP={} (past '0'); acking "
+                            + "RC=0000 so the gateway stops resending. vanOrgCd={} tno={}",
+                    req.fileNm(), known.getProcStep(), vanOrgCd, envelope.tno());
+        } else {
+            log.error("01301 callback in an UNEXPECTED state — fileNm={} is at PROC_STEP={}/PROC_STAT={}, "
+                            + "not the expected '0'/'6'; answering RC={} so the gateway resends. "
+                            + "vanOrgCd={} tno={}",
+                    req.fileNm(), known.getProcStep(), known.getProcStat(),
+                    FirmBankingResultCd.ETC_ERR, vanOrgCd, envelope.tno());
+        }
+        // The replay case keeps legacy's rebuilt-EV success ack; the retryable cases echo the inbound EV.
+        return receptionAck(envelope, req, rc, rm, alreadyProgressed, apiKey);
+    }
+
+    /**
+     * {@code true} when {@code procStep} is past reception-request ({@code '0'}) — the file has already
+     * been advanced by a 01301 callback, so a further callback for it is a replay.
+     */
+    private static boolean isPastReceptionRequest(String procStep) {
+        return ProcStep.REQ_RECV.code().equals(procStep)
+                || ProcStep.DEPO_REQ.code().equals(procStep)
+                || ProcStep.DEPO_RES_RECV.code().equals(procStep);
     }
 
     /** Mark the file reception-failed: {@code PROC_STEP='1' / PROC_STAT='3'}. */
@@ -347,6 +635,40 @@ public class BulkReceptionResultService {
      * {@code PROC_STAT='3'} for the {@code (TRAN_DT, BIZ_KEY, FILE_SEQ_NO)} group). The refactor's
      * pay-file is one row per group, so this is "is the shared pay-file already FAIL?".
      */
+    /**
+     * FIX A — extract {@code TRAN_DT} from {@code FIRM_FILE_NM}.
+     *
+     * <p>The name is {@code S_{VAN_ORG_CD}_{FILE_TYPE}_{round}_{TRAN_DT}}
+     * ({@code BulkReceptionService:513}), so {@code split("_")[4]} is the build date. Neither
+     * {@code VAN_ORG_CD} ({@code GV00000001}) nor {@code FILE_TYPE} ({@code SHB}/{@code VCB}/{@code WRB})
+     * contains an underscore, so the split is unambiguous. Unlike the 01302 result file, the 01301
+     * callback echoes the <b>sent</b> name verbatim — which is why the caller can also still match
+     * {@code FIRM_FILE_NM} exactly.
+     *
+     * <p><b>Fails soft, never throws.</b> On a malformed name this returns {@code fallbackTranDt} (the
+     * callback clock date, i.e. the previous behaviour) and logs a WARN. Rejecting the callback instead
+     * would be worse than the bug being fixed: a name shape this method does not recognise is a
+     * gateway-contract change, and answering it with an error would strand every file rather than the
+     * ones crossing midnight. The 8-digit check is what stops a plausible-but-wrong token (a round
+     * number, a renamed file) silently becoming the lookup key.
+     *
+     * @param fallbackTranDt the callback-clock date to fall back to
+     */
+    private String tranDtFromFileNm(String fileNm, String fallbackTranDt, String vanOrgCd, String tno) {
+        if (fileNm != null) {
+            String[] parts = fileNm.split("_");
+            if (parts.length >= 5 && DT8_DIGITS.matcher(parts[4]).matches()) {
+                return parts[4];
+            }
+        }
+        log.warn("01301 callback — could not derive TRAN_DT from FIRM_FILE_NM={} (expected "
+                        + "S_{{VAN}}_{{TYPE}}_{{round}}_{{yyyyMMdd}}); falling back to the callback clock "
+                        + "date {}. A file built on a different ICT day will NOT be found. "
+                        + "vanOrgCd={} tno={}",
+                fileNm, fallbackTranDt, vanOrgCd, tno);
+        return fallbackTranDt;
+    }
+
     private boolean siblingAlreadyFailed(String tranDt, String bizKey, String fileSeqNo) {
         return payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(tranDt, bizKey, fileSeqNo)
                 .map(pay -> ProcStat.FAIL.code().equals(pay.getProcStat()))
@@ -362,6 +684,20 @@ public class BulkReceptionResultService {
      *                then sends as the 00302 gateway TNO).
      */
     private TbFirmBatApiTran writeApiTran(TbFirmFileMst file, String tranDt, String tranTm, String apiTranTp,
+                                          BigDecimal batCnt, BigDecimal batAmt,
+                                          String regRsltCd, String regRsltMsg,
+                                          String rsCd, String rsMsg, String rsDttm, String tranSeq) {
+        return firmBatApiTranRepository.save(buildApiTran(file, tranDt, tranTm, apiTranTp,
+                batCnt, batAmt, regRsltCd, regRsltMsg, rsCd, rsMsg, rsDttm, tranSeq));
+    }
+
+    /**
+     * Build (but do not persist) a {@code TB_FIRM_BAT_API_TRAN} row — split out of
+     * {@link #writeApiTran} so a caller can choose its own persistence boundary. The unmatched-callback
+     * path routes the built row through {@link DispatchApiTranAuditWriter#saveInNewTransaction} so the
+     * audit survives a rollback of the callback transaction.
+     */
+    private TbFirmBatApiTran buildApiTran(TbFirmFileMst file, String tranDt, String tranTm, String apiTranTp,
                                           BigDecimal batCnt, BigDecimal batAmt,
                                           String regRsltCd, String regRsltMsg,
                                           String rsCd, String rsMsg, String rsDttm, String tranSeq) {
@@ -382,7 +718,7 @@ public class BulkReceptionResultService {
         row.setRsCd(rsCd);
         row.setRsMsg(rsMsg);
         row.setRsDttm(rsDttm);
-        return firmBatApiTranRepository.save(row);
+        return row;
     }
 
     private void validateRequest(BulkReceptionResultRequest req) {
@@ -414,15 +750,6 @@ public class BulkReceptionResultService {
         String i = StringUtils.hasText(itg) ? itg.trim() : "0";
         String d = StringUtils.hasText(dcm) ? dcm.trim() : "0";
         return new BigDecimal(i + "." + d);
-    }
-
-    /**
-     * Split the stored amount back into [integer, decimal-portion] for the 00302 request,
-     * reproducing legacy {@code StrUtil.BigDecPaser} exactly
-     * (see {@link com.kosign.wecms.domain.payment.dispatch.van.AmountSplitter}).
-     */
-    private String[] splitAmount(BigDecimal amt) {
-        return com.kosign.wecms.domain.payment.dispatch.van.AmountSplitter.split(amt);
     }
 
     private BigDecimal bigDecimalOrZero(String value) {
@@ -466,8 +793,9 @@ public class BulkReceptionResultService {
         String tno = cmd.tno();
         String ev = efsCryptoService.encryptEv(businessJson, apiKey, rqDtime);
         String vv = efsCryptoService.buildVv(businessJson, apiKey);
-        String id = StringUtils.hasText(efsProperties.getPartnerId())
-                ? efsProperties.getPartnerId() : cmd.vanOrgCd();
+        // D-2 (legacy parity): the envelope ID is ALWAYS TB_FIRM_CONF.VAN_ORG_CD — never a
+        // configured partner id. Per-leg legacy evidence in EfsProperties' class Javadoc.
+        String id = cmd.vanOrgCd();
 
         EfsEnvelope requestEnvelope = new EfsEnvelope(
                 id, rqDtime, null, tno, ev, vv,
@@ -476,7 +804,10 @@ public class BulkReceptionResultService {
         EfsEnvelope response = efsApiClient.send(EfsApiClient.EFS_302, requestEnvelope);
 
         String rc = response == null ? null : response.rc();
-        if (response == null || !FirmBankingResultCd.isSuccess(rc)) {
+        // Legacy parity (FILE_DEPOSIT_TRANSFER_BATCH2.java:242): the 00302 leg accepts BOTH "0000"
+        // and "BT00" as success. The generic isSuccess() accepts only "0000" and is left untouched
+        // for the 201/202/203/00301 legs, which have no BT00 in their code space.
+        if (response == null || !FirmBankingResultCd.isBulkExecutionSuccess(rc)) {
             log.warn("EFS 302 execution failed vanOrgCd={} fileNm={} dataCnt={} rc={}",
                     cmd.vanOrgCd(), cmd.fileNm(), cmd.dataCnt(), rc);
             throw new BusinessException("WBE_EFS_GATEWAY_ERROR", rc);

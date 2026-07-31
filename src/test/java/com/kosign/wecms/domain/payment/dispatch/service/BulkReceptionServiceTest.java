@@ -39,20 +39,30 @@ class BulkReceptionServiceTest {
     private final EfsCryptoService crypto = new EfsCryptoService();
     private final ObjectMapper mapper = new ObjectMapper()
             .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
-    private final EfsProperties props = new EfsProperties(); // partnerId blank → ID = vanOrgCd
+    private final EfsProperties props = new EfsProperties(); // D-2: envelope ID is always TB_FIRM_CONF.VAN_ORG_CD (legacy-verified)
 
     @Mock
     EfsApiClient efsApiClient;
     @Mock
     VanApiKeyService vanApiKeyService;
+    /**
+     * H-4 — supplied as a mock rather than {@code null} even though these tests never reach
+     * {@code receive()}. A null claim collaborator would NPE the instant a {@code receive()} test is
+     * added to this class, and that NPE would surface from inside the claim call rather than at the
+     * construction site, hiding the real cause. The mock's default {@code false} return is also the
+     * safe direction: an unconfigured claim means "stand down", never "proceed".
+     */
+    @Mock
+    BulkDispatchClaimTxService bulkDispatchClaimTxService;
 
     private BulkReceptionService service() {
-        // issueReception() (the leg under test here) uses only the EFS/crypto deps;
-        // the receive() orchestration deps (repos / key-gen / codec / SFTP) are not
-        // exercised by these tests, so null is fine.
+        // issueReception() (the leg under test here) uses only the EFS/crypto deps; the receive()
+        // orchestration deps (repos / key-gen / codec / SFTP / validator / alerts / operating hours)
+        // are not exercised by these tests. The claim collaborator is the one exception — see above.
         return new BulkReceptionService(
                 efsApiClient, crypto, vanApiKeyService, props, mapper,
                 null, null, null, null, null, null, null, null, null, null, null, null, null,
+                bulkDispatchClaimTxService,
                 null, null, null);
     }
 
@@ -92,7 +102,7 @@ class BulkReceptionServiceTest {
         verify(efsApiClient).send(eq(EfsApiClient.EFS_301), captor.capture());
         EfsEnvelope sent = captor.getValue();
 
-        assertThat(sent.id()).isEqualTo("ORG000001");          // partnerId blank → vanOrgCd
+        assertThat(sent.id()).isEqualTo("ORG000001");          // D-2 legacy parity: envelope ID == VAN_ORG_CD
         assertThat(sent.rqDtime()).matches("\\d{14}");
         assertThat(sent.tno()).isEqualTo("0000042"); // A1 (audit X-2): TNO = allocated TRAN_SEQ
         assertThat(sent.ev()).isNotBlank();

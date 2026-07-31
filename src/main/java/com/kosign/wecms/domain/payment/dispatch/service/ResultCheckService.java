@@ -20,12 +20,17 @@ import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConf;
 import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConfId;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.UUID;
@@ -40,10 +45,12 @@ import java.util.UUID;
  *       transfer returns {@code RC=G999} (no definitive response) to confirm the
  *       true outcome (§5.4 recovery rule).</li>
  *   <li>The scheduled poll ({@link com.kosign.wecms.domain.payment.dispatch.scheduler.ResultCheckJob})
- *       — would call {@link #inquire} for aged {@code TRAN_TP='202'}/{@code PROC_STAT='6'}
- *       rows. <b>Still gated (D4/B7):</b> {@link #runOnce()} stays a no-op and the
- *       cron defaults to "never fire" so the refactor never co-processes live
- *       rows on the shared dev DB.</li>
+ *       — calls {@link #inquire} for aged {@code TRAN_TP='202'}/{@code PROC_STAT='6'}
+ *       rows. <b>Double-gated (D4/B7)</b>, like every sibling sweep: {@link #runOnce()}
+ *       is a no-op unless {@code wecms.dispatch.result-check.enabled=true}, <b>and</b>
+ *       the job's cron defaults to "never fire". Both default OFF, so the refactor never
+ *       co-processes live rows on the shared dev DB. When both gates are open the body
+ *       does real work — it is <b>not</b> inert.</li>
  * </ul>
  *
  * <p>Flow (mirrors {@link com.kosign.wecms.domain.payment.dispatch.recipient.RecipientLookupService}):
@@ -66,6 +73,14 @@ public class ResultCheckService {
     private static final DateTimeFormatter DT8 = DateTimeFormatter.ofPattern("yyyyMMdd");
     private static final DateTimeFormatter TM6 = DateTimeFormatter.ofPattern("HHmmss");
     private static final ZoneId ICT = ZoneId.of("Asia/Ho_Chi_Minh");
+    /**
+     * D-1: the zone {@code TB_FIRM_TRAN.TRAN_DT} lives in. NOT a business zone — it is the zone
+     * legacy stamps the originating {@code TB_PAY_TARGET.TRAN_DT} in
+     * ({@code DateTimeUtils.utcNow()}, legacy {@code PymnHelper:2197}), which the refactor's 202
+     * write seam reuses as the firm-tran PK date. Do not "correct" this to ICT without changing
+     * the writers — reader and writer must share one clock.
+     */
+    private static final ZoneId UTC = ZoneOffset.UTC;
     private static final int TNO_MAX = 50;
 
     /** Real-time transfer leg ({@code TB_FIRM_TRAN.TRAN_TP}) the poll re-checks. */
@@ -76,6 +91,57 @@ public class ResultCheckService {
     private static final String ORG_ST_OK = "1";
     /** Legacy re-check window: only transfers older than 2 minutes are inquired. */
     private static final int RESULT_CHECK_DELAY_MINUTES = 2;
+
+    /** Fallback used when {@code batch-size} is configured non-positive. */
+    static final int DEFAULT_BATCH_SIZE = 100;
+
+    /**
+     * Master gate — OFF by default, matching {@code StrandedRecoveryService.enabled} and
+     * {@code StuckPayFileMonitorService.enabled}.
+     *
+     * <p>Before this existed, {@code result-check.cron} was the <b>only</b> gate on this body: a single
+     * cron variable started outbound EFS 203 traffic and {@code TB_FIRM_TRAN} / {@code TB_PAY_TARGET}
+     * {@code PROC_STAT} writes against whatever database the instance points at. Every sibling sweep
+     * that mutates payment state is double-gated; this one was not, and it is the sweep with the
+     * strictest coexistence precondition (see {@code ResultCheckJob}'s class Javadoc — it must not run
+     * while the legacy {@code PROCESSING_RESULT_CHECK_BATCH} is live on the same DB).
+     *
+     * <p><b>This gate also governs the {@code StrandedRecoveryService} delegation.</b> That sweep calls
+     * {@link #runOnce()} for its aged-{@code '6'} strand class, so with this flag false the delegation
+     * is a no-op even when {@code wecms.dispatch.recovery.enabled=true}. That is deliberate: the flag
+     * answers "may this instance drive 203 traffic and finalize payment rows?", and the answer cannot
+     * depend on which entry point asked.
+     */
+    @Value("${wecms.dispatch.result-check.enabled:false}")
+    private boolean enabled;
+
+    /**
+     * Whether {@link #runOnce()} will do anything — for callers that delegate into it and need to say so
+     * when it will not.
+     *
+     * <p>{@code StrandedRecoveryService} covers four strand classes and this method owns one of them
+     * (aged {@code 202}/{@code '6'} confirmation). A recovery sweep that silently completes three of four
+     * is the trap this accessor exists to close: the sweep logs a WARN naming the flag instead of
+     * reporting success.
+     */
+    public boolean isEnabled() {
+        return enabled;
+    }
+
+    /**
+     * Candidate rows fetched per scheduled pass (H-2).
+     *
+     * <p>Bounds memory <b>and</b> the number of sequential EFS 203 round-trips one pass can make,
+     * which in turn bounds how long the job holds its ShedLock. Legacy had no limit — it processed
+     * every eligible row in one run — so this is an operational bound, not a parity change: the same
+     * rows are still processed, just across successive passes when the volume is large.
+     *
+     * <p>A non-positive value falls back to {@link #DEFAULT_BATCH_SIZE} rather than failing startup;
+     * a scheduler that refuses to boot over a mistyped batch size is worse than one that runs with a
+     * sane default and says so. See {@link #effectiveBatchSize()}.
+     */
+    @Value("${wecms.dispatch.result-check.batch-size:100}")
+    private int batchSize = DEFAULT_BATCH_SIZE;
 
     private final EfsApiClient efsApiClient;
     private final EfsCryptoService efsCryptoService;
@@ -131,8 +197,9 @@ public class ResultCheckService {
         String tno = StringUtils.hasText(inquiryTno) ? inquiryTno : newTno(rqDtime);
         String ev = efsCryptoService.encryptEv(businessJson, apiKey, rqDtime);
         String vv = efsCryptoService.buildVv(businessJson, apiKey);
-        String id = StringUtils.hasText(efsProperties.getPartnerId())
-                ? efsProperties.getPartnerId() : cmd.vanOrgCd();
+        // D-2 (legacy parity): the envelope ID is ALWAYS TB_FIRM_CONF.VAN_ORG_CD — never a
+        // configured partner id. Per-leg legacy evidence in EfsProperties' class Javadoc.
+        String id = cmd.vanOrgCd();
 
         EfsEnvelope requestEnvelope = new EfsEnvelope(
                 id, rqDtime, null, tno, ev, vv,
@@ -189,10 +256,12 @@ public class ResultCheckService {
      * (legacy parity — never abandons a transfer on a single failed inquiry, never
      * blocks the rest of the batch).
      *
-     * <p><b>Operational gating (D4/B7):</b> the {@link ResultCheckJob} cron defaults
-     * to "never fire" — this body only runs when an environment that owns the 202
-     * traffic explicitly sets {@code wecms.dispatch.result-check.cron}, so the
-     * refactor never co-processes live rows on the shared dev DB by accident.
+     * <p><b>Operational gating (D4/B7):</b> double-gated. This body runs only when an environment
+     * that owns the 202 traffic sets <i>both</i> {@code wecms.dispatch.result-check.enabled=true}
+     * <i>and</i> {@code wecms.dispatch.result-check.cron} (the cron defaults to "never fire"), so the
+     * refactor never co-processes live rows on the shared dev DB by accident. See {@link #enabled} for
+     * why one gate was not enough, and note that the flag also silences the
+     * {@code StrandedRecoveryService} delegation into this method.
      *
      * <p><b>Scope note (C4, 2026-06-13; atomicity Item 1, 2026-07-21):</b> the 203-confirmed
      * status is propagated to the originating {@code TB_PAY_TARGET} row as well as the
@@ -200,23 +269,136 @@ public class ResultCheckService {
      * (one {@code REQUIRES_NEW} transaction per row). The link is the shared
      * {@code (BIZ_KEY, TRAN_DT, TRAN_SEQ)} triple the C2 write seam established (the 202
      * firm-tran row reuses the pay-target {@code TRAN_SEQ}).
+     *
+     * <p><b>D-1 — which zone {@code TRAN_DT} is evaluated in (legacy-verified 2026-07-29)</b></p>
+     *
+     * <p>This filter used to compute "today" in {@code Asia/Ho_Chi_Minh} while {@code TRAN_DT} is
+     * written in <b>UTC</b>. Between 00:00 and 07:00 ICT the two disagree by one day, so every row
+     * dispatched in that window failed the date filter, was never re-checked on any later pass
+     * (the filter was today-only) and stayed at {@code PROC_STAT='6'} permanently — a payment sent
+     * to the bank with no result confirmation, 7 hours out of every 24.
+     *
+     * <p>The write side is <b>legacy-correct and unchanged</b>:
+     * <ul>
+     *   <li>Legacy stamps {@code TB_PAY_TARGET.TRAN_DT} / {@code REG_TM} from
+     *       {@code DateTimeUtils.utcNow()} — {@code PymnHelper.pymn_0001_001_c001:2197,2214}
+     *       ({@code utcNow()} = {@code now(TimeZone.getTimeZone("UTC"))},
+     *       {@code DateTimeUtils:84-86}). The refactor's API-rail executors do the same
+     *       ({@code ExpenseDispatchExecutor:150-152} and peers).</li>
+     *   <li>The 202 firm-tran row reuses that same date + {@code TRAN_SEQ}, so one triple keys
+     *       <b>both</b> tables — mirroring legacy, which finalises {@code TB_FIRM_TRAN} and
+     *       {@code TB_PAY_TARGET} with a single {@code org_proc_dt}
+     *       ({@code PROCESSING_RESULT_CHECK_BATCH:301,319}). Moving the firm-tran date to ICT
+     *       would break that shared key and with it {@link DispatchResultTxService}.</li>
+     * </ul>
+     *
+     * <p>So the <b>reader</b> was wrong, not the writer: the date filter is now evaluated in
+     * {@link #UTC}, the same clock the value is written in.
+     *
+     * <p><b>Not a legacy-parity argument, though</b> — an earlier revision of this paragraph claimed
+     * this "is exactly legacy's invariant (legacy reads {@code TRAN_DT = TO_CHAR(now(),'YYYYMMDD')} in
+     * the DB's own zone, the same clock its writer used)". Legacy is <b>not</b> reader==writer: its
+     * reader is PostgreSQL {@code now()} evaluated in the DB session's zone (Asia/Seoul on the JEX DB
+     * — see {@code project_batch_schedule_tz_antdiv_fixes}), while its writer is
+     * {@code DateTimeUtils.utcNow()}. Legacy therefore has the same two-clock mismatch this code was
+     * fixed to remove; it is simply a 9-hour offset instead of 7, and it strands rows for part of every
+     * day exactly as the pre-fix refactor did. Aligning the reader to the writer is the <b>right</b>
+     * choice and stays — but it is a deliberate improvement on legacy, not a reproduction of it, and
+     * should not be defended as parity.
+     *
+     * <p><b>Deliberate divergence from legacy (documented TO-BE, not parity):</b> legacy selects
+     * <i>today only</i>. This pass also accepts the <b>previous</b> UTC date, so a row dispatched
+     * shortly before midnight cannot be orphaned by the rollover before it becomes eligible.
+     * Legacy's own answer to that edge is the guard {@code … < '235800'} in
+     * {@code IDO.TB_FIRM_TRAN_R001.xml} — it stops the batch running in the last two minutes of the
+     * day, which avoids the wrap without ever recovering the affected row. Widening by one day is
+     * strictly safer, cannot double-process (each row is claimed via {@code PROC_STAT}), and is
+     * what makes "no dispatched transaction is permanently stranded by a date boundary" provable.
+     * See {@link #isAged} for the matching aging change.
      */
     public void runOnce() {
-        LocalDateTime now = LocalDateTime.now(ICT);
-        String today = now.format(DT8);
-        String cutoffTm = now.minusMinutes(RESULT_CHECK_DELAY_MINUTES).format(TM6);
-
-        List<TbFirmTran> aged = tbFirmTranRepository
-                .findByTranTpAndProcStat(TRAN_TP_TRANSFER, ProcStat.REQ.code()).stream()
-                .filter(t -> today.equals(t.getTranDt()))
-                .filter(t -> StringUtils.hasText(t.getTranTm()) && t.getTranTm().trim().compareTo(cutoffTm) <= 0)
-                .toList();
-
-        if (aged.isEmpty()) {
-            log.debug("result-check: no aged 202/PROC_STAT=6 transfers");
+        if (!enabled) {
+            log.debug("result-check disabled (wecms.dispatch.result-check.enabled=false) — no-op");
             return;
         }
-        log.info("result-check: {} aged 202 transfer(s) to inquire", aged.size());
+        // H-2: bounded + deterministically ordered. Previously this called
+        // findByTranTpAndProcStat(...), which loaded EVERY 202/'6' row — all dates, all tenants —
+        // into memory before filtering in Java.
+        //
+        // N-1 (2026-07-29): the eligible TRAN_DT set is now a SQL predicate, applied BEFORE the
+        // LIMIT. That is also legacy's own shape (the batch-side IDO.TB_FIRM_TRAN_R001 carries
+        // TRAN_DT = TO_CHAR(now(),'YYYYMMDD')); moving it into Java was the regression. With the
+        // filter after the limit, rows parked at 202/'6' from older dates sorted to the front of
+        // every oldest-first page, consumed the whole window and were then discarded — so once such
+        // rows reached the batch size the sweep processed nothing, permanently.
+        //
+        // Only the AGE comparison stays in Java (selectAged): the tiered RQ_DTTM-first rule is the
+        // D-1 fix and cannot be reduced to one SQL compare without reintroducing the UTC/ICT
+        // boundary bug. The date bound carries none of that subtlety.
+        int limit = effectiveBatchSize();
+
+        // C-10 — TWO CLOCKS IN ONE QUERY PATH, AND BOTH ARE CORRECT. Read this before "fixing" it.
+        //
+        // The date bound is evaluated in UTC and the age bound in ICT — seven hours apart. That is not
+        // a defect: they compare against columns stamped by DIFFERENT writers, in different zones, and
+        // each reader matches its own writer.
+        //
+        //   TRAN_DT      -> UTC. Written by DateTimeUtils.utcNow() on the pay-target (legacy
+        //                   PymnHelper.pymn_0001_001_c001:2197,2214) and reused verbatim as the
+        //                   firm-tran PK date; the refactor's API-rail executors do the same
+        //                   (ExpenseDispatchExecutor:150-152 and peers). Read here via LocalDate.now(UTC)
+        //                   — see eligibleTranDts + the D-1 paragraph in this method's Javadoc.
+        //   RQ_DTTM /    -> ICT. Both stamped from LocalDateTime.now(ICT) at dispatch
+        //   TRAN_TM         (RealtimeDispatchService:146-148 -> :240,:251). Read here via
+        //                   LocalDateTime.now(ICT) — see isAged.
+        //
+        // Aligning them to ONE zone would break whichever column lost its writer's clock: forcing the
+        // age compare to UTC would make every row look 7 hours older than it is and defeat the
+        // 2-minute delay entirely; forcing the date compare to ICT is the D-1 defect this method was
+        // fixed to remove (rows dispatched 00:00-07:00 ICT stranded at PROC_STAT='6' forever).
+        //
+        // What IS aligned here: both are now derived from a SINGLE instant. Previously they were two
+        // independent now() reads a few statements apart, so a pass that straddled a UTC midnight
+        // could bound the date on one day and the age on the other.
+        Instant now = Instant.now();
+        LocalDate utcToday = LocalDate.ofInstant(now, UTC);
+        LocalDateTime nowIct = LocalDateTime.ofInstant(now, ICT);
+        List<String> tranDts = eligibleTranDts(utcToday);
+
+        List<TbFirmTran> candidates = tbFirmTranRepository.findResultCheckCandidates(
+                TRAN_TP_TRANSFER, ProcStat.REQ.code(), tranDts, PageRequest.of(0, limit));
+
+        // Retained as a redundant in-memory guard. It is now a no-op for any row the query above can
+        // return, and exists so a future change to the query cannot silently widen the date scope
+        // past what selectAged/isAged were reasoned about.
+        List<TbFirmTran> aged = selectAged(candidates, nowIct, utcToday);
+
+        // N-1: the cap check is evaluated BEFORE the empty-return. Previously it sat after it, so a
+        // sweep whose entire page was discarded logged only "no aged transfers" at DEBUG — a total
+        // stall was indistinguishable from a healthy idle tick.
+        boolean capReached = candidates.size() >= limit;
+        if (capReached) {
+            log.warn("result-check: candidate batch cap reached ({} of limit {}, dates {}) — more "
+                            + "eligible rows may remain; the next scheduled pass continues from the "
+                            + "oldest remaining row", candidates.size(), limit, tranDts);
+        }
+        if (aged.isEmpty()) {
+            if (capReached) {
+                // A full page where nothing passed the age window. Not the N-1 starvation shape any
+                // more (the date bound is in SQL), but still worth surfacing: it means the whole
+                // window is younger than the delay, i.e. a dispatch burst — or, if it persists, that
+                // something is re-filling '6' faster than the sweep drains it.
+                log.warn("result-check: full candidate page ({}) but no row passed the {}-minute age "
+                                + "window — sweep did no work this pass; investigate if this repeats",
+                        candidates.size(), RESULT_CHECK_DELAY_MINUTES);
+            } else {
+                log.debug("result-check: no aged 202/PROC_STAT=6 transfers "
+                        + "(scanned {} candidate(s), limit {})", candidates.size(), limit);
+            }
+            return;
+        }
+        log.info("result-check: {} aged 202 transfer(s) to inquire (of {} candidate(s), limit {})",
+                aged.size(), candidates.size(), limit);
         for (TbFirmTran row : aged) {
             boolean pace;
             try {
@@ -237,6 +419,134 @@ public class ResultCheckService {
                 dispatchPacer.pause(row.getOutBankCd());
             }
         }
+    }
+
+    /**
+     * The batch size actually used, guarding against a misconfigured non-positive value.
+     *
+     * <p>{@code PageRequest.of(0, n)} throws on {@code n < 1}, and that exception would surface from
+     * inside the scheduler thread on every fire. Clamping to the documented default keeps the sweep
+     * running and logs the correction once per pass instead.
+     */
+    private int effectiveBatchSize() {
+        if (batchSize > 0) {
+            return batchSize;
+        }
+        log.warn("result-check: wecms.dispatch.result-check.batch-size={} is not positive — "
+                + "falling back to {}", batchSize, DEFAULT_BATCH_SIZE);
+        return DEFAULT_BATCH_SIZE;
+    }
+
+    /**
+     * N-1 — the eligible {@code TRAN_DT} values, as a SQL predicate rather than a post-limit filter.
+     *
+     * <p>Legacy selects <b>today only</b> ({@code TRAN_DT = TO_CHAR(now(),'YYYYMMDD')}, batch-side
+     * {@code IDO.TB_FIRM_TRAN_R001}). This adds the <b>previous</b> UTC date, which is the same
+     * deliberate widening {@link #selectAged} already applied — a row dispatched shortly before UTC
+     * midnight must not be orphaned by the rollover. Legacy's own answer to that edge was the
+     * {@code … < '235800'} guard, which skips the last two minutes of the day and never recovers the
+     * affected row.
+     *
+     * <p>Evaluated in {@link #UTC}, because {@code TRAN_DT} is <b>written</b> in UTC
+     * ({@code PymnHelper.pymn_0001_001_c001:2197} via {@code DateTimeUtils.utcNow()}). Comparing it
+     * against an ICT date is the D-1 defect and must not be reintroduced here.
+     *
+     * <p>Ordered newest-first purely for log readability; the query's own {@code ORDER BY} governs row
+     * order and is unaffected by the order of this set.
+     *
+     * @param utcToday current date in {@link #UTC}
+     * @return exactly two dates, {@code [today, yesterday]}, never empty
+     */
+    static List<String> eligibleTranDts(LocalDate utcToday) {
+        return List.of(utcToday.format(DT8), utcToday.minusDays(1).format(DT8));
+    }
+
+    /**
+     * D-1 — the aged-row selection, as a pure function of the candidate rows and the two clocks
+     * involved, so every date/time boundary is testable without waiting for one.
+     *
+     * <p>Two clocks, deliberately:
+     * <ul>
+     *   <li>{@code nowUtcDate} bounds {@code TRAN_DT}, because {@code TRAN_DT} is written in UTC
+     *       (legacy {@code PymnHelper:2197} {@code DateTimeUtils.utcNow()}). Both today and
+     *       yesterday are accepted so the midnight rollover cannot orphan a row.</li>
+     *   <li>{@code nowIct} bounds the aging comparison, because {@code RQ_DTTM} / {@code TRAN_TM}
+     *       are stamped in ICT at dispatch ({@code RealtimeDispatchService:146-148}).</li>
+     * </ul>
+     *
+     * <p>Mixing the two is intentional and is what the row itself looks like; see {@link #isAged}.
+     *
+     * @param candidates all {@code TRAN_TP='202'} / {@code PROC_STAT='6'} rows
+     * @param nowIct     current time in {@link #ICT} (aging clock)
+     * @param nowUtcDate current date in {@link #UTC} ({@code TRAN_DT} clock)
+     */
+    static List<TbFirmTran> selectAged(List<TbFirmTran> candidates, LocalDateTime nowIct, LocalDate nowUtcDate) {
+        String utcTodayDt = nowUtcDate.format(DT8);
+        String utcYesterdayDt = nowUtcDate.minusDays(1).format(DT8);
+        String agedBeforeDttm = nowIct.minusMinutes(RESULT_CHECK_DELAY_MINUTES).format(RQ_DTIME_FMT);
+        String cutoffTm = nowIct.minusMinutes(RESULT_CHECK_DELAY_MINUTES).format(TM6);
+
+        return candidates.stream()
+                .filter(t -> {
+                    String dt = t.getTranDt() == null ? "" : t.getTranDt().trim();
+                    return utcTodayDt.equals(dt) || utcYesterdayDt.equals(dt);
+                })
+                .filter(t -> isAged(t, utcTodayDt, agedBeforeDttm, cutoffTm))
+                .toList();
+    }
+
+    /**
+     * D-1 aging gate — "has this 202 row been pending long enough to re-check?".
+     *
+     * <p>Legacy asks this with a wrapping wall-clock compare:
+     * {@code TRAN_TM <= TO_CHAR(now() - INTERVAL '2 minute','hh24miss')}, plus the guard
+     * {@code TO_CHAR(now() - INTERVAL '2 minute','hh24miss') < '235800'}
+     * ({@code IDO.TB_FIRM_TRAN_R001.xml}). That guard exists only because an {@code HHmmss}
+     * compare is meaningless once the clock rolls past midnight — legacy simply stops selecting
+     * anything in the last two minutes of the day rather than handle the wrap.
+     *
+     * <p>This implementation removes the wrap instead of papering over it, in three tiers — and the
+     * order is load-bearing:
+     * <ol>
+     *   <li><b>{@code RQ_DTTM}</b> — the full 14-char request timestamp stamped at dispatch
+     *       ({@code RealtimeDispatchService:240}); a monotonic string compare against
+     *       {@code now - delay} in the same zone, which cannot wrap. Every refactor-written row
+     *       carries it, so this is the normal path and it is exact at every boundary.</li>
+     *   <li><b>Earlier UTC date</b> — only for rows with no {@code RQ_DTTM}
+     *       (legacy-JEX-originated): a previous {@code TRAN_DT} means a previous UTC day, so treat
+     *       the row as aged. <b>Deliberately not tier 1:</b> in the two minutes after UTC midnight a
+     *       row already carries the previous {@code TRAN_DT} while being seconds old, so letting
+     *       this shortcut pre-empt {@code RQ_DTTM} would re-check a row before its delay had
+     *       elapsed — which {@code ResultCheckSelectionBoundaryTest} caught at 07:00 ICT.</li>
+     *   <li><b>{@code TRAN_TM}</b> — the legacy same-day {@code HHmmss} compare, unchanged, for
+     *       same-date rows with no {@code RQ_DTTM}.</li>
+     * </ol>
+     *
+     * @param utcTodayDt        today's date in the {@code TRAN_DT} zone ({@link #UTC})
+     * @param agedBeforeDttm    {@code now - delay} as {@code yyyyMMddHHmmss}, same zone as {@code RQ_DTTM}
+     * @param cutoffTm          {@code now - delay} as {@code HHmmss} (legacy fallback compare)
+     */
+    private static boolean isAged(TbFirmTran t, String utcTodayDt, String agedBeforeDttm, String cutoffTm) {
+        // Tier 1 — RQ_DTTM is the authority whenever it is present, and it is checked FIRST.
+        // Ordering matters: the tier-2 date shortcut below is not safe on its own around UTC
+        // midnight (a row written one minute before it already carries the previous TRAN_DT while
+        // being one minute old), so a date-based shortcut must never pre-empt a real timestamp.
+        String rqDttm = t.getRqDttm() == null ? "" : t.getRqDttm().trim();
+        if (rqDttm.length() == 14) {
+            return rqDttm.compareTo(agedBeforeDttm) <= 0;
+        }
+        // Tier 2 — no RQ_DTTM (legacy-JEX-written rows): an earlier TRAN_DT means the row is from a
+        // previous UTC day, so treat it as aged. Within the two minutes after UTC midnight this can
+        // be up to the delay window early; accepted for legacy rows only, because the alternative is
+        // reconstructing an instant from a UTC date plus an ICT time-of-day, which is ill-defined.
+        // Refactor-written rows never reach here — they always carry RQ_DTTM.
+        String tranDt = t.getTranDt() == null ? "" : t.getTranDt().trim();
+        if (!utcTodayDt.equals(tranDt)) {
+            return true;
+        }
+        // Tier 3 — same UTC date, no RQ_DTTM: the legacy HHmmss compare, unchanged.
+        String tranTm = t.getTranTm() == null ? "" : t.getTranTm().trim();
+        return !tranTm.isEmpty() && tranTm.compareTo(cutoffTm) <= 0;
     }
 
     /**

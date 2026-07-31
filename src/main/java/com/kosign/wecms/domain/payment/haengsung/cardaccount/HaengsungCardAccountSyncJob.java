@@ -29,6 +29,15 @@ import org.springframework.stereotype.Component;
  * <p>{@code @SchedulerLock} co-located with {@code @Scheduled} (ShedLock proxy
  * mode) serialises the job across instances; the cron is anchored to ICT. No
  * Oracle credentials are logged.
+ *
+ * <p><b>COEXISTENCE PRECONDITION — read before enabling.</b>
+ * {@code haengsung.card-account-sync.enabled=true} is safe ONLY after legacy
+ * {@code ERP_0100_003} is disabled in that environment. ShedLock does NOT help —
+ * the legacy JexSimpleBatch runtime does not participate in the {@code shedlock}
+ * table. Both sides push to the ERP Oracle {@code TB_ACCT_HISTORY} /
+ * {@code TB_CARD_APPROVAL} and flip the source {@code ERP_SND_YN} guards, so
+ * concurrent runs produce duplicate ERP history/card rows with no XA to unwind
+ * them. See {@code docs/audits/scheduler-legacy-parity-audit.md} §7.
  */
 @Slf4j
 @Component
@@ -48,7 +57,7 @@ public class HaengsungCardAccountSyncJob {
 
     @Scheduled(cron = "${haengsung.card-account-sync.cron:"
             + HaengsungCardAccountSyncProperties.DEFAULT_CRON + "}", zone = VIETNAM_TZ_ID)
-    @SchedulerLock(name = "HaengsungCardAccountSyncJob.run",
+    @SchedulerLock(name = com.kosign.wecms.common.lock.JobLockNames.HAENGSUNG_CARD_ACCOUNT_SYNC,
                    lockAtMostFor = "PT10M", lockAtLeastFor = "PT30S")
     public void run() {
         HaengsungCardAccountSyncService service = serviceProvider.getIfAvailable();

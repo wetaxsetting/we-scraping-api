@@ -33,6 +33,7 @@ import java.util.function.Predicate;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
@@ -62,7 +63,16 @@ class ResultCheckPollTest {
     private static final String BIZ = "VN_VNM0004_000001";
     private static final String INQ_SEQ = "900"; // fresh firm_seq_no for the 203 row
     private static final ZoneId ICT = ZoneId.of("Asia/Ho_Chi_Minh");
-    private static final String TODAY = LocalDateTime.now(ICT).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+    /**
+     * D-1: {@code TRAN_DT} lives in the <b>UTC</b> date space — it is the originating
+     * {@code TB_PAY_TARGET.TRAN_DT} (legacy {@code PymnHelper:2197} {@code DateTimeUtils.utcNow()}).
+     * These fixtures previously used the ICT date, which is the same value for 17 hours a day and
+     * one day ahead for the other 7 — so between 00:00 and 07:00 ICT they built rows production
+     * never writes, and the suite could neither catch nor reproduce D-1. Boundary behaviour is
+     * covered exhaustively in {@code ResultCheckSelectionBoundaryTest}.
+     */
+    private static final String TODAY =
+            java.time.LocalDate.now(java.time.ZoneOffset.UTC).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
 
     @Mock EfsApiClient efsApiClient;
     @Mock VanApiKeyService vanApiKeyService;
@@ -84,6 +94,9 @@ class ResultCheckPollTest {
         service = new ResultCheckService(efsApiClient, crypto, vanApiKeyService, props, mapper,
                 tbFirmTranRepository, opsAlertService,
                 legacyFunctions, firmConfRepository, dispatchPacer, dispatchResultTxService);
+        // The master gate defaults OFF (wecms.dispatch.result-check.enabled) and there is no Spring
+        // context here to inject it; this suite exercises the body, not the gate.
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "enabled", true);
         when(vanApiKeyService.getApiKey(VAN)).thenReturn(TEST_KEY);
         when(tbFirmTranRepository.save(any())).thenAnswer(i -> i.getArgument(0));
         when(legacyFunctions.nextTbFirmTranSeq()).thenReturn(INQ_SEQ);
@@ -147,10 +160,33 @@ class ResultCheckPollTest {
         return stat.getValue();
     }
 
+    /**
+     * The master gate. Before it existed, {@code result-check.cron} was the only switch on this body,
+     * so a single cron variable was enough to start outbound EFS 203 traffic and {@code PROC_STAT}
+     * writes — while both sibling sweeps ({@code StrandedRecoveryService},
+     * {@code StuckPayFileMonitorService}) required a cron <i>and</i> an {@code enabled} flag.
+     */
+    @Test
+    void disabled_isANoOp_noQuery_noGatewayCall_noStatusWrite() {
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "enabled", false);
+        when(tbFirmTranRepository.findResultCheckCandidates(
+                eq("202"), eq("6"), anyCollection(), any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(List.of(agedRow("199")));
+
+        service.runOnce();
+
+        // Not even the candidate query runs — the gate is checked at method entry.
+        verify(tbFirmTranRepository, never()).findResultCheckCandidates(any(), any(), anyCollection(), any());
+        verify(efsApiClient, never()).send(any(), any());
+        verify(tbFirmTranRepository, never()).save(any());
+        verify(dispatchResultTxService, never()).finalizeOriginalAndPayTarget(
+                any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
     @Test
     void agedSuccess_creates203Row_andFinalizesOriginalZero() throws Exception {
         TbFirmTran row = agedRow("100");
-        when(tbFirmTranRepository.findByTranTpAndProcStat("202", "6")).thenReturn(List.of(row));
+        when(tbFirmTranRepository.findResultCheckCandidates(eq("202"), eq("6"), anyCollection(), any(org.springframework.data.domain.Pageable.class))).thenReturn(List.of(row));
         stubGateway("0000");
 
         service.runOnce();
@@ -169,7 +205,7 @@ class ResultCheckPollTest {
     @Test
     void agedFailure_finalizesOriginalThree() throws Exception {
         TbFirmTran row = agedRow("101");
-        when(tbFirmTranRepository.findByTranTpAndProcStat("202", "6")).thenReturn(List.of(row));
+        when(tbFirmTranRepository.findResultCheckCandidates(eq("202"), eq("6"), anyCollection(), any(org.springframework.data.domain.Pageable.class))).thenReturn(List.of(row));
         stubGateway("0001"); // comms ok (RC=0000) but original response = not-success
 
         service.runOnce();
@@ -181,7 +217,7 @@ class ResultCheckPollTest {
     void freshRow_withinDelayWindow_isSkipped() {
         TbFirmTran row = agedRow("102");
         row.setTranTm("235959");
-        when(tbFirmTranRepository.findByTranTpAndProcStat("202", "6")).thenReturn(List.of(row));
+        when(tbFirmTranRepository.findResultCheckCandidates(eq("202"), eq("6"), anyCollection(), any(org.springframework.data.domain.Pageable.class))).thenReturn(List.of(row));
 
         service.runOnce();
 
@@ -195,7 +231,7 @@ class ResultCheckPollTest {
     @Test
     void orgStatNotAvailable_skipsRow_noInquiry_noWrite() {
         TbFirmTran row = agedRow("150");
-        when(tbFirmTranRepository.findByTranTpAndProcStat("202", "6")).thenReturn(List.of(row));
+        when(tbFirmTranRepository.findResultCheckCandidates(eq("202"), eq("6"), anyCollection(), any(org.springframework.data.domain.Pageable.class))).thenReturn(List.of(row));
         when(firmConfRepository.findById(any())).thenReturn(Optional.of(conf("2"))); // suspended
 
         service.runOnce();
@@ -211,7 +247,7 @@ class ResultCheckPollTest {
     @Test
     void confirmedSuccess_delegatesFinalizeZero() throws Exception {
         TbFirmTran row = agedRow("200");
-        when(tbFirmTranRepository.findByTranTpAndProcStat("202", "6")).thenReturn(List.of(row));
+        when(tbFirmTranRepository.findResultCheckCandidates(eq("202"), eq("6"), anyCollection(), any(org.springframework.data.domain.Pageable.class))).thenReturn(List.of(row));
         stubGateway("0000");
 
         service.runOnce();
@@ -222,7 +258,7 @@ class ResultCheckPollTest {
     @Test
     void confirmedFailure_delegatesFinalizeThree() throws Exception {
         TbFirmTran row = agedRow("201");
-        when(tbFirmTranRepository.findByTranTpAndProcStat("202", "6")).thenReturn(List.of(row));
+        when(tbFirmTranRepository.findResultCheckCandidates(eq("202"), eq("6"), anyCollection(), any(org.springframework.data.domain.Pageable.class))).thenReturn(List.of(row));
         stubGateway("0001");
 
         service.runOnce();
@@ -233,7 +269,7 @@ class ResultCheckPollTest {
     @Test
     void transportFailure_leavesOriginalUntouched_but203RowRecordedFail() {
         TbFirmTran row = agedRow("202");
-        when(tbFirmTranRepository.findByTranTpAndProcStat("202", "6")).thenReturn(List.of(row));
+        when(tbFirmTranRepository.findResultCheckCandidates(eq("202"), eq("6"), anyCollection(), any(org.springframework.data.domain.Pageable.class))).thenReturn(List.of(row));
         // 203 itself returns a non-0000 RC → inquire() throws after the 203 row is inserted.
         EfsEnvelope env = new EfsEnvelope(VAN, "20240101000000", null, "TNO", "EV", "VV",
                 EfsEnvelope.EM_AES, EfsEnvelope.VM_HMAC_SHA256, "G999", "no response");
@@ -256,7 +292,7 @@ class ResultCheckPollTest {
     void oneFailedRow_doesNotBlockLaterRows() throws Exception {
         TbFirmTran first = agedRow("600");
         TbFirmTran second = agedRow("601");
-        when(tbFirmTranRepository.findByTranTpAndProcStat("202", "6"))
+        when(tbFirmTranRepository.findResultCheckCandidates(eq("202"), eq("6"), anyCollection(), any(org.springframework.data.domain.Pageable.class)))
                 .thenReturn(List.of(first, second));
         stubGateway("0000");
         // The first row's atomic finalize blows up (e.g. a rolled-back tx surfacing an exception).
@@ -276,7 +312,7 @@ class ResultCheckPollTest {
     @Test
     void envelopeRc0001_notFound_finalizesFail() {
         TbFirmTran row = agedRow("400");
-        when(tbFirmTranRepository.findByTranTpAndProcStat("202", "6")).thenReturn(List.of(row));
+        when(tbFirmTranRepository.findResultCheckCandidates(eq("202"), eq("6"), anyCollection(), any(org.springframework.data.domain.Pageable.class))).thenReturn(List.of(row));
         EfsEnvelope env = new EfsEnvelope(VAN, "20240101000000", null, "TNO", "", "",
                 EfsEnvelope.EM_AES, EfsEnvelope.VM_HMAC_SHA256, "0001", "no original transaction");
         when(efsApiClient.send(eq(EfsApiClient.EFS_203), any())).thenReturn(env);
@@ -292,7 +328,7 @@ class ResultCheckPollTest {
     @Test
     void perBankPacing_pacesOnOriginalFailure() throws Exception {
         TbFirmTran row = agedRow("500");
-        when(tbFirmTranRepository.findByTranTpAndProcStat("202", "6")).thenReturn(List.of(row));
+        when(tbFirmTranRepository.findResultCheckCandidates(eq("202"), eq("6"), anyCollection(), any(org.springframework.data.domain.Pageable.class))).thenReturn(List.of(row));
         stubGateway("0001"); // original transaction failed → legacy paces (:393)
 
         service.runOnce();
@@ -303,7 +339,7 @@ class ResultCheckPollTest {
     @Test
     void perBankPacing_notInvokedOnCleanSuccess() throws Exception {
         TbFirmTran row = agedRow("501");
-        when(tbFirmTranRepository.findByTranTpAndProcStat("202", "6")).thenReturn(List.of(row));
+        when(tbFirmTranRepository.findResultCheckCandidates(eq("202"), eq("6"), anyCollection(), any(org.springframework.data.domain.Pageable.class))).thenReturn(List.of(row));
         stubGateway("0000"); // clean success → legacy 6-1 has no Thread.sleep
 
         service.runOnce();
@@ -316,7 +352,7 @@ class ResultCheckPollTest {
     @Test
     void invalidResponseVv_notProcessed_noFinalize() throws Exception {
         TbFirmTran row = agedRow("401");
-        when(tbFirmTranRepository.findByTranTpAndProcStat("202", "6")).thenReturn(List.of(row));
+        when(tbFirmTranRepository.findResultCheckCandidates(eq("202"), eq("6"), anyCollection(), any(org.springframework.data.domain.Pageable.class))).thenReturn(List.of(row));
         Efs203Response resp = new Efs203Response(
                 TODAY, "ORGTNO", "120000", "0000", "msg", "100001020691",
                 "VND", "1000", "0", "0681000001", "OWNER", "", "");

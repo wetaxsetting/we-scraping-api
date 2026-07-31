@@ -14,10 +14,29 @@ import java.util.Map;
  * Bound from {@code wecms.dispatch.efs.*}.
  *
  * <p>The vendor endpoint <b>paths</b> are fixed ({@code /WGVN_EFS_{code}.jct}) and
- * default in code below; only {@code enabled} + {@code base-url} (and the
- * partner {@code ID}) are environment-specific and come from a profile yaml
+ * default in code below; only {@code enabled} + {@code base-url} are
+ * environment-specific and come from a profile yaml
  * (DEV/SIT). Default profile ships {@code enabled=false} + empty {@code base-url}
  * so {@link MockEfsApiClient} is the active bean and no live call can occur.
+ *
+ * <p><b>Envelope {@code ID} is NOT configuration (D-2, legacy-verified 2026-07-29).</b>
+ * A {@code partner-id} property used to live here and was preferred over the VAN org code
+ * when set. Legacy has <b>no such property</b>: on every leg the envelope {@code ID} is read
+ * from {@code TB_FIRM_CONF.VAN_ORG_CD}, so a configured partner id could only ever send a
+ * value legacy never sends. Verified in legacy source:
+ * <ul>
+ *   <li>202 / 204 — {@code NAPAS_REAL_TIME_BATCH:108} {@code ID = idoOutFCR001.getString("VAN_ORG_CD")},
+ *       used at {@code :346} / {@code :559} via {@code inputData(ID, …)} → {@code "ID=" + ID} ({@code :712}).</li>
+ *   <li>203 — {@code PROCESSING_RESULT_CHECK_BATCH:164} {@code "ID=" + van_org_cd} ({@code :112}).</li>
+ *   <li>301 — {@code FILE_DEPOSIT_TRANSFER_BATCH1:1208} {@code "ID=" + …getString("VAN_ORG_CD")}.</li>
+ *   <li>302 — {@code FILE_DEPOSIT_TRANSFER_BATCH2:189} {@code "ID=" + van_org_cd} ({@code :131}).</li>
+ *   <li>MSG — {@code MsgSendUtil.SendMsg(van_org_cd, …)} at every legacy call site.</li>
+ *   <li>201 — {@code PymnHelper:950}, {@code comm_1003_001_act.jsp:136},
+ *       {@code comm_0184_007_r001_act.jsp:355} all {@code put("ID", …VAN_ORG_CD)}.</li>
+ * </ul>
+ * The separate {@code BANK_PRTN_ID} is a <i>business-payload</i> field ({@code prtn_id}), not the
+ * envelope {@code ID} — legacy keeps the two distinct ({@code PROCESSING_RESULT_CHECK_BATCH:144,153})
+ * and so does the refactor ({@code Efs202Request.prtnId}). Do not reintroduce a partner-id property.
  *
  * <p><b>Security:</b> the {@code API_KEY} is the per-VAN AES/HMAC secret and is
  * <b>never</b> stored here or in any yaml — it is provisioned out-of-band into
@@ -45,11 +64,8 @@ public class EfsProperties {
     /** Base URL of the EFS gateway for the active environment (B1). Empty by default. */
     private String baseUrl = "";
 
-    /**
-     * Partner identifier sent as the envelope {@code ID} (PDF sample {@code CORP000001}).
-     * Environment/partner-specific; NOT a secret. Empty by default.
-     */
-    private String partnerId = "";
+    // NOTE: there is deliberately NO partner-id property here. The EFS envelope {@code ID} is
+    // ALWAYS TB_FIRM_CONF.VAN_ORG_CD — see the class Javadoc above for the per-leg legacy evidence.
 
     /**
      * Endpoint-key → vendor path map. Defaults to the five services confirmed in

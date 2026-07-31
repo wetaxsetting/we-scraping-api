@@ -15,8 +15,12 @@ import java.math.BigDecimal;
 
 /**
  * File-path dispatch header. One row per non-VND batch dispatched
- * through {@link
- * com.kosign.wecms.domain.payment.dispatch.service.TransferDispatchExecutor}.
+ * through the per-module dispatch executors
+ * ({@code InternalTransferDispatchExecutor} / {@code VendorDispatchExecutor} /
+ * {@code ExpenseDispatchExecutor} / {@code PayrollDispatchExecutor} /
+ * {@code OverseasDispatchExecutor}).
+ * (The formerly-shared {@code TransferDispatchExecutor} was deleted 2026-07-28 —
+ * it had no production consumer; see {@code docs/reports/dead-code-architecture-review.md} §5.1.)
  *
  * <p>Composite PK {@code (TRAN_DT, BIZ_KEY, FILE_SEQ_NO)}. Detail rows
  * in {@link TbPayFileData} hang off the same key set.

@@ -17,6 +17,7 @@ import com.kosign.wecms.domain.payment.overseas.repository.OvrsPymnSumrRepositor
 import com.kosign.wecms.domain.payment.overseas.service.OverseasPaymentFileResolver;
 import com.kosign.wecms.domain.payment.overseas.service.OverseasPaymentKeyGenerator;
 import com.kosign.wecms.domain.payment.common.LegacyTextNormalizer;
+import com.kosign.wecms.domain.payment.common.WireField;
 import com.kosign.wecms.domain.payment.validation.FieldCd;
 import com.kosign.wecms.domain.payment.validation.PymnType;
 import com.kosign.wecms.domain.payment.validation.SpecialCharValidator;
@@ -103,6 +104,10 @@ public class OverseasPaymentExcelService {
     private final com.kosign.wecms.domain.payment.common.OutBankCdNormalizer outBankCdNormalizer;
     /** Authoritative save-path blocked-char enforcement (audit task-44508, P0). */
     private final com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard blockedCharGuard;
+    /** C-14: fixed-length wire-slot width guard for the bank-bound name & memo fields. */
+    private final com.kosign.wecms.domain.payment.common.PaymentWireWidthGuard wireWidthGuard;
+    /** C-14 / FIX B: SENDER_NAME guard — the wire field with no entry surface. */
+    private final com.kosign.wecms.domain.payment.overseas.service.OverseasSenderNameGuard senderNameGuard;
     private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
     private final TransactionalRetry           transactionalRetry;
     /** F2 — shared ERP_TRNS_HSTR writer for the Overseas Result download 'W' row. */
@@ -242,12 +247,31 @@ public class OverseasPaymentExcelService {
                 validateRequired(memo,             "memo",            errors);
                 // Legacy parity: memo capped at 500 chars
                 // (pymn_0007_003_r001_act.jsp:386 — checkValidStringInMax(..., 500)).
-                // OVRS_PYMN_SUMR_DETL.MEMO is VARCHAR(500), so 500 is the column limit too.
+                // OVRS_PYMN_SUMR_DETL.MEMO is VARCHAR(500), so 500 is the SOURCE column limit.
+                //
+                // ⚠ 500 is NOT the dispatchable limit. The dispatch path copies MEMO verbatim into
+                // TB_PAY_FILE_DATA.TAR_ACCT_RMRK / WDRL_ACCT_RMRK, which are varchar(150) with no
+                // truncation on either side (OverseasDispatchExecutor:275-276 / :396-397, mirroring
+                // legacy pymn_0007_001_c001_act.jsp:368-369 / :219-220). So this check admits memos
+                // that cannot be dispatched — the insert fails with SQLSTATE 22001 at Transfer time,
+                // long after upload, and takes the whole dispatch with it. Not tightened to 150 here
+                // because that is a legacy-side data decision, not a refactor bug: awaiting a PO
+                // call. The C-14 wire-width guard below narrows the exposure to 210 bytes as a side
+                // effect, which is tighter than 500 but still looser than the 150-char destination.
+                // See docs/bug-reports/overseas-memo-width-truncation-gap.md.
                 if (memo != null && memo.length() > 500) {
                     errors.add(new OverseasPaymentExcelFieldError(
                             "memo", "memo must be 500 characters or less"));
                 }
 
+                // C-14: the 500 above is the SOURCE column width (OVRS_PYMN_SUMR_DETL.MEMO). The
+                // dispatch path copies MEMO into TB_PAY_FILE_DATA.TAR_ACCT_RMRK / WDRL_ACCT_RMRK
+                // (varchar 150) and thence into the record's two 210-byte memo slots, so a value
+                // this check accepts can still be undispatchable. See the MEMO_DISPATCH_MAX note
+                // below and OverseasDispatchExecutor.
+                wireWidthGuard.check(WireField.DEPOSIT_ACCOUNT_MEMO, memo)
+                        .ifPresent(msg -> errors.add(
+                                new OverseasPaymentExcelFieldError("memo", msg)));
                 // Reporting account (optional) — when present, must resolve to a
                 // live CHART_ACCT_INFM row for the tenant (legacy getChartAcctInfm,
                 // pymn_0007_003_r001_act.jsp:388-392 / :106-123, WBE0404).
@@ -296,6 +320,15 @@ public class OverseasPaymentExcelService {
                                 .ifPresent(msg -> errors.add(new OverseasPaymentExcelFieldError("memo", msg)));
                     }
                 }
+
+                // C-14: BNFC_NM is cross-filled server-side from the contact master, so this is the
+                // first point at which its value exists on the upload path. It feeds
+                // TB_PAY_FILE_DATA.FINC_MDA_OWNER_NM and the record's 150-byte receiverName slot
+                // (OverseasDispatchExecutor:267 / :394 — raw BNFC_NM, no truncation). Unlike the
+                // blocked-char checks above this is NOT bank-rule-gated: the slot width is a property
+                // of the record layout, not of BLOCKED_CHARS_RULE.
+                wireWidthGuard.check(WireField.RECEIVER_NAME, bnfc.bnfcNm())
+                        .ifPresent(msg -> errors.add(new OverseasPaymentExcelFieldError("bnfcNm", msg)));
 
                 boolean valid = errors.isEmpty();
                 if (valid) completed++; else errored++;
@@ -497,8 +530,12 @@ public class OverseasPaymentExcelService {
         if (cell == null) return "";
         // F2 (audit task-44508): strip embedded CR/LF from text cells,
         // mirroring legacy `ExcelUtils.getCell:144`. Tabs preserved.
+        // C-14: NFC first — replaceTone maps precomposed code points only, so a decomposed accent
+        // would survive tone-stripping and reach the fixed-length codec at full UTF-8 width
+        // (LegacyTextNormalizer.toNfc).
         return switch (cell.getCellType()) {
-            case STRING  -> LegacyTextNormalizer.stripCrLf(cell.getStringCellValue()).trim();
+            case STRING  -> LegacyTextNormalizer.stripCrLf(
+                    LegacyTextNormalizer.toNfc(cell.getStringCellValue())).trim();
             case NUMERIC -> {
                 double d = cell.getNumericCellValue();
                 yield (d == Math.floor(d) && !Double.isInfinite(d))
@@ -510,7 +547,8 @@ public class OverseasPaymentExcelService {
                 try {
                     yield String.valueOf(cell.getNumericCellValue());
                 } catch (Exception ex) {
-                    yield LegacyTextNormalizer.stripCrLf(cell.getStringCellValue()).trim();
+                    yield LegacyTextNormalizer.stripCrLf(
+                            LegacyTextNormalizer.toNfc(cell.getStringCellValue())).trim();
                 }
             }
             default -> "";
@@ -625,7 +663,25 @@ public class OverseasPaymentExcelService {
                                     FieldCd.BENEFICIARY_ADDRESS, LegacyTextNormalizer.normalize(src.bnfc_addr())),
                             com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard.field(
                                     FieldCd.MEMO, LegacyTextNormalizer.normalize(src.memo()))));
+            // C-14: same boundary, different bound — the blocked-char guard above checks WHICH
+            // characters are allowed, this checks whether the value FITS its slot in the bank's
+            // fixed-length record. Byte-counted, not character-counted. Note the source columns are
+            // WIDER than the wire slots on this path (MEMO varchar 500 → two 210-byte slots;
+            // BNFC_NM varchar 150 → 150-byte slot), so a length check against the source column can
+            // never stand in for this one.
+            wireWidthGuard.assertClean(java.util.List.of(
+                    com.kosign.wecms.domain.payment.common.PaymentWireWidthGuard.field(
+                            WireField.DEPOSIT_ACCOUNT_MEMO, src.memo()),
+                    com.kosign.wecms.domain.payment.common.PaymentWireWidthGuard.field(
+                            WireField.RECEIVER_NAME, src.bnfc_nm())));
         }
+
+        // C-14 / FIX B — the ONE wire field with no entry surface. SENDER_NAME is never typed: the
+        // dispatch executor reads it from ACCT_MSTR.ACCT_NM (OverseasDispatchExecutor.resolveSenderNm),
+        // so no upload cell, no request field and no @Size annotation guards it. Checked HERE because
+        // this is the earliest point at which the withdrawal account is known AND the user can still
+        // choose a different one.
+        assertWithdrawalAccountNameIsSendable(bizKey, req.wdrl_bank_cd(), req.wdrl_acct_no());
 
         // ── Summary row ──────────────────────────────────────────────────────
         OvrsPymnSumr sumr = new OvrsPymnSumr();
@@ -856,6 +912,46 @@ public class OverseasPaymentExcelService {
      * resolved (defensive — the picker guarantees it exists). Mirrors
      * {@code VendorPaymentService.resolveWithdrawalCcyCd}.
      */
+    /**
+     * C-14 / FIX B — reject a withdrawal account whose {@code ACCT_MSTR.ACCT_NM} cannot survive the
+     * fixed-length record's 150-byte {@code senderName} slot.
+     *
+     * <h2>Why this field needs its own guard</h2>
+     * {@code SENDER_NAME} is the only one of the four free-text wire fields with <b>no entry
+     * surface</b>. Nobody types it — {@code OverseasDispatchExecutor.resolveSenderNm} reads
+     * {@code ACCT_MSTR.ACCT_NM} verbatim at dispatch — so the C-14 entry guard never sees it and
+     * neither the DTOs nor legacy validate it:
+     * <ul>
+     *   <li>{@code RegisterAccountsRequest.acctNm} and {@code BankAccountRegisterRequest.acctNm} carry
+     *       {@code @Size(max = 100)}, a <b>character</b> cap matching the column. 100 Hangul characters
+     *       satisfy it and are <b>300 UTF-8 bytes</b> — twice the slot;</li>
+     *   <li>legacy sanitises only Unicode space separators
+     *       ({@code wabooks.commons.StringUtils.sanitize:118-124}) — no width or charset check at all.
+     * </ul>
+     * Pure-ASCII overflow is impossible (the column caps at 100 characters ≤ 150 bytes), so the
+     * reachable failure is multibyte: ~51 Hangul/CJK characters. Note tone-stripping does not help —
+     * the 134-entry table is Vietnamese-only.
+     *
+     * <h2>Why reject here rather than at account registration</h2>
+     * {@code ACCT_NM} is <b>adapter-supplied</b> ({@code RegisterAccountsRequest}: "Real-name string
+     * from the bank adapter"). Hard-rejecting registration would refuse to register a real account over
+     * a field only the Overseas rail consumes, and the user cannot edit what the bank returned. Here the
+     * user has a genuine choice: pick a different withdrawal account. Registration gets a non-blocking
+     * WARN instead ({@code AccountRegistrationService} / {@code SettingsBankAccountService}).
+     *
+     * <p>Lookup key matches the executor's. The executor maps {@code OUT_BANK_CD} back to the internal
+     * code ({@code napasCodeForOutBank}: {@code 970424→11704088}, {@code 970457→11704020}), which is
+     * exactly the {@code wdrl_bank_cd} the request already carries — the same key
+     * {@link #resolveWithdrawalCcyCd} uses. A bank outside that pair resolves {@code senderNm} to null
+     * in the executor, so there is nothing to guard and a missing row is not an error here.
+     */
+    private void assertWithdrawalAccountNameIsSendable(String bizKey, String bankCd, String acctNo) {
+        // Normalise the raw internal BANK_CD to the OUT_BANK_CD (NAPAS) form the guard expects — the
+        // same call that stamps OVRS_PYMN_SUMR.OUT_BANK_CD a few lines below, so the guard reads exactly
+        // the ACCT_MSTR row the dispatch executor will read.
+        senderNameGuard.assertSendable(bizKey, outBankCdNormalizer.normalize(bankCd), acctNo);
+    }
+
     private String resolveWithdrawalCcyCd(
             String bizKey, String bankCd, String acctNo, String fallbackCcyCd) {
         if (bankCd == null || bankCd.isBlank() || acctNo == null || acctNo.isBlank()) {

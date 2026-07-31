@@ -100,8 +100,9 @@ public class RealtimeTransferService {
         // Resolve the per-VAN key first — a missing key (B2) must surface here,
         // before any envelope is built or any request is sent.
         String apiKey = vanApiKeyService.getApiKey(cmd.vanOrgCd());
-        String id = StringUtils.hasText(efsProperties.getPartnerId())
-                ? efsProperties.getPartnerId() : cmd.vanOrgCd();
+        // D-2 (legacy parity): the envelope ID is ALWAYS TB_FIRM_CONF.VAN_ORG_CD — never a
+        // configured partner id. Per-leg legacy evidence in EfsProperties' class Javadoc.
+        String id = cmd.vanOrgCd();
 
         // §5.6 Woori-only pre-FX inquiry (WGVN_EFS_204). On the Woori / non-VND path the
         // 204 response FX fields populate the 202 FX block; on the ordinary domestic-VND
@@ -142,8 +143,9 @@ public class RealtimeTransferService {
         }
 
         String apiKey = vanApiKeyService.getApiKey(cmd.vanOrgCd());
-        String id = StringUtils.hasText(efsProperties.getPartnerId())
-                ? efsProperties.getPartnerId() : cmd.vanOrgCd();
+        // D-2 (legacy parity): the envelope ID is ALWAYS TB_FIRM_CONF.VAN_ORG_CD — never a
+        // configured partner id. Per-leg legacy evidence in EfsProperties' class Javadoc.
+        String id = cmd.vanOrgCd();
 
         Efs202Request request = new Efs202Request(
                 cmd.bankCd(), cmd.prtnId(), cmd.currenCd(), cmd.amt(), cmd.dcmAmt(),
@@ -270,8 +272,9 @@ public class RealtimeTransferService {
             throw new IllegalArgumentException("tno (TRAN_SEQ) is required");
         }
         String apiKey = vanApiKeyService.getApiKey(cmd.vanOrgCd());
-        String id = StringUtils.hasText(efsProperties.getPartnerId())
-                ? efsProperties.getPartnerId() : cmd.vanOrgCd();
+        // D-2 (legacy parity): the envelope ID is ALWAYS TB_FIRM_CONF.VAN_ORG_CD — never a
+        // configured partner id. Per-leg legacy evidence in EfsProperties' class Javadoc.
+        String id = cmd.vanOrgCd();
         return inquireFxRate(cmd, apiKey, id, tno);
     }
 

@@ -29,6 +29,16 @@ import org.springframework.stereotype.Component;
  * <p>{@code @SchedulerLock} co-located with {@code @Scheduled} (ShedLock proxy
  * mode) serialises the job across instances; the cron is anchored to ICT. No
  * Oracle credentials are logged.
+ *
+ * <p><b>COEXISTENCE PRECONDITION — read before enabling.</b>
+ * {@code haengsung.exchange-rate-sync.enabled=true} is safe ONLY after legacy
+ * {@code ERP_0100_001} is disabled in that environment. ShedLock does NOT help —
+ * the legacy JexSimpleBatch runtime does not participate in the {@code shedlock}
+ * table. Both sides read {@code BANK_EXCH_RATE_INFM}, push to the ERP Oracle
+ * {@code TB_FCY_EXRATE}, and then flip {@code BANK_EXCH_RATE_INFM.ERP_SND_YN};
+ * running concurrently a rate can be pushed twice or marked sent without being
+ * pushed, and there is no XA between PostgreSQL and Oracle to unwind it. See
+ * {@code docs/audits/scheduler-legacy-parity-audit.md} §7.
  */
 @Slf4j
 @Component
@@ -48,7 +58,7 @@ public class HaengsungExchangeRateSyncJob {
 
     @Scheduled(cron = "${haengsung.exchange-rate-sync.cron:"
             + HaengsungExchangeRateSyncProperties.DEFAULT_CRON + "}", zone = VIETNAM_TZ_ID)
-    @SchedulerLock(name = "HaengsungExchangeRateSyncJob.run",
+    @SchedulerLock(name = com.kosign.wecms.common.lock.JobLockNames.HAENGSUNG_EXCHANGE_RATE_SYNC,
                    lockAtMostFor = "PT10M", lockAtLeastFor = "PT30S")
     public void run() {
         HaengsungExchangeRateSyncService service = serviceProvider.getIfAvailable();

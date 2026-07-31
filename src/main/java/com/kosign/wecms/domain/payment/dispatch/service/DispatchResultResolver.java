@@ -31,14 +31,37 @@ import org.springframework.transaction.annotation.Transactional;
  * JOIN chain with three bulk lookups (one per dispatch path):
  * <ul>
  *   <li><b>API path</b> (when {@code master.payFileSeqNo == null}):
- *       {@code TB_PAY_TARGET} for {@code PROC_STAT}/{@code PROC_DTTM},
+ *       {@code TB_PAY_TARGET} for {@code PROC_STAT}/{@code RSLT_DTTM},
  *       {@code TB_FIRM_TRAN} for {@code RS_CD}/{@code RS_MSG}.</li>
  *   <li><b>File path</b> (when {@code master.payFileSeqNo != null}):
- *       {@code TB_PAY_FILE_MST} for {@code PROC_STAT}/{@code PROC_DTTM}
+ *       {@code TB_PAY_FILE_MST} for {@code PROC_STAT}/{@code RSLT_DTTM}
  *       (master-level — every line in the batch shares the same status),
  *       {@code TB_PAY_FILE_DATA} for the per-line {@code RS_CD}.
  *       {@code RS_MSG} stays null on the File path (legacy parity).</li>
  * </ul>
+ *
+ * <h2>The two datetimes are different columns (DRR-1, fixed 2026-07-30)</h2>
+ *
+ * <table>
+ *   <caption>Legacy datetime sources</caption>
+ *   <tr><th>Field</th><th>SCDUL family ({@code R006})</th><th>Overseas ({@code R007})</th></tr>
+ *   <tr><td>{@code procDttm}</td>
+ *       <td>{@code SPS.TRNF_DTM} (`:89`)</td>
+ *       <td>{@code SPS.TRNF_DT} (`:75`)</td></tr>
+ *   <tr><td>{@code rsltDttm}</td>
+ *       <td>{@code TPFM.PROC_DTTM} / {@code TPT.PROC_DTTM} (`:96-100`)</td>
+ *       <td>{@code TPFM.PROC_DTTM} (`:77`)</td></tr>
+ * </table>
+ *
+ * <p>{@code procDttm} is the <b>master request</b> datetime — a plain master column, the same
+ * value on every line of the batch, present even for a line that has no dispatch row.
+ * {@code rsltDttm} is the <b>bank-side result</b> datetime read from the dispatch row. Until
+ * 2026-07-30 both fields carried the dispatch row's {@code PROC_DTTM}, so they were always
+ * equal and the request datetime was not surfaced per line.
+ *
+ * <p><b>Read-only mapping change.</b> Nothing about the stored
+ * {@code TB_PAY_TARGET.PROC_DTTM} / {@code TB_PAY_FILE_MST.PROC_DTTM} values changed — this
+ * resolver never writes. Only which column each wire field projects changed.
  *
  * <p>Returns {@link DispatchResult#EMPTY} for any line whose master /
  * detail shadow keys are null (batch hasn't been dispatched yet) or
@@ -79,13 +102,18 @@ public class DispatchResultResolver {
         if (master.getPayFileSeqNo() != null && !master.getPayFileSeqNo().isBlank()) {
             return resolveFilePath(bizKey, master, lines);
         }
-        return resolveApiPath(bizKey, lines);
+        return resolveApiPath(bizKey, master, lines);
     }
 
     /* ───────────────── API path ───────────────── */
 
     private Map<String, DispatchResult> resolveApiPath(
-            String bizKey, List<ScdulPymnSumrDetl> lines) {
+            String bizKey, ScdulPymnSumr master, List<ScdulPymnSumrDetl> lines) {
+
+        // DRR-1: PROC_DTTM is the MASTER's request datetime, unconditionally — legacy
+        // SCDUL_PYMN_SUMR_R006.xml:89 `SPS.TRNF_DTM AS PROC_DTTM`. It is a plain master column,
+        // independent of every join, so it is the same value on every line of the batch.
+        String requestDttm = master.getTrnfDtm();
 
         // Group lines by the (pay_tran_dt, pay_tran_seq) shadow keys.
         // Most batches share one pay_tran_dt across all lines, but
@@ -121,7 +149,10 @@ public class DispatchResultResolver {
             String dt  = line.getPayTranDt();
             String seq = line.getPayTranSeq();
             if (dt == null || seq == null) {
-                out.put(line.getScdulPymnDetlNo(), DispatchResult.EMPTY);
+                // Legacy still emits PROC_DTTM here — it is a master column, not a joined one, so a
+                // line with no shadow keys carries the batch's request datetime and nothing else.
+                out.put(line.getScdulPymnDetlNo(), new DispatchResult(
+                        null, null, requestDttm, null, null, null));
                 continue;
             }
             TbPayTarget tpt = targetByKey.get(dt + "|" + seq);
@@ -129,14 +160,16 @@ public class DispatchResultResolver {
             String procStat = tpt != null
                     ? coalesceProcStat(tpt.getProcStat())
                     : null;
-            String procDttm = tpt != null ? tpt.getProcDttm() : null;
+            // DRR-1: RSLT_DTTM is the API route's dispatch-row PROC_DTTM (legacy R006:99
+            // `ELSE TPT.PROC_DTTM END AS RSLT_DTTM`) — a DIFFERENT column from PROC_DTTM above.
+            String rsltDttm = tpt != null ? tpt.getProcDttm() : null;
             String rsCd  = tft != null ? trimToNull(tft.getRsCd())  : null;
             String rsMsg = tft != null ? trimToNull(tft.getRsMsg()) : null;
             out.put(line.getScdulPymnDetlNo(), new DispatchResult(
                     procStat,
                     ProcStatKey.forCode(procStat),
-                    procDttm,
-                    procDttm,                    // rsltDttm = procDttm on API path
+                    requestDttm,
+                    rsltDttm,
                     rsCd,
                     rsMsg));
         }
@@ -154,14 +187,17 @@ public class DispatchResultResolver {
             return Collections.emptyMap();
         }
 
-        // Master-level PROC_STAT / PROC_DTTM from TB_PAY_FILE_MST.
+        // Master-level PROC_STAT / RSLT_DTTM from TB_PAY_FILE_MST.
         Optional<TbPayFileMst> mstOpt = tbPayFileMstRepository
                 .findById(new TbPayFileMstId(tranDt, bizKey, fileSeqNo));
         String procStat = mstOpt
                 .map(TbPayFileMst::getProcStat)
                 .map(DispatchResultResolver::coalesceProcStat)
                 .orElse(null);
-        String procDttm = mstOpt.map(TbPayFileMst::getProcDttm).orElse(null);
+        // DRR-1: RSLT_DTTM on the file route is TB_PAY_FILE_MST.PROC_DTTM (legacy R006:98
+        // `THEN TPFM.PROC_DTTM`), while PROC_DTTM is the master's TRNF_DTM (legacy R006:89).
+        String rsltDttm = mstOpt.map(TbPayFileMst::getProcDttm).orElse(null);
+        String requestDttm = master.getTrnfDtm();
         String procStatKey = ProcStatKey.forCode(procStat);
 
         // Per-line RS_CD from TB_PAY_FILE_DATA. Build a map keyed by SEQ
@@ -181,10 +217,10 @@ public class DispatchResultResolver {
             out.put(line.getScdulPymnDetlNo(), new DispatchResult(
                     procStat,
                     procStatKey,
-                    procDttm,
-                    procDttm,        // rsltDttm = procDttm on File path
+                    requestDttm,
+                    rsltDttm,
                     rsCd,
-                    null));           // rs_msg always null on File path
+                    null));           // rs_msg always null on File path (legacy R006 `THEN NULL`)
         }
         return out;
     }
@@ -200,6 +236,15 @@ public class DispatchResultResolver {
      * {@link OvrsPymnSumrDetl}) so the caller can look up using the same
      * map shape as SCDUL_PYMN. The RS_CD join itself still keys on
      * {@code PAY_TRAN_SEQ} (the stamped TB_PAY_FILE_DATA.SEQ).
+     *
+     * <p><b>DRR-2 (fixed 2026-07-30):</b> unlike the SCDUL File path — where legacy
+     * {@code R006} explicitly selects {@code NULL} for {@code RS_MSG} — Overseas
+     * {@code R007:80} selects {@code TPFM.RS_MSG}, so a SWIFT rejection message reaches the
+     * Result detail. Source precedence is unambiguous: the pay-file master is the only table
+     * on this path carrying an {@code RS_MSG} column ({@code TB_PAY_FILE_DATA} has
+     * {@code RS_CD} only, and there is no {@code TB_FIRM_TRAN} row without an API rail). A
+     * genuinely null master message stays null; a blank one is normalised to null, matching
+     * how the API path already treats {@code TFT.RS_MSG}.
      */
     @Transactional(readOnly = true)
     public Map<String, DispatchResult> resolveOverseas(
@@ -223,7 +268,14 @@ public class DispatchResultResolver {
                 .map(TbPayFileMst::getProcStat)
                 .map(DispatchResultResolver::coalesceProcStat)
                 .orElse(null);
-        String procDttm = mstOpt.map(TbPayFileMst::getProcDttm).orElse(null);
+        // DRR-1: RSLT_DTTM = TPFM.PROC_DTTM (legacy OVRS_PYMN_SUMR_R007.xml:77), PROC_DTTM =
+        // the master's TRNF_DT (legacy R007:75 `SPS.TRNF_DT AS PROC_DTTM`).
+        String rsltDttm = mstOpt.map(TbPayFileMst::getProcDttm).orElse(null);
+        String requestDttm = master.getTrnfDt();
+        // DRR-2: RS_MSG comes from the pay-file MASTER (legacy R007:80 `TPFM.RS_MSG AS RS_MSG`).
+        // Single source — Overseas has no API rail (so no TB_FIRM_TRAN) and TB_PAY_FILE_DATA has no
+        // RS_MSG column, so there is no precedence to resolve. Absent master row → null.
+        String rsMsg = mstOpt.map(TbPayFileMst::getRsMsg).map(DispatchResultResolver::trimToNull).orElse(null);
         String procStatKey = ProcStatKey.forCode(procStat);
 
         // Per-line RS_CD keyed by SEQ (varchar) — same shape as the
@@ -245,10 +297,10 @@ public class DispatchResultResolver {
             out.put(resultKey, new DispatchResult(
                     procStat,
                     procStatKey,
-                    procDttm,
-                    procDttm,
+                    requestDttm,
+                    rsltDttm,
                     rsCd,
-                    null));
+                    rsMsg));
         }
         return out;
     }

@@ -5,6 +5,7 @@ import com.kosign.wecms.domain.payment.dispatch.entity.TbPayTargetId;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -71,6 +72,47 @@ public interface TbPayTargetRepository
      * the flag flipped on after the row was created). {@code PROC_DTTM} is the 14-char
      * {@code yyyyMMddHHmmss} string, so lexicographic {@code <} is chronological {@code <}. Null
      * {@code PROC_DTTM} rows are excluded (never eligible) — safe by construction.
+     *
+     * <p><b>Unbounded — superseded by {@link #findStrandedPayTargets} (H-2, 2026-07-29).</b> No
+     * {@code LIMIT} and no {@code ORDER BY}, so against the live JEX DB it materialises every
+     * historical {@code '9'} row on every sweep. Retained for ad-hoc diagnosis only; do not add new
+     * callers.
      */
     List<TbPayTarget> findByProcStatAndProcDttmLessThan(String procStat, String procDttmCutoff);
+
+    /**
+     * H-2 · Bounded, deterministically-ordered stranded pay-target selection — the paginated
+     * replacement for {@link #findByProcStatAndProcDttmLessThan}, and the API-rail counterpart of
+     * {@code TbPayFileMstRepository.findStrandedPayFiles}.
+     *
+     * <p><b>Deliberately not tenant-scoped, and that is legacy-faithful.</b> Legacy's own pickup
+     * query {@code IDO.TB_PAY_TARGET_R001.xml} reads
+     * {@code WHERE TRAN_DT = TO_CHAR(now(),'yyyymmdd') AND PROC_STAT = '9'} — {@code BIZ_KEY} is a
+     * <b>selected column, never a predicate</b>. The legacy batch is a system-scoped sweep that
+     * iterates rows and then acts per row using that row's own {@code BIZ_KEY}. Tenant safety
+     * therefore lives in the <i>actions</i>, not the scan: every mutating query on this rail
+     * ({@link #claimForDispatch}) carries {@code BIZ_KEY} in its {@code WHERE}, so one tenant's sweep
+     * can never move another tenant's row. Adding {@code BIZ_KEY} here would require a tenant list
+     * the sweep does not have and would diverge from the approved architecture.
+     *
+     * <p>Oldest-first so a truncated sweep drains its backlog rather than starving the tail. The age
+     * cutoff is a SQL predicate applied <b>before</b> the limit — the N-1 lesson from the
+     * result-check scan, where filtering after the limit let old rows consume every page and be
+     * discarded, stalling the sweep permanently.
+     *
+     * @param procStat       {@code '9'} (WAIT) — never a wildcard
+     * @param procDttmCutoff 14-char {@code yyyyMMddHHmmss}; rows at or after this are too recent,
+     *                       and null {@code PROC_DTTM} rows never match
+     * @param pageable       supplies the batch-size limit; always page 0, carrying no sort of its own
+     */
+    @Query("""
+            SELECT t FROM TbPayTarget t
+             WHERE t.procStat  = :procStat
+               AND t.procDttm IS NOT NULL
+               AND t.procDttm  < :procDttmCutoff
+             ORDER BY t.procDttm ASC, t.tranDt ASC, t.tranSeq ASC, t.bizKey ASC
+            """)
+    List<TbPayTarget> findStrandedPayTargets(@Param("procStat") String procStat,
+                                             @Param("procDttmCutoff") String procDttmCutoff,
+                                             Pageable pageable);
 }

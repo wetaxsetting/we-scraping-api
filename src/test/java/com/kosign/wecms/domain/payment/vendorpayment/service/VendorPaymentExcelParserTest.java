@@ -75,7 +75,8 @@ class VendorPaymentExcelParserTest {
     private VendorPaymentExcelParser newParser() {
         return new VendorPaymentExcelParser(
                 firmBankCodeRepo, contactRepo, contactAcctRepo, chartAcctRepo,
-                specialCharValidator, firmBankingInquiryService,
+                specialCharValidator, com.kosign.wecms.domain.payment.common.WireWidthGuards.real(),
+                firmBankingInquiryService,
                 uploadConsistencyValidator, outBankCdNormalizer);
     }
 

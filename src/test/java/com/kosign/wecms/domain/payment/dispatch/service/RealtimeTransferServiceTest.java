@@ -47,7 +47,7 @@ class RealtimeTransferServiceTest {
     private final EfsCryptoService crypto = new EfsCryptoService();
     private final ObjectMapper mapper = new ObjectMapper()
             .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
-    private final EfsProperties props = new EfsProperties(); // partnerId blank → ID = vanOrgCd
+    private final EfsProperties props = new EfsProperties(); // D-2: envelope ID is always TB_FIRM_CONF.VAN_ORG_CD (legacy-verified)
 
     @Mock
     EfsApiClient efsApiClient;

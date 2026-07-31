@@ -73,7 +73,18 @@ class BulkExecutionResultServiceTest2 {
     private static final String FILE_SEQ = "008";
     private static final String OUT_BANK = "970436";
     private static final String PRTN = "HGSNG";
-    private static final String FILE_NM = "S_" + VAN + "_HGS_" + FILE_SEQ + "_" + TRAN_DT;
+    /**
+     * The name BATCH1 <b>sent</b> — what {@code TB_FIRM_FILE_MST.FIRM_FILE_NM} and every
+     * {@code TB_FIRM_FILE_DATA.FIRM_FILE_NM} row actually carry ({@code BulkReceptionService:401,440}).
+     */
+    private static final String SENT_FILE_NM = "S_" + VAN + "_HGS_" + FILE_SEQ + "_" + TRAN_DT;
+    /**
+     * The name the bank <b>returns</b> in the 01302 callback — a different leading 2-char prefix.
+     * Real UAT samples: {@code receive/R_GV00000001_WRB_001_20251223} (see {@code FixedLengthCodecTest}).
+     * Keeping this distinct from {@link #SENT_FILE_NM} is the whole point: the previous single
+     * {@code FILE_NM} constant conflated the two, so the H-1 prefix mismatch could never fail a test.
+     */
+    private static final String RESULT_FILE_NM = "R_" + VAN + "_HGS_" + FILE_SEQ + "_" + TRAN_DT;
 
     @Mock VanApiKeyService vanApiKeyService;
     @Mock SftpClient sftpClient;
@@ -131,7 +142,7 @@ class BulkExecutionResultServiceTest2 {
 
     private EfsCallbackEnvelope envelope() throws Exception {
         BulkExecutionResultRequest req = new BulkExecutionResultRequest(
-                OUT_BANK, PRTN, FILE_NM, "2", "3000", "0", null, null, null);
+                OUT_BANK, PRTN, RESULT_FILE_NM, "2", "3000", "0", null, null, null);
         String json = objectMapper.writeValueAsString(req);
         String ev = crypto.encryptEv(json, TEST_KEY, "20260602000000");
         String vv = crypto.buildVv(json, TEST_KEY);
@@ -143,7 +154,7 @@ class BulkExecutionResultServiceTest2 {
         m.setTranDt(TRAN_DT);
         m.setBizKey(BIZ_KEY);
         m.setFileSeqNo(FILE_SEQ_NO);
-        m.setFirmFileNm(FILE_NM);
+        m.setFirmFileNm(SENT_FILE_NM);
         m.setFileSeq(FILE_SEQ);
         m.setOutBankCd(OUT_BANK);
         m.setBankPrtnId(PRTN);
@@ -156,7 +167,7 @@ class BulkExecutionResultServiceTest2 {
         TbFirmFileData d = new TbFirmFileData();
         d.setTranDt(TRAN_DT);
         d.setFileSeqNo(FILE_SEQ_NO);
-        d.setFirmFileNm(FILE_NM);
+        d.setFirmFileNm(SENT_FILE_NM);
         d.setSeq(BigDecimal.valueOf(seq));
         d.setBizKey(BIZ_KEY);
         d.setFileSeq(FILE_SEQ);
@@ -187,21 +198,21 @@ class BulkExecutionResultServiceTest2 {
 
     /**
      * Pre-place the result file where {@code downloadResultFile} will read it
-     * ({@code localDownloadPath/FILE_NM}); the (unstubbed) {@code sftpClient.download}
+     * ({@code localDownloadPath/RESULT_FILE_NM}); the (unstubbed) {@code sftpClient.download}
      * is a no-op, standing in for a successful transfer.
      */
     private void placeResultFile(byte[] bytes) throws Exception {
-        Files.write(tempDir.resolve(FILE_NM), bytes);
+        Files.write(tempDir.resolve(RESULT_FILE_NM), bytes);
     }
 
     @Test
     void happyPath_parses_writesResults_advancesStep2to3_andFinalizesPay() throws Exception {
         TbFirmFileMst mst = mst(ProcStep.DEPO_REQ.code(), ProcStat.REQ.code());
         when(firmFileMstRepository.findForExecutionResult(
-                TRAN_DT, FILE_NM, VAN, FILE_SEQ, ProcStep.DEPO_REQ.code(), ProcStat.REQ.code())).thenReturn(Optional.of(mst));
+                TRAN_DT, RESULT_FILE_NM, VAN, FILE_SEQ, ProcStep.DEPO_REQ.code(), ProcStat.REQ.code())).thenReturn(Optional.of(mst));
         when(firmFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
                 .thenReturn(List.of(mst)); // same ref — after advance it reads PROC_STAT='0'
-        when(firmFileDataRepository.findByTranDtAndFileSeqNoAndFirmFileNmOrderBySeqAsc(TRAN_DT, FILE_SEQ_NO, FILE_NM))
+        when(firmFileDataRepository.findForExecutionResult(TRAN_DT, FILE_SEQ, RESULT_FILE_NM))
                 .thenReturn(List.of(firmData(1, 10), firmData(2, 20)));
         when(payFileDataRepository.findByBizKeyAndTranDtAndFileSeqNo(BIZ_KEY, TRAN_DT, FILE_SEQ_NO))
                 .thenReturn(List.of(payData(10), payData(20)));
@@ -230,6 +241,54 @@ class BulkExecutionResultServiceTest2 {
         assertEquals(ProcStat.SUCC.code(), payCap.getValue().getProcStat());
     }
 
+    /**
+     * H-1 regression. The callback carries the bank's {@code R_…} name; the stored detail rows carry
+     * the sent {@code S_…} name. The detail lookup must therefore be the prefix-stripped one (legacy
+     * {@code TB_FIRM_FILE_DATA_U001:34}), and per-line results must land on BOTH
+     * {@code TB_FIRM_FILE_DATA} and — chained via {@code ORG_SEQ} — {@code TB_PAY_FILE_DATA}.
+     *
+     * <p>Before the fix this test failed on the pay-detail save: the exact-name lookup returned zero
+     * rows, every line took the {@code fd == null} branch, and the file still advanced to
+     * {@code PROC_STEP='3'} — the silent-loss signature.
+     */
+    @Test
+    void resultCallbackWithRPrefix_propagatesPerLineResults_toFirmAndPayDetail() throws Exception {
+        TbFirmFileMst mst = mst(ProcStep.DEPO_REQ.code(), ProcStat.REQ.code());
+        when(firmFileMstRepository.findForExecutionResult(
+                TRAN_DT, RESULT_FILE_NM, VAN, FILE_SEQ, ProcStep.DEPO_REQ.code(), ProcStat.REQ.code()))
+                .thenReturn(Optional.of(mst));
+        when(firmFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
+                .thenReturn(List.of(mst));
+        when(firmFileDataRepository.findForExecutionResult(TRAN_DT, FILE_SEQ, RESULT_FILE_NM))
+                .thenReturn(List.of(firmData(1, 10), firmData(2, 20)));
+        when(payFileDataRepository.findByBizKeyAndTranDtAndFileSeqNo(BIZ_KEY, TRAN_DT, FILE_SEQ_NO))
+                .thenReturn(List.of(payData(10), payData(20)));
+        when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
+                .thenReturn(Optional.of(new TbPayFileMst()));
+        placeResultFile(resultFile());
+
+        service.handle(envelope());
+
+        // The prefix-stripped finder is the one consulted, with the R_ callback name.
+        verify(firmFileDataRepository).findForExecutionResult(TRAN_DT, FILE_SEQ, RESULT_FILE_NM);
+        // The exact-name finder must NOT be used on the callback path (that is the H-1 defect).
+        verify(firmFileDataRepository, org.mockito.Mockito.never())
+                .findByTranDtAndFileSeqNoAndFirmFileNmOrderBySeqAsc(anyString(), anyString(), anyString());
+
+        // Per-line outcomes reflected onto the firm detail rows: line 1 = 0000, line 2 = 0999/'N'.
+        ArgumentCaptor<TbFirmFileData> fdCap = ArgumentCaptor.forClass(TbFirmFileData.class);
+        verify(firmFileDataRepository, times(2)).save(fdCap.capture());
+        assertEquals("0000", fdCap.getAllValues().get(0).getRsCd());
+        assertEquals("0999", fdCap.getAllValues().get(1).getRsCd());
+        assertEquals("N", fdCap.getAllValues().get(1).getProcRsltDiv());
+
+        // ...and chained onto the pay detail rows via ORG_SEQ (10, 20).
+        ArgumentCaptor<TbPayFileData> pdCap = ArgumentCaptor.forClass(TbPayFileData.class);
+        verify(payFileDataRepository, times(2)).save(pdCap.capture());
+        assertEquals("0000", pdCap.getAllValues().get(0).getRsCd());
+        assertEquals("0999", pdCap.getAllValues().get(1).getRsCd());
+    }
+
     @Test
     void auditRow_tranDt_isProcessingDate_notFilenameDate() throws Exception {
         // E — legacy API2_act.jsp:85,182: the 01302 audit row's TRAN_DT is the callback PROCESSING
@@ -237,10 +296,10 @@ class BulkExecutionResultServiceTest2 {
         // The file lookup still keys on the filename date (legacy R006 parity, unchanged).
         TbFirmFileMst mst = mst(ProcStep.DEPO_REQ.code(), ProcStat.REQ.code());
         when(firmFileMstRepository.findForExecutionResult(
-                TRAN_DT, FILE_NM, VAN, FILE_SEQ, ProcStep.DEPO_REQ.code(), ProcStat.REQ.code())).thenReturn(Optional.of(mst));
+                TRAN_DT, RESULT_FILE_NM, VAN, FILE_SEQ, ProcStep.DEPO_REQ.code(), ProcStat.REQ.code())).thenReturn(Optional.of(mst));
         when(firmFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
                 .thenReturn(List.of(mst));
-        when(firmFileDataRepository.findByTranDtAndFileSeqNoAndFirmFileNmOrderBySeqAsc(TRAN_DT, FILE_SEQ_NO, FILE_NM))
+        when(firmFileDataRepository.findForExecutionResult(TRAN_DT, FILE_SEQ, RESULT_FILE_NM))
                 .thenReturn(List.of(firmData(1, 10), firmData(2, 20)));
         when(payFileDataRepository.findByBizKeyAndTranDtAndFileSeqNo(BIZ_KEY, TRAN_DT, FILE_SEQ_NO))
                 .thenReturn(List.of(payData(10), payData(20)));
@@ -259,7 +318,45 @@ class BulkExecutionResultServiceTest2 {
         org.junit.jupiter.api.Assertions.assertNotEquals(TRAN_DT, audit.getTranDt()); // NOT the filename date
         // File lookup still keyed on the filename date (legacy R006 parity).
         verify(firmFileMstRepository).findForExecutionResult(
-                TRAN_DT, FILE_NM, VAN, FILE_SEQ, ProcStep.DEPO_REQ.code(), ProcStat.REQ.code());
+                TRAN_DT, RESULT_FILE_NM, VAN, FILE_SEQ, ProcStep.DEPO_REQ.code(), ProcStat.REQ.code());
+    }
+
+    /**
+     * False "all success" — the guard driven through the real service, not a mirror of its logic.
+     *
+     * <p>A 01302 lands for file A while sibling B is still stranded at {@code '2'/'6'}. Pre-fix the
+     * barrier only looked for {@code PROC_STEP='0'} siblings, so B did not defer, and {@code TOT}
+     * counted only terminal rows — giving {@code tot=1 / succ=1} and finalising the shared pay-file to
+     * {@code '0'} (ALL SUCCESS) while B had never reported.
+     */
+    @Test
+    void strandedSiblingAtStep2_preventsPayFileFinalisation() throws Exception {
+        TbFirmFileMst mst = mst(ProcStep.DEPO_REQ.code(), ProcStat.REQ.code());
+        TbFirmFileMst strandedSibling = mst(ProcStep.DEPO_REQ.code(), ProcStat.REQ.code());
+        strandedSibling.setFirmFileNm("S_" + VAN + "_HGS_009_" + TRAN_DT);
+
+        when(firmFileMstRepository.findForExecutionResult(
+                TRAN_DT, RESULT_FILE_NM, VAN, FILE_SEQ, ProcStep.DEPO_REQ.code(), ProcStat.REQ.code()))
+                .thenReturn(Optional.of(mst));
+        // Same mst ref — after the handler advances it, this reads '3'/'0'; the sibling stays '2'/'6'.
+        when(firmFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
+                .thenReturn(List.of(mst, strandedSibling));
+        when(firmFileDataRepository.findForExecutionResult(TRAN_DT, FILE_SEQ, RESULT_FILE_NM))
+                .thenReturn(List.of(firmData(1, 10), firmData(2, 20)));
+        when(payFileDataRepository.findByBizKeyAndTranDtAndFileSeqNo(BIZ_KEY, TRAN_DT, FILE_SEQ_NO))
+                .thenReturn(List.of(payData(10), payData(20)));
+        when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
+                .thenReturn(Optional.of(new TbPayFileMst()));
+        placeResultFile(resultFile());
+
+        service.handle(envelope());
+
+        // A itself still advances — this file DID report.
+        assertEquals(ProcStep.DEPO_RES_RECV.code(), mst.getProcStep());
+        assertEquals(ProcStat.SUCC.code(), mst.getProcStat());
+
+        // ...but the shared pay-file must NOT be finalised while B has not reported.
+        verify(payFileMstRepository, org.mockito.Mockito.never()).save(any());
     }
 
     @Test
@@ -279,7 +376,7 @@ class BulkExecutionResultServiceTest2 {
     @Test
     void malformedResultFile_throws_andDoesNotAdvanceState() throws Exception {
         when(firmFileMstRepository.findForExecutionResult(
-                TRAN_DT, FILE_NM, VAN, FILE_SEQ, ProcStep.DEPO_REQ.code(), ProcStat.REQ.code()))
+                TRAN_DT, RESULT_FILE_NM, VAN, FILE_SEQ, ProcStep.DEPO_REQ.code(), ProcStat.REQ.code()))
                 .thenReturn(Optional.of(mst(ProcStep.DEPO_REQ.code(), ProcStat.REQ.code())));
         placeResultFile(new byte[500]); // not a 1000-byte-record multiple → codec rejects
 

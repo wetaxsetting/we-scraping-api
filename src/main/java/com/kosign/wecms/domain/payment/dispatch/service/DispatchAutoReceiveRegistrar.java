@@ -12,7 +12,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * 00301 reception flow ({@link BulkReceptionService#receive}).
  *
  * <p>Used by every File-path dispatch executor — the shared
- * {@link TransferDispatchExecutor} (Vendor / Expense) and the module-specific
+ * {@code TransferDispatchExecutor} (deleted 2026-07-28, F-3) and the module-specific
  * {@code InternalTransferDispatchExecutor} / {@code PayrollDispatchExecutor} /
  * {@code OverseasDispatchExecutor} — so the registration pattern lives in exactly
  * one place.
