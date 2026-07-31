@@ -161,7 +161,7 @@ across the two systems on a shared DB.
 - **No longer an external blocker.** During SIT, capture **one** real outbound request as verification evidence only — not a pending design decision.
 
 ### OQ-2 — VCB transfer method + VND/USD file fields  ·  **CLOSED — CONFIRMED + IMPLEMENTED (2026-07-21)**
-- **Business decision (Mr. Jung 2026-07-16):** VCB (970436) cannot support the real-time Transfer API without a certificate, so **ALL VCB transfers — both VND and USD — use File-based dispatch** (same pattern as Shinhan USD file-only). Not an open routing question. Backup kept in git branch history + legacy SVN r36803.
+- **Business decision (Mr. Jung 2026-07-16):** VCB (970436) cannot support the real-time Transfer API without a certificate, so **ALL VCB transfers — both VND and USD — use File-based dispatch** (same pattern as Shinhan USD file-only). Not an open routing question. Backup kept in git branch history + legacy **SVN r36822** (soknyran, 2026-07-16 12:05:39 +0700, redmine 43078, `M /WECMS/src/wabooks/helper/PymnHelper.java` only — verified via `svn log` 2026-07-29; the `r36803` cited in earlier revisions of this and other docs is a **different** 2026-07-07 commit by ouddom under redmine 43104). Note that r36822 committed **no** DB or schedule script — see [../references/support-matrix.md](../references/support-matrix.md) §11a R-1/R-5.
 - **Routing (CONFIRMED + IMPLEMENTED):** `isVcbFileTransfer` pulls every VCB case off the API path in Vendor / Expense / Internal Transfer; VCB never uses the real-time API. Same-bank and other-bank VND both handled; the VCB→other-bank reject is preserved **USD-only** (legacy parity), so VCB VND→other is allowed. Shinhan / Woori routing unchanged.
 - **`BANK_CHNL_DIV` / `ANT_DIV_CD` field values — CONFIRMED from legacy source** (`PymnHelper` latest, Mr. Jung 2026-07-16 switch), so **not invented**:
   - `VCB VND → VCB` (same-bank): `BANK_CHNL_DIV='T'` (PymnHelper:2572); `ANT_DIV_CD` = the uploaded value (`copyFrom(rows)`, :2840 — no VND override).
@@ -177,6 +177,42 @@ Verify + record (redacted) in §2 for SIT and UAT: **B1** EFS base-url + partner
 - Generate the **same** transfer input through legacy and the refactor; capture both 1000-byte files.
 - Diff byte-for-byte; record a checksum (e.g. SHA-256) of each and any field-offset differences.
 - Focus areas (highest pre-SIT risk): the EV/VV URL-encode pass count and the `BT00` reception-code set.
+
+#### B5-a — gateway read-timeout gap (audit **D-9**)  ·  owner: **Arthur (dev) + VAN Center (SLA)**
+
+Tracked as its own line item, **not** folded into the byte-parity capture: it is a timing property, and a
+byte-identical request can still fail on it.
+
+| | Connect | Read | Source |
+|---|---|---|---|
+| Legacy | **30 s** | **60 s** | `ConnectionUtil.CONNECT_TIMEOUT/READ_TIMEOUT` (handover `04 §4.1`, `06 §6.3`, `07 §7.2`) |
+| Refactor | **3 s** | **20 s** | `EfsProperties.connectTimeoutMs/readTimeoutMs` — Javadoc'd as *"PDF §6 sample uses 3 s / 20 s"* |
+
+- **The refactor's values come from the vendor guide's sample snippet, not from legacy.** That is a 3×
+  read-timeout reduction adopted without anyone reconciling it against the production values legacy ran
+  with. No audit compared the two — the 20 s figure appears in exactly one place
+  (`scheduler-final-readiness.md:109`, as an input to the ShedLock `lockAtMostFor` derivation).
+- **The handover documents no SLA.** It states the legacy constants three times and never gives an
+  expected or observed gateway response time, so 60 s cannot be assumed to be generous headroom — it may
+  have been sized against real latency.
+- **Exposure.** A response arriving between **20 s and 60 s** succeeded under legacy and now times out.
+  On the 202 leg a read timeout lands on the no-response path → `PROC_STAT='6'`, awaiting a 203
+  confirmation. That is recoverable *by design* — but it silently converts a class of **successful**
+  legacy transfers into pending-then-reconciled ones.
+- **Compounding with D-6.** `ResultCheckJob`'s cron defaults to `-` (disabled). With result-check off,
+  a row parked at `'6'` by this timeout is **never resolved** — no 203, no timeout, no terminal status.
+  `payment-dispatch-flags-deployment-readiness-audit.md:326` already rates
+  `realtime-dispatch=true` + `result-check.cron="-"` as **HIGH** for exactly this reason; the tightened
+  read timeout widens the set of rows that land in it.
+
+**To close:**
+- [ ] Ask the VAN Center for the gateway's actual response-time distribution / any SLA on the 201–302 legs.
+- [ ] During the B5 capture, record wall-clock latency per leg (not just bytes) — that is the empirical
+      answer if no SLA is published.
+- [ ] Decide explicitly: keep 20 s, or restore legacy's 60 s. If 20 s is kept, record the rationale and
+      **ensure `result-check.cron` is set** in the same environment, so the `'6'` path actually drains.
+- [ ] Whichever is chosen, replace the "PDF §6 sample" Javadoc rationale in `EfsProperties` with the
+      decision and its evidence.
 
 ## 6. Final activation statement
 

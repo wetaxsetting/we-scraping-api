@@ -5,6 +5,7 @@ import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.banking.entity.AcctMstr;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
+import com.kosign.wecms.domain.payment.dispatch.constant.AntDivChannel;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileData;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileMst;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbFirmConfRepository;
@@ -35,7 +36,7 @@ import java.util.List;
  * Payment &gt; Payroll Payment — <b>Payroll-only</b> dispatch executor (PR2).
  *
  * <p>Deliberate, isolated copy of the shared
- * {@link com.kosign.wecms.domain.payment.dispatch.service.TransferDispatchExecutor},
+ * {@code TransferDispatchExecutor} (deleted 2026-07-28, F-3),
  * mirroring the {@code InternalTransferDispatchExecutor} /
  * {@code OverseasDispatchExecutor} pattern. Consumed ONLY by
  * {@link PayrollPaymentService#dispatch}.
@@ -60,6 +61,13 @@ import java.util.List;
  *       NOT the shared executor's {@code "C"}.</li>
  *   <li><b>{@code TRSC_CCY_CD}</b> = the request {@code trnfCcyCd} (file-path
  *       parity); no Woori/Shinhan USD→VND API routing.</li>
+ *   <li><b>{@code ANT_DIV_CD}</b> (F-1, fixed 2026-07-28) — legacy 4-branch
+ *       channel selection ({@code pymn_0005_001_c001_act.jsp:214-227}) plus the
+ *       Woori-VND-same-bank override ({@code :256-259}). The 5-char detail value
+ *       is narrowed to the {@code bpchar(1)} storage code via
+ *       {@link AntDivChannel#toStorageCode(String)}. Two branches intentionally
+ *       write {@code NULL} (VCB FCY; Woori VND same-bank) — see the inline note
+ *       on the operating-hours consequence.</li>
  * </ul>
  *
  * <p>Validation + cut-off + the master {@code TRNF_YN='Y'} stamp stay in
@@ -205,13 +213,60 @@ public class PayrollDispatchExecutor {
             if (eq(outBank, vcbBankCd) && CCY_VND.equalsIgnoreCase(line.getTrnfCcyCd())) {
                 throw new BusinessException("WBE_PAYROLL_VCB_VND_NOT_SUPPORTED");   // legacy :179-182
             }
+
+            // F-1 — ANT_DIV_CD channel selection. Direct port of the legacy 4-branch
+            // rule at pymn_0005_001_c001_act.jsp:214-227, which this executor
+            // previously omitted entirely (every row was written with a NULL channel).
+            // FCY is decided per out-bank; VND (and any non-firm-banking bank) carries
+            // the uploaded detail code.
+            //
+            // WIDTH: TB_PAY_FILE_DATA.ANT_DIV_CD is bpchar(1) while the source
+            // SCDUL_PYMN_SUMR_DETL.ANT_DIV_CD is bpchar(5) (PayrollPaymentService
+            // writes the 5-char "CITAD"). The detail value must therefore be NARROWED,
+            // never copied — AntDivChannel.toStorageCode is the single conversion
+            // vocabulary and is a port of legacy AntDivCdT.parse (accepts either width,
+            // case-insensitive, returns null for anything unrecognised so an unknown
+            // channel is never guessed).
+            boolean fcy = !CCY_VND.equalsIgnoreCase(trimToNull(line.getTrnfCcyCd()));
+            if (fcy && eq(outBank, shinhanBankCd)) {
+                data.setAntDivCd(AntDivChannel.CODE_EBANK);                        // legacy :215-217
+            } else if (fcy && eq(outBank, wooriBankCd)) {
+                data.setAntDivCd(AntDivChannel.CODE_VCB);                          // legacy :218-220
+            } else if (fcy && eq(outBank, vcbBankCd)) {
+                // PRESERVED LEGACY NULL (:221-223) — VCB FCY is same-bank-only, so the
+                // channel is deliberately blank. See the NULL-branch note below.
+                data.setAntDivCd(null);
+            } else {
+                data.setAntDivCd(AntDivChannel.toStorageCode(line.getAntDivCd()));  // legacy :225-226
+            }
+
             if (eq(outBank, shinhanBankCd) || eq(outBank, wooriBankCd) || eq(outBank, vcbBankCd)) {
                 boolean sameBank = eq(outBank, tarBank) || sameBankGroup(outBank, tarBank);
                 if (eq(outBank, vcbBankCd) && !sameBank) {
                     throw new BusinessException("WBE_PAYROLL_VCB_USD_OTHER_BANK");  // legacy :249-252
                 }
                 data.setBankChnlDiv(sameBank ? BANK_CHNL_DIV_CURRENT_BANK : BANK_CHNL_DIV_OTHER_BANK);
+                if (sameBank && eq(outBank, wooriBankCd)
+                        && CCY_VND.equalsIgnoreCase(trimToNull(line.getTrnfCcyCd()))) {
+                    // PRESERVED LEGACY NULL (:256-259) — Woori VND same-bank clears the
+                    // channel again, AFTER the block above has set it. Order matters:
+                    // legacy applies this override inside the same-bank branch, so it
+                    // must stay here rather than being folded into the selection above.
+                    data.setAntDivCd(null);
+                }
             }
+
+            // ── On the two PRESERVED LEGACY NULL branches (VCB FCY, Woori VND
+            //    same-bank) and on an unrecognised detail code, ANT_DIV_CD stays NULL.
+            //    A file whose rows are ALL null-channel yields an empty channel set in
+            //    BulkReceptionService.presentChannels, and OperatingHoursService then
+            //    returns SKIP (not CUTOFF, not NO_CRITERIA) — the pay-file is left
+            //    PROC_STAT='9' WAIT with no FAIL and no ops alert. That silent-stall
+            //    outcome is LEGACY BEHAVIOUR and is preserved here deliberately; it is
+            //    NOT a defect introduced by this fix, and the empty-channel semantics in
+            //    OperatingHoursService are intentionally left untouched. Whether a
+            //    perpetual silent WAIT is operationally acceptable is open question Q-4
+            //    in docs/audits/payment-dispatch-operating-hours-flow.md. ──
             data.setFincMdaOwnerNm(line.getRcptNm());  // B: legacy raw RCPT_NM (pymn_0005_001_c001_act.jsp:206)
             // Legacy quirk parity (PymnHelper:2295): WDRL_ACT_RMRK copied into
             // both TAR_ACCT_RMRK and WDRL_ACT_RMRK.

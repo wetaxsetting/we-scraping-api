@@ -209,6 +209,8 @@ public class InternalTransferService {
     private final com.kosign.wecms.domain.payment.common.OutBankCdNormalizer outBankCdNormalizer;
     /** Authoritative save-path blocked-char enforcement (audit task-44508, P0). */
     private final com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard blockedCharGuard;
+    /** C-14: fixed-length wire-slot width guard for the bank-bound name & memo fields. */
+    private final com.kosign.wecms.domain.payment.common.PaymentWireWidthGuard wireWidthGuard;
     /** Save-side re-assertion of the single-network rule (legacy
      *  {@code PymnHelper.validateUploadedPayments}, {@code WBE1191}). */
     private final com.kosign.wecms.domain.payment.common.UploadConsistencyValidator uploadConsistencyValidator;
@@ -575,6 +577,15 @@ public class InternalTransferService {
                     java.util.List.of(com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard.field(
                             com.kosign.wecms.domain.payment.validation.FieldCd.REMARKS,
                             com.kosign.wecms.domain.payment.common.LegacyTextNormalizer.normalize(line.tranUsag()))));
+            // C-14: same boundary, different bound — the blocked-char guard above checks WHICH
+            // characters are allowed, this checks whether the value FITS its slot in the bank's
+            // fixed-length record. Byte-counted, not character-counted: 200 characters of Korean
+            // pass the varchar(200) column and still overflow the 210-byte memo slot. Remarks only
+            // — Internal Transfer carries no recipient-name input (audit F4).
+            wireWidthGuard.assertClean(java.util.List.of(
+                    com.kosign.wecms.domain.payment.common.PaymentWireWidthGuard.field(
+                            com.kosign.wecms.domain.payment.common.WireField.DEPOSIT_ACCOUNT_MEMO,
+                            line.tranUsag())));
         }
 
         String scdulPymnNo = keyGenerator.nextScdulPymnNo(bizKey);

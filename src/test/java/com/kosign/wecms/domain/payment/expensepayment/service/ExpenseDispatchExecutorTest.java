@@ -171,27 +171,73 @@ class ExpenseDispatchExecutorTest {
     }
 
     @Test
-    void vcbVnd_otherBank_carriesUploadedAntDivCd_bankChnlDivOther() {
-        // OQ-2 (CONFIRMED file-based VCB; legacy PymnHelper:2573 "VCB VND -> Other : NAPAS/CITAD from upload").
+    void vcbVnd_routesToFilePath_notApi() {
+        // Legacy PymnHelper.pymn_0001_001_c001:2186 + :2188 (SVN r36822, soknyran 2026-07-16,
+        // redmine 43078 — verified via `svn log`; the r36803 cited previously is a different
+        // 2026-07-07 commit by ouddom under redmine 43104):
+        //     boolean isVcbFileTransfer = VCB_BANK_CD.equals(scdulPymnSumr.getOutBankCd());
+        //     if (input.getString("TRNF_CCY_CD").equals("VND") && !isVcbFileTransfer) { ...API... }
+        // pymn_0001_001_c001 is shared by Vendor (pymn_0001_001_c001_act.jsp:99) AND Expense
+        // (pymn_0003_001_c001_act.jsp:84), so the same guard covers both modules. "VCB (970436)
+        // cannot support the real-time Transfer API without a certificate."
+        ScdulPymnSumrDetl l = line(BIDV, "VND");
+        l.setAntDivCd("C");
+        executor.execute(master(VCB, "VND"), List.of(l), "VND");
+
+        verify(tbPayFileMstRepository).save(any());          // File path
+        verify(tbPayTargetRepository, never()).save(any());  // NOT the real-time / API path
+    }
+
+    @Test
+    void vcbVnd_otherBank_longFormAntDivCdIsNulled_bankChnlDivOther() {
+        // F-4 / Option A. OQ-2 confirms VCB VND is file-based; legacy PymnHelper:2573 leaves the copyFrom
+        // value, but copyFrom narrows via AntDivCdT.fromValue (1-char only) so "NAPAS" -> NULL. The old
+        // expectation ("NAPAS") could not be stored — target is bpchar(1), INSERT fails SQLSTATE 22001.
         ScdulPymnSumrDetl l = line(BIDV, "VND");
         l.setAntDivCd("NAPAS");
         executor.execute(master(VCB, "VND"), List.of(l), "VND");
 
         TbPayFileData d = captureData();
-        assertThat(d.getAntDivCd()).isEqualTo("NAPAS");
+        assertThat(d.getAntDivCd()).isNull();
         assertThat(d.getBankChnlDiv()).isEqualTo("O");
         assertThat(d.getTrscCcyCd()).isEqualTo("VND");
     }
 
     @Test
-    void vcbVnd_sameBank_carriesUploadedAntDivCd_bankChnlDivCurrent() {
+    void vcbVnd_sameBank_longFormAntDivCdIsNulled_bankChnlDivCurrent() {
         ScdulPymnSumrDetl l = line(VCB, "VND");
         l.setAntDivCd("CITAD");
         executor.execute(master(VCB, "VND"), List.of(l), "VND");
 
         TbPayFileData d = captureData();
-        assertThat(d.getAntDivCd()).isEqualTo("CITAD");
+        assertThat(d.getAntDivCd()).isNull();             // legacy fromValue("CITAD") -> null
         assertThat(d.getBankChnlDiv()).isEqualTo("T");
+    }
+
+    /* ── F-4 additions: a 1-char upload IS storable and must survive verbatim ── */
+
+    @Test
+    void vcbVnd_oneCharAntDivCd_isPreserved() {
+        ScdulPymnSumrDetl l = line(BIDV, "VND");
+        l.setAntDivCd("C");
+        executor.execute(master(VCB, "VND"), List.of(l), "VND");
+        assertThat(captureData().getAntDivCd()).isEqualTo("C");
+    }
+
+    @Test
+    void vcbVnd_paddedOneCharAntDivCd_isPreserved() {
+        ScdulPymnSumrDetl l = line(BIDV, "VND");
+        l.setAntDivCd("N    ");
+        executor.execute(master(VCB, "VND"), List.of(l), "VND");
+        assertThat(captureData().getAntDivCd()).isEqualTo("N");
+    }
+
+    @Test
+    void vcbVnd_unknownAntDivCd_isNulled() {
+        ScdulPymnSumrDetl l = line(BIDV, "VND");
+        l.setAntDivCd("T");
+        executor.execute(master(VCB, "VND"), List.of(l), "VND");
+        assertThat(captureData().getAntDivCd()).isNull();
     }
 
     @Test

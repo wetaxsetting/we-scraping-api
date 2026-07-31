@@ -41,16 +41,42 @@ import java.time.format.DateTimeFormatter;
  * {@code wecms.dispatch.efs.enabled=true}. Mirrors the {@code recipient-inquiry}
  * gate pattern in {@code FirmBankingInquiryService}.
  *
- * <p><b>appDiv / grpID are legacy protocol constants</b> (verified: hardcoded
- * {@code "0"} / {@code "WECMSBATCH"} at all 10 legacy call sites, never
- * configurable) — see {@code MsgSendUtil.SendMsg}. {@code TNO} is the fixed legacy
- * literal {@code "M9999999"}. Only the enable flag is configuration.
+ * <p><b>{@code appDiv} is a legacy protocol constant</b> ({@code "0"} = Slack,
+ * hardcoded at all 10 legacy call sites). {@code TNO} is the fixed legacy literal
+ * {@code "M9999999"}.
+ *
+ * <h2>{@code grpID} — configurable since FIX K, legacy value as the default</h2>
+ * {@code grpID} is the gateway's <b>channel-mapping id</b> (legacy payload comment:
+ * {@code //CHANNEL 매핑 ID}); the VAN side resolves it to a Slack destination. It was
+ * previously a {@code private static final} constant here, described as
+ * "never configurable" — which was a misreading of the legacy code. In legacy it is a
+ * <b>method parameter</b> ({@code MsgSendUtil.SendMsg(vanOrgCD, cryptKey, appDiv,
+ * grpID, content)}); all 10 call sites merely happen to pass the same literal. The
+ * protocol accepts any value the gateway has registered.
+ *
+ * <p><b>Why it matters:</b> during JEX coexistence the refactor and the live JEX batch
+ * both post to {@code WECMSBATCH}, so ops sees two systems' alerts interleaved in one
+ * channel, separated only by the {@code [ENV][WAS_NO]} label this class appends. A
+ * distinct {@code grpID} would separate them at the channel level.
+ *
+ * <p><b>The default does not change anything.</b> {@code wecms.dispatch.alert.grp-id}
+ * defaults to the legacy {@code WECMSBATCH}, so behaviour is identical until someone
+ * sets it. <b>Do not set it before confirming the value with the VAN Center:</b> an
+ * unregistered {@code grpID} most likely means the gateway drops the message, and
+ * because this service is fire-and-forget the loss would be silent apart from a
+ * non-{@code 0000} {@code RC} in the log. {@code WGVN_MSG_SEND_001} is not specified
+ * in any vendor document available in this workspace (checked: the three files under
+ * {@code COOCON API}), so the registered channel set is a VAN-side question, not one
+ * that can be answered from the code.
  *
  * <p><b>Envelope {@code ID} = VAN org code (audit M-12 / H2).</b> Legacy
  * {@code MSGSendAPIThread:77} always sends {@code vanOrgCd} as the envelope {@code ID}
  * (never the partner id — that is a per-request contract, distinct from the alert
  * channel). This is the ID the Slack gateway keys the channel on, so it is sent
- * verbatim here, unlike the request/callback legs which may use {@code partner-id}.
+ * verbatim here. <b>D-2 (2026-07-29):</b> this is no longer a special case — legacy sends
+ * {@code VAN_ORG_CD} as the envelope {@code ID} on <i>every</i> leg, and the refactor's
+ * {@code partner-id} property has been removed, so the request/callback legs now do the same.
+ * See {@link EfsProperties} for the per-leg legacy evidence.
  *
  * <p><b>Environment / server marker (audit F3/F4 / H2).</b> The alert carries the
  * legacy {@code ServerGB} label {@code [ENV][WAS_NO]} appended to the first content
@@ -70,8 +96,8 @@ public class OpsAlertService {
 
     /** Legacy {@code appDiv} constant — {@code "0"} = Slack. Never configurable. */
     private static final String APP_DIV = "0";
-    /** Legacy {@code grpID} constant — the {@code WECMSBATCH} Slack channel. Never configurable. */
-    private static final String GRP_ID = "WECMSBATCH";
+    /** The legacy {@code grpID} — the default for {@link #grpId}, and the only value legacy ever sends. */
+    static final String GRP_ID_LEGACY = "WECMSBATCH";
     /** Legacy fixed transaction number for the message-send envelope. */
     private static final String TNO = "M9999999";
 
@@ -100,6 +126,18 @@ public class OpsAlertService {
     /** Legacy {@code WAS_NO} — the server/instance number shown in the {@code ServerGB} label. */
     @Value("${wecms.dispatch.alert.was-no:}")
     private String wasNo;
+
+    /**
+     * FIX K · Gateway channel-mapping id ({@code grpID}). Defaults to the legacy
+     * {@link #GRP_ID_LEGACY}, so nothing changes until someone deliberately sets it.
+     *
+     * <p>Set a distinct value only after the VAN Center confirms it is registered — see the
+     * class Javadoc. A blank or whitespace value falls back to the legacy constant rather than
+     * sending an empty {@code grpID}, because an empty channel id is a guaranteed silent drop and
+     * an unset-by-accident property must not be able to switch alerting off.
+     */
+    @Value("${wecms.dispatch.alert.grp-id:" + GRP_ID_LEGACY + "}")
+    private String grpId = GRP_ID_LEGACY;
 
     public OpsAlertService(EfsApiClient efsApiClient,
                            EfsCryptoService efsCryptoService,
@@ -137,7 +175,7 @@ public class OpsAlertService {
             // F3 (audit): re-attach the legacy ServerGB [ENV][WAS_NO] marker to the first content
             // line (legacy CommUtil.getServerGB — "batchname [ENV][WAS_NO]\nfields...").
             String labelledContent = withServerLabel(content);
-            MsgSendRequest payload = new MsgSendRequest(APP_DIV, GRP_ID, labelledContent, resolveMode());
+            MsgSendRequest payload = new MsgSendRequest(APP_DIV, resolveGrpId(), labelledContent, resolveMode());
             String businessJson = objectMapper.writeValueAsString(payload);
 
             String rqDtime = LocalDateTime.now(ICT).format(RQ_DTIME_FMT);
@@ -162,6 +200,16 @@ public class OpsAlertService {
             // Fire-and-forget: an alert failure must never affect the dispatch flow.
             log.warn("ops-alert send failed vanOrgCd={} — swallowed", vanOrgCd, e);
         }
+    }
+
+    /**
+     * The {@code grpID} to send: the configured value, or the legacy constant when it is blank.
+     *
+     * <p>Blank falls back rather than propagating: {@code grpID} is the gateway's channel key, so an
+     * empty one is an unroutable message and a fire-and-forget service would lose it silently.
+     */
+    private String resolveGrpId() {
+        return StringUtils.hasText(grpId) ? grpId.trim() : GRP_ID_LEGACY;
     }
 
     /**

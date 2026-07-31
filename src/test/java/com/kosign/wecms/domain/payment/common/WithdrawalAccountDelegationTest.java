@@ -35,7 +35,7 @@ import static org.mockito.Mockito.when;
 class WithdrawalAccountDelegationTest {
 
     private static final List<WithdrawalAccountRow> STUB =
-            List.of(new WithdrawalAccountRow("11704088", "Shinhan", "1111", "03", "VND", null));
+            List.of(new WithdrawalAccountRow("11704088", "Shinhan", "1111", "03", "VND", null, "ACCT HOLDER"));
 
     @Mock private WithdrawalAccountListService shared;
 

@@ -22,4 +22,18 @@ public record WithdrawalAccountRow(
         String acctNo,
         String acctTypeCd,
         String ccyCd,
-        String acctNickNm) {}
+        String acctNickNm,
+        /**
+         * {@code ACCT_MSTR.ACCT_NM} — the bank-registered account-holder name.
+         *
+         * <p>Added for C-14 / FIX B. This is <b>not</b> a display nicety: on the Overseas rail this
+         * column becomes {@code TB_PAY_FILE_DATA.SENDER_NM} and then the fixed-length record's
+         * 150-byte {@code senderName} slot ({@code OverseasDispatchExecutor.resolveSenderNm}). It is
+         * the one wire field with no entry surface — nobody types it, so nothing validated it, and
+         * until now the picker could not even show the user the value their payment would send.
+         *
+         * <p>{@code varchar(100)} <i>characters</i>, so 100 Hangul/CJK characters is 300 bytes against
+         * a 150-byte slot. Nullable — the column is nullable and the scrape may not have returned a
+         * holder name.
+         */
+        String acctNm) {}

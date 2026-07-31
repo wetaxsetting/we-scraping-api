@@ -194,7 +194,10 @@ public class BulkExecutionResultService {
         FixedLengthCodec.ParsedFile parsed = parseResultFile(localPath, req.fileNm());
 
         // 8. Insert TB_FIRM_FILE_RSLT per D line + reflect onto TB_FIRM_FILE_DATA.
-        Map<Integer, TbFirmFileData> firmDataBySeq = indexFirmDataBySeq(tranDt, fileSeqNo, req.fileNm());
+        // H-1: keyed on FILE_SEQ + prefix-stripped name (legacy U001), NOT the exact callback name —
+        // req.fileNm() is the bank's R_ result name; the stored rows carry the sent S_ name.
+        Map<Integer, TbFirmFileData> firmDataBySeq =
+                indexFirmDataBySeq(tranDt, mst.getFileSeq(), req.fileNm());
         Map<Integer, TbPayFileData> payDataBySeq = indexPayDataBySeq(bizKey, tranDt, fileSeqNo);
 
         for (DepositData line : parsed.lines()) {
@@ -291,14 +294,31 @@ public class BulkExecutionResultService {
      * {@code FILE_SEQ_NO} has reported (none still at {@code PROC_STEP='0'/PROC_STAT='6'}):
      * {@code 0} all-success / {@code 3} all-fail / {@code 1} partial.
      */
+    /** {@code PROC_STEP/PROC_STAT} of each sibling, for the deferral logs. */
+    private static String siblingStates(List<TbFirmFileMst> siblings) {
+        return siblings.stream()
+                .map(f -> f.getFirmFileNm() + "=" + f.getProcStep() + "/" + f.getProcStat())
+                .collect(java.util.stream.Collectors.joining(" "));
+    }
+
     private void finalizePayFileStatus(String tranDt, String bizKey, String fileSeqNo, String dttm14) {
         List<TbFirmFileMst> siblings = firmFileMstRepository
                 .findByTranDtAndBizKeyAndFileSeqNo(tranDt, bizKey, fileSeqNo);
 
-        boolean awaitingSiblings = siblings.stream().anyMatch(f ->
-                ProcStep.REQ.code().equals(f.getProcStep()) && ProcStat.REQ.code().equals(f.getProcStat()));
+        // ── Guard 1 (Option A) — defer while ANY sibling is still non-terminal ────────────────────
+        // Legacy's barrier (IDO.TB_FIRM_FILE_MST_R003.xml:26-30, called at API2_act.jsp:389-405) tests
+        // only PROC_STEP='0' AND PROC_STAT='6' — reception-pending. A sibling mid-EXECUTION ('1'/'6' or
+        // '2'/'6') does not block it, and R005 then counts only terminal rows into TOT, so an
+        // in-flight sibling is invisible to the tot==succ ratio and the parent finalises without it.
+        //
+        // DELIBERATE DIVERGENCE FROM LEGACY (approved 2026-07-31, same class as the ANT_DIV_CD
+        // canonicalisation): defer on PROC_STAT='6' at ANY step. A file that has not reported cannot
+        // be counted as success or failure, so the only correct action is to wait.
+        boolean awaitingSiblings = siblings.stream()
+                .anyMatch(f -> ProcStat.REQ.code().equals(f.getProcStat()));
         if (awaitingSiblings) {
-            log.info("01302 — deferring pay-file finalize, sibling files still pending fileSeqNo={}", fileSeqNo);
+            log.info("01302 — deferring pay-file finalize, sibling files still pending fileSeqNo={} states={}",
+                    fileSeqNo, siblingStates(siblings));
             return;
         }
 
@@ -306,6 +326,23 @@ public class BulkExecutionResultService {
                 ProcStat.SUCC.code().equals(f.getProcStat()) || ProcStat.FAIL.code().equals(f.getProcStat())).count();
         long succ = siblings.stream().filter(f -> ProcStat.SUCC.code().equals(f.getProcStat())).count();
         long fail = siblings.stream().filter(f -> ProcStat.FAIL.code().equals(f.getProcStat())).count();
+
+        // ── Guard 2 — never finalise on an empty terminal set ─────────────────────────────────────
+        // THIS is the arithmetic that produced the two observed PROD false-"all success" rows, and it
+        // needs no split batch at all: for a SINGLE file stranded at '2'/'6', tot=0 and succ=0, so
+        // `tot == succ` is 0 == 0 — TRUE — and the parent is finalised to '0' (ALL SUCCESS) while its
+        // only file never reported. An empty count satisfies the equality.
+        //
+        // Guard 1 already prevents reaching this line (a '6' sibling defers first), so this is
+        // belt-and-braces — but the equality is the actual defect, it is one comparison, and any future
+        // change to Guard 1's predicate would silently re-expose it. Keep both.
+        if (tot == 0) {
+            log.warn("01302 — refusing to finalize pay-file with NO terminal sibling fileSeqNo={} "
+                            + "bizKey={} siblings={} states={} — parent left at PROC_STAT='6' "
+                            + "(finalising here would report '0'/all-success for a file that never reported)",
+                    fileSeqNo, bizKey, siblings.size(), siblingStates(siblings));
+            return;
+        }
 
         // Legacy partial status is the literal '1' (NOT a WCConst PROC_ST_* — see API2_act.jsp:421-429).
         String stat;
@@ -368,10 +405,18 @@ public class BulkExecutionResultService {
         }
     }
 
-    private Map<Integer, TbFirmFileData> indexFirmDataBySeq(String tranDt, String fileSeqNo, String fileNm) {
+    /**
+     * Index the sent file's detail lines by line {@code SEQ}, matching the way legacy
+     * {@code TB_FIRM_FILE_DATA_U001} joins — prefix-stripped {@code FIRM_FILE_NM} + {@code FILE_SEQ}.
+     *
+     * <p><b>H-1:</b> {@code fileNm} here is the bank's {@code R_…} result name, while the stored rows
+     * carry the sent {@code S_…} name, so an exact-name lookup returns nothing. See
+     * {@link TbFirmFileDataRepository#findForExecutionResult}.
+     */
+    private Map<Integer, TbFirmFileData> indexFirmDataBySeq(String tranDt, String fileSeq, String fileNm) {
         Map<Integer, TbFirmFileData> map = new HashMap<>();
         for (TbFirmFileData fd : firmFileDataRepository
-                .findByTranDtAndFileSeqNoAndFirmFileNmOrderBySeqAsc(tranDt, fileSeqNo, fileNm)) {
+                .findForExecutionResult(tranDt, fileSeq, fileNm)) {
             map.put(intValue(fd.getSeq()), fd);
         }
         return map;

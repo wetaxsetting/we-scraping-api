@@ -59,7 +59,11 @@ class SettingsBankAccountServiceBankNameTest {
     @BeforeEach
     void setUp() {
         service = new SettingsBankAccountService(
-                acctRepo, bankCdResolver, vasAcctRepo, acctAuthRepo,
+                acctRepo,
+                // C-14 / FIX B: the REAL guard — see AccountRegistrationServicePrnSeqAndWhitelistTest.
+                new com.kosign.wecms.domain.payment.overseas.service.OverseasSenderNameGuard(
+                        acctRepo, com.kosign.wecms.domain.payment.common.WireWidthGuards.real()),
+                bankCdResolver, vasAcctRepo, acctAuthRepo,
                 auditLogService, auditLogReadRepo, userInfmRepo);
         TenantContext.set(USER, BIZ, LangCd.EN);
     }

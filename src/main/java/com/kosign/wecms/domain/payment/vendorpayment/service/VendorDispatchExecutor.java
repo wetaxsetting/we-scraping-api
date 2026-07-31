@@ -5,6 +5,7 @@ import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.banking.entity.AcctMstr;
 import com.kosign.wecms.domain.banking.repository.AcctMstrRepository;
+import com.kosign.wecms.domain.payment.dispatch.constant.AntDivChannel;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileData;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileMst;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayTarget;
@@ -40,7 +41,7 @@ import java.util.List;
  * <b>Vendor-Payment-specific</b> dispatch executor.
  *
  * <p>This class is a deliberate, isolated copy of the shared
- * {@link com.kosign.wecms.domain.payment.dispatch.service.TransferDispatchExecutor}
+ * {@code TransferDispatchExecutor} (deleted 2026-07-28, F-3)
  * with the legacy-parity corrections that apply to the Vendor/Expense shared
  * transfer engine. It is consumed <b>only</b> by {@link VendorPaymentService}.
  *
@@ -143,7 +144,7 @@ public class VendorDispatchExecutor {
         String bizKey = master.getBizKey();
         String userId = TenantContext.currentUserId();
 
-        // F1 (audit VCB, legacy PymnHelper.pymn_0001_001_c001:2188, SVN r36803 2026-07-16): ALL VCB
+        // F1 (audit VCB, legacy PymnHelper.pymn_0001_001_c001:2188, SVN r36822 2026-07-16): ALL VCB
         // (970436) — VND and USD — dispatches via the File path, not the real-time API.
         boolean isVcbFileTransfer = eq(master.getOutBankCd(), vcbBankCd);
         if (CCY_VND.equalsIgnoreCase(trnfCcyCd) && !isVcbFileTransfer) {
@@ -276,7 +277,16 @@ public class VendorDispatchExecutor {
             // its uploaded NAPAS/CITAD code (legacy "VCB VND -> Other : NAPAS/CITAD from upload"), so
             // it is seeded here; the USD block below only replaces it for Shinhan/Woori/VCB *USD*.
             // (Among VND rows, only VCB VND reaches the File path — non-VCB VND takes the API path.)
-            data.setAntDivCd(line.getAntDivCd());
+            //
+            // F-4 (2026-07-28, Option A — legacy-faithful): the detail column is bpchar(5) and normally
+            // holds the 5-char "NAPAS"/"CITAD"; this target is bpchar(1). A raw copy makes PostgreSQL
+            // reject the INSERT with `value too long for type character(1)` (SQLSTATE 22001) — proven via
+            // bpchar('CITAD'::bpchar, 5, false), the assignment-coercion function INSERT itself uses.
+            // Legacy narrows through TbPayFileData.copyFrom -> AntDivCdT.fromValue, which accepts ONLY
+            // the 1-char codes and yields NULL for a long name — so NULL is the legacy-correct value here.
+            // toStorageCode (= AntDivCdT.parse, 'CITAD'->'C') is Payroll's contract and must NOT be used
+            // here: it would assign a channel legacy never assigned and change money routing.
+            data.setAntDivCd(AntDivChannel.toStorageCodeStrict(line.getAntDivCd()));
 
             // ANT_DIV_CD USD overrides (legacy :2309-2316 / :2778-2785):
             //   Shinhan USD -> EBANK ("E"); Woori USD -> VCB ("V"); VCB USD -> null.

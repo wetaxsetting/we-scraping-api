@@ -1,6 +1,7 @@
 package com.kosign.wecms.domain.payment.haengsung.batch;
 
 import com.kosign.wecms.common.enums.LangCd;
+import com.kosign.wecms.common.lock.JobLockNames;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.auth.entity.BusiInfm;
 import com.kosign.wecms.domain.auth.repository.BusiInfmRepository;
@@ -47,6 +48,24 @@ import java.util.List;
  * <p>{@code @SchedulerLock} co-located with {@code @Scheduled} (ShedLock proxy
  * mode) serialises the job across instances. Crons are anchored to ICT. No
  * Oracle credentials are logged.
+ *
+ * <p><b>Lock identity is shared with the interactive Refresh endpoint.</b> The
+ * lock name is {@link JobLockNames#HAENGSUNG_PAYMENT_IMPORT}, the identity for the
+ * {@code ErpPaymentRefreshService} import body rather than for this job alone.
+ * {@code HaengsungPaymentRefreshController} acquires the same identity before
+ * running the same body, so a user pressing Refresh can no longer import
+ * concurrently with this job (scheduler-audit finding F-3).
+ *
+ * <p><b>COEXISTENCE PRECONDITION — read before enabling.</b>
+ * {@code haengsung.scheduled-payment-import.enabled=true} is safe ONLY after
+ * legacy {@code ERP_0100_002} is disabled in that environment. ShedLock does NOT
+ * help — the legacy JexSimpleBatch runtime does not participate in the
+ * {@code shedlock} table, so both sides would import the same un-received Oracle
+ * masters. Note also that legacy {@code ERP_0100_004} (the WeCMS→ERP
+ * vendor/expense/payroll/overseas export, {@code *}{@code /5 7-19}) has NO
+ * refactor scheduler; whether the event-driven Step-5 write-back fully replaces it
+ * is an unresolved blocking item (OQ-1). See
+ * {@code docs/audits/scheduler-legacy-parity-audit.md} §7 + §10.
  */
 @Slf4j
 @Component
@@ -71,7 +90,7 @@ public class HaengsungScheduledPaymentImportJob {
 
     @Scheduled(cron = "${haengsung.scheduled-payment-import.cron:" +
             HaengsungScheduledPaymentImportProperties.DEFAULT_CRON + "}", zone = VIETNAM_TZ_ID)
-    @SchedulerLock(name = "HaengsungScheduledPaymentImportJob.run",
+    @SchedulerLock(name = JobLockNames.HAENGSUNG_PAYMENT_IMPORT,
                    lockAtMostFor = "PT10M", lockAtLeastFor = "PT30S")
     public void run() {
         runOnce();

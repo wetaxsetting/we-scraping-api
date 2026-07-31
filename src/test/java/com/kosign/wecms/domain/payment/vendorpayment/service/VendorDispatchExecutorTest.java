@@ -192,7 +192,7 @@ class VendorDispatchExecutorTest {
 
     @Test
     void vcbVnd_routesToFilePath_notApi() {
-        // F1 (audit VCB, legacy r36803): ALL VCB (970436) — incl. VND — dispatches via the File path,
+        // F1 (audit VCB, legacy r36822): ALL VCB (970436) — incl. VND — dispatches via the File path,
         // NOT the real-time API (TB_PAY_TARGET). Previously VCB VND was mis-routed to the API path.
         executor.execute(master(VCB, "VND"), List.of(line(VCB, "VND")), "VND");
 
@@ -214,29 +214,63 @@ class VendorDispatchExecutorTest {
        proven vs legacy PymnHelper:2572-2574 / copyFrom :2840-2843 ── */
 
     @Test
-    void vcbVnd_otherBank_carriesUploadedAntDivCd_bankChnlDivOther() {
-        // Legacy "VCB VND -> Other : BANK_CHNL_DIV='O', NAPAS/CITAD from upload" (PymnHelper:2573).
+    void vcbVnd_otherBank_longFormAntDivCdIsNulled_bankChnlDivOther() {
+        // F-4 / Option A. Legacy PymnHelper:2573 leaves the copyFrom value in place for VCB VND — but
+        // copyFrom narrows through AntDivCdT.fromValue (TbPayFileData.java:301), which accepts ONLY the
+        // 1-char codes, so a 5-char "NAPAS" upload becomes NULL in legacy too. Asserting "NAPAS" here
+        // (the pre-fix expectation) encoded a value that cannot be stored: TB_PAY_FILE_DATA.ANT_DIV_CD
+        // is bpchar(1) and PostgreSQL rejects the INSERT with SQLSTATE 22001.
         ScdulPymnSumrDetl l = line(BIDV, "VND");
         l.setAntDivCd("NAPAS");
         executor.execute(master(VCB, "VND"), List.of(l), "VND");
 
         TbPayFileData d = captureData();
-        assertThat(d.getAntDivCd()).isEqualTo("NAPAS");   // uploaded code preserved (not null)
+        assertThat(d.getAntDivCd()).isNull();             // legacy fromValue("NAPAS") -> null
         assertThat(d.getBankChnlDiv()).isEqualTo("O");    // other-bank
         assertThat(d.getTrscCcyCd()).isEqualTo("VND");    // VCB -> TRNF_CCY_CD
     }
 
     @Test
-    void vcbVnd_sameBank_carriesUploadedAntDivCd_bankChnlDivCurrent() {
-        // Legacy "VCB VND -> VCB : BANK_CHNL_DIV='T'" (PymnHelper:2572); ANT_DIV_CD stays the uploaded
-        // copyFrom value (no VCB-VND override — only Shinhan-USD->VND nulls it).
+    void vcbVnd_sameBank_longFormAntDivCdIsNulled_bankChnlDivCurrent() {
+        // Legacy "VCB VND -> VCB : BANK_CHNL_DIV='T'" (PymnHelper:2572). ANT_DIV_CD comes from copyFrom
+        // -> AntDivCdT.fromValue, so the 5-char "CITAD" upload yields NULL (F-4 / Option A).
         ScdulPymnSumrDetl l = line(VCB, "VND");
         l.setAntDivCd("CITAD");
         executor.execute(master(VCB, "VND"), List.of(l), "VND");
 
         TbPayFileData d = captureData();
-        assertThat(d.getAntDivCd()).isEqualTo("CITAD");
+        assertThat(d.getAntDivCd()).isNull();
         assertThat(d.getBankChnlDiv()).isEqualTo("T");    // same-bank
+    }
+
+    /* ── F-4 additions: a 1-char upload IS storable and must survive verbatim ── */
+
+    @Test
+    void vcbVnd_oneCharAntDivCd_isPreserved() {
+        // The complement of the two tests above: legacy fromValue("C") -> 'C', which fits bpchar(1).
+        // Guards against over-correcting F-4 into "always null".
+        ScdulPymnSumrDetl l = line(BIDV, "VND");
+        l.setAntDivCd("C");
+        executor.execute(master(VCB, "VND"), List.of(l), "VND");
+        assertThat(captureData().getAntDivCd()).isEqualTo("C");
+    }
+
+    @Test
+    void vcbVnd_paddedOneCharAntDivCd_isPreserved() {
+        // bpchar(5) source: a stored 'N' reads back as "N    ".
+        ScdulPymnSumrDetl l = line(BIDV, "VND");
+        l.setAntDivCd("N    ");
+        executor.execute(master(VCB, "VND"), List.of(l), "VND");
+        assertThat(captureData().getAntDivCd()).isEqualTo("N");
+    }
+
+    @Test
+    void vcbVnd_unknownAntDivCd_isNulled() {
+        // HAENGSUNG ERP raw passthrough (documented unresolved 'T') — never guessed.
+        ScdulPymnSumrDetl l = line(BIDV, "VND");
+        l.setAntDivCd("T");
+        executor.execute(master(VCB, "VND"), List.of(l), "VND");
+        assertThat(captureData().getAntDivCd()).isNull();
     }
 
     @Test

@@ -1,6 +1,8 @@
 package com.kosign.wecms.domain.payment.haengsung.controller;
 
 import com.kosign.wecms.common.exception.BusinessException;
+import com.kosign.wecms.common.lock.JobLockGuard;
+import com.kosign.wecms.common.lock.JobLockNames;
 import com.kosign.wecms.common.response.ApiResponse;
 import com.kosign.wecms.domain.payment.haengsung.dto.HaengsungRefreshRequest;
 import com.kosign.wecms.domain.payment.haengsung.dto.HaengsungRefreshResult;
@@ -13,6 +15,8 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.time.Duration;
 
 /**
  * HAENGSUNG ({@code PRDT_TYPE='H'}) Oracle payment Refresh import
@@ -31,6 +35,19 @@ import org.springframework.web.bind.annotation.RestController;
  * ({@code haengsung.oracle.enabled}); when off the service bean is absent and
  * this controller returns {@code WBE_HS_REFRESH_DISABLED} so the app still boots
  * and the endpoint stays registered.
+ *
+ * <p><b>Serialised against the scheduled import.</b> {@code refresh(request)} and
+ * the scheduled {@code HaengsungScheduledPaymentImportJob}'s
+ * {@code importUnreceivedForCurrentTenant()} both funnel into
+ * {@code ErpPaymentRefreshService.processMasters(...)} — the same import body over
+ * the same un-received Oracle masters. {@code @SchedulerLock} guards only the
+ * scheduled invocation, so this endpoint previously ran that body completely
+ * unlocked (scheduler-audit finding F-3). It now acquires the same lock identity
+ * ({@link JobLockNames#HAENGSUNG_PAYMENT_IMPORT}) via {@link JobLockGuard} before
+ * importing, and surfaces {@code WBE_HS_REFRESH_IN_PROGRESS} when the scheduled
+ * job (or another user's Refresh) holds it. Failing fast with a retryable message
+ * is deliberate: silently returning a zero-row result would read as "there was
+ * nothing to import", which is a different and misleading statement.
  */
 @RestController
 @RequestMapping("/api/v1/payments/haengsung")
@@ -41,6 +58,7 @@ public class HaengsungPaymentRefreshController {
 
     /** Optional — present only when {@code haengsung.oracle.enabled=true}. */
     private final ObjectProvider<ErpPaymentRefreshService> refreshService;
+    private final JobLockGuard jobLockGuard;
 
     @PostMapping("/refresh")
     public ApiResponse<HaengsungRefreshResult> refresh(@Valid @RequestBody HaengsungRefreshRequest request) {
@@ -48,6 +66,19 @@ public class HaengsungPaymentRefreshController {
         if (service == null) {
             throw new BusinessException("WBE_HS_REFRESH_DISABLED");
         }
-        return ApiResponse.ok(service.refresh(request));
+
+        // Same lock identity as HaengsungScheduledPaymentImportJob — both reach
+        // ErpPaymentRefreshService.processMasters(...). lockAtLeastFor is ZERO so an
+        // interactive Refresh releases immediately and never delays the scheduled fire.
+        HaengsungRefreshResult[] result = new HaengsungRefreshResult[1];
+        boolean ran = jobLockGuard.runIfFree(
+                JobLockGuard.LockKey.of(JobLockNames.HAENGSUNG_PAYMENT_IMPORT,
+                        Duration.ofMinutes(10), Duration.ZERO),
+                () -> result[0] = service.refresh(request));
+
+        if (!ran) {
+            throw new BusinessException("WBE_HS_REFRESH_IN_PROGRESS");
+        }
+        return ApiResponse.ok(result[0]);
     }
 }

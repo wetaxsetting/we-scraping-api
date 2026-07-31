@@ -25,6 +25,15 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
 
+    // Actuator — D-3. SecurityConfig permits /actuator/health, RequestResponseLoggingFilter skips
+    // /actuator, and the SIT deployment checklist has an "/actuator/health UP" step; without this
+    // dependency all three referred to an endpoint that returned 404. Only `health` + `info` are
+    // exposed and health ships `show-details: never` (see the `management` block in
+    // application.yml) so no DB URL, disk path, env var or gateway detail can leak. Of the two,
+    // only /actuator/health is unauthenticated — /actuator/info falls under the authenticated
+    // catch-all in SecurityConfig.
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+
     implementation 'io.jsonwebtoken:jjwt-api:0.12.6'
     runtimeOnly     'io.jsonwebtoken:jjwt-impl:0.12.6'
     runtimeOnly     'io.jsonwebtoken:jjwt-jackson:0.12.6'

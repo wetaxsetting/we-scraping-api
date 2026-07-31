@@ -177,6 +177,8 @@ public class VendorPaymentService {
     private final com.kosign.wecms.domain.payment.common.OutBankCdNormalizer outBankCdNormalizer;
     /** Authoritative save-path blocked-char enforcement (audit task-44508, P0). */
     private final com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard blockedCharGuard;
+    /** C-14: fixed-length wire-slot width guard for the bank-bound name & memo fields. */
+    private final com.kosign.wecms.domain.payment.common.PaymentWireWidthGuard wireWidthGuard;
     /** M-2/M-3 (legacy parity): EXPT_RESOL_MSTR display flags from BUSI_ENV_SET_INFM. */
     private final com.kosign.wecms.domain.payment.approvalbox.service.ApprovalDisplayFlagsResolver displayFlagsResolver;
     /** M-1 (legacy parity): shared Request Approval attachment writer (EXPT_RESOL_FILE). */
@@ -483,6 +485,17 @@ public class VendorPaymentService {
                             com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard.field(
                                     com.kosign.wecms.domain.payment.validation.FieldCd.RECIPIENT_NAME,
                                     com.kosign.wecms.domain.payment.common.LegacyTextNormalizer.normalize(line.rcptNm()))));
+            // C-14: same boundary, different bound — the blocked-char guard above checks WHICH
+            // characters are allowed, this checks whether the value FITS its slot in the bank's
+            // fixed-length record. Byte-counted, not character-counted: the varchar(150) columns
+            // cannot catch multibyte text that survives tone-stripping.
+            wireWidthGuard.assertClean(java.util.List.of(
+                    com.kosign.wecms.domain.payment.common.PaymentWireWidthGuard.field(
+                            com.kosign.wecms.domain.payment.common.WireField.RECEIVER_NAME,
+                            line.rcptNm()),
+                    com.kosign.wecms.domain.payment.common.PaymentWireWidthGuard.field(
+                            com.kosign.wecms.domain.payment.common.WireField.DEPOSIT_ACCOUNT_MEMO,
+                            line.tranUsag())));
         }
 
         String scdulPymnNo = keyGenerator.nextScdulPymnNo(bizKey);

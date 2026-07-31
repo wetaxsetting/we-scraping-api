@@ -1,5 +1,6 @@
 package com.kosign.wecms.domain.payment.dispatch.scheduler;
 
+import com.kosign.wecms.common.lock.JobLockNames;
 import com.kosign.wecms.domain.payment.dispatch.service.StrandedRecoveryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -30,7 +31,8 @@ public class StrandedRecoveryJob {
     private final StrandedRecoveryService strandedRecoveryService;
 
     @Scheduled(cron = "${wecms.dispatch.recovery.cron:-}", zone = "Asia/Ho_Chi_Minh")
-    @SchedulerLock(name = "StrandedRecoveryJob.run", lockAtMostFor = "PT10M", lockAtLeastFor = "PT10S")
+    @SchedulerLock(name = JobLockNames.DISPATCH_STRANDED_RECOVERY,
+                   lockAtMostFor = "PT10M", lockAtLeastFor = "PT10S")
     public void run() {
         log.debug("StrandedRecoveryJob.run fired");
         strandedRecoveryService.recoverOnce();

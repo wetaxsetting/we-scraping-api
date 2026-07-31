@@ -40,13 +40,36 @@ import java.util.Base64;
  * provisioned out-of-band into {@code TB_VAN_API_INFO.API_KEY}
  * ({@link com.kosign.wecms.domain.payment.dispatch.van.client.VanApiKeyService}) — <b>B2</b>.
  *
- * <p><b>TODO(B5):</b> the URL-encoding here is a single, self-consistent
- * encode-on-output / decode-on-input pass that round-trips correctly. The legacy
- * {@code SecurityUtil} hinted at a "2-pass URL-decode" on some gateways, and the
- * PDF's reference snippet applies its own (vendor-quirky) encoding. Before going
- * live, byte-verify {@code EV}/{@code VV} against a real captured gateway sample
- * (B5) and adjust the pass count if — and only if — the sample requires it. Do
- * not speculatively add passes.
+ * <p><b>TODO(B5) — pass count only.</b> The URL-encoding here is a single,
+ * self-consistent encode-on-output / decode-on-input pass that round-trips correctly.
+ * Legacy instead attempts decryption <b>twice</b>
+ * ({@code SecurityUtil.DecryptAesBase64:263-319}, {@code VerifyMac:534-568}): first
+ * without URL-decoding, then — if the first attempt threw <i>or</i> produced a plaintext
+ * that failed its own sanity check (14 leading digits parseable as a {@code Long}, and the
+ * remainder parseable as JSON, {@code :280-293}) — again <b>with</b> URL-decoding.
+ *
+ * <p>Note the handover does not merely "hint" at this. {@code 08_기능추출_이관가이드.md} §8.4
+ * pitfall ③ states a concrete failure mode:
+ * <blockquote>
+ * 무결성 VV 2-pass: URL디코딩 유/무 두 번 시도. <b>한쪽만 구현하면 간헐적 검증실패.</b><br>
+ * <i>"Integrity VV 2-pass: attempt twice, with/without URL-decoding. If you implement only one
+ * side you get <b>intermittent</b> verification failures."</i>
+ * </blockquote>
+ * The legacy comment at {@code SecurityUtil:278-279} gives the mechanism —
+ * 데이터 보호화시 URLEncoding데이터가 그대로 복호화가 성공적으로 되는 경우가 있어서
+ * ("there are cases where URL-encoded data decrypts 'successfully' as-is"), which is why legacy
+ * validates the plaintext rather than trusting a non-throwing decrypt.
+ *
+ * <p>That claim is <b>credible but unverified</b>, and "intermittent" is exactly the class of bug a
+ * green test suite will not catch. It is not, however, actionable without evidence: adding a second
+ * pass speculatively changes what is accepted off the wire. So the decision stays gated on B5 —
+ * byte-verify {@code EV}/{@code VV} against a real captured gateway sample and add the second pass
+ * if, and only if, the sample requires it. <b>Do not speculatively add passes.</b> If an intermittent
+ * verify failure is ever observed in SIT/UAT before B5 closes, treat pitfall ③ as the first hypothesis.
+ *
+ * <p>The unconditional Base64-alphabet repair legacy applies alongside the 2-pass logic was
+ * <b>separable and has been ported</b> — see {@link #repairBase64Alphabet}. It is not part of the
+ * pass count and did not need to wait for B5.
  */
 @Service
 public class EfsCryptoService {
@@ -88,7 +111,8 @@ public class EfsCryptoService {
         if (ev == null) {
             throw new IllegalArgumentException("ev is required");
         }
-        byte[] cipher = Base64.getDecoder().decode(urlDecode(ev));
+        // D-8: repair the Base64 alphabet before decoding (legacy SecurityUtil:269-271).
+        byte[] cipher = Base64.getDecoder().decode(repairBase64Alphabet(urlDecode(ev)));
         byte[] plain = aes(Cipher.DECRYPT_MODE, apiKey, cipher);
         String withPrefix = new String(plain, StandardCharsets.UTF_8);
         if (withPrefix.length() < RQ_DTIME_PREFIX_LEN) {
@@ -125,7 +149,8 @@ public class EfsCryptoService {
             return false;
         }
         String expectedBase64 = hmacBase64(json, apiKey);
-        String providedBase64 = urlDecode(vv);
+        // D-8: legacy repairs the VV alphabet too, not just the EV (SecurityUtil.VerifyMac:543-545).
+        String providedBase64 = repairBase64Alphabet(urlDecode(vv));
         return constantTimeEquals(expectedBase64, providedBase64);
     }
 
@@ -172,6 +197,52 @@ public class EfsCryptoService {
 
     private String urlDecode(String value) {
         return URLDecoder.decode(value, StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Legacy Base64-alphabet repair, ported verbatim from {@code SecurityUtil} (audit <b>D-8</b>).
+     *
+     * <p>Legacy applies these three substitutions <b>unconditionally</b>, to the inbound {@code EV}
+     * ({@code SecurityUtil.DecryptAesBase64:269-271}) and to both the {@code EV} and the {@code VV}
+     * before a MAC check ({@code SecurityUtil.VerifyMac:540-545}):
+     * <pre>
+     * input = input.replaceAll(" ", "+");
+     * input = input.replaceAll("_", "/");
+     * input = input.replaceAll("-", "+");
+     * </pre>
+     *
+     * <p>Each substitution repairs a distinct, real corruption of a standard-Base64 payload:
+     * <ul>
+     *   <li>{@code ' '} → {@code '+'} — {@code application/x-www-form-urlencoded} decoding turns
+     *       {@code '+'} into a space. A {@code '+'} that reached us already form-decoded (by a proxy,
+     *       a gateway, or a servlet container that decoded the body before we saw it) arrives as a
+     *       space and is not valid Base64.</li>
+     *   <li>{@code '_'} → {@code '/'} and {@code '-'} → {@code '+'} — the <b>base64url</b> alphabet
+     *       (RFC 4648 §5) substituted for standard Base64.</li>
+     * </ul>
+     *
+     * <p><b>This is not part of the 2-pass logic</b> and does not depend on it: legacy runs it once,
+     * before either decrypt attempt, regardless of the {@code urldecode} flag. It is therefore
+     * portable independently of {@code TODO(B5)} and is ported here.
+     *
+     * <p><b>Ordering.</b> Legacy repairs immediately before <i>its</i> Base64 decode, and its first
+     * pass does not URL-decode at all. The equivalent position in this single-pass pipeline is
+     * likewise immediately before {@link Base64#getDecoder()} — i.e. <b>after</b> {@link #urlDecode},
+     * not before it. Repairing first would be wrong here: our pipeline always URL-decodes, so a
+     * literal {@code '+'} repaired early would then be turned back into a space by the decode step.
+     *
+     * <p><b>Safe for well-formed input.</b> Standard Base64 output contains none of {@code ' '},
+     * {@code '_'} or {@code '-'}, so on a correctly-encoded payload — including everything this
+     * service itself produces — this method is a no-op.
+     */
+    private String repairBase64Alphabet(String value) {
+        if (value == null || value.isEmpty()) {
+            return value;
+        }
+        return value
+                .replace(' ', '+')
+                .replace('_', '/')
+                .replace('-', '+');
     }
 
     private boolean constantTimeEquals(String a, String b) {

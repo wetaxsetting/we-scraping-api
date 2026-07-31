@@ -44,6 +44,7 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doReturn;
@@ -108,6 +109,7 @@ class BulkReceptionReceiveTest {
                 firmFileMstRepository, firmFileDataRepository, firmBatApiTranRepository,
                 dispatchKeyGenerator, codec, sftpClient, sftpProperties, bulkTransferValidator,
                 opsAlertService, operatingHoursService,
+                new BulkDispatchClaimTxService(payFileMstRepository),
                 org.mockito.Mockito.mock(com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard.class),
                 org.mockito.Mockito.mock(com.kosign.wecms.domain.payment.common.OutBankCdNormalizer.class),
                 perFileTxManager);
@@ -117,6 +119,9 @@ class BulkReceptionReceiveTest {
         when(bulkTransferValidator.validate(any(), any())).thenReturn(Optional.empty());
         // Operating-hours gate: open by default so the dispatch-path tests proceed.
         when(operatingHoursService.evaluateBulk(any(), any())).thenReturn(OperatingHoursDecision.DISPATCH);
+        // H-4: the atomic '9'->'6' claim wins by default. Cases that must NOT dispatch (SKIP,
+        // CUTOFF, NO_CRITERIA, not-WAIT) return before the claim, so this stub is not consulted.
+        when(payFileMstRepository.claimForReception(any(), any(), any(), any())).thenReturn(1);
         when(firmFileMstRepository.save(any())).thenAnswer(i -> i.getArgument(0));
         when(payFileMstRepository.save(any())).thenAnswer(i -> i.getArgument(0));
         when(firmFileDataRepository.save(any())).thenAnswer(i -> i.getArgument(0));
@@ -248,10 +253,16 @@ class BulkReceptionReceiveTest {
         assertEquals("S_" + VAN + "_WRB_001_" + TRAN_DT, saved.getFirmFileNm());
         assertEquals(new BigDecimal("2"), saved.getReqCnt());
 
-        // Pay-file marked in-process ('6'), not failed.
-        ArgumentCaptor<TbPayFileMst> payCap = ArgumentCaptor.forClass(TbPayFileMst.class);
-        verify(payFileMstRepository).save(payCap.capture());
-        assertEquals(ProcStat.REQ.code(), payCap.getValue().getProcStat());
+        // H-4: the pay-file '9'->'6' transition is now the ATOMIC conditional claim, committed
+        // before any egress — not an unconditional save(). Verifying the claim, and the absence of
+        // any save() on the happy path, is the regression guard that the old non-atomic
+        // read-then-write does not come back.
+        verify(payFileMstRepository).claimForReception(
+                org.mockito.ArgumentMatchers.eq(BIZ_KEY),
+                org.mockito.ArgumentMatchers.eq(TRAN_DT),
+                org.mockito.ArgumentMatchers.eq(FILE_SEQ_NO),
+                anyString());
+        verify(payFileMstRepository, never()).save(any());
 
         // Two detail rows persisted; upload + API issued.
         verify(firmFileDataRepository, org.mockito.Mockito.times(2)).save(any());
@@ -412,10 +423,14 @@ class BulkReceptionReceiveTest {
         assertEquals("S_" + VAN + "_WRB_001_" + TRAN_DT, mst.get(0).getFirmFileNm());
         assertEquals("S_" + VAN + "_WRB_002_" + TRAN_DT, mst.get(1).getFirmFileNm());
         assertEquals("S_" + VAN + "_WRB_003_" + TRAN_DT, mst.get(2).getFirmFileNm());
-        // Pay-file marked '6' once (before the loop), never failed.
-        ArgumentCaptor<TbPayFileMst> payCap = ArgumentCaptor.forClass(TbPayFileMst.class);
-        verify(payFileMstRepository, times(1)).save(payCap.capture());
-        assertEquals(ProcStat.REQ.code(), payCap.getValue().getProcStat());
+        // H-4: claimed exactly ONCE before the loop (not once per split file), and never failed.
+        // Claiming per split file would let a second driver win a later file of the same batch.
+        verify(payFileMstRepository, times(1)).claimForReception(
+                org.mockito.ArgumentMatchers.eq(BIZ_KEY),
+                org.mockito.ArgumentMatchers.eq(TRAN_DT),
+                org.mockito.ArgumentMatchers.eq(FILE_SEQ_NO),
+                anyString());
+        verify(payFileMstRepository, never()).save(any());
     }
 
     /** 4. Each split file has the correct header / data / trailer counts (2, 2, 1 for ceil(5/2)). */
@@ -436,7 +451,7 @@ class BulkReceptionReceiveTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<DepositData>> linesCap = ArgumentCaptor.forClass(List.class);
         ArgumentCaptor<DepositTrailer> trailerCap = ArgumentCaptor.forClass(DepositTrailer.class);
-        verify(codec, times(3)).encode(headerCap.capture(), linesCap.capture(), trailerCap.capture());
+        verify(codec, times(3)).encode(headerCap.capture(), linesCap.capture(), trailerCap.capture(), any());
 
         int[] expectedCounts = {2, 2, 1};
         String[] expectedRounds = {"001", "002", "003"};
@@ -588,29 +603,68 @@ class BulkReceptionReceiveTest {
     }
 
     /**
-     * Item 2: an UNEXPECTED (non-BusinessException) throw while dispatching a later split
-     * propagates out of {@code receive()} — but only that file's REQUIRES_NEW tx rolls back;
-     * the earlier file's work was already committed in its own tx (asserted here by the earlier
-     * file's MST save having happened before the throw, and file 3 never being attempted).
+     * Item 2 + H-3: an UNEXPECTED (non-{@code BusinessException}) throw while dispatching a later
+     * split file. Only that file's {@code REQUIRES_NEW} tx rolls back; the earlier file's work was
+     * already committed in its own tx.
+     *
+     * <p><b>BEHAVIOUR CHANGED 2026-07-29 (H-3 / R-2 / N-3) — this test was updated, not weakened.</b>
+     * It previously asserted the throw <b>propagates</b> out of {@code receive()}. That was the defect:
+     * the only caller is {@code DispatchAutoReceiveRegistrar}'s {@code afterCommit()} hook, which
+     * catches and logs, so "propagates" meant "disappears into a log line" — while the pay-file, whose
+     * H-4 claim had already committed {@code '9'→'6'} in a separate transaction, was left at
+     * {@code '6'} forever. No recovery or monitoring query selected {@code '6'}, so the batch became
+     * invisible.
+     *
+     * <p>{@code receive()} now catches the {@code RuntimeException} and records a terminal FAIL through
+     * the conditional {@code failClaimedPayFile} update. The two properties this test always existed to
+     * protect are unchanged and still asserted below: the earlier file stays committed, and the loop
+     * stops rather than continuing to dispatch after an unexpected failure.
      */
     @Test
-    void unexpectedThrowInLaterSplit_propagates_earlierFileAlreadySaved() {
+    void unexpectedThrowInLaterSplit_recordsTerminalFail_earlierFileAlreadySaved() {
         when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
                 .thenReturn(Optional.of(payRow(ProcStat.WAIT.code())));
         when(firmConfRepository.findById(any())).thenReturn(Optional.of(conf("Y", 2)));
         when(payFileDataRepository.findByBizKeyAndTranDtAndFileSeqNo(BIZ_KEY, TRAN_DT, FILE_SEQ_NO))
                 .thenReturn(details(5));
+        when(payFileMstRepository.failClaimedPayFile(any(), any(), any(), any(), any())).thenReturn(1);
 
         BulkReceptionService spy = spy(service);
         doReturn(null)
                 .doThrow(new RuntimeException("unexpected codec blowup"))
                 .when(spy).issueReception(any());
 
-        assertThrows(RuntimeException.class, () -> spy.receive(TRAN_DT, BIZ_KEY, FILE_SEQ_NO));
+        // No longer propagates — rethrowing would only be re-swallowed by the registrar, leaving the
+        // committed claim stranded. The failure is recorded instead.
+        assertDoesNotThrow(() -> spy.receive(TRAN_DT, BIZ_KEY, FILE_SEQ_NO));
 
-        // File 1's MST was saved before file 2 blew up; file 3 was never attempted (loop aborted
-        // by the propagating throw). With per-file REQUIRES_NEW, file 1 stays committed.
+        // UNCHANGED: file 1's MST was saved before file 2 blew up, and file 3 was never attempted —
+        // per-file REQUIRES_NEW keeps file 1 committed while the loop stops at the failure.
         verify(spy, times(2)).issueReception(any());
         verify(firmFileMstRepository, org.mockito.Mockito.atLeast(2)).save(any());
+
+        // NEW: the pay-file reaches a terminal state instead of being stranded at '6'.
+        //
+        // It gets there via failBoth inside the per-file transaction — the inner RuntimeException
+        // guard around the EFS leg — NOT via the outer failClaimedPayFile conditional update. That is
+        // the better of the two paths and the one to assert here: it records the reason on the
+        // firm-file row as well as the pay-file, and it commits with the rest of that file's work. The
+        // outer guard is the backstop for throws that escape the per-file transaction entirely (e.g.
+        // the round lookup, or the firm-file insert itself) — covered in
+        // BulkReceptionStrandedFailureTest.escapingThrow_isRecordedThroughTheConditionalUpdate.
+        ArgumentCaptor<TbPayFileMst> payCap = ArgumentCaptor.forClass(TbPayFileMst.class);
+        verify(payFileMstRepository, org.mockito.Mockito.atLeastOnce()).save(payCap.capture());
+        assertEquals(ProcStat.FAIL.code(),
+                payCap.getAllValues().get(payCap.getAllValues().size() - 1).getProcStat(),
+                "the shared pay-file must end FAIL, never be left at REQ('6')");
+        verify(payFileMstRepository, never())
+                .failClaimedPayFile(anyString(), anyString(), anyString(), anyString(), anyString());
+
+        // The partial-dispatch signal lives in the ops alert on this path: file 1 already reached the
+        // bank, so the batch must not read as a clean retryable failure.
+        ArgumentCaptor<String> alert = ArgumentCaptor.forClass(String.class);
+        verify(opsAlertService, org.mockito.Mockito.atLeastOnce()).notify(anyString(), alert.capture());
+        assertTrue(alert.getAllValues().stream().anyMatch(b -> b.contains("FILES_DISPATCHED")),
+                "expected the dispatched-file count in the ops alert, got: " + alert.getAllValues());
     }
 }

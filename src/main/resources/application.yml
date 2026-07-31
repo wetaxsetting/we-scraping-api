@@ -1,4 +1,174 @@
 # =============================================================================
+# BASE PROFILE — always active, under every other profile
+# =============================================================================
+# HOW THIS FILE RELATES TO .env — read before editing anything
+# -----------------------------------------------------------------------------
+# This file declares the SHAPE of the configuration. It holds NO real values.
+# Every environment-specific value arrives as ${VAR} and lives in the matching
+# .env file:
+#
+#   application.yml        <- .env          (this file, base)
+#   application-local.yml  <- .env.local
+#   application-sit.yml    <- .env.sit
+#   application-uat.yml    <- .env.uat
+#   application-prod.yml   <- .env.prod
+#
+# Do not put a literal value here to "make it work". Put it in the .env.
+#
+# -----------------------------------------------------------------------------
+# THE RULE — ONE FORM ONLY: ${VAR}, no defaults in yml
+# -----------------------------------------------------------------------------
+# Every placeholder in every config file is bare ${VAR}. There are NO in-yaml
+# defaults, deliberately (migrated 2026-07-30 — see
+# docs/deployment/config-bare-placeholder-migration.md).
+#
+#   EVERY ${VAR} IN THIS FILE MUST BE SET IN THE .env FOR THE ACTIVE PROFILE.
+#
+# The authoritative checklist is the matching .env.*.example — it lists every
+# variable that profile needs, with the value the yml used to default to. If a
+# variable is not in the example, no yml reads it.
+#
+# Why no defaults: a default is a value hidden where nobody looks. With one, a
+# MISSPELLED variable name is indistinguishable from "deliberately not
+# configured" — the app boots on the hidden value and ops believes the .env is in
+# force. Without one, the same typo stops startup. Values live in .env; the yml
+# declares only shape.
+#
+# An empty value satisfies a String property but NOT a boolean or an int —
+# WECMS_SFTP_PORT= fails to bind. Where a variable's correct value IS empty
+# (WECMS_SFTP_USERNAME, WECMS_CALLBACK_TRUSTED_PROXIES, …) the .env still needs
+# the line, with nothing after the '='.
+#
+# -----------------------------------------------------------------------------
+# ACCURACY NOTE — the failure is NOT always "Could not resolve placeholder"
+# -----------------------------------------------------------------------------
+# A missing variable does not fail the same way everywhere, and the difference
+# decides how quickly you find it:
+#
+#   @Value / @Scheduled properties  -> STRICT. Abort with
+#     "Could not resolve placeholder 'VAR'", NAMING the variable. Easy.
+#
+#   @ConfigurationProperties        -> LENIENT. Spring's
+#     PropertySourcesPlaceholdersResolver ignores an unresolvable placeholder and
+#     binds the LITERAL STRING "${VAR}" as the value. What happens next depends
+#     only on the target type:
+#       * boolean / int  -> bind error naming the property, e.g. (verified)
+#           Failed to bind 'wecms.dispatch.callback.trust-forwarded-for' to boolean
+#           Value: "${WECMS_CALLBACK_TRUST_FORWARDED_FOR}"
+#       * String         -> NO ERROR AT ALL. The literal is accepted and surfaces
+#         much later as a domain fault that never mentions the variable. Verified:
+#         a missing WECMS_JWT_SECRET produced
+#           "wecms.jwt.secret must be at least 32 bytes (current length: 19)"
+#         — 19 being the character count of the text "${WECMS_JWT_SECRET}".
+#
+# This is why a COMPLETE .env matters more under this convention, not less. Bare
+# placeholders buy fail-fast only where the binding is strict or the type is
+# checked; for a String bound via @ConfigurationProperties (DB URL, SFTP paths,
+# storage roots, Coocon/OSMC URLs) nothing stops a missing variable. Diff your
+# .env against the .env.*.example before you deploy — that is the real gate.
+#
+# -----------------------------------------------------------------------------
+# NOT COVERED BY THIS RULE — the 13 code-only properties
+# -----------------------------------------------------------------------------
+# Thirteen properties are read with a @Value / @ConfigurationProperties default
+# and appear in NO yml and NO .env, so the "must be set in .env" rule does NOT
+# apply to them. They keep their in-code defaults and are unaffected by this
+# migration:
+#   wecms.dispatch.recovery.batch-size (50)
+#   wecms.dispatch.stuck-monitor.{threshold-minutes 15, re-alert-minutes 60,
+#                                 max-alert-keys 20, pay-file-batch-size 200}
+#   wecms.dispatch.operating-hours.zone (Asia/Ho_Chi_Minh)
+#   wecms.internal-transfer.routing.{shinhan 970424, woori 970457, vcb 970436}
+#   wecms.internal-transfer.cutoff.refresh-interval-ms (300000)
+#   wecms.nxisas.{timeout-seconds 60, session-idle-seconds 300}
+#   wecms.oat.seed-decrypt.enabled (false)
+# They are listed, commented out, in every .env.*.example so they are at least
+# discoverable. Setting one there does nothing until a ${VAR} line is added here
+# first — and adding one brings it under the rule above.
+#
+# -----------------------------------------------------------------------------
+# QUOTING — cron values only
+# -----------------------------------------------------------------------------
+# "-" IS SPRING'S NEVER-FIRE MARKER — the only safe way to disable a scheduled
+# job, and now it must be spelled out in the .env (there is no default to fall
+# back on). An EMPTY value or an invalid expression throws at scheduler
+# INITIALISATION, not at fire time, so the app fails to start. Never blank a cron
+# to turn a job off; set it to "-". This file has four cron lines of its own (the
+# operation-status batch and the three haengsung sync jobs) and the same rule
+# governs the dispatch crons in each profile file.
+#
+# Cron placeholders stay quoted — cron: "${VAR}" — so YAML cannot mis-parse the
+# value that arrives. The quoting was left exactly as it was by the bare-placeholder
+# migration; do not add or remove any.
+#
+# Two lines in the PROFILE files are the odd ones out — result-check.cron and
+# recovery.cron are unquoted in all four profiles. Both parse the same way (a
+# plain scalar starting with '$' and containing no colon-space is legal YAML), so
+# this is a latent inconsistency, not a live bug. Do not "fix" it without testing
+# every profile.
+#
+# -----------------------------------------------------------------------------
+# HOW THE .env IS LOADED — and why it is NOT the authority on a server
+# -----------------------------------------------------------------------------
+# Locally, spring.config.import below reads the .env from the working directory.
+# Note the "optional:" prefix — a MISSING .env does not fail the import. It boots
+# on, and then dies on the first placeholder it cannot resolve, with an error that
+# never mentions the absent file. Now that no placeholder has a default, a missing
+# .env fails almost immediately instead of half-working — an improvement, but the
+# error still names a property, not the file.
+#
+# On the deployed server the pair lives at:
+#   /DATA/src-wecms/wecms-backend/environment/
+# and is loaded by:
+#   /DATA/src-wecms/apache-tomcat-11.0.22/bin/setenv.sh
+# which exports them as OS environment variables before Tomcat starts.
+#
+# setenv.sh is NOT in this repository — it is host-owned and invisible here.
+# OS environment variables OVERRIDE .env files, so on any deployed host the
+# RUNTIME AUTHORITY IS setenv.sh, not the committed .env. Never state a
+# deployed environment's flag state from this repo; read it from the host with
+#   env | grep -E '^(WECMS|HAENGSUNG)_'
+# A deploy replaces ROOT.war and leaves setenv.sh untouched — deploying and
+# changing configuration are separate events.
+#
+# -----------------------------------------------------------------------------
+# FRESH CLONE — WHY YOUR FIRST RUN FAILS, AND WHY THE ERROR IS MISLEADING
+# -----------------------------------------------------------------------------
+# The default active profile below is `local`, but BOTH local-profile files are
+# deliberately kept out of git:
+#   src/main/resources/application-local.yml   gitignored (.gitignore:40)
+#   .env.local                                 gitignored (.gitignore:42)
+# Only their template survives: .env.local.example (committed). So a fresh clone
+# has NO application-local.yml at all.
+#
+# THIS FILE DECLARES NO spring.datasource. All four profile files do; the base
+# does not. So on a fresh clone the first run resolves no database at all and
+# fails with
+#   "Failed to configure a DataSource: 'url' attribute is not specified"
+# and NOT with the "Could not resolve placeholder" error the rule above would lead
+# you to expect. Both mean "configuration is missing", but only the second one
+# names the variable — do not read a DataSource error as "my .env is fine".
+#
+# To get a working local profile you need TWO files, not one:
+#   1. src/main/resources/application-local.yml — obtain it from a team member or
+#      docs/INFRASTRUCTURE_ACCESS.md; it is not generated and has no template.
+#   2. .env.local — copy .env.local.example and fill in the secrets.
+# The local profile's own contract (its 28 required variables, and the fact that
+# it is the one profile that defaults callback protection to DISABLED) is
+# documented in the committed .env.local.example, so it stays readable even
+# without the gitignored yml.
+#
+# -----------------------------------------------------------------------------
+# HOW THIS PROFILE DIFFERS
+# -----------------------------------------------------------------------------
+# Base, not an environment. Holds the settings shared by all four profiles
+# (JPA, messages, server port, actuator, jwt/cors/crypto, coocon/osmc,
+# exchange-rate + operation-status batches, haengsung). uat and prod do NOT
+# re-declare the jwt / cors / crypto / exchange-rate / operation-status blocks,
+# so those two profiles inherit them from HERE — edit with that in mind.
+# =============================================================================
+
+# =============================================================================
 # Spring configuration
 # Configures profiles, JPA, messaging, uploads, and task scheduling.
 # =============================================================================
@@ -49,6 +219,43 @@ server:
     include-stacktrace: never
 
 # =============================================================================
+# Actuator / management (D-3)
+# Deliberately minimal. `exposure.include` is an allow-list, so ONLY the two
+# endpoints named here are reachable — env, configprops, beans, heapdump,
+# threaddump, loggers and the rest stay off in every environment. Do not switch
+# this to `include: "*"`.
+#
+# `show-details: never` keeps the health payload to a bare {"status":"UP"}: the
+# DataSource / disk contributors still decide the overall status (so the probe is
+# meaningful), but their details — JDBC URL, validation query, disk paths, free
+# space — are never serialised. Same for `show-components`.
+#
+# Access: /actuator/health is the ONLY unauthenticated actuator path
+# (SecurityConfig permits it explicitly); /actuator/info falls under the
+# authenticated catch-all. Keep it that way — a public /actuator/info would leak
+# build and git metadata.
+# =============================================================================
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+      show-components: never
+      probes:
+        enabled: false
+  info:
+    # No contributors enabled: /actuator/info returns {} rather than build/git/env detail.
+    env:
+      enabled: false
+    java:
+      enabled: false
+    os:
+      enabled: false
+
+# =============================================================================
 # WeCMS application configuration
 # Configures security, integrations, file storage, and application services.
 # =============================================================================
@@ -64,6 +271,17 @@ wecms:
     allowed-origins: ${WECMS_CORS_ALLOWED_ORIGINS}
 
   # Credential encryption.
+  #
+  # REQUIRED despite the code default. CryptoService reads this with
+  # @Value("${wecms.crypto.legacy-cert-seed:wabooksvn}"), so it LOOKS optional —
+  # but the bare ${WECMS_CRYPTO_LEGACY_CERT_SEED} below resolves FIRST and fails
+  # if the variable is absent. The :wabooksvn code default is unreachable through
+  # this path. Set the variable in every .env.
+  #
+  # This is a cross-system CONSTANT, not a tunable: it is the AES key-derivation
+  # seed for BANK_CERT_INFO / GDT_CERT_INFO and MUST equal the legacy pgcrypto
+  # seed everywhere, or certificate data written by one system cannot be read by
+  # the other. It cannot be rotated freely.
   crypto:
     legacy-cert-seed: ${WECMS_CRYPTO_LEGACY_CERT_SEED}
 
@@ -99,8 +317,13 @@ wecms:
     # Scheduled inquiry batch.
     batch:
       enabled: ${WECMS_OPERATION_STATUS_BATCH_ENABLED}
-      seed-cron: ${WECMS_OPERATION_STATUS_BATCH_SEED_CRON}
-      refresh-cron: ${WECMS_OPERATION_STATUS_BATCH_REFRESH_CRON}
+      # Single cron: seed then refresh run as ONE locked, ordered unit (see
+      # OperationStatusBatchScheduler). Never-fire in the shipped .env — the real legacy
+      # instant is UNRESOLVED (OQ-3: legacy DEV fired 15:00:01 UTC = 22:00 ICT =
+      # 00:00 Asia/Seoul; the old placeholder assumed 00:00 ICT). Do not guess:
+      # set WECMS_OPERATION_STATUS_BATCH_CRON only after the legacy batch owner or
+      # Infra confirms the JEX Batch Admin entry AND its timezone.
+      cron: "${WECMS_OPERATION_STATUS_BATCH_CRON}"
   # Coocon API integration.
   coocon:
     api-key: ${WECMS_COOCON_API_KEY}
@@ -121,6 +344,16 @@ wecms:
 # =============================================================================
 haengsung:
   # Oracle database connection.
+  #
+  # TRAP — url / username / password are REQUIRED EVEN WHEN ORACLE IS OFF.
+  # `enabled` defaults false, but the three credential lines below are bare
+  # ${VAR}, so placeholder resolution happens regardless of the flag and startup
+  # ABORTS without them. Turning the integration off does not excuse you from
+  # supplying them; every .env must carry all three (dummy values are fine when
+  # enabled=false). This is true in all four profiles.
+  #
+  # Making them optional (${VAR:}) would be a value change and is not done here —
+  # raise it separately if that is wanted.
   oracle:
     enabled: ${HAENGSUNG_ORACLE_ENABLED}
     url: ${HAENGSUNG_ORACLE_URL}
@@ -129,15 +362,15 @@ haengsung:
   # Scheduled payment import.
   scheduled-payment-import:
     enabled: ${HAENGSUNG_SCHEDULED_IMPORT_ENABLED}
-    cron: ${HAENGSUNG_SCHEDULED_IMPORT_CRON}
+    cron: "${HAENGSUNG_SCHEDULED_IMPORT_CRON}"
   # Exchange rate synchronization.
   exchange-rate-sync:
     enabled: ${HAENGSUNG_EXCHANGE_RATE_SYNC_ENABLED}
-    cron: ${HAENGSUNG_EXCHANGE_RATE_SYNC_CRON}
+    cron: "${HAENGSUNG_EXCHANGE_RATE_SYNC_CRON}"
   # Card and account synchronization.
   card-account-sync:
     enabled: ${HAENGSUNG_CARD_ACCOUNT_SYNC_ENABLED}
-    cron: ${HAENGSUNG_CARD_ACCOUNT_SYNC_CRON}
+    cron: "${HAENGSUNG_CARD_ACCOUNT_SYNC_CRON}"
 
 # =============================================================================
 # Application logging

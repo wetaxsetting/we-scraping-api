@@ -106,6 +106,8 @@ public class OverseasPaymentService {
     private final ApprovalAttachmentLoader       approvalAttachmentLoader;
     private final OvrsPymnDtlsRepository         dtlsRepository;
     private final OverseasDispatchExecutor       dispatchExecutor;
+    /** C-14 / FIX B: last gate on {@code SENDER_NAME}, the wire field with no entry surface. */
+    private final com.kosign.wecms.domain.payment.overseas.service.OverseasSenderNameGuard senderNameGuard;
     /** Phase 2 dispatch-result resolver — surfaces PROC_STAT / RS_CD /
      *  RS_MSG / PROC_DTTM / RSLT_DTTM per beneficiary line on the
      *  Overseas Result detail page. */
@@ -1380,6 +1382,20 @@ public class OverseasPaymentService {
         cutoffValidator.validate(
                 sumr.getOutBankCd(),
                 com.kosign.wecms.domain.payment.internaltransfer.service.TransferNetwork.SWIFT);
+
+        // C-14 / FIX B — last gate on SENDER_NAME, the one wire field with no entry surface.
+        //
+        // The upload path already checks the withdrawal account's ACCT_MSTR.ACCT_NM, but that check ran
+        // when the batch was CREATED. ACCT_NM is refreshed from the bank adapter on every account
+        // re-registration, so it can change between upload and dispatch — and batches uploaded before
+        // that check existed were never checked at all. Re-checking here costs one PK lookup and turns
+        // an opaque mid-dispatch codec failure ("file build failed: IllegalArgumentException", after the
+        // pay-file rows are written) into a named business error before any dispatch row exists.
+        //
+        // Fail-closed on purpose: refusing to dispatch is strictly better than emitting a record the
+        // bank cannot read, and nothing has left the building at this point.
+        // OUT_BANK_CD is already the NAPAS form on the master, which is what the guard expects.
+        senderNameGuard.assertSendable(sumr.getBizKey(), sumr.getOutBankCd(), sumr.getWdrlActNo());
 
         // Writes TB_PAY_FILE_MST + TB_PAY_FILE_DATA inside this
         // @Transactional. Stamps PAY_TRAN_DT + PAY_FILE_SEQ_NO on master

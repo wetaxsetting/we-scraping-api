@@ -94,14 +94,45 @@ public final class LegacyTextNormalizer {
     }
 
     /**
-     * Full upload-time normalization = {@link #stripCrLf} then
-     * {@link #stripVietnameseTone}, in the same order the parsers apply on the
-     * preview path (CR/LF stripped at cell read, Vietnamese accents stripped
-     * per validated field). Used by the save-path / dispatch enforcement guard
-     * so a direct API call persists the SAME normalized value the upload
-     * preview would have produced. Idempotent. Null-safe.
+     * Unicode NFC composition — <b>a refactor-only addition, not a legacy port</b> (C-14).
+     *
+     * <p>{@link #replaceTone} maps 134 <i>precomposed</i> Vietnamese code points. A decomposed
+     * (NFD) {@code ế} is {@code e} + U+0302 + U+0301 — three separate characters, none of which is in
+     * the table — so tone-stripping silently misses it and the value reaches
+     * {@code FixedLengthCodec} still carrying combining marks at 3 UTF-8 bytes each. That is the
+     * secondary reachable path to an over-width wire field (the primary being Korean/CJK, which NFC
+     * cannot help with). Composing first makes the character precomposed, so the legacy table matches
+     * it and it strips to plain {@code e}.
+     *
+     * <p><b>Divergence note — deliberately narrow.</b> Legacy JEX does not normalize, so for NFD input
+     * legacy persists the decomposed form. NFC is the <i>identity</i> for every precomposed value, and
+     * real Vietnamese/Korean/ASCII input from Excel and from the browser is precomposed, so this
+     * changes the stored bytes only for input that <b>currently produces a corrupt 852-byte record</b>
+     * (see {@code FixedLengthCodec}'s overflow note). It moves no value that works today. Migration
+     * safety is unaffected: NFC does not change any legacy row, only what a new refactor write stores.
+     *
+     * <p>Null-safe and idempotent ({@code NFC(NFC(x)) == NFC(x)}).
+     */
+    public static String toNfc(String value) {
+        if (value == null || value.isEmpty()) {
+            return value;
+        }
+        return java.text.Normalizer.isNormalized(value, java.text.Normalizer.Form.NFC)
+                ? value
+                : java.text.Normalizer.normalize(value, java.text.Normalizer.Form.NFC);
+    }
+
+    /**
+     * Full upload-time normalization = {@link #toNfc}, then {@link #stripCrLf}, then
+     * {@link #stripVietnameseTone} — the same order the parsers apply on the preview path (NFC + CR/LF
+     * at cell read, Vietnamese accents stripped per validated field). Used by the save-path / dispatch
+     * enforcement guard so a direct API call persists the SAME normalized value the upload preview
+     * would have produced. Idempotent. Null-safe.
+     *
+     * <p>{@link #toNfc} runs <b>before</b> {@link #stripVietnameseTone} and that order is load-bearing
+     * — reversing it leaves decomposed accents in place. See {@link #toNfc}.
      */
     public static String normalize(String value) {
-        return stripVietnameseTone(stripCrLf(value));
+        return stripVietnameseTone(stripCrLf(toNfc(value)));
     }
 }

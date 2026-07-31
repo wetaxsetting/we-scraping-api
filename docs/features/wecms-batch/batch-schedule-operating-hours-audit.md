@@ -246,7 +246,7 @@ MSG_API transport (`OpsAlertService` / `EFS_MSG` / `MsgSendRequest`) is **reused
 INFO shared key `NAPAS_REAL_TIME_BATCH` for both batches; INFO missing → NO_CRITERIA; `EXE_DIV` E → CUTOFF, N → SKIP (silent), Y → DISPATCH; NAPAS DTL missing → NO_CRITERIA (and `INTER` skips DTL); BATCH1 DTL missing → pass/DISPATCH; BATCH1 channel precedence any-N → SKIP, else any-E → CUTOFF, else DISPATCH. Channel codes verified from the R005 IDO: `E`→EBANK, `V`→VCB, `C`→CITAD, `N`→NAPAS, `S`→SWIFT.
 
 ### Documented deviations
-- **Timezone:** `EXE_DIV` compares against **`Asia/Ho_Chi_Minh` (ICT)** wall-clock (the project-wide dispatch time zone), where legacy used the DB server-local `NOW()`. Same lexicographic `HHmmss` comparison; documented deviation.
+- **Timezone:** `EXE_DIV` compares against **`Asia/Ho_Chi_Minh` (ICT)** wall-clock (the project-wide dispatch time zone), where legacy used the DB server-local `NOW()`. Same lexicographic `HHmmss` comparison; documented deviation. **Quantified 2026-07-28 (§12b):** the legacy DB server zone is `Asia/Seoul` (UTC+9), so the deviation is a real **2-hour** shift, and the zone is now a configurable property rather than a hardcoded constant.
 - **NAPAS alert field label:** the legacy `TRAN_SEQ :` line was populated with `TRAN_DT` (a copy-paste bug); the refactor uses the actual `tranSeq` value under that label. Display-only; no business change.
 
 ### Guarantees
@@ -259,3 +259,66 @@ INFO shared key `NAPAS_REAL_TIME_BATCH` for both batches; INFO missing → NO_CR
 
 ### ⚠ Required before enabling real dispatch (unchanged from §7/§9)
 **`TB_BATCH_SCHEDULE_INFO` and `TB_BATCH_SCHEDULE_DTL` must be seeded** (per bank × channel) before enabling real dispatch. **An empty `TB_BATCH_SCHEDULE_INFO` resolves to `NO_CRITERIA` and will block (FAIL) every dispatch.** No seed migration ships for these two tables yet; seed the operating windows (legacy runs effectively 24h) as part of any enablement.
+
+> **Superseded 2026-07-28 (§12b):** the seed now exists as a manual DBA script —
+> [`Claude Code (AI)/sql/tb_batch_schedule_seed_refactor.sql`](../../../../Claude%20Code%20%28AI%29/sql/tb_batch_schedule_seed_refactor.sql) —
+> and has been **applied to the refactor DEV DB** (3 INFO + 12 DTL verified). SIT / UAT / PROD still pending.
+
+---
+
+## 12b. Follow-up hardening (2026-07-28) — two confirmed defects fixed
+
+Verified read-only against the JEX DEV and refactor DBs. Full record:
+[../../deployment/wecms-batch-schedule-seed-review.md §17](../../deployment/wecms-batch-schedule-seed-review.md).
+
+### Defect A — timezone divergence was 2 hours, not hypothetical
+
+`SELECT current_setting('TimeZone')` on the JEX frame DB returns **`Asia/Seoul`** (UTC+9). Legacy's
+`TO_CHAR(NOW(),'HH24MISS')` therefore reads a `090000-153000` window as 09:00–15:30 **KST** =
+07:00–13:30 Vietnam time. The refactor evaluated in ICT — a two-hour disagreement on every window edge
+against a shared UAT/PROD JEX DB.
+
+ICT is retained as the default: the windows are Vietnamese bank cut-offs, and `CutoffValidator.VIETNAM_ZONE`
+is already `Asia/Ho_Chi_Minh`, so a KST dispatch gate would fail payments the request-time gate had just
+accepted. The zone is now explicit and overridable:
+
+```java
+// OperatingHoursService
+@Value("${wecms.dispatch.operating-hours.zone:Asia/Ho_Chi_Minh}")
+private String operatingHoursZone = "Asia/Ho_Chi_Minh";
+```
+
+In-code default + absent from every YAML ⇒ an unset property cannot abort startup (audit H-1). Set it to
+`Asia/Seoul` for bug-for-bug legacy parity if a co-hosted legacy batch ever demands it.
+
+### Defect B — `ANT_DIV_CD` width inconsistency failed real payments
+
+`TB_PAY_TARGET.ANT_DIV_CD` is `bpchar(5)` and carries **both** widths. Live JEX DEV distribution:
+`CITAD` 39 · `NAPAS` 30 · `INTER` 28 · **`'E'` 2 · `'S'` 2**. The four 1-char rows:
+`(970424,'E')` ×2 → `PROC_STAT='3'` **FAIL** (2025-09-18); `(970424,'S')` ×2 → `PROC_STAT='9'`
+**stranded** (2025-09-19).
+
+Cause: `OperatingHoursService` used the raw column value as the schedule key, so `'N'` never matched the
+`'NAPAS'` row → `NO_CRITERIA` → FAIL. It also never stripped bpchar padding. Every other consumer already
+treated the widths as equivalent (`TransferNetwork.parse`), so this was an internal inconsistency.
+
+Fix: new [`AntDivChannel`](../../../src/main/java/com/kosign/wecms/domain/payment/dispatch/constant/AntDivChannel.java)
+is the single canonical vocabulary —
+
+| Method | Consumer | Behaviour |
+|---|---|---|
+| `fromStorageCode` | `BulkReceptionService.presentChannels` | strict `E/V/C/N/S` → name; `null` otherwise (legacy `ETC`, ungated) |
+| `canonical` | `OperatingHoursService.evaluateRealtime` | trims padding, expands 1-char aliases, passes known names, returns unknown codes **verbatim** so they still fail closed |
+
+`BulkReceptionService`'s private `CHANNEL_BY_ANT_DIV` map was removed in favour of the shared class. Bulk
+behaviour is unchanged (`TB_PAY_FILE_DATA.ANT_DIV_CD` is `bpchar(1)`).
+
+**Not changed on purpose:** an unknown code (e.g. HAENGSUNG's unresolved `'T'`) is never coerced onto a
+channel — it keeps failing loudly. **Still a PO decision:** `'S'`→`SWIFT` / `'E'`→`EBANK` resolve to keys
+with no realtime schedule row, so they still fail; whether those channels should be dispatchable on the
+NAPAS realtime rail is routing, not windows.
+
+### Verification
+`./gradlew compileJava compileTestJava` clean · `./gradlew test` **1935 tests, 0 failures, 0 errors** ·
+`OperatingHoursServiceTest` **12 → 17** tests (added: 1-char NAPAS alias, 1-char CITAD alias,
+bpchar-padded value, padded `INTER` short-circuit, unknown code fails closed).

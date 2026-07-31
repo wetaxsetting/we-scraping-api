@@ -1,5 +1,6 @@
 package com.kosign.wecms.domain.banking.service;
 
+import com.kosign.wecms.common.lock.JobLockNames;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
@@ -21,6 +22,20 @@ import org.springframework.stereotype.Component;
  * double-write / race the legacy batch against the shared DB. Collection stays
  * legacy-owned; this gate is flipped on only in an environment that genuinely
  * owns FX collection (e.g. a future cut-over).
+ *
+ * <p><b>COEXISTENCE PRECONDITION — read before enabling.</b>
+ * {@code wecms.exchange-rate.batch.enabled=true} is safe ONLY after the legacy
+ * {@code EXCH_0001_001} / {@code EXCH_0010_001} / {@code EXCH_0020_001} BCS jobs
+ * are disabled in that same environment. ShedLock does NOT help here: the legacy
+ * JEX runtime does not participate in the {@code shedlock} table, so both sides
+ * would write {@code BANK_EXCH_RATE_INFM} concurrently. The Woori leg is the
+ * most dangerous — legacy and refactor both compute {@code SEQ_NO = MAX+1}
+ * cross-tenant and both INSERT only, so a concurrent round silently duplicates
+ * or collides. Legacy was verified still running in DEV on 2026-07-28.
+ * Additionally, legacy {@code EXCH_0030_001} (multi-bank × multi-SEQ_NO
+ * backfill) has NO refactor equivalent — a missed window is not self-healing
+ * (blocking confirmation item OQ-2). See
+ * {@code docs/audits/scheduler-legacy-parity-audit.md} §7 + §11.
  *
  * <p>The actual work + per-job {@code @Transactional} units live on
  * {@link ExchangeRateBatchService} (always present so the on-demand path and DI
@@ -59,7 +74,7 @@ public class ExchangeRateBatchScheduler {
 
     /** EXCH_0001_001 — Shinhan first-time, once/day at 08:30 ICT. */
     @Scheduled(cron = "0 30 8 * * ?", zone = VIETNAM_TZ_ID)
-    @SchedulerLock(name = "exch-shinhan-first-time",
+    @SchedulerLock(name = JobLockNames.EXCH_SHINHAN_FIRST_TIME,
                    lockAtMostFor = "PT10M",
                    lockAtLeastFor = "PT30S")
     public void shinhanFirstTime() {
@@ -68,7 +83,7 @@ public class ExchangeRateBatchScheduler {
 
     /** EXCH_0010_001 — Shinhan last-time, hourly 08:30–18:30 ICT. */
     @Scheduled(cron = "0 30 8-18 * * ?", zone = VIETNAM_TZ_ID)
-    @SchedulerLock(name = "exch-shinhan-last-time",
+    @SchedulerLock(name = JobLockNames.EXCH_SHINHAN_LAST_TIME,
                    lockAtMostFor = "PT10M",
                    lockAtLeastFor = "PT30S")
     public void shinhanLastTime() {
@@ -82,7 +97,7 @@ public class ExchangeRateBatchScheduler {
      *  of hours 09–20 (→ 09:00 … 20:30). */
     @Scheduled(cron = "0 30 8 * * ?",      zone = VIETNAM_TZ_ID)
     @Scheduled(cron = "0 0,30 9-20 * * ?", zone = VIETNAM_TZ_ID)
-    @SchedulerLock(name = "exch-woori",
+    @SchedulerLock(name = JobLockNames.EXCH_WOORI,
                    lockAtMostFor = "PT10M",
                    lockAtLeastFor = "PT20S")
     public void woori() {

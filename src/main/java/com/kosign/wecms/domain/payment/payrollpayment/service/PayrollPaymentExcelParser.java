@@ -5,6 +5,8 @@ import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ParseExcelResponse;
 import com.kosign.wecms.domain.payment.internaltransfer.dto.ParsedTransferLine;
 import com.kosign.wecms.domain.payment.common.LegacyTextNormalizer;
+import com.kosign.wecms.domain.payment.common.PaymentWireWidthGuard;
+import com.kosign.wecms.domain.payment.common.WireField;
 import com.kosign.wecms.domain.payment.validation.FieldCd;
 import com.kosign.wecms.domain.payment.validation.PymnType;
 import com.kosign.wecms.domain.payment.validation.SpecialCharValidator;
@@ -112,6 +114,8 @@ public class PayrollPaymentExcelParser {
     private final TbFirmBankCodeRepository firmBankCodeRepo;
     private final ChartOfAccountRepository chartAcctRepo;
     private final SpecialCharValidator     specialCharValidator;
+    /** C-14: fixed-length wire-slot width guard for the bank-bound name & memo fields. */
+    private final PaymentWireWidthGuard    wireWidthGuard;
     /** Cross-row consistency guard — single currency per file + single
      *  network per file + VND/USD whitelist. Mirrors legacy
      *  {@code PymnHelper.java:420-436} + {@code :1261-1297}. */
@@ -369,6 +373,16 @@ public class PayrollPaymentExcelParser {
                     .ifPresent(msg -> errors.add(new FieldError("TRAN_USAG", msg)));
         }
 
+        // C-14: the value must also FIT its slot in the bank's fixed-length record. RCPT_NM feeds
+        // the 150-byte receiverName field and TRAN_USAG feeds both 210-byte memo fields; text that
+        // survives tone-stripping (Korean/CJK) is 3 UTF-8 bytes per character and blows the slot
+        // long before the varchar(150) column notices. Flagged here so the user can fix the cell —
+        // FixedLengthCodec's throw is the mid-dispatch backstop, not a user-facing error.
+        wireWidthGuard.check(WireField.RECEIVER_NAME, rcptNm)
+                .ifPresent(msg -> errors.add(new FieldError(FLD_RCPT_NM, msg)));
+        wireWidthGuard.check(WireField.DEPOSIT_ACCOUNT_MEMO, tranUsag)
+                .ifPresent(msg -> errors.add(new FieldError("TRAN_USAG", msg)));
+
         String errFld   = buildErrPair(errors, FieldError::fieldId);
         String errCause = buildErrPair(errors, FieldError::cause);
 
@@ -430,7 +444,11 @@ public class PayrollPaymentExcelParser {
         }
         // F2 (audit task-44508): strip embedded CR/LF from EVERY text cell,
         // mirroring legacy `ExcelUtils.getCell:144`. Tabs preserved.
-        return LegacyTextNormalizer.stripCrLf(fmt.formatCellValue(cell)).trim();
+        // C-14: NFC first. replaceTone maps precomposed code points only, so a decomposed accent
+        // would survive tone-stripping and reach the fixed-length codec at full UTF-8 width.
+        // See LegacyTextNormalizer.toNfc.
+        return LegacyTextNormalizer.stripCrLf(
+                LegacyTextNormalizer.toNfc(fmt.formatCellValue(cell))).trim();
     }
 
     private static boolean isBlank(String s) {

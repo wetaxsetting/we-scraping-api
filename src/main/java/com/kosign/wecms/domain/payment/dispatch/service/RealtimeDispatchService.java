@@ -181,12 +181,39 @@ public class RealtimeDispatchService {
         // clean, so this is defense-in-depth — it also protects any row inserted
         // outside the create services. Rules are keyed on the internal BANK_CD,
         // so resolve the stored NAPAS OUT_BANK_CD back first.
+        //
+        // X-1: on rejection this used to propagate out of the REQUIRES_NEW unit, roll the target back
+        // and be swallowed by RealtimeDispatchRegistrar's log.error — leaving the row at '9' with no
+        // status, no alert, and no user-visible failure, i.e. silently never dispatched. It is now
+        // recorded exactly like the cut-off rejection above: pay-target FAIL + ops alert. Nothing has
+        // been sent at this point (the 202 is built below), so a terminal '3' is the whole truth.
         String internalBankCd = outBankCdNormalizer.toInternalBankCd(pay.getOutBankCd());
-        blockedCharGuard.assertCleanForDispatch(internalBankCd, java.util.List.of(
-                com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard.field(
-                        com.kosign.wecms.domain.payment.validation.FieldCd.RECIPIENT_NAME, ownerNm),
-                com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard.field(
-                        com.kosign.wecms.domain.payment.validation.FieldCd.REMARKS, tranUsag)));
+        try {
+            blockedCharGuard.assertCleanForDispatch(internalBankCd, java.util.List.of(
+                    com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard.field(
+                            com.kosign.wecms.domain.payment.validation.FieldCd.RECIPIENT_NAME, ownerNm),
+                    com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard.field(
+                            com.kosign.wecms.domain.payment.validation.FieldCd.REMARKS, tranUsag)));
+        } catch (BusinessException e) {
+            // The validator's message already names the field and the offending character(s).
+            // TB_PAY_TARGET has no RS_MSG column (legacy shape — the cut-off branch above writes
+            // PROC_STAT + PROC_DTTM only), so the detail is carried on the ops alert.
+            String detail = (e.getArgs() != null && e.getArgs().length > 0)
+                    ? String.valueOf(e.getArgs()[0])
+                    : e.getCode();
+            pay.setProcStat(ProcStat.FAIL.code());
+            pay.setProcDttm(dttm14);
+            payTargetRepository.save(pay);
+            log.warn("realtime-dispatch blocked (blocked-chars) bizKey={} tranSeq={} — pay-target FAIL, reason={}",
+                    bizKey, tranSeq, detail);
+            opsAlertService.notify(conf.getVanOrgCd(),
+                    "실시간지급이체 Batch 금칙문자 오류 발생 (blocked characters at dispatch)"
+                            + "\nTRAN_SEQ : " + tranSeq
+                            + "\nOUT_BANK_CD : " + pay.getOutBankCd()
+                            + "\nANT_DIV_CD : " + pay.getAntDivCd()
+                            + "\nAPI RM : " + detail);
+            return;
+        }
 
         String[] amt = splitAmount(pay.getTranAmt());
         RealtimeTransferCommand cmd = new RealtimeTransferCommand(

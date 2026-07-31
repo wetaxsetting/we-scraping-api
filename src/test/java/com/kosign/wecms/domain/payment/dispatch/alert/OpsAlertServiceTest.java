@@ -90,7 +90,7 @@ class OpsAlertServiceTest {
         verify(efsApiClient).send(eq(EfsApiClient.EFS_MSG), captor.capture());
         EfsEnvelope sent = captor.getValue();
         assertThat(sent.tno()).isEqualTo("M9999999");
-        // M-12 (audit): the alert-channel envelope ID is ALWAYS the VAN org code, never partnerId.
+        // M-12 (audit) + D-2: the envelope ID is ALWAYS the VAN org code (TB_FIRM_CONF.VAN_ORG_CD).
         assertThat(sent.id()).isEqualTo("VAN01");
         assertThat(sent.em()).isEqualTo(EfsEnvelope.EM_AES);
         assertThat(sent.vm()).isEqualTo(EfsEnvelope.VM_HMAC_SHA256);
@@ -122,8 +122,8 @@ class OpsAlertServiceTest {
 
     @Test
     void envelopeIdIsAlwaysVanOrgCd() {
-        // M-12 (audit): even with a partner-id configured, the alert-channel ID stays the VAN org
-        // code (legacy MSGSendAPIThread:77) — the partner-id is a per-request contract, not this channel.
+        // M-12 (audit) + D-2 (legacy-verified): the envelope ID is the VAN org code on every leg
+        // (legacy MsgSendUtil.SendMsg(van_org_cd, ...)); there is no partner-id property any more.
         enable();
         when(vanApiKeyService.getApiKey(anyString())).thenReturn("0123456789abcdef0123456789abcdef");
         when(efsCryptoService.encryptEv(anyString(), anyString(), anyString())).thenReturn("EV");
@@ -141,7 +141,6 @@ class OpsAlertServiceTest {
     void gatewayFailure_isSwallowed() {
         enable();
         when(vanApiKeyService.getApiKey(anyString())).thenReturn("0123456789abcdef0123456789abcdef");
-        lenient().when(efsProperties.getPartnerId()).thenReturn(null);
         when(efsCryptoService.encryptEv(anyString(), anyString(), anyString())).thenReturn("EV");
         when(efsCryptoService.buildVv(anyString(), anyString())).thenReturn("VV");
         when(efsApiClient.send(anyString(), any())).thenThrow(new RuntimeException("gateway down"));
@@ -157,5 +156,59 @@ class OpsAlertServiceTest {
 
         assertThatCode(() -> service.notify("VAN01", "x")).doesNotThrowAnyException();
         verify(efsApiClient, never()).send(anyString(), any());
+    }
+
+    // ── FIX K — grpID is configurable, with the legacy value as the default ──
+    //
+    // grpID is the gateway's channel-mapping id. It was a `private static final` here described as
+    // "never configurable", which misread legacy: MsgSendUtil.SendMsg takes it as a PARAMETER and all
+    // 10 legacy call sites merely pass the same literal. During JEX coexistence both systems post to
+    // WECMSBATCH, so ops cannot attribute an alert to a system — hence the knob.
+
+    /** Captures the decrypted business JSON that goes into EV. */
+    private String capturedBusinessJson(String vanOrgCd) {
+        ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
+        when(vanApiKeyService.getApiKey(anyString())).thenReturn("0123456789abcdef0123456789abcdef");
+        when(efsCryptoService.encryptEv(jsonCaptor.capture(), anyString(), anyString())).thenReturn("EV");
+        lenient().when(efsCryptoService.buildVv(anyString(), anyString())).thenReturn("VV");
+        lenient().when(efsApiClient.send(anyString(), any()))
+                .thenReturn(new EfsEnvelope(vanOrgCd, null, null, null, null, null, null, null, "0000", "OK"));
+        service.notify(vanOrgCd, "body");
+        return jsonCaptor.getValue();
+    }
+
+    @Test
+    void grpId_defaultsToTheLegacyConstant() {
+        // The default must be byte-identical to legacy, so enabling nothing changes nothing.
+        enable();
+        assertThat(capturedBusinessJson("VAN01")).contains("\"grpID\":\"WECMSBATCH\"");
+    }
+
+    @Test
+    void grpId_isOverridable() {
+        enable();
+        ReflectionTestUtils.setField(service, "grpId", "WECMSREFACTOR");
+
+        assertThat(capturedBusinessJson("VAN01"))
+                .contains("\"grpID\":\"WECMSREFACTOR\"")
+                .doesNotContain("WECMSBATCH");
+    }
+
+    @Test
+    void grpId_blankFallsBackToLegacy_ratherThanSendingAnEmptyChannel() {
+        // An empty grpID is an unroutable message, and this service is fire-and-forget — the loss
+        // would be silent. A property set to "" by accident must not be able to switch alerting off.
+        enable();
+        ReflectionTestUtils.setField(service, "grpId", "   ");
+
+        assertThat(capturedBusinessJson("VAN01")).contains("\"grpID\":\"WECMSBATCH\"");
+    }
+
+    @Test
+    void grpId_isTrimmed() {
+        enable();
+        ReflectionTestUtils.setField(service, "grpId", "  WECMSREFACTOR  ");
+
+        assertThat(capturedBusinessJson("VAN01")).contains("\"grpID\":\"WECMSREFACTOR\"");
     }
 }
