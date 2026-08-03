@@ -47,6 +47,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class BulkDispatchClaimTxService {
 
     private final TbPayFileMstRepository payFileMstRepository;
+    private final com.kosign.wecms.domain.payment.dispatch.repository.TbFirmFileMstRepository firmFileMstRepository;
 
     /**
      * Attempt to claim the bulk pay-file identified by {@code (bizKey, tranDt, fileSeqNo)} for 00301
@@ -113,5 +114,41 @@ public class BulkDispatchClaimTxService {
         log.warn("bulk pay-file marked FAIL after a stranded claim bizKey={} tranDt={} fileSeqNo={} rsMsg={}",
                 bizKey, tranDt, fileSeqNo, rsMsg);
         return true;
+    }
+
+    /**
+     * Two-phase dispatch · Record a terminal failure on ONE firm file <b>and</b> its pay file, in one
+     * committed transaction, addressed <b>by key</b>.
+     *
+     * <p>This is the phase-B failure write. Phase A commits the firm-file rows and closes its
+     * transaction before the first external call (legacy {@code FILE_DEPOSIT_TRANSFER_BATCH1:696-697}
+     * commits, then uploads at {@code :700}). Phase B therefore runs with <b>no transaction to roll
+     * back</b>: a staging-write, SFTP or 00301 failure cannot undo the committed rows, so the terminal
+     * state has to be written explicitly. That is the trade the reordering makes, and this method is
+     * where it is paid.
+     *
+     * <p>By key, not by entity, for two reasons: the {@code TbFirmFileMst} phase A created is detached
+     * once its transaction closed, and every caller reaches this from a {@code catch} block where an
+     * ambient transaction (if a future caller introduces one) may already be rollback-only.
+     *
+     * <p>The firm-file leg mirrors legacy {@code UpdateFirmFileMst} ({@code :1321-1340}): {@code
+     * PROC_STEP='0'} (unchanged — no advance) and {@code PROC_STAT='3'}. The pay-file leg reuses the
+     * {@code '6'}-guarded update from {@link #failStrandedPayFile}, so it can only move a row out of
+     * the claimed state and can never overwrite a status a callback has since advanced.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void failFirmFileAndPayFile(String bizKey, String tranDt, String fileSeqNo, String firmFileNm,
+                                       String rsltCd, String msg, String procDttm) {
+        int files = firmFileMstRepository.failFirmFile(
+                bizKey, tranDt, fileSeqNo, firmFileNm, rsltCd, msg, procDttm);
+        if (files == 0) {
+            // The row is already terminal or has been advanced by a callback that raced this failure.
+            // Benign, but worth a line: it means the file's fate was decided somewhere else.
+            log.info("firm file not at the dispatch state, terminal write skipped bizKey={} tranDt={} "
+                    + "fileSeqNo={} firmFileNm={}", bizKey, tranDt, fileSeqNo, firmFileNm);
+        }
+        payFileMstRepository.failClaimedPayFile(bizKey, tranDt, fileSeqNo, msg, procDttm);
+        log.warn("firm file + pay-file marked FAIL bizKey={} tranDt={} fileSeqNo={} firmFileNm={} rsltCd={}",
+                bizKey, tranDt, fileSeqNo, firmFileNm, rsltCd);
     }
 }

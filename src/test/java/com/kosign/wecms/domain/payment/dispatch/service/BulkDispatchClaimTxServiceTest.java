@@ -42,9 +42,10 @@ class BulkDispatchClaimTxServiceTest {
     private static final String DTTM = "20260729101500";
 
     @Mock TbPayFileMstRepository payFileMstRepository;
+    @Mock com.kosign.wecms.domain.payment.dispatch.repository.TbFirmFileMstRepository firmFileMstRepository;
 
     private BulkDispatchClaimTxService service() {
-        return new BulkDispatchClaimTxService(payFileMstRepository);
+        return new BulkDispatchClaimTxService(payFileMstRepository, firmFileMstRepository);
     }
 
     // ── behaviour ────────────────────────────────────────────────────────────

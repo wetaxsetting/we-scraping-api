@@ -96,7 +96,7 @@ class BulkReceptionServiceValidationTest {
                 dispatchKeyGenerator, codec, sftpClient, sftpProperties, validator,
                 org.mockito.Mockito.mock(com.kosign.wecms.domain.payment.dispatch.alert.OpsAlertService.class),
                 operatingHoursService,
-                new BulkDispatchClaimTxService(payFileMstRepository),
+                new BulkDispatchClaimTxService(payFileMstRepository, firmFileMstRepository),
                 org.mockito.Mockito.mock(com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard.class),
                 org.mockito.Mockito.mock(com.kosign.wecms.domain.payment.common.OutBankCdNormalizer.class),
                 org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));

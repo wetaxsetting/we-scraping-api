@@ -46,14 +46,13 @@ class StrandedRecoveryResultCheckLockTest {
 
     @Mock TbPayTargetRepository payTargetRepository;
     @Mock TbPayFileMstRepository payFileMstRepository;
-    @Mock RealtimeDispatchService realtimeDispatchService;
     @Mock BulkReceptionService bulkReceptionService;
     @Mock ResultCheckService resultCheckService;
 
     private StrandedRecoveryService serviceWith(JobLockGuard guard) {
         StrandedRecoveryService service = new StrandedRecoveryService(
-                payTargetRepository, payFileMstRepository, realtimeDispatchService,
-                bulkReceptionService, resultCheckService, guard);
+                payTargetRepository, payFileMstRepository,
+                bulkReceptionService, resultCheckService, guard, mock(RealtimeDispatchQueue.class));
         ReflectionTestUtils.setField(service, "graceMinutes", 30L);
         ReflectionTestUtils.setField(service, "enabled", true);
         // The delegation has a SECOND gate of its own — the result-check body's master flag. These tests
@@ -113,8 +112,8 @@ class StrandedRecoveryResultCheckLockTest {
     void masterGateOff_neverTouchesTheLockOrTheResultCheck() {
         JobLockGuard guard = mock(JobLockGuard.class);
         StrandedRecoveryService service = new StrandedRecoveryService(
-                payTargetRepository, payFileMstRepository, realtimeDispatchService,
-                bulkReceptionService, resultCheckService, guard);
+                payTargetRepository, payFileMstRepository,
+                bulkReceptionService, resultCheckService, guard, mock(RealtimeDispatchQueue.class));
         ReflectionTestUtils.setField(service, "graceMinutes", 30L);
         // `enabled` left false — the coexistence master gate.
 

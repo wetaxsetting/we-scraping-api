@@ -114,7 +114,7 @@ import java.util.List;
  * visible and manually recoverable; a double transfer is neither.
  *
  * <p><b>Detection</b> is {@code StuckPayFileMonitorService}'s firm-file sweep, whose selection
- * ({@link com.kosign.wecms.domain.payment.dispatch.repository.TbFirmFileMstRepository#findStrandedBulkExecutionFiles})
+ * ({@link com.kosign.wecms.domain.payment.dispatch.repository.TbFirmFileMstRepository#findStrandedFirmFiles})
  * is exactly this state — {@code PROC_STEP='1'/PROC_STAT='6'} older than the age threshold — and which
  * classifies it {@code BULK_EXECUTION_NOT_ISSUED} (no 00302 row) as distinct from
  * {@code BULK_EXECUTION_UNCONFIRMED} (a 00302 row exists but the bank never confirmed). The two need
@@ -136,6 +136,66 @@ import java.util.List;
  * {@link #scheduleExecutionFanOut} is still the callback clock, and still correct: it dates the audit
  * row, it no longer keys the guard.
  *
+ * <h2>Envelope RC vs persisted result code — two different questions (D-4)</h2>
+ *
+ * <p>These are <b>not</b> the same field and must not carry the same value. Conflating them was a
+ * real defect, corrected 2026-07-31:
+ * <ul>
+ *   <li>the <b>envelope {@code RC}</b> answers <i>"did you accept my message?"</i> — a transport-level
+ *       acknowledgement to the gateway;</li>
+ *   <li>{@code TB_FIRM_FILE_MST.REG_RSLT_CD} and {@code TB_FIRM_BAT_API_TRAN.RS_CD} answer
+ *       <i>"what happened to the file?"</i> — the business outcome, legacy-parity, unchanged.</li>
+ * </ul>
+ *
+ * <p>Two branches used to answer the second question in the first field. The sibling fail-stop returned
+ * {@code G998} and the count/amount mismatch returned {@code 9999}, on paths where this handler had
+ * <b>durably committed</b> the audit row and the file transition. The envelope was therefore telling the
+ * gateway "I did not accept this notification" about a notification that had been fully received,
+ * reconciled and acted upon. Both now return {@code RC=0000}; both still persist {@code G998} /
+ * {@code 9999} exactly as before.
+ *
+ * <p><b>Why this is the safe default rather than a guess in the other direction.</b> REST API guide
+ * v1.2.6 does not enumerate the {@code RC} values a partner may return on a Return-URL callback, does not
+ * state what the gateway does with a non-{@code 0000}, and contains no retry semantics at all (zero
+ * occurrences of 재시도 / 재전송 in 44 pages; §3.8's flow diagram draws the callback response as a plain
+ * return with no retry arrow). So the consequence of a non-{@code 0000} is <b>unknown</b>, and both
+ * possibilities are bad: if it triggers a resend, the duplicate finds the file past {@code PROC_STEP='0'}
+ * and falls into {@link #handleUnmatchedCallback}, potentially looping; if it is terminal, we have
+ * recorded a falsehood in the counterparty's system. {@code 0000} makes our behaviour independent of the
+ * unknown, and it is what legacy answered on every non-throwing path. Note also that {@code 9999} is not
+ * a vendor code at all — the guide's [참조 2] appendix publishes only
+ * {@code 0000}/{@code G001}/{@code G002}/{@code G997}/{@code G998}/{@code G999} — and the appendix gives
+ * {@code G998} a different meaning from ours ("An error occurred during banking communication.").
+ *
+ * <p><b>What deliberately still answers non-{@code 0000}</b> — the cases where the callback genuinely
+ * was <i>not</i> processed, so a retryable error is the honest answer and the C-2 reasoning stands:
+ * <ul>
+ *   <li>{@link #handleUnmatchedCallback}'s unknown-file, ambiguous-name and unexpected-state branches
+ *       ({@code G999}). Nothing is recorded there — for the first two, no audit row is even
+ *       <i>possible</i>, since {@code TB_FIRM_BAT_API_TRAN.BIZ_KEY} is a NOT NULL PK column and no
+ *       tenant resolves. A resend is exactly what we want.</li>
+ *   <li>The escaped-exception path in {@code CallbackAck} ({@code G002}/{@code G004}/{@code G999}). The
+ *       transaction has rolled back; the file is in its prior state and the callback is replayable.</li>
+ * </ul>
+ *
+ * <p><b>Do not "simplify" this by unifying the two.</b> If a future change makes a branch return
+ * non-{@code 0000}, the test is not "did something go wrong" but "is this callback still unprocessed and
+ * safe to replay". Settling it properly needs B5 (a real captured gateway sample) — see
+ * {@code docs/audits/efs-guide-1.2.6-open-questions-closure.md} §6.
+ *
+ * <h2>The 01302 leg answers this same question differently — read both together</h2>
+ * {@code BulkExecutionResultService} faces the identical question (its state-scoped lookup found
+ * nothing: replay, or unmatchable?) and answers <b>{@code 0000} on every branch</b>, where this leg
+ * answers {@code G999} for unknown / ambiguous / unexpected-state. <b>That asymmetry is ours, not a
+ * legacy divergence</b>, and it is deliberate rather than an oversight: 01302's miss is dominated by the
+ * routine replay case (once a file reaches {@code PROC_STEP='3'} every later callback misses its
+ * {@code '2'}/{@code '6'} lookup), so the C-2 reasoning above — <i>"a retrying callback is recoverable
+ * the moment the ambiguity is resolved, whereas a wrongly-acked one is gone"</i> — would there buy an
+ * unbounded resend loop with nothing to converge on. Legacy tolerated exactly that only because its 60 s
+ * poller re-selected work each pass. <b>Treat the two legs as one decision with two answers</b>; the
+ * split that would make them one rule is recorded, with the deferral and the §10 q1 trigger, in
+ * {@code docs/audits/van-center-open-questions-verification-2026-08-01.md} §4 and §6.
+ *
  * <p><b>Crypto note (B2):</b> the inbound envelope is verified/decrypted here with
  * the real {@link EfsCryptoService} + the per-VAN key from {@link VanApiKeyService}.
  *
@@ -156,8 +216,29 @@ public class BulkReceptionResultService {
     /** FIX A — guards the {@code FIRM_FILE_NM} date token; see {@link #tranDtFromFileNm}. */
     private static final java.util.regex.Pattern DT8_DIGITS = java.util.regex.Pattern.compile("\\d{8}");
 
-    /** Legacy reception-success token compared in {@code FILE_DEPOSIT_TRANSFER_API1_act.jsp:247}. */
-    private static final String RECEPTION_SUCCESS_CD = "BT00"; // TODO(B5): confirm full reception result-code set.
+    /**
+     * Legacy reception-success token compared in {@code FILE_DEPOSIT_TRANSFER_API1_act.jsp:247}.
+     *
+     * <p><b>TODO(B5) — this value has NO documentary basis.</b> Verified 2026-07-31 against REST API
+     * guide v1.2.6 in full: {@code BT00}, {@code BT01} and {@code C999} each appear <b>zero times</b> —
+     * not in §5.11, not in the [참조 2] 응답코드 appendix (which publishes only {@code 0000},
+     * {@code G001}, {@code G002}, {@code G997}, {@code G998}, {@code G999}), not anywhere in the
+     * document. §5.11 marks {@code result_cd String(4)} <i>Mondatory</i> and names it 접수 결과 코드
+     * ("reception result code") but never enumerates its values.
+     *
+     * <p>So the constant that gates the entire bulk flow — reception success vs. fail, and therefore
+     * whether 00302 is ever issued — is a literal observed in legacy
+     * {@code FILE_DEPOSIT_TRANSFER_BATCH2}/{@code API1_act.jsp} and nothing more. It is almost certainly
+     * right (it has driven production for years), but it is unverifiable from the vendor specification
+     * and the <i>rest</i> of the value space is entirely unknown: we cannot distinguish a
+     * "reception failed" {@code result_cd} from an unrecognised success token.
+     *
+     * <p>Closing this needs the full {@code result_cd} set from Mr. Kang / VAN Center (question 2 in
+     * {@code docs/audits/efs-guide-1.2.6-open-questions-closure.md} §10). Until then, treat any
+     * {@code result_cd != BT00} as failure — which is what the reconciliation below does, and which is
+     * the safe direction: it withholds 00302 rather than issuing one on an unrecognised code.
+     */
+    private static final String RECEPTION_SUCCESS_CD = "BT00";
 
     private final EfsApiClient efsApiClient;
     private final EfsCryptoService efsCryptoService;
@@ -266,8 +347,12 @@ public class BulkReceptionResultService {
                     tranDt + tranTm, envelope.tno());
             failFile(file, tranDt + tranTm, req.dataCnt(), receivedAmt,
                     FirmBankingResultCd.TARGET_STAT_ERR, FirmBankingResultCd.MSG_TARGET_STAT_ERR);
-            return receptionAck(envelope, req, FirmBankingResultCd.TARGET_STAT_ERR,
-                    FirmBankingResultCd.MSG_TARGET_STAT_ERR, false, apiKey);
+            // Envelope RC=0000, NOT G998 — see "Envelope RC vs persisted result code" in the class
+            // Javadoc. G998 is durably recorded above (audit row + REG_RSLT_CD) because that is the
+            // truth about the FILE; the envelope answers a different question, and the honest answer
+            // to "did you accept my notification" here is yes — this branch committed both writes.
+            return receptionAck(envelope, req, FirmBankingResultCd.SUCC,
+                    FirmBankingResultCd.MSG_SUCC, false, apiKey);
         }
 
         // 4. 01301 reception-result audit row. TRAN_SEQ = the VAN callback's TNO (A1 / audit X-2 —
@@ -294,8 +379,12 @@ public class BulkReceptionResultService {
             log.warn("01301 reception count/amount mismatch — no 00302 vanOrgCd={} fileNm={} "
                             + "recvCnt={} reqCnt={} recvAmt={} reqAmt={}",
                     vanOrgCd, req.fileNm(), req.dataCnt(), file.getReqCnt(), receivedAmt, file.getReqAmt());
-            // WeCMS detected a count/amount inconsistency → ack 9999 (AMT_ERR), echo EV.
-            return receptionAck(envelope, req, FirmBankingResultCd.AMT_ERR, FirmBankingResultCd.MSG_AMT_ERR, false, apiKey);
+            // Envelope RC=0000, NOT 9999 — see "Envelope RC vs persisted result code" in the class
+            // Javadoc. 9999 (AMT_ERR) is durably recorded above via failFile (REG_RSLT_CD) because the
+            // mismatch is the truth about the FILE; the notification itself was received, reconciled
+            // and acted on, so the envelope says so. 9999 is not a vendor code in any case ([참조 2]
+            // publishes only 0000/G001/G002/G997/G998/G999), so it could never have been read.
+            return receptionAck(envelope, req, FirmBankingResultCd.SUCC, FirmBankingResultCd.MSG_SUCC, false, apiKey);
         }
 
         // Reception success + totals match → PROC_STEP 0→1, PROC_STAT='6' (ready to execute).

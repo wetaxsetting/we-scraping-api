@@ -89,6 +89,8 @@ class StuckFirmFileClassifierDateRolloverTest {
     @Mock OpsAlertService opsAlertService;
     @Mock TbFirmFileMstRepository firmFileMstRepository;
     @Mock TbFirmBatApiTranRepository firmBatApiTranRepository;
+    @Mock com.kosign.wecms.domain.payment.dispatch.repository.TbPayTargetRepository payTargetRepository;
+    @Mock com.kosign.wecms.domain.payment.dispatch.repository.TbFirmTranRepository firmTranRepository;
 
     private StuckPayFileMonitorService service;
 
@@ -99,7 +101,8 @@ class StuckFirmFileClassifierDateRolloverTest {
     void setUp() {
         service = new StuckPayFileMonitorService(payFileMstRepository, payFileDataRepository,
                 firmConfRepository, operatingHoursService, opsAlertService,
-                Clock.fixed(NOW, ICT), firmFileMstRepository, firmBatApiTranRepository);
+                Clock.fixed(NOW, ICT), firmFileMstRepository, firmBatApiTranRepository,
+                payTargetRepository, firmTranRepository);
         ReflectionTestUtils.setField(service, "enabled", true);
         ReflectionTestUtils.setField(service, "thresholdMinutes", 15L);
         ReflectionTestUtils.setField(service, "reAlertMinutes", 60L);
@@ -165,7 +168,7 @@ class StuckFirmFileClassifierDateRolloverTest {
      * These rollover cases are all about the {@code '1'} population.
      */
     private void sweepReturns(TbFirmFileMst... files) {
-        when(firmFileMstRepository.findStrandedBulkExecutionFiles(
+        when(firmFileMstRepository.findStrandedFirmFiles(
                 eq(ProcStep.REQ_RECV.code()), anyString(), anyString(), anyString(), any(Pageable.class)))
                 .thenReturn(List.of(files));
     }

@@ -66,70 +66,89 @@ public class ResultCheckJob {
      * Result-check pass. Cron disabled by default ({@code "-"}); when enabled it
      * runs every minute at ICT. ShedLock serialises it across refactor instances.
      *
-     * <h2>{@code lockAtMostFor} derivation (PT2M → PT30M → <b>PT60M</b>)</h2>
+     * <h2>{@code lockAtMostFor} derivation (PT2M → PT30M → PT60M → PT2H30M → <b>PT30M</b>)</h2>
      *
      * <p>{@code lockAtMostFor} is the crash-recovery ceiling: if the holder dies
      * mid-pass the lock frees after it. It MUST exceed the worst-case duration of a
      * <em>valid</em> pass, otherwise a still-running pass loses its lock and a
      * second node starts a concurrent one on the same {@code PROC_STAT='6'} rows.
-     * The inputs, all verified in code:
+     *
+     * <p><b>What bounds a pass is now the pass deadline, not the batch size.</b> Every earlier value
+     * on this line was computed as {@code batchSize × worstCaseRow}, because nothing stopped a pass
+     * early. {@code ResultCheckService.passDeadline}
+     * ({@code wecms.dispatch.result-check.pass-deadline}, default <b>PT10M</b>) changed that: the
+     * budget is checked at the top of each row iteration and the loop breaks when it is spent, leaving
+     * the remaining rows at {@code '6'} for the next pass. So:
+     *
+     * <pre>  worst valid pass  =  pass-deadline  +  ONE in-flight worst-case row</pre>
+     *
+     * <p>and the batch size drops out of the arithmetic entirely. The {@code + one row} term is
+     * load-bearing and deliberate: the check is at the top of the iteration, never inside a row, so a
+     * row that has already issued its 203 always runs to completion (interrupting it would leave a 203
+     * audit row at {@code '6'} with an inquiry already at the gateway — see {@code passDeadline}'s
+     * Javadoc).
+     *
+     * <h2>The arithmetic (C-11, recomputed 2026-07-31)</h2>
      * <ul>
-     *   <li><b>Rows per pass: capped at {@code wecms.dispatch.result-check.batch-size}</b>
-     *       (default <b>100</b>, {@code ResultCheckService.DEFAULT_BATCH_SIZE}), applied as
-     *       {@code PageRequest.of(0, limit)} on {@code findResultCheckCandidates}. This is the H-2
-     *       change; the paragraph that used to stand here described the pre-H-2 unbounded
-     *       {@code findByTranTpAndProcStat} finder and was stale. A non-positive configured value
-     *       falls back to the same 100, so the cap can never be disabled by misconfiguration.</li>
-     *   <li><b>Processing is strictly sequential</b> — one {@code for} loop over
-     *       the aged rows, one 203 inquiry each.</li>
-     *   <li><b>Per-row gateway worst case ≈ 23 s</b> — {@code EfsProperties}
-     *       {@code connectTimeoutMs=3000} + {@code readTimeoutMs=20000}.</li>
-     *   <li><b>Per-row pacing</b> — {@code DispatchPacer}: Woori {@code 970457}
-     *       3000 ms, Shinhan / default 100 ms. Applied on the skip / comms-fail /
-     *       original-fail branches, not after a clean success — and a timed-out row takes the
-     *       comms-fail branch, so the worst case pays the pacing too.</li>
-     *   <li><b>Errors do not shorten the pass</b> — a failed row is logged, left at
-     *       {@code '6'} for the next pass, paced, and the loop continues.</li>
-     *   <li><b>Per-row DB work</b> — a {@code wb_get_next_val} call plus three
-     *       {@code TB_FIRM_TRAN} saves and one {@code REQUIRES_NEW} finalize transaction. Small
-     *       next to the gateway timeout, but it is additive, not free.</li>
+     *   <li><b>Worst-case row = 93 s</b> — {@code EfsProperties.connectTimeoutMs} <b>30 s</b>
+     *       (raised from 3 s to match legacy {@code ConnectionUtil:16}) + {@code readTimeoutMs}
+     *       <b>60 s</b> (guide §3.2 + legacy {@code ConnectionUtil:17}) + {@code DispatchPacer}'s
+     *       slowest bank delay <b>3 s</b> (Woori {@code 970457}). The pace belongs in the sum: a
+     *       timed-out row takes the comms-fail branch, and <i>that</i> branch paces.</li>
+     *   <li><b>Worst valid pass = 600 s + 93 s = 693 s ≈ 11.6 min.</b></li>
+     *   <li><b>PT30M = 1800 s gives 2.6× headroom</b> for per-row DB work (a
+     *       {@code wb_get_next_val} call, three {@code TB_FIRM_TRAN} saves, one
+     *       {@code REQUIRES_NEW} finalize), JVM pauses and clock skew — none of which are in the
+     *       93 s — and absorbs a pass-deadline raise to PT20M without needing a recompute.</li>
      * </ul>
      *
-     * <h2>C-11 — the arithmetic, and why PT30M did not cover it</h2>
+     * <p><b>Processing is still strictly sequential</b> (one {@code for} loop, one 203 per row) and
+     * <b>errors still do not shorten the pass</b> (a failed row is logged, left at {@code '6'}, paced,
+     * and the loop continues) — both inputs to the per-row figure above, unchanged.
      *
-     * <p>Worst case per row = 3 s connect + 20 s read + 3000 ms Woori pace = <b>26 s</b>.
-     * At the default cap: {@code 100 × 26 s = 2600 s = 43.3 min}. PT30M was <b>13 minutes short</b>
-     * of a single valid worst-case pass, so a slow gateway could expire the lock mid-run and let a
-     * second instance start on rows the first was still processing — the exact concurrency this lock
-     * exists to prevent, on live payment rows.
+     * <h2>Why this is a reduction and not a regression</h2>
+     * <p>PT2H30M was the honest ceiling for a pass that could legitimately grind through 100 gateway
+     * timeouts. Raising the connect timeout 3 s → 30 s would have pushed that model to
+     * {@code 100 × 93 s = 155 min}, i.e. <i>above</i> PT2H30M — the old literal was already short the
+     * moment {@link #run()}'s inputs changed. Rather than raise it again down a path that has no upper
+     * bound, the deadline caps the pass and the ceiling collapses to a fixed crash-recovery constant.
+     * The cost side improves in the same step: the post-crash blind spot, during which dispatched
+     * transfers awaiting confirmation sit at {@code PROC_STAT='6'} unfinalized, drops from
+     * <b>150 minutes to 30</b>.
      *
-     * <p>Typical load is nowhere near that (a healthy pass is ~1 s of gateway time plus pacing per
-     * row, so 100 Woori rows ≈ 7 min), but {@code lockAtMostFor} must bound the <b>worst</b> valid
-     * pass, not the typical one.
+     * <p>The concurrency property is unchanged — the ceiling still exceeds the worst valid pass, which
+     * is the only thing it has to do. ShedLock releases the lock normally on completion, so the
+     * ceiling <b>only binds on abnormal exit</b> (a JVM kill, an OOM, a pod eviction). Operationally:
+     * after any abnormal termination of a node running this job, clear the {@code shedlock} row for
+     * {@link JobLockNames#DISPATCH_RESULT_CHECK} manually rather than waiting the ceiling out.
      *
-     * <p><b>Chosen: raise the ceiling to PT60M, and derive it from the cap</b> — which is what the
-     * previous revision of this Javadoc itself instructed ("if the aged-row set is ever bounded,
-     * revisit this value and derive it from the cap"); H-2 added the cap and nobody came back. 60 min
-     * gives 43.3 min of worst-case work ~38% headroom for the per-row DB work, JVM pauses and clock
-     * skew.
+     * <p><b>PT30M also makes the {@code StrandedRecoveryService} delegation honest.</b> That sweep
+     * borrows this lock identity with hardcoded bounds of {@code Duration.ofMinutes(30)} /
+     * {@code ofSeconds(5)} and a comment claiming they "match {@code ResultCheckJob} exactly". Against
+     * PT2H30M they did not — a delegated pass could lose the lock at 30 min while a scheduled pass ran
+     * on to 150. They match now, and {@code StrandedRecoveryResultCheckLockTest} pins it.
      *
-     * <p><b>Why not lower the batch size instead</b> (≈65 rows would fit PT30M): the cap is also the
-     * drain rate, and this sweep is the only thing that finalizes a dispatched-but-unconfirmed
-     * transfer — a payment already sent to the bank. Slowing the drain to fit a lock ceiling
-     * optimises the wrong quantity. The cost of a larger ceiling is bounded and one-sided: a longer
-     * stale-lock window after an <i>actual</i> node crash (ShedLock releases the lock normally on
-     * completion, so the ceiling only matters on abnormal termination), versus concurrent processing
-     * of live payment rows if it is too small. {@code lockAtLeastFor} stays PT5S — with a 1-minute
-     * cron the floor only needs to outlast an empty/near-empty pass.
+     * <p>The batch size is no longer part of this derivation, so <b>lowering it is no longer a lever
+     * on the ceiling</b> — which is the right outcome. The cap is also the drain rate, and this sweep
+     * is the only thing that finalizes a dispatched-but-unconfirmed transfer (a payment already sent
+     * to the bank); trading drain rate for lock headroom optimised the wrong quantity.
      *
-     * <p><b>These two values are coupled. If you change
-     * {@code wecms.dispatch.result-check.batch-size}, recompute this ceiling</b> as
-     * {@code batchSize × (connectTimeoutMs + readTimeoutMs + worstPaceMs)} plus headroom, and update
+     * <p><b>Not yet live.</b> {@code wecms.dispatch.result-check.cron} is {@code "-"} in every
+     * profile and {@code result-check.enabled} defaults false, so no environment currently holds this
+     * lock at all. The window above is what would apply on the day both gates open, not a live
+     * exposure today.
+     *
+     * <p>{@code lockAtLeastFor} stays PT5S — with a 1-minute cron the floor only needs to outlast an
+     * empty/near-empty pass.
+     *
+     * <p><b>Recompute this ceiling when you change
+     * {@code wecms.dispatch.result-check.pass-deadline}</b> (not {@code batch-size}) as
+     * {@code passDeadline + connectTimeoutMs + readTimeoutMs + worstPaceMs} plus headroom, and update
      * {@code ResultCheckLockCeilingTest}, which asserts the relationship rather than the literal.
      */
     @Scheduled(cron = "${wecms.dispatch.result-check.cron:-}", zone = "Asia/Ho_Chi_Minh")
     @SchedulerLock(name = JobLockNames.DISPATCH_RESULT_CHECK,
-                   lockAtMostFor = "PT60M", lockAtLeastFor = "PT5S")
+                   lockAtMostFor = "PT30M", lockAtLeastFor = "PT5S")
     public void run() {
         log.debug("ResultCheckJob.run fired");
         resultCheckService.runOnce();

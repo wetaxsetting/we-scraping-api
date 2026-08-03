@@ -46,12 +46,29 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class PayFileFinalizeGuardTest {
 
+    /**
+     * Fixture keyed to <b>20251201</b> — one of the two actual PROD instances of this defect
+     * (the other is {@code 20251128}, 9 lines; this one is 2 lines). Both have a parent
+     * {@code TB_PAY_FILE_MST.PROC_STAT='0'}, which is the false ALL-SUCCESS this class guards.
+     *
+     * <p><b>Do not "reconcile" this date back to 20260529.</b> It was 20260529 until 2026-08-01, and
+     * that is wrong: 20260529 (and 20260407) are the §9 worked examples of a *different* condition —
+     * ordinary lost-{@code 01302} files whose parent correctly reads {@code PROC_STAT='6'} and which
+     * therefore **never exhibited {@code tot == 0} finalisation at all**. The two pairs were surfaced
+     * on the same day (2026-07-31) and both sit at {@code PROC_STEP='2'/'6'}, so they are easy to swap;
+     * the discriminator is the **parent's** {@code PROC_STAT}. See
+     * {@code docs/deployment/bulk-file-reconciliation-procedure.md} §8's four-file table.
+     *
+     * <p>The assertions below hold for any date — the date is documentation. That is exactly why it has
+     * to be the right one: a fixture pointing at a file that cannot exhibit the defect is a test that
+     * looks like evidence and is not.
+     */
     private static TbFirmFileMst file(String step, String stat) {
         TbFirmFileMst f = new TbFirmFileMst();
-        f.setTranDt("20260529");
+        f.setTranDt("20251201");
         f.setBizKey("VN_VNM0004_000001");
         f.setFileSeqNo("1");
-        f.setFirmFileNm("S_GV00000001_SHB_001_20260529");
+        f.setFirmFileNm("S_GV00000001_SHB_001_20251201");
         f.setProcStep(step);
         f.setProcStat(stat);
         return f;
@@ -88,7 +105,9 @@ class PayFileFinalizeGuardTest {
     @Test
     @DisplayName("PROD case: a SINGLE file at '2'/'6' leaves the parent at '6' — never '0'")
     void singleStrandedExecutionFile_neverFinalisesToAllSuccess() {
-        // Both observed PROD instances (20260407 WRB, 20260529 SHB) are exactly this: siblings=1.
+        // Both observed PROD instances of THIS defect (20251128, 9 lines; 20251201, 2 lines) are
+        // exactly this: siblings=1, parent finalised to '0'. NOT 20260407/20260529 — those are §9's
+        // lost-01302 examples whose parent correctly reads '6'. Corrected 2026-08-01.
         List<TbFirmFileMst> siblings = List.of(file(ProcStep.DEPO_REQ.code(), ProcStat.REQ.code()));
 
         Optional<String> result = finalizedStatus(siblings);

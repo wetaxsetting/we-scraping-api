@@ -225,6 +225,50 @@ public class EfsCryptoService {
      * before either decrypt attempt, regardless of the {@code urldecode} flag. It is therefore
      * portable independently of {@code TODO(B5)} and is ported here.
      *
+     * <h2>Why the {@code ' '} → {@code '+'} corruption exists: a bug in the vendor's own sample</h2>
+     *
+     * <p>This was an unexplained legacy workaround until 2026-07-31. It is not defensive
+     * over-engineering — it compensates for a defect in the reference implementation the guide ships,
+     * and therefore in any counterparty built from that reference.
+     *
+     * <p><b>REST API guide v1.2.6 §6.2 (C# sample, p.38)</b> — note that the header comment says URL
+     * <i>encoding</i> while the body performs URL <i>decoding</i>:
+     * <pre>
+     * /***********************************
+     *  * 전송할 데이터 생성
+     *  * Base64 변환 및 <b>URL 인코딩</b>(UTF-8)      &#47;&#47; "Base64 conversion and URL ENCODING"
+     *  ***********************************&#47;
+     * public String EncryptAesBase64(String input, string key)
+     * {
+     *    string aesInput = AESEncrypt256(input, key);            &#47;&#47; AES256 암호화
+     *    return HttpUtility.<b>UrlDecode</b>(aesInput, Encoding.UTF8); &#47;&#47; <b>URL 디코딩</b>  &lt;-- decode, on encrypt
+     * }
+     * </pre>
+     *
+     * <p>Running {@code UrlDecode} over raw standard Base64 converts every {@code '+'} into a
+     * <b>space</b> (and would consume any {@code %XX} sequence). That is precisely — and only — the
+     * corruption the {@code ' '} → {@code '+'} substitution above reverses. The vendor's normative
+     * text disagrees with its own sample: §4's {@code EV} memo specifies
+     * {@code DateTime + JSONObject Data -> 암호화 -> BASE64 -> URL Encoding}.
+     *
+     * <p>The sibling function is inconsistent with it — {@code EncryptHmacSha256} (p.39) calls
+     * {@code HttpUtility.UrlEncode(shaInput, Encoding.UTF8)}, the correct direction — so in the
+     * vendor's reference implementation <b>{@code EV} and {@code VV} are encoded in opposite
+     * directions</b>. That asymmetry is why this repair is applied to both fields rather than to
+     * {@code EV} alone, matching legacy {@code VerifyMac:540-545}.
+     *
+     * <p>(Two further defects in the same sample, for context — they are documentation problems, not
+     * things to reproduce: {@code VerifyMac} returns {@code false} when the HMACs are <b>equal</b>
+     * (p.41), and the UTF-8 encoding object is named {@code euckrEncoding} (p.36).)
+     *
+     * <p><b>Consequence: keep this method.</b> It is not speculative hardening — there is a documented
+     * mechanism by which a conforming counterparty emits space-corrupted Base64. It also makes the
+     * {@code TODO(B5)} 2-pass hypothesis more credible (a counterparty whose encode-side URL handling
+     * is this unreliable is exactly the setting for legacy's {@code SecurityUtil:278-279} comment,
+     * 데이터 보호화시 URLEncoding데이터가 그대로 복호화가 성공적으로 되는 경우가 있어서 — "there are cases
+     * where URL-encoded data decrypts successfully as-is") — but it does <b>not</b> settle it. Do not
+     * add the second pass on the strength of this note.
+     *
      * <p><b>Ordering.</b> Legacy repairs immediately before <i>its</i> Base64 decode, and its first
      * pass does not URL-decode at all. The equivalent position in this single-pass pipeline is
      * likewise immediately before {@link Base64#getDecoder()} — i.e. <b>after</b> {@link #urlDecode},

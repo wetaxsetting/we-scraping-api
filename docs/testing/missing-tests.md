@@ -5,6 +5,11 @@ dispatch-adjacent gates in `payment/internaltransfer/service/Cutoff*` and the fi
 per-module dispatch executors.
 **Date:** 2026-07-28 · **System:** Refactor (wecms-api)
 
+> **See also [fixture-data-conventions.md](fixture-data-conventions.md).** A missing test is the honest
+> failure mode; the dangerous one is a *present, passing* test whose fixture data cannot exercise the
+> condition it names. Three defects here were hidden that way — including the `DispatchPacer` constants
+> below, which had no assertion in either direction until 2026-08-01.
+
 > ## ⚠️ SUPERSEDED 2026-07-29 — read [integration-test-audit.md](integration-test-audit.md) first
 >
 > This was a **static, unit-level** gap audit. It has been overtaken by work landed on
@@ -333,10 +338,17 @@ recorded in `docs/`.
 (`ResultCheckPollTest.transportFailure_leavesOriginalUntouched_but203RowRecordedFail`); the 202 leg
 — the one that moves money — does not. **Also:** raise the retry-parity question with the PO.
 
-### P1-13 · `DispatchPacer` has no test file
+### P1-13 · `DispatchPacer` has no test file — **CLOSED 2026-08-01**
+
+> **Closed** by [`DispatchPacerTest`](../../src/test/java/com/kosign/wecms/domain/payment/dispatch/service/DispatchPacerTest.java):
+> all three constants pinned, plus a statelessness test that guards the D-A per-call shape (a Woori call
+> must not leak into the next). `pause()` itself is deliberately not exercised — it really sleeps.
+> Original entry follows.
+
 
 [DispatchPacer.java](../../src/main/java/com/kosign/wecms/domain/payment/dispatch/service/DispatchPacer.java)
-carries verified legacy-parity constants (Woori `970457` = 3000 ms, Shinhan/default = 100 ms).
+carries the pacing constants (Woori `970457` = 3000 ms, Shinhan `970424` = 100 ms — both verified legacy
+values — and **default = 3000 ms**, deliberately NOT legacy's 100, per D-A 2026-08-01).
 `ResultCheckPollTest` verifies the pacer is *invoked* — against a mock, so the delay values
 themselves are unverified. Cheap to fix, and these constants exist precisely because the Woori
 gateway rate-limits.

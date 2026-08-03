@@ -290,11 +290,19 @@ wecms:
     #
     # The two timeouts are hardcoded, not variables — they feed the lock-ceiling
     # arithmetic on result-check.batch-size above.
+    #
+    # read-timeout-ms: 60000 clears the vendor's own SLA. REST API guide v1.2.6
+    # §3.2 전문 응답시간 sets a normative 30-second limit ("감시시간" / "한계 시간")
+    # for the full request->response round trip. The former 20000 came from the §6
+    # Java sample, which §6's 주의 banner marks as illustrative and non-binding —
+    # it sat BELOW the vendor limit, so a 202 answered at 25s (inside the SLA) was
+    # aborted by us, becoming an indeterminate transfer that §5.4 then requires a
+    # 203 to resolve and forbids resending. 60s matches legacy ConnectionUtil.
     efs:
       enabled: ${WECMS_EFS_ENABLED}
       base-url: ${WECMS_EFS_BASE_URL}
       connect-timeout-ms: 3000
-      read-timeout-ms: 20000
+      read-timeout-ms: 60000
     # SFTP file transfer.
     sftp:
       enabled: ${WECMS_SFTP_ENABLED}

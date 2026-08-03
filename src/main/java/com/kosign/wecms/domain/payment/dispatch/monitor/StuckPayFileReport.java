@@ -28,21 +28,29 @@ import java.util.Map;
  *                           ({@code stuckCount}) nor "definitely at the bank"
  *                           ({@code firmFileStuckCount}): whether anything left depends on how far
  *                           the claim got, which is what {@code classifyClaimedPayFile} determines.
+ * @param payTargetStuckCount {@code TB_PAY_TARGET} rows stranded at {@code PROC_STAT='9'} past the
+ *                           <b>pay-target</b> grace window — the real-time (202) rail's WAIT
+ *                           population. A fourth count rather than a fold into {@code stuckCount}
+ *                           because it is a different table, a different rail and a different grace
+ *                           window: the real-time hand-off fires within milliseconds of commit, so a
+ *                           row still at WAIT is stranded on a much shorter timescale than a bulk file
+ *                           waiting on an operating-hours window.
  */
 public record StuckPayFileReport(
         int stuckCount,
         Map<StuckPayFileCause, Integer> byCause,
         boolean alerted,
         int firmFileStuckCount,
-        int claimedStuckCount) {
+        int claimedStuckCount,
+        int payTargetStuckCount) {
 
     public static StuckPayFileReport empty() {
-        return new StuckPayFileReport(0, new EnumMap<>(StuckPayFileCause.class), false, 0, 0);
+        return new StuckPayFileReport(0, new EnumMap<>(StuckPayFileCause.class), false, 0, 0, 0);
     }
 
-    /** Total stranded rows across all three sweeps. */
+    /** Total stranded rows across all four sweeps. */
     public int totalStuck() {
-        return stuckCount + firmFileStuckCount + claimedStuckCount;
+        return stuckCount + firmFileStuckCount + claimedStuckCount + payTargetStuckCount;
     }
 
     /** Count for one cause, 0 when absent. */

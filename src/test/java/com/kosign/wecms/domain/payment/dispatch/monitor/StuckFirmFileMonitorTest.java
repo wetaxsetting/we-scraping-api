@@ -3,6 +3,7 @@ package com.kosign.wecms.domain.payment.dispatch.monitor;
 import com.kosign.wecms.domain.payment.dispatch.alert.OpsAlertService;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmBatApiTran;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmFileMst;
+import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileMst;
 import com.kosign.wecms.domain.payment.dispatch.enums.ApiTranTp;
 import com.kosign.wecms.domain.payment.dispatch.enums.ProcStat;
 import com.kosign.wecms.domain.payment.dispatch.enums.ProcStep;
@@ -69,6 +70,8 @@ class StuckFirmFileMonitorTest {
     @Mock OpsAlertService opsAlertService;
     @Mock TbFirmFileMstRepository firmFileMstRepository;
     @Mock TbFirmBatApiTranRepository firmBatApiTranRepository;
+    @Mock com.kosign.wecms.domain.payment.dispatch.repository.TbPayTargetRepository payTargetRepository;
+    @Mock com.kosign.wecms.domain.payment.dispatch.repository.TbFirmTranRepository firmTranRepository;
 
     private StuckPayFileMonitorService service;
 
@@ -76,7 +79,8 @@ class StuckFirmFileMonitorTest {
     void setUp() {
         service = new StuckPayFileMonitorService(payFileMstRepository, payFileDataRepository,
                 firmConfRepository, operatingHoursService, opsAlertService,
-                Clock.fixed(NOW, ICT), firmFileMstRepository, firmBatApiTranRepository);
+                Clock.fixed(NOW, ICT), firmFileMstRepository, firmBatApiTranRepository,
+                payTargetRepository, firmTranRepository);
         ReflectionTestUtils.setField(service, "enabled", true);
         ReflectionTestUtils.setField(service, "thresholdMinutes", 15L);
         ReflectionTestUtils.setField(service, "reAlertMinutes", 60L);
@@ -114,14 +118,14 @@ class StuckFirmFileMonitorTest {
      */
     private void stranded(TbFirmFileMst... files) {
         // FIX H arg shape: (procStep, procStat, procDttmCutoff, procDttmFloor, pageable) — no tranDt.
-        when(firmFileMstRepository.findStrandedBulkExecutionFiles(
+        when(firmFileMstRepository.findStrandedFirmFiles(
                 eq(ProcStep.REQ_RECV.code()), anyString(), anyString(), anyString(), any(Pageable.class)))
                 .thenReturn(List.of(files));
     }
 
     /** Files stranded at {@code PROC_STEP='2'} — 00302 accepted, 01302 result never received. */
     private void strandedAtExecutionRequested(TbFirmFileMst... files) {
-        when(firmFileMstRepository.findStrandedBulkExecutionFiles(
+        when(firmFileMstRepository.findStrandedFirmFiles(
                 eq(ProcStep.DEPO_REQ.code()), anyString(), anyString(), anyString(), any(Pageable.class)))
                 .thenReturn(List.of(files));
     }
@@ -132,6 +136,31 @@ class StuckFirmFileMonitorTest {
         f.setProcStep(ProcStep.DEPO_REQ.code());
         f.setProcStat(ProcStat.REQ.code());
         return f;
+    }
+
+    /**
+     * A file stranded at {@code PROC_STEP='0'} / {@code PROC_STAT='6'} — reception never reconciled.
+     *
+     * <p>{@code PROC_DTTM} is deliberately left <b>null</b> and only {@code REG_DTTM} set, because that
+     * is what both systems actually write on insert (legacy {@code BATCH1:542-555}, refactor
+     * {@code BulkReceptionService:603-607}; 28 of 30 such rows on JEX DEV have a null {@code PROC_DTTM}).
+     * A fixture that set {@code PROC_DTTM} would silently stop exercising the reason
+     * {@code findStrandedFirmFiles} exists.
+     */
+    private TbFirmFileMst strandedAtStep0() {
+        TbFirmFileMst f = stranded();
+        f.setProcStep(ProcStep.REQ.code());
+        f.setProcStat(ProcStat.REQ.code());
+        f.setProcDttm(null);
+        f.setRegDttm("20260729170000");
+        return f;
+    }
+
+    /** Files stranded at {@code PROC_STEP='0'} — served by the COALESCE-aging finder. */
+    private void strandedAtReceptionRequested(TbFirmFileMst... files) {
+        when(firmFileMstRepository.findStrandedFirmFiles(
+                eq(ProcStep.REQ.code()), anyString(), anyString(), anyString(), any(Pageable.class)))
+                .thenReturn(List.of(files));
     }
 
     /**
@@ -149,7 +178,8 @@ class StuckFirmFileMonitorTest {
 
     // ── 13z. PROC_STEP='2' — execution accepted, result never received ──────
     //
-    // Two PROD files (20260407 WRB, 20260529 SHB — 16 payment lines) sat in this state undetected:
+    // Four PROD files (20251128, 20251201, 20260407 WRB, 20260529 SHB — 27 payment lines; count
+    // corrected 2026-08-01, it read "two / 16") sat in this state undetected:
     // this sweep filtered PROC_STEP='1' only, and the parent pay-file reported the benign
     // AWAITING_EXECUTION_RESULT. The 00302 was ACCEPTED (that is what wrote step '2'), so the bank has
     // most likely executed the batch — the opposite disposition to BULK_EXECUTION_NOT_ISSUED.
@@ -175,7 +205,7 @@ class StuckFirmFileMonitorTest {
 
         service.monitorOnce();
 
-        verify(firmFileMstRepository).findStrandedBulkExecutionFiles(
+        verify(firmFileMstRepository).findStrandedFirmFiles(
                 eq(ProcStep.DEPO_REQ.code()), eq(ProcStat.REQ.code()),
                 eq("20260729174500"),      // same cutoff as the '1' sweep
                 eq("20260722180000"),      // same retention floor
@@ -242,7 +272,7 @@ class StuckFirmFileMonitorTest {
         //   floor  = 18:00 ICT − 7 days retention   (too old to keep reporting)
         // Legacy scoped to TRAN_DT = today, which made a 23:59 strand invisible from 00:00; legacy got
         // away with it because BATCH2 re-sent 00302 every minute, and that re-drive is gone (K9).
-        verify(firmFileMstRepository).findStrandedBulkExecutionFiles(
+        verify(firmFileMstRepository).findStrandedFirmFiles(
                 eq(ProcStep.REQ_RECV.code()), eq(ProcStat.REQ.code()),
                 eq("20260729174500"),      // cutoff
                 eq("20260722180000"),      // floor — 7 days back
@@ -257,7 +287,7 @@ class StuckFirmFileMonitorTest {
 
         service.monitorOnce();
 
-        verify(firmFileMstRepository).findStrandedBulkExecutionFiles(
+        verify(firmFileMstRepository).findStrandedFirmFiles(
                 eq(ProcStep.REQ_RECV.code()), anyString(), eq("20260729174500"),
                 eq("20260727180000"),      // 18:00 ICT − 2 days
                 any(Pageable.class));
@@ -274,7 +304,7 @@ class StuckFirmFileMonitorTest {
 
         service.monitorOnce();
 
-        verify(firmFileMstRepository).findStrandedBulkExecutionFiles(
+        verify(firmFileMstRepository).findStrandedFirmFiles(
                 eq(ProcStep.REQ_RECV.code()), anyString(), anyString(),
                 eq("20260728180000"),      // clamped to 1 day, NOT 18:00 today
                 any(Pageable.class));
@@ -299,7 +329,7 @@ class StuckFirmFileMonitorTest {
                 .as("a strand from before midnight must not fall out of view at 00:00")
                 .isEqualTo(1);
         // And it is inside the window the finder asked for: floor 20260722180000 <= 20260728235900 < cutoff.
-        verify(firmFileMstRepository).findStrandedBulkExecutionFiles(
+        verify(firmFileMstRepository).findStrandedFirmFiles(
                 eq(ProcStep.REQ_RECV.code()), anyString(), eq("20260729174500"), eq("20260722180000"), any(Pageable.class));
     }
 
@@ -398,7 +428,7 @@ class StuckFirmFileMonitorTest {
         service.monitorOnce();
 
         ArgumentCaptor<Pageable> page = ArgumentCaptor.forClass(Pageable.class);
-        verify(firmFileMstRepository).findStrandedBulkExecutionFiles(
+        verify(firmFileMstRepository).findStrandedFirmFiles(
                 eq(ProcStep.REQ_RECV.code()), anyString(), anyString(), anyString(), page.capture());
         assertThat(page.getValue().getPageSize()).isEqualTo(25);
     }
@@ -412,5 +442,161 @@ class StuckFirmFileMonitorTest {
 
         assertThat(report.firmFileStuckCount()).isZero();
         org.mockito.Mockito.verifyNoInteractions(firmFileMstRepository);
+    }
+
+    /* ───────── PROC_STEP='0' — reception never reconciled (added 2026-07-31) ───────── */
+
+    /**
+     * The lost-{@code 01301} case: a {@code 00301} audit row exists, so the request went out and the bank
+     * has the file. This is the majority of the population — 27 of the 30 rows at this state on JEX DEV.
+     */
+    @Test
+    @DisplayName("PROC_STEP=0 with a 00301 audit row => BULK_RECEPTION_RESULT_NOT_RECEIVED (never re-drive)")
+    void step0WithReceptionAudit_isResultNotReceived() {
+        strandedAtReceptionRequested(strandedAtStep0());
+        when(firmBatApiTranRepository.existsByBizKeyAndFirmFileNmAndApiTranTp(
+                BIZ, FILE_NM, ApiTranTp.BULK_RECEPTION.code())).thenReturn(true);
+
+        StuckPayFileReport r = service.monitorOnce();
+
+        assertThat(r.firmFileStuckCount()).isEqualTo(1);
+        assertThat(r.count(StuckPayFileCause.BULK_RECEPTION_RESULT_NOT_RECEIVED)).isEqualTo(1);
+        // Must NOT borrow the execution-leg constants — those describe a file past 00301 reception.
+        assertThat(r.count(StuckPayFileCause.BULK_EXECUTION_NOT_ISSUED)).isZero();
+        assertThat(r.count(StuckPayFileCause.BULK_EXECUTION_UNCONFIRMED)).isZero();
+    }
+
+    /** The phase-B-orphan case: no audit row, so the 00301 call was never reached and nothing was sent. */
+    @Test
+    @DisplayName("PROC_STEP=0 with no 00301 audit row => BULK_RECEPTION_NOT_ISSUED (safe to re-dispatch)")
+    void step0WithoutReceptionAudit_isNotIssued() {
+        strandedAtReceptionRequested(strandedAtStep0());
+        when(firmBatApiTranRepository.existsByBizKeyAndFirmFileNmAndApiTranTp(
+                BIZ, FILE_NM, ApiTranTp.BULK_RECEPTION.code())).thenReturn(false);
+
+        StuckPayFileReport r = service.monitorOnce();
+
+        assertThat(r.count(StuckPayFileCause.BULK_RECEPTION_NOT_ISSUED)).isEqualTo(1);
+    }
+
+    /**
+     * All three firm-file steps go through the <b>same</b> finder, each bounded, each at
+     * {@code PROC_STAT='6'}.
+     *
+     * <p>Rewritten 2026-08-01. It previously asserted that the {@code '0'} step used a dedicated
+     * {@code COALESCE}-aging finder and that the {@code PROC_DTTM}-only sibling was never called for it —
+     * an assertion that became self-contradictory when the two finders were unified (they are now one
+     * method, so "never called with step 0" and "called with step 0" were the same verification). The
+     * property worth keeping is the one the unification bought: <b>one aging rule for every step</b>, so
+     * no step can silently age differently from another. The JPQL half of that is pinned in
+     * {@code FirmFileDataExecutionResultQueryContractTest}; this is the wiring half.
+     */
+    @Test
+    @DisplayName("all three firm-file steps use the one finder, each bounded by the batch size")
+    void allThreeStepsUseTheOneFinderAndAreBounded() {
+        ReflectionTestUtils.setField(service, "firmFileBatchSize", 25);
+        strandedAtReceptionRequested(strandedAtStep0());
+
+        service.monitorOnce();
+
+        for (String step : List.of(ProcStep.REQ.code(), ProcStep.REQ_RECV.code(), ProcStep.DEPO_REQ.code())) {
+            ArgumentCaptor<Pageable> page = ArgumentCaptor.forClass(Pageable.class);
+            verify(firmFileMstRepository).findStrandedFirmFiles(
+                    eq(step), eq(ProcStat.REQ.code()), anyString(), anyString(), page.capture());
+            assertThat(page.getValue().getPageSize())
+                    .as("step %s must carry the configured cap", step)
+                    .isEqualTo(25);
+        }
+        // Exactly three selections — one per step, no extra scan.
+        verify(firmFileMstRepository, org.mockito.Mockito.times(3)).findStrandedFirmFiles(
+                anyString(), anyString(), anyString(), anyString(), any(Pageable.class));
+    }
+
+    /* ───────── the abandoned-batch mislabel fix ───────── */
+
+    /**
+     * A file at {@code '1'/'6'} whose parent pay-file is {@code '3'} must NOT be
+     * {@link StuckPayFileCause#BULK_EXECUTION_NOT_ISSUED}.
+     *
+     * <p>That cause's runbook entry says re-driving is routine. Here it is the opposite: phase B marked
+     * the pay-file FAIL and stopped, so siblings after the failure point were never sent, and re-driving
+     * this one part-executes a batch already reported as failed.
+     */
+    @Test
+    @DisplayName("PROC_STEP=1 in an abandoned batch => BULK_BATCH_PARENT_FAILED, not *_NOT_ISSUED")
+    void step1WithFailedParent_isNotMislabelledAsNotIssued() {
+        stranded(stranded());
+        when(firmBatApiTranRepository.existsByBizKeyAndFirmFileNmAndApiTranTp(
+                BIZ, FILE_NM, ApiTranTp.BULK_EXECUTION.code())).thenReturn(false);
+        when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo("20260729", BIZ, FILE_SEQ))
+                .thenReturn(java.util.Optional.of(failedParent()));
+
+        StuckPayFileReport r = service.monitorOnce();
+
+        assertThat(r.count(StuckPayFileCause.BULK_BATCH_PARENT_FAILED)).isEqualTo(1);
+        assertThat(r.count(StuckPayFileCause.BULK_EXECUTION_NOT_ISSUED))
+                .as("the dangerous mislabel: this cause tells the operator to re-drive")
+                .isZero();
+    }
+
+    /** Same guard on the reception leg — an abandoned batch's unsent orphan is not "safe to re-dispatch". */
+    @Test
+    @DisplayName("PROC_STEP=0 in an abandoned batch => BULK_BATCH_PARENT_FAILED, not BULK_RECEPTION_NOT_ISSUED")
+    void step0WithFailedParent_isNotMislabelledAsNotIssued() {
+        strandedAtReceptionRequested(strandedAtStep0());
+        when(firmBatApiTranRepository.existsByBizKeyAndFirmFileNmAndApiTranTp(
+                BIZ, FILE_NM, ApiTranTp.BULK_RECEPTION.code())).thenReturn(false);
+        when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo("20260729", BIZ, FILE_SEQ))
+                .thenReturn(java.util.Optional.of(failedParent()));
+
+        StuckPayFileReport r = service.monitorOnce();
+
+        assertThat(r.count(StuckPayFileCause.BULK_BATCH_PARENT_FAILED)).isEqualTo(1);
+        assertThat(r.count(StuckPayFileCause.BULK_RECEPTION_NOT_ISSUED)).isZero();
+    }
+
+    /**
+     * {@code PROC_STEP='2'} is exempt from the parent check, deliberately. Its {@code 00302} was
+     * accepted, so {@link StuckPayFileCause#BULK_EXECUTION_RESULT_NOT_RECEIVED} carries the stronger
+     * warning ("the bank has most likely executed this batch"); replacing it with the parent's state
+     * would lose that and read as merely "the batch failed".
+     */
+    @Test
+    @DisplayName("PROC_STEP=2 keeps BULK_EXECUTION_RESULT_NOT_RECEIVED even when the parent is FAIL")
+    void step2IsExemptFromTheParentCheck() {
+        strandedAtExecutionRequested(strandedAtStep2());
+        when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo("20260729", BIZ, FILE_SEQ))
+                .thenReturn(java.util.Optional.of(failedParent()));
+
+        StuckPayFileReport r = service.monitorOnce();
+
+        assertThat(r.count(StuckPayFileCause.BULK_EXECUTION_RESULT_NOT_RECEIVED)).isEqualTo(1);
+        assertThat(r.count(StuckPayFileCause.BULK_BATCH_PARENT_FAILED)).isZero();
+    }
+
+    /** A healthy (non-FAIL) parent leaves the audit-row split in charge. */
+    @Test
+    void healthyParent_doesNotTriggerTheAbandonedBatchCause() {
+        stranded(stranded());
+        when(firmBatApiTranRepository.existsByBizKeyAndFirmFileNmAndApiTranTp(
+                BIZ, FILE_NM, ApiTranTp.BULK_EXECUTION.code())).thenReturn(false);
+        TbPayFileMst parent = failedParent();
+        parent.setProcStat(ProcStat.REQ.code());   // '6' — still in flight
+        when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo("20260729", BIZ, FILE_SEQ))
+                .thenReturn(java.util.Optional.of(parent));
+
+        StuckPayFileReport r = service.monitorOnce();
+
+        assertThat(r.count(StuckPayFileCause.BULK_EXECUTION_NOT_ISSUED)).isEqualTo(1);
+        assertThat(r.count(StuckPayFileCause.BULK_BATCH_PARENT_FAILED)).isZero();
+    }
+
+    private static TbPayFileMst failedParent() {
+        TbPayFileMst p = new TbPayFileMst();
+        p.setBizKey(BIZ);
+        p.setTranDt("20260729");
+        p.setFileSeqNo(FILE_SEQ);
+        p.setProcStat(ProcStat.FAIL.code());
+        return p;
     }
 }

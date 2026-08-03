@@ -26,6 +26,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -95,6 +96,9 @@ public class ResultCheckService {
     /** Fallback used when {@code batch-size} is configured non-positive. */
     static final int DEFAULT_BATCH_SIZE = 100;
 
+    /** Fallback used when {@code pass-deadline} is configured non-positive. */
+    static final Duration DEFAULT_PASS_DEADLINE = Duration.ofMinutes(10);
+
     /**
      * Master gate — OFF by default, matching {@code StrandedRecoveryService.enabled} and
      * {@code StuckPayFileMonitorService.enabled}.
@@ -142,6 +146,34 @@ public class ResultCheckService {
      */
     @Value("${wecms.dispatch.result-check.batch-size:100}")
     private int batchSize = DEFAULT_BATCH_SIZE;
+
+    /**
+     * Wall-clock budget for one {@link #runOnce()} pass, checked at the <b>top of each row
+     * iteration</b>. When the budget is spent the loop breaks and the remaining rows are left at
+     * {@code PROC_STAT='6'} for the next pass, which resumes from the oldest of them (the candidate
+     * query is ordered {@code TRAN_DT, TRAN_TM, TRAN_SEQ} ascending, so a deferred row sorts to the
+     * front rather than starving).
+     *
+     * <p><b>Why a deadline rather than a bigger {@code lockAtMostFor}.</b> Growing the lock ceiling to
+     * track the worst-case pass is unbounded in principle — every timeout or batch-size increase pushes
+     * it up again — and each increase buys concurrency safety by paying for it one-for-one in
+     * crash-recovery latency. The deadline caps the pass instead: a pass cannot exceed
+     * {@code deadline + one in-flight row} regardless of gateway health, which makes the lock ceiling a
+     * fixed crash-recovery constant decoupled from {@code EfsProperties.readTimeoutMs}. A dead gateway
+     * now stops the sweep in ~10 minutes instead of grinding through 100 timeouts for nearly two hours.
+     *
+     * <p><b>The check is at the top of the iteration, never inside a row.</b> A row that has already
+     * begun runs to completion — its 203 audit row is written, its inquiry is issued, its outcome is
+     * finalized and its pace is paid. Interrupting mid-row would be the one thing this budget must not
+     * do: it would leave a 203 audit row at {@code '6'} with an inquiry already at the gateway. The
+     * overrun is therefore bounded by exactly one worst-case row (66&nbsp;s: 3&nbsp;s connect +
+     * 60&nbsp;s read + 3000&nbsp;ms Woori pace).
+     *
+     * <p>A non-positive / unparseable value falls back to {@link #DEFAULT_PASS_DEADLINE} rather than
+     * failing startup — same stance as {@link #effectiveBatchSize()}.
+     */
+    @Value("${wecms.dispatch.result-check.pass-deadline:PT10M}")
+    private Duration passDeadline = DEFAULT_PASS_DEADLINE;
 
     private final EfsApiClient efsApiClient;
     private final EfsCryptoService efsCryptoService;
@@ -230,7 +262,23 @@ public class ResultCheckService {
         // A3 (audit H-5): verify the response VV before decrypting/trusting EV (legacy
         // SecurityUtil.VerifyMac → G003). A tampered/corrupt envelope must not be processed;
         // surface G003 as a gateway error so the row stays '6' and is retried, never mis-mapped.
-        if (!efsCryptoService.verifyVv(response.ev(), response.vv(), apiKey)) {
+        //
+        // D-E GATE (2026-08-01): an ABSENT VV is not a verification failure — it is accepted with a
+        // WARN. This leg is the one place legacy does NOT verify (PRCB:240 decrypts straight from rEV,
+        // while API1:102 / API2:109 / NAPAS:369 / WB_00000100:152 all call VerifyMac), and the refactor
+        // has never run a 203 against the live gateway. If WGVN_EFS_203 emits no VV, a strict check
+        // fails 100% of rows and strands the ENTIRE result-check rail at PROC_STAT='6' on first run —
+        // a far worse outcome than legacy's, which at least completes. Treating null/blank as pass
+        // keeps the tamper defence (a PRESENT but wrong VV still throws) while making a missing field
+        // unable to strand the rail. Remove this branch once the VAN Center confirms VV is emitted;
+        // the answer is recorded in docs/deployment/wecms-batch-activation-runbook.md §5.1a-2.
+        if (!StringUtils.hasText(response.vv())) {
+            log.warn("EFS 203 response carries NO VV — accepting unverified (D-E gate) vanOrgCd={} "
+                            + "orgTno={}. Legacy PROCESSING_RESULT_CHECK_BATCH never verified this leg "
+                            + "either. Record whether WGVN_EFS_203 emits VV in the activation runbook "
+                            + "§5.1a-2 before enabling result-check in UAT.",
+                    cmd.vanOrgCd(), cmd.orgTno());
+        } else if (!efsCryptoService.verifyVv(response.ev(), response.vv(), apiKey)) {
             log.warn("EFS 203 response VV verification failed vanOrgCd={} orgTno={}",
                     cmd.vanOrgCd(), cmd.orgTno());
             throw new BusinessException("WBE_EFS_GATEWAY_ERROR", FirmBankingResultCd.ENC_VRFY_ERR);
@@ -255,6 +303,13 @@ public class ResultCheckService {
      * row is logged and the row is left at {@code PROC_STAT='6'} for the next pass
      * (legacy parity — never abandons a transfer on a single failed inquiry, never
      * blocks the rest of the batch).
+     *
+     * <p><b>Bounded twice.</b> A pass is capped by row count ({@link #batchSize}) <i>and</i> by wall
+     * clock ({@link #passDeadline}, default {@code PT10M}, checked at the top of each iteration). The
+     * second bound is what makes the duration of a pass independent of gateway health: without it a
+     * dead gateway turns a full batch into {@code batchSize × (connect + read + pace)} — nearly two
+     * hours at the defaults — and the ShedLock ceiling has to grow to match. Rows not reached stay at
+     * {@code '6'} and the next pass resumes from the oldest of them.
      *
      * <p><b>Operational gating (D4/B7):</b> double-gated. This body runs only when an environment
      * that owns the 202 traffic sets <i>both</i> {@code wecms.dispatch.result-check.enabled=true}
@@ -397,9 +452,24 @@ public class ResultCheckService {
             }
             return;
         }
-        log.info("result-check: {} aged 202 transfer(s) to inquire (of {} candidate(s), limit {})",
-                aged.size(), candidates.size(), limit);
+        Duration deadline = effectivePassDeadline();
+        log.info("result-check: {} aged 202 transfer(s) to inquire (of {} candidate(s), limit {}, "
+                        + "pass deadline {})", aged.size(), candidates.size(), limit, deadline);
+        int processed = 0;
         for (TbFirmTran row : aged) {
+            // Per-pass deadline — evaluated BEFORE the row is touched, so a row that starts always
+            // finishes (see the passDeadline field Javadoc for why mid-row interruption is unsafe).
+            // `now` is the same instant the date/age bounds were derived from, so the budget covers
+            // the whole pass including candidate selection, not just the loop.
+            Duration elapsed = Duration.between(now, Instant.now());
+            if (elapsed.compareTo(deadline) >= 0) {
+                log.warn("result-check: pass deadline {} exceeded after {} (processed {} of {} aged "
+                                + "row(s)) — stopping; {} row(s) stay at PROC_STAT='6' and the next "
+                                + "pass resumes from the oldest of them",
+                        deadline, elapsed, processed, aged.size(), aged.size() - processed);
+                break;
+            }
+            processed++;
             boolean pace;
             try {
                 pace = reflectOutcome(row);
@@ -435,6 +505,22 @@ public class ResultCheckService {
         log.warn("result-check: wecms.dispatch.result-check.batch-size={} is not positive — "
                 + "falling back to {}", batchSize, DEFAULT_BATCH_SIZE);
         return DEFAULT_BATCH_SIZE;
+    }
+
+    /**
+     * The per-pass deadline actually used, guarding against a null / non-positive configured value.
+     *
+     * <p>A zero or negative budget would break the loop before the first row and the sweep — the only
+     * thing that finalizes a transfer already sent to the bank — would silently never run. Clamping to
+     * the documented default and saying so once per pass is the safe failure.
+     */
+    private Duration effectivePassDeadline() {
+        if (passDeadline != null && !passDeadline.isZero() && !passDeadline.isNegative()) {
+            return passDeadline;
+        }
+        log.warn("result-check: wecms.dispatch.result-check.pass-deadline={} is not positive — "
+                + "falling back to {}", passDeadline, DEFAULT_PASS_DEADLINE);
+        return DEFAULT_PASS_DEADLINE;
     }
 
     /**

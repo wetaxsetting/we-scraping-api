@@ -20,10 +20,16 @@ import java.util.Optional;
  * — see the decision recorded in {@link WireField}.
  *
  * <p>The reachable failure is <b>multibyte text surviving tone-stripping</b>. The dispatch pipeline is
- * {@code value → LegacyTextNormalizer/VietnameseText.replaceTone → FixedLengthCodec}, and
- * {@code replaceTone} only maps the 134 precomposed Vietnamese code points in its table. Anything else
- * passes through at its full UTF-8 width:
+ * {@code value → NFC → CR/LF strip → Unicode-space sanitize →
+ * LegacyTextNormalizer/VietnameseText.replaceTone → FixedLengthCodec}, and {@code replaceTone} only
+ * maps the 134 precomposed Vietnamese code points in its table. Anything else passes through at its
+ * full UTF-8 width:
  * <ul>
+ *   <li><b>Unicode spaces — handled, not rejected.</b> NBSP (U+00A0) and its {@code \p{Zs}} siblings
+ *       are {@code > 0x7F} and are not in the tone table, so they would trip the non-Latin check
+ *       below. {@link LegacyTextNormalizer#sanitizeSpaces} folds them to ASCII {@code 0x20} first,
+ *       matching what legacy does silently on every one of these fields' setters. An invisible
+ *       character is corrected, never reported.</li>
  *   <li><b>Korean / CJK (primary).</b> 50 Hangul syllables = 150 UTF-8 bytes, and 150 syllables = 450
  *       bytes — comfortably inside {@code varchar(150)} and three times over the wire slot.</li>
  *   <li><b>NFD-decomposed Vietnamese (secondary).</b> The tone table holds precomposed code points
@@ -92,10 +98,17 @@ public class PaymentWireWidthGuard {
         }
 
         // Model the dispatch pipeline exactly: NFC (so decomposed Vietnamese becomes matchable),
-        // then the legacy tone table, then measure UTF-8 bytes — which is what FixedLengthCodec.put
-        // does. Anything this method accepts, the codec accepts.
+        // Unicode-space normalization, then the legacy tone table, then measure UTF-8 bytes — which is
+        // what FixedLengthCodec.put does. Anything this method accepts, the codec accepts.
+        //
+        // sanitizeSpaces MUST precede indexOfNonLatin below. NBSP (U+00A0) is > 0x7F and survives
+        // replaceTone, so without it the check reports "non-Latin character ' ' at position 12" for a
+        // value whose only defect is an invisible space the operator cannot see, find, or delete.
+        // Legacy corrects it silently on the setter of all four of these fields
+        // (ScdulPymnSumrDetl:220/259/272/285) — see LegacyTextNormalizer.sanitizeSpaces.
         String onWire = LegacyTextNormalizer.replaceTone(
-                LegacyTextNormalizer.stripCrLf(LegacyTextNormalizer.toNfc(value)));
+                LegacyTextNormalizer.sanitizeSpaces(
+                        LegacyTextNormalizer.stripCrLf(LegacyTextNormalizer.toNfc(value))));
 
         String label = messageResolver.resolve(wireField.labelKey());
 

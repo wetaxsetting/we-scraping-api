@@ -303,7 +303,7 @@ class BulkReceptionResultServiceTest {
         when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(anyString(), eq(BIZ_KEY), eq(FILE_SEQ)))
                 .thenReturn(Optional.of(payFile));
 
-        service().handle(callbackOf(receptionReq("BT00", "3", "1500000")));
+        EfsEnvelope ack = service().handle(callbackOf(receptionReq("BT00", "3", "1500000")));
 
         // No 00302 — partial money movement prevented.
         verify(efsApiClient, never()).send(eq(EfsApiClient.EFS_302), any());
@@ -316,6 +316,11 @@ class BulkReceptionResultServiceTest {
         verify(firmBatApiTranRepository).save(audit.capture());
         assertThat(audit.getValue().getRsCd()).isEqualTo(FirmBankingResultCd.TARGET_STAT_ERR);
         assertThat(audit.getValue().getTranSeq()).isEqualTo("TNO-CB");
+        // D-4: the ENVELOPE answers "did you accept my message", not "what happened to the file".
+        // Both writes above committed, so the callback WAS accepted → 0000, even though the file's
+        // persisted outcome is G998. Sending G998 on the wire told the gateway we had rejected a
+        // notification we had in fact fully processed. Do not couple these two back together.
+        assertThat(ack.rc()).isEqualTo(FirmBankingResultCd.SUCC);
     }
 
     @Test
@@ -360,12 +365,17 @@ class BulkReceptionResultServiceTest {
         stubReceptionLookup(file);
 
         // result_cd success but received count (2) != requested (3).
-        service().handle(callbackOf(receptionReq("BT00", "2", "1500000")));
+        EfsEnvelope ack = service().handle(callbackOf(receptionReq("BT00", "2", "1500000")));
 
         verify(efsApiClient, never()).send(eq(EfsApiClient.EFS_302), any());
         assertThat(file.getProcStep()).isEqualTo(ProcStep.REQ_RECV.code());
         assertThat(file.getProcStat()).isEqualTo(ProcStat.FAIL.code());
         assertThat(file.getRegRsltCd()).isEqualTo("9999"); // FirmBankingResultCd.AMT_ERR
+        // D-4: 9999 is the FILE's outcome and stays persisted above. It is not the envelope's answer,
+        // and it is not even a vendor code — the guide's [참조 2] appendix publishes only
+        // 0000/G001/G002/G997/G998/G999, so the gateway could never have read it. The mismatch was
+        // detected, recorded and acted on, i.e. the callback was accepted → 0000.
+        assertThat(ack.rc()).isEqualTo(FirmBankingResultCd.SUCC);
     }
 
     @Test

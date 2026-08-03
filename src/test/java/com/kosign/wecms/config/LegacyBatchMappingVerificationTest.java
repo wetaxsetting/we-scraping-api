@@ -36,6 +36,7 @@ import com.kosign.wecms.domain.payment.dispatch.service.DispatchPacer;
 import com.kosign.wecms.domain.payment.dispatch.service.DispatchResultTxService;
 import com.kosign.wecms.domain.payment.dispatch.service.OperatingHoursDecision;
 import com.kosign.wecms.domain.payment.dispatch.service.OperatingHoursService;
+import com.kosign.wecms.domain.payment.dispatch.service.RealtimeDispatchQueue;
 import com.kosign.wecms.domain.payment.dispatch.service.RealtimeDispatchRegistrar;
 import com.kosign.wecms.domain.payment.dispatch.service.RealtimeDispatchService;
 import com.kosign.wecms.domain.payment.dispatch.service.RealtimeTransferService;
@@ -158,7 +159,7 @@ class LegacyBatchMappingVerificationTest {
     @DisplayName("Mapping A: realtimeTransfer_hasNoScheduledPollingEntryPoint")
     void realtimeTransfer_hasNoScheduledPollingEntryPoint() throws IOException {
         for (Class<?> c : List.of(RealtimeTransferService.class, RealtimeDispatchService.class,
-                RealtimeDispatchRegistrar.class)) {
+                RealtimeDispatchRegistrar.class, RealtimeDispatchQueue.class)) {
             assertThat(scheduledMethodsOf(c))
                     .as("%s must not poll — the approved trigger is the after-commit hand-off", c.getSimpleName())
                     .isEmpty();
@@ -191,9 +192,18 @@ class LegacyBatchMappingVerificationTest {
                         + "claim-sharing StrandedRecoveryJob recovery net may re-drive one")
                 .containsExactly("StrandedRecoveryJob");
 
+        // C-6: recovery no longer calls dispatch() inline — it enqueues onto the shared paced drain,
+        // which is the sole caller of the claim-bearing dispatch(). The invariant is unchanged (recovery
+        // must never build its own 202); only the hop count did, so assert it across both links.
         String recovery = read(sourceOf(StrandedRecoveryService.class));
         assertThat(recovery)
-                .as("recovery must re-enter through the claim-bearing dispatch(), not build its own 202")
+                .as("recovery must hand off to the shared drain, not build its own 202")
+                .contains("realtimeDispatchQueue.enqueue(")
+                .doesNotContain("realtimeTransferService")
+                .doesNotContain("EFS_202");
+
+        assertThat(read(sourceOf(RealtimeDispatchQueue.class)))
+                .as("the drain must re-enter through the claim-bearing dispatch(), not build its own 202")
                 .contains("realtimeDispatchService.dispatch(")
                 .doesNotContain("realtimeTransferService")
                 .doesNotContain("EFS_202");
@@ -540,15 +550,16 @@ class LegacyBatchMappingVerificationTest {
                 firmFileMstRepository, firmFileDataRepository, firmBatApiTranRepository,
                 mock(DispatchKeyGenerator.class), new FixedLengthCodec(), sftpClient,
                 new SftpProperties(), validator, mock(OpsAlertService.class), operatingHours,
-                new BulkDispatchClaimTxService(payFileMstRepository),
+                new BulkDispatchClaimTxService(payFileMstRepository, firmFileMstRepository),
                 mock(com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard.class),
                 mock(com.kosign.wecms.domain.payment.common.OutBankCdNormalizer.class),
                 mock(PlatformTransactionManager.class));
 
         StrandedRecoveryService sweep = new StrandedRecoveryService(
                 mock(TbPayTargetRepository.class), payFileMstRepository,
-                mock(RealtimeDispatchService.class), reception, mock(ResultCheckService.class),
-                mock(com.kosign.wecms.common.lock.JobLockGuard.class));
+                reception, mock(ResultCheckService.class),
+                mock(com.kosign.wecms.common.lock.JobLockGuard.class),
+                mock(com.kosign.wecms.domain.payment.dispatch.service.RealtimeDispatchQueue.class));
         ReflectionTestUtils.setField(sweep, "enabled", true);
         ReflectionTestUtils.setField(sweep, "graceMinutes", 30L);
         ReflectionTestUtils.setField(sweep, "batchSize", 50);

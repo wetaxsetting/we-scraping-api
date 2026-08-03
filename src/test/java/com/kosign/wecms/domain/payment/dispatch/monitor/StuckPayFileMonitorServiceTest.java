@@ -72,6 +72,8 @@ class StuckPayFileMonitorServiceTest {
     @Mock private OpsAlertService         opsAlertService;
     @Mock private com.kosign.wecms.domain.payment.dispatch.repository.TbFirmFileMstRepository firmFileMstRepository;
     @Mock private com.kosign.wecms.domain.payment.dispatch.repository.TbFirmBatApiTranRepository firmBatApiTranRepository;
+    @Mock private com.kosign.wecms.domain.payment.dispatch.repository.TbPayTargetRepository payTargetRepository;
+    @Mock private com.kosign.wecms.domain.payment.dispatch.repository.TbFirmTranRepository firmTranRepository;
 
     /** Advanceable clock so the re-alert heartbeat is testable. */
     private static final class MutableClock extends Clock {
@@ -93,7 +95,8 @@ class StuckPayFileMonitorServiceTest {
         service = new StuckPayFileMonitorService(
                 payFileMstRepository, payFileDataRepository, firmConfRepository,
                 operatingHoursService, opsAlertService, clock,
-                firmFileMstRepository, firmBatApiTranRepository);
+                firmFileMstRepository, firmBatApiTranRepository,
+                payTargetRepository, firmTranRepository);
         // Enable the monitor; leave the DISPATCH flag ON so classification reaches the
         // channel logic (the flag-off short-circuit has its own test).
         ReflectionTestUtils.setField(service, "enabled", true);

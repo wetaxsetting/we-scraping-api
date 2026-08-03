@@ -255,7 +255,7 @@ All bank-specific behaviour traces to `NAPAS_REAL_TIME_BATCH` (or BATCH1), per M
 
 | Rule | Location | Legacy source |
 |---|---|---|
-| Per-bank pacing (Shinhan 100 ms, Woori 3000 ms, default 100 ms) | `DispatchPacer` | `WCConst.PER_DELAY_*`, `NAPAS_REAL_TIME_BATCH:281-286` |
+| Per-bank pacing (Shinhan 100 ms, Woori 3000 ms, **default 3000 ms** — legacy's 100 deliberately not carried over, D-A 2026-08-01) | `DispatchPacer` | `WCConst.PER_DELAY_*`, `NAPAS_REAL_TIME_BATCH:281-286` |
 | Woori-only FX `204` pre-step when `ccy ≠ VND` | `RealtimeTransferService:245-250`, `RealtimeDispatchService:303` | `NAPAS_REAL_TIME_BATCH:314-490` |
 | VCB file-based transfer (VND + USD) | `isVcbFileTransfer` in the executors | `PymnHelper` latest + Mr. Jung 2026-07-16 (SVN r36822) — documented business decision, not invented |
 | Bank/channel operating-hours keys | `OperatingHoursService` + `BulkTransferConstants.BATCH_ID_*` | `NAPAS_REAL_TIME_BATCH:110`, `BATCH1:272/801` |

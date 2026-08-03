@@ -197,7 +197,7 @@ class BulkReceptionConcurrentClaimTest {
                 dispatchKeyGenerator, new FixedLengthCodec(), sftp, sftpProperties, validator,
                 mock(com.kosign.wecms.domain.payment.dispatch.alert.OpsAlertService.class),
                 operatingHoursService,
-                new BulkDispatchClaimTxService(payFileMstRepository),
+                new BulkDispatchClaimTxService(payFileMstRepository, firmFileMstRepository),
                 mock(com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard.class),
                 mock(com.kosign.wecms.domain.payment.common.OutBankCdNormalizer.class),
                 new NoOpTransactionManager()) {

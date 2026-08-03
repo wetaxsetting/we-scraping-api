@@ -328,12 +328,14 @@ Run this after every deploy, before any activation.
 |---|---|---|
 | A | Callback path restricted by IP / mTLS / network; XFF spoofing test passes (§3.11) | **BLOCKED** — audit H-2 |
 | B | `TB_BATCH_SCHEDULE_INFO` (+ `_DTL`) seeded and verified (§3.6) — **read §5.0-B below before seeding UAT/PROD** | **GREEN for DEV/SIT** (3 + 12 rows, audit §4.5). **BLOCKED for UAT/PROD** — not yet seeded. Residual: SWIFT/EBANK have no realtime DTL row (PO routing decision); OQ-4 CITAD 15:30 vs 16:30 open |
-| C | EFS `base-url` + `partner-id` set; `TB_VAN_API_INFO.API_KEY` present for the environment | **BLOCKED** — partner id empty everywhere |
+| C | EFS `base-url` set; `TB_VAN_API_INFO.API_KEY` present; **`TB_FIRM_CONF.VAN_ORG_CD` + `BANK_PRTN_ID` verified per withdrawal account** (§5.0-C) | **PARTIALLY GREEN** — ~~BLOCKED, partner id empty everywhere~~ **rescoped 2026-08-01.** `base-url` is **in the repo** for all three envs (legacy `{U,R}_API_URL`); `API_KEY` is **inherited** from the live JEX DB on UAT/PROD. The `partner-id` half of this gate **no longer exists** — see §5.0-C. Remaining: the per-account `TB_FIRM_CONF` check |
 | D | EFS 201 `RS_CD='1000'` explained and resolved by VAN Center | **BLOCKED** — audit C-3 |
 | E | Deployed flag state known and reconciled (§0) | **BLOCKED** — audit C-1 |
 | F | Actuator present so health/metrics exist (§3.3) | **BLOCKED** — audit C-5 |
 | G | For UAT: refactor DB confirmed **not** the JEX UAT batch DB | **BLOCKED** — audit dep. 26 |
 | H | Both dispatch performance indexes applied and `indisvalid` (§5.0-H) | **OPEN** — scripts written 2026-07-30, **not applied in any environment** |
+| B-2 | PO decision recorded on the 24 h window vs guide §3.3's 00:15–23:50 service hours (§5.0-B-2) | 🔴 **OPEN — PO (Mr. Jung).** Seeded `000000`–`235959` lets dispatch reach the gateway during its declared closed window. Not SIT-blocking; blocks UAT/PROD sign-off. Raised 2026-07-31 from EFS guide F-7. **Verified 2026-08-01:** the seed *matches legacy* — all four live JEX DEV `tb_batch_schedule_info` rows are `000000`–`235959`, and per-channel DTL narrowing matches too — so this gate is a legacy-vs-vendor conflict, not a seeding error. **§10 q6 (which clock §3.3's hours run in) must be answered before the window can safely be narrowed.** See [van-center-open-questions-verification-2026-08-01.md §2](../audits/van-center-open-questions-verification-2026-08-01.md) |
+| I | `WECMS_DISPATCH_STUCK_MONITOR_ENABLED=true` **and** its cron set, **before** step 5 enables real-time dispatch (§5.0-I) | **GREEN for SIT/UAT** (both ship ON by default). 🔴 **BLOCKED for PROD and local** — both ship the monitor OFF with `CRON=-`, so following §5.1 as written turns on the money rail with no backstop. Raised 2026-08-01 with C-6 |
 
 #### Gate B — seeding these two tables changes the LIVE JEX batch's operating hours
 
@@ -378,6 +380,112 @@ TB_BATCH_SCHEDULE_INFO."` on the bulk path and no message on the realtime path. 
 (it has its own rows). So an unseeded UAT/PROD is a refactor-only outage, whereas a mis-seeded one is a
 **legacy** incident. The asymmetry is why this gate is worth stopping on.
 
+#### Gate B-2 — 🔴 PO DECISION REQUIRED: the seeded 24 h window contradicts the vendor's stated service hours
+
+> **Status change 2026-07-31.** This was previously recorded as "cut-off gate inert, 24 h DB, PO to
+> drop" — an internal-configuration note. Reading the vendor specification moved it: the window is not
+> merely inert, it is **inert precisely across the hours the gateway declares itself closed**. It is now
+> a live decision for Mr. Jung, not a cleanup item. Source: EFS REST API guide v1.2.6 §3.3, via
+> [`../audits/efs-guide-1.2.6-open-questions-closure.md`](../audits/efs-guide-1.2.6-open-questions-closure.md)
+> finding **F-7**.
+
+**The vendor's statement.** Guide §3.3 온라인 처리 시간 (p.9), verbatim:
+
+```
+웹케시 베트남 시스템 시간 기준으로 처리한다.
+온라인 처리 시간은 매일 00:15 ~ 23:50 이다.(은행에 따라 차이가 발생할 수 있음)
+```
+
+> *"Processing is based on **Webcash Vietnam system time**. Online processing hours are **00:15 – 23:50
+> daily** (differences may occur depending on the bank)."*
+
+**What we have seeded.** `batch_start_tm = '000000'`, `batch_end_tm = '235959'` for every row —
+legacy-verbatim and deliberately 24-hour (see
+[wecms-batch-schedule-seed-review.md](wecms-batch-schedule-seed-review.md) §188-194). `EXE_DIV` is a
+lexicographic `HHmmss` compare, so with that window it evaluates to `'Y'` at **every instant of the
+day**, including 23:50–00:15. **The gate would let a dispatch through and it would reach the gateway
+inside the vendor's declared closed window.** The gate is not merely inert in general — it is inert
+exactly where the vendor says the service is unavailable.
+
+**Two properties that compound, and neither is obvious:**
+
+1. **The vendor anchors its hours to its own clock, not ours.** §3.3 says
+   웹케시 베트남 **시스템 시간 기준** — *Webcash Vietnam system time*. We evaluate `EXE_DIV` in
+   `wecms.dispatch.operating-hours.zone`, which defaults to `Asia/Ho_Chi_Minh` and is legitimately
+   overridable to `Asia/Seoul` for legacy parity (`OperatingHoursService`; legacy computed it in SQL as
+   `TO_CHAR(NOW(),'HH24MISS')` on the JEX frame DB, which runs `Asia/Seoul` — memory
+   `project_batch_schedule_tz_antdiv_fixes`). We do not currently know which zone the gateway means.
+2. **A zone error is larger than the window it would be protecting.** ICT and Seoul are **2 hours**
+   apart; the closed window is **25 minutes**. A Seoul-configured gate reads ICT 23:50 as 01:50 the next
+   day. A 2-hour error against a 25-minute window does not shift the protection, it **eliminates** it —
+   and would do so silently, because every other hour of the day evaluates identically under both zones.
+   Any narrowing of this window is therefore worthless until the zone question is settled first.
+
+**Decision required from the PO (Mr. Jung), one of:**
+
+| Option | Effect | Cost |
+|---|---|---|
+| **A — leave 24 h, accept the risk** | Dispatch may reach the gateway 23:50–00:15 | Knowingly calling outside stated hours ~25 min/day. Acceptable only if the gateway is confirmed to answer normally then, or if the failure is benign and retried. **Requires §10 q6 to Mr. Kang first.** |
+| **B — narrow to `001500`–`235000`** | Matches §3.3 exactly | **Changes the LIVE JEX batch's hours too** — see Gate B above; these rows are global and unscoped. This is a legacy production change and needs the same PO + bank treatment. **Must not be done before the zone question is answered**, or it protects the wrong 25 minutes. |
+| **C — settle the zone first, then decide** | — | The only option that is safe to start today. Ask Mr. Kang which clock §3.3's 00:15/23:50 are expressed in, then re-evaluate A vs B. |
+
+**Recommended: C, then re-open.** Do not narrow the window (B) as a "safe tightening" — on UAT/PROD it
+is a write to rows the live JEX batch reads, and if our zone is wrong it closes legacy's dispatch during
+hours the bank is actually open. Option A is defensible in the interim precisely because it is what
+legacy has always done.
+
+**Blocking status:** does **not** block SIT (isolated gateway, no legacy coexistence). **Does** block a
+considered UAT/PROD activation sign-off — record the chosen option in §8 before ticking Gate B.
+
+#### Gate C — the partner-id half was retired, not waived; a per-account DB check replaced it
+
+> **Read this if you remember Gate C as "BLOCKED — partner id empty everywhere".** That half of the gate
+> has not been quietly dropped. The thing it was gating **ceased to exist**, and a different, real check
+> took its place. Corrected 2026-08-01; verification record:
+> [readiness audit §6.1 + decision D-2](wecms-batch-infrastructure-readiness-audit.md).
+
+**What changed.** `wecms.dispatch.efs.partner-id` was **retired on 2026-07-29 (D-2)**. Nothing reads it in
+source or build output: `EfsProperties` has no `partnerId` field (`EfsProperties.java:67`), `getPartnerId()`
+exists nowhere in `src/`, and the key is in no profile YAML —
+`SchedulerConfigurationContractTest.partnerIdPropertyIsRetired` asserts its absence across **all four
+profiles** and fails the build if it returns. Setting `WECMS_EFS_PARTNER_ID` on a host binds to nothing.
+
+**The envelope `ID` is unconditionally `TB_FIRM_CONF.VAN_ORG_CD`.** There is **no fallback** — all six
+build sites assign `String id = cmd.vanOrgCd();` with no branch (`RecipientLookupService:93`,
+`RealtimeTransferService:105/148/277`, `ResultCheckService:234`, `BulkReceptionService:1120`,
+`BulkReceptionResultService:887`, `OpsAlertService:186`). This matches legacy on every leg
+(`NAPAS_REAL_TIME_BATCH:108`, `PROCESSING_RESULT_CHECK_BATCH:164`, `FILE_DEPOSIT_TRANSFER_BATCH1:1208`, …),
+which has no partner-id property at all.
+
+**The vendor's `prtn_id` is a different field** — a *per-account business-payload* value inside `EV`
+(guide §5.9–5.13; §5.11 p.30-31: "Partner ID **issued by the bank**"), sourced from
+`TB_FIRM_CONF.BANK_PRTN_ID` outbound and from the callback body inbound. Legacy keeps the two distinct in
+the same method from the same row: `PROCESSING_RESULT_CHECK_BATCH:112` (`VAN_ORG_CD` → `"ID="`) vs `:153`
+(`BANK_PRTN_ID` → `param.put("prtn_id", …)`).
+
+**Why the retirement was right, not merely tidy.** `TB_FIRM_CONF`'s PK is
+`(biz_key, out_bank_cd, wdrl_act_no)`, so both identifiers are **per withdrawal account**. JEX DEV proves
+it: tenant `VN_VNM0004_000001` on bank `970424` carries `bank_prtn_id='WEBC1'` on account `700005285299`
+and `'000001106'` on `703009080996`, with different `van_org_cd`s. **A single static property could only
+ever have been correct for one account.** Retiring it removed a latent wrong-identity bug.
+
+**What replaces it — verify per withdrawal account, per environment:**
+
+```sql
+SELECT biz_key, out_bank_cd, wdrl_act_no, van_org_cd, bank_prtn_id, org_stat
+  FROM tb_firm_conf ORDER BY biz_key, out_bank_cd, wdrl_act_no;
+```
+
+"Correct" means `van_org_cd` matches a `TB_VAN_API_INFO` row (otherwise `VanApiKeyService` throws and the
+leg fails closed) and `bank_prtn_id` is a value **the bank issued**, not a placeholder.
+
+> ⚠ **Before UAT.** On JEX DEV, three rows for tenant `VN_VNM0004_000001` carry `van_org_cd='34534534'`
+> and `bank_prtn_id='434534'` (accounts `700005285280`, `700022964690`, `700035842686`, all
+> `org_stat='1'`). Those two columns feed the envelope `ID` and the body `prtn_id`, so such a row sends a
+> nonsense partner identity on every EFS call for that account — and `34534534` is not a
+> `TB_VAN_API_INFO` key, so those accounts would fail API-key resolution too. Looks like leftover test
+> data; confirm with the DBA and check whether the pattern exists on UAT/PROD.
+
 #### Gate H — the two dispatch indexes are UAT/PROD preconditions, not optimisations
 
 Two 2026-07-30 fixes removed a `TRAN_DT` predicate from a query that had been relying on it for index
@@ -410,6 +518,59 @@ the same DBA sign-off as gate B's seed. Verify `indisvalid = true` afterwards (�
 **On DEV/SIT they remain optional.** At 122 / 1,304 rows the planner will choose a seq scan even with
 the index present, and be right to — a post-apply `EXPLAIN` showing one there is not a failed apply.
 
+#### Gate I — the stuck-monitor must be ON before real-time dispatch, or a lost dispatch is invisible
+
+> **Read this before step 5.** The step order in §5.1 does not enforce it, and on PROD the default flag
+> state actively violates it.
+
+Since C-6 (2026-08-01) the real-time (202) rail no longer dispatches on the request thread. `afterCommit`
+**enqueues** onto `RealtimeDispatchQueue` — an **in-memory** bounded FIFO drained by one worker — and
+returns. That queue is not a persisted outbox: it writes nothing to the database, and
+`@PreDestroy` (the bounded drain) does not run on a SIGKILL, an OOM, or a pod eviction.
+
+**The failure mode, plainly:**
+
+1. The payment transaction commits its `TB_PAY_TARGET` rows at `PROC_STAT='9'`.
+2. `afterCommit` enqueues them. The HTTP response returns, telling the user the payment was submitted.
+3. The process dies — restart, kill, OOM — before the worker drains them.
+4. **The tickets are gone. The rows are still at `PROC_STAT='9'`. Nothing moves them.** The claim
+   (`'9'→'6'`) only happens on the drain thread, so there is no half-state and no risk of a double-send —
+   but equally nothing re-drives them, and the user has already been told the payment went through.
+5. **Without the stuck-monitor, nothing reports it.** There is no user-facing signal, no ops alert, and no
+   log line after the fact — the process that would have logged is the one that died.
+
+The **only** detection is `StuckPayFileMonitorService`'s fourth sweep: `TB_PAY_TARGET` at
+`PROC_STAT='9'` older than `wecms.dispatch.stuck-monitor.pay-target-threshold-minutes` (default **5**),
+which reports each row with a cause and folds them into one aggregated alert.
+
+**Therefore:**
+
+- **`WECMS_DISPATCH_STUCK_MONITOR_ENABLED=true` and `WECMS_DISPATCH_STUCK_MONITOR_CRON` must both be set
+  before step 5.** Both gates are required — the flag alone is inert without a cron, exactly like every
+  other sweep.
+- **SIT and UAT ship the monitor ON** (`enabled=true`, `cron=0 */5 * * * *`), so gate I is already green
+  there and needs only a confirmation that it survived the deploy.
+- **PROD and local ship it OFF** (`ENABLED=false`, `CRON=-`). A PROD activation that follows §5.1 in order
+  would reach step 5 with the monitor off — enabling the money rail with no backstop. **Enable the monitor
+  first, as its own restart, and confirm one clean sweep in the log before touching step 5.**
+- **Between step 5 and step 8 the monitor's surface is the log only.** Alerting is separately gated by
+  `WECMS_DISPATCH_ALERT_ENABLED` (step 8), so until then detection means grepping
+  `feature=stuck-pay-file-monitor .* stranded pay-target` — see §6. That is acceptable; running step 5 with
+  neither the sweep nor the alert is not.
+
+Verification before step 5:
+
+```bash
+# Both gates open?
+grep -E 'WECMS_DISPATCH_STUCK_MONITOR_(ENABLED|CRON)' <ENV_FILE>
+
+# One clean sweep has run (the sweep logs at DEBUG when clean, WARN when it finds something)
+grep -c 'feature=stuck-pay-file-monitor' <APP_LOG_PATH>
+
+# ShedLock heartbeat for the monitor job
+psql -c "SELECT name, locked_at, lock_until FROM shedlock WHERE name LIKE '%stuck%';"
+```
+
 ### 5.1 Proposed order
 
 Enable **one** component per window. Restart is required after each change (no `@RefreshScope`; see §7.2).
@@ -422,10 +583,130 @@ moving on.
 | **2** | **EFS transport + recipient inquiry** | `WECMS_EFS_ENABLED=true`, `WECMS_DISPATCH_RECIPIENT_INQUIRY=true` | EFS 201 is **read-only** — it inquires a recipient name and moves no money. It exercises the whole risky substrate (TLS, partner id, VAN `API_KEY`, `EV`/`VV` crypto, envelope shape) at zero financial risk. Success criterion: a `TB_FIRM_TRAN` `TRAN_TP='201'` row with `RS_CD='0000'`. This is exactly the leg that is currently failing with `1000`, so it is also the cheapest place to fix the integration. |
 | **3** | **EFS/file dispatch — SFTP transport only** | `WECMS_SFTP_ENABLED=true` (leave `auto-receive=false`) | Turns on the file channel without triggering any dispatch. Verify with §3.8 plus one manual round trip of a throwaway file. Separating transport from dispatch means a path/permission error surfaces before real payment files exist. |
 | **4** | **EFS/file dispatch — bulk 00301** | `WECMS_DISPATCH_AUTO_RECEIVE=true` | Bulk file dispatch is **asynchronous and reversible before the bank acts**: the file is built, uploaded and audited, and the result arrives via the 01302 callback (already restricted in step 1). It is preferred ahead of real-time because a mistake leaves a file and an audit trail rather than an immediately executed transfer. Requires gate B (green on DEV/SIT since 2026-07-28) and, **on UAT/PROD, gate H** — this is the first step whose callback path runs the un-indexed `00302` idempotency probe on a money path (§5.0-H). On the bulk path a *missing* DTL row passes, so this leg is the more forgiving of the two. |
-| **5** | **NAPAS real-time dispatch** | `WECMS_DISPATCH_REALTIME_DISPATCH=true` | The **highest-risk** step: EFS 202 moves money synchronously, with no file to inspect and no cancellation window. It goes after the bulk path because by this point TLS, keys, crypto, envelopes, operating-hours gating and the callback path have all been proven end to end. Verify `PROC_STAT 9→6→0` and that `TNO == TRAN_SEQ`. **Coverage caveat:** the seeded realtime DTL rows cover `970424`/`970457` × `NAPAS`/`CITAD` only. `INTER` short-circuits to DISPATCH (all 4 currently-pending rows are `INTER`), but a target with `ANT_DIV_CD` of `SWIFT`/`EBANK` (or `'S'`/`'E'`) still fails `NO_CRITERIA` — a PO routing decision, not a window gap. |
-| **6** | **Result-check scheduler** | `WECMS_DISPATCH_RESULT_CHECK_ENABLED=true` **and** `WECMS_DISPATCH_RESULT_CHECK_CRON=<cron>` — **both gates, like every other sweep** | Deliberately **after** dispatch: with nothing dispatched it has nothing to reconcile, and enabling it earlier would only scan an empty set while adding a scheduled write path. **No longer blocked — audit H-7 was resolved by D-1** (`ResultCheckService`, 2026-07-29): the scan's date bound now evaluates `TRAN_DT` in **UTC**, the same zone the writer stamps it in (`DateTimeUtils.utcNow()` / `PymnHelper:2197`), so the 00:00–07:00 ICT window that stranded rows at `PROC_STAT='6'` is closed. D-1 also widened the bound to accept the previous UTC date so a row dispatched just before midnight cannot be orphaned by the rollover. **This does not mean timezone handling is closed.** The same method still evaluates two clocks — the date bound in UTC and the age bound in ICT — because `RQ_DTTM`/`TRAN_TM` are stamped in ICT (`RealtimeDispatchService:146-148`) while `TRAN_DT` is stamped in UTC. Both readers match their own writer, and C-10 (2026-07-30 independent audit) verified that and made both derive from a single instant; the remaining open item is the **writer-side** inconsistency that the 203 audit row's own `TRAN_DT` is stamped in ICT (`ResultCheckService.reflectOutcome`) while every 202 row's is UTC — see §6 before interpreting `TRAN_DT` in any reconciliation query. Start with a conservative cron (e.g. every 5 minutes) rather than every minute. |
+| **5** | **NAPAS real-time dispatch** | `WECMS_DISPATCH_REALTIME_DISPATCH=true` | ⚠ **Requires gate I (§5.0-I) — on PROD and local the monitor ships OFF, so this step as written would enable the money rail with no backstop.** Since C-6 the 202 is issued from an in-memory queue, and a ticket lost on restart leaves the row at `PROC_STAT='9'` with nothing to move it and nothing to report it except the stuck-monitor's pay-target sweep. Enable the monitor first, in its own restart.<br><br>The **highest-risk** step: EFS 202 moves money synchronously, with no file to inspect and no cancellation window. It goes after the bulk path because by this point TLS, keys, crypto, envelopes, operating-hours gating and the callback path have all been proven end to end. Verify `PROC_STAT 9→6→0` and that `TNO == TRAN_SEQ`. **Coverage caveat:** the seeded realtime DTL rows cover `970424`/`970457` × `NAPAS`/`CITAD` only. `INTER` short-circuits to DISPATCH (all 4 currently-pending rows are `INTER`), but a target with `ANT_DIV_CD` of `SWIFT`/`EBANK` (or `'S'`/`'E'`) still fails `NO_CRITERIA` — a PO routing decision, not a window gap. |
+| **6** | **Result-check scheduler** | `WECMS_DISPATCH_RESULT_CHECK_ENABLED=true` **and** `WECMS_DISPATCH_RESULT_CHECK_CRON=<cron>` — **both gates, like every other sweep** | Deliberately **after** dispatch: with nothing dispatched it has nothing to reconcile, and enabling it earlier would only scan an empty set while adding a scheduled write path. **No longer blocked — audit H-7 was resolved by D-1 (d1-d2-d3 record)** (`ResultCheckService`, 2026-07-29; ⚠ **not** the `S_`/`R_` prefix D-1 cited in §5.1a — see the ID note under §5.1a-1): the scan's date bound now evaluates `TRAN_DT` in **UTC**, the same zone the writer stamps it in (`DateTimeUtils.utcNow()` / `PymnHelper:2197`), so the 00:00–07:00 ICT window that stranded rows at `PROC_STAT='6'` is closed. D-1 (d1-d2-d3 record) also widened the bound to accept the previous UTC date so a row dispatched just before midnight cannot be orphaned by the rollover. **This does not mean timezone handling is closed.** The same method still evaluates two clocks — the date bound in UTC and the age bound in ICT — because `RQ_DTTM`/`TRAN_TM` are stamped in ICT (`RealtimeDispatchService:146-148`) while `TRAN_DT` is stamped in UTC. Both readers match their own writer, and C-10 (2026-07-30 independent audit) verified that and made both derive from a single instant; the remaining open item is the **writer-side** inconsistency that the 203 audit row's own `TRAN_DT` is stamped in ICT (`ResultCheckService.reflectOutcome`) while every 202 row's is UTC — see §6 before interpreting `TRAN_DT` in any reconciliation query. Start with a conservative cron (e.g. every 5 minutes) rather than every minute. |
 | **7** | **Stranded recovery scheduler** | `WECMS_DISPATCH_RECOVERY_ENABLED=true` **and** `WECMS_DISPATCH_RECOVERY_CRON=<cron>` | **Last, and only in a DB-separated environment.** It is a blind sweep over `'9'`/`'6'` rows and on a shared DB it cannot distinguish refactor rows from legacy-JEX rows (both draw the same global `firm_seq_no`/`firm_file_seq_no`). It is also the only component that is *useless* until the earlier legs have produced real stranded rows, so there is nothing to gain from enabling it early. DEV/SIT are verified DB-separated; UAT requires gate G. Both gates must be opened together.<br><br>**Depends on step 6.** This sweep covers four strand classes, and one of them — aged firm transactions at `TRAN_TP='202'`/`PROC_STAT='6'` awaiting 203 confirmation — is delegated to the result-check body, which has its own master gate. With `WECMS_DISPATCH_RESULT_CHECK_ENABLED=false` the other three classes still recover and that one is **skipped**, so the pass is partial. It is not silent (the sweep logs a WARN naming the flag — grep `aged firm-transaction .* recovery SKIPPED`), but if you enable step 7 without step 6 you are running a recovery that cannot recover `'6'` rows. Enable step 6 first, or accept the gap knowingly. |
 | **8** | **Ops alerting** | `WECMS_DISPATCH_ALERT_ENABLED=true` (+ the two alert YAML lines) | Requires a working EFS transport (it posts through `WGVN_MSG_SEND_001`). Enabling it before EFS works produces nothing; enabling it before step 4/5 would only generate noise from the very failures you are deliberately provoking during earlier verification. Verify: a forced failure alerts; a success does **not**. |
+
+### 5.1a Pre-first-transfer sequence — SIT bulk, one ordered checklist
+
+> **Use this when you are the person running the first SIT bulk transfer.** §5.1 above is the activation
+> *rationale*, one row per capability; this is the same order as an operator checklist, with where each
+> value lives and what it looks like when it is missed. The three orderings that are not negotiable are
+> **monitor before dispatch**, **allow-list before the first callback**, and **SFTP verified before
+> auto-receive** — each is called out in the dependency column.
+>
+> **Where things live:** the SIT host reads **`bin/setenv.sh` / OS env**. Editing the committed `.env.sit`
+> changes nothing on the server (memory `reference_sit_server_config_setenv`) — this has already caused one
+> incident. DB items are DBA-run SQL. Nothing in this table is a code change.
+
+| # | Set | Where | Dependency that fixes its position | Failure signature if missed |
+|---|---|---|---|---|
+| **0** | Read the **actual running state** off the host before changing anything | host env | Deployed flags have diverged from the committed `.env.*` before — memory `project_batch_deployed_flags_diverge_from_repo`: EFS + 201 were live and failing 17/17 with `RS_CD=1000` while the repo said otherwise | You "enable" something already on, or spend the session debugging a flag that was never set |
+| **1** | `TB_VAN_API_INFO.API_KEY`, ~~`WECMS_EFS_PARTNER_ID`~~ **→ `TB_FIRM_CONF.VAN_ORG_CD` + `BANK_PRTN_ID` verified per withdrawal account** (§5.0-C — the variable was retired 2026-07-29, D-2), `TB_FIRM_CONF` (exactly one row per `(BIZ_KEY, VAN_ORG_CD)` — H-10), `TB_BATCH_SCHEDULE_*` (§0.1) | DB + `setenv.sh` | Everything below needs credentials and an open window | Startup aborts on an unset var (H-1), or every target gates `NO_CRITERIA` |
+| **2** | `WECMS_DISPATCH_STUCK_MONITOR_ENABLED=true` **and** `WECMS_DISPATCH_STUCK_MONITOR_CRON` — **both** | `setenv.sh` | **Before any dispatch flag.** Since C-6 the 202 is issued from an in-memory queue; a ticket lost on restart leaves the row at `PROC_STAT='9'` with nothing to move it and **nothing to report it except this sweep**. SIT ships it ON — *verify*, do not assume. Gate §5.0-I | A dispatch lost on restart is invisible: row parked at `'9'`, the user's HTTP request already returned success, no alert ever fires |
+| **3** | `WECMS_CALLBACK_PROTECTION=ENFORCE`, `WECMS_CALLBACK_ALLOWED_IPS=<gateway IP>`, `WECMS_CALLBACK_TRUSTED_PROXIES=`, `WECMS_CALLBACK_TRUST_FORWARDED_FOR=true` | **`setenv.sh`, not `.env.sit`** | **Before the first callback** — i.e. before step 6. `ENFORCE` fails closed and `.env.sit` ships the list empty. Behind a reverse proxy the **direct peer is the proxy**: either allow-list the proxy, or list it in `TRUSTED_PROXIES` so the left-most `XFF` entry is matched. `42.96.55.163` is the **SFTP** host and only a starting hypothesis for the callback source (OQ-PDF-2) — confirm with the VAN Center | **403 on every `01301`/`01302`, and the symptom is silence.** The operator reports "the gateway never called us back", which is the one wrong conclusion — the 00301 succeeded and we refused the answer. The real source IP is readable off the rejection WARN |
+| **4** | `WECMS_EFS_ENABLED=true`, `WECMS_DISPATCH_RECIPIENT_INQUIRY=true` | `setenv.sh` | 201 is **read-only** — it proves TLS, partner id, VAN `API_KEY`, `EV`/`VV` crypto and envelope shape at zero financial risk. Success = a `TB_FIRM_TRAN` row `TRAN_TP='201'` with `RS_CD='0000'` | Crypto/envelope faults surface later, mid-money-path, instead of here. This is the leg currently failing `1000` |
+| **5** | `WECMS_SFTP_ENABLED=true`, leaving `auto-receive=false` | `setenv.sh` | **Transport before dispatch.** Verify with §3.8 plus one manual round trip of a throwaway file, and §3.9 directory permissions **as the service account** | A path or permission error otherwise lands **mid-dispatch on a money path** — file built and rows committed, then the upload fails |
+| **6** | `WECMS_DISPATCH_AUTO_RECEIVE=true` | `setenv.sh` | First money step, and the forgiving one: asynchronous and reversible before the bank acts — a mistake leaves a file and an audit trail rather than an executed transfer. Needs step 3 (the 01302 returns to the callback) and step 5 | Without step 3: file uploaded, 00301 accepted, result 403'd → the file strands at `PROC_STEP='0'`, now reported as `BULK_RECEPTION_RESULT_NOT_RECEIVED` |
+| **7** | **Run one bulk file end to end**, then the verification queries below | — | Do this before adding further rails | — |
+| **8** | `WECMS_DISPATCH_REALTIME_DISPATCH=true` | `setenv.sh` | After step 2 (**hard gate**) and after 4–6 proved crypto + callback. Highest risk: the 202 moves money synchronously, with no file to inspect and no cancellation window. Verify `PROC_STAT 9→6→0` and `TNO == TRAN_SEQ` | Without step 2 the money rail runs with no backstop. Coverage caveat: seeded realtime DTL rows are `970424`/`970457` × `NAPAS`/`CITAD`; a target with `SWIFT`/`EBANK` still fails `NO_CRITERIA` |
+| **9** | `WECMS_DISPATCH_RESULT_CHECK_ENABLED=true` **and** `WECMS_DISPATCH_RESULT_CHECK_CRON` | `setenv.sh` | Deliberately after dispatch — with nothing dispatched it has nothing to reconcile. Start at ~5 minutes, not 1 | Enabled early it scans an empty set while adding a scheduled write path |
+| **10** | `WECMS_DISPATCH_ALERT_ENABLED=true` | `setenv.sh` | Needs a working EFS transport (posts via `WGVN_MSG_SEND_001`). After 6/8 so it does not fire on the failures you are deliberately provoking | Enabled early: silence (no transport), or noise from deliberate test failures |
+| **—** | `WECMS_DISPATCH_RECOVERY_ENABLED` / `_CRON` | — | **Stays OFF.** Blind sweep over `'9'`/`'6'`; on a shared DB it cannot tell refactor rows from legacy-JEX rows (both draw the same global `firm_seq_no` / `firm_file_seq_no`). DEV/SIT are verified DB-separated; UAT is not (dependency 26) | Re-drives legacy JEX rows |
+
+#### 5.1a-1 Verification after step 7 — did the `01302` land on the stored rows?
+
+```sql
+SELECT d.tran_dt, d.firm_file_nm, m.proc_step, m.proc_stat,
+       count(*)                                            AS lines,
+       count(d.rs_cd)                                      AS lines_stamped,
+       count(*) FILTER (WHERE d.proc_rslt_div = 'Y')       AS success,
+       count(*) FILTER (WHERE d.proc_rslt_div = 'N')       AS not_processed,
+       string_agg(DISTINCT d.rs_cd, ',' ORDER BY d.rs_cd)  AS rs_cd_set
+  FROM tb_firm_file_data d
+  JOIN tb_firm_file_mst  m ON m.tran_dt      = d.tran_dt
+                          AND m.firm_file_nm = d.firm_file_nm
+ WHERE d.tran_dt = :tran_dt
+ GROUP BY 1,2,3,4
+ ORDER BY 1,2;
+```
+
+**Pass:** `lines_stamped = lines`, `rs_cd_set` populated, `proc_step='3'`.
+
+**Fail — the signature that matters:** `lines_stamped = 0` while `TB_FIRM_FILE_RSLT` *does* carry rows for
+the same file. The callback arrived and parsed, but did not match the stored rows — the
+**D-1 (boundary-sweep) `S_`/`R_` prefix asymmetry**: legacy stores the audit row under the bank's `R_`
+result name while we store the sent `S_` name. This second query separates that from "the callback never
+arrived", and it is the **load-bearing** one:
+
+```sql
+SELECT (SELECT count(*) FROM tb_firm_file_rslt r
+         WHERE r.tran_dt = :tran_dt
+           AND substring(r.firm_file_nm, 3) = substring(:firm_file_nm, 3)) AS rslt_rows,
+       (SELECT count(*) FROM tb_firm_file_data d
+         WHERE d.tran_dt = :tran_dt
+           AND d.firm_file_nm = :firm_file_nm
+           AND d.rs_cd IS NOT NULL)                                        AS data_rows_stamped;
+```
+
+`rslt_rows > 0 AND data_rows_stamped = 0` → prefix matching is broken. **Both zero → the callback never
+arrived; go back to step 3** (the 403-in-silence case).
+
+> **⚠ `D-1` is two different findings — this runbook cites both.** Always qualify it here:
+> **D-1 (boundary-sweep)** = the `S_`/`R_` `FIRM_FILE_NM` prefix asymmetry, owned by
+> [`../audits/legacy-batch-boundary-rule-sweep-2026-07-31.md`](../audits/legacy-batch-boundary-rule-sweep-2026-07-31.md) — the one this query proves.
+> **D-1 (d1-d2-d3 record)** = the `ResultCheckService` `TRAN_DT` UTC/ICT fix, owned by
+> [`../audits/d1-d2-d3-legacy-verification.md`](../audits/d1-d2-d3-legacy-verification.md) — cited at §5.1 step 6.
+> The same collision exists for **D-3** (round wrap vs Actuator). Per-document ID scoping is the house
+> convention and works fine until two series meet in one document, which is what happens here.
+>
+> **⚠ Why this is a real check and not a formality: the prefix-stripping predicate has never executed.**
+> The project has **no embedded database and no Testcontainers**, so **no test in the suite executes JPQL**.
+> Spring Data validates the query at context startup, which means *booting proves it parses* — it does not
+> prove it returns the right rows. `existsForFileIgnoringNamePrefix` and
+> `findForExecutionResult` (both using `substring(..., 3)`) are therefore
+> **first exercised for real by the first SIT callback**, and the `lines_stamped = 0` /
+> `rslt_rows > 0` combination above is **exactly what an unexercised predicate looks like when it is
+> subtly wrong**. Run both queries; do not infer success from a clean startup or a green test run.
+
+#### 5.1a-2 🔴 UAT GATE — does `WGVN_EFS_203` return a `VV`? Answer this before enabling result-check.
+
+**Do not enable result-check (`wecms.dispatch.result-check.enabled`) in UAT until one SIT `203`
+round-trip has recorded the answer below.** This gate blocks UAT only; SIT is where the answer is
+obtained.
+
+**Why.** `203` is the one EFS leg legacy does **not** MAC-verify — `PROCESSING_RESULT_CHECK_BATCH:240`
+decrypts straight from `rEV`, while `API1:102`, `API2:109`, `NAPAS:369` and `WB_00000100:152` all call
+`SecurityUtil.VerifyMac` first (D-E). Two readings fit: the PRCB author forgot, or **the 203 response
+carries no `VV` to verify**. Nobody has checked with the VAN Center, and the refactor's 203 leg has
+never run against the live gateway — the SIT live run was EFS + `201` (17/17 `RS_CD=1000`).
+
+If the second reading is right and we verified strictly, **every** result-check inquiry would throw and
+**every** row would stay at `PROC_STAT='6'` — the whole rail strands on first run, silently looking like
+a gateway outage. `ResultCheckService` therefore ships a gate: an **absent** `VV` is accepted with a
+WARN; a **present but wrong** `VV` still throws `G003`. Tamper defence intact, strand risk removed.
+
+**How to get the answer** — one SIT inquiry against a real aged `202`, then:
+
+```bash
+# The gate fires exactly once per unverified response. Its presence IS the answer.
+grep "carries NO VV" <app-log> | head
+```
+
+| What you see | Means | Do this |
+|---|---|---|
+| **No `carries NO VV` line**, and rows finalise off `'6'` | The gateway **does** emit `VV`; strict verification is live and working | Record **`VV = present`** in the table below. Raise a ticket to delete the absent-`VV` branch in `ResultCheckService` and the D-E gate note in the sweep — the gate has served its purpose |
+| **`carries NO VV` lines**, and rows finalise normally | The gateway emits **no** `VV` on this leg. Legacy was right not to verify, and a strict check would have stranded the rail | Record **`VV = absent`**. **Keep the gate permanently** and note in the sweep that D-E's premise ("PRCB simply forgot") is disproved |
+| `WBE_EFS_GATEWAY_ERROR` with `G003` on **every** row | `VV` is present but never matches — a key or canonicalisation bug on our side, not a gateway one | **Do not** widen the gate to mask it. Compare `EfsCryptoService.verifyVv` against the working `202`/`204` path in `RealtimeTransferService:196/333`, which uses the same helper |
+
+**Record the answer here — this row is the deliverable of the gate, not the grep:**
+
+| Date | Env | `VAN_ORG_CD` | `VV` present? | Evidence (log line / trace id) | Recorded by |
+|---|---|---|---|---|---|
+| _(pending)_ | SIT | | | | |
+
+Until this row is filled in, treat result-check as **SIT-only**.
 
 ### 5.2 Why this order is safe — the principle
 

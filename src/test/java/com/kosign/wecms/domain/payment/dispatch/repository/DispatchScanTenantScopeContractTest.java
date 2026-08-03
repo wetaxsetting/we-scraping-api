@@ -9,6 +9,8 @@ import org.springframework.data.jpa.repository.Query;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -51,7 +53,7 @@ class DispatchScanTenantScopeContractTest {
      * dispatch rails that selects rows by state + age</b>.
      *
      * <p>Completed 2026-07-29 (repository/query re-verification):
-     * {@code TbFirmFileMstRepository.findStrandedBulkExecutionFiles} was a live scheduled sweep
+     * {@code TbFirmFileMstRepository.findStrandedFirmFiles} was a live scheduled sweep
      * ({@code StuckPayFileMonitorService:420}) that satisfied this whole contract but was not listed
      * here, so nothing would have caught it losing its {@code Pageable}, its ordering or its SQL age
      * cutoff. The result-check candidate scan has a different shape and is pinned separately below.
@@ -63,7 +65,7 @@ class DispatchScanTenantScopeContractTest {
         m.add(TbPayFileMstRepository.class.getMethod(
                 "findStrandedPayFiles", String.class, String.class, Pageable.class));
         m.add(TbFirmFileMstRepository.class.getMethod(
-                "findStrandedBulkExecutionFiles",
+                "findStrandedFirmFiles",
                 String.class, String.class, String.class, String.class, Pageable.class));
         return m;
     }
@@ -119,9 +121,9 @@ class DispatchScanTenantScopeContractTest {
                             + "sweep could revisit the same rows forever", m.getName())
                     .containsIgnoringCase("ORDER BY");
             assertThat(jpql)
-                    .as("%s must order by procDttm ASC first (oldest-first drains the backlog)",
+                    .as("%s must order by its aging basis ASC first (oldest-first drains the backlog)",
                             m.getName())
-                    .containsIgnoringWhitespaces("procDttm ASC");
+                    .containsIgnoringWhitespaces(agingBasis(jpql) + " ASC");
             assertThat(jpql)
                     .as("%s must not order newest-first", m.getName())
                     .doesNotContainIgnoringCase("procDttm DESC");
@@ -137,13 +139,41 @@ class DispatchScanTenantScopeContractTest {
             // If the age filter were applied in Java after the LIMIT, old rows would sort to the front
             // of every page, consume the whole window and then be discarded — the sweep would process
             // nothing, permanently. That is exactly what happened on the result-check rail (N-1).
+            String basis = agingBasis(jpql);
             assertThat(jpql)
-                    .as("%s must bound by procDttm in SQL", m.getName())
-                    .containsIgnoringWhitespaces("procDttm < :procDttmCutoff");
+                    .as("%s must bound by its aging basis in SQL", m.getName())
+                    .containsIgnoringWhitespaces(basis + " < :procDttmCutoff");
             assertThat(jpql)
-                    .as("%s must exclude null procDttm in SQL (never eligible)", m.getName())
-                    .containsIgnoringWhitespaces("procDttm IS NOT NULL");
+                    .as("%s must exclude a null aging basis in SQL (never eligible)", m.getName())
+                    .containsIgnoringWhitespaces(basis + " IS NOT NULL");
         }
+    }
+
+    /**
+     * The expression a sweep ages rows on — {@code f.procDttm} for most, or
+     * {@code COALESCE(NULLIF(f.procDttm, ''), f.regDttm)} for {@code findStrandedFirmFiles} since the
+     * 2026-08-01 unification (neither legacy nor the refactor stamps {@code PROC_DTTM} when a firm-file
+     * row is inserted, so that rail must fall back to {@code REG_DTTM} or it selects nothing).
+     *
+     * <p>Derived from the JPQL rather than hardcoded per method, so the assertions above keep their
+     * teeth: they check that <b>the same</b> expression is used for the ordering, the cutoff and the null
+     * guard. A finder that ordered by one basis and bounded by another would still fail — which is the
+     * defect worth catching, and the reason this is not simply an {@code anyOf(...)} over two literals.
+     */
+    private static String agingBasis(String jpql) {
+        String normalised = jpql.replaceAll("\\s+", " ");
+        Matcher coalesced = Pattern
+                .compile("COALESCE\\(NULLIF\\((\\w+)\\.procDttm, ''\\), \\1\\.regDttm\\)")
+                .matcher(normalised);
+        if (coalesced.find()) {
+            return coalesced.group();
+        }
+        // Otherwise the basis is the plain column, under whichever alias this finder selects with —
+        // 't' for TB_PAY_TARGET, 'p' for TB_PAY_FILE_MST, 'f' for TB_FIRM_FILE_MST. Hardcoding one
+        // alias here would silently pass the other two rails (a `contains` of an alias that never
+        // appears fails, so the test would break rather than pass — but for the wrong reason).
+        Matcher alias = Pattern.compile("SELECT (\\w+) FROM").matcher(normalised);
+        return (alias.find() ? alias.group(1) : "f") + ".procDttm";
     }
 
     @Test

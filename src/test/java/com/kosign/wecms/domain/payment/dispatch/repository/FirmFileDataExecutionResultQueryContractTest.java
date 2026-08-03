@@ -78,21 +78,33 @@ class FirmFileDataExecutionResultQueryContractTest {
     }
 
     @Test
-    @DisplayName("The stranded sweep excludes a BLANK PROC_DTTM explicitly, not via the retention floor")
+    @DisplayName("The stranded sweep handles a BLANK PROC_DTTM explicitly, not via the retention floor")
     void strandedSweepExcludesBlankProcDttm() throws Exception {
         Method m = TbFirmFileMstRepository.class.getMethod(
-                "findStrandedBulkExecutionFiles", String.class, String.class, String.class, String.class,
+                "findStrandedFirmFiles", String.class, String.class, String.class, String.class,
                 org.springframework.data.domain.Pageable.class);
         String jpql = m.getAnnotation(Query.class).value().replaceAll("\\s+", " ");
 
-        // A blank PROC_DTTM sorts before every 14-digit timestamp, so it satisfies `< cutoff`. Today it
-        // is excluded only because it also fails `>= floor` — accidental protection. JEX DEV holds 2
-        // such rows. The repository Javadoc contemplates dropping the floor for index reasons; the
-        // moment that happens, every blank row would alert on every tick, forever.
+        // A blank PROC_DTTM sorts before every 14-digit timestamp, so it satisfies `< cutoff`. It must
+        // never be left to the retention floor to exclude it — the repository Javadoc contemplates
+        // dropping that floor for index reasons, and the moment it goes, every blank row would alert on
+        // every tick forever. JEX DEV holds 2 such rows.
+        //
+        // Changed 2026-08-01 with the unified aging rule: blank is now handled by NULLIF, which treats it
+        // as ABSENT so the row falls back to REG_DTTM and is reported rather than silently dropped. The
+        // emptiness guard survives for the case where BOTH columns are empty, and is still explicit.
+        String basis = "COALESCE(NULLIF(f.procDttm, ''), f.regDttm)";
         assertThat(jpql)
-                .as("blank PROC_DTTM must be excluded on its own terms, not as a side effect of the floor")
-                .contains("f.procDttm <> ''");
-        assertThat(jpql).contains("f.procDttm IS NOT NULL");
+                .as("blank PROC_DTTM must be neutralised on its own terms (NULLIF), not by the floor")
+                .containsIgnoringWhitespaces("NULLIF(f.procDttm, '')");
+        assertThat(jpql)
+                .as("the both-empty case must still be excluded explicitly")
+                .containsIgnoringWhitespaces(basis + " <> ''");
+        assertThat(jpql).containsIgnoringWhitespaces(basis + " IS NOT NULL");
+        // The aging basis must be the coalesced expression on EVERY bound, or one step ages differently
+        // from another — the two-rule trap this unification removed.
+        assertThat(jpql).containsIgnoringWhitespaces(basis + " < :procDttmCutoff");
+        assertThat(jpql).containsIgnoringWhitespaces(basis + " >= :procDttmFloor");
 
         // Prove the coupling the explicit predicate removes: with the floor gone, '' still passes
         // the null check and the cutoff comparison.

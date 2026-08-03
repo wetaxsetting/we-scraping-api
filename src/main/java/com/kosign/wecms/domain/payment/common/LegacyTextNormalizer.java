@@ -45,6 +45,32 @@ public final class LegacyTextNormalizer {
         return value == null ? null : value.replaceAll("\\r|\\n", "");
     }
 
+    /**
+     * Normalize every Unicode space separator to ASCII {@code 0x20}. Verbatim port of legacy
+     * {@code wabooks.commons.StringUtils.sanitize:118-124} ({@code input.replaceAll("[\\p{Zs}]", " ")}).
+     *
+     * <p><b>Why this belongs in the pipeline, not in the guard's error path.</b> NBSP (U+00A0) is the
+     * common case: it arrives from Excel and from pasted browser text, survives
+     * {@link #replaceTone} untouched (it is outside the 134-code-point tone table <i>and</i> outside
+     * {@link #hasVietnameseCharacters}' three ranges, so the guarded call never even fires), and is
+     * {@code > 0x7F}. Without this step it reaches {@code PaymentWireWidthGuard}'s non-Latin check and
+     * gets rejected with a message naming a character the operator cannot see or delete — for a value
+     * whose only defect is one invisible space.
+     *
+     * <p>Legacy corrects it silently instead, on the setter of every field this guard covers:
+     * {@code ScdulPymnSumrDetl.setRcptNm:220 / setTranUsag:259 / setTarAcctRmrk:272 /
+     * setWdrlAcctRmrk:285}. Running it here reproduces that behavior, so it is a parity <i>gain</i> —
+     * the refactor was the outlier in rejecting what legacy silently fixed.
+     *
+     * <p>Null / empty pass through unchanged (legacy contract). Idempotent.
+     */
+    public static String sanitizeSpaces(String input) {
+        if (input == null || input.isEmpty()) {
+            return input;
+        }
+        return input.replaceAll("[\\p{Zs}]", " ");
+    }
+
     /** Verbatim from {@code wabooks.commons.StringUtils.hasVietnameseCharacters} (lines 45-60). */
     public static boolean hasVietnameseCharacters(String text) {
         if (text == null || text.isEmpty()) {
@@ -124,15 +150,20 @@ public final class LegacyTextNormalizer {
 
     /**
      * Full upload-time normalization = {@link #toNfc}, then {@link #stripCrLf}, then
-     * {@link #stripVietnameseTone} — the same order the parsers apply on the preview path (NFC + CR/LF
-     * at cell read, Vietnamese accents stripped per validated field). Used by the save-path / dispatch
-     * enforcement guard so a direct API call persists the SAME normalized value the upload preview
-     * would have produced. Idempotent. Null-safe.
+     * {@link #sanitizeSpaces}, then {@link #stripVietnameseTone} — the same order the parsers apply on
+     * the preview path (NFC + CR/LF at cell read, Vietnamese accents stripped per validated field).
+     * Used by the save-path / dispatch enforcement guard so a direct API call persists the SAME
+     * normalized value the upload preview would have produced. Idempotent. Null-safe.
      *
      * <p>{@link #toNfc} runs <b>before</b> {@link #stripVietnameseTone} and that order is load-bearing
      * — reversing it leaves decomposed accents in place. See {@link #toNfc}.
+     *
+     * <p>{@link #sanitizeSpaces} runs before {@link #stripVietnameseTone} only for grouping with the
+     * other whitespace step; the two are independent (no {@code \p{Zs}} code point is in the tone
+     * table). What matters is that it runs before {@code PaymentWireWidthGuard}'s non-Latin check —
+     * see {@link #sanitizeSpaces}.
      */
     public static String normalize(String value) {
-        return stripVietnameseTone(stripCrLf(toNfc(value)));
+        return stripVietnameseTone(sanitizeSpaces(stripCrLf(toNfc(value))));
     }
 }

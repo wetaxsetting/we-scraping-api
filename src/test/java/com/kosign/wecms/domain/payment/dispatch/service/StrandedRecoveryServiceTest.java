@@ -43,9 +43,22 @@ class StrandedRecoveryServiceTest {
 
     @Mock com.kosign.wecms.domain.payment.dispatch.repository.TbPayTargetRepository payTargetRepository;
     @Mock com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileMstRepository payFileMstRepository;
-    @Mock RealtimeDispatchService realtimeDispatchService;
     @Mock BulkReceptionService bulkReceptionService;
     @Mock ResultCheckService resultCheckService;
+    /**
+     * C-6: the sweep no longer dispatches (or paces) inline — it hands each aged {@code '9'} row to the
+     * shared paced drain. Pacing itself is {@link RealtimeDispatchQueue}'s property and is asserted in
+     * its own test; what this test pins is the hand-off: one {@code enqueue} per aged row, and none for
+     * the bulk pay-file leg.
+     *
+     * <p><b>{@code RealtimeDispatchService} is no longer a mock here (2026-08-01)</b> because it is no
+     * longer a collaborator — the constructor does not take it. The guards that used to read
+     * {@code verifyNoInteractions(realtimeDispatchService)} are now expressed as "the queue is the only
+     * outbound collaborator", which is a stronger statement: the old assertion could only prove the sweep
+     * did not use a dependency it still held, whereas the dependency is now absent by construction and
+     * re-adding it would have to change the constructor.
+     */
+    @Mock RealtimeDispatchQueue realtimeDispatchQueue;
 
     private StrandedRecoveryService service;
 
@@ -55,8 +68,8 @@ class StrandedRecoveryServiceTest {
         // before locking was introduced. The contended branch is covered by
         // StrandedRecoveryResultCheckLockTest.
         service = new StrandedRecoveryService(payTargetRepository, payFileMstRepository,
-                realtimeDispatchService, bulkReceptionService, resultCheckService,
-                com.kosign.wecms.common.lock.JobLockGuardStubs.alwaysFree());
+                bulkReceptionService, resultCheckService,
+                com.kosign.wecms.common.lock.JobLockGuardStubs.alwaysFree(), realtimeDispatchQueue);
         ReflectionTestUtils.setField(service, "graceMinutes", 30L);
     }
 
@@ -68,10 +81,15 @@ class StrandedRecoveryServiceTest {
     }
 
     private TbPayTarget payTarget(String tranSeq) {
+        return payTarget(tranSeq, "970424");
+    }
+
+    private TbPayTarget payTarget(String tranSeq, String outBankCd) {
         TbPayTarget p = new TbPayTarget();
         p.setBizKey(BIZ);
         p.setTranDt("20260612");
         p.setTranSeq(tranSeq);
+        p.setOutBankCd(outBankCd);
         p.setProcStat("9");
         return p;
     }
@@ -91,11 +109,11 @@ class StrandedRecoveryServiceTest {
         service.recoverOnce();
 
         verifyNoInteractions(payTargetRepository, payFileMstRepository,
-                realtimeDispatchService, bulkReceptionService, resultCheckService);
+                bulkReceptionService, resultCheckService);
     }
 
     @Test
-    void enabled_redrivesAgedPayTargets_viaDispatch() {
+    void enabled_redrivesAgedPayTargets_viaThePacedDrain() {
         enable();
         when(payTargetRepository.findStrandedPayTargets(eq("9"), anyString(), any(org.springframework.data.domain.Pageable.class)))
                 .thenReturn(List.of(payTarget("1"), payTarget("2")));
@@ -104,8 +122,15 @@ class StrandedRecoveryServiceTest {
 
         service.recoverOnce();
 
-        verify(realtimeDispatchService).dispatch(BIZ, "20260612", "1");
-        verify(realtimeDispatchService).dispatch(BIZ, "20260612", "2");
+        // C-6: enqueue, don't dispatch. Oldest-first order is preserved into the FIFO drain.
+        org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(realtimeDispatchQueue);
+        inOrder.verify(realtimeDispatchQueue).enqueue(BIZ, "20260612", "1");
+        inOrder.verify(realtimeDispatchQueue).enqueue(BIZ, "20260612", "2");
+        // The queue is the ONLY outbound collaborator: two enqueues and nothing else on it, and no
+        // second dispatch path exists to check because the constructor no longer accepts one.
+        verify(realtimeDispatchQueue, org.mockito.Mockito.times(2))
+                .enqueue(anyString(), anyString(), anyString());
+        org.mockito.Mockito.verifyNoMoreInteractions(realtimeDispatchQueue);
     }
 
     @Test
@@ -134,18 +159,20 @@ class StrandedRecoveryServiceTest {
     }
 
     @Test
-    void oneFailedRow_doesNotBlockLaterRows() {
+    void oneRejectedRow_doesNotBlockLaterRows() {
         enable();
         when(payTargetRepository.findStrandedPayTargets(eq("9"), anyString(), any(org.springframework.data.domain.Pageable.class)))
                 .thenReturn(List.of(payTarget("1"), payTarget("2")));
         when(payFileMstRepository.findStrandedPayFiles(eq("9"), anyString(), any(org.springframework.data.domain.Pageable.class)))
                 .thenReturn(List.of());
-        doThrow(new RuntimeException("EFS down")).when(realtimeDispatchService).dispatch(BIZ, "20260612", "1");
+        // C-6: the per-row failure mode moved from "dispatch threw" to "the drain refused the ticket"
+        // (queue full / shut down). Either way one bad row must not cost the rest of the sweep.
+        when(realtimeDispatchQueue.enqueue(BIZ, "20260612", "1")).thenReturn(false);
+        when(realtimeDispatchQueue.enqueue(BIZ, "20260612", "2")).thenReturn(true);
 
         assertDoesNotThrow(() -> service.recoverOnce());
 
-        // Second row still re-driven despite the first throwing; the delegation still runs.
-        verify(realtimeDispatchService).dispatch(BIZ, "20260612", "2");
+        verify(realtimeDispatchQueue).enqueue(BIZ, "20260612", "2");
         verify(resultCheckService).runOnce();
     }
 
@@ -187,8 +214,9 @@ class StrandedRecoveryServiceTest {
             serviceLogger.detachAppender(logs);
         }
 
-        // The pay-target leg DID run — the pass is partial, not aborted.
-        verify(realtimeDispatchService).dispatch(BIZ, "20260612", "1");
+        // The pay-target leg DID run — the pass is partial, not aborted. (C-6: "ran" now means the row
+        // reached the shared drain, not that this thread called the gateway.)
+        verify(realtimeDispatchQueue).enqueue(BIZ, "20260612", "1");
         // ...and the skipped class is announced loudly enough to notice, naming the flag to set.
         verify(resultCheckService, never()).runOnce();
         assertThat(logs.list)
@@ -199,5 +227,78 @@ class StrandedRecoveryServiceTest {
                             .contains("SKIPPED")
                             .contains("wecms.dispatch.result-check.enabled=false");
                 });
+    }
+
+    /* ─────────────── hand-off to the shared paced drain (C-6) ─────────────── */
+
+    /**
+     * Every aged row goes onto {@link RealtimeDispatchQueue}, in oldest-first order, and the sweep itself
+     * never touches the gateway.
+     *
+     * <p><b>What this test does NOT assert:</b> pacing. That moved to the drain when C-6 put the
+     * request-thread rail behind the same worker — two pacing points would not be a rate limit, so there
+     * is one, and {@link RealtimeDispatchQueueTest} is where it is tested. Asserting it here as well would
+     * re-pin the arrangement C-6 replaced.
+     *
+     * <p>The rows are still deliberately Woori-then-Shinhan: the ordering is what the FIFO drain inherits,
+     * and the drain's per-row bank resolution (the D-A divergence from legacy's leaked
+     * {@code per_request_delay}) depends on receiving them in a defined order.
+     */
+    @Test
+    void enqueuesEveryAgedRow_ontoTheSharedPacedDrain() {
+        enable();
+        when(realtimeDispatchQueue.enqueue(anyString(), anyString(), anyString())).thenReturn(true);
+        when(payTargetRepository.findStrandedPayTargets(eq("9"), anyString(),
+                any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(List.of(payTarget("1", "970457"), payTarget("2", "970424")));
+        when(payFileMstRepository.findStrandedPayFiles(eq("9"), anyString(),
+                any(org.springframework.data.domain.Pageable.class))).thenReturn(List.of());
+
+        service.recoverOnce();
+
+        // Oldest-first order is preserved into the FIFO drain, so submission order IS gateway order.
+        org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(realtimeDispatchQueue);
+        inOrder.verify(realtimeDispatchQueue).enqueue(BIZ, "20260612", "1");
+        inOrder.verify(realtimeDispatchQueue).enqueue(BIZ, "20260612", "2");
+        // Exactly one ticket per row, and nothing else on the queue — the sweep must not dispatch on its
+        // own thread, and since 2026-08-01 it has no dispatch collaborator to do so with.
+        verify(realtimeDispatchQueue, org.mockito.Mockito.times(2))
+                .enqueue(anyString(), anyString(), anyString());
+        org.mockito.Mockito.verifyNoMoreInteractions(realtimeDispatchQueue);
+    }
+
+    /**
+     * A rejected ticket (drain saturated or shut down) leaves that row at {@code PROC_STAT='9'} for the
+     * next pass and must not abort the sweep — otherwise one drop costs every later aged row too.
+     */
+    @Test
+    void oneRejectedTicket_doesNotStopTheSweep() {
+        enable();
+        when(payTargetRepository.findStrandedPayTargets(eq("9"), anyString(),
+                any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(List.of(payTarget("1", "970457"), payTarget("2", "970424")));
+        when(payFileMstRepository.findStrandedPayFiles(eq("9"), anyString(),
+                any(org.springframework.data.domain.Pageable.class))).thenReturn(List.of());
+        when(realtimeDispatchQueue.enqueue(BIZ, "20260612", "1")).thenReturn(false);   // dropped
+        when(realtimeDispatchQueue.enqueue(BIZ, "20260612", "2")).thenReturn(true);
+
+        service.recoverOnce();
+
+        verify(realtimeDispatchQueue).enqueue(BIZ, "20260612", "2");
+    }
+
+    /** The bulk (pay-file) leg does NOT go through the drain — one 00301 per file, not a per-line burst. */
+    @Test
+    void doesNotEnqueueTheBulkPayFileLeg() {
+        enable();
+        when(payTargetRepository.findStrandedPayTargets(eq("9"), anyString(),
+                any(org.springframework.data.domain.Pageable.class))).thenReturn(List.of());
+        when(payFileMstRepository.findStrandedPayFiles(eq("9"), anyString(),
+                any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(List.of(payFile("1"), payFile("2")));
+
+        service.recoverOnce();
+
+        verifyNoInteractions(realtimeDispatchQueue);
     }
 }

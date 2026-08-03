@@ -13,6 +13,17 @@
 > **Every other blocker (C-1, C-3, C-4, C-5, H-2, H-7) is unchanged.** The overall verdict stays
 > **NOT READY**.
 
+> **UPDATE 2026-08-01 — legacy-configuration verification. Four "provisioning" items were mis-framed.**
+> This audit was written as though the dispatch infrastructure had to be obtained. Legacy WeCMS Batch is
+> running in PROD today, so most of these values already exist — in `wecms_batch.properties`, in the
+> shared JEX database, or both. Verified against the legacy sources and a read-only query of JEX DEV:
+> **B2 (VAN API key) is not a vendor request**, **Gate B is satisfied by construction on UAT/PROD**,
+> **the EFS UAT/PROD base URLs are in this repository**, and **Gate H exceeds legacy rather than matching
+> it**. Three previously-unrecorded findings landed (H-11, H-12, M-7) plus one deliberate decision (D-1).
+> See **§6.0** for the corrected framing and **§6.1** for the per-value provenance table; §6's dependency
+> table, §10 R2, §11 and §12 are corrected in line. Nothing in §4 (deployed-runtime evidence) changes —
+> **C-1 remains the top blocker**, and the overall verdict stays **NOT READY**.
+
 **Companion documents (read together, do not duplicate):**
 - [wecms-batch-environment-variables.md](wecms-batch-environment-variables.md) — per-variable reference
 - [wecms-batch-infra-team-checklist.md](wecms-batch-infra-team-checklist.md) — actionable checklist
@@ -134,7 +145,7 @@ the base `application.yml`**.
 | `wecms.dispatch.callback.path-prefix` | *(none)* | `/api/v1/payment/dispatch/callbacks` | `CallbackProperties` | — | No | Code default only |
 | `wecms.dispatch.efs.enabled` | `WECMS_EFS_ENABLED` | `false` → mock | `EfsClientConfig`, `MockEfsApiClient` | all | No | **Live on a deployed node** (§4) |
 | `wecms.dispatch.efs.base-url` | `WECMS_EFS_BASE_URL` | `""` | `EfsClientConfig` | when EFS on | No | SIT template has a value; UAT/PROD empty |
-| `wecms.dispatch.efs.partner-id` | `WECMS_EFS_PARTNER_ID` | `""` | `EfsProperties` | when EFS on | No | **Empty in every template** |
+| ~~`wecms.dispatch.efs.partner-id`~~ | ~~`WECMS_EFS_PARTNER_ID`~~ | — | *(nothing)* | — | No | **RETIRED 2026-07-29 (D-2), corrected 2026-08-01.** No `partnerId` field on `EfsProperties` (`:67`), key in no YAML, `getPartnerId()` absent from `src/`; `SchedulerConfigurationContractTest.partnerIdPropertyIsRetired` enforces it across all four profiles. Envelope `ID` is unconditionally `TB_FIRM_CONF.VAN_ORG_CD` — see §6.1 |
 | `wecms.dispatch.efs.endpoints.*` | *(none)* | 7 vendor paths in code | `EfsProperties.defaultEndpoints()` | — | No | Vendor-fixed; fine |
 | `wecms.dispatch.efs.connect-timeout-ms` | *(hardcoded `3000`)* | `3000` | `EfsClientConfig` | — | No | Hardcoded in all 4 YAMLs |
 | `wecms.dispatch.efs.read-timeout-ms` | *(hardcoded `20000`)* | `20000` | `EfsClientConfig` | — | No | Hardcoded in all 4 YAMLs |
@@ -365,6 +376,8 @@ Severity: **C** = blocks activation · **H** = must fix before the affected leg 
 | **H-8** | **Two `@Scheduled` methods have no `@SchedulerLock`:** `NxisasSessionRegistry:68` (`fixedDelay = 60_000`) and `CutoffConfigProvider:133` (`fixedDelayString`). Both maintain node-local caches, so duplication is benign today — but this must be re-confirmed if the deployment scales out. | grep | Dev |
 | **H-9** | **No truststore/keystore configuration.** `EfsClientConfig` uses `SimpleClientHttpRequestFactory` with default JVM trust. Good (no TLS bypass anywhere — verified) but if the VAN gateway presents a private-CA certificate, the CA must be imported into the JVM truststore; nothing in the repo does this. | `EfsClientConfig` | Ops |
 | **H-10** | **Duplicate `TB_FIRM_CONF` row.** Two rows share `(VN_VNM0004_000001, GV00000001)` with `ORG_STAT='1'`. `hasActiveFirmConfig` uses `exists`, so it tolerates this, but any `findBy…` returning a single row could be non-deterministic. | §4.4 | DBA + Dev |
+| **H-11** *(new 2026-08-01)* | **The PROD SFTP host is a different machine.** `R_SFTP_IP` is **`42.96.55.18`**; DEV and UAT are both `42.96.55.163`. Every other SFTP value (port `3300`, `sdata`/`rdata`/`rdata/success`) is identical across all three environments, which makes the host the single value that silently breaks if someone copies the DEV/UAT block forward. `.env.prod` currently holds `__SET_ON_SERVER__`, so nothing is wrong today — the risk is at fill-in time. **Recorded in §6.1 and in the checklist §1 SFTP line so it is seen at the point of copying.** | `wecms_batch.properties` `R_SFTP_IP` | Ops |
+| **H-12** *(new 2026-08-01)* | **`{ENV}_SFTP_CERT` is dead config in legacy — the effective key path follows the OS account.** [`SftpUtil.CertInit:57-59`](../../../WECMS_BATCH%20DEV/source/WECMS_BATCH/WECMS_BATCH/src/util/SftpUtil.java) accepts a `certPath` argument and **ignores it**, hardcoding `System.getProperty("user.home") + "/.ssh/id_rsa"`. The property values happen to agree with the process user's home (`was` on DEV/UAT → `/home/was/…`, `wildfly` on PROD → `/opt/wildfly/…`), so they are still the right values — but they are right *by coincidence of the account*, not because the property is read. Consequence: `WECMS_SFTP_KEY_PATH=/home/was/.ssh/id_rsa` is correct **only if `wecms-api` runs as `was`**. The refactor's `JschSftpClient` genuinely reads the property, so a service-account mismatch fails at connect time rather than falling back. **Action: "confirm the service account" added to the B4 checklist (§3).** | `SftpUtil.java:57-59` vs `wecms_batch.properties` | Ops + Dev |
 
 ### Medium
 
@@ -376,12 +389,133 @@ Severity: **C** = blocks activation · **H** = must fix before the affected leg 
 | M-4 | EFS/SFTP timeouts and `trust-forwarded-for` are hardcoded literals in the four profile YAMLs rather than variables — they cannot be tuned per environment without a rebuild. |
 | M-5 | No log-rotation, disk-monitoring, alert-hook or certificate-expiry configuration anywhere in the repository. |
 | M-6 | `.env.sit` and `.env.local` exist on disk but are correctly **untracked** (`git ls-files` shows only `*.example`). Confirm they are excluded from build artifacts too. |
+| M-7 *(new 2026-08-01)* | **`WECMS_SFTP_USERNAME` is a behavioural divergence, not a missing credential — and it is currently empty.** Legacy derives the SSH username **per transfer** from the row's `vanOrgCd` ([`FILE_DEPOSIT_TRANSFER_BATCH1:700`](../../../WECMS_BATCH%20DEV/source/WECMS_BATCH/WECMS_BATCH/src/batch/FILE_DEPOSIT_TRANSFER_BATCH1.java) → `SftpUtil.CertInit(cert, ip, port, id)`); the refactor uses one **static configured value** (`JschSftpClient:124` `jsch.getSession(props.getUsername(), …)`). The two are equivalent while a single VAN org is in play (`TB_FIRM_CONF.VAN_ORG_CD` = `GV00000001` on every row), so this is **recorded, not a defect** — but it becomes wrong the moment a second `VAN_ORG_CD` is onboarded. **Operational consequence today:** the variable is **empty** in `.env.local`, `.env.sit` and `.env.sit.example`, and `JschSftpClient:113` throws `"SFTP host/username not configured (B4)"` on an empty username — so the bulk leg fails at first use until it is set. Tracked as dependency 12a. |
+
+### Deliberate decisions (not findings)
+
+| # | Decision | Rationale |
+|---|---|---|
+| **D-1** *(recorded 2026-08-01)* | **SIT keeps legacy's staging paths; UAT/PROD deliberately diverge.** Full rationale in **§6.3**. The UAT/PROD template divergence to `/DATA/src-wecms/wecms-backend/upload-files/{send,receive}` is **the coexistence answer, not drift** — do not "fix" it back to legacy's paths. | §6.3 |
+| **D-2** *(2026-07-29; re-verified and consequences recorded 2026-08-01)* | **The `wecms.dispatch.efs.partner-id` property is retired. Do not reintroduce it.** Envelope `ID` is unconditionally `TB_FIRM_CONF.VAN_ORG_CD`; the vendor's `prtn_id` is a separate per-account body field from `BANK_PRTN_ID`. **Why it was right, not merely tidy:** `TB_FIRM_CONF`'s PK is `(biz_key, out_bank_cd, wdrl_act_no)`, so both identifiers are **per withdrawal account** — JEX DEV has `WEBC1` on account `700005285299` and `000001106` on `703009080996` under the *same* tenant and bank, with different `van_org_cd`s. **A single static property could only ever have been correct for one account**, so retiring it removed a latent wrong-identity bug rather than dead config. Enforced by `SchedulerConfigurationContractTest.partnerIdPropertyIsRetired`. | §6.1, dep. 8/8a |
 
 ---
 
 ## 6. Infrastructure Dependencies
 
-Status: **READY** = evidenced · **MISSING** = evidenced absent · **UNCLEAR** = `NEEDS CONFIRMATION`.
+### 6.0 Corrected framing (2026-08-01) — read this before the table
+
+The original framing of this section was **"provision these."** That is wrong for four of the items.
+Legacy WeCMS Batch is running in PROD today, dispatching payments daily. Its configuration therefore
+already exists, and most of it is either committed to this workspace or sitting in the shared JEX
+database. The correct instruction for those items is **"read the values legacy already uses."**
+
+| Item | Was framed as | Is actually |
+|---|---|---|
+| **B2** — VAN `API_KEY` | "provision out-of-band per environment" | **Not a vendor request.** Legacy `CommUtil.getApiKey` and the refactor's `VanApiKeyService` issue the *identical* query against the *same* shared JEX table. UAT/PROD inherit the real key from the DB-target decision with **zero provisioning steps** |
+| **Gate B** — `TB_BATCH_SCHEDULE_INFO`/`_DTL` | "**BLOCKING** — DBA must repeat the seed on UAT and PROD" | **Satisfied by construction on UAT/PROD.** Legacy reads the same two tables and dispatches daily, so the rows are already there. The seed script was only ever scoped to the refactor's **own separate DB** — which SIT has and UAT/PROD do not |
+| **EFS base-url** (UAT/PROD) | "**BLOCKING** — empty in both templates" | **In this repository.** `U_API_URL` and `R_API_URL` in `wecms_batch.properties`. Not blocking |
+| **Gate H** — the two dispatch indexes | implicitly a parity gap against legacy | **Exceeds legacy.** Legacy never runs these queries, so its zero indexes are no precedent. Justified by a **new access pattern**, not by matching legacy |
+
+**What did *not* change:** §4's deployed-runtime evidence, and therefore **C-1 remains the top blocker**.
+Knowing a value is recoverable says nothing about what a running host is actually configured with.
+
+**Method.** Legacy sources read at
+[`wecms_batch.properties`](../../../WECMS_BATCH%20DEV/source/WECMS_BATCH/WECMS_BATCH/web/WEB-INF/properties/wecms_batch.properties),
+[`CommUtil.java`](../../../WECMS_BATCH%20DEV/source/WECMS_BATCH/WECMS_BATCH/src/util/CommUtil.java),
+[`SftpUtil.java`](../../../WECMS_BATCH%20DEV/source/WECMS_BATCH/WECMS_BATCH/src/util/SftpUtil.java),
+[`FILE_DEPOSIT_TRANSFER_BATCH1.java`](../../../WECMS_BATCH%20DEV/source/WECMS_BATCH/WECMS_BATCH/src/batch/FILE_DEPOSIT_TRANSFER_BATCH1.java),
+`FILE_DEPOSIT_TRANSFER_API2_act.jsp` and `IDO.TB_VAN_API_INFO_R001.xml`; plus a read-only query of
+**JEX DEV** via the `postgres_dev_server_jexframe` MCP. **JEX UAT and PROD are not reachable from this
+workspace** — every UAT/PROD claim below is an inference from the 2026-06-09 DB-target decision
+(memory `project_uat_prod_live_jex_db_target`) plus "legacy PROD dispatches", and is marked
+**INFERRED — confirm with one query**. That confirmation is a `SELECT`, not a provisioning task.
+
+### 6.1 Where each value already lives
+
+`ENV_MODE` is `T`/`U`/`R` = DEV/UAT/PROD, per
+[`CommUtil.java:33-46`](../../../WECMS_BATCH%20DEV/source/WECMS_BATCH/WECMS_BATCH/src/util/CommUtil.java).
+
+| Our variable / item | Legacy source | DEV (`T_`) | UAT (`U_`) | PROD (`R_`) | Recoverable? |
+|---|---|---|---|---|---|
+| `WECMS_SFTP_HOST` | `{ENV}_SFTP_IP` | `42.96.55.163` | `42.96.55.163` | **`42.96.55.18`** ⚠ H-11 | **Repo** |
+| `WECMS_SFTP_PORT` | `{ENV}_SFTP_PORT` | `3300` | `3300` | `3300` | **Repo** |
+| `WECMS_SFTP_KEY_PATH` | `{ENV}_SFTP_CERT` | `/home/was/.ssh/id_rsa` | `/home/was/.ssh/id_rsa` | `/opt/wildfly/.ssh/id_rsa` | **Repo** — but see H-12, the property is dead config |
+| `WECMS_SFTP_REMOTE_UPLOAD` | `{ENV}_SFTP_PATH` | `sdata` | `sdata` | `sdata` | **Repo** |
+| `WECMS_SFTP_LOCAL_UPLOAD` | `{ENV}_SEND_PATH` | `/WAS_DATA/file/wecmsbatch/send` | idem | idem | **Repo** — but see **D-1** |
+| `WECMS_SFTP_LOCAL_DOWNLOAD` | `{ENV}_LOCAL_DOWN_PATH` | `/WAS_DATA/file/wecmsbatch/receive` | idem | idem | **Repo** — but see **D-1** |
+| `WECMS_SFTP_REMOTE_DOWNLOAD` | `{ENV}_REMOTE_DOWN_PATH` | `rdata` | `rdata` | `rdata` | **Repo** |
+| `WECMS_SFTP_REMOTE_MOVE` | `{ENV}_REMOTE_MOVE_PATH` | `rdata/success` | `rdata/success` | `rdata/success` | **Repo** |
+| `WECMS_SFTP_USERNAME` | *no property* — legacy passes `vanOrgCd` per transfer ([`BATCH1:700`](../../../WECMS_BATCH%20DEV/source/WECMS_BATCH/WECMS_BATCH/src/batch/FILE_DEPOSIT_TRANSFER_BATCH1.java)) | `GV00000001` | `GV00000001` | `GV00000001` | **DB** (`TB_FIRM_CONF.VAN_ORG_CD`) — and see M-7 |
+| `WECMS_SFTP_PASSWORD` | *none* — legacy calls `addIdentity(pkey)` with no passphrase | — | — | — | **Not an item.** Empty is correct |
+| **SFTP private key file** | host filesystem only | — | — | — | ❌ **The only genuinely out-of-band item in B4** |
+| `WECMS_EFS_BASE_URL` | `{ENV}_API_URL` | `https://dev-van-gw.webcashvietnam.com` | `https://dev-van-gw.webcashvietnam.com` ⚠ | `https://van-gw.webcashvietnam.com` | **Repo** |
+| `WECMS_EFS_ENABLED` | *no legacy counterpart* — legacy has no mock/real switch | `false` | `false` | `false` | Refactor-only safety flag; nothing to obtain |
+| **VAN `API_KEY`** | `TB_VAN_API_INFO.API_KEY`, shared JEX table | JEX DEV: 3 rows, all keyed (len 32) | INFERRED | INFERRED | **DB — inherited** |
+| **`TB_BATCH_SCHEDULE_INFO`/`_DTL`** | same two tables legacy reads | JEX DEV: **4 INFO + 12 DTL** | INFERRED | INFERRED | **DB — inherited** |
+
+⚠ **Legacy UAT points at the *dev* gateway.** `U_API_URL` is `dev-van-gw`, not a UAT-specific host. The
+value is not in doubt — it is verbatim legacy — but *whether that is still intended* is a fair question
+for the VAN Center. Ask it as a question about the value, not as a request for a missing one.
+
+**B2 — the two implementations, side by side.** Legacy
+[`CommUtil.getApiKey`](../../../WECMS_BATCH%20DEV/source/WECMS_BATCH/WECMS_BATCH/src/util/CommUtil.java)
+resolves IDO `TB_VAN_API_INFO_R001`, whose SQL is:
+
+```sql
+SELECT
+	API_KEY					--	API 암복호화KEY
+FROM TB_VAN_API_INFO
+WHERE VAN_ORG_CD = :VAN_ORG_CD
+```
+
+`VanApiKeyService` documents itself as a refactor of exactly that statement and reads the same table and
+column. `TB_VAN_API_INFO` is a legacy JEX table (PROD Active Table List; PK `van_org_cd`). Because UAT →
+JEX UAT DB and PROD → JEX PROD DB with zero data migration, **pointing `WECMS_DB_URL` at the live JEX
+database *is* the provisioning step.** Remaining work: one `SELECT` per environment confirming a row
+exists for that environment's `TB_FIRM_CONF.VAN_ORG_CD`.
+
+**Gate B — legacy reads the same two tables.**
+[`FILE_DEPOSIT_TRANSFER_BATCH1.java:271-273`](../../../WECMS_BATCH%20DEV/source/WECMS_BATCH/WECMS_BATCH/src/batch/FILE_DEPOSIT_TRANSFER_BATCH1.java)
+executes `TB_BATCH_SCHEDULE_INFO_R001` on `(BATCH_ID='NAPAS_REAL_TIME_BATCH', OUT_BANK_CD)`, and `:800-803`
+executes `TB_BATCH_SCHEDULE_DTL_R001` on `(BATCH_ID='FILE_DEPOSIT_TRANSFER_BATCH1', OUT_BANK_CD,
+ANT_DIV_CD)` — the same split-key behaviour `OperatingHoursService` reproduces. A missing INFO row makes
+legacy skip the row with *"No data to perform bulk transfer batch. Please check TB_BATCH_SCHEDULE_INFO."*
+(`:284-289`). JEX DEV carries **4 INFO + 12 DTL rows**, and the 12 DTL rows are identical to what the DBA
+seeded on 2026-07-28 — unsurprising, since the seed was transcribed *from* them. `.env.local` and
+`.env.sit` both target `172.168.5.172:5432/wecmsdevdb`, the refactor's own DB, which started empty; that
+is the only database the seed was ever needed on.
+
+> **Gate B exception — the VCB `970436` INFO row is real work.** Legacy has **no** `970436` INFO row at
+> all (JEX DEV confirms), so inheriting legacy's rows means VCB bulk dispatch keeps failing exactly as it
+> does in legacy. The refactor's seeded `970436 / ant_where_use_yn='N'` row (OQ-2) is a **refactor
+> addition**. On UAT/PROD, adding it is a **write to a live shared table the JEX batch reads** and needs
+> the same PO + DBA sign-off as narrowing the windows. This is the one part of Gate B that is not
+> satisfied by construction.
+
+**Gate H — not a parity gap.** Read-only `pg_constraint` + `pg_indexes` across all eleven dispatch tables
+on JEX DEV (`tb_firm_tran`, `tb_firm_bat_api_tran`, `tb_firm_file_mst`, `tb_firm_file_rslt`,
+`tb_firm_file_data`, `tb_pay_target`, `tb_pay_file_mst`, `tb_pay_file_data`, `tb_van_api_info`,
+`tb_batch_schedule_info`, `tb_batch_schedule_dtl`): **every one returns exactly one row — its primary
+key.** No secondary index, no unique constraint, no foreign key, no check constraint anywhere in the set.
+
+That is not a precedent for us, because **legacy never runs our query.** Grepping the two legacy callback
+handlers shows `TB_FIRM_BAT_API_TRAN_C001` (INSERT ×4) and `_U001` (UPDATE ×2) and **no SELECT against
+that table at all** — there is no R-series IDO for it. Our `existsByBizKeyAndFirmFileNmAndApiTranTp`
+idempotency probe is refactor-only code; it runs on the 01301 callback thread, synchronously, inside a
+VAN gateway timeout, against an append-only table that is never pruned, and it **cannot use the PK**
+(`PRIMARY KEY (tran_dt, biz_key, tran_seq, api_tran_tp, out_bank_cd, bank_prtn_id)` — leading `tran_dt`).
+
+So the indexes **exceed** legacy rather than matching it, and the need is real regardless: they are
+justified by the new access pattern, not by parity. **Still apply both before enabling any leg in
+UAT/PROD.** The same reasoning covers the three sweep indexes in
+[`dispatch_sweep_indexes_20260729.sql`](../../../Claude%20Code%20%28AI%29/sql/dispatch_sweep_indexes_20260729.sql)
+— five refactor-introduced indexes in total, all on shared legacy tables, all needing DBA sign-off.
+
+### 6.2 Dependency table
+
+Status: **READY** = evidenced · **MISSING** = evidenced absent · **UNCLEAR** = `NEEDS CONFIRMATION` ·
+**INHERITED** = the value exists in the live JEX DB and arrives with the DB-target decision (§6.0) ·
+**IN REPO** = the value is committed to this workspace (§6.1).
 Hostnames/ports marked `NEEDS CONFIRMATION` are **not invented** — the repository does not contain them.
 
 | # | Dependency | Why required | Component | Endpoint | Port / proto | Direction | Credential | Owner | Verify | DEV | SIT | UAT | PROD |
@@ -389,16 +523,18 @@ Hostnames/ports marked `NEEDS CONFIRMATION` are **not invented** — the reposit
 | 1 | PostgreSQL (refactor) | all state | every component | `172.168.5.172` (DEV/SIT); UAT/PROD `NEEDS CONFIRMATION` | 5432 / TCP | outbound | `WECMS_DB_PASSWORD` | Ops/DBA | `psql -c 'select 1'` | READY | READY | UNCLEAR | UNCLEAR |
 | 2 | Schema present, `ddl-auto: validate` | startup | all | — | — | — | — | DBA | app boots without a validate error | READY | READY | UNCLEAR | UNCLEAR |
 | 3 | `shedlock` table | scheduler locking | both dispatch jobs + 6 others | — | — | — | — | DBA | 8 rows present | READY | READY | UNCLEAR | UNCLEAR |
-| 4 | `TB_VAN_API_INFO.API_KEY` | AES/HMAC `EV`/`VV` | all EFS legs | — | — | — | `******` per VAN | Ops (out-of-band) | 2 rows keyed | READY | READY | MISSING | MISSING |
+| 4 | `TB_VAN_API_INFO.API_KEY` | AES/HMAC `EV`/`VV` | all EFS legs | — | — | — | `******` — **shared JEX table, not a vendor request** (§6.1) | ~~Ops (out-of-band)~~ → **DBA: verify only** | `SELECT` a row for that env's `VAN_ORG_CD` | READY | READY | **INHERITED** — INFERRED, confirm | **INHERITED** — INFERRED, confirm |
 | 5 | `TB_FIRM_CONF` `ORG_STAT='1'` | connecting-org gate | 201/202/203 + bulk | — | — | — | — | DBA | 3 rows | READY (dup, H-10) | READY | UNCLEAR | UNCLEAR |
-| 6 | **`TB_BATCH_SCHEDULE_INFO` / `_DTL` rows** | operating-hours gate; empty ⇒ every dispatch FAILS | realtime + bulk | — | — | — | — | DBA + PO | `select count(*)` > 0 | **READY** (3+12, §4.5) | **READY** (same DB) | UNCLEAR — must be seeded on the UAT DB | UNCLEAR — must be seeded on the PROD DB |
-| 7 | EFS / VAN Center gateway | all EFS legs | `EfsApiClient` | SIT template `dev-van-gw.webcashvietnam.com`; UAT/PROD `NEEDS CONFIRMATION` | 443 / HTTPS | outbound | partner `ID` + VAN key | Ops + VAN Center | `openssl s_client` + a 201 probe | reachable, **RC 1000** | UNCLEAR | MISSING | MISSING |
-| 8 | EFS partner id | envelope `ID` | all EFS legs | — | — | — | not a secret | VAN Center | `WECMS_EFS_PARTNER_ID` non-empty | MISSING | MISSING | MISSING | MISSING |
+| 6 | **`TB_BATCH_SCHEDULE_INFO` / `_DTL` rows** | operating-hours gate; empty ⇒ every dispatch FAILS | realtime + bulk | — | — | — | — | DBA + PO | `select count(*)` > 0 | **READY** (3+12, §4.5) | **READY** (same DB) | **INHERITED** — legacy reads the same tables and dispatches daily; INFERRED, confirm with one `count(*)`. ⚠ VCB `970436` row is the exception (§6.1) | **INHERITED** — same; ⚠ same VCB exception |
+| 7 | EFS / VAN Center gateway | all EFS legs | `EfsApiClient` | **IN REPO** — legacy `{ENV}_API_URL`: DEV/UAT `dev-van-gw.webcashvietnam.com`, PROD `van-gw.webcashvietnam.com` (§6.1) | 443 / HTTPS | outbound | VAN key (dep. 4) | Ops + VAN Center | `openssl s_client` + a 201 probe | reachable, **RC 1000** | UNCLEAR | **IN REPO** — copy `U_API_URL`; ⚠ legacy UAT uses the *dev* gateway — ask VAN whether that is still intended | **IN REPO** — copy `R_API_URL` |
+| ~~8~~ | ~~EFS partner id~~ → **RETIRED (D-2)** | ~~envelope `ID`~~ — `ID` is unconditionally `TB_FIRM_CONF.VAN_ORG_CD` | — | — | — | — | not a config value at all | ~~VAN Center~~ → **none** | n/a — contract test enforces the key's absence | **N/A** | **N/A** | **N/A** | **N/A** |
+| 8a | `TB_FIRM_CONF.VAN_ORG_CD` + `BANK_PRTN_ID` **per withdrawal account** | envelope `ID` **and** body `prtn_id` — the two fields the retired property was mistaken for | all EFS legs + both callbacks | — | — | — | not secrets | DBA + Ops | `SELECT … FROM tb_firm_conf ORDER BY biz_key, out_bank_cd, wdrl_act_no` — `van_org_cd` must match a `TB_VAN_API_INFO` row; `bank_prtn_id` must be bank-issued, not a placeholder | ⚠ **3 junk rows** (`van_org_cd='34534534'`, `bank_prtn_id='434534'`) | ⚠ same DB | UNCLEAR | UNCLEAR |
 | 9 | Outbound IP allow-listing at the gateway | gateway accepts our source IP | all EFS legs | — | 443 | outbound | — | Ops + VAN Center | gateway-side confirmation | UNCLEAR (RC 1000 candidate cause) | UNCLEAR | UNCLEAR | UNCLEAR |
 | 10 | TLS trust for the gateway CA | HTTPS handshake | `EfsClientConfig` | — | 443 | outbound | CA cert | Ops | `openssl s_client -verify_return_error` | UNCLEAR | UNCLEAR | UNCLEAR | UNCLEAR |
-| 11 | SFTP / external file service | bulk 00301 upload + 01302 download | `JschSftpClient` | `NEEDS CONFIRMATION` | template `3300` / SSH | outbound | key at `WECMS_SFTP_KEY_PATH` or `******` | Ops | `nc -vz` + `sftp -i` | MISSING | MISSING | MISSING | MISSING |
-| 12 | SFTP private key file + `0600` perms | key auth | `JschSftpClient` | local FS | — | — | **`******`** | Ops | `ls -l` = `-rw-------` | MISSING | MISSING | MISSING | MISSING |
-| 13 | Local staging dirs (send/receive) | file build + result parse | bulk reception / execution | `/DATA/src-wecms/wecms-backend/upload-files/{send,receive}` (UAT template) | — | — | — | Ops | `touch`/`ls` as the app user | MISSING (empty ⇒ tmpdir) | MISSING | UNCLEAR | UNCLEAR |
+| 11 | SFTP / external file service | bulk 00301 upload + 01302 download | `JschSftpClient` | **IN REPO** — legacy `{ENV}_SFTP_IP`: DEV/UAT `42.96.55.163`, **PROD `42.96.55.18`** (⚠ H-11) | `3300` / SSH | outbound | key at `WECMS_SFTP_KEY_PATH`; **no passphrase — legacy supplies none** | Ops | `nc -vz` + `sftp -i` | **IN REPO** (present in `.env.local`) | **IN REPO** (present in `.env.sit`) | **IN REPO** — copy `U_` values | **IN REPO** — copy `R_` values, **note the different host** |
+| 12 | SFTP private key file + `0600` perms | key auth | `JschSftpClient` | local FS | — | — | **`******`** | Ops | `ls -l` = `-rw-------`; **confirm the service account** (H-12) | MISSING | MISSING | MISSING | MISSING |
+| 12a | `WECMS_SFTP_USERNAME` | SSH user | `JschSftpClient` | — | — | — | not a secret — `TB_FIRM_CONF.VAN_ORG_CD` = `GV00000001` | Ops + DEV | non-empty; **divergence M-7** | **MISSING — empty in `.env.local`, throws at first use** | **MISSING — empty in `.env.sit`** | MISSING | MISSING |
+| 13 | Local staging dirs (send/receive) | file build + result parse | bulk reception / execution | **Deliberate split — see D-1.** SIT uses legacy's `/WAS_DATA/file/wecmsbatch/{send,receive}`; UAT/PROD diverge to `/DATA/src-wecms/wecms-backend/upload-files/{send,receive}` | — | — | — | Ops | `touch`/`ls` as the app user | MISSING (empty ⇒ tmpdir) | MISSING | UNCLEAR | UNCLEAR |
 | 14 | 10 × module storage roots | uploads/downloads | payment + settings | UAT/PROD `/DATA/src-wecms/wecms-backend/upload-files` | — | — | — | Ops | `touch`/`ls` | READY (Windows paths) | READY | UNCLEAR | UNCLEAR (H-4) |
 | 15 | Inbound callback reachability | 01301 / 01302 | callback controllers | `https://<api-host>/api/v1/payment/dispatch/callbacks/**` | 443 / HTTPS | **inbound** | none (unauthenticated) | Ops + VAN Center | `curl` from the gateway side | UNCLEAR | UNCLEAR | UNCLEAR | UNCLEAR |
 | 16 | Reverse proxy sets/strips `X-Forwarded-For` | IP allow-list correctness | `CallbackIpWhitelistFilter` | — | — | inbound | — | Ops | header inspection behind the proxy | **UNCLEAR — H-2** | UNCLEAR | UNCLEAR | UNCLEAR |
@@ -412,6 +548,38 @@ Hostnames/ports marked `NEEDS CONFIRMATION` are **not invented** — the reposit
 | 24 | Backup / PITR for the refactor DB | recovery from a bad sweep | all | — | — | — | — | DBA | restore drill | UNCLEAR | UNCLEAR | UNCLEAR | UNCLEAR |
 | 25 | Monitoring + alerting hooks | on-call | ops | — | — | — | — | Ops | alert fires on a synthetic failure | MISSING | MISSING | MISSING | MISSING |
 | 26 | Legacy-JEX coexistence decision (UAT/PROD DB target) | recovery cannot distinguish refactor rows | `StrandedRecoveryService` | — | — | — | — | PO + Ops | compare refactor vs JEX batch DB URL | safe (DB-separated) | safe (no JEX batch) | **UNCLEAR** | N/A |
+
+### 6.3 Staging-directory decision (D-1)
+
+`/WAS_DATA/file/wecmsbatch/{send,receive}` are **legacy's own directories** — `{T,U,R}_SEND_PATH` and
+`{T,U,R}_LOCAL_DOWN_PATH` in `wecms_batch.properties`, identical across all three legacy environments.
+`.env.local`, `.env.sit` and `.env.sit.example` point at them verbatim.
+
+Pointing at them **matches legacy exactly — and that is precisely the risk:**
+
+- **Correct for parity.** Same staging footprint, same backup/retention treatment, same ops runbook as the
+  system we are reproducing.
+- **Dangerous for coexistence.** Both systems build files named by the same `firm_file_nm` generator,
+  drawing from the same global `firm_file_seq_no`, into the same directory. A collision does **not** error
+  — it **overwrites**, and the loser's transfer either never uploads or uploads the wrong bytes.
+  **Neither system checks.** There is no log line, no failed row, and no alert on either side.
+
+**Which one applies depends entirely on whether legacy still runs on that host:**
+
+| Env | Legacy batch present? | Staging paths | Why |
+|---|---|---|---|
+| **SIT** | **No** (`JEX_BATCH` absent — refactor-only host) | **Legacy's** `/WAS_DATA/file/wecmsbatch/{send,receive}` | Pure parity benefit, zero coexistence risk |
+| **UAT** | **Yes** (`JEX_BATCH=true`) | **Diverged** `/DATA/src-wecms/wecms-backend/upload-files/{send,receive}` | Separate directories are the only thing preventing the silent overwrite |
+| **PROD** | **Yes** (`JEX_BATCH=true`) | **Diverged** — same as UAT | idem |
+
+**This is a deliberate decision, recorded here because it currently reads as drift.** Someone tidying the
+templates for consistency — or "restoring parity" — would reintroduce the overwrite risk on the two
+environments where money actually moves, and would get no error telling them so. If legacy is ever
+decommissioned on a host, the paths may be unified back to legacy's; until then the divergence stays.
+
+See also M-2 (both local path variables empty in `.env.sit.example` ⇒ silent fallback to
+`java.io.tmpdir`) — a *third* wrong answer, distinct from both options above. Operational restatement for
+Ops sits in the [infra checklist §3](wecms-batch-infra-team-checklist.md).
 
 ---
 
@@ -532,7 +700,7 @@ same global `firm_seq_no` / `firm_file_seq_no`), so ShedLock does not help there
 | # | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|---|
 | R1 | Someone activates a leg believing flags are OFF, when a deployed host already has them ON | **Realised** (§4.1) | High | Mandatory `env \| grep WECMS_` readout on every host before any change (runbook step 0) |
-| R2 | Dispatch enabled with `TB_BATCH_SCHEDULE_INFO` empty → 100 % of transfers fail + an alert storm | ~~High~~ → **Low on DEV/SIT** (seeded, §4.5); **High on UAT/PROD** (not yet seeded) | High | Seed and verify per environment before enabling. Residual: SWIFT/EBANK targets still fail on the realtime rail (no DTL row — PO routing decision) |
+| R2 | Dispatch enabled with `TB_BATCH_SCHEDULE_INFO` empty → 100 % of transfers fail + an alert storm | ~~High~~ → **Low on DEV/SIT** (seeded, §4.5); ~~High on UAT/PROD~~ → **Low on UAT/PROD** — the rows are inherited from the live JEX DB (§6.1) | High | ~~Seed~~ → **verify** per environment (`select count(*)`) before enabling. Residual: SWIFT/EBANK targets still fail on the realtime rail (no DTL row — PO routing decision), and the VCB `970436` INFO row genuinely does not exist in legacy (§6.1 exception) |
 | R3 | Callback endpoint abused — unauthenticated, IP filter fails open, XFF spoofable | Medium | **Critical** (money movement) | Populate `WECMS_CALLBACK_ALLOWED_IPS`, confirm the proxy strips inbound XFF, or add mTLS |
 | R4 | Recovery sweep double-processes legacy-JEX rows on a shared UAT/PROD DB | Medium | **Critical** | Keep double-gated OFF until Ops confirms distinct DB targets (dep. 26) |
 | R5 | Result-check misses transactions across the UTC/ICT day boundary | High once enabled | Medium | Fix H-7 before setting the cron |
@@ -551,9 +719,14 @@ same global `firm_seq_no` / `firm_file_seq_no`), so ShedLock does not help there
 
 1. **C-1** — capture `env | grep WECMS_` (secrets redacted) on every DEV/SIT/UAT host and reconcile against
    this document. Decide explicitly whether `recipient-inquiry` + `efs.enabled` stay on.
-2. ~~**C-2** — seed `TB_BATCH_SCHEDULE_INFO` / `_DTL`.~~ **CLOSED on the DEV/SIT DB** (§4.5). Still to do:
-   run the same seed on the **UAT and PROD** DBs once those targets are named, and close OQ-2 (VCB flag),
-   OQ-4 (CITAD 15:30 vs 16:30) and the SWIFT/EBANK realtime routing decision with the PO.
+2. ~~**C-2** — seed `TB_BATCH_SCHEDULE_INFO` / `_DTL`.~~ **CLOSED on the DEV/SIT DB** (§4.5).
+   ~~Still to do: run the same seed on the **UAT and PROD** DBs once those targets are named.~~
+   **Corrected 2026-08-01 — the UAT/PROD seed is not a task** (§6.1): legacy reads the same two tables and
+   dispatches daily, so the rows are inherited with the DB target. Remaining: **one `select count(*)` per
+   environment to confirm** (INFERRED — UAT/PROD are not reachable from this workspace); the **VCB
+   `970436` INFO row**, which does not exist in legacy and needs PO + DBA sign-off as a write to a live
+   shared table; and OQ-2 (VCB flag), OQ-4 (CITAD 15:30 vs 16:30) plus the SWIFT/EBANK realtime routing
+   decision with the PO.
 3. **C-3** — obtain from VAN Center the meaning of EFS 201 `RS_CD='1000'` and what must change.
 4. **C-4** — create `application-dev.yml` (or formally state that DEV uses the `local` profile).
 5. **C-5** — add `spring-boot-starter-actuator` so health and metrics exist.
@@ -576,7 +749,14 @@ same global `firm_seq_no` / `firm_file_seq_no`), so ShedLock does not help there
    [`batch-dispatch-variable-reference.md`](batch-dispatch-variable-reference.md).
 
 **Before enabling any leg**
-6. Author and run the `TB_BATCH_SCHEDULE_INFO` / `_DTL` seed (C-2), PO-approved windows.
+6. ~~Author and run the `TB_BATCH_SCHEDULE_INFO` / `_DTL` seed (C-2), PO-approved windows.~~
+   **Corrected 2026-08-01:** done for DEV/SIT; for UAT/PROD **verify** rather than seed (§6.1). The one
+   genuine write is the VCB `970436` INFO row, which needs PO + DBA sign-off.
+6a. **Read the legacy values forward instead of requesting them** (§6.1): `U_API_URL` / `R_API_URL` into
+   `WECMS_EFS_BASE_URL`, and the `{U,R}_SFTP_*` block into the SFTP variables — **noting that the PROD
+   SFTP host is `42.96.55.18`, not `42.96.55.163`** (H-11).
+6b. **Set `WECMS_SFTP_USERNAME`** (`GV00000001`) — it is empty everywhere and throws at first use (M-7).
+6c. **Confirm the OS account `wecms-api` runs as** before trusting `WECMS_SFTP_KEY_PATH` (H-12).
 7. Populate `WECMS_CALLBACK_ALLOWED_IPS` and confirm the reverse proxy strips client-supplied
    `X-Forwarded-For`; consider making `trust-forwarded-for` a variable rather than a hardcoded `true`.
 8. Fix H-7 (result-check UTC).

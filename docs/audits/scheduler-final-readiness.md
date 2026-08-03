@@ -107,7 +107,7 @@ Verified inputs:
 - **Rows per pass: unbounded** — `TbFirmTranRepository.findByTranTpAndProcStat` returns a plain `List`, no `Limit`/`Pageable`; the today+aged filter is in-memory. Legacy had no cap either, so **no cap was introduced** (parity preserved) — but it means the bound is chosen against expected load, not proven from code.
 - **Sequential** — one loop, one EFS 203 inquiry per row.
 - **Worst case per row ≈ 23 s** — `EfsProperties.connectTimeoutMs=3000` + `readTimeoutMs=20000`.
-- **Pacing** — `DispatchPacer`: Woori `970457` 3000 ms, else 100 ms, on the skip / comms-fail / original-fail branches.
+- **Pacing** — `DispatchPacer`: Woori `970457` 3000 ms, Shinhan `970424` 100 ms, **every other bank 3000 ms** (default raised from legacy's 100 on 2026-08-01 — D-A; no third bank has ever been on the paced rail, so legacy's 100 was an unexercised initialiser, not a measured value). Applied on the skip / comms-fail / original-fail branches.
 - **Errors don't shorten a pass** — failed rows are logged, left at `'6'`, paced, loop continues.
 
 Typical: 200 aged rows ≈ 4 min (all-Shinhan) to ≈ 13 min (all-Woori). Degraded (gateway timing out) ≈ 26 s/row, so **PT2M covered only ~4 Woori rows**. **PT30M** absorbs ~400 Woori rows at typical latency or ~70 fully-timed-out rows. A generous ceiling costs only a longer stale-lock window after a real crash; too small causes concurrent processing of live payment rows. `lockAtLeastFor` stays PT5S.

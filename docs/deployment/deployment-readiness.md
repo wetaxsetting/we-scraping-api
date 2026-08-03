@@ -29,7 +29,7 @@ read-only queries executed earlier the same day and recorded in
 | 4 | Batch configuration | **FAIL** | No `application-dev.yml`; no in-YAML defaults (missing var ⇒ startup abort); PROD template is a UAT clone |
 | 5 | Mock clients | **PASS** | Both mocks **throw**; inverse `@ConditionalOnProperty` — no fake-success path exists |
 | 6 | Real clients | **PARTIAL** | Real implementations present and correctly gated, but SFTP runs `StrictHostKeyChecking=no` |
-| 7 | API credentials | **FAIL** | `TB_VAN_API_INFO` DEV/SIT only; `WECMS_EFS_PARTNER_ID` empty in all 4 templates, silently substituted |
+| 7 | API credentials | **PARTIAL** *(was FAIL — rescoped 2026-08-01)* | ~~`TB_VAN_API_INFO` DEV/SIT only; `WECMS_EFS_PARTNER_ID` empty in all 4 templates, silently substituted~~ → `TB_VAN_API_INFO` is a **shared JEX table**, so UAT/PROD **inherit** the real key from the DB target (verify with one `SELECT`). **`WECMS_EFS_PARTNER_ID` was retired 2026-07-29 (D-2)** — nothing reads it, a contract test enforces its absence, and the envelope `ID` is unconditionally `TB_FIRM_CONF.VAN_ORG_CD` (no fallback, matching legacy). Real check: **`VAN_ORG_CD` + `BANK_PRTN_ID` per withdrawal account** — see §7 below |
 | 8 | SFTP | **FAIL** | Not provisioned in any environment; host key checking disabled; staging paths fall back to temp dir |
 | 9 | EFS | **FAIL** | Gateway reachable but rejecting **17/17** with `RS_CD='1000'`; no base-url for UAT/PROD |
 | 10 | Retry | **FAIL** | No retry exists anywhere on any transport; the only recovery net is double-gated OFF |
@@ -163,17 +163,47 @@ One production-hardening defect:
   ([VanApiKeyService.java:46-52](../../src/main/java/com/kosign/wecms/domain/payment/dispatch/van/client/VanApiKeyService.java#L46-L52))
   — fails closed on a money-moving path. Correct design.
 - Keys are never in YAML, env, or the repo; `EV`/`VV`/`API_KEY` values are never logged.
-- **`WECMS_EFS_PARTNER_ID` is empty in all four templates**, and the code does not fail on that — all seven
-  envelope-build sites do
-  `StringUtils.hasText(partnerId) ? partnerId : cmd.vanOrgCd()`
-  (e.g. [RealtimeTransferService.java:103-104](../../src/main/java/com/kosign/wecms/domain/payment/dispatch/service/RealtimeTransferService.java#L103-L104)).
-  So every live call silently sent `ID = GV00000001` instead of a provisioned partner id (the vendor sample
-  is `CORP000001`-shaped).
+- ~~**`WECMS_EFS_PARTNER_ID` is empty in all four templates**, and the code does not fail on that — all
+  seven envelope-build sites do `StringUtils.hasText(partnerId) ? partnerId : cmd.vanOrgCd()` … So every
+  live call silently sent `ID = GV00000001` instead of a provisioned partner id.~~
 
-  **Hypothesis, not a conclusion:** an unrecognised envelope `ID` is a plausible cause of the 17/17
-  `RS_CD='1000'` rejections in item 9. It is cheap to test — provision the partner id and re-probe 201
-  before escalating further to VAN Center. Either way, the silent substitution is wrong for a money path:
-  a blank partner id should fail loud like the missing API key does.
+  > **CORRECTED 2026-08-01 — this bullet and its hypothesis are both withdrawn.** Verification record:
+  > [readiness audit §6.1 + decision D-2](wecms-batch-infrastructure-readiness-audit.md); gate detail in
+  > [activation runbook §5.0-C](wecms-batch-activation-runbook.md).
+  >
+  > - **The property was retired 2026-07-29 (D-2)** and **nothing reads it** in source or build output.
+  >   `EfsProperties` has no `partnerId` field (`EfsProperties.java:67`), `getPartnerId()` exists nowhere
+  >   in `src/`, and the key is in no YAML.
+  >   `SchedulerConfigurationContractTest.partnerIdPropertyIsRetired` **enforces its absence across all
+  >   four profiles**. The cited ternary no longer exists and
+  >   `RealtimeTransferService.java:103-104` now points at unrelated code.
+  > - **The envelope `ID` is unconditionally `TB_FIRM_CONF.VAN_ORG_CD` — there is no fallback and no
+  >   "silent substitution".** `ID = VAN_ORG_CD` is exactly what **legacy** sends on every leg
+  >   (`NAPAS_REAL_TIME_BATCH:108`, `PROCESSING_RESULT_CHECK_BATCH:164`,
+  >   `FILE_DEPOSIT_TRANSFER_BATCH1:1208`, …), and legacy has no partner-id property at all. Sending
+  >   `GV00000001` is **correct behaviour, not a defect**.
+  > - **The `RS_CD='1000'` hypothesis is falsified — do not spend time on it.** There is no partner id to
+  >   provision, and the value we send is the one legacy has used in PROD for years. The vendor's
+  >   `CORP000001`-shaped sample is a **documentation sample**, not our provisioned identity. **C-3
+  >   remains open and still needs VAN Center** (item 9); this line of enquiry is closed.
+  > - **`prtn_id` is a different field.** The vendor's `prtn_id` (guide §5.9–5.13) is a *per-account
+  >   business-payload* value inside `EV`, sourced from `TB_FIRM_CONF.BANK_PRTN_ID` — not the §4 envelope
+  >   `ID`. Legacy keeps them distinct in one method from one row
+  >   (`PROCESSING_RESULT_CHECK_BATCH:112` vs `:153`).
+  >
+  > **What actually needs checking instead — per withdrawal account, per environment** (the PK is
+  > `(biz_key, out_bank_cd, wdrl_act_no)`, so one tenant+bank legitimately carries different values per
+  > account — which is also why a single static property could only ever have been right for one
+  > account):
+  >
+  > ```sql
+  > SELECT biz_key, out_bank_cd, wdrl_act_no, van_org_cd, bank_prtn_id, org_stat
+  >   FROM tb_firm_conf ORDER BY biz_key, out_bank_cd, wdrl_act_no;
+  > ```
+  >
+  > `van_org_cd` must match a `TB_VAN_API_INFO` row; `bank_prtn_id` must be bank-issued, not a
+  > placeholder. ⚠ Three JEX DEV rows for `VN_VNM0004_000001` carry `van_org_cd='34534534'` /
+  > `bank_prtn_id='434534'` — look at these before UAT.
 
 ### 8. SFTP — FAIL
 

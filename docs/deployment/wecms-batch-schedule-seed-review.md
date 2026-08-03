@@ -678,7 +678,7 @@ PROD. Those queries resolved four open questions and uncovered two confirmed def
 | `SELECT out_bank_cd, count(*) FROM tb_firm_conf GROUP BY 1` | exactly **3 banks: `970424` (9 rows), `970436` (2), `970457` (4)** — all `org_stat='1'` | **OQ-1 → RESOLVED** |
 | `SELECT current_setting('TimeZone')` on JEX DEV | **`Asia/Seoul`** (UTC+9) | **OQ-7 → RESOLVED, and it is a defect** |
 | `ant_div_cd` distribution in `tb_pay_target` | `CITAD` 39 · `NAPAS` 30 · `INTER` 28 · **`'E'` 2 · `'S'` 2** | **OQ-5 → CONFIRMED as a live failure** |
-| the 4 one-char rows in detail | `('970424','E')` × 2 → **`PROC_STAT='3'` (FAIL)**, 2025-09-18. `('970424','S')` × 2 → `PROC_STAT='9'` (WAIT), stranded since 2025-09-19 | — |
+| the 4 one-char rows in detail (**JEX DEV**) | `('970424','E')` × 2 → **`PROC_STAT='3'` (FAIL)**, 2025-09-18. `('970424','S')` × 2 → `PROC_STAT='9'` (WAIT), stranded since 2025-09-19 | — |
 | refactor DB state | **3 INFO + 12 DTL, `last_edtr='DBA_MANUAL'`, `reg_dttm=20260728180209`** — the seed script has already been executed | supersedes the "both tables empty" baseline |
 | `SELECT current_setting('TimeZone')` on the refactor DB | `Asia/Phnom_Penh` (UTC+7) — same offset as ICT, so DB-clock and ICT agree *there* | scopes the TZ defect to the JEX DB |
 
@@ -690,6 +690,11 @@ Two consequences worth stating plainly:
   refactor-only concern, and the seed's VCB row is confirmed necessary.
 - **OQ-5 is not theoretical.** Four real legacy pay-targets carried 1-char `ANT_DIV_CD`; two **failed**
   and two are **still stranded in WAIT**. This is the exact mechanism the first pass predicted.
+  **Environment: JEX DEV, not PROD** (corrected 2026-08-01). Every row in the table above was measured
+  on `postgres_dev_server_jexframe`; PROD incidence of the 1-char form is **unmeasured** and cannot be
+  measured from here (`.claude/rules/database.md` forbids PROD access). The mechanism is proven; the
+  production frequency is not. Do not quote these four rows as PROD failures — the correction exists
+  because they were cited that way once.
 
 ### 17.2 Confirmed defect A — timezone divergence (was R10 / OQ-7)
 

@@ -36,17 +36,58 @@ import java.util.List;
  *       owned here, not record fields.</li>
  * </ul>
  *
- * <h2>Charset assumption (documented)</h2>
- * All six UAT samples are <b>pure ASCII</b> (0 bytes &gt; 0x7F), so the on-wire bytes
- * are charset-independent for real legacy files. This codec uses {@link #CHARSET}
- * ({@code UTF-8}) for both width computation and slicing, which reproduces the samples
- * byte-for-byte. The legacy code used the JVM <i>platform-default</i> charset (no
- * explicit charset on {@code getBytes()}/{@code new String(...)}); for ASCII the two
- * are identical. Vietnamese names/addresses are tone-stripped to ASCII upstream
- * ({@code StrUtil.replaceTone} in BATCH1, out of K3 scope) before reaching the codec.
- * If a genuinely non-ASCII value were ever passed, width is measured in UTF-8 bytes
- * and an over-width value is rejected rather than mis-aligned — see the assumptions
- * note in the K3 report.
+ * <h2>Charset — RESOLVED for every entry path (C-13, closed 2026-07-31)</h2>
+ *
+ * <p>The question this section used to leave open — "which charset does the bank accept, and did
+ * legacy send multibyte bytes?" — <b>does not need answering for any value a user can enter</b>,
+ * because a four-link chain now makes it arithmetically impossible for such a value to reach the wire
+ * carrying a byte above {@code 0x7F}. Each link was verified in code on 2026-07-31:
+ * <ol>
+ *   <li>{@code PaymentWireWidthGuard} rejects non-Latin (any char {@code > 0x7F} after NFC +
+ *       tone-stripping) at the <b>entry</b> layer for the four user-typed {@code D}-record slots
+ *       ({@code WireField}: {@code RECEIVER_NAME}, both memos, {@code SENDER_NAME}). Wired on both
+ *       surfaces of all five payment modules — Excel-upload preview
+ *       ({@code *ExcelParser.check(WireField…)}) and save ({@code assertClean}) — in
+ *       {@code InternalTransferService}, {@code VendorPaymentService}, {@code ExpensePaymentService},
+ *       {@code PayrollPaymentService} and {@code OverseasPaymentExcelService}.
+ *       ({@code WITHDRAWAL_ACCOUNT_MEMO} has no direct call site because every writer sources that
+ *       column from the same value already checked as {@code DEPOSIT_ACCOUNT_MEMO}, and both slots are
+ *       210 bytes — the check is not missing, it is shared.)</li>
+ *   <li>{@code OverseasSenderNameGuard} covers {@code senderName}, the one slot with no entry surface
+ *       (server-derived from {@code ACCT_MSTR.ACCT_NM}) — rejecting at Overseas payment
+ *       creation/dispatch and warning at account registration.</li>
+ *   <li>{@link VietnameseText#replaceTone} is applied to all five text fields at file-build time
+ *       ({@code BulkReceptionService:678-687}), so precomposed Vietnamese is ASCII before it is
+ *       measured.</li>
+ *   <li>This codec's non-ASCII scanner (below) warns per field and the caller raises one ops alert per
+ *       file — defence in depth, catching anything the three links above cannot see.</li>
+ * </ol>
+ *
+ * <p><b>So {@link #CHARSET} is not load-bearing for entered text.</b> For a pure-ASCII record, UTF-8,
+ * US-ASCII, ISO-8859-1 and any platform default produce identical bytes, which is why this codec
+ * reproduces all six UAT samples byte-for-byte despite legacy having used the JVM platform default
+ * ({@code String.getBytes()} with no argument, legacy {@code StrUtil.rightPadWith:186}). Resolving PROD
+ * {@code file.encoding} is no longer a blocker for anything.
+ *
+ * <p><b>Two residual non-entry sources keep the scanner load-bearing — do not delete it.</b> The chain
+ * closes the entry paths, not the record:
+ * <ul>
+ *   <li><b>{@code rcptUseAddr}</b> (offset 818, 180 bytes — Overseas {@code BNFC_ADDR}) has <b>no
+ *       entry-layer charset guard</b>. It is byte-truncated
+ *       ({@code BulkReceptionService.byteTruncate}) so it cannot overflow, and it is tone-stripped, but
+ *       a non-Latin address reaches the wire with only a WARN + alert. This is <b>legacy-faithful</b>:
+ *       legacy also truncates and tone-strips it with no charset check, so no guard is added here. It
+ *       is a deliberate residual, not an oversight.</li>
+ *   <li><b>Rows this application did not write</b> — HAENGSUNG ERP raw passthrough
+ *       ({@code ErpPaymentRefreshMasterImporter}) and anything the live JEX system wrote to
+ *       {@code TB_PAY_FILE_DATA} on a shared DB. No refactor-side guard can see those.</li>
+ * </ul>
+ * For both, the honest position is the one the scanner already takes: observe, alert, still send.
+ * Turning the scanner into a reject would refuse payments over an unproven premise about the bank's
+ * charset, and for {@code rcptUseAddr} it would also be stricter than legacy.
+ *
+ * <p>Independent of charset, width is measured in {@code CHARSET} bytes and an over-width value is
+ * rejected rather than mis-aligned — see the overflow section below.
  *
  * <h2>Over-width fields: this codec throws; legacy silently corrupted the record</h2>
  *
@@ -149,25 +190,36 @@ public class FixedLengthCodec {
      * canonical example, plus HAENGSUNG ERP passthrough rows and anything the live JEX system wrote.
      * This is the only place all of those converge.
      *
-     * <h2>TODO — harden to a reject once the bank's charset is confirmed (K3 / C-13)</h2>
-     * This deliberately does <b>not</b> reject. The bank's accepted charset on this channel is
-     * <b>unconfirmed</b>: the UAT samples prove only that real files have been ASCII, not that
-     * non-ASCII is refused. Two things must be established first:
-     * <ol>
-     *   <li><b>The bank's actual accepted encoding</b> for the {@code D}-record text fields.</li>
-     *   <li><b>What legacy actually put on the wire.</b> Legacy encodes with the JVM
-     *       <i>platform-default</i> charset ({@code String.getBytes()} with no argument, legacy
-     *       {@code StrUtil.rightPadWith:186}). If PROD {@code file.encoding} resolved to
-     *       {@code US-ASCII} / {@code ISO-8859-1}, every multibyte character was silently replaced with
-     *       {@code '?'} (or mangled) before it ever reached the file — meaning <b>the bank may never
-     *       have received a multibyte byte on this channel</b>, and "reject" would be the true parity
-     *       behaviour rather than a tightening. This codec pins UTF-8, so it would send the real bytes
-     *       where legacy sent {@code '?'}. Resolving PROD {@code file.encoding} is the blocker; it is
-     *       also why {@link #CHARSET} is on the do-not-touch list (repinning it also changes
-     *       {@code BulkReceptionService.byteTruncate}, which reads the same constant while legacy's
-     *       truncator hardcodes UTF-8).
-     * </ol>
-     * Until both are answered, observe and alert. Do not silently change what goes on the wire.
+     * <h2>Observe-and-alert is the FINAL stance, not a placeholder (C-13, closed 2026-07-31)</h2>
+     * This deliberately does <b>not</b> reject, and that is now a settled decision rather than a
+     * pending one. An earlier revision of this Javadoc carried a TODO to "harden to a reject once the
+     * bank's charset is confirmed"; the premise has been overtaken. Rejecting <i>here</i> would add
+     * nothing for the paths that matter and would be a regression for the paths that remain:
+     * <ul>
+     *   <li><b>User-entered text is already rejected upstream</b>, at the entry layer where the row can
+     *       still be fixed — see the four-link chain in the class Javadoc. A reject at this point would
+     *       be unreachable for those values, and where it did fire it would fire mid-dispatch.</li>
+     *   <li><b>The two residual sources are ones a reject must not block.</b> {@code rcptUseAddr} has no
+     *       entry guard <i>by legacy parity</i> (legacy truncates + tone-strips it with no charset
+     *       check), so rejecting it here would be stricter than the system being replaced. ERP
+     *       passthrough / legacy-JEX-written rows are not ours to validate, and refusing a batch because
+     *       another system wrote a byte we dislike converts an unknown-acceptability file into a
+     *       definite non-payment.</li>
+     *   <li><b>The bank's accepted charset is still unconfirmed</b> — the UAT samples prove real files
+     *       have been ASCII, not that non-ASCII is refused. Building a reject on an unproven premise is
+     *       what this stance avoids.</li>
+     * </ul>
+     *
+     * <p>The old TODO also treated PROD {@code file.encoding} as a blocker, on the grounds that legacy's
+     * platform-default {@code getBytes()} may have silently written {@code '?'} where this codec writes
+     * real UTF-8 bytes. That divergence is real but now scoped to the two residual sources above, and it
+     * is <b>observable</b>: this scanner names the record, field and offset every time it happens. If a
+     * production alert ever fires, the alert itself is the trigger to resolve the encoding question for
+     * that specific field — which is a better sequence than blocking on it in the abstract.
+     *
+     * <p>{@link #CHARSET} nevertheless stays on the do-not-touch list: repinning it also changes
+     * {@code BulkReceptionService.byteTruncate}, which reads the same constant while legacy's truncator
+     * hardcodes UTF-8. Do not silently change what goes on the wire.
      *
      * @param nonAsciiSink optional collector; when non-null, every offending field is appended so the
      *                     caller can raise <b>one</b> alert per file (this class has no {@code VAN_ORG_CD}
@@ -230,11 +282,18 @@ public class FixedLengthCodec {
             }
             NonAsciiField finding =
                     new NonAsciiField(recordType, recordIndex, fieldName, offset, nonAscii, encoded.length);
-            // WARN, not ERROR: the file is still structurally valid and is still sent. This is an
-            // observation about content the bank may not accept — see the encode(...) TODO.
-            // The VALUE is deliberately not logged: these fields carry payer / payee names and memos.
-            log.warn("firm-banking file field carries non-ASCII bytes on the wire — the bank's accepted "
-                            + "charset is unconfirmed (K3 / C-13), so this is NOT rejected. {}",
+            // WARN, not ERROR: the file is still structurally valid and is still sent — see the
+            // "observe-and-alert is the FINAL stance" section on encode(...).
+            //
+            // Reaching this line means the value came from one of the two paths the entry chain cannot
+            // cover: rcptUseAddr (no entry guard, by legacy parity), or a row this application did not
+            // write (HAENGSUNG ERP passthrough, live-JEX). Every user-entered slot is rejected upstream,
+            // so a finding on senderName / receiverName / either memo is a genuine anomaly worth tracing
+            // to its writer. The VALUE is deliberately not logged: these fields carry payer / payee
+            // names and memos.
+            log.warn("firm-banking file field carries non-ASCII bytes on the wire — NOT rejected "
+                            + "(entry-layer guards cover every user-entered slot, so this value reached "
+                            + "dispatch by another route; the bank's accepted charset is unconfirmed). {}",
                     finding);
             if (sink != null) {
                 sink.add(finding);

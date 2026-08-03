@@ -5,6 +5,7 @@ import com.kosign.wecms.domain.payment.dispatch.constant.AntDivChannel;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmFileMst;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileData;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileMst;
+import com.kosign.wecms.domain.payment.dispatch.entity.TbPayTarget;
 import com.kosign.wecms.domain.payment.dispatch.enums.ApiTranTp;
 import com.kosign.wecms.domain.payment.dispatch.enums.ProcStat;
 import com.kosign.wecms.domain.payment.dispatch.enums.ProcStep;
@@ -40,9 +41,31 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
- * Read-only operational monitor for bulk pay-files stranded at {@code PROC_STAT='9'} (WAIT).
+ * Read-only operational monitor for stranded firm-banking dispatch rows — four sweeps over three
+ * tables, sharing one cause map, one aggregated alert and one ShedLock-serialised job:
+ * <ol>
+ *   <li>{@code TB_PAY_FILE_MST} at {@code PROC_STAT='9'} — bulk file never handed to reception;</li>
+ *   <li>{@code TB_FIRM_FILE_MST} at {@code PROC_STEP='0'}/{@code '1'}/{@code '2'} with
+ *       {@code PROC_STAT='6'} — reception never reconciled, or past {@code 00301} and awaiting a
+ *       confirmed {@code 00302} or its {@code 01302} result. <b>The {@code '0'} leg was added
+ *       2026-07-31</b>: before it, a batch whose phase B broke part-way left its unsent siblings visible
+ *       to nothing at all (the parent pay-file goes {@code '3'}, so both pay-file sweeps skip it), and so
+ *       did every file whose {@code 01301} was lost after the bank had accepted it;</li>
+ *   <li>{@code TB_PAY_FILE_MST} at {@code PROC_STAT='6'} — claimed but never finished (H-3 / N-3);</li>
+ *   <li>{@code TB_PAY_TARGET} at {@code PROC_STAT='9'} — the <b>real-time (202) rail</b>, added
+ *       2026-07-31, with its own grace window ({@link #payTargetThresholdMinutes}).</li>
+ * </ol>
  *
- * <h2>Why this exists</h2>
+ * <p><b>Why the fourth sweep has its own window.</b> Sweeps 1–3 watch a rail that legitimately waits —
+ * for an operating-hours window, for a callback, for a sibling. The real-time rail waits for nothing:
+ * {@code RealtimeDispatchRegistrar} hands each committed {@code TRAN_SEQ} to the 202 in an
+ * {@code afterCommit} hook, on the same thread, milliseconds after the approval transaction commits. A
+ * row still at WAIT minutes later is not early — the hand-off ran and returned or threw. Reusing
+ * {@link #thresholdMinutes} would either make sweeps 1–3 noisy or make sweep 4 blind for 15 minutes;
+ * separate knobs are what let both be tuned honestly. {@code classifyPayTarget} names which early exit
+ * happened.
+ *
+ * <h2>Why the first sweep exists</h2>
  * {@code OperatingHoursService.evaluateBulk} returns {@code SKIP} when a file's channel set is
  * empty, and {@code BulkReceptionService} then returns without writing anything — <b>no FAIL and
  * no ops alert</b>. That is deliberate legacy behaviour (legacy {@code !exeYN → continue}) and is
@@ -148,6 +171,10 @@ public class StuckPayFileMonitorService {
     private final com.kosign.wecms.domain.payment.dispatch.repository.TbFirmFileMstRepository firmFileMstRepository;
     /** Attempt history, to tell "retry pending" from "retry exhausted" without a new DB column. */
     private final com.kosign.wecms.domain.payment.dispatch.repository.TbFirmBatApiTranRepository firmBatApiTranRepository;
+    /** Fourth sweep: real-time (202) pay-targets stranded at {@code PROC_STAT='9'}. */
+    private final com.kosign.wecms.domain.payment.dispatch.repository.TbPayTargetRepository payTargetRepository;
+    /** Fourth sweep: distinguishes the permanent {@code REALTIME_DISPATCHED_NOT_CLAIMED} strand. */
+    private final com.kosign.wecms.domain.payment.dispatch.repository.TbFirmTranRepository firmTranRepository;
 
     /** Master gate — OFF by default. The sweep is inert until flipped on. */
     @Value("${wecms.dispatch.stuck-monitor.enabled:false}")
@@ -190,13 +217,54 @@ public class StuckPayFileMonitorService {
     @Value("${wecms.dispatch.stuck-monitor.pay-file-batch-size:200}")
     private int payFileBatchSize = 200;
 
+    /** Cap on the FOURTH ({@code TB_PAY_TARGET}) sweep. Same rationale as the three above. */
+    @Value("${wecms.dispatch.stuck-monitor.pay-target-batch-size:200}")
+    private int payTargetBatchSize = 200;
+
+    /**
+     * FOURTH sweep · its <b>own</b> grace window, in minutes. Default 5.
+     *
+     * <p>Deliberately <b>not</b> {@link #thresholdMinutes}. The two rails wait for different things, so
+     * one number cannot serve both:
+     * <ul>
+     *   <li>A <b>bulk pay-file</b> at WAIT is frequently waiting on an operating-hours window that opens
+     *       later in the day. 15 minutes is already aggressive there, and shortening it would report
+     *       files that are behaving correctly.</li>
+     *   <li>A <b>real-time pay-target</b> at WAIT is waiting on nothing. {@code RealtimeDispatchRegistrar}
+     *       hands the row to the 202 in an {@code afterCommit} hook — milliseconds after the approval
+     *       transaction commits, on the same thread. There is no queue, no schedule and no batch window
+     *       between the two. So a row still at {@code '9'} five minutes later did not "not start yet":
+     *       the hand-off ran and returned early (flag off, operating-hours SKIP, 204 failure) or threw
+     *       (missing {@code TB_FIRM_CONF}, unprovisioned API key).</li>
+     * </ul>
+     *
+     * <p>Five minutes rather than one: the {@code afterCommit} hook loops every {@code TRAN_SEQ} the
+     * payment committed and each 202 can take up to the EFS read timeout, so a large multi-line payment
+     * legitimately has late lines in flight for minutes. One minute would report rows the hook is still
+     * working through. Five clears that with margin while still being an order of magnitude tighter than
+     * the bulk window — which is the point of giving this sweep its own knob.
+     *
+     * <p>Coerced to at least 1 so a mis-set {@code 0} cannot turn the sweep into "report everything,
+     * including rows committed one second ago".
+     */
+    @Value("${wecms.dispatch.stuck-monitor.pay-target-threshold-minutes:5}")
+    private long payTargetThresholdMinutes = 5;
+
+    /**
+     * Read-only view of the real-time dispatch flag, for cause classification
+     * ({@link StuckPayFileCause#REALTIME_DISPATCH_FLAG_DISABLED}) — the real-time twin of
+     * {@link #autoReceiveEnabled}. This monitor never changes it.
+     */
+    @Value("${wecms.dispatch.realtime-dispatch:false}")
+    private boolean realtimeDispatchEnabled = false;
+
     /**
      * FIX H · How far back the firm-file sweep looks, in days, measured on {@code PROC_DTTM}.
      *
      * <p>Replaces the old {@code TRAN_DT = today} scope, which made a file stranded at 23:59 invisible
      * from 00:00 onward. This is the retention floor that keeps the now-dateless predicate from opening
      * a window over all history — see
-     * {@code TbFirmFileMstRepository.findStrandedBulkExecutionFiles}.
+     * {@code TbFirmFileMstRepository.findStrandedFirmFiles}.
      *
      * <p>Seven days so a Friday-night strand is still reported on Monday. Raising it widens the window
      * and the scan; a value below {@code 1} is coerced to {@code 1} rather than disabling the floor,
@@ -212,7 +280,9 @@ public class StuckPayFileMonitorService {
                                       OpsAlertService opsAlertService,
                                       Clock clock,
                                       com.kosign.wecms.domain.payment.dispatch.repository.TbFirmFileMstRepository firmFileMstRepository,
-                                      com.kosign.wecms.domain.payment.dispatch.repository.TbFirmBatApiTranRepository firmBatApiTranRepository) {
+                                      com.kosign.wecms.domain.payment.dispatch.repository.TbFirmBatApiTranRepository firmBatApiTranRepository,
+                                      com.kosign.wecms.domain.payment.dispatch.repository.TbPayTargetRepository payTargetRepository,
+                                      com.kosign.wecms.domain.payment.dispatch.repository.TbFirmTranRepository firmTranRepository) {
         this.payFileMstRepository = payFileMstRepository;
         this.payFileDataRepository = payFileDataRepository;
         this.firmConfRepository = firmConfRepository;
@@ -221,6 +291,8 @@ public class StuckPayFileMonitorService {
         this.clock = clock;
         this.firmFileMstRepository = firmFileMstRepository;
         this.firmBatApiTranRepository = firmBatApiTranRepository;
+        this.payTargetRepository = payTargetRepository;
+        this.firmTranRepository = firmTranRepository;
     }
 
     /**
@@ -275,20 +347,37 @@ public class StuckPayFileMonitorService {
         // monitoring and manual investigation, never to an automatic retry.
         List<TbPayFileMst> claimedStuck = findStrandedClaimedPayFiles(cutoff);
 
+        // FOURTH sweep — the real-time (202) rail: TB_PAY_TARGET rows still at PROC_STAT='9'. Its own
+        // grace window (see payTargetThresholdMinutes), because the after-commit hand-off fires
+        // immediately and has nothing to wait for, unlike a bulk file's operating-hours window.
+        //
+        // DETECTION ONLY, like the three above. StrandedRecoveryService re-drives this exact population
+        // through the atomic '9'→'6' claim — but it is coexistence-gated OFF and must stay off while the
+        // legacy batch may share the DB, which is precisely when this population is invisible. Read-only
+        // monitoring carries no such hazard (see the class Javadoc), so it can run while the mutating
+        // sweep cannot.
+        String payTargetCutoff = LocalDateTime.now(clock.withZone(ICT))
+                .minusMinutes(Math.max(1, payTargetThresholdMinutes))
+                .format(DTTM14);
+        List<TbPayTarget> payTargetStuck = findStrandedPayTargets(payTargetCutoff);
+
         // Prune tracking down to what is still stuck — a file that progressed must not keep
         // an entry (bounds the map, and makes a recurrence read as "newly stuck").
         Set<String> currentKeys = stuck.stream().map(StuckPayFileMonitorService::key)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
         firmStuck.stream().map(StuckPayFileMonitorService::firmKey).forEach(currentKeys::add);
         claimedStuck.stream().map(StuckPayFileMonitorService::claimedKey).forEach(currentKeys::add);
+        payTargetStuck.stream().map(StuckPayFileMonitorService::payTargetKey).forEach(currentKeys::add);
         firstSeen.keySet().retainAll(currentKeys);
 
-        if (stuck.isEmpty() && firmStuck.isEmpty() && claimedStuck.isEmpty()) {
+        if (stuck.isEmpty() && firmStuck.isEmpty() && claimedStuck.isEmpty() && payTargetStuck.isEmpty()) {
             // Reset the fingerprint so the next occurrence alerts immediately rather than
             // being suppressed as "unchanged".
             lastFingerprint = null;
-            log.debug("{} clean — no WAIT pay-file, no claimed-stranded pay-file and no stranded "
-                    + "firm-file older than {}m (cutoff={})", LOG_TAG, thresholdMinutes, cutoff);
+            log.debug("{} clean — no WAIT pay-file, no claimed-stranded pay-file, no stranded firm-file "
+                            + "older than {}m (cutoff={}) and no WAIT pay-target older than {}m "
+                            + "(cutoff={})",
+                    LOG_TAG, thresholdMinutes, cutoff, payTargetThresholdMinutes, payTargetCutoff);
             return StuckPayFileReport.empty();
         }
 
@@ -359,9 +448,34 @@ public class StuckPayFileMonitorService {
             }
         }
 
+        // Fourth sweep's rows share the cause map, the detail lines and the alert.
+        for (TbPayTarget pay : payTargetStuck) {
+            String k = payTargetKey(pay);
+            firstSeen.putIfAbsent(k, now);
+            StuckPayFileCause cause = classifyPayTarget(pay);
+            byCause.merge(cause, 1, Integer::sum);
+
+            long stuckMinutes = minutesSince(pay.getProcDttm(), now);
+            if (logged < maxAlertKeys) {
+                logged++;
+                log.warn("{} stranded pay-target biz_key={} tran_dt={} tran_seq={} out_bank_cd={} "
+                                + "ant_div_cd={} wdrl_act_no={} proc_stat={} proc_dttm={} "
+                                + "stuck_minutes={} cause={}",
+                        LOG_TAG, pay.getBizKey(), pay.getTranDt(), pay.getTranSeq(),
+                        pay.getOutBankCd(), pay.getAntDivCd(), pay.getWdrlActNo(),
+                        pay.getProcStat(), pay.getProcDttm(), stuckMinutes, cause);
+                detailLines.add(k + " cause=" + cause + " stuck_minutes=" + stuckMinutes);
+            }
+        }
+
         // Cap visibility (Phase 5): a truncated sweep must never read as a complete picture. Unlike the
         // result check (N-1) truncation here only under-reports — the age cutoff is in the same SQL as
         // the limit, so nothing is selected and then discarded.
+        if (payTargetStuck.size() >= Math.max(1, payTargetBatchSize)) {
+            log.warn("{} pay-target sweep cap reached (limit {}) — counts are a lower bound; raise "
+                            + "wecms.dispatch.stuck-monitor.pay-target-batch-size or shorten the interval",
+                    LOG_TAG, payTargetBatchSize);
+        }
         if (stuck.size() >= Math.max(1, payFileBatchSize)
                 || claimedStuck.size() >= Math.max(1, payFileBatchSize)) {
             log.warn("{} pay-file sweep cap reached (limit {}) — counts are a lower bound; raise "
@@ -375,12 +489,94 @@ public class StuckPayFileMonitorService {
 
         // Summary counters — the metrics substitute while actuator is absent (blocker C-5).
         log.warn("{} SUMMARY stuck_total={} claimed_stuck_total={} firm_file_stuck_total={} "
-                        + "threshold_minutes={} cutoff={} by_cause={}",
-                LOG_TAG, stuck.size(), claimedStuck.size(), firmStuck.size(),
-                thresholdMinutes, cutoff, byCause);
+                        + "pay_target_stuck_total={} threshold_minutes={} cutoff={} "
+                        + "pay_target_threshold_minutes={} pay_target_cutoff={} by_cause={}",
+                LOG_TAG, stuck.size(), claimedStuck.size(), firmStuck.size(), payTargetStuck.size(),
+                thresholdMinutes, cutoff, payTargetThresholdMinutes, payTargetCutoff, byCause);
 
-        boolean alerted = maybeAlert(stuck, firmStuck, byCause, detailLines, now);
-        return new StuckPayFileReport(stuck.size(), byCause, alerted, firmStuck.size(), claimedStuck.size());
+        boolean alerted = maybeAlert(stuck, firmStuck, payTargetStuck, byCause, detailLines, now);
+        return new StuckPayFileReport(stuck.size(), byCause, alerted, firmStuck.size(),
+                claimedStuck.size(), payTargetStuck.size());
+    }
+
+    /**
+     * Select {@code TB_PAY_TARGET} rows stranded at {@code PROC_STAT='9'} past the pay-target grace
+     * window — the real-time (202) rail's WAIT population.
+     *
+     * <p>Reuses {@code TbPayTargetRepository.findStrandedPayTargets}, the same bounded, oldest-first,
+     * age-cutoff-in-SQL finder {@code StrandedRecoveryService.recoverPayTargets} drives. Sharing the
+     * finder is deliberate: the monitor must report exactly the population the recovery sweep would act
+     * on, or the two disagree about what is stranded.
+     *
+     * <p>Not tenant-scoped, matching that finder and legacy {@code TB_PAY_TARGET_R001} — see the
+     * repository method's Javadoc. Safe here in a way it is not there, because this sweep never writes.
+     */
+    private List<TbPayTarget> findStrandedPayTargets(String cutoff) {
+        return payTargetRepository.findStrandedPayTargets(
+                ProcStat.WAIT.code(), cutoff, PageRequest.of(0, Math.max(1, payTargetBatchSize)));
+    }
+
+    /**
+     * Classify a real-time pay-target stranded at {@code PROC_STAT='9'} by <b>which early return or
+     * throw in {@code RealtimeDispatchService.dispatch} left it there</b> — evaluated in the order that
+     * method reaches them, most-explanatory first.
+     *
+     * <p>Derived entirely from existing rows and config (workspace rule §1 — no new column, no new
+     * table). All reads; {@code evaluateRealtime} performs two PK lookups and no writes.
+     */
+    private StuckPayFileCause classifyPayTarget(TbPayTarget pay) {
+        // The flag being off explains every stranded row on its own — report it first, exactly as the
+        // pay-file classifier does with auto-receive.
+        if (!realtimeDispatchEnabled) {
+            return StuckPayFileCause.REALTIME_DISPATCH_FLAG_DISABLED;
+        }
+
+        // Step 2 of dispatch(): a firm-tran row on the PAY-TARGET's TRAN_SEQ short-circuits as "already
+        // dispatched", so with the row still at WAIT that guard is permanent — every re-drive, including
+        // the recovery sweep's, is a no-op. Checked before the config and window tests because it
+        // outranks them: even a correctly-configured row inside its window cannot progress from here.
+        //
+        // Our own writes cannot produce this (the claim and the 202 insert are atomic, and the 204's
+        // sequence is independent), so a hit means a legacy-JEX-written or hand-edited row — see
+        // REALTIME_DISPATCHED_NOT_CLAIMED.
+        if (firmTranRepository.existsByTranDtAndBizKeyAndTranSeq(
+                pay.getTranDt(), pay.getBizKey(), pay.getTranSeq())) {
+            log.warn("{} stranded pay-target has a TB_FIRM_TRAN row on its OWN TRAN_SEQ — dispatch "
+                            + "step 2 will skip it as 'already dispatched' on EVERY re-drive, so it "
+                            + "cannot progress without manual intervention. biz_key={} tran_dt={} "
+                            + "tran_seq={} — this shape is not producible by the refactor (claim + 202 "
+                            + "insert are atomic), so it is a legacy-written or hand-edited row. Read "
+                            + "that row's TRAN_TP/RS_CD/PROC_STAT: a '202' row means a transfer "
+                            + "instruction exists and may have moved money. Reconcile with the VAN "
+                            + "Center and correct forward; do NOT reset the target to WAIT",
+                    LOG_TAG, pay.getBizKey(), pay.getTranDt(), pay.getTranSeq());
+            return StuckPayFileCause.REALTIME_DISPATCHED_NOT_CLAIMED;
+        }
+
+        // Step 3: dispatch() throws IllegalStateException when this row is missing, which the
+        // after-commit registrar swallows — so the row stays at '9' and will on every retry.
+        boolean confMissing = firmConfRepository
+                .findById(new TbFirmConfId(pay.getBizKey(), pay.getOutBankCd(), pay.getWdrlActNo()))
+                .isEmpty();
+        if (confMissing) {
+            return StuckPayFileCause.REALTIME_NO_FIRM_CONF;
+        }
+
+        // Step 3b: SKIP is the only operating-hours outcome that LEAVES a row at '9' — CUTOFF and
+        // NO_CRITERIA both write PROC_STAT='3'. So a '9' row that evaluates SKIP now is the window case;
+        // any other verdict means the window has since opened and nothing re-drove the row, which is the
+        // same actionable state (see the cause's Javadoc on why it is not self-healing).
+        if (operatingHoursService.evaluateRealtime(pay.getOutBankCd(), pay.getAntDivCd())
+                == OperatingHoursDecision.SKIP) {
+            return StuckPayFileCause.REALTIME_OPERATING_HOURS_SKIP;
+        }
+
+        return StuckPayFileCause.UNKNOWN;
+    }
+
+    /** Tracking key for the pay-target sweep, namespaced so it cannot collide with a pay-file key. */
+    private static String payTargetKey(TbPayTarget pay) {
+        return "TARGET|" + pay.getBizKey() + "|" + pay.getTranDt() + "|" + pay.getTranSeq();
     }
 
     /**
@@ -466,7 +662,7 @@ public class StuckPayFileMonitorService {
      * removed as K9 Option A. Keeping the scope without the mechanism that made it harmless is what
      * created the blind spot, so the window is now a {@code PROC_DTTM} range instead: older than the
      * stuck threshold, newer than {@link #retentionDays}. Rationale + the index implication are on
-     * {@code TbFirmFileMstRepository.findStrandedBulkExecutionFiles}.
+     * {@code TbFirmFileMstRepository.findStrandedFirmFiles}.
      *
      * @param cutoff the 14-char {@code yyyyMMddHHmmss} age threshold — rows at or after it are too
      *               recent to be considered stranded
@@ -481,18 +677,34 @@ public class StuckPayFileMonitorService {
         // the causes they produce, so classifyFirmFile never has to re-derive which state it is looking
         // at, and each keeps its own oldest-first bound. Cost is one extra bounded query per tick over a
         // table with 93 rows on JEX DEV.
-        List<TbFirmFileMst> atReceptionReceived = firmFileMstRepository.findStrandedBulkExecutionFiles(
+        List<TbFirmFileMst> atReceptionReceived = firmFileMstRepository.findStrandedFirmFiles(
                 ProcStep.REQ_RECV.code(), ProcStat.REQ.code(), cutoff, floor, page);
 
         // PROC_STEP='2' — 00302 accepted, 01302 result never received. Previously invisible to every
         // sweep: this finder filtered '1' only, and the parent pay-file reported the benign
         // AWAITING_EXECUTION_RESULT. Two PROD files sat here (20260407, 20260529 — 16 payment lines).
-        List<TbFirmFileMst> atExecutionRequested = firmFileMstRepository.findStrandedBulkExecutionFiles(
+        List<TbFirmFileMst> atExecutionRequested = firmFileMstRepository.findStrandedFirmFiles(
                 ProcStep.DEPO_REQ.code(), ProcStat.REQ.code(), cutoff, floor, page);
 
-        List<TbFirmFileMst> all = new ArrayList<>(atReceptionReceived.size() + atExecutionRequested.size());
+        // PROC_STEP='0' — reception never reconciled (2026-07-31). The third blind spot, and the one
+        // two-phase dispatch turned from rare into routine: a phase-B break at file k of N leaves files
+        // k+1..N committed here, unsent, while the parent pay-file goes '3' — so BOTH pay-file sweeps
+        // skip them and this finder used to filter '1'/'2' only. Same state also holds every lost-01301
+        // file, where the bank DOES have the batch (27 of the 30 rows at this state on JEX DEV carry a
+        // 00301 audit row, verified read-only 2026-07-31).
+        //
+        // Same finder as the two above. It ages on COALESCE(NULLIF(PROC_DTTM,''), REG_DTTM) because
+        // neither legacy nor phase A writes PROC_DTTM on insert, so a PROC_DTTM-only predicate would
+        // select nothing for this state; unifying the rule across all three steps was the 2026-08-01
+        // decision — see TbFirmFileMstRepository.findStrandedFirmFiles.
+        List<TbFirmFileMst> atReceptionRequested = firmFileMstRepository.findStrandedFirmFiles(
+                ProcStep.REQ.code(), ProcStat.REQ.code(), cutoff, floor, page);
+
+        List<TbFirmFileMst> all = new ArrayList<>(atReceptionReceived.size()
+                + atExecutionRequested.size() + atReceptionRequested.size());
         all.addAll(atReceptionReceived);
         all.addAll(atExecutionRequested);
+        all.addAll(atReceptionRequested);
         return all;
     }
 
@@ -531,6 +743,8 @@ public class StuckPayFileMonitorService {
      * construction. The asymmetry is in the writers, not in the classifier.
      */
     private StuckPayFileCause classifyFirmFile(TbFirmFileMst file) {
+        // PROC_STEP='2' is decided FIRST and is never overridden by the parent's state — see the
+        // parent-check block below for why.
         // PROC_STEP='2' — the step itself is the evidence: only BulkExecutionInlineTxService writes it,
         // and only after the 00302 returned 0000/BT00. So there is nothing to infer from an audit row;
         // the instruction is confirmed-accepted and the missing piece is the 01302 RESULT.
@@ -549,6 +763,59 @@ public class StuckPayFileMonitorService {
                             + "per-line outcome with the VAN Center and reconcile forward",
                     LOG_TAG, file.getBizKey(), file.getFirmFileNm(), file.getReqCnt(), resultCallbackSeen);
             return StuckPayFileCause.BULK_EXECUTION_RESULT_NOT_RECEIVED;
+        }
+
+        // ── Parent-batch check, for PROC_STEP='0' and '1' only ────────────────────────────────────
+        // A file whose parent TB_PAY_FILE_MST is already '3' belongs to an ABANDONED batch: phase B
+        // marks the pay-file FAIL and `break`s on the first failure, so the siblings after that point
+        // were never sent. Classifying such a file as *_NOT_ISSUED is actively dangerous — the runbook
+        // says re-drive is routine for that cause, and re-driving one file of an abandoned batch
+        // part-executes a payment the system already reported as failed. Checked BEFORE the audit-row
+        // split so it wins over both NOT_ISSUED verdicts.
+        //
+        // Deliberately not applied to PROC_STEP='2' (handled and returned above): there the 00302 was
+        // accepted, so BULK_EXECUTION_RESULT_NOT_RECEIVED carries the stronger warning and the parent's
+        // state would only dilute it.
+        boolean parentFailed = payFileMstRepository
+                .findByTranDtAndBizKeyAndFileSeqNo(file.getTranDt(), file.getBizKey(), file.getFileSeqNo())
+                .map(pay -> ProcStat.FAIL.code().equals(pay.getProcStat()))
+                .orElse(false);
+        if (parentFailed) {
+            log.warn("{} firm file stranded in an ABANDONED batch biz_key={} tran_dt={} file_seq_no={} "
+                            + "firm_file_nm={} proc_step={} — the parent TB_PAY_FILE_MST is PROC_STAT='3', "
+                            + "so an earlier sibling failed and phase B stopped. Do NOT re-drive this "
+                            + "file on its own: confirm with the VAN Center which siblings the bank "
+                            + "received, then re-create or reconcile the batch as a unit",
+                    LOG_TAG, file.getBizKey(), file.getTranDt(), file.getFileSeqNo(),
+                    file.getFirmFileNm(), file.getProcStep());
+            return StuckPayFileCause.BULK_BATCH_PARENT_FAILED;
+        }
+
+        // PROC_STEP='0' — reception never reconciled. The 00301 audit row splits the two dispositions:
+        // present => the request went out and the bank has the file (reconcile forward, never re-drive);
+        // absent  => the call was never reached, nothing was sent (safe to re-dispatch).
+        //
+        // The probe carries no date predicate, matching the 00302 probe above (FIX G). Verified on JEX
+        // DEV 2026-07-31 that both variants agree on this leg (27 of 30 either way) — BulkReceptionService
+        // writes this audit row with the same tranDt it stamps on the file — but dropping the predicate
+        // costs nothing and keeps the fail-safe direction (a row that exists is always found).
+        if (ProcStep.REQ.code().equals(file.getProcStep())) {
+            boolean receptionIssued = firmBatApiTranRepository.existsByBizKeyAndFirmFileNmAndApiTranTp(
+                    file.getBizKey(), file.getFirmFileNm(), ApiTranTp.BULK_RECEPTION.code());
+            if (receptionIssued) {
+                log.warn("{} firm file stranded at PROC_STEP=0/PROC_STAT=6 WITH a 00301 audit row "
+                                + "biz_key={} firm_file_nm={} req_cnt={} — the reception request WAS "
+                                + "issued, so the bank has this file and the 01301 result was lost. "
+                                + "NEVER re-drive; reconcile forward with the VAN Center",
+                        LOG_TAG, file.getBizKey(), file.getFirmFileNm(), file.getReqCnt());
+                return StuckPayFileCause.BULK_RECEPTION_RESULT_NOT_RECEIVED;
+            }
+            log.warn("{} firm file stranded at PROC_STEP=0/PROC_STAT=6 with NO 00301 audit row "
+                            + "biz_key={} firm_file_nm={} req_cnt={} — never sent (staging/SFTP failure, "
+                            + "or a phase-B break at an earlier sibling). Parent pay-file is not FAIL, so "
+                            + "re-dispatch is safe once the cause is understood",
+                    LOG_TAG, file.getBizKey(), file.getFirmFileNm(), file.getReqCnt());
+            return StuckPayFileCause.BULK_RECEPTION_NOT_ISSUED;
         }
 
         boolean issued = firmBatApiTranRepository.existsByBizKeyAndFirmFileNmAndApiTranTp(
@@ -616,11 +883,12 @@ public class StuckPayFileMonitorService {
      */
     private boolean maybeAlert(List<TbPayFileMst> stuck,
                                List<TbFirmFileMst> firmStuck,
+                               List<TbPayTarget> payTargetStuck,
                                Map<StuckPayFileCause, Integer> byCause,
                                List<String> detailLines,
                                Instant now) {
-        int total = stuck.size() + firmStuck.size();
-        String fingerprint = fingerprint(stuck, firmStuck, byCause);
+        int total = stuck.size() + firmStuck.size() + payTargetStuck.size();
+        String fingerprint = fingerprint(stuck, firmStuck, payTargetStuck, byCause);
         boolean changed = !fingerprint.equals(lastFingerprint);
         boolean heartbeatDue = lastAlertAt == null
                 || Duration.between(lastAlertAt, now).toMinutes() >= reAlertMinutes;
@@ -642,9 +910,15 @@ public class StuckPayFileMonitorService {
                     .orElse(null);
         }
         if (vanOrgCd == null) {
+            // A stranded pay-target resolves its own TB_FIRM_CONF the same way a pay-file does — and on
+            // a real-time-only strand it is the ONLY row that can, since the two pay-file lists are
+            // empty in that case.
+            vanOrgCd = resolveVanOrgCdFromPayTargets(payTargetStuck);
+        }
+        if (vanOrgCd == null) {
             // Do NOT mark as alerted — retry next sweep once a config row is resolvable.
-            log.warn("{} alert skipped — no TB_FIRM_CONF row resolves a VAN_ORG_CD for any stuck file",
-                    LOG_TAG);
+            log.warn("{} alert skipped — no TB_FIRM_CONF row resolves a VAN_ORG_CD for any stuck file "
+                    + "or pay-target", LOG_TAG);
             return false;
         }
 
@@ -652,7 +926,9 @@ public class StuckPayFileMonitorService {
                 .append("대량이체 파일 지연 (bulk file stuck).")
                 .append("\nWAIT_PAY_FILE_TOTAL : ").append(stuck.size())
                 .append("\nSTRANDED_FIRM_FILE_TOTAL : ").append(firmStuck.size())
+                .append("\nWAIT_PAY_TARGET_TOTAL : ").append(payTargetStuck.size())
                 .append("\nTHRESHOLD_MIN : ").append(thresholdMinutes)
+                .append("\nPAY_TARGET_THRESHOLD_MIN : ").append(payTargetThresholdMinutes)
                 .append("\nBY_CAUSE : ").append(byCause);
         for (String line : detailLines) {
             body.append("\n- ").append(line);
@@ -674,10 +950,13 @@ public class StuckPayFileMonitorService {
      * leaving the set, or changing cause, produces a different fingerprint and re-alerts.
      */
     private String fingerprint(List<TbPayFileMst> stuck, List<TbFirmFileMst> firmStuck,
+                               List<TbPayTarget> payTargetStuck,
                                Map<StuckPayFileCause, Integer> byCause) {
         return Stream.concat(
-                        stuck.stream().map(StuckPayFileMonitorService::key),
-                        firmStuck.stream().map(StuckPayFileMonitorService::firmKey))
+                        Stream.concat(
+                                stuck.stream().map(StuckPayFileMonitorService::key),
+                                firmStuck.stream().map(StuckPayFileMonitorService::firmKey)),
+                        payTargetStuck.stream().map(StuckPayFileMonitorService::payTargetKey))
                 .sorted(Comparator.naturalOrder())
                 .collect(Collectors.joining(",")) + "|" + byCause;
     }
@@ -688,6 +967,28 @@ public class StuckPayFileMonitorService {
             Optional<TbFirmConf> conf = firmConfRepository.findById(
                     new TbFirmConfId(pay.getBizKey(), pay.getOutBankCd(), pay.getWdrlActNo()));
             String vanOrgCd = conf.map(TbFirmConf::getVanOrgCd).orElse(null);
+            if (vanOrgCd != null && !vanOrgCd.isBlank()) {
+                return vanOrgCd.trim();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * First resolvable {@code TB_FIRM_CONF.VAN_ORG_CD} among the stranded pay-targets — the same
+     * {@code (BIZ_KEY, OUT_BANK_CD, WDRL_ACT_NO)} key {@code RealtimeDispatchService} uses.
+     *
+     * <p>Returns null for a {@link StuckPayFileCause#REALTIME_NO_FIRM_CONF} strand, which is correct:
+     * the missing config row is the reason there is no VAN to alert. If every stranded row has that
+     * cause the alert is skipped and the WARN logs above are the signal — which is why the per-row
+     * logging is not conditional on alerting.
+     */
+    private String resolveVanOrgCdFromPayTargets(List<TbPayTarget> payTargetStuck) {
+        for (TbPayTarget pay : payTargetStuck) {
+            String vanOrgCd = firmConfRepository
+                    .findById(new TbFirmConfId(pay.getBizKey(), pay.getOutBankCd(), pay.getWdrlActNo()))
+                    .map(TbFirmConf::getVanOrgCd)
+                    .orElse(null);
             if (vanOrgCd != null && !vanOrgCd.isBlank()) {
                 return vanOrgCd.trim();
             }

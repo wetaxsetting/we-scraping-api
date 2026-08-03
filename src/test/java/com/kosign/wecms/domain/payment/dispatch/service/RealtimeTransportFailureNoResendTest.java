@@ -363,8 +363,9 @@ class RealtimeTransportFailureNoResendTest {
     @DisplayName("recovery sweep selects only PROC_STAT='9' — a parked '6' is never re-driven")
     void recoverySweep_selectsOnlyWaitRows_soParkedSixIsNeverResent() {
         StrandedRecoveryService recovery = new StrandedRecoveryService(
-                payTargetRepository, payFileMstRepository, dispatchService, bulkReceptionService,
-                resultCheckService, com.kosign.wecms.common.lock.JobLockGuardStubs.alwaysFree());
+                payTargetRepository, payFileMstRepository, bulkReceptionService,
+                resultCheckService, com.kosign.wecms.common.lock.JobLockGuardStubs.alwaysFree(),
+                mock(RealtimeDispatchQueue.class));
         ReflectionTestUtils.setField(recovery, "enabled", true);
         ReflectionTestUtils.setField(recovery, "graceMinutes", 30L);
 
@@ -398,10 +399,13 @@ class RealtimeTransportFailureNoResendTest {
     @Test
     @DisplayName("a stranded '9' target IS re-driven (proves the sweep is not inert)")
     void strandedWaitTarget_isReDriven() {
-        RealtimeDispatchService dispatchSpy = mock(RealtimeDispatchService.class);
+        // C-6: the sweep re-drives by handing the row to the shared paced drain, not by calling the
+        // gateway itself — so "re-driven" is asserted on the queue.
+        RealtimeDispatchQueue queueSpy = mock(RealtimeDispatchQueue.class);
         StrandedRecoveryService recovery = new StrandedRecoveryService(
-                payTargetRepository, payFileMstRepository, dispatchSpy, bulkReceptionService,
-                resultCheckService, com.kosign.wecms.common.lock.JobLockGuardStubs.alwaysFree());
+                payTargetRepository, payFileMstRepository,
+                bulkReceptionService, resultCheckService,
+                com.kosign.wecms.common.lock.JobLockGuardStubs.alwaysFree(), queueSpy);
         ReflectionTestUtils.setField(recovery, "enabled", true);
         ReflectionTestUtils.setField(recovery, "graceMinutes", 30L);
 
@@ -412,6 +416,6 @@ class RealtimeTransportFailureNoResendTest {
 
         recovery.recoverOnce();
 
-        verify(dispatchSpy).dispatch(BIZ_KEY, TRAN_DT, TRAN_SEQ);
+        verify(queueSpy).enqueue(BIZ_KEY, TRAN_DT, TRAN_SEQ);
     }
 }

@@ -146,7 +146,7 @@ class DispatchBlockedCharFailureTest {
                 firmFileMstRepository, firmFileDataRepository, firmBatApiTranRepository,
                 dispatchKeyGenerator, codec, sftpClient, sftpProperties, bulkTransferValidator,
                 opsAlertService, operatingHoursService,
-                new BulkDispatchClaimTxService(payFileMstRepository),
+                new BulkDispatchClaimTxService(payFileMstRepository, firmFileMstRepository),
                 blockedCharGuard, outBankCdNormalizer, perFileTxManager);
 
         when(operatingHoursService.evaluateRealtime(any(), any())).thenReturn(OperatingHoursDecision.DISPATCH);
@@ -271,19 +271,25 @@ class DispatchBlockedCharFailureTest {
                 .doesNotThrowAnyException();
 
         // The pay-file reaches a terminal '3' — never left at the claimed '6'.
-        ArgumentCaptor<TbPayFileMst> cap = ArgumentCaptor.forClass(TbPayFileMst.class);
-        verify(payFileMstRepository, atLeastOnce()).save(cap.capture());
-        List<String> statuses = cap.getAllValues().stream().map(TbPayFileMst::getProcStat).toList();
-        assertThat(statuses).contains(ProcStat.FAIL.code());
-        assertThat(statuses).doesNotContain(ProcStat.REQ.code());
-
-        // RS_MSG names the field + character(s) (TB_PAY_FILE_MST has the column; TB_PAY_TARGET does not).
-        assertThat(cap.getAllValues().stream().map(TbPayFileMst::getRsMsg).filter(java.util.Objects::nonNull).toList())
-                .anySatisfy(msg -> assertThat(msg).contains(BLOCKED_MSG));
+        //
+        // Two-phase dispatch: the guard now runs in phase A, which rolls back the WHOLE group, so the
+        // terminal state is written by the '6'-guarded UPDATE rather than an entity save (there is no
+        // surviving firm-file row to stamp — see recordGroupRejection). RS_MSG still carries the field
+        // and character(s); TB_PAY_FILE_MST has the column, TB_PAY_TARGET does not.
+        ArgumentCaptor<String> rsMsg = ArgumentCaptor.forClass(String.class);
+        verify(payFileMstRepository).failClaimedPayFile(
+                org.mockito.ArgumentMatchers.eq(BIZ_KEY),
+                org.mockito.ArgumentMatchers.eq(TRAN_DT),
+                org.mockito.ArgumentMatchers.eq(FILE_SEQ_NO),
+                rsMsg.capture(), anyString());
+        assertThat(rsMsg.getValue()).contains(BLOCKED_MSG);
 
         verify(opsAlertService).notify(eqVan(), contains(BLOCKED_MSG));
 
-        // Pre-egress: nothing uploaded, no 00301 issued.
+        // Group-wide rejection (legacy Gate A, FILE_DEPOSIT_TRANSFER_BATCH1:113-266): phase A rolled
+        // back, so no firm-file row survives to be stamped — and nothing was uploaded or 00301'd.
+        verify(firmFileMstRepository, never()).failFirmFile(anyString(), anyString(), anyString(),
+                anyString(), anyString(), anyString(), anyString());
         verify(sftpClient, never()).upload(anyString(), anyString());
     }
 

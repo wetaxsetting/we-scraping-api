@@ -120,7 +120,7 @@ VAN 01301 → BulkReceptionResultController → BulkReceptionResultService.handl
        ├─ 203 row → STAT='0' + confirmed detail                              (U003)
        ├─ DispatchResultTxService.finalizeOriginalAndPayTarget [REQUIRES_NEW] (U004 + U001)
        └─ org_resp_cd≠0000 → "처리결과조회 Batch 원거래오류" alert            (legacy 6-2 :391)
-       DispatchPacer.pause(outBankCd)   Woori 3000ms / else 100ms            (WCConst.PER_DELAY_*)
+       DispatchPacer.pause(outBankCd)   Woori 3000 / Shinhan 100 / else 3000 (D-A: default != legacy 100)
 ```
 
 ---

@@ -207,6 +207,43 @@ Execution is a **manual DBA action** per root `CLAUDE.md` §"2. Manual DDL execu
 | S-4 | **Supply the VAN gateway source IPs** (see §5a) | VAN Center → Ops | ⏳ external |
 | S-5 | Confirm `callback.protection` + `trusted-proxies` per environment | Ops | ⏳ |
 | S-6 | CI: clean daemon, never two concurrent Gradle invocations on one tree | Dev / CI | ⏳ |
+| S-7 | **Recognised risk — first domestic VND 202 may be rejected for a missing FX block.** See below. Not a defect; a *diagnosis shortcut* | Dev + VAN Center | ⏳ watch |
+
+#### S-7 — first domestic VND 202: read this before debugging (EFS guide F-4)
+
+**If the very first domestic VND real-time transfer in SIT is rejected by the gateway with a
+missing/required-field error, check this first — it is a five-second diagnosis and otherwise looks
+like a serialization bug.**
+
+REST API guide v1.2.6 **§5.4** prints all eight FX fields of the 202 request as **`Mondatory`** with
+**no conditional qualifier**:
+
+```
+withd_curren_cd  String(3)   Mondatory  출금통화코드: USD 고정
+dep_curren_cd    String(3)   Mondatory  입금통화코드 VND
+apl_exc_rate_itg Number(22)  Mondatory  적용환율 정수
+apl_exc_rate_dcm Number(3)   Mondatory  적용환율 소수
+withd_amt_itg    Number(22)  Mondatory  출금금액 정수
+withd_amt_dcm    Number(3)   Option     출금금액 소수
+dep_amt_itg      Number(22)  Mondatory  입금금액 정수
+dep_amt_dcm      Number(3)   Option     입금금액 소수
+```
+
+We populate this block **only** on the Woori (`970457`) / non-VND branch, fed from the §5.6 **204**
+FX-rate inquiry, and omit it entirely for domestic VND — matching legacy `NAPAS_REAL_TIME_BATCH`,
+which has run this way in production for years.
+
+**Why we believe the table is mis-marked, not us:** `withd_curren_cd` is documented as *USD 고정*
+("fixed USD"), which cannot apply to a domestic VND transfer; the only source of the rate/amount
+values is the **204**, which §5.6 states is *우리은행 전용* ("Woori-exclusive"); and the whole block was
+appended in the **2026-02-11** revision, which reads like a column that gained fields without gaining
+a conditional marker.
+
+**If the rejection happens:** it is **not** a DTO or Jackson problem. Escalate to Mr. Kang as
+question 4 in [../audits/efs-guide-1.2.6-open-questions-closure.md](../audits/efs-guide-1.2.6-open-questions-closure.md) §10 —
+"confirm the §5.4 FX block is conditional on the Woori FX path and may be omitted for domestic VND".
+Do **not** start sending a zero/empty FX block on domestic transfers to make the error go away: a
+fabricated `apl_exc_rate` on a money-moving request is far worse than a rejected one.
 
 ### UAT
 
@@ -227,8 +264,43 @@ Execution is a **manual DBA action** per root `CLAUDE.md` §"2. Manual DDL execu
 | P-1 | **R-13** — replace `StrictHostKeyChecking=no` with a real `known_hosts` | Dev + Infra |
 | P-2 | **R-12** — durable failure record + change `OpsAlertAsyncConfig`'s `DiscardPolicy`; a dropped alert can be the only trace of a failed hand-off | Dev |
 | P-3 | **R-10 / R-11** — batching and off-thread hand-off, validated by a load test | Dev |
-| P-4 | Multi-instance decision — the monitor de-dup, JWT revocation and rate-limit stores are all in-memory | PO + Ops |
-| P-5 | Pre-existing gates **R-02** (action-level authz) and secret rotation | PO + Ops |
+| P-4 | Multi-instance decision — the monitor de-dup, JWT revocation and rate-limit stores are all in-memory. **Decision is PO + Ops; the resulting store is Dev work** | PO + Ops, **then Dev** |
+| P-5 | Pre-existing gate **R-02** (action-level authz) — **Dev code work**, see the scoping note below — plus secret rotation (Ops) | **Dev** + Ops |
+
+> **Scoping note added 2026-08-01 — "the dispatch subsystem is code-complete" is true; "there is no code
+> work left" is not.** The dispatch subsystem (bulk + real-time rails, the three firm-file sweeps at
+> `PROC_STEP='0'/'1'/'2'`, the pay-target `'9'` sweep, C-6's paced drain) has no open code item, and the
+> SIT and UAT sections above are genuinely verification, provisioning and reconciliation. **Do not
+> generalise that to the deploy as a whole.** Two PROD rows in this table are code:
+>
+> - **P-5 / R-02** is **not** a verification task. Closing it means (a) a PO decision on the per-action
+>   authority source for Request-approval / Delete / Dispatch, then (b) server-side `@PreAuthorize` on
+>   every state-changing handler, then (c) replacing the frontend's static `{R:true,D:true,T:true}` stub
+>   ([`ScheduledTransferPage.tsx:75-77`](../../../wecms-web/components/payment/internal-transfer/ScheduledTransferPage.tsx#L75-L77)) with the real contract. Today only **menu-level**
+>   entitlement is enforced — `@menuAuthz` answers "may you open this screen", all-or-nothing, and the
+>   five action rights have no backend contract at all. Full analysis:
+>   [`../../../docs/audits/action-level-authorization-audit.md`](../../../docs/audits/action-level-authorization-audit.md).
+> - **P-4** is **also code**, and is understated as a "multi-instance decision". `TokenRevocationService`'s
+>   per-user not-before cutoff — written on admin **lock / delete / demote / password-reset** — lands on
+>   one JVM only, so on every other node the affected user keeps a **working privileged token** until
+>   natural expiry (≤ 1 h access-token TTL). That is the exact scenario F-03 exists to prevent, it fails
+>   **open**, and nothing logs it. Instance count is an unanswered `[?]` OPS item
+>   ([`wecms-batch-infra-team-checklist.md:74-75`](wecms-batch-infra-team-checklist.md)), so "probably one
+>   node" is not a control. The decision is PO + Ops; the store is Dev work. **If only one of revocation
+>   and rate limiting is fixed, fix revocation** — rate limiting degrades gracefully behind the durable
+>   `LoginLockoutService`, revocation has no second line. Full statement:
+>   [`payment-dispatch-final-readiness.md` §4.4](payment-dispatch-final-readiness.md).
+>
+> Owners in this table are corrected accordingly. The remaining non-code items are B2 (TEST-key
+> verification), B4 provisioning, one bulk file end-to-end through SIT, and the 35-file backlog
+> reconciliation.
+>
+> **R-03 and `WECMS_CALLBACK_ALLOWED_IPS` are ONE item, not two** (merged 2026-08-01; they were tracked
+> separately here and in `payment-dispatch-final-readiness.md`): *dispatch callback endpoints are
+> unauthenticated at the application layer; the IP allow-list is the mitigation and must be set per
+> environment before the first callback, or every `01301`/`01302` returns 403.* The `permitAll` surface
+> is the vulnerability and the allow-list is its only mitigation — closing either alone leaves the
+> environment either open (`VV` HMAC as sole gate) or silently refusing every callback.
 
 ---
 

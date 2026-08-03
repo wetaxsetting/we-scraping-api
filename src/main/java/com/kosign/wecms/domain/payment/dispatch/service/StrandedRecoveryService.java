@@ -60,6 +60,13 @@ import java.util.List;
  * {@code '9'→'6'} claim guards concurrency <i>within</i> the refactor only, not across the two systems.
  *
  * <p>Per-row failures are isolated (logged, never rethrown) so one bad row never blocks the sweep.
+ *
+ * <p><b>The real-time leg hands off to the shared paced drain.</b> {@link #recoverPayTargets} enqueues
+ * onto {@link RealtimeDispatchQueue} rather than dispatching inline, so the legacy per-bank inter-request
+ * delay is applied once, on one worker thread, for both this rail and the request-thread rail (C-6). The
+ * delay is keyed on <i>each row's own</i> {@code OUT_BANK_CD}, a deliberate divergence from legacy's
+ * leaked {@code per_request_delay} (D-A). Full rationale, including the rate change it implies for
+ * third-party banks, is on that method.
  */
 @Slf4j
 @Service
@@ -70,10 +77,20 @@ public class StrandedRecoveryService {
 
     private final TbPayTargetRepository payTargetRepository;
     private final TbPayFileMstRepository payFileMstRepository;
-    private final RealtimeDispatchService realtimeDispatchService;
     private final BulkReceptionService bulkReceptionService;
     private final ResultCheckService resultCheckService;
     private final com.kosign.wecms.common.lock.JobLockGuard jobLockGuard;
+    /**
+     * The single paced drain shared with the request-thread rail — see {@link #recoverPayTargets}.
+     *
+     * <p><b>{@link RealtimeDispatchService} is deliberately NOT injected here (removed 2026-08-01).</b>
+     * C-6 left it unused, and an unused collaborator on this class is precisely the seam a second
+     * dispatch path would reappear through: adding one {@code realtimeDispatchService.dispatch(...)}
+     * call back into the sweep would compile, pass review as "just re-driving a row", and silently
+     * recreate a second unpaced producer against the same gateway. Removing the reference makes that
+     * a change to the constructor — visible, and to every caller.</p>
+     */
+    private final RealtimeDispatchQueue realtimeDispatchQueue;
 
     /** Master gate — OFF by default. Even with a cron set, the sweep is inert until this is true. */
     @Value("${wecms.dispatch.recovery.enabled:false}")
@@ -93,16 +110,16 @@ public class StrandedRecoveryService {
 
     public StrandedRecoveryService(TbPayTargetRepository payTargetRepository,
                                    TbPayFileMstRepository payFileMstRepository,
-                                   RealtimeDispatchService realtimeDispatchService,
                                    BulkReceptionService bulkReceptionService,
                                    ResultCheckService resultCheckService,
-                                   com.kosign.wecms.common.lock.JobLockGuard jobLockGuard) {
+                                   com.kosign.wecms.common.lock.JobLockGuard jobLockGuard,
+                                   RealtimeDispatchQueue realtimeDispatchQueue) {
         this.payTargetRepository = payTargetRepository;
         this.payFileMstRepository = payFileMstRepository;
-        this.realtimeDispatchService = realtimeDispatchService;
         this.bulkReceptionService = bulkReceptionService;
         this.resultCheckService = resultCheckService;
         this.jobLockGuard = jobLockGuard;
+        this.realtimeDispatchQueue = realtimeDispatchQueue;
     }
 
     /**
@@ -129,9 +146,15 @@ public class StrandedRecoveryService {
         // uses), NOT by this job's lock. Without it, enabling both jobs would let the identical
         // runOnce() body execute concurrently under two different lock names, double-processing
         // live PROC_STAT='6' payment rows (scheduler-audit finding F-8 / parity-audit F-9).
-        // Bounds match ResultCheckJob exactly so neither entry point can outlive the other's
-        // ceiling. Not acquired => ResultCheckJob is already running this body; skipping is the
-        // correct outcome, and the rows stay at '6' for whichever pass gets there.
+        // Bounds match ResultCheckJob exactly (PT30M / PT5S) so neither entry point can outlive the
+        // other's ceiling. They did NOT match between 2026-07-30 and 2026-07-31, when the job's
+        // lockAtMostFor was PT2H30M against the 30 minutes hardcoded below: a delegated pass lost the
+        // lock at 30 min while a scheduled pass could hold it for 150, which is the concurrency the
+        // shared identity exists to prevent. The job's ceiling is now deadline-derived and lands on
+        // PT30M (see ResultCheckJob.run's derivation); if it moves again, move these two with it —
+        // StrandedRecoveryResultCheckLockTest pins the pair.
+        // Not acquired => ResultCheckJob is already running this body; skipping is the correct
+        // outcome, and the rows stay at '6' for whichever pass gets there.
         // The result-check body has its OWN master gate (wecms.dispatch.result-check.enabled, default
         // false), which answers "may this instance drive EFS 203 traffic and finalize payment rows?" —
         // a question whose answer cannot depend on which entry point asked. So enabling recovery alone
@@ -165,6 +188,59 @@ public class StrandedRecoveryService {
         return Math.max(1, batchSize);
     }
 
+    /**
+     * Hand the aged {@code PROC_STAT='9'} real-time rows to {@link RealtimeDispatchQueue} — the single
+     * paced drain shared with the request-thread rail (C-6).
+     *
+     * <h2>Why this rail must be paced at all</h2>
+     * Every other refactor path onto the 202 is one request per business event. This one is a
+     * <b>drain</b>: it can materialise up to {@code recovery.batch-size} (default 50) stranded rows and
+     * fire a 202 for each, back to back. That is the same shape as the legacy polling batch this service
+     * replaced, and the shape the legacy per-request delay existed to throttle.
+     *
+     * <h2>One pacing point, not two (changed 2026-07-31)</h2>
+     * This method briefly called {@code dispatchPacer.pause(...)} itself, in the same change that added
+     * pacing to this rail. That was superseded within the day by {@link RealtimeDispatchQueue}: with the
+     * request-thread rail also paced, two independent pacing points would mean two threads each honouring
+     * a 100 ms/3000 ms delay against the same gateway — which is not a rate limit. Enqueueing here puts
+     * both producers behind one FIFO worker, so the delay between consecutive gateway requests is the
+     * delay, whichever rail produced them.
+     *
+     * <p><b>The sweep no longer waits for the dispatches it triggers.</b> {@code recoverOnce()} returns
+     * once the rows are queued, so its ShedLock is released while work is still in flight. That is safe
+     * and was already true of correctness: the {@code '9'→'6'} claim inside
+     * {@link RealtimeDispatchService#dispatch} is atomic, so a later pass that re-selects a row still in
+     * the queue enqueues a duplicate ticket whose dispatch claims 0 rows and no-ops.
+     *
+     * <h2>Pacing is per row, from that row's bank — a DELIBERATE divergence from legacy (D-A)</h2>
+     * Legacy {@code NAPAS_REAL_TIME_BATCH} declares {@code int per_request_delay = PER_DELAY_DEFAULT} at
+     * <b>{@code :68}, outside</b> its row loop ({@code :82}), and inside the loop only ever <b>raises</b>
+     * it — {@code :276} Shinhan (100 ms), {@code :278} Woori (3000 ms) — <b>never resetting it to the
+     * default</b>. So the variable leaks across iterations: once any Woori row is processed, every
+     * subsequent row in that pass sleeps 3000 ms regardless of its own bank
+     * ({@code Thread.sleep(per_request_delay)} at {@code :360 / :481 / :589 / :698}).
+     *
+     * <p><b>WITHDRAWN 2026-08-01 — this paragraph claimed a rate increase that has no subject.</b> It
+     * used to read: <i>"legacy's effective rate toward non-Shinhan, non-Woori banks has often been
+     * 3000 ms rather than the configured 100 ms … up to 30× faster than the rate they actually receive
+     * today."</i> The leak can only mis-pace a bank outside {@code {970424, 970457}}, and <b>no such
+     * bank has ever been on the 202 rail</b>: JEX DEV {@code TB_FIRM_TRAN TRAN_TP='202'} is
+     * {@code 970424} × 46 + {@code 970457} × 6 and nothing else; VCB {@code 970436} appears only as 4
+     * {@code PROC_STAT='3'} FAIL pay-targets that never dispatched, and is now file-routed. There is
+     * no bank receiving 3000 ms today that would drop to 100 ms. Shinhan gets 100 ms in both systems.
+     *
+     * <p>Legacy's spacing was also never a <i>guarantee</i> to revert to: it is order-dependent on
+     * {@code TB_PAY_TARGET_R001}, which has no {@code ORDER BY} (B-1), so identical workloads could
+     * space at 100 ms or 3000 ms on consecutive days. The residual concern — an unknown bank pacing at
+     * an unmeasured rate — is addressed directly by {@code DispatchPacer.PER_DELAY_DEFAULT} = 3000 ms,
+     * not by importing the leak.
+     *
+     * <p><b>Why this reads as a legacy defect and not a design.</b> The sibling batch does it correctly:
+     * {@code PROCESSING_RESULT_CHECK_BATCH:82} declares {@code per_request_delay} <b>inside</b> its loop,
+     * so it resets every iteration. Same codebase, same idiom, same constants — one scopes the variable
+     * per row and one does not. A 30× throttle applied to every bank that follows a Woori row is not a
+     * policy anyone would write on purpose, and no comment claims it. We therefore match the sibling.
+     */
     private void recoverPayTargets(String cutoff) {
         // H-2: bounded + oldest-first. Previously findByProcStatAndProcDttmLessThan, which had no
         // LIMIT and no ORDER BY — against the live JEX DB that materialises every historical '9' row
@@ -181,15 +257,21 @@ public class StrandedRecoveryService {
             log.warn("stranded-recovery: pay-target sweep hit the batch cap ({}) — more stranded rows "
                     + "remain and will be picked up by the next sweep", limit);
         }
-        log.info("stranded-recovery: {} aged real-time pay-target(s) at PROC_STAT='9'", aged.size());
+        log.info("stranded-recovery: {} aged real-time pay-target(s) at PROC_STAT='9' — handing to the "
+                + "paced dispatch drain", aged.size());
+        int queued = 0;
         for (TbPayTarget pay : aged) {
-            try {
-                // Re-drive through the normal dispatch path; its G2 atomic '9'→'6' claim de-dupes.
-                realtimeDispatchService.dispatch(pay.getBizKey(), pay.getTranDt(), pay.getTranSeq());
-            } catch (Exception e) {
-                log.warn("stranded-recovery: pay-target re-dispatch failed bizKey={} tranDt={} tranSeq={} — {}",
-                        pay.getBizKey(), pay.getTranDt(), pay.getTranSeq(), e.getMessage());
+            // Re-drive through the normal dispatch path (its G2 atomic '9'→'6' claim de-dupes), but via
+            // the shared drain so pacing happens once, on one thread. A rejected ticket is logged by the
+            // queue and leaves the row at '9' for the next pass — never rethrown, so one drop cannot
+            // cost the rest of the sweep.
+            if (realtimeDispatchQueue.enqueue(pay.getBizKey(), pay.getTranDt(), pay.getTranSeq())) {
+                queued++;
             }
+        }
+        if (queued < aged.size()) {
+            log.warn("stranded-recovery: queued only {} of {} aged pay-target(s) — the dispatch drain is "
+                    + "saturated or shut down; the remainder stay PROC_STAT='9'", queued, aged.size());
         }
     }
 

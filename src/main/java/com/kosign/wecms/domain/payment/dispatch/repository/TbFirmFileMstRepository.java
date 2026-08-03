@@ -4,6 +4,7 @@ import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmFileMst;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmFileMstId;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -32,11 +33,40 @@ public interface TbFirmFileMstRepository
         extends JpaRepository<TbFirmFileMst, TbFirmFileMstId> {
 
     /**
+     * Two-phase dispatch · Terminal FAIL on one firm file, addressed by key — legacy
+     * {@code TB_FIRM_FILE_MST_U004} as invoked by {@code FILE_DEPOSIT_TRANSFER_BATCH1.
+     * UpdateFirmFileMst} ({@code :1321-1340}): {@code PROC_STEP='0'} (unchanged — never an advance)
+     * and {@code PROC_STAT='3'}.
+     *
+     * <p>An UPDATE rather than a {@code save(entity)} because phase A commits and closes its
+     * transaction before the first external call, so by the time a phase-B failure needs recording
+     * the entity is detached and the caller is inside a {@code catch} block.
+     *
+     * <p><b>Guarded on the dispatch state</b> ({@code PROC_STEP='0' AND PROC_STAT='6'}). A 01301
+     * callback that raced the failure and already advanced the row to {@code PROC_STEP='1'} must not
+     * be overwritten by a late loser — the callback's outcome is the newer truth and is durable.
+     *
+     * @return {@code 1} when this call recorded the failure, {@code 0} when the row had already moved
+     */
+    @Modifying
+    @Query("UPDATE TbFirmFileMst f SET f.procStat = '3', f.regRsltCd = :rsltCd, "
+            + "f.regRsltMsg = :msg, f.procDttm = :procDttm "
+            + "WHERE f.bizKey = :bizKey AND f.tranDt = :tranDt AND f.fileSeqNo = :fileSeqNo "
+            + "AND f.firmFileNm = :firmFileNm AND f.procStep = '0' AND f.procStat = '6'")
+    int failFirmFile(@Param("bizKey") String bizKey,
+                     @Param("tranDt") String tranDt,
+                     @Param("fileSeqNo") String fileSeqNo,
+                     @Param("firmFileNm") String firmFileNm,
+                     @Param("rsltCd") String rsltCd,
+                     @Param("msg") String msg,
+                     @Param("procDttm") String procDttm);
+
+    /**
      * Legacy {@code TB_FIRM_FILE_MST_R001} (BATCH2 reception-confirmed pick) — verbatim shape.
      *
      * <p><b>Not used by the retry sweep.</b> Legacy ran this unbounded, once per minute, over the
      * whole day's rows across every tenant ({@code FILE_DEPOSIT_TRANSFER_BATCH2.java:48-54} — no age
-     * filter, no ORDER BY, no LIMIT). {@link #findStrandedBulkExecutionFiles} is the bounded
+     * filter, no ORDER BY, no LIMIT). {@link #findStrandedFirmFiles} is the bounded
      * equivalent the refactor actually drives. Kept because it is the exact legacy selection and is
      * the natural probe for ad-hoc operator diagnosis.
      */
@@ -135,21 +165,78 @@ public interface TbFirmFileMstRepository
      * that means this sweep reports the refactor's stranded files and not the legacy batch's —
      * deliberate scoping, recorded here so it is not mistaken for a bug.
      */
+    /**
+     * <h2>DECIDED 2026-08-01 — one finder, one aging rule: {@code COALESCE(NULLIF(PROC_DTTM,''), REG_DTTM)}</h2>
+     *
+     * This replaces two finders that differed only in how they aged a row: this one required
+     * {@code PROC_DTTM IS NOT NULL}, while the {@code PROC_STEP='0'} finder added the same day fell back
+     * to {@code REG_DTTM} because neither system stamps {@code PROC_DTTM} on insert. Two aging rules on
+     * one table for adjacent steps is a trap, so they are unified here and the second is deleted.
+     *
+     * <p><b>The question that had to be answered was not "does this change an existing alert" — it does
+     * not.</b> All 6 legacy rows at {@code '1'/'6'} on JEX DEV are from {@code 20250210}, far outside the
+     * 7-day retention floor, and every {@code '2'} row carries {@code PROC_DTTM} anyway (16 of 16 on DEV —
+     * legacy's {@code U001} writes it on the {@code 1→2} advance), so for step {@code '2'} the
+     * {@code COALESCE} is a no-op. The real question was narrower: <b>should future legacy-written
+     * {@code '1'} rows be visible to this sweep on a shared database?</b>
+     *
+     * <p><b>Answer: yes.</b> Reasons, in order of weight:
+     * <ol>
+     *   <li><b>The state is a genuinely stranded bulk payment regardless of who wrote the row.</b> A file
+     *       at {@code '1'/'6'} got there by a reception advance, so the bank <i>has</i> the file, and no
+     *       execution instruction is confirmed. That is the exact condition this sweep exists to surface.
+     *       On UAT/PROD the refactor points at the live JEX DB (memory
+     *       {@code project_uat_prod_live_jex_db_target}), so most such rows will be legacy's.</li>
+     *   <li><b>Reporting costs nothing and hides nothing.</b> {@code StuckPayFileMonitorService} performs
+     *       no writes, which is why its class Javadoc already settles the same point for the pay-file
+     *       sweep: "Reading a legacy-written row and reporting it is the intended behaviour." Excluding
+     *       legacy rows here contradicted that for no stated reason.</li>
+     *   <li><b>The old exclusion was an accident, not a decision.</b> It followed from legacy's
+     *       {@code TB_FIRM_FILE_MST_U002} ({@code 0→1}) not binding {@code PROC_DTTM} — nobody chose to
+     *       scope this sweep to refactor rows. The previous "deliberate scoping" note was rationalising an
+     *       artifact.</li>
+     * </ol>
+     *
+     * <p><b>Objection considered — false positives while the legacy batch is live.</b> Legacy
+     * {@code FILE_DEPOSIT_TRANSFER_BATCH2} re-picks {@code '1'/'6'} every 60 s and re-sends {@code 00302},
+     * so such a row can be transient rather than stranded. But the age threshold is 15 minutes — roughly
+     * 15 legacy retries — and a row that has survived all of them is failing legacy's retry too, which is
+     * worth an operator's attention. After cutover, with no BATCH2, it is unambiguously stranded. Neither
+     * case argues for silence.
+     *
+     * <p><b>Consequence of aging a {@code '1'} row on {@code REG_DTTM}:</b> the true state-change time is
+     * unrecorded, and build time is necessarily <i>earlier</i>, so the row becomes eligible <b>sooner</b>
+     * and never later. That is the safe direction for a detector — it over-reports slightly rather than
+     * missing a strand. It also ages out of the retention floor marginally sooner, which is the accepted
+     * cost of the floor existing at all.
+     *
+     * <p><b>{@code NULLIF} before {@code COALESCE}, deliberately.</b> A blank (not null) {@code PROC_DTTM}
+     * — JEX DEV holds 2 — would otherwise short-circuit the {@code COALESCE} and be dropped by the
+     * emptiness guard. Treating blank as absent lets it fall back to {@code REG_DTTM}, so such a row is
+     * reported rather than silently skipped. The {@code <> ''} guard remains, now covering only the case
+     * where <i>both</i> columns are empty, and it is still explicit rather than relying on the floor to
+     * exclude it (see {@code FirmFileDataExecutionResultQueryContractTest}).
+     *
+     * <p>Everything below — the age threshold, the retention floor, oldest-first full-PK ordering, the
+     * caller-supplied limit, the absent tenant predicate, the sequential scan and its covering-index
+     * script — is unchanged from the FIX H notes above and applies to all three steps.
+     */
     @Query("""
             SELECT f FROM TbFirmFileMst f
              WHERE f.procStep = :procStep
                AND f.procStat = :procStat
-               AND f.procDttm IS NOT NULL
-               AND f.procDttm <> ''
-               AND f.procDttm <  :procDttmCutoff
-               AND f.procDttm >= :procDttmFloor
-             ORDER BY f.procDttm ASC, f.tranDt ASC, f.bizKey ASC, f.fileSeqNo ASC, f.firmFileNm ASC
+               AND COALESCE(NULLIF(f.procDttm, ''), f.regDttm) IS NOT NULL
+               AND COALESCE(NULLIF(f.procDttm, ''), f.regDttm) <> ''
+               AND COALESCE(NULLIF(f.procDttm, ''), f.regDttm) <  :procDttmCutoff
+               AND COALESCE(NULLIF(f.procDttm, ''), f.regDttm) >= :procDttmFloor
+             ORDER BY COALESCE(NULLIF(f.procDttm, ''), f.regDttm) ASC,
+                      f.tranDt ASC, f.bizKey ASC, f.fileSeqNo ASC, f.firmFileNm ASC
             """)
-    List<TbFirmFileMst> findStrandedBulkExecutionFiles(@Param("procStep") String procStep,
-                                                       @Param("procStat") String procStat,
-                                                       @Param("procDttmCutoff") String procDttmCutoff,
-                                                       @Param("procDttmFloor") String procDttmFloor,
-                                                       Pageable pageable);
+    List<TbFirmFileMst> findStrandedFirmFiles(@Param("procStep") String procStep,
+                                              @Param("procStat") String procStat,
+                                              @Param("procDttmCutoff") String procDttmCutoff,
+                                              @Param("procDttmFloor") String procDttmFloor,
+                                              Pageable pageable);
 
     /** Legacy {@code TB_FIRM_FILE_MST_R004} (01301 callback file lookup). */
     Optional<TbFirmFileMst> findByTranDtAndFirmFileNmAndProcStepAndProcStat(
@@ -191,6 +278,31 @@ public interface TbFirmFileMstRepository
                                                    @Param("fileSeq") String fileSeq,
                                                    @Param("procStep") String procStep,
                                                    @Param("procStat") String procStat);
+
+    /**
+     * {@link #findForExecutionResult} without the state predicate — "does any row exist for this
+     * result file, whatever state it is in?". The disambiguation probe for a 01302 callback whose
+     * {@code R006} lookup found nothing.
+     *
+     * <p>Distinguishes a row that exists but has moved on (already processed at {@code PROC_STEP='3'},
+     * unconfirmed at {@code '1'}, terminal at {@code PROC_STAT='3'} — all swept by
+     * {@code StuckPayFileMonitorService}) from <b>no row at all</b>, which leaves no state anywhere and
+     * no audit row is possible, so it needs an ops alert. Same distinction the 01301 leg draws with
+     * {@link #findByTranDtAndFirmFileNm}.
+     *
+     * <p><b>Must keep {@code findForExecutionResult}'s prefix-insensitive match, not an exact one.</b>
+     * {@code TB_FIRM_FILE_MST.FIRM_FILE_NM} stores the sent {@code S_…} name while the callback carries
+     * the bank's {@code R_…} name, so an exact-name probe returns 0 rows for <i>every</i> 01302
+     * callback — including genuine replays — and would fire the alert on the routine path. Hence the
+     * same {@code substring(…, 3)} + {@code VAN_ORG_CD} + {@code FILE_SEQ} match (audit C3/M-2).
+     */
+    @Query("select f from TbFirmFileMst f where f.tranDt = :tranDt "
+            + "and substring(f.firmFileNm, 3) = substring(:fileNm, 3) "
+            + "and f.vanOrgCd = :vanOrgCd and f.fileSeq = :fileSeq")
+    List<TbFirmFileMst> findAnyStateForExecutionResult(@Param("tranDt") String tranDt,
+                                                       @Param("fileNm") String fileNm,
+                                                       @Param("vanOrgCd") String vanOrgCd,
+                                                       @Param("fileSeq") String fileSeq);
 
     /** All files for a tenant/date — generic detail/list support. */
     List<TbFirmFileMst> findByTranDtAndBizKey(String tranDt, String bizKey);

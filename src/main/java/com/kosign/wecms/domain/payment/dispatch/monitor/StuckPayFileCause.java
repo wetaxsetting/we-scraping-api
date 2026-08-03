@@ -53,6 +53,81 @@ public enum StuckPayFileCause {
      */
     OPERATING_HOURS_SKIP,
 
+    // ── TB_FIRM_FILE_MST at PROC_STEP='0' / PROC_STAT='6' — reception never reconciled ───────────
+    // Added 2026-07-31. This state was previously invisible to every sweep: the parent pay-file is
+    // often already terminal (so both pay-file sweeps skip it) and the firm-file sweep filtered
+    // PROC_STEP='1' and '2' only. It arises two ways, and two-phase dispatch made the second routine:
+    //   * a LOST 01301 — the 00301 was accepted, the bank has the file, the reception result never
+    //     came back (JEX DEV: 27 of 30 rows at this state carry a 00301 audit row);
+    //   * a PARTIAL phase-B failure — when dispatch breaks at file k of N, files k+1..N keep committed
+    //     rows at '0'/'6' that were never built to SFTP and never sent.
+    // The two need opposite handling, which is why they are two constants.
+
+    /**
+     * Stranded at {@code PROC_STEP='0' / PROC_STAT='6'} <b>with</b> a {@code 00301}
+     * ({@code API_TRAN_TP}) audit row — the reception request was issued.
+     *
+     * <p><b>The bank has the file.</b> The SFTP upload precedes the {@code 00301} call and the audit row
+     * is written before it too, so an audit row means the instruction went out; only our copy of the
+     * result is missing. The {@code 01301} was lost (gateway-side), or arrived and could not be matched.
+     *
+     * <p><b>Never re-drive.</b> Re-issuing {@code 00301} for a file the bank already accepted
+     * double-instructs a reception. Reconcile forward: confirm the batch's per-line state with the VAN
+     * Center, then correct {@code TB_FIRM_FILE_MST} / {@code TB_PAY_FILE_MST} to match what actually
+     * happened. Procedure: {@code docs/deployment/bulk-file-reconciliation-procedure.md} §5.3 (answer
+     * <b>C</b> is the expected one for this cause).
+     *
+     * <p>The audit row's {@code RS_CD} is the starting point — it records what the gateway answered the
+     * {@code 00301} with, which narrows "accepted then lost" against "never acknowledged".
+     */
+    BULK_RECEPTION_RESULT_NOT_RECEIVED,
+
+    /**
+     * Stranded at {@code PROC_STEP='0' / PROC_STAT='6'} with <b>no</b> {@code 00301} audit row — the
+     * reception request was never issued.
+     *
+     * <p><b>Nothing left the building.</b> The audit row is written immediately before the {@code 00301}
+     * call ({@code BulkReceptionService:799-807}), so its absence means the call was never reached: the
+     * staging write or the SFTP upload failed, or the process died between the phase-A commit and the
+     * upload. The canonical case since 2026-07-31 is the <b>phase-B partial failure</b> — dispatch broke
+     * at an earlier sibling and {@code break}s out of the loop, leaving the remaining prepared files at
+     * this state, unbuilt and unsent.
+     *
+     * <p><b>Safe to re-dispatch — after checking the parent.</b> The file itself can be re-driven, but
+     * only if the batch as a whole should still go: when the parent {@code TB_PAY_FILE_MST} is
+     * {@code PROC_STAT='3'} an earlier sibling failed and the batch was abandoned, so re-sending this one
+     * would part-execute it. That case is classified {@link #BULK_BATCH_PARENT_FAILED} instead and never
+     * reaches this constant. Procedure: {@code bulk-file-reconciliation-procedure.md} §5.3 (answers
+     * <b>A</b> / <b>B</b>).
+     */
+    BULK_RECEPTION_NOT_ISSUED,
+
+    /**
+     * A firm file stranded at {@code PROC_STEP='0'} or {@code '1'} (with {@code PROC_STAT='6'}) whose
+     * <b>parent {@code TB_PAY_FILE_MST} is already {@code PROC_STAT='3'} (FAIL)</b> — an earlier sibling
+     * in the same branch-split batch failed and the batch was abandoned.
+     *
+     * <h2>Why this needs its own constant</h2>
+     * Without it, such a file classified as {@link #BULK_EXECUTION_NOT_ISSUED} or
+     * {@link #BULK_RECEPTION_NOT_ISSUED} — and both of those tell the operator that re-driving is the
+     * routine action. It is not: {@code BulkReceptionService.buildAndDispatchAllFiles} marks the pay-file
+     * FAIL and {@code break}s on the first phase-B failure, so the siblings after the failure point were
+     * never sent at all. Re-driving one file of an abandoned batch <b>part-executes a payment the system
+     * has already reported as failed</b> — money moves for some lines and not others, with the UI saying
+     * the whole thing failed. That is a worse outcome than the strand.
+     *
+     * <p><b>Never re-drive a single file on this cause.</b> The unit of decision is the batch: establish
+     * with the VAN Center which siblings the bank actually received and executed, then either re-create
+     * the payment cleanly or reconcile the partial forward. Procedure:
+     * {@code bulk-file-reconciliation-procedure.md} §5.6.
+     *
+     * <p>Deliberately <b>not</b> applied to {@code PROC_STEP='2'} — a file there had its {@code 00302}
+     * accepted, so {@link #BULK_EXECUTION_RESULT_NOT_RECEIVED} carries the stronger and more specific
+     * warning ("the bank has most likely executed this batch"), and overriding it with the parent's
+     * state would lose that information.
+     */
+    BULK_BATCH_PARENT_FAILED,
+
     /**
      * A {@code TB_FIRM_FILE_MST} row is stranded at {@code PROC_STEP='1' / PROC_STAT='6'} past the
      * threshold and <b>no {@code 00302} was ever issued</b> — no {@code TB_FIRM_BAT_API_TRAN} row
@@ -192,6 +267,87 @@ public enum StuckPayFileCause {
      * actionable per-file detail; this cause exists so the pay-file side is not silently unaccounted for.
      */
     AWAITING_EXECUTION_RESULT,
+
+    // ── TB_PAY_TARGET · real-time (202) rail stranded at PROC_STAT='9' ───────────────────────────
+    // A different table, rail and timescale from everything above: RealtimeDispatchRegistrar hands a
+    // committed row to the 202 within milliseconds of commit, so a WAIT row past its (short) grace
+    // window has NOT simply "not started yet" — something returned early or threw. These four say which.
+
+    /**
+     * {@code wecms.dispatch.realtime-dispatch=false}. Rows written while the flag is off are never
+     * handed to {@code RealtimeDispatchService}, so they sit at WAIT indefinitely.
+     *
+     * <p>The real-time twin of {@link #DISPATCH_FLAG_DISABLED}, and evaluated first on the pay-target
+     * sweep for the same reason: it explains every stranded row on its own. Separate constant because
+     * the two flags are separate ({@code auto-receive} gates bulk reception, {@code realtime-dispatch}
+     * gates the 202), and reporting a real-time strand under the bulk flag's name would send an operator
+     * to the wrong switch.
+     */
+    REALTIME_DISPATCH_FLAG_DISABLED,
+
+    /**
+     * A {@code TB_PAY_TARGET} row at {@code PROC_STAT='9'} for which a {@code TB_FIRM_TRAN} row
+     * <b>already exists</b> on the same {@code (TRAN_DT, BIZ_KEY, TRAN_SEQ)} key — so
+     * {@code RealtimeDispatchService.dispatch} step 2 ({@code :133}) short-circuits as "already
+     * dispatched" on every re-drive and the row can never progress without manual intervention.
+     *
+     * <h2>This cannot arise from a refactor-written row, and that is the point</h2>
+     * The step-2 guard probes the <b>pay-target's</b> {@code TRAN_SEQ}, which only the {@code 202} row
+     * reuses ({@code RealtimeDispatchService:263}); the {@code 204} FX pre-step allocates its own
+     * independent sequence ({@code :355}, legacy {@code ccy_exc_seq} at
+     * {@code NAPAS_REAL_TIME_BATCH:299}) and therefore never trips it. And the {@code '9'→'6'} claim
+     * ({@code claimForDispatch}) shares {@code dispatch()}'s single {@code REQUIRES_NEW} transaction with
+     * the {@code 202} insert, so the two commit or roll back together: <b>on our own writes a 202 row
+     * implies the target left WAIT.</b>
+     *
+     * <p>Reaching this cause therefore means the row came from somewhere else:
+     * <ul>
+     *   <li><b>A legacy-JEX-written row on a shared DB.</b> Legacy has no claim step — it inserts the
+     *       {@code 202} firm-tran row ({@code :496}) and updates {@code TB_PAY_TARGET} later — so a crash
+     *       between the two leaves exactly this shape. Legacy's own next tick then <b>re-sends the
+     *       202</b>, because {@code NAPAS_REAL_TIME_BATCH} reads no {@code TB_FIRM_TRAN} and has no
+     *       exists-guard at all. Our permanent block is the <i>safer</i> behaviour, not a defect.</li>
+     *   <li><b>A manual {@code PROC_STAT} edit</b> back to {@code '9'} after a transfer was sent.</li>
+     * </ul>
+     *
+     * <p><b>Never re-drive on this cause.</b> The firm-tran row's {@code TRAN_TP} / {@code RS_CD} /
+     * {@code PROC_STAT} say what the bank was told; a {@code '202'} row means a transfer instruction
+     * exists and may have moved money. Reconcile with the VAN Center, then correct the pay-target
+     * forward — do not reset it to WAIT.
+     *
+     * <p><b>Correction of record (2026-07-31).</b> This constant shipped earlier the same day documented
+     * as the Woori 204 pre-step blocking its own retry. That was wrong on the mechanism — the 204's
+     * sequence is independent, so no block occurs, and both legacy and the refactor retry the 204 freely
+     * (accumulating one audit row per attempt, which is legacy-faithful). The observable this cause
+     * reports is unchanged; only the explanation was incorrect.
+     */
+    REALTIME_DISPATCHED_NOT_CLAIMED,
+
+    /**
+     * No {@code TB_FIRM_CONF} row resolves for the pay-target's
+     * {@code (BIZ_KEY, OUT_BANK_CD, WDRL_ACT_NO)}.
+     *
+     * <p>{@code RealtimeDispatchService} throws {@code IllegalStateException} on this, which the
+     * after-commit registrar catches and logs, leaving the row at WAIT. It will fail identically on
+     * every re-drive, so this is a <b>configuration</b> fix (register the firm-banking settings for that
+     * withdrawal account), not a retry.
+     *
+     * <p>Safe to re-drive once the row exists: nothing was sent.
+     */
+    REALTIME_NO_FIRM_CONF,
+
+    /**
+     * The real-time operating-hours gate currently returns {@code SKIP} for the row's
+     * {@code (OUT_BANK_CD, ANT_DIV_CD)} — the window has not opened yet.
+     *
+     * <p>Legitimate at the moment of evaluation, and the real-time twin of
+     * {@link #OPERATING_HOURS_SKIP}. But note it is <b>not self-healing in the approved TO-BE</b>: the
+     * after-commit hand-off already ran and returned, and no scheduled job re-drives the 202 unless
+     * {@code wecms.dispatch.recovery.enabled=true}. So a row that lands outside its window stays at WAIT
+     * <i>after</i> the window opens too. Persisting past the window start is therefore the signal, and
+     * the reason this cause is reported rather than filtered out.
+     */
+    REALTIME_OPERATING_HOURS_SKIP,
 
     /** None of the above matched — needs manual inspection. */
     UNKNOWN

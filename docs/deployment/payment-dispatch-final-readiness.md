@@ -258,8 +258,8 @@ security items. **Do not skip §4.0 in any environment.**
 | 2 | **Seed `TB_BATCH_SCHEDULE_*`** — §0.1 first; if live-JEX rows exist, `DO NOTHING` preserves them | **blocker** |
 | 3 | **Resolve dependency 26** — confirm the refactor UAT DB is *not* the JEX UAT batch DB | **blocker**; recovery must stay OFF until then |
 | 4 | Confirm `TB_VAN_API_INFO.API_KEY` provisioned (DEV has 2 rows; UAT `MISSING`) | **blocker** |
-| 5 | Confirm `WECMS_EFS_PARTNER_ID` non-empty (empty in every template) | **blocker** |
-| 6 | Populate `WECMS_CALLBACK_ALLOWED_IPS` and confirm the proxy strips client `X-Forwarded-For` (**H-2**) | **blocker** — filter currently fails open |
+| 5 | ~~Confirm `WECMS_EFS_PARTNER_ID` non-empty (empty in every template)~~ → **Verify `TB_FIRM_CONF.VAN_ORG_CD` + `BANK_PRTN_ID` per withdrawal account.** The variable was **retired 2026-07-29 (D-2)**: nothing reads it in source or build output, `SchedulerConfigurationContractTest` enforces its absence across all four profiles, the envelope `ID` is **unconditionally `TB_FIRM_CONF.VAN_ORG_CD`** (no fallback), and the vendor's `prtn_id` is a **separate per-account body field** from `BANK_PRTN_ID`. Query + "what correct means" in [activation runbook §5.0-C](wecms-batch-activation-runbook.md); record in [readiness audit §6.1 / D-2](wecms-batch-infrastructure-readiness-audit.md) | ~~blocker~~ → **check** — per account, not per environment (PK is `(biz_key, out_bank_cd, wdrl_act_no)`); ⚠ 3 JEX DEV rows carry placeholder `34534534`/`434534` |
+| 6 | **R-03 / H-2 — callback endpoints are unauthenticated at the application layer; the IP allow-list is the mitigation.** Populate `WECMS_CALLBACK_ALLOWED_IPS` **before the first callback** and confirm the proxy strips client `X-Forwarded-For`. *(Merged 2026-08-01: the `permitAll` controllers and the allow-list were tracked as two entries. They are one item — the first is the vulnerability, the second is its only mitigation, and closing either alone leaves the environment either open or 403ing.)* | **blocker** — set it and every `01301`/`01302` is refused; leave it empty on a `permitAll` surface and `VV` HMAC is the only gate |
 | 7 | Verify TLS trust for the VAN gateway CA (**H-9**) | private-CA would fail the handshake |
 | 8 | Fix the duplicate `TB_FIRM_CONF` row (**H-10**) | two rows share `(VN_VNM0004_000001, GV00000001)` |
 | 9 | Give every dispatch var an in-YAML default (**H-1**) | unset var currently aborts startup |
@@ -275,15 +275,57 @@ security items. **Do not skip §4.0 in any environment.**
 | 3 | **Seed `TB_BATCH_SCHEDULE_*`** with a before-image captured first | **blocker** |
 | 4 | Rotate the historically-committed Coocon/OSMC keys | **blocker** |
 | 5 | Move `WECMS_CRYPTO_LEGACY_CERT_SEED` out of committed templates (**H-6**) | legacy pgcrypto seed |
-| 6 | Close **R-02** (action-level authorization) and **R-03/F-09** (callback hardening) | pre-deploy security gates |
-| 7 | Durable/multi-instance store for JWT revocation + rate limiting | in-memory today |
-| 8 | Confirm `TB_VAN_API_INFO`, partner id, SFTP key `0600`, staging dirs, gateway IP allow-listing | all `MISSING` per §6 of the readiness audit |
+| 6 | Close **R-02** (action-level authorization) and **R-03/F-09** (callback hardening — *one item with the allow-list, see UAT step 6*) | pre-deploy security gates, **both Dev code work** |
+| 7 | **Durable/multi-instance store for JWT revocation** (+ rate limiting) — **a security control that silently does not work on >1 node**, not a scale-out caveat. See §4.4 | **Dev code work, pre-UAT/PROD.** Fix revocation first |
+| 8 | Confirm `TB_VAN_API_INFO`, ~~partner id~~ **`TB_FIRM_CONF.VAN_ORG_CD`/`BANK_PRTN_ID` per account** (D-2 — the partner-id variable is retired), SFTP key `0600`, staging dirs, gateway IP allow-listing | ~~all `MISSING`~~ — **rescoped 2026-08-01**: `TB_VAN_API_INFO` is **inherited** from the live JEX DB, SFTP values are **in the repo**; only the key file, staging dirs and gateway IPs remain genuinely outstanding. See [readiness audit §6.0–§6.1](wecms-batch-infrastructure-readiness-audit.md) |
 | 9 | Stand up log rotation, disk + certificate-expiry monitoring, alert hooks (**M-5**) | none exist |
 | 10 | Backup/PITR restore drill for the refactor DB | untested |
 | 11 | Enable in order: monitor → `alert.enabled` → `auto-receive` → `realtime-dispatch` → `result-check.cron` | recovery stays OFF pending dep. 26 |
 | 12 | Keep `recovery.enabled=false` until the coexistence decision is documented | **blocker** |
 
-### 4.4 Rollback
+### 4.4 Pre-UAT/PROD **code** items — R-02 and the in-memory revocation store
+
+> Recorded 2026-08-01. Both are **Dev code work gated to pre-UAT/PROD**, not verification and not Ops.
+> The dispatch subsystem itself is code-complete; that does not extend to these two.
+
+**R-02 — action-level authorization.** Per-action authority (Request-approval / Delete / Dispatch) is
+unenforced on both sides. Closing it: a PO decision on the authority source → server-side `@PreAuthorize`
+on every state-changing handler → replace the frontend's static `{R:true,D:true,T:true}` stub. Today only
+menu-level entitlement exists (`@menuAuthz`, all-or-nothing). See
+[`../../../docs/audits/action-level-authorization-audit.md`](../../../docs/audits/action-level-authorization-audit.md).
+
+**The in-memory revocation store — a security control that silently does not work on more than one node.**
+State it that way, not as a scale-out caveat:
+
+- **The failure.** `TokenRevocationService`'s `userNotBefore` cutoff — written on admin **lock, delete,
+  demote and password-reset** — lands in a `ConcurrentHashMap` on **one JVM**. On every other node the
+  affected user keeps a **working, privileged** token until its natural `exp`, up to the 1-hour
+  access-token TTL. That is precisely the scenario F-03 was built to prevent. Logout degrades the same
+  way via the `jti` denylist. Nothing logs, nothing alerts — the other nodes simply never learn.
+- **No environment is confirmed single-instance.** All 8 `shedlock` rows show one holder
+  (`GroupwareDev`), so the *observed* deployment is single-node — but instance count is an open
+  **`[?]` OPS** item on
+  [`wecms-batch-infra-team-checklist.md:74-75`](wecms-batch-infra-team-checklist.md), with a companion
+  `[?]` at `:136` on shared staging storage. "Probably one node" is not a control.
+- **Why it is in memory today** — deliberate, not an oversight. A refactor-only table needs **PO +
+  JEX-DDL approval** (the policy that removed the notification and OAT-idempotency tables), so the store
+  was kept in-process rather than adding one unilaterally.
+- **Two viable routes**, both in [`../security/jwt-revocation.md`](../security/jwt-revocation.md): a
+  **shared cache**, or a **PO-approved legacy-table-backed denylist**. Do not add a refactor-only table
+  without that approval.
+- **`RateLimiter` needs no redesign.** Its `tryAcquire(key, limit, windowSeconds)` contract is already
+  shaped so only the backing map changes.
+
+**If only one is fixed, fix revocation.** The two fail differently:
+
+| | Degrades gracefully? | Why |
+|---|---|---|
+| **Rate limiting** | **Yes** | `LoginLockoutService` is durable — it writes `USER_INFM.LOCK_YN='Y'` after 5 consecutive failures, so brute force against a *known* account still locks out on any node. What degrades is the throttle on spraying and on credential reveal: N nodes permit N × the intended attempts per window. |
+| **Revocation** | **No** | There is no durable second line. It fails **open** on every node that missed the write, and a demoted or deleted user stays privileged there for up to the token TTL. |
+
+---
+
+### 4.5 Rollback
 
 | Situation | Action |
 |---|---|

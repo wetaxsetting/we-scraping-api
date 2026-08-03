@@ -269,10 +269,17 @@ which would also cover activation (required area 12) at the context level rather
 
 `@Mock DispatchPacer` in `ResultCheckPollTest:72`. The tests assert *that* pacing is invoked
 (`perBankPacing_pacesOnOriginalFailure`, `…notInvokedOnCleanSuccess` — good) but never that the **rates** are
-right. The legacy-parity rule (Woori `970457` = 3000 ms, else 100 ms) is never executed, so a wrong constant
+right. The pacing rule (Woori `970457` = 3000 ms, Shinhan `970424` = 100 ms, else 3000 ms — the default
+is a deliberate divergence from legacy's 100, D-A 2026-08-01) is never executed, so a wrong constant
 would not be caught — and this rate is the load-bearing input to `ResultCheckJob`'s `PT30M` lock derivation.
 
 **Recommended:** a direct unit test on `DispatchPacer.pause(outBankCd)` asserting the per-bank delay values.
+
+> **CLOSED 2026-08-01** — [`DispatchPacerTest`](../../src/test/java/com/kosign/wecms/domain/payment/dispatch/service/DispatchPacerTest.java)
+> pins all three, parameterised over six unknown-bank inputs (including a trailing-space `"970424 "` that
+> must fall through rather than match Shinhan), plus a statelessness case. It asserts on
+> `perBankDelay(...)` rather than `pause(...)`: `pause` only sleeps for what `perBankDelay` returns, and a
+> test that really sleeps 3 s per case is a test people delete.
 
 ### G-7 · No integration or end-to-end test for dispatch; the only integration suite is disabled — **HIGH**
 

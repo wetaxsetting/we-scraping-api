@@ -1,4 +1,4 @@
-# Bulk-File Reconciliation Procedure — `BULK_EXECUTION_UNCONFIRMED` / `BULK_EXECUTION_NOT_ISSUED` / `RECEPTION_UNCONFIRMED` / **execution-result-not-received** (`PROC_STEP='2'`)
+# Bulk-File Reconciliation Procedure — `BULK_EXECUTION_UNCONFIRMED` / `BULK_EXECUTION_NOT_ISSUED` / `RECEPTION_UNCONFIRMED` / **execution-result-not-received** (`PROC_STEP='2'`) / `BULK_RECEPTION_RESULT_NOT_RECEIVED` / `BULK_RECEPTION_NOT_ISSUED` / `BULK_BATCH_PARENT_FAILED`
 
 > **2026-07-31 — a fourth state, now detected: `BULK_EXECUTION_RESULT_NOT_RECEIVED`.**
 > A firm file at **`PROC_STEP='2'` / `PROC_STAT='6'`** — `00302` accepted, `01302` result never
@@ -88,6 +88,33 @@ discriminator between them is whether a `00302` audit row exists in `TB_FIRM_BAT
 `RECEPTION_UNCONFIRMED` is a **different row shape entirely** — the firm file is still at
 `PROC_STEP='0'` — and it is raised by the **pay-file** sweep, not the firm-file sweep. If you look for a
 `PROC_STEP='1'` row because the procedure said so, you will not find one.
+
+> **Updated 2026-07-31 — the `PROC_STEP='0'` state is now detected directly, and there is a new
+> abandoned-batch cause.** Two changes to what you will see in an alert:
+>
+> 1. **The firm-file sweep now also selects `PROC_STEP='0'` / `PROC_STAT='6'`**, raising
+>    **`BULK_RECEPTION_RESULT_NOT_RECEIVED`** (a `00301` audit row exists — the bank has the file, the
+>    `01301` was lost) or **`BULK_RECEPTION_NOT_ISSUED`** (no audit row — nothing was sent). Previously
+>    this state was reachable *only* by inference from the pay-file sweep's `RECEPTION_UNCONFIRMED`, and
+>    when the parent pay-file was already terminal (`'3'`) **nothing reported it at all**. Both new causes
+>    reconcile through **§5.3**, which was written for exactly this row shape.
+> 2. **`BULK_BATCH_PARENT_FAILED`** (new, **§5.6**) fires when a stranded file at `PROC_STEP='0'` *or*
+>    `'1'` has a parent `TB_PAY_FILE_MST` already at `PROC_STAT='3'`. Such a file previously classified as
+>    one of the `*_NOT_ISSUED` causes, whose entries below say re-driving is routine — **for an abandoned
+>    batch it is not.** Read §5.6 before acting on any `*_NOT_ISSUED` alert.
+>
+> **Why this matters more than it used to:** two-phase dispatch marks the pay-file FAIL and stops at the
+> first phase-B failure, so files after the failure point are *left* at `PROC_STEP='0'` unsent, as a
+> matter of routine rather than as an edge case. The same state also holds every file whose `01301` was
+> lost after the bank accepted it — 27 of the 30 rows at this state on JEX DEV carry a `00301` audit row
+> (verified read-only 2026-07-31).
+>
+> **Detection caveat — the retention floor.** This sweep ages on `COALESCE(PROC_DTTM, REG_DTTM)`, because
+> neither legacy nor the refactor writes `PROC_DTTM` when the row is inserted (28 of those 30 rows have it
+> null). It still honours `stuck-monitor.retention-days` (default 7), and **all 30 of the existing DEV
+> rows are older than that**, so they will *not* appear in an alert. That is deliberate — a year-old
+> orphan re-alerting every 5 minutes is noise. To enumerate the historical backlog, use the query in §3
+> directly or raise `retention-days` temporarily.
 
 | | `RECEPTION_UNCONFIRMED` | `BULK_EXECUTION_NOT_ISSUED` | `BULK_EXECUTION_UNCONFIRMED` | **execution-result-not-received** (§1.2) |
 |---|---|---|---|---|
@@ -445,7 +472,17 @@ execute*.
 | **C. Executed with partial failures** | Some lines settled, some did not. | **Never re-drive the whole file.** Reconcile per line from the bank's results. Any re-send is per failed line and needs explicit PO approval. |
 | **D. Cannot determine** | | Do **not** re-drive. Escalate to PO + VAN Center. Leave stranded and keep the monitor watching it. |
 
-### 5.3 `RECEPTION_UNCONFIRMED` (firm file at `PROC_STEP='0'`)
+### 5.3 `RECEPTION_UNCONFIRMED` / `BULK_RECEPTION_RESULT_NOT_RECEIVED` / `BULK_RECEPTION_NOT_ISSUED` (firm file at `PROC_STEP='0'`)
+
+> **All three causes land here.** `RECEPTION_UNCONFIRMED` is the pay-file sweep's view of this row shape;
+> since 2026-07-31 the firm-file sweep reports the same shape directly, pre-split on the `00301` audit row:
+> **`BULK_RECEPTION_RESULT_NOT_RECEIVED`** (audit row present) or **`BULK_RECEPTION_NOT_ISSUED`** (absent).
+> The split is a *starting hypothesis*, not a verdict — the table below still governs, because only the
+> VAN Center can separate "no request accepted" from "no file delivered".
+>
+> **First, check the parent.** If `TB_PAY_FILE_MST` for this `(TRAN_DT, BIZ_KEY, FILE_SEQ_NO)` is
+> `PROC_STAT='3'`, the batch was abandoned and the monitor will have said `BULK_BATCH_PARENT_FAILED`
+> instead — go to **§5.6** and do not use the re-drive rows below.
 
 Read the `00301` audit row from query 3.2 first — but **its absence is not evidence the file is not at
 the bank.** The SFTP upload precedes the `00301` call, so "no request was accepted" and "no file was
@@ -488,6 +525,45 @@ able to answer **C** without involving the bank at all.
 - Record the VAN Center's answer, the timestamp, and who you spoke to, against `firm_file_nm`.
 - Do not resolve the alert by silencing the monitor. The fingerprint clears itself once the file
   advances; if it stops being reported without you acting, find out why.
+
+### 5.6 `BULK_BATCH_PARENT_FAILED` — the batch was abandoned (added 2026-07-31)
+
+**Never re-drive a single file on this cause.** The unit of decision is the **batch**, not the file.
+
+The monitor raises this when a file stranded at `PROC_STEP='0'` or `'1'` (with `PROC_STAT='6'`) has a
+parent `TB_PAY_FILE_MST` already at `PROC_STAT='3'`. That combination means phase B of
+`BulkReceptionService.buildAndDispatchAllFiles` hit a failure on an **earlier sibling**, marked the
+pay-file FAIL and `break`ed out of the loop — so this file, and every sibling after the failure point,
+was never sent at all, while siblings *before* it may already be at the bank.
+
+**Why it needs its own section.** Without this cause the file classified as `BULK_EXECUTION_NOT_ISSUED`
+(§5.1) or `BULK_RECEPTION_NOT_ISSUED` (§5.3), and both of those say a re-drive is the routine action. It
+is the wrong action here: re-sending one file of an abandoned batch **part-executes a payment the system
+has already reported to the user as failed** — money moves for some lines and not others, with the UI
+showing a clean failure. That is worse than leaving it stranded.
+
+**Establish the batch's shape before anything else** — how many files the batch has, and how far each got:
+
+```sql
+SELECT firm_file_nm, proc_step, proc_stat, req_cnt, req_amt, reg_dttm, proc_dttm
+  FROM tb_firm_file_mst
+ WHERE biz_key = :biz_key AND tran_dt = :tran_dt AND file_seq_no = :file_seq_no
+ ORDER BY firm_file_nm;
+```
+
+Then, per file, whether a `00301` / `00302` audit row exists (query 3.2). The picture you are building is:
+*which siblings did the bank receive, and did any of them execute?*
+
+| VAN Center answer (for the batch as a whole) | Action |
+|---|---|
+| **A. No sibling was received** | Nothing moved. The whole batch may be re-created cleanly. Have the dev re-drive from the pay-file, or have the user re-submit — but **decide once for the batch**, not per file. Confirm the pay-file's `RS_MSG` explains the original failure and that the cause is fixed, or the same break repeats. |
+| **B. Some siblings received, none executed** | Nothing moved yet, but instructions exist. **Do not re-drive.** Have the VAN Center void the accepted receptions first, then treat as **A**. If they cannot be voided, reconcile forward: the batch is partially at the bank and must be completed or cancelled as a unit, with PO sign-off. |
+| **C. Some siblings executed** | **Money has moved for part of the batch.** Never re-drive anything. Escalate to the PO immediately, obtain per-line results for the executed siblings, reconcile those forward, and treat the unsent remainder as a separate PO decision (complete it, or refund/cancel). The user-facing status is wrong in this state and must be corrected. |
+| **D. Cannot determine** | Do **not** act. Escalate to PO + VAN Center jointly. Leave every file stranded. |
+
+**Record the decision against the `file_seq_no`, not the `firm_file_nm`** — the batch is the unit, and the
+next person to see one of its siblings in an alert needs to find the decision you already made.
+§5.5 still applies on top of that.
 
 ---
 
@@ -551,10 +627,22 @@ legacy-written rows.
   computed `tot`/`succ` over terminal siblings only, so a sibling at `PROC_STAT='6'` was in neither
   count. For a **single** file stranded at `'2'/'6'` that gave `tot=0, succ=0` — and `0 == 0` is true —
   finalising the parent to `'0'` (ALL SUCCESS) while its only file never reported. **Two live PROD
-  instances**, both `siblings=1`; no split batch is required to reach it. The barrier did not help: it
+  instances — `20251128` (9 lines) and `20251201` (2 lines)**, both `siblings=1`; no split batch is
+  required to reach it. The barrier did not help: it
   tested `PROC_STEP='0' AND PROC_STAT='6'`, a faithful port of legacy `R003`, so a file mid-execution
   sailed past. Two guards now apply — defer while any sibling is at `PROC_STAT='6'` (a deliberate
   divergence from legacy R003), and never finalise on `tot == 0`.
+  - **⚠ `20251128` / `20251201` are NOT the §9 pair.** §9's worked examples are `20260407` and
+    `20260529`, whose parents correctly read `PROC_STAT='6'` — they are ordinary lost-`01302` members of
+    the §8 backlog and carry **no** false-ALL-SUCCESS flag. All four sit at `PROC_STEP='2'/'6'`; only
+    these two have a parent finalised to `'0'`. The discriminator is the **parent's** `PROC_STAT`, not
+    the file's.
+  - **Why the dates are recorded here at all.** This bullet said only *"two live PROD instances"* for
+    a day, and in that time the wrong pair was attached to it twice — §9's `20260407`/`20260529` are the
+    other PROD pair surfaced on the same date (2026-07-31), which makes them the obvious and wrong
+    candidates. The fix is **naming the instances**, not explaining the distinction at greater length:
+    a dateless count invites the reader to source the dates from whatever nearby table has two rows in
+    it. Any future "N live PROD instances" claim in this document must carry its keys inline.
   - **Legacy has the identical defect** (`R003` + `R005`'s `TOT` definition + `if (tot == succ)`), so
     this is inherited, not introduced — but it means **any pay-file status written before 2026-07-31 by
     either system may be wrong**. Re-derive from the firm-file rows (query 3.0) rather than trusting
@@ -579,7 +667,80 @@ legacy-written rows.
 | **Payment lines** | **~477** |
 | **Date range** | **2025-08-14 → 2026-05-29** (9½ months) |
 | **Largest single file** | **20251010 — 412 lines, 5,101,563,524 VND** |
-| Confirmed `PROC_STEP='2'` (execution accepted, result never received) | 20260407 (WRB, 2 lines), 20260529 (SHB, 14 lines) |
+| Confirmed `PROC_STEP='2'` (execution accepted, result never received) | **four files, 27 lines** — see the table below |
+
+##### The four `PROC_STEP='2'` files — and which two have a lying parent
+
+**Corrected 2026-08-01: this was previously recorded as two files / 16 lines.** It listed only the pair
+worked in §9 and omitted the other two entirely — the two that matter most, because their parent pay-file
+was finalised to ALL SUCCESS over them.
+
+| `TRAN_DT` | Bank | Lines | Firm file `PROC_STEP`/`PROC_STAT` | Parent `TB_PAY_FILE_MST.PROC_STAT` | |
+|---|---|---|---|---|---|
+| **20251201** | *(not captured — read `OUT_BANK_CD` at triage)* | **2** | `'2'`/`'6'` | **`'0'`** | 🔴 **FALSE ALL-SUCCESS** |
+| **20251128** | *(not captured — read `OUT_BANK_CD` at triage)* | **9** | `'2'`/`'6'` | **`'0'`** | 🔴 **FALSE ALL-SUCCESS** |
+| 20260529 | SHB | 14 | `'2'`/`'6'` | `'6'` | correct — §9 Incident 2 |
+| 20260407 | WRB | 2 | `'2'`/`'6'` | `'6'` | correct — §9 Incident 1 |
+
+**These two are the `tot == 0` defect, named.** The §7 bullet's *"two live PROD instances"* of false
+ALL-SUCCESS are `20251128` and `20251201` — nothing else in this document. Both are `siblings=1`, which
+is all it takes: one file at `'2'/'6'` puts `tot` and `succ` both at zero, and `0 == 0` finalises the
+parent to `'0'`.
+
+**This is the concrete form of the warning at the end of this section.** That warning says a pay-file's
+`PROC_STAT` *"is not trustworthy for these 35 — some may already read `'0'` courtesy of the empty-count
+defect"*. **These are the some.** For `20251128` and `20251201` the parent status is not merely stale, it
+is **affirmatively wrong**: it reports 11 payment lines as settled when their outcome was never received.
+Treat them as the highest-priority rows in the backlog — not because more money is involved (it isn't),
+but because they are the only two the business has already been told succeeded.
+
+Everything §5.4 says still governs: **never re-drive**, reconcile forward from the bank's per-line
+results. Correcting the parent `PROC_STAT` is part of that reconciliation, not a separate cleanup — and
+until it happens, anyone quoting a settlement status for these two is quoting a false one.
+
+#### The largest file is NOT a charset case — withdrawn 2026-08-01
+
+> **This section previously carried a charset "candidate cause" for 20251010.** It was withdrawn after
+> the two files were pulled from the PROD JEX DB. The charset hypothesis is dead; 20251010 is a lost
+> 01302 like the other 34, and should be triaged identically. What follows is the evidence, kept so the
+> hypothesis is not re-derived from the same surface correlation.
+
+The correlation that motivated it was real: the largest stranded file is one of exactly two whose
+`FINC_MDA_OWNER_NM` carries multibyte characters, and neither reached `PROC_STEP='3'`. Two things kill it.
+
+**1. Both files predate tone stripping entirely.** The tone-strip block was added to
+`FILE_DEPOSIT_TRANSFER_BATCH1` in the change that produced `IDO.TB_FIRM_FILE_DATA_C001`
+**version `20251029205935`**. Both files are dated **`20251010`** — nineteen days earlier. At the time
+they were written, no legacy code path stripped tones on this rail *at all*, so their multibyte content
+says nothing about whether the `hasVietnameseCharacters` gate (D-L) leaks: the gate did not yet exist.
+The rows are an artefact of the pre-IMP era, not an instance of the gate firing.
+
+**2. The pair is a resubmission, and the payload changed between attempts.** From PROD:
+
+| | `..._SHB_001_20251010` | `..._SHB_002_20251010` |
+|---|---|---|
+| `FILE_SEQ_NO` / `FILE_SEQ` | 80 / `001` | 81 / `002` |
+| `REG_DTTM` | `20251010084104` | `20251010125709` |
+| `REQ_CNT` / `REQ_AMT` | 412 / 5,101,563,524.00 | 412 / 5,101,563,524.00 |
+| `PROC_STEP` / `PROC_STAT` | `0` / `3` | `2` / `6` |
+| rows / multibyte / `ORG_SEQ` | 412 / 411 / 1–412 | 412 / 411 / 1–412 |
+| payload fingerprint | `40ca08d3038277feb6ad432c0109e444` | `2e142b0f40aa2c1f1d1cc557d20e990e` |
+
+Same `BIZ_KEY`, identical `ORG_SEQ` range and identical totals, but **different `FILE_SEQ_NO` and
+different payload fingerprints** — so this is not a split of one logical file. It is the same 412-line
+payment submitted twice, four hours apart, **edited in between**. The first attempt was rejected at
+reception (`PROC_STEP='0'/PROC_STAT='3'`) and someone changed the data before resubmitting. A rejection
+that is fixed by editing the payload is a **data** rejection; a charset refusal would have survived the
+edit, because the multibyte content did not change (411 of 412 rows, both times).
+
+**Consequence for triage:** `20251010` (`FILE_SEQ_NO` 81) is a lost 01302 — execution accepted, result
+never received — exactly like the other 34. Work it through the standard reconcile-forward path in §5.
+Do **not** raise character-set as a question in the bank conversation for this file; ask the ordinary
+"was 01302 delivered" question. `FILE_SEQ_NO` 80 is a separate, already-terminal rejection and is not
+part of the 35-file backlog.
+
+**Refactor exposure is unchanged and remains nil:** `VietnameseText.replaceTone` applies the table
+unconditionally, so the refactor cannot emit an unstripped name regardless of what happened here.
 
 ### These predate the refactor and were produced by legacy
 
@@ -595,11 +756,21 @@ State this plainly in any escalation, because the framing decides who owns it:
   caused.** What changed on 2026-07-31 is only that it is now *visible*: the new sweep raises it, and
   the finalisation guards stop the parent pay-file from reporting a false "all success" over it.
 
-The corollary matters for triage: **a pay-file's `PROC_STAT` is not trustworthy for these 35.** Some may
-already read `'0'` (all success) courtesy of the empty-count defect (§7). Re-derive the true state from
-the firm-file rows with query 3.0 before quoting any status to a payment owner.
+The corollary matters for triage: **a pay-file's `PROC_STAT` is not trustworthy for these 35.** Two of
+them — **`20251128` and `20251201`** — already read `'0'` (all success) courtesy of the empty-count defect
+(§7); they are identified individually in the four-file table above, so this is no longer a "some may"
+caution but a named pair. Re-derive the true state from the firm-file rows with query 3.0 before quoting
+any status to a payment owner, **and treat a parent reading `'0'` as evidence of nothing** — it is
+produced by the same defect for a stranded file as for a genuinely settled one.
 
 ### Operational action
+
+> **The sheet to work this in exists:**
+> [bulk-file-backlog-reconciliation-worksheet.md](bulk-file-backlog-reconciliation-worksheet.md),
+> populated by `Claude Code (AI)/sql/tb_firm_file_mst_stranded_backlog_worksheet_20260801.sql` —
+> one row per file with the three audit-presence flags and the **re-derived** parent state already
+> resolved, ordered newest-first / largest-first within a day. It gathers the evidence; the
+> dispositions below and in §5 still decide what is done with it.
 
 1. **Confirm with the bank whether these executed.** That is the whole question, and it is unanswered
    for all 35. Work newest-first (most likely to still be reconstructable at the bank) and
@@ -624,31 +795,48 @@ Query 1 in the operator pack returns `proc_step` and the audit columns for exact
 
 ---
 
-## 9. Worked examples — the two PROD `PROC_STEP='2'` incidents (2026-07-31)
+## 9. Worked examples — the four PROD `PROC_STEP='2'` incidents (2026-07-31)
 
-Two genuinely stranded PROD files, both in the §1.2 state. **Neither was reported by any sweep** — they
-were found by hand. They are the reason §1.2 exists.
+> **Corrected 2026-08-01: this section covered two incidents and 16 lines. There are four, and 27.**
+> Incidents 3 and 4 were omitted, and they are the pair whose parent pay-file is **lying** — see §8's
+> four-file table. An operator who worked only Incidents 1–2 would have left the two worst rows in place.
 
-| | Incident 1 | Incident 2 |
-|---|---|---|
-| `TRAN_DT` | **20260407** | **20260529** |
-| Bank / file type | Woori (`WRB`) | Shinhan (`SHB`) |
-| Payment lines | **2** | **14** |
-| Firm-file state | `PROC_STEP='2'` / `PROC_STAT='6'` | `PROC_STEP='2'` / `PROC_STAT='6'` |
-| `00302` | sent, acknowledged (this is what advanced the step) | sent, acknowledged |
-| `01302` | never returned | never returned |
-| Detected by the monitor? | **No** — firm-file sweep filters `PROC_STEP='1'` | **No** |
-| Reported (via parent pay-file) as | `AWAITING_EXECUTION_RESULT` — *"often not a defect"* | same |
+Four genuinely stranded PROD files, all in the §1.2 state. **None was reported by any sweep** — they were
+found by hand. They are the reason §1.2 exists.
 
-**16 payment lines in total are in an unknown settlement state.** Our database says "processing"; the
-bank has almost certainly executed both batches.
+| | Incident 1 | Incident 2 | **Incident 3** | **Incident 4** |
+|---|---|---|---|---|
+| `TRAN_DT` | **20260407** | **20260529** | **20251128** | **20251201** |
+| Bank / file type | Woori (`WRB`) | Shinhan (`SHB`) | *(read `OUT_BANK_CD` at triage)* | *(read `OUT_BANK_CD` at triage)* |
+| Payment lines | **2** | **14** | **9** | **2** |
+| Firm-file state | `PROC_STEP='2'` / `PROC_STAT='6'` | same | same | same |
+| `00302` | sent, acknowledged (this is what advanced the step) | sent, acknowledged | sent, acknowledged | sent, acknowledged |
+| `01302` | never returned | never returned | never returned | never returned |
+| Detected by the monitor? | **No** — firm-file sweep filters `PROC_STEP='1'` | **No** | **No** | **No** |
+| Parent `TB_PAY_FILE_MST.PROC_STAT` | `'6'` | `'6'` | 🔴 **`'0'`** | 🔴 **`'0'`** |
+| Reported (via parent pay-file) as | `AWAITING_EXECUTION_RESULT` — *"often not a defect"* | same | 🔴 **nothing — the parent reads ALL SUCCESS.** Not "processing": *settled*. The pay-file dropped out of the claimed sweep entirely, and the business has been told these 9 lines completed | 🔴 same, for 2 lines |
 
-### What to do with these two — the operational action
+**27 payment lines in total are in an unknown settlement state.** For Incidents 1–2 our database says
+"processing"; for **Incidents 3–4 it says *settled***, which is worse — a wrong answer reads as an answer,
+where a pending one at least invites the question. The bank has almost certainly executed all four
+batches.
 
-1. **Ask the bank whether those 16 lines executed.** Use the §4.3 script, once per file. This is the
-   only question that matters and it has not yet been asked.
-2. Then follow §5.4 on the answer. Expect answer **A** or **B**; reconcile forward, do not re-drive.
-3. Record the answer against each `firm_file_nm` per §5.5.
+Incidents 3 and 4 are the two live PROD instances of the `tot == 0` false-ALL-SUCCESS defect (§7). Both
+are `siblings=1`: a single file at `'2'/'6'` leaves `tot` and `succ` both zero, and `0 == 0` finalises the
+parent.
+
+### What to do with these four — the operational action
+
+1. **Work Incidents 3 and 4 first**, ahead of the larger Incident 2. Line count is not the priority
+   order here; a *false* status outranks a *pending* one, because only the false one is already being
+   quoted downstream as fact.
+2. **Ask the bank whether those 27 lines executed.** Use the §4.3 script, once per file. This is the only
+   question that matters and it has not yet been asked for any of the four.
+3. Then follow §5.4 on the answer. Expect answer **A** or **B**; reconcile forward, do not re-drive.
+4. **For Incidents 3–4, correcting the parent `PROC_STAT` off `'0'` is part of the reconciliation, not a
+   follow-up.** Whatever the bank answers, the current `'0'` is wrong: it was produced by an empty count,
+   not by a result.
+5. Record the answer against each `firm_file_nm` per §5.5.
 
 ### Why they read as benign
 
@@ -660,9 +848,10 @@ documented would reasonably conclude nothing needs doing.
 
 ### This shape is not rare
 
-JEX **DEV** carries **16** firm files at `PROC_STEP='2'` / `PROC_STAT='6'` (query run 2026-07-31). Twelve
-are `REQ_CNT=0` test artifacts with no `00302` audit row, but **four are the same shape as the PROD
-incidents** — a `00302` audit row present, no `01302`, real line counts:
+JEX **DEV** carries **16** firm files at `PROC_STEP='2'` / `PROC_STAT='6'` (query run 2026-07-31,
+re-verified read-only 2026-08-01). Twelve are `REQ_CNT=0` test artifacts with no `00302` audit row, but
+**four are the same shape as the PROD incidents** — a `00302` audit row present, no `01302`, real line
+counts:
 
 | `TRAN_DT` | `FIRM_FILE_NM` | Lines | `00302` | `01302` |
 |---|---|---|---|---|
@@ -672,8 +861,8 @@ incidents** — a `00302` audit row present, no `01302`, real line counts:
 | 20250711 | `S_GV00000001_SHB_107_20250711` | 5 | ✅ | ✗ |
 
 All 16 have a parent pay-file at `PROC_STAT='6'`, so all 16 would today be reported as
-`AWAITING_EXECUTION_RESULT`. **Two PROD incidents are not an outlier — it is a recurring shape with no
-detection.**
+`AWAITING_EXECUTION_RESULT`. **Four PROD incidents plus four matching DEV rows are not an outlier — it is
+a recurring shape with no detection.**
 
 ---
 

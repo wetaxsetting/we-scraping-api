@@ -1,5 +1,23 @@
 # D-1 / D-2 / D-3 — Legacy Verification and Fix Record
 
+> **⚠ ID collision — qualify `D-1` and `D-3` whenever they leave this document.** A second, independent
+> `D-n` series is owned by
+> [`legacy-batch-boundary-rule-sweep-2026-07-31.md`](legacy-batch-boundary-rule-sweep-2026-07-31.md), and
+> **two IDs collide**:
+>
+> | ID | **This document** | Boundary-sweep series |
+> |---|---|---|
+> | `D-1` | `ResultCheckService` `TRAN_DT` UTC/ICT reader fix | `S_`/`R_` `FIRM_FILE_NM` prefix asymmetry |
+> | `D-3` | Spring Boot Actuator | 99 / 999 file-round wrap |
+> | `D-2` | EFS envelope partner ID | *(not used there)* |
+>
+> Per-document scoping is the house convention (`H-1` already means three different things in three
+> documents) and it holds while an ID stays home — **inside this file `D-1` is unambiguous and needs no
+> qualifier.** It breaks where two series meet in one document, today
+> [`../deployment/wecms-batch-activation-runbook.md`](../deployment/wecms-batch-activation-runbook.md)
+> (§5.1 step 6 vs §5.1a-1). **Convention: write `D-1 (d1-d2-d3 record)` / `D-1 (boundary-sweep)` at every
+> citation outside the owning document.** Recorded 2026-08-01.
+
 **Date:** 2026-07-29 · **System:** Refactor (`wecms-api`) firm-banking dispatch
 **Method:** legacy JEX source read **first**, refactor source second, then fix. No DB was reachable this
 session (`postgres_dev_server_*` MCP unavailable), so no runtime/DB claim is asserted as live-verified.

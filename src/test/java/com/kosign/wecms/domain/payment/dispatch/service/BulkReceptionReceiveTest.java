@@ -47,6 +47,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
@@ -109,7 +110,7 @@ class BulkReceptionReceiveTest {
                 firmFileMstRepository, firmFileDataRepository, firmBatApiTranRepository,
                 dispatchKeyGenerator, codec, sftpClient, sftpProperties, bulkTransferValidator,
                 opsAlertService, operatingHoursService,
-                new BulkDispatchClaimTxService(payFileMstRepository),
+                new BulkDispatchClaimTxService(payFileMstRepository, firmFileMstRepository),
                 org.mockito.Mockito.mock(com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard.class),
                 org.mockito.Mockito.mock(com.kosign.wecms.domain.payment.common.OutBankCdNormalizer.class),
                 perFileTxManager);
@@ -302,15 +303,16 @@ class BulkReceptionReceiveTest {
         spy.receive(TRAN_DT, BIZ_KEY, FILE_SEQ_NO);
 
         // FIRM_FILE_MST ends FAIL (still step 0, never advanced); pay ends FAIL.
-        ArgumentCaptor<TbFirmFileMst> mstCap = ArgumentCaptor.forClass(TbFirmFileMst.class);
-        verify(firmFileMstRepository, org.mockito.Mockito.atLeastOnce()).save(mstCap.capture());
-        TbFirmFileMst last = mstCap.getValue();
-        assertEquals(ProcStep.REQ.code(), last.getProcStep());
-        assertEquals(ProcStat.FAIL.code(), last.getProcStat());
-
-        ArgumentCaptor<TbPayFileMst> payCap = ArgumentCaptor.forClass(TbPayFileMst.class);
-        verify(payFileMstRepository, org.mockito.Mockito.atLeastOnce()).save(payCap.capture());
-        assertEquals(ProcStat.FAIL.code(), payCap.getValue().getProcStat());
+        //
+        // Two-phase dispatch: the terminal write is a guarded UPDATE by key, not save(entity). Phase A
+        // commits and closes its transaction before the upload, so by the time this SFTP failure is
+        // handled the entity is detached — see BulkDispatchClaimTxService.failFirmFileAndPayFile. The
+        // observable outcome is unchanged: firm file stays PROC_STEP='0' and goes PROC_STAT='3' (the
+        // UPDATE never touches the step), pay-file goes '3'.
+        verify(firmFileMstRepository).failFirmFile(eq(BIZ_KEY), eq(TRAN_DT), eq(FILE_SEQ_NO),
+                anyString(), anyString(), anyString(), anyString());
+        verify(payFileMstRepository).failClaimedPayFile(eq(BIZ_KEY), eq(TRAN_DT), eq(FILE_SEQ_NO),
+                anyString(), anyString());
 
         verify(spy, never()).issueReception(any());
     }
@@ -593,13 +595,13 @@ class BulkReceptionReceiveTest {
 
         // Only files 1 and 2 were attempted — file 3 skipped after the fail-stop.
         verify(spy, times(2)).issueReception(any());
-        // Both files' MST rows were saved (file 1 committed in its own tx BEFORE file 2 failed).
+        // Both files' MST rows were inserted in phase A and committed BEFORE either upload — that is
+        // the ordering restored here: legacy commits at :696-697 and only then uploads at :700.
         verify(firmFileMstRepository, org.mockito.Mockito.atLeast(2)).save(any());
-        // The shared pay-file ends FAIL (file 2's failBoth).
-        ArgumentCaptor<TbPayFileMst> payCap = ArgumentCaptor.forClass(TbPayFileMst.class);
-        verify(payFileMstRepository, org.mockito.Mockito.atLeastOnce()).save(payCap.capture());
-        assertEquals(ProcStat.FAIL.code(),
-                payCap.getAllValues().get(payCap.getAllValues().size() - 1).getProcStat());
+        // The shared pay-file ends FAIL — via the guarded UPDATE, because phase B holds no transaction
+        // and the entity from phase A is detached.
+        verify(payFileMstRepository).failClaimedPayFile(eq(BIZ_KEY), eq(TRAN_DT), eq(FILE_SEQ_NO),
+                anyString(), anyString());
     }
 
     /**
@@ -645,20 +647,18 @@ class BulkReceptionReceiveTest {
 
         // NEW: the pay-file reaches a terminal state instead of being stranded at '6'.
         //
-        // It gets there via failBoth inside the per-file transaction — the inner RuntimeException
-        // guard around the EFS leg — NOT via the outer failClaimedPayFile conditional update. That is
-        // the better of the two paths and the one to assert here: it records the reason on the
-        // firm-file row as well as the pay-file, and it commits with the rest of that file's work. The
-        // outer guard is the backstop for throws that escape the per-file transaction entirely (e.g.
-        // the round lookup, or the firm-file insert itself) — covered in
-        // BulkReceptionStrandedFailureTest.escapingThrow_isRecordedThroughTheConditionalUpdate.
-        ArgumentCaptor<TbPayFileMst> payCap = ArgumentCaptor.forClass(TbPayFileMst.class);
-        verify(payFileMstRepository, org.mockito.Mockito.atLeastOnce()).save(payCap.capture());
-        assertEquals(ProcStat.FAIL.code(),
-                payCap.getAllValues().get(payCap.getAllValues().size() - 1).getProcStat(),
-                "the shared pay-file must end FAIL, never be left at REQ('6')");
-        verify(payFileMstRepository, never())
-                .failClaimedPayFile(anyString(), anyString(), anyString(), anyString(), anyString());
+        // It gets there via failFirmFileAndPayFile — the phase-B RuntimeException guard around the EFS
+        // leg — which stamps the reason on the firm-file row as well as the pay-file.
+        //
+        // Under two-phase dispatch this IS the guarded conditional update. Phase B has no transaction
+        // to roll back, so the guarded UPDATE is the only way a terminal state can be written at all;
+        // the distinction the previous assertion drew (inner save vs outer conditional update) no
+        // longer exists. What still matters, and is asserted, is that BOTH rows are stamped — a bare
+        // pay-file FAIL with no reason recorded on the file is the strand this guard exists to prevent.
+        verify(payFileMstRepository, org.mockito.Mockito.atLeastOnce()).failClaimedPayFile(
+                eq(BIZ_KEY), eq(TRAN_DT), eq(FILE_SEQ_NO), anyString(), anyString());
+        verify(firmFileMstRepository).failFirmFile(eq(BIZ_KEY), eq(TRAN_DT), eq(FILE_SEQ_NO),
+                anyString(), anyString(), anyString(), anyString());
 
         // The partial-dispatch signal lives in the ops alert on this path: file 1 already reached the
         // bank, so the batch must not read as a clean retryable failure.

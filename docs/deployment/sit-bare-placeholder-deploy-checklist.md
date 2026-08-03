@@ -113,6 +113,68 @@ Notes on two of them:
   value is valid for a String; deleting the line is what breaks it.
 - `WECMS_CALLBACK_TRUSTED_PROXIES=` — same. Empty is the intended, safest value.
 
+> ### ⛔ PRE-FIRST-TRANSFER — `WECMS_CALLBACK_ALLOWED_IPS` is empty, so every callback 403s
+>
+> **Not part of this migration, and not needed to deploy.** Needed before the **first bulk
+> transfer on SIT**, which is a different moment — which is exactly why it gets missed.
+>
+> `WECMS_CALLBACK_PROTECTION=ENFORCE` (§2 above) fails **closed**: an empty allow-list rejects
+> with **403**, by design (H-1). `.env.sit` ships `WECMS_CALLBACK_ALLOWED_IPS=` empty. So today
+> **every inbound `01301` / `01302` is rejected before it reaches any handler.**
+>
+> The symptom an operator will report is **"the gateway never called us back"**, and that is the
+> one conclusion that is wrong. The 00301 succeeded; the answer came back and we refused it.
+>
+> **Step 1 — set the value on the host, in `setenv.sh` / OS env, not the repo `.env.sit`.**
+> The SIT host reads `bin/setenv.sh` (memory `reference_sit_server_config_setenv`); editing the
+> committed file changes nothing on the server.
+>
+> ```properties
+> WECMS_CALLBACK_ALLOWED_IPS=42.96.55.163
+> ```
+>
+> **Step 2 — confirm that is actually the address the gateway calls from. Do not assume it.**
+> `42.96.55.163` is the **SFTP** host (guide v1.2.6 §1.2, DEV). The callback **source** IP is
+> documented nowhere in this repository, and there is no reason the two must be the same host —
+> the file channel and the HTTP callback channel are separate services. `42.96.55.163` is the
+> starting hypothesis, not a known value. Confirm with the VAN Center (this is the open half of
+> **OQ-PDF-2**), or read it off the rejection WARN in step 4.
+>
+> **Step 3 — if SIT sits behind a reverse proxy, the allow-list needs the PROXY's IP, not the
+> gateway's.** `WECMS_CALLBACK_TRUST_FORWARDED_FOR=true` with `WECMS_CALLBACK_TRUSTED_PROXIES=`
+> **empty** means `X-Forwarded-For` is ignored entirely and the **direct peer** is matched
+> (`CallbackIpWhitelistFilter.resolveClientIp` — an untrusted peer's forwarded header must not
+> pick its own apparent source). Behind a proxy the direct peer *is* the proxy. Two valid fixes:
+> put the proxy's IP in `ALLOWED_IPS`, or put it in `TRUSTED_PROXIES` so the left-most `XFF`
+> entry is matched instead. Choose one deliberately — the second is what you want if you need
+> the real gateway IP in the allow-list.
+>
+> **Step 4 — the failure signature, so it is recognised on the first transfer and not debugged.**
+>
+> | Where | What you see |
+> |---|---|
+> | Access log | **HTTP 403** on `POST /api/v1/payment/dispatch/callbacks/…` |
+> | Application log | `WARN … Callback rejected — allow-list is empty and protection=ENFORCE (peer=<IP> uri=…)` — or, once the list is non-empty, `WARN … Callback rejected — source IP <IP> not in allow-list (peer=<IP> uri=…)` |
+> | Callback service log | **nothing** — the request is rejected in the security chain and never reaches `BulkReceptionResultService` |
+> | `TB_FIRM_FILE_MST` | stranded at `PROC_STEP='0'` / `PROC_STAT='6'` |
+> | `TB_FIRM_BAT_API_TRAN` | a **`00301` row IS present** — the request went out and succeeded |
+> | Stuck-monitor (if on) | `BULK_RECEPTION_RESULT_NOT_RECEIVED` — *"the bank has this file and the 01301 result was lost. NEVER re-drive"* |
+>
+> **The filter is NOT silent — and that WARN is how you discover the correct value.** Both
+> rejection branches log at WARN naming the source IP and the peer
+> ([`CallbackIpWhitelistFilter:74`](../../src/main/java/com/kosign/wecms/domain/payment/dispatch/callback/CallbackIpWhitelistFilter.java#L74) and
+> [`:87`](../../src/main/java/com/kosign/wecms/domain/payment/dispatch/callback/CallbackIpWhitelistFilter.java#L87)).
+> No code change is needed here. Trigger one callback, read `peer=` out of the WARN, and that is
+> the address to allow-list — subject to step 3, since `peer=` is the proxy when there is one.
+> (The filter deliberately logs the decision inputs only — never headers wholesale, never the
+> payload.)
+>
+> **The monitor's cause is `*_RESULT_NOT_RECEIVED`, i.e. NEVER re-drive.** That verdict is
+> correct and must be respected even though the root cause here is our own 403: the bank really
+> does hold the file. Fix the allow-list and let the gateway retry, or reconcile forward per
+> [bulk-file-reconciliation-procedure.md](bulk-file-reconciliation-procedure.md) §5.3 — do not
+> re-issue the 00301.
+
 `WECMS_DISPATCH_STUCK_MONITOR_ENABLED` and `_CRON` are **already present** on the
 host if it was built from the repo template — do not add them again. But their
 *values* need a decision before this deploy:
@@ -471,3 +533,9 @@ complete per §3.
 8. Leave every dispatch leg `false`. This deploy changes configuration mechanics only;
    it is not an activation. Activation gates live in
    [wecms-batch-activation-runbook.md](wecms-batch-activation-runbook.md) §5.0.
+
+**Later — not part of this deploy, but before the first bulk transfer on SIT:**
+
+9. Set `WECMS_CALLBACK_ALLOWED_IPS` on the host (§2 callout). With it empty, `ENFORCE`
+   rejects **every** inbound `01301` / `01302` with a 403 and the transfer strands at
+   `PROC_STEP='0'` looking like the gateway never answered.

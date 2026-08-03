@@ -211,11 +211,17 @@ and the next pass will continue from the oldest of them.
 |---|---|---|---|---|---|---|
 | `WECMS_EFS_ENABLED` | See §1. | `false` | SIT/UAT/PROD (**REQUIRED**) | PUBLIC | `false` → mock throws | `EfsClientConfig` |
 | `WECMS_EFS_BASE_URL` | Base URL of the EFS gateway. Endpoint paths (`/WGVN_EFS_201.jct` …) are vendor-fixed in code. | `${EFS_GATEWAY_BASE_URL}` | SIT/UAT/PROD (**REQUIRED**; must be non-empty when EFS is on) | SENSITIVE | empty → `RestClient` has no base URL; requests fail | `EfsClientConfig`, `EfsProperties` |
-| `WECMS_EFS_PARTNER_ID` | Partner identifier sent as the envelope `ID`. Not a secret. **Empty in every committed template.** | `${EFS_PARTNER_ID}` | SIT/UAT/PROD (**REQUIRED**; must be non-empty when EFS is on) | SENSITIVE | empty → gateway rejects | `EfsProperties` |
+| ~~`WECMS_EFS_PARTNER_ID`~~ **RETIRED 2026-07-29 (D-2)** | **Setting this has no effect. Do not go looking for a value — it cannot bind to anything.** The property `wecms.dispatch.efs.partner-id` was removed: `EfsProperties` has no `partnerId` field (`EfsProperties.java:67`), `getPartnerId()` exists nowhere in `src/`, and the key is in no YAML under `src/main/resources/`, `bin/main/` or `build/resources/main/`. `SchedulerConfigurationContractTest.partnerIdPropertyIsRetired` fails the build if it returns. **The envelope `ID` is unconditionally `TB_FIRM_CONF.VAN_ORG_CD` — no fallback exists** (all six build sites assign `String id = cmd.vanOrgCd();` with no branch). **Not to be confused with the vendor's `prtn_id`**, a separate *per-account* body field inside `EV` sourced from `TB_FIRM_CONF.BANK_PRTN_ID`. **Real check → the row below.** | *(none)* | **nowhere** — not read in any profile | n/a | n/a — unbindable | *(nothing)* |
+| *(not a variable)* `TB_FIRM_CONF.VAN_ORG_CD` + `BANK_PRTN_ID` | The two values the retired variable was mistaken for. `VAN_ORG_CD` → envelope `ID`; `BANK_PRTN_ID` → vendor body `prtn_id`. **Both are per *withdrawal account*** — `TB_FIRM_CONF`'s PK is `(biz_key, out_bank_cd, wdrl_act_no)`, so one tenant+bank can legitimately carry different values per account. | *(DB row)* | all, when EFS is on — **verify per account, per environment** | PUBLIC | Wrong/placeholder row → a nonsense partner identity on every EFS call **for that account only**; an unknown `VAN_ORG_CD` also makes `VanApiKeyService` throw (fails closed) | `EfsProperties` consumers via `TbFirmConfRepository` |
 | *(not a variable)* `TB_VAN_API_INFO.API_KEY` | Per-VAN AES/HMAC key that builds `EV` and verifies `VV`. **Deliberately never in YAML or any env var** — provisioned out-of-band into the DB. | `******` | all, when EFS is on | **SECRET** | Missing row → `VanApiKeyService.getApiKey` **throws**, so crypto cannot run with a missing key (fails closed) | `VanApiKeyService` → `EfsCryptoService` |
 | *(hardcoded)* `wecms.dispatch.efs.connect-timeout-ms` | Connect timeout. | — | — | PUBLIC | `3000` | `EfsClientConfig` |
 | *(hardcoded)* `wecms.dispatch.efs.read-timeout-ms` | Read timeout. | — | — | PUBLIC | `20000` | `EfsClientConfig` |
 | *(code default)* `wecms.dispatch.efs.endpoints.*` | 7 vendor endpoint paths (`EFS_201/202/203/204/301/302` + `EFS_MSG`). | — | — | PUBLIC | vendor-fixed map in `EfsProperties.defaultEndpoints()` | `EfsProperties` |
+
+> **`WECMS_EFS_PARTNER_ID` correction, 2026-08-01.** This row previously read *"**REQUIRED**; must be
+> non-empty when EFS is on … empty → gateway rejects"*, which sent readers looking for a value that
+> cannot bind to anything. Verification record:
+> [wecms-batch-infrastructure-readiness-audit.md §6.1 + decision D-2](wecms-batch-infrastructure-readiness-audit.md).
 
 ---
 

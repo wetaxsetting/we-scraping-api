@@ -129,7 +129,7 @@ class BulkReceptionStrandedFailureTest {
     void setUp() {
         // A REAL claim service over the mocked repository: the claim and the terminal fail-write are
         // both part of the invariant under test, so stubbing them away would hide the defect.
-        claimTxService = new BulkDispatchClaimTxService(payFileMstRepository);
+        claimTxService = new BulkDispatchClaimTxService(payFileMstRepository, firmFileMstRepository);
         service = new BulkReceptionService(
                 efsApiClient, crypto, vanApiKeyService, efsProperties, objectMapper,
                 payFileMstRepository, payFileDataRepository, firmConfRepository,
@@ -220,11 +220,25 @@ class BulkReceptionStrandedFailureTest {
                 .thenReturn(org.mockito.Mockito.mock(BulkValidationCounts.class));
     }
 
-    /** Every {@code TB_PAY_FILE_MST} status written through the entity save path. */
+    /**
+     * Every terminal {@code TB_PAY_FILE_MST} status this run wrote.
+     *
+     * <p>Two-phase dispatch moved every post-claim terminal write onto the {@code '6'}-guarded
+     * UPDATEs ({@code failClaimedPayFile}) — phase B holds no transaction, so an entity {@code save}
+     * is no longer available to it and the detached row from phase A must not be written back. Both
+     * guarded updates set {@code PROC_STAT='3'}, so any invocation of either is a FAIL for the
+     * purposes of these tests; what they assert is that a FAIL was recorded at all rather than the row
+     * being abandoned at the claimed {@code '6'}.
+     */
     private List<String> savedPayStatuses() {
-        ArgumentCaptor<TbPayFileMst> captor = ArgumentCaptor.forClass(TbPayFileMst.class);
-        verify(payFileMstRepository, atLeastOnce()).save(captor.capture());
-        return captor.getAllValues().stream().map(TbPayFileMst::getProcStat).toList();
+        int viaGuardedUpdate = org.mockito.Mockito.mockingDetails(payFileMstRepository).getInvocations()
+                .stream()
+                .filter(i -> i.getMethod().getName().equals("failClaimedPayFile"))
+                .toList().size();
+        return viaGuardedUpdate > 0
+                ? java.util.stream.IntStream.range(0, viaGuardedUpdate)
+                        .mapToObj(i -> ProcStat.FAIL.code()).toList()
+                : List.of();
     }
 
     /* ── 1. VanApiKeyService throws IllegalStateException (the B2 provisioning gap) ── */
@@ -344,11 +358,20 @@ class BulkReceptionStrandedFailureTest {
 
         service.receive(TRAN_DT, BIZ_KEY, FILE_SEQ_NO);
 
-        // Same outcome as before the fix: committed FAIL, not rethrown, and NOT routed through the
-        // new outer guard (the per-file catch already handled it inside its own transaction).
+        // Same outcome as always: a committed FAIL, not rethrown (legacy parity — the FAIL state
+        // commits rather than propagating).
         assertThat(savedPayStatuses()).contains(ProcStat.FAIL.code());
-        verify(payFileMstRepository, never())
-                .failClaimedPayFile(anyString(), anyString(), anyString(), anyString(), anyString());
+
+        // It took the PER-FILE failure path, not receive()'s outer catch-all. The tell is the
+        // firm-file row: the per-file path stamps BOTH rows (failFirmFileAndPayFile), while the outer
+        // guard only knows the pay-file key and can stamp nothing else.
+        //
+        // UPDATED for two-phase dispatch: this used to assert `failClaimedPayFile` was never called,
+        // because the per-file path wrote through save(entity) and only the outer guard used the
+        // guarded UPDATE. Phase B now holds no transaction, so BOTH paths write through guarded
+        // UPDATEs and that signal no longer separates them — the firm-file stamp does.
+        verify(firmFileMstRepository).failFirmFile(eq(BIZ_KEY), eq(TRAN_DT), eq(FILE_SEQ_NO),
+                anyString(), anyString(), anyString(), anyString());
     }
 
     /* ── 8. A lost claim has no side effects at all ── */
@@ -407,14 +430,22 @@ class BulkReceptionStrandedFailureTest {
         // This version constructs a genuine partial dispatch and asserts the exact count. It failed
         // against the pre-fix code (reported 0 while one file was already at the bank) and passes now
         // that the counter is an accumulator rather than a return value.
+        //
+        // TRIGGER MOVED for two-phase dispatch (the assertion is unchanged). It used to fail file 2's
+        // TB_FIRM_FILE_DATA insert. That can no longer produce a partial dispatch at all: every
+        // file's rows are now inserted in phase A, before ANY upload, so a detail-insert failure rolls
+        // the whole group back with nothing sent — which is the improvement, not a gap. The escaping
+        // throw is now raised in phase B, where a partial dispatch is genuinely reachable:
+        // writeApiTran's firmBatApiTranRepository.save sits outside dispatchOneFile's try blocks, so
+        // file 2's audit insert escapes to receive()'s outer guard AFTER file 1 is already at the bank
+        // — the only path on which the count can still be lost.
         given(3, "Y", 1);                                     // 3 details, limit 1 → 3 split files
         when(vanApiKeyService.getApiKey(anyString())).thenReturn("webcashvietnam0002TEST$#%$&*$&^!");
-        // File 1's detail insert succeeds; file 2's throws. firmFileDataRepository.save sits OUTSIDE
-        // both of buildAndDispatchFile's inner try blocks, so it escapes to receive()'s outer guard —
-        // the only path on which the count can be lost.
-        when(firmFileDataRepository.save(any()))
+        // File 1: audit insert, then the post-00301 success update. File 2: audit insert throws.
+        when(firmBatApiTranRepository.save(any()))
                 .thenAnswer(i -> i.getArgument(0))
-                .thenThrow(new org.springframework.dao.DataIntegrityViolationException("detail insert failed"));
+                .thenAnswer(i -> i.getArgument(0))
+                .thenThrow(new org.springframework.dao.DataIntegrityViolationException("audit insert failed"));
 
         BulkReceptionService spy = spy(service);
         doReturn(null).when(spy).issueReception(any());        // file 1's 00301 is ACCEPTED

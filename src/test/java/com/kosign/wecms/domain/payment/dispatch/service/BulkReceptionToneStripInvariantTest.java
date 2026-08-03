@@ -136,7 +136,7 @@ class BulkReceptionToneStripInvariantTest {
                 firmFileMstRepository, firmFileDataRepository, firmBatApiTranRepository,
                 dispatchKeyGenerator, codec, sftpClient, sftpProperties, bulkTransferValidator,
                 opsAlertService, operatingHoursService,
-                new BulkDispatchClaimTxService(payFileMstRepository),
+                new BulkDispatchClaimTxService(payFileMstRepository, firmFileMstRepository),
                 org.mockito.Mockito.mock(com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard.class),
                 org.mockito.Mockito.mock(com.kosign.wecms.domain.payment.common.OutBankCdNormalizer.class),
                 perFileTxManager);

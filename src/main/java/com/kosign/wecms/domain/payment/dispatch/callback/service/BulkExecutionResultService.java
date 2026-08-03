@@ -73,6 +73,23 @@ import java.util.Map;
  * ignored, and {@code PROC_STEP 2→3} is reached only after every row is parsed
  * and written.
  *
+ * <h2>Unmatched callbacks: this leg answers {@code 0000}, the 01301 leg answers {@code G999}</h2>
+ * Both legs face the identical question — the state-scoped lookup found nothing, so is this a replay we
+ * already handled or a callback we cannot match? {@code BulkReceptionResultService} splits them
+ * (replay → {@code 0000}; unknown / ambiguous / unexpected state → {@code G999} so the gateway resends,
+ * with the reasoning written out at its {@code handleUnmatchedCallback}); this leg answers {@code 0000}
+ * on every branch. <b>The asymmetry is ours, not a legacy divergence</b> — legacy answers {@code G999} +
+ * {@code "<file_nm> not found."} here ({@code FILE_DEPOSIT_TRANSFER_API2_act.jsp:163-169}).
+ *
+ * <p>It is deliberate, not an oversight. This leg's miss is dominated by the routine replay case: once a
+ * file reaches {@code PROC_STEP='3'}, <i>every</i> later callback misses the {@code '2'}/{@code '6'}
+ * lookup, so a blanket {@code G999} would answer a correctly-processed replay and produce a
+ * deterministic resend loop with nothing to converge on — legacy tolerated that only because its 60 s
+ * poller re-selected work each pass. <b>Treat the two legs as one decision with two answers.</b> The flip
+ * is deferred pending §10 q1 (does a non-{@code 0000} callback RC make the gateway resend?), and if the
+ * answer is yes the correct change is to port the 01301 split, not to flip the acknowledgement. Full
+ * record: {@code docs/audits/van-center-open-questions-verification-2026-08-01.md} §4 and §6.
+ *
  * <p><b>Audit-row durability (G1 / audit M-7):</b> legacy commits the 01302 audit row
  * outside the parse transaction so it survives a parse failure. The audit insert here is
  * therefore routed through {@link DispatchApiTranAuditWriter} in a {@code REQUIRES_NEW}
@@ -166,9 +183,63 @@ public class BulkExecutionResultService {
                         ProcStep.DEPO_REQ.code(), ProcStat.REQ.code())
                 .orElse(null);
         if (mst == null) {
-            log.info("01302 callback ignored — no file at PROC_STEP=2/PROC_STAT=6 (already processed or unknown) "
-                    + "vanOrgCd={} fileNm={}", vanOrgCd, req.fileNm());
-            // Idempotent replay / already-processed → acknowledge success so the gateway stops resending.
+            // The lookup collapses four conditions into one miss: (a) the file already advanced to
+            // PROC_STEP='3' — a genuine replay; (b) it is still at '0'/'1' — the 00302 was never
+            // confirmed; (c) NO ROW EXISTS AT ALL for this (tranDt, fileNm) — a name or date mismatch;
+            // (d) it is terminal at PROC_STAT='3'. Cases (a)/(b)/(d) all leave a row behind, and
+            // StuckPayFileMonitorService sweeps '1'/'6' (BULK_EXECUTION_UNCONFIRMED) and '2'/'6'
+            // (BULK_EXECUTION_RESULT_NOT_RECEIVED). Case (c) leaves NO state anywhere — nothing to
+            // sweep, no audit row possible (TB_FIRM_BAT_API_TRAN.BIZ_KEY is a NOT NULL PK column and
+            // an unmatched callback resolves no tenant) — so without the escalation below it was the
+            // only unmatched-callback condition in the dispatch tree with no operator-visible signal.
+            // Matches the 01301 twin, BulkReceptionResultService.handleUnmatchedCallback:560-582.
+            //
+            // The probe MUST reuse findForExecutionResult's prefix-insensitive match. FIRM_FILE_NM
+            // stores the sent S_… name while the callback carries the bank's R_… name, so an exact
+            // findByTranDtAndFirmFileNm (what the 01301 leg can safely use — 01301 quotes the sent
+            // name back) returns 0 rows for EVERY 01302 callback, replays included, and would fire
+            // the alert on the routine path.
+            boolean anyRowForFile = !firmFileMstRepository
+                    .findAnyStateForExecutionResult(tranDt, req.fileNm(), parts[1], parts[3]).isEmpty();
+            if (!anyRowForFile) {
+                log.error("01302 callback UNMATCHED — no TB_FIRM_FILE_MST row for tranDt={} fileNm={} in "
+                                + "any state; the execution result cannot be applied and leaves no state to "
+                                + "monitor. Answering RC={} (see below). vanOrgCd={} tno={} (no audit row is "
+                                + "possible: TB_FIRM_BAT_API_TRAN.BIZ_KEY is a NOT NULL PK column and an "
+                                + "unmatched callback resolves no tenant)",
+                        tranDt, req.fileNm(), FirmBankingResultCd.SUCC, vanOrgCd, envelope.tno());
+                // OpsAlertService is @Async and a no-op unless wecms.dispatch.alert.enabled=true.
+                // Field values only — never the decrypted payload (it carries payee names and amounts).
+                if (StringUtils.hasText(vanOrgCd)) {
+                    opsAlertService.notify(vanOrgCd,
+                            "실행결과 수신요청 API — unmatched callback (no TB_FIRM_FILE_MST row)."
+                                    + "\nTRAN_DT (from file name) : " + tranDt
+                                    + "\nFIRM_FILE_NM : " + req.fileNm()
+                                    + "\nID : " + vanOrgCd
+                                    + "\nTNO : " + envelope.tno()
+                                    + "\nAPI RC : " + FirmBankingResultCd.SUCC
+                                    + "\nThe result was NOT applied and no row exists to reconcile against. "
+                                    + "Establish which file the bank means before any manual action.");
+                }
+            } else {
+                log.info("01302 callback ignored — no file at PROC_STEP=2/PROC_STAT=6 but a row exists for "
+                                + "this name (already processed, unconfirmed or terminal) vanOrgCd={} fileNm={}",
+                        vanOrgCd, req.fileNm());
+            }
+            // THE ACKNOWLEDGEMENT IS DELIBERATELY UNCHANGED AT 0000, ON BOTH BRANCHES.
+            //
+            // Read this before concluding the escalation above is a half-applied flip to G999 — it is
+            // not. Legacy answers G999 + "<file_nm> not found." here (API2_act.jsp:163-169) and we
+            // answer 0000; that divergence is RECORDED AND DEFERRED, pending §10 q1 (does a non-0000
+            // callback RC make the gateway resend?). Only the SIGNAL changed here, never the wire.
+            //
+            // A blanket flip to G999 would be wrong, not merely unproven: once a file reaches
+            // PROC_STEP='3' every subsequent replay misses this '2'/'6' lookup, so G999 would answer a
+            // correctly-processed replay and produce a deterministic resend loop with nothing to
+            // converge on — legacy tolerated that only because its 60 s poller re-selected work each
+            // pass. If q1 comes back "the gateway does resend", the correct change is to port the
+            // 01301 split (replay → 0000; unknown / ambiguous → G999 + alert), not to flip this line.
+            // See docs/audits/van-center-open-questions-verification-2026-08-01.md.
             return ack(envelope, FirmBankingResultCd.SUCC, FirmBankingResultCd.MSG_SUCC);
         }
         String bizKey = mst.getBizKey();
