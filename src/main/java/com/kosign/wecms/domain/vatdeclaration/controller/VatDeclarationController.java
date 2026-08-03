@@ -77,6 +77,15 @@ public class VatDeclarationController {
         return ApiResponse.ok(null);
     }
 
+    /**
+     * Re-aggregate the period's e-invoices into the indicators (API #5). Draft
+     * only. Overwrites the invoice-source cells, preserves manual adjustments.
+     */
+    @PostMapping("/{sid}/sync")
+    public ApiResponse<VatDeclarationDetail> sync(@PathVariable("sid") Long sid) {
+        return ApiResponse.ok(service.sync(sid));
+    }
+
     @PutMapping("/{sid}/lock")
     public ApiResponse<VatDeclarationDetail> lock(@PathVariable("sid") Long sid) {
         return ApiResponse.ok(service.lock(sid));

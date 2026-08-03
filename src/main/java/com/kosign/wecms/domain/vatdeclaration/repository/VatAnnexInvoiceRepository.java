@@ -171,4 +171,31 @@ public interface VatAnnexInvoiceRepository extends Repository<VatDeclaration, Lo
                                               @Param("rate") String rate,
                                               @Param("search") String search,
                                               @Param("excludedStatuses") Collection<String> excludedStatuses);
+
+    /**
+     * Sync aggregation: the period's invoice VAT lines ({@code EINV_TAX_DETL})
+     * summed by {@code (DOC_TYPE, EINV_TAXRATE)}. Same period + excluded-status
+     * predicate as the annex list, but sums {@code AMT} (tax-exclusive) +
+     * {@code TAX_AMT} from the per-rate tax breakdown rather than the line-item
+     * table — this is the source of the invoice-derived indicator buckets
+     * ([23]/[24], [26]/[29]/[30]/[31]/[32]/[33]/[32a]). Consumed by
+     * {@code VatDeclarationService.sync}.
+     */
+    @Query(value = "select m.doc_type                            as docType,"
+            + "        d.einv_taxrate                            as taxRate,"
+            + "        coalesce(sum(coalesce(d.amt, 0)), 0)      as amt,"
+            + "        coalesce(sum(coalesce(d.tax_amt, 0)), 0)  as taxAmt"
+            + "   from einv_tax_detl d"
+            + "   join busa_doc_mstr m on m.biz_key = d.biz_key and m.doc_id = d.doc_id"
+            + "  where m.biz_key = :bizKey"
+            + "    and m.issu_dt between :fromDt and :toDt"
+            + "    and m.doc_type in (:docTypes)"
+            + "    and coalesce(m.einv_invoicestatus, '') not in (:excludedStatuses)"
+            + "  group by m.doc_type, d.einv_taxrate",
+            nativeQuery = true)
+    List<VatSyncBucketProjection> syncBuckets(@Param("bizKey") String bizKey,
+                                              @Param("fromDt") String fromDt,
+                                              @Param("toDt") String toDt,
+                                              @Param("docTypes") Collection<String> docTypes,
+                                              @Param("excludedStatuses") Collection<String> excludedStatuses);
 }
