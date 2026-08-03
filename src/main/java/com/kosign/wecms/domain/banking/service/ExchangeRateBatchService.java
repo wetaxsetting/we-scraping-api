@@ -100,6 +100,7 @@ public class ExchangeRateBatchService {
     private final BankExchRateInfmRepository bankExchRateInfmRepository;
     private final NxisasGatewayClient gateway;
     private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
+    private final com.kosign.wecms.common.lock.JobLockGuard jobLockGuard;
 
     private static final String SYSTEM_USER = "SYSTEM_BATCH";
     private static final String VIETNAM_TZ_ID = "Asia/Ho_Chi_Minh";
@@ -244,6 +245,49 @@ public class ExchangeRateBatchService {
     // ─────────────────────────────────────────────────────────────────
 
     /**
+     * Lock-guarded wrapper around {@link #runOnDemand()} — <b>this is the entry
+     * point callers should use</b>.
+     *
+     * <p>Fixes scheduler-audit finding F-3: {@code @SchedulerLock} is applied by
+     * the scheduler proxy, so it guards only the three scheduled FX methods. This
+     * on-demand path executes the <em>same</em> three bodies and previously held
+     * no lock at all, so a user opening the Exchange Rate page could write
+     * {@code BANK_EXCH_RATE_INFM} concurrently with a running scheduled job.
+     *
+     * <p>Because {@link #runOnDemand()} runs all three legs inside one
+     * transaction, all three scheduled lock identities must be held for its whole
+     * duration — hence {@code runIfAllFree} rather than three sequential guards.
+     * The acquisition order (first → last → woori) is fixed here and this is the
+     * only multi-lock holder over this family, so no deadlock is possible.
+     *
+     * <p>Deliberately <b>not</b> {@code @Transactional}: the lock must be acquired
+     * outside the business transaction. {@link #runOnDemand()} keeps its own
+     * {@code REQUIRES_NEW}, so transactional semantics are unchanged.
+     *
+     * <p>When another holder already has a lock the catch-up is skipped and this
+     * returns {@code false}. That is not an error — the scheduled job is already
+     * doing the work; the caller simply re-reads and may find rows still absent,
+     * which is the same outcome as a Coocon miss and is already handled.
+     *
+     * @return {@code true} if the catch-up ran, {@code false} if it was skipped
+     *         because a scheduled FX job held one of the locks
+     */
+    public boolean runOnDemandGuarded() {
+        return jobLockGuard.runIfAllFree(
+                java.util.List.of(
+                        com.kosign.wecms.common.lock.JobLockGuard.LockKey.of(
+                                com.kosign.wecms.common.lock.JobLockNames.EXCH_SHINHAN_FIRST_TIME,
+                                java.time.Duration.ofMinutes(10), java.time.Duration.ZERO),
+                        com.kosign.wecms.common.lock.JobLockGuard.LockKey.of(
+                                com.kosign.wecms.common.lock.JobLockNames.EXCH_SHINHAN_LAST_TIME,
+                                java.time.Duration.ofMinutes(10), java.time.Duration.ZERO),
+                        com.kosign.wecms.common.lock.JobLockGuard.LockKey.of(
+                                com.kosign.wecms.common.lock.JobLockNames.EXCH_WOORI,
+                                java.time.Duration.ofMinutes(10), java.time.Duration.ZERO)),
+                this::runOnDemand);
+    }
+
+    /**
      * On-demand catch-up — runs all three legacy jobs sequentially so
      * a user opening the Exchange Rate page on an empty day gets a
      * fully-populated snapshot in one round-trip.
@@ -254,6 +298,14 @@ public class ExchangeRateBatchService {
      * writable transaction for the batch work. Mandatory — without it
      * the inner UPSERTs would join the read-only outer tx and fail
      * under strict JDBC drivers.
+     *
+     * <p><b>Call {@link #runOnDemandGuarded()} instead</b> unless you have
+     * already acquired the three FX locks. Invoking this method directly
+     * re-opens the unlocked-manual-execution hole (scheduler-audit F-3).
+     * {@code lockAtLeastFor} is ZERO on the guarded path by design: unlike the
+     * scheduled jobs (where a floor stops a second node re-running a fast pass
+     * in the same window), a user-triggered catch-up must release immediately so
+     * the next scheduled fire is not blocked.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void runOnDemand() {

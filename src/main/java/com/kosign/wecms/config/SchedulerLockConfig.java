@@ -2,7 +2,9 @@ package com.kosign.wecms.config;
 
 import net.javacrumbs.shedlock.provider.jdbctemplate.JdbcTemplateLockProvider;
 import net.javacrumbs.shedlock.spring.annotation.EnableSchedulerLock;
+import net.javacrumbs.shedlock.core.DefaultLockingTaskExecutor;
 import net.javacrumbs.shedlock.core.LockProvider;
+import net.javacrumbs.shedlock.core.LockingTaskExecutor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -15,9 +17,19 @@ import javax.sql.DataSource;
  * PROD horizontal scaling).
  *
  * <p>Backing store: the existing PostgreSQL via the {@code shedlock}
- * table created by Flyway V210. The provider uses the DB's clock
- * ({@code usingDbTime()}) so out-of-sync host clocks don't cause
- * either side to release the lock early.
+ * table, created by a manually-run DBA script (formerly Flyway V210 —
+ * Flyway is disabled in every profile and {@code ddl-auto} is
+ * {@code validate}, so the schema is external and pre-migrated). The
+ * provider uses the DB's clock ({@code usingDbTime()}) so out-of-sync
+ * host clocks don't cause either side to release the lock early.
+ *
+ * <p><b>Scope limit — this lock coordinates refactor nodes ONLY.</b> The
+ * legacy JEX / WECMS_BATCH runtimes do not participate in the
+ * {@code shedlock} table (verified: it holds only refactor lock names), so
+ * ShedLock provides <em>no</em> mutual exclusion against a legacy batch
+ * running against the same database. Legacy/refactor coexistence is settled
+ * by disabling one side, never by this lock — see
+ * {@code docs/audits/scheduler-legacy-parity-audit.md} §7.
  *
  * <p>{@link EnableSchedulerLock#defaultLockAtMostFor} pins a 10-minute
  * safety bound — if a node holding the lock crashes mid-batch, the
@@ -34,11 +46,27 @@ import javax.sql.DataSource;
 public class SchedulerLockConfig {
 
     @Bean
-    public LockProvider lockProvider(DataSource dataSource) {
+    LockProvider lockProvider(DataSource dataSource) {
         return new JdbcTemplateLockProvider(
                 JdbcTemplateLockProvider.Configuration.builder()
                         .withJdbcTemplate(new JdbcTemplate(dataSource))
                         .usingDbTime()
                         .build());
+    }
+
+    /**
+     * Programmatic locking for job bodies reached from a non-{@code @Scheduled}
+     * entry point (manual "refresh now" endpoints, on-demand catch-up, one job
+     * delegating into another job's body).
+     *
+     * <p>{@code @SchedulerLock} is applied by the scheduler proxy and therefore
+     * guards only the scheduled invocation; without this executor those other
+     * entry points run the same body completely unlocked. Consumed via
+     * {@link com.kosign.wecms.common.lock.JobLockGuard}, which is the only class
+     * that should use it directly.
+     */
+    @Bean
+    LockingTaskExecutor lockingTaskExecutor(LockProvider lockProvider) {
+        return new DefaultLockingTaskExecutor(lockProvider);
     }
 }

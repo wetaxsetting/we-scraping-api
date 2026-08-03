@@ -62,6 +62,7 @@ Full per-table reference: [database-schema.md](database-schema.md). Column-by-co
 ## Related documents
 
 - [firm-banking-dispatch.md](firm-banking-dispatch.md) — the feature guide (purpose, architecture, all flow diagrams, design decisions).
+- [bulk-execution-retry.md](bulk-execution-retry.md) — **`00302` retry sweep** (added 2026-07-29). **⛔ NOT approved for enablement, and NOT a legacy-parity fix.** An earlier revision of this line called it a restoration of a dropped legacy responsibility — that was wrong. `issueExecutionInline` already reproduces BATCH2's business responsibility; legacy's retry was an emergent side-effect of polling. K9 offered Mr. Kang the periodic recovery scheduler (**Option A**) and he **did not select it**, choosing inline execution + monitoring + manual recovery. The document's legacy evidence, retry-code mapping (incl. the `BT00` fix), idempotency/transaction analysis, **monitoring** section and **manual-recovery runbook** all remain valid and approved — only the scheduled sweep is not. Ruling: [k9-bulk-retry-reassessment.md](../../architecture/k9-bulk-retry-reassessment.md).
 - [scheduler-flow.md](scheduler-flow.md) — schedulers, cron, `afterCommit`, ShedLock, event-driven model.
 - [database-schema.md](database-schema.md) — the ten dispatch tables (purpose / columns / relationships / R-I-U flows).
 - [deployment-guide.md](deployment-guide.md) — build, env vars, EFS/SFTP config, flags, SIT/UAT/PROD activation checklists.

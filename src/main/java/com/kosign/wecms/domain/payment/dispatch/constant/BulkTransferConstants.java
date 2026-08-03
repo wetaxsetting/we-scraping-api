@@ -23,9 +23,23 @@ public final class BulkTransferConstants {
     public static final String BANK_CD_WOORI = "970457";
 
     // ── 은행 별 처리 딜레이(ms) / per-bank pacing delay ──────────────────────
+    // NOTE: these mirror legacy WCConst verbatim and have no caller. The LIVE pacing values are
+    // DispatchPacer's, where PER_DELAY_DEFAULT is 3000 — deliberately not the 100 below (D-A,
+    // 2026-08-01). Do not read this constant as the rate the application sends at.
     public static final int PER_DELAY_DEFAULT = 100;
     public static final int PER_DELAY_SHINHAN = 100;
     public static final int PER_DELAY_WOORI = 3000;
+
+    // ── 파일회차 상한 / file-round (FILE_SEQ) ceilings ───────────────────────
+    // Legacy IDO.TB_FIRM_FILE_MST_R002.xml:34-49 wraps the next round back to 1:
+    //   WHEN OUT_BANK_CD = '970457' THEN (MAX+1 > 99  ? 1 : MAX+1)   -- 우리은행: 1~99
+    //   ELSE                             (MAX+1 > 999 ? 1 : MAX+1)   -- 다른 은행: 1~999
+    // FILE_SEQ is a 3-byte fixed-length header field and a name segment, so exceeding the
+    // ceiling is bank-visible, and exceeding 999 additionally breaks the 1000-byte record.
+    /** 우리은행 / Woori — rounds run 1..99. */
+    public static final int FILE_ROUND_MAX_WOORI = 99;
+    /** 그 외 은행 / every other bank — rounds run 1..999. */
+    public static final int FILE_ROUND_MAX_DEFAULT = 999;
 
     // ── 대상 구분 / financial-media (target) division ────────────────────────
     /** {@code A} — 계좌 / account. */

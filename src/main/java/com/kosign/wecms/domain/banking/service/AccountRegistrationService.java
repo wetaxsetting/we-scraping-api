@@ -77,6 +77,9 @@ public class AccountRegistrationService {
     private final AcctAuthInfoRepository acctAuthRepo;
     private final UserBusiConnInfmRepository userBusiRepo;
     private final LegacyFunctionRepository legacyFunctions;
+    /** C-14 / FIX B: non-blocking check that ACCT_NM can be carried by the firm-banking
+     *  SENDER_NAME wire field. Never rejects — ACCT_NM is adapter-supplied. */
+    private final com.kosign.wecms.domain.payment.overseas.service.OverseasSenderNameGuard senderNameGuard;
 
     /**
      * Register the picked accounts under the tenant's
@@ -133,6 +136,13 @@ public class AccountRegistrationService {
                 existing.setCont(blankToNull(e.accountDetails()));
                 if (e.acctNm() != null && !e.acctNm().isBlank()) {
                     existing.setAcctNm(blankToNull(e.acctNm()));
+                    // C-14 / FIX B — WARN only, never reject. ACCT_NM is what the bank adapter
+                    // returned; the user cannot edit it, so refusing the registration would block a
+                    // legitimate account over a field only the Overseas rail consumes. The warning
+                    // makes an unusable holder name visible now, instead of surfacing as a rejected
+                    // overseas payment later. Re-registration refreshes ACCT_NM, so this branch is
+                    // exactly where a previously-fine name can turn bad.
+                    senderNameGuard.warnIfUnsendable(bankCd, acctNo, e.acctNm());
                 }
                 if (e.bal() != null) {
                     existing.setBal(e.bal());
@@ -168,6 +178,8 @@ public class AccountRegistrationService {
             row.setCcyCd(coalesceCcy(e.currency()));
             row.setAcctNickNm(blankToNull(e.accountNickname()));
             row.setAcctNm(blankToNull(e.acctNm()));
+            // C-14 / FIX B — WARN only (see the update branch above for why this must not reject).
+            senderNameGuard.warnIfUnsendable(bankCd, acctNo, e.acctNm());
             row.setCont(blankToNull(e.accountDetails()));
             row.setBal(e.bal() == null ? BigDecimal.ZERO : e.bal());
             row.setRealAmt(BigDecimal.ZERO);

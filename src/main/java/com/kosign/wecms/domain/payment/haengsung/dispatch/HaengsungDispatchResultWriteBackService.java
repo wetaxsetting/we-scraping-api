@@ -224,8 +224,15 @@ public class HaengsungDispatchResultWriteBackService {
         BigDecimal errAmt = BigDecimal.ZERO;
         String procDttm = null;
         for (Line l : lines) {
-            if (procDttm == null && l.result().procDttm() != null) {
-                procDttm = l.result().procDttm();
+            // DRR-1 companion (2026-07-30): read rsltDttm(), NOT procDttm(). The ERP write-back's
+            // legacy source is SCDUL_PYMN_SUMR_DETL_R003 / OVRS_PYMN_SUMR_DETL_R004, whose
+            // PROC_DTTM column is the DISPATCH ROW's value
+            // (`R003:92-94` CASE … THEN TPFM.PROC_DTTM ELSE TPT.PROC_DTTM END) — which the resolver
+            // now surfaces as rsltDttm. The Result-page R006/R007 PROC_DTTM (master TRNF_DTM) is a
+            // different column and must NOT reach Oracle. Keeping this on rsltDttm() leaves the
+            // stored END_DATETIME byte-identical to what this service already wrote.
+            if (procDttm == null && l.result().rsltDttm() != null) {
+                procDttm = l.result().rsltDttm();
             }
             switch (countClassify(l.result().procStat(), l.result().rsCd())) {
                 case SUCCESS -> { norCnt++; norAmt = norAmt.add(nz(l.amount())); }

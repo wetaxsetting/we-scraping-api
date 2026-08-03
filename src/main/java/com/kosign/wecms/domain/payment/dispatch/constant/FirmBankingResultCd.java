@@ -62,8 +62,77 @@ public final class FirmBankingResultCd {
     public static final String ETC_ERR = "G999";
     public static final String MSG_ETC_ERR = "General Error";
 
+    // ── 00302 bulk-execution leg only ────────────────────────────────────────
+    // These three codes are NOT in legacy consts.WCConst — they appear as string
+    // literals inside FILE_DEPOSIT_TRANSFER_BATCH2 only, and they apply to the
+    // 00302 execution-instruction leg exclusively. They are deliberately kept out
+    // of isSuccess(String) so the 201/202/203/00301 legs keep their existing
+    // "0000-only" contract unchanged.
+
+    /**
+     * {@code BT00} — 대량이체 실행지시 정상 접수 / bulk execution accepted.
+     *
+     * <p>Legacy treats this as <b>success</b> alongside {@code 0000}:
+     * {@code FILE_DEPOSIT_TRANSFER_BATCH2.java:242}
+     * — {@code if("0000".equals(RC) || "BT00".equals(RC))} → {@code PROC_STEP='2'}.
+     */
+    public static final String BULK_EXEC_ACCEPTED = "BT00";
+
+    /**
+     * {@code BT01} — 대량이체 실행지시 무응답 / bulk execution no-response.
+     * Legacy {@code FILE_DEPOSIT_TRANSFER_BATCH2.java:232} → {@code continue}
+     * (row stays {@code PROC_STEP='1'}, retried on the next 60 s poll).
+     */
+    public static final String BULK_EXEC_NO_RESPONSE = "BT01";
+
+    /**
+     * {@code C999} — 통신 오류 / communication error.
+     * Legacy {@code FILE_DEPOSIT_TRANSFER_BATCH2.java:232} → {@code continue} (retryable).
+     */
+    public static final String COMMS_ERR = "C999";
+
     /** True when {@code rsCd} is the success code {@code "0000"}. */
     public static boolean isSuccess(String rsCd) {
         return SUCC.equals(rsCd);
+    }
+
+    /**
+     * Success test for the <b>00302 bulk-execution leg only</b> — {@code 0000} or {@code BT00}.
+     *
+     * <p>Legacy parity: {@code FILE_DEPOSIT_TRANSFER_BATCH2.java:242} accepts both. The generic
+     * {@link #isSuccess(String)} accepts only {@code 0000}, which would misclassify a legacy
+     * {@code BT00} success as a gateway failure on this leg.
+     */
+    public static boolean isBulkExecutionSuccess(String rsCd) {
+        return SUCC.equals(rsCd) || BULK_EXEC_ACCEPTED.equals(rsCd);
+    }
+
+    /**
+     * Transient-vs-permanent classification for the <b>00302 bulk-execution leg only</b>.
+     *
+     * <p><b>Naming note.</b> "Retryable" describes what <i>legacy</i> did with these codes, not what
+     * the refactor does. The approved TO-BE has <b>no automatic retry</b> — the sole consumer is
+     * {@code BulkReceptionResultService.issueExecutionInline}, which uses this to decide whether a
+     * failure is <b>permanent enough to raise an ops alert</b> (legacy alerted only on the permanent
+     * branch, {@code :264-280}). A transient code leaves the file at {@code PROC_STEP='1'} for
+     * monitoring + manual recovery, exactly as the approved design prescribes.
+     *
+     * <p>Derived verbatim from {@code FILE_DEPOSIT_TRANSFER_BATCH2.java:232}:
+     * <pre>if("BT01".equals(RC) || "G999".equals(RC) || "C999".equals(RC)) { continue; }</pre>
+     * plus the earlier <b>empty-body</b> branch at {@code :202-206}, where legacy performs
+     * {@code continue} <i>before</i> the audit update — leaving {@code TB_FIRM_BAT_API_TRAN.RS_CD}
+     * {@code NULL}. A {@code null}/blank code therefore means "request sent, nothing came back",
+     * which is transient rather than a bank rejection.
+     *
+     * <p>Every other code (including {@code G001}/{@code G002}/{@code G003}/{@code G004}/
+     * {@code G998}) falls through to legacy's {@code else} branch at {@code :264}, which marks the
+     * file {@code PROC_STAT='3'} permanently and alerts.
+     */
+    public static boolean isBulkExecutionRetryable(String rsCd) {
+        if (rsCd == null || rsCd.isBlank()) {
+            return true;
+        }
+        String rc = rsCd.trim();
+        return BULK_EXEC_NO_RESPONSE.equals(rc) || ETC_ERR.equals(rc) || COMMS_ERR.equals(rc);
     }
 }

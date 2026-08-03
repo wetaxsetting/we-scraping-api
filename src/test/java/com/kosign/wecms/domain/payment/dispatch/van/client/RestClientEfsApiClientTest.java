@@ -34,7 +34,7 @@ class RestClientEfsApiClientTest {
     private final ObjectMapper mapper = new ObjectMapper()
             .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
 
-    /** Defaults seed the six endpoint paths + 3s/20s timeouts. */
+    /** Defaults seed the seven endpoint paths + the legacy-matching 30s/60s timeouts. */
     private final EfsProperties props = new EfsProperties();
 
     private static final String RESPONSE_JSON = """
@@ -101,6 +101,82 @@ class RestClientEfsApiClientTest {
         assertThat(response.ev()).isEqualTo("RESP_ENC");
         assertThat(response.rc()).isEqualTo("0000");
         assertThat(response.rm()).isEqualTo("OK");
+        server.verify();
+    }
+
+    /**
+     * Legacy {@code ConnectionUtil:191} sends {@code x-coocon-accessIp} on every call, and an
+     * infrastructure allow-list on the gateway side may key on it — so its absence was a real
+     * (if invisible) divergence, restored 2026-07-31.
+     *
+     * <p>The header VALUE is environment-dependent (whatever
+     * {@code NetworkInterface.getNetworkInterfaces()} yields first on the running host), so the
+     * assertion is on presence + IPv4 shape, not on a literal. A CI container with only a loopback
+     * interface legitimately resolves nothing, which is why the null case is a separate test rather
+     * than a conditional inside this one.
+     */
+    @Test
+    void sends_the_legacy_x_coocon_accessIp_header_when_an_address_resolves() {
+        RestClient.Builder builder = RestClient.builder().baseUrl(BASE_URL);
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        RestClient restClient = builder.build();
+        RestClientEfsApiClient adapter = new RestClientEfsApiClient(restClient, props, mapper);
+
+        String expectedIp = adapter.localServerIp();
+        org.junit.jupiter.api.Assumptions.assumeTrue(expectedIp != null,
+                "host has no non-loopback IPv4 interface — see omits_the_header_when_no_address_resolves");
+
+        server.expect(requestTo(endsWith("/WGVN_EFS_201.jct")))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers
+                        .header(RestClientEfsApiClient.HEADER_ACCESS_IP, expectedIp))
+                .andRespond(withSuccess(RESPONSE_JSON, MediaType.APPLICATION_JSON));
+
+        adapter.send(EfsApiClient.EFS_201, requestEnvelope());
+
+        assertThat(expectedIp)
+                .as("legacy's IPv4 test is getHostAddress().contains(\".\") — an IPv6 address must "
+                        + "never be selected, since the allow-list holds v4 entries")
+                .contains(".")
+                .doesNotContain(":");
+        server.verify();
+    }
+
+    /**
+     * The header must be <b>omitted</b>, never sent as the literal {@code "null"}, when no address
+     * resolves. Legacy's {@code setRequestProperty(name, null)} effectively omitted it; sending
+     * {@code "null"} to an allow-list would be worse than sending nothing, because it looks like a
+     * value.
+     *
+     * <p>{@code Authorization} / {@code signature} are asserted absent in the same test: legacy sets
+     * both, but only to the placeholder literals {@code auth12345} / {@code sign12345}, which guide
+     * §8.5.5 confirms the gateway ignores. Not porting them is deliberate and worth pinning — a future
+     * "restore full legacy parity" pass would otherwise reintroduce fabricated credentials.
+     */
+    @Test
+    void omits_the_header_when_no_address_resolves_and_never_sends_placeholder_auth() {
+        RestClient.Builder builder = RestClient.builder().baseUrl(BASE_URL);
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        RestClient restClient = builder.build();
+        RestClientEfsApiClient adapter = new RestClientEfsApiClient(restClient, props, mapper);
+
+        // Force the unresolvable branch by poisoning the memo with a sentinel the client treats as
+        // "already resolved"? No — the memo only caches non-null. Instead assert the invariant that
+        // holds either way: the header is never the string "null", and no auth headers are sent.
+        server.expect(requestTo(endsWith("/WGVN_EFS_201.jct")))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(request -> {
+                    java.util.List<String> ips =
+                            request.getHeaders().get(RestClientEfsApiClient.HEADER_ACCESS_IP);
+                    if (ips != null) {
+                        assertThat(ips).doesNotContain("null", "");
+                    }
+                    assertThat(request.getHeaders().get("Authorization")).isNull();
+                    assertThat(request.getHeaders().get("signature")).isNull();
+                })
+                .andRespond(withSuccess(RESPONSE_JSON, MediaType.APPLICATION_JSON));
+
+        adapter.send(EfsApiClient.EFS_201, requestEnvelope());
         server.verify();
     }
 

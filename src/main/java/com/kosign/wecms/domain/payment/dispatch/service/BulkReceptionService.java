@@ -2,6 +2,8 @@ package com.kosign.wecms.domain.payment.dispatch.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kosign.wecms.common.exception.BusinessException;
+import com.kosign.wecms.domain.payment.dispatch.constant.AntDivChannel;
+import com.kosign.wecms.domain.payment.dispatch.constant.BulkTransferConstants;
 import com.kosign.wecms.domain.payment.dispatch.constant.FirmBankingResultCd;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmBatApiTran;
 import com.kosign.wecms.domain.setting.firmbankingsettings.entity.TbFirmConf;
@@ -53,10 +55,10 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Comparator;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.Set;
 
 /**
@@ -78,10 +80,23 @@ import java.util.Set;
  *       belongs to the 01301 callback). On any SFTP/API failure the file and the
  *       pay-file row are set to {@code PROC_STAT='3'} (fail); nothing moves
  *       forward.</li>
- *   <li><b>Idempotency / duplicate protection</b> — the pay-file target is
- *       processed only from {@code PROC_STAT='9'} (WAIT); a row already in
- *       {@code '6'}/{@code '0'}/{@code '3'} is a safe no-op (mirrors legacy
- *       {@code R001} selecting only WAIT + the {@code R004} fail skip).</li>
+ *   <li><b>Idempotency / duplicate protection (H-4)</b> — the pay-file target is processed only
+ *       from {@code PROC_STAT='9'} (WAIT), and the {@code '9' → '6'} transition is taken by a
+ *       <b>single conditional UPDATE</b> ({@link
+ *       com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileMstRepository#claimForReception})
+ *       committed in its own transaction <b>before</b> any file is built, uploaded or dispatched. The
+ *       database therefore picks exactly one winner per logical file; a concurrent driver moves 0 rows
+ *       and returns before the egress boundary. Mirrors legacy {@code R001} selecting only WAIT plus
+ *       the {@code R004} fail skip, with the legacy {@code U001} write ({@code PROC_STAT='6'}) made
+ *       conditional.
+ *       <p><b>Superseded claim — do not restore.</b> This bullet previously stated that reading the
+ *       WAIT state was itself the protection. It was not: the read and the write were separate
+ *       statements, so two drivers could both observe {@code '9'}, both write {@code '6'} (the same
+ *       value, so nothing conflicted), and both reach the SFTP upload and EFS 00301. The
+ *       deterministic {@code TB_FIRM_FILE_MST} PK could not compensate — inside
+ *       {@code buildAndDispatchFile}'s transaction the insert is deferred to commit, which happens
+ *       <i>after</i> both egress calls. See
+ *       {@code docs/architecture/bulk-dispatch-concurrency-fix.md}.</li>
  * </ul>
  *
  * <h2>Transaction model (Item 2 / audit M-7 — per-split-file commit)</h2>
@@ -133,17 +148,16 @@ public class BulkReceptionService {
     /** Legacy {@code WCConst.NON_PROCESSING} — detail rows start un-processed. */
     private static final String NON_PROCESSING = "N";
 
+    /**
+     * Cap for a generated {@code TB_PAY_FILE_MST.RS_MSG} (H-3). Matches the mapped column width
+     * ({@code TbPayFileMst.rsMsg}, {@code length = 200}); a failure message that overflowed the column
+     * would fail its own UPDATE and leave the row in exactly the stranded state it is meant to clear.
+     */
+    private static final int RS_MSG_MAX = 200;
+
     /** Legacy no-INFO-row message (FILE_DEPOSIT_TRANSFER_BATCH1.java:289, verbatim). */
     private static final String NO_CRITERIA_MSG =
             "No data to perform bulk transfer batch. Please check TB_BATCH_SCHEDULE_INFO.";
-
-    /**
-     * 1-char {@code ANT_DIV_CD} → operating-hours channel name, per the verified legacy
-     * {@code R005} classification (IDO.TB_PAY_FILE_DATA_R005.xml + entity ANT_DIV_CD length 1).
-     * The DTL table keys on the channel name (legacy {@code operTimeChk(bank, "EBANK")}).
-     */
-    private static final Map<String, String> CHANNEL_BY_ANT_DIV = Map.of(
-            "E", "EBANK", "V", "VCB", "C", "CITAD", "N", "NAPAS", "S", "SWIFT");
 
     private final EfsApiClient efsApiClient;
     private final EfsCryptoService efsCryptoService;
@@ -166,6 +180,8 @@ public class BulkReceptionService {
     private final BulkTransferValidator bulkTransferValidator;
     private final OpsAlertService opsAlertService;
     private final OperatingHoursService operatingHoursService;
+    /** H-4: owns the atomic pre-egress claim, in its own committed transaction. */
+    private final BulkDispatchClaimTxService bulkDispatchClaimTxService;
     /** Dispatch-time blocked-char guard + NAPAS→internal bank-code resolver (audit task-44508, P0). */
     private final com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard blockedCharGuard;
     private final com.kosign.wecms.domain.payment.common.OutBankCdNormalizer outBankCdNormalizer;
@@ -186,7 +202,10 @@ public class BulkReceptionService {
                 .orElseThrow(() -> new IllegalArgumentException(
                         "pay-file target not found: tranDt=" + tranDt + " bizKey=" + bizKey + " fileSeqNo=" + fileSeqNo));
 
-        // Duplicate / re-run guard: only a WAIT target is dispatchable.
+        // Fast-path early-out only — NOT the duplicate guard. Mirrors legacy R001 selecting WAIT
+        // rows, and avoids doing validation / operating-hours work for a file that is already done.
+        // The authoritative duplicate decision is the atomic claim at step 5; this check is racy by
+        // construction and must never be relied on for safety.
         if (!ProcStat.WAIT.code().equals(pay.getProcStat())) {
             log.info("receive() no-op — pay-file not WAIT (procStat={}) tranDt={} bizKey={} fileSeqNo={}",
                     pay.getProcStat(), tranDt, bizKey, fileSeqNo);
@@ -280,11 +299,94 @@ public class BulkReceptionService {
         String dttm14 = now.format(DTTM14_FMT);
         String tranTm = now.format(TRAN_TM_FMT);
 
-        // 5. Mark the pay-file in-process once (legacy U001 → PROC_STAT='6', before the loop).
+        // 5. H-4 · ATOMIC CLAIM — the pre-egress duplicate decision.
+        //
+        // This is the same legacy U001 transition (PROC_STAT '9' -> '6', legacy
+        // FILE_DEPOSIT_TRANSFER_BATCH1:453-454) but expressed as a CONDITIONAL update, and committed
+        // in its own short transaction before any file is built, uploaded, or 00301-dispatched.
+        //
+        // It replaces a read-then-check-then-write that could not stop a double dispatch: the WAIT
+        // check at the top of this method and this write were separate statements, so two drivers
+        // (the auto-receive after-commit hook and a StrandedRecoveryService sweep, or two nodes)
+        // could both read '9', both pass the check, both write '6' — the same value, so nothing
+        // conflicted — and both then upload the file and issue EFS 00301. The deterministic
+        // TB_FIRM_FILE_MST PK did not help: inside buildAndDispatchFile's transaction the insert is
+        // deferred to commit, which happens AFTER the upload and after the 301 call.
+        //
+        // Now the database picks exactly one winner. The loser sees 0 rows updated and returns here,
+        // before the egress boundary. Everything above this line (validation FAIL, cut-off FAIL,
+        // operating-hours SKIP) still runs while the row is WAIT and is unaffected — in particular
+        // SKIP must NOT claim, so the file stays '9' and a later run can pick it up.
+        if (!bulkDispatchClaimTxService.claimForReception(bizKey, tranDt, fileSeqNo, dttm14)) {
+            log.info("00301 no-op — pay-file claimed by another driver (concurrent hand-off or "
+                    + "recovery sweep) bizKey={} tranDt={} fileSeqNo={}", bizKey, tranDt, fileSeqNo);
+            return;
+        }
+        // Mirror the committed transition onto the in-memory row. `pay` was read before the claim, so
+        // without this a later failBoth()/save(pay) would write back the stale '9'.
         pay.setProcStat(ProcStat.REQ.code());
         pay.setProcDttm(dttm14);
-        payFileMstRepository.save(pay);
 
+        // H-3 / N-3 — everything below this point runs with the claim ALREADY COMMITTED at '6'.
+        //
+        // Before this guard, any RuntimeException escaping the post-claim region rolled back the
+        // per-file transaction (taking its failBoth write with it) but NOT the claim, and then escaped
+        // receive() to be swallowed by DispatchAutoReceiveRegistrar's catch-and-log. The pay-file was
+        // left at '6' — neither '9' (WAIT) nor '3' (FAIL) — and every recovery and monitoring query
+        // selected only '9', so nothing ever saw it again. The class Javadoc's "on any SFTP/API failure
+        // the pay-file is set to PROC_STAT='3'" was therefore not true for non-BusinessException
+        // failures. H-4's claim made this worse, not better: the '6' is now committed earlier and
+        // cannot roll back with the file work.
+        //
+        // RuntimeException only — never Throwable/Error. An OutOfMemoryError or a ThreadDeath must not
+        // be converted into a business FAIL by a handler that may itself be unable to run.
+        // The counter is a mutable accumulator, NOT a return value. A return value is only assigned on
+        // normal completion, so when buildAndDispatchAllFiles THROWS — which is the whole reason this
+        // guard exists — the count of files already at the bank would be lost and the failure would be
+        // reported as "0 dispatched". That is worse than silence: it tells the operator nothing left
+        // the building when a file already did, which invites a blind re-drive and a double-send.
+        // Incremented inside the loop, so it is correct at every throw point.
+        AtomicInteger dispatchedFiles = new AtomicInteger();
+        try {
+            buildAndDispatchAllFiles(
+                    pay, conf, tranDt, bizKey, fileSeqNo, details, loopCnt, chunkSize, reqCnt,
+                    dttm14, tranTm, dispatchedFiles);
+        } catch (RuntimeException e) {
+            // The split-file transaction (if one was open) has already rolled back, so this write must
+            // come from its own transaction against the pay-file's key — see
+            // BulkDispatchClaimTxService.failStrandedPayFile.
+            int dispatched = dispatchedFiles.get();
+            String rsMsg = strandedFailMessage(e, dispatched);
+            log.error("00301 unexpected failure after the claim — recording pay-file FAIL "
+                            + "bizKey={} tranDt={} fileSeqNo={} filesAlreadyDispatched={}",
+                    bizKey, tranDt, fileSeqNo, dispatched, e);
+            bulkDispatchClaimTxService.failStrandedPayFile(
+                    bizKey, tranDt, fileSeqNo, rsMsg, nowDttm14());
+            opsAlertService.notify(conf.getVanOrgCd(), strandedAlert(
+                    tranDt, bizKey, fileSeqNo, pay, reqCnt, dispatched, loopCnt, rsMsg));
+            // Not rethrown: the pay-file now carries a terminal state, so there is nothing for the
+            // caller to recover and rethrowing would only be re-swallowed by the registrar.
+        }
+    }
+
+    /**
+     * Build + dispatch every split file (legacy per-file loop). Extracted from {@link #receive} so the
+     * post-claim region has a single entry point that the H-3 guard can wrap.
+     *
+     * @param dispatchedFiles accumulator, incremented as each split file is successfully uploaded and
+     *                        {@code 00301}-accepted. It is an <b>out-parameter rather than a return
+     *                        value</b> on purpose: a return value is only assigned when this method
+     *                        completes normally, so on the throw path — the one the caller's guard
+     *                        exists for — the count would be lost and a partially-dispatched batch
+     *                        would be reported as "0 dispatched". A value {@code > 0} alongside a
+     *                        failure means money has already moved for those files and the batch is
+     *                        NOT safe to blindly re-drive.
+     */
+    private void buildAndDispatchAllFiles(TbPayFileMst pay, TbFirmConf conf, String tranDt, String bizKey,
+                                          String fileSeqNo, List<TbPayFileData> details,
+                                          int loopCnt, int chunkSize, int reqCnt,
+                                          String dttm14, String tranTm,
+                                          AtomicInteger dispatchedFiles) {
         // 6. Base file round (legacy R002 MAX+1). Computed once; split file i uses base+i so the
         //    rounds stay consecutive without depending on intra-transaction flush visibility.
         int baseRound = nextFileRound(tranDt, pay.getOutBankCd(), pay.getBankPrtnId());
@@ -293,8 +395,149 @@ public class BulkReceptionService {
             log.info("00301 branch-split bizKey={} fileSeqNo={} reqCnt={} -> {} files of <= {} rows",
                     bizKey, fileSeqNo, reqCnt, loopCnt, chunkSize);
         }
+        // ── PHASE A ──────────────────────────────────────────────────────────────────────────────
+        // Persist EVERY split file's TB_FIRM_FILE_MST + TB_FIRM_FILE_DATA rows at
+        // PROC_STEP='0'/PROC_STAT='6', encode each file's bytes, and COMMIT — all before any
+        // external call. Nothing here touches SFTP or the gateway.
+        //
+        // This restores the legacy ordering. FILE_DEPOSIT_TRANSFER_BATCH1 commits its firm-file row
+        // at :696-697 and only THEN uploads (:700) and calls 00301 (:721); the refactor had inverted
+        // it, committing last. Three things follow from putting the commit first:
+        //
+        //   * The sibling barrier sees the complete group, every time. BulkExecutionResultService's
+        //     defer-while-any-sibling-is-pending guard counts rows that EXIST
+        //     (TbFirmFileMstRepository.findAllSiblings). With the commit last, file 2's row did not
+        //     exist while file 1 was being uploaded and dispatched, so the barrier counted a short
+        //     group and could pass on an incomplete batch. Legacy never had this hole.
+        //   * A 01301 can no longer arrive before its own row is committed. Legacy's callback looks
+        //     the row up by FIRM_FILE_NM (API1:151-155) and rejects with CD_DB_ERR when it finds
+        //     none; with the commit last that was reachable for a fast gateway.
+        //   * No SFTP or HTTP runs inside a transaction. Phase B opens a transaction per write and
+        //     closes it before the next external call.
+        //
+        // Phase A is ONE transaction covering all N files, which is what makes the barrier guarantee
+        // hold: the group becomes visible atomically rather than file by file. Legacy commits per
+        // file, so this is marginally stronger than legacy — deliberately, and in the direction of
+        // the barrier it protects.
+        List<PreparedFile> prepared;
+        try {
+            prepared = runInNewTransaction(status -> persistAllFileRows(
+                    pay, conf, tranDt, bizKey, fileSeqNo, details, loopCnt, chunkSize, baseRound, dttm14));
+        } catch (BusinessException e) {
+            // Blocked character reached dispatch (task-44508). PRE-EGRESS and GROUP-WIDE: the
+            // transaction rolled back, so no firm-file row exists and nothing was sent. A terminal
+            // '3' on the pay-file is the whole truth.
+            //
+            // Group-wide is the correction here. The guard used to run inside each split file's own
+            // transaction, so file 1 could be dispatched and file 2 rejected — a partially-sent batch
+            // over a validation failure that was knowable before the first byte left. That split was
+            // accidental, not designed: legacy's Gate A (FILE_DEPOSIT_TRANSFER_BATCH1:113-266)
+            // validates the WHOLE pay file BEFORE calculateBatchDivision splits it, and fails the
+            // pay-file as a unit. Validating the group in phase A restores that shape.
+            recordGroupRejection(pay, conf, tranDt, bizKey, fileSeqNo, reqCnt, e, dttm14);
+            return;
+        }
 
-        // 7. Build + dispatch each split file independently (legacy per-file loop).
+        // ── PHASE B ──────────────────────────────────────────────────────────────────────────────
+        // Per file: write the staging file, SFTP-upload it, audit 00301, call 00301. No transaction
+        // spans any of these; each DB write commits on its own.
+        for (PreparedFile f : prepared) {
+            if (!dispatchOneFile(pay, conf, tranDt, bizKey, fileSeqNo, f, dttm14, tranTm)) {
+                // Legacy parity (FILE_DEPOSIT_TRANSFER_BATCH1:741-768): a phase-B failure marks the
+                // firm file AND the pay file FAIL, then throws out of the per-file loop entirely —
+                // remaining split files are never built and never sent. The R004 guard at the head of
+                // legacy's loop (:478-498) is a second, redundant barrier it never reaches. Breaking
+                // here is the same outcome.
+                log.warn("00301 branch-split aborted after a failed file — pay-file FAIL bizKey={} "
+                        + "fileSeqNo={} filesAlreadyDispatched={}", bizKey, fileSeqNo, dispatchedFiles.get());
+                // Ops alert (legacy FILE_DEPOSIT_TRANSFER_BATCH1:751 "이체파일 Batch1 처리중 오류 발생").
+                // filesAlreadyDispatched is appended (H-3 requirement 9): with a branch-split batch the
+                // operator must be able to see that files 1..N-1 already reached the bank, so the batch
+                // reads as partially dispatched rather than as a clean retryable failure.
+                opsAlertService.notify(conf.getVanOrgCd(),
+                        "이체파일 Batch1 처리중 오류 발생"
+                                + "\nTRAN_DT : " + tranDt
+                                + "\nBIZ_KEY : " + bizKey
+                                + "\nFILE_SEQ_NO : " + fileSeqNo
+                                + "\nOUT_BANK_CD : " + pay.getOutBankCd()
+                                + "\nBANK_PRTN_ID : " + pay.getBankPrtnId()
+                                + "\nREQ_CNT : " + reqCnt
+                                + "\nFILES_DISPATCHED : " + dispatchedFiles.get() + " / " + prepared.size());
+                break;
+            }
+            dispatchedFiles.incrementAndGet();
+        }
+    }
+
+    /**
+     * One split file after phase A: its rows are committed at {@code PROC_STEP='0'/PROC_STAT='6'} and
+     * its fixed-length bytes are encoded, but nothing has been sent.
+     *
+     * <p>{@code fileBytes} is carried in memory rather than re-encoded in phase B so the encode — the
+     * step that rejects an over-width field ({@link FixedLengthCodec}, the retained
+     * overflow-rejects-instead-of-writing-"null" divergence) — happens while the transaction is still
+     * open and can still roll back. Encoding is pure local computation with no external effect, so
+     * there is no reason to defer it past the commit: doing so would turn "over-width field ⇒ nothing
+     * committed" into "over-width field ⇒ committed rows that must now be marked FAIL".
+     */
+    private record PreparedFile(String fileName, String fileSeq, int reqCnt, BigDecimal reqAmt,
+                                byte[] fileBytes, List<FixedLengthCodec.NonAsciiField> nonAscii) {}
+
+    /**
+     * Bounded, non-sensitive failure summary for {@code TB_PAY_FILE_MST.RS_MSG} (H-3 requirement 4).
+     *
+     * <p>Carries the exception <b>type</b> and the operational context only. It deliberately does not
+     * include {@code e.getMessage()}: messages on this path can embed a file name, a gateway body, an
+     * account number or a serialised payload, and {@code RS_MSG} is read back into the UI. The full
+     * exception (with message and stack) goes to the log, which is the correct place for it.
+     *
+     * <p>Truncated to {@value #RS_MSG_MAX} characters so a long exception class name can never fail the
+     * UPDATE on column width — a failed failure-write would put the row straight back into the strand
+     * this method exists to prevent.
+     */
+    private static String strandedFailMessage(RuntimeException e, int dispatchedFiles) {
+        String msg = "00301 dispatch failed unexpectedly: " + e.getClass().getSimpleName()
+                + " (files dispatched before failure: " + dispatchedFiles + ")";
+        return msg.length() <= RS_MSG_MAX ? msg : msg.substring(0, RS_MSG_MAX);
+    }
+
+    /** Ops-alert body for an unexpected post-claim failure. Mirrors the legacy Batch1 error alert shape. */
+    private static String strandedAlert(String tranDt, String bizKey, String fileSeqNo, TbPayFileMst pay,
+                                        int reqCnt, int dispatchedFiles, int loopCnt, String rsMsg) {
+        return "이체파일 Batch1 처리중 예외 발생 (pay-file FAIL 처리)"
+                + "\nTRAN_DT : " + tranDt
+                + "\nBIZ_KEY : " + bizKey
+                + "\nFILE_SEQ_NO : " + fileSeqNo
+                + "\nOUT_BANK_CD : " + pay.getOutBankCd()
+                + "\nBANK_PRTN_ID : " + pay.getBankPrtnId()
+                + "\nREQ_CNT : " + reqCnt
+                + "\nFILES_DISPATCHED : " + dispatchedFiles + " / " + loopCnt
+                + "\nMSG : " + rsMsg;
+    }
+
+    /** Current ICT timestamp for a terminal write made outside the main flow's captured {@code dttm14}. */
+    private String nowDttm14() {
+        return LocalDateTime.now(ICT).format(DTTM14_FMT);
+    }
+
+    /**
+     * <b>PHASE A</b> — persist and encode every split file, in the caller's single transaction.
+     *
+     * <p>For each of the {@code loopCnt} windows: insert {@code TB_FIRM_FILE_MST}
+     * ({@code PROC_STEP='0'/PROC_STAT='6'}) + one {@code TB_FIRM_FILE_DATA} per row (line sequence
+     * restarts at 1 per file), and encode the fixed-length bytes. No SFTP, no gateway, no audit row.
+     *
+     * <p>A throw from anywhere in here rolls back the whole group — which is the point: at this stage
+     * nothing has been sent, so discarding the rows is the correct and complete response. The blocked
+     * character guard is allowed to propagate for exactly that reason (see the caller's catch).
+     *
+     * @return one {@link PreparedFile} per split file, in dispatch order
+     */
+    private List<PreparedFile> persistAllFileRows(TbPayFileMst pay, TbFirmConf conf, String tranDt,
+                                                  String bizKey, String fileSeqNo,
+                                                  List<TbPayFileData> details, int loopCnt, int chunkSize,
+                                                  int baseRound, String dttm14) {
+        List<PreparedFile> prepared = new ArrayList<>(loopCnt);
         for (int i = 0; i < loopCnt; i++) {
             // F — legacy parity (FILE_DEPOSIT_TRANSFER_BATCH1:502-528): partition split files by the
             // SEQ *value* range [startSeq, endSeq] (legacy START_SEQ/END_SEQ, advanced by chunkSize),
@@ -310,49 +553,25 @@ public class BulkReceptionService {
                     window.add(d);
                 }
             }
-            String fileSeq = String.format("%03d", baseRound + i);
-
-            // Item 2 (audit M-7): commit each split file in its OWN transaction, so a later split's
-            // unexpected throw cannot roll back an already-committed + already-dispatched earlier file.
-            boolean ok = runInNewTransaction(status ->
-                    buildAndDispatchFile(pay, conf, tranDt, bizKey, fileSeqNo, window, fileSeq, dttm14, tranTm));
-            if (!ok) {
-                // Legacy parity (R004 skip, added 2025.09.10): once a split file fails the shared
-                // pay-file is FAIL, so every remaining sibling would be skipped — stop the batch.
-                log.warn("00301 branch-split aborted after a failed file — pay-file FAIL bizKey={} fileSeqNo={}",
-                        bizKey, fileSeqNo);
-                // Ops alert (legacy FILE_DEPOSIT_TRANSFER_BATCH1:751 "이체파일 Batch1 처리중 오류 발생").
-                opsAlertService.notify(conf.getVanOrgCd(),
-                        "이체파일 Batch1 처리중 오류 발생"
-                                + "\nTRAN_DT : " + tranDt
-                                + "\nBIZ_KEY : " + bizKey
-                                + "\nFILE_SEQ_NO : " + fileSeqNo
-                                + "\nOUT_BANK_CD : " + pay.getOutBankCd()
-                                + "\nBANK_PRTN_ID : " + pay.getBankPrtnId()
-                                + "\nREQ_CNT : " + reqCnt);
-                break;
-            }
+            // M-4: clamp to the bank's legal round range before formatting. Legacy re-runs R002 per
+            // file, so each split file is independently wrapped (99 Woori / 999 others).
+            String fileSeq = String.format("%03d", wrapFileRound(baseRound + i, pay.getOutBankCd()));
+            prepared.add(persistOneFileRows(pay, conf, tranDt, bizKey, fileSeqNo, window, fileSeq, dttm14));
         }
+        return prepared;
     }
 
     /**
-     * Build, persist, upload, audit and 00301-dispatch ONE firm-banking file for the
-     * given detail {@code window}. Shared by the single-file and branch-split paths
-     * (the single-file path is just {@code window == all details}).
+     * Phase A for ONE split file: {@code TB_FIRM_FILE_MST} + {@code TB_FIRM_FILE_DATA} rows and the
+     * encoded bytes. Shared by the single-file and branch-split paths (the single-file path is just
+     * {@code window == all details}).
      *
-     * <p>Inserts {@code TB_FIRM_FILE_MST} (PROC_STEP=0/PROC_STAT=6) + one
-     * {@code TB_FIRM_FILE_DATA} per window row (line sequence restarts at 1), encodes
-     * the fixed-length file, SFTP-uploads it, audits 00301 before the call, then issues
-     * EFS 301. On SFTP or EFS failure both the firm file and the pay-file are marked
-     * FAIL (no advance) and {@code false} is returned; the EFS error is NOT rethrown
-     * (legacy parity — the FAIL state commits).
-     *
-     * @return {@code true} when the file was uploaded and 00301 accepted; {@code false}
-     *         on an SFTP/EFS failure (caller stops the batch).
+     * <p>Throws rather than returning a failure flag — every failure reachable here is pre-egress and
+     * group-wide, and the caller's rollback is the right handling for all of them.
      */
-    private boolean buildAndDispatchFile(TbPayFileMst pay, TbFirmConf conf, String tranDt, String bizKey,
-                                         String fileSeqNo, List<TbPayFileData> window, String fileSeq,
-                                         String dttm14, String tranTm) {
+    private PreparedFile persistOneFileRows(TbPayFileMst pay, TbFirmConf conf, String tranDt, String bizKey,
+                                            String fileSeqNo, List<TbPayFileData> window, String fileSeq,
+                                            String dttm14) {
         int reqCnt = window.size();
         BigDecimal reqAmt = window.stream()
                 .map(TbPayFileData::getTranAmt)
@@ -395,6 +614,14 @@ public class BulkReceptionService {
         String internalBankCd = outBankCdNormalizer.toInternalBankCd(pay.getOutBankCd());
 
         // Insert TB_FIRM_FILE_DATA rows + build the fixed-length D records (line seq restarts at 1).
+        //
+        // X-1: the blocked-char guard below throws BusinessException, and it is now allowed to
+        // propagate out of phase A. The caller catches it once for the whole group, rolls back every
+        // file's rows, and records a single terminal '3' on the pay-file — matching legacy Gate A
+        // (FILE_DEPOSIT_TRANSFER_BATCH1:113-266), which validates the entire pay file BEFORE
+        // calculateBatchDivision splits it and fails the pay-file as a unit. Catching it per file here
+        // (the previous shape) let file 1 dispatch and file 2 be rejected over a condition that was
+        // knowable before the first byte left.
         List<DepositData> dataLines = new ArrayList<>(reqCnt);
         int seq = 0;
         for (TbPayFileData d : window) {
@@ -467,25 +694,111 @@ public class BulkReceptionService {
         DepositTrailer trailer = new DepositTrailer(
                 String.valueOf(reqCnt), plain(reqAmt), "0", "0", "0", "0");
 
-        byte[] fileBytes = fixedLengthCodec.encode(header, dataLines, trailer);
+        // ENCODE IN PHASE A — deliberately, and this is the reason the bytes are carried forward in
+        // PreparedFile rather than re-encoded later.
+        //
+        // The realistic throw is fixedLengthCodec.encode raising IllegalArgumentException on an
+        // over-width field (e.g. a recipient name longer than its 150-byte slot, which the codec
+        // correctly REFUSES rather than truncating — the retained divergence from legacy, which writes
+        // a short misaligned file to the bank with only a log line). Encoding is pure local
+        // computation with no external effect, so keeping it inside the transaction preserves the
+        // strongest available property: an over-width field means NOTHING was committed. Deferring it
+        // to phase B would weaken that to "committed rows that must now be marked FAIL" for no gain.
+        //
+        // C-13: collect every field that puts a non-ASCII byte on the wire, so ONE alert can be raised
+        // per file rather than one per field. The codec logs each finding at WARN; the list is carried
+        // to phase B because raising the alert is itself an outbound call and must not run inside this
+        // transaction (and because the codec has no VAN_ORG_CD, which OpsAlertService needs).
+        List<FixedLengthCodec.NonAsciiField> nonAscii = new ArrayList<>();
+        byte[] fileBytes = fixedLengthCodec.encode(header, dataLines, trailer, nonAscii);
 
-        // Write the local staging file.
-        String localPath = writeLocalFile(fileName, fileBytes);
+        return new PreparedFile(fileName, fileSeq, reqCnt, reqAmt, fileBytes, nonAscii);
+    }
+
+    /**
+     * <b>PHASE B</b> for ONE split file: write the staging file, SFTP-upload it, audit the 00301 leg
+     * before the call, then issue EFS 301.
+     *
+     * <p>Runs with the file's rows ALREADY COMMITTED at {@code PROC_STEP='0'/PROC_STAT='6'} (phase A)
+     * and with <b>no transaction open across any external call</b> — each DB write goes through
+     * {@link BulkDispatchClaimTxService} in its own committed transaction. This is the legacy
+     * ordering: {@code FILE_DEPOSIT_TRANSFER_BATCH1} commits at {@code :696-697}, uploads at
+     * {@code :700}, audits at {@code :718} and calls 00301 at {@code :721}.
+     *
+     * <p>On any failure both the firm file and the pay-file are marked FAIL (no advance) and
+     * {@code false} is returned; the EFS error is NOT rethrown (legacy parity — the FAIL state
+     * commits). Because phase A already committed, a failure here can no longer be undone by a
+     * rollback, so every failure path MUST write its terminal state explicitly — that is what the
+     * {@code failFirmFileAndPayFile} calls below are for.
+     *
+     * @return {@code true} when the file was uploaded and 00301 accepted; {@code false} on any
+     *         failure (caller stops the batch, legacy {@code :741-768})
+     */
+    private boolean dispatchOneFile(TbPayFileMst pay, TbFirmConf conf, String tranDt, String bizKey,
+                                    String fileSeqNo, PreparedFile f, String dttm14, String tranTm) {
+        String fileName = f.fileName();
+
+        // Write the local staging file. Still pre-egress (an unwritable staging path is a local
+        // fault), but no longer rollback-able — phase A has committed — so it records FAIL.
+        String localPath;
+        try {
+            localPath = writeLocalFile(fileName, f.fileBytes());
+        } catch (RuntimeException e) {
+            log.error("00301 staging write failed (pre-egress, nothing sent) fileNm={} — marking FAIL",
+                    fileName, e);
+            bulkDispatchClaimTxService.failFirmFileAndPayFile(bizKey, tranDt, fileSeqNo, fileName,
+                    FirmBankingResultCd.ETC_ERR,
+                    "file build failed: " + e.getClass().getSimpleName(), dttm14);
+            return false;
+        }
+
+        List<FixedLengthCodec.NonAsciiField> nonAscii = f.nonAscii();
+        // C-13 — ONE alert per file, never one per field. Fires only when the file actually carries
+        // non-ASCII bytes, which for a healthy tenant is never: all six UAT samples are pure ASCII and
+        // tone-stripping is meant to leave nothing behind. So this alert firing at all is the signal.
+        //
+        // NOT a failure. The file is structurally valid and IS dispatched — the bank's accepted charset
+        // is unconfirmed (K3 / C-13), so refusing here would block payments over an unproven premise.
+        // See FixedLengthCodec.encode's TODO for what has to be established before this becomes a
+        // reject. Field names / offsets / counts only; never the values (payer + payee names, memos).
+        if (!nonAscii.isEmpty()) {
+            log.warn("00301 file carries non-ASCII bytes in {} field(s) — dispatched anyway (bank charset "
+                            + "unconfirmed, K3/C-13). fileNm={} bizKey={} fields={}",
+                    nonAscii.size(), fileName, bizKey, nonAscii);
+            opsAlertService.notify(conf.getVanOrgCd(),
+                    "대량이체 파일 비ASCII 문자 포함 (non-ASCII bytes on the wire)."
+                            + "\nTRAN_DT : " + tranDt
+                            + "\nBIZ_KEY : " + bizKey
+                            + "\nFIRM_FILE_NM : " + fileName
+                            + "\nFIELD_COUNT : " + nonAscii.size()
+                            + "\nFIELDS : " + nonAscii
+                            + "\nThe file was still sent — the bank's accepted charset on this channel "
+                            + "is unconfirmed (K3 / C-13). Every real sample file is pure ASCII, so this "
+                            + "most likely means a value reached dispatch without tone-stripping or "
+                            + "without entry validation (e.g. ACCT_MSTR.ACCT_NM -> SENDER_NM, an ERP "
+                            + "passthrough row, or a legacy-JEX-written row). Verify the bank accepted "
+                            + "the batch, then trace the field back to its writer.");
+        }
 
         // SFTP upload — on failure mark FAIL (no advance) and stop the batch.
+        // No transaction is open here (legacy uploads at :700, AFTER its :696 commit).
         String remotePath = joinPath(sftpProperties.getRemoteUploadPath(), fileName);
         try {
             sftpClient.upload(localPath, remotePath);
         } catch (RuntimeException e) {
             log.error("00301 SFTP upload failed fileNm={} — marking FAIL", fileName, e);
-            failBoth(pay, mst, FirmBankingResultCd.ETC_ERR, "SFTP upload failed", dttm14);
+            bulkDispatchClaimTxService.failFirmFileAndPayFile(bizKey, tranDt, fileSeqNo, fileName,
+                    FirmBankingResultCd.ETC_ERR, "SFTP upload failed", dttm14);
             return false;
         }
 
-        // Audit the 00301 leg BEFORE the call.
+        // Audit the 00301 leg BEFORE the call (legacy createApiTran :706-718, then apiCall :721).
+        int reqCnt = f.reqCnt();
+        BigDecimal reqAmt = f.reqAmt();
         String[] amt = splitAmount(reqAmt);
-        TbFirmBatApiTran audit = writeApiTran(mst, tranDt, tranTm, ApiTranTp.BULK_RECEPTION.code(),
-                mst.getReqCnt(), mst.getReqAmt());
+        TbFirmBatApiTran audit = writeApiTran(bizKey, pay.getOutBankCd(), conf.getBankPrtnId(), fileName,
+                tranDt, tranTm, ApiTranTp.BULK_RECEPTION.code(),
+                BigDecimal.valueOf(reqCnt), reqAmt);
 
         // Issue EFS 00301.
         try {
@@ -508,11 +821,73 @@ public class BulkReceptionService {
             audit.setRsMsg(e.getCode());
             audit.setRsDttm(dttm14);
             firmBatApiTranRepository.save(audit);
-            failBoth(pay, mst, rc, "EFS 00301 failed: " + e.getCode(), dttm14);
+            bulkDispatchClaimTxService.failFirmFileAndPayFile(bizKey, tranDt, fileSeqNo, fileName, rc,
+                    "EFS 00301 failed: " + e.getCode(), dttm14);
             log.warn("00301 reception failed (rc={}) fileNm={} — FAIL recorded, no advance", rc, fileName);
             // Do NOT rethrow — commit the FAIL state (legacy parity).
             return false;
+        } catch (RuntimeException e) {
+            // H-3 (4.1) — the smallest correct boundary around issueReception for a NON-business
+            // runtime failure. The realistic sources are all inside this leg:
+            //   * VanApiKeyService.getApiKey        → IllegalStateException when TB_VAN_API_INFO has no
+            //                                         API_KEY for the VAN (the B2 provisioning gap)
+            //   * EfsCryptoService encrypt / MAC    → IllegalStateException / IllegalArgumentException
+            //   * serialize / deserialize           → IllegalStateException on a payload problem
+            //   * RestClientEfsApiClient            → IllegalStateException on an unparseable envelope,
+            //                                         and RestClient's own transport exceptions
+            // None is a BusinessException, so before this catch every one of them escaped, rolled back
+            // this transaction (discarding the firm-file row AND any terminal write) and left the
+            // committed pay-file claim at '6' with only a log line — the H-3 strand. Under the
+            // two-phase split there is no transaction here to roll back at all, which is why the
+            // terminal write must be explicit.
+            //
+            // Recorded as ETC_ERR / G999, matching what the gateway itself returns for a general error
+            // and what the SFTP-failure branch above already uses. RuntimeException only — an Error is
+            // deliberately allowed to propagate untouched.
+            //
+            // NOTE on egress ambiguity: unlike the pre-egress build guard, the request MAY have reached
+            // the gateway before the failure (e.g. a response that failed to parse). '3' here matches
+            // the BusinessException branch directly above, which has the same ambiguity and is the
+            // legacy-parity behaviour; the audit row written before the call is what an operator
+            // reconciles against, and the 4.3 monitor sweep surfaces the file for exactly that.
+            audit.setRsCd(FirmBankingResultCd.ETC_ERR);
+            audit.setRsMsg(e.getClass().getSimpleName());
+            audit.setRsDttm(dttm14);
+            firmBatApiTranRepository.save(audit);
+            bulkDispatchClaimTxService.failFirmFileAndPayFile(bizKey, tranDt, fileSeqNo, fileName,
+                    FirmBankingResultCd.ETC_ERR,
+                    "EFS 00301 failed unexpectedly: " + e.getClass().getSimpleName(), dttm14);
+            log.error("00301 reception failed unexpectedly fileNm={} — FAIL recorded, no advance",
+                    fileName, e);
+            return false;
         }
+    }
+
+    /**
+     * Record a group-wide phase-A rejection: the whole batch was refused before any file was built,
+     * so the pay-file carries the terminal state and no firm-file row exists at all (phase A rolled
+     * back). Mirrors legacy Gate A's outcome (FILE_DEPOSIT_TRANSFER_BATCH1:231-265) — pay-file FAIL
+     * with the validation message, one alert, and the request skipped.
+     */
+    private void recordGroupRejection(TbPayFileMst pay, TbFirmConf conf, String tranDt, String bizKey,
+                                      String fileSeqNo, int reqCnt, BusinessException e, String dttm14) {
+        // The validator's message already names the field and the offending character(s).
+        String detail = (e.getArgs() != null && e.getArgs().length > 0)
+                ? String.valueOf(e.getArgs()[0])
+                : e.getCode();
+        String rsMsg = detail.length() <= RS_MSG_MAX ? detail : detail.substring(0, RS_MSG_MAX);
+        log.warn("00301 blocked characters at dispatch — whole request marked FAIL bizKey={} "
+                + "fileSeqNo={} reason={}", bizKey, fileSeqNo, detail);
+        bulkDispatchClaimTxService.failStrandedPayFile(bizKey, tranDt, fileSeqNo, rsMsg, dttm14);
+        opsAlertService.notify(conf.getVanOrgCd(),
+                "이체파일 Batch1 금칙문자 오류 발생 (blocked characters at dispatch)"
+                        + "\nTRAN_DT : " + tranDt
+                        + "\nBIZ_KEY : " + bizKey
+                        + "\nFILE_SEQ_NO : " + fileSeqNo
+                        + "\nOUT_BANK_CD : " + pay.getOutBankCd()
+                        + "\nBANK_PRTN_ID : " + pay.getBankPrtnId()
+                        + "\nREQ_CNT : " + reqCnt
+                        + "\nAPI RM : " + detail);
     }
 
     /**
@@ -532,7 +907,8 @@ public class BulkReceptionService {
      */
     /**
      * The set of operating-hours channel names present in the file — the distinct
-     * 1-char {@code ANT_DIV_CD} of the detail rows mapped via {@link #CHANNEL_BY_ANT_DIV}
+     * 1-char {@code ANT_DIV_CD} of the detail rows mapped via
+     * {@link AntDivChannel#fromStorageCode(String)}
      * (E/V/C/N/S → EBANK/VCB/CITAD/NAPAS/SWIFT). Unmapped / blank codes are ignored
      * (legacy {@code ETC_CNT} — not operating-hours-gated). Mirrors the legacy per-channel
      * {@code count > 0} guards (FILE_DEPOSIT_TRANSFER_BATCH1.java:299/319/339/359/379).
@@ -540,11 +916,8 @@ public class BulkReceptionService {
     private Set<String> presentChannels(List<TbPayFileData> details) {
         Set<String> channels = new LinkedHashSet<>();
         for (TbPayFileData d : details) {
-            String code = d.getAntDivCd();
-            if (code == null) {
-                continue; // Map.of() rejects null-key lookups; blank ANT_DIV_CD = legacy ETC (ungated)
-            }
-            String name = CHANNEL_BY_ANT_DIV.get(code);
+            // null / blank / unrecognised = legacy ETC — deliberately NOT gated.
+            String name = AntDivChannel.fromStorageCode(d.getAntDivCd());
             if (name != null) {
                 channels.add(name);
             }
@@ -564,49 +937,80 @@ public class BulkReceptionService {
     }
 
     /**
-     * Run {@code work} in a fresh {@code REQUIRES_NEW} transaction that commits immediately,
-     * independent of any prior/later split file (Item 2). {@code receive()} holds no outer
-     * transaction, so each per-file unit stands alone — legacy per-file auto-commit parity.
+     * Run {@code work} in a fresh {@code REQUIRES_NEW} transaction that commits immediately.
+     * {@code receive()} holds no outer transaction, so this stands alone.
+     *
+     * <p>Used for phase A (all N files in one committed unit). Phase B holds no transaction at all —
+     * its writes go through {@link BulkDispatchClaimTxService}, one committed transaction each, so
+     * nothing spans an SFTP transfer or a gateway call.
      */
-    private boolean runInNewTransaction(TransactionCallback<Boolean> work) {
+    private <T> T runInNewTransaction(TransactionCallback<T> work) {
         TransactionTemplate tx = new TransactionTemplate(transactionManager);
         tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-        return Boolean.TRUE.equals(tx.execute(work));
+        return tx.execute(work);
     }
 
-    /** Mark both the firm file ({@code PROC_STEP=0/PROC_STAT=3}) and the pay file ({@code '3'}) failed. */
-    private void failBoth(TbPayFileMst pay, TbFirmFileMst mst, String rsltCd, String msg, String dttm14) {
-        mst.setProcStep(ProcStep.REQ.code());
-        mst.setProcStat(ProcStat.FAIL.code());
-        mst.setRegRsltCd(rsltCd);
-        mst.setRegRsltMsg(msg);
-        mst.setProcDttm(dttm14);
-        firmFileMstRepository.save(mst);
-
-        pay.setProcStat(ProcStat.FAIL.code());
-        pay.setRsMsg(msg);
-        pay.setProcDttm(dttm14);
-        payFileMstRepository.save(pay);
-    }
-
-    /** Insert a {@code TB_FIRM_BAT_API_TRAN} audit row (00301), result columns left null. */
-    private TbFirmBatApiTran writeApiTran(TbFirmFileMst file, String tranDt, String tranTm,
+    /**
+     * Insert a {@code TB_FIRM_BAT_API_TRAN} audit row (00301), result columns left null.
+     *
+     * <p>Takes the key fields explicitly rather than a {@code TbFirmFileMst}: phase A committed and
+     * closed its transaction, so the entity the caller would otherwise hold is detached, and reading
+     * it back purely to copy four columns onto the audit row would be a query for nothing.
+     */
+    private TbFirmBatApiTran writeApiTran(String bizKey, String outBankCd, String bankPrtnId,
+                                          String firmFileNm, String tranDt, String tranTm,
                                           String apiTranTp, BigDecimal batCnt, BigDecimal batAmt) {
         TbFirmBatApiTran row = new TbFirmBatApiTran();
         row.setTranDt(tranDt);
-        row.setBizKey(file.getBizKey());
-        row.setTranSeq(dispatchKeyGenerator.nextTranSeq(file.getBizKey(), tranDt));
+        row.setBizKey(bizKey);
+        row.setTranSeq(dispatchKeyGenerator.nextTranSeq(bizKey, tranDt));
         row.setApiTranTp(apiTranTp);
-        row.setOutBankCd(file.getOutBankCd());
-        row.setBankPrtnId(file.getBankPrtnId());
+        row.setOutBankCd(outBankCd);
+        row.setBankPrtnId(bankPrtnId);
         row.setTranTm(tranTm);
-        row.setFirmFileNm(file.getFirmFileNm());
+        row.setFirmFileNm(firmFileNm);
         row.setBatCnt(batCnt == null ? BigDecimal.ZERO : batCnt);
         row.setBatAmt(batAmt == null ? BigDecimal.ZERO : batAmt);
         return firmBatApiTranRepository.save(row);
     }
 
-    /** Next file round (MAX existing + 1) for the bank/partner group (legacy R002 MAX+1). */
+    /**
+     * Wrap a file round to the bank's legal range, mirroring legacy
+     * {@code IDO.TB_FIRM_FILE_MST_R002.xml:34-49} (audit <b>M-4</b>):
+     * <pre>
+     * WHEN OUT_BANK_CD = '970457' THEN (MAX_SEQ + 1 &gt; 99  ? 1 : MAX_SEQ + 1)
+     * ELSE                             (MAX_SEQ + 1 &gt; 999 ? 1 : MAX_SEQ + 1)
+     * </pre>
+     *
+     * <p>Applied <b>per split file</b> ({@code base + i}), not just to the base. Legacy re-runs R002
+     * inside its per-file loop ({@code FILE_DEPOSIT_TRANSFER_BATCH1:520-532}), so every file is
+     * independently clamped; computing the base once and adding {@code i} would otherwise sail past
+     * the ceiling on a multi-split request.
+     *
+     * <p>Note this is a <b>reset to 1</b>, not a modulo — exactly as legacy. Once a bank/partner group
+     * saturates its range for the day, legacy emits {@code 001} repeatedly (its recomputed {@code MAX}
+     * still sees the pre-wrap high value), and so does this. That collision behaviour is legacy's, is
+     * reproduced deliberately, and is bounded by the same precondition: it takes 99 (Woori) or 999
+     * files for one bank+partner in a single day.
+     *
+     * <p>The hard invariant this guarantees is the formatting one: the result is always in
+     * {@code 1..999}, so {@code String.format("%03d", …)} can never emit a 4th character into the
+     * 3-byte {@code FILE_SEQ} header field.
+     */
+    static int wrapFileRound(int round, String outBankCd) {
+        int ceiling = BulkTransferConstants.BANK_CD_WOORI.equals(outBankCd)
+                ? BulkTransferConstants.FILE_ROUND_MAX_WOORI
+                : BulkTransferConstants.FILE_ROUND_MAX_DEFAULT;
+        return round > ceiling ? 1 : round;
+    }
+
+    /**
+     * Next file round (MAX existing + 1) for the bank/partner group (legacy R002 MAX+1).
+     *
+     * <p>Returns the <b>unclamped</b> MAX+1; the per-bank ceiling is applied by
+     * {@link #wrapFileRound(int, String)} at the point of use, so it covers both this base value and
+     * every {@code base + i} split file.
+     */
     private int nextFileRound(String tranDt, String outBankCd, String bankPrtnId) {
         int max = firmFileMstRepository.findByTranDtAndOutBankCdAndBankPrtnId(tranDt, outBankCd, bankPrtnId).stream()
                 .map(TbFirmFileMst::getFileSeq)
@@ -711,8 +1115,9 @@ public class BulkReceptionService {
         String tno = cmd.tno();
         String ev = efsCryptoService.encryptEv(businessJson, apiKey, rqDtime);
         String vv = efsCryptoService.buildVv(businessJson, apiKey);
-        String id = StringUtils.hasText(efsProperties.getPartnerId())
-                ? efsProperties.getPartnerId() : cmd.vanOrgCd();
+        // D-2 (legacy parity): the envelope ID is ALWAYS TB_FIRM_CONF.VAN_ORG_CD — never a
+        // configured partner id. Per-leg legacy evidence in EfsProperties' class Javadoc.
+        String id = cmd.vanOrgCd();
 
         EfsEnvelope requestEnvelope = new EfsEnvelope(
                 id, rqDtime, null, tno, ev, vv,

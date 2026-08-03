@@ -97,6 +97,10 @@ class PayrollPaymentUploadSaveTest {
     @Mock TransferLineDetailMapper transferLineDetailMapper;
     @Mock OutBankCdNormalizer outBankCdNormalizer;
     @Mock com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard blockedCharGuard;
+    /** C-14: the REAL guard (spied so @InjectMocks wires it), so these save-path tests actually
+     *  exercise the wire-width enforcement rather than silently passing a no-op mock. */
+    @org.mockito.Spy com.kosign.wecms.domain.payment.common.PaymentWireWidthGuard wireWidthGuard =
+            com.kosign.wecms.domain.payment.common.WireWidthGuards.real();
     @Mock ApprovalDisplayFlagsResolver displayFlagsResolver;
     @Mock ApprovalAttachmentWriter approvalAttachmentWriter;
     @Mock ApprovalBoxFanoutService approvalBoxFanoutService;

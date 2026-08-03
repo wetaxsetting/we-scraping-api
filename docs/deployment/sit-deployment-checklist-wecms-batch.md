@@ -41,7 +41,7 @@ shared dev DB `172.168.5.172:5432/wecmsdevdb`).
 | File | Why | Mandatory? |
 |---|---|---|
 | `domain/payment/dispatch/service/DispatchResultTxService.java` | **Item 1** — atomic U004+U001 finalize (`REQUIRES_NEW`) | **Yes** |
-| `domain/payment/dispatch/service/DispatchPacer.java` | **B5** — per-bank scan pacing (Woori 3000/else 100ms) | **Yes** |
+| `domain/payment/dispatch/service/DispatchPacer.java` | **B5** — per-bank scan pacing (Woori 3000ms, Shinhan 100ms, **else 3000ms** — default raised from legacy's 100 on 2026-08-01, D-A) | **Yes** |
 | `domain/payment/dispatch/service/StrandedRecoveryService.java` | **Item 4** — recovery (disabled) | **Yes** (inert until enabled) |
 | `domain/payment/dispatch/scheduler/StrandedRecoveryJob.java` | **Item 4** — recovery scheduler (cron `-`) | **Yes** (inert) |
 | `domain/payment/dispatch/callback/service/DispatchApiTranAuditWriter.java` | **G1** — REQUIRES_NEW callback audit | **Yes** |

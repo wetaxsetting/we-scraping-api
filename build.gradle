@@ -25,6 +25,15 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
 
+    // Actuator — D-3. SecurityConfig permits /actuator/health, RequestResponseLoggingFilter skips
+    // /actuator, and the SIT deployment checklist has an "/actuator/health UP" step; without this
+    // dependency all three referred to an endpoint that returned 404. Only `health` + `info` are
+    // exposed and health ships `show-details: never` (see the `management` block in
+    // application.yml) so no DB URL, disk path, env var or gateway detail can leak. Of the two,
+    // only /actuator/health is unauthenticated — /actuator/info falls under the authenticated
+    // catch-all in SecurityConfig.
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+
     implementation 'io.jsonwebtoken:jjwt-api:0.12.6'
     runtimeOnly     'io.jsonwebtoken:jjwt-impl:0.12.6'
     runtimeOnly     'io.jsonwebtoken:jjwt-jackson:0.12.6'
@@ -90,5 +99,19 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
+
+    // Print the failing test's name and cause. Without this a failure surfaces only as
+    // "Process 'Gradle Test Executor N' finished with non-zero exit value 1", and the failing test has
+    // to be re-found by bisecting packages — which cost most of an afternoon on 2026-08-01.
+    //
+    // NOT added here: a raised `maxHeapSize`. It was tried against that same symptom and did not change
+    // it; the cause was an orphaned worker process from an interrupted run holding
+    // `build/test-results/test/binary/output.bin` (see docs/TROUBLESHOOTING.md). The suite passes at the
+    // default fork heap. Do not add heap settings speculatively — kill the orphan instead.
+    testLogging {
+        events 'failed'
+        exceptionFormat 'short'
+        showStackTraces = true
+    }
 }
 

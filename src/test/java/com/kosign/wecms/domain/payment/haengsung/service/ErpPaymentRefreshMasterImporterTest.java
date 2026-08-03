@@ -1,6 +1,7 @@
 package com.kosign.wecms.domain.payment.haengsung.service;
 
 import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
+import com.kosign.wecms.domain.payment.dispatch.file.VietnameseText;
 import com.kosign.wecms.domain.payment.entity.OvrsPymnSumr;
 import com.kosign.wecms.domain.payment.entity.OvrsPymnSumrDetl;
 import com.kosign.wecms.domain.payment.haengsung.oracle.OracleTransDetail;
@@ -66,12 +67,30 @@ class ErpPaymentRefreshMasterImporterTest {
         assertThat(ErpPaymentRefreshMasterImporter.deriveScheduledTypeCd(master("AB0", "20250903-001"))).isEqualTo("01"); // vendor
     }
 
-    @Test void feePayer_and_toneRemoval_mappings() {
+    @Test void feePayer_mappings() {
         assertThat(ErpPaymentRefreshMasterImporter.mapFeePayer("1")).isEqualTo("B");
         assertThat(ErpPaymentRefreshMasterImporter.mapFeePayer("2")).isEqualTo("O");
         assertThat(ErpPaymentRefreshMasterImporter.mapFeePayer("3")).isEqualTo("S");
         assertThat(ErpPaymentRefreshMasterImporter.mapFeePayer(null)).isEqualTo("S");
-        assertThat(ErpPaymentRefreshMasterImporter.removeVietnameseTones("Nguyễn Đức")).isEqualTo("Nguyen Duc");
+    }
+
+    /**
+     * The importer's private NFD tone-stripper was replaced by the shared legacy table
+     * ({@code VietnameseText.replaceTone}, the same one the dispatch codec uses), so this pins the
+     * table's behaviour on the inputs the deleted implementation used to special-case.
+     *
+     * <p>{@code Đ/đ} (U+0110/U+0111) is the reason the NFD version existed in the form it did: those two
+     * have no canonical decomposition, so NFD alone left them and an explicit {@code replace} was bolted
+     * on. {@code Ơơ Ưư} (U+01A0/U+01A1/U+01AF/U+01B0) is the reverse worry and is also unfounded — the
+     * horn is a combining mark (U+031B), so both implementations reduce them. The table handles all of
+     * it in one pass, which is why the second implementation is gone.
+     */
+    @Test void toneStripping_usesTheSharedLegacyTable() {
+        assertThat(VietnameseText.replaceTone("Nguyễn Đức")).isEqualTo("Nguyen Duc");
+        assertThat(VietnameseText.replaceTone("Phương")).isEqualTo("Phuong");
+        assertThat(VietnameseText.replaceTone("Sơn")).isEqualTo("Son");
+        assertThat(VietnameseText.replaceTone("Tư")).isEqualTo("Tu");
+        assertThat(VietnameseText.replaceTone("Được")).isEqualTo("Duoc");
     }
 
     /* ---------------- scheduled NEW insert ---------------- */

@@ -1,6 +1,8 @@
 package com.kosign.wecms.domain.payment.haengsung.service;
 
 import com.kosign.wecms.common.legacy.LegacyFunctionRepository;
+import com.kosign.wecms.domain.payment.common.LegacyTextNormalizer;
+import com.kosign.wecms.domain.payment.dispatch.file.VietnameseText;
 import com.kosign.wecms.domain.payment.entity.OvrsPymnSumr;
 import com.kosign.wecms.domain.payment.entity.OvrsPymnSumrDetl;
 import com.kosign.wecms.domain.payment.haengsung.oracle.OracleTransDetail;
@@ -20,7 +22,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.text.Normalizer;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -137,9 +138,9 @@ public class ErpPaymentRefreshMasterImporter {
             detl.setTrnfCcyCd(blankToDefault(src.isoCode(), resolvedCcy));
             detl.setFincMdaNo(nullToEmpty(stripSpaces(src.trAcctNo())));
             detl.setTarBankCd(stripSpaces(src.trAcctBankCd()));
-            detl.setRcptNm(removeVietnameseTones(src.acetNm()));
+            detl.setRcptNm(stripTone(sanitize(src.acetNm())));
             detl.setAntDivCd(mapAntDivCd(src.antDivCd()));
-            String memo = src.jeokyo();
+            String memo = sanitize(src.jeokyo());
             detl.setTranUsag(memo);
             detl.setTarAcctRmrk(memo);
             detl.setWdrlActRmrk(memo);
@@ -213,14 +214,14 @@ public class ErpPaymentRefreshMasterImporter {
             }
             detl.setTrnfAmt(zeroIfNull(src.trAmt()));
             detl.setCcyCd(blankToDefault(src.isoCode(), resolvedCcy)); // maps TRNF_CCY_CD
-            detl.setBnfcNm(nullToEmpty(removeVietnameseTones(src.acetNm())));
-            detl.setBnfcBankNm(nullToEmpty(src.trAcctBankNm()));
+            detl.setBnfcNm(nullToEmpty(stripTone(sanitize(src.acetNm()))));
+            detl.setBnfcBankNm(nullToEmpty(sanitize(src.trAcctBankNm())));
             detl.setBnfcBankCd(nullToEmpty(stripSpaces(src.trAcctBankCd())));
             detl.setBicCd(nullToEmpty(stripSpaces(src.trAcctBankCd())));
             detl.setBnfcAcctNo(nullToEmpty(stripSpaces(src.trAcctNo())));
-            detl.setBnfcAddr(nullToEmpty(src.acetAddr()));
+            detl.setBnfcAddr(nullToEmpty(sanitize(src.acetAddr())));
             detl.setFeePayerCd(mapFeePayer(src.foriFeeMan()));
-            detl.setMemo(nullToEmpty(src.jeokyo()));
+            detl.setMemo(nullToEmpty(sanitize(src.jeokyo())));
             detl.setTrcoKey("");      // contact-less ERP import (legacy parity, see OverseasPaymentExcelService)
             detl.setHandTrcoKey("");
             detl.setErpFileDate(master.fileDate());
@@ -319,9 +320,35 @@ public class ErpPaymentRefreshMasterImporter {
         return isNotBlank(s) ? s.trim() : def;
     }
 
+    /**
+     * Fold every Unicode space separator ({@code \p{Zs}}, incl. NBSP U+00A0) to ASCII {@code 0x20}.
+     *
+     * <p><b>Missed port, not an addition.</b> Legacy applies
+     * {@code wabooks.commons.StringUtils.sanitize:118-124} to every ERP-sourced text field on this
+     * exact path — {@code ErpDataRefreshHelper:373,424} ({@code FILE_NM}→{@code TITL}),
+     * {@code :510,674} ({@code JEOKYO}→remark/memo), {@code :544,633} ({@code ACET_NM}),
+     * {@code :614} ({@code ACET_ADDR}), {@code :615} ({@code TR_ACCT_BANK_NM}); the batch copy
+     * {@code ERP_0100_002:313,329,358,359} does the same. Legacy also sanitizes a second time in the
+     * entity setters ({@code ScdulPymnSumrDetl.setRcptNm:220 / setTranUsag:259 / setTarAcctRmrk:272 /
+     * setWdrlAcctRmrk:285}, {@code OvrsPymnSumrDetl.setBnfcNm / setBnfcAddr / setMemo}), so an
+     * ERP-imported NBSP can never reach the bank file. The refactor has no setter-level equivalent —
+     * {@link LegacyTextNormalizer#normalize} covers the Excel-upload and API save paths only — so
+     * without this call the ERP import was the one entry surface that let a {@code \p{Zs}} character
+     * through to {@code TB_PAY_FILE_DATA} and on to the wire.
+     *
+     * <p>NBSP is invisible in every UI and log, is outside the 134-code-point tone table, and is
+     * outside {@code hasVietnameseCharacters}' ranges — so tone-stripping never touches it and it
+     * reaches {@code FixedLengthCodec} as two bytes. Correcting it silently here is what legacy does;
+     * reporting it would name a character the operator cannot see.
+     */
+    private static String sanitize(String s) {
+        return LegacyTextNormalizer.sanitizeSpaces(s);
+    }
+
+    /** Trim + 100-char cap for {@code TITL}, with the legacy {@link #sanitize} pass first. */
     private static String sanitizeTitle(String s) {
         if (s == null) return "";
-        String t = s.trim();
+        String t = sanitize(s).trim();
         return t.length() > 100 ? t.substring(0, 100) : t;
     }
 
@@ -333,11 +360,38 @@ public class ErpPaymentRefreshMasterImporter {
         return s == null ? null : s.trim();
     }
 
-    /** Remove Vietnamese diacritics (NFD strip + đ/Đ) — legacy "tone removed". */
-    static String removeVietnameseTones(String s) {
-        if (s == null) return null;
-        String normalized = Normalizer.normalize(s, Normalizer.Form.NFD)
-                .replaceAll("\\p{M}", "");
-        return normalized.replace('đ', 'd').replace('Đ', 'D');
+    /**
+     * Vietnamese tone stripping for ERP-imported names, via the <b>single</b> legacy mapping table
+     * ({@link VietnameseText#replaceTone}) that every other dispatch path uses.
+     *
+     * <p>Legacy applies the same table here — {@code ErpDataRefreshHelper:546-549} (scheduled) and
+     * {@code :635-638} (overseas), both {@code sanitize} → {@code hasVietnameseCharacters} →
+     * {@code StringUtils.replaceTone}. This method drops the legacy {@code hasVietnameseCharacters}
+     * gate deliberately, for the reason recorded as <b>D-L</b> on {@link VietnameseText}: the gate's
+     * three ranges exclude {@code U+01A0-U+01B0} ({@code ƠơƯư}), which its own table maps, so a name
+     * like {@code Sơn} or {@code Tư} would pass through unstripped.
+     *
+     * <p><b>This replaced an NFD-based implementation</b> ({@code Normalizer.NFD} + {@code \p{M}} strip
+     * + explicit {@code đ/Đ}). The two agree across the entire Vietnamese repertoire — including
+     * {@code Đ/đ}, which the NFD version special-cased because {@code U+0110/U+0111} have no canonical
+     * decomposition, and including {@code Ơơ Ưư}, whose horn <i>is</i> a combining mark ({@code U+031B})
+     * and therefore does decompose. They diverge only on <b>non-Vietnamese Latin</b>: NFD stripped
+     * {@code Müller→Muller} and {@code Škoda→Skoda}, whereas the table leaves both unchanged because
+     * neither character is among its 134 entries.
+     *
+     * <p>That divergence is resolved in favour of the table on the project's legacy-first rule: the
+     * table is what legacy dispatches, and one tone implementation is better than two that agree
+     * "mostly". The consequence is real and is <b>not</b> silently absorbed — an ERP counterparty name
+     * carrying non-Vietnamese Latin diacritics now reaches {@code TB_PAY_FILE_DATA} (and the wire) with
+     * those characters intact, exactly as legacy sends them. That is the same defect family as D-L
+     * (pitfall ④: the bank refuses non-ASCII), it predates this change on every other entry path, and
+     * it belongs to the wire-charset decision — not to this importer alone.
+     *
+     * <p>Null-safe: {@code null} in, {@code null} out (legacy leaves a blank {@code ACET_NM} untouched
+     * and stores it as-is). {@link VietnameseText#replaceTone} maps {@code null} to {@code ""}, which
+     * would turn a legacy {@code NULL} {@code RCPT_NM} into an empty string, so the guard stays.
+     */
+    private static String stripTone(String s) {
+        return s == null ? null : VietnameseText.replaceTone(s);
     }
 }

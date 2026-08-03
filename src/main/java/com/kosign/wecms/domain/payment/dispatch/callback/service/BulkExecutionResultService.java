@@ -73,6 +73,23 @@ import java.util.Map;
  * ignored, and {@code PROC_STEP 2→3} is reached only after every row is parsed
  * and written.
  *
+ * <h2>Unmatched callbacks: this leg answers {@code 0000}, the 01301 leg answers {@code G999}</h2>
+ * Both legs face the identical question — the state-scoped lookup found nothing, so is this a replay we
+ * already handled or a callback we cannot match? {@code BulkReceptionResultService} splits them
+ * (replay → {@code 0000}; unknown / ambiguous / unexpected state → {@code G999} so the gateway resends,
+ * with the reasoning written out at its {@code handleUnmatchedCallback}); this leg answers {@code 0000}
+ * on every branch. <b>The asymmetry is ours, not a legacy divergence</b> — legacy answers {@code G999} +
+ * {@code "<file_nm> not found."} here ({@code FILE_DEPOSIT_TRANSFER_API2_act.jsp:163-169}).
+ *
+ * <p>It is deliberate, not an oversight. This leg's miss is dominated by the routine replay case: once a
+ * file reaches {@code PROC_STEP='3'}, <i>every</i> later callback misses the {@code '2'}/{@code '6'}
+ * lookup, so a blanket {@code G999} would answer a correctly-processed replay and produce a
+ * deterministic resend loop with nothing to converge on — legacy tolerated that only because its 60 s
+ * poller re-selected work each pass. <b>Treat the two legs as one decision with two answers.</b> The flip
+ * is deferred pending §10 q1 (does a non-{@code 0000} callback RC make the gateway resend?), and if the
+ * answer is yes the correct change is to port the 01301 split, not to flip the acknowledgement. Full
+ * record: {@code docs/audits/van-center-open-questions-verification-2026-08-01.md} §4 and §6.
+ *
  * <p><b>Audit-row durability (G1 / audit M-7):</b> legacy commits the 01302 audit row
  * outside the parse transaction so it survives a parse failure. The audit insert here is
  * therefore routed through {@link DispatchApiTranAuditWriter} in a {@code REQUIRES_NEW}
@@ -166,9 +183,63 @@ public class BulkExecutionResultService {
                         ProcStep.DEPO_REQ.code(), ProcStat.REQ.code())
                 .orElse(null);
         if (mst == null) {
-            log.info("01302 callback ignored — no file at PROC_STEP=2/PROC_STAT=6 (already processed or unknown) "
-                    + "vanOrgCd={} fileNm={}", vanOrgCd, req.fileNm());
-            // Idempotent replay / already-processed → acknowledge success so the gateway stops resending.
+            // The lookup collapses four conditions into one miss: (a) the file already advanced to
+            // PROC_STEP='3' — a genuine replay; (b) it is still at '0'/'1' — the 00302 was never
+            // confirmed; (c) NO ROW EXISTS AT ALL for this (tranDt, fileNm) — a name or date mismatch;
+            // (d) it is terminal at PROC_STAT='3'. Cases (a)/(b)/(d) all leave a row behind, and
+            // StuckPayFileMonitorService sweeps '1'/'6' (BULK_EXECUTION_UNCONFIRMED) and '2'/'6'
+            // (BULK_EXECUTION_RESULT_NOT_RECEIVED). Case (c) leaves NO state anywhere — nothing to
+            // sweep, no audit row possible (TB_FIRM_BAT_API_TRAN.BIZ_KEY is a NOT NULL PK column and
+            // an unmatched callback resolves no tenant) — so without the escalation below it was the
+            // only unmatched-callback condition in the dispatch tree with no operator-visible signal.
+            // Matches the 01301 twin, BulkReceptionResultService.handleUnmatchedCallback:560-582.
+            //
+            // The probe MUST reuse findForExecutionResult's prefix-insensitive match. FIRM_FILE_NM
+            // stores the sent S_… name while the callback carries the bank's R_… name, so an exact
+            // findByTranDtAndFirmFileNm (what the 01301 leg can safely use — 01301 quotes the sent
+            // name back) returns 0 rows for EVERY 01302 callback, replays included, and would fire
+            // the alert on the routine path.
+            boolean anyRowForFile = !firmFileMstRepository
+                    .findAnyStateForExecutionResult(tranDt, req.fileNm(), parts[1], parts[3]).isEmpty();
+            if (!anyRowForFile) {
+                log.error("01302 callback UNMATCHED — no TB_FIRM_FILE_MST row for tranDt={} fileNm={} in "
+                                + "any state; the execution result cannot be applied and leaves no state to "
+                                + "monitor. Answering RC={} (see below). vanOrgCd={} tno={} (no audit row is "
+                                + "possible: TB_FIRM_BAT_API_TRAN.BIZ_KEY is a NOT NULL PK column and an "
+                                + "unmatched callback resolves no tenant)",
+                        tranDt, req.fileNm(), FirmBankingResultCd.SUCC, vanOrgCd, envelope.tno());
+                // OpsAlertService is @Async and a no-op unless wecms.dispatch.alert.enabled=true.
+                // Field values only — never the decrypted payload (it carries payee names and amounts).
+                if (StringUtils.hasText(vanOrgCd)) {
+                    opsAlertService.notify(vanOrgCd,
+                            "실행결과 수신요청 API — unmatched callback (no TB_FIRM_FILE_MST row)."
+                                    + "\nTRAN_DT (from file name) : " + tranDt
+                                    + "\nFIRM_FILE_NM : " + req.fileNm()
+                                    + "\nID : " + vanOrgCd
+                                    + "\nTNO : " + envelope.tno()
+                                    + "\nAPI RC : " + FirmBankingResultCd.SUCC
+                                    + "\nThe result was NOT applied and no row exists to reconcile against. "
+                                    + "Establish which file the bank means before any manual action.");
+                }
+            } else {
+                log.info("01302 callback ignored — no file at PROC_STEP=2/PROC_STAT=6 but a row exists for "
+                                + "this name (already processed, unconfirmed or terminal) vanOrgCd={} fileNm={}",
+                        vanOrgCd, req.fileNm());
+            }
+            // THE ACKNOWLEDGEMENT IS DELIBERATELY UNCHANGED AT 0000, ON BOTH BRANCHES.
+            //
+            // Read this before concluding the escalation above is a half-applied flip to G999 — it is
+            // not. Legacy answers G999 + "<file_nm> not found." here (API2_act.jsp:163-169) and we
+            // answer 0000; that divergence is RECORDED AND DEFERRED, pending §10 q1 (does a non-0000
+            // callback RC make the gateway resend?). Only the SIGNAL changed here, never the wire.
+            //
+            // A blanket flip to G999 would be wrong, not merely unproven: once a file reaches
+            // PROC_STEP='3' every subsequent replay misses this '2'/'6' lookup, so G999 would answer a
+            // correctly-processed replay and produce a deterministic resend loop with nothing to
+            // converge on — legacy tolerated that only because its 60 s poller re-selected work each
+            // pass. If q1 comes back "the gateway does resend", the correct change is to port the
+            // 01301 split (replay → 0000; unknown / ambiguous → G999 + alert), not to flip this line.
+            // See docs/audits/van-center-open-questions-verification-2026-08-01.md.
             return ack(envelope, FirmBankingResultCd.SUCC, FirmBankingResultCd.MSG_SUCC);
         }
         String bizKey = mst.getBizKey();
@@ -194,7 +265,10 @@ public class BulkExecutionResultService {
         FixedLengthCodec.ParsedFile parsed = parseResultFile(localPath, req.fileNm());
 
         // 8. Insert TB_FIRM_FILE_RSLT per D line + reflect onto TB_FIRM_FILE_DATA.
-        Map<Integer, TbFirmFileData> firmDataBySeq = indexFirmDataBySeq(tranDt, fileSeqNo, req.fileNm());
+        // H-1: keyed on FILE_SEQ + prefix-stripped name (legacy U001), NOT the exact callback name —
+        // req.fileNm() is the bank's R_ result name; the stored rows carry the sent S_ name.
+        Map<Integer, TbFirmFileData> firmDataBySeq =
+                indexFirmDataBySeq(tranDt, mst.getFileSeq(), req.fileNm());
         Map<Integer, TbPayFileData> payDataBySeq = indexPayDataBySeq(bizKey, tranDt, fileSeqNo);
 
         for (DepositData line : parsed.lines()) {
@@ -291,14 +365,31 @@ public class BulkExecutionResultService {
      * {@code FILE_SEQ_NO} has reported (none still at {@code PROC_STEP='0'/PROC_STAT='6'}):
      * {@code 0} all-success / {@code 3} all-fail / {@code 1} partial.
      */
+    /** {@code PROC_STEP/PROC_STAT} of each sibling, for the deferral logs. */
+    private static String siblingStates(List<TbFirmFileMst> siblings) {
+        return siblings.stream()
+                .map(f -> f.getFirmFileNm() + "=" + f.getProcStep() + "/" + f.getProcStat())
+                .collect(java.util.stream.Collectors.joining(" "));
+    }
+
     private void finalizePayFileStatus(String tranDt, String bizKey, String fileSeqNo, String dttm14) {
         List<TbFirmFileMst> siblings = firmFileMstRepository
                 .findByTranDtAndBizKeyAndFileSeqNo(tranDt, bizKey, fileSeqNo);
 
-        boolean awaitingSiblings = siblings.stream().anyMatch(f ->
-                ProcStep.REQ.code().equals(f.getProcStep()) && ProcStat.REQ.code().equals(f.getProcStat()));
+        // ── Guard 1 (Option A) — defer while ANY sibling is still non-terminal ────────────────────
+        // Legacy's barrier (IDO.TB_FIRM_FILE_MST_R003.xml:26-30, called at API2_act.jsp:389-405) tests
+        // only PROC_STEP='0' AND PROC_STAT='6' — reception-pending. A sibling mid-EXECUTION ('1'/'6' or
+        // '2'/'6') does not block it, and R005 then counts only terminal rows into TOT, so an
+        // in-flight sibling is invisible to the tot==succ ratio and the parent finalises without it.
+        //
+        // DELIBERATE DIVERGENCE FROM LEGACY (approved 2026-07-31, same class as the ANT_DIV_CD
+        // canonicalisation): defer on PROC_STAT='6' at ANY step. A file that has not reported cannot
+        // be counted as success or failure, so the only correct action is to wait.
+        boolean awaitingSiblings = siblings.stream()
+                .anyMatch(f -> ProcStat.REQ.code().equals(f.getProcStat()));
         if (awaitingSiblings) {
-            log.info("01302 — deferring pay-file finalize, sibling files still pending fileSeqNo={}", fileSeqNo);
+            log.info("01302 — deferring pay-file finalize, sibling files still pending fileSeqNo={} states={}",
+                    fileSeqNo, siblingStates(siblings));
             return;
         }
 
@@ -306,6 +397,23 @@ public class BulkExecutionResultService {
                 ProcStat.SUCC.code().equals(f.getProcStat()) || ProcStat.FAIL.code().equals(f.getProcStat())).count();
         long succ = siblings.stream().filter(f -> ProcStat.SUCC.code().equals(f.getProcStat())).count();
         long fail = siblings.stream().filter(f -> ProcStat.FAIL.code().equals(f.getProcStat())).count();
+
+        // ── Guard 2 — never finalise on an empty terminal set ─────────────────────────────────────
+        // THIS is the arithmetic that produced the two observed PROD false-"all success" rows, and it
+        // needs no split batch at all: for a SINGLE file stranded at '2'/'6', tot=0 and succ=0, so
+        // `tot == succ` is 0 == 0 — TRUE — and the parent is finalised to '0' (ALL SUCCESS) while its
+        // only file never reported. An empty count satisfies the equality.
+        //
+        // Guard 1 already prevents reaching this line (a '6' sibling defers first), so this is
+        // belt-and-braces — but the equality is the actual defect, it is one comparison, and any future
+        // change to Guard 1's predicate would silently re-expose it. Keep both.
+        if (tot == 0) {
+            log.warn("01302 — refusing to finalize pay-file with NO terminal sibling fileSeqNo={} "
+                            + "bizKey={} siblings={} states={} — parent left at PROC_STAT='6' "
+                            + "(finalising here would report '0'/all-success for a file that never reported)",
+                    fileSeqNo, bizKey, siblings.size(), siblingStates(siblings));
+            return;
+        }
 
         // Legacy partial status is the literal '1' (NOT a WCConst PROC_ST_* — see API2_act.jsp:421-429).
         String stat;
@@ -368,10 +476,18 @@ public class BulkExecutionResultService {
         }
     }
 
-    private Map<Integer, TbFirmFileData> indexFirmDataBySeq(String tranDt, String fileSeqNo, String fileNm) {
+    /**
+     * Index the sent file's detail lines by line {@code SEQ}, matching the way legacy
+     * {@code TB_FIRM_FILE_DATA_U001} joins — prefix-stripped {@code FIRM_FILE_NM} + {@code FILE_SEQ}.
+     *
+     * <p><b>H-1:</b> {@code fileNm} here is the bank's {@code R_…} result name, while the stored rows
+     * carry the sent {@code S_…} name, so an exact-name lookup returns nothing. See
+     * {@link TbFirmFileDataRepository#findForExecutionResult}.
+     */
+    private Map<Integer, TbFirmFileData> indexFirmDataBySeq(String tranDt, String fileSeq, String fileNm) {
         Map<Integer, TbFirmFileData> map = new HashMap<>();
         for (TbFirmFileData fd : firmFileDataRepository
-                .findByTranDtAndFileSeqNoAndFirmFileNmOrderBySeqAsc(tranDt, fileSeqNo, fileNm)) {
+                .findForExecutionResult(tranDt, fileSeq, fileNm)) {
             map.put(intValue(fd.getSeq()), fd);
         }
         return map;

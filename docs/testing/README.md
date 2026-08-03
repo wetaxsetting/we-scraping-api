@@ -18,6 +18,12 @@ Test plans for the Spring Boot + Next.js refactor: unit, integration, E2E, AI-as
 
 Per-feature test plans (e.g. [vas-account.md](vas-account.md)) sit at this root and cross-link to the feature spec under [../features/](../features/).
 
+## Conventions — read before writing tests
+
+| Doc | Covers |
+|---|---|
+| [fixture-data-conventions.md](fixture-data-conventions.md) | **The passing test that cannot fail** — a correct assertion over fixture data that cannot exercise the condition. Three defects in this project have been hidden this way. Includes the review question to ask of every new test |
+
 ## What goes here
 
 - Per-feature test plans (manual + automated scenarios)

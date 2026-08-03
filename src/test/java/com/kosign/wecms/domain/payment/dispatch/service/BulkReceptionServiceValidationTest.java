@@ -96,12 +96,16 @@ class BulkReceptionServiceValidationTest {
                 dispatchKeyGenerator, codec, sftpClient, sftpProperties, validator,
                 org.mockito.Mockito.mock(com.kosign.wecms.domain.payment.dispatch.alert.OpsAlertService.class),
                 operatingHoursService,
+                new BulkDispatchClaimTxService(payFileMstRepository, firmFileMstRepository),
                 org.mockito.Mockito.mock(com.kosign.wecms.domain.payment.common.PaymentBlockedCharGuard.class),
                 org.mockito.Mockito.mock(com.kosign.wecms.domain.payment.common.OutBankCdNormalizer.class),
                 org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));
 
         // Operating-hours gate open by default; validation-fail cases return before it.
         when(operatingHoursService.evaluateBulk(any(), any())).thenReturn(OperatingHoursDecision.DISPATCH);
+        // H-4: the atomic claim wins by default so the dispatch path proceeds. Validation-fail and
+        // cut-off cases return before the claim is ever reached.
+        when(payFileMstRepository.claimForReception(any(), any(), any(), any())).thenReturn(1);
         when(payFileMstRepository.save(any())).thenAnswer(i -> i.getArgument(0));
         when(firmFileMstRepository.save(any())).thenAnswer(i -> i.getArgument(0));
         when(firmFileDataRepository.save(any())).thenAnswer(i -> i.getArgument(0));
@@ -271,9 +275,13 @@ class BulkReceptionServiceValidationTest {
         verify(sftpClient).upload(anyString(), anyString());
         verify(spy).issueReception(any());
 
-        // Pay-file marked in-process ('6'), not failed.
-        ArgumentCaptor<TbPayFileMst> payCap = ArgumentCaptor.forClass(TbPayFileMst.class);
-        verify(payFileMstRepository).save(payCap.capture());
-        assertThat(payCap.getValue().getProcStat()).isEqualTo(ProcStat.REQ.code());
+        // H-4: the '9'->'6' transition is the atomic conditional claim (committed before egress),
+        // not an unconditional save(). A validated file that reaches dispatch must claim exactly once.
+        verify(payFileMstRepository).claimForReception(
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString());
+        verify(payFileMstRepository, org.mockito.Mockito.never()).save(any());
     }
 }

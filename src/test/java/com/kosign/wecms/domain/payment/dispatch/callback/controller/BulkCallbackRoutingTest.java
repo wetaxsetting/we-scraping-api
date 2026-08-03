@@ -18,6 +18,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
@@ -81,5 +82,88 @@ class BulkCallbackRoutingTest {
                 .andExpect(status().isOk());
 
         verify(bulkExecutionResultService).handle(org.mockito.ArgumentMatchers.any());
+    }
+
+    // ── error path: the gateway must get an EFS envelope, never an ApiResponse ────────────────
+
+    /**
+     * The gateway parses only {@code ID/RQ_DTIME/TNO/EV/VV/EM/VM/RC/RM}. Before the controller-level
+     * catch, an escaped exception reached {@code GlobalExceptionHandler} and the gateway received
+     * HTTP 500 with a {@code WBE9999} {@code ApiResponse} body — unparseable, so the callback outcome
+     * was undefined from the bank's side. Legacy sets {@code RC}/{@code RM} on the echoed request
+     * envelope instead ({@code FILE_DEPOSIT_TRANSFER_API1_act.jsp:425-441}).
+     */
+    @Test
+    void receptionResult_escapedException_returns_efs_error_envelope_not_apiResponse() throws Exception {
+        when(bulkReceptionResultService.handle(any()))
+                .thenThrow(new IllegalStateException("no TB_VAN_API_INFO.API_KEY provisioned (B2)"));
+
+        mockMvc.perform(post("/api/v1/payment/dispatch/callbacks/bulk-reception-result")
+                        .contentType("application/json")
+                        .content("""
+                                {"ID":"GV00000002","EV":"ENCRYPTED","VV":"HMAC","EM":"AES","VM":"HmacSHA256",
+                                 "RQ_DTIME":"20260608120000","TNO":"123"}
+                                """))
+                // Not 500: the envelope IS the acknowledgement, and its RC carries the outcome.
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.RC").value("G999"))          // CD_ETC_ERR
+                .andExpect(jsonPath("$.ID").value("GV00000002"))    // request fields echoed
+                .andExpect(jsonPath("$.TNO").value("123"))
+                .andExpect(jsonPath("$.EV").value("ENCRYPTED"))
+                .andExpect(jsonPath("$.VV").value("HMAC"))
+                .andExpect(jsonPath("$.RM").exists())
+                // The internal WeCMS envelope must not appear on this endpoint at all.
+                .andExpect(jsonPath("$.status").doesNotExist())
+                .andExpect(jsonPath("$.trace_id").doesNotExist());
+    }
+
+    /**
+     * {@code WBE_EFS_RESULT_FILE} is the 01302 handler's <b>normal</b> outcome for a missing / empty /
+     * malformed result file, and the throw is load-bearing (it rolls the parse back so the file stays
+     * replayable at {@code PROC_STEP='2'}). It must still leave the gateway with a parseable envelope.
+     */
+    @Test
+    void executionResult_resultFileFailure_returns_efs_error_envelope() throws Exception {
+        when(bulkExecutionResultService.handle(any()))
+                .thenThrow(new com.kosign.wecms.common.exception.BusinessException(
+                        "WBE_EFS_RESULT_FILE", "R_GV00000001_WRB_001_20251223 is empty"));
+
+        mockMvc.perform(post("/api/v1/payment/dispatch/callbacks/bulk-execution-result")
+                        .contentType("application/json")
+                        .content("{\"ID\":\"GV00000002\",\"EV\":\"ENC\",\"VV\":\"HMAC\",\"TNO\":\"9\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.RC").value("G999"))
+                .andExpect(jsonPath("$.TNO").value("9"))
+                .andExpect(jsonPath("$.status").doesNotExist());
+    }
+
+    /**
+     * A missing required business field is legacy's {@code CD_DETAIL_NONE_INPUT_DATA}
+     * (데이터부 필수 입력값 누락), not a general error — the distinction is what tells the gateway
+     * the payload was rejected rather than that WeCMS broke.
+     */
+    @Test
+    void receptionResult_missingRequiredField_maps_to_G002() throws Exception {
+        when(bulkReceptionResultService.handle(any()))
+                .thenThrow(new IllegalArgumentException("01301 callback missing required field: file_nm"));
+
+        mockMvc.perform(post("/api/v1/payment/dispatch/callbacks/bulk-reception-result")
+                        .contentType("application/json")
+                        .content("{\"ID\":\"GV00000002\",\"EV\":\"ENC\",\"VV\":\"HMAC\",\"TNO\":\"7\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.RC").value("G002"));
+    }
+
+    /** A persistence fault is legacy's {@code CD_DB_ERR}. */
+    @Test
+    void executionResult_dataAccessFailure_maps_to_G004() throws Exception {
+        when(bulkExecutionResultService.handle(any()))
+                .thenThrow(new org.springframework.dao.DataIntegrityViolationException("dup key"));
+
+        mockMvc.perform(post("/api/v1/payment/dispatch/callbacks/bulk-execution-result")
+                        .contentType("application/json")
+                        .content("{\"ID\":\"GV00000002\",\"EV\":\"ENC\",\"VV\":\"HMAC\",\"TNO\":\"8\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.RC").value("G004"));
     }
 }

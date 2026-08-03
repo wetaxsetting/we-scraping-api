@@ -70,7 +70,11 @@ class AccountRegistrationServicePrnSeqAndWhitelistTest {
     @BeforeEach
     void setUp() {
         service = new AccountRegistrationService(
-                acctMstrRepo, credentialService, acctAuthRepo, userBusiRepo, legacyFunctions);
+                acctMstrRepo, credentialService, acctAuthRepo, userBusiRepo, legacyFunctions,
+                // C-14 / FIX B: the REAL guard, so the non-blocking ACCT_NM warning path runs here
+                // rather than being silently skipped by a no-op mock.
+                new com.kosign.wecms.domain.payment.overseas.service.OverseasSenderNameGuard(
+                        acctMstrRepo, com.kosign.wecms.domain.payment.common.WireWidthGuards.real()));
         TenantContext.set(USER, BIZ, LangCd.EN);
     }
 

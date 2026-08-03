@@ -88,8 +88,9 @@ public class RecipientLookupService {
         String tno = newTno(rqDtime);
         String ev = efsCryptoService.encryptEv(businessJson, apiKey, rqDtime);
         String vv = efsCryptoService.buildVv(businessJson, apiKey);
-        String id = StringUtils.hasText(efsProperties.getPartnerId())
-                ? efsProperties.getPartnerId() : cmd.vanOrgCd();
+        // D-2 (legacy parity): the envelope ID is ALWAYS TB_FIRM_CONF.VAN_ORG_CD — never a
+        // configured partner id. Per-leg legacy evidence in EfsProperties' class Javadoc.
+        String id = cmd.vanOrgCd();
 
         EfsEnvelope requestEnvelope = new EfsEnvelope(
                 id, rqDtime, null, tno, ev, vv,

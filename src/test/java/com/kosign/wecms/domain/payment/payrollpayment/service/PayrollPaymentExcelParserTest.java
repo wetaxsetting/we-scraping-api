@@ -48,7 +48,8 @@ class PayrollPaymentExcelParserTest {
 
     private PayrollPaymentExcelParser newParser() {
         return new PayrollPaymentExcelParser(
-                firmBankCodeRepo, chartAcctRepo, specialCharValidator, uploadConsistencyValidator);
+                firmBankCodeRepo, chartAcctRepo, specialCharValidator,
+                com.kosign.wecms.domain.payment.common.WireWidthGuards.real(), uploadConsistencyValidator);
     }
 
     @BeforeEach
