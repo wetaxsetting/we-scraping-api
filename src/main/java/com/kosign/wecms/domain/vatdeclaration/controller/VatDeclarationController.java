@@ -77,6 +77,15 @@ public class VatDeclarationController {
         return ApiResponse.ok(null);
     }
 
+    /**
+     * Re-aggregate the period's e-invoices into the indicators (API #5). Draft
+     * only. Overwrites the invoice-source cells, preserves manual adjustments.
+     */
+    @PostMapping("/{sid}/sync")
+    public ApiResponse<VatDeclarationDetail> sync(@PathVariable("sid") Long sid) {
+        return ApiResponse.ok(service.sync(sid));
+    }
+
     @PutMapping("/{sid}/lock")
     public ApiResponse<VatDeclarationDetail> lock(@PathVariable("sid") Long sid) {
         return ApiResponse.ok(service.lock(sid));
@@ -139,6 +148,16 @@ public class VatDeclarationController {
     @GetMapping("/{sid}/export/pdf")
     public ResponseEntity<byte[]> exportPdf(@PathVariable("sid") Long sid) {
         return download(service.exportPdf(sid));
+    }
+
+    /**
+     * Main-form Excel export (01/GTGT) — template-fill of the designed
+     * {@code WeCMS_VAT_Report_download} workbook. Locked declarations only;
+     * EN/VN by session language. Binary download.
+     */
+    @GetMapping("/{sid}/export/report-excel")
+    public ResponseEntity<byte[]> exportReportExcel(@PathVariable("sid") Long sid) {
+        return download(service.exportReportExcel(sid));
     }
 
     private static ResponseEntity<byte[]> download(VatExportFile file) {

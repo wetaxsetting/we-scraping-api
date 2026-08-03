@@ -19,8 +19,10 @@ import com.kosign.wecms.domain.vatdeclaration.dto.AnnexRow;
 import com.kosign.wecms.domain.vatdeclaration.dto.AnnexTaxGroup;
 import com.kosign.wecms.domain.vatdeclaration.export.VatExportFile;
 import com.kosign.wecms.domain.vatdeclaration.export.VatPdfExporter;
+import com.kosign.wecms.domain.vatdeclaration.export.VatReportExcelExporter;
 import com.kosign.wecms.domain.vatdeclaration.export.VatXmlExporter;
 import com.kosign.wecms.domain.vatdeclaration.repository.AnnexTaxGroupProjection;
+import com.kosign.wecms.domain.vatdeclaration.repository.VatSyncBucketProjection;
 import com.kosign.wecms.domain.vatdeclaration.entity.AnnexType;
 import com.kosign.wecms.domain.vatdeclaration.entity.VatDeclaration;
 import com.kosign.wecms.domain.vatdeclaration.entity.VatDeclarationIndicator;
@@ -119,6 +121,7 @@ public class VatDeclarationService {
     private final ObjectMapper objectMapper;
     private final VatXmlExporter xmlExporter;
     private final VatPdfExporter pdfExporter;
+    private final VatReportExcelExporter reportExcelExporter;
 
     @Transactional(readOnly = true)
     public VatDeclarationListResponse list(Integer year, String status, int page, int size) {
@@ -261,6 +264,74 @@ public class VatDeclarationService {
         if (req.duWard()       != null) decl.setDuWard(blankToNull(req.duWard()));
 
         calculator.recompute(ind, sent);
+        ind.setModId(TenantContext.currentUserId());
+        decl.setIndicators(snapshotJson(ind));
+        decl.setModId(TenantContext.currentUserId());
+        return toDetail(decl, ind);
+    }
+
+    /**
+     * Re-aggregate the period's e-invoices into the invoice-source indicators
+     * (API #5, {@code POST /{sid}/sync}). Draft only. Scans
+     * {@code EINV_TAX_DETL ⋈ BUSA_DOC_MSTR} for the declaration's period,
+     * excluding replaced / cancelled invoices, and distributes the per-rate
+     * buckets into the source cells per the Business-Rules table:
+     *
+     * <ul>
+     *   <li>purchases (DOC_TYPE 'B'): [23] += base, [24] += VAT (all rates)</li>
+     *   <li>sales 0% → [29]; 5% → [30]/[31]; 8%+10% → [32]/[33]; KCT → [26];
+     *       KKKNT → [32a] (out-of-scope revenue, OQ-VAT-4)</li>
+     * </ul>
+     *
+     * <p>Only the 9 invoice-source cells are overwritten; carry-forward [22] and
+     * the manual adjustments [37]/[38]/[39a]/[40b]/[42] are preserved. Derived
+     * cells are then recomputed — [31]/[33] are pinned to the real invoice VAT
+     * (not the floor formula). The annex rows are already invoice-derived (live
+     * read), so there is nothing to regenerate there.
+     */
+    @Transactional
+    public VatDeclarationDetail sync(Long sid) {
+        VatDeclaration decl = load(sid);
+        assertDraft(decl);
+        VatDeclarationIndicator ind = loadIndicator(decl);
+        String from = decl.getFromDt().format(YYYYMMDD);
+        String to = decl.getToDt().format(YYYYMMDD);
+
+        BigDecimal ct23 = BigDecimal.ZERO, ct24 = BigDecimal.ZERO, ct26 = BigDecimal.ZERO,
+                ct29 = BigDecimal.ZERO, ct30 = BigDecimal.ZERO, ct31 = BigDecimal.ZERO,
+                ct32 = BigDecimal.ZERO, ct33 = BigDecimal.ZERO, ct32a = BigDecimal.ZERO;
+
+        for (VatSyncBucketProjection b : annexInvoiceRepo.syncBuckets(
+                decl.getBizKey(), from, to, List.of(DOC_TYPE_SALES, DOC_TYPE_PURCHASE),
+                EXCLUDED_INVOICE_STATUSES)) {
+            BigDecimal amt = nz(b.getAmt());
+            BigDecimal tax = nz(b.getTaxAmt());
+            if (DOC_TYPE_PURCHASE.equals(b.getDocType())) {
+                ct23 = ct23.add(amt);   // [23] purchase base — all rates
+                ct24 = ct24.add(tax);   // [24] purchase VAT
+                continue;
+            }
+            switch (b.getTaxRate() == null ? "" : b.getTaxRate().trim()) {
+                case "0%"        -> ct29 = ct29.add(amt);
+                case "5%"        -> { ct30 = ct30.add(amt); ct31 = ct31.add(tax); }
+                case "8%", "10%" -> { ct32 = ct32.add(amt); ct33 = ct33.add(tax); }
+                case "KCT"       -> ct26 = ct26.add(amt);
+                case "KKKNT"     -> ct32a = ct32a.add(amt);   // out-of-scope revenue (OQ-VAT-4)
+                default          -> { /* unknown / null rate → not mapped */ }
+            }
+        }
+
+        ind.setPurchAmt(ct23);
+        ind.setPurchAmtVat(ct24);
+        ind.setSalesAmtNondecl(ct26);
+        ind.setSalesAmt0(ct29);
+        ind.setSalesAmt5(ct30);
+        ind.setSalesAmtVat5(ct31);
+        ind.setSalesAmt10(ct32);
+        ind.setSalesAmtVat10(ct33);
+        ind.setSalesAmtNontax(ct32a);
+
+        calculator.recompute(ind, java.util.Set.of("ct31", "ct33"));
         ind.setModId(TenantContext.currentUserId());
         decl.setIndicators(snapshotJson(ind));
         decl.setModId(TenantContext.currentUserId());
@@ -526,6 +597,18 @@ public class VatDeclarationService {
         VatDeclaration decl = load(sid);
         assertLocked(decl);
         return pdfExporter.build(decl, loadIndicator(decl));
+    }
+
+    /**
+     * Main-form Excel export (01/GTGT) — template-fill of the designed
+     * {@code WeCMS_VAT_Report_download_{EN,VN}.xlsx}. Locked declarations only
+     * (OQ-VAT-7). Template chosen by the session language (VI → VN, else EN).
+     */
+    @Transactional(readOnly = true)
+    public VatExportFile exportReportExcel(Long sid) {
+        VatDeclaration decl = load(sid);
+        assertLocked(decl);
+        return reportExcelExporter.build(decl, loadIndicator(decl), TenantContext.currentLangCd());
     }
 
     private static void assertLocked(VatDeclaration decl) {
