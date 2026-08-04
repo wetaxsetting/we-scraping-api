@@ -209,7 +209,7 @@ public class VatDeclarationService {
                 .delYn("N")
                 .build();
         stampAudit(ind);
-        calculator.recompute(ind);
+        aggregateInvoicesInto(decl, ind);   // pre-fill the period's e-invoice figures on create
         indicatorRepo.save(ind);
 
         decl.setIndicators(snapshotJson(ind));
@@ -435,6 +435,23 @@ public class VatDeclarationService {
         VatDeclaration decl = load(sid);
         assertDraft(decl);
         VatDeclarationIndicator ind = loadIndicator(decl);
+        aggregateInvoicesInto(decl, ind);
+        ind.setModId(TenantContext.currentUserId());
+        decl.setIndicators(snapshotJson(ind));
+        decl.setModId(TenantContext.currentUserId());
+        return toDetail(decl, ind);
+    }
+
+    /**
+     * Aggregate the period's e-invoices into the invoice-source indicators
+     * ([23]/[24] purchase, [26]/[29]/[30]/[32]/[33]/[32a] sales) and recompute
+     * the derived cells — [31]/[33] pinned to the real invoice VAT (not the
+     * floor formula). Manual white-cell adjustments already on {@code ind}
+     * ([37]/[38]/[39a]/[40b]/[42]) and the carried-forward [22] are preserved.
+     * Shared by {@link #sync(Long)} (re-aggregate) and {@link #create} (initial
+     * fill so a freshly-created draft already carries the period's figures).
+     */
+    private void aggregateInvoicesInto(VatDeclaration decl, VatDeclarationIndicator ind) {
         String from = decl.getFromDt().format(YYYYMMDD);
         String to = decl.getToDt().format(YYYYMMDD);
 
@@ -473,10 +490,6 @@ public class VatDeclarationService {
         ind.setSalesAmtNontax(ct32a);
 
         calculator.recompute(ind, Set.of("ct31", "ct33"));
-        ind.setModId(TenantContext.currentUserId());
-        decl.setIndicators(snapshotJson(ind));
-        decl.setModId(TenantContext.currentUserId());
-        return toDetail(decl, ind);
     }
 
     // ---------------------------------------------------------------- helpers
