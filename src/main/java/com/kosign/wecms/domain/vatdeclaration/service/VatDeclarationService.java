@@ -289,54 +289,6 @@ public class VatDeclarationService {
      * (not the floor formula). The annex rows are already invoice-derived (live
      * read), so there is nothing to regenerate there.
      */
-    @Transactional
-    public VatDeclarationDetail sync(Long sid) {
-        VatDeclaration decl = load(sid);
-        assertDraft(decl);
-        VatDeclarationIndicator ind = loadIndicator(decl);
-        String from = decl.getFromDt().format(YYYYMMDD);
-        String to = decl.getToDt().format(YYYYMMDD);
-
-        BigDecimal ct23 = BigDecimal.ZERO, ct24 = BigDecimal.ZERO, ct26 = BigDecimal.ZERO,
-                ct29 = BigDecimal.ZERO, ct30 = BigDecimal.ZERO, ct31 = BigDecimal.ZERO,
-                ct32 = BigDecimal.ZERO, ct33 = BigDecimal.ZERO, ct32a = BigDecimal.ZERO;
-
-        for (VatSyncBucketProjection b : annexInvoiceRepo.syncBuckets(
-                decl.getBizKey(), from, to, List.of(DOC_TYPE_SALES, DOC_TYPE_PURCHASE),
-                EXCLUDED_INVOICE_STATUSES)) {
-            BigDecimal amt = nz(b.getAmt());
-            BigDecimal tax = nz(b.getTaxAmt());
-            if (DOC_TYPE_PURCHASE.equals(b.getDocType())) {
-                ct23 = ct23.add(amt);   // [23] purchase base — all rates
-                ct24 = ct24.add(tax);   // [24] purchase VAT
-                continue;
-            }
-            switch (b.getTaxRate() == null ? "" : b.getTaxRate().trim()) {
-                case "0%"        -> ct29 = ct29.add(amt);
-                case "5%"        -> { ct30 = ct30.add(amt); ct31 = ct31.add(tax); }
-                case "8%", "10%" -> { ct32 = ct32.add(amt); ct33 = ct33.add(tax); }
-                case "KCT"       -> ct26 = ct26.add(amt);
-                case "KKKNT"     -> ct32a = ct32a.add(amt);   // out-of-scope revenue (OQ-VAT-4)
-                default          -> { /* unknown / null rate → not mapped */ }
-            }
-        }
-
-        ind.setPurchAmt(ct23);
-        ind.setPurchAmtVat(ct24);
-        ind.setSalesAmtNondecl(ct26);
-        ind.setSalesAmt0(ct29);
-        ind.setSalesAmt5(ct30);
-        ind.setSalesAmtVat5(ct31);
-        ind.setSalesAmt10(ct32);
-        ind.setSalesAmtVat10(ct33);
-        ind.setSalesAmtNontax(ct32a);
-
-        calculator.recompute(ind, java.util.Set.of("ct31", "ct33"));
-        ind.setModId(TenantContext.currentUserId());
-        decl.setIndicators(snapshotJson(ind));
-        decl.setModId(TenantContext.currentUserId());
-        return toDetail(decl, ind);
-    }
 
     /** Wire {@code yyyy-MM-dd} → LocalDate; blank → null; invalid → WBE_VALIDATION. */
     private static LocalDate parseDate(String raw) {
