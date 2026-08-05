@@ -63,11 +63,18 @@ CREATE TABLE IF NOT EXISTS TAX_DECLARATIONS (
     DEL_YN           VARCHAR(1)   NOT NULL DEFAULT 'N',
     STATUS           VARCHAR(20)  NOT NULL,               -- DRAFT | LOCKED
     CONSTRAINT tax_declarations_pk   PRIMARY KEY (SID),
-    CONSTRAINT tax_declarations_uk01 UNIQUE (BIZ_KEY, PERIOD_TYPE, PERIOD_VALUE, PERIOD_YEAR, SUPPL_NO),
     CONSTRAINT tax_declarations_chk01 CHECK (PERIOD_TYPE IN ('month', 'quarter')),
     CONSTRAINT tax_declarations_chk02 CHECK (DECL_TYPE IN ('C', 'B')),
     CONSTRAINT tax_declarations_chk03 CHECK (DEL_YN IN ('Y', 'N'))
 );
+
+-- One ACTIVE declaration per (BIZ_KEY, PERIOD_TYPE, PERIOD_VALUE, PERIOD_YEAR, SUPPL_NO).
+-- Partial UNIQUE INDEX (not a UNIQUE CONSTRAINT) so soft-deleted rows (DEL_YN='Y') are
+-- excluded — a period can be re-created after its prior declaration is soft-deleted.
+-- PostgreSQL supports a partial predicate only on an INDEX, never on a table constraint.
+CREATE UNIQUE INDEX IF NOT EXISTS tax_declarations_uk01
+    ON TAX_DECLARATIONS (BIZ_KEY, PERIOD_TYPE, PERIOD_VALUE, PERIOD_YEAR, SUPPL_NO)
+    WHERE DEL_YN = 'N';
 
 CREATE INDEX IF NOT EXISTS ix_tax_declarations_biz_period
     ON TAX_DECLARATIONS (BIZ_KEY, PERIOD_YEAR DESC, PERIOD_VALUE DESC);
