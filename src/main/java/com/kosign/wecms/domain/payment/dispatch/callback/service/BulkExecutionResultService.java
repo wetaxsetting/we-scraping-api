@@ -2,29 +2,20 @@ package com.kosign.wecms.domain.payment.dispatch.callback.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kosign.wecms.common.exception.BusinessException;
+import com.kosign.wecms.domain.payment.dispatch.callback.MissingCallbackFieldException;
 import com.kosign.wecms.domain.payment.dispatch.callback.dto.BulkExecutionResultRequest;
 import com.kosign.wecms.domain.payment.dispatch.callback.dto.EfsCallbackEnvelope;
 import com.kosign.wecms.domain.payment.dispatch.van.dto.EfsEnvelope;
-import com.kosign.wecms.domain.payment.dispatch.callback.event.PaymentDispatchResultFinalizedEvent;
 import com.kosign.wecms.domain.payment.dispatch.constant.FirmBankingResultCd;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmBatApiTran;
-import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmFileData;
+import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmBatApiTranId;
 import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmFileMst;
-import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmFileRslt;
-import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileData;
-import com.kosign.wecms.domain.payment.dispatch.entity.TbPayFileMst;
+import com.kosign.wecms.domain.payment.dispatch.entity.TbFirmFileMstId;
 import com.kosign.wecms.domain.payment.dispatch.enums.ApiTranTp;
 import com.kosign.wecms.domain.payment.dispatch.enums.ProcStat;
 import com.kosign.wecms.domain.payment.dispatch.enums.ProcStep;
 import com.kosign.wecms.domain.payment.dispatch.file.FixedLengthCodec;
-import com.kosign.wecms.domain.payment.dispatch.file.DepositData;
-import com.kosign.wecms.domain.payment.dispatch.file.DepositTrailer;
-import com.kosign.wecms.domain.payment.dispatch.repository.TbFirmBatApiTranRepository;
-import com.kosign.wecms.domain.payment.dispatch.repository.TbFirmFileDataRepository;
 import com.kosign.wecms.domain.payment.dispatch.repository.TbFirmFileMstRepository;
-import com.kosign.wecms.domain.payment.dispatch.repository.TbFirmFileRsltRepository;
-import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileDataRepository;
-import com.kosign.wecms.domain.payment.dispatch.repository.TbPayFileMstRepository;
 import com.kosign.wecms.domain.payment.dispatch.service.DispatchKeyGenerator;
 import com.kosign.wecms.domain.payment.dispatch.alert.OpsAlertService;
 import com.kosign.wecms.domain.payment.dispatch.sftp.SftpClient;
@@ -33,9 +24,7 @@ import com.kosign.wecms.domain.payment.dispatch.van.client.VanApiKeyService;
 import com.kosign.wecms.domain.payment.dispatch.van.crypto.EfsCryptoService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.io.IOException;
@@ -45,15 +34,14 @@ import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
 
 /**
  * 01302 bulk execution result callback handler — refactor of
  * {@code FILE_DEPOSIT_TRANSFER_API2_act.jsp}.
  *
- * <p>Flow ({@link #handle}, one transaction): verify {@code VV} + decrypt
+ * <p>Flow ({@link #handle} — no transaction; the writes from {@code TB_FIRM_FILE_RSLT}
+ * onward run in one transaction on {@link BulkExecutionResultTxService}, see C-4 below):
+ * verify {@code VV} + decrypt
  * {@code EV} → parse {@code file_nm} → look up the file at
  * {@code (TRAN_DT, FIRM_FILE_NM, PROC_STEP='2', PROC_STAT='6')} (legacy
  * {@code R006}) → audit {@code 01302} → SFTP-download the result file → parse it
@@ -64,14 +52,32 @@ import java.util.Map;
  * same {@code FILE_SEQ_NO} has reported, finalize {@code TB_PAY_FILE_MST} status
  * ({@code 0} all-success / {@code 1} partial / {@code 3} all-fail).
  *
+ * <h2>C-4 — this class is NOT transactional; the writes live on a separate bean</h2>
+ * {@code handle} is a plain orchestrator: envelope guards, key resolve + {@code VV} verify +
+ * {@code EV} decrypt, required-field checks, the {@code file_nm} split, the {@code R006} lookup, the
+ * {@code REQUIRES_NEW} audit insert, the SFTP download and the parse. Every database <b>write</b> then
+ * happens in one transaction owned by {@link BulkExecutionResultTxService#applyResult}.
+ *
+ * <p><b>Why:</b> legacy {@code FILE_DEPOSIT_TRANSFER_API2_act.jsp} opens its transaction at
+ * {@code :291} — after the download ({@code :234}), the remote archive move ({@code :235}), the
+ * disconnect ({@code :236}), the empty-file check ({@code :249-254}) and the whole parse loop
+ * ({@code :262-290}). This method used to be {@code @Transactional} end-to-end, holding a database
+ * connection across an SFTP round trip on a callback thread. It no longer does. The writer is a
+ * separate bean because a self-invocation would bypass the proxy and run the apply with no transaction
+ * at all — see its class Javadoc.
+ *
  * <h2>Fail-safe / no-corruption</h2>
- * The whole method is {@code @Transactional}. A file not at {@code step2/stat6}
- * is a safe no-op (duplicate / late / unknown callback — already processed).
- * A bad envelope, a missing/empty download, or a malformed result file
- * <b>throws</b> → the transaction rolls back → {@code TB_FIRM_FILE_MST} stays at
- * {@code PROC_STEP='2'} (replayable). Malformed records are never silently
- * ignored, and {@code PROC_STEP 2→3} is reached only after every row is parsed
- * and written.
+ * A file not at {@code step2/stat6} is a safe no-op (duplicate / late / unknown callback — already
+ * processed). A bad envelope, a missing/empty download, or a malformed result file <b>throws before the
+ * writer is ever called</b>, so no write is attempted and {@code TB_FIRM_FILE_MST} stays at
+ * {@code PROC_STEP='2'} (replayable). A failure <i>inside</i> the writer rolls that transaction back to
+ * the same state. Malformed records are never silently ignored, and {@code PROC_STEP 2→3} is reached
+ * only after every row is parsed.
+ *
+ * <p><b>C-4 removed no writes from the rollback set.</b> Nothing was ever written inside the
+ * transaction ahead of the parse — the only earlier write is the audit row, and that already committed
+ * in its own {@code REQUIRES_NEW}. That is what makes the split cheap and the fail-safe guarantee
+ * identical to before.
  *
  * <h2>Unmatched callbacks: this leg answers {@code 0000}, the 01301 leg answers {@code G999}</h2>
  * Both legs face the identical question — the state-scoped lookup found nothing, so is this a replay we
@@ -118,15 +124,14 @@ public class BulkExecutionResultService {
     private final DispatchKeyGenerator dispatchKeyGenerator;
 
     private final TbFirmFileMstRepository firmFileMstRepository;
-    private final TbFirmFileDataRepository firmFileDataRepository;
-    private final TbFirmFileRsltRepository firmFileRsltRepository;
-    private final TbFirmBatApiTranRepository firmBatApiTranRepository;
-    private final TbPayFileMstRepository payFileMstRepository;
-    private final TbPayFileDataRepository payFileDataRepository;
-    private final ApplicationEventPublisher eventPublisher;
     private final OpsAlertService opsAlertService;
     /** G1 (audit M-7): writes the 01302 audit row in its own REQUIRES_NEW tx so it survives a parse rollback. */
     private final DispatchApiTranAuditWriter apiTranAuditWriter;
+    /**
+     * C-4: owns the single transaction every write of this leg happens in. A separate bean by
+     * necessity — calling an {@code @Transactional} method on {@code this} would bypass the proxy.
+     */
+    private final BulkExecutionResultTxService resultTxService;
 
     /**
      * Handle a 01302 execution-result callback.
@@ -136,11 +141,16 @@ public class BulkExecutionResultService {
      *                               malformed result file
      * @throws IllegalStateException when the API key is not provisioned (B2)
      */
-    @Transactional
     public EfsEnvelope handle(EfsCallbackEnvelope envelope) {
-        if (envelope == null || !StringUtils.hasText(envelope.id())) {
-            throw new IllegalArgumentException("callback envelope ID is required");
+        // 0. Common header check — legacy FILE_DEPOSIT_TRANSFER_API2_act.jsp:94-99 guards ID/EV/VV
+        //    (only three; the 01301 twin guards seven) and answers G001. We answered G002 for a
+        //    blank ID and did not check EV/VV at all. Corrected 2026-08-03.
+        if (envelope == null) {
+            throw baseFieldMissing("<envelope>");
         }
+        requireBaseField(envelope.id(), "ID");
+        requireBaseField(envelope.ev(), "EV");
+        requireBaseField(envelope.vv(), "VV");
         String vanOrgCd = envelope.id();
 
         // 1. Resolve key + verify VV + decrypt EV.
@@ -153,12 +163,19 @@ public class BulkExecutionResultService {
         }
         BulkExecutionResultRequest req = decode(efsCryptoService.decryptEv(envelope.ev(), apiKey));
 
-        // 2. Required-field check (legacy detail guard).
-        requireField(req.bankCd(), "bank_cd");
-        requireField(req.prtnId(), "prtn_id");
-        requireField(req.fileNm(), "file_nm");
-        requireField(req.dataAmt(), "data_amt");
-        requireField(req.dataDcmAmt(), "data_dcm_amt");
+        // 2. Required-field check — legacy API2_act.jsp:130-136 tests these five in ONE combined
+        //    guard and answers G002 (CD_DETAIL_NONE_INPUT_DATA) for all of them. Unlike the 01301
+        //    leg there is no G001/G002 split here.
+        //
+        //    S-9: legacy OMITS data_cnt from this guard (01301 requires it, 01302 does not), then
+        //    writes the unchecked value straight into TB_FIRM_BAT_API_TRAN.BAT_CNT. We require it
+        //    below — a deliberate, harmless tightening: a blank BAT_CNT is never useful, and no
+        //    conforming gateway omits the field. Do not "restore parity" by dropping this check.
+        requireDetailField(req.bankCd(), "bank_cd");        // legacy :130 → G002
+        requireDetailField(req.prtnId(), "prtn_id");        // legacy :130 → G002
+        requireDetailField(req.fileNm(), "file_nm");        // legacy :130 → G002
+        requireDetailField(req.dataAmt(), "data_amt");      // legacy :130 → G002
+        requireDetailField(req.dataDcmAmt(), "data_dcm_amt"); // legacy :130 → G002
 
         // 3. Parse file_nm = {prefix}_{vanOrgCd}_{type}_{fileSeq}_{tranDt}.
         String[] parts = req.fileNm().split("_");
@@ -169,6 +186,13 @@ public class BulkExecutionResultService {
                             + "\nFIRM_FILE_NM : " + req.fileNm()
                             + "\nAPI RM : malformed file_nm");
             // A2: acknowledge with the general error RC (validation failure, before any DB work).
+            //
+            // DO NOT PORT LEGACY HERE. API2_act.jsp:142-148 does file_nm.split("_") then indexes [4]
+            // with no length guard, OUTSIDE any try (the verify try closes at :119, the next opens at
+            // :173). A short name therefore raises an uncaught ArrayIndexOutOfBoundsException and the
+            // gateway receives a container HTTP 500 with NO envelope at all — not a parseable RC.
+            // G999 is strictly better and is kept deliberately. Recorded in the do-not-port list:
+            // docs/audits/legacy-batch-boundary-rule-sweep-2026-07-31.md §1.
             return ack(envelope, FirmBankingResultCd.ETC_ERR, FirmBankingResultCd.MSG_ETC_ERR);
         }
         String tranDt = parts[4];
@@ -226,20 +250,27 @@ public class BulkExecutionResultService {
                                 + "this name (already processed, unconfirmed or terminal) vanOrgCd={} fileNm={}",
                         vanOrgCd, req.fileNm());
             }
-            // THE ACKNOWLEDGEMENT IS DELIBERATELY UNCHANGED AT 0000, ON BOTH BRANCHES.
+            // THE ACKNOWLEDGEMENT IS DELIBERATELY 0000 ON BOTH BRANCHES — A LEGACY BEHAVIOUR WE DECLINE.
             //
-            // Read this before concluding the escalation above is a half-applied flip to G999 — it is
-            // not. Legacy answers G999 + "<file_nm> not found." here (API2_act.jsp:163-169) and we
-            // answer 0000; that divergence is RECORDED AND DEFERRED, pending §10 q1 (does a non-0000
-            // callback RC make the gateway resend?). Only the SIGNAL changed here, never the wire.
+            // What legacy does (verified 2026-08-03, not inferred): IDO.TB_FIRM_FILE_MST_R006.xml
+            // constrains "AND PROC_STEP = :PROC_STEP AND PROC_STAT = :PROC_STAT", and API2_act.jsp:144-146
+            // binds those to the literals '2' and '6'. So a file that has advanced to PROC_STEP='3' is
+            // NOT excluded from legacy's view by some quirk — legacy runs the identical filtered lookup,
+            // gets getResultCount < 1, and answers G999 + "<file_nm> not found." (:163-169). Legacy
+            // answers G999 to a completed-file REPLAY exactly as it does to a genuinely unknown file.
             //
-            // A blanket flip to G999 would be wrong, not merely unproven: once a file reaches
-            // PROC_STEP='3' every subsequent replay misses this '2'/'6' lookup, so G999 would answer a
-            // correctly-processed replay and produce a deterministic resend loop with nothing to
-            // converge on — legacy tolerated that only because its 60 s poller re-selected work each
-            // pass. If q1 comes back "the gateway does resend", the correct change is to port the
-            // 01301 split (replay → 0000; unknown / ambiguous → G999 + alert), not to flip this line.
-            // See docs/audits/van-center-open-questions-verification-2026-08-01.md.
+            // Why we still decline it — the poller, not the lookup. Legacy could afford that resend loop
+            // because FILE_DEPOSIT_TRANSFER_BATCH2 re-selected work every 60 s: a callback wedged in
+            // G999 was never the only way for a file to move forward. We removed that poller (K9), so
+            // copying G999 here would give us the loop with nothing to converge on — the gateway resends
+            // forever against a file that is already correctly processed, and no other actor advances it.
+            // Same class as the transient-00302 retry we already declined.
+            //
+            // An earlier version of this comment argued from the lookup ("legacy never sees a step-3
+            // row"). That was wrong and is corrected above: legacy does see it, via getResultCount < 1.
+            // The poller is the argument.
+            //
+            // Recorded in the do-not-port list: docs/audits/legacy-batch-boundary-rule-sweep-2026-07-31.md §1.
             return ack(envelope, FirmBankingResultCd.SUCC, FirmBankingResultCd.MSG_SUCC);
         }
         String bizKey = mst.getBizKey();
@@ -264,86 +295,35 @@ public class BulkExecutionResultService {
         // 7. Read + parse (malformed/empty → throw → rollback, MST stays at step 2).
         FixedLengthCodec.ParsedFile parsed = parseResultFile(localPath, req.fileNm());
 
-        // 8. Insert TB_FIRM_FILE_RSLT per D line + reflect onto TB_FIRM_FILE_DATA.
-        // H-1: keyed on FILE_SEQ + prefix-stripped name (legacy U001), NOT the exact callback name —
-        // req.fileNm() is the bank's R_ result name; the stored rows carry the sent S_ name.
-        Map<Integer, TbFirmFileData> firmDataBySeq =
-                indexFirmDataBySeq(tranDt, mst.getFileSeq(), req.fileNm());
-        Map<Integer, TbPayFileData> payDataBySeq = indexPayDataBySeq(bizKey, tranDt, fileSeqNo);
+        // 8. EVERY WRITE, IN ONE TRANSACTION ON ANOTHER BEAN (C-4).
+        //
+        // Legacy's transaction covers exactly this span — API2_act.jsp:291 to the end: the
+        // TB_FIRM_FILE_RSLT per-line loop (:293-331, where one failed insert rolls back every prior
+        // line — semantics we match), the TB_FIRM_FILE_DATA / TB_PAY_FILE_DATA reflection (:334-348,
+        // :375-387), the MST 2→3 advance with the trailer aggregates (:351-372), the sibling gate and
+        // pay-file finalize (:389-446), and the audit RS update (:451-462).
+        //
+        // Identifiers cross this boundary, never entities. `mst` was loaded WITHOUT a transaction, so
+        // it is detached; save()-ing it inside the writer would be a merge that writes every column and
+        // blind-overwrites a concurrent change. The writer re-reads by PK instead.
+        //
+        // The writer's FIRST statement is an atomic '2'→'3' claim. Moving the R006 lookup above out of
+        // the transaction matches legacy's boundary but would also import legacy's TOCTOU race (its
+        // R006 is likewise outside, at :144-153, with no claim of any kind); the claim declines that,
+        // consistently with H-4 on the reception leg and G2 on the real-time leg.
+        boolean applied = resultTxService.applyResult(new BulkExecutionResultCommand(
+                new TbFirmFileMstId(mst.getTranDt(), bizKey, fileSeqNo, mst.getFirmFileNm()),
+                new TbFirmBatApiTranId(audit.getTranDt(), audit.getBizKey(), audit.getTranSeq(),
+                        audit.getApiTranTp(), audit.getOutBankCd(), audit.getBankPrtnId()),
+                req.fileNm(), tranDt, parsed, dttm14));
 
-        for (DepositData line : parsed.lines()) {
-            int seq = parseInt(line.seq());
-            String procRsltDiv = blankTo(line.processingResult(), "N");
-            String rsCd = trim(line.responseCode());
-            TbFirmFileData fd = firmDataBySeq.get(seq);
-
-            TbFirmFileRslt rslt = new TbFirmFileRslt();
-            rslt.setTranDt(tranDt);
-            rslt.setBizKey(bizKey);
-            rslt.setFirmFileNm(req.fileNm());
-            rslt.setSeq(BigDecimal.valueOf(seq));
-            rslt.setFileSeq(mst.getFileSeq());
-            rslt.setTarBankCd(trim(line.depositBankCode()));
-            rslt.setFincMdaDiv(blankTo(line.cardAccountType(), "Y"));
-            rslt.setFincMdaNo(trim(line.depositAccountNumber()));
-            rslt.setTrscCcyCd(blankTo(line.currencyCode(), "VND"));
-            rslt.setTranAmt(amount(line.transferAmount()));
-            rslt.setBankChnlDiv(trimOrNull(line.sameBankFlag()));
-            rslt.setAntDivCd(trimOrNull(line.otherBankNetworkCode()));
-            rslt.setSenderNm(trim(line.senderName()));
-            rslt.setFincMdaOwnerNm(trim(line.receiverName()));
-            rslt.setTarAcctRmrk(trim(line.depositAccountMemo()));
-            rslt.setWdrlAcctRmrk(trim(line.withdrawalAccountMemo()));
-            rslt.setProcRsltDiv(procRsltDiv);
-            rslt.setRsCd(rsCd);
-            rslt.setRcptBankCntryCd(trimOrNull(line.receiptBankCountryCode()));
-            rslt.setRemitCcyCd(trimOrNull(line.remittanceCurrencyCode()));
-            rslt.setRcptUseAddr(trim(line.rcptUseAddr()));
-            rslt.setFeeBrdnClsCd(trimOrNull(line.feeBrdnClsCd()));
-            // Town name (RCPT_USE_ADDR_SI): not present in the result file — carry from the matching
-            // TB_FIRM_FILE_DATA row (audit M-11/E1). Null when the line has no firm-data match.
-            rslt.setRcptUseAddrSi(fd != null ? fd.getRcptUseAddrSi() : null);
-            firmFileRsltRepository.save(rslt);
-
-            // Reflect onto TB_FIRM_FILE_DATA + then TB_PAY_FILE_DATA (legacy U001 chain via ORG_SEQ).
-            if (fd != null) {
-                fd.setProcRsltDiv(procRsltDiv);
-                fd.setRsCd(rsCd);
-                firmFileDataRepository.save(fd);
-
-                TbPayFileData pd = payDataBySeq.get(intValue(fd.getOrgSeq()));
-                if (pd != null) {
-                    pd.setProcRsltDiv(procRsltDiv);
-                    pd.setRsCd(rsCd);
-                    payFileDataRepository.save(pd);
-                }
-            } else {
-                log.warn("01302 result line seq={} has no TB_FIRM_FILE_DATA row fileNm={}", seq, req.fileNm());
-            }
+        if (!applied) {
+            // Lost the claim to a concurrent callback. Acknowledge 0000 for the same reason the
+            // lookup-miss branch above does: the result IS being applied, by the winner, and a
+            // non-0000 here would only produce a resend against a file already being finalized.
+            log.warn("01302 callback did not claim fileNm={} bizKey={} — another callback is applying "
+                    + "this result; answering RC={}", req.fileNm(), bizKey, FirmBankingResultCd.SUCC);
         }
-
-        // 9. Advance MST PROC_STEP 2→3 + trailer aggregates (legacy U003).
-        DepositTrailer t = parsed.trailer();
-        mst.setProcStep(ProcStep.DEPO_RES_RECV.code());
-        mst.setProcStat(ProcStat.SUCC.code());
-        mst.setSuccCnt(count(t.succProcessingCnt()));
-        mst.setSuccAmt(amount(t.succProcessingAmt()));
-        mst.setUnprocCnt(count(t.nonProcessingCnt()));
-        mst.setUnprocAmt(amount(t.nonProcessingAmt()));
-        mst.setProcDttm(dttm14);
-        firmFileMstRepository.save(mst);
-
-        // 10. Sibling gate + final pay-file status (legacy R003/R005 + PAY U002).
-        finalizePayFileStatus(tranDt, bizKey, fileSeqNo, dttm14);
-
-        // 11. Audit success.
-        audit.setRsCd(FirmBankingResultCd.SUCC);
-        audit.setRsMsg(FirmBankingResultCd.MSG_SUCC);
-        audit.setRsDttm(dttm14);
-        firmBatApiTranRepository.save(audit);
-
-        log.info("01302 execution result processed fileNm={} bizKey={} lines={}",
-                req.fileNm(), bizKey, parsed.lines().size());
         // A2: EFS success acknowledgement. 01302 is RC/RM-only — the request EV/VV/ID/TNO/EM/VM are
         // echoed verbatim (legacy FILE_DEPOSIT_TRANSFER_API2_act.jsp copyDomain + setResult), NOT
         // re-encrypted (the load-bearing 01301↔01302 asymmetry).
@@ -360,88 +340,6 @@ public class BulkExecutionResultService {
                 in.ev(), in.vv(), in.em(), in.vm(), rc, rm);
     }
 
-    /**
-     * Finalize {@code TB_PAY_FILE_MST} only when every sibling file of the same
-     * {@code FILE_SEQ_NO} has reported (none still at {@code PROC_STEP='0'/PROC_STAT='6'}):
-     * {@code 0} all-success / {@code 3} all-fail / {@code 1} partial.
-     */
-    /** {@code PROC_STEP/PROC_STAT} of each sibling, for the deferral logs. */
-    private static String siblingStates(List<TbFirmFileMst> siblings) {
-        return siblings.stream()
-                .map(f -> f.getFirmFileNm() + "=" + f.getProcStep() + "/" + f.getProcStat())
-                .collect(java.util.stream.Collectors.joining(" "));
-    }
-
-    private void finalizePayFileStatus(String tranDt, String bizKey, String fileSeqNo, String dttm14) {
-        List<TbFirmFileMst> siblings = firmFileMstRepository
-                .findByTranDtAndBizKeyAndFileSeqNo(tranDt, bizKey, fileSeqNo);
-
-        // ── Guard 1 (Option A) — defer while ANY sibling is still non-terminal ────────────────────
-        // Legacy's barrier (IDO.TB_FIRM_FILE_MST_R003.xml:26-30, called at API2_act.jsp:389-405) tests
-        // only PROC_STEP='0' AND PROC_STAT='6' — reception-pending. A sibling mid-EXECUTION ('1'/'6' or
-        // '2'/'6') does not block it, and R005 then counts only terminal rows into TOT, so an
-        // in-flight sibling is invisible to the tot==succ ratio and the parent finalises without it.
-        //
-        // DELIBERATE DIVERGENCE FROM LEGACY (approved 2026-07-31, same class as the ANT_DIV_CD
-        // canonicalisation): defer on PROC_STAT='6' at ANY step. A file that has not reported cannot
-        // be counted as success or failure, so the only correct action is to wait.
-        boolean awaitingSiblings = siblings.stream()
-                .anyMatch(f -> ProcStat.REQ.code().equals(f.getProcStat()));
-        if (awaitingSiblings) {
-            log.info("01302 — deferring pay-file finalize, sibling files still pending fileSeqNo={} states={}",
-                    fileSeqNo, siblingStates(siblings));
-            return;
-        }
-
-        long tot = siblings.stream().filter(f ->
-                ProcStat.SUCC.code().equals(f.getProcStat()) || ProcStat.FAIL.code().equals(f.getProcStat())).count();
-        long succ = siblings.stream().filter(f -> ProcStat.SUCC.code().equals(f.getProcStat())).count();
-        long fail = siblings.stream().filter(f -> ProcStat.FAIL.code().equals(f.getProcStat())).count();
-
-        // ── Guard 2 — never finalise on an empty terminal set ─────────────────────────────────────
-        // THIS is the arithmetic that produced the two observed PROD false-"all success" rows, and it
-        // needs no split batch at all: for a SINGLE file stranded at '2'/'6', tot=0 and succ=0, so
-        // `tot == succ` is 0 == 0 — TRUE — and the parent is finalised to '0' (ALL SUCCESS) while its
-        // only file never reported. An empty count satisfies the equality.
-        //
-        // Guard 1 already prevents reaching this line (a '6' sibling defers first), so this is
-        // belt-and-braces — but the equality is the actual defect, it is one comparison, and any future
-        // change to Guard 1's predicate would silently re-expose it. Keep both.
-        if (tot == 0) {
-            log.warn("01302 — refusing to finalize pay-file with NO terminal sibling fileSeqNo={} "
-                            + "bizKey={} siblings={} states={} — parent left at PROC_STAT='6' "
-                            + "(finalising here would report '0'/all-success for a file that never reported)",
-                    fileSeqNo, bizKey, siblings.size(), siblingStates(siblings));
-            return;
-        }
-
-        // Legacy partial status is the literal '1' (NOT a WCConst PROC_ST_* — see API2_act.jsp:421-429).
-        String stat;
-        if (tot == succ) {
-            stat = ProcStat.SUCC.code();   // "0" — all success
-        } else if (tot == fail) {
-            stat = ProcStat.FAIL.code();   // "3" — all fail
-        } else {
-            stat = "1";                    // partial (mixed) — verbatim legacy value
-        }
-
-        payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(tranDt, bizKey, fileSeqNo)
-                .ifPresent(pay -> {
-                    pay.setProcStat(stat);
-                    pay.setProcDttm(dttm14);
-                    payFileMstRepository.save(pay);
-
-                    // Single trigger for the HAENGSUNG Oracle dispatch-result
-                    // write-back (Step 5). Fires once, only on actual pay-file
-                    // finalization (all siblings reported). Deferred to
-                    // AFTER_COMMIT by the subscriber, which filters to
-                    // HAENGSUNG / ERP batches and is a no-op otherwise — so it
-                    // is harmless for every other tenant/module.
-                    eventPublisher.publishEvent(
-                            new PaymentDispatchResultFinalizedEvent(bizKey, tranDt, fileSeqNo));
-                });
-    }
-
     // ------------------------------------------------------------------ helpers
 
     private String downloadResultFile(String fileNm) {
@@ -454,7 +352,17 @@ public class BulkExecutionResultService {
         } catch (RuntimeException e) {
             throw new BusinessException("WBE_EFS_RESULT_FILE", fileNm + " download failed");
         }
-        // Best-effort move to the processed dir (legacy fileMove — failure ignored).
+        // Archive move to the processed dir — legacy fileMove (API2_act.jsp:235).
+        //
+        // NOT best-effort, and the comment that used to say so was wrong. There is no catch here, so a
+        // move failure propagates and aborts the callback — which is exactly what legacy does: its
+        // fileMove sits inside the same try as the download (:226-247) and any exception becomes
+        // `JexBIZException(CD_ETC_ERR, "<file_nm> DOWNLOAD FAIL !!!")` at :246. The behaviour was
+        // always right; only the comment claimed otherwise.
+        //
+        // Consequence worth knowing: the file is downloaded locally before this runs, so a failed move
+        // leaves a local copy and an un-archived remote file, and the retry re-downloads. Legacy has
+        // the identical window.
         if (StringUtils.hasText(sftpProperties.getRemoteMovePath())) {
             sftpClient.move(remote, joinPath(sftpProperties.getRemoteMovePath(), fileNm));
         }
@@ -474,31 +382,6 @@ public class BulkExecutionResultService {
             // FixedLengthCodec rejects a malformed file — do NOT silently ignore.
             throw new BusinessException("WBE_EFS_RESULT_FILE", fileNm + " parse failed: " + e.getMessage());
         }
-    }
-
-    /**
-     * Index the sent file's detail lines by line {@code SEQ}, matching the way legacy
-     * {@code TB_FIRM_FILE_DATA_U001} joins — prefix-stripped {@code FIRM_FILE_NM} + {@code FILE_SEQ}.
-     *
-     * <p><b>H-1:</b> {@code fileNm} here is the bank's {@code R_…} result name, while the stored rows
-     * carry the sent {@code S_…} name, so an exact-name lookup returns nothing. See
-     * {@link TbFirmFileDataRepository#findForExecutionResult}.
-     */
-    private Map<Integer, TbFirmFileData> indexFirmDataBySeq(String tranDt, String fileSeq, String fileNm) {
-        Map<Integer, TbFirmFileData> map = new HashMap<>();
-        for (TbFirmFileData fd : firmFileDataRepository
-                .findForExecutionResult(tranDt, fileSeq, fileNm)) {
-            map.put(intValue(fd.getSeq()), fd);
-        }
-        return map;
-    }
-
-    private Map<Integer, TbPayFileData> indexPayDataBySeq(String bizKey, String tranDt, String fileSeqNo) {
-        Map<Integer, TbPayFileData> map = new HashMap<>();
-        for (TbPayFileData pd : payFileDataRepository.findByBizKeyAndTranDtAndFileSeqNo(bizKey, tranDt, fileSeqNo)) {
-            map.put(intValue(pd.getSeq()), pd);
-        }
-        return map;
     }
 
     private TbFirmBatApiTran writeApiTran(TbFirmFileMst file, String tranDt, String tranTm,
@@ -526,10 +409,28 @@ public class BulkExecutionResultService {
         return apiTranAuditWriter.saveInNewTransaction(row);
     }
 
-    private void requireField(String value, String name) {
+    /** Transport header → {@code G001} (legacy {@code API2_act.jsp:94-99}). */
+    private void requireBaseField(String value, String name) {
         if (!StringUtils.hasText(value)) {
-            throw new IllegalArgumentException("01302 callback missing required field: " + name);
+            throw baseFieldMissing(name);
         }
+    }
+
+    /** Body field → {@code G002} (legacy {@code API2_act.jsp:130-136}, one combined guard). */
+    private void requireDetailField(String value, String name) {
+        if (!StringUtils.hasText(value)) {
+            throw new MissingCallbackFieldException(
+                    FirmBankingResultCd.DETAIL_NONE_INPUT_DATA,
+                    FirmBankingResultCd.MSG_DETAIL_NONE_INPUT_DATA,
+                    "01302 callback missing required field: " + name);
+        }
+    }
+
+    private MissingCallbackFieldException baseFieldMissing(String name) {
+        return new MissingCallbackFieldException(
+                FirmBankingResultCd.BASE_NONE_INPUT_DATA,
+                FirmBankingResultCd.MSG_BASE_NONE_INPUT_DATA,
+                "01302 callback missing required field: " + name);
     }
 
     private BulkExecutionResultRequest decode(String json) {
@@ -553,41 +454,7 @@ public class BulkExecutionResultService {
         return new BigDecimal(i + "." + d);
     }
 
-    /** Parse a fixed-width numeric/amount field (leading zeros, optional decimal point). */
-    private static BigDecimal amount(String raw) {
-        String s = trim(raw);
-        return s.isEmpty() ? BigDecimal.ZERO : new BigDecimal(s);
-    }
-
-    private static BigDecimal count(String raw) {
-        String s = trim(raw);
-        return s.isEmpty() ? BigDecimal.ZERO : new BigDecimal(s);
-    }
-
     private static BigDecimal bigDecimalOrZero(String value) {
         return StringUtils.hasText(value) ? new BigDecimal(value.trim()) : BigDecimal.ZERO;
-    }
-
-    private static int parseInt(String raw) {
-        String s = trim(raw);
-        return s.isEmpty() ? 0 : Integer.parseInt(s);
-    }
-
-    private static int intValue(BigDecimal v) {
-        return v == null ? 0 : v.intValue();
-    }
-
-    private static String trim(String v) {
-        return v == null ? "" : v.trim();
-    }
-
-    private static String trimOrNull(String v) {
-        String t = trim(v);
-        return t.isEmpty() ? null : t;
-    }
-
-    private static String blankTo(String v, String dflt) {
-        String t = trim(v);
-        return t.isEmpty() ? dflt : t;
     }
 }

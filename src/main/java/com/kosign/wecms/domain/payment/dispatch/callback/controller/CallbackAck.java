@@ -1,8 +1,10 @@
 package com.kosign.wecms.domain.payment.dispatch.callback.controller;
 
 import com.kosign.wecms.common.exception.BusinessException;
+import com.kosign.wecms.domain.payment.dispatch.callback.MissingCallbackFieldException;
 import com.kosign.wecms.domain.payment.dispatch.callback.dto.EfsCallbackEnvelope;
 import com.kosign.wecms.domain.payment.dispatch.constant.FirmBankingResultCd;
+import com.kosign.wecms.domain.payment.dispatch.van.client.VanApiKeyNotProvisionedException;
 import com.kosign.wecms.domain.payment.dispatch.van.dto.EfsEnvelope;
 import org.springframework.dao.DataAccessException;
 
@@ -32,19 +34,37 @@ import org.springframework.dao.DataAccessException;
  * the legacy {@code WCConst} code that describes the same class of failure:
  * <table border="1">
  *   <caption>Exception → RC</caption>
- *   <tr><th>Escaped exception</th><th>RC</th><th>Legacy constant</th></tr>
- *   <tr><td>{@link IllegalArgumentException} (a missing required business field —
- *       {@code requireField}, or a blank envelope {@code ID})</td>
- *       <td>{@code G002}</td><td>{@code CD_DETAIL_NONE_INPUT_DATA} — 데이터부 필수 입력값 누락</td></tr>
+ *   <tr><th>Escaped exception</th><th>RC</th><th>Legacy constant / line</th></tr>
+ *   <tr><td>{@link MissingCallbackFieldException} — a missing required field, on either leg</td>
+ *       <td><b>the code the exception carries</b> ({@code G001} or {@code G002})</td>
+ *       <td>{@code API1_act.jsp:68-77}, {@code :125-129}, {@code :131-147};
+ *           {@code API2_act.jsp:94-99}, {@code :130-136}</td></tr>
+ *   <tr><td>{@link VanApiKeyNotProvisionedException} — no {@code TB_VAN_API_INFO} row</td>
+ *       <td>{@code G003}</td>
+ *       <td>{@code CD_ENC_VRFY_ERR}; {@code API1_act.jsp:99-110} / {@code API2_act.jsp:105-119}
+ *           — a null key fails {@code VerifyMac} on both legs</td></tr>
  *   <tr><td>{@link DataAccessException} (persistence fault)</td>
- *       <td>{@code G004}</td><td>{@code CD_DB_ERR} — DB처리 오류</td></tr>
+ *       <td>{@code G004}</td><td>{@code CD_DB_ERR} —
+ *           {@code API1_act.jsp:159-164} ({@code DomainUtil.isError} → DB fault)</td></tr>
+ *   <tr><td>other {@link IllegalArgumentException} (not a declared field check)</td>
+ *       <td>{@code G002}</td><td>{@code CD_DETAIL_NONE_INPUT_DATA} — unchanged fallback</td></tr>
  *   <tr><td>anything else ({@link BusinessException} incl. {@code WBE_EFS_RESULT_FILE},
- *       {@link IllegalStateException} from an unprovisioned key / crypto / (de)serialize, …)</td>
+ *       {@link IllegalStateException} from crypto / (de)serialize, …)</td>
  *       <td>{@code G999}</td><td>{@code CD_ETC_ERR} — 기타에러</td></tr>
  * </table>
  *
- * <p>Note what is <b>not</b> here: {@code G003} (verify failure) and the per-file business codes are
- * produced by the handlers themselves on their normal return paths and never reach this class.
+ * <h2>Why there is no {@code CallbackLeg} parameter</h2>
+ * Legacy's missing-field split really is per-leg and per-field — but the split is resolved
+ * <b>at the throw site</b>, where the field is known, and travels here inside
+ * {@link MissingCallbackFieldException}. After the 2026-08-03 correction to the unprovisioned-key
+ * mapping ({@code G003} on <i>both</i> legs, not {@code G004} on 01301 and {@code G003} on 01302),
+ * <b>no exception type maps to different codes on different legs</b>. A leg parameter would be
+ * accepted and never branched on, so it is deliberately absent. If a future divergence makes one
+ * necessary, add it then — with the branch that needs it.
+ *
+ * <p>Note what is <b>not</b> here: the {@code G003} produced on a genuine MAC/verify failure, and the
+ * per-file business codes, are produced by the handlers themselves on their normal return paths and
+ * never reach this class. Only the unprovisioned-key {@code G003} arrives as an exception.
  *
  * <p><b>TODO(B5): confirm the gateway's retry semantics per code against the captured EFS sample.</b>
  * The mapping above is sound as a <i>description</i> of the failure — each code says the right thing
@@ -82,18 +102,33 @@ final class CallbackAck {
     }
 
     private static String resultCd(Throwable e) {
-        if (e instanceof IllegalArgumentException) {
-            return FirmBankingResultCd.DETAIL_NONE_INPUT_DATA;
+        // The field check already decided G001-vs-G002 from the field's own legacy line.
+        if (e instanceof MissingCallbackFieldException missing) {
+            return missing.resultCd();
         }
+        // Unprovisioned VAN key → G003 on BOTH legs (API1_act.jsp:99-110 / API2_act.jsp:105-119:
+        // a null CRYPT_KEY fails VerifyMac, and both actions answer CD_ENC_VRFY_ERR).
+        // Must precede the IllegalStateException fall-through below.
+        if (e instanceof VanApiKeyNotProvisionedException) {
+            return FirmBankingResultCd.ENC_VRFY_ERR;
+        }
+        // DB fault → G004 (legacy DomainUtil.isError branch, API1_act.jsp:159-164).
         if (e instanceof DataAccessException) {
             return FirmBankingResultCd.DB_ERR;
+        }
+        // Any other bad-argument fault keeps the pre-existing G002 fallback — legacy has no
+        // counterpart, so this is left as-is rather than reclassified on a guess.
+        if (e instanceof IllegalArgumentException) {
+            return FirmBankingResultCd.DETAIL_NONE_INPUT_DATA;
         }
         return FirmBankingResultCd.ETC_ERR;
     }
 
     private static String resultMsg(String rc) {
         return switch (rc) {
+            case FirmBankingResultCd.BASE_NONE_INPUT_DATA -> FirmBankingResultCd.MSG_BASE_NONE_INPUT_DATA;
             case FirmBankingResultCd.DETAIL_NONE_INPUT_DATA -> FirmBankingResultCd.MSG_DETAIL_NONE_INPUT_DATA;
+            case FirmBankingResultCd.ENC_VRFY_ERR -> FirmBankingResultCd.MSG_ENC_VRFY_ERR;
             case FirmBankingResultCd.DB_ERR -> FirmBankingResultCd.MSG_DB_ERR;
             default -> FirmBankingResultCd.MSG_ETC_ERR;
         };

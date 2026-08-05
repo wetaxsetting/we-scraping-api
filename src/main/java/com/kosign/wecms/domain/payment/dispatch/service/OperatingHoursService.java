@@ -187,15 +187,29 @@ public class OperatingHoursService {
         if (infoDiv == ExeDiv.N) {
             return OperatingHoursDecision.SKIP;
         }
-        // Canonicalise the pay-target's ANT_DIV_CD to the schedule vocabulary before
-        // both the INTER test and the lookup. TB_PAY_TARGET.ANT_DIV_CD is bpchar(5) and
-        // legitimately carries BOTH widths — verified on JEX DEV 2026-07-28: CITAD/NAPAS/
-        // INTER plus 1-char 'E' and 'S' rows. The raw value was previously used as the
-        // schedule key, so a 1-char code could never match its 5-char schedule row and
-        // the payment was failed with 수행 기준 없음 — observed in live legacy data
-        // (tran_seq 13219/13220, ANT_DIV_CD='E', PROC_STAT='3' FAIL). Canonicalising also
-        // strips bpchar padding, which the raw comparison did not. Unknown codes stay
-        // verbatim and still miss the lookup, preserving the legacy fail-closed outcome.
+        // DELIBERATE DIVERGENCE FROM LEGACY. Legacy NAPAS_REAL_TIME_BATCH:144 passes
+        // TB_PAY_TARGET.ANT_DIV_CD *verbatim* as the DTL key; we canonicalise first,
+        // mapping the 1-char AntDivCd values 'E'/'S'/'V' onto EBANK/SWIFT/VCB. (The
+        // column is not "mixed width" — it holds AntDivCd.getValue(), which is 5-char
+        // for INTER/NAPAS/CITAD and 1-char for EBANK/SWIFT/VCB by design. All 101 JEX
+        // DEV rows conform. See AntDivChannel for the three-vocabulary map.)
+        //
+        // WHAT THIS DOES NOT ACHIEVE. It does not rescue the rows often cited as its
+        // motivation — tran_seq 13219/13220 (ANT_DIV_CD='E', PROC_STAT='3' FAIL,
+        // 2025-09-18) and 13221/13222 ('S', PROC_STAT='9' stranded, 2025-09-19). There
+        // is no NAPAS_REAL_TIME_BATCH/970424/EBANK (or /SWIFT) DTL row, so 'E' and
+        // 'EBANK' both miss and both return NO_CRITERIA. Outcome identical to legacy.
+        // Those rows look like a routing-provenance defect (EBANK and SWIFT are file-path
+        // channels), not a schedule-lookup miss — see boundary-sweep D-I.
+        //
+        // WHAT IT DOES. Only two things: it strips bpchar padding (neutral — PostgreSQL
+        // bpchar comparison already ignores trailing blanks), and it aligns this gate's
+        // spelling with the request-time gate (TransferNetwork.parse). Its one live
+        // effect is latent: if an EBANK/SWIFT/VCB realtime DTL row is ever inserted,
+        // we would dispatch where legacy fails closed. Whether those channels belong on
+        // the NAPAS realtime rail is an OPEN PO ROUTING DECISION
+        // (batch-schedule-operating-hours-audit.md §12b) — do not add such a DTL row to
+        // "make it work". Unknown codes stay verbatim and still fail closed.
         String channel = AntDivChannel.canonical(antDivCd);
 
         // EXE_DIV = 'Y' — bank window open. Check the other-bank network only when the

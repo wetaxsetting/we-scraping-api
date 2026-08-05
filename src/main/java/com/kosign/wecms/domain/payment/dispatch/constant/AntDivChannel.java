@@ -7,28 +7,41 @@ import java.util.Map;
  * Canonical {@code ANT_DIV_CD} (other-bank network / channel) vocabulary shared by
  * the two operating-hours gates.
  *
- * <h2>Why this exists</h2>
- * The legacy schema stores the same concept in two widths:
+ * <h2>Why this exists — three columns, three vocabularies</h2>
+ * There is no single {@code ANT_DIV_CD} vocabulary, and the widths are <b>not</b>
+ * drift. Each column applies its own vocabulary consistently:
  * <ul>
- *   <li>{@code TB_PAY_FILE_DATA.ANT_DIV_CD} is {@code bpchar(1)} — the 1-char
- *       storage codes {@code E/V/C/N/S}, classified verbatim by
+ *   <li>{@code TB_PAY_TARGET.ANT_DIV_CD} — {@code bpchar(5)}, holds
+ *       {@code wabooks.enums.AntDivCd.getValue()}. That enum is <b>mixed-width by
+ *       design</b>: {@code INTER("INTER")}, {@code NAPAS("NAPAS")},
+ *       {@code CITAD("CITAD")} sit in the same enum body as {@code SWIFT("S")},
+ *       {@code EBANK("E")}, {@code VCB("V")}. Verified on JEX DEV 2026-07-28:
+ *       {@code CITAD} 39 · {@code NAPAS} 30 · {@code INTER} 28 · {@code 'E'} 2 ·
+ *       {@code 'S'} 2 — <b>all 101 rows conform to the enum</b>. The column is
+ *       5 bytes wide because {@code INTER}/{@code NAPAS}/{@code CITAD} need 5, not
+ *       because every value is 5 chars. {@code 'E'} and {@code 'S'} are the correct
+ *       values for EBANK and SWIFT, not anomalies.</li>
+ *   <li>{@code TB_PAY_FILE_DATA.ANT_DIV_CD} — {@code bpchar(1)}, holds
+ *       {@code wabooks.enums.AntDivCdT.getValue()} ({@code E/N/C/S/V}). This is the
+ *       1-byte wire slot at offset 62 of the D record; classified verbatim by
  *       {@code IDO.TB_PAY_FILE_DATA_R005.xml}.</li>
- *   <li>{@code TB_PAY_TARGET.ANT_DIV_CD} is {@code bpchar(5)} — and carries a
- *       <b>mixture</b>: the 5-char names ({@code NAPAS} / {@code CITAD} /
- *       {@code INTER}) <i>and</i> 1-char codes. Verified on JEX DEV 2026-07-28:
- *       {@code CITAD} 39 rows, {@code NAPAS} 30, {@code INTER} 28, but also
- *       {@code 'E'} 2 rows and {@code 'S'} 2 rows.</li>
- *   <li>{@code TB_BATCH_SCHEDULE_DTL.ANT_DIV_CD} is {@code bpchar(5)} and is keyed
- *       <b>only</b> by the 5-char names.</li>
+ *   <li>{@code TB_BATCH_SCHEDULE_DTL.ANT_DIV_CD} — {@code bpchar(5)}, holds channel
+ *       <b>names</b> ({@code EBANK}/{@code NAPAS}/{@code CITAD}/{@code SWIFT}/{@code VCB}).
+ *       These are enum <i>names</i>, matching neither enum's {@code getValue()}.</li>
  * </ul>
  *
- * The rest of the refactor already treats the two widths as equivalent —
- * {@code TransferNetwork.parse} maps {@code "N"} and {@code "NAPAS"} onto the same
- * network for the request-time cut-off gate. The dispatch-time gate
- * ({@code OperatingHoursService}) previously used the raw column value as the
- * schedule key, so {@code 'N'} missed the {@code 'NAPAS'} schedule row and the
- * payment was failed with {@code 수행 기준 없음}. This class removes that
- * inconsistency by giving both gates one spelling to agree on.
+ * <p><b>Legacy performs the {@code E → EBANK} expansion itself</b> on the bulk path:
+ * {@code FILE_DEPOSIT_TRANSFER_BATCH1:301-381} reads 1-char counts out of
+ * {@code TB_PAY_FILE_DATA} (via {@code R005}) and then calls
+ * {@code operTimeChk(bankCd, "EBANK"/"VCB"/"CITAD"/"NAPAS"/"SWIFT")} with the
+ * <b>hard-coded 5-char name</b>. So {@link #fromStorageCode} normalises in the same
+ * direction legacy does, at the same point in the same flow.
+ *
+ * <p>{@link #canonical} normalises in that same direction but on a <b>different
+ * path</b> — the realtime gate, where legacy {@code NAPAS_REAL_TIME_BATCH:144}
+ * passes the {@code TB_PAY_TARGET} value <b>verbatim</b>. That is a deliberate
+ * divergence; see {@code OperatingHoursService.evaluateRealtime} for exactly what it
+ * does and does not achieve.
  *
  * <p><b>Not a behaviour change to the windows themselves</b> — it only decides
  * which existing schedule row a given {@code ANT_DIV_CD} refers to.

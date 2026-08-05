@@ -13,7 +13,7 @@
 > |---|---|---|---|
 > | **F-1 / C-7** — read timeout below the vendor SLA (§4.5, §9) | `readTimeoutMs = 20_000` | **`60_000`**, matching legacy; `connectTimeoutMs` unchanged at 3 000 | `EfsProperties` + `application-{local,sit,uat,prod}.yml`. Javadoc now cites **§3.2** as the source and records that the §6 sample is non-binding. |
 > | **D-4** — envelope RC over-reach (§6.6) | sibling fail-stop → `G998`; count/amount mismatch → `9999` | **both → `0000`** on the envelope. `G998` / `9999` still persist unchanged in `REG_RSLT_CD` and `TB_FIRM_BAT_API_TRAN.RS_CD` | `BulkReceptionResultService` (:269, :298 as numbered at audit time), + a new class-Javadoc section *"Envelope RC vs persisted result code"*. Two existing tests extended to pin `ack.rc() == 0000` alongside the persisted codes. |
-> | **§5.5** — Base64 repair mechanism | unexplained legacy workaround | mechanism documented: the guide's own §6.2 `EncryptAesBase64` calls `UrlDecode` on the **encrypt** path | `EfsCryptoService.repairBase64Alphabet` Javadoc. The method is **kept**; the 2-pass decode is still **not** added (still gated on B5). |
+> | **§5.5** — Base64 repair mechanism | unexplained legacy workaround | mechanism documented: the guide's own §6.2 `EncryptAesBase64` calls `UrlDecode` on the **encrypt** path | `EfsCryptoService.repairBase64Alphabet` Javadoc. The method is **kept**; the 2-pass decode is **not** added — **and as of 2026-08-03 that is a settled decision, no longer a B5 deferral** (see §5.4 addendum). |
 > | **§6.5 / report item c** — `BT00` has no documentary basis | bare `TODO(B5)` comment | `RECEPTION_SUCCESS_CD` Javadoc now states explicitly that `BT00` / `BT01` / `C999` appear **zero times** in the guide and in [참조 2] | `BulkReceptionResultService` |
 > | **F-4** (§9) — §5.4 FX block printed unconditionally Mandatory | audit finding only | recorded as SIT blocker **S-7** with a first-transfer diagnosis shortcut | [`../deployment/payment-dispatch-merge-sit-handoff.md`](../deployment/payment-dispatch-merge-sit-handoff.md) §7 |
 >
@@ -98,7 +98,7 @@
 | 1 | CHARSET (C-13 / K3) | **SPLIT** — API/JSON layer **CLOSED** (UTF-8, §1.2). Fixed-length H/D/T file **STILL OPEN** (explicitly delegated to another document). |
 | 2 | HTTP headers (C-8) | **CLOSED (negatively)** — the spec requires `Content-Type` and nothing else. No `Authorization`, no `signature`, no `x-coocon-accessIp`, no IP allow-listing anywhere in 44 pages. Our client is conformant. |
 | 3 | Timeouts / SLA (C-7) | **CLOSED — and our value is wrong.** §3.2 states a normative **30-second** limit. Our 20 s read timeout is *below* the vendor's own SLA and is sourced from a sample the PDF labels non-normative. |
-| 4 | EV/VV encoding (C-15) | **MOSTLY CLOSED** — single URL-encode, applied last, both directions. The 2-pass decode and the Base64 repair are **not** in the spec, but the vendor's own §6.2 sample contains the bug that *creates* the corruption the repair fixes. |
+| 4 | EV/VV encoding (C-15) | **CLOSED** *(upgraded from MOSTLY CLOSED 2026-08-03)* — single URL-encode, applied last, both directions. The 2-pass decode and the Base64 repair are **not** in the spec, but the vendor's own §6.2 sample contains the bug that *creates* the corruption the repair fixes. The pass-count question is now settled on its own merits — **not** deferred to B5 — and legacy's plaintext validation has been ported. See the §5.4 addendum. |
 | 5 | Callback response contract (D-4) | **STILL OPEN** — the most valuable question is the one the PDF does not answer. No RC enumeration for the partner's response, no retry semantics, no unparseable-response behaviour. It neither authorises nor forbids our G998/9999. |
 | 6 | 00302 timing / idempotency | **SPLIT** — timing **CLOSED** (a precondition, not a settling period; our AFTER_COMMIT fan-out satisfies it). Duplicate-00302 handling **STILL OPEN** (total silence). |
 | 7 | Fixed-length layout | **STILL OPEN** — not in this PDF at all; §1.2 delegates to `글로벌 VAN_펌뱅킹_배치파일 레이아웃.xlsx`, which is **not in the handover folder**. The independent vendor-side check of `FixedLengthCodec` is not possible from this document. |
@@ -514,6 +514,37 @@ Legacy `SecurityUtil.DecryptAesBase64:263-319` attempts decryption twice (withou
 
 **`EfsCryptoService`'s current stance is correct and should not change on the strength of this pass**: single self-consistent pass, with the reasoning gated on B5 ("Do not speculatively add passes"). The PDF does not supply the evidence B5 needs.
 
+#### Addendum 2026-08-03 — the pass count is settled; the validation is ported. **B5 no longer gates this.**
+
+A dedicated legacy read (C-15, approved by Sonny) resolved the pass count **without** a captured sample, because the deciding fact is in the legacy source rather than on the wire.
+
+**Finding — the ladder exists to compensate for an ordering defect we do not have.** Legacy repairs the Base64 alphabet **before** its decode (`SecurityUtil:269-271`, then `:411`); `EfsCryptoService` repairs **after** the URL-decode. For a plain, **not**-URL-encoded standard-Base64 `EV` containing a `'+'`:
+
+| | pipeline | result |
+|---|---|---|
+| legacy pass 1 | repair (no-op) → no URL-decode → commons-codec | ✅ correct bytes |
+| legacy pass 2 | repair (no-op) → `URLDecoder` `'+'`→space → commons-codec **discards** the space | ❌ **wrong bytes, no error** |
+| ours | `urlDecode` `'+'`→space → repair space→`'+'` → strict decode | ✅ correct bytes |
+
+So legacy's pass 2 is *broken* for the exact input class its pass 1 exists to serve. **Legacy needs two passes because each handles only one input class; ours handles both.** Six input classes were traced (URL-encoded; plain standard Base64; base64url ±URL-encoding; a `'+'` form-decoded to a space; a `%2B` double-form-decoded to a space) — all six decode correctly in the single pass, including the two legacy's pass 2 corrupts. Porting the ladder would mean reproducing legacy's ordering bug in order to reproduce its workaround.
+
+**Also relevant: our decoder is stricter than legacy's.** `java.util.Base64.getDecoder()` **throws** on non-alphabet characters; commons-codec `decodeBase64` **discards** them. The specific silent success legacy's `:278-279` comment describes (a `%`-bearing URL-encoded payload decrypting "successfully" as-is) therefore cannot occur here — it fails at the decoder.
+
+**What WAS ported: the plaintext validation** (`SecurityUtil:278-293` → `EfsCryptoService.assertPlaintextWellFormed`). Its value is independent of the encoding, and the dependency runs one way only: porting the *pass count* would have required the validation, but the validation stands alone. It asserts a 14-digit prefix (`Long.parseLong`, as legacy) plus a JSON **object** remainder (`ObjectMapper.readTree` + `isObject()`, the faithful equivalent of legacy's `JSONObject.fromObject`). It catches the class the strict decoder cannot see: **alphabet-clean, correctly padded, decrypts to garbage — a wrong key, a truncated ciphertext, a mis-split envelope field.**
+
+Two things deliberately **not** ported:
+
+- **Legacy's `isPaddingNum == false` branch** (`:291-293`) is defective — it validates the *whole* string as JSON, certifies it intact, and then every caller does `.substring(14)` and chops 14 characters off it. Only the `true` branch is ported.
+- **`VerifyMac`'s nesting.** `VerifyMac:534-568` runs two passes, each calling `VerifyMac2:579-591`, which calls the already-2-pass `DecryptAesBase64` — up to **four** decrypt attempts per verify. Accreted patching, not a designed ladder: (i) `VerifyMac2:581` forwards `urldecode` into `DecryptAesBase64`, so the outer pass 1 *enables* the inner 2-pass while the outer pass 2 *disables* the inner pass 1 via the `else` at `:294` — asymmetric nesting depth between the outer passes; (ii) `:582` also uses `urldecode` as `getHmacSha256`'s `urlencode` flag, then `:585-586` `URLDecoder.decode`s **both** sides, largely neutralising the toggle it just introduced. `verifyVv` stays flat and inherits the validation via `catch (RuntimeException) → false`.
+
+**Deliberate divergence recorded.** We now throw where legacy returned garbage: a response whose prefix is not 14 digits. **Watch item for the first SIT run** — if the gateway ever omits `RQ_DTIME` on a *response*, we begin rejecting envelopes the previous build accepted-and-garbled (surfacing as `G003` on the callback legs, gateway error on the outbound legs). Better outcome, but it should be *recognised* on the first SIT run rather than later debugged as a mystery `G003`.
+
+**Pitfall ③ re-read.** `08_기능추출_이관가이드.md` §8.4's *"한쪽만 구현하면 간헐적 검증실패"* is a warning about **legacy's two-input-class design**, where implementing one pass genuinely does drop one class — **not about ours**, where one pass covers both. There is no unresolved intermittent-failure risk behind this item.
+
+**Net effect on B5:** the pass count drops off B5's dependency list. A captured sample could only have revealed whether a counterparty sends `EV` not URL-encoded, which classes 2/4/5/6 already cover. B5's remaining dependencies — the `BT00`/`BT01`/`C999` reception result-code set and **D-4** — are unaffected and stay open.
+
+Tests: `EfsCryptoServiceTest` 6 → 12, `EfsCryptoBase64RepairTest` 5 → 6 (the new repair case pins input class 2, which is also the guard against anyone moving the repair back ahead of the URL-decode). Full suite green — 2 699 tests, 0 failures.
+
 ### 5.5 The Base64 repair — not in the spec, but the spec's own sample explains it
 
 Legacy applies `' '→'+'`, `'_'→'/'`, `'-'→'+'` before Base64-decoding. **Zero occurrences of any such repair in the PDF.** However — and this is new to this pass — **the vendor's §6.2 sample contains the bug that produces exactly that corruption.** §6.2 C# FUNCTION (p.38):
@@ -551,7 +582,7 @@ This is a third defect in §6.2, joining the two already known (`VerifyMac` retu
 | Encoding depth, inbound | **CLOSED** — single URL-decode before Base64-decode (§6.2 `DecryptAesBase64`) |
 | Order of operations | **CLOSED** — EV: `datetime(14) + json` → AES → Base64 → urlEncode. VV: `json` → HMAC-SHA256 → Base64 → urlEncode |
 | Double encoding | **CLOSED** — occurs only in the `_JSON_` transport variant, which we do not use |
-| Legacy 2-pass decode | **STILL OPEN** — no analogue in the spec; keep the single pass; B5 decides |
+| Legacy 2-pass decode | **CLOSED** *(2026-08-03 — was "STILL OPEN … B5 decides")* — no analogue in the spec, and none needed: legacy's ladder compensates for its repair-**before**-decode ordering, which we do not share. Single pass kept; legacy's plaintext validation ported. See the §5.4 addendum. |
 | Base64 alphabet repair | **Not specified — but now mechanistically explained** by the §6.2 `UrlDecode`-on-encrypt bug. Keep the port. |
 
 ---
@@ -1026,12 +1057,12 @@ Ordered by value. The first three are the ones worth a meeting.
 | **C-7** (timeouts / SLA) | Values sourced from the §6 sample; no known SLA | 🟢 **CLOSED** — §3.2 = 30 s, normative. **Our 20 s read timeout is below it (F-1).** Fix + re-cite the Javadoc to §3.2. |
 | **C-8** (HTTP headers) | Unknown whether the gateway requires/validates headers | 🟢 **CLOSED (negatively)** — `Content-Type` only; no `Authorization`/`signature`/`accessIp`/IP allow-list in 44 pages. Our client is conformant. Infra-level IP allow-listing stays an infra question (OQ-PDF-2). |
 | **C-13** (charset) | "CP/UTF-8 byte 기준 패딩", no codepage named | 🟢 **CLOSED** *(updated 2026-07-31, after this pass)* — API/JSON layer **UTF-8** (§1.2). File layer **ASCII, negatively confirmed** from evidence outside this PDF: handover §8.4 pitfall ④ (`미적용 시 은행 측 거절` — non-application ⇒ bank rejects) + zero multibyte files ever reaching `PROC_STEP='3'` (2 attempts, both failed). The row's prior "ASCII-only-by-contract is unsupported by the spec" verdict was a statement about *this document's silence* and is superseded, not contradicted. See **D-L**. |
-| **C-15** (EV/VV encoding) | Single vs double encoding unresolved; 2-pass + repair unexplained | 🟢 **MOSTLY CLOSED** — single encode/decode, both directions, applied last. Double encoding only in the unused `_JSON_` variant. Repair now **mechanistically explained** by the §6.2 `UrlDecode` bug — keep it. 2-pass still gated on B5. |
+| **C-15** (EV/VV encoding) | Single vs double encoding unresolved; 2-pass + repair unexplained | 🟢 **CLOSED** *(upgraded from MOSTLY CLOSED 2026-08-03)* — single encode/decode, both directions, applied last. Double encoding only in the unused `_JSON_` variant. Repair **mechanistically explained** by the §6.2 `UrlDecode` bug — keep it. **2-pass resolved without B5**: legacy's ladder compensates for its repair-before-decode ordering; our repair-after-decode covers both input classes in one pass. Legacy's plaintext validation **ported**; its defective `else` branch and `VerifyMac`'s nesting deliberately not. §5.4 addendum. |
 | **D-4** (callback response contract) | Unknown | 🔴 **STILL OPEN** — the PDF does not settle it. Non-`0000` branches are neither authorised nor forbidden. **Recommendation in §6.6: revert the envelope `RC` to legacy's uniform `0000` on durably-recorded paths, keep `G998`/`9999` in the persisted columns.** Question 1 in §10. |
 | **00302 timing** | Unknown whether a settling period is required | 🟢 **CLOSED** — precondition on state, not elapsed time. Our AFTER_COMMIT fan-out is conformant. |
 | **00302 idempotency** | Unknown | 🔴 **STILL OPEN** — total silence. No dedup statement, no idempotency key, and **no bulk-leg equivalent of 203**. Local state-based suppression is the only guard and must stay. |
 | **K3** (fixed-length layout) | Blocked on the file spec; UAT samples answered the offsets | 🟡 **NARROWED** *(updated 2026-07-31)* — still open for the vendor-document check (the `.xlsx` is absent; layout has 2 confirmations, 0 vendor-document ones), but **charset is no longer the live risk** — see C-13 above. The residual value of the `.xlsx` is the **`data_amt` 23-vs-22 width** question. |
-| **B5** (real captured EFS sample) | Open | 🔴 **Unchanged, and now the critical path** — it is the sole remaining closer for D-4, the `result_cd` set (`BT00`/`BT01`/`C999`), and the 2-pass question. |
+| **B5** (real captured EFS sample) | Open | 🔴 **Still the critical path, on a narrower list** *(updated 2026-08-03)* — remaining closer for **D-4** and the `result_cd` set (`BT00`/`BT01`/`C999`). **The 2-pass question was removed** from this list: it was settled from the legacy source, not the wire (§5.4 addendum). Do not re-attach it. |
 | **OQ-PDF-2** (partner instance / IP whitelist) | Open | 🔴 Unchanged — infra question. The guide has no IP allow-list concept at all, which is not evidence either way. |
 | **OQ-PDF-4** (`Gxxx` vs `WCConst`) | Open, framed as inbound interpretation | 🔴 Open, **now also outbound** — we **emit** `9999` and `G004`, neither of which is a gateway code (F-2). |
 | **OQ-PDF-5 / OQ-PDF-6** | Open | 🔴 Unchanged; both **reinforced** — see §8.1 and §7.2. |

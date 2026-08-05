@@ -59,6 +59,82 @@ import java.util.List;
  * cron MUST stay disabled until the coexistence rule is resolved (owner: PO / Mr. Kang). The atomic
  * {@code '9'→'6'} claim guards concurrency <i>within</i> the refactor only, not across the two systems.
  *
+ * <h2>C-12 — "nothing advances a JEX-written {@code '9'} row" (reframed 2026-08-03, verified against legacy)</h2>
+ *
+ * <p><b>Legacy does not solve C-12. It has the same gap, silently.</b> Both legacy selections are
+ * <i>today-only</i>, so a {@code '9'} row is retried on every tick for the rest of the calendar day and
+ * then falls out of the query permanently — still {@code '9'}, with nothing written to mark it. Legacy
+ * simply has no detection, which is why the gap was never named there. Our pay-target {@code '9'} sweep
+ * is the detection legacy lacks.
+ *
+ * <ul>
+ *   <li><b>Neither query carries an origin, tenant or source predicate</b> (verified in full).
+ *       {@code IDO.TB_PAY_TARGET_R001.xml:24-45} takes <i>no parameters at all</i> — an empty
+ *       {@code <in>} block — and reads
+ *       {@code WHERE TRAN_DT = TO_CHAR(now(),'yyyymmdd') AND PROC_STAT = '9'}, with no {@code BIZ_KEY}
+ *       and no {@code ORDER BY} (the B-1 note). {@code IDO.TB_PAY_FILE_MST_R001.xml:24-44} binds only
+ *       {@code :PROC_STAT} + {@code :TRAN_DT}, which {@code FILE_DEPOSIT_TRANSFER_BATCH1:86-87} sets to
+ *       the constants {@code PROC_ST_WAIT} ({@code '9'}) and today. Legacy takes whatever is {@code '9'}
+ *       today, from anyone.</li>
+ *   <li><b>The provenance problem is a SHARED-DATABASE problem only.</b> On a separate database there
+ *       are no JEX-written rows, so "who wrote this row" has one possible answer and the question
+ *       dissolves. Legacy never encounters it because it is the sole driver against its own DB.</li>
+ *   <li><b>The hazard is not misattribution — it is two independent drivers on one queue.</b> Both
+ *       would select the same {@code '9'} row, and the atomic {@code '9'→'6'} claims plus ShedLock
+ *       coordinate only <i>within</i> the refactor; the legacy JEX batch participates in neither. So the
+ *       failure mode is a genuine double-dispatch — a duplicate payment — not a bookkeeping error.
+ *       That is what makes the current double-gating proportionate rather than merely cautious.</li>
+ *   <li><b>Legacy's precondition asymmetry — match it if this sweep ever grows its own checks.</b>
+ *       {@code NAPAS_REAL_TIME_BATCH} writes a terminal {@code PROC_STAT='3'} when no
+ *       {@code TB_BATCH_SCHEDULE_INFO} row exists for the bank ({@code :125-130}), when no schedule
+ *       detail exists for the {@code ANT_DIV_CD} ({@code :155-161}), or when the bank/network window has
+ *       CLOSED for the day ({@code EXE_DIV='E'}, {@code :171-175} / {@code :184-187}) — all via
+ *       {@code TB_PAY_TARGET_U001} at {@code :191-205}, with an alert. But a row that is merely
+ *       <i>not yet open</i> takes the bare {@code continue} at {@code :227-230} and <b>stays
+ *       {@code '9'}</b>. "No rule for this bank" and "window closed today" are terminal; "not open yet"
+ *       is not. (For completeness: a 202 no-response / {@code G999} moves the row to {@code '6'} at
+ *       {@code :576-587}, and a 202 non-{@code 0000} to {@code '3'} at {@code :667-679}; the file leg
+ *       writes {@code '3'} on a validation failure, {@code FILE_DEPOSIT_TRANSFER_BATCH1:234-239}.)</li>
+ * </ul>
+ *
+ * <h2>C-12 — the gate this should be behind (PROPOSED, NOT IMPLEMENTED)</h2>
+ *
+ * <p>Because the problem is shared-database-only, the correct gate is on <b>whether the database is
+ * shared</b>, not a permanent global OFF. Proposed shape — <b>do not implement without PO sign-off</b>:
+ * a third property {@code wecms.dispatch.legacy-jex-shares-database}, <b>defaulting to {@code true}</b>
+ * (fail-closed), with {@code recovery.enabled} effective only when it is <i>explicitly</i> {@code false},
+ * and a startup log line stating which way it resolved and against which JDBC host.
+ *
+ * <p><b>It must be an operator declaration, not an inference from the DB target.</b> Three reasons:
+ * <ol>
+ *   <li>Memory {@code project_uat_prod_live_jex_db_target} records a standing PO directive that the
+ *       refactor runs against the <b>live JEX DB in all environments</b>. SIT points at the refactor's
+ *       own dev DB today (team decision 2026-05-26, memory {@code reference-sit-endpoints}), which makes
+ *       it the separate-DB case — but that is a current-state fact, not a durable guarantee, and the
+ *       directive points the other way.</li>
+ *   <li>A JDBC URL cannot answer the question that actually matters — <i>"is the legacy
+ *       {@code WECMS_BATCH} pointed at this same database?"</i> That target lives in JEX property files
+ *       on a different host ({@code <target>WABOOKSVNDEV_DB</target>} in every IDO). A URL check would
+ *       answer an easier question while appearing to answer the real one.</li>
+ *   <li>Deployed config on these hosts already diverges from the committed {@code .env.*} (memories
+ *       {@code project_batch_deployed_flags_diverge_from_repo}, {@code reference_sit_server_config_setenv}
+ *       — SIT loads from host env, not the repo file). A gate keyed on an env-supplied URL would be
+ *       exactly as fragile as the flags it is meant to reinforce.</li>
+ * </ol>
+ *
+ * <p><b>Nothing in the code distinguishes the two cases today.</b> {@code WECMS_DB_URL} is a bare
+ * placeholder in every profile and is never read or inspected; there is no property, profile check or
+ * datasource inspection anywhere. The word "coexistence" appears only in Javadoc and YAML comments —
+ * prose, not a guard. Enabling recovery on SIT right now is a pure {@code .env} change with no
+ * code-level check that the database is in fact separate.
+ *
+ * <p><b>Operational caveat for whoever enables it first, independent of the gate.</b> This sweep has
+ * <b>no date bound</b> where legacy's is today-only: {@link #recoverPayTargets} filters on the grace
+ * window alone. That widening is the entire point of C-12 — it recovers exactly the rows legacy
+ * abandons at midnight — but it means the first enabled pass sees <b>every historical {@code '9'} row in
+ * the table, from any date</b>. {@code recovery.batch-size} (default 50) and oldest-first ordering bound
+ * each pass, <b>not the total</b>. Plan the first run accordingly.
+ *
  * <p>Per-row failures are isolated (logged, never rethrown) so one bad row never blocks the sweep.
  *
  * <p><b>The real-time leg hands off to the shared paced drain.</b> {@link #recoverPayTargets} enqueues
@@ -231,9 +307,14 @@ public class StrandedRecoveryService {
      *
      * <p>Legacy's spacing was also never a <i>guarantee</i> to revert to: it is order-dependent on
      * {@code TB_PAY_TARGET_R001}, which has no {@code ORDER BY} (B-1), so identical workloads could
-     * space at 100 ms or 3000 ms on consecutive days. The residual concern — an unknown bank pacing at
-     * an unmeasured rate — is addressed directly by {@code DispatchPacer.PER_DELAY_DEFAULT} = 3000 ms,
-     * not by importing the leak.
+     * space at 100 ms or 3000 ms on consecutive days.
+     *
+     * <p><b>The residual concern is NOT addressed by moving the default (corrected 2026-08-05).</b> This
+     * paragraph used to close with "addressed directly by {@code DispatchPacer.PER_DELAY_DEFAULT} =
+     * 3000 ms". That raise has been withdrawn: handover {@code 05 §5.3} / {@code 06 §6.3} document 100 ms
+     * as the 기본 딜레이 and name BIDV / Vietcombank / Kookmin as banks that run on it, while
+     * {@code 08 §8.4} attributes 3000 ms to <b>Woori's</b> rate limit specifically. D-A is fixed by the
+     * per-row keying — the structural half — and a new bank's throughput belongs in its own constant.
      *
      * <p><b>Why this reads as a legacy defect and not a design.</b> The sibling batch does it correctly:
      * {@code PROCESSING_RESULT_CHECK_BATCH:82} declares {@code per_request_delay} <b>inside</b> its loop,

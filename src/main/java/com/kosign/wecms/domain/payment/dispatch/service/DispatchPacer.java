@@ -38,9 +38,17 @@ import org.springframework.stereotype.Component;
  * <p><b>The "up to 30× faster than legacy" consequence this Javadoc used to claim is withdrawn
  * (2026-08-01).</b> The leak can only mis-pace a bank outside {@code {970424, 970457}} — both of those
  * set the delay explicitly on their own rows — and no such bank has ever been on the paced rail. The
- * claim had no subject. What replaces it is {@link #PER_DELAY_DEFAULT} = 3000 ms, which makes this
- * component {@code >=} legacy's spacing for every row without importing the leak. Full analysis:
+ * claim had no subject. Full analysis:
  * {@code docs/audits/legacy-batch-boundary-rule-sweep-2026-07-31.md} §D-A.
+ *
+ * <p><b>The remedy applied for it has since been withdrawn too (2026-08-05).</b> D-A was closed by
+ * raising {@link #PER_DELAY_DEFAULT} 100 → 3000 ms, on the premise that legacy had no considered value
+ * for a third bank. Handover {@code 05_배치스케줄_운영가이드.md §5.3} and
+ * {@code 06_환경설정_항목목록.md §6.3} both document 100 ms as the 기본 딜레이, and 05 §5.3 names BIDV /
+ * Vietcombank / Kookmin as banks that process normally on it — so the premise was false, and handover
+ * {@code 08_기능추출_이관가이드.md §8.4} attributes the 3-second floor specifically to <b>Woori's</b>
+ * rate limit. The default is back to legacy's 100 ms. <b>The D-A finding itself still stands</b>, fixed
+ * by the per-row keying above — the structural half, and the half that was always doing the work.
  *
  * <p><b>That is a scope decision, not a claim that the event-driven legs never burst.</b> An earlier
  * revision of this Javadoc justified the exemption with "they fire one request per business event,
@@ -54,7 +62,8 @@ import org.springframework.stereotype.Component;
  *
  * <p>Delays for the two banks legacy actually configured are its verified values: Woori
  * {@code 970457} = 3000&nbsp;ms, Shinhan {@code 970424} = 100&nbsp;ms. <b>Every other bank paces at
- * 3000&nbsp;ms</b> — see {@link #PER_DELAY_DEFAULT}, which is deliberately NOT legacy's 100 ms.
+ * 100&nbsp;ms</b> — legacy's {@code WCConst.PER_DELAY_DEFAULT}, documented as the 기본 딜레이 in handover
+ * 05 §5.3 and 06 §6.3. See {@link #PER_DELAY_DEFAULT}.
  * Extracted into a component so the scan loop stays clean and unit tests can substitute a no-op
  * (avoiding real sleeps).
  */
@@ -68,28 +77,35 @@ public class DispatchPacer {
     static final String BANK_CD_WOORI = "970457";
 
     /**
-     * Pacing for any bank that is <b>not</b> Shinhan or Woori — <b>3000 ms, deliberately not legacy's
-     * {@code WCConst.PER_DELAY_DEFAULT = 100}</b> (raised 2026-08-01).
+     * Pacing for any bank that is <b>not</b> Shinhan or Woori — <b>100 ms, legacy's
+     * {@code WCConst.PER_DELAY_DEFAULT}</b> (restored 2026-08-05).
      *
-     * <p><b>Why this diverges.</b> Legacy has no considered value here. 100 ms is the initialiser of a
-     * variable that legacy's own loop then overwrites for the only two banks it knew about; no third
-     * bank has ever reached the paced rail, so 100 ms has never actually been sent to one. Evidence
-     * (JEX DEV, read-only 2026-08-01): {@code TB_FIRM_TRAN TRAN_TP='202'} carries {@code 970424} × 46
-     * and {@code 970457} × 6 and nothing else, ever; the only third bank in {@code TB_PAY_TARGET},
-     * VCB {@code 970436} (4 rows, 20260617), is {@code PROC_STAT='3'} FAIL on all four — it never
-     * dispatched — and VCB has since been routed off the API rail to file-based entirely
-     * (PO-approved 2026-07-16, memory {@code project_vcb_file_transfer_switch}).
+     * <p><b>100 ms is a documented value, not an unconsidered initialiser.</b> Handover
+     * {@code 05_배치스케줄_운영가이드.md §5.3} ("은행/통화/딜레이") states it twice — <i>그 외 은행:
+     * 기본 딜레이 100ms 적용</i> and <i>기본 딜레이: 100ms</i> — and {@code 06_환경설정_항목목록.md §6.3}
+     * lists {@code WCConst.PER_DELAY_*} as {@code 100/3000ms}. The same 05 §5.3 note warns that Shinhan
+     * and Woori are hard-coded <b>because they are delay overrides and specific network-validation rules
+     * (EBANK→Shinhan, VCB망→Woori)</b>, not because they are a bank whitelist —
+     * <i>실제 처리 은행은 데이터(`OUT_BANK_CD`)로 결정되며 BIDV·국민 등도 정상 처리(기본 딜레이)</i>,
+     * naming <b>BIDV and Kookmin</b> as banks that do process normally on the 기본 딜레이. So third banks
+     * were expected on this rail and 100 ms is the value documented for them.
      *
-     * <p>So the first bank to take this value will be one whose throughput tolerance we have never
-     * measured, against a rate limit documented nowhere. 3000 ms is the slowest rate legacy is known
-     * to sustain against a real bank (Woori), which makes it the conservative floor: this constant is
-     * now {@code >=} legacy's effective spacing for <b>every</b> row, deterministically, rather than
-     * only when a Woori row happened to sort ahead in the same pass (see the D-A note below and B-1 —
-     * {@code TB_PAY_TARGET_R001} has no {@code ORDER BY}, so legacy's spacing was never a guarantee).
+     * <p><b>Woori's 3000 ms is specific to Woori.</b> Handover
+     * {@code 08_기능추출_이관가이드.md §8.4} (함정 포인트) reads <i>은행별 딜레이: 우리은행 3초.
+     * 미적용 시 은행 측 유량제한(rate limit) 위반 가능</i> — the 3-second floor exists to avoid violating
+     * <b>that</b> bank's rate limit. It is not a general-purpose conservative default, and generalising
+     * it is not a safety improvement: at 3000 ms a 100-row BIDV batch paces ~5 minutes of gateway
+     * traffic where legacy paced ~10 seconds. That is a throughput regression against a documented
+     * value, justified by no bank's published limit.
      *
-     * <p>Lower it only with a measured throughput answer from the VAN Center for the specific bank.
+     * <p>An earlier revision of this constant was 3000 ms (2026-08-01), on the reasoning that legacy
+     * "had no considered value" for banks outside {@code {970424, 970457}}. Handover 05/06 contradict
+     * that premise directly, so the divergence is withdrawn and legacy parity restored.
+     *
+     * <p>Raise it for a specific bank only by adding that bank's own constant, the way legacy does for
+     * Woori — never by moving the default.
      */
-    static final long PER_DELAY_DEFAULT = 3000L;
+    static final long PER_DELAY_DEFAULT = 100L;
     /** Legacy {@code WCConst.PER_DELAY_SHINHAN} (ms) — verified legacy value, unchanged. */
     static final long PER_DELAY_SHINHAN = 100L;
     /** Legacy {@code WCConst.PER_DELAY_WOORI} (ms) — verified legacy value, unchanged. */

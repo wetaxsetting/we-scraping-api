@@ -18,8 +18,16 @@ import static org.assertj.core.api.Assertions.assertThat;
  * are the base64url alphabet. Without the repair those payloads fail to decode — the
  * "intermittent verify failure" the handover warns about ({@code 08 §8.4} pitfall ③).
  *
- * <p>This is <b>separate from the 2-pass URL-decode</b> (still {@code TODO(B5)}): legacy runs the repair
- * once, unconditionally, independent of the pass count — so it was portable now.
+ * <p>This is <b>separate from the 2-pass URL-decode</b>: legacy runs the repair once,
+ * unconditionally, independent of the pass count — so it was portable on its own.
+ *
+ * <p><b>These tests are also the guard on the repair's POSITION</b> (C-15, resolved 2026-08-03).
+ * We repair <i>after</i> {@code urlDecode}, legacy repairs <i>before</i> its decode, and that
+ * difference is the reason a single pass suffices here where legacy needs two — see
+ * {@code EfsCryptoService.repairBase64Alphabet} §"Ordering". If the repair is ever moved ahead of
+ * the URL-decode "to match legacy's line order", {@link #ev_withPlusDecodedToSpace_stillDecrypts}
+ * and {@link #ev_plainStandardBase64_notUrlEncoded_stillDecrypts} fail. Leave them failing loudly
+ * rather than adjusting them.
  *
  * <p><b>What these tests do NOT cover:</b> whether the gateway actually emits such payloads. That is
  * B5 (byte-verify against a captured sample). These assert only that if one arrives, we decode it
@@ -55,6 +63,19 @@ class EfsCryptoBase64RepairTest {
         String corrupted = ev.replace('+', ' ');
 
         assertThat(crypto.decryptEv(corrupted, TEST_KEY)).isEqualTo(JSON);
+    }
+
+    @Test
+    @DisplayName("EV: plain standard Base64, NOT URL-encoded, still decrypts (legacy pass 2 corrupts this)")
+    void ev_plainStandardBase64_notUrlEncoded_stillDecrypts() {
+        // C-15 input class 2. This is the case legacy needs its pass 1 for: with legacy's
+        // repair-BEFORE-decode ordering, its pass 2 turns the literal '+' into a space that
+        // commons-codec then silently DISCARDS, decoding to the wrong bytes with no error.
+        // Our repair-AFTER-decode ordering handles it in the single pass.
+        String ev = rawBase64Ev();
+        assertThat(ev).as("EV must contain a '+' for this scenario to mean anything").contains("+");
+
+        assertThat(crypto.decryptEv(ev, TEST_KEY)).isEqualTo(JSON);
     }
 
     @Test

@@ -17,6 +17,7 @@ import com.kosign.wecms.domain.payment.dispatch.repository.TbFirmFileMstReposito
 import com.kosign.wecms.domain.payment.dispatch.service.DispatchKeyGenerator;
 import com.kosign.wecms.domain.payment.dispatch.van.client.EfsApiClient;
 import com.kosign.wecms.domain.payment.dispatch.van.client.EfsProperties;
+import com.kosign.wecms.domain.payment.dispatch.van.client.VanApiKeyNotProvisionedException;
 import com.kosign.wecms.domain.payment.dispatch.van.client.VanApiKeyService;
 import com.kosign.wecms.domain.payment.dispatch.van.crypto.EfsCryptoService;
 import com.kosign.wecms.domain.payment.dispatch.van.dto.Efs302Response;
@@ -163,12 +164,21 @@ class BulkReceptionResultServiceTest {
                 .extracting("code").isEqualTo("WBE_EFS_GATEWAY_ERROR");
     }
 
+    /**
+     * The B2 gap must stop the flow before any gateway call. The thrown type is
+     * {@code VanApiKeyNotProvisionedException} (an {@link IllegalStateException}) — on the callback
+     * path it is what makes the acknowledgement {@code G003} rather than {@code G999}, matching
+     * legacy on both legs ({@code API1_act.jsp:99-110} / {@code API2_act.jsp:105-119}: a null
+     * {@code CRYPT_KEY} fails {@code VerifyMac} → {@code CD_ENC_VRFY_ERR}).
+     */
     @Test
     void missing_api_key_propagates_b2_failure_without_calling_gateway() {
         when(vanApiKeyService.getApiKey(VAN_ORG))
-                .thenThrow(new IllegalStateException("No TB_VAN_API_INFO.API_KEY provisioned ... B2"));
+                .thenThrow(new VanApiKeyNotProvisionedException(
+                        "No TB_VAN_API_INFO.API_KEY provisioned ... B2"));
 
         assertThatThrownBy(() -> service().issueExecution(cmd()))
+                .isInstanceOf(VanApiKeyNotProvisionedException.class)
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("B2");
 
@@ -631,6 +641,12 @@ class BulkReceptionResultServiceTest {
      * and lost the reception result with nothing recorded. Now: a retryable RC so it resends, plus an ops
      * alert — no audit row is possible because {@code TB_FIRM_BAT_API_TRAN.BIZ_KEY} is a NOT NULL PK
      * column and an unmatched callback resolves no tenant.
+     *
+     * <p><b>RC is {@code G004}, matching legacy</b> — {@code FILE_DEPOSIT_TRANSFER_API1_act.jsp:168-170}
+     * answers {@code WCConst.CD_DB_ERR} when the file lookup returns {@code resultCount == 0}. This
+     * assertion was {@code G999} until 2026-08-03: the same retryable intent, but not legacy's code.
+     * Note the 01302 twin uses {@code G999} for its equivalent miss ({@code API2_act.jsp:163-169}) —
+     * the two legs genuinely differ, so do not "align" them.
      */
     @Test
     void unmatched_unknownFile_answersRetryable_andAlerts_withNoAuditRow() throws Exception {
@@ -644,8 +660,9 @@ class BulkReceptionResultServiceTest {
         EfsEnvelope ack = service().handle(callbackOf(receptionReq("BT00", "3", "1500000")));
 
         assertThat(ack.rc())
-                .as("must NOT be 0000 — that is the 'stop resending' signal and the result would be lost")
-                .isEqualTo(FirmBankingResultCd.ETC_ERR);
+                .as("must NOT be 0000 — that is the 'stop resending' signal and the result would be lost; "
+                        + "G004 is legacy's code for resultCount==0 (API1_act.jsp:168-170)")
+                .isEqualTo(FirmBankingResultCd.DB_ERR);
         verify(opsAlertService).notify(eq(VAN_ORG), Mockito.contains("unmatched callback"));
         verifyNoInteractions(apiTranAuditWriter);
         verify(firmFileMstRepository, never()).save(any());

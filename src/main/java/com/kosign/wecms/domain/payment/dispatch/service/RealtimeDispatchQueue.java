@@ -171,9 +171,10 @@ public class RealtimeDispatchQueue {
 
     /**
      * That row's {@code OUT_BANK_CD}, or null when the row is gone. Null paces at
-     * {@code DispatchPacer.PER_DELAY_DEFAULT} — 3000 ms since 2026-08-01, so an unresolvable bank now
-     * paces at the slowest rate legacy is known to sustain rather than the fastest. An unknown bank is
-     * not a reason to skip pacing, and it is not a reason to guess a fast one either.
+     * {@code DispatchPacer.PER_DELAY_DEFAULT} — legacy's 100 ms (the 3000 ms default introduced
+     * 2026-08-01 was withdrawn 2026-08-05; see that constant's Javadoc for the handover citations).
+     * An unknown bank is not a reason to skip pacing; it is paced at the documented default rather
+     * than at a bank-specific override we cannot attribute to it.
      */
     private String resolveOutBankCd(String bizKey, String tranDt, String tranSeq) {
         try {

@@ -75,7 +75,7 @@ class PayFileFinalizeGuardTest {
     }
 
     /**
-     * Mirrors {@code BulkExecutionResultService.finalizePayFileStatus} exactly: Guard 1, then the
+     * Mirrors {@code BulkExecutionResultTxService.finalizePayFileStatus} exactly: Guard 1, then the
      * counts, then Guard 2, then the ratio.
      *
      * @return the status the parent would be set to, or {@link Optional#empty()} when finalisation is

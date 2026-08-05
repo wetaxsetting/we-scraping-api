@@ -280,6 +280,59 @@ public interface TbFirmFileMstRepository
                                                    @Param("procStat") String procStat);
 
     /**
+     * C-4 · <b>The atomic claim for the 01302 execution-result apply</b> — {@code PROC_STEP '2'→'3'}
+     * plus {@code PROC_STAT '6'→'0'} and the trailer aggregates, guarded on the state it is leaving.
+     * Must be the FIRST statement of {@code BulkExecutionResultTxService.applyResult}.
+     *
+     * <p><b>Why this exists — and why it is a deliberate improvement on legacy, not parity.</b>
+     * C-4 moved the SFTP download and the file parse out of the callback transaction, matching legacy
+     * {@code FILE_DEPOSIT_TRANSFER_API2_act.jsp}, which opens its transaction at {@code :291} — after
+     * the download ({@code :234}), the remote archive move ({@code :235}), the disconnect
+     * ({@code :236}), the empty-file check ({@code :249-254}) and the entire parse loop
+     * ({@code :262-290}). That is strictly better than holding a connection across a network round
+     * trip on a callback thread, and it is what the refactor now does.
+     *
+     * <p>But matching legacy's <i>boundary</i> also imports legacy's <i>race</i>. Legacy's {@code R006}
+     * state-scoped lookup is at {@code :144-153}, likewise outside the transaction, so two concurrent
+     * 01302 callbacks for the same file can both pass it, both download, and both apply — legacy has no
+     * claim of any kind. We decline that. The refactor's other two dispatch legs already solved the
+     * identical problem with an atomic state transition — {@code H-4} in {@link
+     * com.kosign.wecms.domain.payment.dispatch.service.BulkReceptionService} and {@code G2} in
+     * {@code RealtimeDispatchService}, both {@code '9'→'6'} — and this is the consistent third answer.
+     *
+     * <p><b>The whole advance is the claim, not a separate marker column.</b> Legacy performs this
+     * advance at {@code API2_act.jsp:351-372} ({@code TB_FIRM_FILE_MST_U003}) as the last write before
+     * the pay-file finalize; doing it first, conditionally, is the only reordering. It is safe because
+     * the caller is one transaction: a later failure in the {@code TB_FIRM_FILE_RSLT} loop rolls the
+     * advance back with everything else, so the row returns to {@code '2'/'6'} and stays replayable —
+     * exactly the guarantee the pre-C-4 code gave.
+     *
+     * <p>{@code flushAutomatically} / {@code clearAutomatically} are set so the subsequent
+     * re-read-by-PK and the sibling query in {@code finalizePayFileStatus} observe this update rather
+     * than a stale first-level-cache copy. Nothing is loaded before this statement today; the flags
+     * exist so that a future reordering cannot silently make that untrue.
+     *
+     * @return {@code 1} when this caller claimed the file, {@code 0} when it was no longer at
+     *         {@code PROC_STEP='2'/PROC_STAT='6'} — a concurrent callback won, and the loser must
+     *         apply nothing
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE TbFirmFileMst f SET f.procStep = '3', f.procStat = '0', "
+            + "f.succCnt = :succCnt, f.succAmt = :succAmt, "
+            + "f.unprocCnt = :unprocCnt, f.unprocAmt = :unprocAmt, f.procDttm = :procDttm "
+            + "WHERE f.tranDt = :tranDt AND f.bizKey = :bizKey AND f.fileSeqNo = :fileSeqNo "
+            + "AND f.firmFileNm = :firmFileNm AND f.procStep = '2' AND f.procStat = '6'")
+    int claimExecutionResult(@Param("tranDt") String tranDt,
+                             @Param("bizKey") String bizKey,
+                             @Param("fileSeqNo") String fileSeqNo,
+                             @Param("firmFileNm") String firmFileNm,
+                             @Param("succCnt") java.math.BigDecimal succCnt,
+                             @Param("succAmt") java.math.BigDecimal succAmt,
+                             @Param("unprocCnt") java.math.BigDecimal unprocCnt,
+                             @Param("unprocAmt") java.math.BigDecimal unprocAmt,
+                             @Param("procDttm") String procDttm);
+
+    /**
      * {@link #findForExecutionResult} without the state predicate — "does any row exist for this
      * result file, whatever state it is in?". The disambiguation probe for a 01302 callback whose
      * {@code R006} lookup found nothing.

@@ -103,6 +103,8 @@ class BulkExecutionResultServiceTest2 {
     private final SftpProperties sftpProperties = new SftpProperties();
 
     private BulkExecutionResultService service;
+    /** The audit row {@code DispatchApiTranAuditWriter} committed, so {@code findById} can return it. */
+    private TbFirmBatApiTran lastAudit;
 
     @TempDir
     Path tempDir;
@@ -111,22 +113,57 @@ class BulkExecutionResultServiceTest2 {
     void setUp() {
         sftpProperties.setLocalDownloadPath(tempDir.toString());
         sftpProperties.setRemoteDownloadPath("rdata");
+        // C-4: the writes live on their own bean/transaction. Wired here with the same mocks so these
+        // tests still drive the whole callback end to end.
+        BulkExecutionResultTxService txService = new BulkExecutionResultTxService(
+                firmFileMstRepository, firmFileDataRepository, firmFileRsltRepository,
+                firmBatApiTranRepository, payFileMstRepository, payFileDataRepository, eventPublisher);
         service = new BulkExecutionResultService(
                 crypto, vanApiKeyService, objectMapper, sftpClient, sftpProperties, codec,
-                dispatchKeyGenerator, firmFileMstRepository, firmFileDataRepository,
-                firmFileRsltRepository, firmBatApiTranRepository, payFileMstRepository, payFileDataRepository,
-                eventPublisher,
+                dispatchKeyGenerator, firmFileMstRepository,
                 org.mockito.Mockito.mock(com.kosign.wecms.domain.payment.dispatch.alert.OpsAlertService.class),
-                new DispatchApiTranAuditWriter(firmBatApiTranRepository));
+                new DispatchApiTranAuditWriter(firmBatApiTranRepository),
+                txService);
 
         when(vanApiKeyService.getApiKey(VAN)).thenReturn(TEST_KEY);
         when(dispatchKeyGenerator.nextTranSeq(anyString(), anyString())).thenReturn("1");
         when(firmFileMstRepository.save(any())).thenAnswer(i -> i.getArgument(0));
         when(firmFileDataRepository.save(any())).thenAnswer(i -> i.getArgument(0));
         when(firmFileRsltRepository.save(any())).thenAnswer(i -> i.getArgument(0));
-        when(firmBatApiTranRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(firmBatApiTranRepository.save(any())).thenAnswer(i -> {
+            lastAudit = i.getArgument(0);
+            return lastAudit;
+        });
+        when(firmBatApiTranRepository.findById(any())).thenAnswer(i -> Optional.ofNullable(lastAudit));
         when(payFileDataRepository.save(any())).thenAnswer(i -> i.getArgument(0));
         when(payFileMstRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+    }
+
+    /**
+     * Stand in for the C-4 atomic claim ({@code TbFirmFileMstRepository.claimExecutionResult}) against a
+     * mock repository: report one row updated <b>and apply the advance to {@code mst} itself</b>, exactly
+     * as the real {@code UPDATE … SET PROC_STEP='3', PROC_STAT='0'} does to the row the subsequent
+     * re-read-by-PK and the sibling scan then observe.
+     *
+     * <p>Applying it here rather than asserting a {@code save(mst)} is the point of the change: after C-4
+     * the {@code 2→3} advance IS the claim, so a test that still expected {@code save} would be testing a
+     * code path that no longer exists.
+     */
+    private void stubClaimSucceeds(TbFirmFileMst mst) {
+        when(firmFileMstRepository.claimExecutionResult(
+                anyString(), anyString(), anyString(), anyString(),
+                any(), any(), any(), any(), anyString()))
+                .thenAnswer(i -> {
+                    mst.setProcStep(ProcStep.DEPO_RES_RECV.code());
+                    mst.setProcStat(ProcStat.SUCC.code());
+                    mst.setSuccCnt(i.getArgument(4));
+                    mst.setSuccAmt(i.getArgument(5));
+                    mst.setUnprocCnt(i.getArgument(6));
+                    mst.setUnprocAmt(i.getArgument(7));
+                    mst.setProcDttm(i.getArgument(8));
+                    return 1;
+                });
+        when(firmFileMstRepository.findById(any())).thenReturn(Optional.of(mst));
     }
 
     private byte[] resultFile() {
@@ -218,6 +255,7 @@ class BulkExecutionResultServiceTest2 {
                 .thenReturn(List.of(payData(10), payData(20)));
         when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
                 .thenReturn(Optional.of(new TbPayFileMst()));
+        stubClaimSucceeds(mst);
         placeResultFile(resultFile());
 
         service.handle(envelope());
@@ -225,14 +263,16 @@ class BulkExecutionResultServiceTest2 {
         // 2 result rows written.
         verify(firmFileRsltRepository, times(2)).save(any());
 
-        // MST advanced 2→3 / stat 0 with trailer aggregates.
-        ArgumentCaptor<TbFirmFileMst> mstCap = ArgumentCaptor.forClass(TbFirmFileMst.class);
-        verify(firmFileMstRepository).save(mstCap.capture());
-        TbFirmFileMst saved = mstCap.getValue();
-        assertEquals(ProcStep.DEPO_RES_RECV.code(), saved.getProcStep());
-        assertEquals(ProcStat.SUCC.code(), saved.getProcStat());
-        assertEquals(new BigDecimal("1"), saved.getSuccCnt());
-        assertEquals(new BigDecimal("1"), saved.getUnprocCnt());
+        // C-4: MST advanced 2→3 / stat '0' with the trailer aggregates BY THE ATOMIC CLAIM — guarded on
+        // the state it leaves, so a concurrent callback that lost the race writes nothing.
+        verify(firmFileMstRepository).claimExecutionResult(
+                eq(TRAN_DT), eq(BIZ_KEY), eq(FILE_SEQ_NO), eq(SENT_FILE_NM),
+                eq(new BigDecimal("1")), eq(new BigDecimal("1000")),
+                eq(new BigDecimal("1")), eq(new BigDecimal("2000")), anyString());
+        assertEquals(ProcStep.DEPO_RES_RECV.code(), mst.getProcStep());
+        assertEquals(ProcStat.SUCC.code(), mst.getProcStat());
+        assertEquals(new BigDecimal("1"), mst.getSuccCnt());
+        assertEquals(new BigDecimal("1"), mst.getUnprocCnt());
 
         // Pay detail rows reflected + pay master finalized (single sibling, all-success file → '0').
         verify(payFileDataRepository, times(2)).save(any());
@@ -265,6 +305,7 @@ class BulkExecutionResultServiceTest2 {
                 .thenReturn(List.of(payData(10), payData(20)));
         when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
                 .thenReturn(Optional.of(new TbPayFileMst()));
+        stubClaimSucceeds(mst);
         placeResultFile(resultFile());
 
         service.handle(envelope());
@@ -305,6 +346,7 @@ class BulkExecutionResultServiceTest2 {
                 .thenReturn(List.of(payData(10), payData(20)));
         when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
                 .thenReturn(Optional.of(new TbPayFileMst()));
+        stubClaimSucceeds(mst);
         placeResultFile(resultFile());
 
         service.handle(envelope());
@@ -347,6 +389,7 @@ class BulkExecutionResultServiceTest2 {
                 .thenReturn(List.of(payData(10), payData(20)));
         when(payFileMstRepository.findByTranDtAndBizKeyAndFileSeqNo(TRAN_DT, BIZ_KEY, FILE_SEQ_NO))
                 .thenReturn(Optional.of(new TbPayFileMst()));
+        stubClaimSucceeds(mst);
         placeResultFile(resultFile());
 
         service.handle(envelope());
@@ -370,7 +413,10 @@ class BulkExecutionResultServiceTest2 {
 
         verify(sftpClient, never()).download(anyString(), anyString());
         verify(firmFileRsltRepository, never()).save(any());
-        verify(firmFileMstRepository, never()).save(any());
+        // C-4: the advance is the claim, so "never advanced" is asserted on the claim.
+        verify(firmFileMstRepository, never()).claimExecutionResult(
+                anyString(), anyString(), anyString(), anyString(),
+                any(), any(), any(), any(), anyString());
     }
 
     @Test
@@ -384,6 +430,10 @@ class BulkExecutionResultServiceTest2 {
         assertEquals("WBE_EFS_RESULT_FILE", ex.getCode());
 
         verify(firmFileRsltRepository, never()).save(any());
-        verify(firmFileMstRepository, never()).save(any()); // MST never advanced
+        // MST never advanced — and after C-4 the throw happens in the ORCHESTRATOR, before the writer
+        // (and its transaction) is entered at all, so the claim is never even attempted.
+        verify(firmFileMstRepository, never()).claimExecutionResult(
+                anyString(), anyString(), anyString(), anyString(),
+                any(), any(), any(), any(), anyString());
     }
 }

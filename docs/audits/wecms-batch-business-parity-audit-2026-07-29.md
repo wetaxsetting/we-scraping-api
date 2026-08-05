@@ -360,12 +360,27 @@ path, so it always answers `RC=0000` with a **freshly rebuilt** `EV` over the si
 Read-only on both sides — no INSERT/UPDATE/DELETE in either. Keys, `EXE_DIV`, `ANT_WHERE_USE_YN`,
 the per-batch `BATCH_ID` quirk, and both missing-row policies match (§3.1). Two notes:
 
-* **`ANT_DIV_CD` canonicalisation (intentional legacy-bug fix).** Legacy uses the **raw** column value
-  as the realtime DTL key (`:144`). `TB_PAY_TARGET.ANT_DIV_CD` is `bpchar(5)` and carries both widths,
-  so a stored `'E'` could never match the `'EBANK'` schedule row → `NO_CRITERIA` → payment FAILED.
-  Measured on JEX DEV: `(970424,'E')`×2 → `PROC_STAT='3'`. `OperatingHoursService:161` canonicalises
-  via `AntDivChannel.canonical`, so those rows now dispatch. **This changes a business decision** and
-  is recorded here as an approved fix (see `batch-schedule-operating-hours-audit.md` §12b), not a defect.
+* **`ANT_DIV_CD` canonicalisation (deliberate divergence — rewritten 2026-08-03).** Legacy uses the
+  **raw** column value as the realtime DTL key (`:144`); `OperatingHoursService` canonicalises first
+  via `AntDivChannel.canonical`.
+
+  The previous version of this bullet was wrong on two counts. (1) `TB_PAY_TARGET.ANT_DIV_CD` does
+  **not** "carry both widths" as drift — it holds `AntDivCd.getValue()`, an enum that is mixed-width
+  by design (`INTER`/`NAPAS`/`CITAD` 5-char; `SWIFT`/`EBANK`/`VCB` 1-char). All 101 DEV rows conform;
+  `'E'` and `'S'` are correct values. (2) It claimed the four measured rows *"now dispatch"* — **they
+  do not.** There is no `NAPAS_REAL_TIME_BATCH/970424/EBANK` DTL row, so `'E'` and `'EBANK'` both miss
+  and both return `NO_CRITERIA`, exactly as legacy. Nothing about those rows changed.
+
+  What canonicalisation actually does: strips bpchar padding (neutral — PostgreSQL `bpchar` comparison
+  already ignores trailing blanks) and aligns this gate's spelling with `TransferNetwork.parse`. Its
+  only live effect is **latent** — if an EBANK/SWIFT/VCB realtime DTL row is ever inserted we would
+  dispatch where legacy fails closed. Whether those channels belong on the NAPAS realtime rail is an
+  **open PO routing decision** (`batch-schedule-operating-hours-audit.md` §12b). Not an approved
+  business-decision change; an inert divergence with an armed edge.
+
+  Note that the analogous expansion on the **bulk** path is plain legacy parity, not divergence:
+  `FILE_DEPOSIT_TRANSFER_BATCH1:301-381` itself reads 1-char counts and calls `operTimeChk` with
+  hard-coded 5-char names, which is what `AntDivChannel.fromStorageCode` reproduces.
 * **Null window bounds:** legacy's `BATCH_START_TM == null` test is a *row-absence* test, not a
   null-value test — both columns are `NOT NULL` in the DDL. `Optional.empty() → NO_CRITERIA` is
   equivalent, and `BatchScheduleNotNullContractTest` pins the precondition. **Not a divergence.**

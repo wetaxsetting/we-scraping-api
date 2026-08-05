@@ -291,16 +291,46 @@ private String operatingHoursZone = "Asia/Ho_Chi_Minh";
 In-code default + absent from every YAML ⇒ an unset property cannot abort startup (audit H-1). Set it to
 `Asia/Seoul` for bug-for-bug legacy parity if a co-hosted legacy batch ever demands it.
 
-### Defect B — `ANT_DIV_CD` width inconsistency failed real payments
+### Defect B — `ANT_DIV_CD` vocabularies across three columns
 
-`TB_PAY_TARGET.ANT_DIV_CD` is `bpchar(5)` and carries **both** widths. Live JEX DEV distribution:
-`CITAD` 39 · `NAPAS` 30 · `INTER` 28 · **`'E'` 2 · `'S'` 2**. The four 1-char rows:
-`(970424,'E')` ×2 → `PROC_STAT='3'` **FAIL** (2025-09-18); `(970424,'S')` ×2 → `PROC_STAT='9'`
-**stranded** (2025-09-19).
+> **Rewritten 2026-08-03.** The previous version framed this as a "width inconsistency [that] failed
+> real payments" and gave a cause (`'N'` never matched `'NAPAS'`) that **does not exist in the data**.
+> Both claims are corrected below. The trailing "Still a PO decision" paragraph was always right and is
+> retained — it is the part that survived; everything above it did not.
 
-Cause: `OperatingHoursService` used the raw column value as the schedule key, so `'N'` never matched the
-`'NAPAS'` row → `NO_CRITERIA` → FAIL. It also never stripped bpchar padding. Every other consumer already
-treated the widths as equivalent (`TransferNetwork.parse`), so this was an internal inconsistency.
+**There is no width inconsistency.** `TB_PAY_TARGET.ANT_DIV_CD` holds `wabooks.enums.AntDivCd.getValue()`
+applied consistently. That enum is **mixed-width by design** — `INTER("INTER")`, `NAPAS("NAPAS")`,
+`CITAD("CITAD")` sit in the same enum body as `SWIFT("S")`, `EBANK("E")`, `VCB("V")`. Live JEX DEV:
+`CITAD` 39 · `NAPAS` 30 · `INTER` 28 · `'E'` 2 · `'S'` 2 — **all 101 rows conform to the enum.** `'E'`
+and `'S'` are the *correct* values for EBANK and SWIFT, not anomalies. The column is `bpchar(5)` because
+`INTER`/`NAPAS`/`CITAD` need 5 bytes.
+
+Three columns, three vocabularies, all correct in place:
+
+| Column | Width | Vocabulary | Values |
+|---|---|---|---|
+| `TB_PAY_TARGET.ANT_DIV_CD` | `bpchar(5)` | `AntDivCd.getValue()` | `INTER` · `NAPAS` · `CITAD` · `E` · `S` · `V` |
+| `TB_PAY_FILE_DATA.ANT_DIV_CD` | `bpchar(1)` | `AntDivCdT.getValue()` | `E` · `N` · `C` · `S` · `V` — the 1-byte wire slot at offset 62 of the D record |
+| `TB_BATCH_SCHEDULE_DTL.ANT_DIV_CD` | `bpchar(5)` | channel **names** | `EBANK` · `NAPAS` · `CITAD` · `SWIFT` · `VCB` |
+
+**The stated cause was false.** `'N'` never matched `'NAPAS'` — because `TB_PAY_TARGET` holds **zero**
+`'N'` rows. It stores `'NAPAS'`. That failure mode does not occur.
+
+**The four rows are not fixed by this change** (see the closing paragraph, which said so all along):
+`(970424,'E')` ×2 → `PROC_STAT='3'` **FAIL** (2025-09-18, tran_seq 13219/13220); `(970424,'S')` ×2 →
+`PROC_STAT='9'` **stranded** (2025-09-19, tran_seq 13221/13222). Both `'E'` and `'EBANK'` miss the DTL
+lookup and return `NO_CRITERIA`. EBANK and SWIFT are **file-path** channels in both trees, so these look
+like a routing-provenance defect (boundary-sweep D-I), not a schedule-lookup miss.
+
+**What the change was actually for:** internal consistency between the refactor's two gates —
+request-time `TransferNetwork.parse` already treated both spellings as equivalent, dispatch-time
+`OperatingHoursService` did not. That is a refactor-internal goal, **not legacy parity**. Legacy
+`NAPAS_REAL_TIME_BATCH:144` passes the value verbatim.
+
+**Legacy does expand `E → EBANK` — but on the bulk path.** `FILE_DEPOSIT_TRANSFER_BATCH1:301-381` reads
+1-char counts out of `TB_PAY_FILE_DATA` and calls `operTimeChk(bankCd, "EBANK"/"VCB"/"CITAD"/"NAPAS"/"SWIFT")`
+with the hard-coded 5-char name. `fromStorageCode` reproduces that exactly — plain parity. Only
+`canonical`, on the realtime path, is a divergence.
 
 Fix: new [`AntDivChannel`](../../../src/main/java/com/kosign/wecms/domain/payment/dispatch/constant/AntDivChannel.java)
 is the single canonical vocabulary —
@@ -317,6 +347,15 @@ behaviour is unchanged (`TB_PAY_FILE_DATA.ANT_DIV_CD` is `bpchar(1)`).
 channel — it keeps failing loudly. **Still a PO decision:** `'S'`→`SWIFT` / `'E'`→`EBANK` resolve to keys
 with no realtime schedule row, so they still fail; whether those channels should be dispatchable on the
 NAPAS realtime rail is routing, not windows.
+
+> **⚠ The routing decision is armed behind a data change (recorded 2026-08-03).** Because `canonical`
+> already maps `'E'`→`EBANK`, inserting a single `NAPAS_REAL_TIME_BATCH` / `EBANK` (or `SWIFT` / `VCB`)
+> row into `TB_BATCH_SCHEDULE_DTL` would flip the refactor from *fail-closed* to *dispatch* — with no
+> code change, no review and no deploy. Legacy would still fail (it passes `'E'` verbatim). **Do not
+> insert such a DTL row to "make EBANK/SWIFT realtime work"** — that is the PO routing decision above,
+> not a seeding gap. Reviewed 2026-08-03; the standing recommendation is to remove `canonical` from
+> `evaluateRealtime` and match legacy verbatim, so enabling the channel costs a code change. **Not
+> actioned — awaiting PO.**
 
 ### Verification
 `./gradlew compileJava compileTestJava` clean · `./gradlew test` **1935 tests, 0 failures, 0 errors** ·

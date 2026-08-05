@@ -7,7 +7,7 @@ package com.kosign.wecms.domain.payment.dispatch.callback.event;
  * ({@code 0} all-success / {@code 1} partial / {@code 3} all-fail).
  *
  * <p>Published once, at the single finalization point
- * ({@code BulkExecutionResultService.finalizePayFileStatus}), inside the
+ * ({@code BulkExecutionResultTxService.finalizePayFileStatus}), inside the
  * dispatch-result transaction. The only subscriber is the HAENGSUNG Oracle
  * dispatch-result write-back (Step 5,
  * {@code HaengsungDispatchResultWriteBackService}); it runs

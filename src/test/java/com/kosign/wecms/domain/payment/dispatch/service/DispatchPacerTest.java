@@ -22,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * that sleeps 3 s per case is a test people delete. {@link DispatchPacer#perBankDelay} is the whole
  * decision; {@code pause} only sleeps for what it returns.
  *
- * @see DispatchPacer#PER_DELAY_DEFAULT for the full reasoning behind the non-legacy default
+ * @see DispatchPacer#PER_DELAY_DEFAULT for the handover citations behind the 100 ms default
  */
 class DispatchPacerTest {
 
@@ -42,41 +42,57 @@ class DispatchPacerTest {
         assertThat(pacer.perBankDelay("970424")).isEqualTo(100L);
     }
 
-    /* ── the deliberate divergence ─────────────────────────────────────────── */
+    /* ── the documented default, for every other bank ──────────────────────── */
 
     /**
-     * The default is <b>3000 ms, not legacy's 100</b> (D-A, 2026-08-01).
+     * The default is <b>100 ms</b> — legacy's {@code WCConst.PER_DELAY_DEFAULT} (restored 2026-08-05).
      *
-     * <p>Legacy's 100 is the initialiser of a variable {@code NAPAS_REAL_TIME_BATCH:68} declares outside
-     * its row loop and then overwrites for the only two banks it knew about. No third bank has ever been
-     * on the paced rail — JEX DEV {@code TB_FIRM_TRAN TRAN_TP='202'} is {@code 970424} × 46 +
-     * {@code 970457} × 6 and nothing else, and the one other bank in {@code TB_PAY_TARGET} (VCB
-     * {@code 970436}) is {@code PROC_STAT='3'} FAIL on all four rows and is now file-routed. So 100 ms
-     * has never actually been sent to a third bank; it is unexercised, not measured.
+     * <p>100 ms is a documented operating value, not an unexercised initialiser. Handover
+     * {@code 05_배치스케줄_운영가이드.md §5.3} states it twice (<i>그 외 은행: 기본 딜레이 100ms 적용</i>,
+     * <i>기본 딜레이: 100ms</i>) and {@code 06_환경설정_항목목록.md §6.3} lists {@code WCConst.PER_DELAY_*}
+     * as {@code 100/3000ms}. 05 §5.3 also warns that Shinhan and Woori are hard-coded <b>as delay
+     * overrides and network-validation rules, not as a bank whitelist</b>, and names <b>BIDV and
+     * Kookmin</b> as banks that process normally on the 기본 딜레이.
      *
-     * <p>The first bank to take this value will therefore be one whose throughput tolerance is unknown,
-     * against a rate limit documented nowhere. 3000 ms is the slowest rate legacy is known to sustain
-     * against a real bank, which makes it the conservative floor.
+     * <p>Woori's 3000 ms is Woori's: {@code 08_기능추출_이관가이드.md §8.4} gives it as <i>우리은행 3초.
+     * 미적용 시 은행 측 유량제한(rate limit) 위반 가능</i> — one bank's published-nowhere-else limit, not a
+     * general conservative floor. Generalising it costs ~5 minutes on a 100-row BIDV batch where legacy
+     * spends ~10 seconds, which is a throughput regression no bank asked for.
      *
-     * <p><b>If this test fails because someone lowered the default, that is the conversation the test
-     * exists to force</b> — it needs a measured throughput answer from the VAN Center for a specific
-     * bank, not a parity argument. Legacy's spacing was never a guarantee to restore: it is
-     * order-dependent on {@code TB_PAY_TARGET_R001}, which has no {@code ORDER BY} (B-1).
+     * <p><b>If this test fails because someone raised the default, the fix is a per-bank constant</b> —
+     * the way legacy does it for Woori — not a move of the default. A measured throughput answer from
+     * the VAN Center belongs to the bank it was measured for.
      */
-    @ParameterizedTest(name = "unknown bank [{0}] paces at the 3000 ms default, NOT legacy''s 100")
+    @ParameterizedTest(name = "unknown bank [{0}] paces at legacy''s 100 ms default")
     @NullSource
     @ValueSource(strings = {
-            "970436",   // VCB — the only third bank ever seen, and only as failed pay-targets
+            "970436",   // VCB — seen only as failed pay-targets, now file-routed
             "970415",   // Vietinbank — plausible next arrival
             "",         // blank OUT_BANK_CD
             "  ",       // whitespace
             "970424 ",  // Shinhan with trailing space: NOT an exact match, must fall through to default
             "unknown",
     })
-    void everyOtherBankPacesAtTheConservativeDefault(String outBankCd) {
+    void everyOtherBankPacesAtTheLegacyDefault(String outBankCd) {
         assertThat(pacer.perBankDelay(outBankCd))
-                .as("an unmeasured bank must pace at the slowest known-safe rate, not the fastest")
-                .isEqualTo(3000L);
+                .as("a bank with no override must pace at legacy's documented 100 ms (handover 05 "
+                        + "§5.3 / 06 §6.3), not at Woori's bank-specific 3000 ms (08 §8.4)")
+                .isEqualTo(100L);
+    }
+
+    /**
+     * The Woori override must be Woori's alone — the guard against re-generalising it.
+     *
+     * <p>This is the assertion that would have failed the 2026-08-01 change on the way in: the two
+     * values must be <i>different</i>, because 3000 ms exists for one bank's rate limit (handover 08
+     * §8.4) and collapsing the distinction silently applies it to every bank.
+     */
+    @Test
+    @DisplayName("Woori's 3000 ms is bank-specific — the default must not equal it")
+    void wooriOverrideIsNotTheDefault() {
+        assertThat(pacer.perBankDelay("970457"))
+                .as("Woori's 3000 ms floor (handover 08 §8.4) must not become every bank's floor")
+                .isNotEqualTo(pacer.perBankDelay("970999"));
     }
 
     /**
