@@ -24,8 +24,9 @@ public final class BulkTransferConstants {
 
     // ── 은행 별 처리 딜레이(ms) / per-bank pacing delay ──────────────────────
     // NOTE: these mirror legacy WCConst verbatim and have no caller. The LIVE pacing values are
-    // DispatchPacer's, where PER_DELAY_DEFAULT is 3000 — deliberately not the 100 below (D-A,
-    // 2026-08-01). Do not read this constant as the rate the application sends at.
+    // DispatchPacer's, which since 2026-08-05 carry the same three numbers (the 2026-08-01 divergence
+    // raising the default to 3000 was withdrawn — handover 05 §5.3 / 06 §6.3 document 100 ms as the
+    // 기본 딜레이). Still read DispatchPacer, not this class, for the rate the application sends at.
     public static final int PER_DELAY_DEFAULT = 100;
     public static final int PER_DELAY_SHINHAN = 100;
     public static final int PER_DELAY_WOORI = 3000;

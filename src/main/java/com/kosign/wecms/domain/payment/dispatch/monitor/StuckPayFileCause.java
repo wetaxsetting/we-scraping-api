@@ -257,7 +257,7 @@ public enum StuckPayFileCause {
      * the file is inside the {@code 01301} → {@code 00302} → {@code 01302} callback pipeline and the
      * pay-file simply has not been finalised yet.
      *
-     * <p>Often <b>not</b> a defect: {@code BulkExecutionResultService.finalizePayFileStatus} only
+     * <p>Often <b>not</b> a defect: {@code BulkExecutionResultTxService.finalizePayFileStatus} only
      * finalises the pay-file once every split sibling has reported, so a partially-reported branch-split
      * batch sits here legitimately. It becomes a concern when it persists well past the threshold, which
      * is what surfacing it here is for.

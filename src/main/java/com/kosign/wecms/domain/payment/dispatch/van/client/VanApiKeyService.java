@@ -32,14 +32,15 @@ public class VanApiKeyService {
     /**
      * Return the {@code API_KEY} for a VAN org code.
      *
-     * @throws IllegalStateException when no credential row exists for the org
-     *         code (table not yet provisioned — TODO(B2)).
+     * @throws VanApiKeyNotProvisionedException when no credential row exists for the org
+     *         code (table not yet provisioned — TODO(B2)). On a callback this acknowledges
+     *         {@code G003}, matching legacy on both legs — see that class for the derivation.
      */
     @Transactional(readOnly = true)
     public String getApiKey(String vanOrgCd) {
         return tbVanApiInfoRepository.findByVanOrgCd(vanOrgCd)
                 .map(com.kosign.wecms.domain.payment.dispatch.entity.TbVanApiInfo::getApiKey)
-                .orElseThrow(() -> new IllegalStateException(
+                .orElseThrow(() -> new VanApiKeyNotProvisionedException(
                         "No TB_VAN_API_INFO.API_KEY provisioned for VAN_ORG_CD=" + vanOrgCd
                                 + " — blocked on B2 (secure-channel key provisioning)."));
     }

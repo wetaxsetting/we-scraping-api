@@ -1,8 +1,11 @@
 package com.kosign.wecms.domain.payment.dispatch.callback.controller;
 
+import com.kosign.wecms.domain.payment.dispatch.callback.MissingCallbackFieldException;
 import com.kosign.wecms.domain.payment.dispatch.callback.dto.EfsCallbackEnvelope;
 import com.kosign.wecms.domain.payment.dispatch.callback.service.BulkExecutionResultService;
 import com.kosign.wecms.domain.payment.dispatch.callback.service.BulkReceptionResultService;
+import com.kosign.wecms.domain.payment.dispatch.constant.FirmBankingResultCd;
+import com.kosign.wecms.domain.payment.dispatch.van.client.VanApiKeyNotProvisionedException;
 import com.kosign.wecms.domain.payment.dispatch.van.dto.EfsEnvelope;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -95,8 +98,12 @@ class BulkCallbackRoutingTest {
      */
     @Test
     void receptionResult_escapedException_returns_efs_error_envelope_not_apiResponse() throws Exception {
+        // A genuinely unclassified fault. NOTE: an unprovisioned API key used to be thrown here as a
+        // bare IllegalStateException and asserted as G999; since 2026-08-03 it has its own type and
+        // maps to G003 (see unprovisionedApiKey_maps_to_G003_onBothLegs below), so this test now uses
+        // an unrelated failure to exercise the G999 default.
         when(bulkReceptionResultService.handle(any()))
-                .thenThrow(new IllegalStateException("no TB_VAN_API_INFO.API_KEY provisioned (B2)"));
+                .thenThrow(new IllegalStateException("EFS payload could not be parsed"));
 
         mockMvc.perform(post("/api/v1/payment/dispatch/callbacks/bulk-reception-result")
                         .contentType("application/json")
@@ -138,20 +145,79 @@ class BulkCallbackRoutingTest {
     }
 
     /**
-     * A missing required business field is legacy's {@code CD_DETAIL_NONE_INPUT_DATA}
-     * (데이터부 필수 입력값 누락), not a general error — the distinction is what tells the gateway
-     * the payload was rejected rather than that WeCMS broke.
+     * A missing required field is a payload rejection, not a general error — the distinction is what
+     * tells the gateway the payload was wrong rather than that WeCMS broke. <b>Which</b> rejection code
+     * depends on the field, and legacy's split is not what the constant names suggest.
+     *
+     * <p>On 01301, {@code file_nm} is one of the six fields legacy answers {@code G001} for
+     * ({@code FILE_DEPOSIT_TRANSFER_API1_act.jsp:131-132},
+     * {@code WCConst.CD_BASE_NONE_INPUT_DATA}). This assertion was {@code G002} until 2026-08-03,
+     * when we answered {@code G002} for all eight fields.
      */
     @Test
-    void receptionResult_missingRequiredField_maps_to_G002() throws Exception {
+    void receptionResult_missingBaseField_maps_to_G001() throws Exception {
         when(bulkReceptionResultService.handle(any()))
-                .thenThrow(new IllegalArgumentException("01301 callback missing required field: file_nm"));
+                .thenThrow(new MissingCallbackFieldException(
+                        FirmBankingResultCd.BASE_NONE_INPUT_DATA,
+                        FirmBankingResultCd.MSG_BASE_NONE_INPUT_DATA,
+                        "01301 callback missing required field: file_nm"));
+
+        mockMvc.perform(post("/api/v1/payment/dispatch/callbacks/bulk-reception-result")
+                        .contentType("application/json")
+                        .content("{\"ID\":\"GV00000002\",\"EV\":\"ENC\",\"VV\":\"HMAC\",\"TNO\":\"7\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.RC").value("G001"));
+    }
+
+    /**
+     * The other half of the split: {@code bank_cd} / {@code prtn_id} are the only two fields 01301
+     * answers {@code G002} for ({@code API1_act.jsp:125-129},
+     * {@code WCConst.CD_DETAIL_NONE_INPUT_DATA}).
+     */
+    @Test
+    void receptionResult_missingDetailField_maps_to_G002() throws Exception {
+        when(bulkReceptionResultService.handle(any()))
+                .thenThrow(new MissingCallbackFieldException(
+                        FirmBankingResultCd.DETAIL_NONE_INPUT_DATA,
+                        FirmBankingResultCd.MSG_DETAIL_NONE_INPUT_DATA,
+                        "01301 callback missing required field: bank_cd"));
 
         mockMvc.perform(post("/api/v1/payment/dispatch/callbacks/bulk-reception-result")
                         .contentType("application/json")
                         .content("{\"ID\":\"GV00000002\",\"EV\":\"ENC\",\"VV\":\"HMAC\",\"TNO\":\"7\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.RC").value("G002"));
+    }
+
+    /**
+     * An unprovisioned VAN key acknowledges {@code G003} on <b>both</b> legs — we answered
+     * {@code G999} until 2026-08-03.
+     *
+     * <p>Legacy never row-counts the key lookup; it only tests {@code DomainUtil.isError} (a DB-fault
+     * test, proven by {@code API1_act.jsp} running a <i>separate</i> {@code getResultCount == 0} check
+     * on the file lookup twenty lines later). A missing key therefore yields {@code CRYPT_KEY = null},
+     * {@code VerifyMac} fails, and both actions answer {@code CD_ENC_VRFY_ERR}:
+     * {@code API1_act.jsp:99-110} and {@code API2_act.jsp:105-119} (via
+     * {@code CommUtil.getApiKey}, {@code CommUtil.java:66-70}).
+     */
+    @Test
+    void unprovisionedApiKey_maps_to_G003_onBothLegs() throws Exception {
+        when(bulkReceptionResultService.handle(any()))
+                .thenThrow(new VanApiKeyNotProvisionedException("no key for GV00000002 (B2)"));
+        when(bulkExecutionResultService.handle(any()))
+                .thenThrow(new VanApiKeyNotProvisionedException("no key for GV00000002 (B2)"));
+
+        mockMvc.perform(post("/api/v1/payment/dispatch/callbacks/bulk-reception-result")
+                        .contentType("application/json")
+                        .content("{\"ID\":\"GV00000002\",\"EV\":\"ENC\",\"VV\":\"HMAC\",\"TNO\":\"7\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.RC").value("G003"));
+
+        mockMvc.perform(post("/api/v1/payment/dispatch/callbacks/bulk-execution-result")
+                        .contentType("application/json")
+                        .content("{\"ID\":\"GV00000002\",\"EV\":\"ENC\",\"VV\":\"HMAC\",\"TNO\":\"7\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.RC").value("G003"));
     }
 
     /** A persistence fault is legacy's {@code CD_DB_ERR}. */

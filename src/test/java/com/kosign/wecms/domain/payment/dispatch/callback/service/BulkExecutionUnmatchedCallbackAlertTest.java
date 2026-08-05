@@ -107,10 +107,14 @@ class BulkExecutionUnmatchedCallbackAlertTest {
         service = new BulkExecutionResultService(
                 crypto, vanApiKeyService, objectMapper, sftpClient, sftpProperties,
                 new FixedLengthCodec(), dispatchKeyGenerator,
-                firmFileMstRepository, firmFileDataRepository, firmFileRsltRepository,
-                firmBatApiTranRepository, payFileMstRepository, payFileDataRepository,
-                eventPublisher, opsAlertService,
-                new DispatchApiTranAuditWriter(firmBatApiTranRepository));
+                firmFileMstRepository, opsAlertService,
+                new DispatchApiTranAuditWriter(firmBatApiTranRepository),
+                // C-4: unreachable in this class — every scenario here misses the '2'/'6' lookup and
+                // returns before any write. Wired for completeness, not exercised.
+                new BulkExecutionResultTxService(
+                        firmFileMstRepository, firmFileDataRepository, firmFileRsltRepository,
+                        firmBatApiTranRepository, payFileMstRepository, payFileDataRepository,
+                        eventPublisher));
 
         when(vanApiKeyService.getApiKey(VAN)).thenReturn(TEST_KEY);
         when(dispatchKeyGenerator.nextTranSeq(anyString(), anyString())).thenReturn("1");

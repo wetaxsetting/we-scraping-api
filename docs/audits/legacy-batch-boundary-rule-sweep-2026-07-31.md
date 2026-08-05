@@ -18,7 +18,7 @@ the firm-banking dispatch path, each classified as **ported**, **deliberate dive
 **Method.** Read against the refactor counterpart, looking specifically for boundary rules the
 handover never documented — the class that produced every defect found so far (D-1 (boundary-sweep)
 `S_`/`R_` prefix asymmetry, D-3 (boundary-sweep) 99/999 round wrap, D-4 always-0000 callback contract,
-D-7 mixed-width `ANT_DIV_CD`).
+D-7 `ANT_DIV_CD` vocabularies).
 
 > **⚠ ID collision — qualify `D-1` and `D-3` whenever they leave this document.** Two independent `D-n`
 > series exist and **two IDs collide**:
@@ -28,7 +28,7 @@ D-7 mixed-width `ANT_DIV_CD`).
 > | `D-1` | `S_`/`R_` `FIRM_FILE_NM` prefix asymmetry | `ResultCheckService` `TRAN_DT` UTC/ICT reader fix |
 > | `D-3` | 99 / 999 file-round wrap (reset, not modulo) | Spring Boot Actuator |
 > | `D-2` | *(not used here)* | EFS envelope partner ID |
-> | `D-4`, `D-7` | always-0000 callback contract · mixed-width `ANT_DIV_CD` | *(not used there)* |
+> | `D-4`, `D-7` | always-0000 callback contract · `ANT_DIV_CD` vocabularies | *(not used there)* |
 >
 > Per-document scoping is the house convention (`H-1` already means three different things in three
 > documents) and it holds as long as an ID stays home. It breaks where two series meet in **one**
@@ -209,24 +209,50 @@ carries `RC/RM/EV/VV` only — while the `TB_FIRM_TRAN_U002` write uses
 `rs_EV_201.getString("ant_div_cd")`, the **decrypted EV**. The value returned to the caller is
 therefore not the value persisted. Read before the `RC` check, so it also runs on failures.
 
-Given D-7 (mixed-width `ANT_DIV_CD` failing real payments — see memory
+Given D-7 (the four `ANT_DIV_CD` rows that failed or stranded — see memory
 `project_batch_schedule_tz_antdiv_fixes`), this is the provenance seam most likely to have produced
 them.
 
-> **D-7 / B-2 evidence is JEX DEV, not PROD. Corrected 2026-08-01.** The four one-char rows that
-> motivate the canonicalisation were measured on the **JEX DEV** frame DB (`postgres_dev_server_jexframe`),
-> re-verified read-only 2026-08-01:
+> **D-7 / B-2 characterisation corrected 2026-08-03. Supersedes the 2026-08-01 note.**
+>
+> **1 — `TB_PAY_TARGET.ANT_DIV_CD` is not "mixed-width drift".** It holds
+> `wabooks.enums.AntDivCd.getValue()`, applied consistently. That enum is mixed-width **by design** —
+> `INTER("INTER")`, `NAPAS("NAPAS")`, `CITAD("CITAD")` sit in the same enum body as `SWIFT("S")`,
+> `EBANK("E")`, `VCB("V")`. **All 101 JEX DEV rows conform to the enum.** The column is `bpchar(5)`
+> because `INTER`/`NAPAS`/`CITAD` need 5 bytes, not because every value is 5 chars. `'E'` and `'S'`
+> are the **correct** values for EBANK and SWIFT — not anomalies, not drift. The correct model is
+> **three columns, three vocabularies, all correct in place**:
+>
+> | Column | Width | Vocabulary | Values |
+> |---|---|---|---|
+> | `TB_PAY_TARGET.ANT_DIV_CD` | `bpchar(5)` | `AntDivCd.getValue()` | `INTER` · `NAPAS` · `CITAD` · `E` · `S` · `V` |
+> | `TB_PAY_FILE_DATA.ANT_DIV_CD` | `bpchar(1)` | `AntDivCdT.getValue()` | `E` · `N` · `C` · `S` · `V` — the 1-byte wire slot at offset 62 of the D record |
+> | `TB_BATCH_SCHEDULE_DTL.ANT_DIV_CD` | `bpchar(5)` | channel **names** | `EBANK` · `NAPAS` · `CITAD` · `SWIFT` · `VCB` |
+>
+> `TB_BATCH_SCHEDULE_DTL` holds enum *names*, matching neither enum's `getValue()`. Its DEV rows carry
+> `reg_dttm='20251113095800'` — a legacy DBA INSERT, not our seed.
+>
+> **2 — legacy performs the `E → EBANK` expansion itself.** `FILE_DEPOSIT_TRANSFER_BATCH1:301-381`
+> reads 1-char counts out of `TB_PAY_FILE_DATA` (via `R005`) and then calls
+> `operTimeChk(bankCd, "EBANK"/"VCB"/"CITAD"/"NAPAS"/"SWIFT")` with the **hard-coded 5-char name**.
+> So `AntDivChannel.fromStorageCode` normalises in the same direction legacy does, at the same point
+> in the same flow. `canonical` normalises the same direction but on the **realtime** path, where
+> legacy (`NAPAS:144`) passes the value verbatim — that one is a real divergence, see B-2.
+>
+> **3 — evidence is JEX DEV, not PROD** (unchanged from the 2026-08-01 note). Measured read-only via
+> `postgres_dev_server_jexframe`:
 >
 > ```
-> ant_div_cd='E    ', proc_stat='3'  → 2 rows, 20250918   (FAIL)
-> ant_div_cd='S    ', proc_stat='9'  → 2 rows, 20250919   (stranded in WAIT)
+> ant_div_cd='E    ', proc_stat='3'  → 2 rows, 20250918 (tran_seq 13219/13220)  FAIL
+> ant_div_cd='S    ', proc_stat='9'  → 2 rows, 20250919 (tran_seq 13221/13222)  stranded in WAIT
 > ```
 >
-> Four real payments failed or stranded in a live JEX system — but the DEV one. **PROD incidence is
-> unmeasured** (Claude has no PROD DB access; `.claude/rules/database.md` forbids it). The finding
-> itself is unaffected: `TB_PAY_TARGET.ANT_DIV_CD` is `bpchar(5)` and demonstrably carries both widths,
-> while `TB_PAY_FILE_DATA.ANT_DIV_CD` is `bpchar(1)`, so a 5-char literal comparison misses the 1-char
-> form wherever it occurs. Do not cite these four rows as PROD failures.
+> **PROD incidence is unmeasured** (`.claude/rules/database.md` forbids PROD access). Do not cite
+> these four rows as PROD failures — **and do not cite them as fixed.** Canonicalisation does not
+> rescue them: there is no `NAPAS_REAL_TIME_BATCH/970424/EBANK` (or `/SWIFT`) DTL row, so `'E'` and
+> `'EBANK'` both miss and both return `NO_CRITERIA`. EBANK and SWIFT are **file-path** channels, which
+> is why this D-I provenance seam remains the leading explanation for how they reached `TB_PAY_TARGET`
+> at all.
 
 **Refactor: clean, verified 2026-07-31.** `RecipientLookupService:123` returns
 `parsed.antDivCd()` where `parsed` is the deserialized **decrypted** EV (`decryptEv` at `:118`), and
@@ -360,9 +386,14 @@ Legacy's gate therefore produces files the vendor says will be refused.
 **Refactor: corrected deliberately.** [`VietnameseText.replaceTone`](../../src/main/java/com/kosign/wecms/domain/payment/dispatch/file/VietnameseText.java) applies the table
 **unconditionally — no gate** — which is what pitfall ④ requires and what legacy's own table already
 encoded. Called at [`BulkReceptionService:646-649/662`](../../src/main/java/com/kosign/wecms/domain/payment/dispatch/service/BulkReceptionService.java#L646-L649) (DB row) and
-[`:678-687`](../../src/main/java/com/kosign/wecms/domain/payment/dispatch/service/BulkReceptionService.java#L678-L687) (wire). Same shape as the **D-7 / B-2 `ANT_DIV_CD`
-canonicalisation**: legacy holds two mutually inconsistent encodings of one rule, the refactor picks the
-one the bank actually accepts, and the divergence is recorded rather than "fixed back".
+[`:678-687`](../../src/main/java/com/kosign/wecms/domain/payment/dispatch/service/BulkReceptionService.java#L678-L687) (wire).
+
+> **Analogy to D-7 / B-2 withdrawn 2026-08-03.** This previously read *"Same shape as the D-7 / B-2
+> `ANT_DIV_CD` canonicalisation: legacy holds two mutually inconsistent encodings of one rule."* That
+> is not what `ANT_DIV_CD` is. Legacy is **not** inconsistent there — three columns each apply their
+> own coherent vocabulary (see the D-7 box above), and legacy performs the `E → EBANK` expansion itself
+> on the bulk path. D-L is a genuine legacy self-contradiction; `ANT_DIV_CD` is not. Do not use one to
+> justify the other. The D-L divergence stands on its own basis below.
 
 **Consequence to accept, not to reverse:** for a name like `Sơn`, legacy stores and sends `Sơn`; the
 refactor stores and sends `Son`. The accented form is lost from `TB_FIRM_FILE_DATA.FINC_MDA_OWNER_NM`
@@ -441,6 +472,65 @@ because our dispatch guard runs where legacy's is disabled.
 is option 3 with a PO decision on what a dispatch-time rejection should do to an unattended row — not a
 guard bolted onto one importer.
 
+### D-N · `API2` — `G999` to a completed-file **replay**, with no poller to converge on
+
+*(Recorded 2026-08-03. This is a legacy behaviour we deliberately decline, not a legacy bug.)*
+
+**Legacy behaviour, verified not inferred.**
+[`IDO.TB_FIRM_FILE_MST_R006.xml`](../../../WECMS_BATCH%20DEV/source/WECMS_BATCH/WECMS_BATCH_ETC/xml/service/IDO/IDO.TB_FIRM_FILE_MST_R006.xml)
+constrains state, not just identity:
+
+```sql
+WHERE TRAN_DT = :TRAN_DT
+AND PROC_STEP = :PROC_STEP
+AND PROC_STAT = :PROC_STAT
+AND VAN_ORG_CD = :VAN_ORG_CD
+AND FILE_SEQ = :FILE_SEQ
+AND substring(FIRM_FILE_NM,3) = substring(:FIRM_FILE_NM,3)
+```
+
+and `API2_act.jsp:144-146` binds `PROC_STEP="2"` / `PROC_STAT="6"` as **literals**. So a file already
+advanced to `PROC_STEP='3'` is not hidden from legacy by any quirk — legacy runs the identical filtered
+lookup, gets `getResultCount < 1`, and answers **`G999` + `"<file_nm> not found."`** (`:163-169`).
+**Legacy answers `G999` to a completed-file replay exactly as it does to a genuinely unknown file.**
+
+**Why we decline it — the poller, not the lookup.** Legacy could absorb that resend loop because
+`FILE_DEPOSIT_TRANSFER_BATCH2` re-selected work every 60 s: a callback wedged in `G999` was never the
+only route by which a file moved forward. **We removed that poller (K9.)** Copying `G999` would give us
+the loop with nothing to converge on — the gateway resends indefinitely against a file that is already
+correctly processed, and no other actor advances it. Same class as the transient-00302 retry already
+declined.
+
+**What we do instead:** `RC=0000` on both replay branches, with the escalation signal carried by log +
+ops alert rather than the wire. `BulkExecutionResultService` (the `PROC_STEP='2'`/`PROC_STAT='6'` miss
+branch).
+
+> **Correction.** The in-code comment previously argued this from the *lookup* — that legacy never sees
+> a step-3 row. That was wrong: it does see it, via `getResultCount < 1`, and answers `G999`. The
+> poller is the argument. Comment rewritten 2026-08-03.
+
+**Related, and deliberately *not* changed with it:** the 01301 leg answers `G004` for its unmatched-file
+miss (`API1_act.jsp:168-170`, `CD_DB_ERR`) — legacy's two legs genuinely use different codes for the
+equivalent miss, and both are now matched. See §2 B-2.
+
+### D-O · `API2` — uncaught `AIOOBE` on a malformed `file_nm`: container 500, no envelope
+
+*(Recorded 2026-08-03. Ours is strictly better; keep it.)*
+
+`API2_act.jsp:142-148` does `file_nm.split("_")` and then indexes `[4]` with **no length guard**, and it
+sits **outside any `try`** — the verify `try` closes at `:119` and the next opens at `:173`. A short or
+malformed name therefore raises an uncaught `ArrayIndexOutOfBoundsException`, and the gateway receives a
+**container HTTP 500 with no envelope at all** — not a parseable `RC`, so the callback outcome is
+undefined from the bank's side and the gateway's retry behaviour is driven by an unparseable body.
+
+**Refactor keeps `G999` + ops alert** (`BulkExecutionResultService`, the `parts.length < 5` branch). Do
+not "restore parity" here: there is no legacy `RC` to match, only an absence of one.
+
+**Related tightening, also kept:** legacy `API2` omits `data_cnt` from its required-field guard
+(`:130-136`) yet writes the unchecked value straight into `TB_FIRM_BAT_API_TRAN.BAT_CNT` — the **S-9**
+asymmetry in §3. We require the field. A blank `BAT_CNT` is never useful and no conforming gateway omits
+it, so this is a harmless strictening; do not drop the check to match legacy.
+
 ---
 
 ## 2. Boundary rules — ported or deliberate divergence
@@ -448,7 +538,8 @@ guard bolted onto one importer.
 | # | Legacy rule | Site | Status |
 |---|---|---|---|
 | B-1 | `TB_PAY_TARGET_R001`: `TRAN_DT = TO_CHAR(now(),'yyyymmdd') AND PROC_STAT='9'` — today only, no `BIZ_KEY`, no `ORDER BY`, no `LIMIT` | `IDO.TB_PAY_TARGET_R001.xml` | Cross-tenant scope is the design (system batch). Boundedness is the H-2 divergence. |
-| B-2 | `"INTER".equals(ANT_DIV_CD)` — a **5-char** literal | `NAPAS:139` | D-7 canonicalisation. Deliberate divergence; this is the site that motivates it. **Evidence is JEX DEV, not PROD** — see the box below. |
+| B-2 | `"INTER".equals(ANT_DIV_CD)` — a **5-char** literal | `NAPAS:139` | **Not a defect — corrected 2026-08-03.** `TB_PAY_TARGET` genuinely stores `"INTER"` (28 DEV rows); `AntDivCd.INTER.getValue()` *is* `"INTER"`. The literal is right. The real divergence is one line later at `NAPAS:144`, where legacy passes `ANT_DIV_CD` **verbatim** to the DTL lookup and we canonicalise first — inert today (no EBANK/SWIFT/VCB realtime DTL row), live the moment one is added. **Open PO routing decision**, see §12b of `batch-schedule-operating-hours-audit.md`. Evidence is JEX DEV, not PROD — see the D-7 box. |
+| B-14 | Callback `RC` per failure class — the two legs deliberately differ | `API1_act.jsp:68-77`, `:125-129`, `:131-147`, `:159-170`; `API2_act.jsp:94-99`, `:130-136`, `:163-169` | **Matched 2026-08-03** (was four divergences). 01301 header + six body fields → `G001`, `bank_cd`/`prtn_id` → `G002`, unmatched file → `G004`; 01302 header → `G001`, five body fields → `G002`. Unprovisioned VAN key → `G003` on **both** legs (legacy never row-counts the key lookup — a null `CRYPT_KEY` fails `VerifyMac`; the earlier "`G004` on 01301" reading mistook the constant name for the flow). Carried by `MissingCallbackFieldException` + `VanApiKeyNotProvisionedException` through `CallbackAck`. Two branches keep a refactor-only `G999`: the 01301 **ambiguous-name** stop (FIX J — legacy has no ambiguity guard at all) and the 01302 **malformed `file_nm`** guard (D-O). |
 | B-3 | Bank has no `TB_BATCH_SCHEDULE_INFO` row → `PROC_STAT='3'` FAIL. The comment claims "skip except INTER/blank/null", but the `INTER` exclusion exists **only** in the inner `ANT_WHERE_USE_YN` branch — the bank-level check fails unconditionally | `NAPAS:126-131` | Comment describes an intent the code does not implement. Refactor follows the **code**; flagged as an open question for the PO, not silently reinterpreted. |
 | B-4 | 204 no-response → `sleep; continue`, leaving the `TRAN_TP='204'` firm-tran at `'6'` forever | `NAPAS:357-360` | Same strand class as D-J, on the FX leg. Refactor: `RealtimeDispatchService` FX leg records a terminal state. |
 | B-5 | 204 **error** branch still reads `dep_curren_cd` / `apl_exc_rate` / `withd_amt` / `dep_amt` out of the EV and writes them to the DB | `NAPAS:441-448` | Writing rate/amount fields from a failed response. Not ported. |

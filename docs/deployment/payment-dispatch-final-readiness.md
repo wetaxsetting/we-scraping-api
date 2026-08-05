@@ -101,8 +101,14 @@ is either a `CODE_*` constant, an explicit `null`, or a narrowing call.
 |---|---|---|---|
 | `AntDivChannel.toStorageCode` | ≡ legacy `AntDivCdT.parse` — names accepted, `"CITAD"`→`'C'` | **Payroll only** | `strict_and_lenient_divergeExactlyOnTheLongForm` |
 | `AntDivChannel.toStorageCodeStrict` | ≡ legacy `AntDivCdT.fromValue` — 1-char only, `"CITAD"`→`null` | Vendor, Expense, Internal Transfer | same |
-| `AntDivChannel.fromStorageCode` | 1-char → channel name (bulk gate) | `BulkReceptionService.presentChannels` | `fromStorageCode_isStrict` |
-| `AntDivChannel.canonical` | lenient, both widths (realtime gate) | `OperatingHoursService.evaluateRealtime` | `AntDivChannelTest` |
+| `AntDivChannel.fromStorageCode` | `AntDivCdT` 1-char → channel name (bulk gate). **Legacy parity** — `FILE_DEPOSIT_TRANSFER_BATCH1:301-381` does the same expansion itself, calling `operTimeChk` with hard-coded 5-char names | `BulkReceptionService.presentChannels` | `fromStorageCode_isStrict` |
+| `AntDivChannel.canonical` | `AntDivCd` value → channel name (realtime gate). **Deliberate divergence** — legacy `NAPAS:144` passes the value verbatim. Inert today; latent flip if an EBANK/SWIFT/VCB realtime DTL row is added. Open PO routing decision, see `batch-schedule-operating-hours-audit.md` §12b | `OperatingHoursService.evaluateRealtime` | `AntDivChannelTest` |
+
+> **`ANT_DIV_CD` is three vocabularies, not one column with drift** (corrected 2026-08-03):
+> `TB_PAY_TARGET` (`bpchar(5)`) holds `AntDivCd.getValue()` — `INTER`/`NAPAS`/`CITAD`/`E`/`S`/`V`, mixed-width
+> **by design**, all 101 DEV rows conforming; `TB_PAY_FILE_DATA` (`bpchar(1)`) holds `AntDivCdT.getValue()`
+> — `E`/`N`/`C`/`S`/`V`, the 1-byte wire slot at offset 62 of the D record; `TB_BATCH_SCHEDULE_DTL`
+> (`bpchar(5)`) holds channel **names** — `EBANK`/`NAPAS`/`CITAD`/`SWIFT`/`VCB`. Each is correct in place.
 
 ---
 

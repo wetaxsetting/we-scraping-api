@@ -2,6 +2,7 @@ package com.kosign.wecms.domain.payment.dispatch.callback.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kosign.wecms.common.exception.BusinessException;
+import com.kosign.wecms.domain.payment.dispatch.callback.MissingCallbackFieldException;
 import com.kosign.wecms.domain.payment.dispatch.callback.dto.BulkReceptionResultRequest;
 import com.kosign.wecms.domain.payment.dispatch.callback.dto.EfsCallbackEnvelope;
 import com.kosign.wecms.domain.payment.dispatch.constant.FirmBankingResultCd;
@@ -274,9 +275,11 @@ public class BulkReceptionResultService {
      */
     @Transactional
     public EfsEnvelope handle(EfsCallbackEnvelope envelope) {
-        if (envelope == null || !StringUtils.hasText(envelope.id())) {
-            throw new IllegalArgumentException("callback envelope ID is required");
-        }
+        // 0. Common header check (legacy step 0, FILE_DEPOSIT_TRANSFER_API1_act.jsp:68-77).
+        //    Legacy tests all SEVEN transport fields in one guard and answers G001
+        //    (CD_BASE_NONE_INPUT_DATA) for any of them. We previously checked only ID, and answered
+        //    G002. Both corrected 2026-08-03.
+        validateEnvelope(envelope);
         String vanOrgCd = envelope.id();
 
         // 1. Resolve key + verify VV + decrypt EV (legacy steps 1–2). A bad MAC must not process.
@@ -570,11 +573,15 @@ public class BulkReceptionResultService {
             // Report the date the query ACTUALLY used (the filename-derived one) plus the callback
             // clock date, so an operator can see immediately whether the two disagree — that
             // disagreement is the rollover signature and it used to be invisible in this log line.
+            // RC = G004, matching legacy: FILE_DEPOSIT_TRANSFER_API1_act.jsp:168-170 answers
+            // WCConst.CD_DB_ERR when the file lookup returns resultCount == 0. (Legacy reuses its
+            // DB-error code for "no such file" on this leg; the 01302 twin uses G999 instead. We
+            // answered G999 here until 2026-08-03 — same retryable intent, wrong code.)
             log.error("01301 callback UNMATCHED — no TB_FIRM_FILE_MST row for lookupTranDt={} fileNm={} in "
                             + "any state (callbackClockDt={}); answering RC={} so the gateway resends. "
                             + "vanOrgCd={} tno={} (no audit row is possible: TB_FIRM_BAT_API_TRAN.BIZ_KEY "
                             + "is a NOT NULL PK column and an unmatched callback resolves no tenant)",
-                    lookupTranDt, req.fileNm(), tranDt, FirmBankingResultCd.ETC_ERR,
+                    lookupTranDt, req.fileNm(), tranDt, FirmBankingResultCd.DB_ERR,
                     vanOrgCd, envelope.tno());
             // Escalate instead of auditing: no DB row is possible here (see the method Javadoc), and the
             // gateway will keep retrying until someone works out why the file cannot be found.
@@ -587,12 +594,12 @@ public class BulkReceptionResultService {
                                 + "\nFIRM_FILE_NM : " + req.fileNm()
                                 + "\nID : " + vanOrgCd
                                 + "\nTNO : " + envelope.tno()
-                                + "\nAPI RC : " + FirmBankingResultCd.ETC_ERR
+                                + "\nAPI RC : " + FirmBankingResultCd.DB_ERR
                                 + "\nThe gateway will retry. No audit row could be written "
                                 + "(TB_FIRM_BAT_API_TRAN.BIZ_KEY is NOT NULL and no tenant is resolvable).");
             }
-            return receptionAck(envelope, req, FirmBankingResultCd.ETC_ERR,
-                    FirmBankingResultCd.MSG_ETC_ERR, false, apiKey);
+            return receptionAck(envelope, req, FirmBankingResultCd.DB_ERR,
+                    FirmBankingResultCd.MSG_DB_ERR, false, apiKey);
         }
 
         // FIX J — AMBIGUOUS NAME. More than one file carries this FIRM_FILE_NM, so "which file is this
@@ -629,6 +636,10 @@ public class BulkReceptionResultService {
                             + ", procStep=" + f.getProcStep()
                             + ", procStat=" + f.getProcStat() + "}")
                     .collect(java.util.stream.Collectors.joining(", "));
+            // RC stays G999 here, deliberately — unlike the UNMATCHED branch above there is NO legacy
+            // line to mirror. Legacy has no ambiguity guard at all: it takes the row the unordered
+            // query happened to return. FIX J is a refactor-only safety stop, so it keeps the generic
+            // error code rather than borrowing legacy's G004, which means "lookup found nothing".
             log.error("01301 callback AMBIGUOUS — {} TB_FIRM_FILE_MST rows share fileNm={} on tranDt={}; "
                             + "refusing to classify from another row's state. Answering RC={} so the "
                             + "gateway resends. vanOrgCd={} tno={} rows=[{}] (no audit row written: "
@@ -810,21 +821,75 @@ public class BulkReceptionResultService {
         return row;
     }
 
-    private void validateRequest(BulkReceptionResultRequest req) {
-        requireField(req.bankCd(), "bank_cd");
-        requireField(req.prtnId(), "prtn_id");
-        requireField(req.fileNm(), "file_nm");
-        requireField(req.dataCnt(), "data_cnt");
-        requireField(req.dataAmt(), "data_amt");
-        requireField(req.dataDcmAmt(), "data_dcm_amt");
-        requireField(req.resultCd(), "result_cd");
-        requireField(req.resultMsg(), "result_msg");
+    /**
+     * Common transport-header check — legacy {@code FILE_DEPOSIT_TRANSFER_API1_act.jsp:68-77}.
+     *
+     * <p>Legacy guards all seven fields together and throws
+     * {@code WCConst.CD_BASE_NONE_INPUT_DATA} ({@code G001}) for any of them. The order below
+     * matches the legacy {@code ||} chain so the reported field is the same one legacy would have
+     * hit first.
+     */
+    private void validateEnvelope(EfsCallbackEnvelope envelope) {
+        if (envelope == null) {
+            throw baseFieldMissing("<envelope>");
+        }
+        requireHeader(envelope.id(), "ID");
+        requireHeader(envelope.rqDtime(), "RQ_DTIME");
+        requireHeader(envelope.tno(), "TNO");
+        requireHeader(envelope.ev(), "EV");
+        requireHeader(envelope.vv(), "VV");
+        requireHeader(envelope.em(), "EM");
+        requireHeader(envelope.vm(), "VM");
     }
 
-    private void requireField(String value, String name) {
+    /**
+     * Per-field business check — legacy {@code API1_act.jsp:125-147}.
+     *
+     * <p><b>The split is not what the constant names suggest.</b> Legacy answers
+     * {@code G002} ({@code CD_DETAIL_NONE_INPUT_DATA}) for exactly two fields — the bank-identity
+     * pair at {@code :125-129} — and {@code G001} ({@code CD_BASE_NONE_INPUT_DATA}) for the other
+     * six at {@code :131-147}. We previously answered {@code G002} for all eight.
+     */
+    private void validateRequest(BulkReceptionResultRequest req) {
+        requireDetailField(req.bankCd(), "bank_cd");        // legacy :125-127 → G002
+        requireDetailField(req.prtnId(), "prtn_id");        // legacy :128-129 → G002
+        requireBaseField(req.fileNm(), "file_nm");          // legacy :131-132 → G001
+        requireBaseField(req.dataCnt(), "data_cnt");        // legacy :134-135 → G001
+        requireBaseField(req.dataAmt(), "data_amt");        // legacy :137-138 → G001
+        requireBaseField(req.dataDcmAmt(), "data_dcm_amt"); // legacy :140-141 → G001
+        requireBaseField(req.resultCd(), "result_cd");      // legacy :143-144 → G001
+        requireBaseField(req.resultMsg(), "result_msg");    // legacy :146-147 → G001
+    }
+
+    /** Transport header → {@code G001} (legacy {@code API1_act.jsp:68-77}). */
+    private void requireHeader(String value, String name) {
         if (!StringUtils.hasText(value)) {
-            throw new IllegalArgumentException("01301 callback missing required field: " + name);
+            throw baseFieldMissing(name);
         }
+    }
+
+    /** Body field legacy answers {@code G001} for (legacy {@code API1_act.jsp:131-147}). */
+    private void requireBaseField(String value, String name) {
+        if (!StringUtils.hasText(value)) {
+            throw baseFieldMissing(name);
+        }
+    }
+
+    /** Bank-identity field legacy answers {@code G002} for (legacy {@code API1_act.jsp:125-129}). */
+    private void requireDetailField(String value, String name) {
+        if (!StringUtils.hasText(value)) {
+            throw new MissingCallbackFieldException(
+                    FirmBankingResultCd.DETAIL_NONE_INPUT_DATA,
+                    FirmBankingResultCd.MSG_DETAIL_NONE_INPUT_DATA,
+                    "01301 callback missing required field: " + name);
+        }
+    }
+
+    private MissingCallbackFieldException baseFieldMissing(String name) {
+        return new MissingCallbackFieldException(
+                FirmBankingResultCd.BASE_NONE_INPUT_DATA,
+                FirmBankingResultCd.MSG_BASE_NONE_INPUT_DATA,
+                "01301 callback missing required field: " + name);
     }
 
     /** {@code true} when received count or amount differs from the requested totals (legacy step 5-2-1). */

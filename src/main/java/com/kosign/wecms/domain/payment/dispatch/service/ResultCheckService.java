@@ -415,6 +415,12 @@ public class ResultCheckService {
         // What IS aligned here: both are now derived from a SINGLE instant. Previously they were two
         // independent now() reads a few statements apart, so a pass that straddled a UTC midnight
         // could bound the date on one day and the age on the other.
+        //
+        // Residual R-B (a THIRD clock, deliberately left open): the TRAN_TP='203' audit row this sweep
+        // writes stamps its own TRAN_DT in ICT while the 202 row it audits carries UTC. Legacy has no
+        // such split — one DateTime.getInstance() call feeds both rows — so this one is ours. Recorded
+        // rather than fixed because the aligning move is blocked on a downstream assumption; the full
+        // reasoning is at the stamping site in reflectOutcome.
         Instant now = Instant.now();
         LocalDate utcToday = LocalDate.ofInstant(now, UTC);
         LocalDateTime nowIct = LocalDateTime.ofInstant(now, ICT);
@@ -687,6 +693,45 @@ public class ResultCheckService {
 
         String vanOrgCd = conf.getVanOrgCd();
         String bankPrtnId = conf.getBankPrtnId();
+        // ─────────────────────────────────────────────────────────────────────────────────────────
+        // C-10 residual R-B — THE 203 AUDIT ROW'S TRAN_DT IS ICT WHILE THE 202 ROW'S IS UTC.
+        // RECORDED, NOT FIXED (decision 2026-08-03). Read all four points before changing this.
+        //
+        // The divergence is real. Between 17:00 and 24:00 UTC this row's TRAN_DT sits one day ahead of
+        // the 202 row it audits.
+        //
+        // 1. LEGACY USES ONE CLOCK FOR BOTH, so the pair is internally consistent by construction and
+        //    the split cannot occur there. Both rows come from the SAME call:
+        //      * 203 row — PROCESSING_RESULT_CHECK_BATCH:78-79 `DateTime.getInstance().getDate("YYYYMMDD")`
+        //        / `("HH24MISS")`, bound as :TRAN_DT / :TRAN_TM (IDO.TB_FIRM_TRAN_C001.xml:24,56,90 —
+        //        the value is passed in, NOT derived DB-side; only RQ_DTTM is TO_CHAR(NOW(),…) at :73).
+        //      * 202 row — NAPAS_REAL_TIME_BATCH:489-495, the identical
+        //        `DateTime.getInstance().getDate("yyyymmdd")` in the sibling batch.
+        //
+        // 2. OUR SPLIT TRACES TO A REFACTOR DECISION LEGACY DOES NOT MAKE. Legacy's 202 firm-tran row
+        //    reuses only the pay-target's TRAN_SEQ (`dep_seq = idoOutPTR001.getString("TRAN_SEQ")`,
+        //    NAPAS:273) and stamps its OWN batch-clock date at :489; every pay-target update stays keyed
+        //    on the pay-target's own TRAN_DT (:577-578, :632-633, :669-670). We made the two the same
+        //    value (the D-1 decision documented on the UTC field above), which is the only reason our
+        //    202 rows carry a UTC date at all.
+        //
+        // 3. THE BLOCKER ON ALIGNING IS DOWNSTREAM, NOT HERE. FirmBankingHistoryView renders the F leg
+        //    as `kr_to_vn_time(TFT.TRAN_DT || TFT.TRAN_TM)` (FirmBankingHistoryView:56) for EVERY
+        //    TB_FIRM_TRAN row — 202 and 203 alike — which assumes the stored value is Asia/Seoul
+        //    wall-clock, i.e. legacy's writer. We feed it UTC on one row and ICT on the other. Aligning
+        //    the 203 to UTC would make that view CONSISTENTLY wrong rather than inconsistently wrong.
+        //    That is an improvement — a uniform offset is diagnosable and fixable in one place — but it
+        //    means the real question is the VIEW'S ASSUMPTION, not the writers'.
+        //
+        // 4. NOTHING SELECTS TRAN_TP='203'. findResultCheckCandidates filters '202' only, so no aging or
+        //    eligibility path reads this date, and ORG_TRAN_DT below is copied verbatim from the
+        //    original row so the 203→202 back-pointer is correct either way. The blast radius is the
+        //    203 row's own PK date plus the Firm Banking History rendering in (3).
+        //
+        // TREAT THIS AS ONE DECISION: fix the view's Asia/Seoul assumption, or align the writers to it.
+        // Do not fix R-B in isolation — stamping this row UTC while leaving kr_to_vn_time in place
+        // trades one wrong rendering for another and closes nothing.
+        // ─────────────────────────────────────────────────────────────────────────────────────────
         LocalDateTime now = LocalDateTime.now(ICT);
         String tranDt = now.format(DT8);
         String tranTm = now.format(TM6);
