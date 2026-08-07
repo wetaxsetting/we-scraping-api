@@ -5,6 +5,7 @@ import com.kosign.wecms.common.enums.LangCd;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.auth.repository.BusiInfmRepository;
+import com.kosign.wecms.domain.vatdeclaration.dto.VatDeclarationCreateRequest;
 import com.kosign.wecms.domain.vatdeclaration.entity.VatDeclaration;
 import com.kosign.wecms.domain.vatdeclaration.entity.VatDeclarationIndicator;
 import com.kosign.wecms.domain.vatdeclaration.repository.VatAnnexInvoiceRepository;
@@ -380,6 +381,48 @@ class VatDeclarationLifecycleTest {
             verify(annexInvoiceRepo).groupTotals(anyString(), anyString(), anyString(),
                     docTypes.capture(), any(), any(), any());
             assertThat(docTypes.getValue()).containsExactly("I");   // output / sales
+        }
+    }
+
+    @Nested
+    @DisplayName("create — required fields")
+    class Create {
+
+        /** Q2/2026 create request with the given business-industry code. */
+        private static VatDeclarationCreateRequest requestWithIndustry(String bsnsLineCd) {
+            return new VatDeclarationCreateRequest(
+                    "Q", 2, 2026,
+                    bsnsLineCd, null,
+                    null, null,
+                    null, null, null, null, null);
+        }
+
+        @Test
+        @DisplayName("bsns_line_cd null → WBE_VAT_DECL_BSNS_LINE_REQUIRED, nothing persisted")
+        void nullIndustryRejected() {
+            assertThatThrownBy(() -> service.create(requestWithIndustry(null)))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("WBE_VAT_DECL_BSNS_LINE_REQUIRED");
+            verify(declRepo, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("bsns_line_cd blank → same guard (whitespace is not a code)")
+        void blankIndustryRejected() {
+            assertThatThrownBy(() -> service.create(requestWithIndustry("   ")))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("WBE_VAT_DECL_BSNS_LINE_REQUIRED");
+            verify(declRepo, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("guard runs before the duplicate-period lookup")
+        void guardPrecedesRepositoryWork() {
+            assertThatThrownBy(() -> service.create(requestWithIndustry(null)))
+                    .isInstanceOf(BusinessException.class);
+            verify(declRepo, never())
+                    .existsByBizKeyAndPeriodTypeAndPeriodValueAndPeriodYearAndSupplNoAndDelYn(
+                            anyString(), anyString(), anyInt(), anyInt(), anyInt(), anyString());
         }
     }
 }

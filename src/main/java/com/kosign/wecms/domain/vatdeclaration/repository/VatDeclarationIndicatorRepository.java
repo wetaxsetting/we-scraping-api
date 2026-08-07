@@ -6,7 +6,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import java.util.Optional;
 
 /**
- * Access to {@code TAX_DECLARATION_ITEMS}. The table carries no {@code BIZ_KEY}
+ * Access to {@code VAT_DECL_ITEMS}. The table carries no {@code BIZ_KEY}
  * of its own (per the PO design sheet), so tenant scoping rides through the
  * owning declaration join ({@code declaration.bizKey}) on every method.
  */
