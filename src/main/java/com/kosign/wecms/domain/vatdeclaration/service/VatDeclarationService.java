@@ -132,8 +132,8 @@ public class VatDeclarationService {
         List<Long> sids = result.getContent().stream().map(VatDeclaration::getSid).toList();
         Map<Long, VatDeclarationIndicator> bySid = sids.isEmpty() ? Map.of()
                 : indicatorRepo.findByDeclaration_SidInAndDelYn(sids, "N").stream()
-                        .collect(java.util.stream.Collectors.toMap(
-                                i -> i.getDeclaration().getSid(), i -> i, (a, b) -> a));
+                .collect(java.util.stream.Collectors.toMap(
+                        i -> i.getDeclaration().getSid(), i -> i, (a, b) -> a));
 
         List<VatDeclarationRow> rows = result.getContent().stream()
                 .map(d -> toRow(d, bySid.get(d.getSid())))
@@ -165,8 +165,17 @@ public class VatDeclarationService {
             throw new BusinessException("WBE_VAT_DECL_DUPLICATE_PERIOD");
         }
 
+        // Contiguity guard (PO 2026-08-06): declarations must be created in order.
+        // K may be created only when K-1 exists AND is LOCKED — or when K is the
+        // tenant's very first period. No skipping (can't create M3 while M2 is
+        // absent), and the immediately-preceding period must be closed first.
         VatDeclaration previous = findAdjacent(bizKey, req.periodType(), req.periodValue(), req.declYear(), -1);
-        if (previous != null && !STATUS_LOCKED.equals(previous.getStatus())) {
+        if (previous == null) {
+            if (declRepo.existsEarlierPeriod(bizKey, periodType, req.declYear(), req.periodValue())) {
+                throw new BusinessException("WBE_VAT_DECL_PREV_MISSING",
+                        periodLabel(req.periodType(), req.periodValue(), req.declYear()));
+            }
+        } else if (!STATUS_LOCKED.equals(previous.getStatus())) {
             throw new BusinessException("WBE_VAT_DECL_PREV_NOT_LOCKED");
         }
         BigDecimal carryOver = previous == null ? BigDecimal.ZERO
@@ -426,8 +435,8 @@ public class VatDeclarationService {
      *
      * <ul>
      *   <li>purchases (DOC_TYPE 'B'): [23] += base, [24] += VAT (all rates)</li>
-     *   <li>sales 0% → [29]; 5% → [30]/[31]; 8%+10% → [32]/[33]; KCT → [26];
-     *       KKKNT → [32a] (out-of-scope revenue, OQ-VAT-4)</li>
+     *   <li>sales 0% → [29]; 5% → [30]/[31]; 8%+10% → [32]/[33]; KKKNT → [26];
+     *       KCT → [32a] (mapping per the PO prototype {@code aggFor}, OQ-VAT-4)</li>
      * </ul>
      *
      * <p>Only the 9 invoice-source cells are overwritten; carry-forward [22] and
@@ -479,8 +488,8 @@ public class VatDeclarationService {
                 case "0%"        -> ct29 = ct29.add(amt);
                 case "5%"        -> { ct30 = ct30.add(amt); ct31 = ct31.add(tax); }
                 case "8%", "10%" -> { ct32 = ct32.add(amt); ct33 = ct33.add(tax); }
-                case "KCT"       -> ct26 = ct26.add(amt);
-                case "KKKNT"     -> ct32a = ct32a.add(amt);   // out-of-scope revenue (OQ-VAT-4)
+                case "KKKNT"     -> ct26 = ct26.add(amt);     // [26] not-subject sales (per PO prototype aggFor)
+                case "KCT"       -> ct32a = ct32a.add(amt);   // [32a] not-tax-calculated sales (per PO prototype aggFor)
                 default          -> { /* unknown / null rate → not mapped */ }
             }
         }
@@ -558,8 +567,8 @@ public class VatDeclarationService {
 
         List<AnnexRow> rows = offset >= total ? List.of()
                 : annexInvoiceRepo.findRows(decl.getBizKey(), from, to, docTypes, rate, q,
-                                EXCLUDED_INVOICE_STATUSES, offset, pageSize)
-                        .stream().map(a -> toAnnexRow(a, type)).toList();
+                        EXCLUDED_INVOICE_STATUSES, offset, pageSize)
+                .stream().map(a -> toAnnexRow(a, type)).toList();
 
         int totalPages = (int) ((total + pageSize - 1) / pageSize);
         return new AnnexInvoiceListResponse(rows, total, totalPages, pageNumber, pageSize,
@@ -872,7 +881,7 @@ public class VatDeclarationService {
                 d.getDuProv(),
                 d.getDuDist(),
                 d.getDuWard()
-                );
+        );
     }
 
     private static VatIndicatorSet toIndicatorSet(VatDeclarationIndicator i) {
