@@ -383,10 +383,11 @@ public class VatDeclarationService {
      * <ol>
      *   <li>K-1 exists → it must be LOCKED
      *       ({@code WBE_VAT_DECL_PREV_NOT_LOCKED}).</li>
-     *   <li>K-1 missing → fine only when nothing older exists at all (K is the
-     *       tenant's first period). Otherwise the chain has a hole and the
-     *       carry-forward cannot be trusted
-     *       ({@code WBE_VAT_DECL_PREV_MISSING}).</li>
+     *   <li>K-1 missing → the lock is ALLOWED (PO 2026-08-06). This is either the
+     *       tenant's first declaration or a deliberate gap in filing — VAT periods
+     *       need not be contiguous, so an older, non-adjacent declaration must NOT
+     *       block a period whose immediate predecessor was never filed. Only the
+     *       immediately-preceding period gates the lock.</li>
      *   <li>K-1 exists → this period's [22] must equal K-1's [43]. A drift means
      *       K-1 was re-opened and edited after K was created, so K's figures are
      *       stale ({@code WBE_VAT_DECL_PREV_CREDIT_MISMATCH}). Deliberately an
@@ -401,12 +402,10 @@ public class VatDeclarationService {
                 decl.getPeriodValue(), decl.getPeriodYear(), -1);
 
         if (previous == null) {
-            if (declRepo.existsEarlierPeriod(decl.getBizKey(), decl.getPeriodType(),
-                    decl.getPeriodYear(), decl.getPeriodValue())) {
-                throw new BusinessException("WBE_VAT_DECL_PREV_MISSING",
-                        periodLabel(wireType, decl.getPeriodValue(), decl.getPeriodYear()));
-            }
-            return;   // genuinely the first period — nothing to carry forward
+            // No immediately-preceding period on file -> nothing to carry forward,
+            // so allow the lock. First declaration OR a deliberate filing gap; an
+            // older, non-adjacent declaration must not block it (PO 2026-08-06).
+            return;
         }
         if (!STATUS_LOCKED.equals(previous.getStatus())) {
             throw new BusinessException("WBE_VAT_DECL_PREV_NOT_LOCKED");
