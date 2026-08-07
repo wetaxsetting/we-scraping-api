@@ -173,20 +173,28 @@ public interface VatAnnexInvoiceRepository extends Repository<VatDeclaration, Lo
                                               @Param("excludedStatuses") Collection<String> excludedStatuses);
 
     /**
-     * Sync aggregation: the period's invoice VAT lines ({@code EINV_TAX_DETL})
-     * summed by {@code (DOC_TYPE, EINV_TAXRATE)}. Same period + excluded-status
-     * predicate as the annex list, but sums {@code AMT} (tax-exclusive) +
-     * {@code TAX_AMT} from the per-rate tax breakdown rather than the line-item
-     * table — this is the source of the invoice-derived indicator buckets
-     * ([23]/[24], [26]/[29]/[30]/[31]/[32]/[33]/[32a]). Consumed by
-     * {@code VatDeclarationService.sync}.
+     * Sync aggregation: the period's invoice lines summed by
+     * {@code (DOC_TYPE, EINV_TAXRATE)} — the source of the invoice-derived
+     * indicator buckets ([23]/[24], [26]/[29]/[30]/[31]/[32]/[33]/[32a]).
+     *
+     * <p>Reads {@code BUSA_DOC_DETL} (the same line-item source as the annex
+     * {@link #groupTotals}), <b>not</b> {@code EINV_TAX_DETL}. Verified on DEV
+     * 2026-08-06: {@code EINV_TAX_DETL.AMT} is 0 for every output (sales)
+     * invoice — only purchase rows carry a base there — so the previous
+     * {@code EINV_TAX_DETL} source left the sales base cells ([26]/[30]/[32]/…)
+     * at 0 even when the annex clearly listed the invoices. Sourcing base from
+     * {@code SPLY_AMT} and VAT from {@code floor(SPLY_AMT * rate% / 100)} makes
+     * the declaration reconcile to the đồng with BKBR/BKMV (the annex is the
+     * supporting schedule for these lines and already computes VAT this way).
+     * Same period + excluded-status predicate as the annex list. Consumed by
+     * {@code VatDeclarationService.sync} / {@code create}.
      */
     @Query(value = "select m.doc_type                            as docType,"
             + "        d.einv_taxrate                            as taxRate,"
-            + "        coalesce(sum(coalesce(d.amt, 0)), 0)      as amt,"
-            + "        coalesce(sum(coalesce(d.tax_amt, 0)), 0)  as taxAmt"
-            + "   from einv_tax_detl d"
-            + "   join busa_doc_mstr m on m.biz_key = d.biz_key and m.doc_id = d.doc_id"
+            + "        coalesce(sum(coalesce(d.sply_amt, 0)), 0) as amt,"
+            + "        coalesce(sum(floor(coalesce(d.sply_amt, 0) * " + RATE_PCT + " / 100)), 0) as taxAmt"
+            + "   from busa_doc_mstr m"
+            + "   join busa_doc_detl d on d.biz_key = m.biz_key and d.doc_id = m.doc_id"
             + "  where m.biz_key = :bizKey"
             + "    and m.issu_dt between :fromDt and :toDt"
             + "    and m.doc_type in (:docTypes)"

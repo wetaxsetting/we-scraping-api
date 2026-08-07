@@ -10,7 +10,7 @@ import org.springframework.data.repository.query.Param;
 import java.util.Optional;
 
 /**
- * Tenant-scoped access to {@code TAX_DECLARATIONS}. Every method constrains
+ * Tenant-scoped access to {@code VAT_DECL}. Every method constrains
  * on {@code BIZ_KEY} (tenant-scope rule) and excludes soft-deleted rows.
  */
 public interface VatDeclarationRepository extends JpaRepository<VatDeclaration, Long> {

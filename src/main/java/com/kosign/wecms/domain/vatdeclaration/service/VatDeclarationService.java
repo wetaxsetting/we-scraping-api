@@ -47,8 +47,8 @@ import java.util.function.Consumer;
 
 /**
  * VAT Declaration (Mẫu 01/GTGT TT80) — list / create / detail / save-draft /
- * delete / lock / unlock over {@code TAX_DECLARATIONS} +
- * {@code TAX_DECLARATION_ITEMS}. Spec:
+ * delete / lock / unlock over {@code VAT_DECL} +
+ * {@code VAT_DECL_ITEMS}. Spec:
  * docs/features/addon-service/vat-declaration/interface-specification.md.
  *
  * <p>Invoice auto-aggregation (sync) and the annex/export legs are pending
@@ -152,6 +152,13 @@ public class VatDeclarationService {
         String bizKey = TenantContext.currentBizKey();
         String periodType = toDbPeriodType(req.periodType());
         validatePeriodValue(req.periodType(), req.periodValue());
+        // "Business Industry *" is required on the PO create form (Dictionary
+        // WEB_VAT_CRE_006) and ships its own message (WEB_VAT_CRE_MSG_004), so it
+        // is checked here rather than with @NotBlank — bean validation would
+        // collapse it into the generic WBE_VALIDATION and lose the PO wording.
+        if (blankToNull(req.bsnsLineCd()) == null) {
+            throw new BusinessException("WBE_VAT_DECL_BSNS_LINE_REQUIRED");
+        }
 
         if (declRepo.existsByBizKeyAndPeriodTypeAndPeriodValueAndPeriodYearAndSupplNoAndDelYn(
                 bizKey, periodType, req.periodValue(), req.declYear(), 0, "N")) {

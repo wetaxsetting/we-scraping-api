@@ -5,8 +5,11 @@ import java.util.Optional;
 /**
  * The five annex types a VAT declaration can carry, matching the PO prototype's
  * create-form checkboxes one-for-one ({@code VAT_Declaration_Report.html},
- * {@code .annexChk[data-code]}). Stored verbatim in
- * {@code TAX_DECLARATION_ANNEX_ITEMS.ANNEX_TYPE}.
+ * {@code .annexChk[data-code]}). The per-declaration "attached?" flags live as
+ * the {@code ANNEX_*_YN} columns on {@code VAT_DECL}; the annex line data itself
+ * is live-derived from {@code BUSA_DOC_MSTR}+{@code BUSA_DOC_DETL} (no persisted
+ * annex-item table). Used on the wire as the {@code annex_type} filter of
+ * {@code GET /{sid}/annex/invoices}.
  *
  * <p>01-6/GTGT ships in two variants that are distinct forms — production
  * facility (CSSX) and post-paid telecom — so they carry distinct codes rather
