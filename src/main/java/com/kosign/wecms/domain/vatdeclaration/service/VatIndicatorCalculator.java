@@ -83,7 +83,18 @@ public class VatIndicatorCalculator {
         BigDecimal ct33 = clientProvided.contains("ct33")
                 ? nz(ind.getSalesAmtVat10()) : floorDivide(ct32, TEN_PCT_DIVISOR);
         BigDecimal ct27 = ct29.add(ct30).add(ct32).add(ct32a);
-        BigDecimal ct28 = ct31.add(ct33).add(ct33a);
+        // [28] = [31] + [33]. ct33a is deliberately NOT summed here: the PO ruled
+        // on 2026-08-08 that [33a] does not exist on form 01/GTGT and must not be
+        // counted. The evidence agrees — neither shipped template mentions [33a]
+        // (both carry [32a]), and no locale file has a label for it.
+        //
+        // Including it overstated [28], and with it [35], [36] and the amount
+        // payable, on any period carrying other-rate sales. The frontend and the
+        // Excel template were already correct; this side was the outlier.
+        //
+        // The column and the DTO field stay — the value is still stored and still
+        // validated non-negative above. Only the total drops it.
+        BigDecimal ct28 = ct31.add(ct33);
         BigDecimal ct34 = ct26.add(ct27);
         BigDecimal ct35 = ct28;
         BigDecimal ct36 = ct35.subtract(ct25);
