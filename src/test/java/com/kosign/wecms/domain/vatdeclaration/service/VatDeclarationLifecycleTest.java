@@ -204,6 +204,52 @@ class VatDeclarationLifecycleTest {
                     any(), any(), eq(SID));
         }
 
+        /** First-period-ever setup, so only the [21] guard is in play. */
+        private VatDeclarationIndicator openFirstPeriod() {
+            VatDeclaration d = decl(SID, VatDeclarationService.STATUS_DRAFT, 1, 2026);
+            VatDeclarationIndicator i = ind(d, "0", "0");
+            given(d, i);
+            noPreviousRow();
+            when(declRepo.existsEarlierPeriod(BIZ, "quarter", 2026, 1)).thenReturn(false);
+            i.setNoActivity(BigDecimal.ONE);
+            return i;
+        }
+
+        @Test
+        @DisplayName("[21] set but [34] reports sales → refused")
+        void noActivityWithSalesRefused() {
+            VatDeclarationIndicator i = openFirstPeriod();
+            i.setTotalSalesAmt(new BigDecimal("39858181"));
+
+            assertThatThrownBy(() -> service.lock(SID))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("WBE_VAT_DECL_NO_ACTIVITY_CONFLICT");
+            assertThat(i.getDeclaration().getStatus())
+                    .isEqualTo(VatDeclarationService.STATUS_DRAFT);
+        }
+
+        @Test
+        @DisplayName("[21] set with purchases only → still refused")
+        void noActivityWithPurchasesRefused() {
+            VatDeclarationIndicator i = openFirstPeriod();
+            i.setPurchAmt(new BigDecimal("12000000"));   // bought, sold nothing
+
+            assertThatThrownBy(() -> service.lock(SID))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("WBE_VAT_DECL_NO_ACTIVITY_CONFLICT");
+        }
+
+        @Test
+        @DisplayName("[21] set on a genuinely empty period → locks")
+        void noActivityOnEmptyPeriodLocks() {
+            VatDeclarationIndicator i = openFirstPeriod();
+
+            service.lock(SID);
+
+            assertThat(i.getDeclaration().getStatus())
+                    .isEqualTo(VatDeclarationService.STATUS_LOCKED);
+        }
+
         @Test
         @DisplayName("already locked → idempotent, no re-stamp")
         void alreadyLockedIsIdempotent() {
