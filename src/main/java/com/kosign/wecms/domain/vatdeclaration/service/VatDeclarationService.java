@@ -356,6 +356,7 @@ public class VatDeclarationService {
         }
         VatDeclarationIndicator ind = loadIndicator(decl);
         assertPreviousPeriodClosed(decl, ind);
+        assertNoActivityConsistent(ind);
 
         decl.setStatus(STATUS_LOCKED);
         decl.setModId(TenantContext.currentUserId());
@@ -423,6 +424,38 @@ public class VatDeclarationService {
         if (nz(ind.getPrevCredit()).compareTo(carried) != 0) {              // K   [22]
             throw new BusinessException("WBE_VAT_DECL_PREV_CREDIT_MISMATCH",
                     str(ind.getPrevCredit()), str(carried));
+        }
+    }
+
+    /**
+     * [21] "no purchase/sale activity in the period" must not sit on a
+     * declaration that reports activity.
+     *
+     * <p>The flag is not a computed cell — {@code applyFlag} stores whatever the
+     * client sends and {@link VatIndicatorCalculator} only range-checks it, so
+     * nothing zeroes the other indicators when it is set. It then reaches the
+     * filing verbatim: {@code <ct21>1</ct21>} in the HTKK XML and an {@code "X"}
+     * in cell I36 of the 01/GTGT workbook. A return that says "no activity"
+     * beside a non-zero [34] contradicts itself inside a single file, and the
+     * tax office sees both at once.
+     *
+     * <p>Checked at lock rather than on update, matching how [22] is handled: a
+     * mis-tick while drafting is ordinary and must stay correctable. What must
+     * not happen is a self-contradicting return being closed and exported.
+     *
+     * <p>Both sides count. Sales alone would let a period with purchases but no
+     * sales through, which is just as untrue — hence [23]/[24] as well as
+     * [34]/[35].
+     */
+    private void assertNoActivityConsistent(VatDeclarationIndicator ind) {
+        if (nz(ind.getNoActivity()).signum() <= 0) {
+            return;
+        }
+        BigDecimal sales = nz(ind.getTotalSalesAmt()).add(nz(ind.getTotalSalesAmtVat()));
+        BigDecimal purch = nz(ind.getPurchAmt()).add(nz(ind.getPurchAmtVat()));
+        if (sales.signum() != 0 || purch.signum() != 0) {
+            throw new BusinessException("WBE_VAT_DECL_NO_ACTIVITY_CONFLICT",
+                    str(nz(ind.getTotalSalesAmt())), str(nz(ind.getPurchAmt())));
         }
     }
 
