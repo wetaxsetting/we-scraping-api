@@ -681,15 +681,30 @@ public class VatDeclarationService {
             throw new BusinessException("WBE_VAT_DECL_UNKNOWN_TAX_RATE", detail);
         }
 
-        ind.setPurchAmt(ct23);
-        ind.setPurchAmtVat(ct24);
-        ind.setSalesAmtNondecl(ct26);
-        ind.setSalesAmt0(ct29);
-        ind.setSalesAmt5(ct30);
-        ind.setSalesAmtVat5(ct31);
-        ind.setSalesAmt10(ct32);
-        ind.setSalesAmtVat10(ct33);
-        ind.setSalesAmtNontax(ct32a);
+        // Round to whole đồng HERE — this is the one place a figure crosses from
+        // the invoice tables into the declaration, so everything downstream is
+        // integral and the exporters have nothing left to truncate.
+        //
+        // SPLY_AMT is NUMERIC(20,6) and real invoices carry fractions: QA found
+        // [23] = 4,040,744.71 (02/2026) and 1,901,577,943.5 (06/2026) on live
+        // data. The XML exporter silently dropped the fraction while the stored
+        // declaration kept it, so one filing carried two different numbers for
+        // the same line (QA S-35). Rounding at export would have hidden that
+        // instead of fixing it.
+        //
+        // HALF_UP, not truncation: VND has no sub-unit, and always truncating
+        // understates revenue — the direction that draws a penalty. The tax
+        // products keep their documented floor (HTKK truncates those); they are
+        // already integral by the time they arrive here.
+        ind.setPurchAmt(dong(ct23));
+        ind.setPurchAmtVat(dong(ct24));
+        ind.setSalesAmtNondecl(dong(ct26));
+        ind.setSalesAmt0(dong(ct29));
+        ind.setSalesAmt5(dong(ct30));
+        ind.setSalesAmtVat5(dong(ct31));
+        ind.setSalesAmt10(dong(ct32));
+        ind.setSalesAmtVat10(dong(ct33));
+        ind.setSalesAmtNontax(dong(ct32a));
 
         // Name every cell this aggregation writes, not just the two that used to
         // need protecting. [25] now auto-fills from [24] only when [24] is in the
@@ -1097,6 +1112,15 @@ public class VatDeclarationService {
 
     private static String str(BigDecimal v) {
         return v == null ? "0" : v.stripTrailingZeros().toPlainString();
+    }
+
+    /**
+     * Whole đồng, half-up. VND has no sub-unit, so a declaration line carrying
+     * a fraction is meaningless — and worse, invisible: only the exporter's
+     * truncation revealed it.
+     */
+    private static BigDecimal dong(BigDecimal v) {
+        return nz(v).setScale(0, java.math.RoundingMode.HALF_UP);
     }
 
     private static BigDecimal nz(BigDecimal v) {
