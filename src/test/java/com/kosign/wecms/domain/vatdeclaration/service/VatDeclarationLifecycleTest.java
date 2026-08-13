@@ -153,7 +153,9 @@ class VatDeclarationLifecycleTest {
         @Test
         @DisplayName("hole in the chain: K-1 missing but older periods exist → locks anyway")
         void gapInChainLocks() {
-            VatDeclaration d = decl(SID, VatDeclarationService.STATUS_DRAFT, 3, 2026);
+            // Q2/2026, not Q3: Q3 was still running when assertPeriodEnded landed
+            // and this case would fail on that guard instead of exercising the gap.
+            VatDeclaration d = decl(SID, VatDeclarationService.STATUS_DRAFT, 2, 2026);
             given(d, ind(d, "0", "0"));
             noPreviousRow();
 
@@ -209,6 +211,40 @@ class VatDeclarationLifecycleTest {
             assertThat(d.getStatus()).isEqualTo(VatDeclarationService.STATUS_LOCKED);
             verify(annexInvoiceRepo).markProcessed(eq(BIZ), eq("20260401"), eq("20260630"),
                     any(), any(), eq(SID));
+        }
+
+        /**
+         * Year 2999 rather than "next quarter": the period must still be in the
+         * future the day someone runs this suite in 2030, and a relative date
+         * would need the clock injected to stay honest.
+         */
+        @Test
+        @DisplayName("period still running → lock refused")
+        void unfinishedPeriodRefused() {
+            VatDeclaration d = decl(SID, VatDeclarationService.STATUS_DRAFT, 1, 2999);
+            given(d, ind(d, "0", "0"));
+
+            assertThatThrownBy(() -> service.lock(SID))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("WBE_VAT_DECL_PERIOD_NOT_ENDED");
+            assertThat(d.getStatus()).isEqualTo(VatDeclarationService.STATUS_DRAFT);
+        }
+
+        /**
+         * A future period locked before this guard existed stays locked — the
+         * idempotent early-return fires first. Re-locking it after an unlock is
+         * refused, which is the intended nudge to clean the row up rather than a
+         * regression.
+         */
+        @Test
+        @DisplayName("future period already locked → still idempotent, not an error")
+        void alreadyLockedFuturePeriodTolerated() {
+            VatDeclaration d = decl(SID, VatDeclarationService.STATUS_LOCKED, 1, 2999);
+            given(d, ind(d, "0", "0"));
+
+            service.lock(SID);
+
+            assertThat(d.getStatus()).isEqualTo(VatDeclarationService.STATUS_LOCKED);
         }
 
         /** First-period-ever setup, so only the [21] guard is in play. */
