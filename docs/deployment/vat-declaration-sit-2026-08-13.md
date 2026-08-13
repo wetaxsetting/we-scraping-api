@@ -108,23 +108,34 @@ Riêng VAT: **46 test, 0 đỏ.**
 curl -s https://wecms-api.kosign.dev/actuator/health
 
 cd /opt/wecms/qa && git pull && cd /opt/wecms
-python3 qa/l3/run-vat-business.py --group cong-thuc --type M --yes
-python3 qa/l3/run-vat-cases.py --all --type M --yes
+python3 qa/agent/run-all.py --yes
 ```
 
-Chờ chuyển sang PASS:
+### Cơ sở đối chiếu — lần chạy 13/08/2026, trước deploy
 
-| | Chờ thấy |
+**16 phép kiểm đỏ, và cả 16 đều là bản chưa deploy.** Không còn cái nào chưa
+giải thích được. Sau deploy, cả 16 phải chuyển xanh trong **một** lần chạy; cái
+nào còn đỏ là hồi quy thật, không phải nợ cũ.
+
+| Bản sửa | Phép kiểm đang đỏ | Chờ thấy |
+|---|---|---|
+| 1 · `[28]` bỏ `[33a]` | `S-31` | `[28]` không đổi khi `[33a]` đổi |
+| 2 · guard `[21]` | `S-19` | `KHOA BI CHAN: WBE_VAT_DECL_NO_ACTIVITY_CONFLICT` |
+| 3 · kỳ chưa kết thúc | `S-23` | `tao duoc … nhung KHOA BI CHAN: WBE_VAT_DECL_PERIOD_NOT_ENDED` |
+| 4 · loại kỳ theo năm | `S-05` `S-06` | `bi chan: WBE_VAT_DECL_PERIOD_TYPE_MISMATCH` |
+| 5 · `[25]`/`[33]`/thuế suất lạ | `S-26` `S-29` `S-36` `S-42` | `[33]` giữ thuế thật; `[25]` nhập tay sống qua lần sửa ô khác; thuế suất lạ báo `WBE_VAT_DECL_UNKNOWN_TAX_RATE` thay vì im lặng nuốt 60.000.000 |
+| 6 · làm tròn đồng | `S-35` + 4 phép L1 (`VAT-INV-frac`, `VAT-EXP-xml` ở 02/2026 và 06/2026) | mọi chỉ tiêu là số nguyên đồng; XML và API khớp `ct23` |
+| 7 · chỉ tiêu âm | `S-07` `S-34` | `S-07` đồng bộ được, `[43]` ra số dương; `S-34` báo `13 o nhan so am, 7 o chan` |
+
+Một dấu hiệu **chưa deploy** dễ nhận: `S-34` in `ct24 BI CHAN`, `ct32 BI CHAN`…
+— nghĩa là build đang chạy còn chặn cả 20 ô.
+
+### Không nằm trong deploy này
+
+| | |
 |---|---|
-| `S-26` | `[33]` giữ thuế thật, không bị suy theo 10% |
-| `S-29` | `[25]` nhập tay giữ được qua lần sửa ô khác |
-| `S-31` | `[28]` không đổi khi `[33a]` đổi |
-| `S-05` `S-06` | `bi chan: WBE_VAT_DECL_PERIOD_TYPE_MISMATCH` |
-| `S-19` | `KHOA BI CHAN: WBE_VAT_DECL_NO_ACTIVITY_CONFLICT` |
-| `S-23` | `tao duoc … nhung KHOA BI CHAN: WBE_VAT_DECL_PERIOD_NOT_ENDED` |
-
-Và `run-vat-indicators.py --no-sql` phải hết `VAT-INV-frac` / `VAT-EXP-xml` ở
-02/2026 và 06/2026 — đó là bản làm tròn.
+| `S-44` | bỏ qua thật — cần một tenant thứ hai có hoá đơn cùng kỳ |
+| `S-06` | ngoài việc chặn lẫn loại kỳ, còn một câu **hỏi PO chưa trả lời**: khi đổi tháng→quý qua ranh giới năm, `[22]` lấy từ `[43]` của kỳ tháng cuối hay bằng 0? |
 
 ---
 
