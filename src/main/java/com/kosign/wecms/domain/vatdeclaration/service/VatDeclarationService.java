@@ -1023,11 +1023,40 @@ public class VatDeclarationService {
         sent.add(field);
     }
 
-    /** Integer-VND string → BigDecimal; negative / non-integer → business error. */
+    /**
+     * Amount cells a downward-adjustment invoice can legitimately drive below
+     * zero.
+     *
+     * <p>A "hóa đơn điều chỉnh giảm" can exceed the period's own revenue when it
+     * cancels part of what an earlier period invoiced. The period then really
+     * did book negative net revenue, and refusing the value blocked a lawful
+     * filing outright (QA S-07). The PO ruled on 2026-08-13 that negative
+     * indicators are permitted.
+     *
+     * <p>The cells NOT in this set stay guarded, because negative is not a
+     * smaller number there — it is a different meaning:
+     * <ul>
+     *   <li>{@code ct22} carries {@code [43]} of the previous period, which is
+     *       {@code max(0,…) - max(0,…)} and so never negative at source.</li>
+     *   <li>{@code ct37} / {@code ct38} / {@code ct39a} are magnitudes; the
+     *       formula supplies the sign ({@code +ct37 - ct38}). A negative
+     *       decrease would silently become an increase, giving two ways to
+     *       write one adjustment and no way for a reader to tell them apart.</li>
+     *   <li>{@code ct40b} and the {@code ct42*} family are bounded by
+     *       {@code ct40a} / {@code ct41}, both {@code max(0,…)} — and nobody
+     *       requests a negative refund.</li>
+     * </ul>
+     */
+    private static final Set<String> MAY_BE_NEGATIVE = Set.of(
+            "ct23", "ct24", "ct23a", "ct24a", "ct25", "ct26",
+            "ct29", "ct30", "ct31", "ct32", "ct32a", "ct33", "ct33a");
+
+    /** Integer-VND string → BigDecimal; non-integer → business error. */
     private static BigDecimal parseAmount(String raw, String field) {
         try {
             BigDecimal v = new BigDecimal(raw.trim());
-            if (v.signum() < 0 || v.stripTrailingZeros().scale() > 0) {
+            if (v.stripTrailingZeros().scale() > 0
+                    || (v.signum() < 0 && !MAY_BE_NEGATIVE.contains(field))) {
                 throw new BusinessException("WBE_VAT_DECL_INVALID_INDICATOR", field);
             }
             return v;

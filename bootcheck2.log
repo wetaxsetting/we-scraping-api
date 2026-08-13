@@ -1,0 +1,896 @@
+> Task :compileJava UP-TO-DATE
+> Task :processResources UP-TO-DATE
+> Task :classes UP-TO-DATE
+> Task :resolveMainClassName
+
+> Task :bootRun
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+
+ :: Spring Boot ::               (v3.5.13)
+
+2026-07-22T16:39:55.605+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : Starting WecmsApiMainApplication using Java 21.0.11 with PID 19684 (C:\Project\wecms\wecms-api\build\classes\java\main started by lvthe in C:\Project\wecms\wecms-api)
+2026-07-22T16:39:55.616+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : Running with Spring Boot v3.5.13, Spring v6.2.17
+2026-07-22T16:39:55.619+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : The following 1 profile is active: "local"
+2026-07-22T16:39:55.832+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.b.devtools.restart.ChangeableUrls    : The Class-Path manifest attribute in C:\Users\lvthe\.gradle\caches\modules-2\files-2.1\com.oracle.database.jdbc\ojdbc11\23.4.0.24.05\239c6f65f74ebdf08bf0da234815fc757a13224c\ojdbc11-23.4.0.24.05.jar referenced one or more files that do not exist: file:/C:/Users/lvthe/.gradle/caches/modules-2/files-2.1/com.oracle.database.jdbc/ojdbc11/23.4.0.24.05/239c6f65f74ebdf08bf0da234815fc757a13224c/oraclepki.jar
+2026-07-22T16:39:55.833+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] .e.DevToolsPropertyDefaultsPostProcessor : Devtools property defaults active! Set 'spring.devtools.add-properties' to 'false' to disable
+2026-07-22T16:39:55.834+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] .e.DevToolsPropertyDefaultsPostProcessor : For additional web related logging consider setting the 'logging.level.web' property to 'DEBUG'
+2026-07-22T16:40:04.106+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2026-07-22T16:40:05.343+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 1216 ms. Found 105 JPA repository interfaces.
+2026-07-22T16:40:06.836+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8080 (http)
+2026-07-22T16:40:06.858+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-07-22T16:40:06.858+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.53]
+2026-07-22T16:40:06.941+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext
+2026-07-22T16:40:06.942+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 11105 ms
+2026-07-22T16:40:07.122+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.c.s.JwtAuthenticationFilter        : Filter 'jwtAuthenticationFilter' configured for use
+2026-07-22T16:40:07.123+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.common.exception.TraceIdFilter     : Filter 'traceIdFilter' configured for use
+2026-07-22T16:40:07.123+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.c.w.RequestResponseLoggingFilter   : Filter 'requestResponseLoggingFilter' configured for use
+2026-07-22T16:40:07.433+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.hibernate.jpa.internal.util.LogHelper  : HHH000204: Processing PersistenceUnitInfo [name: default]
+2026-07-22T16:40:07.555+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.Version                    : HHH000412: Hibernate ORM core version 6.6.45.Final
+2026-07-22T16:40:07.608+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.h.c.internal.RegionFactoryInitiator    : HHH000026: Second-level cache disabled
+2026-07-22T16:40:08.210+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
+2026-07-22T16:40:08.265+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Starting...
+2026-07-22T16:40:09.327+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.pool.HikariPool        : HikariPool-1 - Added connection org.postgresql.jdbc.PgConnection@1ba73b50
+2026-07-22T16:40:09.329+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Start completed.
+2026-07-22T16:40:09.460+07:00  WARN [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.orm.deprecation            : HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+2026-07-22T16:40:09.725+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.orm.connections.pooling    : HHH10001005: Database info:
+	Database JDBC URL [Connecting through datasource 'HikariDataSource (HikariPool-1)']
+	Database driver: undefined/unknown
+	Database version: 17.5
+	Autocommit mode: undefined/unknown
+	Isolation level: undefined/unknown
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+2026-07-22T16:40:14.179+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.h.e.t.j.p.i.JtaPlatformInitiator       : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2026-07-22T16:40:15.142+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2026-07-22T16:40:15.892+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.d.j.r.query.QueryEnhancerFactory     : Hibernate is in classpath; If applicable, HQL parser will be used.
+2026-07-22T16:40:21.019+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.SQL                        : SELECT bank_cd, COALESCE(NULLIF(wb_get_bank_nm(bank_cd, 's'), ''), NULLIF(wb_get_bank_nm(bank_cd), '')) FROM bank_infm
+2026-07-22T16:40:36.393+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.SQL                        : select cc1_0.bank_key,cc1_0.network,cc1_0.change_reason,cc1_0.enable_yn,cc1_0.end_time,cc1_0.mod_dtm,cc1_0.mod_id,cc1_0.reg_dtm,cc1_0.reg_id,cc1_0.start_time,cc1_0.warning_time from tb_cutoff_config cc1_0
+2026-07-22T16:40:36.623+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.SQL                        : select cp1_0.param_key,cp1_0.change_reason,cp1_0.enable_yn,cp1_0.mod_dtm,cp1_0.mod_id,cp1_0.param_value,cp1_0.reg_dtm,cp1_0.reg_id from tb_cutoff_param cp1_0 where cp1_0.param_key=?
+2026-07-22T16:40:36.624+07:00 TRACE [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.orm.jdbc.bind              : binding parameter (1:VARCHAR) <- [large-txn-threshold]
+2026-07-22T16:40:36.785+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.d.p.i.s.CutoffConfigProvider       : feature=internal-transfer cutoff-config loaded from DB (DB-only, no YAML fallback)
+2026-07-22T16:40:40.039+07:00  WARN [traceId=-] 19684 --- [wecms-api] [  restartedMain] .s.s.UserDetailsServiceAutoConfiguration : 
+
+Using generated security password: 6f92bd2a-7320-4c3b-9158-43fa16b945b4
+
+This generated password is for development use only. Your security configuration must be updated before running your application in production.
+
+2026-07-22T16:40:40.059+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] r$InitializeUserDetailsManagerConfigurer : Global AuthenticationManager configured with UserDetailsService bean with name inMemoryUserDetailsManager
+2026-07-22T16:40:42.009+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.b.d.a.OptionalLiveReloadServer       : LiveReload server is running on port 35729
+2026-07-22T16:40:42.056+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 8080 (http) with context path '/'
+2026-07-22T16:40:42.068+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : Started WecmsApiMainApplication in 48.45 seconds (process running for 49.416)
+2026-07-22T16:45:42.979+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] org.hibernate.SQL                        : select cc1_0.bank_key,cc1_0.network,cc1_0.change_reason,cc1_0.enable_yn,cc1_0.end_time,cc1_0.mod_dtm,cc1_0.mod_id,cc1_0.reg_dtm,cc1_0.reg_id,cc1_0.start_time,cc1_0.warning_time from tb_cutoff_config cc1_0
+2026-07-22T16:45:43.237+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] org.hibernate.SQL                        : select cp1_0.param_key,cp1_0.change_reason,cp1_0.enable_yn,cp1_0.mod_dtm,cp1_0.mod_id,cp1_0.param_value,cp1_0.reg_dtm,cp1_0.reg_id from tb_cutoff_param cp1_0 where cp1_0.param_key=?
+2026-07-22T16:45:43.240+07:00 TRACE [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] org.hibernate.orm.jdbc.bind              : binding parameter (1:VARCHAR) <- [large-txn-threshold]
+2026-07-22T16:45:43.408+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] c.k.w.d.p.i.s.CutoffConfigProvider       : feature=internal-transfer cutoff-config refreshed from DB
+2026-07-22T16:50:43.537+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] org.hibernate.SQL                        : select cc1_0.bank_key,cc1_0.network,cc1_0.change_reason,cc1_0.enable_yn,cc1_0.end_time,cc1_0.mod_dtm,cc1_0.mod_id,cc1_0.reg_dtm,cc1_0.reg_id,cc1_0.start_time,cc1_0.warning_time from tb_cutoff_config cc1_0
+2026-07-22T16:50:43.709+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] org.hibernate.SQL                        : select cp1_0.param_key,cp1_0.change_reason,cp1_0.enable_yn,cp1_0.mod_dtm,cp1_0.mod_id,cp1_0.param_value,cp1_0.reg_dtm,cp1_0.reg_id from tb_cutoff_param cp1_0 where cp1_0.param_key=?
+2026-07-22T16:50:43.710+07:00 TRACE [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] org.hibernate.orm.jdbc.bind              : binding parameter (1:VARCHAR) <- [large-txn-threshold]
+2026-07-22T16:50:43.868+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] c.k.w.d.p.i.s.CutoffConfigProvider       : feature=internal-transfer cutoff-config refreshed from DB
+2026-07-22T16:55:44.110+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] org.hibernate.SQL                        : select cc1_0.bank_key,cc1_0.network,cc1_0.change_reason,cc1_0.enable_yn,cc1_0.end_time,cc1_0.mod_dtm,cc1_0.mod_id,cc1_0.reg_dtm,cc1_0.reg_id,cc1_0.start_time,cc1_0.warning_time from tb_cutoff_config cc1_0
+2026-07-22T16:55:44.331+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] org.hibernate.SQL                        : select cp1_0.param_key,cp1_0.change_reason,cp1_0.enable_yn,cp1_0.mod_dtm,cp1_0.mod_id,cp1_0.param_value,cp1_0.reg_dtm,cp1_0.reg_id from tb_cutoff_param cp1_0 where cp1_0.param_key=?
+2026-07-22T16:55:44.332+07:00 TRACE [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] org.hibernate.orm.jdbc.bind              : binding parameter (1:VARCHAR) <- [large-txn-threshold]
+2026-07-22T16:55:44.498+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] c.k.w.d.p.i.s.CutoffConfigProvider       : feature=internal-transfer cutoff-config refreshed from DB
+2026-07-22T16:56:21.382+07:00  INFO [traceId=-] 19684 --- [wecms-api] [   File Watcher] rtingClassPathChangeChangedEventListener : Restarting due to 214 class path changes (0 additions, 0 deletions, 214 modifications)
+2026-07-22T16:56:21.813+07:00  INFO [traceId=-] 19684 --- [wecms-api] [       Thread-5] o.s.b.w.e.tomcat.GracefulShutdown        : Commencing graceful shutdown. Waiting for active requests to complete
+2026-07-22T16:56:21.933+07:00  INFO [traceId=-] 19684 --- [wecms-api] [tomcat-shutdown] o.s.b.w.e.tomcat.GracefulShutdown        : Graceful shutdown complete
+2026-07-22T16:56:22.086+07:00  INFO [traceId=-] 19684 --- [wecms-api] [       Thread-5] j.LocalContainerEntityManagerFactoryBean : Closing JPA EntityManagerFactory for persistence unit 'default'
+2026-07-22T16:56:22.321+07:00  INFO [traceId=-] 19684 --- [wecms-api] [       Thread-5] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Shutdown initiated...
+2026-07-22T16:56:22.369+07:00  INFO [traceId=-] 19684 --- [wecms-api] [       Thread-5] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Shutdown completed.
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+
+ :: Spring Boot ::               (v3.5.13)
+
+2026-07-22T16:56:23.457+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : Starting WecmsApiMainApplication using Java 21.0.11 with PID 19684 (C:\Project\wecms\wecms-api\build\classes\java\main started by lvthe in C:\Project\wecms\wecms-api)
+2026-07-22T16:56:23.458+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : Running with Spring Boot v3.5.13, Spring v6.2.17
+2026-07-22T16:56:23.458+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : The following 1 profile is active: "local"
+2026-07-22T16:56:26.427+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2026-07-22T16:56:27.721+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 1288 ms. Found 105 JPA repository interfaces.
+2026-07-22T16:56:28.747+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8081 (http)
+2026-07-22T16:56:28.753+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-07-22T16:56:28.753+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.53]
+2026-07-22T16:56:28.838+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext
+2026-07-22T16:56:28.838+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 5373 ms
+2026-07-22T16:56:28.981+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.c.s.JwtAuthenticationFilter        : Filter 'jwtAuthenticationFilter' configured for use
+2026-07-22T16:56:28.982+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.common.exception.TraceIdFilter     : Filter 'traceIdFilter' configured for use
+2026-07-22T16:56:28.982+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.c.w.RequestResponseLoggingFilter   : Filter 'requestResponseLoggingFilter' configured for use
+2026-07-22T16:56:29.454+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.hibernate.jpa.internal.util.LogHelper  : HHH000204: Processing PersistenceUnitInfo [name: default]
+2026-07-22T16:56:29.470+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.h.c.internal.RegionFactoryInitiator    : HHH000026: Second-level cache disabled
+2026-07-22T16:56:29.532+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
+2026-07-22T16:56:29.535+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.HikariDataSource       : HikariPool-2 - Starting...
+2026-07-22T16:56:30.203+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.pool.HikariPool        : HikariPool-2 - Added connection org.postgresql.jdbc.PgConnection@4a4dbb96
+2026-07-22T16:56:30.204+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.HikariDataSource       : HikariPool-2 - Start completed.
+2026-07-22T16:56:30.288+07:00  WARN [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.orm.deprecation            : HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+2026-07-22T16:56:30.527+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.orm.connections.pooling    : HHH10001005: Database info:
+	Database JDBC URL [Connecting through datasource 'HikariDataSource (HikariPool-2)']
+	Database driver: undefined/unknown
+	Database version: 17.5
+	Autocommit mode: undefined/unknown
+	Isolation level: undefined/unknown
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+2026-07-22T16:56:33.110+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.h.e.t.j.p.i.JtaPlatformInitiator       : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2026-07-22T16:56:35.350+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2026-07-22T16:56:35.589+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.SQL                        : SELECT bank_cd, COALESCE(NULLIF(wb_get_bank_nm(bank_cd, 's'), ''), NULLIF(wb_get_bank_nm(bank_cd), '')) FROM bank_infm
+2026-07-22T16:56:38.203+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.SQL                        : select cc1_0.bank_key,cc1_0.network,cc1_0.change_reason,cc1_0.enable_yn,cc1_0.end_time,cc1_0.mod_dtm,cc1_0.mod_id,cc1_0.reg_dtm,cc1_0.reg_id,cc1_0.start_time,cc1_0.warning_time from tb_cutoff_config cc1_0
+2026-07-22T16:56:38.374+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.SQL                        : select cp1_0.param_key,cp1_0.change_reason,cp1_0.enable_yn,cp1_0.mod_dtm,cp1_0.mod_id,cp1_0.param_value,cp1_0.reg_dtm,cp1_0.reg_id from tb_cutoff_param cp1_0 where cp1_0.param_key=?
+2026-07-22T16:56:38.375+07:00 TRACE [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.orm.jdbc.bind              : binding parameter (1:VARCHAR) <- [large-txn-threshold]
+2026-07-22T16:56:38.536+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.d.p.i.s.CutoffConfigProvider       : feature=internal-transfer cutoff-config loaded from DB (DB-only, no YAML fallback)
+2026-07-22T16:56:41.054+07:00  WARN [traceId=-] 19684 --- [wecms-api] [  restartedMain] .s.s.UserDetailsServiceAutoConfiguration : 
+
+Using generated security password: d3c9c596-3286-4d8e-b25b-d9cc60b015f8
+
+This generated password is for development use only. Your security configuration must be updated before running your application in production.
+
+2026-07-22T16:56:41.061+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] r$InitializeUserDetailsManagerConfigurer : Global AuthenticationManager configured with UserDetailsService bean with name inMemoryUserDetailsManager
+2026-07-22T16:56:41.896+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.b.d.a.OptionalLiveReloadServer       : LiveReload server is running on port 35729
+2026-07-22T16:56:41.961+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 8081 (http) with context path '/'
+2026-07-22T16:56:41.969+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : Started WecmsApiMainApplication in 18.678 seconds (process running for 1009.317)
+2026-07-22T16:56:41.972+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] .ConditionEvaluationDeltaLoggingListener : Condition evaluation unchanged
+2026-07-22T17:01:42.085+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] org.hibernate.SQL                        : select cc1_0.bank_key,cc1_0.network,cc1_0.change_reason,cc1_0.enable_yn,cc1_0.end_time,cc1_0.mod_dtm,cc1_0.mod_id,cc1_0.reg_dtm,cc1_0.reg_id,cc1_0.start_time,cc1_0.warning_time from tb_cutoff_config cc1_0
+2026-07-22T17:01:42.258+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] org.hibernate.SQL                        : select cp1_0.param_key,cp1_0.change_reason,cp1_0.enable_yn,cp1_0.mod_dtm,cp1_0.mod_id,cp1_0.param_value,cp1_0.reg_dtm,cp1_0.reg_id from tb_cutoff_param cp1_0 where cp1_0.param_key=?
+2026-07-22T17:01:42.258+07:00 TRACE [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] org.hibernate.orm.jdbc.bind              : binding parameter (1:VARCHAR) <- [large-txn-threshold]
+2026-07-22T17:01:42.420+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] c.k.w.d.p.i.s.CutoffConfigProvider       : feature=internal-transfer cutoff-config refreshed from DB
+2026-07-22T17:06:42.824+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] org.hibernate.SQL                        : select cc1_0.bank_key,cc1_0.network,cc1_0.change_reason,cc1_0.enable_yn,cc1_0.end_time,cc1_0.mod_dtm,cc1_0.mod_id,cc1_0.reg_dtm,cc1_0.reg_id,cc1_0.start_time,cc1_0.warning_time from tb_cutoff_config cc1_0
+2026-07-22T17:06:43.104+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] org.hibernate.SQL                        : select cp1_0.param_key,cp1_0.change_reason,cp1_0.enable_yn,cp1_0.mod_dtm,cp1_0.mod_id,cp1_0.param_value,cp1_0.reg_dtm,cp1_0.reg_id from tb_cutoff_param cp1_0 where cp1_0.param_key=?
+2026-07-22T17:06:43.107+07:00 TRACE [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] org.hibernate.orm.jdbc.bind              : binding parameter (1:VARCHAR) <- [large-txn-threshold]
+2026-07-22T17:06:43.270+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] c.k.w.d.p.i.s.CutoffConfigProvider       : feature=internal-transfer cutoff-config refreshed from DB
+2026-07-22T17:09:39.230+07:00  INFO [traceId=-] 19684 --- [wecms-api] [   File Watcher] rtingClassPathChangeChangedEventListener : Restarting due to 214 class path changes (0 additions, 0 deletions, 214 modifications)
+2026-07-22T17:09:39.327+07:00  INFO [traceId=-] 19684 --- [wecms-api] [       Thread-7] o.s.b.w.e.tomcat.GracefulShutdown        : Commencing graceful shutdown. Waiting for active requests to complete
+2026-07-22T17:09:39.384+07:00  INFO [traceId=-] 19684 --- [wecms-api] [tomcat-shutdown] o.s.b.w.e.tomcat.GracefulShutdown        : Graceful shutdown complete
+2026-07-22T17:09:39.460+07:00  INFO [traceId=-] 19684 --- [wecms-api] [       Thread-7] j.LocalContainerEntityManagerFactoryBean : Closing JPA EntityManagerFactory for persistence unit 'default'
+2026-07-22T17:09:39.504+07:00  INFO [traceId=-] 19684 --- [wecms-api] [       Thread-7] com.zaxxer.hikari.HikariDataSource       : HikariPool-2 - Shutdown initiated...
+2026-07-22T17:09:39.555+07:00  INFO [traceId=-] 19684 --- [wecms-api] [       Thread-7] com.zaxxer.hikari.HikariDataSource       : HikariPool-2 - Shutdown completed.
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+
+ :: Spring Boot ::               (v3.5.13)
+
+2026-07-22T17:09:40.540+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : Starting WecmsApiMainApplication using Java 21.0.11 with PID 19684 (C:\Project\wecms\wecms-api\build\classes\java\main started by lvthe in C:\Project\wecms\wecms-api)
+2026-07-22T17:09:40.540+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : Running with Spring Boot v3.5.13, Spring v6.2.17
+2026-07-22T17:09:40.540+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : The following 1 profile is active: "local"
+2026-07-22T17:09:43.012+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2026-07-22T17:09:43.478+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 464 ms. Found 105 JPA repository interfaces.
+2026-07-22T17:09:43.870+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8080 (http)
+2026-07-22T17:09:43.874+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-07-22T17:09:43.874+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.53]
+2026-07-22T17:09:43.918+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext
+2026-07-22T17:09:43.918+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 3369 ms
+2026-07-22T17:09:43.985+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.c.s.JwtAuthenticationFilter        : Filter 'jwtAuthenticationFilter' configured for use
+2026-07-22T17:09:43.985+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.common.exception.TraceIdFilter     : Filter 'traceIdFilter' configured for use
+2026-07-22T17:09:43.986+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.c.w.RequestResponseLoggingFilter   : Filter 'requestResponseLoggingFilter' configured for use
+2026-07-22T17:09:44.179+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.hibernate.jpa.internal.util.LogHelper  : HHH000204: Processing PersistenceUnitInfo [name: default]
+2026-07-22T17:09:44.185+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.h.c.internal.RegionFactoryInitiator    : HHH000026: Second-level cache disabled
+2026-07-22T17:09:44.213+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
+2026-07-22T17:09:44.214+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.HikariDataSource       : HikariPool-3 - Starting...
+2026-07-22T17:09:44.879+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.pool.HikariPool        : HikariPool-3 - Added connection org.postgresql.jdbc.PgConnection@916e2d8
+2026-07-22T17:09:44.879+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.HikariDataSource       : HikariPool-3 - Start completed.
+2026-07-22T17:09:44.962+07:00  WARN [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.orm.deprecation            : HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+2026-07-22T17:09:45.201+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.orm.connections.pooling    : HHH10001005: Database info:
+	Database JDBC URL [Connecting through datasource 'HikariDataSource (HikariPool-3)']
+	Database driver: undefined/unknown
+	Database version: 17.5
+	Autocommit mode: undefined/unknown
+	Isolation level: undefined/unknown
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+2026-07-22T17:09:48.892+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.h.e.t.j.p.i.JtaPlatformInitiator       : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2026-07-22T17:09:51.153+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2026-07-22T17:09:51.992+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.SQL                        : SELECT bank_cd, COALESCE(NULLIF(wb_get_bank_nm(bank_cd, 's'), ''), NULLIF(wb_get_bank_nm(bank_cd), '')) FROM bank_infm
+2026-07-22T17:09:57.060+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.SQL                        : select cc1_0.bank_key,cc1_0.network,cc1_0.change_reason,cc1_0.enable_yn,cc1_0.end_time,cc1_0.mod_dtm,cc1_0.mod_id,cc1_0.reg_dtm,cc1_0.reg_id,cc1_0.start_time,cc1_0.warning_time from tb_cutoff_config cc1_0
+2026-07-22T17:09:57.233+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.SQL                        : select cp1_0.param_key,cp1_0.change_reason,cp1_0.enable_yn,cp1_0.mod_dtm,cp1_0.mod_id,cp1_0.param_value,cp1_0.reg_dtm,cp1_0.reg_id from tb_cutoff_param cp1_0 where cp1_0.param_key=?
+2026-07-22T17:09:57.233+07:00 TRACE [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.orm.jdbc.bind              : binding parameter (1:VARCHAR) <- [large-txn-threshold]
+2026-07-22T17:09:57.397+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.d.p.i.s.CutoffConfigProvider       : feature=internal-transfer cutoff-config loaded from DB (DB-only, no YAML fallback)
+2026-07-22T17:10:04.053+07:00  WARN [traceId=-] 19684 --- [wecms-api] [  restartedMain] .s.s.UserDetailsServiceAutoConfiguration : 
+
+Using generated security password: 9b1f0720-d1ac-451a-b810-a27fd8b99343
+
+This generated password is for development use only. Your security configuration must be updated before running your application in production.
+
+2026-07-22T17:10:04.141+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] r$InitializeUserDetailsManagerConfigurer : Global AuthenticationManager configured with UserDetailsService bean with name inMemoryUserDetailsManager
+2026-07-22T17:10:06.709+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.b.d.a.OptionalLiveReloadServer       : LiveReload server is running on port 35729
+2026-07-22T17:10:06.914+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 8080 (http) with context path '/'
+2026-07-22T17:10:06.946+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : Started WecmsApiMainApplication in 26.635 seconds (process running for 1814.295)
+2026-07-22T17:10:06.954+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] .ConditionEvaluationDeltaLoggingListener : Condition evaluation unchanged
+2026-07-22T17:11:11.374+07:00  INFO [traceId=-] 19684 --- [wecms-api] [   File Watcher] rtingClassPathChangeChangedEventListener : Restarting due to 1393 class path changes (0 additions, 1393 deletions, 0 modifications)
+2026-07-22T17:11:11.378+07:00  INFO [traceId=-] 19684 --- [wecms-api] [      Thread-11] o.s.b.w.e.tomcat.GracefulShutdown        : Commencing graceful shutdown. Waiting for active requests to complete
+2026-07-22T17:11:11.399+07:00  INFO [traceId=-] 19684 --- [wecms-api] [tomcat-shutdown] o.s.b.w.e.tomcat.GracefulShutdown        : Graceful shutdown complete
+2026-07-22T17:11:11.442+07:00  INFO [traceId=-] 19684 --- [wecms-api] [      Thread-11] j.LocalContainerEntityManagerFactoryBean : Closing JPA EntityManagerFactory for persistence unit 'default'
+2026-07-22T17:11:11.445+07:00  INFO [traceId=-] 19684 --- [wecms-api] [      Thread-11] com.zaxxer.hikari.HikariDataSource       : HikariPool-3 - Shutdown initiated...
+2026-07-22T17:11:11.452+07:00  INFO [traceId=-] 19684 --- [wecms-api] [      Thread-11] com.zaxxer.hikari.HikariDataSource       : HikariPool-3 - Shutdown completed.
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+
+ :: Spring Boot ::               (v3.5.13)
+
+2026-07-22T17:11:11.782+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : Starting WecmsApiMainApplication using Java 21.0.11 with PID 19684 (C:\Project\wecms\wecms-api\build\classes\java\main started by lvthe in C:\Project\wecms\wecms-api)
+2026-07-22T17:11:11.782+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : Running with Spring Boot v3.5.13, Spring v6.2.17
+2026-07-22T17:11:11.782+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : The following 1 profile is active: "local"
+2026-07-22T17:11:12.424+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2026-07-22T17:11:12.429+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 1 ms. Found 0 JPA repository interfaces.
+2026-07-22T17:11:12.647+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8080 (http)
+2026-07-22T17:11:12.649+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-07-22T17:11:12.649+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.53]
+2026-07-22T17:11:12.727+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext
+2026-07-22T17:11:12.727+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 936 ms
+2026-07-22T17:11:12.804+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.hibernate.jpa.internal.util.LogHelper  : HHH000204: Processing PersistenceUnitInfo [name: default]
+2026-07-22T17:11:12.814+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.h.c.internal.RegionFactoryInitiator    : HHH000026: Second-level cache disabled
+2026-07-22T17:11:12.838+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
+2026-07-22T17:11:12.841+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.HikariDataSource       : HikariPool-4 - Starting...
+2026-07-22T17:11:13.514+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.pool.HikariPool        : HikariPool-4 - Added connection org.postgresql.jdbc.PgConnection@53d7bf12
+2026-07-22T17:11:13.515+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.HikariDataSource       : HikariPool-4 - Start completed.
+2026-07-22T17:11:13.602+07:00  WARN [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.orm.deprecation            : HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+2026-07-22T17:11:13.842+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.orm.connections.pooling    : HHH10001005: Database info:
+	Database JDBC URL [Connecting through datasource 'HikariDataSource (HikariPool-4)']
+	Database driver: undefined/unknown
+	Database version: 17.5
+	Autocommit mode: undefined/unknown
+	Isolation level: undefined/unknown
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+2026-07-22T17:11:13.888+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.h.e.t.j.p.i.JtaPlatformInitiator       : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2026-07-22T17:11:13.888+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2026-07-22T17:11:14.102+07:00  WARN [traceId=-] 19684 --- [wecms-api] [  restartedMain] .s.s.UserDetailsServiceAutoConfiguration : 
+
+Using generated security password: e7eba191-a9fd-4428-8dfe-2b3b2dd09d9a
+
+This generated password is for development use only. Your security configuration must be updated before running your application in production.
+
+2026-07-22T17:11:14.104+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] r$InitializeUserDetailsManagerConfigurer : Global AuthenticationManager configured with UserDetailsService bean with name inMemoryUserDetailsManager
+2026-07-22T17:11:14.179+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.b.d.a.OptionalLiveReloadServer       : LiveReload server is running on port 35729
+2026-07-22T17:11:14.195+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 8080 (http) with context path '/'
+2026-07-22T17:11:14.202+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : Started WecmsApiMainApplication in 2.575 seconds (process running for 1881.551)
+2026-07-22T17:11:14.210+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] .ConditionEvaluationDeltaLoggingListener : Condition evaluation delta:
+
+
+==========================
+CONDITION EVALUATION DELTA
+==========================
+
+
+Positive matches:
+-----------------
+
+   SpringBootWebSecurityConfiguration.SecurityFilterChainConfiguration matched:
+      - AllNestedConditions 2 matched 0 did not; NestedCondition on DefaultWebSecurityCondition.Beans @ConditionalOnMissingBean (types: org.springframework.security.web.SecurityFilterChain; SearchStrategy: all) did not find any beans; NestedCondition on DefaultWebSecurityCondition.Classes @ConditionalOnClass found required classes 'org.springframework.security.web.SecurityFilterChain', 'org.springframework.security.config.annotation.web.builders.HttpSecurity' (DefaultWebSecurityCondition)
+
+   TaskExecutorConfigurations.AsyncConfigurerConfiguration matched:
+      - @ConditionalOnMissingBean (types: org.springframework.scheduling.annotation.AsyncConfigurer; SearchStrategy: all) did not find any beans (OnBeanCondition)
+
+   TaskExecutorConfigurations.AsyncConfigurerConfiguration#applicationTaskExecutorAsyncConfigurer matched:
+      - @ConditionalOnMissingBean (types: org.springframework.scheduling.annotation.AsyncConfigurer; SearchStrategy: all) did not find any beans (OnBeanCondition)
+
+   TaskExecutorConfigurations.TaskExecutorConfiguration matched:
+      - AnyNestedCondition 1 matched 1 did not; NestedCondition on TaskExecutorConfigurations.OnExecutorCondition.ModelCondition @ConditionalOnProperty (spring.task.execution.mode=force) did not find property 'spring.task.execution.mode'; NestedCondition on TaskExecutorConfigurations.OnExecutorCondition.ExecutorBeanCondition @ConditionalOnMissingBean (types: java.util.concurrent.Executor; SearchStrategy: all) did not find any beans (TaskExecutorConfigurations.OnExecutorCondition)
+
+   TaskExecutorConfigurations.TaskExecutorConfiguration#applicationTaskExecutor matched:
+      - @ConditionalOnThreading found PLATFORM (OnThreadingCondition)
+
+
+Negative matches:
+-----------------
+
+   TaskExecutorConfigurations.TaskExecutorConfiguration#applicationTaskExecutorVirtualThreads:
+      Did not match:
+         - @ConditionalOnThreading did not find VIRTUAL (OnThreadingCondition)
+
+   TaskSchedulingAutoConfiguration#scheduledBeanLazyInitializationExcludeFilter:
+      Did not match:
+         - @ConditionalOnBean (names: org.springframework.context.annotation.internalScheduledAnnotationProcessor; SearchStrategy: all) did not find any beans named org.springframework.context.annotation.internalScheduledAnnotationProcessor (OnBeanCondition)
+
+   TaskSchedulingConfigurations.TaskSchedulerConfiguration:
+      Did not match:
+         - @ConditionalOnBean (names: org.springframework.context.annotation.internalScheduledAnnotationProcessor; SearchStrategy: all) did not find any beans named org.springframework.context.annotation.internalScheduledAnnotationProcessor (OnBeanCondition)
+
+
+Exclusions:
+-----------
+
+    None
+
+
+Unconditional classes:
+----------------------
+
+    None
+
+
+
+2026-07-22T17:11:56.168+07:00  INFO [traceId=-] 19684 --- [wecms-api] [   File Watcher] rtingClassPathChangeChangedEventListener : Restarting due to 1393 class path changes (1393 additions, 0 deletions, 0 modifications)
+2026-07-22T17:11:56.173+07:00  INFO [traceId=-] 19684 --- [wecms-api] [      Thread-15] o.s.b.w.e.tomcat.GracefulShutdown        : Commencing graceful shutdown. Waiting for active requests to complete
+2026-07-22T17:11:56.224+07:00  INFO [traceId=-] 19684 --- [wecms-api] [tomcat-shutdown] o.s.b.w.e.tomcat.GracefulShutdown        : Graceful shutdown complete
+2026-07-22T17:11:56.228+07:00  INFO [traceId=-] 19684 --- [wecms-api] [      Thread-15] j.LocalContainerEntityManagerFactoryBean : Closing JPA EntityManagerFactory for persistence unit 'default'
+2026-07-22T17:11:56.229+07:00  INFO [traceId=-] 19684 --- [wecms-api] [      Thread-15] com.zaxxer.hikari.HikariDataSource       : HikariPool-4 - Shutdown initiated...
+2026-07-22T17:11:56.242+07:00  INFO [traceId=-] 19684 --- [wecms-api] [      Thread-15] com.zaxxer.hikari.HikariDataSource       : HikariPool-4 - Shutdown completed.
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+
+ :: Spring Boot ::               (v3.5.13)
+
+2026-07-22T17:11:56.548+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : Starting WecmsApiMainApplication using Java 21.0.11 with PID 19684 (C:\Project\wecms\wecms-api\build\classes\java\main started by lvthe in C:\Project\wecms\wecms-api)
+2026-07-22T17:11:56.548+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : Running with Spring Boot v3.5.13, Spring v6.2.17
+2026-07-22T17:11:56.548+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : The following 1 profile is active: "local"
+2026-07-22T17:12:00.461+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2026-07-22T17:12:01.824+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 1362 ms. Found 105 JPA repository interfaces.
+2026-07-22T17:12:02.560+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8080 (http)
+2026-07-22T17:12:02.561+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-07-22T17:12:02.561+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.53]
+2026-07-22T17:12:02.626+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext
+2026-07-22T17:12:02.626+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 6071 ms
+2026-07-22T17:12:02.808+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.c.s.JwtAuthenticationFilter        : Filter 'jwtAuthenticationFilter' configured for use
+2026-07-22T17:12:02.809+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.common.exception.TraceIdFilter     : Filter 'traceIdFilter' configured for use
+2026-07-22T17:12:02.810+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.c.w.RequestResponseLoggingFilter   : Filter 'requestResponseLoggingFilter' configured for use
+2026-07-22T17:12:03.207+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.hibernate.jpa.internal.util.LogHelper  : HHH000204: Processing PersistenceUnitInfo [name: default]
+2026-07-22T17:12:03.213+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.h.c.internal.RegionFactoryInitiator    : HHH000026: Second-level cache disabled
+2026-07-22T17:12:03.238+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
+2026-07-22T17:12:03.241+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.HikariDataSource       : HikariPool-5 - Starting...
+2026-07-22T17:12:03.903+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.pool.HikariPool        : HikariPool-5 - Added connection org.postgresql.jdbc.PgConnection@411e5baf
+2026-07-22T17:12:03.903+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.HikariDataSource       : HikariPool-5 - Start completed.
+2026-07-22T17:12:03.988+07:00  WARN [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.orm.deprecation            : HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+2026-07-22T17:12:04.226+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.orm.connections.pooling    : HHH10001005: Database info:
+	Database JDBC URL [Connecting through datasource 'HikariDataSource (HikariPool-5)']
+	Database driver: undefined/unknown
+	Database version: 17.5
+	Autocommit mode: undefined/unknown
+	Isolation level: undefined/unknown
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+2026-07-22T17:12:07.714+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.h.e.t.j.p.i.JtaPlatformInitiator       : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2026-07-22T17:12:09.932+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2026-07-22T17:12:10.501+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.SQL                        : SELECT bank_cd, COALESCE(NULLIF(wb_get_bank_nm(bank_cd, 's'), ''), NULLIF(wb_get_bank_nm(bank_cd), '')) FROM bank_infm
+2026-07-22T17:12:15.462+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.SQL                        : select cc1_0.bank_key,cc1_0.network,cc1_0.change_reason,cc1_0.enable_yn,cc1_0.end_time,cc1_0.mod_dtm,cc1_0.mod_id,cc1_0.reg_dtm,cc1_0.reg_id,cc1_0.start_time,cc1_0.warning_time from tb_cutoff_config cc1_0
+2026-07-22T17:12:15.643+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.SQL                        : select cp1_0.param_key,cp1_0.change_reason,cp1_0.enable_yn,cp1_0.mod_dtm,cp1_0.mod_id,cp1_0.param_value,cp1_0.reg_dtm,cp1_0.reg_id from tb_cutoff_param cp1_0 where cp1_0.param_key=?
+2026-07-22T17:12:15.644+07:00 TRACE [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.orm.jdbc.bind              : binding parameter (1:VARCHAR) <- [large-txn-threshold]
+2026-07-22T17:12:15.807+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.d.p.i.s.CutoffConfigProvider       : feature=internal-transfer cutoff-config loaded from DB (DB-only, no YAML fallback)
+2026-07-22T17:12:19.620+07:00  WARN [traceId=-] 19684 --- [wecms-api] [  restartedMain] .s.s.UserDetailsServiceAutoConfiguration : 
+
+Using generated security password: 7c2ed29f-9aed-41f4-92e0-7f9755ff9e15
+
+This generated password is for development use only. Your security configuration must be updated before running your application in production.
+
+2026-07-22T17:12:19.623+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] r$InitializeUserDetailsManagerConfigurer : Global AuthenticationManager configured with UserDetailsService bean with name inMemoryUserDetailsManager
+2026-07-22T17:12:20.484+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.b.d.a.OptionalLiveReloadServer       : LiveReload server is running on port 35729
+2026-07-22T17:12:20.542+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 8080 (http) with context path '/'
+2026-07-22T17:12:20.554+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : Started WecmsApiMainApplication in 24.123 seconds (process running for 1947.902)
+2026-07-22T17:12:20.558+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] .ConditionEvaluationDeltaLoggingListener : Condition evaluation delta:
+
+
+==========================
+CONDITION EVALUATION DELTA
+==========================
+
+
+Positive matches:
+-----------------
+
+   MockEfsApiClient matched:
+      - @ConditionalOnProperty (wecms.dispatch.efs.enabled=false) matched (OnPropertyCondition)
+
+   MockSftpClient matched:
+      - @ConditionalOnProperty (wecms.dispatch.sftp.enabled=false) matched (OnPropertyCondition)
+
+   TaskSchedulingAutoConfiguration#scheduledBeanLazyInitializationExcludeFilter matched:
+      - @ConditionalOnBean (names: org.springframework.context.annotation.internalScheduledAnnotationProcessor; SearchStrategy: all) found bean 'org.springframework.context.annotation.internalScheduledAnnotationProcessor' (OnBeanCondition)
+
+   TaskSchedulingConfigurations.TaskSchedulerConfiguration matched:
+      - @ConditionalOnBean (names: org.springframework.context.annotation.internalScheduledAnnotationProcessor; SearchStrategy: all) found bean 'org.springframework.context.annotation.internalScheduledAnnotationProcessor'; @ConditionalOnMissingBean (types: org.springframework.scheduling.TaskScheduler,java.util.concurrent.ScheduledExecutorService; SearchStrategy: all) did not find any beans (OnBeanCondition)
+
+   TaskSchedulingConfigurations.TaskSchedulerConfiguration#taskScheduler matched:
+      - @ConditionalOnThreading found PLATFORM (OnThreadingCondition)
+
+
+Negative matches:
+-----------------
+
+   EfsClientConfig:
+      Did not match:
+         - @ConditionalOnProperty (wecms.dispatch.efs.enabled=true) did not find property 'enabled' (OnPropertyCondition)
+
+   ErpPaymentRefreshMasterImporter:
+      Did not match:
+         - @ConditionalOnProperty (haengsung.oracle.enabled=true) found different value in property 'enabled' (OnPropertyCondition)
+
+   ErpPaymentRefreshService:
+      Did not match:
+         - @ConditionalOnProperty (haengsung.oracle.enabled=true) found different value in property 'enabled' (OnPropertyCondition)
+
+   ExchangeRateBatchScheduler:
+      Did not match:
+         - @ConditionalOnProperty (wecms.exchange-rate.batch.enabled=true) found different value in property 'enabled' (OnPropertyCondition)
+
+   HaengsungApprovalStatusWriteBackService:
+      Did not match:
+         - @ConditionalOnProperty (haengsung.oracle.enabled=true) found different value in property 'enabled' (OnPropertyCondition)
+
+   HaengsungCardAccountOracleRepository:
+      Did not match:
+         - @ConditionalOnProperty (haengsung.oracle.enabled=true) found different value in property 'enabled' (OnPropertyCondition)
+
+   HaengsungCardAccountSyncJob:
+      Did not match:
+         - @ConditionalOnProperty (haengsung.card-account-sync.enabled=true) found different value in property 'enabled' (OnPropertyCondition)
+
+   HaengsungCardAccountSyncService:
+      Did not match:
+         - @ConditionalOnProperty (haengsung.oracle.enabled=true) found different value in property 'enabled' (OnPropertyCondition)
+
+   HaengsungDispatchResultWriteBackService:
+      Did not match:
+         - @ConditionalOnProperty (haengsung.oracle.enabled=true) found different value in property 'enabled' (OnPropertyCondition)
+
+   HaengsungErpOracleRepository:
+      Did not match:
+         - @ConditionalOnProperty (haengsung.oracle.enabled=true) found different value in property 'enabled' (OnPropertyCondition)
+
+   HaengsungExchangeRateSyncJob:
+      Did not match:
+         - @ConditionalOnProperty (haengsung.exchange-rate-sync.enabled=true) found different value in property 'enabled' (OnPropertyCondition)
+
+   HaengsungExchangeRateSyncService:
+      Did not match:
+         - @ConditionalOnProperty (haengsung.oracle.enabled=true) found different value in property 'enabled' (OnPropertyCondition)
+
+   HaengsungFcyExRateOracleRepository:
+      Did not match:
+         - @ConditionalOnProperty (haengsung.oracle.enabled=true) found different value in property 'enabled' (OnPropertyCondition)
+
+   HaengsungOracleDataSourceConfig:
+      Did not match:
+         - @ConditionalOnProperty (haengsung.oracle.enabled=true) found different value in property 'enabled' (OnPropertyCondition)
+
+   HaengsungOracleHealthCheck:
+      Did not match:
+         - @ConditionalOnProperty (haengsung.oracle.enabled=true) found different value in property 'enabled' (OnPropertyCondition)
+
+   HaengsungScheduledPaymentImportJob:
+      Did not match:
+         - @ConditionalOnProperty (haengsung.scheduled-payment-import.enabled=true) found different value in property 'enabled' (OnPropertyCondition)
+
+   JschSftpClient:
+      Did not match:
+         - @ConditionalOnProperty (wecms.dispatch.sftp.enabled=true) did not find property 'enabled' (OnPropertyCondition)
+
+   OperationStatusBatchScheduler:
+      Did not match:
+         - @ConditionalOnProperty (wecms.operation-status.batch.enabled=true) found different value in property 'enabled' (OnPropertyCondition)
+
+   RestClientEfsApiClient:
+      Did not match:
+         - @ConditionalOnProperty (wecms.dispatch.efs.enabled=true) did not find property 'enabled' (OnPropertyCondition)
+
+   SpringBootWebSecurityConfiguration.SecurityFilterChainConfiguration:
+      Did not match:
+         - AllNestedConditions 1 matched 1 did not; NestedCondition on DefaultWebSecurityCondition.Beans @ConditionalOnMissingBean (types: org.springframework.security.web.SecurityFilterChain; SearchStrategy: all) found beans of type 'org.springframework.security.web.SecurityFilterChain' filterChain; NestedCondition on DefaultWebSecurityCondition.Classes @ConditionalOnClass found required classes 'org.springframework.security.web.SecurityFilterChain', 'org.springframework.security.config.annotation.web.builders.HttpSecurity' (DefaultWebSecurityCondition)
+
+   TaskExecutorConfigurations.TaskExecutorConfiguration:
+      Did not match:
+         - AnyNestedCondition 0 matched 2 did not; NestedCondition on TaskExecutorConfigurations.OnExecutorCondition.ModelCondition @ConditionalOnProperty (spring.task.execution.mode=force) did not find property 'spring.task.execution.mode'; NestedCondition on TaskExecutorConfigurations.OnExecutorCondition.ExecutorBeanCondition @ConditionalOnMissingBean (types: java.util.concurrent.Executor; SearchStrategy: all) found beans of type 'java.util.concurrent.Executor' opsAlertExecutor (TaskExecutorConfigurations.OnExecutorCondition)
+
+   TaskSchedulingConfigurations.TaskSchedulerConfiguration#taskSchedulerVirtualThreads:
+      Did not match:
+         - @ConditionalOnThreading did not find VIRTUAL (OnThreadingCondition)
+
+
+Exclusions:
+-----------
+
+    None
+
+
+Unconditional classes:
+----------------------
+
+    None
+
+
+
+2026-07-22T17:17:20.997+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] org.hibernate.SQL                        : select cc1_0.bank_key,cc1_0.network,cc1_0.change_reason,cc1_0.enable_yn,cc1_0.end_time,cc1_0.mod_dtm,cc1_0.mod_id,cc1_0.reg_dtm,cc1_0.reg_id,cc1_0.start_time,cc1_0.warning_time from tb_cutoff_config cc1_0
+2026-07-22T17:17:21.281+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] org.hibernate.SQL                        : select cp1_0.param_key,cp1_0.change_reason,cp1_0.enable_yn,cp1_0.mod_dtm,cp1_0.mod_id,cp1_0.param_value,cp1_0.reg_dtm,cp1_0.reg_id from tb_cutoff_param cp1_0 where cp1_0.param_key=?
+2026-07-22T17:17:21.283+07:00 TRACE [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] org.hibernate.orm.jdbc.bind              : binding parameter (1:VARCHAR) <- [large-txn-threshold]
+2026-07-22T17:17:21.529+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] c.k.w.d.p.i.s.CutoffConfigProvider       : feature=internal-transfer cutoff-config refreshed from DB
+2026-07-22T17:19:45.377+07:00  INFO [traceId=-] 19684 --- [wecms-api] [   File Watcher] rtingClassPathChangeChangedEventListener : Restarting due to 214 class path changes (0 additions, 0 deletions, 214 modifications)
+2026-07-22T17:19:45.477+07:00  INFO [traceId=-] 19684 --- [wecms-api] [      Thread-19] o.s.b.w.e.tomcat.GracefulShutdown        : Commencing graceful shutdown. Waiting for active requests to complete
+2026-07-22T17:19:45.516+07:00  INFO [traceId=-] 19684 --- [wecms-api] [tomcat-shutdown] o.s.b.w.e.tomcat.GracefulShutdown        : Graceful shutdown complete
+2026-07-22T17:19:45.578+07:00  INFO [traceId=-] 19684 --- [wecms-api] [      Thread-19] j.LocalContainerEntityManagerFactoryBean : Closing JPA EntityManagerFactory for persistence unit 'default'
+2026-07-22T17:19:45.606+07:00  INFO [traceId=-] 19684 --- [wecms-api] [      Thread-19] com.zaxxer.hikari.HikariDataSource       : HikariPool-5 - Shutdown initiated...
+2026-07-22T17:19:45.654+07:00  INFO [traceId=-] 19684 --- [wecms-api] [      Thread-19] com.zaxxer.hikari.HikariDataSource       : HikariPool-5 - Shutdown completed.
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+
+ :: Spring Boot ::               (v3.5.13)
+
+2026-07-22T17:19:46.957+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : Starting WecmsApiMainApplication using Java 21.0.11 with PID 19684 (C:\Project\wecms\wecms-api\build\classes\java\main started by lvthe in C:\Project\wecms\wecms-api)
+2026-07-22T17:19:46.958+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : Running with Spring Boot v3.5.13, Spring v6.2.17
+2026-07-22T17:19:46.958+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : The following 1 profile is active: "local"
+2026-07-22T17:19:50.601+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2026-07-22T17:19:51.794+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 1189 ms. Found 105 JPA repository interfaces.
+2026-07-22T17:19:52.596+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8082 (http)
+2026-07-22T17:19:52.601+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-07-22T17:19:52.601+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.53]
+2026-07-22T17:19:52.701+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext
+2026-07-22T17:19:52.702+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 5728 ms
+2026-07-22T17:19:52.861+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.c.s.JwtAuthenticationFilter        : Filter 'jwtAuthenticationFilter' configured for use
+2026-07-22T17:19:52.861+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.common.exception.TraceIdFilter     : Filter 'traceIdFilter' configured for use
+2026-07-22T17:19:52.862+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.c.w.RequestResponseLoggingFilter   : Filter 'requestResponseLoggingFilter' configured for use
+2026-07-22T17:19:53.472+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.hibernate.jpa.internal.util.LogHelper  : HHH000204: Processing PersistenceUnitInfo [name: default]
+2026-07-22T17:19:53.483+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.h.c.internal.RegionFactoryInitiator    : HHH000026: Second-level cache disabled
+2026-07-22T17:19:53.549+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
+2026-07-22T17:19:53.553+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.HikariDataSource       : HikariPool-6 - Starting...
+2026-07-22T17:19:54.310+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.pool.HikariPool        : HikariPool-6 - Added connection org.postgresql.jdbc.PgConnection@b52d7e4
+2026-07-22T17:19:54.311+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.HikariDataSource       : HikariPool-6 - Start completed.
+2026-07-22T17:19:54.396+07:00  WARN [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.orm.deprecation            : HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+2026-07-22T17:19:54.638+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.orm.connections.pooling    : HHH10001005: Database info:
+	Database JDBC URL [Connecting through datasource 'HikariDataSource (HikariPool-6)']
+	Database driver: undefined/unknown
+	Database version: 17.5
+	Autocommit mode: undefined/unknown
+	Isolation level: undefined/unknown
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+2026-07-22T17:19:57.802+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.h.e.t.j.p.i.JtaPlatformInitiator       : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2026-07-22T17:20:00.061+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2026-07-22T17:20:00.440+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.SQL                        : SELECT bank_cd, COALESCE(NULLIF(wb_get_bank_nm(bank_cd, 's'), ''), NULLIF(wb_get_bank_nm(bank_cd), '')) FROM bank_infm
+2026-07-22T17:20:04.608+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.SQL                        : select cc1_0.bank_key,cc1_0.network,cc1_0.change_reason,cc1_0.enable_yn,cc1_0.end_time,cc1_0.mod_dtm,cc1_0.mod_id,cc1_0.reg_dtm,cc1_0.reg_id,cc1_0.start_time,cc1_0.warning_time from tb_cutoff_config cc1_0
+2026-07-22T17:20:04.790+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.SQL                        : select cp1_0.param_key,cp1_0.change_reason,cp1_0.enable_yn,cp1_0.mod_dtm,cp1_0.mod_id,cp1_0.param_value,cp1_0.reg_dtm,cp1_0.reg_id from tb_cutoff_param cp1_0 where cp1_0.param_key=?
+2026-07-22T17:20:04.790+07:00 TRACE [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.orm.jdbc.bind              : binding parameter (1:VARCHAR) <- [large-txn-threshold]
+2026-07-22T17:20:04.951+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.d.p.i.s.CutoffConfigProvider       : feature=internal-transfer cutoff-config loaded from DB (DB-only, no YAML fallback)
+2026-07-22T17:20:08.448+07:00  WARN [traceId=-] 19684 --- [wecms-api] [  restartedMain] .s.s.UserDetailsServiceAutoConfiguration : 
+
+Using generated security password: e065aaf0-cbdc-4109-bc08-2caf2db7281f
+
+This generated password is for development use only. Your security configuration must be updated before running your application in production.
+
+2026-07-22T17:20:08.455+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] r$InitializeUserDetailsManagerConfigurer : Global AuthenticationManager configured with UserDetailsService bean with name inMemoryUserDetailsManager
+2026-07-22T17:20:09.331+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.b.d.a.OptionalLiveReloadServer       : LiveReload server is running on port 35729
+2026-07-22T17:20:09.402+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 8082 (http) with context path '/'
+2026-07-22T17:20:09.415+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : Started WecmsApiMainApplication in 22.826 seconds (process running for 2416.764)
+2026-07-22T17:20:09.418+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] .ConditionEvaluationDeltaLoggingListener : Condition evaluation unchanged
+2026-07-22T17:20:40.092+07:00  INFO [traceId=-] 19684 --- [wecms-api] [   File Watcher] rtingClassPathChangeChangedEventListener : Restarting due to 214 class path changes (0 additions, 0 deletions, 214 modifications)
+2026-07-22T17:20:40.097+07:00  INFO [traceId=-] 19684 --- [wecms-api] [      Thread-23] o.s.b.w.e.tomcat.GracefulShutdown        : Commencing graceful shutdown. Waiting for active requests to complete
+2026-07-22T17:20:40.115+07:00  INFO [traceId=-] 19684 --- [wecms-api] [tomcat-shutdown] o.s.b.w.e.tomcat.GracefulShutdown        : Graceful shutdown complete
+2026-07-22T17:20:40.156+07:00  INFO [traceId=-] 19684 --- [wecms-api] [      Thread-23] j.LocalContainerEntityManagerFactoryBean : Closing JPA EntityManagerFactory for persistence unit 'default'
+2026-07-22T17:20:40.158+07:00  INFO [traceId=-] 19684 --- [wecms-api] [      Thread-23] com.zaxxer.hikari.HikariDataSource       : HikariPool-6 - Shutdown initiated...
+2026-07-22T17:20:40.166+07:00  INFO [traceId=-] 19684 --- [wecms-api] [      Thread-23] com.zaxxer.hikari.HikariDataSource       : HikariPool-6 - Shutdown completed.
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+
+ :: Spring Boot ::               (v3.5.13)
+
+2026-07-22T17:20:40.623+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : Starting WecmsApiMainApplication using Java 21.0.11 with PID 19684 (C:\Project\wecms\wecms-api\build\classes\java\main started by lvthe in C:\Project\wecms\wecms-api)
+2026-07-22T17:20:40.624+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : Running with Spring Boot v3.5.13, Spring v6.2.17
+2026-07-22T17:20:40.624+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : The following 1 profile is active: "local"
+2026-07-22T17:20:43.296+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2026-07-22T17:20:44.316+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 1017 ms. Found 105 JPA repository interfaces.
+2026-07-22T17:20:44.978+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 80899 (http)
+2026-07-22T17:20:44.980+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-07-22T17:20:44.980+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.53]
+2026-07-22T17:20:45.058+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext
+2026-07-22T17:20:45.058+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 4426 ms
+2026-07-22T17:20:45.198+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.c.s.JwtAuthenticationFilter        : Filter 'jwtAuthenticationFilter' configured for use
+2026-07-22T17:20:45.198+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.common.exception.TraceIdFilter     : Filter 'traceIdFilter' configured for use
+2026-07-22T17:20:45.199+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.c.w.RequestResponseLoggingFilter   : Filter 'requestResponseLoggingFilter' configured for use
+2026-07-22T17:20:45.572+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.hibernate.jpa.internal.util.LogHelper  : HHH000204: Processing PersistenceUnitInfo [name: default]
+2026-07-22T17:20:45.580+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.h.c.internal.RegionFactoryInitiator    : HHH000026: Second-level cache disabled
+2026-07-22T17:20:45.626+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
+2026-07-22T17:20:45.629+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.HikariDataSource       : HikariPool-7 - Starting...
+2026-07-22T17:20:46.312+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.pool.HikariPool        : HikariPool-7 - Added connection org.postgresql.jdbc.PgConnection@7fcaaa3
+2026-07-22T17:20:46.312+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.HikariDataSource       : HikariPool-7 - Start completed.
+2026-07-22T17:20:46.399+07:00  WARN [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.orm.deprecation            : HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+2026-07-22T17:20:46.635+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.orm.connections.pooling    : HHH10001005: Database info:
+	Database JDBC URL [Connecting through datasource 'HikariDataSource (HikariPool-7)']
+	Database driver: undefined/unknown
+	Database version: 17.5
+	Autocommit mode: undefined/unknown
+	Isolation level: undefined/unknown
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+2026-07-22T17:20:50.159+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.h.e.t.j.p.i.JtaPlatformInitiator       : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2026-07-22T17:20:52.427+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2026-07-22T17:20:52.842+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.SQL                        : SELECT bank_cd, COALESCE(NULLIF(wb_get_bank_nm(bank_cd, 's'), ''), NULLIF(wb_get_bank_nm(bank_cd), '')) FROM bank_infm
+2026-07-22T17:20:57.070+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.SQL                        : select cc1_0.bank_key,cc1_0.network,cc1_0.change_reason,cc1_0.enable_yn,cc1_0.end_time,cc1_0.mod_dtm,cc1_0.mod_id,cc1_0.reg_dtm,cc1_0.reg_id,cc1_0.start_time,cc1_0.warning_time from tb_cutoff_config cc1_0
+2026-07-22T17:20:57.241+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.SQL                        : select cp1_0.param_key,cp1_0.change_reason,cp1_0.enable_yn,cp1_0.mod_dtm,cp1_0.mod_id,cp1_0.param_value,cp1_0.reg_dtm,cp1_0.reg_id from tb_cutoff_param cp1_0 where cp1_0.param_key=?
+2026-07-22T17:20:57.241+07:00 TRACE [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.orm.jdbc.bind              : binding parameter (1:VARCHAR) <- [large-txn-threshold]
+2026-07-22T17:20:57.410+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.d.p.i.s.CutoffConfigProvider       : feature=internal-transfer cutoff-config loaded from DB (DB-only, no YAML fallback)
+2026-07-22T17:21:00.634+07:00  WARN [traceId=-] 19684 --- [wecms-api] [  restartedMain] .s.s.UserDetailsServiceAutoConfiguration : 
+
+Using generated security password: 7b6f1a6c-0c11-4c2b-9610-779701fad5c8
+
+This generated password is for development use only. Your security configuration must be updated before running your application in production.
+
+2026-07-22T17:21:00.638+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] r$InitializeUserDetailsManagerConfigurer : Global AuthenticationManager configured with UserDetailsService bean with name inMemoryUserDetailsManager
+2026-07-22T17:21:01.357+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.b.d.a.OptionalLiveReloadServer       : LiveReload server is running on port 35729
+2026-07-22T17:21:01.417+07:00  WARN [traceId=-] 19684 --- [wecms-api] [  restartedMain] ConfigServletWebServerApplicationContext : Exception encountered during context initialization - cancelling refresh attempt: org.springframework.context.ApplicationContextException: Failed to start bean 'webServerStartStop'
+2026-07-22T17:21:01.446+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] j.LocalContainerEntityManagerFactoryBean : Closing JPA EntityManagerFactory for persistence unit 'default'
+2026-07-22T17:21:01.447+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.HikariDataSource       : HikariPool-7 - Shutdown initiated...
+2026-07-22T17:21:01.452+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.HikariDataSource       : HikariPool-7 - Shutdown completed.
+2026-07-22T17:21:01.469+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] .s.b.a.l.ConditionEvaluationReportLogger : 
+
+Error starting ApplicationContext. To display the condition evaluation report re-run your application with 'debug' enabled.
+2026-07-22T17:21:01.530+07:00 ERROR [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.boot.SpringApplication               : Application run failed
+
+org.springframework.context.ApplicationContextException: Failed to start bean 'webServerStartStop'
+	at org.springframework.context.support.DefaultLifecycleProcessor.doStart(DefaultLifecycleProcessor.java:408) ~[spring-context-6.2.17.jar:6.2.17]
+	at org.springframework.context.support.DefaultLifecycleProcessor.doStart(DefaultLifecycleProcessor.java:394) ~[spring-context-6.2.17.jar:6.2.17]
+	at org.springframework.context.support.DefaultLifecycleProcessor$LifecycleGroup.start(DefaultLifecycleProcessor.java:586) ~[spring-context-6.2.17.jar:6.2.17]
+	at java.base/java.lang.Iterable.forEach(Iterable.java:75) ~[na:na]
+	at org.springframework.context.support.DefaultLifecycleProcessor.startBeans(DefaultLifecycleProcessor.java:364) ~[spring-context-6.2.17.jar:6.2.17]
+	at org.springframework.context.support.DefaultLifecycleProcessor.onRefresh(DefaultLifecycleProcessor.java:310) ~[spring-context-6.2.17.jar:6.2.17]
+	at org.springframework.context.support.AbstractApplicationContext.finishRefresh(AbstractApplicationContext.java:1010) ~[spring-context-6.2.17.jar:6.2.17]
+	at org.springframework.context.support.AbstractApplicationContext.refresh(AbstractApplicationContext.java:631) ~[spring-context-6.2.17.jar:6.2.17]
+	at org.springframework.boot.web.servlet.context.ServletWebServerApplicationContext.refresh(ServletWebServerApplicationContext.java:146) ~[spring-boot-3.5.13.jar:3.5.13]
+	at org.springframework.boot.SpringApplication.refresh(SpringApplication.java:752) ~[spring-boot-3.5.13.jar:3.5.13]
+	at org.springframework.boot.SpringApplication.refreshContext(SpringApplication.java:439) ~[spring-boot-3.5.13.jar:3.5.13]
+	at org.springframework.boot.SpringApplication.run(SpringApplication.java:318) ~[spring-boot-3.5.13.jar:3.5.13]
+	at org.springframework.boot.SpringApplication.run(SpringApplication.java:1361) ~[spring-boot-3.5.13.jar:3.5.13]
+	at org.springframework.boot.SpringApplication.run(SpringApplication.java:1350) ~[spring-boot-3.5.13.jar:3.5.13]
+	at com.kosign.wecms.WecmsApiMainApplication.main(WecmsApiMainApplication.java:27) ~[main/:na]
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103) ~[na:na]
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580) ~[na:na]
+	at org.springframework.boot.devtools.restart.RestartLauncher.run(RestartLauncher.java:50) ~[spring-boot-devtools-3.5.13.jar:3.5.13]
+Caused by: org.springframework.boot.web.server.WebServerException: Unable to start embedded Tomcat server
+	at org.springframework.boot.web.embedded.tomcat.TomcatWebServer.start(TomcatWebServer.java:251) ~[spring-boot-3.5.13.jar:3.5.13]
+	at org.springframework.boot.web.servlet.context.WebServerStartStopLifecycle.start(WebServerStartStopLifecycle.java:44) ~[spring-boot-3.5.13.jar:3.5.13]
+	at org.springframework.context.support.DefaultLifecycleProcessor.doStart(DefaultLifecycleProcessor.java:405) ~[spring-context-6.2.17.jar:6.2.17]
+	... 17 common frames omitted
+Caused by: java.lang.IllegalArgumentException: standardService.connector.startFailed
+	at org.apache.catalina.core.StandardService.addConnector(StandardService.java:220) ~[tomcat-embed-core-10.1.53.jar:10.1.53]
+	at org.springframework.boot.web.embedded.tomcat.TomcatWebServer.addPreviouslyRemovedConnectors(TomcatWebServer.java:310) ~[spring-boot-3.5.13.jar:3.5.13]
+	at org.springframework.boot.web.embedded.tomcat.TomcatWebServer.start(TomcatWebServer.java:236) ~[spring-boot-3.5.13.jar:3.5.13]
+	... 19 common frames omitted
+Caused by: org.apache.catalina.LifecycleException: Protocol handler start failed
+	at org.apache.catalina.connector.Connector.startInternal(Connector.java:1115) ~[tomcat-embed-core-10.1.53.jar:10.1.53]
+	at org.apache.catalina.util.LifecycleBase.start(LifecycleBase.java:164) ~[tomcat-embed-core-10.1.53.jar:10.1.53]
+	at org.apache.catalina.core.StandardService.addConnector(StandardService.java:217) ~[tomcat-embed-core-10.1.53.jar:10.1.53]
+	... 21 common frames omitted
+Caused by: java.lang.IllegalArgumentException: port out of range:80899
+	at java.base/java.net.InetSocketAddress.checkPort(InetSocketAddress.java:153) ~[na:na]
+	at java.base/java.net.InetSocketAddress.<init>(InetSocketAddress.java:198) ~[na:na]
+	at org.apache.tomcat.util.net.NioEndpoint.initServerSocket(NioEndpoint.java:263) ~[tomcat-embed-core-10.1.53.jar:10.1.53]
+	at org.apache.tomcat.util.net.NioEndpoint.bind(NioEndpoint.java:219) ~[tomcat-embed-core-10.1.53.jar:10.1.53]
+	at org.apache.tomcat.util.net.AbstractEndpoint.bindWithCleanup(AbstractEndpoint.java:1432) ~[tomcat-embed-core-10.1.53.jar:10.1.53]
+	at org.apache.tomcat.util.net.AbstractEndpoint.start(AbstractEndpoint.java:1515) ~[tomcat-embed-core-10.1.53.jar:10.1.53]
+	at org.apache.coyote.AbstractProtocol.start(AbstractProtocol.java:644) ~[tomcat-embed-core-10.1.53.jar:10.1.53]
+	at org.apache.catalina.connector.Connector.startInternal(Connector.java:1112) ~[tomcat-embed-core-10.1.53.jar:10.1.53]
+	... 23 common frames omitted
+
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+
+ :: Spring Boot ::               (v3.5.13)
+
+2026-07-22T17:30:41.989+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : Starting WecmsApiMainApplication using Java 21.0.11 with PID 19684 (C:\Project\wecms\wecms-api\build\classes\java\main started by lvthe in C:\Project\wecms\wecms-api)
+2026-07-22T17:30:41.990+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : Running with Spring Boot v3.5.13, Spring v6.2.17
+2026-07-22T17:30:41.990+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : The following 1 profile is active: "local"
+2026-07-22T17:30:44.612+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2026-07-22T17:30:45.248+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 633 ms. Found 105 JPA repository interfaces.
+2026-07-22T17:30:45.728+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8080 (http)
+2026-07-22T17:30:45.734+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-07-22T17:30:45.734+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.53]
+2026-07-22T17:30:45.793+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.a.c.c.C.[Tomcat-1].[localhost].[/]     : Initializing Spring embedded WebApplicationContext
+2026-07-22T17:30:45.793+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 3789 ms
+2026-07-22T17:30:45.896+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.c.s.JwtAuthenticationFilter        : Filter 'jwtAuthenticationFilter' configured for use
+2026-07-22T17:30:45.897+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.common.exception.TraceIdFilter     : Filter 'traceIdFilter' configured for use
+2026-07-22T17:30:45.897+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.c.w.RequestResponseLoggingFilter   : Filter 'requestResponseLoggingFilter' configured for use
+2026-07-22T17:30:46.156+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.hibernate.jpa.internal.util.LogHelper  : HHH000204: Processing PersistenceUnitInfo [name: default]
+2026-07-22T17:30:46.164+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.h.c.internal.RegionFactoryInitiator    : HHH000026: Second-level cache disabled
+2026-07-22T17:30:46.195+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
+2026-07-22T17:30:46.198+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.HikariDataSource       : HikariPool-8 - Starting...
+2026-07-22T17:30:46.870+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.pool.HikariPool        : HikariPool-8 - Added connection org.postgresql.jdbc.PgConnection@35c587a9
+2026-07-22T17:30:46.871+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.HikariDataSource       : HikariPool-8 - Start completed.
+2026-07-22T17:30:46.956+07:00  WARN [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.orm.deprecation            : HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+2026-07-22T17:30:47.202+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.orm.connections.pooling    : HHH10001005: Database info:
+	Database JDBC URL [Connecting through datasource 'HikariDataSource (HikariPool-8)']
+	Database driver: undefined/unknown
+	Database version: 17.5
+	Autocommit mode: undefined/unknown
+	Isolation level: undefined/unknown
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+2026-07-22T17:30:49.760+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.h.e.t.j.p.i.JtaPlatformInitiator       : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2026-07-22T17:30:52.260+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2026-07-22T17:30:52.577+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.SQL                        : SELECT bank_cd, COALESCE(NULLIF(wb_get_bank_nm(bank_cd, 's'), ''), NULLIF(wb_get_bank_nm(bank_cd), '')) FROM bank_infm
+2026-07-22T17:30:55.729+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.SQL                        : select cc1_0.bank_key,cc1_0.network,cc1_0.change_reason,cc1_0.enable_yn,cc1_0.end_time,cc1_0.mod_dtm,cc1_0.mod_id,cc1_0.reg_dtm,cc1_0.reg_id,cc1_0.start_time,cc1_0.warning_time from tb_cutoff_config cc1_0
+2026-07-22T17:30:55.899+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.SQL                        : select cp1_0.param_key,cp1_0.change_reason,cp1_0.enable_yn,cp1_0.mod_dtm,cp1_0.mod_id,cp1_0.param_value,cp1_0.reg_dtm,cp1_0.reg_id from tb_cutoff_param cp1_0 where cp1_0.param_key=?
+2026-07-22T17:30:55.900+07:00 TRACE [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.orm.jdbc.bind              : binding parameter (1:VARCHAR) <- [large-txn-threshold]
+2026-07-22T17:30:56.060+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.d.p.i.s.CutoffConfigProvider       : feature=internal-transfer cutoff-config loaded from DB (DB-only, no YAML fallback)
+2026-07-22T17:30:58.009+07:00  WARN [traceId=-] 19684 --- [wecms-api] [  restartedMain] .s.s.UserDetailsServiceAutoConfiguration : 
+
+Using generated security password: 972c0f7f-8e94-487e-873a-6d8264c4731b
+
+This generated password is for development use only. Your security configuration must be updated before running your application in production.
+
+2026-07-22T17:30:58.011+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] r$InitializeUserDetailsManagerConfigurer : Global AuthenticationManager configured with UserDetailsService bean with name inMemoryUserDetailsManager
+2026-07-22T17:30:58.532+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.b.d.a.OptionalLiveReloadServer       : LiveReload server is running on port 35729
+2026-07-22T17:30:58.564+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 8080 (http) with context path '/'
+2026-07-22T17:30:58.571+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : Started WecmsApiMainApplication in 16.841 seconds (process running for 3065.92)
+2026-07-22T17:30:58.573+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] .ConditionEvaluationDeltaLoggingListener : Condition evaluation unchanged
+2026-07-22T17:35:58.665+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] org.hibernate.SQL                        : select cc1_0.bank_key,cc1_0.network,cc1_0.change_reason,cc1_0.enable_yn,cc1_0.end_time,cc1_0.mod_dtm,cc1_0.mod_id,cc1_0.reg_dtm,cc1_0.reg_id,cc1_0.start_time,cc1_0.warning_time from tb_cutoff_config cc1_0
+2026-07-22T17:35:58.825+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] org.hibernate.SQL                        : select cp1_0.param_key,cp1_0.change_reason,cp1_0.enable_yn,cp1_0.mod_dtm,cp1_0.mod_id,cp1_0.param_value,cp1_0.reg_dtm,cp1_0.reg_id from tb_cutoff_param cp1_0 where cp1_0.param_key=?
+2026-07-22T17:35:58.826+07:00 TRACE [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] org.hibernate.orm.jdbc.bind              : binding parameter (1:VARCHAR) <- [large-txn-threshold]
+2026-07-22T17:35:59.010+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] c.k.w.d.p.i.s.CutoffConfigProvider       : feature=internal-transfer cutoff-config refreshed from DB
+2026-07-22T17:37:44.534+07:00  INFO [traceId=-] 19684 --- [wecms-api] [   File Watcher] rtingClassPathChangeChangedEventListener : Restarting due to 214 class path changes (0 additions, 0 deletions, 214 modifications)
+2026-07-22T17:37:44.538+07:00  INFO [traceId=-] 19684 --- [wecms-api] [      Thread-27] o.s.b.w.e.tomcat.GracefulShutdown        : Commencing graceful shutdown. Waiting for active requests to complete
+2026-07-22T17:37:44.553+07:00  INFO [traceId=-] 19684 --- [wecms-api] [tomcat-shutdown] o.s.b.w.e.tomcat.GracefulShutdown        : Graceful shutdown complete
+2026-07-22T17:37:44.576+07:00  INFO [traceId=-] 19684 --- [wecms-api] [      Thread-27] j.LocalContainerEntityManagerFactoryBean : Closing JPA EntityManagerFactory for persistence unit 'default'
+2026-07-22T17:37:44.578+07:00  INFO [traceId=-] 19684 --- [wecms-api] [      Thread-27] com.zaxxer.hikari.HikariDataSource       : HikariPool-8 - Shutdown initiated...
+2026-07-22T17:37:44.585+07:00  INFO [traceId=-] 19684 --- [wecms-api] [      Thread-27] com.zaxxer.hikari.HikariDataSource       : HikariPool-8 - Shutdown completed.
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+
+ :: Spring Boot ::               (v3.5.13)
+
+2026-07-22T17:37:44.954+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : Starting WecmsApiMainApplication using Java 21.0.11 with PID 19684 (C:\Project\wecms\wecms-api\build\classes\java\main started by lvthe in C:\Project\wecms\wecms-api)
+2026-07-22T17:37:44.954+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : Running with Spring Boot v3.5.13, Spring v6.2.17
+2026-07-22T17:37:44.955+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : The following 1 profile is active: "local"
+2026-07-22T17:37:47.379+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2026-07-22T17:37:48.243+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 861 ms. Found 105 JPA repository interfaces.
+2026-07-22T17:37:48.853+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8080 (http)
+2026-07-22T17:37:48.857+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-07-22T17:37:48.857+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.53]
+2026-07-22T17:37:48.923+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.a.c.c.C.[Tomcat-1].[localhost].[/]     : Initializing Spring embedded WebApplicationContext
+2026-07-22T17:37:48.923+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 3960 ms
+2026-07-22T17:37:49.026+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.c.s.JwtAuthenticationFilter        : Filter 'jwtAuthenticationFilter' configured for use
+2026-07-22T17:37:49.026+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.common.exception.TraceIdFilter     : Filter 'traceIdFilter' configured for use
+2026-07-22T17:37:49.028+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.c.w.RequestResponseLoggingFilter   : Filter 'requestResponseLoggingFilter' configured for use
+2026-07-22T17:37:49.378+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.hibernate.jpa.internal.util.LogHelper  : HHH000204: Processing PersistenceUnitInfo [name: default]
+2026-07-22T17:37:49.388+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.h.c.internal.RegionFactoryInitiator    : HHH000026: Second-level cache disabled
+2026-07-22T17:37:49.437+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
+2026-07-22T17:37:49.440+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.HikariDataSource       : HikariPool-9 - Starting...
+2026-07-22T17:37:50.118+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.pool.HikariPool        : HikariPool-9 - Added connection org.postgresql.jdbc.PgConnection@3794f18f
+2026-07-22T17:37:50.118+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.HikariDataSource       : HikariPool-9 - Start completed.
+2026-07-22T17:37:50.201+07:00  WARN [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.orm.deprecation            : HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+2026-07-22T17:37:50.437+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.orm.connections.pooling    : HHH10001005: Database info:
+	Database JDBC URL [Connecting through datasource 'HikariDataSource (HikariPool-9)']
+	Database driver: undefined/unknown
+	Database version: 17.5
+	Autocommit mode: undefined/unknown
+	Isolation level: undefined/unknown
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+2026-07-22T17:37:53.180+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.h.e.t.j.p.i.JtaPlatformInitiator       : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2026-07-22T17:37:55.408+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2026-07-22T17:37:55.941+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.SQL                        : SELECT bank_cd, COALESCE(NULLIF(wb_get_bank_nm(bank_cd, 's'), ''), NULLIF(wb_get_bank_nm(bank_cd), '')) FROM bank_infm
+2026-07-22T17:37:58.974+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.SQL                        : select cc1_0.bank_key,cc1_0.network,cc1_0.change_reason,cc1_0.enable_yn,cc1_0.end_time,cc1_0.mod_dtm,cc1_0.mod_id,cc1_0.reg_dtm,cc1_0.reg_id,cc1_0.start_time,cc1_0.warning_time from tb_cutoff_config cc1_0
+2026-07-22T17:37:59.145+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.SQL                        : select cp1_0.param_key,cp1_0.change_reason,cp1_0.enable_yn,cp1_0.mod_dtm,cp1_0.mod_id,cp1_0.param_value,cp1_0.reg_dtm,cp1_0.reg_id from tb_cutoff_param cp1_0 where cp1_0.param_key=?
+2026-07-22T17:37:59.145+07:00 TRACE [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.orm.jdbc.bind              : binding parameter (1:VARCHAR) <- [large-txn-threshold]
+2026-07-22T17:37:59.308+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.d.p.i.s.CutoffConfigProvider       : feature=internal-transfer cutoff-config loaded from DB (DB-only, no YAML fallback)
+2026-07-22T17:38:01.470+07:00  WARN [traceId=-] 19684 --- [wecms-api] [  restartedMain] .s.s.UserDetailsServiceAutoConfiguration : 
+
+Using generated security password: dcb0fe26-8f6b-4c5b-9c82-4c73589af5b9
+
+This generated password is for development use only. Your security configuration must be updated before running your application in production.
+
+2026-07-22T17:38:01.476+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] r$InitializeUserDetailsManagerConfigurer : Global AuthenticationManager configured with UserDetailsService bean with name inMemoryUserDetailsManager
+2026-07-22T17:38:01.976+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.b.d.a.OptionalLiveReloadServer       : LiveReload server is running on port 35729
+2026-07-22T17:38:02.000+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 8080 (http) with context path '/'
+2026-07-22T17:38:02.005+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : Started WecmsApiMainApplication in 17.215 seconds (process running for 3489.354)
+2026-07-22T17:38:02.007+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] .ConditionEvaluationDeltaLoggingListener : Condition evaluation unchanged
+2026-07-22T17:43:02.095+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] org.hibernate.SQL                        : select cc1_0.bank_key,cc1_0.network,cc1_0.change_reason,cc1_0.enable_yn,cc1_0.end_time,cc1_0.mod_dtm,cc1_0.mod_id,cc1_0.reg_dtm,cc1_0.reg_id,cc1_0.start_time,cc1_0.warning_time from tb_cutoff_config cc1_0
+2026-07-22T17:43:02.271+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] org.hibernate.SQL                        : select cp1_0.param_key,cp1_0.change_reason,cp1_0.enable_yn,cp1_0.mod_dtm,cp1_0.mod_id,cp1_0.param_value,cp1_0.reg_dtm,cp1_0.reg_id from tb_cutoff_param cp1_0 where cp1_0.param_key=?
+2026-07-22T17:43:02.271+07:00 TRACE [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] org.hibernate.orm.jdbc.bind              : binding parameter (1:VARCHAR) <- [large-txn-threshold]
+2026-07-22T17:43:02.565+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [cms-scheduler-1] c.k.w.d.p.i.s.CutoffConfigProvider       : feature=internal-transfer cutoff-config refreshed from DB
+2026-07-22T17:43:49.898+07:00  INFO [traceId=-] 19684 --- [wecms-api] [   File Watcher] rtingClassPathChangeChangedEventListener : Restarting due to 214 class path changes (0 additions, 0 deletions, 214 modifications)
+2026-07-22T17:43:49.906+07:00  INFO [traceId=-] 19684 --- [wecms-api] [      Thread-35] o.s.b.w.e.tomcat.GracefulShutdown        : Commencing graceful shutdown. Waiting for active requests to complete
+2026-07-22T17:43:49.924+07:00  INFO [traceId=-] 19684 --- [wecms-api] [tomcat-shutdown] o.s.b.w.e.tomcat.GracefulShutdown        : Graceful shutdown complete
+2026-07-22T17:43:49.954+07:00  INFO [traceId=-] 19684 --- [wecms-api] [      Thread-35] j.LocalContainerEntityManagerFactoryBean : Closing JPA EntityManagerFactory for persistence unit 'default'
+2026-07-22T17:43:49.956+07:00  INFO [traceId=-] 19684 --- [wecms-api] [      Thread-35] com.zaxxer.hikari.HikariDataSource       : HikariPool-9 - Shutdown initiated...
+2026-07-22T17:43:49.969+07:00  INFO [traceId=-] 19684 --- [wecms-api] [      Thread-35] com.zaxxer.hikari.HikariDataSource       : HikariPool-9 - Shutdown completed.
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+
+ :: Spring Boot ::               (v3.5.13)
+
+2026-07-22T17:43:50.337+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : Starting WecmsApiMainApplication using Java 21.0.11 with PID 19684 (C:\Project\wecms\wecms-api\build\classes\java\main started by lvthe in C:\Project\wecms\wecms-api)
+2026-07-22T17:43:50.338+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : Running with Spring Boot v3.5.13, Spring v6.2.17
+2026-07-22T17:43:50.338+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : The following 1 profile is active: "local"
+2026-07-22T17:43:52.249+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2026-07-22T17:43:53.013+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 762 ms. Found 105 JPA repository interfaces.
+2026-07-22T17:43:53.478+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8080 (http)
+2026-07-22T17:43:53.482+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-07-22T17:43:53.482+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.53]
+2026-07-22T17:43:53.527+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.a.c.c.C.[Tomcat-1].[localhost].[/]     : Initializing Spring embedded WebApplicationContext
+2026-07-22T17:43:53.527+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 3182 ms
+2026-07-22T17:43:53.600+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.c.s.JwtAuthenticationFilter        : Filter 'jwtAuthenticationFilter' configured for use
+2026-07-22T17:43:53.600+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.common.exception.TraceIdFilter     : Filter 'traceIdFilter' configured for use
+2026-07-22T17:43:53.601+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.c.w.RequestResponseLoggingFilter   : Filter 'requestResponseLoggingFilter' configured for use
+2026-07-22T17:43:53.826+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.hibernate.jpa.internal.util.LogHelper  : HHH000204: Processing PersistenceUnitInfo [name: default]
+2026-07-22T17:43:53.836+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.h.c.internal.RegionFactoryInitiator    : HHH000026: Second-level cache disabled
+2026-07-22T17:43:53.881+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
+2026-07-22T17:43:53.884+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.HikariDataSource       : HikariPool-10 - Starting...
+2026-07-22T17:43:54.540+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.pool.HikariPool        : HikariPool-10 - Added connection org.postgresql.jdbc.PgConnection@7a996052
+2026-07-22T17:43:54.540+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] com.zaxxer.hikari.HikariDataSource       : HikariPool-10 - Start completed.
+2026-07-22T17:43:54.625+07:00  WARN [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.orm.deprecation            : HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+2026-07-22T17:43:54.861+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.orm.connections.pooling    : HHH10001005: Database info:
+	Database JDBC URL [Connecting through datasource 'HikariDataSource (HikariPool-10)']
+	Database driver: undefined/unknown
+	Database version: 17.5
+	Autocommit mode: undefined/unknown
+	Isolation level: undefined/unknown
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+2026-07-22T17:43:56.892+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.h.e.t.j.p.i.JtaPlatformInitiator       : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2026-07-22T17:43:59.254+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2026-07-22T17:43:59.554+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.SQL                        : SELECT bank_cd, COALESCE(NULLIF(wb_get_bank_nm(bank_cd, 's'), ''), NULLIF(wb_get_bank_nm(bank_cd), '')) FROM bank_infm
+2026-07-22T17:44:02.375+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.SQL                        : select cc1_0.bank_key,cc1_0.network,cc1_0.change_reason,cc1_0.enable_yn,cc1_0.end_time,cc1_0.mod_dtm,cc1_0.mod_id,cc1_0.reg_dtm,cc1_0.reg_id,cc1_0.start_time,cc1_0.warning_time from tb_cutoff_config cc1_0
+2026-07-22T17:44:02.538+07:00 DEBUG [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.SQL                        : select cp1_0.param_key,cp1_0.change_reason,cp1_0.enable_yn,cp1_0.mod_dtm,cp1_0.mod_id,cp1_0.param_value,cp1_0.reg_dtm,cp1_0.reg_id from tb_cutoff_param cp1_0 where cp1_0.param_key=?
+2026-07-22T17:44:02.538+07:00 TRACE [traceId=-] 19684 --- [wecms-api] [  restartedMain] org.hibernate.orm.jdbc.bind              : binding parameter (1:VARCHAR) <- [large-txn-threshold]
+2026-07-22T17:44:02.696+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.k.w.d.p.i.s.CutoffConfigProvider       : feature=internal-transfer cutoff-config loaded from DB (DB-only, no YAML fallback)
+2026-07-22T17:44:05.171+07:00  WARN [traceId=-] 19684 --- [wecms-api] [  restartedMain] .s.s.UserDetailsServiceAutoConfiguration : 
+
+Using generated security password: 43f79bcb-1507-4d69-9590-fc1df967538b
+
+This generated password is for development use only. Your security configuration must be updated before running your application in production.
+
+2026-07-22T17:44:05.173+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] r$InitializeUserDetailsManagerConfigurer : Global AuthenticationManager configured with UserDetailsService bean with name inMemoryUserDetailsManager
+2026-07-22T17:44:05.647+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.b.d.a.OptionalLiveReloadServer       : LiveReload server is running on port 35729
+2026-07-22T17:44:05.677+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 8080 (http) with context path '/'
+2026-07-22T17:44:05.684+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] c.kosign.wecms.WecmsApiMainApplication   : Started WecmsApiMainApplication in 15.488 seconds (process running for 3853.033)
+2026-07-22T17:44:05.686+07:00  INFO [traceId=-] 19684 --- [wecms-api] [  restartedMain] .ConditionEvaluationDeltaLoggingListener : Condition evaluation unchanged
+
+> Task :bootRun FAILED
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':bootRun'.
+> Process 'command 'C:\Program Files\Eclipse Adoptium\jdk-21.0.11.10-hotspot\bin\java.exe'' finished with non-zero exit value -1
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 1h 6m 56s
+4 actionable tasks: 2 executed, 2 up-to-date

@@ -31,8 +31,34 @@ Sokny Ran (03/08, 05/08) **đã ra rồi** — deploy này không mang chúng th
 | 4 | Không lẫn tháng/quý trong một năm dương lịch; `[43]`→`[22]` bắc cầu qua ranh giới năm | `WBE_VAT_DECL_PERIOD_TYPE_MISMATCH` |
 | 5 | Đồng bộ **từ chối** thuế suất không xếp được; `[25]`/`[31]` chỉ tự điền khi ô nguồn cùng request; `[33]` không còn được suy | `WBE_VAT_DECL_UNKNOWN_TAX_RATE` |
 | 6 | Đồng bộ làm tròn về đồng chẵn (HALF_UP) | — |
+| 7 | **Chỉ tiêu âm được phép** trên 13 ô doanh thu / mua vào | — |
 
 **Bốn mã lỗi mới** đã có trong `messages.properties`, `_en`, `_vi`.
+
+### (7) chỉ tiêu âm — PO chốt 13/08/2026
+
+Hoá đơn điều chỉnh giảm có thể lớn hơn doanh thu của chính kỳ đó khi nó huỷ một
+phần hoá đơn kỳ trước. Kỳ đó thật sự ghi nhận doanh thu thuần âm, và việc từ chối
+làm **không khai được** một tờ khai hợp lệ (QA S-07).
+
+**13 ô nhận số âm:** `[23]` `[24]` `[23a]` `[24a]` `[25]` `[26]` `[29]` `[30]`
+`[31]` `[32]` `[32a]` `[33]` `[33a]`.
+
+**7 ô vẫn chặn** — ở đây dấu trừ đổi *ý nghĩa* chứ không phải đổi độ lớn:
+
+| Ô | Vì sao vẫn chặn |
+|---|---|
+| `[21]` | cờ 0/1 |
+| `[22]` | là `[43]` của kỳ trước, vốn `max(0,…) − max(0,…)` nên không âm tại nguồn |
+| `[37]` `[38]` `[39a]` | là **độ lớn**; công thức mới là chỗ cấp dấu (`+[37] − [38]`). Cho âm thì một khoản giảm viết được thành khoản tăng — hai cách viết cho cùng một điều chỉnh, người đọc không phân biệt được |
+| `[40b]` `[42]` `[42a]` `[42b]` | bị chặn trên bởi `[40a]`/`[41]`, cả hai đều `max(0,…)`; và không ai đề nghị hoàn một số âm |
+
+Danh sách này ở `VatDeclarationService.MAY_BE_NEGATIVE`, và QA `S-34` kiểm đúng
+hai chiều: 13 ô phải **nhận**, 7 ô phải **chặn**.
+
+Hệ quả số học: doanh thu âm đẩy `[36]` âm → `hieuSo` âm → `[41]`/`[43]` dương.
+Tức là kỳ đó sinh **số thuế còn được khấu trừ chuyển kỳ sau**, không phải số phải
+nộp âm. Đúng như mong đợi.
 
 ### Thay đổi có thể chặn thao tác đang chạy được hôm nay
 

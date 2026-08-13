@@ -617,6 +617,52 @@ class VatDeclarationLifecycleTest {
         }
 
         /**
+         * QA S-07. A downward-adjustment invoice can exceed the period's own
+         * revenue when it cancels part of what an earlier period billed. The
+         * period then really did book negative net revenue.
+         *
+         * <p>Sync used to refuse the whole period with
+         * {@code WBE_VAT_DECL_INVALID_INDICATOR}, so a lawful filing could not be
+         * made at all. PO ruled 2026-08-13 that negative indicators are allowed.
+         */
+        @Test
+        @DisplayName("sync accepts a period whose adjustments exceed its revenue")
+        void negativeRevenueSyncs() {
+            when(busiInfmRepo.findById(BIZ)).thenReturn(Optional.of(new BusiInfm()));
+            when(declRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(annexInvoiceRepo.syncBuckets(eq(BIZ), any(), any(), any(), any()))
+                    .thenReturn(List.of(bucket("I", "10%", "-4900000000", "-490000000")));
+
+            service.create(request("M", 5, 2026));
+
+            ArgumentCaptor<VatDeclarationIndicator> saved =
+                    ArgumentCaptor.forClass(VatDeclarationIndicator.class);
+            verify(indicatorRepo).save(saved.capture());
+            assertThat(saved.getValue().getSalesAmt10()).isEqualByComparingTo("-4900000000");
+            // Negative output VAT is a credit, so it lands in [41]/[43], not [40].
+            assertThat(saved.getValue().getVatPayableNet()).isEqualByComparingTo("0");
+            assertThat(saved.getValue().getCreditNext()).isPositive();
+        }
+
+        /**
+         * The other half of the PO ruling: a minus sign on a magnitude cell is a
+         * different statement, not a smaller number. {@code [38]} is an increase
+         * whose sign the formula supplies ({@code +ct37 - ct38}); accepting
+         * {@code -1000} there would make it an indistinguishable second way to
+         * write {@code [37] = 1000}.
+         */
+        @Test
+        @DisplayName("[38] still refuses a negative — the formula owns its sign")
+        void negativeStillRefusedOnMagnitudeCell() {
+            VatDeclarationIndicator ind = new VatDeclarationIndicator();
+            ind.setAdjIncrease(new BigDecimal("-1000"));
+
+            assertThatThrownBy(() -> calculator.recompute(ind))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("WBE_VAT_DECL_INVALID_INDICATOR");
+        }
+
+        /**
          * QA S-08. February of a leap year must end on the 29th, or an invoice
          * dated 29/02 falls outside its own period and vanishes from the return.
          *

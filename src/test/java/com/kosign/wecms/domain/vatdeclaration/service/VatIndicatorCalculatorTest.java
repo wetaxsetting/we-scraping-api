@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -266,26 +267,58 @@ class VatIndicatorCalculatorTest {
                     .hasMessageContaining("WBE_VAT_DECL_INVALID_INDICATOR");
         }
 
+        /**
+         * Both of these used to assert the opposite. PO ruled 2026-08-13 that a
+         * period whose downward adjustments exceed its own revenue must still be
+         * filable (QA S-07), so a revenue cell going below zero is now data, not
+         * an error.
+         */
         @Test
-        @DisplayName("a negative input is rejected")
-        void negativeInputRejected() {
+        @DisplayName("a negative revenue cell is accepted and flows to the total")
+        void negativeRevenueAccepted() {
             VatDeclarationIndicator i = blank();
-            i.setSalesAmt10(bd("-1"));
+            i.setSalesAmt10(bd("-1000000"));
 
-            assertThatThrownBy(() -> calculator.recompute(i))
-                    .isInstanceOf(BusinessException.class)
-                    .hasMessageContaining("WBE_VAT_DECL_INVALID_INDICATOR");
+            assertThatCode(() -> calculator.recompute(i)).doesNotThrowAnyException();
+            assertThat(i.getTolSalesAmt()).isEqualByComparingTo("-1000000");
         }
 
         @Test
-        @DisplayName("a negative client-supplied source cell is rejected too")
-        void negativeSourceCellRejected() {
+        @DisplayName("a negative client-supplied source cell is accepted too")
+        void negativeSourceCellAccepted() {
             VatDeclarationIndicator i = blank();
             i.setSalesAmtVat5(bd("-1"));
 
-            assertThatThrownBy(() -> calculator.recompute(i, Set.of("ct31")))
-                    .isInstanceOf(BusinessException.class)
-                    .hasMessageContaining("WBE_VAT_DECL_INVALID_INDICATOR");
+            assertThatCode(() -> calculator.recompute(i, Set.of("ct31")))
+                    .doesNotThrowAnyException();
+            assertThat(i.getSalesAmtVat5()).isEqualByComparingTo("-1");
+        }
+
+        /**
+         * The line the ruling does NOT cross. On these cells a minus sign is a
+         * different statement rather than a smaller number — {@code [22]} is the
+         * previous period's {@code [43]} and cannot be negative at source, and
+         * {@code [37]}/{@code [38]}/{@code [39a]} are magnitudes whose sign the
+         * formula supplies.
+         */
+        @Test
+        @DisplayName("[22] and the magnitude cells still reject a negative")
+        void negativeStillRejectedWhereSignCarriesMeaning() {
+            record Cell(String name, java.util.function.Consumer<VatDeclarationIndicator> set) {}
+            List.of(new Cell("ct22",  x -> x.setPrevCredit(bd("-1"))),
+                    new Cell("ct37",  x -> x.setAdjDecrease(bd("-1"))),
+                    new Cell("ct38",  x -> x.setAdjIncrease(bd("-1"))),
+                    new Cell("ct39a", x -> x.setTransfVat(bd("-1"))),
+                    new Cell("ct40b", x -> x.setInvestOffsetVatAmt(bd("-1"))),
+                    new Cell("ct42",  x -> x.setVatRefundReq(bd("-1"))))
+                .forEach(c -> {
+                    VatDeclarationIndicator i = blank();
+                    c.set().accept(i);
+                    assertThatThrownBy(() -> calculator.recompute(i))
+                            .as("%s must still refuse a negative", c.name())
+                            .isInstanceOf(BusinessException.class)
+                            .hasMessageContaining("WBE_VAT_DECL_INVALID_INDICATOR");
+                });
         }
 
         @Test

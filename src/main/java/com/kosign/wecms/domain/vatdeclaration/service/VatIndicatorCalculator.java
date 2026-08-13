@@ -68,12 +68,19 @@ public class VatIndicatorCalculator {
         BigDecimal ct40b = nz(ind.getInvestOffsetVatAmt());
         BigDecimal ct42  = nz(ind.getVatRefundReq());
 
-        assertNonNegative(ct22, ct24, ct26, ct29, ct30, ct32, ct32a, ct33a,
-                ct37, ct38, ct39a, ct40b, ct42,
-                nz(ind.getNoActivity()), nz(ind.getPurchAmt()),
-                nz(ind.getImpAmt()), nz(ind.getImpAmtVat()),
-                nz(ind.getDeductVatAmt()), nz(ind.getSalesAmtVat5()),
-                nz(ind.getSalesAmtVat10()));
+        // Revenue and purchase cells may be NEGATIVE. A downward-adjustment
+        // invoice can exceed the period's own revenue when it cancels part of an
+        // earlier period's; the period then genuinely booked negative net
+        // revenue, and rejecting it blocked a lawful filing (QA S-07). PO ruled
+        // 2026-08-13 that negative indicators are permitted.
+        //
+        // What stays guarded is not "the rest" but the cells where a minus sign
+        // changes the MEANING rather than the size — the carried credit, the
+        // three magnitude-style adjustments whose sign the formula supplies, and
+        // the offset/refund family bounded by max(0,…) terms. The reasoning per
+        // cell is on VatDeclarationService.MAY_BE_NEGATIVE.
+        assertNonNegative(ct22, ct37, ct38, ct39a, ct40b, ct42,
+                nz(ind.getNoActivity()));
 
         // Source cells auto-fill ONLY when their driver arrives in the SAME
         // request. The previous rule was "keep the client's value when sent,
