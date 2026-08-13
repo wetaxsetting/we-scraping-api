@@ -570,6 +570,42 @@ class VatDeclarationLifecycleTest {
         }
 
         /**
+         * QA S-08. February of a leap year must end on the 29th, or an invoice
+         * dated 29/02 falls outside its own period and vanishes from the return.
+         *
+         * <p>Tested here rather than through the API because reaching 02/2028
+         * over HTTP needs a contiguous chain of nineteen more monthly periods —
+         * the question is only what {@code periodRange} computes, and that is
+         * visible on the row {@code create()} builds.
+         */
+        @Test
+        @DisplayName("February 2028 (leap) spans 01–29, not 01–28")
+        void leapFebruarySpansTwentyNineDays() {
+            when(busiInfmRepo.findById(BIZ)).thenReturn(Optional.of(new BusiInfm()));
+            when(declRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            service.create(request("M", 2, 2028));
+
+            ArgumentCaptor<VatDeclaration> saved = ArgumentCaptor.forClass(VatDeclaration.class);
+            verify(declRepo).save(saved.capture());
+            assertThat(saved.getValue().getFromDt()).isEqualTo(LocalDate.of(2028, 2, 1));
+            assertThat(saved.getValue().getToDt()).isEqualTo(LocalDate.of(2028, 2, 29));
+        }
+
+        @Test
+        @DisplayName("February 2026 (non-leap) spans 01–28")
+        void ordinaryFebruarySpansTwentyEightDays() {
+            when(busiInfmRepo.findById(BIZ)).thenReturn(Optional.of(new BusiInfm()));
+            when(declRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            service.create(request("M", 2, 2026));
+
+            ArgumentCaptor<VatDeclaration> saved = ArgumentCaptor.forClass(VatDeclaration.class);
+            verify(declRepo).save(saved.capture());
+            assertThat(saved.getValue().getToDt()).isEqualTo(LocalDate.of(2026, 2, 28));
+        }
+
+        /**
          * The contiguity guard the Lock nest used to assert. PO 2026-08-06: a
          * period may be created only when K-1 exists (and is locked), or when it
          * is the tenant's very first — no skipping ahead over an absent period.
