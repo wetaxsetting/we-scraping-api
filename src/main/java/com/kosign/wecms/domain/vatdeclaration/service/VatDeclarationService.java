@@ -333,6 +333,7 @@ public class VatDeclarationService {
             return toDetail(decl, loadIndicator(decl));   // idempotent toggle
         }
         VatDeclarationIndicator ind = loadIndicator(decl);
+        assertPeriodEnded(decl);
         assertPreviousPeriodClosed(decl, ind);
         assertNoActivityConsistent(ind);
 
@@ -402,6 +403,43 @@ public class VatDeclarationService {
         if (nz(ind.getPrevCredit()).compareTo(carried) != 0) {              // K   [22]
             throw new BusinessException("WBE_VAT_DECL_PREV_CREDIT_MISMATCH",
                     str(ind.getPrevCredit()), str(carried));
+        }
+    }
+
+    /**
+     * A tax period that has not finished yet must not be closed.
+     *
+     * <p>Nothing else in the lifecycle knows what day it is: {@code create()}
+     * validates the period number, duplicates and chain contiguity, and
+     * {@code lock()} walks backward for [43] → [22] — none of them compares the
+     * period to the calendar. So M8/2026 could be created in August and locked
+     * the same day, purely because M7 was already closed.
+     *
+     * <p>Two things follow from that, and the second is the worse one. A locked
+     * declaration exports HTKK XML, so figures for days that have not happened
+     * become a filing. And a locked declaration cannot be deleted
+     * ({@code WBE_VAT_DECL_LOCKED}), so the premature row squats on the period:
+     * when the real M8 comes due in September it collides with
+     * {@code WBE_VAT_DECL_DUPLICATE_PERIOD} and the tenant is stuck without DB
+     * intervention.
+     *
+     * <p><b>Creating early stays allowed</b> — {@code create()} pre-fills the
+     * period's e-invoices, so opening the period and filling it in as invoices
+     * arrive is real, useful work. What is refused is <b>closing</b> it: a draft
+     * remains editable and deletable, so nothing gets stuck and no XML escapes.
+     * Same shape as [22] and [21] — permissive while drafting, strict at the
+     * point of no return.
+     *
+     * <p>The boundary is the day AFTER the period's last day: on 31/08 the
+     * August period is still running.
+     */
+    private void assertPeriodEnded(VatDeclaration decl) {
+        String wireType = toWirePeriodType(decl.getPeriodType());
+        LocalDate end = periodRange(wireType, decl.getPeriodValue(), decl.getPeriodYear())[1];
+        if (!LocalDate.now().isAfter(end)) {
+            throw new BusinessException("WBE_VAT_DECL_PERIOD_NOT_ENDED",
+                    periodLabel(wireType, decl.getPeriodValue(), decl.getPeriodYear()),
+                    end.toString());
         }
     }
 

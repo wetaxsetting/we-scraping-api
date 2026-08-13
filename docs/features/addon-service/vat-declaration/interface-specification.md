@@ -337,6 +337,7 @@ Server gán `annex_seq_no` (MAX+1), set `HAND_REG_YN='Y'`, `SRC_DOC_ID=null`. DE
 | `WBE_VAT_DECL_INVALID_INDICATOR` | Giá trị chỉ tiêu âm / không phải số nguyên (`WEB_VAT_MAIN_MSG_004`) | 2.4 |
 | `WBE_VAT_DECL_ANNEX_ROW_NOT_FOUND` | Không tìm thấy dòng phụ lục | 2.11 |
 | `WBE_VAT_DECL_BSNS_LINE_REQUIRED` | Thiếu ngành nghề kinh doanh (`WEB_VAT_CRE_MSG_004`) — thêm 2026-08-04 | 2.2 |
+| `WBE_VAT_DECL_PERIOD_NOT_ENDED` | Kỳ tính thuế chưa kết thúc — chặn **khóa**, không chặn tạo (tạo sớm để nhập dần vẫn được; nháp thì sửa/xóa được nên không kẹt chỗ). Thêm 2026-08-12, từ QA S-23 | 2.7 |
 | `WBE_VAT_DECL_NO_ACTIVITY_CONFLICT` | `[21]` đánh dấu không phát sinh nhưng `[34]`/`[23]` vẫn có số — chặn ở bước khóa, không chặn khi nhập (thêm 2026-08-12, từ QA S-19) | 2.7 |
 
 Message hiển thị (VI/EN) lấy theo bảng `Dictionary` trong file Requirement-Design của PO (`WEB_VAT_*_MSG_*`).
