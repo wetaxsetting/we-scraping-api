@@ -12,6 +12,7 @@ import com.kosign.wecms.domain.vatdeclaration.entity.VatDeclarationIndicator;
 import com.kosign.wecms.domain.vatdeclaration.repository.VatAnnexInvoiceRepository;
 import com.kosign.wecms.domain.vatdeclaration.repository.VatDeclarationIndicatorRepository;
 import com.kosign.wecms.domain.vatdeclaration.repository.VatDeclarationRepository;
+import com.kosign.wecms.domain.vatdeclaration.repository.VatSyncBucketProjection;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -116,6 +117,24 @@ class VatDeclarationLifecycleTest {
         when(declRepo.findBySidAndBizKeyAndDelYn(d.getSid(), BIZ, "N")).thenReturn(Optional.of(d));
         when(indicatorRepo.findByDeclaration_SidAndDeclaration_BizKeyAndDelYn(d.getSid(), BIZ, "N"))
                 .thenReturn(Optional.of(i));
+    }
+
+    /**
+     * One aggregation bucket as {@code syncBuckets} would return it.
+     *
+     * <p>A plain implementation, not a mock: stubbing it with {@code when(...)}
+     * inside the argument list of another {@code when(...)} is what Mockito
+     * rejects as unfinished stubbing, and the failure names the outer call —
+     * which sends you looking in the wrong place.
+     */
+    private static VatSyncBucketProjection bucket(String docType, String rate,
+                                                  String amt, String tax) {
+        return new VatSyncBucketProjection() {
+            public String getDocType()     { return docType; }
+            public String getTaxRate()     { return rate; }
+            public BigDecimal getAmt()     { return new BigDecimal(amt); }
+            public BigDecimal getTaxAmt()  { return new BigDecimal(tax); }
+        };
     }
 
     /** No K-1 row in the repository for the period before this one. */
@@ -567,6 +586,34 @@ class VatDeclarationLifecycleTest {
             verify(indicatorRepo).save(saved.capture());
             assertThat(saved.getValue().getPrevCredit())
                     .isEqualByComparingTo(new BigDecimal("7000000"));
+        }
+
+        /**
+         * QA S-35. {@code SPLY_AMT} is {@code NUMERIC(20,6)} and live invoices
+         * carry fractions — [23] came out at 4,040,744.71 on 02/2026. The XML
+         * exporter then dropped the fraction while the stored declaration kept
+         * it, so one filing held two different numbers for the same line.
+         *
+         * <p>Rounding belongs at the sync boundary, not at export: after this,
+         * every downstream artifact reads the same integral figure.
+         */
+        @Test
+        @DisplayName("sync rounds a fractional bucket to whole đồng")
+        void syncRoundsToWholeDong() {
+            when(busiInfmRepo.findById(BIZ)).thenReturn(Optional.of(new BusiInfm()));
+            when(declRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(annexInvoiceRepo.syncBuckets(eq(BIZ), any(), any(), any(), any()))
+                    .thenReturn(List.of(bucket("B", "10%", "4040744.71", "404074"),
+                                        bucket("I", "10%", "1901577943.5", "190157794")));
+
+            service.create(request("M", 5, 2026));
+
+            ArgumentCaptor<VatDeclarationIndicator> saved =
+                    ArgumentCaptor.forClass(VatDeclarationIndicator.class);
+            verify(indicatorRepo).save(saved.capture());
+            // .71 rounds up, .5 rounds up (HALF_UP) — never silently truncated
+            assertThat(saved.getValue().getPurchAmt()).isEqualByComparingTo("4040745");
+            assertThat(saved.getValue().getSalesAmt10()).isEqualByComparingTo("1901577944");
         }
 
         /**
