@@ -167,26 +167,36 @@ public class VatDeclarationService {
             throw new BusinessException("WBE_VAT_DECL_DUPLICATE_PERIOD");
         }
 
+        assertPeriodTypeConsistentInYear(bizKey, req.periodType(), req.declYear());
+
+        LocalDate[] range = periodRange(req.periodType(), req.periodValue(), req.declYear());
+
         // Contiguity guard (PO 2026-08-06): declarations must be created in order.
         // K may be created only when K-1 exists AND is LOCKED — or when K is the
         // tenant's very first period. No skipping (can't create M3 while M2 is
         // absent), and the immediately-preceding period must be closed first.
         VatDeclaration previous = findAdjacent(bizKey, req.periodType(), req.periodValue(), req.declYear(), -1);
+        BigDecimal carryOver;
         if (previous == null) {
             if (declRepo.existsEarlierPeriod(bizKey, periodType, req.declYear(), req.periodValue())) {
                 throw new BusinessException("WBE_VAT_DECL_PREV_MISSING",
                         periodLabel(req.periodType(), req.periodValue(), req.declYear()));
             }
+            // No same-type predecessor and nothing earlier of this type: either the
+            // tenant's very first declaration, or the first period after a legal
+            // year-boundary switch between monthly and quarterly. The type-scoped
+            // lookup cannot tell those apart and used to return ZERO for both,
+            // which silently destroys the credit balance carried out of December.
+            carryOver = precedingCreditAcrossTypes(bizKey, range[0]);
         } else if (!STATUS_LOCKED.equals(previous.getStatus())) {
             throw new BusinessException("WBE_VAT_DECL_PREV_NOT_LOCKED");
+        } else {
+            carryOver = nz(loadIndicator(previous).getCreditNext());
         }
-        BigDecimal carryOver = previous == null ? BigDecimal.ZERO
-                : nz(loadIndicator(previous).getCreditNext());
 
         BusiInfm company = busiInfmRepo.findById(bizKey)
                 .orElseThrow(() -> new BusinessException("WBE_VAT_DECL_NOT_FOUND"));
 
-        LocalDate[] range = periodRange(req.periodType(), req.periodValue(), req.declYear());
         VatDeclaration decl = VatDeclaration.builder()
                 .bizKey(bizKey)
                 .periodType(periodType)
@@ -413,9 +423,22 @@ public class VatDeclarationService {
                 decl.getPeriodValue(), decl.getPeriodYear(), -1);
 
         if (previous == null) {
-            // No immediately-preceding period on file -> nothing to carry forward,
-            // so allow the lock. First declaration OR a deliberate filing gap; an
-            // older, non-adjacent declaration must not block it (PO 2026-08-06).
+            // A deliberate filing gap must not block the lock (PO 2026-08-06), so
+            // only the "nothing earlier of this type at all" case is examined —
+            // which is exactly where a year-boundary switch lands. Without this,
+            // [22] could be overridden and closed at the one seam create() now
+            // seeds across types, and the mismatch guard would never see it.
+            if (!declRepo.existsEarlierPeriod(decl.getBizKey(), decl.getPeriodType(),
+                    decl.getPeriodYear(), decl.getPeriodValue())) {
+                VatDeclaration prior = precedingDeclaration(decl.getBizKey(), decl.getFromDt());
+                if (prior != null && STATUS_LOCKED.equals(prior.getStatus())) {
+                    BigDecimal seam = nz(loadIndicator(prior).getCreditNext());
+                    if (nz(ind.getPrevCredit()).compareTo(seam) != 0) {
+                        throw new BusinessException("WBE_VAT_DECL_PREV_CREDIT_MISMATCH",
+                                str(ind.getPrevCredit()), str(seam));
+                    }
+                }
+            }
             return;
         }
         if (!STATUS_LOCKED.equals(previous.getStatus())) {
@@ -426,6 +449,70 @@ public class VatDeclarationService {
             throw new BusinessException("WBE_VAT_DECL_PREV_CREDIT_MISMATCH",
                     str(ind.getPrevCredit()), str(carried));
         }
+    }
+
+    /**
+     * Monthly and quarterly filing may not be mixed inside one calendar year.
+     *
+     * <p>Every guard in {@code create()} was scoped to {@code periodType} — the
+     * duplicate check, {@code findAdjacent}, {@code existsEarlierPeriod}. Send
+     * {@code type=Q} and the system looked at the quarterly rows, found none,
+     * and concluded this was the tenant's first declaration ever. Q2/2026 was
+     * created beside a closed M4, M5 and M6, and the same revenue sat in two
+     * filings.
+     *
+     * <p>Điều 9 Nghị định 126/2020 fixes the choice for the calendar year, so
+     * the year — not the period type — is the scope this belongs in. Switching
+     * at a year boundary stays open: 2025 monthly then 2026 quarterly passes,
+     * and {@link #precedingCreditAcrossTypes} keeps the credit flowing across
+     * that seam.
+     *
+     * <p>Pre-existing mixed years are reported with both types in the message
+     * rather than silently picking one, because a tenant already in that state
+     * needs a human decision, not a guess.
+     */
+    private void assertPeriodTypeConsistentInYear(String bizKey, String wireType, int year) {
+        String wanted = toDbPeriodType(wireType);
+        List<String> used = declRepo.periodTypesInYear(bizKey, year);
+        if (used.isEmpty() || (used.size() == 1 && used.contains(wanted))) {
+            return;
+        }
+        // Only the year is interpolated. The wire codes "M"/"Q" would read as
+        // untranslated tokens inside a Vietnamese sentence, and the list screen
+        // already shows which type the year is on.
+        throw new BusinessException("WBE_VAT_DECL_PERIOD_TYPE_MISMATCH",
+                String.valueOf(year));
+    }
+
+    /**
+     * [43] of whatever period ran immediately before this one, ignoring type.
+     *
+     * <p>Only consulted when the same-type chain has no predecessor at all. A
+     * tenant filing monthly through 12/2025 and quarterly from Q1/2026 has a
+     * real predecessor — December — that {@code findAdjacent} cannot see because
+     * it looks for Q4/2025. Returning ZERO there is not a formatting detail: the
+     * carried credit is money the tenant has already paid and may deduct, and it
+     * would vanish at the seam.
+     *
+     * <p>An unlocked predecessor yields ZERO rather than its draft [43]: an open
+     * period's figure is not final, and quietly seeding [22] from it would put a
+     * number into the new declaration that changes underneath it.
+     */
+    private BigDecimal precedingCreditAcrossTypes(String bizKey, LocalDate periodStart) {
+        VatDeclaration prior = precedingDeclaration(bizKey, periodStart);
+        return prior == null || !STATUS_LOCKED.equals(prior.getStatus())
+                ? BigDecimal.ZERO
+                : nz(loadIndicator(prior).getCreditNext());
+    }
+
+    /** Latest declaration ending before {@code periodStart}, any period type. */
+    private VatDeclaration precedingDeclaration(String bizKey, LocalDate periodStart) {
+        if (periodStart == null) {
+            return null;
+        }
+        List<VatDeclaration> rows = declRepo.findPrecedingByDate(
+                bizKey, periodStart, PageRequest.of(0, 1));
+        return rows.isEmpty() ? null : rows.get(0);
     }
 
     /**

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kosign.wecms.common.enums.LangCd;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
+import com.kosign.wecms.domain.auth.entity.BusiInfm;
 import com.kosign.wecms.domain.auth.repository.BusiInfmRepository;
 import com.kosign.wecms.domain.vatdeclaration.dto.VatDeclarationCreateRequest;
 import com.kosign.wecms.domain.vatdeclaration.entity.VatDeclaration;
@@ -502,6 +503,70 @@ class VatDeclarationLifecycleTest {
                     .isInstanceOf(BusinessException.class)
                     .hasMessageContaining("WBE_VAT_DECL_BSNS_LINE_REQUIRED");
             verify(declRepo, never()).save(any());
+        }
+
+        /** Same shape as {@link #requestWithIndustry}, for an arbitrary period. */
+        private static VatDeclarationCreateRequest request(String type, int value, int year) {
+            return new VatDeclarationCreateRequest(
+                    type, value, year, "00", null, null, null, null, null, null, null, null);
+        }
+
+        @Test
+        @DisplayName("year already filed monthly → a quarterly period is refused")
+        void mixedPeriodTypeInYearRefused() {
+            when(declRepo.periodTypesInYear(BIZ, 2026)).thenReturn(List.of("month"));
+
+            assertThatThrownBy(() -> service.create(request("Q", 2, 2026)))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("WBE_VAT_DECL_PERIOD_TYPE_MISMATCH");
+            verify(declRepo, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("same type again in the same year → allowed past the type guard")
+        void samePeriodTypeInYearAllowed() {
+            when(declRepo.periodTypesInYear(BIZ, 2026)).thenReturn(List.of("quarter"));
+            when(declRepo.existsByBizKeyAndPeriodTypeAndPeriodValueAndPeriodYearAndSupplNoAndDelYn(
+                    BIZ, "quarter", 2, 2026, 0, "N")).thenReturn(false);
+            noPreviousRow();
+            when(declRepo.existsEarlierPeriod(BIZ, "quarter", 2026, 2)).thenReturn(true);
+
+            // Falls through to the contiguity guard, which is the next one along —
+            // proving the type check let it past rather than swallowing it.
+            assertThatThrownBy(() -> service.create(request("Q", 2, 2026)))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("WBE_VAT_DECL_PREV_MISSING");
+        }
+
+        /**
+         * The legal switch: monthly through 12/2025, quarterly from Q1/2026. The
+         * type-scoped lookup sees no Q4/2025 and used to seed [22] = 0, throwing
+         * away a credit balance the tenant is entitled to deduct.
+         */
+        @Test
+        @DisplayName("first quarter after a monthly year → [22] carries December's [43]")
+        void yearBoundarySwitchCarriesCredit() {
+            VatDeclaration dec2025 = VatDeclaration.builder()
+                    .bizKey(BIZ).periodType("month").periodValue(12).periodYear(2025)
+                    .supplNo(0).delYn("N").status(VatDeclarationService.STATUS_LOCKED)
+                    .fromDt(LocalDate.of(2025, 12, 1)).toDt(LocalDate.of(2025, 12, 31))
+                    .build();
+            dec2025.setSid(99L);
+
+            when(declRepo.findPrecedingByDate(eq(BIZ), eq(LocalDate.of(2026, 1, 1)), any()))
+                    .thenReturn(List.of(dec2025));
+            when(indicatorRepo.findByDeclaration_SidAndDeclaration_BizKeyAndDelYn(99L, BIZ, "N"))
+                    .thenReturn(Optional.of(ind(dec2025, "0", "7000000")));
+            when(busiInfmRepo.findById(BIZ)).thenReturn(Optional.of(new BusiInfm()));
+            when(declRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            service.create(request("Q", 1, 2026));
+
+            ArgumentCaptor<VatDeclarationIndicator> saved =
+                    ArgumentCaptor.forClass(VatDeclarationIndicator.class);
+            verify(indicatorRepo).save(saved.capture());
+            assertThat(saved.getValue().getPrevCredit())
+                    .isEqualByComparingTo(new BigDecimal("7000000"));
         }
 
         /**
