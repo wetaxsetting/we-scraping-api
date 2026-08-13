@@ -75,13 +75,29 @@ public class VatIndicatorCalculator {
                 nz(ind.getDeductVatAmt()), nz(ind.getSalesAmtVat5()),
                 nz(ind.getSalesAmtVat10()));
 
-        // Source cells: keep the client's value when sent, else derive from the rate.
-        BigDecimal ct25 = clientProvided.contains("ct25")
-                ? nz(ind.getDeductVatAmt()) : ct24;
-        BigDecimal ct31 = clientProvided.contains("ct31")
-                ? nz(ind.getSalesAmtVat5()) : floorDivide(ct30, FIVE_PCT_DIVISOR);
-        BigDecimal ct33 = clientProvided.contains("ct33")
-                ? nz(ind.getSalesAmtVat10()) : floorDivide(ct32, TEN_PCT_DIVISOR);
+        // Source cells auto-fill ONLY when their driver arrives in the SAME
+        // request. The previous rule was "keep the client's value when sent,
+        // else derive" — but {@code clientProvided} lives for one request, so a
+        // value the user typed yesterday was re-derived by any unrelated edit
+        // today. Setting [25] to 5,517,132 and then touching any other cell put
+        // it back to [24] = 5,517,133, with no message (QA S-29). Auto-fill is
+        // for the moment the driver changes; it is not a standing rule that
+        // outranks what the user entered.
+        BigDecimal ct25 = derive(clientProvided, "ct25", "ct24")
+                ? ct24 : nz(ind.getDeductVatAmt());
+        BigDecimal ct31 = derive(clientProvided, "ct31", "ct30")
+                ? floorDivide(ct30, FIVE_PCT_DIVISOR) : nz(ind.getSalesAmtVat5());
+
+        // [33] is NEVER derived. [32] is a MIXED bucket: Resolution 204/2025
+        // reduced 10% to 8% and both rates land in it, so no single divisor can
+        // be right. floor([32]/10) turned 8% tax into 10% tax — measured at
+        // 80,219,866 -> 100,273,868 on one edit, overstating output VAT by
+        // 20,054,002 (QA S-26). And because the two rates share the cell, the
+        // error cannot be detected by inspecting the total afterwards.
+        //
+        // Sync sets this cell from the invoices' real tax; a hand-typed
+        // declaration sets it directly. Neither needs a guess from [32].
+        BigDecimal ct33 = nz(ind.getSalesAmtVat10());
         BigDecimal ct27 = ct29.add(ct30).add(ct32).add(ct32a);
         // [28] = [31] + [33]. ct33a is deliberately NOT summed here: the PO ruled
         // on 2026-08-08 that [33a] does not exist on form 01/GTGT and must not be
@@ -121,6 +137,17 @@ public class VatIndicatorCalculator {
         ind.setVatPayableNet(ct40);
         ind.setVatNotDeducted(ct41);
         ind.setCreditNext(ct43);
+    }
+
+    /**
+     * Should {@code cell} be auto-filled from {@code driver} in this request?
+     *
+     * <p>Only when the driver is being written and the cell itself is not — the
+     * user is editing revenue and expects the tax to follow. A request that
+     * mentions neither leaves the cell exactly as the user left it.
+     */
+    private static boolean derive(java.util.Set<String> provided, String cell, String driver) {
+        return !provided.contains(cell) && provided.contains(driver);
     }
 
     private static BigDecimal nz(BigDecimal v) {

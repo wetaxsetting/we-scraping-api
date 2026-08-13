@@ -632,6 +632,11 @@ public class VatDeclarationService {
                 ct29 = BigDecimal.ZERO, ct30 = BigDecimal.ZERO, ct31 = BigDecimal.ZERO,
                 ct32 = BigDecimal.ZERO, ct33 = BigDecimal.ZERO, ct32a = BigDecimal.ZERO;
 
+        // Sales rates the switch below cannot place. Collected rather than
+        // thrown on first sight so the message names every offending rate at
+        // once — fixing invoice data one error per round trip is miserable.
+        Map<String, BigDecimal> unmapped = new LinkedHashMap<>();
+
         for (VatSyncBucketProjection b : annexInvoiceRepo.syncBuckets(
                 decl.getBizKey(), from, to, List.of(DOC_TYPE_SALES, DOC_TYPE_PURCHASE),
                 EXCLUDED_INVOICE_STATUSES)) {
@@ -648,8 +653,32 @@ public class VatDeclarationService {
                 case "8%", "10%" -> { ct32 = ct32.add(amt); ct33 = ct33.add(tax); }
                 case "KKKNT"     -> ct26 = ct26.add(amt);     // [26] not-subject sales (per PO prototype aggFor)
                 case "KCT"       -> ct32a = ct32a.add(amt);   // [32a] not-tax-calculated sales (per PO prototype aggFor)
-                default          -> { /* unknown / null rate → not mapped */ }
+                default          -> unmapped.merge(
+                        b.getTaxRate() == null ? "(null)"
+                                : b.getTaxRate().isBlank() ? "(rỗng)" : b.getTaxRate(),
+                        amt, BigDecimal::add);
             }
+        }
+
+        // A sales rate the switch cannot place used to fall into an empty
+        // default and vanish. The row never reached an indicator, nothing was
+        // logged, and the declaration came out short — under-declared revenue is
+        // a penalty, and it happened where nobody could see it.
+        //
+        // Worse, the annex does NOT drop them: 01-1/GTGT computes VAT
+        // arithmetically for any numeric rate, so it lists what the declaration
+        // omits. QA S-45 measured the two halves of one filing disagreeing by
+        // 60,000,000 in revenue and 700,000 in tax. A taxpayer would be handing
+        // the tax office a schedule that contradicts its own return.
+        //
+        // Refusing the sync is the conservative choice: no declaration is better
+        // than a quietly wrong one. The fix belongs in the invoice data, or in a
+        // PO decision to map the rate — either way a human must see it.
+        if (!unmapped.isEmpty()) {
+            String detail = unmapped.entrySet().stream()
+                    .map(e -> e.getKey() + " (" + str(e.getValue()) + ")")
+                    .collect(java.util.stream.Collectors.joining(", "));
+            throw new BusinessException("WBE_VAT_DECL_UNKNOWN_TAX_RATE", detail);
         }
 
         ind.setPurchAmt(ct23);
@@ -662,7 +691,12 @@ public class VatDeclarationService {
         ind.setSalesAmtVat10(ct33);
         ind.setSalesAmtNontax(ct32a);
 
-        calculator.recompute(ind, Set.of("ct31", "ct33"));
+        // Name every cell this aggregation writes, not just the two that used to
+        // need protecting. [25] now auto-fills from [24] only when [24] is in the
+        // same write — so a sync that refreshes [24] must say so, or [25] would
+        // keep a figure belonging to the previous aggregation.
+        calculator.recompute(ind, Set.of("ct23", "ct24", "ct26", "ct29", "ct30",
+                                         "ct31", "ct32", "ct33", "ct32a"));
     }
 
     // ---------------------------------------------------------------- helpers
