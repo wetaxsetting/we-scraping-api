@@ -141,18 +141,25 @@ class VatDeclarationLifecycleTest {
             assertThat(d.getStatus()).isEqualTo(VatDeclarationService.STATUS_LOCKED);
         }
 
+        /**
+         * PO 2026-08-06 moved the contiguity guard to {@code create()}: lock only
+         * walks back one period to carry [43] → [22], and a deliberate filing gap
+         * has nothing to carry, so it locks. This test used to expect
+         * {@code WBE_VAT_DECL_PREV_MISSING} here and had been failing ever since
+         * that decision landed — the guard it was written for now lives one
+         * lifecycle step earlier, where {@code gapInChainRejectedAtCreate} covers
+         * it.
+         */
         @Test
-        @DisplayName("hole in the chain: K-1 missing but older periods exist → refused")
-        void gapInChainRefused() {
+        @DisplayName("hole in the chain: K-1 missing but older periods exist → locks anyway")
+        void gapInChainLocks() {
             VatDeclaration d = decl(SID, VatDeclarationService.STATUS_DRAFT, 3, 2026);
             given(d, ind(d, "0", "0"));
             noPreviousRow();
-            when(declRepo.existsEarlierPeriod(BIZ, "quarter", 2026, 3)).thenReturn(true);
 
-            assertThatThrownBy(() -> service.lock(SID))
-                    .isInstanceOf(BusinessException.class)
-                    .hasMessageContaining("WBE_VAT_DECL_PREV_MISSING");
-            assertThat(d.getStatus()).isEqualTo(VatDeclarationService.STATUS_DRAFT);
+            service.lock(SID);
+
+            assertThat(d.getStatus()).isEqualTo(VatDeclarationService.STATUS_LOCKED);
         }
 
         @Test
@@ -458,6 +465,25 @@ class VatDeclarationLifecycleTest {
             assertThatThrownBy(() -> service.create(requestWithIndustry("   ")))
                     .isInstanceOf(BusinessException.class)
                     .hasMessageContaining("WBE_VAT_DECL_BSNS_LINE_REQUIRED");
+            verify(declRepo, never()).save(any());
+        }
+
+        /**
+         * The contiguity guard the Lock nest used to assert. PO 2026-08-06: a
+         * period may be created only when K-1 exists (and is locked), or when it
+         * is the tenant's very first — no skipping ahead over an absent period.
+         */
+        @Test
+        @DisplayName("hole in the chain: K-1 missing but older periods exist → refused at create")
+        void gapInChainRejectedAtCreate() {
+            when(declRepo.existsByBizKeyAndPeriodTypeAndPeriodValueAndPeriodYearAndSupplNoAndDelYn(
+                    BIZ, "quarter", 2, 2026, 0, "N")).thenReturn(false);
+            noPreviousRow();
+            when(declRepo.existsEarlierPeriod(BIZ, "quarter", 2026, 2)).thenReturn(true);
+
+            assertThatThrownBy(() -> service.create(requestWithIndustry("00")))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("WBE_VAT_DECL_PREV_MISSING");
             verify(declRepo, never()).save(any());
         }
 
