@@ -432,7 +432,8 @@ class OwnAccountTransferServiceTest {
         when(acctMstrRepo.findOwnTransferSourceRows(any(), anyList(), anyBoolean(), anyString(), any()))
                 .thenReturn(List.of(src, other));
         stubBankName(VIETIN, "Vietin Bank");
-        when(napasBankInfoRepo.findByBankCd(VIETIN)).thenReturn(java.util.Optional.empty());
+        when(napasBankInfoRepo.findFirstByBankCdOrderByNapasBankCdAsc(VIETIN))
+                .thenReturn(java.util.Optional.empty());
 
         var resp = service.listTargetAccounts(SHINHAN, "0001");
 
@@ -454,7 +455,8 @@ class OwnAccountTransferServiceTest {
         when(acctAuthRepo.findByBizKeyAndUserIdAndUseYn(TENANT, USER, "Y"))
                 .thenReturn(List.of(grant(VIETIN, "0002", "W")));
         stubBankName(VIETIN, "Vietin Bank");
-        when(napasBankInfoRepo.findByBankCd(VIETIN)).thenReturn(java.util.Optional.empty());
+        when(napasBankInfoRepo.findFirstByBankCdOrderByNapasBankCdAsc(VIETIN))
+                .thenReturn(java.util.Optional.empty());
 
         var resp = service.listTargetAccounts(SHINHAN, "0001");
 

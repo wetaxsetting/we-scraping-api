@@ -475,7 +475,10 @@ public class OwnAccountTransferService {
             if (!isAdmin && !userGrants.getOrDefault(key, GrantFlags.EMPTY).hasAny()) {
                 continue;
             }
-            final String napasBankCd = napasBankInfoRepo.findByBankCd(a.getBankCd())
+            // Lowest NAPAS code wins for multi-branch banks (IBK / KB /
+            // KEB Hana / VPBank) — legacy IDO.ACCT_MSTR_R008 parity.
+            final String napasBankCd = napasBankInfoRepo
+                    .findFirstByBankCdOrderByNapasBankCdAsc(a.getBankCd())
                     .map(NapasBankInfo::getNapasBankCd).orElse(null);
             projected.add(new TargetAccountRow(
                     TargetAccountRow.KIND_OWN_ACCOUNT,

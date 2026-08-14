@@ -97,6 +97,45 @@ dependencies {
     testAnnotationProcessor 'org.projectlombok:lombok'
 }
 
+// Feed `.env.local` to bootRun as environment variables.
+//
+// Since the 2026-07-30 config migration (docs/deployment/config-bare-placeholder-migration.md)
+// every placeholder in application.yml / application-local.yml is a bare ${VAR} with no default,
+// so all 68 variables MUST come from somewhere. Gradle reads no .env file on its own and the
+// project has no dotenv dependency, which is why a plain `gradlew bootRun` died at context
+// initialisation with "Could not resolve placeholder 'HAENGSUNG_ORACLE_ENABLED'" — the first
+// placeholder Spring touches, because HaengsungOracleDataSourceConfig's @ConditionalOnProperty is
+// evaluated during component scan.
+//
+// Why here and not in run-local.bat: cmd cannot hold an empty environment variable — `set "VAR="`
+// deletes it — and several variables are legitimately empty (WECMS_SFTP_USERNAME,
+// WECMS_CALLBACK_TRUSTED_PROXIES, WECMS_CALLBACK_ALLOWED_IPS, …; the template says to keep the
+// line with nothing after the '='). Gradle passes its environment map straight to ProcessBuilder,
+// which preserves an empty value, so the placeholder resolves to "" instead of failing.
+//
+// bootRun only — `test` is untouched (it runs the `test` profile).
+tasks.named('bootRun') {
+    def envFile = file('.env.local')
+    if (envFile.exists()) {
+        envFile.eachLine('UTF-8') { line ->
+            def trimmed = line.trim()
+            if (trimmed.isEmpty() || trimmed.startsWith('#')) return
+            def eq = trimmed.indexOf('=')
+            if (eq <= 0) return
+            // Key trimmed, value verbatim after '=' — no unquoting, no trimming: a trailing space
+            // in a path or secret is data, not formatting.
+            environment trimmed.substring(0, eq).trim(), trimmed.substring(eq + 1)
+        }
+    } else {
+        doFirst {
+            throw new GradleException(
+                "wecms-api/.env.local is missing. The yml files carry no defaults since 2026-07-30, " +
+                "so the app cannot start without it. Copy .env.local.example to .env.local and set " +
+                "WECMS_DB_PASSWORD. See docs/deployment/config-bare-placeholder-migration.md.")
+        }
+    }
+}
+
 tasks.named('test') {
     useJUnitPlatform()
 

@@ -15,24 +15,26 @@ if exist "C:\Program Files\Eclipse Adoptium\jdk-21.0.11.10-hotspot" (
     echo        Current JAVA_HOME: %JAVA_HOME%
 )
 
-REM --- 2. Optional env vars — application-local.yml has safe local defaults ---
-if "%WECMS_DB_PASSWORD%"=="" (
-    echo [INFO] WECMS_DB_PASSWORD not set — using default from application-local.yml (password: 1234)
-)
-if "%WECMS_JWT_SECRET%"=="" (
-    REM F-01: application-local.yml no longer carries a JWT secret default. Set a
-    REM local-only dev secret so run-local.bat still works out of the box. Laptop
-    REM use ONLY — SIT/UAT/PROD must set their own unique WECMS_JWT_SECRET.
-    set "WECMS_JWT_SECRET=wecms-local-dev-only-jwt-secret-not-for-any-shared-environment-0123456789"
-    echo [INFO] WECMS_JWT_SECRET not set — using a local-only dev secret ^(laptop use only^)
+REM --- 2. Require .env.local — it is the ONLY source of configuration ---
+REM  Since the 2026-07-30 config migration every placeholder in the yml files is a bare
+REM  ${VAR} with no default (docs/deployment/config-bare-placeholder-migration.md), so all
+REM  68 variables come from .env.local. It is loaded by the bootRun task in build.gradle,
+REM  NOT here: cmd cannot hold an empty environment variable (`set "VAR="` deletes it) and
+REM  several variables are legitimately empty. Gradle's ProcessBuilder env map can.
+set "ENV_FILE=%~dp0.env.local"
+if not exist "%ENV_FILE%" (
+    echo.
+    echo [FAIL] %ENV_FILE% not found.
+    echo        The yml files carry no defaults — the app cannot start without it.
+    echo        Copy .env.local.example to .env.local, then set WECMS_DB_PASSWORD.
+    exit /b 1
 )
 
-REM --- 3. Sanity-check local PostgreSQL is reachable ---
-powershell -NoProfile -Command "if (-not (Test-NetConnection -ComputerName 'localhost' -Port 5432 -InformationLevel Quiet -WarningAction SilentlyContinue)) { exit 1 }"
+REM --- 3. Sanity-check the DB in .env.local is reachable (host is remote + VPN-gated) ---
+powershell -NoProfile -Command "$u = (Select-String -Path '%ENV_FILE%' -Pattern '^WECMS_DB_URL=' | Select-Object -First 1).Line -replace '^WECMS_DB_URL=',''; if ($u -notmatch '//([^:/]+):(\d+)/') { Write-Host '[WARN] WECMS_DB_URL not parseable — skipping reachability check'; exit 0 }; $h = $matches[1]; $p = $matches[2]; if (-not (Test-NetConnection -ComputerName $h -Port $p -InformationLevel Quiet -WarningAction SilentlyContinue)) { Write-Host \"[FAIL] PostgreSQL at ${h}:${p} is not reachable.\"; exit 1 }"
 if errorlevel 1 (
-    echo.
-    echo [FAIL] Local PostgreSQL at localhost:5432 is not reachable.
-    echo        Make sure PostgreSQL is running before rerunning.
+    echo        The shared dev DB ^(172.168.5.172^) needs the office network or VPN.
+    echo        Check the connection, then rerun.
     exit /b 1
 )
 

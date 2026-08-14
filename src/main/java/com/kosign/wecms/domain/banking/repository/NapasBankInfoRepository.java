@@ -26,6 +26,18 @@ public interface NapasBankInfoRepository extends JpaRepository<NapasBankInfo, St
      *  response with the engine-side routing code. The dictionary is
      *  small (a handful of rows) so a derived method is fine; if it
      *  ever grows beyond a couple of dozen rows, swap to a cached
-     *  Map. */
-    Optional<NapasBankInfo> findByBankCd(String bankCd);
+     *  Map.
+     *
+     *  <p><b>{@code BANK_CD} is NOT unique</b> — a bank with several
+     *  NAPAS-registered branches carries one row per branch (IBK VN
+     *  {@code 11704003} → {@code 970455} Hanoi / {@code 970456} HCM;
+     *  likewise KB {@code 11704013}, KEB Hana {@code 11704080},
+     *  VPBank {@code 11704102}). The lowest {@code NAPAS_BANK_CD}
+     *  wins, mirroring legacy {@code IDO.ACCT_MSTR_R008.xml}
+     *  (the IDO behind {@code trns_0001_005_r001}) which resolves the
+     *  same column with
+     *  {@code ORDER BY NBI.NAPAS_BANK_CD ASC LIMIT 1}. A plain
+     *  {@code findByBankCd} returning {@code Optional} throws
+     *  {@code NonUniqueResultException} for those four banks. */
+    Optional<NapasBankInfo> findFirstByBankCdOrderByNapasBankCdAsc(String bankCd);
 }

@@ -1,0 +1,23 @@
+{
+  "attempts": {
+    "T-002": 1
+  },
+  "verified": {
+    "T-001": {
+      "commit": "858e807e7490b3dc739de52599c2934f9c16f5fb",
+      "attempt": 3,
+      "ts": "2026-08-13T09:15:54.329Z"
+    }
+  },
+  "blocked": [],
+  "vacuous": [],
+  "holdBroken": [],
+  "runs": [
+    "2026-08-13T08:56:32.461Z"
+  ],
+  "fingerprints": {
+    "T-001": "19f4e54800f4accc",
+    "T-002": "44167be6ebf09324",
+    "T-003": "f903afa3f4bdfc25"
+  }
+}

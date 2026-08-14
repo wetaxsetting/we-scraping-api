@@ -81,8 +81,10 @@ public class OutBankCdNormalizer {
             return hit.get().getNapasBankCd();
         }
 
-        // Try as internal BANK_CD.
-        hit = napasRepo.findByBankCd(code);
+        // Try as internal BANK_CD. Lowest NAPAS code wins for the
+        // multi-branch banks (IBK / KB / KEB Hana / VPBank) — BANK_CD is
+        // not unique; legacy IDO.ACCT_MSTR_R008 tie-breaks the same way.
+        hit = napasRepo.findFirstByBankCdOrderByNapasBankCdAsc(code);
         if (hit.isPresent()) {
             return hit.get().getNapasBankCd();
         }
