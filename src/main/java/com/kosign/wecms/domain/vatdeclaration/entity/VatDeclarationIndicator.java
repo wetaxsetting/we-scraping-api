@@ -40,7 +40,7 @@ public class VatDeclarationIndicator extends BaseEntity {
     @Column(name = "ID")
     private Long id;
 
-    /** Owning declaration ({@code TAX_DECLARATIONS.SID}); UK per revision. */
+    /** Owning declaration ({@code VAT_DECL.SID}); UK per revision. */
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "VAT_DECL_ID", nullable = false)
     private VatDeclaration declaration;

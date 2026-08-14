@@ -9,6 +9,13 @@ import jakarta.validation.constraints.Pattern;
  * Create-period request. Wire {@code period_type} is {@code M}/{@code Q};
  * the service maps to the stored {@code month}/{@code quarter} values.
  * Tax-office fields are optional until the Company-Settings source lands.
+ *
+ * <p>{@code bsnsLineCd} is <b>required</b> ("Business Industry *" on the PO create
+ * form, Dictionary {@code WEB_VAT_CRE_006}) but carries no {@code @NotBlank}: the
+ * PO ships a dedicated message for it ({@code WEB_VAT_CRE_MSG_004}), so
+ * {@code VatDeclarationService.create} throws
+ * {@code WBE_VAT_DECL_BSNS_LINE_REQUIRED} instead of letting bean validation
+ * collapse it into the generic {@code WBE_VALIDATION}.
  */
 public record VatDeclarationCreateRequest(
         @NotNull @Pattern(regexp = "M|Q") String periodType,

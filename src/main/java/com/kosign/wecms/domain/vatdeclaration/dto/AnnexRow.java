@@ -1,7 +1,8 @@
 package com.kosign.wecms.domain.vatdeclaration.dto;
 
 /**
- * One annex line ({@code TAX_DECLARATION_ANNEX_ITEMS}). Amount fields are
+ * One annex line — live-derived per request from {@code BUSA_DOC_MSTR} +
+ * {@code BUSA_DOC_DETL} (no persisted annex-item table). Amount fields are
  * VND strings; {@code allocRatio} is ALLOC-only, {@code reducedAmt} REDUCE8-only.
  */
 public record AnnexRow(

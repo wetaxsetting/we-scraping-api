@@ -48,8 +48,8 @@ import java.util.function.Consumer;
 
 /**
  * VAT Declaration (Mẫu 01/GTGT TT80) — list / create / detail / save-draft /
- * delete / lock / unlock over {@code TAX_DECLARATIONS} +
- * {@code TAX_DECLARATION_ITEMS}. Spec:
+ * delete / lock / unlock over {@code VAT_DECL} +
+ * {@code VAT_DECL_ITEMS}. Spec:
  * docs/features/addon-service/vat-declaration/interface-specification.md.
  *
  * <p>Invoice auto-aggregation (sync) and the annex/export legs are pending
@@ -134,8 +134,8 @@ public class VatDeclarationService {
         List<Long> sids = result.getContent().stream().map(VatDeclaration::getSid).toList();
         Map<Long, VatDeclarationIndicator> bySid = sids.isEmpty() ? Map.of()
                 : indicatorRepo.findByDeclaration_SidInAndDelYn(sids, "N").stream()
-                        .collect(java.util.stream.Collectors.toMap(
-                                i -> i.getDeclaration().getSid(), i -> i, (a, b) -> a));
+                .collect(java.util.stream.Collectors.toMap(
+                        i -> i.getDeclaration().getSid(), i -> i, (a, b) -> a));
 
         List<VatDeclarationRow> rows = result.getContent().stream()
                 .map(d -> toRow(d, bySid.get(d.getSid())))
@@ -154,23 +154,49 @@ public class VatDeclarationService {
         String bizKey = TenantContext.currentBizKey();
         String periodType = toDbPeriodType(req.periodType());
         validatePeriodValue(req.periodType(), req.periodValue());
+        // "Business Industry *" is required on the PO create form (Dictionary
+        // WEB_VAT_CRE_006) and ships its own message (WEB_VAT_CRE_MSG_004), so it
+        // is checked here rather than with @NotBlank — bean validation would
+        // collapse it into the generic WBE_VALIDATION and lose the PO wording.
+        if (blankToNull(req.bsnsLineCd()) == null) {
+            throw new BusinessException("WBE_VAT_DECL_BSNS_LINE_REQUIRED");
+        }
 
         if (declRepo.existsByBizKeyAndPeriodTypeAndPeriodValueAndPeriodYearAndSupplNoAndDelYn(
                 bizKey, periodType, req.periodValue(), req.declYear(), 0, "N")) {
             throw new BusinessException("WBE_VAT_DECL_DUPLICATE_PERIOD");
         }
 
+        assertPeriodTypeConsistentInYear(bizKey, req.periodType(), req.declYear());
+
+        LocalDate[] range = periodRange(req.periodType(), req.periodValue(), req.declYear());
+
+        // Contiguity guard (PO 2026-08-06): declarations must be created in order.
+        // K may be created only when K-1 exists AND is LOCKED — or when K is the
+        // tenant's very first period. No skipping (can't create M3 while M2 is
+        // absent), and the immediately-preceding period must be closed first.
         VatDeclaration previous = findAdjacent(bizKey, req.periodType(), req.periodValue(), req.declYear(), -1);
-        if (previous != null && !STATUS_LOCKED.equals(previous.getStatus())) {
+        BigDecimal carryOver;
+        if (previous == null) {
+            if (declRepo.existsEarlierPeriod(bizKey, periodType, req.declYear(), req.periodValue())) {
+                throw new BusinessException("WBE_VAT_DECL_PREV_MISSING",
+                        periodLabel(req.periodType(), req.periodValue(), req.declYear()));
+            }
+            // No same-type predecessor and nothing earlier of this type: either the
+            // tenant's very first declaration, or the first period after a legal
+            // year-boundary switch between monthly and quarterly. The type-scoped
+            // lookup cannot tell those apart and used to return ZERO for both,
+            // which silently destroys the credit balance carried out of December.
+            carryOver = precedingCreditAcrossTypes(bizKey, range[0]);
+        } else if (!STATUS_LOCKED.equals(previous.getStatus())) {
             throw new BusinessException("WBE_VAT_DECL_PREV_NOT_LOCKED");
+        } else {
+            carryOver = nz(loadIndicator(previous).getCreditNext());
         }
-        BigDecimal carryOver = previous == null ? BigDecimal.ZERO
-                : nz(loadIndicator(previous).getCreditNext());
 
         BusiInfm company = busiInfmRepo.findById(bizKey)
                 .orElseThrow(() -> new BusinessException("WBE_VAT_DECL_NOT_FOUND"));
 
-        LocalDate[] range = periodRange(req.periodType(), req.periodValue(), req.declYear());
         VatDeclaration decl = VatDeclaration.builder()
                 .bizKey(bizKey)
                 .periodType(periodType)
@@ -339,7 +365,9 @@ public class VatDeclarationService {
             return toDetail(decl, loadIndicator(decl));   // idempotent toggle
         }
         VatDeclarationIndicator ind = loadIndicator(decl);
+        assertPeriodEnded(decl);
         assertPreviousPeriodClosed(decl, ind);
+        assertNoActivityConsistent(ind);
 
         decl.setStatus(STATUS_LOCKED);
         decl.setModId(TenantContext.currentUserId());
@@ -376,10 +404,11 @@ public class VatDeclarationService {
      * <ol>
      *   <li>K-1 exists → it must be LOCKED
      *       ({@code WBE_VAT_DECL_PREV_NOT_LOCKED}).</li>
-     *   <li>K-1 missing → fine only when nothing older exists at all (K is the
-     *       tenant's first period). Otherwise the chain has a hole and the
-     *       carry-forward cannot be trusted
-     *       ({@code WBE_VAT_DECL_PREV_MISSING}).</li>
+     *   <li>K-1 missing → the lock is ALLOWED (PO 2026-08-06). This is either the
+     *       tenant's first declaration or a deliberate gap in filing — VAT periods
+     *       need not be contiguous, so an older, non-adjacent declaration must NOT
+     *       block a period whose immediate predecessor was never filed. Only the
+     *       immediately-preceding period gates the lock.</li>
      *   <li>K-1 exists → this period's [22] must equal K-1's [43]. A drift means
      *       K-1 was re-opened and edited after K was created, so K's figures are
      *       stale ({@code WBE_VAT_DECL_PREV_CREDIT_MISMATCH}). Deliberately an
@@ -394,12 +423,23 @@ public class VatDeclarationService {
                 decl.getPeriodValue(), decl.getPeriodYear(), -1);
 
         if (previous == null) {
-            if (declRepo.existsEarlierPeriod(decl.getBizKey(), decl.getPeriodType(),
+            // A deliberate filing gap must not block the lock (PO 2026-08-06), so
+            // only the "nothing earlier of this type at all" case is examined —
+            // which is exactly where a year-boundary switch lands. Without this,
+            // [22] could be overridden and closed at the one seam create() now
+            // seeds across types, and the mismatch guard would never see it.
+            if (!declRepo.existsEarlierPeriod(decl.getBizKey(), decl.getPeriodType(),
                     decl.getPeriodYear(), decl.getPeriodValue())) {
-                throw new BusinessException("WBE_VAT_DECL_PREV_MISSING",
-                        periodLabel(wireType, decl.getPeriodValue(), decl.getPeriodYear()));
+                VatDeclaration prior = precedingDeclaration(decl.getBizKey(), decl.getFromDt());
+                if (prior != null && STATUS_LOCKED.equals(prior.getStatus())) {
+                    BigDecimal seam = nz(loadIndicator(prior).getCreditNext());
+                    if (nz(ind.getPrevCredit()).compareTo(seam) != 0) {
+                        throw new BusinessException("WBE_VAT_DECL_PREV_CREDIT_MISMATCH",
+                                str(ind.getPrevCredit()), str(seam));
+                    }
+                }
             }
-            return;   // genuinely the first period — nothing to carry forward
+            return;
         }
         if (!STATUS_LOCKED.equals(previous.getStatus())) {
             throw new BusinessException("WBE_VAT_DECL_PREV_NOT_LOCKED");
@@ -408,6 +448,139 @@ public class VatDeclarationService {
         if (nz(ind.getPrevCredit()).compareTo(carried) != 0) {              // K   [22]
             throw new BusinessException("WBE_VAT_DECL_PREV_CREDIT_MISMATCH",
                     str(ind.getPrevCredit()), str(carried));
+        }
+    }
+
+    /**
+     * Monthly and quarterly filing may not be mixed inside one calendar year.
+     *
+     * <p>Every guard in {@code create()} was scoped to {@code periodType} — the
+     * duplicate check, {@code findAdjacent}, {@code existsEarlierPeriod}. Send
+     * {@code type=Q} and the system looked at the quarterly rows, found none,
+     * and concluded this was the tenant's first declaration ever. Q2/2026 was
+     * created beside a closed M4, M5 and M6, and the same revenue sat in two
+     * filings.
+     *
+     * <p>Điều 9 Nghị định 126/2020 fixes the choice for the calendar year, so
+     * the year — not the period type — is the scope this belongs in. Switching
+     * at a year boundary stays open: 2025 monthly then 2026 quarterly passes,
+     * and {@link #precedingCreditAcrossTypes} keeps the credit flowing across
+     * that seam.
+     *
+     * <p>Pre-existing mixed years are reported with both types in the message
+     * rather than silently picking one, because a tenant already in that state
+     * needs a human decision, not a guess.
+     */
+    private void assertPeriodTypeConsistentInYear(String bizKey, String wireType, int year) {
+        String wanted = toDbPeriodType(wireType);
+        List<String> used = declRepo.periodTypesInYear(bizKey, year);
+        if (used.isEmpty() || (used.size() == 1 && used.contains(wanted))) {
+            return;
+        }
+        // Only the year is interpolated. The wire codes "M"/"Q" would read as
+        // untranslated tokens inside a Vietnamese sentence, and the list screen
+        // already shows which type the year is on.
+        throw new BusinessException("WBE_VAT_DECL_PERIOD_TYPE_MISMATCH",
+                String.valueOf(year));
+    }
+
+    /**
+     * [43] of whatever period ran immediately before this one, ignoring type.
+     *
+     * <p>Only consulted when the same-type chain has no predecessor at all. A
+     * tenant filing monthly through 12/2025 and quarterly from Q1/2026 has a
+     * real predecessor — December — that {@code findAdjacent} cannot see because
+     * it looks for Q4/2025. Returning ZERO there is not a formatting detail: the
+     * carried credit is money the tenant has already paid and may deduct, and it
+     * would vanish at the seam.
+     *
+     * <p>An unlocked predecessor yields ZERO rather than its draft [43]: an open
+     * period's figure is not final, and quietly seeding [22] from it would put a
+     * number into the new declaration that changes underneath it.
+     */
+    private BigDecimal precedingCreditAcrossTypes(String bizKey, LocalDate periodStart) {
+        VatDeclaration prior = precedingDeclaration(bizKey, periodStart);
+        return prior == null || !STATUS_LOCKED.equals(prior.getStatus())
+                ? BigDecimal.ZERO
+                : nz(loadIndicator(prior).getCreditNext());
+    }
+
+    /** Latest declaration ending before {@code periodStart}, any period type. */
+    private VatDeclaration precedingDeclaration(String bizKey, LocalDate periodStart) {
+        if (periodStart == null) {
+            return null;
+        }
+        List<VatDeclaration> rows = declRepo.findPrecedingByDate(
+                bizKey, periodStart, PageRequest.of(0, 1));
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    /**
+     * A tax period that has not finished yet must not be closed.
+     *
+     * <p>Nothing else in the lifecycle knows what day it is: {@code create()}
+     * validates the period number, duplicates and chain contiguity, and
+     * {@code lock()} walks backward for [43] → [22] — none of them compares the
+     * period to the calendar. So M8/2026 could be created in August and locked
+     * the same day, purely because M7 was already closed.
+     *
+     * <p>Two things follow from that, and the second is the worse one. A locked
+     * declaration exports HTKK XML, so figures for days that have not happened
+     * become a filing. And a locked declaration cannot be deleted
+     * ({@code WBE_VAT_DECL_LOCKED}), so the premature row squats on the period:
+     * when the real M8 comes due in September it collides with
+     * {@code WBE_VAT_DECL_DUPLICATE_PERIOD} and the tenant is stuck without DB
+     * intervention.
+     *
+     * <p><b>Creating early stays allowed</b> — {@code create()} pre-fills the
+     * period's e-invoices, so opening the period and filling it in as invoices
+     * arrive is real, useful work. What is refused is <b>closing</b> it: a draft
+     * remains editable and deletable, so nothing gets stuck and no XML escapes.
+     * Same shape as [22] and [21] — permissive while drafting, strict at the
+     * point of no return.
+     *
+     * <p>The boundary is the day AFTER the period's last day: on 31/08 the
+     * August period is still running.
+     */
+    private void assertPeriodEnded(VatDeclaration decl) {
+        String wireType = toWirePeriodType(decl.getPeriodType());
+        LocalDate end = periodRange(wireType, decl.getPeriodValue(), decl.getPeriodYear())[1];
+        if (!LocalDate.now().isAfter(end)) {
+            throw new BusinessException("WBE_VAT_DECL_PERIOD_NOT_ENDED",
+                    periodLabel(wireType, decl.getPeriodValue(), decl.getPeriodYear()),
+                    end.toString());
+        }
+    }
+
+    /**
+     * [21] "no purchase/sale activity in the period" must not sit on a
+     * declaration that reports activity.
+     *
+     * <p>The flag is not a computed cell — {@code applyFlag} stores whatever the
+     * client sends and {@link VatIndicatorCalculator} only range-checks it, so
+     * nothing zeroes the other indicators when it is set. It then reaches the
+     * filing verbatim: {@code <ct21>1</ct21>} in the HTKK XML and an {@code "X"}
+     * in cell I36 of the 01/GTGT workbook. A return that says "no activity"
+     * beside a non-zero [34] contradicts itself inside a single file, and the
+     * tax office sees both at once.
+     *
+     * <p>Checked at lock rather than on update, matching how [22] is handled: a
+     * mis-tick while drafting is ordinary and must stay correctable. What must
+     * not happen is a self-contradicting return being closed and exported.
+     *
+     * <p>Both sides count. Sales alone would let a period with purchases but no
+     * sales through, which is just as untrue — hence [23]/[24] as well as
+     * [34]/[35].
+     */
+    private void assertNoActivityConsistent(VatDeclarationIndicator ind) {
+        if (nz(ind.getNoActivity()).signum() <= 0) {
+            return;
+        }
+        BigDecimal sales = nz(ind.getTotalSalesAmt()).add(nz(ind.getTotalSalesAmtVat()));
+        BigDecimal purch = nz(ind.getPurchAmt()).add(nz(ind.getPurchAmtVat()));
+        if (sales.signum() != 0 || purch.signum() != 0) {
+            throw new BusinessException("WBE_VAT_DECL_NO_ACTIVITY_CONFLICT",
+                    str(nz(ind.getTotalSalesAmt())), str(nz(ind.getPurchAmt())));
         }
     }
 
@@ -442,8 +615,8 @@ public class VatDeclarationService {
      *
      * <ul>
      *   <li>purchases (DOC_TYPE 'B'): [23] += base, [24] += VAT (all rates)</li>
-     *   <li>sales 0% → [29]; 5% → [30]/[31]; 8%+10% → [32]/[33]; KCT → [26];
-     *       KKKNT → [32a] (out-of-scope revenue, OQ-VAT-4)</li>
+     *   <li>sales 0% → [29]; 5% → [30]/[31]; 8%+10% → [32]/[33]; KKKNT → [26];
+     *       KCT → [32a] (mapping per the PO prototype {@code aggFor}, OQ-VAT-4)</li>
      * </ul>
      *
      * <p>Only the 9 invoice-source cells are overwritten; carry-forward [22] and
@@ -481,6 +654,11 @@ public class VatDeclarationService {
                 ct29 = BigDecimal.ZERO, ct30 = BigDecimal.ZERO, ct31 = BigDecimal.ZERO,
                 ct32 = BigDecimal.ZERO, ct33 = BigDecimal.ZERO, ct32a = BigDecimal.ZERO;
 
+        // Sales rates the switch below cannot place. Collected rather than
+        // thrown on first sight so the message names every offending rate at
+        // once — fixing invoice data one error per round trip is miserable.
+        Map<String, BigDecimal> unmapped = new LinkedHashMap<>();
+
         for (VatSyncBucketProjection b : annexInvoiceRepo.syncBuckets(
                 decl.getBizKey(), from, to, List.of(DOC_TYPE_SALES, DOC_TYPE_PURCHASE),
                 EXCLUDED_INVOICE_STATUSES)) {
@@ -495,23 +673,67 @@ public class VatDeclarationService {
                 case "0%"        -> ct29 = ct29.add(amt);
                 case "5%"        -> { ct30 = ct30.add(amt); ct31 = ct31.add(tax); }
                 case "8%", "10%" -> { ct32 = ct32.add(amt); ct33 = ct33.add(tax); }
-                case "KCT"       -> ct26 = ct26.add(amt);
-                case "KKKNT"     -> ct32a = ct32a.add(amt);   // out-of-scope revenue (OQ-VAT-4)
-                default          -> { /* unknown / null rate → not mapped */ }
+                case "KKKNT"     -> ct26 = ct26.add(amt);     // [26] not-subject sales (per PO prototype aggFor)
+                case "KCT"       -> ct32a = ct32a.add(amt);   // [32a] not-tax-calculated sales (per PO prototype aggFor)
+                default          -> unmapped.merge(
+                        b.getTaxRate() == null ? "(null)"
+                                : b.getTaxRate().isBlank() ? "(rỗng)" : b.getTaxRate(),
+                        amt, BigDecimal::add);
             }
         }
 
-        ind.setPurchAmt(ct23);
-        ind.setPurchAmtVat(ct24);
-        ind.setSalesAmtNondecl(ct26);
-        ind.setSalesAmt0(ct29);
-        ind.setSalesAmt5(ct30);
-        ind.setSalesAmtVat5(ct31);
-        ind.setSalesAmt10(ct32);
-        ind.setSalesAmtVat10(ct33);
-        ind.setSalesAmtNontax(ct32a);
+        // A sales rate the switch cannot place used to fall into an empty
+        // default and vanish. The row never reached an indicator, nothing was
+        // logged, and the declaration came out short — under-declared revenue is
+        // a penalty, and it happened where nobody could see it.
+        //
+        // Worse, the annex does NOT drop them: 01-1/GTGT computes VAT
+        // arithmetically for any numeric rate, so it lists what the declaration
+        // omits. QA S-45 measured the two halves of one filing disagreeing by
+        // 60,000,000 in revenue and 700,000 in tax. A taxpayer would be handing
+        // the tax office a schedule that contradicts its own return.
+        //
+        // Refusing the sync is the conservative choice: no declaration is better
+        // than a quietly wrong one. The fix belongs in the invoice data, or in a
+        // PO decision to map the rate — either way a human must see it.
+        if (!unmapped.isEmpty()) {
+            String detail = unmapped.entrySet().stream()
+                    .map(e -> e.getKey() + " (" + str(e.getValue()) + ")")
+                    .collect(java.util.stream.Collectors.joining(", "));
+            throw new BusinessException("WBE_VAT_DECL_UNKNOWN_TAX_RATE", detail);
+        }
 
-        calculator.recompute(ind, Set.of("ct31", "ct33"));
+        // Round to whole đồng HERE — this is the one place a figure crosses from
+        // the invoice tables into the declaration, so everything downstream is
+        // integral and the exporters have nothing left to truncate.
+        //
+        // SPLY_AMT is NUMERIC(20,6) and real invoices carry fractions: QA found
+        // [23] = 4,040,744.71 (02/2026) and 1,901,577,943.5 (06/2026) on live
+        // data. The XML exporter silently dropped the fraction while the stored
+        // declaration kept it, so one filing carried two different numbers for
+        // the same line (QA S-35). Rounding at export would have hidden that
+        // instead of fixing it.
+        //
+        // HALF_UP, not truncation: VND has no sub-unit, and always truncating
+        // understates revenue — the direction that draws a penalty. The tax
+        // products keep their documented floor (HTKK truncates those); they are
+        // already integral by the time they arrive here.
+        ind.setPurchAmt(dong(ct23));
+        ind.setPurchAmtVat(dong(ct24));
+        ind.setSalesAmtNondecl(dong(ct26));
+        ind.setSalesAmt0(dong(ct29));
+        ind.setSalesAmt5(dong(ct30));
+        ind.setSalesAmtVat5(dong(ct31));
+        ind.setSalesAmt10(dong(ct32));
+        ind.setSalesAmtVat10(dong(ct33));
+        ind.setSalesAmtNontax(dong(ct32a));
+
+        // Name every cell this aggregation writes, not just the two that used to
+        // need protecting. [25] now auto-fills from [24] only when [24] is in the
+        // same write — so a sync that refreshes [24] must say so, or [25] would
+        // keep a figure belonging to the previous aggregation.
+        calculator.recompute(ind, Set.of("ct23", "ct24", "ct26", "ct29", "ct30",
+                                         "ct31", "ct32", "ct33", "ct32a"));
     }
 
     // ---------------------------------------------------------------- helpers
@@ -574,8 +796,8 @@ public class VatDeclarationService {
 
         List<AnnexRow> rows = offset >= total ? List.of()
                 : annexInvoiceRepo.findRows(decl.getBizKey(), from, to, docTypes, rate, q,
-                                EXCLUDED_INVOICE_STATUSES, offset, pageSize)
-                        .stream().map(a -> toAnnexRow(a, type)).toList();
+                        EXCLUDED_INVOICE_STATUSES, offset, pageSize)
+                .stream().map(a -> toAnnexRow(a, type)).toList();
 
         int totalPages = (int) ((total + pageSize - 1) / pageSize);
         return new AnnexInvoiceListResponse(rows, total, totalPages, pageNumber, pageSize,
@@ -801,11 +1023,40 @@ public class VatDeclarationService {
         sent.add(field);
     }
 
-    /** Integer-VND string → BigDecimal; negative / non-integer → business error. */
+    /**
+     * Amount cells a downward-adjustment invoice can legitimately drive below
+     * zero.
+     *
+     * <p>A "hóa đơn điều chỉnh giảm" can exceed the period's own revenue when it
+     * cancels part of what an earlier period invoiced. The period then really
+     * did book negative net revenue, and refusing the value blocked a lawful
+     * filing outright (QA S-07). The PO ruled on 2026-08-13 that negative
+     * indicators are permitted.
+     *
+     * <p>The cells NOT in this set stay guarded, because negative is not a
+     * smaller number there — it is a different meaning:
+     * <ul>
+     *   <li>{@code ct22} carries {@code [43]} of the previous period, which is
+     *       {@code max(0,…) - max(0,…)} and so never negative at source.</li>
+     *   <li>{@code ct37} / {@code ct38} / {@code ct39a} are magnitudes; the
+     *       formula supplies the sign ({@code +ct37 - ct38}). A negative
+     *       decrease would silently become an increase, giving two ways to
+     *       write one adjustment and no way for a reader to tell them apart.</li>
+     *   <li>{@code ct40b} and the {@code ct42*} family are bounded by
+     *       {@code ct40a} / {@code ct41}, both {@code max(0,…)} — and nobody
+     *       requests a negative refund.</li>
+     * </ul>
+     */
+    private static final Set<String> MAY_BE_NEGATIVE = Set.of(
+            "ct23", "ct24", "ct23a", "ct24a", "ct25", "ct26",
+            "ct29", "ct30", "ct31", "ct32", "ct32a", "ct33", "ct33a");
+
+    /** Integer-VND string → BigDecimal; non-integer → business error. */
     private static BigDecimal parseAmount(String raw, String field) {
         try {
             BigDecimal v = new BigDecimal(raw.trim());
-            if (v.signum() < 0 || v.stripTrailingZeros().scale() > 0) {
+            if (v.stripTrailingZeros().scale() > 0
+                    || (v.signum() < 0 && !MAY_BE_NEGATIVE.contains(field))) {
                 throw new BusinessException("WBE_VAT_DECL_INVALID_INDICATOR", field);
             }
             return v;
@@ -900,7 +1151,7 @@ public class VatDeclarationService {
                 d.getDuProv(),
                 d.getDuDist(),
                 d.getDuWard()
-                );
+        );
     }
 
     private static VatIndicatorSet toIndicatorSet(VatDeclarationIndicator i) {
@@ -924,6 +1175,15 @@ public class VatDeclarationService {
 
     private static String str(BigDecimal v) {
         return v == null ? "0" : v.stripTrailingZeros().toPlainString();
+    }
+
+    /**
+     * Whole đồng, half-up. VND has no sub-unit, so a declaration line carrying
+     * a fraction is meaningless — and worse, invisible: only the exporter's
+     * truncation revealed it.
+     */
+    private static BigDecimal dong(BigDecimal v) {
+        return nz(v).setScale(0, java.math.RoundingMode.HALF_UP);
     }
 
     private static BigDecimal nz(BigDecimal v) {
