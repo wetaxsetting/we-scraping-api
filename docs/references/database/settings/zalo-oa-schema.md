@@ -2,8 +2,14 @@
 
 **Flyway migration:** `V254__zalo_oa_integration.sql`
 **Java package:** `com.kosign.wecms.domain.setting.zalooa`
+**Feature doc (service layer, endpoints, vendor contract):** [../../../features/settings/zalo-oa.md](../../../features/settings/zalo-oa.md)
 **Frontend types:** [wecms-web/components/settings/zalo-oa/types.ts](../../../../../wecms-web/components/settings/zalo-oa/types.ts)
-**Status:** schema + entity layer landed; migration **not yet applied** (see §9)
+**Status:** schema + entity layer landed; DDL **applied to the shared dev DB `172.168.5.172/wecmsdevdb` on 2026-08-17** and verified (see §9). Service layer (client / token / send / controller / scheduler) landed the same day — see the feature doc.
+
+> **Scope of this document: the three tables only.** Endpoints, the Zalo HTTP
+> contract, token-rotation handling and configuration live in the feature doc linked
+> above. The open decisions in §10 are duplicated there as a single list — when they
+> diverge, the feature doc is the one being maintained.
 
 > **Not a JEX port.** Zalo has no legacy JEX counterpart, so the Legacy Schema
 > Parity Rule (`wecms-api/CLAUDE.md`) does not apply — there is no DEV table to
@@ -226,19 +232,47 @@ template?" without parsing JSON. `RCVR_NO`, `TMPL_ID`, `TMPL_TYPE`, `LANG_CD`,
 
 ## 9. Migration status
 
-**V254 has not been applied.** Two things to know before running it:
+**Applied to `172.168.5.172:5432/wecmsdevdb` on 2026-08-17.** `psql -1 -f` ran the
+whole file in one transaction: 3 tables, 1 sequence, 4 indexes, 11 comments, no
+errors. Verified against §11 — column counts 13 / 11 / 18, all 8 constraints and
+7 indexes present, and every mapped entity column resolves (see §7).
 
-1. **Pre-existing Flyway version collision.** Four tracked files share two
-   versions:
-   `V250__tax_declaration_items_ct42a_ct42b.sql` / `V250__trco_rspb_infm.sql`, and
-   `V251__sys_trco_infm_dis_nm.sql` / `V251__tax_declarations_annex_alloc_split.sql`.
-   Flyway aborts at startup with *"Found more than one migration with version
-   250"*, so **no** migration applies — V254 included — until one file in each
-   pair is renumbered. `out-of-order: true` does not help; it addresses ordering,
-   not duplicates. This collision predates this feature.
-2. **The `local` profile points at a shared DB** (`172.168.5.172:5432/wecmsdevdb`),
-   not a developer-local instance. Applying a migration there affects everyone on
-   that database.
+**Why it had not been applied before.** Not the reason an earlier revision of this
+section gave. That revision claimed a Flyway version collision at `V250` / `V251`
+(`V250__tax_declaration_items_ct42a_ct42b.sql` vs `V250__trco_rspb_infm.sql`, and
+`V251__sys_trco_infm_dis_nm.sql` vs `V251__tax_declarations_annex_alloc_split.sql`)
+was aborting every migration. **That premise is wrong: Flyway is no longer a
+dependency of this project** — there is no `flyway-core` in `build.gradle`, so
+nothing resolves `db/migration/` at runtime and no collision can be raised. The
+duplicate filenames are real and still worth renumbering for human clarity, but
+they were never the blocker.
+
+The actual reason is simply that **nobody ran the file.** Since Flyway was
+removed, everything under `src/main/resources/db/migration/` is a **manual DBA
+script** — the two VAT files above say so in their own headers (*"Manual DBA
+Script. Flyway disabled/removed. Execute manually in DEV -> UAT -> PROD."*). A new
+`V…sql` therefore does nothing until someone executes it by hand. The
+`spring.flyway.out-of-order` key still sitting in `application-local.yml` is dead
+config and reads misleadingly.
+
+**Consequences worth carrying forward**
+
+- **`ddl-auto: validate` turns an unrun script into a startup failure**, not a
+  runtime one. Adding an entity without running its DDL means the app refuses to
+  boot on the first missing relation.
+- **The file is now idempotent.** Every `CREATE TABLE` / `CREATE SEQUENCE` /
+  `CREATE INDEX` carries `IF NOT EXISTS`, so the same file re-runs safely on
+  DEV / UAT / PROD — required now that execution is manual and has no history
+  table to guard it. This follows the "make migrations idempotent" rule in
+  `wecms-api/CLAUDE.md`; the e-Invoice pair (`V250__trco_rspb_infm.sql`,
+  `V251__sys_trco_infm_dis_nm.sql`) is **not** idempotent and will fail on a
+  second run.
+- **`local` points at a shared DB**, not a developer-local instance — running DDL
+  there affects everyone on it. These three tables are new and used only by this
+  feature, so the blast radius was nil, but that is a property of this change, not
+  a general licence.
+
+**Still to run elsewhere:** UAT / PROD have not had this DDL applied.
 
 ---
 

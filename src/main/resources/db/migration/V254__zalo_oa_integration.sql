@@ -43,7 +43,7 @@
 -- ---------------------------------------------------------------------------
 -- ZALO_OA_INFM — one row per (tenant, Official Account) connection
 -- ---------------------------------------------------------------------------
-CREATE TABLE zalo_oa_infm (
+CREATE TABLE IF NOT EXISTS zalo_oa_infm (
 	biz_key         varchar(20)   NOT NULL,
 	oa_id           varchar(50)   NOT NULL,
 	oa_nm           varchar(100)  NULL,
@@ -73,19 +73,19 @@ COMMENT ON COLUMN zalo_oa_infm.del_yn         IS 'Y = disconnected (soft delete)
 -- One live OA per tenant. WeBill365 enforced this in service code only, which
 -- leaves the invariant open to a concurrent update; a partial unique index
 -- closes it.
-CREATE UNIQUE INDEX zalo_oa_infm_uk01
+CREATE UNIQUE INDEX IF NOT EXISTS zalo_oa_infm_uk01
 	ON zalo_oa_infm (biz_key)
 	WHERE use_yn = 'Y' AND del_yn = 'N';
 
 -- Token-refresh job scans by staleness, not by tenant.
-CREATE INDEX zalo_oa_infm_ix01
+CREATE INDEX IF NOT EXISTS zalo_oa_infm_ix01
 	ON zalo_oa_infm (mod_dtm)
 	WHERE use_yn = 'Y' AND del_yn = 'N';
 
 -- ---------------------------------------------------------------------------
 -- ZALO_TMPL_INFM — approved Zalo template ids, per OA / type / language
 -- ---------------------------------------------------------------------------
-CREATE TABLE zalo_tmpl_infm (
+CREATE TABLE IF NOT EXISTS zalo_tmpl_infm (
 	biz_key    varchar(20)   NOT NULL,
 	oa_id      varchar(50)   NOT NULL,
 	tmpl_type  varchar(20)   NOT NULL,
@@ -111,7 +111,7 @@ COMMENT ON COLUMN zalo_tmpl_infm.unit_prc  IS 'Per-message price Zalo charges fo
 -- ---------------------------------------------------------------------------
 -- ZALO_SEND_HIS — outbound send log, one row per Zalo API call
 -- ---------------------------------------------------------------------------
-CREATE SEQUENCE sq_zalo_send_seq
+CREATE SEQUENCE IF NOT EXISTS sq_zalo_send_seq
 	INCREMENT BY 1
 	MINVALUE 1
 	MAXVALUE 9223372036854775807
@@ -119,7 +119,7 @@ CREATE SEQUENCE sq_zalo_send_seq
 	CACHE 1
 	NO CYCLE;
 
-CREATE TABLE zalo_send_his (
+CREATE TABLE IF NOT EXISTS zalo_send_his (
 	send_seq    numeric(18)  NOT NULL,
 	biz_key     varchar(20)  NOT NULL,
 	oa_id       varchar(50)  NULL,
@@ -148,5 +148,5 @@ COMMENT ON COLUMN zalo_send_his.rslt_cd     IS 'Zalo error code as text (0 = suc
 
 -- No FK to zalo_oa_infm: the log must survive an OA being deleted, and a send
 -- that failed before an OA was resolved still deserves a row.
-CREATE INDEX zalo_send_his_ix01 ON zalo_send_his (biz_key, reg_dtm DESC);
-CREATE INDEX zalo_send_his_ix02 ON zalo_send_his (tracking_id);
+CREATE INDEX IF NOT EXISTS zalo_send_his_ix01 ON zalo_send_his (biz_key, reg_dtm DESC);
+CREATE INDEX IF NOT EXISTS zalo_send_his_ix02 ON zalo_send_his (tracking_id);

@@ -337,6 +337,32 @@ wecms:
     api-key: ${WECMS_OSMC_API_KEY}
     api-id: ${WECMS_OSMC_API_ID}
     unique-key: ${WECMS_OSMC_UNIQUE_KEY}
+  # Zalo Official Account messaging (Settings > Zalo OA).
+  #
+  # enabled=false (the shipped .env value) keeps MockZaloApiClient as the active
+  # client, so no token exchange and no message can leave the process. That matters
+  # more than for a bank gateway: every Zalo template message is BILLED against the
+  # tenant's ZBS wallet (210-400 VND) and lands on a real customer's phone, so an
+  # accidental send costs money and reaches a stranger.
+  #
+  # app-id / app-secret carry NO default on purpose. The reference implementation
+  # (WeBill365) hardcoded both into its yaml and they are now in its git history —
+  # the same mistake F-05 closed here. Provision them via .env only.
+  #
+  # Not declared here because they are vendor-fixed or tuning, and default in
+  # ZaloProperties — add a ${VAR} line first if one ever needs overriding per
+  # environment: wecms.zalo.{token-url, notify-url, connect-timeout-ms,
+  # read-timeout-ms, expiry-skew-seconds, refresh-stale-days}.
+  zalo:
+    enabled: ${WECMS_ZALO_ENABLED}
+    app-id: ${WECMS_ZALO_APP_ID}
+    app-secret: ${WECMS_ZALO_APP_SECRET}
+    # Keep-alive sweep for Zalo's ROTATING refresh token (ZaloTokenRefreshScheduler)
+    # — not an access-token refresher; those refresh on demand at send time. Ships
+    # never-fire ("-"): this is a refactor-native feature with no legacy schedule to
+    # inherit, and the right hour is a per-deployment choice. Blank throws at
+    # scheduler INITIALISATION, so the value must be a valid cron or "-".
+    token-refresh-cron: "${WECMS_ZALO_TOKEN_REFRESH_CRON}"
 
 # =============================================================================
 # Haengsung ERP integration

@@ -2,9 +2,11 @@ package com.kosign.wecms.domain.setting.zalooa.repository;
 
 import com.kosign.wecms.domain.setting.zalooa.entity.ZaloOaInfm;
 import com.kosign.wecms.domain.setting.zalooa.entity.ZaloOaInfmId;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -39,6 +41,27 @@ public interface ZaloOaInfmRepository extends JpaRepository<ZaloOaInfm, ZaloOaIn
             String bizKey, String useYn, String delYn, String oaId);
 
     boolean existsByBizKeyAndOaIdAndDelYn(String bizKey, String oaId, String delYn);
+
+    /**
+     * One connection, locked for the duration of the caller's transaction
+     * ({@code SELECT … FOR UPDATE}).
+     *
+     * <p>Used only by {@code ZaloTokenService} around a token refresh, and the
+     * lock is load-bearing rather than defensive. Zalo <b>rotates the refresh
+     * token on every refresh and invalidates the previous one</b>, so two callers
+     * refreshing the same connection concurrently produce two rotations where the
+     * second retires the first: whichever write commits last wins, and the other
+     * caller is left holding a token Zalo no longer accepts. Serialising on the
+     * row makes the second caller wait and then observe the already-refreshed
+     * token instead of asking Zalo again.
+     *
+     * <p>Does not filter on {@code DEL_YN} — a refresh must be able to read a
+     * connection that was disconnected mid-flight, and the caller decides what
+     * that means.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT o FROM ZaloOaInfm o WHERE o.bizKey = :bizKey AND o.oaId = :oaId")
+    Optional<ZaloOaInfm> lockForTokenRefresh(@Param("bizKey") String bizKey, @Param("oaId") String oaId);
 
     /**
      * Connections whose credentials have not been touched for {@code staleDays}
