@@ -1,5 +1,7 @@
 # references/
 
+**Status:** active · **Last reviewed:** 2026-08-17
+
 Supporting **reference material** for the WeCMS refactor — the detail layers that the feature-first docs
 under [../features/](../features/) link out to. A feature doc is the spine; everything here is the detail it
 points at.
@@ -27,7 +29,7 @@ Four places hold docs — know which one to open:
 | [api-spec/](api-spec/) | **REST API reference.** Endpoint + DTO contracts (`*-api.md`, lowercase snake_case wire shape) and the cross-feature [api-mapping.md](api-spec/api-mapping.md). Open this for "what does this endpoint accept/return?". |
 | [database/](database/) | **Database reference.** Per-table schemas, the [legacy-table-inventory.md](database/legacy-table-inventory.md) (the authoritative table baseline), [table-ownership.md](database/table-ownership.md), [ERDs](database/erd/), [db-function-classification.md](database/db-function-classification.md), and [manual-tenant-setup.md](database/manual-tenant-setup.md). Open this for "what columns/keys/relationships exist?". |
 | [business-rules/](business-rules/) | **Per-feature domain design** — the deep "why/how" behind a feature's logic (e.g. [internal-transfer.md](business-rules/internal-transfer.md), [contacts-design.md](business-rules/contacts-design.md), [settings/purpose-settings.md](business-rules/settings/purpose-settings.md)). Complements the matching `features/<…>/business-flow.md`. |
-| [migration/](migration/) | **JEX → Spring mapping reference.** Service/field maps per feature + the [MIGRATION_PLAYBOOK.md](migration/MIGRATION_PLAYBOOK.md), [jex-analysis/](migration/jex-analysis/), and [screen-mapping/](migration/screen-mapping/). *This is migration-**reference** only — unrelated to the (removed) top-level `docs/migration/`.* |
+| [migration/](migration/) | **JEX → Spring mapping reference.** Service/field maps per feature + the [migration-playbook.md](migration/migration-playbook.md), [jex-analysis/](migration/jex-analysis/), and [screen-mapping/](migration/screen-mapping/). *This is migration-**reference** only — unrelated to the (removed) top-level `docs/migration/`.* |
 | [audits/](audits/) | **Implementation parity checklists & reviews** (refactor vs JEX) supporting the build — e.g. firm-banking / own-account-transfer parity checklists, the DB parity audit, the NXiSAS spike. *Project-wide governance and per-module audits live in [../audits/](../audits/).* |
 | [figma/](figma/) | **Design-source pointer.** The Figma **WB365** typography rule and the figma-first workflow for `wecms-web`. |
 | [jex/](jex/) | **Legacy JEX onboarding pointer** — JEX ids, IDO/WSVC naming, ML/`WBE` codes, and how a JEX screen maps to a Spring feature. Start here if JEX terminology is unfamiliar. Authoritative JEX docs live at [../../../docs/jex/](../../../docs/jex/). |

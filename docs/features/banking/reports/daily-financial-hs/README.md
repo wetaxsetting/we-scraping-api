@@ -1,11 +1,20 @@
 # Daily Financial (HS) — Backend Documentation Package
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../../../references/database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../../../references/database/flyway-migration-baseline.md) §5.
+
 > **Scope of this folder.** Implementation-accurate backend documentation for the **Daily Financial
 > (HS)** report — the HAENGSUNG (`PRDT_TYPE = 'H'`) variant of Daily Financial, legacy JEX
 > `rept_0017_001`. Every statement here is backed by the actual `wecms-api` source, the legacy JEX
 > tree (`WECMS DEV/`, read-only), and the two closed audit records
-> ([daily-financial-hs-legacy-audit.md](../../../../audits/daily-financial-hs-legacy-audit.md),
-> [daily-financial-hs-final-audit.md](../../../../audits/daily-financial-hs-final-audit.md)).
+> ([daily-financial-hs-legacy-audit.md](../../../../audits/legacy-parity/daily-financial-hs-legacy-audit.md),
+> [daily-financial-hs-final-audit.md](../../../../audits/legacy-parity/daily-financial-hs-final-audit.md)).
 > Anything that could not be traced to source is explicitly marked
 > *"Not verified from implementation."* This package supersedes the "HS is folded into the
 > daily-financial package" note in [`../README.md`](../README.md) — the CMC sibling package
@@ -21,7 +30,7 @@
 | Audit `WSVC_ID` | n/a — this feature writes **no** `AUDIT_LOGS_INFM` rows (legacy parity; see [functional-specification.md §7](functional-specification.md#7-audit--logging)) |
 | View Setting | `banking-reports-daily-financial-hs` / `default` — seeded by the **manual DBA script** [V249__sys_scr_option_daily_financial_hs.sql](../../../../../src/main/resources/db/migration/V249__sys_scr_option_daily_financial_hs.sql) |
 | i18n key prefix (frontend) | `report.daily_financial_hs.*` |
-| Refactor status | ✅ **PASS — code-complete (2026-07-02).** Read + per-field save + template Excel download implemented, tested, and closed by [daily-financial-hs-final-audit.md](../../../../audits/daily-financial-hs-final-audit.md). Remaining items are **manual QA only** (authenticated browser smoke, human Excel open, per-env V249 seed run). |
+| Refactor status | ✅ **PASS — code-complete (2026-07-02).** Read + per-field save + template Excel download implemented, tested, and closed by [daily-financial-hs-final-audit.md](../../../../audits/legacy-parity/daily-financial-hs-final-audit.md). Remaining items are **manual QA only** (authenticated browser smoke, human Excel open, per-env V249 seed run). |
 
 ---
 
@@ -71,16 +80,16 @@ monitoring, coding, and reporting to HQ.
 | [migration-guide.md](migration-guide.md) | Legacy JSP architecture → Spring architecture; templates, localization, deployment notes (V249). |
 | [test-scenarios.md](test-scenarios.md) | Search / validation / currency / save / download / empty / large-data / permission / regression cases. |
 | [refactor-gap-analysis.md](refactor-gap-analysis.md) | Per-feature Legacy vs Refactor table with status / gap / risk / resolution. |
-| [parity-verification-report.md](parity-verification-report.md) | Category-by-category parity verdict with evidence + overall parity percentage. |
+| [parity-verification-report.md](../../../../audits/legacy-parity/daily-financial-hs-parity-verification-report.md) | Category-by-category parity verdict with evidence + overall parity percentage. |
 
 ---
 
 ## 3. Related documents
 
 - **Audit records (authoritative closure evidence):**
-  [audits/daily-financial-hs-legacy-audit.md](../../../../audits/daily-financial-hs-legacy-audit.md)
+  [audits/daily-financial-hs-legacy-audit.md](../../../../audits/legacy-parity/daily-financial-hs-legacy-audit.md)
   (2026-07-01 legacy semantics + parity plan) ·
-  [audits/daily-financial-hs-final-audit.md](../../../../audits/daily-financial-hs-final-audit.md)
+  [audits/daily-financial-hs-final-audit.md](../../../../audits/legacy-parity/daily-financial-hs-final-audit.md)
   (2026-07-02 closure record — fixes 1–12, validation, PO divergences).
 - **CMC sibling package:** [`../daily-financial/`](../daily-financial/README.md) — its §4 row
   "HAENGSUNG variant" reflects the 2026-06-14 snapshot and is superseded by this package.
@@ -123,7 +132,7 @@ POI). The refactor reproduces exactly that surface as three Spring endpoints.
 three **intentional, PO-approved divergences** (localized Excel titles EN/VI, KRW inclusion,
 per-column summary cells — see [legacy-spec.md §6](legacy-spec.md#6-intentional-differences)) and
 manual QA outstanding (authenticated browser smoke, human Excel open, per-environment V249 run).
-See [parity-verification-report.md](parity-verification-report.md) for the category breakdown.
+See [parity-verification-report.md](../../../../audits/legacy-parity/daily-financial-hs-parity-verification-report.md) for the category breakdown.
 
 ### Migration complexity: **Medium** (retired)
 

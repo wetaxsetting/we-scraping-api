@@ -139,7 +139,7 @@ Request body: shared [`ExcelExportRequest`](../../../../src/main/java/com/kosign
 }
 ```
 
-Backed by *(casing corrected 2026-06-06 — source-verified; the wire is **lowercase `snake_case`**, NOT `@JsonProperty("UPPER_SNAKE")`. `EInvoiceRow.java` / `EInvoiceListResponse.java` carry **no** `@JsonProperty` — they are camelCase Java records serialized by the global Jackson `SNAKE_CASE` strategy. See [field-casing-parity-audit-2026-06-06.md](../../../audits/field-casing-parity-audit-2026-06-06.md))*:
+Backed by *(casing corrected 2026-06-06 — source-verified; the wire is **lowercase `snake_case`**, NOT `@JsonProperty("UPPER_SNAKE")`. `EInvoiceRow.java` / `EInvoiceListResponse.java` carry **no** `@JsonProperty` — they are camelCase Java records serialized by the global Jackson `SNAKE_CASE` strategy. See [field-casing-parity-audit-2026-06-06.md](../../../audits/historical/field-casing-parity-audit-2026-06-06.md))*:
 
 - [`EInvoiceListResponse`](../../../../src/main/java/com/kosign/wecms/domain/einvoice/dto/EInvoiceListResponse.java) — `record(rows, totalCount, totalPages, pageNumber, pageSize, totals)` → wire `rows`, `total_count`, `total_pages`, `page_number`, `page_size`, `totals`
 - [`EInvoiceRow`](../../../../src/main/java/com/kosign/wecms/domain/einvoice/dto/EInvoiceRow.java) — 16-field record → wire `doc_id`, `disp_doc_id`, `issu_dt`, `issu_tm`, `totl_amt`, `tax_amt_sum`, `trco_trsc_ccy_cd`, … (all lowercase snake_case)

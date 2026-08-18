@@ -5,9 +5,9 @@
 `wecms-api/src/main/java`, plus **read-only** `SELECT`s against JEX DEV
 (`postgres_dev_server_jexframe`). No DB writes. No feature flags enabled.
 
-**Related:** [../audits/payment-dispatch-operating-hours-flow.md](../audits/payment-dispatch-operating-hours-flow.md) ·
+**Related:** [../audits/payment-dispatch-operating-hours-flow.md](../audits/deployment/payment-dispatch-operating-hours-flow.md) ·
 [../deployment/wecms-batch-schedule-seed-review.md](../deployment/wecms-batch-schedule-seed-review.md) ·
-[../features/wecms-batch/batch-schedule-operating-hours-audit.md](../features/wecms-batch/batch-schedule-operating-hours-audit.md)
+[../features/wecms-batch/batch-schedule-operating-hours-audit.md](../audits/batch/batch-schedule-operating-hours-audit.md)
 
 > ### ⚠ Correction to the 2026-07-28 revision
 >
@@ -186,7 +186,7 @@ configuration that would give VCB a window in UAT or PROD — but DEV is the onl
 readable from here (§11).
 
 The only VCB INFO row that exists anywhere in the workspace is a **proposal**, not legacy:
-`Claude Code (AI)/sql/tb_batch_schedule_seed_refactor.sql:307` seeds
+`docs/sql/2026/seed-batch-schedule-operating-hours-2026-07-28.sql:322` seeds
 `('NAPAS_REAL_TIME_BATCH','970436','N','000000','235959')` and its own header at `:28-29` states
 *"970436 IS a configured firm-banking bank in legacy yet has NO legacy schedule row → the VCB gap
 is real."* That script is DBA-run and PO-gated; it has **not** been applied. Per the instruction
@@ -424,12 +424,12 @@ Every dispatch capability above sits behind a flag that defaults **off** —
 
 | # | Risk | Needs |
 |---|---|---|
-| R-1 | ✅ **CLOSED as legacy parity 2026-07-29** (§11b). Legacy has no VCB INFO row; the refactor now has none either. **VCB file dispatch will FAIL (`NO_CRITERIA`) until the business explicitly decides to introduce a VCB schedule** — that is the legacy behaviour, preserved on purpose, not a regression. Residual: **PO (Mr. Jung)** may *choose* to introduce a VCB schedule as a forward business decision; if so it needs a new row **and** a new `ANT_WHERE_USE_YN` decision. **DBA:** run [`tb_batch_schedule_info_vcb_rollback_20260729.sql`](../../../Claude%20Code%20%28AI%29/sql/tb_batch_schedule_info_vcb_rollback_20260729.sql) on the refactor DEV DB (not executed by this audit). |
+| R-1 | ✅ **CLOSED as legacy parity 2026-07-29** (§11b). Legacy has no VCB INFO row; the refactor now has none either. **VCB file dispatch will FAIL (`NO_CRITERIA`) until the business explicitly decides to introduce a VCB schedule** — that is the legacy behaviour, preserved on purpose, not a regression. Residual: **PO (Mr. Jung)** may *choose* to introduce a VCB schedule as a forward business decision; if so it needs a new row **and** a new `ANT_WHERE_USE_YN` decision. **DBA:** run [`delete-vcb-batch-schedule-info-row-2026-07-29.sql`](../sql/2026/delete-vcb-batch-schedule-info-row-2026-07-29.sql) on the refactor DEV DB (not executed by this audit). |
 | R-2 | ✅ **NOT APPLICABLE.** No legacy VCB INFO row exists, therefore no legacy `ANT_WHERE_USE_YN` value exists — neither `'Y'` nor `'N'`. Nothing to match, nothing to decide unless and until a VCB schedule is introduced. The earlier `'Y'` vs `'N'` analysis described a hypothetical absent from legacy and is **withdrawn**. |
 | R-3 | Findings are **JEX DEV only**. UAT and PROD `TB_BATCH_SCHEDULE_INFO/_DTL` and `TB_FIRM_CONF` were not read (no MCP access, and the rules forbid touching them). **UAT/PROD DB verification** required before any deploy — re-run §12. Memory `project_batch_deployed_flags_diverge_from_repo` records that deployed batch flags already diverge from committed `.env.*`, so DEV is not a safe proxy. |
 | R-4 | Legacy evaluates `EXE_DIV` in the **DB server zone (Asia/Seoul)**; the refactor uses `Asia/Ho_Chi_Minh` (`OperatingHoursService.java:68-83`). A deliberate, documented divergence — a `090000-153000` window means 09:00–15:30 KST in legacy vs ICT in the refactor. Co-hosting a legacy batch against a shared UAT/PROD DB needs `wecms.dispatch.operating-hours.zone=Asia/Seoul`. **Deployment-time validation.** |
 | R-5 | SVN revision **r36803** is cited from in-code comments and corroborated by the dated pre-change backup; the SVN server was not queried. **Infrastructure confirmation** if the exact revision number matters for a release note. |
-| R-6 | Payroll `ANT_DIV_CD` defect (**F-1, HIGH, open**) — `PayrollDispatchExecutor` never sets `ANT_DIV_CD`, so Payroll `presentChannels` is empty → `evaluateBulk` → `SKIP` → files stall at `PROC_STAT='9'` silently on Shinhan and Woori. Out of scope for this audit (VCB Payroll is blocked before reaching it), but it gates any Payroll dispatch enablement. See [../audits/payment-dispatch-operating-hours-flow.md](../audits/payment-dispatch-operating-hours-flow.md) §3.3. |
+| R-6 | Payroll `ANT_DIV_CD` defect (**F-1, HIGH, open**) — `PayrollDispatchExecutor` never sets `ANT_DIV_CD`, so Payroll `presentChannels` is empty → `evaluateBulk` → `SKIP` → files stall at `PROC_STAT='9'` silently on Shinhan and Woori. Out of scope for this audit (VCB Payroll is blocked before reaching it), but it gates any Payroll dispatch enablement. See [../audits/payment-dispatch-operating-hours-flow.md](../audits/deployment/payment-dispatch-operating-hours-flow.md) §3.3. |
 
 ---
 
@@ -471,7 +471,7 @@ refactor DEV AFTER    NAPAS_REAL_TIME_BATCH × (970424 'Y', 970457 'Y')   → no
 ```
 
 **What changed:** the row is removed by
-[`Claude Code (AI)/sql/tb_batch_schedule_info_vcb_rollback_20260729.sql`](../../../Claude%20Code%20%28AI%29/sql/tb_batch_schedule_info_vcb_rollback_20260729.sql)
+[`docs/sql/2026/delete-vcb-batch-schedule-info-row-2026-07-29.sql`](../sql/2026/delete-vcb-batch-schedule-info-row-2026-07-29.sql)
 (DBA-run by hand; **not executed by this audit**), and the seed script's VCB tuple is **commented out**
 so a re-run cannot reintroduce it. `970424`, `970457`, all 12 DTL rows, `tb_firm_conf`, and **all
 production Java** are untouched.
@@ -584,7 +584,7 @@ set is empty and `evaluateBulk` returns `SKIP` — file stays `PROC_STAT='9'`, n
 is legacy behaviour (`FILE_DEPOSIT_TRANSFER_BATCH1.java:445` `!exeYN` → `continue`) and is preserved
 per the parity rule; `BulkReceptionService:241-243` does log it at INFO. Whether a perpetual silent
 WAIT is *operationally* acceptable is open question **Q-4** in
-[../audits/payment-dispatch-operating-hours-flow.md](../audits/payment-dispatch-operating-hours-flow.md)
+[../audits/payment-dispatch-operating-hours-flow.md](../audits/deployment/payment-dispatch-operating-hours-flow.md)
 — a business decision, not a parity defect. Only reachable now via the two legitimate legacy null
 branches (VCB FCY same-bank, Woori VND same-bank) or an unrecognised uploaded code.
 

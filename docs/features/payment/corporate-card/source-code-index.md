@@ -33,7 +33,7 @@ File-level index for the Card Transactions sub-module. Paths are repo-relative.
 
 ## Frontend — `wecms-web/`
 
-- Page: [`app/(dashboard)/payment/corporate-card/card-transactions/page.tsx`](../../../../../wecms-web/app/(dashboard)/payment/corporate-card/card-transactions/page.tsx) — thin server component.
+- Page: [`app/(dashboard)/payment/corporate-card/card-transactions/page.tsx`](<../../../../../wecms-web/app/(dashboard)/payment/corporate-card/card-transactions/page.tsx>) — thin server component.
 - Components: [`components/payment/corporate-card/`](../../../../../wecms-web/components/payment/corporate-card/) — `CardTransactionsPage`, `CardSummaryCards`, `CardTransactionsFilterBar`, `CardTransactionsTable`, `CardTransactionsTableColumns`, `ApprovalRefDetailDialog`, `LinkCardPaymentsDialog`, `NewReceiptDialog`, `ReceiptDetailDialog`, `ReportingAccountPickerDialog`, `MemoPanel`, `CardManagementDialog`, `AddCardFlowDialog`, `SelectCardsDialog`, `UpdateCardsDialog`, `EditApprovalLinePicker` (16 components), `cardTransactionMappers.ts`, `addCardFlowTypes.ts`, `mockData.ts` (present, not a runtime fallback), `types.ts`.
 - API client: [`lib/api/cardTransactions.ts`](../../../../../wecms-web/lib/api/cardTransactions.ts) — 28 functions wrapping the full controller surface.
 - Mappers: `components/payment/corporate-card/cardTransactionMappers.ts` (feature-local boundary mapper, not `lib/api/mappers.ts`).

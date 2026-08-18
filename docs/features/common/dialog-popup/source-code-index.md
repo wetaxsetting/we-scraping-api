@@ -31,5 +31,5 @@ See [`../../../../../wecms-web/docs/features/common/dialog-popup/component-index
 (`useDialog`, `<SystemDialog>`, shadcn `<Dialog>` + `stackLevel` ladder).
 
 ## Related
-- Common source index (consolidated): [`../../../audits/common-source-index.md`](../../../audits/common-source-index.md)
+- Common source index (consolidated): [`../../../audits/common-source-index.md`](../../../audits/modules/common-source-index.md)
 - Error envelope: [`../error-envelope/README.md`](../error-envelope/README.md)

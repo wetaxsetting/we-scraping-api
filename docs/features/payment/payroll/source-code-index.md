@@ -30,7 +30,7 @@
 | Hooks/lib | `useViewSetting` + `<ViewSettingPopover>`, `useTableSort`, `useExcelExport`, `useDialog`; SCREEN_IDS in `lib/viewSettingScreens.ts` (`PAYMENT_PAYROLL_PAYMENT_{SCHEDULED,SCHEDULED_DETAIL,RESULT,RESULT_DETAIL}`); wire types in `lib/types/api.ts` |
 
 ## Migrations
-`V144__payroll_payment_view_setting_seed.sql`, `V146__scdul_pymn_sumr_chk01_allow_payroll.sql`, `V232__payroll_payment_scheduled_view_setting_legacy.sql`.
+`V156__sys_scr_option_wecms.sql`, `V146__scdul_pymn_sumr_chk01_allow_payroll.sql`, `V156__sys_scr_option_wecms.sql`. *(historical — FOLDED INTO BASE DDL; the CHECK now ships inside `V86__scdul_pymn_sumr.sql`)*
 
 ## Backend tests (`src/test/.../payrollpayment`)
 `PayrollPaymentResultParityTest`, `PayrollPaymentResultFooterTotalsTest`, `PayrollPaymentResultStatusCountTest`, `PayrollPaymentResultReportingAccountTest`, `PayrollPaymentResultDownloadAuditTest`, `PayrollPaymentResultDownloadAuthorizationTest`, `PayrollPaymentResultRouteValidationTest`, `PayrollPaymentRequestApprovalAttachmentTest`, `PayrollDispatchExecutorAutoReceiveTest`, `PayrollDispatchExecutorBankPrtnIdTest`. **Frontend tests: none** (G-PAYR-3).

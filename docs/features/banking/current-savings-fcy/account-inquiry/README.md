@@ -56,7 +56,7 @@ Legacy FCY is hard-locked to `CCY_CD = 'USD'`. The refactor returns **all non-VN
 (`ccy_cd <> 'VND'`) and exposes an in-page currency dropdown + per-CCY summary tiles. The PO confirmed
 multi-currency FCY is the intended modernization; the legacy USD-only restriction is intentionally
 retired. **Not a defect.** Details: [refactor-gap-analysis.md](refactor-gap-analysis.md) · audit
-[../../../audits/account-inquiry-fcy-parity-audit.md](../../../../audits/account-inquiry-fcy-parity-audit.md).
+[../../../audits/account-inquiry-fcy-parity-audit.md](../../../../audits/legacy-parity/account-inquiry-fcy-parity-audit.md).
 
 ---
 
@@ -77,14 +77,14 @@ retired. **Not a defect.** Details: [refactor-gap-analysis.md](refactor-gap-anal
 
 | Doc | Location |
 |---|---|
-| **Parity audit (2026-06-06)** | [audits/account-inquiry-fcy-parity-audit.md](../../../../audits/account-inquiry-fcy-parity-audit.md) |
+| **Parity audit (2026-06-06)** | [audits/account-inquiry-fcy-parity-audit.md](../../../../audits/legacy-parity/account-inquiry-fcy-parity-audit.md) |
 | Backend API design (original) | [references/api-spec/banking/account-inquiry-fcy-api.md](../../../../references/api-spec/banking/account-inquiry-fcy-api.md) |
 | DB design (original) | [references/database/banking/account-inquiry-fcy-db.md](../../../../references/database/banking/account-inquiry-fcy-db.md) |
 | Older single-file feature spec | [features/banking/current-savings-fcy/account-inquiry.md](../account-inquiry/legacy-spec.md) |
 | **Legacy investigation package (agent-verified, `fnsh_0005_001`)** | [docs/features/account-inquiry-fcy/](../../../../../../docs/features/account-inquiry-fcy/README.md) |
 | VND twin (shared code path) | [account-inquiry-vnd/](../account-inquiry/README.md) |
 | Banking ERD | [references/database/erd/banking-erd.md](../../../../references/database/erd/banking-erd.md) |
-| NXiSAS / Coocon gateway spike | [references/audits/nxisas-vcb-spike.md](../../../../references/audits/nxisas-vcb-spike.md) |
+| NXiSAS / Coocon gateway spike | [audits/nxisas-vcb-spike.md](../../../../audits/historical/nxisas-vcb-spike.md) |
 
 > **Two FCY screens — do not confuse them.** Account Inquiry (FCY) = legacy `fnsh_0005_001`
 > (foreign-currency account list + Update Balance, this folder). The FCY **Transaction History**

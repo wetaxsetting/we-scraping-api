@@ -19,27 +19,32 @@ erDiagram
 
 Full attribute detail: [`diagrams/addon-service-erd.mmd`](diagrams/addon-service-erd.mmd).
 
+> ⚠️ **Migration column regenerated from disk 2026-08-17.** The [2026-06-09 rebaseline](../flyway-migration-baseline.md)
+> reassigned every Flyway number to a one-table-per-migration scheme; the values below name the migration
+> that creates each table **today**. Rows marked **DROPPED** / **no refactor DDL migration** have no current
+> migration — that is accurate, not a gap.
+
 ## Tables by sub-module
 
 ### e-Invoice (`domain/einvoice`)
 | Table | Source | Purpose | PK |
 |---|---|---|---|
-| `BUSA_DOC_MSTR` | V15 (+V23 → 100 cols, +V24 UK/CHECK) | Invoice / business-document master, `DOC_TYPE` I=Sales, B=Expense | `(BIZ_KEY, DOC_ID)` |
-| `EINV_FEE_DETL` | V15 | Per-invoice fee detail lines | `(BIZ_KEY, DOC_ID, DISP_ORD)` |
-| `EINV_TAX_DETL` | V15 | Per-invoice tax-rate breakdown lines | `(BIZ_KEY, DOC_ID, DISP_ORD)` |
+| `BUSA_DOC_MSTR` | V23 | Invoice / business-document master, `DOC_TYPE` I=Sales, B=Expense | `(BIZ_KEY, DOC_ID)` |
+| `EINV_FEE_DETL` | V48 | Per-invoice fee detail lines | `(BIZ_KEY, DOC_ID, DISP_ORD)` |
+| `EINV_TAX_DETL` | V50 | Per-invoice tax-rate breakdown lines | `(BIZ_KEY, DOC_ID, DISP_ORD)` |
 
 ### Operation Status (`domain/operation`)
 | Table | Source | Purpose | PK |
 |---|---|---|---|
-| `OPRT_STTS_INFO` | V16 | Tax-authority (GDT) operation-status snapshot per company tax code | `(BIZ_KEY, TAXCODE)` |
-| `EXT_TRAN_CALL_HIS` | V16 | External-call audit log (GDT bridge, deferred consumer) | `(SVC_ID, REF_DATE, SEQ_NO)` |
+| `OPRT_STTS_INFO` | V74 | Tax-authority (GDT) operation-status snapshot per company tax code | `(BIZ_KEY, TAXCODE)` |
+| `EXT_TRAN_CALL_HIS` | V61 | External-call audit log (GDT bridge, deferred consumer) | `(SVC_ID, REF_DATE, SEQ_NO)` |
 
 ### Card Transactions (`domain/payment/cardtransactions`)
 | Table | Source | Purpose | PK |
 |---|---|---|---|
-| `CARD_MSTR` | V192 | Card registry (filter dropdown + LEFT JOIN display names) | `(BIZ_KEY, BANK_CD, CARD_NO)` |
+| `CARD_MSTR` | V38 | Card registry (filter dropdown + LEFT JOIN display names) | `(BIZ_KEY, BANK_CD, CARD_NO)` |
 | `CARD_TRNS_HSTR` | **V192** (redefines the earlier V184) | One row per scraped card transaction | `(BIZ_KEY, CARD_SEQ_NO)` |
-| `CARD_TRNS_RCV_PAY_INFM` | V200 | Card-link master (child documents live on `BUSA_DOC_RCV_PAY_HIS`) | `(BIZ_KEY, CARD_SEQ_NO, RCV_PAY_SEQ_NO)` |
+| `CARD_TRNS_RCV_PAY_INFM` | V40 | Card-link master (child documents live on `BUSA_DOC_RCV_PAY_HIS`) | `(BIZ_KEY, CARD_SEQ_NO, RCV_PAY_SEQ_NO)` |
 
 > **V184 vs V192 reconciliation:** `CARD_TRNS_HSTR` is created by both V184 (early cash-flow phase) and V192 (full card module). Both use `CREATE TABLE IF NOT EXISTS`, so on a fresh DB V184 lands first; V192 adds three helper indexes (`ix_card_trns_hstr_biz_trsc_dt`, `ix_card_trns_hstr_biz_card`, `ix_card_trns_hstr_biz_appr_seq`). **V192 is the authoritative final shape.**
 

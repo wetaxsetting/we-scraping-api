@@ -1,4 +1,4 @@
-# navigation — Database Mapping (Backend)
+# Navigation — Database Mapping (Backend)
 
 **Part of:** Common → navigation
 **Last verified:** 2026-06-23
@@ -11,10 +11,10 @@ Seeded by Flyway and **never mutated at runtime** → no `BaseEntity` audit colu
 
 - **Schema:** **V137** (`product_menu`) + **V138** (`menu_item`) + **V139** (`menu_item_translation`) —
   each `CREATE TABLE / INDEX IF NOT EXISTS`. *(These were `V242` before the 2026-06-09 migration
-  renumber; the pre-renumber file `V242__navigation_menu_catalogue.sql` was in the archived history
+  renumber; the pre-renumber file `V138__menu_item.sql` was in the archived history
   (`db/archive/`), **removed 2026-06-23 (approved decision)**.)*
 - **Seed:** 42 menu items, 115 product-menu rows (F=41, H=33, M=41), 345 translations (115 × EN/KO/VI),
-  generated from the JexAdmin export. ⚠️ The seed shipped as the pre-renumber `V243__navigation_menu_seed.sql`
+  generated from the JexAdmin export. ⚠️ The seed shipped as the pre-renumber `V243__navigation_menu_seed.sql` *(historical — NOT IN THE CURRENT SET; `V137`-`V139` create the nav tables but contain zero INSERTs, so the seed must be applied separately)*
   (archived, then **removed with `db/archive/` 2026-06-23**); the live `V137`–`V139` files contain **no** `INSERT`.
   Its removal is **not** missing functionality — UAT/PROD already hold this data in the legacy DB. Clean-environment database provisioning is outside the scope of this repository and must follow DBA-approved procedures. (DC-2)
 

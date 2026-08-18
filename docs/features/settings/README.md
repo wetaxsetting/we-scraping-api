@@ -17,6 +17,26 @@ Settings-menu screens:
 - **environment-settings** — generic cross-feature tenant-flag infrastructure shared by the
   Preferences and Firm Banking Settings panels.
 
+> **Dual-tier layout confirmed, not accidental (reviewed 2026-08-17, P2).** All 12 `{module}.md` +
+> `{module}/` pairs were compared. The flat files are a **uniform, deliberate two-tier pattern** — each
+> opens with the same "⚠️ this is a high-level summary, the detail is in `<folder>/`" banner and carries
+> four fixed sections (Feature Overview · Menu/Route Mapping · Current Status · Detailed Documentation)
+> plus a **"Historical Design Notes (preserved)"** tail that the folder deliberately does *not* carry.
+> That tail is the reason the summary cannot simply be generated from the folder: it records
+> design-stage decisions that shipped the other way, which the current spec must not restate as fact.
+> **No content drift was found** — every summary defers to its folder and to the code. **Verdict: keep
+> both tiers.** Any future change to this arrangement is a documentation-governance decision for the PO,
+> not a cleanup. See the P2 report for the full analysis.
+
+> **Name asymmetry — `users.md` ↔ `user-management/` (reviewed 2026-08-17, P2).** This is the one pair
+> where the flat file and the folder do not share a name. **This is correct and must not be "fixed":**
+> the folder uses the feature slug `user-management`, which is what ~20 documents link to, while the
+> flat summary uses the **menu label** `Users`. `wecms-web/docs/features/settings/` carries the **exact
+> same pair** (`users.md` + `user-management/`), so renaming either side here would break the cross-tree
+> slug symmetry required by the workspace `CLAUDE.md` ("feature names must match across both systems").
+> Backend package `domain/setting/users` and menu grant `settings-core-users` are a third naming
+> surface and are also unaffected. **Canonical slug for documentation purposes: `user-management`.**
+
 Status legend: ✅ Implemented (full-stack evidenced) · 🟡 Partial (backend implemented; frontend
 not re-verified this pass) · ⚪ Legacy/Deprecated or not a standalone module.
 
@@ -32,7 +52,7 @@ not re-verified this pass) · ⚪ Legacy/Deprecated or not a standalone module.
 | 6 | Login Credentials | [login-credentials/](login-credentials/README.md) | [login-credentials.md](login-credentials.md) | ✅ Implemented (backend + frontend wired, 2026-06-02) |
 | 7 | Bank Account | [bank-account/](bank-account/README.md) | [bank-account.md](bank-account.md) | 🟡 Backend implemented (frontend not re-verified this pass) |
 | 8 | Preferences | [preferences/](preferences/README.md) | [preferences.md](preferences.md) | 🟡 Backend implemented (frontend not re-verified this pass) |
-| 9 | Users | [user-management/](user-management/README.md) | summary only — flat [users.md](users.md) is the **deprecated** plan, superseded by the folder | ✅ Implemented (parity verified 2026-06-05) |
+| 9 | Users | [user-management/](user-management/README.md) | [users.md](users.md) — note the **name asymmetry**: menu label `Users` for the summary, feature slug `user-management` for the folder (see below) | ✅ Implemented (parity verified 2026-06-05) |
 | 10 | Transaction History (ERP) | [transaction-history/](transaction-history/README.md) | [transaction-history.md](transaction-history.md) | 🟡 Backend implemented (read-only audit ledger; frontend not re-verified) |
 | 11 | Firm Banking Settings | [firm-banking-settings/](firm-banking-settings/README.md) | [firm-banking-settings.md](firm-banking-settings.md) | 🟡 Backend implemented + unit tests (frontend not re-verified) |
 | 12 | Firm Banking History | [firm-banking-history/](firm-banking-history/README.md) | [firm-banking-history.md](firm-banking-history.md) | ✅ Implemented (parity verified 2026-06-05; XLSX export) |
@@ -55,15 +75,15 @@ not re-verified this pass) · ⚪ Legacy/Deprecated or not a standalone module.
 
 | Screen | Business rules | DB schema | JEX → Spring mapping | Parity audit |
 |---|---|---|---|---|
-| Purpose | [purpose-settings.md](../../references/business-rules/settings/purpose-settings.md) | [purpose-settings-schema.md](../../references/database/settings/purpose-settings-schema.md) | [purpose-settings.md](../../references/migration/purpose-settings.md) | [purpose-settings-audit.md](../../references/audits/purpose-settings-audit.md) |
-| VAS Account | [vas-account.md](../../references/business-rules/vas-account.md) | [vas-account.md](../../references/database/vas-account.md) | [vas-account.md](../../references/migration/vas-account.md) | [vas-account.md](../../references/audits/vas-account.md) |
+| Purpose | [purpose-settings.md](../../references/business-rules/settings/purpose-settings.md) | [purpose-settings-schema.md](../../references/database/settings/purpose-settings-schema.md) | [purpose-settings.md](../../references/migration/purpose-settings.md) | [purpose-settings-audit.md](../../audits/legacy-parity/purpose-settings-audit.md) |
+| VAS Account | [vas-account.md](../../references/business-rules/vas-account.md) | [vas-account.md](../../references/database/vas-account.md) | [vas-account.md](../../references/migration/vas-account.md) | [vas-account.md](../../audits/legacy-parity/vas-account.md) |
 | Contacts | [contacts-design.md](../../references/business-rules/contacts-design.md) | [contacts-schema.md](../../references/database/contacts-schema.md) | [contacts-mapping.md](../../references/migration/contacts-mapping.md) | — |
 | Approval Line | [approval-line.md](../../references/business-rules/approval-line.md) | — | [approval-line.md](../../references/migration/approval-line.md) · [jex-analysis](../../references/migration/jex-analysis/approval-line-add-flow-analysis.md) | — |
-| Chart of Accounts | [chart-of-accounts.md](../../references/business-rules/chart-of-accounts.md) | [chart-of-accounts.md](../../references/database/chart-of-accounts.md) | [chart-of-accounts.md](../../references/migration/chart-of-accounts.md) | [final-parity-audit](../../audits/chart-of-accounts-final-parity-audit.md) |
+| Chart of Accounts | [chart-of-accounts.md](../../references/business-rules/chart-of-accounts.md) | [chart-of-accounts.md](../../references/database/chart-of-accounts.md) | [chart-of-accounts.md](../../references/migration/chart-of-accounts.md) | [final-parity-audit](../../audits/legacy-parity/chart-of-accounts-final-parity-audit.md) |
 | Bank Account | — | — | — | — |
-| Transaction History (ERP) | [erp-transaction-history.md](../../references/business-rules/settings/erp-transaction-history.md) | [erp-transaction-history-schema.md](../../references/database/settings/erp-transaction-history-schema.md) | [erp-transaction-history-mapping.md](../../references/migration/erp-transaction-history-mapping.md) | [erp-transaction-history-audit.md](../../references/audits/erp-transaction-history-audit.md) |
-| Firm Banking Settings | — | [firm-banking-settings-schema.md](../../references/database/settings/firm-banking-settings-schema.md) | [firm-banking-settings-mapping.md](../../references/migration/firm-banking-settings-mapping.md) | [parity](../../references/audits/firm-banking-settings-parity-checklist.md) · [review](../../references/audits/firm-banking-settings-review-2026-05-09.md) |
-| Firm Banking History | — | [firm-banking-history-schema.md](../../references/database/settings/firm-banking-history-schema.md) | [firm-banking-history-mapping.md](../../references/migration/firm-banking-history-mapping.md) | [parity](../../references/audits/firm-banking-history-parity-checklist.md) · [review](../../references/audits/firm-banking-history-review-2026-05-08.md) |
+| Transaction History (ERP) | [erp-transaction-history.md](../../references/business-rules/settings/erp-transaction-history.md) | [erp-transaction-history-schema.md](../../references/database/settings/erp-transaction-history-schema.md) | [erp-transaction-history-mapping.md](../../references/migration/erp-transaction-history-mapping.md) | [erp-transaction-history-audit.md](../../audits/legacy-parity/erp-transaction-history-audit.md) |
+| Firm Banking Settings | — | [firm-banking-settings-schema.md](../../references/database/settings/firm-banking-settings-schema.md) | [firm-banking-settings-mapping.md](../../references/migration/firm-banking-settings-mapping.md) | [parity](../../audits/legacy-parity/firm-banking-settings-parity-checklist.md) · [review](../../audits/historical/firm-banking-settings-review-2026-05-09.md) |
+| Firm Banking History | — | [firm-banking-history-schema.md](../../references/database/settings/firm-banking-history-schema.md) | [firm-banking-history-mapping.md](../../references/migration/firm-banking-history-mapping.md) | [parity](../../audits/legacy-parity/firm-banking-history-parity-checklist.md) · [review](../../audits/historical/firm-banking-history-review-2026-05-08.md) |
 
 Task plans: _(the historical `planning/` and `archive/planning/` task-plan folders were removed 2026-06-23 by project decision)_.
 Frontend UI: [wecms-web/docs/features/settings/](../../../../wecms-web/docs/features/settings/).

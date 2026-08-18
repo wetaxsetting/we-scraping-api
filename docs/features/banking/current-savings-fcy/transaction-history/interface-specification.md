@@ -4,7 +4,7 @@
 > (shared with the VND twin) — the Transaction DTOs no longer carry UPPER_SNAKE
 > `@JsonProperty`. UPPER tokens below are historical; read each as its lowercase
 > snake_case form. See
-> [field-casing-parity-audit-2026-06-06.md](../../../../audits/field-casing-parity-audit-2026-06-06.md).
+> [field-casing-parity-audit-2026-06-06.md](../../../../audits/historical/field-casing-parity-audit-2026-06-06.md).
 
 Every REST endpoint, request/response shape, and error code for the refactored FCY transaction
 inquiry. All endpoints live on `AccountController` (`@RequestMapping("/api/v1/banking")`) and are
@@ -117,7 +117,7 @@ DELETE .../{trnsSeqNo}/match                             → ApiResponse<MatchRe
 
 Delegated to `MatchService`; `requireBankRow(...)` enforces `AccountAccessGuard.assertCanView`. R11
 scope fix (account-scoped Smart Organizer) — CLOSED, see
-[../../audits/smart-organizer-r11-verification.md](../../../../audits/smart-organizer-r11-verification.md).
+[../../../../audits/legacy-parity/smart-organizer-verification-2026-06-06.md](../../../../audits/legacy-parity/smart-organizer-verification-2026-06-06.md).
 
 ---
 

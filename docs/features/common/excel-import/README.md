@@ -52,4 +52,4 @@ Only **Purpose Settings** and **VAS Account** follow the canonical multipart-`pr
   - VAS Account — [`../../settings/vas-account/README.md`](../../settings/vas-account/README.md)
   - Chart of Accounts — [`../../settings/chart-of-accounts/README.md`](../../settings/chart-of-accounts/README.md)
   - Contacts — [`../../settings/contacts/README.md`](../../settings/contacts/README.md)
-- **Audit deliverables (common module):** [`../../../audits/common-source-index.md`](../../../audits/common-source-index.md) · [`../../../audits/common-gap-analysis.md`](../../../audits/common-gap-analysis.md) · [`../../../audits/common-docs-audit.md`](../../../audits/common-docs-audit.md)
+- **Audit deliverables (common module):** [`../../../audits/common-source-index.md`](../../../audits/modules/common-source-index.md) · [`../../../audits/common-gap-analysis.md`](../../../audits/modules/common-gap-analysis.md) · [`../../../audits/common-docs-audit.md`](../../../audits/modules/common-docs-audit.md)

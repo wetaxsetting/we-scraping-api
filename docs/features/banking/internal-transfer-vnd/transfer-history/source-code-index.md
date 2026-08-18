@@ -16,7 +16,7 @@
 | Sort whitelist | `src/main/java/com/kosign/wecms/domain/banking/transferhistory/dto/TransferHistorySortField.java` |
 | Entity | `src/main/java/com/kosign/wecms/domain/banking/entity/NapasRemitTrnsHstr.java` |
 | Entity id | `src/main/java/com/kosign/wecms/domain/banking/entity/NapasRemitTrnsHstrId.java` |
-| Flyway (helper index) | `src/main/resources/db/migration/V196__transfer_history_helper_index.sql` ⚠️ internal header reads `V181` (stale) |
+| Flyway (base table) | `src/main/resources/db/migration/V69__napas_remit_trns_hstr.sql` — PK only, no index. ⚠️ **No helper-index migration exists**: `V196__transfer_history_helper_index.sql` is historical only, dropped by the [2026-06-09 rebaseline](../../../../references/database/flyway-migration-baseline.md) |
 | Message (error) | `src/main/resources/messages.properties:683` (`WBE_TRANSFER_HISTORY_INVALID_PERIOD`) |
 
 ### Shared / supporting (not feature-owned)
@@ -93,7 +93,7 @@ See [test-scenarios.md](test-scenarios.md) for per-test assertions.
 |---|---|
 | Legacy JEX feature package (canonical) | `docs/jex/features/transfer-history/` (10 files) |
 | JEX→Spring migration mapping | `wecms-api/docs/references/migration/transfer-history.md` |
-| Parity audit | `wecms-api/docs/references/audits/transfer-history-audit-2026-05-20.md` |
+| Parity audit | `wecms-api/docs/audits/…/transfer-history-audit-2026-05-20.md` |
 | Archived Sprint-1 plan | `wecms-api/docs/archive/planning/phase-1/transfer-history-plan.md` |
 | Frontend page-design (existing) | `wecms-web/docs/features/banking/internal-transfer-vnd/own-account-transfer/transfer-history.md` |
 | Page-mapping inventory | `wecms-web/docs/references/page-mapping/page-mapping.md` |

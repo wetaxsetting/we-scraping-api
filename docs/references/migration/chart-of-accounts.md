@@ -1,5 +1,14 @@
 # Chart of Accounts — JEX → Refactor Migration Map
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../database/flyway-migration-baseline.md) §5.
+
 **Slug:** `chart-of-accounts`
 **Refactor home:** Spring Boot ([wecms-api/](../../../)) + Next.js Settings panel ([wecms-web/components/settings/chart-of-accounts/](../../../../wecms-web/components/settings/chart-of-accounts/)).
 **Legacy WSVC ids (traceability only — never echoed in refactor identifiers):** `comm_0223_001` (main view + CRUD), `comm_0223_002` (Excel bulk upload).
@@ -51,7 +60,7 @@ Legacy WSVC ids appear above strictly for traceability — no refactor REST URI,
 
 | JEX artifact | Refactor counterpart |
 |---|---|
-| [wabooks/entity/ChartAcctInfm.java](../../../../WECMS%20DEV/WECMS/src/wabooks/entity/ChartAcctInfm.java) (extends `ChartAcctInfmPk implements GenericEntity`) | [`com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount`](../../../src/main/java/com/kosign/wecms/domain/setting/chartofaccounts/entity/ChartOfAccount.java) (to be created) extending `BaseEntity`, `@IdClass(ChartOfAccountId.class)`. Field names: camelCase Java + `@Column(name = "UPPER_SNAKE")`. |
+| [wabooks/entity/ChartAcctInfm.java](../../../../WECMS%20DEV/WECMS/src/wabooks/entity/ChartAcctInfm.java) (extends `ChartAcctInfmPk implements GenericEntity`) | [`com.kosign.wecms.domain.setting.chartofaccounts.entity.ChartOfAccount`](../../../src/main/java/com/kosign/wecms/domain/setting/chartofaccounts/entity/ChartAcctInfm.java) (to be created) extending `BaseEntity`, `@IdClass(ChartOfAccountId.class)`. Field names: camelCase Java + `@Column(name = "UPPER_SNAKE")`. |
 | `ChartAcctInfmPk.java` (composite PK) | `ChartOfAccountId` — `Serializable` record with `bizKey: String`, `chartAcctSeqNo: Long` |
 | [wabooks/dao/ChartAcctInfmDAO.java](../../../../WECMS%20DEV/WECMS/src/wabooks/dao/ChartAcctInfmDAO.java) (extends `GenericDAO`) | `ChartOfAccountRepository extends JpaRepository<ChartOfAccount, ChartOfAccountId>` |
 | `wabooks.commons.IdoUtils.executeListWithTxn(…)` | `@Transactional` on service methods + Spring Data `@Modifying @Query` for the child re-parent statement |

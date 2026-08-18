@@ -4,7 +4,7 @@
 
 Status legend: **MATCH** (behaves as legacy) · **APPROVED DEVIATION** (intentional, signed-off) ·
 **PARTIAL** (incomplete) · **MISSING** (planned-but-absent). The authoritative as-built record is the
-preserved audit [references/audits/vas-account.md](../../../references/audits/vas-account.md)
+preserved audit [audits/vas-account.md](../../../audits/legacy-parity/vas-account.md)
 (2026-05-11; 4 Majors all resolved). This file is the final parity review against the request's
 verification checklist.
 
@@ -76,7 +76,7 @@ resolved on 2026-05-11. The single residual item is infrastructure-only:
   behaviour, but the parity matrix marks it **PARTIAL** for transparency.
 
 Evidence: see [test-scenarios.md](test-scenarios.md) (automated coverage map), the preserved audit
-[references/audits/vas-account.md](../../../references/audits/vas-account.md) (finding-by-finding
+[audits/vas-account.md](../../../audits/legacy-parity/vas-account.md) (finding-by-finding
 resolution log + build verification), and [business-flow.md](business-flow.md) (flow-by-flow behaviour
 with the consumption boundary).
 

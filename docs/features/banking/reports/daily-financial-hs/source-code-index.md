@@ -74,7 +74,7 @@ Full detail in the frontend package's
 
 | Doc | Role |
 |---|---|
-| [audits/daily-financial-hs-legacy-audit.md](../../../../audits/daily-financial-hs-legacy-audit.md) | 2026-07-01 legacy semantics + parity plan (P1–P11, G1/G2, D1/D2) |
-| [audits/daily-financial-hs-final-audit.md](../../../../audits/daily-financial-hs-final-audit.md) | 2026-07-02 closure — fixes 1–12, validation matrix, PO divergences, manual-QA list |
+| [audits/daily-financial-hs-legacy-audit.md](../../../../audits/legacy-parity/daily-financial-hs-legacy-audit.md) | 2026-07-01 legacy semantics + parity plan (P1–P11, G1/G2, D1/D2) |
+| [audits/daily-financial-hs-final-audit.md](../../../../audits/legacy-parity/daily-financial-hs-final-audit.md) | 2026-07-02 closure — fixes 1–12, validation matrix, PO divergences, manual-QA list |
 | [docs/bug-reports/BUG-001…](../../../../../../docs/bug-reports/BUG-001_haengsung_daily_financial_wrong_account_type_label.md) | JEX-side function bug (account-type `'02'` label) |
 | This package | implementation-accurate feature documentation (2026-07-02) |

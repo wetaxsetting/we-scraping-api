@@ -58,7 +58,7 @@ balance, per-account inquiry status and last-refresh timestamp. From the same sc
 | Service mapping (cross-feature) | [references/migration/service-mapping.md](../../../../references/migration/service-mapping.md) |
 | Older single-file feature spec | [features/banking/current-savings-vnd/account-inquiry.md](../account-inquiry/legacy-spec.md) |
 | Banking ERD | [references/database/erd/banking-erd.md](../../../../references/database/erd/banking-erd.md) |
-| NXiSAS / Coocon gateway spike | [references/audits/nxisas-vcb-spike.md](../../../../references/audits/nxisas-vcb-spike.md) |
+| NXiSAS / Coocon gateway spike | [audits/nxisas-vcb-spike.md](../../../../audits/historical/nxisas-vcb-spike.md) |
 | JEX functional spec (source of truth) | [docs/jex/features/account-inquiry-vnd/](../../../../../../docs/jex/features/account-inquiry-vnd/README.md) |
 
 ---

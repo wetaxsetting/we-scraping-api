@@ -1,6 +1,13 @@
 # Database Coverage Matrix
 
-**Generated:** 2026-06-01 (ERD Phase 2) · audited from Flyway migrations `V1`–`V237`, JPA `@Table` entities, repository interfaces, and the ERD set under [`erd/`](erd/).
+**Generated:** 2026-06-01 (ERD Phase 2) · **Migration column regenerated from disk 2026-08-17.**
+
+> ⚠️ The original matrix was audited against the pre-rebaseline set (`V1`–`V237`). The
+> [2026-06-09 rebaseline](flyway-migration-baseline.md) reassigned every number to a strict
+> one-table-per-migration scheme, so the Migration column has been **recomputed from
+> `src/main/resources/db/migration/`** — each row now names the migration that actually creates that
+> table today. Rows reading **DROPPED** or **no refactor DDL migration** are accurate as written: no
+> current migration creates them. Entity/Repository columns are unchanged from the 2026-06-01 audit.
 
 Tracks, per live table: which Flyway migration creates it, whether a JPA **entity** and a Spring Data **repository** exist, and which **ERD** documents it. Use this to spot tables that are schema-only (no code) or have entities without repositories.
 
@@ -23,42 +30,42 @@ Tracks, per live table: which Flyway migration creates it, whether a JPA **entit
 
 | Table | Migration | Entity | Repository |
 |---|---|---|---|
-| `ACCT_MSTR` | V13 | ✅ | ✅ AcctMstrRepository |
-| `ACCT_TRNS_HSTR` | V13 | ✅ | ✅ AcctTrnsHstrRepository |
-| `ACCT_TRNS_RCV_PAY_INFM` | V13 | ✅ | ✅ AcctTrnsRcvPayInfmRepository |
-| `BUSA_DOC_RCV_PAY_HIS` | V13 | ✅ | ✅ BusaDocRcvPayHisRepository |
-| `NAPAS_REMIT_TRNS_HSTR` | V13 | ✅ | ✅ NapasRemitTrnsHstrRepository (+ TransferHistoryRepository) |
-| `BANK_EXCH_RATE_INFM` | V127 | ✅ | ✅ BankExchRateInfmRepository |
-| `RMRK_ORG_INFM` | V172 | ✅ | ✅ RmrkOrgInfmRepository |
-| `MEMO_INFM` | V202 | ✅ | ✅ MemoInfmRepository |
-| `BUSI_MATCH_LOG` | V170 | ✅ | ✅ BusiMatchLogRepository |
-| `DAILY_CASH_REPT_DAILY_SUMR_DETL` | V125 | ✅ | ✅ DailyCashReptDailySumrDetlRepository |
+| `ACCT_MSTR` | V2 | ✅ | ✅ AcctMstrRepository |
+| `ACCT_TRNS_HSTR` | V3 | ✅ | ✅ AcctTrnsHstrRepository |
+| `ACCT_TRNS_RCV_PAY_INFM` | V4 | ✅ | ✅ AcctTrnsRcvPayInfmRepository |
+| `BUSA_DOC_RCV_PAY_HIS` | V25 | ✅ | ✅ BusaDocRcvPayHisRepository |
+| `NAPAS_REMIT_TRNS_HSTR` | V69 | ✅ | ✅ NapasRemitTrnsHstrRepository (+ TransferHistoryRepository) |
+| `BANK_EXCH_RATE_INFM` | V10 | ✅ | ✅ BankExchRateInfmRepository |
+| `RMRK_ORG_INFM` | V85 | ✅ | ✅ RmrkOrgInfmRepository |
+| `MEMO_INFM` | V65 | ✅ | ✅ MemoInfmRepository |
+| `BUSI_MATCH_LOG` | V33 | ✅ | ✅ BusiMatchLogRepository |
+| `DAILY_CASH_REPT_DAILY_SUMR_DETL` | V45 | ✅ | ✅ DailyCashReptDailySumrDetlRepository |
 
 ## Payment — [erd/payment-erd.md](erd/payment-erd.md)
 
 | Table | Migration | Entity | Repository |
 |---|---|---|---|
-| `SCDUL_PYMN_SUMR` | V131 | ✅ | ✅ ScdulPymnSumrRepository |
-| `SCDUL_PYMN_SUMR_DETL` | V131 | ✅ | ✅ ScdulPymnSumrDetlRepository |
-| `INTERNAL_TRANSFER_KEY_SEQ` | V131 | ✅ | ✅ InternalTransferKeySeqRepository |
+| `SCDUL_PYMN_SUMR` | V86 | ✅ | ✅ ScdulPymnSumrRepository |
+| `SCDUL_PYMN_SUMR_DETL` | V87 | ✅ | ✅ ScdulPymnSumrDetlRepository |
+| `INTERNAL_TRANSFER_KEY_SEQ` | — **DROPPED** (historical `V131`) | ❌ | ❌ — no entity or repository on disk; `SCDUL_PYMN_NO` now funnels through `wb_get_next_val` |
 | `SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN` | — (archived V188) | ❌ removed 2026-06-10 | — (legacy API-path bridge; never used by Spring) |
-| `OVRS_PYMN_SUMR` | V156 | ✅ | ✅ OvrsPymnSumrRepository |
-| `OVRS_PYMN_MSTR` | V156 | ✅ | ✅ OvrsPymnMstrRepository (+ OverseasPaymentRepository) |
-| `OVRS_PYMN_DTLS` | V138 | ✅ | ✅ OvrsPymnDtlsRepository |
-| `OVERSEAS_PAYMENT_KEY_SEQ` | V158 | ✅ | ✅ OverseasPaymentKeySeqRepository |
-| `EXPT_RESOL_MSTR` | V109 | ✅ | ✅ ExptResolMstrRepository |
-| `EXPT_RESOL_APPRVR_INFM` | V109 | ✅ | ✅ ExptResolApprvrInfmRepository (+ OverseasApproverRepository) |
-| `EXPT_RESOL_FILE` | V211 | ✅ | ✅ ExptResolFileRepository |
-| `TB_PAY_TARGET` | V148 | ✅ | ✅ TbPayTargetRepository |
-| `TB_PAY_FILE_MST` | V148 | ✅ | ✅ TbPayFileMstRepository |
-| `TB_PAY_FILE_DATA` | V148 | ✅ | ✅ TbPayFileDataRepository |
-| `TB_BATCH_SCHEDULE_INFO` | V189 | ✅ | — 🔭 |
-| `TB_BATCH_SCHEDULE_DTL` | V189 | ✅ | — 🔭 |
-| `TB_FIRM_BAT_API_TRAN` | V189 | ✅ | — 🔭 |
-| `TB_FIRM_FILE_MST` | V189 | ✅ | — 🔭 |
-| `TB_FIRM_FILE_DATA` | V189 | ✅ | — 🔭 |
-| `TB_FIRM_FILE_RSLT` | V189 | ✅ | — 🔭 |
-| `BLOCKED_CHARS_RULE` | V149 | ✅ | ✅ BlockedCharsRuleRepository |
+| `OVRS_PYMN_SUMR` | V75 | ✅ | ✅ OvrsPymnSumrRepository |
+| `OVRS_PYMN_MSTR` | V78 | ✅ | ✅ OvrsPymnMstrRepository (+ OverseasPaymentRepository) |
+| `OVRS_PYMN_DTLS` | — **no refactor DDL migration** (schema is external/live-JEX; referenced by `V140` + `V248`) | ✅ | ✅ OvrsPymnDtlsRepository |
+| `OVERSEAS_PAYMENT_KEY_SEQ` | — **DROPPED** (historical `V158`) | ❌ | ❌ — no entity or repository on disk |
+| `EXPT_RESOL_MSTR` | V59 | ✅ | ✅ ExptResolMstrRepository |
+| `EXPT_RESOL_APPRVR_INFM` | V56 | ✅ | ✅ ExptResolApprvrInfmRepository (+ OverseasApproverRepository) |
+| `EXPT_RESOL_FILE` | V58 | ✅ | ✅ ExptResolFileRepository |
+| `TB_PAY_TARGET` | V109 | ✅ | ✅ TbPayTargetRepository |
+| `TB_PAY_FILE_MST` | V107 | ✅ | ✅ TbPayFileMstRepository |
+| `TB_PAY_FILE_DATA` | V105 | ✅ | ✅ TbPayFileDataRepository |
+| `TB_BATCH_SCHEDULE_INFO` | V96 | ✅ | — 🔭 |
+| `TB_BATCH_SCHEDULE_DTL` | V95 | ✅ | — 🔭 |
+| `TB_FIRM_BAT_API_TRAN` | V99 | ✅ | — 🔭 |
+| `TB_FIRM_FILE_MST` | V102 | ✅ | — 🔭 |
+| `TB_FIRM_FILE_DATA` | V101 | ✅ | — 🔭 |
+| `TB_FIRM_FILE_RSLT` | V103 | ✅ | — 🔭 |
+| `BLOCKED_CHARS_RULE` | V14 | ✅ | ✅ BlockedCharsRuleRepository |
 
 > The six `TB_BATCH_SCHEDULE_*` / `TB_FIRM_BAT_API_TRAN` / `TB_FIRM_FILE_*` tables have entities (schema parity) but **no repository** — the dispatch write-path that would consume them is not yet ported. See database-follow-up.md _(removed — historical `planning/` folder deleted by project decision)_ context and the dispatch schema doc.
 
@@ -66,14 +73,14 @@ Tracks, per live table: which Flyway migration creates it, whether a JPA **entit
 
 | Table | Migration | Entity | Repository |
 |---|---|---|---|
-| `BUSA_DOC_MSTR` | V15 | ✅ | ✅ BusaDocMstrRepository |
-| `EINV_FEE_DETL` | V15 | — 🔭 | — 🔭 |
-| `EINV_TAX_DETL` | V15 | — 🔭 | — 🔭 |
-| `OPRT_STTS_INFO` | V16 | ✅ | ✅ OprtSttsInfoRepository |
-| `EXT_TRAN_CALL_HIS` | V16 | ✅ | ✅ ExtTranCallHisRepository |
-| `CARD_MSTR` | V192 | ✅ | ✅ CardMstrRepository |
+| `BUSA_DOC_MSTR` | V23 | ✅ | ✅ BusaDocMstrRepository |
+| `EINV_FEE_DETL` | V48 | — 🔭 | — 🔭 |
+| `EINV_TAX_DETL` | V50 | — 🔭 | — 🔭 |
+| `OPRT_STTS_INFO` | V74 | ✅ | ✅ OprtSttsInfoRepository |
+| `EXT_TRAN_CALL_HIS` | V61 | ✅ | ✅ ExtTranCallHisRepository |
+| `CARD_MSTR` | V38 | ✅ | ✅ CardMstrRepository |
 | `CARD_TRNS_HSTR` | V192 (redef. V184) | ✅ | ✅ CardTrnsHstrRepository |
-| `CARD_TRNS_RCV_PAY_INFM` | V200 | ✅ | ✅ CardTrnsRcvPayInfmRepository |
+| `CARD_TRNS_RCV_PAY_INFM` | V40 | ✅ | ✅ CardTrnsRcvPayInfmRepository |
 
 > `EINV_FEE_DETL` / `EINV_TAX_DETL` are schema-only — declared in V15 for the future e-invoice detail page; the listing feature does not map them. No entity, no repository.
 
@@ -81,49 +88,49 @@ Tracks, per live table: which Flyway migration creates it, whether a JPA **entit
 
 | Table | Migration | Entity | Repository |
 |---|---|---|---|
-| `ACCT_AUTH_INFO` | V153 | ✅ | ✅ AcctAuthInfoRepository |
-| `CHART_ACCT_INFM` | V94 | ✅ | ✅ ChartOfAccountRepository |
-| `TRCO_INFM` | V112 | ✅ | ✅ TrcoInfmRepository |
-| `TRCO_ADDR_INFM` | V112 | ✅ | ✅ TrcoAddrInfmRepository |
+| `ACCT_AUTH_INFO` | V1 | ✅ | ✅ AcctAuthInfoRepository |
+| `CHART_ACCT_INFM` | V42 | ✅ | ✅ ChartOfAccountRepository |
+| `TRCO_INFM` | V119 | ✅ | ✅ TrcoInfmRepository |
+| `TRCO_ADDR_INFM` | V114 | ✅ | ✅ TrcoAddrInfmRepository |
 | `TRCO_ACCT_INFO` | V112 | ✅ | ✅ TrcoAcctInfoRepository |
-| `TRCO_OVRS_INFM` | V112 | ✅ | ✅ TrcoOvrsInfmRepository |
-| `PGRO_BSAC_LNKN_INFM` | V112 | ✅ | ✅ PgroBsacLnknInfmRepository |
-| `TRCO_INFO_FILE` | V139 | ✅ | ✅ TrcoInfoFileRepository |
-| `APPR_LINE_INFM` | V90 | ✅ | ✅ ApprovalLineRepository |
-| `APPR_LINE_INFM_DETL` | V90 | ✅ | ✅ ApprovalLineApproverRepository |
-| `TB_FIRM_CONF` | V62 | ✅ | ✅ FirmBankingSettingRepository |
-| `TB_FIRM_TRAN` | V59 | ✅ | ✅ TbFirmTranRepository |
-| `TB_FIRM_BANK_CODE` | V59 | ✅ | ✅ TbFirmBankCodeRepository |
+| `TRCO_OVRS_INFM` | V121 | ✅ | ✅ TrcoOvrsInfmRepository |
+| `PGRO_BSAC_LNKN_INFM` | V82 | ✅ | ✅ PgroBsacLnknInfmRepository |
+| `TRCO_INFO_FILE` | V116 | ✅ | ✅ TrcoInfoFileRepository |
+| `APPR_LINE_INFM` | V6 | ✅ | ✅ ApprovalLineRepository |
+| `APPR_LINE_INFM_DETL` | V7 | ✅ | ✅ ApprovalLineApproverRepository |
+| `TB_FIRM_CONF` | V100 | ✅ | ✅ FirmBankingSettingRepository |
+| `TB_FIRM_TRAN` | V104 | ✅ | ✅ TbFirmTranRepository |
+| `TB_FIRM_BANK_CODE` | V97 | ✅ | ✅ TbFirmBankCodeRepository |
 | `NXSIAS_MODULE_TRAN_LOG_HIS` | V59 / V101 | ✅ | ✅ NxsiasModuleTranLogHisRepository |
-| `ERP_TRNS_HSTR` | V71 | ✅ | ✅ ErpTrnsHstrRepository |
-| `BUSI_VAS_ACCT_INFM` | V77 | ✅ | ✅ BusiVasAcctInfmRepository |
-| `USAG_INFM` | V201 | ✅ | ✅ UsagInfmRepository |
-| `USAG_INFM_LANG_DETL` | V201 | — | — (read via UsagInfm join) |
-| `BUSI_USAG_SET_INFM` | V80 | ✅ | ✅ PurposeSettingsRepository |
-| `SYS_ENV_SET_INFM` | V69 | ✅ | ✅ SysEnvSetInfmRepository |
-| `BUSI_ENV_SET_INFM` | V69 | ✅ | ✅ BusiEnvSetInfmRepository |
-| `BANK_CERT_INFO` | V100 | ✅ | ✅ BankCertInfoRepository |
-| `GDT_CERT_INFO` | V128 | ✅ | ✅ GdtCertInfoRepository |
+| `ERP_TRNS_HSTR` | V54 | ✅ | ✅ ErpTrnsHstrRepository |
+| `BUSI_VAS_ACCT_INFM` | V37 | ✅ | ✅ BusiVasAcctInfmRepository |
+| `USAG_INFM` | V122 | ✅ | ✅ UsagInfmRepository |
+| `USAG_INFM_LANG_DETL` | V123 | — | — (read via UsagInfm join) |
+| `BUSI_USAG_SET_INFM` | V35 | ✅ | ✅ PurposeSettingsRepository |
+| `SYS_ENV_SET_INFM` | V92 | ✅ | ✅ SysEnvSetInfmRepository |
+| `BUSI_ENV_SET_INFM` | V30 | ✅ | ✅ BusiEnvSetInfmRepository |
+| `BANK_CERT_INFO` | V9 | ✅ | ✅ BankCertInfoRepository |
+| `GDT_CERT_INFO` | V62 | ✅ | ✅ GdtCertInfoRepository |
 
 ## Shared / Common — [erd/common-erd.md](erd/common-erd.md)
 
 | Table | Migration | Entity | Repository |
 |---|---|---|---|
-| `BUSI_INFM` | V1 | ✅ | ✅ BusiInfmRepository |
-| `USER_INFM` | V1 | ✅ | ✅ UserInfmRepository |
-| `USER_BUSI_CONN_INFM` | V1 | ✅ | ✅ UserBusiConnInfmRepository |
-| `USER_LOGIN_HIS` | V1 | ✅ | ✅ UserLoginHisRepository |
-| `USER_PW_CHG_HIS` | V215 | ✅ | ✅ UserPwChgHisRepository |
-| `EMPL_INFM` | V11 | ✅ | ✅ EmplInfmRepository |
-| `BUSI_ADMN_INFM` | V11 | ✅ | ✅ BusiAdmnInfmRepository |
-| `BANK_INFM` | V20 | ✅ | ✅ BankInfmRepository (+ BankPickerRepository, BankFormInfoRepository) |
-| `BANK_INFM_DETL` | V44 | — | ✅ BankInfmDetlPeriodLimitRepository (projection; no `@Table` entity) |
-| `NAPAS_BANK_INFO` | V68 | ✅ | ✅ NapasBankInfoRepository |
-| `NATN_INFM` | V205 | ✅ | ✅ NatnInfmRepository |
-| `AUDIT_LOGS_INFM` | V63 | ✅ | ✅ AuditLogEntryRepository (+ AuditLogSeqNoRepository) |
-| `SYS_SCR_OPTION_WECMS` | V30 | ✅ | ✅ SysScrOptionWecmsRepository |
-| `USER_SCR_OPTION_WECMS` | V30 | ✅ | ✅ UserScrOptionWecmsRepository |
-| `USER_MENU_AUTH_INFM` | V126 | ✅ | ✅ UserMenuAuthInfmRepository |
+| `BUSI_INFM` | V32 | ✅ | ✅ BusiInfmRepository |
+| `USER_INFM` | V128 | ✅ | ✅ UserInfmRepository |
+| `USER_BUSI_CONN_INFM` | V125 | ✅ | ✅ UserBusiConnInfmRepository |
+| `USER_LOGIN_HIS` | V129 | ✅ | ✅ UserLoginHisRepository |
+| `USER_PW_CHG_HIS` | V132 | ✅ | ✅ UserPwChgHisRepository |
+| `EMPL_INFM` | V52 | ✅ | ✅ EmplInfmRepository |
+| `BUSI_ADMN_INFM` | V27 | ✅ | ✅ BusiAdmnInfmRepository |
+| `BANK_INFM` | V11 | ✅ | ✅ BankInfmRepository (+ BankPickerRepository, BankFormInfoRepository) |
+| `BANK_INFM_DETL` | V12 | — | ✅ BankInfmDetlPeriodLimitRepository (projection; no `@Table` entity) |
+| `NAPAS_BANK_INFO` | V67 | ✅ | ✅ NapasBankInfoRepository |
+| `NATN_INFM` | V70 | ✅ | ✅ NatnInfmRepository |
+| `AUDIT_LOGS_INFM` | V8 | ✅ | ✅ AuditLogEntryRepository (+ AuditLogSeqNoRepository) |
+| `SYS_SCR_OPTION_WECMS` | V93 | ✅ | ✅ SysScrOptionWecmsRepository |
+| `USER_SCR_OPTION_WECMS` | V133 | ✅ | ✅ UserScrOptionWecmsRepository |
+| `USER_MENU_AUTH_INFM` | V131 | ✅ | ✅ UserMenuAuthInfmRepository |
 | `shedlock` | V210 | — | — (ShedLock library-managed) |
 
 ## DB views (read-only entities)

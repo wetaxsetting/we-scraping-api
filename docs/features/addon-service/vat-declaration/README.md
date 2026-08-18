@@ -1,16 +1,25 @@
 # VAT Declaration & 8% Tax Reduction Annex — WeCMS Technical Specification
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../../references/database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../../references/database/flyway-migration-baseline.md) §5.
+
 | | |
 |---|---|
 | **JEX counterpart** | None — **brand-new module** on WeCMS (no JEX WSVC to port) |
 | **Refactor status** | 🟡 Design (this spec) — no code on disk yet; branch `f1_v1_vat_declaration` reserved |
 | **Owner** | PO: Phan Tuyen · Backend spec normalized: 2026-07-13 |
 | **Sprint** | TBD (Release Plan: Phase 1 MVP = Sprint 1–2) |
-| **Source documents** | PO package at [`docs/vat-declaration/`](../../../vat-declaration/0.%20VAT_Declaration_Overview_VN_EN.md) (PRD, User Flow, Business Rules, Design Brief, prototype TechSpecs, Release Plan, HTKK templates) |
+| **Source documents** | PO package at [`source-requirements/`](./source-requirements/overview.md) (PRD, User Flow, Business Rules, Design Brief, prototype TechSpecs, Release Plan) + [`source-requirements/attachments/`](./source-requirements/attachments/README.md) (HTKK form templates, report workbooks) |
 | **Open questions** | [planning/open-questions/vat-declaration-follow-up.md](../../../planning/open-questions/vat-declaration-follow-up.md) |
 
 > **Why this document exists.** The PO's prototype TechSpecs
-> ([`5. VAT_Declaration_TechSpecs_EN.md`](../../../vat-declaration/5.%20VAT_Declaration_TechSpecs_EN.md))
+> ([`5. VAT_Declaration_TechSpecs_EN.md`](./source-requirements/tech-specs.md))
 > describes a Next.js-API-route prototype: lowercase tables without `BIZ_KEY`, UUID PKs,
 > unwrapped JSON arrays, and source tables (`tbl_pur_vat`, `tbl_sale_vat`) that **do not exist**
 > in WeCMS. This spec is the **normative translation to real WeCMS conventions** — when the
@@ -300,7 +309,7 @@ only, H omits Add-on per V243 precedent).
 ## 6. Business rules (normative summary — full matrix in PO doc 3)
 
 1. **Formula matrix** — implement exactly as
-   [`3. VAT_Declaration_BusinessRules_EN.md`](../../../vat-declaration/3.%20VAT_Declaration_BusinessRules_EN.md) §1:
+   [`3. VAT_Declaration_BusinessRules_EN.md`](./source-requirements/business-rules.md) §1:
    propagation on `[23]→[24]→[25]`, `[30]→[31]`, `[32]→[33]`; derived `[27] [28] [34] [35] [36]`;
    `hieu_so = [36]-[22]+[37]-[38]-[39a]`; split into `[40a]`/`[41]`; `[40] = max(0, [40a]-[40b])`;
    `[43] = max(0, [41]-[42])`. **Integer math only** (`Math.floorDiv`-style flooring on the
@@ -325,7 +334,7 @@ only, H omits Add-on per V243 precedent).
 - **Filename**: `{MST13}-01_GTGT_TT80-{PERIOD}-L{REV}.xml` — 10-digit tax code padded with
   `000` to 13; period `M052026` / `Q22026`; `L00` official, `L01+` supplement.
 - **Structure**: per the prescribed template
-  [`1201496252000-01_GTGT_TT80-Q22026-L00.xml`](../../../vat-declaration/) — indicators map
+  [`1201496252000-01_GTGT_TT80-Q22026-L00.xml`](./source-requirements/attachments/README.md) — indicators map
   1:1 to `<ct21>..<ct43>` under `<CTieuTKhaiChinh>`; `<loaiTKhai>` = `C`/`B`;
   `<soLan>` = revision. Grouped nodes (e.g. `<GiaTriVaThueGTGTHHDVMuaVao>` wrapping
   `ct23`/`ct24`) must match the template verbatim.
@@ -350,7 +359,7 @@ only, H omits Add-on per V243 precedent).
 ## 9. Cross-references
 
 - **Field-level data dictionary**: [references/database/addon/vat-declaration-db.md](../../../references/database/addon/vat-declaration-db.md) — per-field descriptions (EN/VN) for all three new tables + source-table usage
-- PO source package: [`docs/vat-declaration/`](../../../vat-declaration/0.%20VAT_Declaration_Overview_VN_EN.md)
+- PO source package: [`source-requirements/`](./source-requirements/overview.md) · binaries: [`source-requirements/attachments/`](./source-requirements/attachments/README.md)
 - e-Invoice source tables & ERD: [addon-service ERD](../../../references/database/erd/addon-service-erd.md) · [database-coverage-matrix](../../../references/database/database-coverage-matrix.md)
 - Sibling feature docs (source-table owners): [sales-e-invoices/](../sales-e-invoices/README.md) · [expenses-e-invoices/](../expenses-e-invoices/README.md)
 - REST conventions / envelope / error funnel: `wecms-api/CLAUDE.md` §"REST API Design Conventions"

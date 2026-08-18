@@ -44,4 +44,4 @@ Errors: `WBE2001` (unknown screenId), `WBE_VALIDATION` (kebab pattern fail). Aud
 
 - Frontend twin: [`../../../../wecms-web/docs/features/common/view-setting/README.md`](../../../../wecms-web/docs/features/common/view-setting/README.md)
 - JEX functional reference: [`../../../../docs/jex/features/view-setting.md`](../../../../docs/jex/features/view-setting.md)
-- Audit deliverables: [`../../audits/common-source-index.md`](../../audits/common-source-index.md) · [`common-gap-analysis.md`](../../audits/common-gap-analysis.md) · [`common-docs-audit.md`](../../audits/common-docs-audit.md)
+- Audit deliverables: [`../../audits/common-source-index.md`](../../audits/modules/common-source-index.md) · [`common-gap-analysis.md`](../../audits/modules/common-gap-analysis.md) · [`common-docs-audit.md`](../../audits/modules/common-docs-audit.md)

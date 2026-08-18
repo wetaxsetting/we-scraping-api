@@ -56,8 +56,8 @@ PK `(BIZ_KEY, SCDUL_PYMN_NO, SCDUL_PYMN_DETL_NO)` (`ScdulPymnSumrDetlId`). Key c
 
 | Migration | Effect |
 |---|---|
-| `V144__payroll_payment_view_setting_seed.sql` | View Setting seed for the 4 Payroll screens |
-| `V146__scdul_pymn_sumr_chk01_allow_payroll.sql` | Relax `scdul_pymn_sumr_chk01` CHECK to admit `'00'` (re-assert if the CHECK is ever re-touched) |
-| `V232__payroll_payment_scheduled_view_setting_legacy.sql` | Scheduled list → legacy `pymn_0005_001` column parity + Payroll Type column |
+| `V156__sys_scr_option_wecms.sql` | View Setting seed for the 4 Payroll screens |
+| `V146__scdul_pymn_sumr_chk01_allow_payroll.sql` | Relax `scdul_pymn_sumr_chk01` CHECK to admit `'00'` (re-assert if the CHECK is ever re-touched) | *(historical — FOLDED INTO BASE DDL; the CHECK now ships inside `V86__scdul_pymn_sumr.sql`)*
+| `V156__sys_scr_option_wecms.sql` | Scheduled list → legacy `pymn_0005_001` column parity + Payroll Type column |
 
 > No Payroll-only table is introduced — every object above is in the legacy inventory. Status is never persisted; it is computed from `EXPT_RESOL_MSTR` via the legacy DB function.

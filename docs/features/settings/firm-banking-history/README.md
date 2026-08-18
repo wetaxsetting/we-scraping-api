@@ -118,7 +118,7 @@ entry point; deep detail lives here:
   deep implementation narrative.
 - **DB schema design:** [../../../references/database/settings/firm-banking-history-schema.md](../../../references/database/settings/firm-banking-history-schema.md)
 - **JEX → Spring mapping:** [../../../references/migration/firm-banking-history-mapping.md](../../../references/migration/firm-banking-history-mapping.md)
-- **Parity audits:** [parity checklist](../../../references/audits/firm-banking-history-parity-checklist.md) · [independent review 2026-05-08](../../../references/audits/firm-banking-history-review-2026-05-08.md)
+- **Parity audits:** [parity checklist](../../../audits/legacy-parity/firm-banking-history-parity-checklist.md) · [independent review 2026-05-08](../../../audits/historical/firm-banking-history-review-2026-05-08.md)
 - **JEX legacy spec set (read-only):** [docs/jex/features/firm-banking-history/](../../../../../docs/jex/features/firm-banking-history/README.md)
 - **Frontend feature folder:** [wecms-web/docs/features/settings/firm-banking-history/](../../../../../wecms-web/docs/features/settings/firm-banking-history/README.md)
 - **Settings ERD:** [references/database/erd/settings-erd.md](../../../references/database/erd/settings-erd.md)

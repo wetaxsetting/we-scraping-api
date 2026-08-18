@@ -97,7 +97,7 @@ Added 2026-07-28. Detects `TB_PAY_FILE_MST` rows left at `PROC_STAT='9'` (WAIT) 
 condition an `OperatingHoursService` `SKIP` produces silently (no FAIL, no alert). **Read-only: it never
 changes a payment status, never re-drives dispatch, and never enables anything.**
 
-Rationale + design: [../audits/payment-dispatch-operating-hours-flow.md §10](../audits/payment-dispatch-operating-hours-flow.md).
+Rationale + design: [../audits/payment-dispatch-operating-hours-flow.md §10](../audits/deployment/payment-dispatch-operating-hours-flow.md).
 
 | Property | Description | Default | Required in | Secret | Default behaviour | Component |
 |---|---|---|---|---|---|---|
@@ -161,7 +161,7 @@ parity requirement.
 them set on a host, remove them.
 
 The approved residual-recovery model is **monitoring + manual recovery** (§2a) — see
-[../audits/final-four-to-one-batch-architecture-correction.md](../audits/final-four-to-one-batch-architecture-correction.md).
+[../audits/final-four-to-one-batch-architecture-correction.md](../audits/batch/final-four-to-one-batch-architecture-correction.md).
 
 ---
 

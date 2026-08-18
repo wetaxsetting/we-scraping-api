@@ -1,4 +1,4 @@
-# notification — Functional Specification (Backend)
+# Notification — Functional Specification (Backend)
 
 **Part of:** Common → notification
 **Last verified:** 2026-06-23

@@ -85,4 +85,4 @@ Full file map of the `common/` infrastructure that the error envelope sits withi
 ## Cross-links
 
 - Test scenarios narrative: [test-scenarios.md](test-scenarios.md)
-- Audit deliverable: [`../../../audits/common-source-index.md`](../../../audits/common-source-index.md)
+- Audit deliverable: [`../../../audits/common-source-index.md`](../../../audits/modules/common-source-index.md)

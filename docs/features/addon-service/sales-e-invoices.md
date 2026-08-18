@@ -55,7 +55,7 @@ Full request/response contracts: [sales-e-invoices/interface-specification.md](s
 
 ## Current implementation status
 
-✅ Implemented end-to-end (see Status above). **Remaining gaps** (tracked in the folder gap-analysis + [`docs/audits/addon-service-gap-analysis.md`](../../audits/addon-service-gap-analysis.md)):
+✅ Implemented end-to-end (see Status above). **Remaining gaps** (tracked in the folder gap-analysis + [`docs/audits/addon-service-gap-analysis.md`](../../audits/modules/addon-service-gap-analysis.md)):
 - Invoice-**status** filter is applied **client-side** — backend returns the raw `EINV_INVOICESTATUS` and has no server `invoiceStatus` param yet (IR-4; PO decision pending).
 - "Has-line-items" baseline predicate not ported.
 - No dedicated tests for the history / detail-scrape / detail-export services.

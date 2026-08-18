@@ -11,14 +11,15 @@ last_updated: 2026-05-20
 > Code lives under
 > [wecms-api/src/main/java/com/kosign/wecms/domain/banking/transferhistory/](../../../../../src/main/java/com/kosign/wecms/domain/banking/transferhistory/)
 > with the shared `NapasRemitTrnsHstr` entity reused (no duplicate
-> entity). Helper index shipped as
-> `V196__transfer_history_helper_index.sql`.
+> entity). Helper index shipped at the time as
+> `V196__transfer_history_helper_index.sql` — **historical only; dropped by the 2026-06-09 rebaseline,
+> no current equivalent** (see [flyway-migration-baseline.md](../../../../references/database/flyway-migration-baseline.md)).
 > Sprint-1 interim endpoint at `/api/v1/banking/transfers/history`
 > retained `@Deprecated` until removed in a follow-up cleanup.
 
 > **2026-05-20 — Frontend landed.** Next.js page at
 > `/banking/transfer-history` ships in
-> [wecms-web/app/(dashboard)/banking/transfer-history/page.tsx](../../../../../../wecms-web/app/(dashboard)/banking/transfer-history/page.tsx)
+> [wecms-web/app/(dashboard)/banking/transfer-history/page.tsx](<../../../../../../wecms-web/app/(dashboard)/banking/transfer-history/page.tsx>)
 > backed by
 > [TransferHistoryClient.tsx](../../../../../../wecms-web/components/banking/internal-transfer/TransferHistoryClient.tsx)
 > + the existing
@@ -47,6 +48,15 @@ last_updated: 2026-05-20
 > surface).
 
 # Banking > Internal Transfer > Transfer History — Refactor Feature Spec
+
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../../../references/database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../../../references/database/flyway-migration-baseline.md) §5.
 
 **Module:** Banking
 **Menu:** Internal Transfer > Transfer History
@@ -558,7 +568,7 @@ All eight OQs resolved by the PO with spec-default selections in Prompt 3
 |---|---|
 | OQ-1 | **Resolved — V114 funnel.** Use `LegacyFunctionRepository.resolveNapasOrCitadBankName(code, langCd)` for `in_bank_nm`. Implementation: [TransferHistoryQueryService.toRow:212](../../../../../src/main/java/com/kosign/wecms/domain/banking/transferhistory/service/TransferHistoryQueryService.java). |
 | OQ-2 | **Resolved — no period cap.** Bean Validation enforces `\d{8}` shape + `to_dt ≥ from_dt`; no `WBE_TRANSFER_HISTORY_PERIOD_TOO_LONG` code. |
-| OQ-3 | **Resolved — ship the helper index in the same MR.** `V181__transfer_history_helper_index.sql` (Needs Confirmation — source file not found). |
+| OQ-3 | **Resolved at the time — ship the helper index in the same MR** as `V181__transfer_history_helper_index.sql` (later renumbered `V196`). ⚠️ **Superseded 2026-08-17:** both files were dropped by the [2026-06-09 rebaseline](../../../../references/database/flyway-migration-baseline.md); `V69__napas_remit_trns_hstr.sql` is PK-only and the index does **not** exist today. |
 | OQ-4 | **Resolved — no audit write.** Legacy-parity (matches `approval-line` / `erp-transaction-history` precedent). `AuditLogService` is intentionally NOT a dependency. |
 | OQ-5 | **Resolved — VND footer only.** Frontend renders VND total per legacy `trns_0003_001.ts:243-258`. USD totals are still carried on the wire (`total_usd_amount` / `total_usd_count`) so a future Figma frame can surface a second footer row without a backend change. |
 | OQ-6 | **Resolved — whitelist `{10,15,20,50,100}`, default 15.** Enforced by `TransferHistoryListRequest.PAGE_PER_CNT_PATTERN` + the controller's `@Pattern` guard. |

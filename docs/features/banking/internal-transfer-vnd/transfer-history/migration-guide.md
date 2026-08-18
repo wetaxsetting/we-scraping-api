@@ -32,7 +32,7 @@
 | Sort tie-break | per IDO ORDER BY | always appends `seqNo DESC` | deterministic paging |
 | User/bank name | DB functions inline in SQL | Java-side resolvers with per-request caching | "no new DB-function dependencies" policy (bank-name fn kept by exception, V114) |
 | `WBE` codes | JEX ML codes | `WBE_TRANSFER_HISTORY_INVALID_PERIOD`, `WBE_VALIDATION` | code translation rule |
-| Helper index | DEV table has PK only | adds `ix_napas_remit_trns_hstr_biz_regdtm` | extra index allowed |
+| Helper index | DEV table has PK only | ⚠️ **none today** — `V69__napas_remit_trns_hstr.sql` is PK-only. The planned `ix_napas_remit_trns_hstr_biz_regdtm` was dropped by the 2026-06-09 rebaseline | extra index was allowed, but is not shipped |
 
 ## 3. Scope decisions (resolved open questions)
 

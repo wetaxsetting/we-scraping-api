@@ -343,7 +343,7 @@ No new shared component is needed for this feature — every piece is already in
 - [ ] Frontend `lib/types/api.ts` gains `ApiCardTransactionRow` + `ApiCardTransactionListResponse` (snake_case); `lib/api/mappers.ts` gains the camelCase mapper; consumer reads camelCase only.
 - [ ] `SCREEN_IDS.CARD_TRANSACTIONS = "card-transactions"` registered in [wecms-web/lib/viewSettingScreens.ts](../../../../wecms-web/lib/viewSettingScreens.ts).
 - [ ] `locales/en.json` + `locales/ko.json` + `locales/vi.json` gain `card_transactions.*` keys (no `km`).
-- [ ] Parity checklist at [audits/card-transactions-parity-checklist.md](../audits/card-transactions-parity-checklist.md) is ticked.
+- [ ] Parity checklist at [audits/card-transactions-parity-checklist.md](../../audits/legacy-parity/card-transactions-parity-checklist.md) is ticked.
 
 ## 10 · Open questions specific to this mapping
 

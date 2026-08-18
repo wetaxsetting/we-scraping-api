@@ -155,4 +155,4 @@ All `BusinessException`s return HTTP 200 with the standard `{ status, timestamp,
 
 `MAX_PAGE_SIZE = 100`, `DEFAULT_PAGE_SIZE = 15`, `MAX_BULK_SIZE = 100`, `MAX_EXPORT_ROWS = 50_000`, `AUDIT_WSVC_ID = "approval-box"`.
 
-> **Page-size note:** the backend default is 15 (legacy parity). The frontend list hook requests `size = 10` by an intentional project decision (see [parity-fixes-2026-06.md](parity-fixes-2026-06.md)); the backend honours whatever size the client sends, clamped to `[1..100]`.
+> **Page-size note:** the backend default is 15 (legacy parity). The frontend list hook requests `size = 10` by an intentional project decision (see [parity-fixes-2026-06.md](../../../audits/historical/approval-box-parity-fixes-2026-06.md)); the backend honours whatever size the client sends, clamped to `[1..100]`.

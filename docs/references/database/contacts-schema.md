@@ -1,6 +1,15 @@
 # Contacts — Database Schema Design
 > **Status (verified 2026-06-02): Implemented — code is authoritative.** This doc predates the shipped implementation and describes design-stage decisions that were resolved the OTHER way. Where it conflicts with `domain/setting/contacts/`, the code wins. Specifically: TRCO_KEY is allocated via the `wb_get_next_val('trco_infm','trco_key')` branch through `LegacyFunctionRepository.nextTrcoKey` (there is **no** Java `TrcoKeyGeneratorService`); `TRCO_INFO_FILE` **is** in scope (attachments shipped via `ContactsFileService`); bank-name resolution uses the ported `wb_get_napas_bank_nm_or_citad_bank_nm` via `LegacyFunctionRepository.resolveNapasOrCitadBankName` (**not** `BankCdResolver`). See `wecms-api/CLAUDE.md` → Feature Status (contacts) + "Surviving legacy functions". The §§ on key-generation / bank-resolution / file-scope below are stale and flagged for a follow-up rewrite.
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](flyway-migration-baseline.md) §5.
+
 | Field | Value |
 |---|---|
 | Refactor slug | `contacts` |

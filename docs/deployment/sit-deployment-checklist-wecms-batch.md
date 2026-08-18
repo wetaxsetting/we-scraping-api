@@ -243,7 +243,7 @@ not the JEX UAT batch DB (DEV/SIT are DB-separated and safe; see the activation 
 ## 2026-07-22 — legacy-output-parity alignment (pre-SIT)
 
 The dispatch output was aligned to legacy for all source-derivable findings — see
-[../audits/legacy-vs-refactor-output-parity-audit.md](../audits/legacy-vs-refactor-output-parity-audit.md) §7
+[../audits/legacy-vs-refactor-output-parity-audit.md](../audits/legacy-parity/legacy-vs-refactor-output-parity-audit.md) §7
 (full backend suite 1904 green; dispatch flags remain OFF). SIT items added/affected:
 
 - **K (migration-critical):** API-rail `TB_PAY_TARGET.TRAN_DT`/`REG_TM` now stamped in **UTC** (legacy parity).

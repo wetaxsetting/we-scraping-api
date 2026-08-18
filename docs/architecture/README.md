@@ -1,5 +1,7 @@
 # architecture/
 
+**Status:** active · **Last reviewed:** 2026-08-17
+
 System-level architecture for the Spring Boot + Next.js refactor.
 
 ## Purpose

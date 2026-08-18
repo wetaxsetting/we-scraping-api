@@ -1,4 +1,4 @@
-# audit-log — Refactor Gap Analysis (Backend)
+# Audit Log — Refactor Gap Analysis (Backend)
 
 **Part of:** Common → audit-log
 **Last verified:** 2026-06-23

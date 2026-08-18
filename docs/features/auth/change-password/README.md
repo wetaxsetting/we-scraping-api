@@ -111,7 +111,7 @@ Cross-package collaborators (reused, not re-implemented):
 
 - **Frontend counterpart:** [wecms-web/docs/features/auth/change-password/README.md](../../../../../wecms-web/docs/features/auth/change-password/README.md)
 - **Sibling auth modules:** [login](../login/README.md) · [profile](../profile/README.md) · [logout](../logout/README.md) · [session-management](../session-management/README.md)
-- **Login coexistence audit (password hashing):** [docs/audits/login-legacy-compatibility-2026-06-10.md](../../../audits/login-legacy-compatibility-2026-06-10.md)
+- **Login coexistence audit (password hashing):** [docs/audits/login-legacy-compatibility-2026-06-10.md](../../../audits/legacy-parity/login-legacy-compatibility-2026-06-10.md)
 - **Legacy table inventory (baseline):** [references/database/legacy-table-inventory.md](../../../references/database/legacy-table-inventory.md)
 
 ---

@@ -1,4 +1,4 @@
-# navigation — Business Flow (Backend)
+# Navigation — Business Flow (Backend)
 
 **Part of:** Common → navigation
 **Last verified:** 2026-06-23

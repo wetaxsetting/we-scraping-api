@@ -1,5 +1,14 @@
 # Add-on Service — Authorization & Product-Type Behaviour (Backend)
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../references/database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../references/database/flyway-migration-baseline.md) §5.
+
 **System:** Refactor (wecms-api) · **Status:** Verified against source 2026-06-06 (F-3 complete) · **Scope:** `/addon/sales-einvoices`, `/addon/expenses-einvoices`, `/addon/operation-status` and the **Add-on Service** top menu.
 
 This doc is the single source of truth for how the backend authorizes the Add-on Service module per product type (H / W / M / F) and per user permission. It supersedes the older "product gate deferred" notes in the per-feature functional specs (now corrected).
@@ -123,7 +132,7 @@ The same `USER_MENU_AUTH_INFM` grant set drives both `/api/v1/navigation` (what'
 - `domain/navigation/service/NavigationService.java`
 - `domain/einvoice/controller/EInvoiceController.java`
 - `domain/operation/controller/OperationStatusController.java`
-- `src/main/resources/db/migration/V243__navigation_menu_seed.sql`
+- `src/main/resources/db/migration/V243__navigation_menu_seed.sql` *(historical — NOT IN THE CURRENT SET; `V137`-`V139` create the nav tables but contain zero INSERTs, so the seed must be applied separately)*
 - `wecms-api/CLAUDE.md` (Product-type rule; Authority-model F-3 bullet)
 - Cross-ref: [docs/jex/features/menu-product-type-management/endpoint-authorization-matrix.md](../../../../docs/jex/features/menu-product-type-management/endpoint-authorization-matrix.md)
 

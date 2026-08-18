@@ -1,5 +1,14 @@
 # WeCMS-API — Full-Project ERD
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../flyway-migration-baseline.md) §5.
+
 **Diagram source:** [`diagrams/full-project-erd.mmd`](diagrams/full-project-erd.mmd)
 **Generated:** 2026-06-01 · audited from Flyway migrations `V1`–`V237` (`src/main/resources/db/migration`), JPA entities under `src/main/java/com/kosign/wecms/domain/**/entity`, repositories, and existing schema docs under [`../`](../).
 
@@ -18,7 +27,7 @@ This is the cross-module map. Per-module attribute detail lives in:
 | Module | Count | Tables |
 |---|---|---|
 | **Banking** | 10 | ACCT_MSTR · ACCT_TRNS_HSTR · ACCT_TRNS_RCV_PAY_INFM · BUSA_DOC_RCV_PAY_HIS · NAPAS_REMIT_TRNS_HSTR · BANK_EXCH_RATE_INFM · RMRK_ORG_INFM · MEMO_INFM · BUSI_MATCH_LOG · DAILY_CASH_REPT_DAILY_SUMR_DETL |
-| **Payment** | 21 | SCDUL_PYMN_SUMR · SCDUL_PYMN_SUMR_DETL · INTERNAL_TRANSFER_KEY_SEQ · SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN · OVRS_PYMN_SUMR · OVRS_PYMN_MSTR · OVRS_PYMN_DTLS · OVERSEAS_PAYMENT_KEY_SEQ · EXPT_RESOL_MSTR · EXPT_RESOL_APPRVR_INFM · EXPT_RESOL_FILE · TB_PAY_TARGET · TB_PAY_FILE_MST · TB_PAY_FILE_DATA · TB_BATCH_SCHEDULE_INFO · TB_BATCH_SCHEDULE_DTL · TB_FIRM_BAT_API_TRAN · TB_FIRM_FILE_MST · TB_FIRM_FILE_DATA · TB_FIRM_FILE_RSLT · BLOCKED_CHARS_RULE |
+| **Payment** | 21 *(19 live — see note)* | SCDUL_PYMN_SUMR · SCDUL_PYMN_SUMR_DETL · ~~INTERNAL_TRANSFER_KEY_SEQ~~ *(retired 2026-06-09)* · SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN · OVRS_PYMN_SUMR · OVRS_PYMN_MSTR · OVRS_PYMN_DTLS · ~~OVERSEAS_PAYMENT_KEY_SEQ~~ *(retired 2026-06-10)* · EXPT_RESOL_MSTR · EXPT_RESOL_APPRVR_INFM · EXPT_RESOL_FILE · TB_PAY_TARGET · TB_PAY_FILE_MST · TB_PAY_FILE_DATA · TB_BATCH_SCHEDULE_INFO · TB_BATCH_SCHEDULE_DTL · TB_FIRM_BAT_API_TRAN · TB_FIRM_FILE_MST · TB_FIRM_FILE_DATA · TB_FIRM_FILE_RSLT · BLOCKED_CHARS_RULE |
 | **Add-on Service** | 8 | BUSA_DOC_MSTR · EINV_FEE_DETL · EINV_TAX_DETL · OPRT_STTS_INFO · EXT_TRAN_CALL_HIS · CARD_MSTR · CARD_TRNS_HSTR · CARD_TRNS_RCV_PAY_INFM |
 | **Settings** | 24 | ACCT_AUTH_INFO · CHART_ACCT_INFM · TRCO_INFM · TRCO_ADDR_INFM · TRCO_ACCT_INFO · TRCO_OVRS_INFM · PGRO_BSAC_LNKN_INFM · TRCO_INFO_FILE · APPR_LINE_INFM · APPR_LINE_INFM_DETL · TB_FIRM_CONF · TB_FIRM_TRAN · TB_FIRM_BANK_CODE · NXSIAS_MODULE_TRAN_LOG_HIS · ERP_TRNS_HSTR · BUSI_VAS_ACCT_INFM · USAG_INFM · USAG_INFM_LANG_DETL · BUSI_USAG_SET_INFM · SYS_ENV_SET_INFM · BUSI_ENV_SET_INFM · BANK_CERT_INFO · GDT_CERT_INFO |
 | **Shared / Common** | 16 | BUSI_INFM · USER_INFM · USER_BUSI_CONN_INFM · USER_LOGIN_HIS · USER_PW_CHG_HIS · EMPL_INFM · BUSI_ADMN_INFM · BANK_INFM · BANK_INFM_DETL · NAPAS_BANK_INFO · NATN_INFM · AUDIT_LOGS_INFM · SYS_SCR_OPTION_WECMS · USER_SCR_OPTION_WECMS · USER_MENU_AUTH_INFM · shedlock |
@@ -31,21 +40,21 @@ These tables back authentication, tenancy, reference data, audit, and the global
 
 | Table | Source | Purpose | PK |
 |---|---|---|---|
-| `BUSI_INFM` | V1 (+V8) | Company / tenant master — the multi-tenant hub | `BIZ_KEY` |
-| `USER_INFM` | V1 | User master (login credentials) | `USER_ID` |
-| `USER_BUSI_CONN_INFM` | V1 | User ↔ company linkage | `(USER_ID, BIZ_KEY)` |
-| `USER_LOGIN_HIS` | V1 (+V28) | Login attempt audit | `(USER_ID, REG_DTM, REG_UID)` |
-| `USER_PW_CHG_HIS` | V215 | Password-change history | `(USER_ID, REG_SEQ_NO)` |
-| `EMPL_INFM` | V11 | Employee master | `(BIZ_KEY, EMPL_NO)` |
-| `BUSI_ADMN_INFM` | V11 | Per-tenant admin authority source | `(BIZ_KEY, USER_ID)` |
-| `BANK_INFM` | V20 | Vietnamese bank registry (display names) | `BANK_CD` |
-| `BANK_INFM_DETL` | V44 | Bank detail / short-name info | `(BANK_CD, BANK_DETL_INFO_CD, START_DATE)` |
-| `NAPAS_BANK_INFO` | V68 | NAPAS code → internal bank-code lookup | `NAPAS_BANK_CD` |
-| `NATN_INFM` | V205 | Country master | `NTNL_CD` |
-| `AUDIT_LOGS_INFM` | V63 | Cross-cutting audit log (one row per locale) | `(BIZ_KEY, AUDIT_LOGS_SEQ_NO, WSVC_ID, LANG_CD)` |
-| `SYS_SCR_OPTION_WECMS` | V30 (+V32-V42) | View-Setting system defaults | `(WEB_SVC_ID, FIELD_ID)` |
-| `USER_SCR_OPTION_WECMS` | V30 (+V32) | View-Setting per-user overrides | `(BIZ_KEY, USER_ID, WEB_SVC_ID, FIELD_ID)` |
-| `USER_MENU_AUTH_INFM` | V126 | Per-user menu entitlements | `(BIZ_KEY, USER_ID, MENU_AUTH_CD)` |
+| `BUSI_INFM` | V32 | Company / tenant master — the multi-tenant hub | `BIZ_KEY` |
+| `USER_INFM` | V128 | User master (login credentials) | `USER_ID` |
+| `USER_BUSI_CONN_INFM` | V125 | User ↔ company linkage | `(USER_ID, BIZ_KEY)` |
+| `USER_LOGIN_HIS` | V129 | Login attempt audit | `(USER_ID, REG_DTM, REG_UID)` |
+| `USER_PW_CHG_HIS` | V132 | Password-change history | `(USER_ID, REG_SEQ_NO)` |
+| `EMPL_INFM` | V52 | Employee master | `(BIZ_KEY, EMPL_NO)` |
+| `BUSI_ADMN_INFM` | V27 | Per-tenant admin authority source | `(BIZ_KEY, USER_ID)` |
+| `BANK_INFM` | V11 | Vietnamese bank registry (display names) | `BANK_CD` |
+| `BANK_INFM_DETL` | V12 | Bank detail / short-name info | `(BANK_CD, BANK_DETL_INFO_CD, START_DATE)` |
+| `NAPAS_BANK_INFO` | V67 | NAPAS code → internal bank-code lookup | `NAPAS_BANK_CD` |
+| `NATN_INFM` | V70 | Country master | `NTNL_CD` |
+| `AUDIT_LOGS_INFM` | V8 | Cross-cutting audit log (one row per locale) | `(BIZ_KEY, AUDIT_LOGS_SEQ_NO, WSVC_ID, LANG_CD)` |
+| `SYS_SCR_OPTION_WECMS` | V93 | View-Setting system defaults | `(WEB_SVC_ID, FIELD_ID)` |
+| `USER_SCR_OPTION_WECMS` | V133 | View-Setting per-user overrides | `(BIZ_KEY, USER_ID, WEB_SVC_ID, FIELD_ID)` |
+| `USER_MENU_AUTH_INFM` | V131 | Per-user menu entitlements | `(BIZ_KEY, USER_ID, MENU_AUTH_CD)` |
 | `shedlock` | V210 | ShedLock distributed scheduler lock | `name` |
 
 ### Shared/Common declared FKs
@@ -79,16 +88,16 @@ The complete set of `FOREIGN KEY` constraints that actually exist in the schema:
 | Child | Parent | Constraint / note |
 |---|---|---|
 | `USER_BUSI_CONN_INFM` | `USER_INFM`, `BUSI_INFM` | `FK_UBCI_USER`, `FK_UBCI_BUSI` |
-| `BUSI_ADMN_INFM` | `USER_INFM`, `BUSI_INFM` | V11 |
+| `BUSI_ADMN_INFM` | `USER_INFM`, `BUSI_INFM` | V27 |
 | `EMPL_INFM` | `BUSI_INFM` | `fk_empl_infm_busi` |
-| `SCDUL_PYMN_SUMR` | `BUSI_INFM` | V131 |
-| `SCDUL_PYMN_SUMR_DETL` | `SCDUL_PYMN_SUMR` | V131 |
-| `EXPT_RESOL_MSTR` | `BUSI_INFM` | V109 |
+| `SCDUL_PYMN_SUMR` | `BUSI_INFM` | V86 |
+| `SCDUL_PYMN_SUMR_DETL` | `SCDUL_PYMN_SUMR` | V87 |
+| `EXPT_RESOL_MSTR` | `BUSI_INFM` | V59 |
 | `TRCO_ADDR_INFM` | `TRCO_INFM` | V112 (deferrable) |
 | `TRCO_ACCT_INFO` | `TRCO_INFM` | `trco_acct_info_fk01` (deferrable) |
-| `TRCO_INFO_FILE` | `TRCO_INFM` | V139 |
+| `TRCO_INFO_FILE` | `TRCO_INFM` | V116 |
 | `PGRO_BSAC_LNKN_INFM` | `TRCO_INFM`, `BUSI_INFM` | `pgro_bsac_lnkn_infm_fk01/fk02` |
-| `BUSI_ENV_SET_INFM` | `BUSI_INFM`, `SYS_ENV_SET_INFM` | V69 |
+| `BUSI_ENV_SET_INFM` | `BUSI_INFM`, `SYS_ENV_SET_INFM` | V30 |
 
 Everything else is a **logical** relationship enforced by application code.
 

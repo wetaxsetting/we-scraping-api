@@ -24,34 +24,39 @@ erDiagram
 
 Full attribute detail: [`diagrams/common-erd.mmd`](diagrams/common-erd.mmd).
 
+> ⚠️ **Migration column regenerated from disk 2026-08-17.** The [2026-06-09 rebaseline](../flyway-migration-baseline.md)
+> reassigned every Flyway number to a one-table-per-migration scheme; the values below name the migration
+> that creates each table **today**. Rows marked **DROPPED** / **no refactor DDL migration** have no current
+> migration — that is accurate, not a gap.
+
 ## Tables by sub-group
 
 ### Auth & tenancy (`domain/auth`)
 | Table | Source | Purpose | PK |
 |---|---|---|---|
-| `BUSI_INFM` | V1 (+V8) | Company / tenant master — the multi-tenant hub | `BIZ_KEY` |
-| `USER_INFM` | V1 | User master (login credentials, flags) | `USER_ID` |
-| `USER_BUSI_CONN_INFM` | V1 | User ↔ company linkage (one user → one active company is the operational model) | `(USER_ID, BIZ_KEY)` |
-| `USER_LOGIN_HIS` | V1 (+V28) | Login-attempt audit (success/fail rows) | `(USER_ID, REG_DTM, REG_UID)` |
-| `USER_PW_CHG_HIS` | V215 | Password-change history (reuse-prevention ledger) | `(USER_ID, REG_SEQ_NO)` |
-| `EMPL_INFM` | V11 | Employee master | `(BIZ_KEY, EMPL_NO)` |
-| `BUSI_ADMN_INFM` | V11 | Per-tenant admin authority source (presence = ADMIN) | `(BIZ_KEY, USER_ID)` |
+| `BUSI_INFM` | V32 | Company / tenant master — the multi-tenant hub | `BIZ_KEY` |
+| `USER_INFM` | V128 | User master (login credentials, flags) | `USER_ID` |
+| `USER_BUSI_CONN_INFM` | V125 | User ↔ company linkage (one user → one active company is the operational model) | `(USER_ID, BIZ_KEY)` |
+| `USER_LOGIN_HIS` | V129 | Login-attempt audit (success/fail rows) | `(USER_ID, REG_DTM, REG_UID)` |
+| `USER_PW_CHG_HIS` | V132 | Password-change history (reuse-prevention ledger) | `(USER_ID, REG_SEQ_NO)` |
+| `EMPL_INFM` | V52 | Employee master | `(BIZ_KEY, EMPL_NO)` |
+| `BUSI_ADMN_INFM` | V27 | Per-tenant admin authority source (presence = ADMIN) | `(BIZ_KEY, USER_ID)` |
 
 ### Reference data (`domain/common`)
 | Table | Source | Purpose | PK |
 |---|---|---|---|
-| `BANK_INFM` | V20 | Vietnamese bank registry (`BANK_CD` → display name) | `BANK_CD` |
-| `BANK_INFM_DETL` | V44 | Bank detail / short-name info (no JPA entity — accessed via period-limit projection) | `(BANK_CD, BANK_DETL_INFO_CD, START_DATE)` |
-| `NAPAS_BANK_INFO` | V68 | NAPAS code → internal bank-code lookup | `NAPAS_BANK_CD` |
-| `NATN_INFM` | V205 | Country master (phone-country picker) | `NTNL_CD` |
+| `BANK_INFM` | V11 | Vietnamese bank registry (`BANK_CD` → display name) | `BANK_CD` |
+| `BANK_INFM_DETL` | V12 | Bank detail / short-name info (no JPA entity — accessed via period-limit projection) | `(BANK_CD, BANK_DETL_INFO_CD, START_DATE)` |
+| `NAPAS_BANK_INFO` | V67 | NAPAS code → internal bank-code lookup | `NAPAS_BANK_CD` |
+| `NATN_INFM` | V70 | Country master (phone-country picker) | `NTNL_CD` |
 
 ### Cross-cutting infrastructure (`common/*`)
 | Table | Source | Purpose | PK |
 |---|---|---|---|
-| `AUDIT_LOGS_INFM` | V63 | Shared audit log — one row per Create/Update per locale (EN/KO/VI/KM); `WSVC_ID` = route slug | `(BIZ_KEY, AUDIT_LOGS_SEQ_NO, WSVC_ID, LANG_CD)` |
-| `SYS_SCR_OPTION_WECMS` | V30 (+V32–V42) | View-Setting **system defaults** (column visibility / order / size) | `(WEB_SVC_ID, FIELD_ID)` |
-| `USER_SCR_OPTION_WECMS` | V30 (+V32) | View-Setting **per-user overrides** | `(BIZ_KEY, USER_ID, WEB_SVC_ID, FIELD_ID)` |
-| `USER_MENU_AUTH_INFM` | V126 | Per-user menu entitlements (`USE_YN='Y'` rows; absence = deny) | `(BIZ_KEY, USER_ID, MENU_AUTH_CD)` |
+| `AUDIT_LOGS_INFM` | V8 | Shared audit log — one row per Create/Update per locale (EN/KO/VI/KM); `WSVC_ID` = route slug | `(BIZ_KEY, AUDIT_LOGS_SEQ_NO, WSVC_ID, LANG_CD)` |
+| `SYS_SCR_OPTION_WECMS` | V93 | View-Setting **system defaults** (column visibility / order / size) | `(WEB_SVC_ID, FIELD_ID)` |
+| `USER_SCR_OPTION_WECMS` | V133 | View-Setting **per-user overrides** | `(BIZ_KEY, USER_ID, WEB_SVC_ID, FIELD_ID)` |
+| `USER_MENU_AUTH_INFM` | V131 | Per-user menu entitlements (`USE_YN='Y'` rows; absence = deny) | `(BIZ_KEY, USER_ID, MENU_AUTH_CD)` |
 | `shedlock` | V210 | ShedLock distributed scheduler lock (library-managed, no JPA entity) | `name` |
 
 ## Key columns & conventions

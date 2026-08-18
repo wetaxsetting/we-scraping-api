@@ -55,7 +55,7 @@ Each doc states only the Expenses delta and links the Sales canonical section:
 - API contract reference: [../../../references/api-spec/addon/expenses-e-invoices-api.md](../../../references/api-spec/addon/expenses-e-invoices-api.md)
 - DB design reference: [../../../references/database/addon/expenses-e-invoices-db.md](../../../references/database/addon/expenses-e-invoices-db.md)
 - JEX → Spring migration (both variants): [../../../references/migration/sales-and-expense-einvoices.md](../../../references/migration/sales-and-expense-einvoices.md)
-- Scraping parity audit (both variants): [../../../audits/sales-expense-einvoices-scraping-parity.md](../../../audits/sales-expense-einvoices-scraping-parity.md)
+- Scraping parity audit (both variants): [../../../audits/sales-expense-einvoices-scraping-parity.md](../../../audits/legacy-parity/sales-expense-einvoices-scraping-parity.md)
 - Implementation plan: ../../../planning/addon/expenses-e-invoices-plan.md _(removed — historical `planning/` folder deleted by project decision)_
 - **Canonical backend (shared):** [../sales-e-invoices/README.md](../sales-e-invoices/README.md)
 - **Frontend counterpart:** [../../../../../wecms-web/docs/features/addon-service/expenses-e-invoices/README.md](../../../../../wecms-web/docs/features/addon-service/expenses-e-invoices/README.md)

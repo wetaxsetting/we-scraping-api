@@ -43,5 +43,5 @@ service is the validator. Special FIELD_IDs (`CHECKBOX` / `ETC`) are never in an
 - Frontend twin: [`../../../../../wecms-web/docs/features/common/table-sort/README.md`](../../../../../wecms-web/docs/features/common/table-sort/README.md)
 - View Setting sibling (FIELD_ID alignment): [`../view-setting/README.md`](../view-setting/README.md)
 - Excel export sibling (shares the same FIELD_ID + sort contract): [`../excel-export/README.md`](../excel-export/README.md)
-- Audit deliverables: [`../../../audits/common-source-index.md`](../../../audits/common-source-index.md)
+- Audit deliverables: [`../../../audits/common-source-index.md`](../../../audits/modules/common-source-index.md)
 - Implementation rules: `wecms-api/CLAUDE.md` §"Common table sort — `common/web/`" + §"Screen Option (View Setting)"

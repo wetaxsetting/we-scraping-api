@@ -1,5 +1,14 @@
 # Cash Flow — Database Mapping
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../../../references/database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../../../references/database/flyway-migration-baseline.md) §5.
+
 Every table, column and function used by `cash_0001_001`, and the legacy → refactor mapping. Verified
 against the JEX DEV database (read-only MCP), the IDO/WSVC contracts, and the refactor Java/Flyway.
 
@@ -145,9 +154,15 @@ no Haengsung hide-closed rule is applied (consistent with Haengsung product-gate
 
 | Version | Summary |
 |---|---|
-| `V124__cash_flow_report_view_setting_seed.sql` | Seeds 19 `SYS_SCR_OPTION_WECMS` columns for `web_svc_id='cash-flow-report'` / `default` (DISP_CD, DISP_NM, ITEM_CD, ITEM_NM, ROW_TYPE, JAN_AMT..DEC_AMT, TOTAL_AMT, DISP_CCY_CD), all `USE_YN='Y'`, `SORT_YN='N'`. **Only** unlocks the export visibility filter — the report page has no column-toggle popover. `ON CONFLICT DO NOTHING`. |
-| `V184__card_trns_hstr_schema.sql` *(internal header says "V166" — known stale-header pattern)* | Creates `CARD_TRNS_HSTR` (26 cols, PK `(BIZ_KEY, CARD_SEQ_NO)`) — Cash Flow source #3. |
-| `V185__ovrs_pymn_mstr_chart_acct_columns.sql` *(internal header "V167")* | Adds `CHART_ACCT_CD` + `CHART_ACCT_SEQ_NO` to `OVRS_PYMN_MSTR` (additive, nullable) so overseas rows can be classified — Cash Flow source #2. |
+| `V156__sys_scr_option_wecms.sql` *(manual DBA script, not Flyway)* | Seeds the `SYS_SCR_OPTION_WECMS` columns for `web_svc_id='cash-flow-report'` / `default` (DISP_CD, DISP_NM, ITEM_CD, ITEM_NM, ROW_TYPE, JAN_AMT..DEC_AMT, TOTAL_AMT, DISP_CCY_CD), all `USE_YN='Y'`, `SORT_YN='N'`. **Only** unlocks the export visibility filter — the report page has no column-toggle popover. `ON CONFLICT DO NOTHING`. |
+| `V39__card_trns_hstr.sql` | Creates `CARD_TRNS_HSTR` (PK `(BIZ_KEY, CARD_SEQ_NO)`) — Cash Flow source #3. |
+| `V78__ovrs_pymn_mstr.sql` | Carries `CHART_ACCT_CD` + `CHART_ACCT_SEQ_NO` on `OVRS_PYMN_MSTR` (nullable) so overseas rows can be classified — Cash Flow source #2. |
+
+> **Numbering note.** These were previously cited as `V124` / `V184` / `V185`. The
+> [2026-06-09 rebaseline](../../../../references/database/flyway-migration-baseline.md) renumbered the set
+> to one-table-per-migration, consolidated all View Setting seeds into the manual `V156` DBA script, and
+> folded additive column changes into the base table DDL. Verify a number against
+> `src/main/resources/db/migration/` before citing it.
 
 `CHART_ACCT_INFM` schema (V94) + restricted roots (V96) + demo seed (V97) land with Chart of Accounts;
 `ACCT_TRNS_HSTR`/`ACCT_TRNS_RCV_PAY_INFM` (V13/V21/V23), `EXPT_RESOL_MSTR` (V109), `SCDUL_PYMN_SUMR(_DETL)`

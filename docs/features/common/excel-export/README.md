@@ -46,6 +46,6 @@ JSON and saves the returned blob.
 - Frontend twin: [`../../../../../wecms-web/docs/features/common/excel-export/README.md`](../../../../../wecms-web/docs/features/common/excel-export/README.md)
 - View Setting (visibility / order source): [`../view-setting/README.md`](../view-setting/README.md)
 - Audit deliverables:
-  [`../../../audits/common-source-index.md`](../../../audits/common-source-index.md) ·
-  [`../../../audits/common-gap-analysis.md`](../../../audits/common-gap-analysis.md) ·
-  [`../../../audits/common-docs-audit.md`](../../../audits/common-docs-audit.md)
+  [`../../../audits/common-source-index.md`](../../../audits/modules/common-source-index.md) ·
+  [`../../../audits/common-gap-analysis.md`](../../../audits/modules/common-gap-analysis.md) ·
+  [`../../../audits/common-docs-audit.md`](../../../audits/modules/common-docs-audit.md)

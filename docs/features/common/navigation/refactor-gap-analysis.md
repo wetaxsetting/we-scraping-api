@@ -1,4 +1,4 @@
-# navigation — Refactor Gap Analysis (Backend)
+# Navigation — Refactor Gap Analysis (Backend)
 
 **Part of:** Common → navigation
 **Last verified:** 2026-06-23

@@ -1,5 +1,14 @@
 # VAT Declaration — API Specification / Danh sách chức năng
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../../references/database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../../references/database/flyway-migration-baseline.md) §5.
+
 | | |
 |---|---|
 | **Trạng thái** | 🟡 Design — API **đề xuất**, chưa có code (branch `f1_v1_vat_declaration` reserved) |
@@ -343,7 +352,7 @@ Server gán `annex_seq_no` (MAX+1), set `HAND_REG_YN='Y'`, `SRC_DOC_ID=null`. DE
 
 Message hiển thị (VI/EN) lấy theo bảng `Dictionary` trong file Requirement-Design của PO (`WEB_VAT_*_MSG_*`).
 
-> **Bảng này chưa đủ.** Code hiện throw thêm 4 mã chưa có ở đây — `WBE_VAT_DECL_PREV_MISSING`, `WBE_VAT_DECL_PREV_CREDIT_MISMATCH`, `WBE_VAT_DECL_LATER_PERIOD_EXISTS`, `WBE_VAT_DECL_EXPORT_FAILED` — và `WBE_VAT_DECL_ANNEX_ROW_NOT_FOUND` không còn được throw ở đâu (2 endpoint ở §2.10/§2.11 đã bị bỏ). Chi tiết + đề xuất xử lý: [qa/reports/vat-declaration-doc-gap.md](../../../../../qa/reports/vat-declaration-doc-gap.md) §G-05 và §G-01.
+> **Bảng này chưa đủ.** Code hiện throw thêm 4 mã chưa có ở đây — `WBE_VAT_DECL_PREV_MISSING`, `WBE_VAT_DECL_PREV_CREDIT_MISMATCH`, `WBE_VAT_DECL_LATER_PERIOD_EXISTS`, `WBE_VAT_DECL_EXPORT_FAILED` — và `WBE_VAT_DECL_ANNEX_ROW_NOT_FOUND` không còn được throw ở đâu (2 endpoint ở §2.10/§2.11 đã bị bỏ). Chi tiết + đề xuất xử lý: `qa/reports/vat-declaration-doc-gap.md` *(referenced `qa/` tree does not exist in this repository)* §G-05 và §G-01.
 
 ## 5. Việc kèm theo khi implement (checklist)
 

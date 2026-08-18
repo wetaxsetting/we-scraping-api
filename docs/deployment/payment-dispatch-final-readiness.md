@@ -8,7 +8,7 @@
 > `ANT_DIV_CD` issue. This document is therefore a *conditional* release artifact: the parity work is
 > complete and signed off below; the deployment checklists in §4 carry the remaining gates.
 
-**Companions:** [../audits/payment-dispatch-operating-hours-flow.md](../audits/payment-dispatch-operating-hours-flow.md) (findings F-1…F-5, §13 parity closure) ·
+**Companions:** [../audits/payment-dispatch-operating-hours-flow.md](../audits/deployment/payment-dispatch-operating-hours-flow.md) (findings F-1…F-5, §13 parity closure) ·
 [wecms-batch-infrastructure-readiness-audit.md](wecms-batch-infrastructure-readiness-audit.md) ·
 [wecms-batch-environment-variables.md](wecms-batch-environment-variables.md) ·
 [wecms-batch-schedule-seed-review.md](wecms-batch-schedule-seed-review.md)
@@ -244,7 +244,7 @@ security items. **Do not skip §4.0 in any environment.**
 | # | Step | Gate |
 |---|---|---|
 | 1 | §4.0 complete | — |
-| 2 | Run [`tb_batch_schedule_seed_refactor.sql`](../../../Claude%20Code%20%28AI%29/sql/tb_batch_schedule_seed_refactor.sql) §0 pre-checks, then §1–3 | 15 rows `PRESENT` (§5.2) |
+| 2 | Run [`seed-batch-schedule-operating-hours-2026-07-28.sql`](../sql/2026/seed-batch-schedule-operating-hours-2026-07-28.sql) §0 pre-checks, then §1–3 | 15 rows `PRESENT` (§5.2) |
 | 3 | Run §5.5 behavioural dry-run | all INFO rows `Y (open)` |
 | 4 | **Enable the monitor alone** — `stuck-monitor.enabled=true`, `cron=0 */5 * * * ?` | read-only; safe **without** dispatch |
 | 5 | Confirm the monitor reports the existing WAIT backlog as `DISPATCH_FLAG_DISABLED` | proves the detector works before it is needed |
@@ -316,7 +316,7 @@ State it that way, not as a scale-out caveat:
 - **Why it is in memory today** — deliberate, not an oversight. A refactor-only table needs **PO +
   JEX-DDL approval** (the policy that removed the notification and OAT-idempotency tables), so the store
   was kept in-process rather than adding one unilaterally.
-- **Two viable routes**, both in [`../security/jwt-revocation.md`](../security/jwt-revocation.md): a
+- **Two viable routes**, both in ``../security/jwt-revocation.md`` *(document was never written — see [`docs/security/README.md`](../security/README.md) for the security closure set)*: a
   **shared cache**, or a **PO-approved legacy-table-backed denylist**. Do not add a refactor-only table
   without that approval.
 - **`RateLimiter` needs no redesign.** Its `tryAcquire(key, limit, windowSeconds)` contract is already

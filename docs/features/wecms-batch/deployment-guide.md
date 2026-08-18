@@ -155,6 +155,6 @@ SIT DB is Flyway-off (`ddl-auto: validate`) — apply all DDL/seed by hand (DBA)
 - [ ] Cutover window agreed; enable flags one leg at a time, lowest-volume tenant first
 ```
 
-> **Blocking gates (do not skip):** R-03 (dispatch-callback network protection) and the Shinhan/Woori override block any non-local deploy. Neither blocks local R&D. See [../../audits/wecms-batch-full-legacy-vs-refactor-final-gap-audit.md §7](../../audits/wecms-batch-full-legacy-vs-refactor-final-gap-audit.md) for the authoritative blocker list.
+> **Blocking gates (do not skip):** R-03 (dispatch-callback network protection) and the Shinhan/Woori override block any non-local deploy. Neither blocks local R&D. See [../../audits/wecms-batch-full-legacy-vs-refactor-final-gap-audit.md §7](../../audits/legacy-parity/wecms-batch-full-legacy-vs-refactor-final-gap-audit.md) for the authoritative blocker list.
 
 For diagnosing failures during activation, see [troubleshooting.md](troubleshooting.md).

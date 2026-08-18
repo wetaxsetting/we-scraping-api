@@ -64,14 +64,14 @@ The shared write-side fan-out (`ApprovalBoxFanoutService`) is owned by this pack
 - API flow (Mermaid sequence diagrams): [api-flow.md](api-flow.md)
 - Database impact (schema-parity draft): [database-impact.md](database-impact.md)
 - Phased migration plan + risk register: [migration-plan.md](migration-plan.md)
-- Post-Phase-1 parity fixes (current source of truth for behaviour deltas): [parity-fixes-2026-06.md](parity-fixes-2026-06.md)
+- Post-Phase-1 parity fixes (current source of truth for behaviour deltas): [parity-fixes-2026-06.md](../../../audits/historical/approval-box-parity-fixes-2026-06.md)
 
 **Preserved category docs cross-linked (NOT moved):**
 - Payment hub README: [../README.md](../README.md)
 - DB ERD (payment): [../../../references/database/erd/payment-erd.md](../../../references/database/erd/payment-erd.md)
 - Table ownership: [../../../references/database/table-ownership.md](../../../references/database/table-ownership.md)
 - Screen / page mapping: [../../../references/migration/screen-mapping/page-mapping.md](../../../references/migration/screen-mapping/page-mapping.md)
-- Migration playbook: [../../../references/migration/MIGRATION_PLAYBOOK.md](../../../references/migration/MIGRATION_PLAYBOOK.md)
+- Migration playbook: [../../../references/migration/migration-playbook.md](../../../references/migration/migration-playbook.md)
 - Open-questions follow-up: ../../../planning/open-questions/documentation-follow-up.md _(removed — historical `planning/` folder deleted by project decision)_
 
 **Frontend counterpart:** [../../../../../wecms-web/docs/features/payment/approval-box/README.md](../../../../../wecms-web/docs/features/payment/approval-box/README.md)

@@ -1,5 +1,14 @@
 # Own Account Transfer — Functional Specification (Refactor Backend)
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../../../references/database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../../../references/database/flyway-migration-baseline.md) §5.
+
 Backend functional behaviour of the shipped feature: search/filters, grid columns, transfer actions,
 statuses, validation, failure handling. Field-by-field business rules live in the canonical spec
 [own-account-transfer.md](legacy-spec.md); legacy functional source-of-truth is

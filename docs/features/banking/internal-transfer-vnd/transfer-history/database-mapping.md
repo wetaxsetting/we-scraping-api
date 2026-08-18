@@ -44,7 +44,13 @@ Verified against JEX DEV via the `postgres_dev_server_jexframe` MCP.
 
 **PK:** `napas_remit_trns_hstr_pk = PRIMARY KEY (BIZ_KEY, SEQ_NO)`.
 **Indexes (DEV):** PK only — no other index, no UNIQUE/CHECK/FK.
-**Index (local refactor, added):** `ix_napas_remit_trns_hstr_biz_regdtm` on `(BIZ_KEY, substr(REG_DTM,1,8) DESC, SEQ_NO DESC)` — `V196__transfer_history_helper_index.sql` (allowed extra index per Legacy Schema Parity Rule).
+**Index (refactor):** none. The base table ships as [`V69__napas_remit_trns_hstr.sql`](../../../../../src/main/resources/db/migration/V69__napas_remit_trns_hstr.sql) with **PK only**, matching DEV.
+
+> ⚠️ **Superseded.** Earlier revisions documented a refactor-added helper index
+> `ix_napas_remit_trns_hstr_biz_regdtm` on `(BIZ_KEY, substr(REG_DTM,1,8) DESC, SEQ_NO DESC)`, shipped as
+> `V196__transfer_history_helper_index.sql`. The [2026-06-09 rebaseline](../../../../references/database/flyway-migration-baseline.md)
+> dropped all helper-index migrations — `V69` is base DDL only. If the index is still wanted for query
+> performance it must be re-proposed as a manual DBA script; it is **not** in the schema today.
 
 > ⚠️ **Dual in-bank columns (legacy quirk, R6):** the table carries both `IN_BANK_CODE` (internal code, e.g. `11704088`) and `IN_NAPAS_BANK_CODE` (NAPAS code, e.g. `970424`). The refactor resolves the recipient bank **name** from `IN_NAPAS_BANK_CODE` and ships that NAPAS code as the wire `in_bank_code`. A row with no NAPAS code yields empty `in_bank_code`/`in_bank_nm` (the resolver is not called). The entity field `inBankCode` (mapped to `IN_BANK_CODE`) exists but is not what populates the wire `in_bank_code`.
 

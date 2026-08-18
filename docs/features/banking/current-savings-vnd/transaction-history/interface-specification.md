@@ -7,7 +7,7 @@
 > strategy (`acct_seq_no`, `trsc_dt`, `deposit_amt`, `conf_yn`, `rows`,
 > `total_count`, …). UPPER tokens in the tables below are historical; read each
 > as its lowercase snake_case form. See
-> [field-casing-parity-audit-2026-06-06.md](../../../../audits/field-casing-parity-audit-2026-06-06.md).
+> [field-casing-parity-audit-2026-06-06.md](../../../../audits/historical/field-casing-parity-audit-2026-06-06.md).
 
 Every REST endpoint, request/response shape, DTO field, and error code for the refactored
 Transaction History (VND) backend. All endpoints live on `AccountController`
@@ -21,7 +21,7 @@ per-DTO `@JsonProperty` exceptions (migrated 2026-06-07).
 > annotations — the UPPER_SNAKE `@JsonProperty` holdovers were removed on 2026-06-07. Wire fields are
 > lowercase snake_case (e.g. `trsc_dt`, `deposit_amt`, `conf_yn`). UPPER tokens in the tables below are
 > historical labels; read each as its lowercase snake_case form. See
-> [field-casing-parity-audit-2026-06-06.md](../../../../audits/field-casing-parity-audit-2026-06-06.md).
+> [field-casing-parity-audit-2026-06-06.md](../../../../audits/historical/field-casing-parity-audit-2026-06-06.md).
 
 ---
 

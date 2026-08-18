@@ -1,4 +1,4 @@
-# notification — Interface Specification (Backend)
+# Notification — Interface Specification (Backend)
 
 **Part of:** Common → notification
 **Last verified:** 2026-06-23

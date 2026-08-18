@@ -3,9 +3,9 @@
 Final parity review of the refactored FCY transaction inquiry against legacy JEX `fnsh_0006_001`.
 Status vocabulary: **MATCH · APPROVED DEVIATION · PARTIAL · MISSING**. This document summarizes the
 line-by-line audit; the authoritative source is
-[../../audits/transaction-history-fcy-parity-audit.md](../../../../audits/transaction-history-fcy-parity-audit.md)
+[../../audits/transaction-history-fcy-parity-audit.md](../../../../audits/legacy-parity/transaction-history-fcy-parity-audit.md)
 (verdict **GO FOR SIT**) and its companion
-[../../audits/transaction-history-fcy-fix-verification.md](../../../../audits/transaction-history-fcy-fix-verification.md).
+[../../audits/transaction-history-fcy-fix-verification.md](../../../../audits/historical/transaction-history-fcy-fix-verification.md).
 
 ```
 Refactor Status: 100% Complete  (full-stack — all five SIT/UAT blockers + R11 CLOSED)

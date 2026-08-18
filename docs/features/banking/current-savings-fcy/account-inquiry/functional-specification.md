@@ -132,7 +132,7 @@ accepted; full legacy parity (Option A — `START_DATE` wiring + `ACCT_TRNS_HSTR
 Vietcombank `11704004`) deferred to a post-SIT MR, gated on realistic seeded transaction history (R&D
 seed ≤30 `ACCT_TRNS_HSTR` rows cannot validate as-of-date math). PO sign-off: Mr. Jung (pending formal
 confirmation). See [refactor-gap-analysis.md](refactor-gap-analysis.md) and the
-[parity audit §3](../../../../audits/account-inquiry-fcy-parity-audit.md).
+[parity audit §3](../../../../audits/legacy-parity/account-inquiry-fcy-parity-audit.md).
 
 ## 9. Permissions
 

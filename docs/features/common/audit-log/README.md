@@ -29,7 +29,7 @@ allocation, and `REQUIRES_NEW` transaction semantics so no consumer reimplements
 
 - Common module hub — [../README.md](../README.md)
 - WEB twin (read dialog) — [../../../../../wecms-web/docs/features/common/audit-log/README.md](../../../../../wecms-web/docs/features/common/audit-log/README.md)
-- Common audit deliverables — [../../../audits/common-source-index.md](../../../audits/common-source-index.md) · [../../../audits/common-gap-analysis.md](../../../audits/common-gap-analysis.md) · [../../../audits/common-docs-audit.md](../../../audits/common-docs-audit.md)
+- Common audit deliverables — [../../../audits/common-source-index.md](../../../audits/modules/common-source-index.md) · [../../../audits/common-gap-analysis.md](../../../audits/modules/common-gap-analysis.md) · [../../../audits/common-docs-audit.md](../../../audits/modules/common-docs-audit.md)
 
 ## At a glance (verified)
 

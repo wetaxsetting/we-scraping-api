@@ -1,4 +1,4 @@
-# notification — Test Scenarios (Backend)
+# Notification — Test Scenarios (Backend)
 
 **Part of:** Common → notification
 **Last verified:** 2026-06-23

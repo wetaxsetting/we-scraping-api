@@ -1,5 +1,14 @@
 # Chart of Accounts — Database Design
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](flyway-migration-baseline.md) §5.
+
 **Slug:** `chart-of-accounts`
 **Tenant:** all tables tenant-scoped via `BIZ_KEY`.
 **Related docs:** [feature spec](../../features/settings/chart-of-accounts.md) · [migration map](../migration/chart-of-accounts.md) · [backend](../business-rules/chart-of-accounts.md) · [frontend](../../../../wecms-web/docs/features/settings/chart-of-accounts.md) · plan _(removed — historical `archive/` folder deleted by project decision)_.
@@ -74,12 +83,12 @@ Numbering note: this doc was authored pre-implementation reserving V93–V96; on
 | **V96** | Settings > Chart of Accounts: restricted-roots seed (`chart_of_accounts_seed_restricted_roots.sql`, per tenant) | Idempotent seed of `ACC-01` (REVENUE), `ACC-02` (EXPENSES), `ACC-03` (INVESTMENT) for every tenant present in `BUSI_INFM` — `INSERT … ON CONFLICT DO NOTHING` keyed on `(biz_key, chart_acct_cd, del_yn)`. `STTS='A'`, `DEL_YN='N'`, `PARENT_CHART_ACCT_CD=NULL`, `REG_ID = biz_key`, `REG_DTM = '20260513000000'` (deterministic seed timestamp). Allocates `CHART_ACCT_SEQ_NO` via `wb_get_next_val('chart_acct_infm','chart_acct_seq_no', biz_key)` so values stay tenant-disjoint. Resolves the root-provisioning OQ. |
 | **V97** | Settings > Chart of Accounts: demo seed for `VN_VNM0004_000001` (`chart_of_accounts_demo_seed.sql`) | Non-root rows pulled verbatim from real JEX DEV. Preserves DEV `CHART_ACCT_SEQ_NO` so any frontend-cached references stay consistent. Idempotent via `INSERT … ON CONFLICT DO NOTHING`. Excludes V96-seeded restricted roots (already present). |
 
-> No VARCHAR(14)→BIGINT migration exists or is planned for `CHART_ACCT_SEQ_NO` — it stays `VARCHAR(14)` and the entity maps it as `String` (verified in [`ChartOfAccount.java`](../../../src/main/java/com/kosign/wecms/domain/setting/chartofaccounts/entity/ChartOfAccount.java)). The earlier "optional Phase-2 V97 BIGINT + `@Convert(StringToLongConverter)`" plan was never implemented and is dropped.
+> No VARCHAR(14)→BIGINT migration exists or is planned for `CHART_ACCT_SEQ_NO` — it stays `VARCHAR(14)` and the entity maps it as `String` (verified in [`ChartOfAccount.java`](../../../src/main/java/com/kosign/wecms/domain/setting/chartofaccounts/entity/ChartAcctInfm.java)). The earlier "optional Phase-2 V97 BIGINT + `@Convert(StringToLongConverter)`" plan was never implemented and is dropped.
 
 ### 2.1 V94 — `CHART_ACCT_INFM` schema (full)
 
 ```sql
--- V94__chart_of_accounts_schema.sql
+-- V42__chart_acct_infm.sql
 -- Column count parity with DEV: 15
 -- DEV introspection: 2026-05-13 (postgres_dev_server_jexframe MCP)
 -- Refactor naming: kebab-case slug `chart-of-accounts` — no `comm_0223_001` anywhere.
@@ -115,7 +124,7 @@ CREATE INDEX IF NOT EXISTS ix_chart_acct_infm_biz_moddtm
 ### 2.2 V95 — `wb_get_next_val` extension
 
 ```sql
--- V95__wb_get_next_val_chart_acct_infm.sql
+-- V140__wb_get_next_val.sql
 -- Adds the chart_acct_infm.chart_acct_seq_no branch ported VERBATIM from DEV.
 -- Pattern: per-tenant MAX+1 (same as appr_line_no V91, trco_key V113).
 -- Branch count after: 16.
@@ -149,7 +158,7 @@ Body is copied verbatim from DEV (introspection 2026-05-13). `p3` is the `BIZ_KE
 ### 2.3 V96 — Per-tenant restricted-roots seed
 
 ```sql
--- V96__chart_of_accounts_seed_restricted_roots.sql
+-- V96__chart_of_accounts_seed_restricted_roots.sql *(historical — DROPPED in the 2026-06-09 rebaseline; restricted roots are seeded operationally, no current migration)*
 -- Seeds ACC-01 / ACC-02 / ACC-03 for every active tenant in BUSI_INFM.
 -- Resolves OQ-4: provisioning-time seed (not on-demand auto-creation).
 -- Idempotent — ON CONFLICT against uk_chart_acct_cd.
@@ -233,7 +242,7 @@ Required by [wecms-api/CLAUDE.md](../../../CLAUDE.md) — paste into the MR desc
 
 | # | Item | Notes |
 |---|---|---|
-| DB-1 | `CHART_ACCT_SEQ_NO` column type | **No change planned.** Stays `VARCHAR(14)` (DEV parity); the entity maps it as `String` end-to-end (no converter) — verified in [`ChartOfAccount.java`](../../../src/main/java/com/kosign/wecms/domain/setting/chartofaccounts/entity/ChartOfAccount.java). The earlier VARCHAR→BIGINT + `@Convert(StringToLongConverter)` plan was never implemented and is dropped. |
+| DB-1 | `CHART_ACCT_SEQ_NO` column type | **No change planned.** Stays `VARCHAR(14)` (DEV parity); the entity maps it as `String` end-to-end (no converter) — verified in [`ChartOfAccount.java`](../../../src/main/java/com/kosign/wecms/domain/setting/chartofaccounts/entity/ChartAcctInfm.java). The earlier VARCHAR→BIGINT + `@Convert(StringToLongConverter)` plan was never implemented and is dropped. |
 | DB-2 | FK `chart_acct_infm.biz_key → busi_infm.biz_key` | NOT declared in DEV; refactor mirrors. Adding it would require V96 to use `INSERT … FROM BUSI_INFM` (already does); revisit if a future audit finds orphaned rows. |
 | DB-3 | Self-referential FK `parent_chart_acct_cd → chart_acct_cd` within same `biz_key` | NOT declared in DEV; would be tricky (cross-row UK, not PK). Refactor mirrors — parent existence is service-validated. |
 | DB-4 | Audit-log write to `AUDIT_LOGS_INFM` | Schema side: `AUDIT_LOGS_INFM` already exists per Settings precedent. No schema change for this feature; `ChartOfAccountsAuditLogger` (Spring side) just writes rows. |

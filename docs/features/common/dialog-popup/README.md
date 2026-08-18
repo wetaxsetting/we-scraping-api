@@ -40,7 +40,7 @@ carries only this stub so the Common module index stays complete and traceable.
 - **WEB feature docs (authoritative):**
   [`../../../../../wecms-web/docs/features/common/dialog-popup/README.md`](../../../../../wecms-web/docs/features/common/dialog-popup/README.md)
 - **Category hub (backend):** [`../README.md`](../README.md)
-- **Common audit deliverables:** [`../../../audits/common-source-index.md`](../../../audits/common-source-index.md)
+- **Common audit deliverables:** [`../../../audits/common-source-index.md`](../../../audits/modules/common-source-index.md)
 
 ## Related (backend contract the error dialog consumes)
 

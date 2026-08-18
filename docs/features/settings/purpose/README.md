@@ -1,5 +1,14 @@
 # Settings > Purpose — Backend Feature (Refactor)
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../../references/database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../../references/database/flyway-migration-baseline.md) §5.
+
 **Status:** ✅ Implemented full-stack — backend (controller + 2 services + 2 repositories + 2 entities + 12 DTOs + V35 schema + V140 `wb_get_next_val` branch, with unit + controller tests) and frontend wired; legacy parity verified; Purpose-specific audit review complete; SIT/UAT verified.
 **Module / menu:** Settings → **Purpose** (Settings modal panel — **no standalone route**)
 **Refactor slug:** `purpose-settings` (matches the JEX-traceability, backend, and frontend counterparts)
@@ -112,7 +121,7 @@ entry point; deep detail lives here:
 - **Business rules / service design:** [references/business-rules/settings/purpose-settings.md](../../../references/business-rules/settings/purpose-settings.md)
 - **DB schema design:** [references/database/settings/purpose-settings-schema.md](../../../references/database/settings/purpose-settings-schema.md)
 - **JEX → Spring mapping:** [references/migration/purpose-settings.md](../../../references/migration/purpose-settings.md)
-- **Parity / audit review:** [references/audits/purpose-settings-audit.md](../../../references/audits/purpose-settings-audit.md) · [audits/purpose-refactor-parity-audit.md](../../../audits/purpose-refactor-parity-audit.md)
+- **Parity / audit review:** [audits/purpose-settings-audit.md](../../../audits/legacy-parity/purpose-settings-audit.md) · [audits/purpose-refactor-parity-audit.md](../../../audits/legacy-parity/purpose-refactor-parity-audit.md)
 - **Task plan (archived):** archive/planning/settings/purpose-settings-task-plan.md _(removed — historical `archive/` folder deleted by project decision)_
 - **JEX legacy spec set (read-only):** [docs/jex/features/purpose/](../../../../../docs/jex/features/purpose/README.md)
 - **Frontend feature folder:** [wecms-web/docs/features/settings/purpose/](../../../../../wecms-web/docs/features/settings/purpose/README.md)

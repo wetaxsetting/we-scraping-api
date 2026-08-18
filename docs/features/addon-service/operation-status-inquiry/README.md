@@ -54,7 +54,7 @@ The live OSMC → NXISAS → GDT bridge **is wired** (`OsmcGdtClient`); a non-PR
 - API contract: [../../../references/api-spec/addon/operation-status-inquiry-api.md](../../../references/api-spec/addon/operation-status-inquiry-api.md)
 - DB design: [../../../references/database/addon/operation-status-inquiry-db.md](../../../references/database/addon/operation-status-inquiry-db.md)
 - JEX → Spring migration: ../../../migration/operation-status-inquiry.md _(removed — historical `migration/` folder deleted by project decision)_
-- Parity audit: [../../../audits/operation-status-inquiry-parity.md](../../../audits/operation-status-inquiry-parity.md)
+- Parity audit: [../../../audits/operation-status-inquiry-parity.md](../../../audits/legacy-parity/operation-status-inquiry-parity.md)
 - Implementation plan: ../../../planning/addon/operation-status-inquiry-plan.md _(removed — historical `planning/` folder deleted by project decision)_
 
 **Frontend counterpart:** [../../../../../wecms-web/docs/features/addon-service/operation-status-inquiry/README.md](../../../../../wecms-web/docs/features/addon-service/operation-status-inquiry/README.md)

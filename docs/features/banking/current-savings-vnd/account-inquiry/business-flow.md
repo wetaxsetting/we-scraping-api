@@ -147,4 +147,4 @@ UI refresh: list re-fetch → updated balance, available, last-update, status co
 
 The Coocon smart-gateway is shared with the FX-rate path — configured only via `wecms.coocon.smart-api-*`
 (no separate `wecms.nxisas.*`). See memory `reference_nxisas_gateway_urls` and the
-[NXiSAS / Coocon spike](../../../../references/audits/nxisas-vcb-spike.md).
+[NXiSAS / Coocon spike](../../../../audits/historical/nxisas-vcb-spike.md).

@@ -19,20 +19,25 @@ erDiagram
 
 See the full attribute-level diagram in [`diagrams/banking-erd.mmd`](diagrams/banking-erd.mmd).
 
+> ⚠️ **Migration column regenerated from disk 2026-08-17.** The [2026-06-09 rebaseline](../flyway-migration-baseline.md)
+> reassigned every Flyway number to a one-table-per-migration scheme; the values below name the migration
+> that creates each table **today**. Rows marked **DROPPED** / **no refactor DDL migration** have no current
+> migration — that is accurate, not a gap.
+
 ## Tables
 
 | Table | Source | Purpose | PK |
 |---|---|---|---|
-| `ACCT_MSTR` | V13 (+V23, V175, V193) | Bank account master — one row per tenant/bank/account | `(BIZ_KEY, BANK_CD, ACCT_NO)` |
-| `ACCT_TRNS_HSTR` | V13 (+V23, V167–V169, V181) | Bank transaction history — one row per statement line | `(BIZ_KEY, ACCT_SEQ_NO)` |
-| `ACCT_TRNS_RCV_PAY_INFM` | V13 (+V21, V23, V171) | Receipt/payment match info attached to a transaction | `(BIZ_KEY, ACCT_SEQ_NO, RCV_PAY_SEQ_NO)` |
-| `BUSA_DOC_RCV_PAY_HIS` | V13 (+V23) | History link from a business document to a receipt/payment row | `(BIZ_KEY, DOC_ID, SEQ_NO)` |
-| `NAPAS_REMIT_TRNS_HSTR` | V13 (+V195) | NAPAS inter-bank remittance / transfer history | `(BIZ_KEY, SEQ_NO)` |
-| `BANK_EXCH_RATE_INFM` | V127 (+V130 seed) | FX rates (Coocon/Shinhan feed, batch-populated) | `(BIZ_KEY, BANK_CD, REF_DATE, CCY_CD, EXCH_SEQ_NO)` |
-| `RMRK_ORG_INFM` | V172 | Smart Organizer auto-classification rules | `(BIZ_KEY, RMRK_SEQ_NO)` |
-| `MEMO_INFM` | V202 | Polymorphic memo/note attached to any page row | `(BIZ_KEY, WEB_SVC_ID, SEQ_NO)` |
-| `BUSI_MATCH_LOG` | V170 | Audit/lock log of transaction↔payment match operations | `(BIZ_KEY, MATCH_LOG_SEQ)` |
-| `DAILY_CASH_REPT_DAILY_SUMR_DETL` | V125 | Daily cash report — per-account daily balance/in/out summary | `(BIZ_KEY, REF_DATE, ACCT_TYPE_CD, CCY_CD, BANK_CD, ACCT_NO)` |
+| `ACCT_MSTR` | V2 | Bank account master — one row per tenant/bank/account | `(BIZ_KEY, BANK_CD, ACCT_NO)` |
+| `ACCT_TRNS_HSTR` | V3 | Bank transaction history — one row per statement line | `(BIZ_KEY, ACCT_SEQ_NO)` |
+| `ACCT_TRNS_RCV_PAY_INFM` | V4 | Receipt/payment match info attached to a transaction | `(BIZ_KEY, ACCT_SEQ_NO, RCV_PAY_SEQ_NO)` |
+| `BUSA_DOC_RCV_PAY_HIS` | V25 | History link from a business document to a receipt/payment row | `(BIZ_KEY, DOC_ID, SEQ_NO)` |
+| `NAPAS_REMIT_TRNS_HSTR` | V69 | NAPAS inter-bank remittance / transfer history | `(BIZ_KEY, SEQ_NO)` |
+| `BANK_EXCH_RATE_INFM` | V10 | FX rates (Coocon/Shinhan feed, batch-populated) | `(BIZ_KEY, BANK_CD, REF_DATE, CCY_CD, EXCH_SEQ_NO)` |
+| `RMRK_ORG_INFM` | V85 | Smart Organizer auto-classification rules | `(BIZ_KEY, RMRK_SEQ_NO)` |
+| `MEMO_INFM` | V65 | Polymorphic memo/note attached to any page row | `(BIZ_KEY, WEB_SVC_ID, SEQ_NO)` |
+| `BUSI_MATCH_LOG` | V33 | Audit/lock log of transaction↔payment match operations | `(BIZ_KEY, MATCH_LOG_SEQ)` |
+| `DAILY_CASH_REPT_DAILY_SUMR_DETL` | V45 | Daily cash report — per-account daily balance/in/out summary | `(BIZ_KEY, REF_DATE, ACCT_TYPE_CD, CCY_CD, BANK_CD, ACCT_NO)` |
 
 `NXSIAS_MODULE_TRAN_LOG_HIS` (bank-scraping gateway audit) is documented under [Settings → firm-banking-history](settings-erd.md) — its primary feature home — but is also written by Banking scraping flows.
 

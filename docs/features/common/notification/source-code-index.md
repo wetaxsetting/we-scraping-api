@@ -1,4 +1,4 @@
-# notification — Source Code Index (Backend)
+# Notification — Source Code Index (Backend)
 
 **Part of:** Common → notification
 **Last verified:** 2026-06-23

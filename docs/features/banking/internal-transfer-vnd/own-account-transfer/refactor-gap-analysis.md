@@ -1,9 +1,9 @@
 # Own Account Transfer — Refactor Gap Analysis (Final Parity Review)
 
 Parity of the shipped refactor (backend + frontend) against the legacy JEX feature. Companion audits:
-[own-account-transfer-parity-2026-06-01.md](../../../../references/audits/own-account-transfer-parity-2026-06-01.md),
-[own-account-transfer-current-implementation-audit.md](../../../../references/audits/own-account-transfer-current-implementation-audit.md),
-[own-account-transfer-legacy-bank-business-rules.md](../../../../references/audits/own-account-transfer-legacy-bank-business-rules.md).
+[own-account-transfer-parity-2026-06-01.md](../../../../audits/legacy-parity/own-account-transfer-parity-2026-06-01.md),
+[own-account-transfer-current-implementation-audit.md](../../../../audits/legacy-parity/own-account-transfer-current-implementation-audit.md),
+[own-account-transfer-legacy-bank-business-rules.md](../../../../audits/legacy-parity/own-account-transfer-legacy-bank-business-rules.md).
 Legacy-side gap doc: [docs/jex/features/own-account-transfer/refactor-gap-analysis.md](../../../../../../docs/jex/features/own-account-transfer/refactor-gap-analysis.md) and [final-status.md](../../../../../../docs/jex/features/own-account-transfer/final-status.md).
 
 ---

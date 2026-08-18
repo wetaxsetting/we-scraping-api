@@ -1,5 +1,14 @@
 # Card Transactions — Backend Design (Spring Boot)
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../database/flyway-migration-baseline.md) §5.
+
 Companion to [docs/refactor-wecms/features/card-transactions.md](../../features/payment/card-transactions.md) and [docs/refactor-wecms/migration/card-transactions.md](../migration/card-transactions.md). Refactor slug: **`card-transactions`**. Module package: `com.kosign.wecms.domain.payment.cardtransactions`.
 
 > **Identifier-naming rule reminder** — the kebab-case slug `card-transactions` is the canonical id across every Spring surface (REST URI, Java package, class name, DTO name, error code, i18n message key, log/MDC tag, audit `WSVC_ID`). Legacy `card_0001_001*` ids appear only in JEX file:line citations and migration-traceability prose.

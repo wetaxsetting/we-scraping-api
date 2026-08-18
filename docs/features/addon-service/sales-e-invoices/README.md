@@ -58,7 +58,7 @@ The scrape-intake endpoints are the WeCMS-side ingestion of GDT data normally dr
 - API contract reference: [../../../references/api-spec/addon/sales-e-invoices-api.md](../../../references/api-spec/addon/sales-e-invoices-api.md)
 - DB design reference: [../../../references/database/addon/sales-e-invoices-db.md](../../../references/database/addon/sales-e-invoices-db.md)
 - JEX → Spring migration (service-level, both variants): [../../../references/migration/sales-and-expense-einvoices.md](../../../references/migration/sales-and-expense-einvoices.md)
-- Scraping parity audit (both variants): [../../../audits/sales-expense-einvoices-scraping-parity.md](../../../audits/sales-expense-einvoices-scraping-parity.md)
+- Scraping parity audit (both variants): [../../../audits/sales-expense-einvoices-scraping-parity.md](../../../audits/legacy-parity/sales-expense-einvoices-scraping-parity.md)
 - Implementation plan (IR-1 … IR-9 locked rules): ../../../planning/addon/sales-e-invoices-plan.md _(removed — historical `planning/` folder deleted by project decision)_
 - Archived combined spec: ../../../archive/features/sales-and-expense-einvoices.md _(removed — historical `archive/` folder deleted by project decision)_
 

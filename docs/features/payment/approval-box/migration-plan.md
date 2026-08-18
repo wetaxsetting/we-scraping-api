@@ -1,5 +1,14 @@
 # Approval Box — Migration Plan (JEX → Spring Boot + Next.js)
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../../references/database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../../references/database/flyway-migration-baseline.md) §5.
+
 **Feature slug:** `approval-box`
 **Module:** `payment`
 **Date:** 2026-05-13
@@ -9,7 +18,7 @@ Companion docs: [discovery.md](discovery.md), [design-backend.md](design-backend
 
 > **Status update (2026-06-02) — this is a historical plan; several "Deferred" rows below have since shipped.**
 > Implemented & verified beyond Phase 1: detail popup (Phase 2), approve/reject (Phase 3), withdraw/delete + change-approval-line for non-card types and card (Phase 4 scope, via the generic endpoints + `ApprovalBoxFanoutService`), and bulk-approve (backend; UI deferred). Excel export now returns **all** matching rows (bounded by the shared 50k cap), not the original single-page cap. The File-Name column sources `COALESCE(SCDUL.ORG_FILE_NM, OVRS.ORG_FILE_NM)` — superseding the §1.1 "search hits raw TITL only" and the [design-backend.md](design-backend.md) §13 D1 file-name deferral. Default page size is **10** by project decision (not the legacy 15). Still deferred / out of scope: **ERP synchronization, approval notification/comment creation, uploader visibility branch, Vietnamese translated keyword search**.
-> Single source of truth for the post-Phase-1 behaviors, decisions, and the SIT checklist: [parity-fixes-2026-06.md](parity-fixes-2026-06.md). The phase tables below are retained as the original plan-of-record.
+> Single source of truth for the post-Phase-1 behaviors, decisions, and the SIT checklist: [parity-fixes-2026-06.md](../../../audits/historical/approval-box-parity-fixes-2026-06.md). The phase tables below are retained as the original plan-of-record.
 
 ---
 
@@ -58,7 +67,7 @@ Companion docs: [discovery.md](discovery.md), [design-backend.md](design-backend
 
 | JEX | Refactor | Notes |
 |---|---|---|
-| View [resl_0001_001_view_osmc.jsp](../../../../../WECMS%20DEV/WECMS/web/view/jex/wabooks/resl/resl_0001_001_view_osmc.jsp) | Next.js route `/payment/approval-box` already exists at [wecms-web/app/(dashboard)/payment/approval-box/page.tsx](../../../../../wecms-web/app/(dashboard)/payment/approval-box/page.tsx) | This MR wires it to the real API. |
+| View [resl_0001_001_view_osmc.jsp](../../../../../WECMS%20DEV/WECMS/web/view/jex/wabooks/resl/resl_0001_001_view_osmc.jsp) | Next.js route `/payment/approval-box` already exists at [wecms-web/app/(dashboard)/payment/approval-box/page.tsx](<../../../../../wecms-web/app/(dashboard)/payment/approval-box/page.tsx>) | This MR wires it to the real API. |
 | TS [resl_0001_001_osmc.ts](../../../../../WECMS%20DEV/WECMS_STATIC/ts-src/js/jex/wabooks/resl/resl_0001_001_osmc.ts) (AJAX + render + hover) | `components/payment/approval-box/*` + `lib/api/approvalBox.ts` | Existing static-UI components are correct; the MR adds data + mapper layer. |
 | ML codes `resl_0001_001_m001..m008`, `_kh*`, `_ml*` | `approval_box.*` keys in `locales/{en,ko,vi}.json` | [design-frontend.md](design-frontend.md) §8. |
 | ML codes `resl_0001_001_j033..j047` (status / type labels) | `approval_box.status.*` / `approval_box.type.*` | |
@@ -132,7 +141,7 @@ The Approval Box port is large enough to split into four phases. **This MR is Ph
 
 ## 3 · Backend-before-frontend rule
 
-Per [MIGRATION_PLAYBOOK.md](../../../references/migration/MIGRATION_PLAYBOOK.md) Step 5/6 — backend lands first inside the same MR pair. The static-UI page in `wecms-web/components/payment/approval-box/` continues to render mocks until the backend `GET /api/v1/payment/approval-box` is reachable on `localhost:8090`. The frontend half of Phase 1 (real fetch + mapper + types) lands together with the backend; mock data stays in the file system but is not imported anywhere after the swap.
+Per [migration-playbook.md](../../../references/migration/migration-playbook.md) Step 5/6 — backend lands first inside the same MR pair. The static-UI page in `wecms-web/components/payment/approval-box/` continues to render mocks until the backend `GET /api/v1/payment/approval-box` is reachable on `localhost:8090`. The frontend half of Phase 1 (real fetch + mapper + types) lands together with the backend; mock data stays in the file system but is not imported anywhere after the swap.
 
 ---
 
@@ -248,6 +257,6 @@ Summarised from [discovery.md](discovery.md) §10 — kept here in plan form so 
 - [design-frontend.md](design-frontend.md) — Next.js contract.
 - [database-impact.md](database-impact.md) — Flyway draft.
 - [api-flow.md](api-flow.md) — sequence diagrams.
-- [docs/refactor-wecms/MIGRATION_PLAYBOOK.md](../../../references/migration/MIGRATION_PLAYBOOK.md) — 10-step playbook.
+- [docs/refactor-wecms/MIGRATION_PLAYBOOK.md](../../../references/migration/migration-playbook.md) — 10-step playbook.
 - [docs/refactor-wecms/migration/erp-transaction-history-mapping.md](../../../references/migration/erp-transaction-history-mapping.md) — closest precedent (read-only list + tabs + Excel).
 - [docs/refactor-wecms/migration/firm-banking-settings-mapping.md](../../../references/migration/firm-banking-settings-mapping.md) — canonical mapping format reference.

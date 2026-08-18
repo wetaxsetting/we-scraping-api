@@ -2,7 +2,7 @@
 
 **Created:** 2026-07-28
 **Applies to:** `wecms-api` scheduler subsystem — 13 `@Scheduled` methods / 10 classes
-**Companions:** [scheduler-final-readiness.md](../audits/scheduler-final-readiness.md) · [scheduler-legacy-parity-audit.md](../audits/scheduler-legacy-parity-audit.md) · [scheduler-audit.md](../audits/scheduler-audit.md)
+**Companions:** [scheduler-final-readiness.md](../audits/deployment/scheduler-final-readiness.md) · [scheduler-legacy-parity-audit.md](../audits/legacy-parity/scheduler-legacy-parity-audit.md) · [scheduler-audit.md](../audits/legacy-parity/scheduler-audit.md)
 **Sibling checklists:** [sit-security-deployment-checklist.md](sit-security-deployment-checklist.md) · [sit-deployment-checklist-wecms-batch.md](sit-deployment-checklist-wecms-batch.md) · [wecms-batch-activation-runbook.md](wecms-batch-activation-runbook.md)
 
 > **Two rules that override everything else on this page.**
@@ -122,7 +122,7 @@ Read-only (two reads per stuck file), no legacy twin, no mutation.
 > disabled: the job, its ShedLock identity, its YAML keys and its 5 `WECMS_DISPATCH_BULK_EXECUTION_RETRY_*`
 > variables are all deleted. If a host still sets them, remove them — they bind to nothing.
 > Residual recovery is monitoring + manual (see the note on 2a below).
-> [final-four-to-one-batch-architecture-correction.md](../audits/final-four-to-one-batch-architecture-correction.md)
+> [final-four-to-one-batch-architecture-correction.md](../audits/batch/final-four-to-one-batch-architecture-correction.md)
 
 **Exit criteria:** each enabled job has a `shedlock` row, expected target-table writes, and no duplicate/conflicting rows versus legacy.
 
@@ -168,7 +168,7 @@ will be refused.
 - [ ] **OQ-2 resolved** — decision on whether an `EXCH_0030_001` backfill equivalent is required *before* legacy FX is switched off
 - [ ] **OQ-1 resolved** — `ERP_0100_004` confirmed replaced by the event-driven Step-5 write-back, or scheduled for implementation
 - [ ] **OQ-5 resolved** — event-driven dispatch honours the legacy per-`out_bank_cd` `tb_batch_schedule_info` windows and zone
-- [x] **R-1 / R-2 (VCB schedule row) — RESOLVED 2026-07-29: exact legacy parity, no VCB row.** Legacy has no `970436` `tb_batch_schedule_info` row in any environment or script (SVN r36822, the 2026-07-16 VCB file-transfer switch, shipped **no** schedule script). The refactor-only row that had been seeded on the refactor DEV DB is **withdrawn** — seed tuple commented out, removal script at [`tb_batch_schedule_info_vcb_rollback_20260729.sql`](../../../Claude%20Code%20%28AI%29/sql/tb_batch_schedule_info_vcb_rollback_20260729.sql). **No production Java changed.** R-2 is **NOT APPLICABLE** — no legacy row means no legacy `ANT_WHERE_USE_YN` value, neither `'Y'` nor `'N'`.
+- [x] **R-1 / R-2 (VCB schedule row) — RESOLVED 2026-07-29: exact legacy parity, no VCB row.** Legacy has no `970436` `tb_batch_schedule_info` row in any environment or script (SVN r36822, the 2026-07-16 VCB file-transfer switch, shipped **no** schedule script). The refactor-only row that had been seeded on the refactor DEV DB is **withdrawn** — seed tuple commented out, removal script at [`delete-vcb-batch-schedule-info-row-2026-07-29.sql`](../sql/2026/delete-vcb-batch-schedule-info-row-2026-07-29.sql). **No production Java changed.** R-2 is **NOT APPLICABLE** — no legacy row means no legacy `ANT_WHERE_USE_YN` value, neither `'Y'` nor `'N'`.
   - [ ] **DBA:** run the rollback script on the refactor DEV DB and confirm the post-check shows `970424` + `970457` only.
   - [ ] **Before enabling `WECMS_DISPATCH_AUTO_RECEIVE`, accept this consequence in writing:** **VCB dispatch will fail (`NO_CRITERIA` → `PROC_STAT=FAIL` + ops alert) until the business explicitly decides to introduce a VCB schedule.** That is legacy behaviour, not a regression. Do **not** re-seed a VCB row to suppress the failures — introducing a VCB schedule is a forward PO (Mr. Jung) decision that also requires a fresh `ANT_WHERE_USE_YN` decision.
 - [ ] **R-3 — run the three comparison queries on UAT and PROD** (`tb_batch_schedule_info`, `tb_batch_schedule_dtl`, `tb_firm_conf` grouped by `org_stat`) and diff against JEX DEV. Only DEV was reachable at audit time. Queries: [../references/support-matrix.md](../references/support-matrix.md) §12.

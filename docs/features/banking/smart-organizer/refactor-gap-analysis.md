@@ -7,7 +7,7 @@ list + confirm) + `fnsh_0200_002` (Organizer Settings rule CRUD). Refactor =
 **Companion audits (authoritative, preserved):**
 - [docs/jex/audits/smart-organizer-parity-audit.md](../../../../../docs/jex/audits/smart-organizer-parity-audit.md) — full comparison + golden test.
 - [docs/jex/audits/smart-organizer-remediation-plan.md](../../../../../docs/jex/audits/smart-organizer-remediation-plan.md) — per-blocker implementation.
-- [../../../audits/smart-organizer-r11-verification.md](../../../audits/smart-organizer-r11-verification.md) — R11 independent re-verification.
+- [../../../audits/legacy-parity/smart-organizer-verification-2026-06-06.md](../../../audits/legacy-parity/smart-organizer-verification-2026-06-06.md) — R11 independent re-verification.
 
 Status legend: **MATCH** = behavior equals legacy (or PO-approved deviation) · **PARTIAL** = works
 with a known, non-blocking deviation · **MISSING** = not implemented.
@@ -88,7 +88,7 @@ contact name, plus `bal`/`ccy_cd`, with per-page memoised caches. **Deviation:**
 Both endpoints require `bank_cd`+`acct_no`; `AccountAccessGuard.assertCanView` enforces per-account `V`
 grant (admins bypass); confirm re-validates every row's account (anti-smuggling). No tenant-wide
 fallback. Independently re-verified — all 9 backend + 6 frontend + 4 security checks PASS
-([smart-organizer-r11-verification.md](../../../audits/smart-organizer-r11-verification.md)).
+([smart-organizer-verification-2026-06-06.md](../../../audits/legacy-parity/smart-organizer-verification-2026-06-06.md)).
 
 ## 3. Migration status
 

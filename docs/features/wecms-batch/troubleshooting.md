@@ -92,4 +92,4 @@
 
 ### Escalation
 
-If an issue is not infrastructure/config but appears to be missing or wrong logic, check it against the gap audit before raising — most "missing" behaviour is a documented deferral, not a defect: [../../audits/wecms-batch-full-legacy-vs-refactor-final-gap-audit.md](../../audits/wecms-batch-full-legacy-vs-refactor-final-gap-audit.md). PO (Mr. Jung) owns scope decisions; Mr. Kang owns TO-BE architecture.
+If an issue is not infrastructure/config but appears to be missing or wrong logic, check it against the gap audit before raising — most "missing" behaviour is a documented deferral, not a defect: [../../audits/wecms-batch-full-legacy-vs-refactor-final-gap-audit.md](../../audits/legacy-parity/wecms-batch-full-legacy-vs-refactor-final-gap-audit.md). PO (Mr. Jung) owns scope decisions; Mr. Kang owns TO-BE architecture.

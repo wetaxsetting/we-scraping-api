@@ -1,5 +1,14 @@
 # Banking > Smart Organizer — Refactor Backend Feature Hub
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../../references/database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../../references/database/flyway-migration-baseline.md) §5.
+
 **Module:** Banking → Current & Savings (VND **and** FCY — one screen, both currencies)
 **Menu:** Smart Organizer (reached from the Transaction History toolbar; no standalone menu seed)
 **Refactor feature slug (matches JEX + frontend):** `smart-organizer`
@@ -19,7 +28,7 @@
 > names, R11 account scope) are **all CLOSED**. SIT/UAT verification completed.
 > See [refactor-gap-analysis.md](refactor-gap-analysis.md), the JEX parity audit
 > [docs/jex/audits/smart-organizer-parity-audit.md](../../../../../docs/jex/audits/smart-organizer-parity-audit.md),
-> and the R11 verification [../../../audits/smart-organizer-r11-verification.md](../../../audits/smart-organizer-r11-verification.md).
+> and the R11 verification [../../../audits/legacy-parity/smart-organizer-verification-2026-06-06.md](../../../audits/legacy-parity/smart-organizer-verification-2026-06-06.md).
 >
 > This folder is the **primary backend documentation home** for the refactored feature. The older
 > single-file specs under
@@ -85,7 +94,7 @@ a client error, never a silent tenant-wide fallback. Non-admin callers must hold
 |---|---|
 | **Legacy ↔ refactor parity audit (2026-06-06)** | [docs/jex/audits/smart-organizer-parity-audit.md](../../../../../docs/jex/audits/smart-organizer-parity-audit.md) |
 | **Remediation plan (six blockers, 2026-06-06)** | [docs/jex/audits/smart-organizer-remediation-plan.md](../../../../../docs/jex/audits/smart-organizer-remediation-plan.md) |
-| **R11 account-scope verification (2026-06-06)** | [../../../audits/smart-organizer-r11-verification.md](../../../audits/smart-organizer-r11-verification.md) |
+| **R11 account-scope verification (2026-06-06)** | [../../../audits/legacy-parity/smart-organizer-verification-2026-06-06.md](../../../audits/legacy-parity/smart-organizer-verification-2026-06-06.md) |
 | JEX functional spec (source of truth) | [docs/jex/features/smart-organizer/](../../../../../docs/jex/features/smart-organizer/README.md) |
 | Older single-file backend spec (VND) | [current-savings-vnd/smart-organizer.md](legacy-spec-vnd.md) |
 | Older single-file backend spec (FCY) | [current-savings-fcy/smart-organizer.md](legacy-spec-fcy.md) |

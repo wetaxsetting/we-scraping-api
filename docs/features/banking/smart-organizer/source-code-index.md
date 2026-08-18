@@ -1,5 +1,14 @@
 # Smart Organizer — Source Code Index
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../../references/database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../../references/database/flyway-migration-baseline.md) §5.
+
 Legacy JEX (`fnsh_0200_*`) ↔ refactor backend ↔ refactor frontend file index.
 
 ---
@@ -55,7 +64,7 @@ All under `src/main/java/com/kosign/wecms/`.
 | DTO (confirm) | `ConfirmRequest` (+`Row`), `ConfirmResponse` | `domain/banking/smartorganizer/dto/` |
 | DTO (rules) | `OrganizerRuleListResponse`, `OrganizerRuleRow`, `OrganizerRuleSaveRequest`, `OrganizerRuleReorderRequest` (+`Entry`) | `domain/banking/smartorganizer/dto/` |
 | Sort whitelist | `SmartOrganizerSortField` | `domain/banking/smartorganizer/dto/` |
-| Flyway | `V172__smart_organizer_rmrk_org_infm_schema.sql`, `V173__wb_get_next_val_rmrk_org_infm.sql`, `V174__smart_organizer_view_setting_seed.sql` | `src/main/resources/db/migration/` |
+| Flyway | `V85__rmrk_org_infm.sql`, `V140__wb_get_next_val.sql` (carries the `rmrk_seq_no` branch), `V156__sys_scr_option_wecms.sql` (View Setting seed — manual DBA script) — *previously cited as V172/V173/V174, renumbered by the [2026-06-09 rebaseline](../../../references/database/flyway-migration-baseline.md)* | `src/main/resources/db/migration/` |
 | Error messages | `messages.properties:633-639`, `messages_en.properties:199-202` | `src/main/resources/` |
 
 ## 3. Refactor frontend (`wecms-web/`)

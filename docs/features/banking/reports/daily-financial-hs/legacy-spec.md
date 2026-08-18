@@ -2,7 +2,7 @@
 
 > Legacy `rept_0017_001` behaviour (source of truth, read-only `WECMS DEV/` tree) side-by-side
 > with the refactor. Deep legacy semantics were captured in
-> [audits/daily-financial-hs-legacy-audit.md](../../../../audits/daily-financial-hs-legacy-audit.md) §2;
+> [audits/daily-financial-hs-legacy-audit.md](../../../../audits/legacy-parity/daily-financial-hs-legacy-audit.md) §2;
 > this document is the package-local comparison.
 
 ---

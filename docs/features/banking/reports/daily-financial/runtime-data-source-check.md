@@ -24,15 +24,15 @@
 
 Chain: `DailyFinancialClient` → `useApiData(fetchDailyFinancial)` → `DailyFinancialPage` (mock fallback).
 
-- [`DailyFinancialPage.tsx:198-202`](../../../../../wecms-web/components/banking/reports/daily-financial/DailyFinancialPage.tsx#L198-L202):
+- [`DailyFinancialPage.tsx:198-202`](../../../../../../wecms-web/components/banking/reports/daily-financial/DailyFinancialPage.tsx#L198-L202):
   ```ts
   const sourceStatus   = financialStatus ?? mockFinancialStatus;
   const sourceAccounts = currentAccounts && currentAccounts.length > 0
                          ? currentAccounts : mockCurrentAccounts;
   ```
-- [`DailyFinancialClient.tsx:47-59`](../../../../../wecms-web/components/banking/reports/daily-financial/DailyFinancialClient.tsx#L47-L59): `financialStatus = data?.FINANCIAL_STATUS?.map(...)`, `currentAccounts = data?.CURRENT_ACCOUNTS?.map(...)` — both become `undefined` when `data` is `null`/`undefined`.
-- [`useApiData.ts:48-60`](../../../../../wecms-web/lib/api/useApiData.ts#L48-L60): on a thrown loader it runs `setState({ data: null, ... })`.
-- [`banking.ts:63-78` `unwrap`](../../../../../wecms-web/lib/api/banking.ts#L63-L78): throws `ApiCallError` when `status.error === true` **or** `!body.data`, and on any axios/network error throws `ApiCallError("NETWORK", ...)`.
+- [`DailyFinancialClient.tsx:47-59`](../../../../../../wecms-web/components/banking/reports/daily-financial/DailyFinancialClient.tsx#L47-L59): `financialStatus = data?.FINANCIAL_STATUS?.map(...)`, `currentAccounts = data?.CURRENT_ACCOUNTS?.map(...)` — both become `undefined` when `data` is `null`/`undefined`.
+- [`useApiData.ts:48-60`](../../../../../../wecms-web/lib/api/useApiData.ts#L48-L60): on a thrown loader it runs `setState({ data: null, ... })`.
+- [`banking.ts:63-78` `unwrap`](../../../../../../wecms-web/lib/api/banking.ts#L63-L78): throws `ApiCallError` when `status.error === true` **or** `!body.data`, and on any axios/network error throws `ApiCallError("NETWORK", ...)`.
 
 **Fallback to `mockFinancialStatus` fires when (and only when):**
 
@@ -49,10 +49,10 @@ The screenshot showed the **report region rendered** (the "As of 04-Jun-2026 · 
 
 ## 2. Endpoint correctness
 
-- Frontend: [`banking.ts:782-787`](../../../../../wecms-web/lib/api/banking.ts#L782-L787) → `api.get("/api/v1/banking/reports/daily-financial", { params })`.
+- Frontend: [`banking.ts:782-787`](../../../../../../wecms-web/lib/api/banking.ts#L782-L787) → `api.get("/api/v1/banking/reports/daily-financial", { params })`.
 - Backend: [`ReportController.java:16,29-36`](../../../../../src/main/java/com/kosign/wecms/domain/banking/controller/ReportController.java#L29-L36) → `@RequestMapping("/api/v1/banking/reports")` + `@GetMapping("/daily-financial")`, params `asOf` / `currencyScope` / `activeAccountsOnly` / `includeInternalTransfers`.
 - **Path + params match exactly.** The endpoint wiring is correct.
-- **Base URL** ([`axios.ts:5-6`](../../../../../wecms-web/lib/axios.ts#L5-L6)): `process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080"`. On a **deployed** frontend (e.g. `sample.coocon.co.kr:3000`) where this env var is unset, the browser resolves `http://localhost:8080` against the **viewer's own machine**, not the server → connection refused → `ApiCallError("NETWORK")` → mock. This is the most probable runtime trigger.
+- **Base URL** ([`axios.ts:5-6`](../../../../../../wecms-web/lib/axios.ts#L5-L6)): `process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080"`. On a **deployed** frontend (e.g. `sample.coocon.co.kr:3000`) where this env var is unset, the browser resolves `http://localhost:8080` against the **viewer's own machine**, not the server → connection refused → `ApiCallError("NETWORK")` → mock. This is the most probable runtime trigger.
 
 ## 3. Does the API have real data for `asOf=20260604` / `currencyScope=ALL`?
 
@@ -77,7 +77,7 @@ Inspected `postgres_dev_server_refactor` (`172.168.5.172/wecmsdevdb`, tenant `VN
 
 1. **API base URL unreachable (most likely).** Deployed FE with `NEXT_PUBLIC_API_BASE_URL` unset → `http://localhost:8080` → connection refused in the viewer's browser → `NETWORK`.
 2. **CORS** — deployed FE origin not in backend `wecms.cors.allowed-origins` → browser blocks → axios network error → `NETWORK`.
-3. **Auth (401)** — missing/expired JWT. Would normally open the re-auth dialog ([`axios.ts:59-83`](../../../../../wecms-web/lib/axios.ts#L59-L83)); if unresolved, the call rejects → mock. (Less likely — the user appears logged in.)
+3. **Auth (401)** — missing/expired JWT. Would normally open the re-auth dialog ([`axios.ts:59-83`](../../../../../../wecms-web/lib/axios.ts#L59-L83)); if unresolved, the call rejects → mock. (Less likely — the user appears logged in.)
 4. **`status.error=true` / 5xx** — backend reached but errored → mock.
 
 Local probe this run: `GET http://localhost:8080/actuator/health` → **HTTP 404** (a server answered but not the wecms-api health route) — inconclusive for the remote host; documented only for completeness.
@@ -86,13 +86,13 @@ Local probe this run: `GET http://localhost:8080/actuator/health` → **HTTP 404
 
 | File | Role |
 |---|---|
-| [`components/.../daily-financial/DailyFinancialClient.tsx`](../../../../../wecms-web/components/banking/reports/daily-financial/DailyFinancialClient.tsx) | builds params, calls `fetchDailyFinancial`, maps `data?.FINANCIAL_STATUS` / `CURRENT_ACCOUNTS` |
-| [`components/.../daily-financial/DailyFinancialPage.tsx`](../../../../../wecms-web/components/banking/reports/daily-financial/DailyFinancialPage.tsx) | the `?? mock` / `length>0 ? : mock` fallback |
-| [`components/.../daily-financial/mockData.ts`](../../../../../wecms-web/components/banking/reports/daily-financial/mockData.ts) | `mockFinancialStatus` / `mockCurrentAccounts` |
-| [`lib/api/banking.ts`](../../../../../wecms-web/lib/api/banking.ts) | `fetchDailyFinancial` + `unwrap` (throws on error/empty) |
-| [`lib/api/useApiData.ts`](../../../../../wecms-web/lib/api/useApiData.ts) | sets `data=null` on throw |
-| [`lib/axios.ts`](../../../../../wecms-web/lib/axios.ts) | `baseURL` (env var), JWT interceptor, 401 re-auth |
-| [`lib/api/mappers.ts`](../../../../../wecms-web/lib/api/mappers.ts) | `mapFinancialStatus` / `mapCurrentAccountRow` (pass-through, no fallback) |
+| [`components/.../daily-financial/DailyFinancialClient.tsx`](../../../../../../wecms-web/components/banking/reports/daily-financial/DailyFinancialClient.tsx) | builds params, calls `fetchDailyFinancial`, maps `data?.FINANCIAL_STATUS` / `CURRENT_ACCOUNTS` |
+| [`components/.../daily-financial/DailyFinancialPage.tsx`](../../../../../../wecms-web/components/banking/reports/daily-financial/DailyFinancialPage.tsx) | the `?? mock` / `length>0 ? : mock` fallback |
+| [`components/.../daily-financial/mockData.ts`](../../../../../../wecms-web/components/banking/reports/daily-financial/mockData.ts) | `mockFinancialStatus` / `mockCurrentAccounts` |
+| [`lib/api/banking.ts`](../../../../../../wecms-web/lib/api/banking.ts) | `fetchDailyFinancial` + `unwrap` (throws on error/empty) |
+| [`lib/api/useApiData.ts`](../../../../../../wecms-web/lib/api/useApiData.ts) | sets `data=null` on throw |
+| [`lib/axios.ts`](../../../../../../wecms-web/lib/axios.ts) | `baseURL` (env var), JWT interceptor, 401 re-auth |
+| [`lib/api/mappers.ts`](../../../../../../wecms-web/lib/api/mappers.ts) | `mapFinancialStatus` / `mapCurrentAccountRow` (pass-through, no fallback) |
 | [`ReportController.java`](../../../../../src/main/java/com/kosign/wecms/domain/banking/controller/ReportController.java) · [`ReportService.java`](../../../../../src/main/java/com/kosign/wecms/domain/banking/service/ReportService.java) | backend endpoint + query (verified correct, returns real data) |
 
 ## 6. Recommended fix (NOT applied — logic unchanged per instructions)

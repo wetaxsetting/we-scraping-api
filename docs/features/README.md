@@ -1,5 +1,7 @@
 # features/
 
+**Status:** active · **Last reviewed:** 2026-08-17
+
 **Feature-first** documentation for the Spring Boot + Next.js refactor, organized to mirror the live
 WeCMS **menu structure**. This is the primary entry point for developers: start from the menu group
 your screen belongs to, then drill into the per-screen doc.

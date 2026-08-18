@@ -18,4 +18,4 @@ The former single migration document was split as follows:
 
 Per the WeCMS doc convention, migration-traceability content for this module is consolidated in [legacy-jex-mapping.md](../../features/wecms-batch/legacy-jex-mapping.md). This stub is retained so existing links keep resolving — do not author new content here.
 
-**Related (unchanged):** schema DDL parity [../database/payment/firm-banking-dispatch-schema.md](../database/payment/firm-banking-dispatch-schema.md) · dispatch-path peer [internal-transfer-mapping.md](internal-transfer-mapping.md) · audits [TO-BE process](../../audits/wecms-batch-tobe-process-audit.md) · [final gap](../../audits/wecms-batch-full-legacy-vs-refactor-final-gap-audit.md).
+**Related (unchanged):** schema DDL parity [../database/payment/firm-banking-dispatch-schema.md](../database/payment/firm-banking-dispatch-schema.md) · dispatch-path peer [internal-transfer-mapping.md](internal-transfer-mapping.md) · audits [TO-BE process](../../audits/legacy-parity/wecms-batch-tobe-process-audit.md) · [final gap](../../audits/legacy-parity/wecms-batch-full-legacy-vs-refactor-final-gap-audit.md).

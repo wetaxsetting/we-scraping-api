@@ -1,5 +1,14 @@
 # Exchange Rate Inquiry — Database Mapping
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../../references/database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../../references/database/flyway-migration-baseline.md) §5.
+
 Single table backs this feature: **`BANK_EXCH_RATE_INFM`** (PROD Active Table List;
 [legacy-table-inventory.md](../../../references/database/legacy-table-inventory.md)).
 Read-side bank-name resolution joins `BANK_INFM` via `BankCdResolver`; no other table is
@@ -99,8 +108,8 @@ row PK `EXCH_SEQ_NO` IS funnelled). See
 
 | Migration | Purpose |
 |---|---|
-| V127 (`V127__bank_exch_rate_infm_table.sql`) | creates `BANK_EXCH_RATE_INFM` (composite PK, rate columns, ERP flag, audit columns, `IDX_BANK_EXCH_RATE_INFM_BIZ_DATE` on `(BIZ_KEY, REF_DATE, BANK_CD)`) |
-| V130 (`V130__bank_exch_rate_infm_seed.sql`) | seeds 15 currency rows for `VN_VNM0004_000001` / `11704088` / `20250425` / `EXCH_SEQ_NO=1` (KRW-denominated demo values) |
+| V127 (`V10__bank_exch_rate_infm.sql`) | creates `BANK_EXCH_RATE_INFM` (composite PK, rate columns, ERP flag, audit columns, `IDX_BANK_EXCH_RATE_INFM_BIZ_DATE` on `(BIZ_KEY, REF_DATE, BANK_CD)`) |
+| V130 (`V130__bank_exch_rate_infm_seed.sql`) | seeds 15 currency rows for `VN_VNM0004_000001` / `11704088` / `20250425` / `EXCH_SEQ_NO=1` (KRW-denominated demo values) | *(historical — DROPPED; demo seeds were removed in the 2026-06-09 rebaseline)*
 | V140 / V155 | `wb_get_next_val` branch for `bank_exch_rate_infm.exch_seq_no` (per `(biz_key, bank_cd, ref_date, ccy_cd)` MAX+1) — funnelled via `LegacyFunctionRepository.nextBankExchRateExchSeqNo` |
 
 > The V127/V130 file headers still show draft numbers (`V84`/`V87`) — renumbered on commit.

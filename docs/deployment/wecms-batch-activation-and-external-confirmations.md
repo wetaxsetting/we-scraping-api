@@ -4,7 +4,7 @@
 **Purpose:** deliverables 3, 5, 6, 7, 8 of the "implement all remaining WeCMS Batch items" task —
 the runtime configuration audit for DEV/SIT/UAT, the concrete external-confirmation tasks (with owner
 + exact question), and the per-component activation status. Companion to the parity audit
-[wecms-batch-refactor-parity-audit-2026-07-21.md](../audits/wecms-batch-refactor-parity-audit-2026-07-21.md).
+[wecms-batch-refactor-parity-audit-2026-07-21.md](../audits/legacy-parity/wecms-batch-refactor-parity-audit-2026-07-21.md).
 
 > **No secrets in this document.** Where a runtime value is a credential/key/host, only its
 > *presence/absence* and *source location* are recorded, never the value.
@@ -228,7 +228,7 @@ byte-identical request can still fail on it.
 ## 2026-07-22 — legacy-output-parity alignment
 
 All source-derivable dispatch-output findings were aligned to legacy (see
-[../audits/legacy-vs-refactor-output-parity-audit.md](../audits/legacy-vs-refactor-output-parity-audit.md) §7;
+[../audits/legacy-vs-refactor-output-parity-audit.md](../audits/legacy-parity/legacy-vs-refactor-output-parity-audit.md) §7;
 full suite 1904 green; flags OFF). Activation-relevant deltas:
 
 - **K:** API-rail `TRAN_DT`/`REG_TM` are now **UTC** (PK-relevant). **Before enabling result-check**, make

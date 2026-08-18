@@ -1,6 +1,6 @@
 # Corporate Card — Refactor Gap Analysis (Card Transactions)
 
-Gaps between the refactor Card Transactions sub-module and legacy JEX, using the shared payment gap vocabulary. Source: [payment-gap-analysis.md](../../../audits/payment-gap-analysis.md) §"Card Transactions" + §"Cross-cutting".
+Gaps between the refactor Card Transactions sub-module and legacy JEX, using the shared payment gap vocabulary. Source: [payment-gap-analysis.md](../../../audits/modules/payment-gap-analysis.md) §"Card Transactions" + §"Cross-cutting".
 
 ## Gap vocabulary
 

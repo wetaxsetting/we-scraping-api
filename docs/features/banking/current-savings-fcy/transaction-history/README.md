@@ -1,5 +1,14 @@
 # Banking > Transaction History (FCY) — Refactor Backend Feature Hub
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../../../references/database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../../../references/database/flyway-migration-baseline.md) §5.
+
 **Module:** Banking → Current & Savings (FCY)
 **Menu:** Transaction History (FCY)
 **Refactor screen ID / View Setting `WEB_SVC_ID`:** `banking-transaction-history` (one id shared by VND + FCY)
@@ -19,7 +28,7 @@
 > #29 per-account authorization) and the R11 Smart Organizer scope blocker are **all CLOSED**.
 > SIT/UAT verification completed — final verdict **GO FOR SIT**. See
 > [refactor-gap-analysis.md](refactor-gap-analysis.md) and the parity audit
-> [../../../audits/transaction-history-fcy-parity-audit.md](../../../../audits/transaction-history-fcy-parity-audit.md).
+> [../../../audits/transaction-history-fcy-parity-audit.md](../../../../audits/legacy-parity/transaction-history-fcy-parity-audit.md).
 >
 > This folder is the **primary documentation home** for the refactored FCY feature. The older
 > single-file spec under [current-savings-fcy/transaction-history.md](../transaction-history/legacy-spec.md)
@@ -86,7 +95,7 @@ in-memory currency filter in `TransactionService.fetchRows(...)`, so each FCY ac
 currency's rows (USD/KRW/JPY/EUR/THB/…). Multi-currency FCY is therefore the intended behaviour, not
 a defect. (This mirrors Account Inquiry's [FCY-A01](../account-inquiry/README.md#approved-modernization--fcy-a01-multi-currency)
 multi-currency modernization.) Details: [refactor-gap-analysis.md](refactor-gap-analysis.md) · audit
-[../../../audits/transaction-history-fcy-parity-audit.md](../../../../audits/transaction-history-fcy-parity-audit.md).
+[../../../audits/transaction-history-fcy-parity-audit.md](../../../../audits/legacy-parity/transaction-history-fcy-parity-audit.md).
 
 ---
 
@@ -107,9 +116,9 @@ multi-currency modernization.) Details: [refactor-gap-analysis.md](refactor-gap-
 
 | Doc | Location |
 |---|---|
-| **Parity audit (2026-06-06)** | [audits/transaction-history-fcy-parity-audit.md](../../../../audits/transaction-history-fcy-parity-audit.md) |
-| **SIT-readiness fix verification (2026-06-06)** | [audits/transaction-history-fcy-fix-verification.md](../../../../audits/transaction-history-fcy-fix-verification.md) |
-| Smart Organizer R11 account-scope verification | [audits/smart-organizer-r11-verification.md](../../../../audits/smart-organizer-r11-verification.md) |
+| **Parity audit (2026-06-06)** | [audits/transaction-history-fcy-parity-audit.md](../../../../audits/legacy-parity/transaction-history-fcy-parity-audit.md) |
+| **SIT-readiness fix verification (2026-06-06)** | [audits/transaction-history-fcy-fix-verification.md](../../../../audits/historical/transaction-history-fcy-fix-verification.md) |
+| Smart Organizer R11 account-scope verification | [audits/legacy-parity/smart-organizer-verification-2026-06-06.md](../../../../audits/legacy-parity/smart-organizer-verification-2026-06-06.md) |
 | VND twin (shared code path) | [transaction-history-vnd/README.md](../transaction-history/README.md) |
 | Account Inquiry (FCY) — upstream entry screen + sync owner | [account-inquiry-fcy/README.md](../account-inquiry/README.md) |
 | Older single-file feature spec (backend) | [features/banking/current-savings-fcy/transaction-history.md](../transaction-history/legacy-spec.md) |
@@ -138,7 +147,7 @@ multi-currency modernization.) Details: [refactor-gap-analysis.md](refactor-gap-
 | Amount formatter | `AmountFormatter` | `src/main/java/com/kosign/wecms/domain/banking/service/AmountFormatter.java` |
 | Inout enum | `InoutDv` | `src/main/java/com/kosign/wecms/common/enums/InoutDv.java` |
 | Excel provider (shared VND+FCY) | `TransactionHistoryExportProvider` (`screenId = banking-transaction-history`) | `src/main/java/com/kosign/wecms/domain/banking/export/TransactionHistoryExportProvider.java` |
-| View Setting seed | V155 → V169 / V171 / V167 / V181 (shared with VND) | `src/main/resources/db/migration/V155__transaction_history_view_setting_seed.sql` |
+| View Setting seed | V155 → V169 / V171 / V167 / V181 (shared with VND) | `src/main/resources/db/migration/V156__sys_scr_option_wecms.sql` |
 
 DTOs (`src/main/java/com/kosign/wecms/domain/banking/dto/`): `TransactionListResponse`, `TransactionRow`,
 `TransactionDetailResponse`, `TransactionSummaryResponse`, and the request records

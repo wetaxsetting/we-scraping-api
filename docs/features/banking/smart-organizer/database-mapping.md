@@ -29,9 +29,14 @@ master tables are dimension lookups resolved at read time (R07) and denormalized
 
 | Migration | Adds |
 |---|---|
-| `V172__smart_organizer_rmrk_org_infm_schema.sql` | `RMRK_ORG_INFM` rule table (refactor of legacy `V160`) |
-| `V173__wb_get_next_val_rmrk_org_infm.sql` | `wb_get_next_val` branch for `rmrk_org_infm.rmrk_seq_no` |
-| `V174__smart_organizer_view_setting_seed.sql` | View Setting seed `WEB_SVC_ID='smart-organizer'` |
+| `V85__rmrk_org_infm.sql` | `RMRK_ORG_INFM` rule table |
+| `V140__wb_get_next_val.sql` | carries the `rmrk_org_infm.rmrk_seq_no` branch (all branches are consolidated in this one file) |
+| `V156__sys_scr_option_wecms.sql` | View Setting seed `WEB_SVC_ID='smart-organizer'` — a **manual DBA script**, not a Flyway migration |
+
+> **Numbering note.** These were previously cited as `V172` / `V173` / `V174`. Those files no longer
+> exist — the [2026-06-09 rebaseline](../../../references/database/flyway-migration-baseline.md)
+> reassigned every migration number and consolidated per-feature seq-branch and View-Setting-seed
+> migrations. Verify a number against `src/main/resources/db/migration/` before citing it.
 
 `ACCT_TRNS_HSTR` and `ACCT_TRNS_RCV_PAY_INFM` are owned by the Transaction History migrations — see
 [transaction-history-vnd/database-mapping.md](../current-savings-vnd/transaction-history/database-mapping.md).

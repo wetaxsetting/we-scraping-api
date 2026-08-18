@@ -1,6 +1,6 @@
 # Payroll Payment — Refactor Gap Analysis
 
-> Backend feature doc. Hub: [README.md](README.md). Gap vocabulary: **MATCH · APPROVED DEVIATION · DEAD LEGACY · PARTIAL · MISSING**, with a gap *kind*. Source of truth = latest code. Cross-ref: [payment-gap-analysis.md](../../../audits/payment-gap-analysis.md) (rows G-PAYR-1/2/3).
+> Backend feature doc. Hub: [README.md](README.md). Gap vocabulary: **MATCH · APPROVED DEVIATION · DEAD LEGACY · PARTIAL · MISSING**, with a gap *kind*. Source of truth = latest code. Cross-ref: [payment-gap-analysis.md](../../../audits/modules/payment-gap-analysis.md) (rows G-PAYR-1/2/3).
 
 | ID | Gap | Class | Kind | Owner |
 |---|---|---|---|---|

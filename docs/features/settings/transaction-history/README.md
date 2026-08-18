@@ -1,5 +1,14 @@
 # Settings > Transaction History (ERP) — Backend Feature (Refactor)
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../../references/database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../../references/database/flyway-migration-baseline.md) §5.
+
 **Status:** ✅ Backend implemented — controller (4 endpoints) + 1 read service + 1 writer service + repository + entity + 5 DTOs + sort whitelist + export provider + file resolver/storage config. Read paths (list + 4 tab counts + download) verified against the JEX `comm_0219_001` source-of-truth. Read-only audit ledger; upload write-path intentionally NOT ported (OQ-1).
 **Module / menu:** Settings → **Transaction History** (Settings modal panel — **no standalone route**). This is the **ERP file-exchange audit ledger**, NOT the Banking transaction-history page.
 **Refactor slug:** `erp-transaction-history` (REST URI, Java package, log tags, audit `WSVC_ID`, View Setting `screenId`, export `screenId`). Doc-folder name `transaction-history` per the prompt; the slug on every identifier surface is `erp-transaction-history`.

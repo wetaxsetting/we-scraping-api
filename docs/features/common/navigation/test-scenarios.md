@@ -1,4 +1,4 @@
-# navigation — Test Scenarios (Backend)
+# Navigation — Test Scenarios (Backend)
 
 **Part of:** Common → navigation
 **Last verified:** 2026-06-23

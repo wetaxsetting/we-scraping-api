@@ -1,5 +1,14 @@
 # Internal Transfer — Database Mapping (Backend)
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../../references/database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../../references/database/flyway-migration-baseline.md) §5.
+
 > **Hub:** [README.md](README.md) · **Schema baseline:** [legacy-table-inventory.md](../../../references/database/legacy-table-inventory.md) · **Schema intent:** [database/payment/internal-transfer-schema.md](../../../references/database/payment/internal-transfer-schema.md)
 
 Source-code-verified 2026-06-23. All entity mappings target legacy JEX column names/types as they exist in the live `wecmsvndev` schema (DDL is the source of truth; `ddl-auto=validate`). All tables below are in the legacy table inventory.

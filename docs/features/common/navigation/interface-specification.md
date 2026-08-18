@@ -1,4 +1,4 @@
-# navigation — Interface Specification (Backend)
+# Navigation — Interface Specification (Backend)
 
 **Part of:** Common → navigation
 **Last verified:** 2026-06-23

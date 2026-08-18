@@ -145,4 +145,4 @@ the per-account FCY Transaction History page.
 > Wire fields vs. legacy `fnsh_0005_001_r001`: the refactor drops the raw cert payload
 > (`CERT_INFO_*`) in favour of a derived `cert_conn_yn` boolean (security-positive), and renames
 > `ACCT_BAL_LST_INQ_DTM` on the wire to `acct_bal_upd_dtm`. Full field-by-field comparison:
-> [audits/account-inquiry-fcy-parity-audit.md §6](../../../../audits/account-inquiry-fcy-parity-audit.md).
+> [audits/account-inquiry-fcy-parity-audit.md §6](../../../../audits/legacy-parity/account-inquiry-fcy-parity-audit.md).

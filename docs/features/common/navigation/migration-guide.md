@@ -1,4 +1,4 @@
-# navigation — Migration Guide (Backend)
+# Navigation — Migration Guide (Backend)
 
 **Part of:** Common → navigation
 **Last verified:** 2026-06-23
@@ -43,7 +43,7 @@ not read this pass — ⚠️ UNVERIFIED migration number.)
 | Migration | Role |
 |---|---|
 | V137 / V138 / V139 | `CREATE TABLE / INDEX IF NOT EXISTS` for `PRODUCT_MENU` (V137), `MENU_ITEM` (V138), `MENU_ITEM_TRANSLATION` (V139) (refactor-owned infra; no audit columns). *(Pre-2026-06-09-renumber these were `V242`; the archived file was removed with `db/archive/` 2026-06-23.)* |
-| seed (archived) | Seed from the JexAdmin export — 42 menu items (41 F + 1 HS), 115 product-menu rows (F=41, H=33, M=41), 345 translations (115 × EN/KO/VI), `ON CONFLICT DO NOTHING`. Shipped as the pre-renumber `V243__navigation_menu_seed.sql` (archived, then **removed with `db/archive/` 2026-06-23**); not in the live `V*` set. Its removal is not missing functionality — UAT/PROD already hold this data in the legacy DB; clean-environment provisioning is out of repo scope (DBA-approved procedures, DC-2). |
+| seed (archived) | Seed from the JexAdmin export — 42 menu items (41 F + 1 HS), 115 product-menu rows (F=41, H=33, M=41), 345 translations (115 × EN/KO/VI), `ON CONFLICT DO NOTHING`. Shipped as the pre-renumber `V243__navigation_menu_seed.sql` (archived, then **removed with `db/archive/` 2026-06-23**); not in the live `V*` set. Its removal is not missing functionality — UAT/PROD already hold this data in the legacy DB; clean-environment provisioning is out of repo scope (DBA-approved procedures, DC-2). | *(historical — NOT IN THE CURRENT SET; `V137`-`V139` create the nav tables but contain zero INSERTs, so the seed must be applied separately)*
 
 ## Design references
 

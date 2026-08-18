@@ -139,7 +139,7 @@ The four pagination fields land in the same MR as the server-side pagination wir
 > (`lib/api/mappers.ts:736-740`, reads `api.taxcode` / `api.company_nm` /
 > `api.status_cd`) confirm lowercase. The "Refactor field" column below is shown
 > in legacy UPPER for traceability — read each as its lowercase wire form. See
-> [field-casing-parity-audit-2026-06-06.md](../../../audits/field-casing-parity-audit-2026-06-06.md).
+> [field-casing-parity-audit-2026-06-06.md](../../../audits/historical/field-casing-parity-audit-2026-06-06.md).
 
 | Legacy WSVC `REC` field | Refactor wire field (lowercase) | Decision |
 |---|---|---|
@@ -341,8 +341,8 @@ The controller forwards raw query params; the service does the parsing (sort enu
 | [`OprtSttsInfo.java`](../../../../src/main/java/com/kosign/wecms/domain/operation/entity/OprtSttsInfo.java) | JPA entity, `@IdClass(OprtSttsInfoId.class)` |
 | [`OprtSttsInfoId.java`](../../../../src/main/java/com/kosign/wecms/domain/operation/entity/OprtSttsInfoId.java) | Composite PK class |
 | [`OprtSttsInfoRepository.java`](../../../../src/main/java/com/kosign/wecms/domain/operation/repository/OprtSttsInfoRepository.java) | Spring Data JPA |
-| [`V16__sprint1_operation_status_schema.sql`](../../../../src/main/resources/db/migration/V16__sprint1_operation_status_schema.sql) | Created `OPRT_STTS_INFO` + `EXT_TRAN_CALL_HIS` |
-| [`V17__sprint1_seed_data.sql`](../../../../src/main/resources/db/migration/V17__sprint1_seed_data.sql) | Seeded 5 demo rows for `BIZ_KEY = VN_VNM0004_000001` |
+| [`V74__oprt_stts_info.sql`](../../../../src/main/resources/db/migration/V74__oprt_stts_info.sql) | Created `OPRT_STTS_INFO` + `EXT_TRAN_CALL_HIS` |
+| `V17__sprint1_seed_data.sql` | Seeded 5 demo rows for `BIZ_KEY = VN_VNM0004_000001` | *(historical — DROPPED; demo seeds were removed in the 2026-06-09 rebaseline)*
 
 ### Legacy JEX assets (read-only reference)
 

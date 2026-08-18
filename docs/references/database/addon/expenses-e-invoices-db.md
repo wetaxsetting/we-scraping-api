@@ -1,5 +1,14 @@
 # Add-on Service > Expenses e-Invoices — Database Design
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../flyway-migration-baseline.md) §5.
+
 **Module:** Add-on Service
 **Refactor screen ID (proposed):** `addon-expenses-einvoices`
 **JEX counterpart:** `einv_0001_001_r001` with `einvType=2` — `DOC_TYPE='B'` slice of `BUSA_DOC_MSTR`
@@ -212,7 +221,7 @@ These tables become relevant only for the **per-invoice detail page** (separate 
 - Migration mapping: [../../migration/service-mapping.md](../../migration/service-mapping.md)
 - Implementation plan: ../../planning/addon/expenses-e-invoices-plan.md _(removed — historical `planning/` folder deleted by project decision)_
 - Sales planning rules (IR-1 through IR-9 inherited): ../../planning/addon/sales-e-invoices-plan.md _(removed — historical `planning/` folder deleted by project decision)_
-- DB parity audit (Sprint 1): [../../audits/db-parity-audit-2026-04-30.md](../../audits/db-parity-audit-2026-04-30.md)
+- DB parity audit (Sprint 1): [../../audits/db-parity-audit-2026-04-30.md](../../../audits/historical/db-parity-audit-2026-04-30.md)
 - Schema parity rules: [wecms-api/CLAUDE.md → Legacy Schema Parity Rule](../../../../CLAUDE.md)
 - PROD active table list: [wecms-api/CLAUDE.md → PROD DB Table Scope for Refactoring](../../../../CLAUDE.md)
 - Local Flyway migration directory: [`wecms-api/src/main/resources/db/migration/`](../../../../src/main/resources/db/migration/)

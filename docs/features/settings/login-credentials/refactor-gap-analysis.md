@@ -120,7 +120,7 @@ Residual (non-blocking, tracked):
 1. GAP-1 — flip GDT verify-before-save on once the captcha challenge-chain lands.
 2. GAP-3 — stale "AES-GCM" Javadoc cleanup on the two entities.
 3. GAP-4 — CAPTCHA / QnA challenge UI when a real bank demands it.
-4. `VAS_ACCT_SEQ_NO` confirmation (operational, PO/DBA) + `NXISAS_ACCT_TYPE_MAPPING` DBA seed — the latter is the Tier-1 half of the Account Type auto-fill gap; full analysis in [select-bank-accounts-account-type-autofill-parity-audit.md](../../../audits/select-bank-accounts-account-type-autofill-parity-audit.md).
+4. `VAS_ACCT_SEQ_NO` confirmation (operational, PO/DBA) + `NXISAS_ACCT_TYPE_MAPPING` DBA seed — the latter is the Tier-1 half of the Account Type auto-fill gap; full analysis in [select-bank-accounts-account-type-autofill-parity-audit.md](../../../audits/legacy-parity/select-bank-accounts-account-type-autofill-parity-audit.md).
 5. No dedicated `LoginCredentialsService`/`Controller` JUnit on disk yet (see test-scenarios.md).
 
 None of the residual items affect the implemented feature's parity or correctness.

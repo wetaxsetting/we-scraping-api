@@ -7,7 +7,7 @@
 > Java field rather than the legacy token (`balance` not `bal`,
 > `acct_nickname` not `acct_nick_nm`, nested-tx `transaction_time` / `amount` /
 > `balance_after` / `in_out_div`). UPPER tokens below are historical. See
-> [field-casing-parity-audit-2026-06-06.md](../../../../audits/field-casing-parity-audit-2026-06-06.md).
+> [field-casing-parity-audit-2026-06-06.md](../../../../audits/historical/field-casing-parity-audit-2026-06-06.md).
 
 Contracts from `WSVC.rept_0015_001_r001.xml`, the action JSP, and the TS renderer. Refactor contract
 from `ReportController` / `DailyFinancialCmcReport` / `DailyFinancialTransactionsReport`.

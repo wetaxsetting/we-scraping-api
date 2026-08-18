@@ -1,5 +1,7 @@
 # wecms-api — Security Documentation Index
 
+**Status:** active · **Last reviewed:** 2026-08-17
+
 Security docs for the WeCMS refactor backend. Start here.
 
 **Current status (2026-06-24):** Spring security deep review **closed** for F-01–F-07 + F-10; **Conditionally Ready** for SIT/UAT. Remaining items (F-08/F-09/F-11, in-memory durability, secret rotation) are tracked in the risk register. See [`../../CLAUDE.md`](../../CLAUDE.md) → "Security & SIT Readiness Status".

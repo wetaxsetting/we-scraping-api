@@ -1,5 +1,14 @@
 # Settings > Firm Banking History — DB Design
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../flyway-migration-baseline.md) §5.
+
 **Refactor screen ID:** `firm-banking-history`
 **Feature spec:** [../../features/settings/firm-banking-history.md](../../../features/settings/firm-banking-history.md)
 **Migration mapping:** [../../migration/firm-banking-history-mapping.md](../../migration/firm-banking-history-mapping.md)
@@ -11,7 +20,7 @@
 
 ## 1. Source tables (legacy DEV — schema captured 2026-05-08)
 
-Schema captured live from `wecmsvndev` via the read-only `postgres_dev_server_jexframe` MCP. Refactor mirrors **column-for-column**, with the documented intentional divergences from [docs/refactor-wecms/audits/db-parity-audit-2026-04-30.md § 3a–3b](../../audits/db-parity-audit-2026-04-30.md) (CHAR→VARCHAR, varchar(14)→TIMESTAMPTZ kept as varchar(14) for the legacy `REG_DTM` columns to keep behaviour parity).
+Schema captured live from `wecmsvndev` via the read-only `postgres_dev_server_jexframe` MCP. Refactor mirrors **column-for-column**, with the documented intentional divergences from [docs/refactor-wecms/audits/db-parity-audit-2026-04-30.md § 3a–3b](../../../audits/historical/db-parity-audit-2026-04-30.md) (CHAR→VARCHAR, varchar(14)→TIMESTAMPTZ kept as varchar(14) for the legacy `REG_DTM` columns to keep behaviour parity).
 
 ### 1.1 `TB_FIRM_TRAN` — Firm Banking gateway log (Korean firm-banking leg)
 
@@ -63,7 +72,7 @@ Per the [legacy schema parity rule](../../../../CLAUDE.md), entity `TbFirmTran` 
 
 PK: `(BIZ_KEY, SEQ_NO)` — `napas_remit_trns_hstr_pk`.
 DEV row count: **290**.
-Columns (already mirrored by V13 per [audit § 1](../../audits/db-parity-audit-2026-04-30.md#1-full-local-table-list-23-tables)).
+Columns (already mirrored by V13 per [audit § 1](../../../audits/historical/db-parity-audit-2026-04-30.md#1-full-local-table-list-23-tables)).
 
 Used by this screen: `BIZ_KEY`, `SEQ_NO`, `OUT_BANK_CODE`, `REG_DTM`, `TRNS_STTS`, `TRNS_MSG`.
 
@@ -229,7 +238,7 @@ The view is queried with `WHERE BIZ_KEY = ? AND TARN_DTM BETWEEN ? AND ? [AND SV
 | `NXSIAS_MODULE_TRAN_LOG_HIS` | `ix_nxsias_biz_dtm (BIZ_KEY, REG_DTM)` + `ix_nxsias_type (NXISAS_TYPE)` partial index for the GDT/Business legs | No PK exists today; the indexes ARE the access path. |
 | `EXT_TRAN_CALL_HIS` | `ix_ext_tran_biz_dtm (BIZ_KEY, REG_DTM, SVC_ID)` partial `WHERE SVC_ID IN (...)` | Filtered subset; partial index keeps it tight. |
 
-**Decision rule (per [audit doc](../../audits/db-parity-audit-2026-04-30.md)):** add only after EXPLAIN ANALYZE on representative data shows it's needed. R&D scale (≤30 days, single tenant) probably does not need them; they become essential at production scale.
+**Decision rule (per [audit doc](../../../audits/historical/db-parity-audit-2026-04-30.md)):** add only after EXPLAIN ANALYZE on representative data shows it's needed. R&D scale (≤30 days, single tenant) probably does not need them; they become essential at production scale.
 
 ---
 
@@ -237,9 +246,9 @@ The view is queried with `WHERE BIZ_KEY = ? AND TARN_DTM BETWEEN ? AND ? [AND SV
 
 | Concern | Status |
 |---|---|
-| BIZ_KEY tenant isolation | Enforced at query time via repository predicate; see [audit § 4](../../audits/db-parity-audit-2026-04-30.md#4-constraint-gaps). No DB-level enforcement (matches DEV). |
+| BIZ_KEY tenant isolation | Enforced at query time via repository predicate; see [audit § 4](../../../audits/historical/db-parity-audit-2026-04-30.md#4-constraint-gaps). No DB-level enforcement (matches DEV). |
 | Audit columns (`REG_ID/REG_DTM/MOD_ID/MOD_DTM`) | Read-only screen — no writes, no `BaseEntity` extension. The view's `REG_DTM` columns come from the source legs unchanged. |
-| Triggers | None on this read path. The deferred audit-log triggers from V24 ([audit § 5](../../audits/db-parity-audit-2026-04-30.md#5-trigger-parity)) are unchanged; this screen has no write surface so triggers do not fire from refactor activity. |
+| Triggers | None on this read path. The deferred audit-log triggers from V24 ([audit § 5](../../../audits/historical/db-parity-audit-2026-04-30.md#5-trigger-parity)) are unchanged; this screen has no write surface so triggers do not fire from refactor activity. |
 | `PROC_STAT` / `RS_CD` / `TRNS_STTS` value space | No CHECK constraints in DEV; refactor mirrors. Validation lives in the **frontend's** localized result-code map, not the DB. |
 | `SVC_TYPE` enum (`F`/`S`/`G`/`B`) | View is the only place these literals exist — the constraint is the view definition itself. |
 
@@ -251,10 +260,10 @@ The view is queried with `WHERE BIZ_KEY = ? AND TARN_DTM BETWEEN ? AND ? [AND SV
 
 | Migration | Filename | Purpose | Effects |
 |---|---|---|---|
-| V59 | `V59__firm_banking_history_source_tables.sql` | Add the two missing source tables: `TB_FIRM_TRAN`, `NXSIAS_MODULE_TRAN_LOG_HIS`. Mirror DEV column-for-column with the documented intentional CHAR→VARCHAR / NUMERIC→NUMERIC(N,M) divergences. | DDL (CREATE TABLE x2) |
-| V60 | `V60__firm_banking_history_view_and_fns.sql` | Port `kr_to_vn_time(varchar)` and `wb_get_napas_bank_nm` (1-arg + 3-arg overloads) from `wecmsvndev.pg_proc`. Create `V_FIRM_BANKING_HISTORY` view. | DDL (CREATE FUNCTION x2 + CREATE VIEW) |
-| V61 | `V61__firm_banking_history_view_setting_seed.sql` | Seed `SYS_SCR_OPTION_WECMS` for `WEB_SVC_ID = 'firm-banking-history'`, `DYM_AREA_ID = 'default'` with the 7 FIELD_IDs (incl. `ETC` admin-pinned). `SIZE` from Figma. | DML (INSERT seed rows) |
-| V62 | `V62__firm_banking_history_demo_seed.sql` | Optional — copy a representative slice from DEV (≤30 rows per source leg) for the configured tenant per the [Data Migration Rule](../../../../CLAUDE.md). Idempotent via `INSERT … ON CONFLICT DO NOTHING`. | DML (seed) |
+| V59 | `V104__tb_firm_tran.sql` | Add the two missing source tables: `TB_FIRM_TRAN`, `NXSIAS_MODULE_TRAN_LOG_HIS`. Mirror DEV column-for-column with the documented intentional CHAR→VARCHAR / NUMERIC→NUMERIC(N,M) divergences. | DDL (CREATE TABLE x2) |
+| V60 | `V60__firm_banking_history_view_and_fns.sql` | Port `kr_to_vn_time(varchar)` and `wb_get_napas_bank_nm` (1-arg + 3-arg overloads) from `wecmsvndev.pg_proc`. Create `V_FIRM_BANKING_HISTORY` view. | DDL (CREATE FUNCTION x2 + CREATE VIEW) | *(historical — REPLACED BY CODE; the union is a Hibernate `@Subselect`, no view migration exists)*
+| V61 | `V156__sys_scr_option_wecms.sql` | Seed `SYS_SCR_OPTION_WECMS` for `WEB_SVC_ID = 'firm-banking-history'`, `DYM_AREA_ID = 'default'` with the 7 FIELD_IDs (incl. `ETC` admin-pinned). `SIZE` from Figma. | DML (INSERT seed rows) |
+| V62 | `V62__firm_banking_history_demo_seed.sql` | Optional — copy a representative slice from DEV (≤30 rows per source leg) for the configured tenant per the [Data Migration Rule](../../../../CLAUDE.md). Idempotent via `INSERT … ON CONFLICT DO NOTHING`. | DML (seed) | *(historical — DROPPED; demo seeds were removed in the 2026-06-09 rebaseline)*
 
 **Order matters.** V59 must precede V60 (the view references the new tables). V60 must precede V61 (View Setting seed depends on the View Setting tables, which already exist from V30 — so no new dependency, but the screen needs to "exist" conceptually). V62 is independent of V61.
 
@@ -303,8 +312,8 @@ The PK choice (`BIZ_KEY + TARN_DTM + SVC_TYPE + SEQ_NO`) is **best-effort** — 
 
 - Feature spec: [../../features/settings/firm-banking-history.md](../../../features/settings/firm-banking-history.md)
 - Migration mapping: [../../migration/firm-banking-history-mapping.md](../../migration/firm-banking-history-mapping.md)
-- Parity audit checklist: [../../audits/firm-banking-history-parity-checklist.md](../../audits/firm-banking-history-parity-checklist.md)
+- Parity audit checklist: [../../audits/firm-banking-history-parity-checklist.md](../../../audits/legacy-parity/firm-banking-history-parity-checklist.md)
 - Cross-feature DB mapping: [../db-mapping.md](../table-mapping/db-mapping.md) (add a row when V59–V62 land)
-- DB parity audit (precedent for divergences): [../../audits/db-parity-audit-2026-04-30.md](../../audits/db-parity-audit-2026-04-30.md)
+- DB parity audit (precedent for divergences): [../../audits/db-parity-audit-2026-04-30.md](../../../audits/historical/db-parity-audit-2026-04-30.md)
 - DB function strategy: [../../architecture/db-function-strategy.md](../../../architecture/database/db-function-strategy.md)
 - Workspace DB rules: [/.claude/rules/database.md](../../../../../.claude/rules/database.md)

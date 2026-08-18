@@ -1,5 +1,14 @@
 # Banking > Account Inquiry (FCY) — Backend API Design
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../database/flyway-migration-baseline.md) §5.
+
 **Refactor screen ID:** `banking-account-inquiry-fcy`
 **Feature spec:** [../../features/banking/account-inquiry-fcy.md](../../../features/banking/current-savings-fcy/account-inquiry/README.md)
 **JEX reference:**
@@ -108,7 +117,7 @@ Pagination + aggregation semantics (identical to VND):
 > ([account-inquiry-vnd-api.md](account-inquiry-vnd-api.md)). The field names in
 > the table below are shown in their legacy UPPER form for traceability — read
 > each as its lowercase snake_case wire equivalent. See
-> [field-casing-parity-audit-2026-06-06.md](../../../audits/field-casing-parity-audit-2026-06-06.md).
+> [field-casing-parity-audit-2026-06-06.md](../../../audits/historical/field-casing-parity-audit-2026-06-06.md).
 
 | Field | Type | Source | Notes |
 |---|---|---|---|

@@ -11,11 +11,11 @@ refactor databases (`SELECT` only — no writes, no DDL, no PROD).
 > and **applied two code fixes** to `wecms-api`. Sections 1–16 are the original static review and remain
 > accurate except for the "both tables are empty" baseline, which §17 supersedes.
 
-**Deliverable under review:** [`Claude Code (AI)/sql/tb_batch_schedule_seed_refactor.sql`](../../../Claude%20Code%20%28AI%29/sql/tb_batch_schedule_seed_refactor.sql)
+**Deliverable under review:** [`docs/sql/2026/seed-batch-schedule-operating-hours-2026-07-28.sql`](../sql/2026/seed-batch-schedule-operating-hours-2026-07-28.sql)
 
 **Related documents:**
 - [wecms-batch-infrastructure-readiness-audit.md](wecms-batch-infrastructure-readiness-audit.md) — this closes its blocker **C-2**
-- [../features/wecms-batch/batch-schedule-operating-hours-audit.md](../features/wecms-batch/batch-schedule-operating-hours-audit.md) — the gate's implementation record
+- [../features/wecms-batch/batch-schedule-operating-hours-audit.md](../audits/batch/batch-schedule-operating-hours-audit.md) — the gate's implementation record
 - [wecms-batch-activation-runbook.md](wecms-batch-activation-runbook.md) · [wecms-batch-infra-team-checklist.md](wecms-batch-infra-team-checklist.md)
 
 ---
@@ -60,7 +60,7 @@ is the main risk in this task:
 | Amount-aware | **No** — no amount column exists | **Yes** — `large-txn-threshold` param |
 | Missing config | INFO missing ⇒ **FAIL the payment** | ⇒ **allow** (documented "no such rail") |
 | On failure | mark FAIL + Korean ops alert | `WBE2066` / `WBE2067` / `WBE2068` to the user |
-| Seeded by | this script | [`cutoff-config_20260709.sql`](../../../Claude%20Code%20%28AI%29/sql/cutoff-config_20260709.sql) |
+| Seeded by | this script | [`create-cutoff-config-tables-and-seed-2026-07-09.sql`](../sql/2026/create-cutoff-config-tables-and-seed-2026-07-09.sql) |
 
 The "known operating windows" in the review request — Shinhan CITAD API 16:30, VCB CITAD
 small/large — are **cut-off-config facts**, not batch-schedule facts. `CutoffConfigProvider.java:67-69`
@@ -194,7 +194,7 @@ ever read (§2.1).
 The 24-hour `000000`–`235959` window is the legacy value and is deliberate: INFO is the bank-level
 on/off switch plus the `ANT_WHERE_USE_YN` toggle that decides whether the per-channel DTL table is
 consulted at all. Real time restriction lives in DTL. Corroborated by
-[batch-schedule-operating-hours-audit.md:169](../features/wecms-batch/batch-schedule-operating-hours-audit.md)
+[batch-schedule-operating-hours-audit.md:169](../audits/batch/batch-schedule-operating-hours-audit.md)
 ("legacy currently runs 24h windows / inert").
 
 **`ant_where_use_yn` is the highest-leverage value in this seed.** `'Y'` engages the DTL gate; any
@@ -527,7 +527,7 @@ the DBA can see exactly what the gate would decide for every seeded key without 
 3. **Timezone deviation, already documented.** The gate compares against `Asia/Ho_Chi_Minh`
    (`OperatingHoursService.java:55`, `:197-199`); legacy used the DB server's `NOW()`. If the DB server
    is not on ICT, window edges shift between the two systems. Recorded in
-   [batch-schedule-operating-hours-audit.md §12a](../features/wecms-batch/batch-schedule-operating-hours-audit.md).
+   [batch-schedule-operating-hours-audit.md §12a](../audits/batch/batch-schedule-operating-hours-audit.md).
 4. **No weekday / holiday dimension in these tables at all** — the legacy IDO `CASE` is time-of-day
    only, and `<tmUseYn>N</tmUseYn>` makes the jex-framework service-time block inert. Weekend blocking
    for non-NAPAS rails exists only in `CutoffValidator.java:133-140`. A seeded 24h INFO window really
@@ -561,7 +561,7 @@ the DBA can see exactly what the gate would decide for every seeded key without 
 
 Run in this order, per environment. Do not compress steps.
 
-1. **Review the SQL end to end** — [`Claude Code (AI)/sql/tb_batch_schedule_seed_refactor.sql`](../../../Claude%20Code%20%28AI%29/sql/tb_batch_schedule_seed_refactor.sql).
+1. **Review the SQL end to end** — [`docs/sql/2026/seed-batch-schedule-operating-hours-2026-07-28.sql`](../sql/2026/seed-batch-schedule-operating-hours-2026-07-28.sql).
    Confirm it contains no DDL, no `DELETE`, no `UPDATE`, and that §6 (`DO UPDATE`) stays commented.
 2. **Confirm dispatch flags are OFF** on the application host:
    `env | grep -E 'WECMS_DISPATCH_|WECMS_EFS_ENABLED|WECMS_SFTP_ENABLED'`.
@@ -654,7 +654,7 @@ Primary sources read for this review. Every conclusion above cites one of these.
 **Docs / memory** `wecms-batch-infrastructure-readiness-audit.md` (C-2, C-1 — empty-table and
 flag-divergence evidence) · `../features/wecms-batch/batch-schedule-operating-hours-audit.md` ·
 `docs/references/database/legacy-table-inventory.md:133-134` ·
-`Claude Code (AI)/sql/cutoff-config_20260709.sql` (manual-script precedent) ·
+`docs/sql/2026/create-cutoff-config-tables-and-seed-2026-07-09.sql` (manual-script precedent) ·
 memories `project_vcb_file_transfer_switch`, `project_payment_cutoff_validation_16h30`,
 `project_flyway_disabled_ddl_validate`, `project_uat_prod_live_jex_db_target`,
 `project_sys_scr_option_seed_strategy`
@@ -804,8 +804,8 @@ on the row (no hard-coded `970436` in `domain/payment/dispatch/`).
 
 | Item | Change |
 |---|---|
-| §1 SECTION 1 VCB tuple | **Commented out** in `tb_batch_schedule_seed_refactor.sql`. The seed now inserts 2 INFO rows (Shinhan, Woori) — legacy's exact bank set. Re-running it cannot reintroduce VCB. |
-| Applied refactor DEV row | Removed by [`tb_batch_schedule_info_vcb_rollback_20260729.sql`](../../../Claude%20Code%20%28AI%29/sql/tb_batch_schedule_info_vcb_rollback_20260729.sql) — DBA-run by hand, with pre-check, a raise-on-mismatch guard, and post-check. **Not executed by the audit.** |
+| §1 SECTION 1 VCB tuple | **Commented out** in `seed-batch-schedule-operating-hours-2026-07-28.sql`. The seed now inserts 2 INFO rows (Shinhan, Woori) — legacy's exact bank set. Re-running it cannot reintroduce VCB. |
+| Applied refactor DEV row | Removed by [`delete-vcb-batch-schedule-info-row-2026-07-29.sql`](../sql/2026/delete-vcb-batch-schedule-info-row-2026-07-29.sql) — DBA-run by hand, with pre-check, a raise-on-mismatch guard, and post-check. **Not executed by the audit.** |
 | `970424` / `970457` / all 12 DTL rows / `tb_firm_conf` | **Untouched.** |
 | Production Java | **No changes.** The code was already legacy-faithful. |
 

@@ -2,7 +2,7 @@
 
 How each JEX layer became its Spring counterpart. Deep narrative + OQ log:
 [../login-credentials.md](../login-credentials.md). Legacy-vs-refactor audit:
-[docs/audits/login-credentials-legacy-vs-refactor-audit.md](../../../audits/login-credentials-legacy-vs-refactor-audit.md).
+[docs/audits/login-credentials-legacy-vs-refactor-audit.md](../../../audits/legacy-parity/login-credentials-legacy-vs-refactor-audit.md).
 
 ---
 

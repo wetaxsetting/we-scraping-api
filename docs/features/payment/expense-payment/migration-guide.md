@@ -29,7 +29,7 @@ Approval withdraw (`DELETE /{id}/approval`), change-line (`PUT /{id}/approval-li
 3. **`APPR_STTS` not stored** on `SCDUL_PYMN_SUMR` (no such legacy column) — derived via `wb_get_appr_stts`; rejected = `R` not `X`. Matches all payment modules.
 4. **Reporting-account late-bind via PATCH** — not mandated at create (resolved open question; same as Vendor).
 5. **Key reuse** — `InternalTransferKeyGenerator.nextScdulPymnNo` reused verbatim (shared physical table); `APPR_SEQ_NO` via global `wb_get_next_val('sq_appr_seq_no')`.
-6. **Dispatch flag-gating** — bank hand-offs `@ConditionalOnProperty` OFF by default in every profile (DB-row creation still runs). See [dispatch-sit-uat-deployment-checklist.md](./dispatch-sit-uat-deployment-checklist.md).
+6. **Dispatch flag-gating** — bank hand-offs `@ConditionalOnProperty` OFF by default in every profile (DB-row creation still runs). See [dispatch-sit-uat-deployment-checklist.md](../../../deployment/expense-payment-dispatch-sit-uat-checklist.md).
 
 ## Dead legacy (no refactor equivalent)
 

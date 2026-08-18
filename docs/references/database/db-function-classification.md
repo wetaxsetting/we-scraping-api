@@ -1,5 +1,14 @@
 # DB Function Classification & Migration Priority — wecms-api
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](flyway-migration-baseline.md) §5.
+
 **Scope:** wecms-api/ (Needs Confirmation) (Spring Boot 3.5.13, Java 21, Flyway, single tenant `VN_VNM0004_000001`).
 **Status:** Plan only — no code changes, no Flyway migrations, no DB writes.
 **Companion plan:** task-plan-common-backend-functional-seahorse.md _(removed — historical `planning/` folder deleted by project decision)_ — bootstrap & `wb_get_next_val` strategy, Phase 1/2/3 framing reused below.

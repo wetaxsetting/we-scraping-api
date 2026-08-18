@@ -4,7 +4,7 @@
 **Status:** Phase 1 (design only). No code in this phase.
 **Feature spec:** [../features/settings/firm-banking-history.md](../../features/settings/firm-banking-history.md)
 **DB design:** [../database/settings/firm-banking-history-schema.md](../database/settings/firm-banking-history-schema.md)
-**Parity checklist:** [../audits/firm-banking-history-parity-checklist.md](../audits/firm-banking-history-parity-checklist.md)
+**Parity checklist:** [../audits/firm-banking-history-parity-checklist.md](../../audits/legacy-parity/firm-banking-history-parity-checklist.md)
 
 JEX is **read-only reference** ([../../jex/](../../../../docs/jex/)). This file traces every JEX artefact to its refactor counterpart.
 
@@ -217,7 +217,7 @@ Everything else — auth filter chain, tenant context, ApiResponse envelope, err
 
 - Feature spec: [../features/settings/firm-banking-history.md](../../features/settings/firm-banking-history.md)
 - DB design: [../database/settings/firm-banking-history-schema.md](../database/settings/firm-banking-history-schema.md)
-- Parity audit checklist: [../audits/firm-banking-history-parity-checklist.md](../audits/firm-banking-history-parity-checklist.md)
+- Parity audit checklist: [../audits/firm-banking-history-parity-checklist.md](../../audits/legacy-parity/firm-banking-history-parity-checklist.md)
 - Cross-feature service mapping: [./service-mapping.md](service-mapping.md)
 - API mapping (cross-feature): [../backend/api-mapping.md](../api-spec/api-mapping.md)
 - Page mapping (cross-feature): [../frontend/page-mapping.md](../../../../wecms-web/docs/references/page-mapping/page-mapping.md)

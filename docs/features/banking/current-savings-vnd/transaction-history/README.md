@@ -1,5 +1,14 @@
 # Banking > Transaction History (VND) — Refactor Backend Feature Hub
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../../../references/database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../../../references/database/flyway-migration-baseline.md) §5.
+
 **Module:** Banking → Current & Savings (VND)
 **Menu:** Transaction History (VND)
 **Refactor screen ID / View Setting `WEB_SVC_ID`:** `banking-transaction-history` (one id shared by VND + FCY)
@@ -79,7 +88,7 @@ for the boundary.
 | Account Inquiry (VND) — upstream entry screen + sync owner | [features/banking/current-savings-vnd/account-inquiry/README.md](../account-inquiry/README.md) |
 | Smart Organizer (matching hand-off) | [features/banking/current-savings-vnd/smart-organizer.md](../../smart-organizer/README.md) |
 | Sprint plan | planning/phase-1/account-inquiry-and-transaction-history-plan.md _(removed — historical `planning/` folder deleted by project decision)_ |
-| Parity audit (preserved) | [audits/transaction-history-vnd-parity-audit.md](../../../../audits/transaction-history-vnd-parity-audit.md) |
+| Parity audit (preserved) | [audits/transaction-history-vnd-parity-audit.md](../../../../audits/legacy-parity/transaction-history-vnd-parity-audit.md) |
 | Banking ERD | [references/database/erd/banking-erd.md](../../../../references/database/erd/banking-erd.md) |
 | Account / transaction DB design | [references/database/banking/account-inquiry-vnd-db.md](../../../../references/database/banking/account-inquiry-vnd-db.md) |
 | JEX functional spec (source of truth) | [docs/jex/features/transaction-history-vnd/](../../../../../../docs/jex/features/transaction-history-vnd/README.md) |
@@ -99,7 +108,7 @@ for the boundary.
 | Amount formatter | `AmountFormatter` | `src/main/java/com/kosign/wecms/domain/banking/service/AmountFormatter.java` |
 | Inout enum | `InoutDv` | `src/main/java/com/kosign/wecms/common/enums/InoutDv.java` |
 | Excel provider | `TransactionHistoryExportProvider` | `src/main/java/com/kosign/wecms/domain/banking/export/TransactionHistoryExportProvider.java` |
-| View Setting seed | V155 → V169 / V171 / V167 / V181 | `src/main/resources/db/migration/V155__transaction_history_view_setting_seed.sql` (+ realign/contact/unlock migrations) |
+| View Setting seed | V155 → V169 / V171 / V167 / V181 | `src/main/resources/db/migration/V156__sys_scr_option_wecms.sql` (+ realign/contact/unlock migrations) |
 
 DTOs (`src/main/java/com/kosign/wecms/domain/banking/dto/`): `TransactionListResponse`, `TransactionRow`,
 `TransactionDetailResponse`, `TransactionSummaryResponse`, and the request records

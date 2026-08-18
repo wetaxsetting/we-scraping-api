@@ -131,7 +131,7 @@ All references `WECMS_BATCH DEV/source/WECMS_BATCH/WECMS_BATCH/src/batch/FILE_DE
 | 13 | Does BATCH2 retry the same file? | Yes — re-polls `(TRAN_DT, PROC_STEP='1', PROC_STAT='6')` every 60 s; retries only on empty body or `RC ∈ {BT01, G999, C999}` | `FILE_DEPOSIT_TRANSFER_BATCH2.java:48-54`, `:201-203`, `:231-233` |
 | 14 | Retry reuses the same filename/seq? | Yes — it re-reads the same `TB_FIRM_FILE_MST` row; 00302 references the existing `FIRM_FILE_NM` | `BATCH2:48-54` |
 | 15 | Duplicate submission prevented by bank/VAN? | **Not provable from this repository.** No idempotency key in the 301/302 contract | — |
-| 16 | Could multiple instances/nodes run concurrently? | Governed by the container-level `JEX_BATCH` flag in `jex.prop`, not per batch; each `.batch` declares only `name`/`batchClass`/`schedule` | `WECMS_BATCH/web/WEB-INF/jex/simpleBatch/WECMS_BATCH/*.batch`; see [../audits/legacy-batch2-ownership-verification.md](../audits/legacy-batch2-ownership-verification.md) §3 |
+| 16 | Could multiple instances/nodes run concurrently? | Governed by the container-level `JEX_BATCH` flag in `jex.prop`, not per batch; each `.batch` declares only `name`/`batchClass`/`schedule` | `WECMS_BATCH/web/WEB-INF/jex/simpleBatch/WECMS_BATCH/*.batch`; see [../audits/legacy-batch2-ownership-verification.md](../audits/batch/legacy-batch2-ownership-verification.md) §3 |
 | 17 | Process- or DB-level lock? | **None found** in the batch source | — |
 | 18 | Does `STEP`/`PROC_STAT` act as a claim? | It acts as a *state marker*, written unconditionally. It is not a claim | `:453-454` |
 

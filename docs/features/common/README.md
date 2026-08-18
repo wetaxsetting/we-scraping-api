@@ -59,9 +59,9 @@ documented there, summarized here only as a pointer.
 
 ## Audit deliverables (planning baseline)
 
-- [`../../audits/common-docs-audit.md`](../../audits/common-docs-audit.md) — docs-vs-code re-audit
-- [`../../audits/common-gap-analysis.md`](../../audits/common-gap-analysis.md) — gap vocab A–G + open decisions (C1–C6)
-- [`../../audits/common-source-index.md`](../../audits/common-source-index.md) — validated source-code index
+- [`../../audits/common-docs-audit.md`](../../audits/modules/common-docs-audit.md) — docs-vs-code re-audit
+- [`../../audits/common-gap-analysis.md`](../../audits/modules/common-gap-analysis.md) — gap vocab A–G + open decisions (C1–C6)
+- [`../../audits/common-source-index.md`](../../audits/modules/common-source-index.md) — validated source-code index
 
 ## Naming traceability
 

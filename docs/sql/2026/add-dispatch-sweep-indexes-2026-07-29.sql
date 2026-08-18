@@ -1,0 +1,317 @@
+-- WeCMS Manual Database Change
+-- Date: 2026-07-29
+-- Source: migrated from Claude Code (AI)/sql/dispatch_sweep_indexes_20260729.sql
+-- Related record: docs/deployment/payment-dispatch-merge-sit-handoff.md
+-- Type: DDL
+-- Execution: MANUAL
+-- Target environments: Live JEX DB — the original script states it has NOT been run on DEV, SIT, UAT or PROD
+-- Executor: DBA TEAM
+-- Rollback: DROP INDEX reverses each CREATE INDEX; the application does not depend on these indexes for correctness
+-- Verification: VERIFICATION CHECK REQUIRED — the original script carries no executable pre/post-check query
+--
+-- Migrated 2026-08-17 into the governed wecms-api SQL location. The original file
+-- remains unchanged in the workspace archive; nothing below this line was edited.
+-- =============================================================================
+
+-- =============================================================================
+-- dispatch_sweep_indexes_20260729.sql
+-- Supporting indexes for the three BOUNDED dispatch sweep queries introduced by
+-- the H-2 / N-1 / H-3 / Phase-5 remediation (2026-07-29).
+-- =============================================================================
+--
+--  ############################################################################
+--  ##                                                                        ##
+--  ##   STATUS: NOT EXECUTED                                                 ##
+--  ##                                                                        ##
+--  ##   This script has NOT been run against any database — not DEV, not      ##
+--  ##   SIT, not UAT, not PROD. It was authored read-only and is delivered    ##
+--  ##   for DBA review and manual execution, per the workspace manual-DDL     ##
+--  ##   policy (root CLAUDE.md §"2. Manual DDL execution policy": Flyway is   ##
+--  ##   disabled, ddl-auto=validate, and DDL is never auto-applied).          ##
+--  ##                                                                        ##
+--  ##   Nothing in the application depends on these indexes for CORRECTNESS.  ##
+--  ##   Every query below is already bounded by ORDER BY + LIMIT in Java, so  ##
+--  ##   the sweeps are safe without them. The indexes are a PERFORMANCE       ##
+--  ##   measure for the live JEX DB as these tables grow.                     ##
+--  ##                                                                        ##
+--  ############################################################################
+--
+-- Companion documents
+--   wecms-api/docs/architecture/architecture-review.md   (Rev 3 — findings H-2 / N-1 / H-3 / Phase 5)
+--
+-- Author       : architecture remediation pass, 2026-07-29
+-- Target       : the WeCMS business schema holding TB_FIRM_TRAN / TB_PAY_FILE_MST / TB_PAY_TARGET
+-- Executed by  : DBA, by hand. NOT by the application, NOT by Flyway.
+-- Run order    : standalone. No dependency on any other script; no seed data; no
+--                data migration. Safe to run in any order relative to other
+--                pending scripts, and safe to run on a live system (see §4).
+--
+--
+-- 1. WHY THESE INDEXES
+-- -----------------------------------------------------------------------------
+-- Three scheduled sweeps were changed from unbounded scans to bounded,
+-- deterministically-ordered queries:
+--
+--   (a) ResultCheckService.runOnce()          → TbFirmTranRepository.findResultCheckCandidates
+--   (b) StrandedRecoveryService.recoverPayFiles / StuckPayFileMonitorService
+--                                             → TbPayFileMstRepository.findStrandedPayFiles
+--   (c) StrandedRecoveryService.recoverPayTargets
+--                                             → TbPayTargetRepository.findStrandedPayTargets
+--
+-- Each is now `WHERE <equality predicates> ORDER BY <stable key> LIMIT <n>`.
+-- That shape is only cheap if an index supplies BOTH the filter and the sort
+-- order. Without one, PostgreSQL must scan the qualifying rows and SORT THE
+-- WHOLE SET before applying the LIMIT — so the LIMIT bounds the memory handed
+-- back to Java, but NOT the work the database does. On a table that accumulates
+-- indefinitely (TB_FIRM_TRAN gains a row per firm-banking API leg) that cost
+-- grows without limit while the sweep runs on a cron.
+--
+-- VERIFIED READ-ONLY 2026-07-29 against the JEX DEV frame DB
+-- (10.254.242.254:54311/wecmsvndevdb, schema wecmsvndev) — all three tables
+-- carry ONLY their primary key, and no PK matches any sweep's access pattern:
+--
+--   tb_firm_tran     pk_tb_firm_tran     (tran_dt, biz_key, tran_seq)
+--   tb_pay_file_mst  pk_tb_pay_file_mst  (tran_dt, biz_key, file_seq_no)
+--   tb_pay_target    pk_tb_pay_target    (tran_dt, biz_key, tran_seq)
+--
+-- So there is NO duplicate-index risk: none of the three indexes below overlaps
+-- an existing one. (pk_tb_firm_tran leads on tran_dt, which the result-check
+-- query does filter on, but it cannot serve the tran_tp / proc_stat equalities
+-- and its column order does not match the required sort — a leading-column
+-- match alone does not make it usable here.)
+--
+--
+-- 2. COLUMN ORDER — derived from the actual queries, not guessed
+-- -----------------------------------------------------------------------------
+-- 2a. TB_FIRM_TRAN — TbFirmTranRepository.findResultCheckCandidates
+--
+--     SELECT ... FROM TB_FIRM_TRAN
+--      WHERE TRAN_TP   = :tranTp        -- equality  ('202')
+--        AND PROC_STAT = :procStat      -- equality  ('6')
+--        AND TRAN_DT  IN :tranDts       -- IN-list   (UTC today, UTC yesterday)
+--      ORDER BY TRAN_DT ASC, TRAN_TM ASC, TRAN_SEQ ASC
+--      LIMIT :batchSize
+--
+--     Index: (TRAN_TP, PROC_STAT, TRAN_DT, TRAN_TM, TRAN_SEQ)
+--       * the two equality columns lead, so the scan starts already narrowed;
+--       * TRAN_DT comes third because it is BOTH the IN-list filter AND the
+--         first ORDER BY key — placing it here lets one index serve both. With
+--         a 2-element IN-list the planner can emit one ordered scan per value
+--         and merge them, preserving the sort;
+--       * TRAN_TM then TRAN_SEQ complete the ORDER BY, so the sort is satisfied
+--         by the index and the LIMIT can stop early rather than after a sort.
+--     NOTE the deliberate absence of BIZ_KEY: this is a system batch servicing
+--     every tenant (legacy IDO.TB_FIRM_TRAN_R001 has no BIZ_KEY predicate
+--     either), so a tenant column in the index would not be used.
+--
+-- 2b. TB_PAY_FILE_MST — TbPayFileMstRepository.findStrandedPayFiles
+-- 2c. TB_PAY_TARGET  — TbPayTargetRepository.findStrandedPayTargets
+--
+--     SELECT ... WHERE PROC_STAT = :procStat        -- equality ('9' or '6')
+--                  AND PROC_DTTM IS NOT NULL
+--                  AND PROC_DTTM < :cutoff          -- range
+--      ORDER BY PROC_DTTM ASC, ...                  -- oldest first
+--      LIMIT :batchSize
+--
+--     Index: (PROC_STAT, PROC_DTTM)
+--       * equality column first, range/sort column second — the textbook order;
+--       * PROC_DTTM is the first ORDER BY key, so the index also supplies the
+--         ordering and the LIMIT stops early;
+--       * the trailing ORDER BY tiebreakers (TRAN_DT, FILE_SEQ_NO / TRAN_SEQ,
+--         BIZ_KEY) are deliberately NOT in the index. They exist only to make
+--         the order total across nodes; PROC_DTTM is near-unique in practice, so
+--         including them would enlarge the index for no measurable gain.
+--       * both queries are served by ONE index per table because PROC_STAT is a
+--         bound parameter ('9' for the WAIT sweep, '6' for the H-3 claimed
+--         sweep), not a literal.
+--
+--
+-- 3. TYPE ALIGNMENT — checked, and it is CORRECT (revised 2026-07-29)
+-- -----------------------------------------------------------------------------
+-- Column types (verified read-only, information_schema.columns) against the JPA
+-- bind types (verified from the entity mappings):
+--
+--   COLUMN                       DB TYPE                 ENTITY MAPPING          BINDS AS
+--   tb_firm_tran.tran_tp         character(3)     bpchar  @JdbcTypeCode(CHAR)     CHAR    ✓
+--   tb_firm_tran.proc_stat       character(1)     bpchar  @JdbcTypeCode(CHAR)     CHAR    ✓
+--   tb_firm_tran.tran_tm         character(6)     bpchar  @JdbcTypeCode(CHAR)     CHAR    ✓
+--   tb_firm_tran.tran_dt         varchar(8)               (no annotation)         VARCHAR ✓
+--   tb_firm_tran.tran_seq        varchar(10)              (no annotation)         VARCHAR ✓
+--   tb_pay_file_mst.proc_stat    character(1)     bpchar  @JdbcTypeCode(CHAR)     CHAR    ✓
+--   tb_pay_file_mst.proc_dttm    varchar(14)              (no annotation)         VARCHAR ✓
+--   tb_pay_target.proc_stat      character(1)     bpchar  @JdbcTypeCode(CHAR)     CHAR    ✓
+--   tb_pay_target.proc_dttm      varchar(14)              (no annotation)         VARCHAR ✓
+--
+-- Every bpchar predicate column is explicitly mapped @JdbcTypeCode(SqlTypes.CHAR)
+-- (TbFirmTran:72,77,82; TbPayFileMst:65; TbPayTarget:81), so Hibernate binds the
+-- parameter as CHAR and PostgreSQL resolves `bpchar_col = ?` through the native
+-- bpchar operator. A plain bpchar btree index is therefore usable. The varchar
+-- columns carry no CHAR annotation and bind as VARCHAR, which also matches.
+--
+--   >>> The indexes below are LIKELY USABLE as written. No expression index and
+--   >>> no mapping change is required.
+--
+-- CORRECTION OF RECORD: an earlier revision of this script warned that the
+-- parameters bind as varchar and that the bpchar/varchar coercion might make the
+-- index unusable, and suggested adding @JdbcTypeCode(SqlTypes.CHAR) as the fix.
+-- That was wrong on both counts — the annotation is ALREADY present on every
+-- affected column, and was not checked before the warning was written. The
+-- warning is withdrawn.
+--
+-- ACTION FOR THE DBA — ordinary diligence, not a special hazard:
+--   1. Run the EXPLAIN in §5 BEFORE creating the index and keep the plan.
+--   2. Create the indexes.
+--   3. Run the same EXPLAIN again. Confirm an Index Scan (or Bitmap Index Scan)
+--      on the new index AND the absence of a Sort node above it.
+--   4. If a plan unexpectedly still shows Seq Scan + Sort, do NOT keep an unused
+--      index — roll back (§6) and raise it. On these row counts (§4) the planner
+--      may legitimately prefer a Seq Scan simply because the tables are tiny; in
+--      that case re-check on a table with production-like volume before drawing a
+--      conclusion.
+--
+-- NOTE the one thing this pass genuinely could not verify: no EXPLAIN was run
+-- against the index, because creating it is DDL and this pass is read-only
+-- (EXPLAIN ANALYZE is also deny-listed in .claude/rules/database.md). The type
+-- analysis above is static, from the column types and the entity mappings.
+--
+--
+-- 4. ESTIMATED OPERATIONAL IMPACT
+-- -----------------------------------------------------------------------------
+-- Current sizes on JEX DEV (read-only, 2026-07-29; pg_class.reltuples estimate):
+--
+--   tb_firm_tran     ~10,151 rows    2,480 kB total
+--   tb_pay_file_mst      ~121 rows       64 kB total
+--   tb_pay_target         ~94 rows       48 kB total
+--
+-- Build cost   : negligible at these volumes — well under a second per index.
+--                Expect roughly 300–600 kB for the TB_FIRM_TRAN index and a few
+--                tens of kB for the other two.
+-- Lock impact  : the plain `CREATE INDEX` below takes a SHARE lock, which blocks
+--                INSERT/UPDATE/DELETE on the table for the duration. At these
+--                sizes that is sub-second and acceptable in a maintenance window.
+--                For UAT/PROD, or any table that has grown materially, prefer
+--                CREATE INDEX CONCURRENTLY (see the commented variant in §5) —
+--                it does not block writes, but it cannot run inside a
+--                transaction block and can leave an INVALID index if it fails,
+--                which then needs dropping and retrying.
+-- Write cost   : three extra btree entries to maintain per affected INSERT.
+--                These tables are append-mostly and low-volume (a row per
+--                firm-banking API leg / per dispatched bulk file), so the
+--                overhead is immaterial.
+-- Read benefit : turns each sweep from "scan the qualifying set + sort it, then
+--                take N" into "walk the index, take N, stop". The benefit is
+--                small today and grows with the table — which is the point:
+--                TB_FIRM_TRAN never gets smaller.
+-- Reversible   : fully. §6 drops all three with no data effect.
+-- Correctness  : none of the three indexes changes any query RESULT. They are
+--                purely an access-path optimisation.
+--
+--
+-- 5. FORWARD SQL
+-- -----------------------------------------------------------------------------
+-- Idempotent (IF NOT EXISTS), so a re-run is a no-op.
+-- Set the schema to match the target environment before running.
+
+-- \set ON_ERROR_STOP on
+-- SET search_path TO wecmsvndev;   -- adjust per environment; do NOT assume
+
+-- 5a. Result-check candidate sweep (H-2 / N-1).
+--     Serves: TRAN_TP = ? AND PROC_STAT = ? AND TRAN_DT IN (?, ?)
+--             ORDER BY TRAN_DT, TRAN_TM, TRAN_SEQ  LIMIT ?
+CREATE INDEX IF NOT EXISTS ix_tb_firm_tran_result_check
+    ON TB_FIRM_TRAN (TRAN_TP, PROC_STAT, TRAN_DT, TRAN_TM, TRAN_SEQ);
+
+-- 5b. Stranded bulk pay-file sweep — WAIT ('9') and claimed ('6') (H-3 / Phase 5).
+--     Serves: PROC_STAT = ? AND PROC_DTTM < ?  ORDER BY PROC_DTTM  LIMIT ?
+CREATE INDEX IF NOT EXISTS ix_tb_pay_file_mst_stranded
+    ON TB_PAY_FILE_MST (PROC_STAT, PROC_DTTM);
+
+-- 5c. Stranded real-time pay-target sweep (Phase 5).
+--     Serves: PROC_STAT = ? AND PROC_DTTM < ?  ORDER BY PROC_DTTM  LIMIT ?
+CREATE INDEX IF NOT EXISTS ix_tb_pay_target_stranded
+    ON TB_PAY_TARGET (PROC_STAT, PROC_DTTM);
+
+-- Non-blocking variants for UAT / PROD. Run these INSTEAD of the three above,
+-- one at a time, each outside a transaction block:
+--
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_tb_firm_tran_result_check
+--       ON TB_FIRM_TRAN (TRAN_TP, PROC_STAT, TRAN_DT, TRAN_TM, TRAN_SEQ);
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_tb_pay_file_mst_stranded
+--       ON TB_PAY_FILE_MST (PROC_STAT, PROC_DTTM);
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_tb_pay_target_stranded
+--       ON TB_PAY_TARGET (PROC_STAT, PROC_DTTM);
+--
+-- After a CONCURRENTLY build, check for a failed/invalid index:
+--   SELECT c.relname FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid
+--    WHERE NOT i.indisvalid AND c.relname LIKE 'ix_tb_%';
+
+
+-- VERIFICATION — the indexes exist and are valid
+-- -----------------------------------------------------------------------------
+-- SELECT c.relname AS index_name, i.indisvalid, pg_size_pretty(pg_relation_size(c.oid)) AS size
+--   FROM pg_class c
+--   JOIN pg_index i ON i.indexrelid = c.oid
+--  WHERE c.relname IN ('ix_tb_firm_tran_result_check',
+--                      'ix_tb_pay_file_mst_stranded',
+--                      'ix_tb_pay_target_stranded')
+--  ORDER BY c.relname;
+--
+-- VERIFICATION — the plans actually use them (§3 step 3). EXPLAIN only, never
+-- EXPLAIN ANALYZE: ANALYZE executes the statement.
+--
+-- EXPLAIN SELECT * FROM TB_FIRM_TRAN
+--  WHERE TRAN_TP = '202' AND PROC_STAT = '6'
+--    AND TRAN_DT IN ('20260729','20260728')
+--  ORDER BY TRAN_DT ASC, TRAN_TM ASC, TRAN_SEQ ASC
+--  LIMIT 100;
+--   EXPECT: Index Scan / Bitmap Index Scan on ix_tb_firm_tran_result_check,
+--           and NO "Sort" node above it.
+--
+-- EXPLAIN SELECT * FROM TB_PAY_FILE_MST
+--  WHERE PROC_STAT = '6' AND PROC_DTTM IS NOT NULL AND PROC_DTTM < '20260729120000'
+--  ORDER BY PROC_DTTM ASC LIMIT 200;
+--   EXPECT: Index Scan on ix_tb_pay_file_mst_stranded, no Sort node.
+--
+-- EXPLAIN SELECT * FROM TB_PAY_TARGET
+--  WHERE PROC_STAT = '9' AND PROC_DTTM IS NOT NULL AND PROC_DTTM < '20260729120000'
+--  ORDER BY PROC_DTTM ASC LIMIT 200;
+--   EXPECT: Index Scan on ix_tb_pay_target_stranded, no Sort node.
+--
+-- After creating an index, run ANALYZE on the table so the planner has fresh
+-- statistics (ANALYZE <table> — a statistics refresh, distinct from the
+-- forbidden EXPLAIN ANALYZE):
+--   ANALYZE TB_FIRM_TRAN;
+--   ANALYZE TB_PAY_FILE_MST;
+--   ANALYZE TB_PAY_TARGET;
+--
+--
+-- 6. ROLLBACK SQL
+-- -----------------------------------------------------------------------------
+-- Fully reversible. Dropping an index affects no data and no query results —
+-- the sweeps revert to the scan-and-sort plan they use today, which is correct,
+-- just slower. Safe to run at any time.
+
+-- DROP INDEX IF EXISTS ix_tb_firm_tran_result_check;
+-- DROP INDEX IF EXISTS ix_tb_pay_file_mst_stranded;
+-- DROP INDEX IF EXISTS ix_tb_pay_target_stranded;
+--
+-- Non-blocking variants (UAT / PROD; must run outside a transaction block):
+--   DROP INDEX CONCURRENTLY IF EXISTS ix_tb_firm_tran_result_check;
+--   DROP INDEX CONCURRENTLY IF EXISTS ix_tb_pay_file_mst_stranded;
+--   DROP INDEX CONCURRENTLY IF EXISTS ix_tb_pay_target_stranded;
+--
+--
+-- 7. WHAT THIS SCRIPT DOES NOT DO
+-- -----------------------------------------------------------------------------
+--   * No table, column, constraint, trigger, function or sequence is created,
+--     altered or dropped. Indexes only.
+--   * No data is inserted, updated or deleted.
+--   * No legacy row is touched, so live-JEX coexistence is unaffected.
+--   * Extra indexes beyond the legacy DDL are explicitly permitted by the
+--     Legacy Schema Parity Rule ("extra performance indexes are allowed even
+--     when DEV has none — extra indexes don't hurt parity"), so this does not
+--     widen structural drift from the legacy schema.
+--
+-- =============================================================================
+-- END — NOT EXECUTED. Delivered for DBA review and manual execution.
+-- =============================================================================

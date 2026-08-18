@@ -1,4 +1,4 @@
-# backend/security/
+# business-rules/security/
 
 Security design for `wecms-api`.
 

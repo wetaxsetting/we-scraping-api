@@ -1,5 +1,14 @@
 # Approval Box — Discovery (JEX → Refactor)
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../../references/database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../../references/database/flyway-migration-baseline.md) §5.
+
 **Feature slug:** `approval-box`
 **Module:** `payment`
 **Backend package (planned):** `com.kosign.wecms.domain.payment.approvalbox`
@@ -9,7 +18,7 @@
 **Date:** 2026-05-13
 **Status:** Discovery — no code in `wecms-api/` or `wecms-web/` yet.
 
-This document follows Step 2 of [MIGRATION_PLAYBOOK.md](../../../references/migration/MIGRATION_PLAYBOOK.md). Every JEX claim cites a file:line. Legacy WSVC ids (`resl_0001_001`, `comm_0195_001`, …) appear here **only** as JEX traceability pointers — they are NOT identifier surfaces in the refactor (per workspace [CLAUDE.md](../../../../../CLAUDE.md) §"Refactor identifier naming").
+This document follows Step 2 of [migration-playbook.md](../../../references/migration/migration-playbook.md). Every JEX claim cites a file:line. Legacy WSVC ids (`resl_0001_001`, `comm_0195_001`, …) appear here **only** as JEX traceability pointers — they are NOT identifier surfaces in the refactor (per workspace [CLAUDE.md](../../../../../CLAUDE.md) §"Refactor identifier naming").
 
 ---
 
@@ -427,4 +436,4 @@ Legacy ids appear ONLY as JEX file:line citations going forward.
 | [migration-plan.md](migration-plan.md) | JEX-vs-Spring mapping, phased order, risk register. |
 | [docs/jex/business-rules/approval.md](../../../../../docs/jex/business-rules/approval.md) | Source-of-truth business rules. |
 | [docs/jex/screen-flows/payments.md](../../../../../docs/jex/screen-flows/payments.md) | Source-of-truth flow (with the `pymn_0001_001` typo noted in §1). |
-| [docs/refactor-wecms/MIGRATION_PLAYBOOK.md](../../../references/migration/MIGRATION_PLAYBOOK.md) | Procedural playbook. |
+| [docs/refactor-wecms/MIGRATION_PLAYBOOK.md](../../../references/migration/migration-playbook.md) | Procedural playbook. |

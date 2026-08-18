@@ -4,8 +4,8 @@ Final parity review of the refactored Firm Banking History against the legacy JE
 `comm_0221_001_r001`. Parent: [README.md](README.md).
 Backed by the JEX-side audit set: [refactor-gap-analysis](../../../../../docs/jex/features/firm-banking-history/refactor-gap-analysis.md) ·
 [refactor-verification-report (2026-06-05)](../../../../../docs/jex/features/firm-banking-history/refactor-verification-report.md) ·
-[parity checklist](../../../references/audits/firm-banking-history-parity-checklist.md) ·
-[independent review (2026-05-08)](../../../references/audits/firm-banking-history-review-2026-05-08.md).
+[parity checklist](../../../audits/legacy-parity/firm-banking-history-parity-checklist.md) ·
+[independent review (2026-05-08)](../../../audits/historical/firm-banking-history-review-2026-05-08.md).
 
 **Review date:** 2026-06-05. **Legend:** MATCH = behaviourally equivalent · PARTIAL = equivalent
 with a documented intentional deviation · MISSING = legacy behaviour not reproduced.

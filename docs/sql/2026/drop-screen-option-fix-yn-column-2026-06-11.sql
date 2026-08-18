@@ -1,0 +1,45 @@
+-- WeCMS Manual Database Change
+-- Date: 2026-06-11
+-- Source: migrated from Claude Code (AI)/sql/sys_scr_option_wecms_drop_fix_yn_20260611.sql
+-- Related record: TBD
+-- Type: DDL
+-- Execution: MANUAL
+-- Target environments: LOCAL / shared refactor dev DB ONLY — the original script states DO NOT run against any live JEX database
+-- Executor: DBA OR DEV TEAM — environment dependent
+-- Rollback: Re-adding the column is possible but the original script forbids adding FIX_YN to any live JEX database
+-- Verification: VERIFICATION CHECK REQUIRED — the original script carries no executable pre/post-check query
+--
+-- DESTRUCTIVE / DATA-RISK CHANGE — DBA REVIEW REQUIRED
+--
+-- Migrated 2026-08-17 into the governed wecms-api SQL location. The original file
+-- remains unchanged in the workspace archive; nothing below this line was edited.
+-- =============================================================================
+
+-- ============================================================================
+-- sys_scr_option_wecms — drop refactor-only FIX_YN column
+-- Date    : 2026-06-11
+-- Scope   : LOCAL / SHARED REFACTOR DEV DB ONLY  (172.168.5.172 / localhost)
+-- Purpose : Optional cleanup. FIX_YN support was removed from the refactor
+--           (entity / DTO / service / frontend). Column-locking is now a
+--           static frontend-registry concern; CHECKBOX/ETC stay locked via
+--           SPECIAL_FIELD_IDS. The refactor entity no longer maps FIX_YN, so
+--           an orphaned fix_yn column on the dev DB is harmless (Hibernate
+--           validate ignores unmapped columns) — this script just removes the
+--           leftover so the dev schema matches the live JEX 10-column shape.
+--
+-- IMPORTANT:
+--   * NOT REQUIRED for the app to boot — ddl-auto=validate passes with or
+--     without this column once the entity mapping is removed.
+--   * DO NOT RUN against any live JEX database (DEV / UAT / PROD). The live
+--     JEX SYS_SCR_OPTION_WECMS already has no fix_yn column; there is nothing
+--     to drop and nothing to add there.
+--   * No FIX_YN ALTER ADD COLUMN is to be applied to live JEX. Ever.
+-- ============================================================================
+
+ALTER TABLE sys_scr_option_wecms DROP COLUMN IF EXISTS fix_yn;
+
+-- Verify the resulting column set is the canonical live-JEX 10:
+--   WEB_SVC_ID, FIELD_ID, FIELD_NM, DISP_ORD, DISP_YN, USE_YN,
+--   SIZE, DYM_AREA_ID, SORT_YN, HTML_CONT
+-- SELECT column_name FROM information_schema.columns
+--  WHERE table_name = 'sys_scr_option_wecms' ORDER BY ordinal_position;

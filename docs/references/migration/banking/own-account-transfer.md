@@ -1,5 +1,14 @@
 # Banking > Own Account Transfer — JEX → Spring/Next Migration Mapping
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../database/flyway-migration-baseline.md) §5.
+
 **Refactor slug:** `own-account-transfer`
 **Refactor route:** `/banking/own-account-transfer`
 **Status:** Phase 1 — design only. No code in this phase.
@@ -292,7 +301,7 @@ The bundle is loaded **only on routes that need it** — `wecms-web/app/(dashboa
 
 ## 9. Phase ordering inside the migration playbook
 
-Per [docs/refactor-wecms/MIGRATION_PLAYBOOK.md](../MIGRATION_PLAYBOOK.md) — the playbook's step 4–5 (backend slice) + step 6 (frontend slice) for **own-account-transfer** decompose as:
+Per [docs/refactor-wecms/MIGRATION_PLAYBOOK.md](../migration-playbook.md) — the playbook's step 4–5 (backend slice) + step 6 (frontend slice) for **own-account-transfer** decompose as:
 
 1. **Phase 1 — design (this MR).** Five docs land + summary table to chat. No code.
 2. **Phase 1.5 — Flyway.** New migrations: `ACCT_AUTH_INFO` table, `ACCT_MSTR` column adds (CORC_BF_BAL, BANK_CERT_SEQ, HAND_REG_YN, PRN_SEQ if missing), `SYS_SCR_OPTION_WECMS` seed for `web_svc_id='own-account-transfer'`. See database doc §3–§5.

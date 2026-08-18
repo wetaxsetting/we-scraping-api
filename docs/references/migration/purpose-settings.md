@@ -1,5 +1,14 @@
 # Purpose Settings — JEX → Spring + Next.js mapping
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../database/flyway-migration-baseline.md) §5.
+
 **Refactor slug:** `purpose-settings`
 **Sibling docs:** [feature spec](../../features/settings/purpose.md) · backend design (Needs Confirmation) · [frontend design](../../../../wecms-web/docs/features/settings/purpose.md) · DB schema (Needs Confirmation) · task plan _(removed — historical `archive/` folder deleted by project decision)_.
 **Mirrors live JEX:** `comm_0187_001_r001` (list), `_r002` (name search — merged into list), `_c001` (create), `_u002` (edit + soft-delete), `_u004` (reorder), `comm_0187_004_c001` (Excel upload). Out of scope: `_u003` (reset to system defaults), `comm_0187_003_*` (Unused / restore).
@@ -95,7 +104,7 @@ The refactor consumes existing shared components instead of re-implementing them
 | Validation | Bean Validation (`@NotBlank`, `@Size`, `@Pattern`) on record components. |
 | Tenant write idempotence | `JpaRepository.save(entity)` — JEX's manual `update()` calls map 1:1 onto Spring Data dirty updates. |
 
-No new shared infrastructure required. The shared `AuditLogService` already exists (introduced by `firm-banking-settings` Phase 2 — see its [V63 migration](../../../src/main/resources/db/migration/V63__audit_logs_infm_prerequisite.sql)).
+No new shared infrastructure required. The shared `AuditLogService` already exists (introduced by `firm-banking-settings` Phase 2 — see its [V63 migration](../../../src/main/resources/db/migration/V8__audit_logs_infm.sql)).
 
 ---
 
@@ -156,9 +165,9 @@ wecms-api/src/main/java/com/kosign/wecms/domain/setting/purposesettings/
 
 ```
 wecms-api/src/main/resources/db/migration/
-├── V80__busi_usag_set_infm_schema.sql            (CREATE TABLE matching DEV; columns + PK + nullability)
-├── V81__busi_usag_set_infm_purpose_in_use_view.sql  (CREATE OR REPLACE VIEW v_purpose_in_use)
-└── V82__busi_usag_set_infm_demo_seed.sql         (Phase 3 — 5-10 level-1 + level-2 rows for VN_VNM0004_000001)
+├── V35__busi_usag_set_infm.sql            (CREATE TABLE matching DEV; columns + PK + nullability)
+├── V81__busi_usag_set_infm_purpose_in_use_view.sql  (CREATE OR REPLACE VIEW v_purpose_in_use) *(historical — REPLACED BY CODE; `v_purpose_in_use` is a Hibernate `@Subselect`, no view migration exists)*
+└── V82__busi_usag_set_infm_demo_seed.sql         (Phase 3 — 5-10 level-1 + level-2 rows for VN_VNM0004_000001) *(historical — DROPPED; demo seeds were removed in the 2026-06-09 rebaseline)*
 ```
 
 V80 numbering follows the rolling-slot rule from [wecms-api/CLAUDE.md §Data Migration Rule](../../../CLAUDE.md): the next free slot at planning time. Phase 2 owner re-checks the slot at write time and bumps if another feature has claimed it in the meantime.

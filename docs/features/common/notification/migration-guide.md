@@ -1,4 +1,4 @@
-# notification — Migration Guide (Backend)
+# Notification — Migration Guide (Backend)
 
 **Part of:** Common → notification
 **Last verified:** 2026-06-23
@@ -66,6 +66,6 @@ Tracked as open decision **C1** (`refactor-gap-analysis.md`). Confirmed in the c
 ## Cross-link
 
 Full read-only legacy analysis + the C1/C2 decisions:
-[../../../audits/notification-popup-legacy-vs-refactor-analysis.md](../../../audits/notification-popup-legacy-vs-refactor-analysis.md).
+[../../../audits/notification-popup-legacy-vs-refactor-analysis.md](../../../audits/legacy-parity/notification-popup-legacy-vs-refactor-analysis.md).
 Approval-detail popup parity (the click-through target, partial): 
-[../../../audits/notification-approval-detail-popup-parity-audit.md](../../../audits/notification-approval-detail-popup-parity-audit.md).
+[../../../audits/notification-approval-detail-popup-parity-audit.md](../../../audits/legacy-parity/notification-approval-detail-popup-parity-audit.md).

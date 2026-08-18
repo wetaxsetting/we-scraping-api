@@ -1,4 +1,4 @@
-# navigation — Source Code Index (Backend)
+# Navigation — Source Code Index (Backend)
 
 **Part of:** Common → navigation
 **Last verified:** 2026-06-23

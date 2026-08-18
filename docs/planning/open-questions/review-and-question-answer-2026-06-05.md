@@ -1,5 +1,14 @@
 # WeCMS Refactor — Rà soát đầy đủ & Phản hồi câu hỏi (2026-06-05)
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../references/database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../references/database/flyway-migration-baseline.md) §5.
+
 **Gửi:** Team Phát triển Việt Nam · Team KOSIGN · Quản lý dự án
 **Chủ đề:** Phản hồi từng mục, dựa trên source code, cho bản rà soát toàn dự án (`review-and-question-2026-06-05`)
 **Cơ sở kiểm chứng:** mã nguồn backend `wecms-api` tính tới 2026-06-08, đối chiếu với hệ JEX cũ làm nguồn chân lý nghiệp vụ.

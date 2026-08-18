@@ -1,4 +1,4 @@
-# notification — Refactor Gap Analysis (Backend)
+# Notification — Refactor Gap Analysis (Backend)
 
 **Part of:** Common → notification
 **Last verified:** 2026-06-23
@@ -73,7 +73,7 @@ Clicking an approval notification opens the Approval Details popup on the curren
 is correct), but the popup currently shows the approval header / status / approver chain / content and is
 **missing the transaction-detail rows, attachments, and the Approve/Reject/Edit/Withdraw actions**. This
 is a frontend-plus-small-read-only-backend follow-up, not a notification-module gap per se — full detail in
-[../../../audits/notification-approval-detail-popup-parity-audit.md](../../../audits/notification-approval-detail-popup-parity-audit.md).
+[../../../audits/notification-approval-detail-popup-parity-audit.md](../../../audits/legacy-parity/notification-approval-detail-popup-parity-audit.md).
 
 ## Open decisions (carry forward)
 

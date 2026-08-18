@@ -1,5 +1,14 @@
 # Service Mapping — JEX → Spring Boot
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../database/flyway-migration-baseline.md) §5.
+
 Cross-feature index of JEX services translated (or planned for translation) into Spring Boot REST endpoints in `wecms-api`.
 
 JEX is **read-only reference**. This file exists for traceability only — never modify JEX side.
@@ -26,7 +35,7 @@ JEX is **read-only reference**. This file exists for traceability only — never
 | `nxisas_oprtstts_*` *(legacy GDT-pull bridge via OSMC; see `OperationStatusService.java:21` TODO referencing OSMC `TRCO_TRCO001_00003`)* | (NXISAS / OSMC handler — not in `wabooks` action tree) | `/api/v1/addon/operation-status/inquire` | POST | `/addon/operation-status` | `operation` | Deferred — refactor R&D scope is local-only (no NXISAS / no GDT integration); Phase 4 ships a stub returning `WBE_NOT_IMPLEMENTED` | [../features/addon-service/operation-status-inquiry.md](../../features/addon-service/operation-status-inquiry.md) |
 | `aosv_0001_001_u001` *(manual operator edit)* | `aosv_0001_001_u001_act.jsp` | `/api/v1/addon/operation-status/{taxcode}` (PUT) | PUT | `/addon/operation-status` | `operation` | Deferred — refactor is read-only on this page; no PO ask for manual edits | [../features/addon-service/operation-status-inquiry.md](../../features/addon-service/operation-status-inquiry.md) |
 | `aosv_0001_002_*` *(Add Operation Status modal — `_r001` / `_c001`)* | `aosv_0001_002_*_act.jsp` | (no refactor endpoint) | — | (no route) | `operation` | Deferred — manual-add modal out of refactor scope | — |
-| `comm_0221_001_r001` *(read — five-leg unified history)* | `comm_0221_001_r001_act.jsp` | `/api/v1/settings/firm-banking-history` | GET | (Settings modal panel — `useSettingsModal().open("firm_banking_history")`; no standalone route per [feature spec § 4.4](../../features/settings/firm-banking-history.md)) | `setting` (sub-package `setting/firmbankinghistory`) | Working — Phase 2 backend (controller + service + repository + `FirmBankingHistoryView` over Flyway V60 view), Phase 3 frontend wiring (filters / table / popover via shared `<InteractiveDateRangePicker>` + `<TableHeaderCell>` + `useApiData`), Phase 3b/c/d resolvers (`dictionaryVan` / `scrapingResultCodes` / `TranTp` / `FirmBankingSvcType` / `FirmBankingServiceNameResolver`) | [../features/settings/firm-banking-history/](../../features/settings/firm-banking-history/README.md) · [./firm-banking-history-mapping.md](firm-banking-history-mapping.md) · [../database/settings/firm-banking-history-schema.md](../database/settings/firm-banking-history-schema.md) · [../audits/firm-banking-history-parity-checklist.md](../audits/firm-banking-history-parity-checklist.md) |
+| `comm_0221_001_r001` *(read — five-leg unified history)* | `comm_0221_001_r001_act.jsp` | `/api/v1/settings/firm-banking-history` | GET | (Settings modal panel — `useSettingsModal().open("firm_banking_history")`; no standalone route per [feature spec § 4.4](../../features/settings/firm-banking-history.md)) | `setting` (sub-package `setting/firmbankinghistory`) | Working — Phase 2 backend (controller + service + repository + `FirmBankingHistoryView` over Flyway V60 view), Phase 3 frontend wiring (filters / table / popover via shared `<InteractiveDateRangePicker>` + `<TableHeaderCell>` + `useApiData`), Phase 3b/c/d resolvers (`dictionaryVan` / `scrapingResultCodes` / `TranTp` / `FirmBankingSvcType` / `FirmBankingServiceNameResolver`) | [../features/settings/firm-banking-history/](../../features/settings/firm-banking-history/README.md) · [./firm-banking-history-mapping.md](firm-banking-history-mapping.md) · [../database/settings/firm-banking-history-schema.md](../database/settings/firm-banking-history-schema.md) · [../audits/firm-banking-history-parity-checklist.md](../../audits/legacy-parity/firm-banking-history-parity-checklist.md) |
 
 > Add a row here when starting work on a new JEX service. Keep the kebab-case slug consistent across `features/`, `backend/`, `frontend/`, `database/`, and `migration/`.
 
@@ -120,7 +129,7 @@ Backend handler today: [`EInvoiceController#list`](../../../src/main/java/com/ko
 /addon/sales-einvoices
 ```
 
-Page file: [`wecms-web/app/(dashboard)/addon/sales-einvoices/page.tsx`](../../../../wecms-web/app/(dashboard)/addon/sales-einvoices/page.tsx). Page shell shared with Expenses via `<EInvoicesPage translationPrefix="sales_einvoices">`; client wrapper [`<EInvoicesClient type="SALES">`](../../../../wecms-web/components/addon/sales-einvoices/EInvoicesClient.tsx) calls `fetchEInvoices(type)`.
+Page file: [`wecms-web/app/(dashboard)/addon/sales-einvoices/page.tsx`](<../../../../wecms-web/app/(dashboard)/addon/sales-einvoices/page.tsx>). Page shell shared with Expenses via `<EInvoicesPage translationPrefix="sales_einvoices">`; client wrapper [`<EInvoicesClient type="SALES">`](../../../../wecms-web/components/addon/sales-einvoices/EInvoicesClient.tsx) calls `fetchEInvoices(type)`.
 
 ### Status: **Planned — Phase 2 implementation approved**
 
@@ -217,7 +226,7 @@ Backend handler: same `EInvoiceController#list` → `EInvoiceService#list` → `
 /addon/expenses-einvoices
 ```
 
-Page file: [`wecms-web/app/(dashboard)/addon/expenses-einvoices/page.tsx`](../../../../wecms-web/app/(dashboard)/addon/expenses-einvoices/page.tsx). Entry wrapper: [`<ExpensesEInvoicesPage>`](../../../../wecms-web/components/addon/expenses-einvoices/ExpensesEInvoicesPage.tsx) — two lines of meaningful code, composes the shared `<EInvoicesClient type="EXPENSE" translationPrefix="expenses_einvoices" />`.
+Page file: [`wecms-web/app/(dashboard)/addon/expenses-einvoices/page.tsx`](<../../../../wecms-web/app/(dashboard)/addon/expenses-einvoices/page.tsx>). Entry wrapper: [`<ExpensesEInvoicesPage>`](../../../../wecms-web/components/addon/expenses-einvoices/ExpensesEInvoicesPage.tsx) — two lines of meaningful code, composes the shared `<EInvoicesClient type="EXPENSE" translationPrefix="expenses_einvoices" />`.
 
 ### Status: **Planned — shared implementation with Sales**
 
@@ -324,7 +333,7 @@ Backend handler today: [`OperationStatusController#list`](../../../src/main/java
 /addon/operation-status
 ```
 
-Page file: [`wecms-web/app/(dashboard)/addon/operation-status/page.tsx`](../../../../wecms-web/app/(dashboard)/addon/operation-status/page.tsx). Client wrapper [`<OperationStatusClient>`](../../../../wecms-web/components/addon/operation-status/OperationStatusClient.tsx) calls `fetchOperationStatus(q?)` via `useApiData`; rows pass through [`mapOperationCompanyRow`](../../../../wecms-web/lib/api/mappers.ts) which coerces the GDT free-text Vietnamese status into the canonical 3-state enum (`active_certificate_issued | suspended | not_registered`). Page shell [`<OperationStatusPage>`](../../../../wecms-web/components/addon/operation-status/OperationStatusPage.tsx) (Figma 12346:109158) renders a 5-column table via `<DataTableShell footerMode="paginationOnly">` (no totals row).
+Page file: [`wecms-web/app/(dashboard)/addon/operation-status/page.tsx`](<../../../../wecms-web/app/(dashboard)/addon/operation-status/page.tsx>). Client wrapper [`<OperationStatusClient>`](../../../../wecms-web/components/addon/operation-status/OperationStatusClient.tsx) calls `fetchOperationStatus(q?)` via `useApiData`; rows pass through [`mapOperationCompanyRow`](../../../../wecms-web/lib/api/mappers.ts) which coerces the GDT free-text Vietnamese status into the canonical 3-state enum (`active_certificate_issued | suspended | not_registered`). Page shell [`<OperationStatusPage>`](../../../../wecms-web/components/addon/operation-status/OperationStatusPage.tsx) (Figma 12346:109158) renders a 5-column table via `<DataTableShell footerMode="paginationOnly">` (no totals row).
 
 ### Status: **Planned**
 

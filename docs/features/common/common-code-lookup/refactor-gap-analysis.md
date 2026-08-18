@@ -26,7 +26,7 @@ Gap vocabulary: **MATCH** · **APPROVED DEVIATION** · **PARTIAL** · **MISSING*
 > domain-embedded.**
 
 Status: recorded, **not actioned** — needs PO (Mr. Jung). Tracked in
-[`../../../audits/common-gap-analysis.md`](../../../audits/common-gap-analysis.md) rows A6 / C6 / D5.
+[`../../../audits/common-gap-analysis.md`](../../../audits/modules/common-gap-analysis.md) rows A6 / C6 / D5.
 
 Until C6 is decided:
 - Keep bank-name resolution inside the owning domain mapper (do not extract a `/common/banks`).
@@ -44,4 +44,4 @@ Until C6 is decided:
 ## Related
 
 - Hub: [`README.md`](README.md) · Functional: [`functional-specification.md`](functional-specification.md)
-- Audit: [`../../../audits/common-gap-analysis.md`](../../../audits/common-gap-analysis.md)
+- Audit: [`../../../audits/common-gap-analysis.md`](../../../audits/modules/common-gap-analysis.md)

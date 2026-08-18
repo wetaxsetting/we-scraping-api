@@ -28,7 +28,7 @@ evidence only. Items needing sign-off are marked **[CONFIRM: Mr. Kang]**, **[CON
 > Verdict in §10 updated. **Remaining condition restated 2026-07-29:** not a coexistence sign-off —
 > the 4→1 architecture is already approved and coexistence is resolved for DEV/SIT / is an Ops check
 > for UAT. The open item is that the retry sweep is the K9 **Option A** design Mr. Kang declined.
-> → [legacy-batch2-ownership-verification.md](../audits/legacy-batch2-ownership-verification.md)
+> → [legacy-batch2-ownership-verification.md](../audits/batch/legacy-batch2-ownership-verification.md)
 
 > **Working-tree note (material).** This audit reads the **uncommitted working tree**, which has moved
 > since the 2026-07-28 pass. `TransferDispatchExecutor.java` and its test are **already deleted**
@@ -38,9 +38,9 @@ evidence only. Items needing sign-off are marked **[CONFIRM: Mr. Kang]**, **[CON
 
 **Companion documents (read alongside, not superseded):**
 [architecture-review.md](../architecture/architecture-review.md) ·
-[scheduler-legacy-parity-audit.md](../audits/scheduler-legacy-parity-audit.md) ·
-[scheduler-audit.md](../audits/scheduler-audit.md) ·
-[cleanup.md](cleanup.md) (2026-07-28 dead-code pass — partly actioned; see §5.1)
+[scheduler-legacy-parity-audit.md](../audits/legacy-parity/scheduler-legacy-parity-audit.md) ·
+[scheduler-audit.md](../audits/legacy-parity/scheduler-audit.md) ·
+[dead-code-duplication-cleanup-2026-07-28.md](dead-code-duplication-cleanup-2026-07-28.md) (2026-07-28 dead-code pass — partly actioned; see §5.1)
 
 ---
 
@@ -104,7 +104,7 @@ refactors*, but the tree contains **9 `@Scheduled` classes / 13 annotations**. T
 
 The other six (`ExchangeRateBatchScheduler`, `OperationStatusBatchScheduler`, 3× HAENGSUNG,
 `NxisasSessionRegistry`) are outside batch-refactor scope and are covered by
-[scheduler-legacy-parity-audit.md](../audits/scheduler-legacy-parity-audit.md).
+[scheduler-legacy-parity-audit.md](../audits/legacy-parity/scheduler-legacy-parity-audit.md).
 
 All three dispatch jobs default to `-` (Spring's never-fire marker) and every flag in
 [batch-dispatch-variable-reference.md](../deployment/batch-dispatch-variable-reference.md) is `false`. Per the audit brief, **these are not dead code.**
@@ -396,7 +396,7 @@ Each verified live through a non-code-reference mechanism.
 bug. It is not — legacy does exactly the same: `FILE_DEPOSIT_TRANSFER_BATCH1.java:272` uses
 `"NAPAS_REAL_TIME_BATCH"` for `TB_BATCH_SCHEDULE_INFO_R001`, and `:801` uses
 `"FILE_DEPOSIT_TRANSFER_BATCH1"` for `TB_BATCH_SCHEDULE_DTL_R001`. **Faithful parity.** This closes the
-open question raised in [cleanup.md](cleanup.md) §5.6.
+open question raised in [dead-code-duplication-cleanup-2026-07-28.md](dead-code-duplication-cleanup-2026-07-28.md) §5.6.
 
 ### 7.3 Safe implementation improvements
 
@@ -441,7 +441,7 @@ open question raised in [cleanup.md](cleanup.md) §5.6.
 > (monitoring is precisely what K9 prescribed). **`BulkExecutionRetryJob` is not** — it is Option A, and
 > it must not be enabled anywhere until Mr. Kang explicitly reopens K9.
 >
-> Full analysis: [architecture/k9-bulk-retry-reassessment.md](../architecture/k9-bulk-retry-reassessment.md).
+> Full analysis: [architecture/bulk-retry-reassessment.md](../architecture/bulk-retry-reassessment.md).
 > The original finding text is preserved below as the record of the reasoning that led to the error.
 
 > **✅ CLOSED — code implemented, tests green, disabled by default.**
@@ -461,7 +461,7 @@ open question raised in [cleanup.md](cleanup.md) §5.6.
 >
 > **Still open — RESTATED 2026-07-29 after an ownership verification.** The "coexistence precondition"
 > written here was wrong on three counts and is superseded by
-> [legacy-batch2-ownership-verification.md](../audits/legacy-batch2-ownership-verification.md):
+> [legacy-batch2-ownership-verification.md](../audits/batch/legacy-batch2-ownership-verification.md):
 > * The **4→1 architecture, including Batch 2's replacement, was already approved** by Mr. Kang
 >   (2026-06-04 / 06-06 / 06-12, *"배치2 → API1으로 갈음"*) — it should never have been re-asked.
 > * **Coexistence is scoped and is an Ops item:** DEV/SIT are DB-separated (SIT has no legacy batch
@@ -686,7 +686,7 @@ deleted a wrong constant rather than losing behaviour.
    OFF **everywhere** because it is the K9 **Option A** periodic sweep Mr. Kang was offered and
    **declined** (*"no periodic sweep; monitoring + manual"*).
    **[CONFIRM: Mr. Kang — reopen K9]** →
-   [legacy-batch2-ownership-verification.md](../audits/legacy-batch2-ownership-verification.md)
+   [legacy-batch2-ownership-verification.md](../audits/batch/legacy-batch2-ownership-verification.md)
 2. ~~**§5.3 row 1** — do not delete `findByTranDtAndProcStepAndProcStat`…~~ **Released.** The retry uses
    the bounded `findBulkExecutionRetryCandidates`; the legacy-shaped finder is now genuinely unused
    and deletable (kept as an operator diagnostic).

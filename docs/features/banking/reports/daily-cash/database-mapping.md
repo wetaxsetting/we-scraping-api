@@ -198,7 +198,7 @@ The IDOs wrap each as `SELECT <cols> FROM <fn>(:BIZ_KEY,:REQ_DATE,:REQ_DATE2) WH
 
 1. ~~**`rept_0900_001_rec1..4` bodies — UNVERIFIED.**~~ ✅ **RESOLVED 2026-06-04.** The `rec2`/`rec4`
    bodies were read from DEV via `pg_get_functiondef` and recorded in
-   [refactor-parity-verification.md](refactor-parity-verification.md) §1.5: summary buckets `03/04`→NORM,
+   [refactor-parity-verification.md](../../../../audits/legacy-parity/daily-cash-refactor-parity-verification.md) §1.5: summary buckets `03/04`→NORM,
    `05/06`→SAV, `02`→ACCT, `01`→LOAN; `TOTL_CASH` comes from `cash_repy_mstr` via `rec4→rec3` (out of
    refactor scope → 0); `07/08` excluded from every summary bucket. DEV's `ACCT_TYPE_CD` distribution is
    `01–07` only (no `08`, no fabricated `11/12/13/21`). **Update 2026-06-13:** the active path now calls

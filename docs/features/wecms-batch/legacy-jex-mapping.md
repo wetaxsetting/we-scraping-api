@@ -71,7 +71,7 @@ The migration moved a **polling-based, JEX-runtime-coupled batch farm** to **eve
 
 **Migration status legend:** ✅ Migrated · ✅ Absorbed (folded into another component) · 🔁 Replaced (different mechanism) · ➕ Added (refactor-only) · ⏳ Deferred / not ported (PO scope).
 
-**Deferred / open before non-local activation** (full authoritative list — [../../audits/wecms-batch-full-legacy-vs-refactor-final-gap-audit.md](../../audits/wecms-batch-full-legacy-vs-refactor-final-gap-audit.md)):
+**Deferred / open before non-local activation** (full authoritative list — [../../audits/wecms-batch-full-legacy-vs-refactor-final-gap-audit.md](../../audits/legacy-parity/wecms-batch-full-legacy-vs-refactor-final-gap-audit.md)):
 - UAT Shinhan/Woori bank-code override (mandatory before UAT/PROD on those banks).
 - Result-check day-boundary fix (before enabling the PROD cron).
 - Operating-hours gate + channel-mix validation (PO ruling: SIT-only vs PROD-required).
@@ -84,4 +84,4 @@ The migration moved a **polling-based, JEX-runtime-coupled batch farm** to **eve
 - Legacy helper: `WECMS DEV/WECMS/src/com/firm/FIRM_PROC.java`; service descriptor `WECMS DEV/WECMS_ETC/xml/service/IMO/IMO.WB_00000100.xml`.
 - Schema DDL parity: [../../references/database/payment/firm-banking-dispatch-schema.md](../../references/database/payment/firm-banking-dispatch-schema.md).
 - Dispatch-path payment peer: [../../references/migration/internal-transfer-mapping.md](../../references/migration/internal-transfer-mapping.md).
-- Audits: [TO-BE process](../../audits/wecms-batch-tobe-process-audit.md) · [final gap](../../audits/wecms-batch-full-legacy-vs-refactor-final-gap-audit.md).
+- Audits: [TO-BE process](../../audits/legacy-parity/wecms-batch-tobe-process-audit.md) · [final gap](../../audits/legacy-parity/wecms-batch-full-legacy-vs-refactor-final-gap-audit.md).

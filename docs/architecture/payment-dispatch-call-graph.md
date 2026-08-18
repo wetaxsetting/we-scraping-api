@@ -95,7 +95,7 @@ Two consequences worth stating explicitly, because they change what needs testin
 
 Re-verified 2026-07-29. **Exactly three** dispatch schedulers exist; `BulkExecutionRetryJob` was
 **withdrawn** (it was the periodic sweep K9 explicitly declined — see
-[../audits/legacy-batch2-ownership-verification.md](../audits/legacy-batch2-ownership-verification.md)).
+[../audits/legacy-batch2-ownership-verification.md](../audits/batch/legacy-batch2-ownership-verification.md)).
 
 | Job | Cron property (default) | Capability | Drives |
 |---|---|---|---|

@@ -84,7 +84,7 @@ Roughly 35 further untracked documents under `docs/architecture/`, `docs/audits/
 
 | Script | Status |
 |---|---|
-| [`Claude Code (AI)/sql/dispatch_sweep_indexes_20260729.sql`](../../../Claude%20Code%20(AI)/sql/dispatch_sweep_indexes_20260729.sql) | **NOT EXECUTED** — see §6. |
+| [`docs/sql/2026/add-dispatch-sweep-indexes-2026-07-29.sql`](../sql/2026/add-dispatch-sweep-indexes-2026-07-29.sql) | **NOT EXECUTED** — see §6. |
 
 No Flyway migration was added. Flyway stays disabled and `ddl-auto` stays `validate`, per
 `project_flyway_disabled_ddl_validate.md`.
@@ -186,7 +186,7 @@ exactly that (blocker S-6).
 
 | Script | Contents | Status |
 |---|---|---|
-| `Claude Code (AI)/sql/dispatch_sweep_indexes_20260729.sql` | Three supporting indexes for the bounded sweeps introduced by H-2 / N-1 / H-3 / Phase 5, plus an `EXPLAIN` validation section. | **NOT EXECUTED** — banner present at two points in the file. Authored read-only; not run against DEV, SIT, UAT or PROD. |
+| `docs/sql/2026/add-dispatch-sweep-indexes-2026-07-29.sql` | Three supporting indexes for the bounded sweeps introduced by H-2 / N-1 / H-3 / Phase 5, plus an `EXPLAIN` validation section. | **NOT EXECUTED** — banner present at two points in the file. Authored read-only; not run against DEV, SIT, UAT or PROD. |
 
 Execution is a **manual DBA action** per root `CLAUDE.md` §"2. Manual DDL execution policy". Run the
 `EXPLAIN` validation in §3 of the script first and drop any index the planner does not use.
@@ -240,7 +240,7 @@ appended in the **2026-02-11** revision, which reads like a column that gained f
 a conditional marker.
 
 **If the rejection happens:** it is **not** a DTO or Jackson problem. Escalate to Mr. Kang as
-question 4 in [../audits/efs-guide-1.2.6-open-questions-closure.md](../audits/efs-guide-1.2.6-open-questions-closure.md) §10 —
+question 4 in [../audits/efs-guide-1.2.6-open-questions-closure.md](../audits/governance/efs-guide-1.2.6-open-questions-closure.md) §10 —
 "confirm the §5.4 FX block is conditional on the Woori FX path and may be omitted for domestic VND".
 Do **not** start sending a zero/empty FX block on domestic transfers to make the error go away: a
 fabricated `apl_exc_rate` on a money-moving request is far worse than a rejected one.

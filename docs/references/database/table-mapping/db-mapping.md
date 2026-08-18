@@ -1,5 +1,14 @@
 # DB Mapping — Refactor PostgreSQL ↔ JEX schema
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../flyway-migration-baseline.md) §5.
+
 Cross-feature index of tables touched by the refactor, with their JEX counterpart and the Flyway migration that introduced them.
 
 JEX is **read-only reference**. The refactor mirrors JEX schema column-for-column unless an explicit divergence is documented.
@@ -29,7 +38,7 @@ JEX is **read-only reference**. The refactor mirrors JEX schema column-for-colum
 
 ## Migration index (high level)
 
-See per-feature migration intent docs in this folder, and the parity audit at [../audits/migration-audit/db-parity-audit-2026-04-30.md](../../audits/db-parity-audit-2026-04-30.md). Full migration log is documented inline in [../../../wecms-api/CLAUDE.md](../../../../CLAUDE.md) §"Migrations".
+See per-feature migration intent docs in this folder, and the parity audit at [../audits/migration-audit/db-parity-audit-2026-04-30.md](../../../audits/historical/db-parity-audit-2026-04-30.md). Full migration log is documented inline in [../../../wecms-api/CLAUDE.md](../../../../CLAUDE.md) §"Migrations".
 
 | Migration | Scope |
 |---|---|

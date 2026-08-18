@@ -3,7 +3,7 @@
 **Part of:** Common → excel-import
 **Last verified:** 2026-06-23
 
-Gap vocabulary follows the common-module standard: **DONE** (parity), **PARTIAL** (works but diverges from the ideal/shared pattern), **MISSING** (not built; tracked as an open decision). See [`../../../audits/common-gap-analysis.md`](../../../audits/common-gap-analysis.md).
+Gap vocabulary follows the common-module standard: **DONE** (parity), **PARTIAL** (works but diverges from the ideal/shared pattern), **MISSING** (not built; tracked as an open decision). See [`../../../audits/common-gap-analysis.md`](../../../audits/modules/common-gap-analysis.md).
 
 ## Headline gap — C3: shared backend import service = MISSING
 
@@ -39,4 +39,4 @@ C3 is an **open decision**, not a bug to fix silently. Consolidating four featur
 ## Related
 
 - [README.md](README.md) · [interface-specification.md](interface-specification.md) · [source-code-index.md](source-code-index.md)
-- Common-module audit deliverables: [`../../../audits/common-gap-analysis.md`](../../../audits/common-gap-analysis.md) · [`../../../audits/common-source-index.md`](../../../audits/common-source-index.md)
+- Common-module audit deliverables: [`../../../audits/common-gap-analysis.md`](../../../audits/modules/common-gap-analysis.md) · [`../../../audits/common-source-index.md`](../../../audits/modules/common-source-index.md)

@@ -2,7 +2,7 @@
 
 > Final parity review: legacy `fnsh_0005_001` (USD account list + Update Balance) vs. the refactor.
 > Pairs with the source-verified audit
-> [audits/account-inquiry-fcy-parity-audit.md](../../../../audits/account-inquiry-fcy-parity-audit.md) (2026-06-06, PO: Mr. Jung)
+> [audits/account-inquiry-fcy-parity-audit.md](../../../../audits/legacy-parity/account-inquiry-fcy-parity-audit.md) (2026-06-06, PO: Mr. Jung)
 > and the agent-verified legacy investigation
 > [docs/features/account-inquiry-fcy/refactor-gap-analysis.md](../../../../../../docs/features/account-inquiry-fcy/refactor-gap-analysis.md).
 
@@ -94,7 +94,7 @@ Refactor renders the live `ACCT_MSTR.BAL`/`REAL_AMT` snapshot; refreshed on sync
 > (current R&D seed ≤30 `ACCT_TRNS_HSTR` rows cannot validate as-of-date math). The date control is
 > **retained** because it scopes the per-account balance/transaction popup
 > (`AccountInquiryPage.tsx:1301`); it does **not** re-base list balances. See
-> [audits/account-inquiry-fcy-parity-audit.md](../../../../audits/account-inquiry-fcy-parity-audit.md) §3.
+> [audits/account-inquiry-fcy-parity-audit.md](../../../../audits/legacy-parity/account-inquiry-fcy-parity-audit.md) §3.
 
 ## Verified-present (NOT gaps)
 

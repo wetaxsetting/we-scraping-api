@@ -149,9 +149,9 @@ entry point; deep detail lives here:
   [../login-credentials.md](../login-credentials.md) — the original ~440-line flat spec, kept as the
   deep design narrative.
 - **Legacy-vs-refactor audit (cert cipher §7 / db-object §11, GDT verify-before-save):**
-  [docs/audits/login-credentials-legacy-vs-refactor-audit.md](../../../audits/login-credentials-legacy-vs-refactor-audit.md)
+  [docs/audits/login-credentials-legacy-vs-refactor-audit.md](../../../audits/legacy-parity/login-credentials-legacy-vs-refactor-audit.md)
 - **Login legacy-compatibility audit (password coexistence):**
-  [audits/login-legacy-compatibility-2026-06-10.md](../../../audits/login-legacy-compatibility-2026-06-10.md)
+  [audits/login-legacy-compatibility-2026-06-10.md](../../../audits/legacy-parity/login-legacy-compatibility-2026-06-10.md)
 - **Archived settings-menu-hub note:** archive/settings-menu-hubs/login-credentials.md _(removed — historical `archive/` folder deleted by project decision)_
 - **Frontend feature folder:** [wecms-web/docs/features/settings/login-credentials/](../../../../../wecms-web/docs/features/settings/login-credentials/README.md)
 - **Legacy table inventory (baseline):** [references/database/legacy-table-inventory.md](../../../references/database/legacy-table-inventory.md)

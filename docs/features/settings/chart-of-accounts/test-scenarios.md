@@ -1,6 +1,6 @@
 # Chart of Accounts — Backend Test Scenarios (SIT / UAT)
 
-API-level scenarios for the shipped backend. Frontend/UI scenarios: [../../../../../wecms-web/docs/features/settings/chart-of-accounts/test-scenarios.md](../../../../../wecms-web/docs/features/settings/chart-of-accounts/test-scenarios.md). The audit's SIT checklist (`§5`) is the master list: [final parity audit](../../../audits/chart-of-accounts-final-parity-audit.md).
+API-level scenarios for the shipped backend. Frontend/UI scenarios: [../../../../../wecms-web/docs/features/settings/chart-of-accounts/test-scenarios.md](../../../../../wecms-web/docs/features/settings/chart-of-accounts/test-scenarios.md). The audit's SIT checklist (`§5`) is the master list: [final parity audit](../../../audits/legacy-parity/chart-of-accounts-final-parity-audit.md).
 
 All requests require a JWT + the `settings-core-chart-of-accounts` menu grant; all are tenant-scoped via `TenantContext`.
 
@@ -103,4 +103,4 @@ All requests require a JWT + the `settings-core-chart-of-accounts` menu grant; a
 
 ---
 
-Map to the audit's master SIT checklist for sign-off tracking: [final parity audit §5](../../../audits/chart-of-accounts-final-parity-audit.md).
+Map to the audit's master SIT checklist for sign-off tracking: [final parity audit §5](../../../audits/legacy-parity/chart-of-accounts-final-parity-audit.md).

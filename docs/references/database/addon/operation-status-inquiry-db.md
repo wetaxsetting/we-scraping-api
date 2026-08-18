@@ -1,5 +1,14 @@
 # Add-on Service > Operation Status Inquiry — Database Design
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../flyway-migration-baseline.md) §5.
+
 > **Consolidated feature docs:** see [../../../features/addon-service/operation-status-inquiry/](../../../features/addon-service/operation-status-inquiry/) — especially [database-mapping.md](../../../features/addon-service/operation-status-inquiry/database-mapping.md) for the implemented entity ↔ schema mapping. This file remains the deep DB-design reference.
 
 **Module:** Add-on Service · `domain/operation/`
@@ -53,8 +62,8 @@ WHERE 1=1
 
 | Migration | What landed |
 |---|---|
-| [V16](../../../../src/main/resources/db/migration/V16__sprint1_operation_status_schema.sql) | Created `OPRT_STTS_INFO` (Sprint 1 column shape) + `EXT_TRAN_CALL_HIS` (audit log) + index `ix_oprt_stts_biz_dtm ON (BIZ_KEY, SEARCHDATETIME)`. |
-| [V17](../../../../src/main/resources/db/migration/V17__sprint1_seed_data.sql) | Seeded 5 demo rows under `BIZ_KEY = VN_VNM0004_000001`: `0102345678 / CUSTOMER ABC LTD / "đang hoạt động" / 20251125…`, `0103456789 / CUSTOMER XYZ / "tạm ngừng" / 20251124…`, plus 3 active rows. |
+| [V16](../../../../src/main/resources/db/migration/V74__oprt_stts_info.sql) | Created `OPRT_STTS_INFO` (Sprint 1 column shape) + `EXT_TRAN_CALL_HIS` (audit log) + index `ix_oprt_stts_biz_dtm ON (BIZ_KEY, SEARCHDATETIME)`. |
+| `V17__sprint1_seed_data.sql` | Seeded 5 demo rows under `BIZ_KEY = VN_VNM0004_000001`: `0102345678 / CUSTOMER ABC LTD / "đang hoạt động" / 20251125…`, `0103456789 / CUSTOMER XYZ / "tạm ngừng" / 20251124…`, plus 3 active rows. | *(historical — DROPPED; demo seeds were removed in the 2026-06-09 rebaseline)*
 
 ### Phase 3 deliverables
 

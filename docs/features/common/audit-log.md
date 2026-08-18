@@ -46,4 +46,4 @@ semantics. **No controller, no REST endpoint** (write-path only).
 
 - Frontend read-view twin: [`../../../../wecms-web/docs/features/common/audit-log/README.md`](../../../../wecms-web/docs/features/common/audit-log/README.md)
 - Security design: [`../../references/business-rules/security/README.md`](../../references/business-rules/security/README.md) · shared baseline [`../../../../docs/security/`](../../../../docs/security/)
-- Audit deliverables: [`../../audits/common-source-index.md`](../../audits/common-source-index.md) · [`common-gap-analysis.md`](../../audits/common-gap-analysis.md) · [`common-docs-audit.md`](../../audits/common-docs-audit.md)
+- Audit deliverables: [`../../audits/common-source-index.md`](../../audits/modules/common-source-index.md) · [`common-gap-analysis.md`](../../audits/modules/common-gap-analysis.md) · [`common-docs-audit.md`](../../audits/modules/common-docs-audit.md)

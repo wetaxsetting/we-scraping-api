@@ -209,7 +209,7 @@ Deliberate choices that differ from the legacy implementation — do **not** "fi
 
 ## 6. Future improvements
 
-None is a missing core flow — see [../../audits/wecms-batch-full-legacy-vs-refactor-final-gap-audit.md](../../audits/wecms-batch-full-legacy-vs-refactor-final-gap-audit.md) for the authoritative list.
+None is a missing core flow — see [../../audits/wecms-batch-full-legacy-vs-refactor-final-gap-audit.md](../../audits/legacy-parity/wecms-batch-full-legacy-vs-refactor-final-gap-audit.md) for the authoritative list.
 
 - **Code (small):** result-check day-boundary fix (use a `RQ_DTTM`/timestamp range instead of same-day + `HHmmss` string compare before enabling the cron in PROD); correct the stale `ResultCheckService` class Javadoc.
 - **Deferred pre-flight features (PO scope):** operating-hours window gate (`TB_BATCH_SCHEDULE_*` entities exist but are not consumed), channel-mix validation (EBANK / VCB / CITAD / NAPAS), UAT Shinhan (`970424`) / Woori (`970457`) bank-code override (**mandatory before any UAT/PROD activation on those two banks**), Slack alerting.

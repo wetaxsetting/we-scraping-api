@@ -33,9 +33,9 @@ Group hubs: [current-savings-vnd/](current-savings-vnd/README.md) · [current-sa
 | Doc | Purpose |
 |---|---|
 | [bank-credentials.md](bank-credentials.md) | Bank Credentials & live scraping (settings-adjacent; not a Current&Savings/Reports submenu) — high-level summary |
-| [banking-docs-audit.md](../../audits/banking-docs-audit.md) | 2026-06-23 documentation audit (code = source of truth): per-module before→after + structure |
-| [banking-source-index.md](../../audits/banking-source-index.md) | Code ↔ docs ↔ tests index across all banking features |
-| [banking-gap-analysis.md](../../audits/banking-gap-analysis.md) | Consolidated parity/gap matrix |
+| [banking-docs-audit.md](../../audits/modules/banking-docs-audit.md) | 2026-06-23 documentation audit (code = source of truth): per-module before→after + structure |
+| [banking-source-index.md](../../audits/modules/banking-source-index.md) | Code ↔ docs ↔ tests index across all banking features |
+| [banking-gap-analysis.md](../../audits/modules/banking-gap-analysis.md) | Consolidated parity/gap matrix |
 | [menu-authorization-and-product-types.md](menu-authorization-and-product-types.md) | Menu authz + product-type behavior |
 
 **Related (other modules):** [Payment → Exchange Rate Inquiry](../payment/exchange-rate-inquiry/README.md) (FX rates consumed by the FCY views).

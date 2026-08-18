@@ -65,7 +65,7 @@ Base `/api/v1/payment/payroll-payment` — full table in [interface-specificatio
 
 ## Notes
 
-- `SCDUL_PYMN_TYPE_CD = "00"` — the `scdul_pymn_sumr_chk01` CHECK was relaxed in [V146](../../../../src/main/resources/db/migration/V146__scdul_pymn_sumr_chk01_allow_payroll.sql) to admit `'00'`; do not tighten without re-allowing all siblings.
+- `SCDUL_PYMN_TYPE_CD = "00"` — the `scdul_pymn_sumr_chk01` CHECK was relaxed in `V146__scdul_pymn_sumr_chk01_allow_payroll.sql` to admit `'00'`; do not tighten without re-allowing all siblings. *(historical — FOLDED INTO BASE DDL; the CHECK now ships inside `V86__scdul_pymn_sumr.sql`)*
 - Status is **never** stored on `SCDUL_PYMN_SUMR` (no `APPR_STTS` column in legacy JEX) — it is derived via `wb_get_appr_stts(...)` through `LegacyFunctionRepository`. Rejected = `R` (legacy code, not `X`).
 - Slug asymmetry (frontend `payroll`, backend/audit `payroll-payment`) is intentional and confirmed acceptable.
 

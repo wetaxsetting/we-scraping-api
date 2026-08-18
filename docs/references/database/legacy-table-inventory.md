@@ -1,5 +1,16 @@
 # Legacy-Copied Table Inventory — Refactor DB
 
+**Status:** active · **Last reviewed:** 2026-08-17
+
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](flyway-migration-baseline.md) §5.
+
 **Recorded:** 2026-06-11 · **Count:** 145 tables (the 142-table set — which already included `busa_doc_file`, 2026-07-04 — plus `trco_rspb_infm` & `sys_trco_infm_dis_nm` added 2026-07-14, plus `swift_bic_mst` added 2026-07-21; see scope-override notes) · **Source:** table list supplied by the team (recorded as-is, not re-verified against the JEX DEV DB this pass).
 
 > **Scope override 2026-07-04 — `busa_doc_file` added (PO decision).** Card Transactions > Link Reference > New Receipt attaches files; legacy IDO `BUSA_DOC_MSTR_R034` `REC_1` reads `BUSA_DOC_FILE` and the receipt download uses `prch_0006_001_r002.act`. `BUSA_DOC_FILE` was originally excluded from the 141-table baseline because it looked empty/unused — but that reflects "no user had attached a file yet," not an unused feature (598 rows on JEX DEV confirm real usage). Per the PO decision relayed by the team lead (2026-07-04), `busa_doc_file` is the **legacy source of truth for receipt/e-invoice attachments** and is added to the baseline as a legacy table (multi-file per document — do **not** collapse to the single-file `BUSA_DOC_MSTR.ORG_FILE_NM`/`SAVE_FILE_NM`/`FILE_SIZE` columns). Same widening precedent as `trco_info_file` (2026-05-13). Implementation of the attachment feature (audit G3/G5) stays **blocked until this inventory entry is confirmed applied** (schema DDL script + entity), then proceeds against `busa_doc_file`.

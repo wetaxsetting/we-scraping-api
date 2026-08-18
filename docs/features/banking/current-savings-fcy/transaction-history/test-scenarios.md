@@ -3,7 +3,7 @@
 SIT/UAT scenarios for the refactored FCY transaction inquiry. Legend: ✅ verified · ⏳ pending PARTIAL.
 Run the DB-backed scenarios against an FCY account in the seed tenant `VN_VNM0004_000001` (or a tenant
 holding USD/KRW/JPY/EUR accounts). Cross-ref: [refactor-gap-analysis.md](refactor-gap-analysis.md),
-[../../audits/transaction-history-fcy-fix-verification.md](../../../../audits/transaction-history-fcy-fix-verification.md).
+[../../audits/transaction-history-fcy-fix-verification.md](../../../../audits/historical/transaction-history-fcy-fix-verification.md).
 
 ## Search
 

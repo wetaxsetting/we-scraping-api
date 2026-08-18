@@ -1,5 +1,14 @@
 # Contacts — Database Mapping (Backend)
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../../references/database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../../references/database/flyway-migration-baseline.md) §5.
+
 The six tables behind Contacts, the surviving legacy functions, and the full
 legacy-column → entity-field → DTO-field → UI-field mapping. Schema source (current per-table Flyway
 scheme after the 2026-06-09 consolidation — one legacy table per file, DDL copied verbatim from the

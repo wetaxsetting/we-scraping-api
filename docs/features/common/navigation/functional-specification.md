@@ -1,4 +1,4 @@
-# navigation — Functional Specification (Backend)
+# Navigation — Functional Specification (Backend)
 
 **Part of:** Common → navigation
 **Last verified:** 2026-06-23

@@ -108,5 +108,5 @@ see [test-scenarios.md §2](test-scenarios.md). `BankCertCryptoService`, `BankSc
 
 - Backend feature folder (this): `wecms-api/docs/features/settings/login-credentials/`
 - Preserved flat spec: [../login-credentials.md](../login-credentials.md)
-- Legacy-vs-refactor audit: [docs/audits/login-credentials-legacy-vs-refactor-audit.md](../../../audits/login-credentials-legacy-vs-refactor-audit.md)
+- Legacy-vs-refactor audit: [docs/audits/login-credentials-legacy-vs-refactor-audit.md](../../../audits/legacy-parity/login-credentials-legacy-vs-refactor-audit.md)
 - Frontend feature folder: [wecms-web/docs/features/settings/login-credentials/](../../../../../wecms-web/docs/features/settings/login-credentials/README.md)

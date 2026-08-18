@@ -1,5 +1,14 @@
 # Approval Box — Database Impact
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../../references/database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../../references/database/flyway-migration-baseline.md) §5.
+
 **Feature slug:** `approval-box`
 **Module:** `payment`
 **Date:** 2026-05-13
@@ -316,7 +325,7 @@ Sample real rows fetched on 2026-05-13 (5 most recent, `BIZ_KEY = VN_VNM0004_000
 | `1537` | `31` (Expense) | `2` | `01` | `VO_260325_005` | Testing | 20260325093212 |
 | `1536` | `34` (Overseas) | `2` | `01` | `VO_260325_004` | Testing | 20260325084948 |
 
-The seed script (separate `.sql` file generated under [Claude Code (AI)/sql/](../../../../../Claude%20Code%20(AI)/sql/) at file-placement time) will `INSERT … ON CONFLICT DO NOTHING` rows for the 325 masters + their approver / file children, scoped to `VN_VNM0004_000001`.
+The seed script (separate `.sql` file generated under [Claude Code (AI)/sql/](<../../../../../Claude%20Code%20(AI)/sql/>) at file-placement time) will `INSERT … ON CONFLICT DO NOTHING` rows for the 325 masters + their approver / file children, scoped to `VN_VNM0004_000001`.
 
 ---
 
@@ -340,7 +349,7 @@ After Flyway applies the migration, `spring.jpa.hibernate.ddl-auto = validate` w
 | Q2 | Sibling tables `BLTB_POST_INFM` / `OVRS_PYMN_MSTR` / `SCDUL_PYMN_SUMR` / `OVRS_PYMN_SUMR` may collide with future full ports | Use `CREATE TABLE IF NOT EXISTS` (idempotent). Subsequent full-port migration will `ALTER TABLE … ADD COLUMN IF NOT EXISTS` to extend. |
 | Q3 | `EXPT_RESOL_APPRVR_INFM` has no FK to master | Preserved (legacy gap). Application code enforces cascade order on delete. |
 | Q4 | Helper functions on DEV (`wb_get_appr_stts`, …) — refactor cannot use them | Reimplemented in Java per [design-backend.md](design-backend.md) §5 (`deriveApprStts`). |
-| Q5 | Seed volume (325 rows) | Ships as a separate generated `.sql` script under [Claude Code (AI)/sql/](../../../../../Claude%20Code%20(AI)/sql/) to keep the migration diff small. |
+| Q5 | Seed volume (325 rows) | Ships as a separate generated `.sql` script under [Claude Code (AI)/sql/](<../../../../../Claude%20Code%20(AI)/sql/>) to keep the migration diff small. |
 
 ---
 

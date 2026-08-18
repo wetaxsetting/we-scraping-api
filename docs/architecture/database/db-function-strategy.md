@@ -1,5 +1,14 @@
 # DB Function Strategy — Hybrid
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../references/database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../references/database/flyway-migration-baseline.md) §5.
+
 **Status:** Adopted 2026-05-03.
 **Scope:** Project-wide for the JEX → Spring Boot refactor.
 
@@ -97,6 +106,6 @@ Other dependencies migrated alongside:
 
 ## Cross-references
 
-- [V44 migration](../../../src/main/resources/db/migration/V44__bank_infm_detl_and_nickname_fns.sql)
+- [`V12__bank_infm_detl.sql`](../../../src/main/resources/db/migration/V12__bank_infm_detl.sql) — the `BANK_INFM_DETL` table. *(Was cited as `V44__bank_infm_detl_and_nickname_fns.sql` before the [2026-06-09 rebaseline](../../references/database/flyway-migration-baseline.md); the nickname helper functions are **not** defined by any refactor migration — they pre-exist in the live JEX DB.)*
 - [Account Inquiry (VND) feature spec](../../features/banking/current-savings-vnd/account-inquiry/README.md) — first consumer
-- [Account Inquiry (VND) DB doc](../../references/database/banking/account-inquiry-vnd-db.md) — V44 migration entry
+- [Account Inquiry (VND) DB doc](../../references/database/banking/account-inquiry-vnd-db.md) — `BANK_INFM_DETL` entry

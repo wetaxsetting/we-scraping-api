@@ -1,11 +1,20 @@
 # Internal Transfer — Refactor Database Design
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../flyway-migration-baseline.md) §5.
+
 | Field | Value |
 |---|---|
 | Slug | `internal-transfer` |
 | Module | `payment` |
 | Companion docs | [features/payment/internal-transfer.md](../../../features/payment/internal-transfer/README.md) · [features/payment/README.md](../../../features/payment/README.md) · [migration/internal-transfer-mapping.md](../../migration/internal-transfer-mapping.md) · [backend/internal-transfer.md](../../business-rules/internal-transfer.md) |
-| Flyway versions (shipped) | **V131** schema (`SCDUL_PYMN_SUMR` + `_DETL` + `INTERNAL_TRANSFER_KEY_SEQ`) · **V133** demo seed · **V136** APPR_STTS column · **V146** `scdul_pymn_sumr_chk01` CHECK relaxation for Payroll · **V148** dispatch tables (TB_PAY_TARGET / TB_PAY_FILE_MST / TB_PAY_FILE_DATA / TB_FIRM_*) · **V149** `BLOCKED_CHARS_RULE` schema + seed · **V188** `SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN` schema · **V189** payment-dispatch tables follow-up. See [src/main/resources/db/migration/](../../../../src/main/resources/db/migration/) for the full set. |
+| Flyway versions (shipped) | ⚠️ *pre-rebaseline numbers — see [flyway-migration-baseline.md](../flyway-migration-baseline.md).* **V131** schema (`SCDUL_PYMN_SUMR` + `_DETL` + ~~`INTERNAL_TRANSFER_KEY_SEQ`~~ — the counter table was **retired 2026-06-09**, see §2.4) · **V133** demo seed · **V136** APPR_STTS column · **V146** `scdul_pymn_sumr_chk01` CHECK relaxation for Payroll · **V148** dispatch tables (TB_PAY_TARGET / TB_PAY_FILE_MST / TB_PAY_FILE_DATA / TB_FIRM_*) · **V149** `BLOCKED_CHARS_RULE` schema + seed · **V188** `SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN` schema · **V189** payment-dispatch tables follow-up. See [src/main/resources/db/migration/](../../../../src/main/resources/db/migration/) for the full set. |
 | Reconciled against DEV | 2026-05-13 via `postgres` MCP `information_schema` queries |
 | Status | **Implemented** — schema is the as-shipped state of `wecms-api` HEAD; refactor-only deviations from DEV documented inline. |
 
@@ -56,15 +65,30 @@ All PKs / data types / NOT NULL / DEFAULT below are read from DEV `wecmsvndev.in
 | `AUDIT_LOGS_INFM` | Audit log writes | already local. PK `(biz_key, audit_logs_seq_no, lang_cd)`, `wsvc_id VARCHAR(20)` — `'internal-transfer'` (17 chars) fits. |
 | `SYS_SCR_OPTION_WECMS` / `USER_SCR_OPTION_WECMS` | View Setting seed | already local — feature migration adds seed rows |
 
-### 2.4 New — refactor-only helper table for key generation
+### 2.4 ~~New — refactor-only helper table for key generation~~ · **RETIRED 2026-06-09 (MR-1)**
+
+> ⚠️ **This table does not exist. Do not create it.**
+> `INTERNAL_TRANSFER_KEY_SEQ` was a refactor-only counter with **no legacy counterpart** — exactly the
+> kind of construct the workspace DB rules forbid. It was **dropped**, and its entities
+> (`InternalTransferKeySeq`, `…Id`) and `InternalTransferKeySeqRepository` were **deleted** in commit
+> `eb9296b` (2026-06-09), because the date-prefixed key it produced **diverged from the live JEX DB**.
+>
+> **Current:** `SCDUL_PYMN_NO` is minted by
+> `wb_get_next_val('scdul_pymn_sumr','scdul_pymn_no', biz_key)` — `V140__wb_get_next_val.sql` branch
+> **#36**, per-tenant plain-int `MAX+1` — reached via
+> `InternalTransferKeyGenerator` → `LegacyFunctionRepository.nextScdulPymnNo`. Shared by all four
+> scheduled-payment siblings. See [`../../../../CLAUDE.md`](../../../../CLAUDE.md) §"Retired exception #5".
+>
+> The DDL below is preserved **only** as the historical record of the retired design.
 
 | Table | Role | PK |
 |---|---|---|
-| `INTERNAL_TRANSFER_KEY_SEQ` | Java-side `SCDUL_PYMN_NO` generator | `(biz_key, key_dt)` |
+| ~~`INTERNAL_TRANSFER_KEY_SEQ`~~ | ~~Java-side `SCDUL_PYMN_NO` generator~~ — **RETIRED, dropped** | ~~`(biz_key, key_dt)`~~ |
 
-`INTERNAL_TRANSFER_KEY_SEQ` is **NOT** in DEV / PROD — refactor-only helper. Replaces legacy `wb_get_next_val('scdul_pymn_sumr','scdul_pymn_no',BIZ_KEY)`.
+~~`INTERNAL_TRANSFER_KEY_SEQ` is **NOT** in DEV / PROD — refactor-only helper. Replaces legacy `wb_get_next_val('scdul_pymn_sumr','scdul_pymn_no',BIZ_KEY)`.~~ **Reversed — the refactor now calls that legacy function rather than replacing it.**
 
 ```sql
+-- HISTORICAL ONLY — this table was dropped 2026-06-09. Do not execute.
 CREATE TABLE IF NOT EXISTS INTERNAL_TRANSFER_KEY_SEQ (
     BIZ_KEY  VARCHAR(20) NOT NULL,
     KEY_DT   DATE        NOT NULL,
@@ -86,7 +110,7 @@ COMMENT ON TABLE INTERNAL_TRANSFER_KEY_SEQ IS
 | Column | Type | Nullable | Default | Notes |
 |---|---|---|---|---|
 | `biz_key` | `VARCHAR(20)` | NO | — | PK part 1 |
-| `scdul_pymn_no` | `VARCHAR(20)` (refactor) / `VARCHAR(10)` (DEV) | NO | — | PK part 2. **Refactor-only widening** — [V131:70](../../../../src/main/resources/db/migration/V131__internal_transfer_schema.sql#L70) declares 20 to fit the Java generator (`YYYYMMDD<seq:6>` = 14 chars). BLOCKER-A resolved. |
+| `scdul_pymn_no` | `VARCHAR(10)` (refactor **and** DEV) | NO | — | PK part 2. **DEV-parity width** — [`V86__scdul_pymn_sumr.sql`](../../../../src/main/resources/db/migration/V86__scdul_pymn_sumr.sql) line 9. ⚠️ *Historical:* `V131__internal_transfer_schema.sql` declared `VARCHAR(20)` to fit a 14-char Java generator; that widening was dropped by the [2026-06-09 rebaseline](../flyway-migration-baseline.md) and key generation now funnels through `wb_get_next_val` (per-tenant plain-int MAX+1). |
 | `scdul_pymn_type_cd` | `VARCHAR(2)` | NO | — | `"03"` for Internal Transfer |
 | `ccy_cd` | `VARCHAR(3)` | NO | — | Withdrawal currency |
 | `titl` | `VARCHAR(100)` | NO | — | Batch title |
@@ -277,11 +301,22 @@ The shipped strategy: refactor widens the column to `VARCHAR(20)` and uses a dat
 
 Vietnam-local date (UTC+7), per-tenant per-day sequence 1..999,999 (range-guarded in [`InternalTransferKeyGenerator.format`](../../../../src/main/java/com/kosign/wecms/domain/payment/internaltransfer/service/InternalTransferKeyGenerator.java#L90-L97)).
 
-**Generator implementation** ([`InternalTransferKeyGenerator.nextScdulPymnNo`](../../../../src/main/java/com/kosign/wecms/domain/payment/internaltransfer/service/InternalTransferKeyGenerator.java#L77)):
+> ⚠️ **RETIRED 2026-06-09 (MR-1) — the format above and the bullets below are historical.**
+> `SCDUL_PYMN_NO` is **not** date-prefixed. It is a plain per-tenant integer from
+> `wb_get_next_val('scdul_pymn_sumr','scdul_pymn_no', biz_key)` (V140 branch **#36**), so there is no
+> day-roll and no 999,999 per-day ceiling.
 
-- `@Transactional(propagation = REQUIRES_NEW)` so the sequence advance commits even if the outer business-write transaction rolls back. Orphaned numbers are acceptable — there's no contiguous-id requirement.
-- Backed by `INTERNAL_TRANSFER_KEY_SEQ` (`(BIZ_KEY, KEY_DT)` PK) — `INSERT … ON CONFLICT (BIZ_KEY, KEY_DT) DO UPDATE SET LAST_SEQ = LAST_SEQ + 1 RETURNING LAST_SEQ`. PostgreSQL's row-level lock serialises concurrent saves on the same `(tenant, day)`.
-- Refactor-only deviation from DEV's `wb_get_next_val('scdul_pymn_sumr','scdul_pymn_no',BIZ_KEY)` branch. Documented in [api CLAUDE.md "DB Function / Legacy Function Policy"](../../../../CLAUDE.md#db-function--legacy-function-policy) — no new `wb_get_next_val` branch added.
+**Generator implementation — CURRENT** ([`InternalTransferKeyGenerator.nextScdulPymnNo`](../../../../src/main/java/com/kosign/wecms/domain/payment/internaltransfer/service/InternalTransferKeyGenerator.java)):
+
+- A **thin delegator**: validates `bizKey`, calls `LegacyFunctionRepository.nextScdulPymnNo`, logs. No counter logic, no date formatting.
+- `@Transactional(propagation = MANDATORY)` — the `MAX+1` read and the subsequent `SCDUL_PYMN_SUMR` INSERT deliberately share **one** transactional view.
+- ⚠️ **Concurrency:** the funnel `MAX+1` is **lock-free**, so concurrent creates on one tenant can collide on the PK. The one-shot retry that mitigates this is implemented for **Overseas** but **intentionally deferred** for the four scheduled-payment create services.
+
+*Historical (superseded):*
+
+- ~~`@Transactional(propagation = REQUIRES_NEW)` so the sequence advance commits even if the outer business-write transaction rolls back.~~
+- ~~Backed by `INTERNAL_TRANSFER_KEY_SEQ` (`(BIZ_KEY, KEY_DT)` PK) — `INSERT … ON CONFLICT … RETURNING LAST_SEQ`; PostgreSQL's row-level lock serialises concurrent saves.~~
+- ~~Refactor-only deviation from DEV's `wb_get_next_val('scdul_pymn_sumr','scdul_pymn_no',BIZ_KEY)` branch — no new `wb_get_next_val` branch added.~~ **Reversed:** branch #36 **is** in the refactor function and the code calls it.
 
 > ### Reference: the two 10-char strategies that were proposed and rejected
 >
@@ -377,7 +412,7 @@ V146 ("scdul_pymn_sumr_chk01_allow_payroll") **relaxes the CHECK constraint** on
 
 The dispatch tables in §2.2 (`TB_PAY_TARGET`, `TB_PAY_FILE_MST`, `TB_PAY_FILE_DATA`) are likewise shared infrastructure — single set of tables, all four siblings write into them via `TransferDispatchExecutor` (see [backend/internal-transfer.md §16.1](../../business-rules/internal-transfer.md)). (The legacy `SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN` bridge is **not** written by the refactor — removed 2026-06-10; see §3.3.)
 
-`INTERNAL_TRANSFER_KEY_SEQ` (§2.4) is **Internal-Transfer-specific** — Vendor / Expense / Payroll each maintain their own per-sibling key generators (separate helper tables) so day-rolls and seq exhaustion are independent. The naming convention is `{SIBLING}_KEY_SEQ` / `{Sibling}KeyGenerator`.
+⚠️ ~~`INTERNAL_TRANSFER_KEY_SEQ` (§2.4) is **Internal-Transfer-specific** — Vendor / Expense / Payroll each maintain their own per-sibling key generators (separate helper tables)… naming convention `{SIBLING}_KEY_SEQ` / `{Sibling}KeyGenerator`.~~ **RETIRED 2026-06-09 (MR-1).** There are no per-sibling counter tables and no `{SIBLING}_KEY_SEQ` convention. **All four siblings share one call** — `InternalTransferKeyGenerator.nextScdulPymnNo` → `LegacyFunctionRepository` → `wb_get_next_val` (V140 #36). Do not create a per-sibling helper table for a new sibling.
 
 ---
 

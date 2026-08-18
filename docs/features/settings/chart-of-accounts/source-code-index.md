@@ -41,10 +41,10 @@ All paths relative to `wecms-api/` (backend) and `wecms-web/` (frontend). Packag
 ### Migrations & shared
 | File | Role |
 |---|---|
-| `src/main/resources/db/migration/V94__chart_of_accounts_schema.sql` | table + PK + UK + indexes |
-| `V95__wb_get_next_val_chart_acct_infm.sql` | seq branch |
-| `V96__chart_of_accounts_seed_restricted_roots.sql` | ACC-01/02/03 per tenant |
-| `V97__chart_of_accounts_seed_demo.sql` | 9 demo rows (tenant 000001) |
+| `src/main/resources/db/migration/V42__chart_acct_infm.sql` | table + PK + UK + indexes |
+| `V140__wb_get_next_val.sql` | seq branch |
+| `V96__chart_of_accounts_seed_restricted_roots.sql` | ACC-01/02/03 per tenant | *(historical — DROPPED in the 2026-06-09 rebaseline; restricted roots are seeded operationally, no current migration)*
+| `V97__chart_of_accounts_seed_demo.sql` | 9 demo rows (tenant 000001) | *(historical — DROPPED; demo seeds were removed in the 2026-06-09 rebaseline)*
 | `.../common/legacy/LegacyFunctionRepository.java` | `nextChartAcctSeqNo` funnel (`:137-139`) |
 | `messages.properties` | `WBE_CHART_OF_ACCOUNTS_*` codes |
 

@@ -52,8 +52,9 @@ screen but are tracked as open questions for product confirmation.
 
 ## 3. Plan-vs-shipped drift
 
-The earlier flat plan [`../users.md`](../users.md) (2026-05-14) diverges from what shipped — readers of
-that file should treat the following as superseded:
+The earlier flat plan that [`../users.md`](../users.md) used to hold (2026-05-14, before that file was
+rewritten as a summary card) diverged from what shipped. The drift is recorded here so the abandoned
+design is not mistaken for history that once worked — treat the following as superseded:
 
 | Old plan said | Shipped reality |
 |---|---|

@@ -24,33 +24,38 @@ erDiagram
 
 Full attribute detail: [`diagrams/settings-erd.mmd`](diagrams/settings-erd.mmd).
 
+> ⚠️ **Migration column regenerated from disk 2026-08-17.** The [2026-06-09 rebaseline](../flyway-migration-baseline.md)
+> reassigned every Flyway number to a one-table-per-migration scheme; the values below name the migration
+> that creates each table **today**. Rows marked **DROPPED** / **no refactor DDL migration** have no current
+> migration — that is accurate, not a gap.
+
 ## Tables by sub-module
 
 | Table | Sub-module | Source | Purpose | PK |
 |---|---|---|---|---|
-| `ACCT_AUTH_INFO` | bank-account | V153 (+V186) | Per-user/account authorization (view/withdraw/full) | `(BIZ_KEY, USER_ID, BANK_CD, ACCT_NO, AUTH_TYPE)` |
-| `CHART_ACCT_INFM` | chart-of-accounts | V94 (+V191 seed) | Hierarchical GL account master | `(BIZ_KEY, CHART_ACCT_SEQ_NO)` |
-| `TRCO_INFM` | contacts | V112 | Contact (trading-company) master | `TRCO_KEY` (global sequence) |
-| `TRCO_ADDR_INFM` | contacts | V112 | Contact address history (current/previous) | `(TRCO_KEY, BIZ_KEY, TRCO_ADDR_KEY)` |
+| `ACCT_AUTH_INFO` | bank-account | V1 | Per-user/account authorization (view/withdraw/full) | `(BIZ_KEY, USER_ID, BANK_CD, ACCT_NO, AUTH_TYPE)` |
+| `CHART_ACCT_INFM` | chart-of-accounts | V42 | Hierarchical GL account master | `(BIZ_KEY, CHART_ACCT_SEQ_NO)` |
+| `TRCO_INFM` | contacts | V119 | Contact (trading-company) master | `TRCO_KEY` (global sequence) |
+| `TRCO_ADDR_INFM` | contacts | V114 | Contact address history (current/previous) | `(TRCO_KEY, BIZ_KEY, TRCO_ADDR_KEY)` |
 | `TRCO_ACCT_INFO` | contacts | V112 | Contact local bank-account details | `(BIZ_KEY, TRCO_KEY, TRCO_ACCT_KEY)` |
-| `TRCO_OVRS_INFM` | contacts | V112 | Contact overseas beneficiary details | `(TRCO_KEY, BIZ_KEY, TRCO_OVRS_KEY)` |
-| `PGRO_BSAC_LNKN_INFM` | contacts | V112 | Group/user → contact linkage (Buy/Sale) | `(BIZ_KEY, USER_ID, GRP_CD, TRCO_KEY)` |
-| `TRCO_INFO_FILE` | contacts | V139 | Contact file-attachment metadata | `(TRCO_KEY, FILE_ID)` |
-| `APPR_LINE_INFM` | approval-line | V90 (+V92) | Approval-line master (workflow) | `(BIZ_KEY, APPR_LINE_NO)` |
-| `APPR_LINE_INFM_DETL` | approval-line | V90 (+V92) | Approver chain row (max 5) | `(BIZ_KEY, APPR_LINE_NO, APPRVR_ID)` |
-| `TB_FIRM_CONF` | firm-banking-settings | V62 | Firm-banking channel binding (outbound config) | `(BIZ_KEY, OUT_BANK_CD, WDRL_ACT_NO)` |
-| `TB_FIRM_TRAN` | firm-banking-history | V59 | Firm-banking gateway transaction log | `(TRAN_DT, BIZ_KEY, TRAN_SEQ)` |
-| `TB_FIRM_BANK_CODE` | firm-banking-history | V59 (+V145 seed) | Bank-code dictionary (global) | `BANK_CD` |
+| `TRCO_OVRS_INFM` | contacts | V121 | Contact overseas beneficiary details | `(TRCO_KEY, BIZ_KEY, TRCO_OVRS_KEY)` |
+| `PGRO_BSAC_LNKN_INFM` | contacts | V82 | Group/user → contact linkage (Buy/Sale) | `(BIZ_KEY, USER_ID, GRP_CD, TRCO_KEY)` |
+| `TRCO_INFO_FILE` | contacts | V116 | Contact file-attachment metadata | `(TRCO_KEY, FILE_ID)` |
+| `APPR_LINE_INFM` | approval-line | V6 | Approval-line master (workflow) | `(BIZ_KEY, APPR_LINE_NO)` |
+| `APPR_LINE_INFM_DETL` | approval-line | V7 | Approver chain row (max 5) | `(BIZ_KEY, APPR_LINE_NO, APPRVR_ID)` |
+| `TB_FIRM_CONF` | firm-banking-settings | V100 | Firm-banking channel binding (outbound config) | `(BIZ_KEY, OUT_BANK_CD, WDRL_ACT_NO)` |
+| `TB_FIRM_TRAN` | firm-banking-history | V104 | Firm-banking gateway transaction log | `(TRAN_DT, BIZ_KEY, TRAN_SEQ)` |
+| `TB_FIRM_BANK_CODE` | firm-banking-history | V97 | Bank-code dictionary (global) | `BANK_CD` |
 | `NXSIAS_MODULE_TRAN_LOG_HIS` | firm-banking-history | V59 / V101 | NXISAS/GDT bridge audit log | `(BIZ_KEY, REG_DTM, UUID)` |
-| `ERP_TRNS_HSTR` | erp-transaction-history | V71 (+V75) | ERP file-exchange ledger | `(BIZ_KEY, SEQ_NO)` |
-| `BUSI_VAS_ACCT_INFM` | vas-account | V77 | VAS (virtual account) master | `(BIZ_KEY, VAS_ACCT_SEQ_NO)` |
-| `USAG_INFM` | purpose-settings | V201 | Purpose/usage dictionary (global master) | `USE_USAG_CD` |
-| `USAG_INFM_LANG_DETL` | purpose-settings | V201 | Per-language purpose name | `(USE_USAG_CD, LANG_CODE)` |
-| `BUSI_USAG_SET_INFM` | purpose-settings | V80 | Per-tenant purpose/usage categorization | `(BIZ_KEY, USE_USAG_CD)` |
-| `SYS_ENV_SET_INFM` | environment-settings | V69 | System-wide environment setting codes | `ENV_SET_INF` |
-| `BUSI_ENV_SET_INFM` | environment-settings | V69 | Per-tenant environment settings | `(BIZ_KEY, ENV_SET_INF)` |
-| `BANK_CERT_INFO` | login-credentials | V100 (+V182) | Bank login credentials (encrypted) | `(BIZ_KEY, SEQ_NO)` |
-| `GDT_CERT_INFO` | login-credentials | V128 | Tax-portal (GDT) login credentials (encrypted) | `(BIZ_KEY, SEQ_NO)` |
+| `ERP_TRNS_HSTR` | erp-transaction-history | V54 | ERP file-exchange ledger | `(BIZ_KEY, SEQ_NO)` |
+| `BUSI_VAS_ACCT_INFM` | vas-account | V37 | VAS (virtual account) master | `(BIZ_KEY, VAS_ACCT_SEQ_NO)` |
+| `USAG_INFM` | purpose-settings | V122 | Purpose/usage dictionary (global master) | `USE_USAG_CD` |
+| `USAG_INFM_LANG_DETL` | purpose-settings | V123 | Per-language purpose name | `(USE_USAG_CD, LANG_CODE)` |
+| `BUSI_USAG_SET_INFM` | purpose-settings | V35 | Per-tenant purpose/usage categorization | `(BIZ_KEY, USE_USAG_CD)` |
+| `SYS_ENV_SET_INFM` | environment-settings | V92 | System-wide environment setting codes | `ENV_SET_INF` |
+| `BUSI_ENV_SET_INFM` | environment-settings | V30 | Per-tenant environment settings | `(BIZ_KEY, ENV_SET_INF)` |
+| `BANK_CERT_INFO` | login-credentials | V9 | Bank login credentials (encrypted) | `(BIZ_KEY, SEQ_NO)` |
+| `GDT_CERT_INFO` | login-credentials | V62 | Tax-portal (GDT) login credentials (encrypted) | `(BIZ_KEY, SEQ_NO)` |
 
 ## Key columns & conventions
 

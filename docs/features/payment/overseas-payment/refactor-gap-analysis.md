@@ -1,6 +1,6 @@
 # Overseas Payment — Refactor Gap Analysis
 
-> Gaps classified with the project vocabulary: **MATCH · APPROVED DEVIATION · DEAD LEGACY · PARTIAL · MISSING**, plus a gap *kind* (code-exists-doc-missing / backend-missing / frontend-missing / test-missing / PO-decision-required / uncertain-needs-confirmation). Hub: [README.md](README.md). Companion: [`../payment-gap-analysis.md`](../../../audits/payment-gap-analysis.md). Verified 2026-06-23.
+> Gaps classified with the project vocabulary: **MATCH · APPROVED DEVIATION · DEAD LEGACY · PARTIAL · MISSING**, plus a gap *kind* (code-exists-doc-missing / backend-missing / frontend-missing / test-missing / PO-decision-required / uncertain-needs-confirmation). Hub: [README.md](README.md). Companion: [`../payment-gap-analysis.md`](../../../audits/modules/payment-gap-analysis.md). Verified 2026-06-23.
 
 ## Gap table
 
@@ -27,4 +27,4 @@
 - Result authz override `payment-overseas-result`.
 
 ## Cross-links
-- [`../payment-gap-analysis.md`](../../../audits/payment-gap-analysis.md) (G-OVRS-1 carried) · [migration-guide.md](migration-guide.md) · [test-scenarios.md](test-scenarios.md)
+- [`../payment-gap-analysis.md`](../../../audits/modules/payment-gap-analysis.md) (G-OVRS-1 carried) · [migration-guide.md](migration-guide.md) · [test-scenarios.md](test-scenarios.md)

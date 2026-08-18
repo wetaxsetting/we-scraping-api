@@ -1,5 +1,14 @@
 # features/payment/
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../references/database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../references/database/flyway-migration-baseline.md) §5.
+
 Feature hubs (menu-level) for the **Payment** domain in the Spring Boot + Next.js refactor, plus the
 single cross-sibling / shared-infrastructure authority for the module (this README absorbed the former
 `_payment-module-overview.md` on 2026-06-02). Each module folder carries the standard **9-doc set**:
@@ -29,16 +38,16 @@ single cross-sibling / shared-infrastructure authority for the module (this READ
 > Exchange Rate Inquiry sits under the Overseas Payment menu group; its controller lives in the
 > `domain.banking` package (`ExchangeRateController`, base `/api/v1/banking/exchange-rates`).
 > Shared payment infrastructure (dispatch, dispatch callbacks, validation/blocked-chars, notification
-> BLTB write-side) is indexed in [payment-source-index.md](../../audits/payment-source-index.md) §8.
+> BLTB write-side) is indexed in [payment-source-index.md](../../audits/modules/payment-source-index.md) §8.
 
 ## Cross-cutting payment features
-- **HAENGSUNG Oracle Integration — master roadmap** (all six Oracle flows, step-by-step): [`../haengsung-oracle-integration-roadmap.md`](../haengsung-oracle-integration-roadmap.md). Start here for the end-to-end plan + recommended order.
-- **HAENGSUNG Payment Refresh** (Vendor / Expense / Payroll / Overseas, `PRDT_TYPE='H'` only — Internal Transfer excluded): [`../haengsung-payment-refresh.md`](../haengsung-payment-refresh.md). Two-datasource (WeCMS Postgres + HAENGSUNG Oracle ERP) import that replaces Excel Upload with Refresh. **Phase 1 (this feature)** = manual Refresh import only.
+- **HAENGSUNG Oracle Integration — master roadmap** (all six Oracle flows, step-by-step): [`../haengsung-oracle-integration-roadmap.md`](../../planning/haengsung-oracle-integration-roadmap.md). Start here for the end-to-end plan + recommended order.
+- **HAENGSUNG Payment Refresh** (Vendor / Expense / Payroll / Overseas, `PRDT_TYPE='H'` only — Internal Transfer excluded): [`../haengsung-payment-refresh.md`](../integrations/haengsung/payment-refresh.md). Two-datasource (WeCMS Postgres + HAENGSUNG Oracle ERP) import that replaces Excel Upload with Refresh. **Phase 1 (this feature)** = manual Refresh import only.
 - **HAENGSUNG ERP integration — follow-on / separate flows** (deferred; see the Refresh spec §25 scope decision):
-  - **Phase 3** — Approval-status write-back: [`../haengsung-approval-status-writeback.md`](../haengsung-approval-status-writeback.md) (`ErpStatusUpdateHelper`).
-  - **Phase 4** — Dispatch-result write-back: [`../haengsung-dispatch-result-writeback.md`](../haengsung-dispatch-result-writeback.md) (`ERP_0100_004`).
-  - **Separate ERP sync** (not payment): [`../haengsung-exchange-rate-sync.md`](../haengsung-exchange-rate-sync.md) (`ERP_0100_001`) · [`../haengsung-card-account-sync.md`](../haengsung-card-account-sync.md) (`ERP_0100_003`).
-- **HAENGSUNG Oracle Integration — final full audit** (2026-06-29; all 11 flows compared across legacy / API / Web / Oracle DB / WeCMS DB; DB columns + row counts verified): [`../haengsung-oracle-integration-final-audit.md`](../haengsung-oracle-integration-final-audit.md). Verdict: complete + legacy-faithful; one low-severity card-sync source-parity item (F-1) for SIT.
+  - **Phase 3** — Approval-status write-back: [`../haengsung-approval-status-writeback.md`](../integrations/haengsung/approval-status-writeback.md) (`ErpStatusUpdateHelper`).
+  - **Phase 4** — Dispatch-result write-back: [`../haengsung-dispatch-result-writeback.md`](../integrations/haengsung/dispatch-result-writeback.md) (`ERP_0100_004`).
+  - **Separate ERP sync** (not payment): [`../haengsung-exchange-rate-sync.md`](../integrations/haengsung/exchange-rate-sync.md) (`ERP_0100_001`) · [`../haengsung-card-account-sync.md`](../integrations/haengsung/card-account-sync.md) (`ERP_0100_003`).
+- **HAENGSUNG Oracle Integration — final full audit** (2026-06-29; all 11 flows compared across legacy / API / Web / Oracle DB / WeCMS DB; DB columns + row counts verified): [`../haengsung-oracle-integration-final-audit.md`](../../audits/legacy-parity/haengsung-oracle-integration-final-audit.md). Verdict: complete + legacy-faithful; one low-severity card-sync source-parity item (F-1) for SIT.
 
 ### Payment import strategy — Standard WeCMS vs HAENGSUNG
 
@@ -55,19 +64,19 @@ How each payment module gets its scheduled-payment data into WeCMS depends on th
 - **Refresh replaces Excel Upload only for the four modules above** (Vendor / Expense / Payroll / Overseas). For those four, the HAENGSUNG scheduled-payment screen renders **Refresh** instead of **Excel Upload**; the button imports payment batches directly from the Oracle ERP interface tables and upserts them as WeCMS drafts identical to an uploaded batch (same `SCDUL_PYMN_SUMR(_DETL)` / `OVRS_PYMN_SUMR(_DETL)` target tables, same downstream approval / dispatch / result flow).
 - **Internal Transfer always uses Excel Upload** for every product type — including HAENGSUNG. It has no Refresh button and no Oracle import path.
 - **Standard (non-`H`) tenants are unaffected** — every module keeps Excel Upload regardless.
-- Full design + Oracle schema / status flow / field mapping: [`../haengsung-payment-refresh.md`](../haengsung-payment-refresh.md). Frontend gating + legacy parity: [`wecms-web/docs/features/payment/haengsung-payment-refresh-frontend-parity.md`](../../../../wecms-web/docs/features/payment/haengsung-payment-refresh-frontend-parity.md).
+- Full design + Oracle schema / status flow / field mapping: [`../haengsung-payment-refresh.md`](../integrations/haengsung/payment-refresh.md). Frontend gating + legacy parity: [`wecms-web/docs/features/payment/haengsung-payment-refresh-frontend-parity.md`](../../../../wecms-web/docs/audits/haengsung-payment-refresh-frontend-parity-audit.md).
 
 ## Audit (2026-06-23 re-audit)
-- **Doc-vs-code audit:** [payment-docs-audit.md](../../audits/payment-docs-audit.md) — per-module status + corrections made.
-- **Gap analysis:** [payment-gap-analysis.md](../../audits/payment-gap-analysis.md) — remaining gaps (MATCH / APPROVED DEVIATION / DEAD LEGACY / PARTIAL / MISSING).
-- **Source index:** [payment-source-index.md](../../audits/payment-source-index.md) — code ↔ docs ↔ tests map per module.
+- **Doc-vs-code audit:** [payment-docs-audit.md](../../audits/modules/payment-docs-audit.md) — per-module status + corrections made.
+- **Gap analysis:** [payment-gap-analysis.md](../../audits/modules/payment-gap-analysis.md) — remaining gaps (MATCH / APPROVED DEVIATION / DEAD LEGACY / PARTIAL / MISSING).
+- **Source index:** [payment-source-index.md](../../audits/modules/payment-source-index.md) — code ↔ docs ↔ tests map per module.
 
 ## Companion layers (cross-linked, not duplicated)
 - **Business rules:** [`../../business-rules/internal-transfer.md`](../../references/business-rules/internal-transfer.md), [`../../business-rules/card-transactions.md`](../../references/business-rules/card-transactions.md)
 - **Database schema:** [`../../database/payment/`](../../references/database/payment/) (`internal-transfer-schema`, `firm-banking-dispatch-*`), [`../../database/card-transactions.md`](../../references/database/card-transactions.md)
 - **Data model (ERD):** [Payment ERD](../../references/database/erd/payment-erd.md) ([Mermaid](../../references/database/erd/diagrams/payment-erd.mmd)); Card Transactions is in the [Add-on Service ERD](../../references/database/erd/addon-service-erd.md). Cross-module map: [full-project ERD](../../references/database/erd/full-project-erd.md). Coverage: [database-coverage-matrix.md](../../references/database/database-coverage-matrix.md) · ownership: [table-ownership.md](../../references/database/table-ownership.md).
 - **Migration:** [`../../migration/internal-transfer-mapping.md`](../../references/migration/internal-transfer-mapping.md), [`../../migration/card-transactions.md`](../../references/migration/card-transactions.md)
-- **Audits:** [`../../audits/internal-transfer-parity-checklist.md`](../../references/audits/internal-transfer-parity-checklist.md), [`../../audits/card-transactions-parity-checklist.md`](../../references/audits/card-transactions-parity-checklist.md)
+- **Audits:** [`../../audits/internal-transfer-parity-checklist.md`](../../audits/legacy-parity/internal-transfer-parity-checklist.md), [`../../audits/card-transactions-parity-checklist.md`](../../audits/legacy-parity/card-transactions-parity-checklist.md)
 - **Frontend:** [`wecms-web/docs/features/payment/`](../../../../wecms-web/docs/features/payment/)
 - **JEX reference:** [`../../../../docs/jex/screen-flows/payments.md`](../../../../docs/jex/screen-flows/payments.md), [`../../../../docs/jex/business-rules/payment.md`](../../../../docs/jex/business-rules/payment.md)
 
@@ -141,7 +150,7 @@ Mirrors `PymnHelper.pymn_0009_001_c001` routing — TB_PAY_TARGET (API path) vs 
 | `SpecialCharValidator` | [`payment/validation/SpecialCharValidator.java`](../../../src/main/java/com/kosign/wecms/domain/payment/validation/SpecialCharValidator.java) | Per-`(PymnType, FieldCd)` blocked-chars enforcement. Consumed during Excel parse + create-draft. |
 | `BlockedCharsRule` entity + `BlockedCharsRuleRepository` | [`payment/validation/entity/`](../../../src/main/java/com/kosign/wecms/domain/payment/validation/entity/) + [`payment/validation/repository/`](../../../src/main/java/com/kosign/wecms/domain/payment/validation/repository/) | Schema + 39-row DEV seed in V149. |
 
-> **Doc status:** MATCH. Parity audit at [`../../audits/special-char-validation-parity-audit-2026-06-10.md`](../../audits/special-char-validation-parity-audit-2026-06-10.md); field-casing audit + per-module Excel-parser sections cover it. One open verification item (OV-1: runtime `BLOCKED_CHARS_RULE` row count) tracked in the bug-reports tree.
+> **Doc status:** MATCH. Parity audit at [`../../audits/special-char-validation-parity-audit-2026-06-10.md`](../../audits/historical/special-char-validation-parity-audit-2026-06-10.md); field-casing audit + per-module Excel-parser sections cover it. One open verification item (OV-1: runtime `BLOCKED_CHARS_RULE` row count) tracked in the bug-reports tree.
 
 ### 2.2a `payment/dispatch/callback/` — bank dispatch callback endpoints
 
@@ -152,7 +161,7 @@ Inbound EFS-gateway callbacks for firm-banking dispatch (Phase B). Base path `/a
 | `BulkExecutionResultController` | [`payment/dispatch/callback/controller/`](../../../src/main/java/com/kosign/wecms/domain/payment/dispatch/callback/controller/BulkExecutionResultController.java) | `POST /bulk-execution-result` — 01302 execution result ingest → `TB_FIRM_FILE_RSLT` / `_DATA` / `_MST`, `TB_PAY_*`, `TB_FIRM_BAT_API_TRAN`. |
 | `BulkReceptionResultController` | [`payment/dispatch/callback/controller/`](../../../src/main/java/com/kosign/wecms/domain/payment/dispatch/callback/controller/BulkReceptionResultController.java) | `POST /bulk-reception-result` — 01301 reception result + inline 00302 issuance. |
 
-> **Doc status:** MATCH. Both controllers + services are implemented and documented in [`../../audits/wecms-batch-full-legacy-vs-refactor-final-gap-audit.md`](../../audits/wecms-batch-full-legacy-vs-refactor-final-gap-audit.md) and [`../../audits/wecms-batch-tobe-process-audit.md`](../../audits/wecms-batch-tobe-process-audit.md). Open items are operational only (B7 IP-allowlist for external callers; B5 SIT byte-parity) — not missing code.
+> **Doc status:** MATCH. Both controllers + services are implemented and documented in [`../../audits/wecms-batch-full-legacy-vs-refactor-final-gap-audit.md`](../../audits/legacy-parity/wecms-batch-full-legacy-vs-refactor-final-gap-audit.md) and [`../../audits/wecms-batch-tobe-process-audit.md`](../../audits/legacy-parity/wecms-batch-tobe-process-audit.md). Open items are operational only (B7 IP-allowlist for external callers; B5 SIT byte-parity) — not missing code.
 
 ### 2.2b `payment/notification/` — bulletin / approval-notification (BLTB_* tables)
 
@@ -161,7 +170,7 @@ Inbound EFS-gateway callbacks for firm-banking dispatch (Phase B). Base path `/a
 | `NotificationController` | [`payment/notification/controller/`](../../../src/main/java/com/kosign/wecms/domain/payment/notification/controller/NotificationController.java) | `/api/v1/notifications` — read-side list / unread-count / mark-read / mark-all-read. **Read-side service logic is a stub (HIGH gap).** |
 | `ApprovalNotificationService` | [`payment/notification/service/`](../../../src/main/java/com/kosign/wecms/domain/payment/notification/service/) | **Write-side, fully implemented** — fans out `BLTB_POST_INFM` / `BLTB_USER_NEW_POST_INFM` / `BLTB_NOTI_INFM` / `BLTB_NOTI_CONT_INFM` / `BLTB_COMNT_INFM` on every Payment module's request/approve/reject (Card, Internal Transfer, Vendor, Expense, Payroll, Overseas). |
 
-> **Doc status & memory reconciliation:** memory `project_notification_module_removed.md` says "the NOTIFICATION table + notification module were removed". That is accurate for the **refactor-only `NOTIFICATION` table** (never built). It does NOT mean there is no notification code — the `payment/notification/` package backs approval notifications via the legacy **`BLTB_*` tables** (which are in the active table list). Classification: **code-exists-doc-missing (PARTIAL)** — write-side live + documented in [`../../audits/notification-popup-legacy-vs-refactor-analysis.md`](../../audits/notification-popup-legacy-vs-refactor-analysis.md); read-side `NotificationController`/`NotificationService` is a documented HIGH-priority stub. **Recommendation:** not dead legacy, no PO decision needed on existence — just finish wiring the read-side `NotificationService` per the gap audit; clarify the memory note so the BLTB write-side isn't mistaken for the removed `NOTIFICATION` table.
+> **Doc status & memory reconciliation:** memory `project_notification_module_removed.md` says "the NOTIFICATION table + notification module were removed". That is accurate for the **refactor-only `NOTIFICATION` table** (never built). It does NOT mean there is no notification code — the `payment/notification/` package backs approval notifications via the legacy **`BLTB_*` tables** (which are in the active table list). Classification: **code-exists-doc-missing (PARTIAL)** — write-side live + documented in [`../../audits/notification-popup-legacy-vs-refactor-analysis.md`](../../audits/legacy-parity/notification-popup-legacy-vs-refactor-analysis.md); read-side `NotificationController`/`NotificationService` is a documented HIGH-priority stub. **Recommendation:** not dead legacy, no PO decision needed on existence — just finish wiring the read-side `NotificationService` per the gap audit; clarify the memory note so the BLTB write-side isn't mistaken for the removed `NOTIFICATION` table.
 
 > **Cut-off-time** validation is currently Internal-Transfer-specific ([`CutoffValidator`](../../../src/main/java/com/kosign/wecms/domain/payment/internaltransfer/service/CutoffValidator.java) under `internaltransfer/service/`). If Vendor / Expense / Payroll need cut-offs, lift to `payment/shared/cutoff/`.
 
@@ -230,9 +239,9 @@ Legacy `pymn_xxxx_xxx` ids appear **only** in: (1) JEX file:line citations in Ja
 
 ### 4.2 Schema invariants
 
-- All four siblings share `SCDUL_PYMN_SUMR` + `SCDUL_PYMN_SUMR_DETL`, discriminated by `SCDUL_PYMN_TYPE_CD`. CHECK constraint `scdul_pymn_sumr_chk01` allows all four codes (`'00'`, `'01'`, `'02'`, `'03'`) — relaxation landed in [V146__scdul_pymn_sumr_chk01_allow_payroll.sql](../../../src/main/resources/db/migration/V146__scdul_pymn_sumr_chk01_allow_payroll.sql).
-- `SCDUL_PYMN_NO` is `VARCHAR(20)` in the refactor (DEV is 10) — refactor-only widening to fit the 14-char `YYYYMMDD<seq:6>` Java generator. Documented in [database/payment/internal-transfer-schema.md §7](../../references/database/payment/internal-transfer-schema.md).
-- Each sibling has its **own** per-(tenant, day) key-sequence helper table (e.g. `INTERNAL_TRANSFER_KEY_SEQ`) so day-rolls and seq exhaustion are independent.
+- All four siblings share `SCDUL_PYMN_SUMR` + `SCDUL_PYMN_SUMR_DETL`, discriminated by `SCDUL_PYMN_TYPE_CD`. CHECK constraint `scdul_pymn_sumr_chk01` allows all four codes (`'00'`, `'01'`, `'02'`, `'03'`) — relaxation landed in `V146__scdul_pymn_sumr_chk01_allow_payroll.sql`. *(historical — FOLDED INTO BASE DDL; the CHECK now ships inside `V86__scdul_pymn_sumr.sql`)*
+- `SCDUL_PYMN_NO` is `VARCHAR(20)` in the refactor (DEV is 10). ⚠️ **The stated reason is historical** — the widening was made to fit a 14-char `YYYYMMDD<seq:6>` Java generator that was **retired 2026-06-09 (MR-1)**. The key is now a plain per-tenant integer from `wb_get_next_val`, so the extra width is unused legacy headroom, not a live requirement.
+- ~~Each sibling has its **own** per-(tenant, day) key-sequence helper table (e.g. `INTERNAL_TRANSFER_KEY_SEQ`).~~ ⚠️ **RETIRED 2026-06-09/10 (MR-1 + MR-2C).** No `*_KEY_SEQ` helper table exists — all four siblings share one funnel call, `InternalTransferKeyGenerator.nextScdulPymnNo` → `LegacyFunctionRepository` → `wb_get_next_val('scdul_pymn_sumr','scdul_pymn_no', biz_key)` (per-tenant `MAX+1`, V140 #36). See [`../../../CLAUDE.md`](../../../CLAUDE.md) §"Retired exception #5".
 - Dispatch tables (`TB_PAY_TARGET`, `TB_PAY_FILE_MST`, `TB_PAY_FILE_DATA`) are shared infrastructure — written via `TransferDispatchExecutor` in `payment/dispatch/`. (The legacy `SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN` API-path bridge is **not** written by the refactor — removed 2026-06-10.)
 
 ### 4.3 Error code allocation
@@ -261,13 +270,13 @@ Distilled from the Internal Transfer baseline. The memory note `project_payment_
    - Result list + Result detail — `_r001`
    Plus any per-sibling sort metadata in WSVC XML.
 3. **Cross-tree feature spec** — copy [internal-transfer/README.md](internal-transfer/README.md) shape to `wecms-api/docs/features/payment/<slug>/README.md`. Stamp the discriminator + audit `WSVC_ID` + JEX counterpart screen-ids.
-4. **DB schema** — confirm the master + detail tables already exist (`SCDUL_PYMN_SUMR` + `_DETL`). Add a sibling-specific key-sequence helper table `{SIBLING_UPPER}_KEY_SEQ` in a new Flyway migration. If the `scdul_pymn_sumr_chk01` CHECK needs relaxing, ship a corrective migration (mirror V146).
+4. **DB schema** — confirm the master + detail tables already exist (`SCDUL_PYMN_SUMR` + `_DETL`). ⚠️ **Do NOT add a `{SIBLING_UPPER}_KEY_SEQ` helper table** — that step is **obsolete**: the `*_KEY_SEQ` architecture was retired 2026-06-09/10 and refactor-only counter tables are forbidden by the workspace rules. A new sibling reuses `InternalTransferKeyGenerator.nextScdulPymnNo` (the `wb_get_next_val` funnel) verbatim. If the `scdul_pymn_sumr_chk01` CHECK needs relaxing, ship a corrective migration (mirror V146).
 5. **Backend package skeleton** — create `com.kosign.wecms.domain.payment.<sibling>` with `controller/`, `service/`, `export/` subfolders. Declare `static final String WSVC_ID = "<slug>"` at the top of the service. Wire the discriminator: `repo.findByBizKeyAndScdulPymnTypeCd(bizKey, ScdulPymnTypeCd.<CONST>.code(), …)`.
 6. **DTOs + sort whitelist enum** — sibling-specific DTOs (`*Row`, `*ListResponse`, `*DetailResponse`, `Create*Request`, `*LineInput`, `*ResultLine`, `Update*Request`, `Dispatch*Request`, `Parse*Response`, `Parsed*Line`) under the sibling's `dto/`. Per-sibling sort enum implementing `SortableField`.
 7. **Excel parser** — `*ExcelParser.java` mirrors `PymnHelper.importDataFromExcelFor<Type>`; consumes `SpecialCharValidator` with the sibling's `PymnType` constant.
-8. **Frontend folder + routes** — create [`components/payment/<slug>/`](../../../../wecms-web/components/payment/) with the same five files (`ScheduledPaymentPage`, `ScheduledPaymentDetailPage`, `PaymentResultPage`, `PaymentResultDetailPage`, `<Sibling>UploadDialog`, plus `types.ts`). Add the four routes under [`app/(dashboard)/payment/<slug>/`](../../../../wecms-web/app/(dashboard)/payment/). Use Internal Transfer's `transfer-result` → `payment-result` rename convention for the sibling subroute (Vendor / Expense / Payroll all use `scheduled-payment` + `payment-result`).
+8. **Frontend folder + routes** — create [`components/payment/<slug>/`](../../../../wecms-web/components/payment/) with the same five files (`ScheduledPaymentPage`, `ScheduledPaymentDetailPage`, `PaymentResultPage`, `PaymentResultDetailPage`, `<Sibling>UploadDialog`, plus `types.ts`). Add the four routes under [`app/(dashboard)/payment/<slug>/`](<../../../../wecms-web/app/(dashboard)/payment/>). Use Internal Transfer's `transfer-result` → `payment-result` rename convention for the sibling subroute (Vendor / Expense / Payroll all use `scheduled-payment` + `payment-result`).
 9. **API client + locale entries + SCREEN_IDS** — sibling-specific API client at [`lib/api/<siblingCamelCase>.ts`](../../../../wecms-web/lib/api/) (e.g. `vendorPayment.ts`); 4 new `SCREEN_IDS.PAYMENT_<SIBLING>_*` constants + matching `SCREEN_ID_TO_ROUTE` entries; locale entries under the sibling's i18n prefix in `en.json` / `ko.json` / `vi.json` (no `km.json`).
-10. **Audit checklist + cross-link** — add a parity-checklist file under `../../audits/<slug>-parity-checklist.md` (mirror [internal-transfer-parity-checklist.md](../../references/audits/internal-transfer-parity-checklist.md)). Update §1 of this README to flip the sibling's status row from 🟡 stub → ✅ full doc.
+10. **Audit checklist + cross-link** — add a parity-checklist file under `../../audits/<slug>-parity-checklist.md` (mirror [internal-transfer-parity-checklist.md](../../audits/legacy-parity/internal-transfer-parity-checklist.md)). Update §1 of this README to flip the sibling's status row from 🟡 stub → ✅ full doc.
 
 The shared infrastructure in §2 + §3 **does not change**. Adding a new sibling is purely additive.
 

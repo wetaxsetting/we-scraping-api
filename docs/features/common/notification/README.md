@@ -48,9 +48,9 @@ Unknown / other-tenant id on mark-read ⇒ `WBE_NOTIFICATION_NOT_FOUND`. Produce
 
 - Common module hub — [../README.md](../README.md)
 - WEB twin (header bell + slide-over) — [../../../../../wecms-web/docs/features/common/notification/README.md](../../../../../wecms-web/docs/features/common/notification/README.md)
-- Reference analysis — popup legacy-vs-refactor — [../../../audits/notification-popup-legacy-vs-refactor-analysis.md](../../../audits/notification-popup-legacy-vs-refactor-analysis.md)
-- Reference analysis — approval-detail popup parity — [../../../audits/notification-approval-detail-popup-parity-audit.md](../../../audits/notification-approval-detail-popup-parity-audit.md)
-- Common audit deliverables — [../../../audits/common-source-index.md](../../../audits/common-source-index.md) (§6 notification) · [../../../audits/common-gap-analysis.md](../../../audits/common-gap-analysis.md) · [../../../audits/common-docs-audit.md](../../../audits/common-docs-audit.md)
+- Reference analysis — popup legacy-vs-refactor — [../../../audits/notification-popup-legacy-vs-refactor-analysis.md](../../../audits/legacy-parity/notification-popup-legacy-vs-refactor-analysis.md)
+- Reference analysis — approval-detail popup parity — [../../../audits/notification-approval-detail-popup-parity-audit.md](../../../audits/legacy-parity/notification-approval-detail-popup-parity-audit.md)
+- Common audit deliverables — [../../../audits/common-source-index.md](../../../audits/modules/common-source-index.md) (§6 notification) · [../../../audits/common-gap-analysis.md](../../../audits/modules/common-gap-analysis.md) · [../../../audits/common-docs-audit.md](../../../audits/modules/common-docs-audit.md)
 
 ## At a glance (verified)
 

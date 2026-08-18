@@ -1,4 +1,4 @@
-# audit-log — Business Flow (Backend)
+# Audit Log — Business Flow (Backend)
 
 **Part of:** Common → audit-log
 **Last verified:** 2026-06-23

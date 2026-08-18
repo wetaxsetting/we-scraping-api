@@ -1,5 +1,14 @@
 # Cash Flow — Source Code Index (traceability)
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../../../references/database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../../../references/database/flyway-migration-baseline.md) §5.
+
 Complete inventory of every file / object, legacy and refactor. Paths are workspace-relative.
 
 ---
@@ -65,7 +74,7 @@ cash_0001_001.act
 | [domain/banking/export/CashFlowExcelWriter.java](../../../../../src/main/java/com/kosign/wecms/domain/banking/export/CashFlowExcelWriter.java) | dedicated POI XSSF writer (live `/export` path) |
 | [domain/banking/export/CashFlowReportExportProvider.java](../../../../../src/main/java/com/kosign/wecms/domain/banking/export/CashFlowReportExportProvider.java) | `ExportRowProvider` (`screenId="cash-flow-report"`) for the generic dispatcher / visibility wiring |
 | Repositories | `AcctTrnsHstrRepository.findCashFlowSourceRows`, `OvrsPymnMstrRepository.findCashFlowSourceRows`, `CardTrnsHstrRepository.findClassifiedByBizKeyAndYear`, `ScdulPymnSumrDetlRepository.findCashFlowSourceRows` (+ `ScdulPymnCashFlowRow` projection), `ExptResolMstrRepository.findCompletedApprSeqNos`, `ChartAcctInfmRepository.findByBizKeyAndDelYn` |
-| Flyway | [V124__cash_flow_report_view_setting_seed.sql](../../../../../src/main/resources/db/migration/V124__cash_flow_report_view_setting_seed.sql), `V184__card_trns_hstr_schema.sql`, `V185__ovrs_pymn_mstr_chart_acct_columns.sql` |
+| Flyway | [V156__sys_scr_option_wecms.sql](../../../../../src/main/resources/db/migration/V156__sys_scr_option_wecms.sql) (View Setting seed — manual DBA script), `V39__card_trns_hstr.sql`, `V78__ovrs_pymn_mstr.sql` — *previously cited as V124/V184/V185, renumbered by the [2026-06-09 rebaseline](../../../../references/database/flyway-migration-baseline.md)* |
 | messages | [messages.properties](../../../../../src/main/resources/messages.properties) — `WBE_CASH_FLOW_RATE_REQUIRED` (line ~39) |
 | Tests | `src/test/.../banking/service/CashFlowReportQuarterParityTest.java`, `.../cashflow/BalanceCalculatorTest.java`, `.../cashflow/FxConverterTest.java` |
 

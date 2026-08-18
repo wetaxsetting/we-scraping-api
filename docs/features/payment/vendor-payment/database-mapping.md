@@ -1,5 +1,14 @@
 # Vendor Payment — Database Mapping (Backend)
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../../references/database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../../references/database/flyway-migration-baseline.md) §5.
+
 Tables, columns, keys, key-generation, and migrations for `vendor-payment` (both sub-modules). Authoritative source: the JPA entities (shared with Internal Transfer) + the legacy JEX DDL, cross-checked against the live DEV `wecmsvndev` schema. All tables are in the [legacy-table-inventory](../../../../docs/references/database/legacy-table-inventory.md).
 
 > **Shared tables.** Vendor Payment owns **no** tables of its own. It reuses Internal Transfer's `SCDUL_PYMN_SUMR` / `SCDUL_PYMN_SUMR_DETL` (partitioned by `SCDUL_PYMN_TYPE_CD = '01'`) and the Approval-Box `EXPT_RESOL_*` family. See [internal-transfer](../internal-transfer/) + [approval-box/database-mapping.md](../approval-box/database-mapping.md) for the full column-level mapping; this file documents the Vendor-specific facts.

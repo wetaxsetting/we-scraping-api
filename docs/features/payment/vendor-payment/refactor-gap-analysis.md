@@ -1,8 +1,17 @@
 # Vendor Payment — Refactor Gap Analysis (Backend)
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../../references/database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../../references/database/flyway-migration-baseline.md) §5.
+
 Area-by-area comparison of the legacy JEX `pymn_0001_*` / `pymn_0002_*` behaviour against the refactor. Status vocabulary: **MATCH** · **APPROVED DEVIATION** · **DEAD LEGACY** · **PARTIAL** · **MISSING**.
 
-> Re-audited 2026-06-23 against the latest code ([VendorPaymentController.java](../../../../src/main/java/com/kosign/wecms/domain/payment/vendorpayment/controller/VendorPaymentController.java) + the two services + `lib/api/vendorPayment.ts`). Companion: [payment-gap-analysis.md](../../../audits/payment-gap-analysis.md) (rows G-VEND-1/2).
+> Re-audited 2026-06-23 against the latest code ([VendorPaymentController.java](../../../../src/main/java/com/kosign/wecms/domain/payment/vendorpayment/controller/VendorPaymentController.java) + the two services + `lib/api/vendorPayment.ts`). Companion: [payment-gap-analysis.md](../../../audits/modules/payment-gap-analysis.md) (rows G-VEND-1/2).
 
 | Area | Legacy (JEX) | Refactor (Spring) | Status |
 |---|---|---|---|

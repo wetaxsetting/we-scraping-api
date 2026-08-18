@@ -27,12 +27,12 @@ Ownership rule: a table has exactly **one** owning module. Shared reference/infr
 |---|---|---|---|
 | `SCDUL_PYMN_SUMR` | `payment/internaltransfer` | [internal-transfer](../../features/payment/internal-transfer/README.md) | Vendor/Expense/Payroll (shared) |
 | `SCDUL_PYMN_SUMR_DETL` | `payment/internaltransfer` | [internal-transfer](../../features/payment/internal-transfer/README.md) | — |
-| `INTERNAL_TRANSFER_KEY_SEQ` | `payment/internaltransfer` | [internal-transfer](../../features/payment/internal-transfer/README.md) | — (refactor helper) |
+| ~~`INTERNAL_TRANSFER_KEY_SEQ`~~ | — | — | **RETIRED 2026-06-09 (MR-1)** — refactor-only counter table; table, entity and repository all deleted (commit `eb9296b`). `SCDUL_PYMN_NO` now funnels through `wb_get_next_val` (V140 #36). |
 | ~~`SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN`~~ | — | — | **Removed from refactor 2026-06-10** — legacy API-path bridge, never used by Spring (entity deleted; dropped via manual cleanup script). Still exists in JEX DEV. |
 | `OVRS_PYMN_SUMR` | `payment/overseas` | [overseas-payment](../../features/payment/overseas-payment/README.md) | — |
 | `OVRS_PYMN_MSTR` | `payment/overseas` | [overseas-payment](../../features/payment/overseas-payment/README.md) | — |
 | `OVRS_PYMN_DTLS` | `payment/overseas` | [overseas-payment](../../features/payment/overseas-payment/README.md) | — |
-| `OVERSEAS_PAYMENT_KEY_SEQ` | `payment/overseas` | [overseas-payment](../../features/payment/overseas-payment/README.md) | — (refactor helper) |
+| ~~`OVERSEAS_PAYMENT_KEY_SEQ`~~ | — | — | **RETIRED 2026-06-10 (MR-2C)** — refactor-only counter table; table, entity and repository all deleted (commits `eb9296b` / `4987435`). `OVRS_PYMN_NO` now funnels through `wb_get_next_val` (V140 #63). |
 | `EXPT_RESOL_MSTR` | `payment/approvalbox` | [approval-box](../../features/payment/approval-box/) | All payment + card (APPR_SEQ_NO) |
 | `EXPT_RESOL_APPRVR_INFM` | `payment/approvalbox` | [approval-box](../../features/payment/approval-box/) | — |
 | `EXPT_RESOL_FILE` | `payment/approvalbox` | [approval-box](../../features/payment/approval-box/) | — |

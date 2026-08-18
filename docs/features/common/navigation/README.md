@@ -35,7 +35,7 @@ JEX tables** and are flagged non-legacy in the table inventory.
 - Design ref (backend resolution) — [../../../../../docs/jex/features/menu-product-type-management/backend-navigation-implementation-design.md](../../../../../docs/jex/features/menu-product-type-management/backend-navigation-implementation-design.md)
 - Design ref (endpoint gate) — [../../../../../docs/jex/features/menu-product-type-management/endpoint-authorization-matrix.md](../../../../../docs/jex/features/menu-product-type-management/endpoint-authorization-matrix.md)
 - Design ref (`permission_cd` verify) — [../../../../../docs/jex/features/menu-product-type-management/permission-code-normalization-verification.md](../../../../../docs/jex/features/menu-product-type-management/permission-code-normalization-verification.md)
-- Common audit deliverables — [../../../audits/common-source-index.md](../../../audits/common-source-index.md)
+- Common audit deliverables — [../../../audits/common-source-index.md](../../../audits/modules/common-source-index.md)
 
 ## At a glance (verified)
 

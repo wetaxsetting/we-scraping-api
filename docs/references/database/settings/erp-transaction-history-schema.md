@@ -6,7 +6,7 @@
 **Backend design:** [../../backend/settings/erp-transaction-history.md](../../business-rules/settings/erp-transaction-history.md)
 **JEX reference:** `IDO.ERP_TRNS_HSTR_R001.xml`, `IDO.ERP_TRNS_HSTR_R001_CNT.xml` — read-only
 
-> Implemented in [V71](../../../../src/main/resources/db/migration/V71__erp_trns_hstr_schema.sql) + [V72](../../../../src/main/resources/db/migration/V72__erp_trns_hstr_demo_seed.sql). This file is the design-time spec — the migrations are the source of truth for the live local schema.
+> Implemented in [V71](../../../../src/main/resources/db/migration/V54__erp_trns_hstr.sql) + `V72__erp_trns_hstr_demo_seed.sql`. This file is the design-time spec — the migrations are the source of truth for the live local schema. *(historical — DROPPED; demo seeds were removed in the 2026-06-09 rebaseline)*
 
 ---
 
@@ -39,7 +39,7 @@ The refactor entity ([`ErpTrnsHstr.java`](../../../../src/main/java/com/kosign/w
 
 ## 2. Local migrations
 
-### 2.1 `V71__erp_trns_hstr_schema.sql` — table + helper indexes
+### 2.1 `V54__erp_trns_hstr.sql` — table + helper indexes
 
 Creates `ERP_TRNS_HSTR` with the column shape above. Adds two performance indexes beyond DEV parity (the legacy schema has only the PK index):
 
@@ -50,7 +50,7 @@ Creates `ERP_TRNS_HSTR` with the column shape above. Adds two performance indexe
 
 Extra performance indexes are allowed beyond DEV parity per the [legacy schema parity rule](../../../../CLAUDE.md). Idempotent (`CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`).
 
-### 2.2 `V72__erp_trns_hstr_demo_seed.sql` — real-DEV seed
+### 2.2 `V72__erp_trns_hstr_demo_seed.sql` — real-DEV seed *(historical — DROPPED; demo seeds were removed in the 2026-06-09 rebaseline)*
 
 30 rows from real JEX DEV for tenant `VN_VNM0004_000001`. Sample selection: top 10 per direction (`W` / `E` / `D`) ordered by `REG_DTM DESC, SEQ_NO DESC`. Mix preserves real-world filename patterns (Account Inquiry exports, Vendor Payment uploads, Internal Transfer ingests, batch-generated rows, etc.). All seeded rows have `FILE_SIZE > 0` — fixture files are NOT committed under the storage root, so the download endpoint surfaces `WBE2015` for any seeded `seqNo` whose file hasn't been manually placed at `<storage-root>/<biz_key>/erp-transaction-history/<save_file_nm>`. Per the [data migration rule](../../../../CLAUDE.md) (≤30 rows per active table, idempotent via `INSERT … ON CONFLICT DO NOTHING`).
 

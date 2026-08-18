@@ -1,5 +1,14 @@
 # Own Account Transfer — Database Mapping (Refactor Backend)
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../../../references/database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../../../references/database/flyway-migration-baseline.md) §5.
+
 Tables read/written by the feature, and the full **Legacy column → Refactor entity field → DTO field →
 UI field** chain for the key concepts. Schema design detail (gaps, migrations, idempotent SQL) lives in the
 reference doc [own-account-transfer-db.md](../../../../references/database/banking/own-account-transfer-db.md);
@@ -25,8 +34,8 @@ ERD in [banking-erd.md](../../../../references/database/erd/banking-erd.md); own
 | `NXSIAS_MODULE_TRAN_LOG_HIS` | INSERT | (native write) | Per-engine-job forensic audit. |
 | `AUDIT_LOGS_INFM` | INSERT | shared writer | App-level audit (`WSVC_ID = 'own-account-transfer'`). |
 
-Migrations: `V195__napas_remit_trns_hstr_oat_idempotency.sql` (idempotency key + partial unique index),
-`V199__own_account_transfer_view_setting_seed.sql` (View Setting column seed). `BANK_CERT_INFO` /
+Migrations: `V195__napas_remit_trns_hstr_oat_idempotency.sql` (idempotency key + partial unique index), *(historical — DROPPED; the OAT idempotency guard was removed entirely. Base table: `V69__napas_remit_trns_hstr.sql`)*
+`V156__sys_scr_option_wecms.sql` (View Setting column seed). `BANK_CERT_INFO` /
 `NXSIAS_MODULE_TRAN_LOG_HIS` schema landed in V100/V101 (draft-numbered V86/V87 — OQ-DOC-3 drift note).
 
 ## 2. Column mapping — key concepts

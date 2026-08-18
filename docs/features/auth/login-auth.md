@@ -6,7 +6,7 @@
 >
 > Specifically: [login/](login/README.md) · [logout/](logout/README.md) · [session-management/](session-management/README.md)
 > (login flow, logout, and `/me` session bootstrap were split into per-module folders in the 2026-06-23
-> Auth standardization — see [auth-docs-audit.md](../../audits/auth-docs-audit.md)).
+> Auth standardization — see [auth-docs-audit.md](../../audits/modules/auth-docs-audit.md)).
 
 **Domain:** `auth` (system / cross-cutting — JEX `logn` module)
 **Backend package:** `com.kosign.wecms.domain.auth`
@@ -43,5 +43,5 @@ test-demo fallback (`LoginResponse.chooser(...)` + `CompanyOption[]`, and the fr
 ## Related
 
 - Backend module folders: [login/](login/README.md) · [logout/](logout/README.md) · [change-password/](change-password/README.md) · [profile/](profile/README.md) · [jwt-authentication/](jwt-authentication/README.md) · [authorization/](authorization/README.md) · [menu-authorization/](menu-authorization/README.md) · [session-management/](session-management/README.md)
-- Audit deliverables: [auth-docs-audit.md](../../audits/auth-docs-audit.md) · [auth-gap-analysis.md](../../audits/auth-gap-analysis.md) · [auth-source-index.md](../../audits/auth-source-index.md)
+- Audit deliverables: [auth-docs-audit.md](../../audits/modules/auth-docs-audit.md) · [auth-gap-analysis.md](../../audits/modules/auth-gap-analysis.md) · [auth-source-index.md](../../audits/modules/auth-source-index.md)
 - Frontend counterpart: [../../../../wecms-web/docs/features/auth/login/README.md](../../../../wecms-web/docs/features/auth/login/README.md)

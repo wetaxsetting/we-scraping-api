@@ -1,35 +1,37 @@
-# audits/
+# references/audits/ — MIGRATED
 
-Parity and compliance audits for the refactor.
+**This folder no longer holds audit documents.** All 15 audit files that lived here were migrated to
+[`../../audits/`](../../audits/) on 2026-08-17.
 
-## Purpose
+➡️ **Audits now live in one place: [`docs/audits/`](../../audits/)** — start at its
+[index](../../audits/README.md).
 
-Snapshot reports comparing the refactor system against the JEX live system or against previously declared specs. Audits are dated, frozen-in-time evidence — not living documentation.
+## Why
 
-## What goes here
+`docs/audits/` and `docs/references/audits/` had the same charter and overlapping topics
+(card-transactions, erp-transaction-history, firm-banking-settings, purpose-settings, vas-account,
+internal-transfer). Two folders with one purpose meant authors picked at random and readers had to search
+both. Consolidation resolves that.
 
-- DB parity audits (refactor PostgreSQL vs JEX DEV PostgreSQL): tables, columns, types, defaults, PK/UK/CHECK/FK, indexes, triggers, row counts
-- API contract audits (Spring REST endpoints vs JEX WSVC contracts)
-- Security / dependency audits
-- End-of-sprint audit reports
+## Where the files went
 
-## What does NOT go here
+| Was here | Now |
+|---|---|
+| `card-transactions-parity-checklist.md` | [`audits/legacy-parity/`](../../audits/legacy-parity/card-transactions-parity-checklist.md) |
+| `erp-transaction-history-audit.md` | [`audits/legacy-parity/`](../../audits/legacy-parity/erp-transaction-history-audit.md) |
+| `firm-banking-history-parity-checklist.md` | [`audits/legacy-parity/`](../../audits/legacy-parity/firm-banking-history-parity-checklist.md) |
+| `firm-banking-settings-parity-checklist.md` | [`audits/legacy-parity/`](../../audits/legacy-parity/firm-banking-settings-parity-checklist.md) |
+| `internal-transfer-parity-checklist.md` | [`audits/legacy-parity/`](../../audits/legacy-parity/internal-transfer-parity-checklist.md) |
+| `own-account-transfer-current-implementation-audit.md` | [`audits/legacy-parity/`](../../audits/legacy-parity/own-account-transfer-current-implementation-audit.md) |
+| `own-account-transfer-legacy-bank-business-rules.md` | [`audits/legacy-parity/`](../../audits/legacy-parity/own-account-transfer-legacy-bank-business-rules.md) |
+| `own-account-transfer-parity-2026-06-01.md` | [`audits/legacy-parity/`](../../audits/legacy-parity/own-account-transfer-parity-2026-06-01.md) |
+| `purpose-settings-audit.md` | [`audits/legacy-parity/`](../../audits/legacy-parity/purpose-settings-audit.md) |
+| `vas-account.md` | [`audits/legacy-parity/`](../../audits/legacy-parity/vas-account.md) |
+| `db-parity-audit-2026-04-30.md` | [`audits/historical/`](../../audits/historical/db-parity-audit-2026-04-30.md) |
+| `firm-banking-history-review-2026-05-08.md` | [`audits/historical/`](../../audits/historical/firm-banking-history-review-2026-05-08.md) |
+| `firm-banking-settings-review-2026-05-09.md` | [`audits/historical/`](../../audits/historical/firm-banking-settings-review-2026-05-09.md) |
+| `nxisas-vcb-spike.md` | [`audits/historical/`](../../audits/historical/nxisas-vcb-spike.md) |
+| `transfer-history-audit-2026-05-20.md` | [`audits/historical/`](../../audits/historical/transfer-history-audit-2026-05-20.md) |
 
-- Living migration plans — those belong in [../migration/](../migration/)
-- Schema design or Flyway migration intent → [../database/](../database/)
-- Bug reports — those go in [../../bug-reports/](../../../../docs/bug-reports/) with `System: Refactor`
-
-## Example file names
-
-- `db-parity-audit-YYYY-MM-DD.md`
-- `api-contract-audit-YYYY-MM-DD.md`
-- `sprint-1-final-parity-YYYY-MM-DD.md`
-- `account-inquiry-vnd-parity.md`
-
-## Reference
-
-JEX DEV (`https://dev.wecms.vn/` + DEV DB) is the **read-only reference** for parity comparisons. Never modify JEX during an audit — only record observations.
-
-## Audit cadence rule
-
-Run a full local-vs-DEV parity audit at the **end of every sprint** before declaring the schema "done". See [../../../wecms-api/CLAUDE.md](../../../CLAUDE.md) §"Audit rule".
+Nothing was deleted or merged. This stub is kept so existing bookmarks and older links land somewhere
+useful; it can be removed once the team is confident nothing references the old path.

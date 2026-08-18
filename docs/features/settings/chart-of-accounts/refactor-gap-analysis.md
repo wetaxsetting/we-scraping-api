@@ -1,6 +1,6 @@
 # Chart of Accounts — Refactor Gap Analysis (Parity Review)
 
-> **The authoritative, source-based gap analysis is** [../../../audits/chart-of-accounts-final-parity-audit.md](../../../audits/chart-of-accounts-final-parity-audit.md) (audited 2026-06-07/08, both trees). This file is the **feature-folder summary** of that audit, kept in sync. Do not duplicate the audit — extend it there and reflect the verdict here.
+> **The authoritative, source-based gap analysis is** [../../../audits/chart-of-accounts-final-parity-audit.md](../../../audits/legacy-parity/chart-of-accounts-final-parity-audit.md) (audited 2026-06-07/08, both trees). This file is the **feature-folder summary** of that audit, kept in sync. Do not duplicate the audit — extend it there and reflect the verdict here.
 
 **Status (2026-06-08):** 🟢 **Code-complete for SIT** · 🟡 CONDITIONAL GO — only PO ratification remains. No Chart-of-Accounts code change is required before SIT.
 
@@ -65,6 +65,6 @@ Chart of Accounts — Refactor Status: ~100% functionally complete for SIT.
   • Zero data-corrupting defects in the COA feature. The one referential-integrity gap (CA-G10) is in the Payment/Internal-Transfer module, not COA.
 ```
 
-**Evidence for closed gaps:** see the source-cited rows in the [final parity audit §2–§3](../../../audits/chart-of-accounts-final-parity-audit.md) and [source-code-index.md](source-code-index.md).
+**Evidence for closed gaps:** see the source-cited rows in the [final parity audit §2–§3](../../../audits/legacy-parity/chart-of-accounts-final-parity-audit.md) and [source-code-index.md](source-code-index.md).
 
 **Verdict:** Documentation is complete, current, and aligned with the implemented refactor. The feature is code-complete for SIT; remaining items are PO confirmations tracked above and in the audit's PO Ratification Checklist.

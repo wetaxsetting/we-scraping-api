@@ -24,52 +24,57 @@ erDiagram
 
 Full attribute detail: [`diagrams/payment-erd.mmd`](diagrams/payment-erd.mmd).
 
+> ⚠️ **Migration column regenerated from disk 2026-08-17.** The [2026-06-09 rebaseline](../flyway-migration-baseline.md)
+> reassigned every Flyway number to a one-table-per-migration scheme; the values below name the migration
+> that creates each table **today**. Rows marked **DROPPED** / **no refactor DDL migration** have no current
+> migration — that is accurate, not a gap.
+
 ## Tables by sub-module
 
 ### Scheduled payment (internal transfer / vendor / expense / payroll)
 | Table | Source | Purpose | PK |
 |---|---|---|---|
-| `SCDUL_PYMN_SUMR` | V131 | Batch master, discriminated by `SCDUL_PYMN_TYPE_CD` (00 payroll, 01 vendor, 02 expense, 03 internal) | `(BIZ_KEY, SCDUL_PYMN_NO)` |
-| `SCDUL_PYMN_SUMR_DETL` | V131 | Per-recipient line of a batch | `(BIZ_KEY, SCDUL_PYMN_NO, SCDUL_PYMN_DETL_NO)` |
-| `INTERNAL_TRANSFER_KEY_SEQ` | V131 | Java-side per-day `SCDUL_PYMN_NO` generator (refactor-only helper, not in DEV/PROD) | `(BIZ_KEY, KEY_DT)` |
-| `SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN` | V188 | 1:1 bridge from a detail line to its `TB_PAY_TARGET` dispatch row (API path) | `(BIZ_KEY, SCDUL_PYMN_NO, SCDUL_PYMN_DETL_NO)` |
+| `SCDUL_PYMN_SUMR` | V86 | Batch master, discriminated by `SCDUL_PYMN_TYPE_CD` (00 payroll, 01 vendor, 02 expense, 03 internal) | `(BIZ_KEY, SCDUL_PYMN_NO)` |
+| `SCDUL_PYMN_SUMR_DETL` | V87 | Per-recipient line of a batch | `(BIZ_KEY, SCDUL_PYMN_NO, SCDUL_PYMN_DETL_NO)` |
+| `INTERNAL_TRANSFER_KEY_SEQ` | — **DROPPED** (historical `V131`) | ~~Java-side per-day `SCDUL_PYMN_NO` generator~~ — table, entity and repository all absent; the key funnels through `wb_get_next_val` | `(BIZ_KEY, KEY_DT)` |
+| `SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN` | — **DROPPED** (historical `V188`) | 1:1 bridge from a detail line to its `TB_PAY_TARGET` dispatch row (API path) | `(BIZ_KEY, SCDUL_PYMN_NO, SCDUL_PYMN_DETL_NO)` |
 
 ### Overseas payment
 | Table | Source | Purpose | PK |
 |---|---|---|---|
-| `OVRS_PYMN_SUMR` | V156 (+V151, V162) | Overseas batch master (Excel upload), `OVRS_PYMN_TYPE_CD` E/M | `(BIZ_KEY, OVRS_PYMN_NO)` |
-| `OVRS_PYMN_MSTR` | V156 (+V185) | Individual manual overseas payment master | `(BIZ_KEY, OVRS_PYMN_NO)` |
-| `OVRS_PYMN_DTLS` | V138 (+V134) | Detail line within an overseas batch | `(BIZ_KEY, OVRS_PYMN_NO, TRN_SEQ)` |
-| `OVERSEAS_PAYMENT_KEY_SEQ` | V158 (+V159) | Java-side per-day `OVRS_PYMN_NO` generator (refactor-only helper) | `(BIZ_KEY, KEY_DT)` |
+| `OVRS_PYMN_SUMR` | V75 | Overseas batch master (Excel upload), `OVRS_PYMN_TYPE_CD` E/M | `(BIZ_KEY, OVRS_PYMN_NO)` |
+| `OVRS_PYMN_MSTR` | V78 | Individual manual overseas payment master | `(BIZ_KEY, OVRS_PYMN_NO)` |
+| `OVRS_PYMN_DTLS` | — **no refactor DDL migration** (external/live-JEX schema) | Detail line within an overseas batch | `(BIZ_KEY, OVRS_PYMN_NO, TRN_SEQ)` |
+| `OVERSEAS_PAYMENT_KEY_SEQ` | — **DROPPED** (historical `V158`) | ~~Java-side per-day `OVRS_PYMN_NO` generator~~ — table, entity and repository all absent | `(BIZ_KEY, KEY_DT)` |
 
 ### Approval box
 | Table | Source | Purpose | PK |
 |---|---|---|---|
-| `EXPT_RESOL_MSTR` | V109 | Approval request master (one per batch, all payment types) | `(BIZ_KEY, APPR_SEQ_NO)` |
-| `EXPT_RESOL_APPRVR_INFM` | V109 | Approver chain row | `(BIZ_KEY, APPR_SEQ_NO, APPRVR_ID)` |
-| `EXPT_RESOL_FILE` | V211 | Attachment uploaded with a request | `(BIZ_KEY, APPR_SEQ_NO, FILE_ID)` |
+| `EXPT_RESOL_MSTR` | V59 | Approval request master (one per batch, all payment types) | `(BIZ_KEY, APPR_SEQ_NO)` |
+| `EXPT_RESOL_APPRVR_INFM` | V56 | Approver chain row | `(BIZ_KEY, APPR_SEQ_NO, APPRVR_ID)` |
+| `EXPT_RESOL_FILE` | V58 | Attachment uploaded with a request | `(BIZ_KEY, APPR_SEQ_NO, FILE_ID)` |
 
 ### Dispatch (firm banking)
 | Table | Source | Purpose | PK |
 |---|---|---|---|
-| `TB_PAY_TARGET` | V148 (+V212) | API-path dispatch request (one per line to a VND bank API) | `(TRAN_DT, BIZ_KEY, TRAN_SEQ)` |
-| `TB_PAY_FILE_MST` | V148 | File-path dispatch header (non-VND, file batch) | `(TRAN_DT, BIZ_KEY, FILE_SEQ_NO)` |
-| `TB_PAY_FILE_DATA` | V148 | File-path dispatch line | `(TRAN_DT, BIZ_KEY, FILE_SEQ_NO, SEQ)` |
-| `TB_BATCH_SCHEDULE_INFO` | V189 | Per-bank batch schedule header (global, no BIZ_KEY) | `(BATCH_ID, OUT_BANK_CD)` |
-| `TB_BATCH_SCHEDULE_DTL` | V189 | Schedule detail split by `ANT_DIV_CD` | `(BATCH_ID, OUT_BANK_CD, ANT_DIV_CD)` |
-| `TB_FIRM_BAT_API_TRAN` | V189 | Batch-level API call audit | `(TRAN_DT, BIZ_KEY, TRAN_SEQ, API_TRAN_TP, OUT_BANK_CD, BANK_PRTN_ID)` |
-| `TB_FIRM_FILE_MST` | V189 | Gateway-side file header | `(TRAN_DT, BIZ_KEY, FILE_SEQ_NO, FIRM_FILE_NM)` |
-| `TB_FIRM_FILE_DATA` | V189 | Gateway-side file line (**PK omits BIZ_KEY** — DEV design) | `(TRAN_DT, FILE_SEQ_NO, FIRM_FILE_NM, SEQ)` |
-| `TB_FIRM_FILE_RSLT` | V189 | Gateway response per line | `(TRAN_DT, BIZ_KEY, FIRM_FILE_NM, SEQ)` |
+| `TB_PAY_TARGET` | V109 | API-path dispatch request (one per line to a VND bank API) | `(TRAN_DT, BIZ_KEY, TRAN_SEQ)` |
+| `TB_PAY_FILE_MST` | V107 | File-path dispatch header (non-VND, file batch) | `(TRAN_DT, BIZ_KEY, FILE_SEQ_NO)` |
+| `TB_PAY_FILE_DATA` | V105 | File-path dispatch line | `(TRAN_DT, BIZ_KEY, FILE_SEQ_NO, SEQ)` |
+| `TB_BATCH_SCHEDULE_INFO` | V96 | Per-bank batch schedule header (global, no BIZ_KEY) | `(BATCH_ID, OUT_BANK_CD)` |
+| `TB_BATCH_SCHEDULE_DTL` | V95 | Schedule detail split by `ANT_DIV_CD` | `(BATCH_ID, OUT_BANK_CD, ANT_DIV_CD)` |
+| `TB_FIRM_BAT_API_TRAN` | V99 | Batch-level API call audit | `(TRAN_DT, BIZ_KEY, TRAN_SEQ, API_TRAN_TP, OUT_BANK_CD, BANK_PRTN_ID)` |
+| `TB_FIRM_FILE_MST` | V102 | Gateway-side file header | `(TRAN_DT, BIZ_KEY, FILE_SEQ_NO, FIRM_FILE_NM)` |
+| `TB_FIRM_FILE_DATA` | V101 | Gateway-side file line (**PK omits BIZ_KEY** — DEV design) | `(TRAN_DT, FILE_SEQ_NO, FIRM_FILE_NM, SEQ)` |
+| `TB_FIRM_FILE_RSLT` | V103 | Gateway response per line | `(TRAN_DT, BIZ_KEY, FIRM_FILE_NM, SEQ)` |
 
 ### Validation
 | Table | Source | Purpose | PK |
 |---|---|---|---|
-| `BLOCKED_CHARS_RULE` | V149 | Per-bank/payment-type/field blocked-character ruleset (lookup) | `RULE_ID` |
+| `BLOCKED_CHARS_RULE` | V14 | Per-bank/payment-type/field blocked-character ruleset (lookup) | `RULE_ID` |
 
 ## Key columns & conventions
 
-- **Audit columns:** payment business tables use `REG_ID/REG_DTM/MOD_ID/MOD_DTM` `VARCHAR(14)`; dispatch (`TB_*`) tables use `REG_DTTM/MOD_DTTM`, `RQ_DTTM/RS_DTTM`. The `*_KEY_SEQ` helper tables use `TIMESTAMPTZ`.
+- **Audit columns:** payment business tables use `REG_ID/REG_DTM/MOD_ID/MOD_DTM` `VARCHAR(14)`; dispatch (`TB_*`) tables use `REG_DTTM/MOD_DTTM`, `RQ_DTTM/RS_DTTM`. *(The `*_KEY_SEQ` helper tables used `TIMESTAMPTZ` — both were **dropped 2026-06-09/10**; noted for historical completeness only.)*
 - **State / use flags:** `TRNF_YN` (dispatch complete) on the summary/master tables; `EXPT_RESOL_MSTR.DEL_YN`; `EXPT_RESOL_APPRVR_INFM.READ_YN`; `PROC_STAT` / `PROC_RSLT_DIV` on dispatch tables; `BLOCKED_CHARS_RULE.STATUS`.
 - **Code / enum columns:** `SCDUL_PYMN_TYPE_CD`, `OVRS_PYMN_TYPE_CD` (E/M), `FEE_PAYER_CD` (O/S/B), `APPR_DV` / `APPR_STS` (0 draft / 1 pending / 2 approved / 4 rejected), `APPRVR_STTS` (P/A/R), `ANT_DIV_CD` (NAPAS/SWIFT/CITAD), `API_TRAN_TP`, `PYMN_TPYE` + `FIELD_CD` on `BLOCKED_CHARS_RULE`.
 - **Important indexes:** `IX_SCDUL_PYMN_SUMR_BIZ_TYPE_REG`, `IX_SCDUL_PYMN_SUMR_DETL_BIZ_TRCO`, `IDX_OVRS_PYMN_SUMR_BIZ_DTM`, `IX_EXPT_RESOL_MSTR_BIZ_DRAFT_DATE`, `IDX_TB_PAY_TARGET_BIZ_TRAN`, `IDX_BLOCKED_CHARS_RULE_LOOKUP`.

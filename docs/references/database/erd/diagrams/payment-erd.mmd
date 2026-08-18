@@ -20,11 +20,15 @@ erDiagram
         varchar PAY_TRAN_DT "logical -> TB_PAY_TARGET"
         varchar PAY_FILE_SEQ_NO "logical -> TB_PAY_FILE_DATA"
     }
-    INTERNAL_TRANSFER_KEY_SEQ {
-        varchar BIZ_KEY PK
-        date KEY_DT PK
-        integer LAST_SEQ
-    }
+    %% RETIRED 2026-06-09 (MR-1) — table, entities and repository DELETED (commit eb9296b).
+    %% SCDUL_PYMN_NO now funnels: InternalTransferKeyGenerator -> LegacyFunctionRepository
+    %% -> wb_get_next_val('scdul_pymn_sumr','scdul_pymn_no', biz_key)  [V140 branch #36].
+    %% Retained as a commented historical record only — do NOT re-add as a live entity.
+    %% INTERNAL_TRANSFER_KEY_SEQ {
+    %%     varchar BIZ_KEY PK
+    %%     date KEY_DT PK
+    %%     integer LAST_SEQ
+    %% }
     SCDU_PYMN_SUMR_DETL_PAY_TARGET_CONN {
         varchar BIZ_KEY PK
         varchar SCDUL_PYMN_NO PK
@@ -55,11 +59,15 @@ erDiagram
         numeric TRNF_AMT
         varchar TRNF_YN "Y|N"
     }
-    OVERSEAS_PAYMENT_KEY_SEQ {
-        varchar BIZ_KEY PK
-        date KEY_DT PK
-        integer LAST_SEQ
-    }
+    %% RETIRED 2026-06-10 (MR-2C) — table, entities and repository DELETED (eb9296b / 4987435).
+    %% OVRS_PYMN_NO now funnels: OverseasPaymentKeyGenerator -> LegacyFunctionRepository
+    %% -> wb_get_next_val('ovrs_pymn_sumr','ovrs_pymn_no', biz_key)  [V140 branch #63].
+    %% Retained as a commented historical record only — do NOT re-add as a live entity.
+    %% OVERSEAS_PAYMENT_KEY_SEQ {
+    %%     varchar BIZ_KEY PK
+    %%     date KEY_DT PK
+    %%     integer LAST_SEQ
+    %% }
     EXPT_RESOL_MSTR {
         varchar BIZ_KEY PK,FK "-> BUSI_INFM"
         varchar APPR_SEQ_NO PK

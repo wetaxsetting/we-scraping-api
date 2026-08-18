@@ -1,5 +1,14 @@
 # Internal Transfer — Refactor Backend Design
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../database/flyway-migration-baseline.md) §5.
+
 | Field | Value |
 |---|---|
 | Slug | `internal-transfer` |
@@ -64,20 +73,33 @@ entity/
     ScdulPymnSumr.java + ScdulPymnSumrId.java      @Table("SCDUL_PYMN_SUMR") composite PK (BIZ_KEY, SCDUL_PYMN_NO)
     ScdulPymnSumrDetl.java + ScdulPymnSumrDetlId.java  @Table("SCDUL_PYMN_SUMR_DETL") PK (BIZ_KEY, SCDUL_PYMN_NO, SCDUL_PYMN_DETL_NO)
     InternalTransferKeySeq.java + InternalTransferKeySeqId.java
-                                                    refactor-only helper @Table("INTERNAL_TRANSFER_KEY_SEQ")
+                                                    [DELETED 2026-06-09 — see the RETIRED banner in Notes]
 repository/
     ScdulPymnSumrRepository.java                   extends JpaRepository<ScdulPymnSumr, ScdulPymnSumrId>
     ScdulPymnSumrDetlRepository.java               extends JpaRepository<ScdulPymnSumrDetl, ScdulPymnSumrDetlId>
-    InternalTransferKeySeqRepository.java          custom — exposes allocateNext(bizKey, keyDt) via ON CONFLICT UPSERT
+    InternalTransferKeySeqRepository.java          [DELETED 2026-06-09 — see the RETIRED banner in Notes]
     ScdulPymnCashFlowRow.java                      projection for the joined list query
 export/
     InternalTransferResultExportProvider.java      implements ExportRowProvider — screenId "payment-internal-transfer-result"
                                                     (additional detail-page provider lands with the export-wiring follow-up)
 ```
 
+> ⚠️ **RETIRED 2026-06-09 (MR-1) — `INTERNAL_TRANSFER_KEY_SEQ` no longer exists.** The counter table
+> and its `InternalTransferKeySeq` / `…Id` entities and `InternalTransferKeySeqRepository` were
+> **deleted** (commit `eb9296b`) because the date-prefixed key they produced **diverged from the live
+> JEX DB**, which owns `SCDUL_PYMN_NO` via `wb_get_next_val`.
+>
+> **What ships today:** `InternalTransferKeyGenerator` is a **thin delegator** — `nextScdulPymnNo(bizKey)`
+> → `LegacyFunctionRepository.nextScdulPymnNo` → `wb_get_next_val('scdul_pymn_sumr','scdul_pymn_no',
+> biz_key)` (V140 branch #36, per-tenant plain-int `MAX+1`), running
+> `@Transactional(propagation = MANDATORY)`. The value is plain numeric text (`1, 2, 3, …`), identical
+> to what live JEX mints — **not** `YYYYMMDD<seq:6>`. See [`../../../CLAUDE.md`](../../../CLAUDE.md)
+> §"Retired exception #5". Design-era passages below are preserved as historical record; **do not
+> implement them and do not re-create a refactor-only counter table.**
+
 Notes:
 
-- **Path-variable `@Pattern` constraint deviation.** Earlier design templates pinned `{id}` to `^[0-9]+$`. The actual generator emits 14 chars (`YYYYMMDD<seq:6>`) — purely numeric, so the digit-only `@Pattern` still works. `{lineId}` (= `SCDUL_PYMN_DETL_NO`) follows the same rule.
+- **Path-variable `@Pattern` constraint deviation.** Earlier design templates pinned `{id}` to `^[0-9]+$`. ⚠️ *Historical:* the retired generator emitted 14 chars (`YYYYMMDD<seq:6>`); the funnel now emits a plain per-tenant integer. Both are purely numeric, so the digit-only `@Pattern` still works. `{lineId}` (= `SCDUL_PYMN_DETL_NO`) follows the same rule.
 - **No `mapper/` / `validator/` / `audit/` subpackages**. Earlier template proposed these as standalone subfolders; the actual code keeps mapping helpers private inside the service, validation in DTO bean-validation + `CutoffValidator`, and audit calls inline at service-method level (passing the `WSVC_ID` constant directly into `AuditLogService.append(...)` — no per-feature `InternalTransferAuditWriter` class).
 - **Dispatch entities live in `payment/dispatch/`, not in this package.** `TbPayTarget`, `TbPayFileMst`, `TbPayFileData` are owned by the cross-feature `payment/dispatch/` infrastructure — see §16.
 - **Result service has its own controller**. Earlier design referred to `InternalTransferResultController`; the actually-shipped class name is `TransferResultController` (under `controller/`, same package). Function unchanged.
@@ -114,13 +136,24 @@ SCDUL_PYMN_NO format: <YYYYMMDD><6-digit-tenant-day-seq>
                                 └─ 1..999999 per (BIZ_KEY, day)
 ```
 
-Implementation:
+> ⚠️ **RETIRED 2026-06-09 (MR-1) — the format block above and the bullets below describe an
+> architecture that was removed.** `SCDUL_PYMN_NO` is **not** `<YYYYMMDD><6-digit-seq>`; it is a plain
+> per-tenant integer minted by `wb_get_next_val('scdul_pymn_sumr','scdul_pymn_no', biz_key)`
+> (V140 branch #36), exactly as live JEX mints it. Preserved as the historical design record.
 
-- A new helper table `INTERNAL_TRANSFER_KEY_SEQ` keyed by `(BIZ_KEY, KEY_DT)` with `LAST_SEQ INTEGER` is created in the same Flyway migration as the entities (see [database/internal-transfer.md § 4](internal-transfer.md)).
-- `InternalTransferKeyGenerator` uses `@Transactional(propagation = REQUIRES_NEW)` to `INSERT ON CONFLICT … DO UPDATE … SET LAST_SEQ = LAST_SEQ + 1 RETURNING LAST_SEQ` so concurrent inserts don't collide.
-- The generator is the only writer to `INTERNAL_TRANSFER_KEY_SEQ` — every Internal Transfer save goes through it.
+Implementation *(historical — superseded, see banner above)*:
 
-OQ-3 in the feature spec gates this — the refactor SCDUL_PYMN_NO format will differ from any legacy DEV values for the same date, which is acceptable because refactor is local-only R&D.
+- ~~A new helper table `INTERNAL_TRANSFER_KEY_SEQ` keyed by `(BIZ_KEY, KEY_DT)` with `LAST_SEQ INTEGER` is created in the same Flyway migration as the entities.~~ **Table never survived — deleted 2026-06-09 (commit `eb9296b`).**
+- ~~`InternalTransferKeyGenerator` uses `@Transactional(propagation = REQUIRES_NEW)` to `INSERT ON CONFLICT … DO UPDATE … SET LAST_SEQ = LAST_SEQ + 1 RETURNING LAST_SEQ` so concurrent inserts don't collide.~~ **Today it runs `MANDATORY` and delegates to the funnel; the `ON CONFLICT` row lock is gone.**
+- ~~The generator is the only writer to `INTERNAL_TRANSFER_KEY_SEQ`.~~
+
+~~OQ-3 in the feature spec gates this — the refactor SCDUL_PYMN_NO format will differ from any legacy DEV values for the same date, which is acceptable because refactor is local-only R&D.~~ **This reasoning was reversed.** The refactor runs against the **live JEX DB** in all environments, so a divergent key format was *not* acceptable — which is precisely why MR-1 funnelled the key.
+
+> **Concurrency consequence.** The retired counter serialised allocation with an `ON CONFLICT` row
+> lock; the funnel's `MAX+1` does not, so two concurrent creates on one tenant can collide on the
+> `SCDUL_PYMN_SUMR` PK. Mitigation is a one-shot retry at the INSERT site — **implemented for Overseas,
+> intentionally deferred for the four scheduled-payment create services.** A separate resilience item;
+> **not** a reason to revive the counter table.
 
 ## 4. DTO definitions (Java records)
 
@@ -469,7 +502,7 @@ New components introduced for this feature only:
 | Concern | New component | Reason |
 |---|---|---|
 | Cut-off-time gate | `cutoff/CutoffValidator` + `cutoff/CutoffProperties` | Replaces `PymnHelper.validateTransferTiming` / `getCutoffConfig`. Configuration-driven (per OQ-6) under `wecms.internal-transfer.cutoff.*` |
-| SCDUL_PYMN_NO generator | `InternalTransferKeyGenerator` + `INTERNAL_TRANSFER_KEY_SEQ` table | Replaces legacy `wb_get_next_val('scdul_pymn_sumr','scdul_pymn_no',BIZ_KEY)` per OQ-3 |
+| SCDUL_PYMN_NO generator | `InternalTransferKeyGenerator` — a **thin delegator** into `LegacyFunctionRepository` → `wb_get_next_val` (V140 #36) | ⚠️ **Reversed 2026-06-09 (MR-1).** This row previously read "*+ `INTERNAL_TRANSFER_KEY_SEQ` table · Replaces legacy `wb_get_next_val(...)` per OQ-3*". The refactor no longer replaces the legacy call — it **calls it**, and the counter table was deleted. |
 | Excel storage | `InternalTransferUploadStorage` | Persists original uploads under `wecms.internal-transfer.storage-root` (mirrors `ErpTrnsHistoryStorage` pattern) |
 | Excel parsing | `InternalTransferExcelParser` | Replaces `PymnHelper.importDataFromExcelForInternalTransfer` — Apache POI workbook walk, per-cell validation, returns `ParseExcelResponse` |
 | Dispatch routing | `InternalTransferDispatchService.computeRouting(...)` | Replaces the routing-flag block at `PymnHelper.pymn_0009_001_c001` lines 2459-2509. Pure function for testability. |
@@ -588,7 +621,7 @@ public enum InternalTransferDetailSortField implements SortableField { ... }
 public enum InternalTransferResultSortField implements SortableField { ... }
 ```
 
-Default ORDER BY mirrors the legacy listing: `REG_DTM DESC, SCDUL_PYMN_NO DESC` (matches `SCDUL_PYMN_SUMR_R012` IDO behaviour; verify in Sprint 2 against the IDO XML — recorded as a checklist item in [audits/internal-transfer-parity-checklist.md](../audits/internal-transfer-parity-checklist.md)).
+Default ORDER BY mirrors the legacy listing: `REG_DTM DESC, SCDUL_PYMN_NO DESC` (matches `SCDUL_PYMN_SUMR_R012` IDO behaviour; verify in Sprint 2 against the IDO XML — recorded as a checklist item in [audits/internal-transfer-parity-checklist.md](../../audits/legacy-parity/internal-transfer-parity-checklist.md)).
 
 ## 11. View Setting seeds
 
@@ -796,7 +829,7 @@ Path: [`com.kosign.wecms.domain.payment.validation`](../../../src/main/java/com/
 | [`FieldCd`](../../../src/main/java/com/kosign/wecms/domain/payment/validation/FieldCd.java) | enum: `REMARKS("RMKS")`, `RECIPIENT_NAME("RCPT")`, `MEMO("MEMO")`, `BENEFICIARY_NAME("BENA")`, `BENEFICIARY_ADDRESS("BEAD")` — the per-field discriminator used by `BLOCKED_CHARS_RULE`. |
 | [`PymnType`](../../../src/main/java/com/kosign/wecms/domain/payment/validation/PymnType.java) | enum: `INTERNAL_TRANSFER("INTR")`, `VENDOR_PAYMENT("VEND")`, `EXPENSE_PAYMENT("EXPN")`, `PAYROLL_PAYMENT("PAYR")`, `OVERSEAS_PAYMENT("OVER")`. The per-payment-type discriminator for blocked-chars lookup (different from `ScdulPymnTypeCd` which is the DB discriminator). |
 | [`SpecialCharValidator`](../../../src/main/java/com/kosign/wecms/domain/payment/validation/SpecialCharValidator.java) | Reads `BLOCKED_CHARS_RULE` and rejects payment-line strings that violate the per-`(PymnType, FieldCd)` ruleset. Consumed during Excel parse + create-draft. |
-| [`BlockedCharsRule`](../../../src/main/java/com/kosign/wecms/domain/payment/validation/entity/) entity + [`BlockedCharsRuleRepository`](../../../src/main/java/com/kosign/wecms/domain/payment/validation/repository/) | Schema landed in [V149__blocked_chars_rule_schema_and_seed.sql](../../../src/main/resources/db/migration/V149__blocked_chars_rule_schema_and_seed.sql). |
+| [`BlockedCharsRule`](../../../src/main/java/com/kosign/wecms/domain/payment/validation/entity/) entity + [`BlockedCharsRuleRepository`](../../../src/main/java/com/kosign/wecms/domain/payment/validation/repository/) | Schema landed in [V14__blocked_chars_rule.sql](../../../src/main/resources/db/migration/V14__blocked_chars_rule.sql). |
 
 > Note: the **cut-off-time** validator lives inside `payment/internaltransfer/service/CutoffValidator.java` (not in `validation/`). That's an intentional split — cut-off rules are Internal-Transfer-specific by current scope; if Vendor / Expense / Payroll need them, lift the class to `payment/shared/cutoff/` in the future.
 
@@ -811,7 +844,7 @@ Path: [`com.kosign.wecms.domain.payment.approvalbox`](../../../src/main/java/com
 | `ApprovalBoxFanoutService` | Notification / fanout side-effects (out of scope for this feature). |
 | [`ApprDv`](../../../src/main/java/com/kosign/wecms/domain/payment/approvalbox/) enum | Approval-domain discriminator — has an `INTERNAL_TRANSFER` constant the dispatch flow reads. |
 | `ApprTypeCd`, `ApprvrStts`, `ApprovalBoxSortField` | Supporting enums. |
-| [`ExptResolMstr`](../../../src/main/java/com/kosign/wecms/domain/payment/approvalbox/entity/) + `Id` + [`ExptResolApprvrInfm`](../../../src/main/java/com/kosign/wecms/domain/payment/approvalbox/entity/) + `Id` entities + repositories | The two backing tables — schema in [V109__approval_box_schema.sql](../../../src/main/resources/db/migration/V109__approval_box_schema.sql). |
+| [`ExptResolMstr`](../../../src/main/java/com/kosign/wecms/domain/payment/approvalbox/entity/) + `Id` + [`ExptResolApprvrInfm`](../../../src/main/java/com/kosign/wecms/domain/payment/approvalbox/entity/) + `Id` entities + repositories | The two backing tables — schema in [V59__expt_resol_mstr.sql](../../../src/main/resources/db/migration/V59__expt_resol_mstr.sql). |
 | `ApprovalBox{ListResponse, Row, Projection, ActionResponse, BulkApproveRequest, BulkApproveResponse, Approver, TabCounts}` DTOs | 9 DTOs that the Approval Box page consumes. |
 | [`ApprovalBoxExportProvider`](../../../src/main/java/com/kosign/wecms/domain/payment/approvalbox/export/) | XLSX export. |
 

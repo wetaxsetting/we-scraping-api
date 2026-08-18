@@ -42,6 +42,6 @@
 - Frontend twin (Next.js error handling): [`../../../../../wecms-web/docs/features/common/error-envelope/README.md`](../../../../../wecms-web/docs/features/common/error-envelope/README.md)
 - Shared error-code registry (both systems): [`../../../../../docs/_shared/error-code-registry.md`](../../../../../docs/_shared/error-code-registry.md)
 - Security baseline (auth / API / audit policies): [`../../../../../docs/security/`](../../../../../docs/security/)
-- Common source index (audit deliverable): [`../../../audits/common-source-index.md`](../../../audits/common-source-index.md)
+- Common source index (audit deliverable): [`../../../audits/common-source-index.md`](../../../audits/modules/common-source-index.md)
 - Shared audit-log writer (uses this envelope + locale fan-out): [`../audit-log/README.md`](../audit-log/README.md)
 - API naming + error-handling rules: `wecms-api/CLAUDE.md` §"API Naming & Serialization Standards", §"Error handling", §"Exception → response mapping", §"Error codes in use", §"i18n Rules"

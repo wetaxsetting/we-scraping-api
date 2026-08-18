@@ -1,5 +1,14 @@
 # Expense Payment — Database Mapping (API)
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../../references/database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../../references/database/flyway-migration-baseline.md) §5.
+
 > **Backend doc.** Source of truth = legacy JEX DDL (per workspace CLAUDE.md) + entity mappings under `domain/payment/**`. Verified 2026-06-23.
 > Tables below are all on the [legacy-table-inventory](../../../references/database/legacy-table-inventory.md) baseline; Expense creates **no new table** — it shares the physical tables with Internal Transfer / Vendor / Payroll.
 
@@ -68,7 +77,7 @@ Per `project_wb_get_next_val_funnel.md` — single-executor rule; no Hibernate s
 ## Migrations / seeds
 
 - **No DDL** is owned by Expense (all tables pre-exist in legacy / inventory).
-- `V143__expense_payment_view_setting_seed.sql` — View Setting column seed for the 4 Expense screen ids.
+- `V156__sys_scr_option_wecms.sql` — View Setting column seed for the 4 Expense screen ids.
 - Key-gen sequences seeded via the shared `wb_get_next_val` funnel migrations (V140, V155).
 
 ---

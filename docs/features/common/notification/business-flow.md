@@ -1,4 +1,4 @@
-# notification — Business Flow (Backend)
+# Notification — Business Flow (Backend)
 
 **Part of:** Common → notification
 **Last verified:** 2026-06-23

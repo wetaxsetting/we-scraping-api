@@ -40,7 +40,7 @@ are **read-only reference**. The legacy-only deep index (every JSP/TS/IDO/WSVC) 
 | Response DTOs | `dto/response/{SourceAccountListResponse, SourceAccountRow, TargetAccountListResponse, TargetAccountRow, NapasBankInfoRow, BalanceRefreshResponse, ScrapingResultResponse, NxisasCertAcctListResponse, NxisasDecryptResponse}.java` | WSVC outputs |
 | Entities (shared) | `banking/entity/{AcctMstr, NapasRemitTrnsHstr, NapasBankInfo}.java` | `ACCT_MSTR`, `NAPAS_REMIT_TRNS_HSTR`, `NAPAS_BANK_INFO` |
 | Repositories (shared) | `banking/repository/{AcctMstrRepository, NapasRemitTrnsHstrRepository, NapasBankInfoRepository}.java`, `setting/bankaccount/repository/AcctAuthInfoRepository.java` | IDO reads/writes |
-| Migrations | `resources/db/migration/V195__napas_remit_trns_hstr_oat_idempotency.sql`, `V199__own_account_transfer_view_setting_seed.sql` | — |
+| Migrations | `resources/db/migration/V195__napas_remit_trns_hstr_oat_idempotency.sql`, `V156__sys_scr_option_wecms.sql` | — | *(historical — DROPPED; the OAT idempotency guard was removed entirely. Base table: `V69__napas_remit_trns_hstr.sql`)*
 | Tests | `src/test/java/.../ownaccounttransfer/{controller/OwnAccountTransferControllerTest, service/OwnAccountTransferServiceTest, service/OatNxisasServiceExtTranLogTest, service/OatNxisasServiceSeedFlagTest, service/SeedCbcDecryptServiceTest}.java` | — |
 
 ## 3. Refactor frontend (`wecms-web/`)

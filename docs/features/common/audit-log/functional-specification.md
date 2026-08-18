@@ -1,4 +1,4 @@
-# audit-log — Functional Specification (Backend)
+# Audit Log — Functional Specification (Backend)
 
 **Part of:** Common → audit-log
 **Last verified:** 2026-06-23

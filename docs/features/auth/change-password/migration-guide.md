@@ -1,7 +1,7 @@
 # Change Password — Migration Guide (JEX → Spring)
 
 How each JEX layer of `comm_0400_001_u001` (popup `comm_0401_001`) became its Spring counterpart.
-Login coexistence audit: [docs/audits/login-legacy-compatibility-2026-06-10.md](../../../audits/login-legacy-compatibility-2026-06-10.md).
+Login coexistence audit: [docs/audits/login-legacy-compatibility-2026-06-10.md](../../../audits/legacy-parity/login-legacy-compatibility-2026-06-10.md).
 
 ---
 

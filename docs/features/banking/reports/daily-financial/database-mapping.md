@@ -122,7 +122,7 @@ trsc_amt, bal, trco_key/nm/enm, use_usag_cd, prjt_no, cont, hand_reg_yn, ref_no1
 > null**). The Transaction History Details popup therefore renders a **blank Time cell by design** for
 > those rows (backend → mapper → UI bind `TRSC_TM` correctly; legacy `rept_0015_001.ts` is identical).
 > This is **not a mapping defect** — see [README.md §6](README.md#6-time-column-verification-transaction-history-details-popup)
-> and [parity-verification-report.md §13](parity-verification-report.md#13-time-column-verification-2026-06).
+> and [parity-verification-report.md §13](../../../../audits/legacy-parity/daily-financial-parity-verification-report.md#13-time-column-verification-2026-06).
 
 ---
 

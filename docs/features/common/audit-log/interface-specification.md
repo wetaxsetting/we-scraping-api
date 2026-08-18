@@ -1,4 +1,4 @@
-# audit-log — Interface Specification (Backend)
+# Audit Log — Interface Specification (Backend)
 
 **Part of:** Common → audit-log
 **Last verified:** 2026-06-23

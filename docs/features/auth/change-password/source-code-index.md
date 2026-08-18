@@ -76,6 +76,6 @@ Frontend Zod blocks new ≠ confirm before the call; backend codes consumed: `WB
 ## Documentation
 
 - Backend feature folder (this): `wecms-api/docs/features/auth/change-password/`
-- Login coexistence audit: [docs/audits/login-legacy-compatibility-2026-06-10.md](../../../audits/login-legacy-compatibility-2026-06-10.md)
+- Login coexistence audit: [docs/audits/login-legacy-compatibility-2026-06-10.md](../../../audits/legacy-parity/login-legacy-compatibility-2026-06-10.md)
 - Frontend feature folder: [wecms-web/docs/features/auth/change-password/](../../../../../wecms-web/docs/features/auth/change-password/README.md)
 - Sibling auth modules: [login](../login/README.md) · [profile](../profile/README.md) · [session-management](../session-management/README.md)

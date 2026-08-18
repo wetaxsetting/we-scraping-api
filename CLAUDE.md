@@ -2,7 +2,7 @@
 
 Living AI/developer guide for the Spring Boot backend of the WeCMS JEX → Spring/Next.js refactor. Update this file whenever the real code moves.
 
-Workspace-level rules (cross-tree, write boundary, typography source of truth, BIZ_KEY rule) live in the root [CLAUDE.md](../CLAUDE.md). The Next.js frontend this app serves is in [wecms-web/](../wecms-web/). JEX functional spec is read-only in [WECMS DEV/CLAUDE.md](../WECMS%20DEV/CLAUDE.md).
+Workspace-level rules (cross-tree, write boundary, typography source of truth, BIZ_KEY rule) live in the root [CLAUDE.md](../CLAUDE.md). The Next.js frontend this app serves is in [wecms-web/](../wecms-web/). JEX functional spec is read-only in the JEX rules at [../CLAUDE.md](../CLAUDE.md) §Workspace Layout (there is no `WECMS DEV/CLAUDE.md` file on disk — the JEX ruleset lives in the workspace root CLAUDE.md) plus the read-only spec under [../docs/jex/](../docs/jex/).
 
 **Porting a feature?** The end-to-end procedural workflow (discovery → design docs → Flyway → backend → frontend → verify) is at [docs/refactor-wecms/MIGRATION_PLAYBOOK.md](../docs/refactor-wecms/MIGRATION_PLAYBOOK.md). Steps 4–5 of the playbook are the backend slice; the rules each step links to live in *this* file.
 
@@ -41,24 +41,2415 @@ When in doubt, ask the user. The cost of pausing to confirm is low; the cost of 
 
 All refactor backend documentation lives under this project's own [`docs/`](docs/) tree (relocated 2026-06-01 out of the deprecated workspace-level `docs/refactor-wecms/`). Never write refactor docs under `docs/jex/` — that tree is **read-only** functional reference for the live JEX system.
 
+> **Corrected 2026-08-17.** This table previously mapped four doc types to top-level `docs/api-spec/`,
+> `docs/business-rules/`, `docs/migration/`, and `docs/database/`, and referenced `docs/archive/`. **None of
+> those paths exist** — the four reference trees live under [`docs/references/`](docs/references/) and
+> `archive/` was removed 2026-06-23. The table below matches the tree as it actually is. The canonical
+> folder index is [docs/README.md](docs/README.md) §Layout; keep the two in sync.
+
 | Doc type | Path |
 |---|---|
-| Backend API contracts (controllers, DTOs, validation, errors) | [docs/api-spec/](docs/api-spec/) |
-| Service / domain design (services, repositories, entities, security, settings) | [docs/business-rules/](docs/business-rules/) |
-| JEX → Spring service mapping (which WSVC/IDO maps to which controller/service, field-by-field) | [docs/migration/](docs/migration/) |
-| DB schema design + Flyway migration notes | [docs/database/](docs/database/) |
-| DB parity audits (refactor vs JEX) | [docs/audits/](docs/audits/) |
-| Refactor feature specs (kebab-case must match the JEX counterpart) | [docs/features/](docs/features/) |
-| Sprint / task plans | [docs/planning/](docs/planning/) |
-| System architecture (cross-feature) | [docs/architecture/](docs/architecture/) |
-| Refactor-side test plans | [docs/testing/](docs/testing/) |
-| Bug reports (tag `System: Refactor`) | [../docs/bug-reports/](../docs/bug-reports/) (shared, workspace root) |
+| **Refactor feature specs** (kebab-case slug must match the JEX + frontend counterparts) — *the default home for feature documentation* | [docs/features/](docs/features/) — grouped by the six menu domains `auth` · `common` · `banking` · `payment` · `addon-service` · `settings`, plus `wecms-batch/` and `integrations/haengsung/` (non-menu integrations) |
+| **Dated BUG implementation records** (docs-first) — *added 2026-08-17* | [docs/bugs/](docs/bugs/) — `descriptive-name-YYYY-MM-DD.md`, index + rules at [docs/bugs/README.md](docs/bugs/README.md). Never inside `docs/features/`. |
+| **Dated ISSUE implementation records** (docs-first, non-bug) — *added 2026-08-17* | [docs/issues/](docs/issues/) — `descriptive-name-YYYY-MM-DD.md`, index + rules at [docs/issues/README.md](docs/issues/README.md). Never inside `docs/features/`. |
+| System architecture (cross-feature: module boundaries, dispatch call graph, tenant isolation, API catalogue) | [docs/architecture/](docs/architecture/) |
+| Backend API contracts (endpoint/DTO contracts, `*-api.md`) | [docs/references/api-spec/](docs/references/api-spec/) |
+| Service / domain design (services, repositories, entities, security, settings) | [docs/references/business-rules/](docs/references/business-rules/) |
+| DB schema design, ERDs, table mapping, migration baseline | [docs/references/database/](docs/references/database/) — incl. [legacy-table-inventory.md](docs/references/database/legacy-table-inventory.md) (authoritative table baseline) and [flyway-migration-baseline.md](docs/references/database/flyway-migration-baseline.md) (**read before citing any `V<n>__*.sql`**) |
+| JEX → Spring service mapping (which WSVC/IDO maps to which controller/service, field-by-field) | [docs/references/migration/](docs/references/migration/) |
+| JEX / Figma reference notes | [docs/references/jex/](docs/references/jex/) · [docs/references/figma/](docs/references/figma/) |
+| **Parity + governance audits** (refactor vs JEX — DB, API, migration, security, UX) — *the single authoritative audit home* | [docs/audits/](docs/audits/) — six sub-folders: `governance/` · `modules/` · `legacy-parity/` · `batch/` · `deployment/` · `historical/`. Curated index at [docs/audits/README.md](docs/audits/README.md). `docs/references/audits/` was consolidated here 2026-08-17 and is now a pointer stub. |
+| Deployment checklists, run-books, environment-variable references (SIT / UAT / batch) | [docs/deployment/](docs/deployment/) — index at [docs/deployment/README.md](docs/deployment/README.md). Readiness **audits** go to `docs/audits/deployment/`. |
+| Security closure reports, risk register, required secrets, rotation handoff | [docs/security/](docs/security/) |
+| Refactor-side test plans + fixture conventions | [docs/testing/](docs/testing/) |
+| Open questions (OQ-DOC / OQ-DB) + project reviews — **live, not removed** | [docs/planning/open-questions/](docs/planning/open-questions/) |
+| One-off engineering reports | [docs/reports/](docs/reports/) |
+| VAT Declaration source-requirements (PRD / user-flow / tech-spec) + source binaries | [docs/features/addon-service/vat-declaration/source-requirements/](docs/features/addon-service/vat-declaration/source-requirements/) — Markdown moved there 2026-08-17, the 7 binary attachments followed into [source-requirements/attachments/](docs/features/addon-service/vat-declaration/source-requirements/attachments/README.md) the same day. The former top-level `docs/vat-declaration/` folder **no longer exists**. |
+| Manual DBA SQL scripts that are a **repository document's deliverable** | [docs/sql/](docs/sql/) — index + rules at [docs/sql/README.md](docs/sql/README.md). Never run by the application. Kept in-repo because the workspace `Claude Code (AI)/` folder is under **no version control**; that folder remains correct for ad-hoc, session-scoped scripts. |
+| Bug **reports** (tag `System: Refactor`) — the cross-system intake tracker, **not** the same thing as [docs/bugs/](docs/bugs/) (this repo's dated bug *implementation records*) | [../docs/bug-reports/](../docs/bug-reports/) (shared, workspace root) |
+
+**Placement rules.** Default to [docs/features/](docs/features/) — a doc about *how a screen or service behaves*
+is a feature doc. Reach for `references/` only when the content is cross-feature supporting material (a contract,
+a schema, a mapping). An audit is a **dated, point-in-time record** and belongs in `audits/`, never in `features/`.
+A **dated bug or issue implementation record** belongs in `bugs/` / `issues/`, never in `features/` (placement
+policy revised 2026-08-17 — see §"Docs-First Implementation Workflow (MANDATORY)" §4). A deployment checklist
+belongs in `deployment/`, never in `features/`. Never create a new top-level folder under
+`docs/` without updating this table **and** [docs/README.md](docs/README.md) **and**
+`.claude/skills/wecms-api-docs/SKILL.md` in the same MR — those three must always agree.
 
 > The deprecated [`docs/refactor-wecms/`](../docs/refactor-wecms/) tree is retained read-only; deep links elsewhere in this file still point there and remain valid.
 
 **JEX is read-only reference.** Read JEX entity, DAO, IDO XML, WSVC XML, and `_act.jsp` (under `WECMS DEV/`) plus the canonical specs under [docs/jex/](../docs/jex/) as the functional spec for any service being translated. **Never implement JEX patterns directly** — the refactor is a clean Spring Boot rewrite informed by JEX behavior, not a port. No `JexData`, no `IDODynamic`, no `_act.jsp`-style logic, no `getInput()/getOutput()` envelope mimicry inside Java code.
 
 **Naming traceability:** when a feature exists on both sides, the JEX spec at `docs/jex/features/<slug>.md` and the refactor spec at `wecms-api/docs/features/<slug>.md` must share the same kebab-case `<slug>`.
+
+## Docs-First Implementation Workflow (MANDATORY)
+
+**Adopted 2026-08-17. This section is authoritative for `wecms-api`.** The same rule — with
+frontend-specific placement — is stated in the frontend `wecms-web/CLAUDE.md` §"Docs-First
+Implementation Workflow" *(maintained in the separate `wecms-web` repository)*. The two must always
+agree on the order, the Definition of Done, the filename standard, and the templates.
+[docs/README.md](docs/README.md) §"Implementation records (docs-first)" and
+`.claude/skills/wecms-api-docs/**` restate the same rule. **If any of those disagrees with this
+section, this section wins** — fix the other file, do not fork the rule.
+
+**Documentation is part of the implementation workflow, not something added only after the code is
+finished.** For every meaningful behaviour-changing task, the dated Markdown record is created
+**before the detailed investigation begins**, and therefore before any application code is modified
+(§2a — the record is a hard precondition, not a recommendation).
+
+**And the task does not end when the code is written.** After implementation, the
+**implementation quality gate in §15** is mandatory — self-audit the diff, add/run the tests the
+change warrants, update test scenarios, run the applicable API / UI / DB / security / parity checks,
+and report the outcome honestly before any final status is set. §15 applies to the same people, tools,
+branches, and environments as this section.
+
+**And the workflow ends before Git does.** Commit, push, merge, tag, and environment promotion are
+**manual** developer/team actions — §16. AI-assisted work stops at **`READY FOR MANUAL COMMIT`**:
+
+```
+QUALITY GATE COMPLETE  →  READY FOR MANUAL COMMIT  →  HUMAN Git / deployment process
+```
+
+**And it may have to stop earlier still.** When the request is only to **check · investigate · review ·
+audit · analyze · design**, the work ends at the record — a **human approves implementation before any
+application code is modified** (§17). Investigation never authorizes a fix:
+
+```
+INVESTIGATE  →  DOCUMENT FINDINGS  →  HUMAN APPROVAL  →  implement  →  quality gate
+   →  TEST-RESULT RECORD (§18)  →  READY FOR MANUAL COMMIT
+   →  HUMAN Git / deployment process
+```
+
+> ### This is a TEAM rule, not an AI rule
+>
+> **The docs-first workflow is mandatory for every developer contributing a meaningful
+> behaviour-changing change to WeCMS** — the whole team, regardless of *how* the implementation is
+> performed: **manually by a developer · Claude Code · Cursor · another AI coding assistant · IDE
+> tooling · scripts · pair programming.**
+>
+> The requirement belongs to the **project**, not to a person or a tool. No one is exempt because they
+> did not use an AI assistant, because the work is on their own branch, because the change is small but
+> behaviour-changing, or because it is backend-only or frontend-only.
+>
+> Full detail — responsibility, one-record-per-task, parallel work, review expectations, branch /
+> environment independence, and the emergency-hotfix exception — is in **§12 "Who must follow this"**
+> below.
+
+### 1 · When this applies — and to whom
+
+**What:** any work to **fix a bug · fix an issue · implement a feature · run an audit / parity review /
+investigation · update functional behaviour · change business rules · change API behaviour · change UI
+behaviour · change integration behaviour · resolve legacy/JEX parity · perform a functional refactor ·
+fix SIT/UAT/PROD behaviour.**
+
+**Who:** **every developer on the WeCMS team**, and every tool used to do the work (see §12). Whether
+the task arrives as a ticket, a verbal request, a code-review follow-up, or a developer's own
+initiative makes no difference.
+
+The only exemptions are the short list in §10.
+
+### 2 · Mandatory order
+
+> **Steps 2–4 are ORIENTATION ONLY.** They exist to let you *classify and place* the record — not to
+> solve the problem. **The record is created before the detailed investigation, not merely before the
+> code** (§2a). *Corrected 2026-08-18: this list previously read "inspect the source · inspect the docs ·
+> inspect tests and Git history" **before** step 6, which licensed a full investigation with no record —
+> and that is exactly what went wrong in the Internal Transfer test.*
+
+1. Read the user's requirement.
+2. **Orient only** in the source — enough to identify the module / screen / repository and classify the
+   task. **Do not** trace the fault, follow the call chain end to end, query the DB, or form a root
+   cause yet (§2a).
+3. Orient the same way in the existing documentation, and check whether a record for this task already
+   exists (§12c).
+4. Glance at tests and Git history only as far as classification needs.
+5. Determine the correct documentation location (§4).
+6. **CREATE the dated Markdown record FIRST — before the detailed investigation and before touching
+   application code — then VERIFY the file exists on disk and report its path** (§2a).
+7. Set `**Status:** IN PROGRESS`.
+8. Document what is known **so far**: requirement / problem · current behaviour as observed · expected /
+   target behaviour · scope · out of scope · initial evidence · investigation plan · and
+   **`## Database Impact` (§14)** — decided here, not later. **An unknown root cause is written as
+   `Pending investigation`, not used as a reason to postpone the record** (§2a).
+8b. **NOW perform the detailed investigation** — trace the fault, read the call chain, compare against
+   legacy, inspect the DB read-only — and **write the findings into the same record as they are found**
+   (§2a). The chat summarizes the record; it never replaces it.
+9. **Only after the Markdown record exists — and only when implementation is authorized (§17)** —
+   modify application code. A request to *check · investigate · review · audit · analyze · design*
+   stops here: document the findings and **wait for a human approval decision**. When DB impact exists,
+   the migration file or manual `.sql` artifact is prepared and reviewed as part of the change, and its
+   **execution is a separate operational step** (§14f).
+10. During implementation, update the **same** record whenever the real implementation diverges from
+    the initial plan.
+11. **Run the implementation quality gate (§15) — implementation is not the end of the task.**
+    Self-audit the actual Git diff · decide and add/update the appropriate tests · run the relevant
+    test scope · run the applicable API / UI / DB / security / performance / parity checks · perform
+    the regression review · review the diff against the requested scope.
+11b. **Write the test-result record (§18)** at `docs/testing/results/` once verification has actually
+    run, and **link it from the implementation record** (`## Test Evidence`) and back again.
+12. After implementation, complete the record with: verified root cause · actual implementation ·
+    files changed · API impact · UI impact · **database impact + the DB artifact's execution status
+    (§14)** · integration impact · the **`## Verification` section with real evidence (§15g)** ·
+    actual result · limitations / follow-up.
+13. Update the permanent / current feature documentation when the implemented behaviour changes the
+    system's authoritative behaviour (§8) — including the feature's `test-scenarios.md` when permanent
+    behaviour changed (§15f).
+14. Change `Status:` from `IN PROGRESS` to the appropriate final state — `COMPLETE` · `CLOSED` ·
+    `PARTIAL` · `BLOCKED` · `READY FOR DBA` — honestly, per §15u.
+15. Validate documentation links (§11).
+16. Only then may the implementation task be declared complete — and "complete" for AI-assisted work
+    means **`READY FOR MANUAL COMMIT`** (§16). Committing, pushing, merging, and deploying are
+    **manual** steps performed by the developer or the team afterwards.
+
+### 2a · The record is a HARD PRECONDITION — not a recommendation
+
+**Added 2026-08-18 after a governance test failed.** A request to *check a Transfer-button error* was
+answered with a full technical investigation — UI → target-accounts API → `WBE_DB` → duplicate
+`NAPAS_BANK_INFO.BANK_CD` → existing source fix → stale deployed WAR — **and no audit record was ever
+created.** The rule existed; it was not enforceable, because every operative step list said the record
+comes before *code*, and investigation is not code. It now says **before investigation.**
+
+```
+NO DOC FILE  →  NO DETAILED INVESTIGATION  →  NO IMPLEMENTATION
+```
+
+This applies to every meaningful **AUDIT · INVESTIGATION · BUG · ISSUE · FEATURE · PARITY REVIEW ·
+BEHAVIOUR CHANGE**, for every developer and every tool (§12).
+
+#### What you may do before the record exists
+
+**Orientation only** — enough to *classify and place* the record:
+
+| Allowed before the record | Not allowed before the record |
+|---|---|
+| Skim the repo to identify the module / screen / repository involved | Tracing the fault through the call chain |
+| Read enough governance to pick the record category and folder | Reading controller → service → repository → SQL end to end |
+| Check whether a record for this task already exists (§12c) | Querying the database for evidence |
+| Glance at a filename, a route, an error string to name the subject | Comparing against legacy JEX to explain behaviour |
+| | Forming, testing, or reporting a root cause |
+| | Running tests to reproduce |
+
+The line is: **enough to know what kind of task this is, and where its record goes.** Everything past
+that is the investigation, and the investigation happens *inside* a record.
+
+#### Required first-action sequence
+
+```
+1. classify the task            (AUDIT / BUG / ISSUE / FEATURE)
+2. determine the governed location   (§4 — never invent one)
+3. CREATE the Markdown record
+4. VERIFY the file exists on disk
+5. only then begin the detailed investigation
+```
+
+Step 4 is not ceremonial. *Intending* to create the file, describing the file, or naming a path you did
+not write is not compliance — **the file must exist.**
+
+#### Surface it before investigating
+
+Before the detailed investigation begins, report:
+
+```
+Documentation record:  docs/audits/<category>/<subject>-audit-YYYY-MM-DD.md
+Classification:        AUDIT / BUG / ISSUE / FEATURE
+Investigation Status:  IN PROGRESS
+Approval Status:       PENDING
+Implementation Status: NOT STARTED
+```
+
+**A bare *"docs-first followed"* is not evidence — the actual path is** (§17b). If the path is not in
+the response, the precondition was not met.
+
+#### No silent deferral
+
+> *"I'll investigate first and write the document once I understand the issue."*
+
+**Specifically forbidden.** The record does **not** need the root cause to be created — that is the
+entire purpose of `Investigation Status: IN PROGRESS`. An initial investigation record is legitimately
+this thin:
+
+```markdown
+# <Subject> — Audit
+
+**Date:** YYYY-MM-DD
+**Type:** AUDIT / INVESTIGATION
+**Investigation Status:** IN PROGRESS
+**Approval Status:** PENDING
+**Implementation Status:** NOT STARTED
+
+## Observed Behavior
+## Expected Behavior
+## Scope
+## Initial Evidence
+## Investigation Plan
+
+## Root Cause
+Pending investigation.
+
+## Recommended Implementation
+Pending investigation.
+```
+
+Create that, then go and fill it in.
+
+#### The investigation lives in the record, not in the chat
+
+As findings appear, **write them into the same record** (§12b–12c) — the failing endpoint, the error
+code, the root cause, DB evidence, legacy behaviour, the current source state, a stale deployment or
+build state, missing regression coverage. **The chat response summarizes the governed file; it does not
+replace it.** A finding that exists only in a conversation is lost the moment the session ends — which
+is precisely what the failed test produced.
+
+#### Failure modes — stop, do not proceed
+
+| Situation | Required behaviour |
+|---|---|
+| **The location is unclear** | Re-read the governance (§4), pick the closest governed category. If it is still genuinely ambiguous, **stop and ask** — do not investigate "while deciding". |
+| **The file cannot be created** (permissions, path, tooling) | **STOP.** Report **`DOCS-FIRST BLOCKED — documentation record could not be created`** and why. Do not continue the investigation. |
+| **A record already exists for this task** | Update **that** record (§12b) — do not open a second one, and do not treat the existing file as permission to skip reporting its path. |
+
+#### Where this rule stops
+
+The exemption list in §10 (comment-only, formatting, lint, lockfile noise, a genuinely mechanical
+rename) is unchanged — those need no record and therefore no precondition. And a **quick factual
+answer** — *"which file defines this constant?"*, *"does this endpoint exist?"* — is a question, not an
+investigation. The precondition attaches to **diagnosing behaviour, comparing against legacy, or
+explaining why something is wrong**, whether or not the user used the word "audit".
+
+### 3 · Definition of Done
+
+For a meaningful behaviour-changing task, **do not report the work as complete** unless every box is
+true:
+
+```
+[ ] the dated implementation record was created BEFORE the detailed
+       investigation — and therefore before any code change (§2a)
+[ ] the record reflects the final implemented behaviour
+[ ] planned statements were updated to verified facts
+[ ] authoritative feature documentation was updated if needed
+[ ] Database Impact is declared (not left vague) — and if not NONE:
+       the DB artifact exists, is linked from the record, and its
+       per-environment execution status is accurate (§14)
+[ ] the implementation quality gate (§15) was run:
+       [ ] the actual Git diff was self-audited (§15b, §15s)
+       [ ] the appropriate automated tests were decided, and added/updated
+             where within scope — a bug fix carries a regression test or a
+             justification for why one is impractical (§15c, §15d)
+       [ ] the relevant existing tests were executed, and what was run is
+             stated exactly (§15i); failures are classified, not hidden (§15j)
+       [ ] the applicable API / UI / DB / security / performance / parity
+             checks were performed (§15k–§15p)
+       [ ] docs/features/**/test-scenarios.md was updated where permanent
+             behaviour changed (§15f)
+[ ] testing / result evidence was recorded in the record's ## Verification
+       section, with honest states — PASS / FAIL / NOT RUN / BLOCKED /
+       NOT APPLICABLE, never a plan reported as a result (§15g, §15h)
+[ ] for a meaningful change whose verification actually ran: the durable
+       test-result record exists at docs/testing/results/, and the
+       implementation record's ## Test Evidence links to it — both
+       directions resolve (§18)
+[ ] known limitations / follow-up were recorded
+[ ] documentation links validate
+[ ] Status is no longer IN PROGRESS unless work genuinely remains
+       — and NOT COMPLETE while a required DB execution is still pending (§14h)
+       or a required verification step has not actually been performed (§15u)
+[ ] no commit / push / merge / tag / deploy was performed by tooling — the
+       work is handed over at READY FOR MANUAL COMMIT and the Git and
+       deployment steps stay manual (§16)
+```
+
+### 4 · Where the record goes (`wecms-api`)
+
+> **Placement policy revised 2026-08-17 (supersedes the original docs-first placement table).** Dated
+> **bug** and **issue** implementation records no longer live inside the feature folder — they live in
+> the dedicated top-level `docs/bugs/` and `docs/issues/` categories. **Feature documentation,
+> `docs/audits/`, and the docs-first workflow itself are unchanged.** The earlier instruction "do not
+> create a global `bugs/` or `issues/` folder" is **withdrawn** — those two folders are now part of the
+> approved top-level set, added here together with [docs/README.md](docs/README.md) §Layout and
+> `.claude/skills/wecms-api-docs/**` in the same pass, as the new-top-level-folder rule requires.
+
+**Four record categories — one home each:**
+
+| Record type | Goes in | Filename |
+|---|---|---|
+| **BUG** — dated implementation record for a bug fix | [docs/bugs/](docs/bugs/) | `descriptive-name-YYYY-MM-DD.md` |
+| **ISSUE** — dated implementation record for non-bug issue / behavioural / operational / tracked implementation work | [docs/issues/](docs/issues/) | `descriptive-name-YYYY-MM-DD.md` |
+| **FEATURE** — current + permanent feature documentation (**structure unchanged**) | [docs/features/](docs/features/)`<domain>/<feature>/` — e.g. `features/payment/approval-box/`, `features/payment/internal-transfer/`, `features/settings/contacts/`, `features/banking/reports/daily-cash/` | the feature doc set |
+| **AUDIT** — audit · parity review · verification · investigation · legacy comparison · migration verification · architecture review · historical validation · cross-feature analysis | [docs/audits/](docs/audits/)`<category>/` — this repo's audit tree is categorised, so file into the matching `governance` · `modules` · `legacy-parity` · `batch` · `deployment` · `historical` sub-folder | `descriptive-name-YYYY-MM-DD.md` |
+
+Examples:
+
+```
+docs/bugs/citad-recipient-name-resolution-fix-2026-08-17.md
+docs/bugs/payment-dispatch-timeout-fix-2026-08-17.md
+docs/issues/uat-payment-result-handling-2026-08-17.md
+docs/issues/environment-configuration-alignment-2026-08-17.md
+docs/audits/legacy-parity/payment-dispatch-parity-audit-2026-08-17.md
+```
+
+**BUG vs ISSUE.** Use **BUG** when implemented behaviour is incorrect · something that worked is
+broken · behaviour differs from an accepted requirement · a defect causes wrong user/system behaviour ·
+parity behaviour is incorrect and the task is to fix it. Use **ISSUE** when the work is needed but is
+not clearly a product defect · operational / configuration behaviour needs correcting · an unresolved
+implementation concern is being addressed · a tracked behaviour/problem does not fit BUG cleanly.
+**If classification is unclear, prefer ISSUE.** Never create duplicate BUG + ISSUE records for the
+same implementation task.
+
+**A large feature is still a feature.** Do **not** open a bug or issue record just because feature
+implementation work is big — feature work stays on the feature documentation model.
+
+**An audit is never converted into an implementation record.** If an audit leads to a code fix, the
+audit stays in `docs/audits/` and a **separate** record is created in `docs/bugs/` or `docs/issues/`
+for the fix — **after a human approves implementation** (§17i). The bug/issue record **links to the
+audit as evidence** rather than copying it. `Audit Status: COMPLETE` means the investigation finished,
+**not** that the defect is fixed (§17n). Conversely, do not file a defect fix under `audits/` because the task originated from a
+finding — `audits/` holds dated *findings*, `bugs/` and `issues/` hold dated *implementation records*.
+
+**These other folders keep their existing purposes** and are **not** homes for dated bug/issue
+records: [docs/architecture/](docs/architecture/) (permanent cross-feature architecture),
+[docs/deployment/](docs/deployment/) (run-books / checklists),
+[docs/security/](docs/security/) (closure / risk / secrets),
+[docs/planning/open-questions/](docs/planning/open-questions/) (unresolved decisions),
+[docs/references/database/](docs/references/database/) and
+[docs/references/api-spec/](docs/references/api-spec/) (schema + contract reference). A change to one
+of those areas that is itself bug/issue implementation work still gets its dated record in
+`docs/bugs/` / `docs/issues/`, with the permanent doc in the area updated afterwards.
+
+**Existing historical records are not migrated.** This is a rule for future work — see §14.
+
+### 5 · Filename standard
+
+```
+descriptive-name-YYYY-MM-DD.md
+```
+
+Lowercase kebab-case. The permanent filename must describe the actual subject.
+
+**Correct:**
+
+```
+citad-recipient-name-resolution-fix-2026-08-17.md
+approval-box-detail-navigation-fix-2026-08-17.md
+payment-dispatch-timeout-fix-2026-08-17.md
+transaction-history-memo-feature-2026-08-17.md
+tax-filing-export-implementation-2026-08-17.md
+account-filter-parity-fix-2026-08-17.md
+```
+
+**Forbidden** — internal work codes, sequence numbers, vague labels, **or a developer's name** as the
+filename. Every developer uses the same standard; the record is named after the subject, never after
+the person or session that wrote it:
+
+```
+a1-01-account-filter-fix.md   d1-d2-d3-check.md   k9-fix.md
+p0-fix.md   p1-update.md   th-01-verification.md
+task-03.md   issue-04.md   final-fix.md   new-feature.md
+dev-a-fix.md   sokny-fix.md   mr-kang-update.md
+```
+
+### 6 · Date standard
+
+ISO only — `YYYY-MM-DD` (e.g. `2026-08-17`). Never `20260817`, `17-08-2026`, or `08-17-2026`. The
+date is the implementation / change record date. **Never use a fake date.**
+
+### 7 · Internal issue / task IDs
+
+Internal identifiers live in the document **metadata**, not normally in the filename:
+
+```
+Filename:  account-filter-parity-fix-2026-08-17.md
+
+# Account Filter Parity Fix
+
+**Date:** 2026-08-17
+**Issue:** A1-01
+**Type:** PARITY FIX
+**Status:** IN PROGRESS
+```
+
+Same rule for `A1` · `A1-01` · `D1-D2-D3` · `K9` · `TH-01` · `P0` · `P1` · `P2` · `Q1` · `Task-03` ·
+`Issue-04`. Keep an identifier in a filename **only** when the exact identifier is an externally
+fixed contract, a vendor specification, or a machine-consumed name.
+
+### 8 · Dated record vs permanent feature docs
+
+They have different jobs — do not collapse them, and do not treat a dated record as the only source
+of truth for permanent behaviour.
+
+| | Dated implementation record | Permanent feature docs |
+|---|---|---|
+| **Lives in** | `docs/bugs/` or `docs/issues/` | `docs/features/<domain>/<feature>/` |
+| **File** | `descriptive-name-YYYY-MM-DD.md` | `README.md`, `business-flow.md`, `interface-specification.md`, `source-code-index.md`, business-rules / database references as applicable |
+| **Answers** | *why* the change happened — original problem, investigation, implementation decision, files actually changed, verification, historical traceability | *how the system works NOW* |
+
+**`docs/bugs/` and `docs/issues/` are change history; they do not replace `docs/features/`.** A bug
+record at `docs/bugs/approval-status-detail-navigation-fix-2026-08-17.md` explains why it changed, what
+was wrong, the root cause, the implementation, the testing; the feature's own
+`docs/features/payment/approval-box/**` still explains how the feature works now.
+
+Order of operations: **create the dated record → implement → complete the dated record → update the
+permanent feature docs if current behaviour changed.**
+
+**An existing authoritative feature doc does not remove the docs-first requirement.** A meaningful
+bug / issue / feature implementation still gets a dated change record first; the authoritative docs
+are updated afterwards. The only exemptions are §10.
+
+### 9 · Templates
+
+#### 9a · Bug / issue record — initial
+
+Create this **before** modifying code:
+
+```markdown
+# <Descriptive Human-Readable Title>
+
+**Date:** YYYY-MM-DD
+**Type:** BUG FIX | ISSUE | PARITY FIX
+**Status:** IN PROGRESS
+**Repository:** wecms-api
+**Issue:** <ticket/work ID if available>
+
+## Problem
+
+Describe what the user/system is doing incorrectly. Do not assume the root cause yet.
+
+## Current Behavior
+
+Describe the CURRENT behavior verified from source/runtime evidence.
+
+## Expected Behavior
+
+Describe the requested target behavior.
+
+## Scope
+
+What this task will change.
+
+## Out of Scope
+
+What this task will not change.
+
+## Initial Investigation
+
+- source inspected
+- relevant docs inspected
+- tests inspected
+- legacy/JEX evidence inspected where applicable
+- known facts before implementation
+
+Do not write an unverified root cause as fact.
+
+## Proposed Implementation Plan
+
+Describe the intended implementation. Use planned/proposed wording.
+
+## Testing Plan
+
+Describe how the fix will be verified.
+
+## Root Cause
+
+Pending verification.
+
+## Implementation
+
+Pending.
+
+## Files Changed
+
+Pending.
+
+## API Impact
+
+Pending / None.
+
+## UI Impact
+
+Pending / None.
+
+## Database Impact
+
+NONE | FLYWAY MIGRATION | MANUAL DBA SCRIPT | BOTH | UNRESOLVED — DBA REVIEW REQUIRED
+
+<!-- Decide this NOW, at IN PROGRESS — see §14. If not NONE, document: affected schema ·
+     table/function/index/constraint · current state · target state · DDL or DML · execution method ·
+     execution order · rollback/recovery · environments affected · executor · verification check.
+     Link the artifact: docs/sql/<YYYY>/<name>-YYYY-MM-DD.sql or the db/migration/ file.
+     Add the ## Database Execution Status table (§14g) when the work is a manual script. -->
+
+## Integration Impact
+
+Pending / None.
+
+## Verification
+
+<!-- Completed AFTER implementation, from real evidence — see §15g. Keep only the applicable
+     subsections. Honest states only: PASS | FAIL | NOT RUN | BLOCKED | NOT APPLICABLE.
+     A bug fix also carries the ## Regression Test block (§15d), or a justification for why an
+     automated regression test is impractical. -->
+
+### Automated Tests
+
+- Test:
+- Result:
+
+### Test Scenarios
+
+- Scenario:
+- Expected:
+- Actual:
+- Result:
+
+### Regression Review
+
+- Areas checked:
+- Result:
+
+### Manual Verification
+
+- Environment:
+- Steps:
+- Result:
+
+## Result
+
+Pending.
+
+## Known Limitations / Follow-up
+
+Pending / None.
+```
+
+#### 9b · Feature record — initial
+
+Create this **before** implementing a meaningful new feature:
+
+```markdown
+# <Feature Name>
+
+**Date:** YYYY-MM-DD
+**Type:** FEATURE
+**Status:** IN PROGRESS
+**Repository:** wecms-api
+**Issue:** <ticket/work ID if available>
+
+## Purpose
+
+Why this feature is needed.
+
+## Requirement
+
+What has been requested.
+
+## Current System Behavior
+
+What exists before implementation.
+
+## Target Behavior
+
+What should exist after implementation.
+
+## Scope
+
+Included behavior.
+
+## Out of Scope
+
+Excluded behavior.
+
+## Proposed User / Business Flow
+
+Planned flow.
+
+## Proposed Implementation
+
+Planned code/components/services/modules.
+
+## API Impact
+
+Planned / None.
+
+## UI Impact
+
+Planned / None.
+
+## Database Impact
+
+NONE | FLYWAY MIGRATION | MANUAL DBA SCRIPT | BOTH | UNRESOLVED — DBA REVIEW REQUIRED
+
+<!-- Decide this NOW, before implementation — see §14. New table / new DB function → db/migration/.
+     Existing table, index, constraint, or ANY data change → docs/sql/<YYYY>/<name>-YYYY-MM-DD.sql.
+     Link the artifact and add the ## Database Execution Status table (§14g) for manual scripts. -->
+
+## Integration Impact
+
+Planned / None.
+
+## Validation / Business Rules
+
+Planned rules.
+
+## Testing Plan
+
+How implementation will be verified.
+
+## Implementation
+
+Pending.
+
+## Verification
+
+<!-- Completed AFTER implementation, from real evidence — see §15g, and the feature-verification
+     dimensions in §15e (happy path · validation · empty state · error state · permission ·
+     boundary values · API failure · duplicate/retry · DB · localization · concurrency).
+     Include only what this feature actually has. Honest states only:
+     PASS | FAIL | NOT RUN | BLOCKED | NOT APPLICABLE. -->
+
+### Automated Tests
+
+- Test:
+- Result:
+
+### Test Scenarios
+
+- Scenario:
+- Expected:
+- Actual:
+- Result:
+
+### Regression Review
+
+- Areas checked:
+- Result:
+
+### Manual Verification
+
+- Environment:
+- Steps:
+- Result:
+
+## Result
+
+Pending.
+
+## Known Limitations / Follow-up
+
+Pending / None.
+```
+
+#### 9c · Finalization — the same file, never a second one
+
+After the code changes, return to the **same** dated record. **Do not create a second "final"
+Markdown file.** Update: `Status` · Root Cause · Implementation · Files Changed · API Impact · UI
+Impact · **Database Impact + Database Execution Status (§14)** · Integration Impact ·
+**Verification (§15g)** · Result · Known Limitations / Follow-up.
+
+Finalizing the record is not the same as finishing the task: the **quality gate in §15 runs first**,
+and the `## Verification` section is filled from what that pass actually produced.
+
+Replace inaccurate planned statements where appropriate. Do **not** erase useful planning history
+when it explains an important design decision — instead distinguish clearly between **Initial plan**
+and **Actual implementation**.
+
+#### 9d · Planned vs current accuracy
+
+Because the record is created before the code, wording matters.
+
+- Before implementation use **PLANNED · PROPOSED · EXPECTED · TO BE IMPLEMENTED · PENDING
+  VERIFICATION**.
+- Do **not** write "the system now does X" until the implementation is actually verified.
+- After implementation, update the document to CURRENT facts.
+
+Never present: planned behaviour as implemented · legacy JEX behaviour as current refactor behaviour ·
+a test plan as a successful test result · an assumed root cause as a verified root cause.
+
+### 9e · Legacy / JEX parity work
+
+A parity record must clearly distinguish four things:
+
+1. Legacy JEX behaviour.
+2. Current refactor behaviour **before** the fix.
+3. Target parity behaviour.
+4. Actual corrected behaviour **after** implementation.
+
+Do not simply write "matched legacy" — record **what was actually compared** (the JEX `file:line`
+citations, the IDO/WSVC query, the columns, the rows observed). This is the existing
+legacy-first rule in the workspace [CLAUDE.md](../CLAUDE.md) §"North-star — legacy-first, understand
+before implement", expressed as a documentation requirement.
+
+If the task is a **point-in-time parity audit** rather than implementation work, it belongs under
+[docs/audits/](docs/audits/)`<category>/` using the same `descriptive-name-YYYY-MM-DD.md` filename.
+
+### 9f · Cross-repository change (API + WEB)
+
+If the task affects **both** `wecms-api` and `wecms-web`, create the appropriate dated record in
+**both** repositories **before** modifying either side's application code — this is the documentation
+half of the existing full-stack ownership rule.
+
+| Repository | Path | Record focus |
+|---|---|---|
+| `wecms-api` | `docs/bugs/` (BUG) · `docs/issues/` (ISSUE) | backend rule · business rules · endpoint · request/response · validation · database / integration behaviour · backend tests |
+| `wecms-web` | `docs/bugs/` (BUG) · `docs/issues/` (ISSUE) | UI behaviour · user inputs · frontend validation · API consumption · loading / error / result behaviour · frontend tests |
+
+Use the same descriptive subject and date on both sides where appropriate, and cross-link the two
+records where the sibling repository is available. **Do not** copy backend implementation internals
+into the frontend record, and **do not** copy frontend component details into the backend record.
+
+**Cross-repo audits:** prefer the repository that owns the primary audit scope. If both sides need
+their own audit evidence, create scoped audit records in both repositories' `docs/audits/` and
+cross-link them.
+
+**Authority rule:** backend business / API / database behaviour → `wecms-api`; frontend UI /
+interaction / API consumption → `wecms-web`.
+
+### 10 · Exceptions — no new dated record normally required
+
+- spelling-only documentation fix
+- formatting-only change
+- comment-only change
+- import ordering
+- lint-only change
+- generated-file refresh
+- lockfile-only noise
+- mechanical filename / path rename with no behaviour change
+- purely cosmetic change with no interaction / behaviour impact
+- temporary local debugging that will not be committed
+
+**However:** if any of these makes existing documentation inaccurate, update the affected
+documentation. And if a supposedly mechanical change turns out to alter behaviour, the docs-first
+rule applies.
+
+The same list exempts these changes from the **quality gate (§15)** — a comment-only edit needs no
+regression test, no DB verification, and no security review. The exemption travels with the change,
+not with the developer: the moment a "mechanical" change turns out to alter behaviour, **both** §1–§14
+and §15 apply to it in full.
+
+### 11 · Documentation validation before declaring complete
+
+- Verify the dated record exists.
+- Verify `Status:` is correct.
+- Verify the permanent feature docs are still accurate.
+- Verify internal links resolve, including moved / renamed doc references.
+- Verify cross-repo doc links where relevant.
+
+Use the established `wecms-api` documentation-link validation workflow —
+`.claude/skills/wecms-api-docs/references/api-doc-rules.md` §"Link validation": every relative link
+in a touched file must resolve to a real path, `#anchor` targets confirmed where practical, and the
+result reported (clean, or the list of issues). Expected result: **0 broken documentation links.**
+*(There is no committed link-checker script in this repository; the frontend's
+`node scripts/check-doc-links.mjs` covers `wecms-web` only.)*
+
+### 12 · Who must follow this — team rule, and how tools enforce it
+
+#### 12a · Team governance — all developers
+
+**Every developer contributing a meaningful behaviour-changing change to WeCMS must follow
+docs-first.** This covers **BUG · ISSUE · FEATURE · AUDIT / PARITY / INVESTIGATION · behaviour change ·
+business-rule change · API behaviour change · UI behaviour change · integration behaviour change ·
+functional refactor · SIT/UAT/PROD behaviour fix · legacy/JEX parity fix.**
+
+It applies regardless of *how* the change is implemented — **manually by a developer, Claude Code,
+Cursor, another AI coding assistant, IDE tooling, scripts, or pair programming.**
+
+**No developer is exempt because:**
+
+- they did not use Claude or any AI assistant,
+- the change is on their own branch,
+- the implementation is small but behaviour-changing,
+- the code is backend-only,
+- the code is frontend-only.
+
+**Documentation is a project requirement, not an AI requirement.** A change that is technically correct
+but undocumented is **incomplete under project governance**.
+
+#### 12b · Responsibility — and one canonical record per task
+
+**The developer who starts the change is responsible for making sure the dated record exists before
+the detailed investigation begins — and therefore before code implementation.** The required sequence (identical to §2, restated here as the team
+contract):
+
+```
+1. Orient ONLY — enough to classify the task and place its record (§2a).
+   NOT the investigation: no fault tracing, no root cause yet.
+2. Create the appropriate dated record BEFORE the detailed investigation, and
+   verify the file exists  (docs/bugs/ · docs/issues/ · docs/audits/;
+                                         features keep docs/features/<domain>/<feature>/)
+3. Set Status: IN PROGRESS.
+4. Record current behaviour, target behaviour, scope, plan and testing plan.
+5. Implement the change.
+6. Update the SAME record with the actual implementation and test results.
+7. Update permanent feature docs when current behaviour changes.
+8. Validate documentation links.
+9. Change Status to COMPLETE / CLOSED / PARTIAL / BLOCKED.
+```
+
+**One task → one canonical record per affected repository.** The document belongs to the **task**, not
+to the developer. If Developer A starts a task and Developer B continues it, **B updates the same
+record**:
+
+```
+✅  docs/bugs/payment-timeout-fix-2026-08-17.md          ← one record, both developers update it
+
+❌  docs/bugs/payment-timeout-fix-dev-a-2026-08-17.md
+❌  docs/bugs/payment-timeout-fix-dev-b-2026-08-17.md
+```
+
+Never name a record after a person (`dev-a-fix.md`, `sokny-fix.md`, `mr-kang-update.md`) or after an
+internal work code (`a1-01-fix.md`, `p0-fix.md`, `task-03.md`, `final-fix.md`) — see §5 and §7. The
+ticket ID goes in the metadata (`**Issue:** PAY-123`).
+
+#### 12c · Multiple developers / parallel work
+
+- **Check whether a record already exists for the task before creating another one.**
+- **Update the existing record** when the scope is the same.
+- **Create a separate record only when the work is genuinely a separate task.**
+- **Avoid duplicate bug/issue records describing the same fix.**
+- If two branches modify the same record, **resolve it like source code** during merge/rebase. **Never
+  silently drop another developer's documentation updates** — merge them.
+
+#### 12d · AI governance — Claude Code, Agents, and other assistants
+
+AI tooling **enforces the team rule automatically**; it does not own it. When asked to **fix ·
+implement · change · update · resolve · add a feature · change business behaviour · change UI
+behaviour · change API behaviour · fix parity**, Claude must **not** start editing application code
+immediately. Claude must first:
+
+1. orient in the implementation and the docs **only far enough to classify the task** — this is not
+   the investigation (§2a),
+2. determine the governed location (§4),
+3. create the dated Markdown implementation record (or **update the existing one** for this task, per
+   §12b–12c) — **then verify the file exists on disk and report its path**,
+4. set `**Status:** IN PROGRESS`,
+5. document what is known so far — an unknown root cause is `Pending investigation`, never a reason to
+   postpone the record — **and only now begin the detailed investigation, writing findings into that
+   same record** (§2a),
+6. **then** begin application-code modification — **but only when the request actually carries
+   implementation intent.** The verbs listed above (*fix · implement · change · resolve · add*) do; a
+   request only to **check · investigate · review · audit · analyze · design** does **not**. For those,
+   step 6 is replaced by *stop and present the findings for human approval* — **§17**.
+
+Claude must **not** ask *"Do you want me to document this?"* for a clearly meaningful behaviour
+change. **Documentation is mandatory by default** — for the human developer and for the assistant
+alike. The same expectation applies to Agents-harness sessions, Cursor, and any other AI coding
+assistant used on this repository.
+
+**And Claude must not stop when the code is written.** The implementation quality gate (§15) is part
+of the same obligation: review the diff, add/run the tests the change warrants, verify API / UI / DB /
+security / parity impact, update the docs and test scenarios, report failures honestly, and only then
+set a final status. The AI-specific form of that rule is **§15w**.
+
+**Equally, Claude must not carry on past the handover point.** Commit, push, merge, rebase onto a
+shared branch, tagging, and any deployment or environment promotion are **manual** team actions —
+**§16**. The assistant stops at `READY FOR MANUAL COMMIT` unless the user explicitly asks, in the
+current conversation, for one specific Git operation (§16c).
+
+**And Claude must not treat an investigation as its own authorization.** When the request was to
+*check · investigate · review · audit · analyze · design*, the work ends at the documented findings and
+a **human decides** whether implementation proceeds — **§17**. Finding the root cause is not permission
+to fix it, and *"OK"* / *"thanks"* / *"looks good"* is not an approval (§17e).
+
+This sits alongside — and does not weaken — the existing rules that still apply first: the
+**Scope Guard** above (backend is edited only on an explicit backend request), the workspace
+[CLAUDE.md](../CLAUDE.md) §"5. Required analysis before modifying a copied legacy table" (analyse and
+get approval **before** changing a legacy-compatible table / entity / key-generation path), and
+`feedback_preserve_existing_code` (change only what is broken). Where an approval gate applies, the
+dated record is the natural place to present the analysis — write the record, then get approval, then
+implement.
+
+#### 12e · Code review / merge expectation
+
+For a meaningful behaviour-changing change, **reviewers verify**:
+
+```
+[ ] the required dated record exists
+[ ] it was created for the correct task / repository
+[ ] the final implementation is documented
+[ ] test results are recorded — as real outcomes, not as a restated test plan
+[ ] permanent feature docs are updated if needed
+[ ] Database Impact is declared, and any DB artifact is reviewed as code:
+       right location (db/migration/ vs docs/sql/<YYYY>/), pre/post-checks that
+       actually prove the change, named executor, destructive changes flagged (§14)
+[ ] links are valid
+[ ] Status is not incorrectly left IN PROGRESS — and not COMPLETE while a
+       required DB execution is still pending
+```
+
+**Plus the implementation quality gate.** The full reviewer checklist for a meaningful change — diff
+scope, self-audit, regression risk, tests added and executed, test scenarios, API contract,
+frontend/backend alignment, DB impact, security, parity, documentation, honest final status — is
+**§15v**. Review both lists together; they are one Definition of Done, not two.
+
+A code change may be technically correct and still **incomplete under project governance** if the
+required documentation is missing. This is a **review expectation**, deliberately *not* a CI gate —
+nothing in the pipeline enforces it. **SQL is reviewed like source code**, and review approval is not
+execution.
+
+#### 12f · Branch and environment independence
+
+The rule applies on **local development · feature branches · SIT · UAT · PROD hotfixes** alike. **A
+PROD/UAT hotfix is NOT exempt.**
+
+**Emergency exception (narrow, and explicitly labelled).** If operational urgency genuinely forces the
+implementation to land before the record:
+
+- create the record **as soon as operationally possible**,
+- state plainly that **emergency implementation preceded the record**,
+- explain **why**,
+- **complete the documentation before the change is considered closed.**
+
+**Do not normalize emergency-first coding as the standard workflow** — it is an exception to be
+justified in the record, not a second accepted path.
+
+### 13 · Blocked / partial / abandoned work
+
+If implementation does not complete, **do not delete the dated record.** Set `Status: BLOCKED` or
+`Status: PARTIAL` and record: what was attempted · investigation findings · what was implemented ·
+what was **not** implemented · why work stopped · which decision or dependency is required. This
+preserves engineering history.
+
+### 14 · Database impact — mandatory declaration and artifacts
+
+**Added 2026-08-17. Applies to every BUG, ISSUE, and FEATURE, for every developer and every tool.**
+This section governs *where the DB artifacts live and how they are declared*; it does **not** restate
+the existing schema rules. Those remain authoritative and must be read first:
+
+- [docs/references/database/flyway-migration-baseline.md](docs/references/database/flyway-migration-baseline.md) — **why Flyway is disabled** and how DDL actually reaches a database.
+- [docs/references/database/legacy-table-inventory.md](docs/references/database/legacy-table-inventory.md) — the authoritative 141-table baseline any DDL must respect.
+- [docs/sql/README.md](docs/sql/README.md) — the manual-DBA-script folder rules.
+- §"Legacy Schema Parity Rule", §"DB Function / Legacy Function Policy", §"Manual DDL execution policy" (workspace [CLAUDE.md](../CLAUDE.md) §2), and the "Required analysis before modifying a copied legacy table" gate (workspace [CLAUDE.md](../CLAUDE.md) §5) all still apply **unchanged and first**.
+
+> **⚠️ There is no rule that "every DB change belongs in Flyway" — and there must not be.**
+> `spring.flyway.enabled=false` and `ddl-auto=validate` in every profile. The files under
+> `src/main/resources/db/migration/` are **schema-of-record and DBA input**, not an auto-applied
+> pipeline. Nothing in this repository applies DDL at startup.
+
+#### 14a · Declare DB impact in the record, before implementation
+
+Every BUG / ISSUE / FEATURE record carries a **`## Database Impact`** section, filled in at
+`Status: IN PROGRESS` — i.e. **before** application code is written. Pick exactly one:
+
+| Value | Meaning |
+|---|---|
+| `NONE` | No schema, function, index, constraint, or data change. |
+| `FLYWAY MIGRATION` | A **new table** or **new DB function** — lands as a `V<n>__<name>.sql` file in `src/main/resources/db/migration/` per the existing convention. *(Kept as the team's vocabulary; read it as "migration-folder file — schema-of-record, **DBA-applied by hand**, not auto-run", per the baseline doc.)* |
+| `MANUAL DBA SCRIPT` | Any change to an **existing** table, index, constraint, function, or **any data change** — lands as a reviewed `.sql` artifact (§14c). |
+| `BOTH` | Genuinely needs a new structural asset **and** a separate manual script (e.g. new table + backfill from existing data). Do not use it to duplicate one change in two places. |
+| `UNRESOLVED — DBA REVIEW REQUIRED` | Impact is real but the shape or safety is not yet decided. Legitimate at `IN PROGRESS`; **not** a value the record may be finalized on. |
+
+**Do not leave this section vague** — "maybe some DB changes" is not an answer. When impact exists,
+document all of: affected schema · affected table / function / index / constraint · current state ·
+target state · **DDL or DML** · execution method · execution order · rollback / recovery approach ·
+environments affected · responsible executor · verification query or check.
+
+#### 14b · Which artifact — the classification
+
+| Change | Artifact | Where |
+|---|---|---|
+| **New table** | migration-folder file (existing convention) | `src/main/resources/db/migration/V<n>__<table_name>.sql` |
+| **New DB function** | migration-folder file (existing convention) | `src/main/resources/db/migration/V<n>__<function_name>.sql` |
+| **ALTER an existing table** (add / alter / drop column, re-type, widen) | **manual DBA script** | `docs/sql/<YYYY>/` |
+| **CREATE / DROP INDEX** on an existing table | **manual DBA script** | `docs/sql/<YYYY>/` |
+| **Add / modify a constraint** | **manual DBA script** | `docs/sql/<YYYY>/` |
+| **Replace / modify an existing DB function** where manual execution is required | **manual DBA script** | `docs/sql/<YYYY>/` |
+| **Data change** — `INSERT` / `UPDATE` / `DELETE`, seed, reference or configuration rows, backfill, corrective SQL, one-time migration | **manual DBA script** | `docs/sql/<YYYY>/` |
+
+**Do not put an `ALTER TABLE`, an `UPDATE`, or corrective SQL into the migration folder** just because
+the change is part of a feature. **Never edit an already-applied migration** (that prohibition is
+unchanged). Conversely, when a new table or function genuinely lands, use the migration folder and
+**do not** also write a duplicate manual script — unless the deployment process truly needs both, in
+which case say why in the record.
+
+#### 14c · Manual DBA script — location and filename
+
+**Location (verified 2026-08-17):** [docs/sql/](docs/sql/), the repository's established durable
+manual-SQL home — version-controlled in this repo, and already defined as "the delivery vehicle for the
+DDL/DML those docs describe" (see [docs/sql/README.md](docs/sql/README.md) for the recorded decision).
+New scripts are partitioned by year:
+
+```
+docs/sql/<YYYY>/descriptive-name-YYYY-MM-DD.sql
+```
+
+**Every** script follows this layout — the two pre-existing flat scripts were normalized into
+`docs/sql/2026/` on 2026-08-17 (`git mv`, dated from evidence), so no SQL file remains directly under
+`docs/sql/` except its `README.md`. *(Corrected 2026-08-17 — this line previously read "The two
+pre-existing flat scripts stay where they are".)*
+
+**Do not** place operational SQL in an untracked or scratch location (`Claude Code (AI)/sql/` is for
+*ad-hoc, session-scoped* scripts only and is under **no** version control; `tmp/`, `notes/` never).
+**Do not** paste executable SQL into the Markdown record instead of shipping a script.
+
+**Filename:** `descriptive-name-YYYY-MM-DD.sql`, lowercase kebab-case, ISO date, subject-descriptive:
+
+```
+add-recipient-name-column-2026-08-17.sql
+update-payment-status-data-2026-08-17.sql
+add-transfer-history-index-2026-08-17.sql
+backfill-vas-account-type-2026-08-17.sql
+update-citad-bank-mapping-2026-08-17.sql
+```
+
+Forbidden: `P0.sql` · `fix.sql` · `update.sql` · `script.sql` · `final.sql` · `A1-01.sql` · anything
+named after a developer. Internal issue IDs go in the script header comments, not the filename.
+
+#### 14d · Script header + structure
+
+```sql
+-- WeCMS Manual Database Change
+-- Date: YYYY-MM-DD
+-- Related record: <relative path to the bug/issue/feature .md>
+-- Type: DDL | DML | DDL+DML
+-- Execution: MANUAL
+-- Target environments: SIT | UAT | PROD | as applicable
+-- Executor: DBA TEAM | DEV TEAM | TBD
+-- Transaction requirement: <documented requirement>
+-- Rollback: <documented approach, or "ROLLBACK REQUIRES DBA REVIEW">
+
+-- 1. PRE-CHECK
+-- 2. CHANGE
+-- 3. POST-CHECK
+-- 4. ROLLBACK / RECOVERY NOTES
+```
+
+**Pre-check and post-check must actually prove the change** — never add a check that passes regardless.
+For DDL, read `information_schema.columns` (or `pg_indexes` / `pg_constraint`) before and after. For
+DML, `SELECT COUNT(*)` on the affected predicate before and after. **Do not fabricate row counts** — if
+the count is not knowable before execution, say so and leave the pre-check to produce it.
+
+**Do not auto-include destructive rollback SQL** that could itself lose data. When rollback is unsafe,
+write **`ROLLBACK REQUIRES DBA REVIEW`** and explain what recovery would involve.
+
+#### 14e · The Markdown explains WHY, the SQL states WHAT to run
+
+```
+docs/bugs/recipient-name-resolution-fix-2026-08-17.md   ← why: problem, root cause, decision, verification
+docs/sql/2026/add-recipient-name-support-2026-08-17.sql  ← what the DBA executes
+```
+
+The record **must link to the script**, and the script's header **must link back to the record**. Keep
+business reason, affected data, expected row count (when knowable), pre-check, execution, post-check
+and rollback in the record; keep the runnable statements in the `.sql`.
+
+#### 14f · Who executes — preparation is not execution
+
+**Database scripts are prepared and version-controlled by the development process; database execution
+is a separate operational action.** Depending on environment and current team authority, the executor
+may be the **DBA team**, an **authorized developer**, or the **deployment/operator team**.
+
+Every artifact names its expected executor — one of: `DBA TEAM` · `DEV TEAM` ·
+`DBA OR DEV TEAM — environment dependent` · `TBD — requires approval`. Do not encode one universal
+executor; for shared environments (**UAT / PROD**) prefer explicit DBA or authorized-operator
+ownership where that is the established process.
+
+> **Creating a SQL file is NEVER equivalent to executing it.** An AI assistant must never execute DB
+> changes against a shared environment, and must never report a script as "applied" because it was
+> written. The flow is: **developer prepares → reviewer reviews → DBA / authorized dev executes per
+> environment process → the result is recorded.**
+
+#### 14g · Per-environment execution record
+
+A record with manual DB work carries an execution table, e.g.:
+
+```markdown
+## Database Execution Status
+
+| Environment | Required | Executor | Status | Executed Date | Verification |
+|---|---|---|---|---|---|
+| LOCAL | Yes | DEV TEAM | COMPLETE | 2026-08-17 | post-check output pasted |
+| SIT | Yes | DBA OR DEV TEAM | PENDING | - | - |
+| UAT | Yes | DBA TEAM | PENDING | - | - |
+| PROD | Yes | DBA TEAM | NOT STARTED | - | - |
+```
+
+**Never mark an environment `COMPLETE` without evidence** (the post-check output, or a named person and
+date). If the real company process assigns ownership differently, record the **real** process — do not
+invent one.
+
+#### 14h · Status honesty when a DB change is outstanding
+
+If code depends on a DB change not yet applied to the required environment, the overall task is **not**
+`COMPLETE`. Use `PARTIAL` · `BLOCKED` · `READY FOR DBA` · `READY FOR DEPLOYMENT` as the situation
+warrants, and state the split plainly:
+
+```
+Code: COMPLETE · DB script: PREPARED · SIT DB execution: PENDING
+Overall: PARTIAL / READY FOR DBA
+```
+
+**Do not claim verified SIT/UAT behaviour before the required DB execution has actually happened.**
+
+#### 14i · Destructive / data-risk changes
+
+For `DROP` · `DELETE` · `TRUNCATE` · column narrowing · constraint tightening · large data correction ·
+any irreversible update, put an explicit warning in **both** the Markdown record **and** the SQL script:
+
+```
+DESTRUCTIVE / DATA-RISK CHANGE — DBA REVIEW REQUIRED
+```
+
+Never execute such a change automatically, and **never generate a destructive operation from an
+ambiguous requirement** — ask instead.
+
+#### 14j · Audits that find DB problems
+
+An audit stays in [docs/audits/](docs/audits/) and **does not** become the DB change. An audit may
+*identify* required DB work; it must not create or execute it. When the finding turns into
+implementation, open the separate `docs/bugs/` or `docs/issues/` record (per §4) and attach the SQL
+artifact there, leaving the audit intact as historical evidence.
+
+#### 14k · Frontend dependency
+
+DB artifacts belong to **this** repository. `wecms-web` records only declare the dependency and
+cross-link the backend record — **no `.sql` files live in `wecms-web`.** See the frontend
+`wecms-web/CLAUDE.md` §12g *(separate repository)*. *(Corrected 2026-08-18 — this pointer previously
+read "§14", which is the frontend's **quality gate**, not its database-dependency rule.)*
+
+### 15 · Implementation quality gate — verify before COMPLETE (MANDATORY)
+
+**Added 2026-08-18. Applies to every BUG · ISSUE · FEATURE · PARITY FIX · behaviour change ·
+business-rule change · API change · UI-behaviour change · integration change · functional refactor —
+for every developer and every tool.** This section adds the **verification pass** that closes the
+docs-first loop. It does not restate §1–§14: placement, filenames, templates, the team rule, and the
+database artifact rules stay exactly where they are and are read first.
+
+> **Code implementation is not the end of the task.** A meaningful task is not complete when the
+> files compile, when the editor stops showing errors, or when the diff "looks right". It is complete
+> when the change has been **audited against its own diff, tested, verified, and honestly reported**.
+
+**Required lifecycle:**
+
+```
+DOCS-FIRST RECORD → implementation → implementation self-audit → tests
+  → test scenarios → regression review → DB verification (if applicable)
+  → security / permission verification (if applicable) → documentation update
+  → final evidence → COMPLETE
+```
+
+Every individual check below is **REQUIRED WHEN APPLICABLE** (§15x). The gate itself is never
+optional; the depth of each check is chosen by risk.
+
+#### 15a · Team scope — one Definition of Done for everyone
+
+This quality gate applies equally to **Cambodia developers · Vietnam developers · Korea developers ·
+any other current or future WeCMS contributor**, and regardless of how the implementation was
+performed — **manually · Claude Code · Cursor · another AI assistant · IDE tooling · scripts · pair
+programming.**
+
+**No country, team, vendor, or individual may operate a weaker Definition of Done for these
+repositories.** Teams may hold different *operational* responsibilities — who executes DB SQL in UAT
+or PROD, who runs the SIT cycle, who signs off UAT — but the **implementation-quality expectation is
+shared and identical**. This is a **project quality rule**, not an AI rule; §12a states the team
+governance for documentation, and this section states it for verification.
+
+#### 15b · Implementation self-audit — review the actual diff
+
+After the code changes and **before** declaring anything done, audit the implementation **from the
+current diff and the current source** — not from the original ticket description, and not from memory
+of what was intended.
+
+```bash
+git status
+git diff
+git diff --stat
+```
+
+Check for:
+
+```
+[ ] requirement not fully implemented
+[ ] behaviour outside the requested scope
+[ ] accidental unrelated changes
+[ ] duplicated logic (something the codebase already does elsewhere)
+[ ] stale / dead code introduced
+[ ] incorrect null handling
+[ ] incorrect error handling
+[ ] incorrect API mapping (path, method, DTO field, envelope)
+[ ] incorrect field casing (wire = lowercase snake_case; see §"API Naming & Serialization Standards")
+[ ] incorrect validation
+[ ] broken permission checks (@PreAuthorize / @menuAuthz / role gates)
+[ ] broken tenant / company scope (BIZ_KEY filter present on every tenant-scoped query)
+[ ] transaction / concurrency risks
+[ ] frontend ↔ backend mismatch
+[ ] DB assumptions not backed by the actual schema
+[ ] legacy / JEX parity mismatch where relevant
+[ ] hard-coded values that should be configuration or reference data
+[ ] temporary debugging code
+[ ] console / debug logging left behind
+[ ] TODO / FIXME added without a documented follow-up
+[ ] secrets or credentials in code, config, docs, or SQL
+[ ] unsafe destructive behaviour
+```
+
+Findings that matter are recorded in the dated record — fixed, or explicitly deferred with a reason.
+This audit is also where `feedback_preserve_existing_code` is enforced: **anything in the diff that the
+task did not ask for is a finding**, not a bonus.
+
+#### 15c · Test requirement — decide what is appropriate, then do it
+
+For every BUG / ISSUE / FEATURE, **decide** which automated tests the change warrants, and say so in
+the record. Candidates in `wecms-api`:
+
+| Test kind | Typical shape in this repository |
+|---|---|
+| **Unit test** | plain JUnit 5 + AssertJ |
+| **Service test** | `@ExtendWith(MockitoExtension.class)` with mocked repositories — the dominant idiom here |
+| **Repository test** | `@DataJpaTest`, or a **query-contract test** asserting the `@Query` / `@Modifying` annotation text where no database is available |
+| **Controller / API test** | `@WebMvcTest` |
+| **Integration test** | `@SpringBootTest` |
+| **Regression test** | a test that pins the exact behaviour a bug fix restored (§15d) |
+| **Concurrency / idempotency test** | where claim / retry / callback / sequence logic changed (§15p) |
+
+> **Do not invent test infrastructure this repository does not have.** There is **no H2, no embedded
+> database, and no Testcontainers** in `wecms-api` — see §"Do / Don't" (*"Don't add SpringDoc /
+> Testcontainers / any other dependency just in case"*) and §"Known Issues / Inconsistencies"
+> (*"No Testcontainers … H2/in-memory deferred"*). Where a guarantee is genuinely a database property,
+> either assert it as a **query-contract test** — the established idiom, e.g.
+> `DispatchClaimQueryContractTest`, `FirmFileDataExecutionResultQueryContractTest` — or verify it
+> manually against a real environment and record that evidence. Adding an embedded DB is a dependency
+> change and a separate, approved task.
+
+**Do not create meaningless tests to raise a count.** A test must prove the behaviour that changed.
+Read [docs/testing/fixture-data-conventions.md](docs/testing/fixture-data-conventions.md) first — a
+correct assertion over fixture data that cannot exercise the condition is a *passing test that cannot
+fail*, and three defects in this project have hidden behind exactly that.
+
+#### 15d · Bug-fix regression rule
+
+A bug fix **normally includes a regression test** whenever the behaviour can be tested automatically.
+Work through these four questions explicitly:
+
+1. Can the original bug be **reproduced** in a test?
+2. Does that test **fail before** the fix?
+3. Does it **pass after** the fix?
+4. Does it **protect against recurrence** — pinning the behaviour, not the implementation detail?
+
+The record carries the outcome:
+
+```markdown
+## Regression Test
+
+Test file:          src/test/java/com/kosign/wecms/domain/<...>/<Name>Test.java
+Test case:          <method / @DisplayName>
+Behavior protected: <the exact behaviour that must never regress>
+```
+
+If an automated regression test is genuinely **not practical** — the behaviour needs a live bank
+gateway, a real database, a browser, or an environment this repository cannot reach — **explain why**
+and supply manual / test-scenario evidence instead.
+
+**"No test needed" without justification is not acceptable.**
+
+#### 15e · Feature verification
+
+For a new feature, verify the scenarios that actually apply — choose from:
+
+- happy path · validation · empty state · error state
+- permission / authorization · boundary values
+- API failure handling · duplicate / retry behaviour
+- database behaviour · localization (EN / KO / VI) where the feature emits text
+- concurrency / idempotency where relevant
+
+**Do not paste the same checklist onto every feature.** An export-only screen has no duplicate/retry
+dimension; a dispatch path has almost no localization surface. Pick what the feature actually has.
+
+#### 15f · Test scenarios — permanent behaviour vs this change
+
+The feature documentation set carries a permanent `test-scenarios.md`
+(`docs/features/<domain>/<feature>/test-scenarios.md`).
+
+- When a change alters **permanent feature behaviour**, **update the relevant
+  `docs/features/**/test-scenarios.md`** so the scenarios describe the *final* behaviour.
+- The **dated bug / issue record** carries only the **implementation-specific verification evidence**
+  for this change.
+- **Do not duplicate a long scenario suite in both places.** Permanent scenarios live in
+  `test-scenarios.md`; the dated record links to it.
+
+This is the same separation as §8 (dated record = *why it changed*; feature docs = *how it works now*),
+applied to verification.
+
+#### 15g · The record's `## Verification` section
+
+Every BUG / ISSUE dated record ends with a verification section. Use only the applicable subsections:
+
+```markdown
+## Verification
+
+### Automated Tests
+
+- Test:    <class / method, or the command run>
+- Result:  PASS | FAIL | NOT RUN | BLOCKED | NOT APPLICABLE
+
+### Test Scenarios
+
+- Scenario: <what was exercised>
+- Expected: <expected observable behaviour>
+- Actual:   <observed behaviour>
+- Result:   PASS | FAIL | NOT RUN | BLOCKED | NOT APPLICABLE
+
+### Regression Review
+
+- Areas checked: <callers, sibling screens, shared services, exports, batch paths>
+- Result:        <what was confirmed unaffected, and how>
+
+### Manual Verification
+
+- Environment: LOCAL | SIT | UAT | PROD
+- Steps:       <what was actually done>
+- Result:      PASS | FAIL | NOT RUN | BLOCKED | NOT APPLICABLE
+```
+
+*(This section supersedes the older single `## Test Results` heading in the §9a / §9b templates.
+Existing records that already use `## Test Results` keep it — do not rewrite history; new records use
+`## Verification`.)*
+
+**Never mark `PASS` without evidence.**
+
+**For a meaningful change whose verification actually ran, this section is the *summary*, not the whole
+evidence story.** The durable detail — commands, counts, environment, build under test, per-scenario
+outcomes, pre-existing vs new failures — goes into a **test-result record** at
+`docs/testing/results/descriptive-name-test-result-YYYY-MM-DD.md`, and the implementation record adds a
+**`## Test Evidence`** section linking to it (**§18**). Keep `## Verification` short and let the link
+carry the detail; do not duplicate the whole result document here.
+
+#### 15h · Test-result honesty
+
+**Never report `PASS`, `SUCCESS`, or `COMPLETE` for a test that was not executed.** The permitted
+states are:
+
+`PASS` · `FAIL` · `NOT RUN` · `BLOCKED` · `NOT APPLICABLE`
+
+```
+Automated test:      NOT RUN — environment unavailable
+SIT verification:    BLOCKED — DBA script not applied
+Regression test:     PASS — 14/14 tests
+```
+
+**A planned test case is not a test result.** This is §9d's planned-vs-current rule applied to
+verification: a testing *plan* may never be finalized as a testing *outcome*.
+
+#### 15i · Run the existing suite — smallest relevant scope first
+
+Before completing the implementation, run the tests that actually cover the change:
+
+```bash
+./gradlew test --tests "com.kosign.wecms.domain.<module>.*"      # targeted — start here
+./gradlew test                                                    # broader regression run
+```
+
+`tasks.named('test')` in [build.gradle](build.gradle) is configured to print failing test names and
+causes, so a failure is actionable without bisecting packages.
+
+Run the **smallest scope that proves the change** first; do not blindly run expensive suites. But
+**before final completion, consider whether a broader regression run is justified** — it usually is for
+shared services, dispatch / callback paths, export pipelines, security, and anything reachable from
+more than one module.
+
+**Report exactly what was run** — the command and the observed counts, not "tests pass".
+
+#### 15j · When tests fail
+
+**Do not hide, skip, or quietly delete a failing test.** Classify it:
+
+| | Classification | What it means for this task |
+|---|---|---|
+| **A** | **Caused by this change** | The task is **NOT COMPLETE**. Fix it. |
+| **B** | **Pre-existing** | Record the failing test, the evidence that it predates this work (e.g. it fails on the unmodified baseline), and whether the change is still safe to merge. |
+| **C** | **Environment / infrastructure** | Record it as `BLOCKED` with the cause; do not claim `PASS`. |
+| **D** | **Test-data problem** | Record it; fix only if it is in scope (see the fixture-data trap in §15c). |
+| **E** | **Unresolved** | Say so plainly and record it as a follow-up. |
+
+**Do not auto-fix unrelated failures.** Per `feedback_preserve_existing_code`, repair an unrelated
+failure only when it genuinely blocks the requested work **and** the widened scope is approved —
+otherwise record it.
+
+#### 15k · API verification
+
+For API / backend changes, verify what applies:
+
+- endpoint path · HTTP method · request fields · required-vs-optional validation
+- response envelope (`ApiResponse<T>` + `CommonHead`; binary download is the documented exception in
+  §"REST API Design Conventions" 3)
+- response field names and **lowercase snake_case** wire casing
+- error codes (`WBExxxx`) with a matching `messages.properties` entry, and the error messages themselves
+- authorization (`@PreAuthorize` / `@menuAuthz`) · tenant / `BIZ_KEY` scope
+- transaction behaviour · idempotency · pagination (`page` + `size`, zero-based)
+- filtering / sorting whitelist · file download / upload behaviour
+
+**If `wecms-web` consumes the endpoint, verify the API ↔ WEB contract alignment** — the field names,
+types, nullability, and error shape the frontend actually reads (§15r).
+
+#### 15l · UI-facing verification from the backend side
+
+A backend change with user-visible effect is verified against what the UI will render: the payload the
+screen consumes, the empty / error shapes it must handle, and the permission visibility it derives.
+Full UI verification (route, states, dialogs, localization, responsive behaviour) is the frontend
+record's job — see `wecms-web/CLAUDE.md` §14 *(separate repository)*. **Do not claim visual
+verification from this repository** unless the UI was actually run and inspected.
+
+#### 15m · Database quality gate
+
+When **`Database Impact` is not `NONE`**, verify the §14 requirements before completion:
+
+```
+[ ] correct artifact location (migration folder vs docs/sql/<YYYY>/) — §14b / §14c
+[ ] correct classification: new table / new function vs existing table / data change
+[ ] SQL filename standard — descriptive-name-YYYY-MM-DD.sql
+[ ] pre-check that can actually fail
+[ ] the change SQL itself
+[ ] post-check that actually proves the change
+[ ] destructive / data-risk warning where applicable — §14i
+[ ] named executor — §14f
+[ ] per-environment execution status — §14g
+[ ] record ↔ script links resolve in both directions — §14e
+```
+
+**Never mark DB-dependent behaviour `COMPLETE` while a required DB execution is still pending** (§14h).
+The honest overall state is `READY FOR DBA` · `PARTIAL` · `BLOCKED`.
+
+#### 15n · Audit / parity verification
+
+When the task requires legacy / JEX parity, verify against **actual legacy evidence** and state the
+four-way comparison §9e already requires:
+
+```
+Legacy JEX behaviour        →  what was read (file:line, IDO / WSVC query, columns, rows)
+Refactor behaviour BEFORE   →  what the refactor did
+Target behaviour            →  what parity requires
+Final implemented behaviour →  what it does now, and how that was confirmed
+```
+
+**"Parity confirmed" without naming what was compared is not verification.** If the task is a formal
+point-in-time audit rather than implementation work, it belongs in
+[docs/audits/](docs/audits/)`<category>/descriptive-name-YYYY-MM-DD.md` under the existing audit
+governance (§4, §14j).
+
+#### 15o · Security / permission verification
+
+Perform an explicit security review when the change touches **authentication · authorization ·
+permissions · user / role access · R/D/T permission · JWT · cookies · sensitive information · file
+access · destructive DB operations.**
+
+Check the **relevant scope only** — do not turn a small bug into a full application security audit.
+Record meaningful findings in the record; a finding with no fix in this task becomes an explicit
+follow-up.
+
+#### 15p · Performance / concurrency verification
+
+Review performance and concurrency impact when the change touches **batch processing · large lists ·
+large Excel files · payment dispatch · callbacks · retry · sequence generation · MAX+1 · parallel
+processing · database loops · N+1 queries · large exports.**
+
+Where relevant, verify: duplicate execution · race conditions · retry behaviour · idempotency ·
+transaction boundaries · query count · large-memory behaviour.
+
+**Do not demand performance testing for an unrelated simple fix.**
+
+#### 15q · Error-handling verification
+
+Verify the changed code does **not**:
+
+- swallow errors
+- expose sensitive detail in a message or a log
+- return a misleading success
+- convert a partial failure into an all-success result
+- silently ignore a DB or API failure
+- leave a caller's loading / in-flight state stuck
+- produce an incorrect fallback
+
+Check both the expected error paths and the unexpected-failure path where relevant.
+
+#### 15r · Cross-repository verification
+
+When work changes **both** `wecms-api` and `wecms-web`, verification covers **both sides** — §9f is the
+documentation half of this rule, and this is the verification half:
+
+| Side | Verifies |
+|---|---|
+| Backend developer / team | backend logic · API contract · database · backend tests |
+| Frontend developer / team | UI behaviour · API consumption · frontend tests · user-visible result |
+
+Then verify the integration end-to-end:
+
+```
+wecms-web request → wecms-api handling → DB / integration → response → UI result
+```
+
+**The overall task is not `COMPLETE` because only one repository is green.** Each record states its own
+side's status and cross-links the other.
+
+#### 15s · Git-diff review before completion
+
+Before final completion, run and read `git status`, `git diff`, and `git diff --stat`, and confirm the
+changed files match the requested scope. Identify and deal with:
+
+- accidental files · temporary files · generated files
+- local configuration · secrets · debug files
+- unrelated refactors
+
+**Do not silently include unrelated work in the implementation record** — either take it out of the
+change, or declare it in the record.
+
+#### 15t · Documentation review
+
+Documentation is part of the quality gate, not a postscript. Before completion verify:
+
+```
+[ ] the dated implementation record is updated and reflects the final behaviour
+[ ] Status is correct and honest
+[ ] permanent feature docs reflect current behaviour (§8)
+[ ] API docs reflect the current contract
+[ ] docs/features/**/test-scenarios.md updated where permanent behaviour changed (§15f)
+[ ] database references are correct (§14)
+[ ] audit references are correct (§14j)
+[ ] links validate — 0 broken (§11)
+```
+
+#### 15u · Final status — honesty rule
+
+Use **`COMPLETE` only when every REQUIRED part of the task is actually done.** Otherwise use
+`READY FOR MANUAL COMMIT` · `PARTIAL` · `BLOCKED` · `READY FOR DBA` · `READY FOR DEPLOYMENT` ·
+`READY FOR SIT`, or another already-approved state.
+
+```
+Code complete · Tests PASS · DB script prepared · UAT DB not applied
+   →  READY FOR DBA / PARTIAL       — NOT "COMPLETE"
+
+Code complete · Unit tests PASS · required SIT verification not performed
+   →  PARTIAL / READY FOR SIT       — NOT "COMPLETE"
+
+Code complete · Tests PASS · docs updated · nothing else pending
+   →  READY FOR MANUAL COMMIT       — NOT "COMMITTED" / "PUSHED" / "DEPLOYED"
+```
+
+**`Test Status` is part of the decision, not a footnote.** `Implementation Status: COMPLETE` requires
+test evidence that supports it, recorded in a test-result record (§18h). If tests fail, the honest pair
+is `Test Status: FAIL` + `Implementation Status: BLOCKED` / `PARTIAL` — never `COMPLETE`.
+
+This extends §13 (blocked / partial work) and §14h (pending DB execution) across the whole verification
+pass. **`READY FOR MANUAL COMMIT` is the normal terminal state of AI-assisted work** — Git and
+deployment actions are manual (§16), and `PUSHED` · `MERGED` · `DEPLOYED` · `SIT COMPLETE` ·
+`UAT COMPLETE` · `PROD COMPLETE` are only ever reported for actions the responsible team actually
+performed and verified.
+
+#### 15v · Reviewer checklist — meaningful changes
+
+For a meaningful behaviour-changing change, the reviewer verifies:
+
+```
+[ ] docs-first record exists
+[ ] requirement matches implementation
+[ ] Git diff matches scope
+[ ] code self-audit completed
+[ ] regression risk reviewed
+[ ] automated tests added / updated where appropriate
+[ ] relevant tests executed — and what was run is stated
+[ ] test scenarios updated where permanent behaviour changed
+[ ] API contract verified where applicable
+[ ] frontend / backend alignment verified where applicable
+[ ] DB impact verified
+[ ] security / permissions reviewed where applicable
+[ ] legacy parity verified where applicable
+[ ] permanent documentation updated
+[ ] remaining limitations explicitly documented
+[ ] final status is honest
+[ ] no commit / push / merge / tag / deployment was performed automatically —
+      the change arrives at READY FOR MANUAL COMMIT for a human to take
+      forward (§16)
+[ ] the required test-result Markdown exists (§18)
+[ ] it links to the correct BUG / ISSUE / FEATURE record
+[ ] the implementation record links back to it (## Test Evidence)
+[ ] actual test commands and results are recorded — not a restated plan
+[ ] PASS appears only for checks that were executed
+[ ] regression coverage is documented for bug fixes (YES/NO + detail — §18f)
+[ ] failed and not-run tests are visible, not omitted
+[ ] the final implementation status agrees with the test evidence (§18h)
+```
+
+This is a **team review / governance expectation, deliberately NOT a CI gate** — the same stance as
+§12e. Nothing in the pipeline enforces it.
+
+#### 15w · AI enforcement
+
+Claude Code and every other AI assistant **enforce this same team rule**; they do not own it, and they
+do not get a lighter version of it. When an AI assistant implements a bug / issue / feature, it **must
+not stop after editing files**. It must:
+
+1. review the implementation diff (§15b),
+2. identify the test coverage the change needs (§15c–§15e),
+3. add / update tests when that is within the requested implementation scope,
+4. run the relevant tests where the tools and environment permit (§15i),
+5. update test scenarios (§15f),
+6. verify API / UI / DB impact (§15k–§15m),
+7. perform the relevant regression review,
+7b. **capture the actual results in a test-result record** at `docs/testing/results/` and link it from
+    the implementation record's `## Test Evidence` (§18) — *"all tests passed"* without recording what
+    actually ran is not an acceptable report,
+8. update documentation (§15t),
+9. report failures honestly (§15h, §15j),
+10. determine the final status (§15u),
+11. and **stop at `READY FOR MANUAL COMMIT`** — never commit, push, merge, tag, or deploy on its own
+    initiative (§16).
+
+**"Done" because the code compiles or because files were edited is not an acceptable report.** If a
+required check could not be run, the assistant names which one and why — `NOT RUN` / `BLOCKED` — rather
+than implying it passed. And a finished task is **handed over**, not shipped: the Git and deployment
+steps belong to the developer or the team (§16).
+
+#### 15x · Risk-based verification — do not over-test
+
+The gate is mandatory; the individual checks are **REQUIRED WHEN APPLICABLE**. Match depth to risk:
+
+| Change | Proportionate verification |
+|---|---|
+| A CSS / label / typo fix | No DB audit, no security audit, no load testing. Confirm the result and move on. |
+| A payment-dispatch change | Unit + integration tests · idempotency review · DB review · callback review · regression scenarios. |
+
+**Do not generate boilerplate checks that say nothing.** A checklist filled with "N/A" on every line is
+noise — state the two or three checks the change actually needed, and their real outcomes.
+
+### 16 · Manual Git & deployment rule — the workflow ends at READY FOR MANUAL COMMIT (MANDATORY)
+
+**Added 2026-08-18. Applies to every developer and every tool, in both `wecms-api` and `wecms-web`.**
+This section governs *who performs Git and deployment actions*. It does not restate §1–§15 — docs-first,
+the database rules, and the quality gate are read first and are unchanged.
+
+> **Git commit, push, merge, and environment promotion are human-controlled steps.** The AI-assisted
+> workflow **ends at `READY FOR MANUAL COMMIT`** — never at `COMMITTED`, `PUSHED`, or `DEPLOYED`.
+
+#### 16a · What an AI assistant must NOT do automatically
+
+Claude Code, Agents, Cursor, or any other AI assistant must **not** perform any of the following on its
+own initiative — not to "finish the task", not to "tidy up", not because the quality gate passed:
+
+```
+[ ] git commit
+[ ] git push
+[ ] git merge
+[ ] git rebase onto a shared branch
+[ ] create or push tags
+[ ] push to sit
+[ ] push to uat
+[ ] push to prod / any production branch
+[ ] trigger a deployment
+[ ] promote code between environments
+[ ] execute any release / deployment command
+```
+
+Read-only inspection is expected and encouraged — `git status`, `git diff`, `git diff --stat`,
+`git log`, `git branch` are part of the quality gate (§15b, §15s) and are **not** covered by this
+prohibition. The line is between **observing** the repository and **changing its shared history or a
+running environment**.
+
+**This is not a Claude-only restriction.** It is a project rule about *who owns the action*: the
+developer or the team owns it, whatever tool is in the room.
+
+#### 16b · Standard flow — where the AI stops and the human starts
+
+```
+Requirement
+  → BUG / ISSUE / FEATURE classification            (§4)
+  → documentation FIRST                             (§2)
+  → DB-impact check                                 (§14)
+  → implementation
+  → self-audit                                      (§15b)
+  → automated tests                                 (§15c–§15e, §15i)
+  → test scenarios                                  (§15f)
+  → regression verification                         (§15j)
+  → API / UI / DB / security / performance checks    (§15k–§15p, when applicable)
+  → permanent documentation update                  (§15t)
+  → reviewer quality gate                           (§15v)
+  → READY FOR MANUAL COMMIT     ← the AI-assisted workflow ends HERE
+```
+
+Everything after that line is performed **manually by the developer or the team**:
+
+```
+Developer / team manually:
+  → reviews git status / git diff
+  → stages the intended files
+  → commits
+  → pushes the intended branch
+  → merges according to team process
+  → promotes / deploys to SIT / UAT / PROD
+```
+
+At `READY FOR MANUAL COMMIT` the assistant's job is to **hand over cleanly**: say which files changed,
+what the verification produced, and what remains — not to take the next step.
+
+#### 16c · Explicit user request — the only exception
+
+If the user **explicitly asks in the current conversation** for a specific Git operation — *"commit
+this"*, *"push this branch"*, *"merge this branch"* — the assistant may assist with **exactly that one
+operation**, subject to every safety rule already in force (branch protection, the workspace root
+[CLAUDE.md](../CLAUDE.md) rules, and the harness permission prompts).
+
+**The permission is narrow and does not travel:**
+
+- It covers **the operation actually named**, not the ones that usually follow it. "Commit this" is not
+  permission to push. "Push this branch" is not permission to merge or to promote.
+- It covers **this conversation and this request**, not the rest of the session and not the next task.
+- **SIT / UAT / PROD deployment and promotion stay manual regardless** — unless repository governance
+  explicitly permits AI execution for that environment **and** the user explicitly requests it. No such
+  permission exists in this repository today.
+
+**Never infer permission from a completion phrase.** None of the following means commit, push, merge,
+or deploy:
+
+```
+"done"        "finish it"      "deploy-ready"
+"complete"    "ready to merge"  "wrap it up"     "ship it"
+```
+
+When the intent is ambiguous, the assistant **stops at `READY FOR MANUAL COMMIT` and asks** — the cost
+of asking is a sentence; the cost of an unwanted push to a shared branch is someone else's afternoon.
+
+#### 16d · Final status vocabulary
+
+Extends §15u. Once the code, documentation, and verification work is finished and nothing else is
+pending:
+
+| State | Use when |
+|---|---|
+| **`READY FOR MANUAL COMMIT`** | Code + docs + tests are complete and verified; the change is waiting for a human to review, stage, commit, and push. **This is the normal terminal state of AI-assisted work.** |
+| `READY FOR DBA` | A required DB execution is still pending (§14h). |
+| `READY FOR SIT` / `READY FOR UAT` | Environment verification has not been performed yet. |
+| `READY FOR DEPLOYMENT` | Everything is verified and the change is waiting on the team's release process. |
+| `PARTIAL` / `BLOCKED` | Work genuinely remains, or a dependency blocks it (§13). |
+
+**Never report** `PUSHED` · `MERGED` · `DEPLOYED` · `SIT COMPLETE` · `UAT COMPLETE` · `PROD COMPLETE`
+**unless the action was actually performed and verified by the responsible team.** This is §15h's
+test-result honesty rule applied to Git and to environments: an action nobody performed is not a status,
+and a branch nobody pushed is not deployed.
+
+#### 16e · Team scope
+
+This rule binds **Cambodia developers · Vietnam developers · Korea developers · any future WeCMS
+contributor**, and **Claude Code · Agents · Cursor · every other AI tool**. Teams may hold different
+operational authority — who is allowed to push `sit`, who runs the release, who executes DB SQL — but
+**no team and no tool treats commit, push, merge, or environment promotion as an automatic step**.
+
+Recorded so the whole chain reads in one line:
+
+```
+QUALITY GATE COMPLETE  →  READY FOR MANUAL COMMIT  →  HUMAN Git / deployment process
+```
+
+### 17 · Human approval gate between investigation and implementation (MANDATORY)
+
+**Added 2026-08-18. Canonical definition for `wecms-api`.** The frontend counterpart is
+`wecms-web/CLAUDE.md` §16 *(separate repository)* and must agree with this section. `docs/README.md`,
+`docs/audits/README.md`, `docs/bugs/README.md`, `docs/issues/README.md` and
+`.claude/skills/wecms-api-docs/**` summarize it and point here — **if any of those disagrees with this
+section, this section wins.**
+
+This section adds the missing boundary between **finding out** and **changing things**. It does not
+restate §1–§16: docs-first placement, the database rules, the quality gate, and the manual Git /
+deployment rule are read first and are unchanged.
+
+> **Investigation never authorizes implementation.** Understanding a defect is not permission to fix
+> it. The decision to change application code belongs to a **human developer or reviewer**, made after
+> reading the record.
+
+This generalizes a gate the project already has: workspace [CLAUDE.md](../CLAUDE.md) §5 ("Required
+analysis before modifying a copied legacy table") already says *analyse, present the impact, obtain
+explicit approval, then change* — §12d already says *write the record, then get approval, then
+implement*. §17 extends that from legacy-table work to **every investigation-only request**.
+
+#### 17a · Core principle — the record is the pre-implementation review contract
+
+Before application code is modified, a human developer/reviewer must be able to read the relevant
+Markdown record and understand:
+
+- **what** is wrong or requested
+- the **current verified behaviour**
+- the **expected / target behaviour**
+- the **root cause** or investigation findings, where known
+- **what implementation is recommended**
+- **which repositories** are affected
+- **DB impact** · **API impact** · **UI impact**
+- **risks**
+- the **required tests** and **required regression scenarios**
+
+The human then decides whether implementation is approved. **An AI assistant must never assume that
+completing an investigation authorizes a fix.**
+
+#### 17b · The record exists first — and the assistant proves it
+
+For every **BUG · ISSUE · FEATURE · AUDIT / INVESTIGATION**, the governed Markdown record exists
+**before** detailed investigation or application-code implementation begins, at the placement §4
+already defines — `docs/bugs/` · `docs/issues/` · `docs/features/<domain>/<feature>/` ·
+`docs/audits/<category>/`, filename `descriptive-name-YYYY-MM-DD.md`. **Do not invent a different
+location.**
+
+Saying *"docs-first followed"* is not proof. **The file must exist**, and the assistant reports it
+explicitly:
+
+```
+Documentation record:
+docs/audits/legacy-parity/internal-transfer-database-error-audit-2026-08-18.md
+
+Classification:        AUDIT / INVESTIGATION
+Investigation Status:  IN PROGRESS
+Approval Status:       PENDING
+Implementation Status: NOT STARTED
+```
+
+#### 17c · Reading intent — three request classes
+
+The request itself decides how far the work may go. Classify it before starting.
+
+| | Request looks like | Authorizes | Ends at |
+|---|---|---|---|
+| **A · CHECK / INVESTIGATE ONLY** | *"Can you check this?"* · *"Please investigate."* · *"Why does this happen?"* · *"Find the cause."* · *"Review this issue."* · *"Audit this."* · *"Analyze this problem."* · *"Can you check the error?"* | documentation · read-only source inspection · Git/history inspection · inspecting and (where safe) running existing tests · read-only DB/schema inspection where permitted · root-cause analysis · parity comparison · a **recommended** implementation · risk and test recommendations | **STOP for human approval** |
+| **B · INVESTIGATE AND FIX** | *"Please investigate and fix this error."* | everything in A, **plus implementation** — the request already carries approval | `READY FOR MANUAL COMMIT` (§16) |
+| **C · IMPLEMENT** | *"Implement this feature."* · *"Please fix this bug."* · *"Proceed with this solution."* | implementation — explicitly authorized | `READY FOR MANUAL COMMIT` (§16) |
+
+**Class A does NOT authorize:** modifying source · writing implementation tests · modifying SQL ·
+modifying migrations · modifying configuration · implementing · committing · pushing · merging ·
+deploying.
+
+**Class B needs no second approval.** *"Investigate and fix"* contains the decision — do not stall the
+work by asking again. Still docs-first: create the record, investigate, confirm the root cause, update
+the record, **then** implement.
+
+**Class C still requires the record first.** Explicit implementation intent removes the approval
+question, never the documentation requirement (§2).
+
+**When the class is genuinely ambiguous, treat it as A** — the cost of stopping to ask is one message;
+the cost of an unwanted change to a live-parity code path is considerably more.
+
+#### 17d · Investigation phase (class A)
+
+```
+REQUEST → CLASSIFY → CREATE DOC → INVESTIGATE → UPDATE DOC WITH FINDINGS → STOP
+```
+
+The record carries, **where applicable** (omit what does not apply — §15x's risk-based rule holds
+here too; a boilerplate heading with nothing under it is noise):
+
+```
+## Observed Behavior          ## Expected Behavior         ## Reproduction
+## Frontend Trace             ## Backend Trace             ## Database Trace
+## Legacy / JEX Comparison    ## Root Cause                ## Evidence
+## Existing Tests             ## Missing Regression Coverage
+## DB Impact                  ## API Impact                ## UI Impact
+## Security / Permission Impact                 ## Performance / Concurrency Impact
+## Recommended Implementation ## Required Regression Tests ## Required Test Scenarios
+## Risks                      ## Affected Repositories
+```
+
+and ends at:
+
+```
+Investigation Status:  COMPLETE
+Approval Status:       PENDING
+Implementation Status: NOT STARTED
+```
+
+**`Recommended Implementation` is a recommendation, not a licence.** Writing down the fix is part of
+the investigation; applying it is not.
+
+#### 17e · The approval gate
+
+When a class-A task is complete, **the assistant stops.** A human developer/reviewer reads the record
+and chooses one of:
+
+```
+APPROVE IMPLEMENTATION   ·   DENY / NO IMPLEMENTATION   ·   NEEDS MORE INVESTIGATION
+```
+
+**The assistant must not infer the decision.** These are **not** approval:
+
+```
+"OK"        "thanks"       "looks good"
+"done"      "understood"   "check again"
+```
+
+Explicit implementation intent looks like:
+
+```
+"Approved, implement the fix."      "Please continue with implementation."
+"Proceed with the fix."             "Implement this solution."
+```
+
+This is the same discipline as §16c (a completion phrase is never permission to push) applied one step
+earlier in the workflow.
+
+#### 17f · If approved
+
+Update the record, then proceed:
+
+```
+Approval Status:       APPROVED
+Implementation Status: IN PROGRESS
+```
+
+```
+APPROVED → implement → self-audit the Git diff → automated tests → regression tests
+  → test scenarios → API / UI / DB / security / performance checks when applicable
+  → update permanent documentation → quality gate (§15) → READY FOR MANUAL COMMIT → STOP
+```
+
+**Approval to implement is not approval to ship.** §16 is unchanged: no automatic commit, push, merge,
+tag, deploy, or promotion to SIT / UAT / PROD.
+
+#### 17g · If denied
+
+If the human decision is `DENY` · `DO NOT FIX` · `NOT REQUIRED` · `WON'T FIX` · `KEEP CURRENT
+BEHAVIOUR`, the assistant must:
+
+1. **not** modify application source,
+2. **not** add implementation tests,
+3. **not** create DB changes,
+4. **not** create migrations,
+5. **record the human decision** in the document,
+6. **preserve all investigation evidence**,
+7. **stop.**
+
+```
+Investigation Status:  COMPLETE
+Approval Status:       DENIED
+Implementation Status: NOT APPROVED / WON'T FIX
+```
+
+**The record stays in the repository as engineering history — never delete it because implementation
+was denied.** A denied investigation is one of the most useful documents in the tree: the next person
+who hits the same symptom finds the analysis *and* the decision. This extends §13 (blocked / partial
+work is documented, not deleted).
+
+#### 17h · If more investigation is requested
+
+```
+Approval Status: NEEDS MORE INVESTIGATION
+```
+
+Continue investigating only — **do not implement.** Update the **same** record unless the new work is
+genuinely a different task (§12b–12c: one task → one canonical record per repository).
+
+#### 17i · Audit → BUG / ISSUE → implementation
+
+§4's rule is unchanged and now has its approval step made explicit:
+
+```
+AUDIT  ──identifies──▶  BUG / ISSUE  ──human approval──▶  IMPLEMENTATION
+```
+
+- The audit **stays** in `docs/audits/<category>/`. Never converted, never deleted.
+- When implementation is later approved, create the **BUG** or **ISSUE** record per §4.
+- **Do not copy the full audit into the bug/issue record** — the implementation record **links to the
+  audit as evidence**.
+
+#### 17j · Feature review vs feature implementation
+
+A feature request does **not** authorize implementation when the ask is only *"review this feature"* ·
+*"check feasibility"* · *"design this"* · *"analyze how we could implement this"* · *"prepare a plan"*:
+
+```
+FEATURE DOC → ANALYZE / DESIGN → UPDATE DOC → STOP FOR APPROVAL
+```
+
+When the request says *"implement this feature"*, implementation is already approved (class C) — and
+docs-first still comes first.
+
+#### 17k · Status model — three dimensions, one canonical `Status:`
+
+A record tracks three independent dimensions in its metadata:
+
+| Dimension | Values |
+|---|---|
+| **Investigation Status** | `IN PROGRESS` · `COMPLETE` · `BLOCKED` |
+| **Approval Status** | `PENDING` · `APPROVED` · `DENIED` · `NEEDS MORE INVESTIGATION` · `NOT REQUIRED` |
+| **Implementation Status** | `NOT STARTED` · `IN PROGRESS` · `COMPLETE` · `BLOCKED` · `WON'T FIX` |
+
+**This is not a second status vocabulary.** The record keeps its single canonical `**Status:**` field
+(§2, §15u, §16d); the three dimensions are extra metadata that explain *why* it holds that value:
+
+| Investigation | Approval | Implementation | Canonical `Status:` |
+|---|---|---|---|
+| IN PROGRESS | PENDING | NOT STARTED | `IN PROGRESS` |
+| COMPLETE | PENDING | NOT STARTED | `COMPLETE` *(the investigation is what was asked for)* |
+| COMPLETE | NEEDS MORE INVESTIGATION | NOT STARTED | `IN PROGRESS` |
+| COMPLETE | DENIED | NOT APPROVED / WON'T FIX | `CLOSED` |
+| COMPLETE | APPROVED | IN PROGRESS | `IN PROGRESS` |
+| COMPLETE | APPROVED | COMPLETE (code + tests + docs done) | `READY FOR MANUAL COMMIT` (§16d) |
+| COMPLETE | APPROVED | COMPLETE, DB execution pending | `READY FOR DBA` (§14h) |
+| any | any | BLOCKED | `BLOCKED` |
+| n/a — routine implementation task (class B / C) | `NOT REQUIRED` | per the work | the existing §15u / §16d states |
+
+`Approval Status: NOT REQUIRED` is the honest value for class-B and class-C work, where the request
+itself carried the decision — use it rather than back-filling a fictitious approval.
+
+#### 17l · Documentation review contract — what the reviewer must be able to answer
+
+Before approving implementation, the record should let the reviewer answer:
+
+```
+ 1. What exactly is the problem / requirement?
+ 2. What does the system do now?
+ 3. Why does it behave that way?
+ 4. What change is proposed?
+ 5. Which repository changes?
+ 6. Is DB work required?
+ 7. Does API behaviour change?
+ 8. Does UI behaviour change?
+ 9. Are security / permission concerns involved?
+10. Are concurrency / performance risks involved?
+11. What regression tests are required?
+12. What test scenarios prove the change?
+13. What risks or limitations remain?
+```
+
+**If the document cannot answer the questions that apply, implementation should not be approved yet** —
+the right response is `NEEDS MORE INVESTIGATION`, not a hopeful start on the code.
+
+#### 17m · Approval to implement ≠ approval to execute SQL
+
+Keep the two decisions separate:
+
+| Decision | Who makes it | Governed by |
+|---|---|---|
+| **Implementation Approval** | the developer / reviewer | this section |
+| **DB Execution Approval** | the DBA / authorized executor per environment | §14 (§14f, §14g, §14h) |
+
+Application implementation may be `APPROVED` while DB execution is still `READY FOR DBA` / `PENDING`.
+Approving the code change **never** authorizes running SQL against a shared environment.
+
+#### 17n · Audit COMPLETE ≠ defect fixed
+
+Make this explicit in every record. `Audit Status: COMPLETE` means **the investigation is complete** —
+it does **not** mean the defect is fixed. This is a valid, finished state for an investigation request:
+
+```
+Audit:          COMPLETE
+Approval:       PENDING
+Implementation: NOT STARTED
+```
+
+Reporting a closed audit as if the underlying defect were resolved is the same category of error as
+reporting an unrun test as `PASS` (§15h).
+
+#### 17o · The assistant's response before approval
+
+For investigation-only work, the final response includes:
+
+```
+Documentation record:      <path>
+Classification:            AUDIT / BUG / ISSUE / FEATURE
+Investigation:             COMPLETE / BLOCKED
+Root cause:                <short summary>
+Recommended implementation: <short summary>
+Affected repositories:     <wecms-api / wecms-web / both>
+DB impact:                 <NONE / …>
+Required tests:            <short summary>
+Approval:                  PENDING HUMAN REVIEW
+Implementation:            NOT STARTED
+```
+
+**Then STOP.** Do not ask *"shall I continue?"* as a way of nudging the work forward, and do not begin
+implementing while waiting. **A recommendation is allowed; implementation is not.**
+
+#### 17p · Team scope and multi-developer work
+
+Binds **Cambodia · Vietnam · Korea · every future WeCMS contributor**, and **Claude Code · Agents ·
+Cursor · every other AI assistant**. This is repository/project governance, not an individual
+preference.
+
+- **One canonical investigation/implementation record per affected repository** (§12b). If Developer A
+  investigates and Developer B later receives approval to implement, **B reads and updates the same
+  record** — never a developer-specific duplicate.
+- **A recorded denial binds everyone** until a later authorized decision changes it. If a colleague's
+  record says `Approval Status: DENIED`, that is the project's position — reopen it with a new
+  decision, not with a quiet fix.
+
+#### 17q · Worked example — Internal Transfer (2026-08-18)
+
+Request: *"When I press the Transfer button, it gives an error. Can you help me check it?"*
+
+That is **class A**. The correct behaviour is:
+
+```
+1. classify as AUDIT / INVESTIGATION
+2. create the audit record FIRST
+3. investigate: web → API → DB → legacy JEX → Git / deployment state
+4. document the root cause
+5. document that an existing source fix may already exist
+6. document missing regression coverage if found
+7. STOP
+8. the human reads the audit
+9. the human chooses: APPROVE IMPLEMENTATION / TEST WORK · DENY · MORE INVESTIGATION
+```
+
+Note steps 5 and 6: *"a fix already exists in the source"* and *"there is no regression test for this"*
+are **findings to record**, not tasks to start. Writing the missing test is implementation work and
+waits for approval like any other.
+
+### 18 · Test-result records — durable execution evidence (MANDATORY)
+
+**Added 2026-08-18. Canonical definition for `wecms-api`.** The frontend counterpart is
+`wecms-web/CLAUDE.md` §17 *(separate repository)*. [docs/README.md](docs/README.md),
+[docs/testing/README.md](docs/testing/README.md),
+[docs/testing/results/README.md](docs/testing/results/README.md),
+[docs/bugs/README.md](docs/bugs/README.md), [docs/issues/README.md](docs/issues/README.md) and
+`.claude/skills/wecms-api-docs/**` summarize it and point here — **if any of those disagrees with this
+section, this section wins.**
+
+This section adds one thing to the quality gate (§15): **when verification is actually executed, the
+evidence gets its own durable Markdown record, linked from the implementation record, before the work
+may be called COMPLETE.** It does not restate §1–§17.
+
+> **A dated implementation record says what the change was. A test-result record says what was
+> actually run, on what, and what happened.** For a meaningful change, the implementation record's
+> `## Verification` section is a **summary plus a link** — not the whole evidence story.
+
+#### 18a · When a test-result record is required
+
+Required for every meaningful implemented **BUG · ISSUE · FEATURE · PARITY FIX · behaviour-changing
+refactor**, **once verification or tests are actually executed**.
+
+**Not required** for: the §10 exception list (comment-only, formatting, lint, lockfile noise, …), and
+**audit-only work where no implementation was approved** (§18j).
+
+The record documents **what** was tested · **how** · **what actually ran** · **what passed** · **what
+failed** · **what was not run** · **which environment** · **what evidence supports completion**.
+
+#### 18b · Location and filename
+
+```
+docs/testing/results/descriptive-name-test-result-YYYY-MM-DD.md
+```
+
+Folder rules and the index: [docs/testing/results/README.md](docs/testing/results/README.md).
+
+- **Do not** put test-result records in `docs/bugs/`, `docs/issues/`, or `docs/audits/` — those keep
+  their existing purposes (§4).
+- **Do not create a second competing location.** `docs/testing/sit/` and `docs/testing/uat/` keep their
+  existing jobs — **environment cycle reports and per-environment plans**, run by the SIT/UAT owners.
+  A `results/` record is **per implemented change**, whichever environment it was verified in. A
+  test-result record may cite a SIT/UAT cycle report as its evidence, and vice versa.
+- **Filename:** lowercase kebab-case, subject first, ISO date. Examples:
+
+```
+internal-transfer-target-account-test-result-2026-08-18.md
+citad-recipient-name-resolution-test-result-2026-08-18.md
+tax-filing-export-test-result-2026-08-18.md
+```
+
+Forbidden, exactly as §5: `test.md` · `result.md` · `final-test.md` · `p0-test.md` · `a1-01-test.md` ·
+`dev-a-test.md`. Internal issue IDs live in the metadata (`**Issue:**`), never the filename.
+
+#### 18c · When it is created — after real execution
+
+Docs-first (§2) governs the **implementation** record: it comes first. The **test-result** record is
+different — it is created or updated **when verification is actually performed**:
+
+```
+IMPLEMENTATION RECORD FIRST → human approval where required (§17) → implementation
+  → run tests / verification → CREATE TEST-RESULT RECORD → record actual evidence
+  → update the BUG / ISSUE / FEATURE record with the test-result link
+  → final quality gate (§15) → status decision → READY FOR MANUAL COMMIT (§16)
+```
+
+**Never pre-write a `PASS` test-result document before the tests run.** A test-result file that
+predates its own execution is a fabrication, not a plan.
+
+#### 18d · `test-scenarios.md` vs a test-result record — different documents
+
+| | `docs/features/**/test-scenarios.md` | `docs/testing/results/*-test-result-YYYY-MM-DD.md` |
+|---|---|---|
+| **Is** | a **specification** — permanent, reusable scenarios describing how the feature *should* be tested | **evidence** from one actual verification run |
+| **Lifecycle** | kept current with the feature | frozen once written; a later run gets a later file |
+| **Example** | *Scenario: valid internal transfer · Expected: target accounts load successfully* | *Test: `OwnAccountTransferServiceTest` · Command: `./gradlew test --tests …` · Result: PASS — 25 executed, 25 passed, 0 failed* |
+
+**Do not confuse planned scenarios with actual results** (§15h). A scenario listed in
+`test-scenarios.md` is never evidence that anything was executed.
+
+#### 18e · Template
+
+```markdown
+# <Change Name> — Test Result
+
+**Date:** YYYY-MM-DD
+**Type:** TEST RESULT
+**Status:** PASS | FAIL | PARTIAL | BLOCKED
+**Repository:** wecms-api
+**Related Record:** <relative link to the bug / issue / feature record>
+**Issue:** <ticket ID if available>
+
+## Scope
+What implementation/change is being verified.
+
+## Environment
+LOCAL | DEV | SIT | UAT — only the environments actually used.
+Do not claim SIT/UAT testing that was not performed.
+
+## Code / Build Under Test
+Branch: · Commit: · Build/artifact: · API URL/environment:
+Do not fabricate values. `Commit: NOT COMMITTED` is a valid, honest entry (§16).
+
+## Automated Tests
+| Test / Command | Result | Evidence |
+|---|---|---|
+Results: PASS | FAIL | NOT RUN | BLOCKED | NOT APPLICABLE
+
+## Regression Tests
+The tests specifically protecting the changed behaviour. For a bug fix, state whether
+the test covers the original defect (§18f).
+
+## Test Scenarios
+| Scenario | Expected | Actual | Result |
+|---|---|---|---|
+Only scenarios actually executed — do not copy the whole permanent set.
+
+## API Verification            ## UI Verification
+## Database Verification       (include DB execution status where relevant — §14g)
+## Security / Permission Verification
+## Performance / Concurrency Verification
+
+## Existing Failures
+Pre-existing failures, listed separately with the evidence that they predate this work (§15j-B).
+
+## New Failures
+Failures caused by this implementation (§15j-A). Any entry here means the task is NOT COMPLETE.
+
+## Not Tested
+Relevant checks not performed, and why.
+
+## Final Result
+PASS | FAIL | PARTIAL | BLOCKED
+
+## Recommendation
+READY FOR MANUAL COMMIT | PARTIAL | BLOCKED | READY FOR DBA | READY FOR SIT | …
+```
+
+Use only the applicable sections — §15x's risk-based rule holds here too.
+
+#### 18f · Bug fixes — the regression question must be answered
+
+A test-result record for a **BUG** answers, explicitly:
+
+> **Did a regression test cover the original defect? YES / NO**
+
+```
+YES →  Test file: · Test case: · Original failure reproduced/protected: · Result:
+NO  →  Reason:
+```
+
+A bare *"no regression test"* is **not acceptable** when the defect is automatable (§15d).
+
+#### 18g · Link it back — `## Test Evidence` in the implementation record
+
+Once the test-result record exists, the BUG / ISSUE / FEATURE record gains:
+
+```markdown
+## Test Evidence
+
+Test result:
+[Internal Transfer Target Account Test Result](../testing/results/internal-transfer-target-account-test-result-2026-08-18.md)
+
+Final test result:    PASS
+Regression coverage:  PASS
+```
+
+**The link must resolve in both directions** — the implementation record links to the result, the
+result's `**Related Record:**` links back. The record's `## Verification` section (§15g) stays as the
+**summary**; the durable detail lives in the test-result file. Do not duplicate the whole result
+document into the record.
+
+#### 18h · Status and completion
+
+`Implementation Status: COMPLETE` requires that all required implementation work is done **and** the
+test evidence supports it. Adds one dimension to §17k:
+
+```
+Investigation Status:  COMPLETE
+Approval Status:       APPROVED
+Implementation Status: COMPLETE
+Test Status:           PASS
+Overall Status:        READY FOR MANUAL COMMIT
+```
+
+If tests fail: `Test Status: FAIL` and `Implementation Status: BLOCKED` / `PARTIAL` — **do not mark
+COMPLETE** (§15j-A).
+
+**Passing tests are not a deployment.** This is correct and complete work:
+
+```
+Code implementation: COMPLETE · Automated tests: PASS · Regression: PASS
+Test-result document: COMPLETE · Manual commit: PENDING · SIT deployment: NOT STARTED
+  → Overall: READY FOR MANUAL COMMIT
+```
+
+`SIT COMPLETE` · `UAT COMPLETE` · `PROD COMPLETE` are reported only when those environments were
+actually deployed and verified (§16d).
+
+#### 18i · DB-dependent tests
+
+When the change needs a DB script that has not been executed:
+
+```
+DB script prepared: YES · DB executed: NO
+  → tests depending on it:  BLOCKED   (say so in the test-result record)
+  → overall:                READY FOR DBA         — not COMPLETE (§14h)
+```
+
+After the DBA executes it, the **same** test-result record may be updated with the real post-DB
+verification, or a new dated one written for that run — say which in the record.
+
+#### 18j · Audit-only work — no test-result record required
+
+For an AUDIT / investigation where **no implementation was approved** (§17), no implementation
+test-result file is required:
+
+```
+Audit: COMPLETE · Approval: DENIED (or PENDING) · Implementation: NOT STARTED
+```
+
+If the audit ran diagnostic tests as **investigation evidence**, record those inside the audit itself.
+The separate test-result requirement begins when implementation/verification work actually occurs.
+
+#### 18k · Cross-repository changes
+
+When both repositories change and both sides have meaningful verification, **each repository carries
+its own test-result record**:
+
+```
+wecms-api/docs/testing/results/recipient-name-resolution-api-test-result-2026-08-18.md
+wecms-web/docs/testing/results/recipient-name-resolution-web-test-result-2026-08-18.md
+```
+
+The API result covers backend tests · API contract · DB / integration · business logic. The WEB result
+covers frontend tests · UI behaviour · API consumption. **Cross-link for integration behaviour; do not
+duplicate all the evidence into both files** (§15r).
+
+#### 18l · Honesty — the same rule as everywhere else
+
+The test-result document records **actual observations only**. Never write `PASS` for something that
+was not run; use `NOT RUN` · `BLOCKED` · `NOT APPLICABLE` with the reason:
+
+```
+SIT manual verification:  NOT RUN — deployment is manual and has not happened yet
+Database verification:    BLOCKED — DBA script has not been applied
+UI visual verification:   NOT RUN — browser environment was unavailable
+```
+
+Pre-existing failures are listed **separately and visibly** (§15j-B), never hidden or quietly repaired.
+
+#### 18m · Team scope, AI enforcement, and existing work
+
+Binds **Cambodia · Vietnam · Korea · every future WeCMS contributor**, and **Claude Code · Agents ·
+Cursor · every other AI assistant.** Human developers preserve test evidence under the same governance —
+this is not an AI-only requirement.
+
+**AI enforcement.** After implementing an approved change, an assistant must: run the applicable tests →
+capture the actual results → create/update the test-result record → link it to the implementation
+record → update `test-scenarios.md` where required (§15f) → finish the rest of the quality gate → set an
+honest status → **stop at `READY FOR MANUAL COMMIT`**. Saying *"all tests passed"* without recording
+what actually ran is not an acceptable report.
+
+**Not retroactive.** This applies to **new and in-flight work**. Do **not** mass-create test-result
+files for historical bugs and features. If an in-flight implementation clearly needs one, report it as a
+**TEST RESULT MIGRATION CANDIDATE** rather than back-filling evidence nobody observed.
 
 ## Project Overview
 
@@ -68,7 +2459,7 @@ All refactor backend documentation lives under this project's own [`docs/`](docs
 - **Multi-company linkage is exceptional / test-demo only.** The refactor's per-user `userBusiRepo.findAllByUserIdAndDelYn(...)` + chooser response (`LoginResponse.chooser(...)` + `CompanyOption[]` + `<CompanyChooser>` UI) are retained as a **safe generic fallback** so a user who happens to have two or more active links won't error out — but that fallback is **not** an endorsement of the multi-company pattern as a documented business requirement. Treat the chooser branch as an exception path; do not redesign domain logic around it. If/when a real future business rule introduces multi-company users, this clause should be replaced with explicit requirements.
 - **Tenant resolution mechanics:** tenant is resolved per user at login from `USER_BUSI_CONN_INFM`; JWT carries the selected `bizKey` + `authGrCd` + `prdtType` claims; `TenantContext` reads them per request. Local seed ships two R&D tenants today: `VN_VNM0004_000001` (V2 + V5 DEV snapshot — `CÔNG TY TNHH WEBCASH VIỆT NAM`, `PRDT_TYPE = 'F'`) and `VN_VNM0004_000014` (V73 seed — `HAENGSUNG ELECTRONICS`, `PRDT_TYPE = 'H'`). V73 originally added a guarded two-company link for `lamine@gmail.com` so the chooser UI could be exercised locally; **V76 removes that test link** so even on the seeded DB the operational model is one-user-one-company. The former `wecms.tenant.biz-key` slot and its `TenantProperties` binding were **removed** — both were dead (login never routed through them; the only intended consumer, `CompanyBootstrapService`, was deleted 2026-06-10).
 - **No Spring auto-bootstrap.** Production / UAT / local startup never creates company, employee, user, link, or admin rows. The previous `BootstrapRunner` auto-invocation has been removed. Operational practice is **DBA-driven manual SQL** following the legacy setup pattern (see `Claude Code (AI)/sql/setup_uat_account_*.sql`): generate `BIZ_KEY` via `wb_get_next_val('BUSI_INFM','biz_key',NTNL_CD,CHNL_ID)`, insert `BUSI_INFM`, generate `EMPL_NO` via `wb_get_next_val('EMPL_INFM','empl_no',BIZ_KEY)`, then insert `EMPL_INFM` → `USER_INFM` → `BUSI_ADMN_INFM` → `USER_BUSI_CONN_INFM`. **That legacy script targets the legacy JEX schema** (`encrypt(...)` + `hash(...)` DB functions present, audit columns as `varchar(14)`) and is meant for DEV / UAT / PROD. It is **not** a directly executable migration against the refactor's local DB, which uses native PostgreSQL `TIMESTAMPTZ` / `DATE` audit columns and does not install `encrypt()` / `hash()` (per the "DB Function / Legacy Function Policy" rule — refactor does not add new legacy PL/pgSQL helpers). Local R&D account creation goes through Flyway seeds, not the manual script. **Canonical operational reference:** [docs/refactor-wecms/database/manual-tenant-setup.md](../docs/refactor-wecms/database/manual-tenant-setup.md) — full step-by-step SQL flow, both legacy-UAT and refactor-LOCAL variants, verification queries, and known limitations.
-- **Bootstrap services removed (2026-06-10).** The inert `domain/auth/bootstrap/` package (`CompanyBootstrapService`, `UserBootstrapService`, `BusinessKeyGeneratorService`, `EmployeeNumberGeneratorService`, `CompanyBootstrapCommand`, `FirstAdminCommand`, `BootstrapResult`, `DataSeeder`) plus the BCrypt-only `PasswordHashService` were deleted — they had no production invoker and the "future Phase 2 admin API" never materialised. Account creation is **manual SQL only** (see the "No Spring auto-bootstrap" bullet). `TenantEnvironmentSettingsBootstrapService` was kept (it is the env-set seeding leg used by the Environment-Settings feature, not account creation). If a Phase 2 admin API is ever built, design it fresh — do not resurrect the deleted skeleton. See [docs/audits/login-legacy-compatibility-2026-06-10.md](docs/audits/login-legacy-compatibility-2026-06-10.md).
+- **Bootstrap services removed (2026-06-10).** The inert `domain/auth/bootstrap/` package (`CompanyBootstrapService`, `UserBootstrapService`, `BusinessKeyGeneratorService`, `EmployeeNumberGeneratorService`, `CompanyBootstrapCommand`, `FirstAdminCommand`, `BootstrapResult`, `DataSeeder`) plus the BCrypt-only `PasswordHashService` were deleted — they had no production invoker and the "future Phase 2 admin API" never materialised. Account creation is **manual SQL only** (see the "No Spring auto-bootstrap" bullet). `TenantEnvironmentSettingsBootstrapService` was kept (it is the env-set seeding leg used by the Environment-Settings feature, not account creation). If a Phase 2 admin API is ever built, design it fresh — do not resurrect the deleted skeleton. See [docs/audits/legacy-parity/login-legacy-compatibility-2026-06-10.md](docs/audits/legacy-parity/login-legacy-compatibility-2026-06-10.md).
 - **Authority model:** `BUSI_ADMN_INFM` is the per-(BIZ_KEY, USER_ID) authority source — presence means ADMIN of that company, absence means USER. Legacy `USER_BUSI_CONN_INFM` carries no `AUTH_GR_CD` column (confirmed on DEV 2026-05-11), so the admin-master table is authoritative. The same user can be ADMIN at one company and USER at another. JWT carries `authGrCd`; `JwtAuthenticationFilter` populates Spring Security authorities (`ROLE_ADMIN` / `ROLE_USER`). `@PreAuthorize` gating is **live (F-3 complete, 2026-06-06)**: every business `/api/v1/**` endpoint across Banking / Payment / Add-on / Settings is gated by the `@menuAuthz` menu-authorization guard (30 of 43 controllers; the other 13 are documented allow-list exceptions), with existing role gates (`hasRole('ADMIN')`, `@userMgmtAccess`) stacked, not weakened. A Phase-F coverage test (`EndpointAuthorizationCoverageTest`) fails the build on any un-annotated, non-allow-listed handler. See [docs/jex/features/menu-product-type-management/endpoint-authorization-matrix.md](../docs/jex/features/menu-product-type-management/endpoint-authorization-matrix.md).
 - **Product type:** `BUSI_INFM.PRDT_TYPE` (one-character legacy code) is stamped into the JWT at login finalize and surfaced via `TenantContext.currentPrdtType()`. The refactor recognises three letters explicitly today — `F` (WeCMS default, used by `VN_VNM0004_000001`), `M` (WeCMS Lumens), and `H` (WeCMS HAENGSUNG Electronics, used by `VN_VNM0004_000014`) — via `common/enums/PrdtType`. The remaining 11 legacy letters (`W` / `R` / `B` / `E` / `U` / `L` / `S` / `P` / `C` / `D` / `T`) are carried verbatim on the wire and in the JWT but intentionally not modelled — a constant lands in `PrdtType` only when a real consumer for that letter arrives. Per-product behavioural gates (HAENGSUNG payment-table-2 layout, account masking for bank `11704020`, hidden expense file column, daily-financial-HS report gating; WeCMS Default e-Invoice gate; Lumens readonly overrides) are **deferred** and port with each feature MR. Infrastructure only this phase.
 - **Deploy target:** developer laptop only. Runs against a local PostgreSQL instance owned by the developer.
@@ -446,7 +2837,7 @@ com.kosign.wecms
 >
 > **2026-06-23 addendum (frontend reality):** the "Frontend not verified this pass" caveat reflects the **2026-06-02** snapshot only. The Next.js app now ships **43 dashboard routes** — full Banking (Account Inquiry VND/FCY, Transaction History VND/FCY + `[accountId]`, Transfer Own Accounts, Transfer History, Smart Organizer, 4 Reports incl. `daily-financial-hs`), all 5 Payment modules (scheduled + result list + `[id]` detail) + Card Transactions + Exchange Rate Inquiry, and Add-on ×3 — plus the Settings panels under `<SettingsModal>`. For per-module frontend state consult the `wecms-web` Feature Status table + the feature docs; do not treat the 2026-06-02 caveats as current.
 >
-> **Frontend verification (2026-06-02):** `login-credentials`, `einvoice` (sales/expenses), and `operation-status` were checked against `wecms-web` and found **frontend-wired** (calling live endpoints, no mock fallback) — more complete than their feature docs claimed. The residual gaps that note listed have since been resolved: the e-invoice invoice-status **server-side filter is now implemented (IR-4 CLOSED 2026-06-30)**, the operation-status inquire-dialog Save persist endpoint is live (corrected 2026-06-23), and the `resolveDocType EXPENSE→'E'` "bug" was itself stale (corrected 2026-06-23). Details in the content-validation report under [docs/archive/reports/](docs/archive/reports/).
+> **Frontend verification (2026-06-02):** `login-credentials`, `einvoice` (sales/expenses), and `operation-status` were checked against `wecms-web` and found **frontend-wired** (calling live endpoints, no mock fallback) — more complete than their feature docs claimed. The residual gaps that note listed have since been resolved: the e-invoice invoice-status **server-side filter is now implemented (IR-4 CLOSED 2026-06-30)**, the operation-status inquire-dialog Save persist endpoint is live (corrected 2026-06-23), and the `resolveDocType EXPENSE→'E'` "bug" was itself stale (corrected 2026-06-23). Details were in the content-validation report under the former `docs/archive/reports/` folder, which was **removed 2026-06-23 by project decision** — the corrections themselves are recorded in the module audits under [docs/audits/modules/](docs/audits/modules/).
 
 Deferred inside `auth` (still genuinely open): password-change-history reset, `NTNL_CD` / `CHNL_TYPE` / `BUSI_STTS` post-auth gates, refresh tokens, and a durable/multi-instance revocation + rate-limit store. **No longer deferred — now implemented:** 5-failure auto-lock (F-10), JWT revocation / server-side logout (F-03), and post-login menu resolution (F-3).
 
@@ -555,7 +2946,7 @@ The chooser response (multi-link user, no `biz_key` in request) stamps the per-c
 - Per-field `@JsonProperty` is reserved for the rare wire name that diverges from the Java field — e.g. `LoginResponse.accessToken` annotated `@JsonProperty("access_token")` (OAuth-style) rather than the strict snake `access_token`. Don't add `@JsonProperty` "for safety" when the strategy already produces the correct name.
 - Success: `ApiResponse.ok(data)` → `error=false`, `code=WBI0000`. `@JsonInclude(NON_NULL)` drops `data` (and the `timestamp` / `path` / `trace_id` tracing trio) when null — successes stay a clean `{ status, data }`.
 - Error: every error response carries `timestamp` (ISO-8601), `path` (the request URI), and `trace_id` alongside `status`. The trace id format is JEX-style — `yyyyMMddHHmmss + "PT" + 14 random digits + "DEVL"` — generated by [`TraceIdFilter`](src/main/java/com/kosign/wecms/common/exception/TraceIdFilter.java) at the head of the filter chain, placed in SLF4J `MDC` under key `traceId`, and echoed back in the `X-Trace-Id` response header. The same id appears in every log line for the request via the `%X{traceId}` MDC pattern in [`application.yml`](src/main/resources/application.yml). A user reading the id from the error dialog can quote it back to support; ops can grep it directly in server logs.
-- **UPPER_SNAKE DTO holdovers fully retired 2026-06-07.** The Transaction History, Daily Cash, Daily Financial (CMC/HS/transactions), and Bank-Matching DTOs under `domain/banking/dto/` were migrated (UPPER `@JsonProperty` removed → lowercase snake_case via the global strategy). The last holdover — the `@Deprecated` legacy `TransferRow` / `TransferHistoryResponse` + `TransferHistoryService` + the `GET /api/v1/banking/transfers/history` endpoint — was **deleted** (superseded by the lowercase `/internal-transfer/transfer-history`). **No WeCMS DTO carries an UPPER `@JsonProperty` anymore**; the only `@JsonProperty` UPPER/PascalCase left in the tree is the external Coocon/NXiSAS gateway binding (`nxisas/gateway/`), which is a vendor contract, not the WeCMS wire. Full record: [docs/audits/field-casing-parity-audit-2026-06-06.md](docs/audits/field-casing-parity-audit-2026-06-06.md). Do not add new UPPER `@JsonProperty`.
+- **UPPER_SNAKE DTO holdovers fully retired 2026-06-07.** The Transaction History, Daily Cash, Daily Financial (CMC/HS/transactions), and Bank-Matching DTOs under `domain/banking/dto/` were migrated (UPPER `@JsonProperty` removed → lowercase snake_case via the global strategy). The last holdover — the `@Deprecated` legacy `TransferRow` / `TransferHistoryResponse` + `TransferHistoryService` + the `GET /api/v1/banking/transfers/history` endpoint — was **deleted** (superseded by the lowercase `/internal-transfer/transfer-history`). **No WeCMS DTO carries an UPPER `@JsonProperty` anymore**; the only `@JsonProperty` UPPER/PascalCase left in the tree is the external Coocon/NXiSAS gateway binding (`nxisas/gateway/`), which is a vendor contract, not the WeCMS wire. Full record: [docs/audits/historical/field-casing-parity-audit-2026-06-06.md](docs/audits/historical/field-casing-parity-audit-2026-06-06.md). Do not add new UPPER `@JsonProperty`.
 
 ### Exception → response mapping
 
@@ -691,7 +3082,7 @@ Add new codes to `messages.properties` first, then throw `new BusinessException(
   | V153 | Settings > Firm Banking History: View Setting seed (2026-05-15, export gate) — seeds `SYS_SCR_OPTION_WECMS` with 7 columns (`REG_DTM`, `SVC_TYPE`, `SVC_NM`, `SEQ_NO`, `DEP_BANK_CD`, `RS_CD`, `RS_MSG`) under `web_svc_id = 'firm-banking-history'` / `dym_area_id = 'default'`. Every row `FIX_YN='Y'` (no popover); `SORT_YN='Y'` only where `FirmBankingHistorySortField` covers it (REG_DTM/SVC_TYPE/SVC_NM/SEQ_NO). Unlocks `FirmBankingHistoryExportProvider` — without the seed `ExcelExportService` would drop every column with `WBE2013`. Idempotent. |
   | V154 | Settings > ERP Transaction History: View Setting seed (2026-05-15, export gate) — seeds `SYS_SCR_OPTION_WECMS` with 7 columns (`REG_DTM`, `ERP_TYPE`, `TRNS_TYPE_CD`, `ORG_FILE_NM`, `FILE_SIZE`, `REG_USER`, `REG_ID`) under `web_svc_id = 'erp-transaction-history'` / `dym_area_id = 'default'`. Same shape + rationale as V153. `SORT_YN='Y'` only where `ErpTrnsHistorySortField` covers it (REG_DTM/ERP_TYPE/TRNS_TYPE_CD/REG_USER). Idempotent. |
   | V155–V241 | *(Historical pre-renumber range — superseded by the 2026-06-09 consolidation that archived the old higher-numbered migrations into `migration_archive_20260609/` and renumbered the live set to V1–V155.)* Various feature + stabilisation migrations across the Settings / Banking / Payment / Add-on modules. See per-file headers under `src/main/resources/db/migration/`. |
-  | **V140 (live)** *(was labelled "V155" here)* | **⚠️ Number corrected 2026-06-23:** on the current disk the live `wb_get_next_val` function is **`V140__wb_get_next_val.sql`** — `V155` on disk is `mrec_pic_store`. The "V155 centralization" described in this row was renumbered to **V140** during the 2026-06-09 consolidation; the pre-renumber file is under `src/main/resources/db/migration_archive_20260609/`. Original (historical) text follows. **`wb_get_next_val` centralization (2026-06-09).** `CREATE OR REPLACE FUNCTION wb_get_next_val` superseding the prior V140 — curated **28 branches** (10 kept + 2 restored + 16 added), 8-param signature unchanged; plus raise-only `setval` floors for the four global sequences (`sq_appr_seq_no`/`firm_seq_no`/`firm_file_seq_no`/`sq_actv_seq`, already created in V143/V144/V147/V148). Highest *renumbered* `wb_get_next_val` migration — **NOT the highest migration overall**: later feature migrations continue past it (current max = **V248**; 158 `V*.sql` files — e.g. V156–V159 Settings/Add-on route-slug seeds, V172–V174 Smart Organizer, V196 Transfer History, V237 Card-Txn special fields, V242/V243 Navigation). See `db/migration/` per-file headers. See "`wb_get_next_val` centralization — FINAL STATUS" under DB Function / Legacy Function Policy + [docs/audits/wb-get-next-val-centralization-2026-06-09.md](docs/audits/wb-get-next-val-centralization-2026-06-09.md). |
+  | **V140 (live)** *(was labelled "V155" here)* | **⚠️ Number corrected 2026-06-23:** on the current disk the live `wb_get_next_val` function is **`V140__wb_get_next_val.sql`** — `V155` on disk is `mrec_pic_store`. The "V155 centralization" described in this row was renumbered to **V140** during the 2026-06-09 consolidation; the pre-renumber file is under `src/main/resources/db/migration_archive_20260609/`. Original (historical) text follows. **`wb_get_next_val` centralization (2026-06-09).** `CREATE OR REPLACE FUNCTION wb_get_next_val` superseding the prior V140 — curated **28 branches** (10 kept + 2 restored + 16 added), 8-param signature unchanged; plus raise-only `setval` floors for the four global sequences (`sq_appr_seq_no`/`firm_seq_no`/`firm_file_seq_no`/`sq_actv_seq`, already created in V143/V144/V147/V148). Highest *renumbered* `wb_get_next_val` migration — **NOT the highest migration overall**: later feature migrations continue past it (current max = **V248**; 158 `V*.sql` files — e.g. V156–V159 Settings/Add-on route-slug seeds, V172–V174 Smart Organizer, V196 Transfer History, V237 Card-Txn special fields, V242/V243 Navigation). See `db/migration/` per-file headers. See "`wb_get_next_val` centralization — FINAL STATUS" under DB Function / Legacy Function Policy + [docs/audits/historical/wb-get-next-val-centralization-2026-06-09.md](docs/audits/historical/wb-get-next-val-centralization-2026-06-09.md). |
   | V137 / V138 / V139 *(was "V242")* | **⚠️ Number corrected 2026-06-23:** the live navigation-catalogue tables are **V137** (`product_menu`), **V138** (`menu_item`), **V139** (`menu_item_translation`). The pre-renumber `V242__navigation_menu_catalogue.sql` is archived under `migration_archive_20260609/`. Original (historical) text follows. **Navigation menu catalogue (Phase 1 — refactor-owned product-tree tables).** Creates `MENU_ITEM` (product-independent node structure: slug PK, `PARENT_ID`, `MENU_DEP`, `ROUTE`, `ICON`, `SHOW_YN`, `PERMISSION_CD`, `LEGACY_MNU_ID`, `LEGACY_WSVC_ID`), `PRODUCT_MENU` (per-product membership + `DISP_ORD`; PK `(PRODUCT_TYPE, MENU_ITEM_ID)` — replaces the legacy per-product catalogue role of `MENU_AUTH_ADMN_SYS`), `MENU_ITEM_TRANSLATION` (per-product per-language label; PK `(PRODUCT_TYPE, MENU_ITEM_ID, LANG_CD)` — keyed by product because M's VI/KO labels diverge from F for the same node). These are **new refactor infrastructure tables** (not legacy JEX tables, not in the PROD Active Table List) that replace the lost JexAdmin / Jex Studio MenuManager trees (`WE_CMSVN` / `WE_CMSVN_LUMENS` / `WE_CMSVN_HAENGSUNG`); seeded by Flyway and never mutated at runtime, so no audit columns. Idempotent (`CREATE TABLE / INDEX IF NOT EXISTS`). First consumer: `domain/navigation` (`GET /api/v1/navigation`). |
   | seed *(was "V243" — archived, not in live set)* | **⚠️ Number corrected 2026-06-23:** the navigation seed shipped as the pre-renumber `V243__navigation_menu_seed.sql`, now archived under `migration_archive_20260609/`. The live `V137`–`V139` files contain **no** `INSERT` — the seed was **not** carried into the renumbered `V*` set; confirm its live application path. Original (historical) text follows. **Navigation menu catalogue seed (F / M / H product trees).** Seeds `MENU_ITEM` (42 rows = 41 F-nodes + 1 HS Daily Financial), `PRODUCT_MENU` (115 rows: F=41, H=33, M=41) and `MENU_ITEM_TRANSLATION` (345 rows = 115 × EN/KO/VI) from the JexAdmin export at [docs/jex/features/menu-product-type-management/export/wecms-menu-export.json](../docs/jex/features/menu-product-type-management/export/wecms-menu-export.json). `permission_cd` values are the **verified live `menuAuth.ts` kebab codes** (cross-checked against `USER_MENU_AUTH_INFM` in [permission-code-normalization-verification.md](../docs/jex/features/menu-product-type-management/permission-code-normalization-verification.md) §1). **Daily Financial split:** F/M carry `banking-reports-daily-financial` (`rept_0015_001`), H carries `banking-reports-daily-financial-hs` (`rept_0017_001`). M is structurally identical to F (same slugs/routes/`permission_cd`s) and differs only in VI/KO translation rows. Idempotent (`INSERT … ON CONFLICT DO NOTHING`). Generated by `tmp/gen_nav_seed.js`. |
 
@@ -806,7 +3197,7 @@ The refactor is moving away from legacy JEX-style PL/pgSQL helpers in favour of 
 
 **`wb_get_next_val` centralization — FINAL STATUS (2026-06-09)**
 
-The legacy-key generation surface was consolidated and centralized. The authoritative function is the live **`V140__wb_get_next_val.sql`** on disk (it was authored as `V155__wb_get_next_val_centralize.sql` and **renumbered to V140** during the 2026-06-09 consolidation — verify by `ls src/main/resources/db/migration/`), a `CREATE OR REPLACE` (8-param signature unchanged) carrying the **curated 28 branches** actually invoked by Spring (the 10 kept from V140 + 2 regressed branches restored — `audit_logs_infm.audit_logs_seq_no`, `busi_usag_set_infm.use_usag_cd` — + 16 added for tables whose Spring code previously used Java-side `MAX+1`). Status: **all in-scope business key generation now routes through `LegacyFunctionRepository` → `wb_get_next_val`; compile + affected tests pass.** Full record: [docs/audits/wb-get-next-val-centralization-2026-06-09.md](docs/audits/wb-get-next-val-centralization-2026-06-09.md).
+The legacy-key generation surface was consolidated and centralized. The authoritative function is the live **`V140__wb_get_next_val.sql`** on disk (it was authored as `V155__wb_get_next_val_centralize.sql` and **renumbered to V140** during the 2026-06-09 consolidation — verify by `ls src/main/resources/db/migration/`), a `CREATE OR REPLACE` (8-param signature unchanged) carrying the **curated 28 branches** actually invoked by Spring (the 10 kept from V140 + 2 regressed branches restored — `audit_logs_infm.audit_logs_seq_no`, `busi_usag_set_infm.use_usag_cd` — + 16 added for tables whose Spring code previously used Java-side `MAX+1`). Status: **all in-scope business key generation now routes through `LegacyFunctionRepository` → `wb_get_next_val`; compile + affected tests pass.** Full record: [docs/audits/historical/wb-get-next-val-centralization-2026-06-09.md](docs/audits/historical/wb-get-next-val-centralization-2026-06-09.md).
 
 **Funnel architecture rule (non-negotiable):**
 
@@ -825,12 +3216,72 @@ Spring services → LegacyFunctionRepository → wb_get_next_val() → JEX-compa
 2. ~~**`MEMO_INFM.seq_no`** — `MEMO_INFM` is NOT in the PROD Active Table List (rule 6).~~ **RETIRED 2026-07-02** — the premise was wrong: legacy DOES have `wb_get_next_val('memo_infm','seq_no',biz_key,web_svc_id)` (and `memo_infm_file.file_id`) branches. `MEMO_INFM.seq_no` now funnels through `LegacyFunctionRepository.nextMemoInfmSeqNo` → `wb_get_next_val`. The `memo_infm` (and `memo_infm_file.file_id`) branches were added directly to the live refactor `wb_get_next_val` function (**no dedicated Flyway migration** — the function already carries them; Flyway is disabled / schema is external in this project). The former Java-side `MemoInfmRepository.findMaxSeqNoByBizKeyAndWebSvcId + 1` was removed. No value change — the branch body is the identical `COALESCE(MAX(seq_no::numeric),0)+1 WHERE biz_key AND web_svc_id`. `memo_infm_file.file_id` branch is present-but-unwired pending the attachments feature.
 3. **Display-order / UI-ordering fields** — `rmrk_org_infm.disp_ord` (`OrganizerRuleService`), `busi_usag_set_infm.disp_ord` (`PurposeSettingsService`; the PK `use_usag_cd` IS funneled).
 4. **Round-probe fields** — `bank_exch_rate_infm.seq_no` Woori round (`ExchangeRateBatchService.findHighestSeqNo`); a read for round computation, not a row-key allocator (the row PK `exch_seq_no` IS funneled).
-5. **Date-prefixed composite payment keys** — `scdul_pymn_no` / `ovrs_pymn_no` and the child detail numbering (`scdul_pymn_detl_no`), via `InternalTransferKeyGenerator` / `OverseasPaymentKeyGenerator` + `*_KEY_SEQ` counter tables. Different format than JEX's plain-int `wb_get_next_val`; collision-free (disjoint numeric range). **Open Decision 2** below.
+5. ~~**Date-prefixed composite payment keys** — `scdul_pymn_no` / `ovrs_pymn_no` / `scdul_pymn_detl_no` via `InternalTransferKeyGenerator` / `OverseasPaymentKeyGenerator` + `*_KEY_SEQ` counter tables.~~ **RETIRED 2026-06-09/10 (MR-1 + MR-2C) — this is no longer an exception; these keys ARE funnelled.** See "Retired exception #5" immediately below. **Do not re-introduce a refactor-only counter table for these keys.**
 
-**Open decisions (recorded, not actioned — see [docs/planning/open-questions/wb-get-next-val-open-decisions.md](docs/planning/open-questions/wb-get-next-val-open-decisions.md)):**
+**Retired exception #5 — date-prefixed composite payment keys (RETIRED 2026-06-09/10)**
 
-- **OD-1 — Contacts `trco_acct_key`:** `ContactsService` accepts `trco_acct_key` from the client request instead of generating it via `wb_get_next_val` (the e-Invoice path to the same table IS funneled). Recorded as a create-vs-update key-contract review. **Do not change now.**
-- **OD-2 — Date-prefixed payment keys:** the exception #5 architecture (`scdul_pymn_no` / `ovrs_pymn_no` / detail numbering). Recorded as a PO/architecture decision. **Do not change now.**
+The refactor briefly minted these keys itself, in a **date-prefixed `<YYYYMMDD><6-digit-seq>` format**
+backed by refactor-only `INTERNAL_TRANSFER_KEY_SEQ` / `OVERSEAS_PAYMENT_KEY_SEQ` counter tables. That
+architecture **diverged from the live JEX DB, which owns these keys via `wb_get_next_val`**, so it was
+deliberately reversed. The counter tables and their entities/repositories were **deleted**.
+
+**Current architecture — all three keys funnel:**
+
+```text
+scdul_pymn_no · scdul_pymn_detl_no · ovrs_pymn_no
+        ↓  generator / service wrapper
+LegacyFunctionRepository (the single executor)
+        ↓
+wb_get_next_val()   → plain-int per-tenant MAX+1, byte-identical to what live JEX mints
+```
+
+| Key | Funnel helper | `V140` branch |
+|---|---|---|
+| `SCDUL_PYMN_SUMR.SCDUL_PYMN_NO` | `LegacyFunctionRepository.nextScdulPymnNo` | #36 — per-tenant `MAX+1` |
+| `SCDUL_PYMN_SUMR_DETL.SCDUL_PYMN_DETL_NO` | `LegacyFunctionRepository.nextScdulPymnDetlNo` | #38 — per-tenant `MAX+1` (seed-once, then increment in Java across the detail batch) |
+| `OVRS_PYMN_SUMR.OVRS_PYMN_NO` | `LegacyFunctionRepository.nextOvrsPymnNo` | #63 — per-tenant `MAX+1` over `OVRS_PYMN_MSTR UNION OVRS_PYMN_SUMR` |
+
+**`InternalTransferKeyGenerator` and `OverseasPaymentKeyGenerator` still exist — but they are now thin
+delegators into the funnel, not independent key generators.** They hold no counter logic and no date
+formatting; each validates `bizKey`, calls its `LegacyFunctionRepository` helper, and logs. They run
+`@Transactional(propagation = MANDATORY)` so the `MAX+1` read and the subsequent INSERT share one
+transactional view. `InternalTransferKeyGenerator.nextScdulPymnNo` is shared by **all four**
+scheduled-payment modules (Vendor / Expense / Payroll / Internal Transfer).
+
+**Evidence** — `InternalTransferKeyGenerator` Javadoc §"OD-2 reversal (2026-06-09 — MR-1)" ·
+`OverseasPaymentKeyGenerator` Javadoc §"Format change" (MR-2C, 2026-06-10) ·
+[`LegacyFunctionRepository.java`](src/main/java/com/kosign/wecms/common/legacy/LegacyFunctionRepository.java)
+(`nextScdulPymnNo` / `nextScdulPymnDetlNo` / `nextOvrsPymnNo`) ·
+`V140__wb_get_next_val.sql` branch #63 header ("replaced the date-prefixed Java generator +
+OVERSEAS_PAYMENT_KEY_SEQ table (deleted)") · commit **`eb9296b`** (2026-06-11 — deleted all six
+`*KeySeq` entity/id/repository files and added `LegacyFunctionRepository` in one change) · commit
+**`4987435`** (2026-06-23 — deleted the archived `V158`/`V159__overseas_payment_key_seq.sql`).
+
+> **⚠️ Residual concurrency concern — open, and NOT a reason to revive `*_KEY_SEQ`.**
+> The funnel's `MAX+1` is **lock-free** (unlike the retired counter's `ON CONFLICT` row lock), so two
+> concurrent creates on the same tenant can read the same `MAX` and collide on the PK at INSERT.
+> Mitigation is uneven today:
+> - **Overseas — protected.** `OverseasPaymentExcelService.submit` wraps the create in a
+>   boundary-level one-shot retry on `DataIntegrityViolationException`.
+> - **Scheduled payments — not uniformly protected.** The equivalent retry across the four
+>   scheduled-payment create services is **intentionally deferred**; `InternalTransferKeyGenerator`'s
+>   Javadoc §Concurrency records the reasoning (single-tenant R&D traffic does not hit the race in
+>   practice — the same stance the retired counter's Javadoc took).
+>
+> This is a **separate concurrency / resilience concern**, and it applies equally to every other
+> `MAX+1` funnel branch (`appr_line_infm`, `chart_acct_infm`, …). It is **not** evidence that the
+> retired `*_KEY_SEQ` architecture should return — reviving it would re-introduce the JEX value
+> divergence that MR-1 and MR-2C were run to eliminate. The correct fix, if the race becomes real, is
+> to extend the existing one-shot-retry pattern to the four scheduled-payment create sites.
+
+**Open decisions — both now closed**
+
+- **OD-1 — Contacts `trco_acct_key`: ✅ CLOSED 2026-06-24.** `TRCO_ACCT_INFO.TRCO_ACCT_KEY` routes through `LegacyFunctionRepository.nextTrcoAcctKey` (V140 #31, per-`(biz_key, trco_key)` `MAX+1`). On **create** every account is new, so the frontend placeholder key is ignored and the funnel value is used; on **update** an account whose key already exists for `(biz_key, trco_key)` preserves it, and anything else generates via the funnel (new-vs-existing decided by existence in `TRCO_ACCT_INFO`, not a blank check). Backend caller-routing only — no DB function, DDL, schema, migration or data change. Evidence: [wb-get-next-val-parity-closure-2026-06-24.md §5](docs/audits/governance/wb-get-next-val-parity-closure-2026-06-24.md) · the `// OD-1:` comments in `ContactsService` · 6 OD-1 cases in `ContactsServiceTest`. The same pass also funnelled `trco_addr_key` and `trco_ovrs_key`.
+- **OD-2 — Date-prefixed payment keys: ✅ CLOSED 2026-06-09/10 by MR-1 + MR-2C.** The refactor-only date-prefixed `*_KEY_SEQ` architecture was retired to restore parity with the live JEX `wb_get_next_val` behaviour. Full detail + evidence in "Retired exception #5" above. The residual `MAX+1` concurrency item is tracked in the callout above, not as a reopening of OD-2.
+
+> §6 of the parity-closure audit records a full post-OD-1 sweep of the backend (2026-06-24):
+> **0 remaining parity gaps · 0 missing `wb_get_next_val` branches · no Java business-key generation
+> left outside the funnel.**
 
 **Surviving legacy functions (kept by exception, not by default)**
 
@@ -1124,7 +3575,7 @@ The controller is intentionally thin — one `@PostMapping` that takes `@Valid @
 | `POST /api/v1/settings/firm-banking-history/export` | `FirmBankingHistoryExportProvider` (`screenId = firm-banking-history`) | `REG_DTM`, `SVC_TYPE`, `SVC_NM`, `SEQ_NO`, `DEP_BANK_CD`, `RS_CD`, `RS_MSG` | Backend (`<count> record(s)` — no aggregable amount; unified view carries audit metadata only). Reuses `FirmBankingHistoryService.listAll`. Refactor-only addition (no legacy JEX counterpart). |
 | `POST /api/v1/settings/erp-transaction-history/export` | `ErpTrnsHistoryExportProvider` (`screenId = erp-transaction-history`) | `REG_DTM`, `ERP_TYPE`, `TRNS_TYPE_CD`, `ORG_FILE_NM`, `FILE_SIZE`, `REG_USER`, `REG_ID` | Backend (`<count> record(s)`). Reuses `ErpTrnsHistoryService.listAll`. Refactor-only addition (no legacy JEX counterpart). |
 
-> **As of 2026-06-23 ~20 providers are registered** — the three rows above are illustrative, not the full list (that table was stale). `ExportableScreenRegistry` auto-collects every `@Component` implementing `ExportRowProvider` (26 provider files on disk; ~4 abstract bases unregistered). Additional wired screenIds: `banking-account-inquiry-fcy`, `banking-transaction-history`, `daily-cash-report`, `cash-flow-report`, `addon-sales-einvoices`, `addon-expenses-einvoices`, `addon-operation-status`, `approval-box`, `card-transactions`, `vas-account`, `settings-contacts-local`, `settings-contacts-overseas`, and the 5 payment-result screens. The registry is the source of truth — see [docs/audits/common-source-index.md](docs/audits/common-source-index.md) §3.
+> **As of 2026-06-23 ~20 providers are registered** — the three rows above are illustrative, not the full list (that table was stale). `ExportableScreenRegistry` auto-collects every `@Component` implementing `ExportRowProvider` (26 provider files on disk; ~4 abstract bases unregistered). Additional wired screenIds: `banking-account-inquiry-fcy`, `banking-transaction-history`, `daily-cash-report`, `cash-flow-report`, `addon-sales-einvoices`, `addon-expenses-einvoices`, `addon-operation-status`, `approval-box`, `card-transactions`, `vas-account`, `settings-contacts-local`, `settings-contacts-overseas`, and the 5 payment-result screens. The registry is the source of truth — see [docs/audits/modules/common-source-index.md](docs/audits/modules/common-source-index.md) §3.
 
 Other list pages adopt the contract one-at-a-time in their next stabilisation pass — one `ExportRowProvider` class + one new `@PostMapping` per migration. The common primitives in `common/export/` do not change.
 
@@ -1384,6 +3835,11 @@ Update this section (and only this section) when the filtered list changes. Neve
 
 ## Build & Run
 
+> **Start-to-finish laptop setup walkthrough: [docs/local-setup.md](docs/local-setup.md).** It covers the
+> mandatory `.env.local` (68 vars — the yml files carry **no** defaults since 2026-07-30) and the two
+> failure modes that stop people: the misleading `Could not resolve placeholder 'HAENGSUNG_ORACLE_ENABLED'`
+> (which is a missing `.env.local`, not an Oracle bug) and the silent lenient-bind of a `String` placeholder.
+
 ```bash
 ./gradlew build                                              # compile + unit tests
 ./gradlew bootRun --args='--spring.profiles.active=local'    # runs against the shared dev DB in application-local.yml (172.168.5.172)
@@ -1405,7 +3861,7 @@ Test users (when seeded):
 **Do**
 - Keep DTO Java field names in camelCase; the global Jackson SNAKE_CASE strategy converts to lowercase snake_case on the wire ([JacksonConfig](src/main/java/com/kosign/wecms/config/JacksonConfig.java)). Add `@JsonProperty` only when the wire name diverges from snake-cased Java (e.g. `accessToken` → `access_token`).
 - Throw `BusinessException("WBExxxx")` with a matching `messages.properties` entry for every known error path.
-- Add a Flyway migration for every schema change; ensure the JPA entity matches (`ddl-auto: validate` will fail startup otherwise).
+- Ship a DB artifact for every schema change and make sure the JPA entity matches (`ddl-auto: validate` will fail startup otherwise). **Which artifact depends on the change** — a new table or new DB function goes in `src/main/resources/db/migration/`; an existing-table alteration, index, constraint, or any data change goes in `docs/sql/<YYYY>/` as a manual DBA script. See §"Docs-First Implementation Workflow" §14. *(Corrected 2026-08-17 — this line previously read "Add a Flyway migration for every schema change", which contradicted both §14 and the fact that Flyway is disabled.)*
 - Constrain every tenant-scoped query on `BIZ_KEY = <tenantProperties.bizKey>` — never a literal string, never a wildcard.
 - Put Next.js-visible shape changes into matching DTO/types on both sides in the same MR (full-stack ownership rule, root CLAUDE.md).
 - Use `TenantContext` to read the current user's identity inside service methods — do not re-parse the JWT or re-query the user for every call.
@@ -1415,7 +3871,7 @@ Test users (when seeded):
 - Don't hardcode passwords, JWT secrets, or DB credentials. Everything sensitive reads from env / `application-local.yml`.
 - Don't hand-roll an alternative response shape — always go through `ApiResponse<T>` + `CommonHead`.
 - Don't add business logic in entities, controllers, or filters. It belongs in `service/`.
-- Don't use `ddl-auto: update` or `create`. Flyway is the only sanctioned schema channel.
+- Don't use `ddl-auto: update` or `create`. The schema is **external and DBA-applied** — the migration folder plus `docs/sql/` are the sanctioned channels, and neither is auto-run (Flyway is disabled; see [docs/references/database/flyway-migration-baseline.md](docs/references/database/flyway-migration-baseline.md)). *(Corrected 2026-08-17 — previously "Flyway is the only sanctioned schema channel".)*
 - Don't widen the tenant filter to `LIKE 'VN_VNM0004_%'` in code — the property regex rejects wildcards for a reason.
 - Don't add SpringDoc / Testcontainers / Redis / any other dependency "just in case". Add it when the first feature needs it.
 - Don't cross the write boundary: JEX trees are read-only references.
@@ -1431,7 +3887,7 @@ Test users (when seeded):
 | NTNL_CD/CHNL_TYPE/BUSI_STTS gates missing | `AuthService.login` | Post-auth gates deferred; not in Sprint 0 scope |
 | No SpringDoc / Swagger | — | Deferred; add with first non-auth module |
 | No Testcontainers | `AuthServiceTest` | Tests use Mockito; H2/in-memory deferred until second domain |
-| `SYS_SCR_OPTION_WECMS.SIZE` type drift from DEV | [V30__sprint1_screen_option_tables.sql:25](src/main/resources/db/migration/V30__sprint1_screen_option_tables.sql#L25) | DEV is `VARCHAR` (e.g. `"250px"`); local is `INTEGER`. Deferred — bundle with the View Setting SIZE end-to-end feature (entity field + DTO + frontend `<col width>` consumption + Figma-aligned px backfill) so the type fix lands with the first real consumer. |
+| `SYS_SCR_OPTION_WECMS.SIZE` type drift from DEV | `SYS_SCR_OPTION_WECMS` — ⚠️ the original citation `V30__sprint1_screen_option_tables.sql:25` **no longer exists on disk** (renumbered away in the 2026-06-09 rebaseline; find the current file via `ls src/main/resources/db/migration/ \| grep -i screen_option` and see [docs/references/database/flyway-migration-baseline.md](docs/references/database/flyway-migration-baseline.md)) | DEV is `VARCHAR` (e.g. `"250px"`); local is `INTEGER`. Deferred — bundle with the View Setting SIZE end-to-end feature (entity field + DTO + frontend `<col width>` consumption + Figma-aligned px backfill) so the type fix lands with the first real consumer. |
 
 ## Notes for future implementation
 

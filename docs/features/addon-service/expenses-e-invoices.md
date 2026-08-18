@@ -51,7 +51,7 @@ Same endpoint set as [Sales](sales-e-invoices.md#endpoints-summary) with `type=E
 
 ## Current implementation status
 
-✅ Implemented (shared backend). **Remaining gap:** the invoice-**status** filter is client-side on both Sales and Expenses (backend IR-4 status param not implemented — PO decision pending). See [`docs/audits/addon-service-gap-analysis.md`](../../audits/addon-service-gap-analysis.md).
+✅ Implemented (shared backend). **Remaining gap:** the invoice-**status** filter is client-side on both Sales and Expenses (backend IR-4 status param not implemented — PO decision pending). See [`docs/audits/addon-service-gap-analysis.md`](../../audits/modules/addon-service-gap-analysis.md).
 
 ## Detailed docs (source of truth)
 

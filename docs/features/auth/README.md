@@ -11,9 +11,9 @@ implementation. The earlier flat `login-auth.md` is now a [summary](login-auth.m
 
 | Doc | Purpose |
 |---|---|
-| [auth-docs-audit.md](../../audits/auth-docs-audit.md) | What the audit changed; stale-fact corrections; per-module notes |
-| [auth-gap-analysis.md](../../audits/auth-gap-analysis.md) | Consolidated gap table (MATCH / APPROVED DEVIATION / DEAD LEGACY / PARTIAL / MISSING) |
-| [auth-source-index.md](../../audits/auth-source-index.md) | Every auth source file (BE + FE), grouped by module |
+| [auth-docs-audit.md](../../audits/modules/auth-docs-audit.md) | What the audit changed; stale-fact corrections; per-module notes |
+| [auth-gap-analysis.md](../../audits/modules/auth-gap-analysis.md) | Consolidated gap table (MATCH / APPROVED DEVIATION / DEAD LEGACY / PARTIAL / MISSING) |
+| [auth-source-index.md](../../audits/modules/auth-source-index.md) | Every auth source file (BE + FE), grouped by module |
 
 ## Modules
 

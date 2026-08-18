@@ -1,5 +1,14 @@
 # Manual Tenant Setup — DBA Operational Guide
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](flyway-migration-baseline.md) §5.
+
 **Audience:** DBAs provisioning a new company account + first admin user.
 **Status:** Authoritative. Replaces any prior Spring auto-bootstrap path.
 **Last updated:** 2026-05-11.
@@ -179,7 +188,7 @@ If the function is **not** executed after creating a company, the tenant is left
 
 Because the refactor has no company-creation flow to host an application-level call, automatic legacy-like execution is available as a **DBA-installed `AFTER INSERT ON busi_infm` trigger** that forwards each new company row to `wb_init_busi_data(NEW.biz_key, COALESCE(NEW.reg_id,'SYSTEM'), COALESCE(NEW.reg_dtm, …))`. The trigger holds **no copy logic** — `wb_init_busi_data()` stays the single source of truth; it only auto-invokes the function in the same transaction as the insert.
 
-- Prepared (NOT executed) at [`Claude Code (AI)/sql/wb_init_busi_data_autotrigger_20260611.sql`](../../../../Claude%20Code%20%28AI%29/sql/wb_init_busi_data_autotrigger_20260611.sql) — DBA-run, idempotent, with verification + rollback SQL and caveats.
+- Prepared (NOT executed) at [`docs/sql/2026/create-business-init-data-trigger-2026-06-11.sql`](../../sql/2026/create-business-init-data-trigger-2026-06-11.sql) — DBA-run, idempotent, with verification + rollback SQL and caveats.
 - With the trigger installed, **Step 5 / Step 8 happen automatically** — DBAs only insert `BUSI_INFM` and the tenant data is initialized.
 - It is **not** a Flyway migration (Flyway disabled; `ddl-auto=validate`) and is **not** auto-run. Caveats (fires on every insert incl. seeds, empty-SYS = no-op, shared/live-JEX-DB double-fire is harmless-but-redundant) are documented in the script header.
 
@@ -610,7 +619,7 @@ SELECT
 - [wecms-api/CLAUDE.md](../../../CLAUDE.md) — full refactor rules: tenant-resolution, password policy, product-type enum, Flyway policy.
 - [wecms-api/src/main/java/com/kosign/wecms/domain/auth/service/AuthService.java](../../../src/main/java/com/kosign/wecms/domain/auth/service/AuthService.java) — canonical login flow.
 - [wecms-api/src/main/java/com/kosign/wecms/common/security/WecmsPasswordEncoder.java](../../../src/main/java/com/kosign/wecms/common/security/WecmsPasswordEncoder.java) — hybrid BCrypt / legacy SHA-256 password matcher.
-- [wecms-api/src/main/java/com/kosign/wecms/domain/auth/bootstrap/DataSeeder.java](../../../src/main/java/com/kosign/wecms/domain/auth/bootstrap/DataSeeder.java) — `__BCRYPT_PENDING__` sentinel patcher.
-- [wecms-api/src/main/resources/db/migration/V11__empl_infm_busi_admn_infm.sql](../../../src/main/resources/db/migration/V11__empl_infm_busi_admn_infm.sql) — local `wb_get_next_val` PL/pgSQL definition (2-branch port).
-- [wecms-api/src/main/resources/db/migration/V73__seed_haengsung_company_for_multi_tenant.sql](../../../src/main/resources/db/migration/V73__seed_haengsung_company_for_multi_tenant.sql) — working Flyway template for adding a tenant to local R&D.
+- `wecms-api/src/main/java/com/kosign/wecms/domain/auth/bootstrap/DataSeeder.java` *(historical — the `domain/auth/bootstrap/` package was deleted 2026-06-10)* — `__BCRYPT_PENDING__` sentinel patcher.
+- `V11__empl_infm_busi_admn_infm.sql` — local `wb_get_next_val` PL/pgSQL definition (2-branch port). *(historical — split into `V52__empl_infm.sql` + `V27__busi_admn_infm.sql`; the `wb_get_next_val` body now lives in `V140__wb_get_next_val.sql`)*
+- `V73__seed_haengsung_company_for_multi_tenant.sql` — working Flyway template for adding a tenant to local R&D. *(historical — DROPPED; tenant seeds were removed in the 2026-06-09 rebaseline)*
 - `Claude Code (AI)/sql/setup_uat_account_*.sql` — historical legacy UAT scripts (the source pattern Script A in §6 was derived from).

@@ -1,5 +1,14 @@
 # Overseas Payment — Database Mapping
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../../references/database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../../references/database/flyway-migration-baseline.md) §5.
+
 > Entity ↔ table ↔ column map. Hub: [README.md](README.md). All tables present in the legacy table inventory; the refactor mirrors the JEX DDL (no rename/re-type). Verified against the `OvrsPymn*` entities on 2026-06-23.
 
 > **Correct table names.** The per-line detail table/entity is **`OVRS_PYMN_SUMR_DETL`** (`OvrsPymnSumrDetl`). The earlier `OVRS_PYMN_DTLS` name was wrong and is retired. (The repository class is named `OvrsPymnDtlsRepository` but maps the `OvrsPymnSumrDetl` entity → `OVRS_PYMN_SUMR_DETL`.)

@@ -1,5 +1,14 @@
 # Open Questions (2026-06-05)
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../references/database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../references/database/flyway-migration-baseline.md) §5.
+
 > Whole-project review from a **PO + senior fullstack** lens, built from reading the actual code (`wecms-api` + cross-checking `wecms-web`) on 2026-06-05.
 > **Status**: ✅ *Clear in code* (no PO needed, just confirm) · ❓ *Needs PO/stakeholder decision* · ⚠️ *Bug/contradiction to confirm*.
 > **Severity**: 🔴 P0 (blocks production go-live) · 🟠 P1 (architecture/safety impact, do soon) · 🟡 P2 (needs clarification, not blocking).

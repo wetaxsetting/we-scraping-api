@@ -56,5 +56,5 @@ There is **no** `GET /api/v1/common/banks`, `/api/v1/common/currencies`, or gene
 - Frontend twin: [`../../../../../wecms-web/docs/features/common/common-code-lookup/README.md`](../../../../../wecms-web/docs/features/common/common-code-lookup/README.md)
 - Owning feature — reporting-account data + CRUD: [`../../settings/chart-of-accounts/README.md`](../../settings/chart-of-accounts/README.md)
 - Owning feature — purpose codes: [`../../settings/purpose/README.md`](../../settings/purpose/README.md)
-- Audit deliverables: [`../../../audits/common-source-index.md`](../../../audits/common-source-index.md) · [`common-gap-analysis.md`](../../../audits/common-gap-analysis.md) · [`common-docs-audit.md`](../../../audits/common-docs-audit.md)
+- Audit deliverables: [`../../../audits/common-source-index.md`](../../../audits/modules/common-source-index.md) · [`common-gap-analysis.md`](../../../audits/modules/common-gap-analysis.md) · [`common-docs-audit.md`](../../../audits/modules/common-docs-audit.md)
 - Reference-data rule: `wecms-api/CLAUDE.md` §"Reference data — single sources of truth"

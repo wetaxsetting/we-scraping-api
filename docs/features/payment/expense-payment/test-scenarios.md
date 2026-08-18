@@ -34,7 +34,7 @@
 - Tenant isolation: every query scoped by `BIZ_KEY` + `SCDUL_PYMN_TYPE_CD="02"`.
 
 ## Dispatch SIT/UAT (manual — flag-gated)
-See [dispatch-sit-uat-deployment-checklist.md](./dispatch-sit-uat-deployment-checklist.md) for the end-to-end transmission checklist (EFS/SFTP/00301/202 flags + B1/B2/`TB_FIRM_CONF` provisioning). Default-config DB-row-only validation is listed there.
+See [dispatch-sit-uat-deployment-checklist.md](../../../deployment/expense-payment-dispatch-sit-uat-checklist.md) for the end-to-end transmission checklist (EFS/SFTP/00301/202 flags + B1/B2/`TB_FIRM_CONF` provisioning). Default-config DB-row-only validation is listed there.
 
 ## Frontend tests
 None present for the Expense pages — see [wecms-web/docs/features/payment/expense-payment/test-scenarios.md](../../../../../wecms-web/docs/features/payment/expense-payment/test-scenarios.md).

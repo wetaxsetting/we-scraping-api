@@ -1,5 +1,14 @@
 # Banking > Own Account Transfer — Database Design (Refactor)
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../flyway-migration-baseline.md) §5.
+
 **Refactor slug:** `own-account-transfer`
 **Status:** Phase 1 — design only. No code in this phase.
 **Feature spec:** [../../features/banking/own-account-transfer.md](../../../features/banking/internal-transfer-vnd/own-account-transfer/README.md)
@@ -220,7 +229,7 @@ ON CONFLICT (WEB_SVC_ID, DYM_AREA_ID, FIELD_ID) DO NOTHING;
 
 ## 7. Parity audit hooks
 
-A separate [docs/refactor-wecms/audits/own-account-transfer-parity.md](../../audits/own-account-transfer-parity-2026-06-01.md) (to be authored alongside the Phase 2 backend MR) should record:
+A separate [docs/refactor-wecms/audits/own-account-transfer-parity.md](../../../audits/legacy-parity/own-account-transfer-parity-2026-06-01.md) (to be authored alongside the Phase 2 backend MR) should record:
 
 - Side-by-side row count: JEX `dev.wecms.vn` source-account list vs refactor `localhost:5434` list, same tenant, same `bank_cd` filter, same user, same `prdt_type`.
 - For each row: `(bank_cd, acct_no)` match + `bal` exact-equal (or documented divergence reason).

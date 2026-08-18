@@ -508,7 +508,7 @@ VAN gateway timeout, against an append-only table that is never pruned, and it *
 So the indexes **exceed** legacy rather than matching it, and the need is real regardless: they are
 justified by the new access pattern, not by parity. **Still apply both before enabling any leg in
 UAT/PROD.** The same reasoning covers the three sweep indexes in
-[`dispatch_sweep_indexes_20260729.sql`](../../../Claude%20Code%20%28AI%29/sql/dispatch_sweep_indexes_20260729.sql)
+[`add-dispatch-sweep-indexes-2026-07-29.sql`](../sql/2026/add-dispatch-sweep-indexes-2026-07-29.sql)
 — five refactor-introduced indexes in total, all on shared legacy tables, all needing DBA sign-off.
 
 ### 6.2 Dependency table
@@ -666,7 +666,7 @@ same global `firm_seq_no` / `firm_file_seq_no`), so ShedLock does not help there
 | Batch execution audit | **Implemented** — `TB_FIRM_TRAN`, `TB_FIRM_BAT_API_TRAN` (`DispatchApiTranAuditWriter`, `REQUIRES_NEW` so it survives a rollback), `TB_FIRM_FILE_RSLT` | ready |
 | Alert hook | **Implemented but OFF** — `OpsAlertService` posts via EFS `WGVN_MSG_SEND_001`; requires `alert.enabled=true` **and** EFS enabled | code ready |
 | Scheduler execution visibility | **Partial** — `shedlock.locked_at` is a usable heartbeat; no metric | usable |
-| **Stuck pay-file (WAIT) detection** | **Implemented 2026-07-28, OFF by default** — `StuckPayFileMonitorService` + `StuckPayFileMonitorJob` sweep `TB_PAY_FILE_MST` for `PROC_STAT='9'` rows older than a threshold (default 15 min), classify the likely cause, emit a structured `WARN` summary and one de-duplicated aggregated ops alert. **Read-only — never changes `PROC_STAT`.** Closes the observability half of the silent-`SKIP` gap (`OperatingHoursService` returns `SKIP` with no FAIL and no alert). Config: [wecms-batch-environment-variables.md §2a](wecms-batch-environment-variables.md) · design: [../audits/payment-dispatch-operating-hours-flow.md §10](../audits/payment-dispatch-operating-hours-flow.md) | code ready, **enable in SIT first** |
+| **Stuck pay-file (WAIT) detection** | **Implemented 2026-07-28, OFF by default** — `StuckPayFileMonitorService` + `StuckPayFileMonitorJob` sweep `TB_PAY_FILE_MST` for `PROC_STAT='9'` rows older than a threshold (default 15 min), classify the likely cause, emit a structured `WARN` summary and one de-duplicated aggregated ops alert. **Read-only — never changes `PROC_STAT`.** Closes the observability half of the silent-`SKIP` gap (`OperatingHoursService` returns `SKIP` with no FAIL and no alert). Config: [wecms-batch-environment-variables.md §2a](wecms-batch-environment-variables.md) · design: [../audits/payment-dispatch-operating-hours-flow.md §10](../audits/deployment/payment-dispatch-operating-hours-flow.md) | code ready, **enable in SIT first** |
 | **Health endpoint** | **MISSING** — C-5, actuator not a dependency | blocker |
 | **Metrics** | **MISSING** — no Micrometer, no actuator | blocker |
 | **Structured (JSON) logs** | **MISSING** — plain pattern layout only | gap |

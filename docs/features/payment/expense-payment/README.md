@@ -21,7 +21,7 @@
 | [refactor-gap-analysis.md](./refactor-gap-analysis.md) | MATCH / APPROVED DEVIATION / PARTIAL / DEAD LEGACY / MISSING |
 | [source-code-index.md](./source-code-index.md) | Backend + frontend file inventory + tests |
 | [test-scenarios.md](./test-scenarios.md) | BE + FE test inventory + missing coverage |
-| [dispatch-sit-uat-deployment-checklist.md](./dispatch-sit-uat-deployment-checklist.md) | Firm-banking transmission flags + SIT/UAT provisioning (G3) |
+| [dispatch-sit-uat-deployment-checklist.md](../../../deployment/expense-payment-dispatch-sit-uat-checklist.md) | Firm-banking transmission flags + SIT/UAT provisioning (G3) |
 
 ## Screens (this feature)
 
@@ -110,7 +110,7 @@ Base URI `/api/v1/payment/expense-payment`. **MATCH** with the frontend client [
 | [`ExpensePaymentUploadDialog.tsx`](../../../../../wecms-web/components/payment/expense-payment/ExpensePaymentUploadDialog.tsx) | Thin wrapper over `<PaymentExcelUploadDialog>`. Supplies the Expense-specific column set (expense-account + description + reporting-account-centric) + parse/upload handlers. |
 | `types.ts` | Local component types. |
 
-### 1.3 Routes ([`app/(dashboard)/payment/expense-payment/`](../../../../../wecms-web/app/(dashboard)/payment/expense-payment))
+### 1.3 Routes ([`app/(dashboard)/payment/expense-payment/`](<../../../../../wecms-web/app/(dashboard)/payment/expense-payment>))
 
 | Route | page.tsx export | Imported component |
 |---|---|---|
@@ -127,7 +127,7 @@ Base URI `/api/v1/payment/expense-payment`. **MATCH** with the frontend client [
   - `PAYMENT_EXPENSE_PAYMENT_SCHEDULED_DETAIL` = `"payment-expense-payment-scheduled-detail"`
   - `PAYMENT_EXPENSE_PAYMENT_RESULT` = `"payment-expense-payment-result"`
   - `PAYMENT_EXPENSE_PAYMENT_RESULT_DETAIL` = `"payment-expense-payment-result-detail"`
-- View Setting seed: [V143__expense_payment_view_setting_seed.sql](../../../../src/main/resources/db/migration/V143__expense_payment_view_setting_seed.sql).
+- View Setting seed: [V156__sys_scr_option_wecms.sql](../../../../src/main/resources/db/migration/V156__sys_scr_option_wecms.sql).
 
 ---
 
@@ -141,7 +141,7 @@ Base URI `/api/v1/payment/expense-payment`. **MATCH** with the frontend client [
 | Upload-dialog column set | recipient acct, name, bank, network, amount, description, doc no, note | Expense-specific — column set centred on expense account + description + reporting account (exact list: follow-up MR documents from `<ExpensePaymentUploadDialog>`'s `COLUMNS` array) |
 | Discriminator value | `"03"` | `"02"` |
 | Audit `WSVC_ID` | `internal-transfer` | `expense-payment` |
-| Key-sequence | `scdul_pymn_no` via `InternalTransferKeyGenerator` + `*_KEY_SEQ` (date-prefixed) | Expense **reuses** `InternalTransferKeyGenerator.nextScdulPymnNo` verbatim (shared physical table). `APPR_SEQ_NO` via the global `wb_get_next_val('sq_appr_seq_no')` funnel; detail numbering via `wb_get_next_val('scdul_pymn_sumr_detl','scdul_pymn_detl_no')`. |
+| Key-sequence | `scdul_pymn_no` via `InternalTransferKeyGenerator` → `wb_get_next_val` funnel (per-tenant `MAX+1`, V140 #36). ⚠️ *The former `*_KEY_SEQ` date-prefixed counter was **retired 2026-06-09**.* | Expense **reuses** `InternalTransferKeyGenerator.nextScdulPymnNo` verbatim (shared physical table). `APPR_SEQ_NO` via the global `wb_get_next_val('sq_appr_seq_no')` funnel; detail numbering via `wb_get_next_val('scdul_pymn_sumr_detl','scdul_pymn_detl_no')`. |
 | Dispatch executor | shared `TransferDispatchExecutor` (Vendor/Payroll) / dedicated `InternalTransferDispatchExecutor` | **Dedicated `ExpenseDispatchExecutor`** (isolated copy carrying the G2 legacy-parity fixes; shared executor left untouched for Vendor/Payroll) |
 
 Per [payment hub README §2 + §3](../README.md), Expense consumes the shared infrastructure verbatim.
@@ -157,7 +157,7 @@ The code is implemented full-stack; the gaps below are doc-completeness and know
 - **MATCH (verified):** `APPR_STTS` is **not** stored on `SCDUL_PYMN_SUMR` (no such column in legacy JEX) — derived via `wb_get_appr_stts(...)` over `EXPT_RESOL_MSTR.APPR_TYPE_CD`; rejected = `R` not `X`. Same model as Internal Transfer / the other payment modules.
 - **MATCH (verified):** dispatch G1 gate requires `EXPT_RESOL_MSTR.APPR_TYPE_CD = '01'` (fully approved) before bank-dispatch tables are written — `WBE2063` otherwise (legacy parity, `PymnHelper.pymn_0001_001_c001:2146`).
 - **APPROVED DEVIATION:** reporting-account is **late-bind via PATCH** (`/{id}/lines/{lineId}/reporting-account`), same as Vendor — the earlier "Expense may require it on Save" open question is resolved as no special requirement; the create path does not mandate it.
-- **PARTIAL (dispatch, flag-gated by design):** the `ExpenseDispatchExecutor` writes pending DB rows unconditionally but all real bank hand-offs (EFS/VAN, SFTP, 00301 receive, VND 202 realtime) are `@ConditionalOnProperty`-gated **off by default** in every profile. See [dispatch-sit-uat-deployment-checklist.md](./dispatch-sit-uat-deployment-checklist.md) — verified accurate against the dispatch code this pass.
+- **PARTIAL (dispatch, flag-gated by design):** the `ExpenseDispatchExecutor` writes pending DB rows unconditionally but all real bank hand-offs (EFS/VAN, SFTP, 00301 receive, VND 202 realtime) are `@ConditionalOnProperty`-gated **off by default** in every profile. See [dispatch-sit-uat-deployment-checklist.md](../../../deployment/expense-payment-dispatch-sit-uat-checklist.md) — verified accurate against the dispatch code this pass.
 
 ---
 

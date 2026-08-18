@@ -1,5 +1,14 @@
 # Banking > Account Inquiry (FCY) — DB Design
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../flyway-migration-baseline.md) §5.
+
 **Refactor screen ID:** `banking-account-inquiry-fcy`
 **Feature spec:** [../../features/banking/account-inquiry-fcy.md](../../../features/banking/current-savings-fcy/account-inquiry/README.md)
 **JEX reference:** `ACCT_MSTR` table (read-only — same physical table on both sides; same table the VND screen uses)
@@ -142,7 +151,7 @@ For the full migration log see [../../../wecms-api/CLAUDE.md](../../../../CLAUDE
 
 ### V43 seed (already shipped)
 
-The FCY-specific seed lives in [V43__view_setting_seed_banking_account_inquiry_fcy.sql](../../../../src/main/resources/db/migration/V43__view_setting_seed_banking_account_inquiry_fcy.sql) and is idempotent (`ON CONFLICT (WEB_SVC_ID, FIELD_ID) DO NOTHING`):
+The FCY-specific seed lives in [V156__sys_scr_option_wecms.sql](../../../../src/main/resources/db/migration/V156__sys_scr_option_wecms.sql) and is idempotent (`ON CONFLICT (WEB_SVC_ID, FIELD_ID) DO NOTHING`):
 
 ```sql
 INSERT INTO SYS_SCR_OPTION_WECMS
@@ -170,5 +179,5 @@ The seed mirrors the VND final state (V32+V33+V34+V41+V42) under the FCY scope. 
 - Frontend page: [../../frontend/banking/account-inquiry-fcy-page.md](../../../../../wecms-web/docs/features/banking/current-savings-fcy/account-inquiry/README.md)
 - VND twin (read-only reference): [./account-inquiry-vnd-db.md](account-inquiry-vnd-db.md)
 - Cross-feature DB mapping: [../db-mapping.md](../table-mapping/db-mapping.md)
-- DB parity audit: [../../audits/db-parity-audit-2026-04-30.md](../../audits/db-parity-audit-2026-04-30.md)
+- DB parity audit: [../../audits/db-parity-audit-2026-04-30.md](../../../audits/historical/db-parity-audit-2026-04-30.md)
 - JEX schema reference: [../../../jex/architecture/database-design.md](../../../../../docs/jex/architecture/database-design.md), [../../../jex/architecture/ERD.md](../../../../../docs/jex/architecture/ERD.md)

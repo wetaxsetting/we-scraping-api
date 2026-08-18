@@ -4,7 +4,7 @@
 
 Hướng dẫn sống cho AI/lập trình viên về phần backend Spring Boot của dự án refactor WeCMS JEX → Spring/Next.js. Cập nhật file này mỗi khi code thực tế thay đổi.
 
-Các quy tắc cấp workspace (cross-tree, ranh giới ghi, nguồn chuẩn về typography, quy tắc BIZ_KEY) nằm ở [CLAUDE.md](../CLAUDE.md) gốc. Frontend Next.js mà app này phục vụ nằm ở [wecms-web-main/](../wecms-web-main/). Đặc tả chức năng JEX là tài liệu chỉ-đọc tại [WECMS DEV/CLAUDE.md](../WECMS%20DEV/CLAUDE.md).
+Các quy tắc cấp workspace (cross-tree, ranh giới ghi, nguồn chuẩn về typography, quy tắc BIZ_KEY) nằm ở [CLAUDE.md](../CLAUDE.md) gốc. Frontend Next.js mà app này phục vụ nằm ở [wecms-web/](../wecms-web/). Đặc tả chức năng JEX là tài liệu chỉ-đọc tại bộ quy tắc JEX tại [../CLAUDE.md](../CLAUDE.md) §Workspace Layout (không có file `WECMS DEV/CLAUDE.md` trên đĩa) cùng đặc tả chỉ-đọc tại [../docs/jex/](../docs/jex/).
 
 **Đang port một tính năng?** Quy trình thủ tục đầu-cuối (khám phá → tài liệu thiết kế → Flyway → backend → frontend → kiểm chứng) nằm ở [docs/refactor-wecms/MIGRATION_PLAYBOOK.md](../docs/refactor-wecms/MIGRATION_PLAYBOOK.md). Bước 4–5 của playbook là phần backend; các quy tắc mà mỗi bước liên kết tới đều nằm trong *chính file này*.
 
@@ -18,7 +18,7 @@ Trạng thái: **proof-of-concept R&D**, chỉ chạy local, chỉ trên GitLab.
 
 ## Scope Guard — Chỉ thay đổi backend khi có yêu cầu rõ ràng
 
-Cây code này **KHÔNG** bị sửa trong các task static-UI / frontend. Repo frontend (`wecms-web-main/`) là cây mặc định được phép sửa; repo này chỉ được đụng tới khi người dùng yêu cầu rõ ràng một thay đổi backend.
+Cây code này **KHÔNG** bị sửa trong các task static-UI / frontend. Repo frontend (`wecms-web/`) là cây mặc định được phép sửa; repo này chỉ được đụng tới khi người dùng yêu cầu rõ ràng một thay đổi backend.
 
 **Các điều kiện cho phép sửa cây code này:**
 
@@ -35,7 +35,7 @@ Cây code này **KHÔNG** bị sửa trong các task static-UI / frontend. Repo 
 - "Đấu nối trước" một endpoint mà một mock frontend đã có thể đảm nhiệm.
 - Sửa schema DB local, kể cả qua `postgres` MCP — thay đổi schema phải đi qua Flyway, và Flyway migration là artifact backend.
 
-**Dữ liệu mock cho static-UI thuộc sở hữu của frontend** (`wecms-web-main/components/{feature}/.../mockData.ts`). Không tạo "mock data tương ứng" ở phía backend, và không đề xuất chuyển mock của frontend vào repo này. Frontend ship các panel static-UI không phụ thuộc backend cho tới khi có yêu cầu một endpoint thật.
+**Dữ liệu mock cho static-UI thuộc sở hữu của frontend** (`wecms-web/components/{feature}/.../mockData.ts`). Không tạo "mock data tương ứng" ở phía backend, và không đề xuất chuyển mock của frontend vào repo này. Frontend ship các panel static-UI không phụ thuộc backend cho tới khi có yêu cầu một endpoint thật.
 
 Khi phân vân, hãy hỏi người dùng. Chi phí dừng lại để xác nhận thì thấp; chi phí của một migration ngoài kế hoạch hoặc một endpoint đấu nối dở dang thì cao.
 
@@ -58,6 +58,179 @@ Toàn bộ tài liệu backend refactor nằm dưới [`docs/refactor-wecms/`](.
 **JEX là tài liệu tham chiếu chỉ-đọc.** Đọc entity, DAO, IDO XML, WSVC XML, và `_act.jsp` của JEX (dưới `WECMS DEV/`) cùng các đặc tả chuẩn dưới [docs/jex/](../docs/jex/) như là đặc tả chức năng cho bất kỳ service nào đang được dịch. **Không bao giờ triển khai trực tiếp các pattern của JEX** — refactor là viết lại sạch bằng Spring Boot dựa trên hành vi JEX, không phải port nguyên xi. Không `JexData`, không `IDODynamic`, không logic kiểu `_act.jsp`, không bắt chước envelope `getInput()/getOutput()` bên trong code Java.
 
 **Truy vết đặt tên:** khi một tính năng tồn tại ở cả hai phía, đặc tả JEX tại `docs/jex/features/<slug>.md` và đặc tả refactor tại `docs/refactor-wecms/features/<slug>.md` phải dùng chung một `<slug>` kebab-case.
+
+## Quy trình TÀI LIỆU-TRƯỚC (BẮT BUỘC)
+
+> **Áp dụng từ 2026-08-17.** Nội dung đầy đủ — thứ tự bắt buộc, Definition of Done, chuẩn tên file và
+> ngày, hai template khởi tạo, quy tắc hoàn tất, cách dùng từ "kế hoạch" vs "hiện tại", quy tắc parity
+> và cross-repo, danh sách ngoại lệ — là **bản tiếng Anh** tại [CLAUDE.md](CLAUDE.md) §"Docs-First
+> Implementation Workflow (MANDATORY)". Bản tiếng Anh là nguồn chuẩn; phần dưới đây chỉ là bản tóm tắt.
+
+**Tài liệu là một phần của quy trình triển khai, không phải việc bổ sung sau khi code đã xong.**
+
+> ### Đây là quy tắc CỦA CẢ TEAM, không phải quy tắc riêng cho AI
+>
+> **Quy trình tài liệu-trước là bắt buộc với MỌI lập trình viên** đóng góp một thay đổi có ảnh hưởng
+> hành vi vào WeCMS — bất kể việc triển khai được thực hiện **bằng tay, bằng Claude Code, Cursor, một
+> trợ lý AI khác, công cụ IDE, script, hay pair programming.** Yêu cầu này thuộc về **dự án**, không
+> thuộc về một cá nhân hay một công cụ.
+>
+> **Không ai được miễn** vì: không dùng Claude/AI · thay đổi nằm trên nhánh riêng của mình · thay đổi
+> nhỏ nhưng có ảnh hưởng hành vi · chỉ backend · chỉ frontend. Một thay đổi code đúng về kỹ thuật nhưng
+> **thiếu tài liệu vẫn là CHƯA HOÀN THÀNH** theo quy định của dự án.
+>
+> **Người bắt đầu thay đổi chịu trách nhiệm** đảm bảo bản ghi có ngày tồn tại **trước khi** bắt đầu
+> viết code. **Một task → một bản ghi chuẩn duy nhất cho mỗi repo** — tài liệu thuộc về *task*, không
+> thuộc về lập trình viên. Nếu lập trình viên B tiếp tục việc của A thì B **cập nhật đúng bản ghi đó**,
+> không tạo bản riêng theo tên người (`…-dev-a-…`, `sokny-fix.md`). Khi làm song song: kiểm tra xem đã
+> có bản ghi cho task chưa trước khi tạo mới; nếu hai nhánh sửa cùng một bản ghi thì **giải quyết
+> conflict như với source code**, không âm thầm bỏ phần tài liệu của người khác.
+>
+> **Quy tắc áp dụng cho mọi nhánh và mọi môi trường** — local · feature branch · SIT · UAT · **hotfix
+> PROD cũng KHÔNG được miễn**. Nếu vì lý do vận hành khẩn cấp mà code phải lên trước, thì: tạo bản ghi
+> ngay khi có thể · ghi rõ rằng việc triển khai khẩn cấp đã diễn ra trước bản ghi · giải thích lý do ·
+> và **hoàn tất tài liệu trước khi coi thay đổi là đã đóng**. Không biến "code trước, tài liệu sau"
+> thành quy trình bình thường.
+>
+> **Khi review/merge**, người review kiểm tra: bản ghi có ngày tồn tại · đúng task/repo · triển khai
+> thực tế đã được ghi · có kết quả test · tài liệu tính năng thường trực đã cập nhật nếu cần · link hợp
+> lệ · `Status` không bị bỏ lại `IN PROGRESS` sai. Đây là kỳ vọng review, **không** phải cổng CI.
+>
+> Chi tiết đầy đủ: [CLAUDE.md](CLAUDE.md) §12 "Who must follow this".
+
+Với **mọi** yêu cầu làm thay đổi hành vi có ý nghĩa — sửa bug · sửa issue · làm tính năng · thay đổi
+hành vi chức năng · thay đổi business rule · thay đổi hành vi API · thay đổi hành vi UI · xử lý parity
+với JEX cũ · refactor có ảnh hưởng chức năng · sửa hành vi trên SIT/UAT/PROD · thay đổi tích hợp có
+ảnh hưởng quan sát được — bắt buộc:
+
+1. Đọc yêu cầu, đọc source code hiện tại, đọc tài liệu liên quan (và test / Git history khi cần).
+2. Xác định vị trí tài liệu đúng, rồi **TẠO bản ghi Markdown có ngày TRƯỚC KHI sửa code ứng dụng**.
+3. Đặt `**Status:** IN PROGRESS` và ghi: yêu cầu / vấn đề · hành vi hiện tại **đã kiểm chứng** · hành vi
+   mong muốn · scope · out of scope · điều tra ban đầu · kế hoạch triển khai · kế hoạch kiểm thử.
+4. **Chỉ sau khi bản ghi tồn tại** mới được sửa code ứng dụng; cập nhật lại **chính file đó** khi
+   triển khai thực tế khác kế hoạch.
+5. Sau khi triển khai, hoàn tất bản ghi: root cause đã kiểm chứng · triển khai thực tế · file đã thay
+   đổi · ảnh hưởng API / UI / database-tích hợp · test đã chạy · kết quả thực tế · hạn chế / việc còn
+   lại. **Không tạo file "final" thứ hai.**
+6. Cập nhật tài liệu tính năng thường trực nếu hành vi chuẩn của hệ thống đã thay đổi.
+7. Đổi `Status:` từ `IN PROGRESS` sang `COMPLETE` · `CLOSED` · `PARTIAL` · `BLOCKED`.
+8. Kiểm tra các link tài liệu (mục tiêu: **0 link lỗi**), rồi mới được báo là hoàn thành.
+
+**Chuẩn tên file:** `descriptive-name-YYYY-MM-DD.md` — kebab-case chữ thường, ngày theo ISO, tên mô tả
+đúng chủ đề (ví dụ `account-filter-parity-fix-2026-08-17.md`). **Không** dùng mã công việc hoặc số thứ
+tự làm tên file (`a1-01-…`, `k9-fix.md`, `p0-fix.md`, `p1-update.md`, `th-01-verification.md`,
+`task-03.md`, `issue-04.md`, `final-fix.md`, `new-feature.md`). Mã nội bộ (`A1-01`, `K9`, `TH-01`,
+`P0`, `Task-03`, …) đặt trong metadata của tài liệu ở dòng `**Issue:**`, không đặt trong tên file.
+Ngày luôn là `YYYY-MM-DD`, không dùng `20260817` / `17-08-2026` / `08-17-2026`, và **không dùng ngày
+giả**.
+
+**Vị trí — CHÍNH SÁCH ĐÃ ĐỔI 2026-08-17** (thay thế bảng vị trí ban đầu; *quy trình tài liệu-trước và
+chuẩn tên file KHÔNG đổi*). Bốn loại bản ghi, mỗi loại một chỗ:
+
+| Loại bản ghi | Vị trí |
+|---|---|
+| **BUG** — bản ghi triển khai cho việc sửa lỗi | `docs/bugs/` |
+| **ISSUE** — bản ghi triển khai không phải bug (hành vi · vận hành · cấu hình · việc triển khai được theo dõi) | `docs/issues/` |
+| **FEATURE** — tài liệu tính năng hiện hành và thường trực (**giữ nguyên cấu trúc**) | `docs/features/<domain>/<feature>/` |
+| **AUDIT** — audit · rà soát parity · verification · điều tra · so sánh legacy · verification migration · rà soát kiến trúc · kiểm chứng lịch sử · phân tích xuyên tính năng | `docs/audits/<category>/` |
+
+Bản ghi BUG/ISSUE có ngày **không còn** nằm trong folder tính năng; câu "**Không tạo folder `bugs/` hay
+`issues/` chung**" ở bản trước **đã được thu hồi** — hai folder đó giờ thuộc tập top-level đã được duyệt.
+`docs/architecture/` · `docs/deployment/` · `docs/security/` · `docs/planning/open-questions/` ·
+`docs/references/database/` · `docs/references/api-spec/` giữ nguyên mục đích cũ là **tài liệu tham chiếu
+thường trực** — một BUG/ISSUE có chạm tới các vùng đó vẫn ghi bản ghi vào `docs/bugs/` / `docs/issues/`,
+rồi cập nhật tài liệu thường trực sau.
+
+**BUG hay ISSUE?** Dùng **BUG** khi: hành vi đã triển khai bị sai · thứ đang chạy được bị hỏng · hành vi
+khác với yêu cầu đã chấp nhận · một defect gây hành vi sai · hành vi parity sai và việc cần làm là sửa nó.
+Dùng **ISSUE** khi: cần triển khai nhưng không rõ ràng là defect sản phẩm · cần chỉnh hành vi vận hành /
+cấu hình · xử lý một vấn đề triển khai còn treo · một vấn đề được theo dõi nhưng không khớp hẳn với BUG.
+**Khi chưa rõ, chọn ISSUE.** Không tạo trùng cả BUG lẫn ISSUE cho cùng một việc.
+
+**Không bao giờ biến một audit thành bản ghi triển khai.** Nếu audit dẫn tới việc sửa code, audit ở lại
+`docs/audits/` và tạo **một bản ghi riêng** trong `docs/bugs/` hoặc `docs/issues/`. **Tính năng lớn vẫn
+là tính năng** — không mở bản ghi bug/issue chỉ vì việc làm tính năng nhiều.
+
+**Việc ảnh hưởng cả hai repo** (`wecms-api` + `wecms-web`) phải tạo bản ghi ở **cả hai** repo *trước
+khi* sửa code của bất kỳ bên nào — `docs/bugs/` ↔ `docs/bugs/` cho BUG, `docs/issues/` ↔ `docs/issues/`
+cho ISSUE, dùng cùng chủ đề và cùng ngày khi phù hợp. Phía API ghi
+rule/endpoint/request-response/validation/database; phía WEB ghi luồng UI/input/validation/cách gọi
+API/trạng thái loading-error-result. Không copy chi tiết nội bộ backend vào bản ghi frontend và ngược
+lại. Với **audit xuyên repo**, ưu tiên repo sở hữu phạm vi audit chính; nếu cả hai bên đều cần bằng
+chứng riêng thì tạo bản ghi audit có phạm vi riêng ở mỗi repo và liên kết chéo.
+
+**Không tự động di chuyển bản ghi cũ.** Đây là quy tắc cho công việc **tương lai**; các bản ghi lịch sử
+giữ nguyên vị trí hiện tại.
+
+**Ngoại lệ (thường không cần bản ghi mới):** sửa lỗi chính tả trong tài liệu · chỉ format · chỉ comment ·
+sắp xếp import · chỉ lint · refresh file sinh tự động · chỉ lockfile · đổi tên/đường dẫn thuần cơ học
+không đổi hành vi · thay đổi thuần thẩm mỹ không ảnh hưởng tương tác · debug tạm local không commit.
+Nhưng nếu một trong các việc đó làm tài liệu hiện có sai, phải cập nhật tài liệu; và nếu một thay đổi
+"cơ học" thực ra làm đổi hành vi thì quy tắc tài liệu-trước được áp dụng.
+
+**Hành vi của Claude Code / Agents / trợ lý AI khác — thực thi quy tắc của team, không phải quy tắc
+riêng của AI:** với các yêu cầu *fix / implement / change / update / resolve / thêm tính năng / đổi
+business behaviour / đổi UI / đổi API / sửa parity*, **không** được sửa code ứng dụng ngay.
+Phải đọc code hiện tại → đọc tài liệu → tạo bản ghi có ngày (hoặc **cập nhật bản ghi đã có** của task
+đó) → đặt `Status: IN PROGRESS` → ghi lại hiện trạng đã kiểm chứng và kế hoạch → rồi mới sửa code.
+**Không** hỏi *"bạn có muốn tôi viết tài liệu không?"* cho một thay đổi hành vi rõ ràng có ý nghĩa —
+tài liệu là bắt buộc theo mặc định, **với cả lập trình viên và với trợ lý AI**. Quy tắc này
+không làm yếu **Scope Guard** ở trên, cũng không làm yếu yêu cầu phân tích-và-xin-duyệt trước khi sửa
+bảng/entity/khoá kế thừa ở [CLAUDE.md](../CLAUDE.md) gốc §5.
+
+**Nếu công việc không hoàn tất:** **không xoá** bản ghi. Đặt `Status: BLOCKED` hoặc `Status: PARTIAL`
+và ghi rõ: đã thử gì · phát hiện khi điều tra · đã làm được gì · chưa làm gì · vì sao dừng · cần quyết
+định hay phụ thuộc nào.
+
+### Ảnh hưởng DATABASE (bổ sung 2026-08-17)
+
+> Nội dung đầy đủ ở bản tiếng Anh: [CLAUDE.md](CLAUDE.md) §14 "Database impact — mandatory declaration
+> and artifacts". Phải đọc trước: [docs/references/database/flyway-migration-baseline.md](docs/references/database/flyway-migration-baseline.md)
+> (vì sao Flyway bị TẮT) · [docs/references/database/legacy-table-inventory.md](docs/references/database/legacy-table-inventory.md)
+> · [docs/sql/README.md](docs/sql/README.md).
+
+**Mọi BUG / ISSUE / FEATURE phải khai báo mục `## Database Impact` ngay khi ở `Status: IN PROGRESS`** —
+tức là **trước khi** viết code — chọn đúng một giá trị: `NONE` · `FLYWAY MIGRATION` ·
+`MANUAL DBA SCRIPT` · `BOTH` · `UNRESOLVED — DBA REVIEW REQUIRED`. **Không được ghi chung chung.**
+
+| Loại thay đổi | Sản phẩm cần tạo |
+|---|---|
+| **Bảng mới** · **DB function mới** | file `V<n>__<tên>.sql` trong `src/main/resources/db/migration/` (là *schema-of-record*; **Flyway đang TẮT** nên DBA vẫn chạy bằng tay) |
+| **ALTER bảng đã có** · index · constraint · thay thế function đã có · **mọi thay đổi dữ liệu** (`INSERT`/`UPDATE`/`DELETE`, seed, dữ liệu tham chiếu/cấu hình, backfill, SQL sửa lỗi, migration một lần) | script DBA thủ công tại `docs/sql/<YYYY>/descriptive-name-YYYY-MM-DD.sql` |
+
+**KHÔNG có quy tắc "mọi thay đổi DB đều thuộc Flyway"** — không được đưa `ALTER TABLE` / `UPDATE` / SQL
+sửa lỗi vào thư mục migration chỉ vì việc đó thuộc một feature, và **không bao giờ sửa migration đã áp
+dụng**. **Không dán SQL thực thi vào file Markdown** — bản ghi giải thích **VÌ SAO**, file `.sql` ghi
+**CÁI GÌ cần chạy**; hai bên liên kết chéo với nhau.
+
+Tên file SQL: `descriptive-name-YYYY-MM-DD.sql` (không dùng `P0.sql`, `fix.sql`, `update.sql`,
+`script.sql`, `final.sql`, `A1-01.sql`, hay tên theo người). Mỗi script có header chuẩn (Date · Related
+record · Type DDL/DML · Execution: MANUAL · Target environments · Executor · Transaction requirement ·
+Rollback) và 4 phần: **PRE-CHECK · CHANGE · POST-CHECK · ROLLBACK/RECOVERY NOTES**. Pre/post-check phải
+**thực sự chứng minh** thay đổi; **không được bịa số dòng**. Nếu rollback không an toàn thì ghi rõ
+**`ROLLBACK REQUIRES DBA REVIEW`**.
+
+**Tạo file SQL KHÔNG đồng nghĩa với việc đã chạy SQL.** Script được chuẩn bị và quản lý phiên bản bởi
+quy trình phát triển; **việc thực thi là một hành động vận hành riêng biệt** do **DBA team**, **lập trình
+viên được uỷ quyền**, hoặc **team deploy/vận hành** thực hiện tuỳ môi trường. Mỗi artifact ghi rõ người
+dự kiến thực thi (`DBA TEAM` · `DEV TEAM` · `DBA OR DEV TEAM — environment dependent` ·
+`TBD — requires approval`); với UAT/PROD ưu tiên DBA hoặc người vận hành được uỷ quyền. **Trợ lý AI không
+bao giờ tự chạy SQL trên môi trường dùng chung.**
+
+Bản ghi có công việc DB thủ công phải kèm bảng **`## Database Execution Status`** (LOCAL / SIT / UAT /
+PROD × required · executor · status · ngày · verification). **Không đánh `COMPLETE` cho một môi trường
+khi chưa có bằng chứng.** Nếu code phụ thuộc một thay đổi DB chưa được áp dụng thì **task chưa
+`COMPLETE`** — dùng `PARTIAL` / `BLOCKED` / `READY FOR DBA` / `READY FOR DEPLOYMENT`.
+
+Thay đổi **có nguy cơ mất dữ liệu** (`DROP` · `DELETE` · `TRUNCATE` · thu hẹp cột · siết constraint ·
+sửa dữ liệu lớn · update không thể hoàn nguyên) phải ghi
+**`DESTRUCTIVE / DATA-RISK CHANGE — DBA REVIEW REQUIRED`** ở **cả** bản ghi Markdown **và** file SQL;
+không tự động thực thi, và **không sinh ra lệnh phá huỷ từ một yêu cầu chưa rõ ràng**.
+
+**Audit** ở [docs/audits/](docs/audits/) có thể *phát hiện* nhu cầu thay đổi DB nhưng **không** được tự
+tạo hay thực thi thay đổi đó — mở bản ghi `docs/bugs/` hoặc `docs/issues/` riêng và gắn artifact SQL ở đó.
+**Artifact DB thuộc `wecms-api`;** `wecms-web` chỉ khai báo phụ thuộc và liên kết tới bản ghi backend —
+**không có file `.sql` nào nằm trong `wecms-web`.**
 
 ## Tổng quan dự án
 
@@ -157,7 +330,7 @@ Toàn bộ tài liệu backend refactor nằm dưới [`docs/refactor-wecms/`](.
 3. **Thay các controller trả về `Map<String, Object>`** bằng một DTO record Java có kiểu.
 4. **Dịch mã ML của JEX (`P00001` v.v.) sang `WBExxxx` / `WBIxxxx`.** Không tái dùng mã JEX nguyên văn — thêm mã mới vào `messages.properties` và tham chiếu mã cũ trong tài liệu migration.
 5. **Đối chiếu entity / DAO / IDO XML / WSVC XML / `_act.jsp` của tính năng mới với PROD Active Table List** (mục "PROD DB Table Scope for Refactoring") trước khi viết bất kỳ Flyway nào. Nếu một bảng được tham chiếu không có trong danh sách active, nó không được tạo entity.
-6. **Cập nhật wire type + mapper frontend tương ứng trong cùng MR.** Đây là quy tắc full-stack ownership từ [CLAUDE.md](../CLAUDE.md) gốc của workspace. Các wire type ở repo frontend trong [lib/types/api.ts](../wecms-web-main/lib/types/api.ts) phải đổi sang lowercase ngay khi DTO của bạn đổi.
+6. **Cập nhật wire type + mapper frontend tương ứng trong cùng MR.** Đây là quy tắc full-stack ownership từ [CLAUDE.md](../CLAUDE.md) gốc của workspace. Các wire type ở repo frontend trong [lib/types/api.ts](../wecms-web/lib/types/api.ts) phải đổi sang lowercase ngay khi DTO của bạn đổi.
 
 ### Ngoại lệ (không phải quy tắc) — schema DB + `@Column` JPA
 
@@ -176,7 +349,7 @@ Các id WSVC / menu của JEX cũ (`comm_0220_001`, `fnsh_0001_001`, `pymn_0010_
 | Khóa message i18n | `audit.firm_banking_settings.*`, `settings.firm_banking_settings.*` | ❌ không bao giờ `audit.comm_0220_001.*` |
 | Tag Log / MDC | `firm-banking-settings` | ❌ không bao giờ `comm_0220_001` |
 | `AUDIT_LOGS_INFM.WSVC_ID` | slug route refactor, ví dụ `firm-banking-settings` (override 2026-05-09) | ❌ không bao giờ `comm_0220_001` cho ghi mới — V67 back-fill các dòng local còn mang giá trị cũ |
-| View Setting `WEB_SVC_ID` | slug dựa trên route refactor từ registry trung tâm, ví dụ `banking-account-inquiry-vnd` (xem [wecms-web-main/lib/viewSettingScreens.ts](../wecms-web-main/lib/viewSettingScreens.ts)) | ❌ không bao giờ `fnsh_0001_001` (registry cũ loại bỏ ở V32) |
+| View Setting `WEB_SVC_ID` | slug dựa trên route refactor từ registry trung tâm, ví dụ `banking-account-inquiry-vnd` (xem [wecms-web/lib/viewSettingScreens.ts](../wecms-web/lib/viewSettingScreens.ts)) | ❌ không bao giờ `fnsh_0001_001` (registry cũ loại bỏ ở V32) |
 
 Id WSVC cũ chỉ được giữ lại trong **hai nhóm** về sau:
 
@@ -187,7 +360,7 @@ Id WSVC cũ chỉ được giữ lại trong **hai nhóm** về sau:
 
 Nếu bạn thấy mình định dùng một id WSVC cũ trong bất kỳ tên trường Java mới, đoạn REST URI, package, class, khóa i18n, tag log, **hoặc cột DB** nào (bao gồm `AUDIT_LOGS_INFM.WSVC_ID`), **hãy dừng lại** — đó là một bug. Dùng slug.
 
-Các quy tắc frontend tương ứng (route Next.js, `screenId` của View Setting) nằm ở [wecms-web-main/CLAUDE.md](../wecms-web-main/CLAUDE.md) §"Routing" + §13.
+Các quy tắc frontend tương ứng (route Next.js, `screenId` của View Setting) nằm ở [wecms-web/CLAUDE.md](../wecms-web/CLAUDE.md) §"Routing" + §13.
 
 ## Quy tắc kiến trúc
 
@@ -527,7 +700,7 @@ Thêm mã mới vào `messages.properties` trước, rồi throw `new BusinessEx
   | V32 | Chuyển View Setting sang screen-id ngữ nghĩa (2026-05-01) — xóa các dòng `fnsh_0001_001` V30 khỏi cả `SYS_SCR_OPTION_WECMS` và `USER_SCR_OPTION_WECMS`, seed lại Banking > Account Inquiry (VND) dưới `WEB_SVC_ID = 'banking-account-inquiry-vnd'` ngữ nghĩa với `DYM_AREA_ID = 'default'` trên mọi dòng, rồi `ALTER COLUMN DYM_AREA_ID SET NOT NULL` trên cả hai bảng (sau khi backfill các null). Idempotent. Phía Java (cùng MR): thêm ánh xạ `dymAreaId` vào entity `SysScrOptionWecms`/`UserScrOptionWecms`; cập nhật repo/service/controller cho hình dạng path mới (`{webSvcId}/{dymAreaId}` cộng `{webSvcId}/areas`); thêm guard validation `@Pattern`; thêm handler `ConstraintViolationException` trong `GlobalExceptionHandler`. Phạm vi R&D — không bảo toàn override do user lưu ở local. Xem [docs/jex/features/view-setting.md](../docs/jex/features/view-setting.md). |
   | V33 | Seed FIELD_ID special View Setting (2026-05-02) — thêm `CHECKBOX` (DISP_ORD=0, FIX_YN='Y') dưới `banking-account-inquiry-vnd` / `default` để neo quy ước cột chọn-dòng. Các FIELD_ID special (`CHECKBOX`, `ETC`) do admin kiểm soát — popover frontend ẩn chúng, backend `ScreenOptionService.SPECIAL_FIELD_IDS` khóa `USE_YN='Y'` + `DISP_ORD` ghim-theo-sys khi save. ETC KHÔNG seed — Account Inquiry không có cột hành động. |
   | V34 | Parity schema View Setting + seed SIZE (2026-05-02) — căn `SYS_SCR_OPTION_WECMS` / `USER_SCR_OPTION_WECMS` theo DEV: `SIZE` INTEGER → VARCHAR(10), `DISP_YN` SET NOT NULL, THÊM `SORT_YN CHAR(1) NOT NULL DEFAULT 'Y'` + `HTML_CONT TEXT` trên sys (DEV không có chúng trên user_scr — local phản chiếu). Backfill SIZE cho `banking-account-inquiry-vnd` dùng **độ rộng Figma WB365** (nguồn chuẩn về bố cục — không khớp DEV cũ ở 5 trên 7 cột). Tái khẳng định hai drift giá trị dòng tích tụ sau V32 (`BANK.fix_yn='Y'`, `VAS_ACCOUNT.use_yn='N'/disp_yn='Y'`). Xóa bảng USER cho phạm vi để lazy-init copy lại. Các sai lệch chỉ-của-refactor có tài liệu (giữ): `field_nm` rộng 200/nullable, `disp_ord` INTEGER, cột `fix_yn`, `reg_dtm`/`mod_dtm` TIMESTAMPTZ. SIZE **đã căn schema + seed giá trị nhưng vẫn chưa tiêu thụ đầu-cuối** — entity Java / DTO / TS type không đổi. **Bị thay thế ở tầng dữ liệu bởi V35** vốn đảo quyết định id ngữ nghĩa của V32 và seed lại với id DEV cũ. |
-  | V35 | Parity DEV chỉ-schema View Setting (2026-05-02) — siết kiểu/nullability cột mà không đụng nội dung dòng. `field_nm` VARCHAR(200) NULL → VARCHAR(100) NOT NULL trên cả hai bảng; `disp_ord` INTEGER NOT NULL DEFAULT 0 → NUMERIC(10,0) NOT NULL trên cả hai bảng (DROP DEFAULT trước); `size` SET NOT NULL trên sys (V34 đã populate mọi dòng dùng độ rộng Figma WB365). Các dòng `web_svc_id = 'banking-account-inquiry-vnd'` từ V32–V34 giữ nguyên — V35 KHÔNG seed `fnsh_0001_001` cũ (quy ước screenId refactor là route-based ngữ nghĩa theo `wecms-web-main/lib/viewSettingScreens.ts`, KHÔNG phải id JEX cũ). Sai lệch chỉ-của-refactor giữ: cột `fix_yn` (khóa cột, xem [docs/jex/features/view-setting.md §1.8](../docs/jex/features/view-setting.md)) và cột audit `BaseEntity` (`reg_dtm`/`mod_dtm` TIMESTAMPTZ vs VARCHAR(14) của DEV) — cả hai cố ý khác DEV. `user_scr_option_wecms.size` giữ NULLABLE (hoãn — `ScreenOptionService.initUserRowsFromSys` giờ copy sys.size vào user.size, nhưng dòng user local cũ có NULL; chuyển sang NOT NULL trong follow-up sau một vòng dev/QA xác nhận coverage). Phía Java cùng MR: `SysScrOptionWecms` thêm `size`/`sortYn`/`htmlCont`/`dispYn`; DTO `ScreenOptionItem` lộ SIZE/SORT_YN/HTML_CONT/DISP_YN; `initUserRowsFromSys` copy `size`/`dispYn`. **`disp_ord` NUMERIC(10,0) bị đảo ngay bởi V36** (xem dưới) — schema validator của Hibernate từ chối NUMERIC với ánh xạ Java `Long`/`Integer`. Idempotent. |
+  | V35 | Parity DEV chỉ-schema View Setting (2026-05-02) — siết kiểu/nullability cột mà không đụng nội dung dòng. `field_nm` VARCHAR(200) NULL → VARCHAR(100) NOT NULL trên cả hai bảng; `disp_ord` INTEGER NOT NULL DEFAULT 0 → NUMERIC(10,0) NOT NULL trên cả hai bảng (DROP DEFAULT trước); `size` SET NOT NULL trên sys (V34 đã populate mọi dòng dùng độ rộng Figma WB365). Các dòng `web_svc_id = 'banking-account-inquiry-vnd'` từ V32–V34 giữ nguyên — V35 KHÔNG seed `fnsh_0001_001` cũ (quy ước screenId refactor là route-based ngữ nghĩa theo `wecms-web/lib/viewSettingScreens.ts`, KHÔNG phải id JEX cũ). Sai lệch chỉ-của-refactor giữ: cột `fix_yn` (khóa cột, xem [docs/jex/features/view-setting.md §1.8](../docs/jex/features/view-setting.md)) và cột audit `BaseEntity` (`reg_dtm`/`mod_dtm` TIMESTAMPTZ vs VARCHAR(14) của DEV) — cả hai cố ý khác DEV. `user_scr_option_wecms.size` giữ NULLABLE (hoãn — `ScreenOptionService.initUserRowsFromSys` giờ copy sys.size vào user.size, nhưng dòng user local cũ có NULL; chuyển sang NOT NULL trong follow-up sau một vòng dev/QA xác nhận coverage). Phía Java cùng MR: `SysScrOptionWecms` thêm `size`/`sortYn`/`htmlCont`/`dispYn`; DTO `ScreenOptionItem` lộ SIZE/SORT_YN/HTML_CONT/DISP_YN; `initUserRowsFromSys` copy `size`/`dispYn`. **`disp_ord` NUMERIC(10,0) bị đảo ngay bởi V36** (xem dưới) — schema validator của Hibernate từ chối NUMERIC với ánh xạ Java `Long`/`Integer`. Idempotent. |
   | V36 | Đảo `disp_ord` View Setting về INTEGER (2026-05-02) — hotfix cho V35: Hibernate `validate` thất bại vì Java `Long` ánh xạ BIGINT nhưng V35 đặt cột thành NUMERIC. Đảo `disp_ord` NUMERIC(10,0) → INTEGER NN DEFAULT 0 trên cả hai bảng và khôi phục lập trường V34 ("khớp kiểu trường JPA `Integer dispOrd`"). Entity đảo về `Integer dispOrd` trong cùng MR. Sai lệch vĩnh viễn chỉ-của-refactor so với NUMERIC(10,0) của DEV — có tài liệu trong Javadoc entity + header V36. Idempotent (`ALTER COLUMN TYPE` là no-op khi đã INTEGER). |
   | V37 | `sort_yn` View Setting CHAR(1)→VARCHAR(1) trên sys (2026-05-02) — hotfix tạm cho lỗi Hibernate validate thứ hai sau V35 (`found bpchar, expecting char(1) (Types#VARCHAR)` cho trường `String sortYn` mới). **Sai hướng — bị thay thế bởi V38** vốn đảo thay đổi nghiêng về parity DEV (DEV là `bpchar(1)`). V37 để lại trong flyway_schema_history như-đã-áp-dụng; V38 đảo kiểu cột và entity được `@JdbcTypeCode(SqlTypes.CHAR)` để giữ parity phía DB. |
   | V38 | Đảo `sort_yn` View Setting về CHAR(1) trên sys (2026-05-02) — đảo V37, khôi phục `bpchar(1) NOT NULL DEFAULT 'Y'` parity-DEV trên `sys_scr_option_wecms.sort_yn`. Phía Java cùng MR: `SysScrOptionWecms.sortYn` annotate `@JdbcTypeCode(SqlTypes.CHAR)` để Hibernate ánh xạ `String` → kiểu JDBC CHAR và `validate` chấp nhận cột bpchar. **Khóa hướng**: khi DEV dùng `char(1)`, ưu tiên annotation phía entity hơn migration CHAR→VARCHAR — giữ DB local nghiêm ngặt parity-DEV. Idempotent. |
@@ -717,7 +890,7 @@ Nếu một tính năng tương lai cần một bảng tham chiếu mới, thêm
 > Refactor không bao giờ port interface `GenericEnum` của JEX, method
 > `getLabel()`, các annotation `@JsonValue` / `@JsonCreator`, hay bất kỳ nhãn
 > đã-localize nào bên trong thân enum — nhãn nằm trong
-> `wecms-web-main/locales/{en,ko,vi}.json` và được phân giải qua `t(key)` ở frontend.
+> `wecms-web/locales/{en,ko,vi}.json` và được phân giải qua `t(key)` ở frontend.
 
 **Hình dạng enum chuẩn (mọi domain enum theo nó):**
 
@@ -803,7 +976,7 @@ View Setting là một **tính năng chính WeCMS global / common**, không ph�
 - Các FIELD_ID lạ trong payload save (drift bundle frontend) bị âm thầm bỏ — không bao giờ throw. Response GET của popover khi thành công sẽ điều hòa user với tập cột chuẩn.
 - Cột mới thuộc Flyway migration **của riêng** trang đó. Đừng lén chèn dòng `INSERT` vào V30 — file đó đã đóng (chỉ phủ schema gốc + consumer đầu tiên `fnsh_0001_001`). Mỗi trang tương lai thêm dòng của nó trong migration ship trang, với comment kiểu `-- Seed: <page name> column set`. Đánh số file migration là slot trống kế tiếp trong `db/migration/`; seed không liên quan gì tới V30 và không bị V30 chặn.
 - Áp dụng một trang mới ở backend là **chỉ-seed**. Không controller mới, không method service mới, không DTO mới, không thay đổi entity. Các endpoint `GET / PUT / DELETE /api/v1/screen-options/{webSvcId}/{dymAreaId}` đã nhận mọi cặp `(WEB_SVC_ID, DYM_AREA_ID)` — chúng được thiết kế cho toàn-sản-phẩm, không cho một Sprint. Nếu một refactor bị cám dỗ fork `ScreenOptionController` mỗi module ("BankingScreenOptionController", "PaymentScreenOptionController", v.v.), refactor đó sai — mở rộng seed, không phải bề mặt API.
-- **Quy ước giá trị `WEB_SVC_ID` là kebab-case route-based ngữ nghĩa** — `<module>-<page>[-<type>]` (ví dụ `banking-account-inquiry-vnd`). Registry trung tâm của frontend refactor tại [`wecms-web-main/lib/viewSettingScreens.ts`](../wecms-web-main/lib/viewSettingScreens.ts) là nguồn chuẩn duy nhất — API và DB đều khóa theo cùng chuỗi mà registry export. `@Pattern` backend bắt buộc định dạng (`screenId` cần ≥ 2 đoạn kebab qua `^[a-z][a-z0-9]*(-[a-z0-9]+)+$`; `dymAreaId` chấp nhận một đoạn nên `default` pass). Regex cố ý từ chối id JEX cũ (`fnsh_0001_001`, `fnap_0001_001`, v.v. — không cho gạch dưới) để một frontend cũ không thể mồ côi dòng dưới namespace sai. Token trùng lặp (`banking-banking-account-inquiry-vnd`, `banking-account-inquiry-account-inquiry-vnd`) và id không-module (`account-inquiry-vnd`) pass regex nhưng fail review — reject trong MR. Input path xấu trả về `WBE_VALIDATION` qua envelope chuẩn; giá trị screenId lạ (regex pass nhưng không có dòng `SYS_SCR_OPTION_WECMS`) trả về `WBE2001` từ `ScreenOptionService`.
+- **Quy ước giá trị `WEB_SVC_ID` là kebab-case route-based ngữ nghĩa** — `<module>-<page>[-<type>]` (ví dụ `banking-account-inquiry-vnd`). Registry trung tâm của frontend refactor tại [`wecms-web/lib/viewSettingScreens.ts`](../wecms-web/lib/viewSettingScreens.ts) là nguồn chuẩn duy nhất — API và DB đều khóa theo cùng chuỗi mà registry export. `@Pattern` backend bắt buộc định dạng (`screenId` cần ≥ 2 đoạn kebab qua `^[a-z][a-z0-9]*(-[a-z0-9]+)+$`; `dymAreaId` chấp nhận một đoạn nên `default` pass). Regex cố ý từ chối id JEX cũ (`fnsh_0001_001`, `fnap_0001_001`, v.v. — không cho gạch dưới) để một frontend cũ không thể mồ côi dòng dưới namespace sai. Token trùng lặp (`banking-banking-account-inquiry-vnd`, `banking-account-inquiry-account-inquiry-vnd`) và id không-module (`account-inquiry-vnd`) pass regex nhưng fail review — reject trong MR. Input path xấu trả về `WBE_VALIDATION` qua envelope chuẩn; giá trị screenId lạ (regex pass nhưng không có dòng `SYS_SCR_OPTION_WECMS`) trả về `WBE2001` từ `ScreenOptionService`.
 - **`DYM_AREA_ID` là bắt buộc** trong mọi cuộc gọi API và mọi dòng DB. Trang một-area dùng `default`; trang nhiều-area dùng tên kebab-case có nghĩa (`summary`, `detail`, `current-accounts`). V32 backfill các null và khóa cả hai cột thành `NOT NULL`. Xem [docs/jex/features/view-setting.md §1.5](../docs/jex/features/view-setting.md) để biết quy tắc đặt tên đầy đủ.
 - **FIELD_ID special — `CHECKBOX` (`DISP_ORD=0`) và `ETC` (`DISP_ORD=99`)** — đi qua dữ liệu View Setting để thứ tự cột / Save / Reset bảo toàn chúng, nhưng chúng KHÔNG BAO GIỜ user cuối sửa được. Popover ẩn chúng; backend khóa chúng. `ScreenOptionService.SPECIAL_FIELD_IDS` là tập chuẩn phía API: khi Save, các dòng có `FIELD_ID` trong tập đó luôn persist với `USE_YN='Y'` và `DISP_ORD` lấy nguyên văn từ seed hệ thống, bất kể payload — một frontend cũ hay lỗi không thể nới lỏng quy tắc. Với cột không-special, Save tin `DISP_ORD` của frontend vì popover đánh số dày đặc bắt đầu từ 1 sau mỗi reorder. Trang seed `CHECKBOX` chỉ khi bảng của nó render cột chọn-dòng (Account Inquiry VND ở V33); ĐỪNG bulk-seed `ETC` trên các trang không có cột hành động.
 
@@ -817,7 +990,7 @@ Thêm bản sinh đôi FCY (`fnsh_0005_001`), Approval Box, Transaction History,
 
 ### Sort bảng dùng chung — whitelist `common/web/` + enum theo-từng-domain
 
-Sort theo header bảng dùng cùng các khóa `FIELD_ID` như View Setting và chia sẻ một API contract chung trên mọi endpoint list. Chu kỳ frontend (`default → ASC → DESC → default` — xem [wecms-web-main/CLAUDE.md §13a](../wecms-web-main/CLAUDE.md)) gửi hai query param — `sortField` (`FIELD_ID` View Setting) và `sortDirection` (`ASC` / `DESC`) — và backend phân giải chúng qua một enum whitelist theo-từng-domain, không bao giờ là một chuỗi SQL thô.
+Sort theo header bảng dùng cùng các khóa `FIELD_ID` như View Setting và chia sẻ một API contract chung trên mọi endpoint list. Chu kỳ frontend (`default → ASC → DESC → default` — xem [wecms-web/CLAUDE.md §13a](../wecms-web/CLAUDE.md)) gửi hai query param — `sortField` (`FIELD_ID` View Setting) và `sortDirection` (`ASC` / `DESC`) — và backend phân giải chúng qua một enum whitelist theo-từng-domain, không bao giờ là một chuỗi SQL thô.
 
 **Primitive dùng chung — [`common/web/`](src/main/java/com/kosign/wecms/common/web/):**
 
@@ -917,7 +1090,7 @@ Controller cố ý mỏng — một `@PostMapping` nhận `@Valid @RequestBody E
 - **Nhãn i18n nằm ở frontend.** `header` wire là text đã-dịch; backend không bao giờ phân giải lại chuỗi locale-aware cho cột export.
 - **Subheader do backend tính** (CLAUDE.md quyết định 5). Provider trả về chuỗi count + tổng chuẩn trong `ExportFetch.subHeader`; `subHeader` của request chỉ là fallback thông tin.
 - **Giá trị amount trong workbook PHẢI đi qua formatter hiển thị dùng chung** — không bao giờ chuỗi wire thô và không bao giờ một template số `String.format` tùy tiện. Cụ thể:
-  - **Dòng subheader / summary** (ví dụ `"20 account(s) · Balance: 19.886.030.287₫ · Available Balance: 8.417.734.439₫"`) — provider soạn qua [`AmountFormatter.forDisplay(value, ccyCd)`](src/main/java/com/kosign/wecms/domain/banking/service/AmountFormatter.java), phản chiếu frontend [`lib/currency.ts formatAmount`](../wecms-web-main/lib/currency.ts) 1:1 (locale vi-VN + hậu tố `₫` cho VND, en-US + tiền tố cho USD/EUR/KRW/JPY, vi-VN + không ký hiệu cho mọi thứ khác). Thẻ summary trên màn hình, popup in, và subheader Excel render cùng con số y hệt.
+  - **Dòng subheader / summary** (ví dụ `"20 account(s) · Balance: 19.886.030.287₫ · Available Balance: 8.417.734.439₫"`) — provider soạn qua [`AmountFormatter.forDisplay(value, ccyCd)`](src/main/java/com/kosign/wecms/domain/banking/service/AmountFormatter.java), phản chiếu frontend [`lib/currency.ts formatAmount`](../wecms-web/lib/currency.ts) 1:1 (locale vi-VN + hậu tố `₫` cho VND, en-US + tiền tố cho USD/EUR/KRW/JPY, vi-VN + không ký hiệu cho mọi thứ khác). Thẻ summary trên màn hình, popup in, và subheader Excel render cùng con số y hệt.
   - **Cell dữ liệu số** (Balance, Available Balance, v.v.) — `format: "amount"` trên `ExcelColumnSpec` wire kích hoạt định dạng dữ liệu `#,##0.##` của POI bên trong cell, áp dụng tự động bởi [`ExcelWorkbookWriter`](src/main/java/com/kosign/wecms/common/export/ExcelWorkbookWriter.java). Provider trao cho writer chuỗi `BigDecimal` / wire-decimal thô — không bao giờ một chuỗi đã-định-dạng-sẵn với phân-tách-hàng-nghìn hay ký hiệu nhúng — để Excel tự re-sum cột native.
   - **Cell title** giữ free-form (không cần định dạng amount; phản chiếu title trang trên màn hình).
   - **Trường amount free-text nhúng trong bất kỳ cell nào khác** — cùng quy tắc: đi qua `AmountFormatter.forDisplay` để locale + ký hiệu nhất quán trên mọi consumer export. Không `String.format("%,d ₫", n)`, không `BigDecimal.toString()`, không formatter mỗi-trang.
@@ -1253,7 +1426,7 @@ User test sau khi seed:
 | Thiếu gate NTNL_CD/CHNL_TYPE/BUSI_STTS | `AuthService.login` | Gate sau-auth bị hoãn; không trong phạm vi Sprint 0 |
 | Không có SpringDoc / Swagger | — | Hoãn; thêm với module non-auth đầu tiên |
 | Không có Testcontainers | `AuthServiceTest` | Test dùng Mockito; H2/in-memory hoãn tới domain thứ hai |
-| Drift kiểu `SYS_SCR_OPTION_WECMS.SIZE` so với DEV | [V30__sprint1_screen_option_tables.sql:25](src/main/resources/db/migration/V30__sprint1_screen_option_tables.sql#L25) | DEV là `VARCHAR` (ví dụ `"250px"`); local là `INTEGER`. Hoãn — gói với tính năng View Setting SIZE đầu-cuối (trường entity + DTO + tiêu thụ `<col width>` frontend + backfill px căn-Figma) để sửa kiểu xuất hiện cùng consumer thật đầu tiên. |
+| Drift kiểu `SYS_SCR_OPTION_WECMS.SIZE` so với DEV | `SYS_SCR_OPTION_WECMS` — ⚠️ trích dẫn gốc `V30__sprint1_screen_option_tables.sql:25` **không còn tồn tại trên đĩa** (đã đánh số lại trong đợt rebaseline 2026-06-09; tìm file hiện tại bằng `ls src/main/resources/db/migration/ \| grep -i screen_option` và xem [docs/references/database/flyway-migration-baseline.md](docs/references/database/flyway-migration-baseline.md)) | DEV là `VARCHAR` (ví dụ `"250px"`); local là `INTEGER`. Hoãn — gói với tính năng View Setting SIZE đầu-cuối (trường entity + DTO + tiêu thụ `<col width>` frontend + backfill px căn-Figma) để sửa kiểu xuất hiện cùng consumer thật đầu tiên. |
 
 ## Ghi chú cho triển khai tương lai
 

@@ -66,7 +66,7 @@ The three roots `ACC-01` (REVENUE), `ACC-02` (EXPENSES), `ACC-03` (INVESTMENT) a
 
 ## Cross-links (preserved existing docs — do not duplicate)
 
-- **Final parity audit (authoritative gap analysis):** [../../../audits/chart-of-accounts-final-parity-audit.md](../../../audits/chart-of-accounts-final-parity-audit.md)
+- **Final parity audit (authoritative gap analysis):** [../../../audits/chart-of-accounts-final-parity-audit.md](../../../audits/legacy-parity/chart-of-accounts-final-parity-audit.md)
 - **JEX→refactor migration map:** [../../../references/migration/chart-of-accounts.md](../../../references/migration/chart-of-accounts.md)
 - **DB reference:** [../../../references/database/chart-of-accounts.md](../../../references/database/chart-of-accounts.md)
 - **Backend business-rules reference:** [../../../references/business-rules/chart-of-accounts.md](../../../references/business-rules/chart-of-accounts.md)

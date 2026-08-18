@@ -85,7 +85,7 @@ All under base `/api/v1/payment/overseas-payment` (single controller). Full deta
 
 ## Cross-links
 
-- Cross-sibling index: [payment hub README](../README.md) · [payment-source-index.md](../../../audits/payment-source-index.md) · [payment-gap-analysis.md](../../../audits/payment-gap-analysis.md)
+- Cross-sibling index: [payment hub README](../README.md) · [payment-source-index.md](../../../audits/modules/payment-source-index.md) · [payment-gap-analysis.md](../../../audits/modules/payment-gap-analysis.md)
 - FX lookup: [exchange-rate-inquiry.md](../exchange-rate-inquiry.md) (authored separately)
 - Approval flow: [approval-box/](../approval-box/)
 - Web/UI hub: [`wecms-web/.../overseas-payment/README.md`](../../../../../wecms-web/docs/features/payment/overseas-payment/README.md)

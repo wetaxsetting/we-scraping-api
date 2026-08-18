@@ -70,7 +70,7 @@ frontend [ui-specification.md](../../../../../../wecms-web/docs/features/banking
 | [migration-guide.md](migration-guide.md) | Legacy architecture → Spring architecture; service-by-service mapping; wire/naming rules; doc reconciliation. |
 | [test-scenarios.md](test-scenarios.md) | Parity scenarios A–G (load, currency filter, account-type classification, grids, Excel/print, validation, permissions). |
 | [refactor-gap-analysis.md](refactor-gap-analysis.md) | Implemented / partial / missing / technical debt, prioritized — the authoritative open-items list. |
-| [refactor-parity-verification.md](refactor-parity-verification.md) | DB-verified parity check; §1.5 carries the `rept_0900_001_rec2/rec4` function-body extract. |
+| [refactor-parity-verification.md](../../../../audits/legacy-parity/daily-cash-refactor-parity-verification.md) | DB-verified parity check; §1.5 carries the `rept_0900_001_rec2/rec4` function-body extract. |
 | [fix-plan.md](fix-plan.md) | Remaining backlog ordered by severity (export single-producer, per-tenant local ccy, dead-code cleanup). |
 
 ---

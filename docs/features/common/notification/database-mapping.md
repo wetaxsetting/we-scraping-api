@@ -1,4 +1,4 @@
-# notification — Database Mapping (Backend)
+# Notification — Database Mapping (Backend)
 
 **Part of:** Common → notification
 **Last verified:** 2026-06-23

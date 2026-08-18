@@ -66,7 +66,7 @@ surfaces, `application*.yml` × 5, `build.gradle`, and the legacy baseline
 `IDO.TB_BATCH_SCHEDULE_{INFO,DTL}_R001.xml` + migrations `V95`/`V96`.
 
 Not audited: everything outside the dispatch path; the six non-dispatch `@Scheduled` classes
-(covered by [../audits/scheduler-legacy-parity-audit.md](../audits/scheduler-legacy-parity-audit.md)).
+(covered by [../audits/scheduler-legacy-parity-audit.md](../audits/legacy-parity/scheduler-legacy-parity-audit.md)).
 
 **Working-tree note (material).** This reads the **uncommitted** tree: 114 changed paths, 48
 untracked. `TransferDispatchExecutor` and its test are `D`; `AntDivChannel`, `common/lock/`,
@@ -325,7 +325,7 @@ All new; no production code changed by this pass.
 | `dispatch/repository/DispatchScanTenantScopeContractTest` *(extended)* | `findStrandedBulkExecutionFiles` joins the pinned sweep list (it was a live scheduled sweep outside the contract); three new tests pin `findResultCheckCandidates` — bounded, ordered `tranDt`/`tranTm`/`tranSeq` ASC with no `DESC`, `tranDt IN` as a **SQL** predicate (the N-1 regression), exact `tranTp`+`procStat` | `IDO.TB_FIRM_TRAN_R001.xml` (batch-side copy) |
 
 Full query-by-query re-verification record, including the `Q-1` defect it surfaced:
-[../audits/dispatch-repository-query-reverification.md](../audits/dispatch-repository-query-reverification.md).
+[../audits/dispatch-repository-query-reverification.md](../audits/deployment/dispatch-repository-query-reverification.md).
 
 ## 8. Production defects fixed
 
@@ -450,7 +450,7 @@ the time of the previous audit is closed. **Residual condition — RESTATED 2026
 coexistence question (DEV/SIT are DB-separated; UAT is an **Ops** DB-target check). The sweep must stay
 OFF **everywhere** because it is the K9 **Option A** periodic sweep Mr. Kang was offered and **declined**
 in favour of *"no periodic sweep; monitoring + manual"*.
-**[CONFIRM: Mr. Kang — reopen K9]** → [legacy-batch2-ownership-verification.md](../audits/legacy-batch2-ownership-verification.md).
+**[CONFIRM: Mr. Kang — reopen K9]** → [legacy-batch2-ownership-verification.md](../audits/batch/legacy-batch2-ownership-verification.md).
 Both gates (`bulk-execution-retry.enabled=false`, cron `-`) are verified off in all four profiles.
 
 The requested pinning test for the 202 leg (*"transport failure does not resend automatically"*)
@@ -580,7 +580,7 @@ performance-vs-fidelity call. DRR-5 needs no decision unless a future consumer s
 - **[CONFIRM: PO]** H-4 fix approval (money-path behaviour change).
 - ~~**[CONFIRM: PO]** `Q-1`~~ — **FIXED 2026-07-30.** Query-only correction (master routing + the
   varchar-CAST join on `PAY_TRAN_SEQ`); no schema, wire-shape or consumer change. 34 tests added.
-  [../audits/dispatch-repository-query-reverification.md](../audits/dispatch-repository-query-reverification.md) §5 + §5.1
+  [../audits/dispatch-repository-query-reverification.md](../audits/deployment/dispatch-repository-query-reverification.md) §5 + §5.1
 - ~~**[CONFIRM: PO]** `DRR-1` / `DRR-2`~~ — **FIXED 2026-07-30** (§11.2). The ERP write-back was moved
   to `rsltDttm()` in the same change so the persisted Oracle `END_DATETIME` stays byte-identical.
 - **[CONFIRM: PO]** `DRR-3` + `DRR-6` (decide together — they interact), `DRR-4`, `DRR-5` — four
@@ -588,7 +588,7 @@ performance-vs-fidelity call. DRR-5 needs no decision unless a future consumer s
 - ~~**[CONFIRM: Mr. Kang]** BATCH2 coexistence~~ — **superseded 2026-07-29.** Coexistence is resolved
   (DEV/SIT DB-separated; UAT = **Ops** DB-target check) and the 4→1 architecture was already approved.
   Replaced by: **[CONFIRM: Mr. Kang — reopen K9]** — `bulk-execution-retry` is the Option-A periodic
-  sweep that was offered and declined. → [legacy-batch2-ownership-verification.md](../audits/legacy-batch2-ownership-verification.md)
+  sweep that was offered and declined. → [legacy-batch2-ownership-verification.md](../audits/batch/legacy-batch2-ownership-verification.md)
 - **[CONFIRM: Mr. Kang]** Stranded-recovery coexistence (pre-existing).
 - **[CONFIRM: PO]** Keep or remove the `operating-hours.zone` override (§6.3).
 

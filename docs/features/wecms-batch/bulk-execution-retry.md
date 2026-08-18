@@ -23,13 +23,13 @@
 > audit row — safe to re-drive) and `BULK_EXECUTION_RETRY_EXHAUSTED` → **`BULK_EXECUTION_UNCONFIRMED`**
 > (a row exists — **reconcile with the VAN Center first**). The two need opposite manual actions.
 >
-> Full record: [final-four-to-one-batch-architecture-correction.md](../../audits/final-four-to-one-batch-architecture-correction.md)
+> Full record: [final-four-to-one-batch-architecture-correction.md](../../audits/batch/final-four-to-one-batch-architecture-correction.md)
 
 **Date:** 2026-07-29 · **System:** Refactor (`wecms-api`)
 **Status:** the retry sweep is **deleted**; this file survives as the legacy-evidence + manual-recovery record
 **Legacy source of truth:** `WECMS_BATCH DEV/source/WECMS_BATCH/WECMS_BATCH/src/batch/FILE_DEPOSIT_TRANSFER_BATCH2.java`
 **Why it was deleted:** it was K9 **Option A**, offered to Mr. Kang and not selected —
-[k9-bulk-retry-reassessment.md](../../architecture/k9-bulk-retry-reassessment.md)
+[bulk-retry-reassessment.md](../../architecture/bulk-retry-reassessment.md)
 
 ---
 
@@ -261,7 +261,7 @@ unset host variable cannot abort startup (readiness finding H-1). Verified tab-f
 > a retry sweep. Steps 2-5 describe deleted configuration.
 
 > **CORRECTED 2026-07-29 — the earlier blanket "requires Mr. Kang for coexistence" wording was wrong
-> on three counts.** See [legacy-batch2-ownership-verification.md](../../audits/legacy-batch2-ownership-verification.md).
+> on three counts.** See [legacy-batch2-ownership-verification.md](../../audits/batch/legacy-batch2-ownership-verification.md).
 >
 > **Architecture: already approved — do not re-ask.** Mr. Kang approved the 4→1 reduction *including
 > Batch 2's replacement*: 2026-06-04 re-scope, 2026-06-06 written clarification
@@ -283,7 +283,7 @@ unset host variable cannot abort startup (readiness finding H-1). Verified tab-f
 > side-effect of polling, not a distinct legacy responsibility. **Automatic retry is therefore an
 > architecture enhancement beyond the approved TO-BE**, and requires an explicit K9 decision before it
 > may be enabled in any environment.
-> Full ruling: [k9-bulk-retry-reassessment.md](../../architecture/k9-bulk-retry-reassessment.md).
+> Full ruling: [bulk-retry-reassessment.md](../../architecture/bulk-retry-reassessment.md).
 >
 > K9 formally offered Mr. Kang four recovery strategies. **Option A was
 > *"Recovery Scheduler (reconciliation) — periodically re-process aged `STEP=1` rows — re-introduces
@@ -464,7 +464,7 @@ Tests: `BulkExecutionAlertParityTest` (15).
 
 | # | Item | Owner |
 |---|---|---|
-| 1 | **Reopen K9.** This job is the Option-A periodic sweep that was offered and declined in favour of *"no periodic sweep; monitoring + manual"*. Blocks enabling in **every** environment, including the DB-separated ones. → [ownership verification](../../audits/legacy-batch2-ownership-verification.md) | **Mr. Kang** |
+| 1 | **Reopen K9.** This job is the Option-A periodic sweep that was offered and declined in favour of *"no periodic sweep; monitoring + manual"*. Blocks enabling in **every** environment, including the DB-separated ones. → [ownership verification](../../audits/batch/legacy-batch2-ownership-verification.md) | **Mr. Kang** |
 | 1b | Confirm whether the refactor UAT DB is the JEX UAT batch DB (UAT only; DEV/SIT already proven separate) | **Ops / Infra** |
 | 2 | Confirm `max-attempts=3` / `grace-seconds=120` suit real VAN latency | batch owner |
 | 3 | Cross-midnight files fall out of the `TRAN_DT=today` scope — same as legacy, surfaced by the monitor, recovered manually. Widening the scope is a deliberate divergence and needs approval. | PO |

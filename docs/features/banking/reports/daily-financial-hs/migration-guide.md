@@ -3,7 +3,7 @@
 > How the legacy `rept_0017_001` JSP service maps onto the Spring architecture, plus the
 > deployment/configuration facts an operator or future maintainer needs. Decision history
 > (D1 template-populate, D2 per-field save) is recorded in
-> [audits/daily-financial-hs-legacy-audit.md §6](../../../../audits/daily-financial-hs-legacy-audit.md).
+> [audits/daily-financial-hs-legacy-audit.md §6](../../../../audits/legacy-parity/daily-financial-hs-legacy-audit.md).
 
 ---
 

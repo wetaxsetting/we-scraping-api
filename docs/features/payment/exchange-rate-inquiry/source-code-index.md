@@ -1,5 +1,14 @@
 # Exchange Rate Inquiry — Source Code Index
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](../../../references/database/flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](../../../references/database/flyway-migration-baseline.md) §5.
+
 Every file that implements the feature, with line citations validated against the working
 tree. Paths are repo-relative; line numbers reflect the build read on 2026-06-23.
 
@@ -80,9 +89,9 @@ tree. Paths are repo-relative; line numbers reflect the build read on 2026-06-23
 
 ### Migrations
 
-- `db/migration/V127__bank_exch_rate_infm_table.sql` (header shows draft `V84`) — schema + `IDX_BANK_EXCH_RATE_INFM_BIZ_DATE`
-- `db/migration/V130__bank_exch_rate_infm_seed.sql` (header shows draft `V87`) — 15-row demo seed
-- `db/migration/V155__wb_get_next_val_centralize.sql` — `bank_exch_rate_infm.exch_seq_no` branch
+- `db/migration/V10__bank_exch_rate_infm.sql` (header shows draft `V84`) — schema + `IDX_BANK_EXCH_RATE_INFM_BIZ_DATE`
+- `db/migration/V130__bank_exch_rate_infm_seed.sql` (header shows draft `V87`) — 15-row demo seed *(historical — DROPPED; demo seeds were removed in the 2026-06-09 rebaseline)*
+- `db/migration/V155__wb_get_next_val_centralize.sql` — `bank_exch_rate_infm.exch_seq_no` branch *(historical numbering — the live function is `V140__wb_get_next_val.sql`)*
 
 ### Tests
 

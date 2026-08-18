@@ -17,11 +17,15 @@ flag, soft-delete (per-tenant unlink), manage per-user **menu entitlement** gran
 upload / remove a user **avatar**.
 
 This folder is the **authoritative backend home** for the feature. It documents the real,
-shipped Spring Boot implementation — superseding the earlier flat plan
-[`../users.md`](../users.md) (2026-05-14), which described a since-abandoned design
-(`/api/v1/users` base path, a hard 5-user plan cap, and a "Menu Entitlement deferred"
-scope). Both of those were dropped before release; see
-[refactor-gap-analysis.md](refactor-gap-analysis.md) §"Plan-vs-shipped drift".
+shipped Spring Boot implementation.
+
+[`../users.md`](../users.md) is the module's **high-level summary card** (the same two-tier pattern
+every Settings module uses — see [`../README.md`](../README.md) §"Doc convention"). It originally held
+a 2026-05-14 implementation *plan* describing a since-abandoned design (`/api/v1/users` base path, a
+hard 5-user plan cap, a "Menu Entitlement deferred" scope); that plan's stale claims were **scrubbed**
+when the file was rewritten as a summary, and its deltas are preserved in
+[refactor-gap-analysis.md](refactor-gap-analysis.md) §"Plan-vs-shipped drift". Where the summary and
+this folder disagree, **this folder wins**; where either disagrees with the code, the code wins.
 
 ## 2. Document map
 
@@ -56,7 +60,7 @@ scope). Both of those were dropped before release; see
 - **Authorization rules (shared):** [`docs/security/authorization.md`](../../../../../docs/security/authorization.md)
 - **JEX as-is account provisioning context:** [`docs/jex/features/login-wecms.md`](../../../../../docs/jex/features/login-wecms.md)
 - **Settings index:** [`../README.md`](../README.md)
-- **Superseded plan (kept for history):** [`../users.md`](../users.md)
+- **Module summary card:** [`../users.md`](../users.md) (high-level; this folder is authoritative)
 
 ## 4. Implementation at a glance
 

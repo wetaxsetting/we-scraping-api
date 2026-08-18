@@ -88,14 +88,34 @@ All five source tables are in the PROD Active Table List. The local Flyway migra
 column-for-column per the Legacy Schema Parity Rule; the demo seed copies a ≤30-row slice for tenant
 `VN_VNM0004_000001` per the Data Migration Rule.
 
-> **Migration set (post 2026-06-09 renumber).** The source-table migrations are **V73**
-> (`NXSIAS_MODULE_TRAN_LOG_HIS`), **V97** (`TB_FIRM_BANK_CODE`), **V104** (`TB_FIRM_TRAN`); plus the
-> existing V13 (`NAPAS_REMIT_TRNS_HSTR`) and V16 (`EXT_TRAN_CALL_HIS`). There is **no View Setting seed**
-> for `firm-banking-history` — it is an export-only screen and `V156__sys_scr_option_wecms.sql`
-> explicitly excludes it (export uses the `WBE2001` → request-cols ∩ allow-list fallback; see §4.4).
-> There is also **no** view-creating migration — the five-leg union is a Hibernate `@Subselect` (§4.1).
-> The earlier V59/V60/V61/V165 numbering (and any `V102__firm_banking_history_view.sql`) no longer
-> exists in the migration tree.
+> **Migration set (post 2026-06-09 rebaseline — corrected 2026-08-17).** The five source-table
+> migrations are:
+>
+> | Table | Current migration |
+> |---|---|
+> | `NAPAS_REMIT_TRNS_HSTR` | [`V69__napas_remit_trns_hstr.sql`](../../../../src/main/resources/db/migration/V69__napas_remit_trns_hstr.sql) |
+> | `EXT_TRAN_CALL_HIS` | [`V61__ext_tran_call_his.sql`](../../../../src/main/resources/db/migration/V61__ext_tran_call_his.sql) |
+> | `NXSIAS_MODULE_TRAN_LOG_HIS` | [`V73__nxsias_module_tran_log_his.sql`](../../../../src/main/resources/db/migration/V73__nxsias_module_tran_log_his.sql) |
+> | `TB_FIRM_BANK_CODE` | [`V97__tb_firm_bank_code.sql`](../../../../src/main/resources/db/migration/V97__tb_firm_bank_code.sql) |
+> | `TB_FIRM_TRAN` | [`V104__tb_firm_tran.sql`](../../../../src/main/resources/db/migration/V104__tb_firm_tran.sql) |
+>
+> ⚠️ **Correction.** An earlier revision of this note gave `NAPAS_REMIT_TRNS_HSTR` as "V13" and
+> `EXT_TRAN_CALL_HIS` as "V16". Those are **pre-rebaseline Sprint-1 numbers** (old V13 = Sprint-1 banking
+> schema, old V16 = Sprint-1 operation-status schema) that were carried over when the note was partially
+> renumbered — the three tables the author was actively adding (V73/V97/V104) were renumbered correctly,
+> these two were not. On disk today V13 is `base_infm` and V16 is `bltb_noti_cont_infm` — both unrelated.
+>
+> **View Setting seed — MANUAL DBA SCRIPT, not applicable here.** There is **no** `firm-banking-history`
+> row in the seed: it is an export-only screen and [`V156__sys_scr_option_wecms.sql`](../../../../src/main/resources/db/migration/V156__sys_scr_option_wecms.sql)
+> (a hand-run DBA script, **not** an auto-applied Flyway migration) explicitly excludes it. Export falls
+> back to `WBE2001` → request-cols ∩ allow-list; see §4.4.
+>
+> **View — REPLACED BY CODE.** There is no view-creating migration. The five-leg union is a Hibernate
+> `@Subselect` on the entity (§4.1). **Historical only:** `V59__firm_banking_history_source_tables.sql`,
+> `V60__firm_banking_history_view_and_fns.sql`, `V61__firm_banking_history_view_setting_seed.sql`, *(historical — REPLACED BY CODE; the union is a Hibernate `@Subselect`, no view migration exists)*
+> `V165` (View Setting export seed) and `V102__firm_banking_history_view.sql` were all removed by the
+> [2026-06-09 rebaseline](../../../references/database/flyway-migration-baseline.md) and have no current
+> migration equivalent.
 
 ---
 

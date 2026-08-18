@@ -1,4 +1,4 @@
-# backend/
+# business-rules/
 
 Spring Boot service design for `wecms-api`.
 

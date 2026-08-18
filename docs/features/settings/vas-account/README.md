@@ -92,7 +92,7 @@ a backend template-download endpoint (the template is a static XLSX served by th
 | Backend service/domain design (signatures) | [references/business-rules/vas-account.md](../../../references/business-rules/vas-account.md) |
 | Database design (schema + Flyway plan) | [references/database/vas-account.md](../../../references/database/vas-account.md) |
 | JEX → Refactor migration mapping (preserved) | [references/migration/vas-account.md](../../../references/migration/vas-account.md) |
-| Parity audit 2026-05-11 (preserved, authoritative as-built record) | [references/audits/vas-account.md](../../../references/audits/vas-account.md) |
+| Parity audit 2026-05-11 (preserved, authoritative as-built record) | [audits/vas-account.md](../../../audits/legacy-parity/vas-account.md) |
 | Test plan (4-layer) — preserved | [testing/vas-account.md](../../../testing/vas-account.md) |
 | Settings ERD | [references/database/erd/settings-erd.md](../../../references/database/erd/settings-erd.md) |
 | Table ownership | [references/database/table-ownership.md](../../../references/database/table-ownership.md) |

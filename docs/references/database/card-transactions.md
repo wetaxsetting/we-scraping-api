@@ -1,5 +1,14 @@
 # Card Transactions — Database Schema Notes (Refactor)
 
+
+> ⚠️ **Flyway numbering in this document is PRE-REBASELINE (note added 2026-08-17).**
+> Bare `V<n>` references below were written against the migration set as it stood **before** the
+> [2026-06-09 rebaseline](flyway-migration-baseline.md), which renumbered every migration to a
+> one-table-per-migration scheme and dropped all seed / helper-index / view migrations. **Treat every
+> bare `V<n>` here as HISTORICAL** — it does not identify the same migration today. To find the current
+> migration for a table, run `ls src/main/resources/db/migration/ | grep <table>` or see
+> [flyway-migration-baseline.md](flyway-migration-baseline.md) §5.
+
 Companion to [docs/refactor-wecms/features/card-transactions.md](../../features/payment/card-transactions.md). Refactor slug: **`card-transactions`**.
 
 > **Identifier-naming reminder** — Flyway migrations, View Setting `web_svc_id`, audit `WSVC_ID`, log tags all use kebab-case `card-transactions`. Legacy JEX WSVC `card_0001_001*` appears only in JEX file:line citations / migration-traceability prose. **Database column names mirror legacy JEX UPPER_SNAKE forever** ([wecms-api/CLAUDE.md §"Exceptions — DB schema + JPA `@Column`"](../../../CLAUDE.md)) — the slug rule does not apply to SQL identifiers.

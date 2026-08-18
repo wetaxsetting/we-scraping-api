@@ -55,7 +55,7 @@ Full request/response contracts: [operation-status-inquiry/interface-specificati
 
 ## Current implementation status
 
-✅ Implemented end-to-end. **Remaining items** (see [`docs/audits/addon-service-gap-analysis.md`](../../audits/addon-service-gap-analysis.md)):
+✅ Implemented end-to-end. **Remaining items** (see [`docs/audits/addon-service-gap-analysis.md`](../../audits/modules/addon-service-gap-analysis.md)):
 - Per-row delete (`aosv_0001_002_d001`) intentionally **not ported** (the refactor page exposes no delete — matches the JEX page).
 - GDT status-string localisation (`wb_get_operat_stts`) not ported (3-state Java mapping instead).
 - No controller/integration test beyond the service unit test.

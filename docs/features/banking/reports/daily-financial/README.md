@@ -14,7 +14,7 @@
 | Refactor route | `/banking/reports/daily-financial` (Next.js) |
 | Refactor base URI | `/api/v1/banking/reports/daily-financial` (Spring Boot) |
 | Audit `WSVC_ID` | `daily-financial` (slug — never `rept_0015_001`) |
-| Refactor status | **READY FOR SIT** (in-PROD scope) — main report (date-aware), Financial Status (VND/USD/KRW), Current/Saving grids, and the Transaction History Details popup are implemented + verified against real data. Non-SIT-blockers remain (server-side Excel provider, inline REC2 grid, internal-transfer toggle, active-account widening) — all P1/out-of-scope. See [§5 SIT Readiness](#5-sit-readiness-2026-06) + [parity-verification-report.md](parity-verification-report.md). |
+| Refactor status | **READY FOR SIT** (in-PROD scope) — main report (date-aware), Financial Status (VND/USD/KRW), Current/Saving grids, and the Transaction History Details popup are implemented + verified against real data. Non-SIT-blockers remain (server-side Excel provider, inline REC2 grid, internal-transfer toggle, active-account widening) — all P1/out-of-scope. See [§5 SIT Readiness](#5-sit-readiness-2026-06) + [parity-verification-report.md](../../../../audits/legacy-parity/daily-financial-parity-verification-report.md). |
 
 ---
 

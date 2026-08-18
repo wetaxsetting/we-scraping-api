@@ -68,7 +68,7 @@ Refactor Status (Transfer History feature): 100% Complete — legacy parity veri
 | # | Item | Owner |
 |---|---|---|
 | OQ-A | `WBE_TRANSFER_HISTORY_INVALID_PERIOD` is in `messages.properties` but **not** `messages_en.properties` (resolves via fallback, but violates the "add to both" convention). | Backend cleanup MR |
-| OQ-B | `V196__transfer_history_helper_index.sql` has a stale internal header reading `V181`. Harmless, but misleading. | Backend cleanup MR |
+| OQ-B | ~~`V196__transfer_history_helper_index.sql` has a stale internal header reading `V181`.~~ **Moot 2026-08-17** — the file no longer exists. The [2026-06-09 rebaseline](../../../../references/database/flyway-migration-baseline.md) dropped all helper-index migrations; `V69__napas_remit_trns_hstr.sql` is PK-only. **New question:** should the index be re-proposed as a manual DBA script? | PO / DBA decision |
 | OQ-C | ✅ **RESOLVED 2026-06-07** — deprecated interim endpoint `GET /api/v1/banking/transfers/history` + `TransferController.history()` + `TransferHistoryService` + `TransferHistoryResponse` / `TransferRow` (UPPER_SNAKE) **deleted** after confirming no consumer. | Done |
 | OQ-D | ✅ **RESOLVED 2026-06-07** — CLAUDE.md "Current API calls" table updated to `/api/v1/banking/internal-transfer/transfer-history`. | Done |
 | OQ-E | USD second-footer-row rendering deferred (business decision — is a USD totals row wanted on screen?). | PO (Mr. Jung) |

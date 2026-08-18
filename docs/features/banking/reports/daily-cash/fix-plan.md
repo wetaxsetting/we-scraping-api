@@ -2,7 +2,7 @@
 
 **Feature:** Banking > Reports > Daily Cash (`rept_0009_001`) — refactor route `/banking/reports/daily-cash`
 **Date:** 2026-06-03 · **OQ-1 resolved 2026-06-04** (DB function bodies read from DEV).
-**Source of findings:** [refactor-parity-verification.md](./refactor-parity-verification.md) §1.5
+**Source of findings:** [refactor-parity-verification.md](../../../../audits/legacy-parity/daily-cash-refactor-parity-verification.md) §1.5
 **Status:** **Issues 1 & 2 IMPLEMENTED 2026-06-04** (the two CRITICAL bugs). Issues 3–8 remain plan-only (non-critical, gated on their OQs).
 
 > **2026-06-04 — CRITICAL fixes landed.**

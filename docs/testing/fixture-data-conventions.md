@@ -60,5 +60,5 @@ shown to be connected to the code.
 - [`integration-test-audit.md`](integration-test-audit.md) — what the absence of an embedded DB costs
 - [`../deployment/wecms-batch-activation-runbook.md`](../deployment/wecms-batch-activation-runbook.md)
   §5.1a-1 — the unexercised-JPQL warning, and the SIT queries that stand in for it
-- [`../audits/legacy-batch-boundary-rule-sweep-2026-07-31.md`](../audits/legacy-batch-boundary-rule-sweep-2026-07-31.md)
+- [`../audits/legacy-batch-boundary-rule-sweep-2026-07-31.md`](../audits/batch/legacy-batch-boundary-rule-sweep-2026-07-31.md)
   — D-1 (boundary-sweep), the defect instance 1 hid

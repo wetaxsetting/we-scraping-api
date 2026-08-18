@@ -4,7 +4,7 @@
 - **System pair:** Legacy JEX (`WECMS DEV/`) ⇄ Refactor (`wecms-api/`, `wecms-web/`)
 - **Date:** 2026-06-29
 - **Status:** ✅ Implementation complete — 5 approved gaps fixed, re-audited, and verified
-- **Source audit:** [vendor-payment-excel-upload-audit.md](../audits/vendor-payment-excel-upload-audit.md)
+- **Source audit:** [vendor-payment-excel-upload-audit.md](../audits/legacy-parity/vendor-payment-excel-upload-audit.md)
 - **Note:** Documentation only — no code changed in producing this report.
 
 ---
