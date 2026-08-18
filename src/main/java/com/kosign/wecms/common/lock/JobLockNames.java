@@ -86,4 +86,18 @@ public final class JobLockNames {
 
     /** Legacy {@code ERP_0100_003} — account-history + card-approval push to ERP. */
     public static final String HAENGSUNG_CARD_ACCOUNT_SYNC = "HaengsungCardAccountSyncJob.run";
+
+    // ── Zalo OA (refactor-native — no legacy JEX counterpart) ─────────────────
+
+    /**
+     * Keep-alive sweep for Zalo's rotating OAuth refresh token
+     * ({@code ZaloTokenRefreshScheduler}).
+     *
+     * <p>The lock is not a nicety here. Zalo issues a new refresh token on every
+     * refresh and invalidates the previous one, so two instances sweeping the same
+     * connection produce two rotations where the second retires the first — leaving
+     * a stored token Zalo no longer accepts and a connection only a human can
+     * repair by redoing the OAuth consent flow.
+     */
+    public static final String ZALO_TOKEN_REFRESH = "ZaloTokenRefreshJob.run";
 }

@@ -10,12 +10,15 @@ the `{module}/` folder** (≈9 docs each: scope, JEX traceability, REST endpoint
 business rules, validation, error cases, audits). When the summary and the folder disagree, the
 folder wins; when either disagrees with the backend/frontend code, **the code wins**.
 
-Two modules have **no folder** — they are summary-only because they are not standalone
-Settings-menu screens:
+Three modules have **no folder** — they are summary-only:
 
 - **change-password** — a slice of the `auth` domain (header profile dropdown), not a Settings screen.
 - **environment-settings** — generic cross-feature tenant-flag infrastructure shared by the
   Preferences and Firm Banking Settings panels.
+- **zalo-oa** — refactor-native (no JEX counterpart, so there is no parity or traceability
+  detail to split out) and still behind open product decisions. One summary is the honest
+  size of it; it grows a folder when the message catalogue is agreed and the feature is
+  wired to real events.
 
 > **Dual-tier layout confirmed, not accidental (reviewed 2026-08-17, P2).** All 12 `{module}.md` +
 > `{module}/` pairs were compared. The flat files are a **uniform, deliberate two-tier pattern** — each
@@ -56,6 +59,7 @@ not re-verified this pass) · ⚪ Legacy/Deprecated or not a standalone module.
 | 10 | Transaction History (ERP) | [transaction-history/](transaction-history/README.md) | [transaction-history.md](transaction-history.md) | 🟡 Backend implemented (read-only audit ledger; frontend not re-verified) |
 | 11 | Firm Banking Settings | [firm-banking-settings/](firm-banking-settings/README.md) | [firm-banking-settings.md](firm-banking-settings.md) | 🟡 Backend implemented + unit tests (frontend not re-verified) |
 | 12 | Firm Banking History | [firm-banking-history/](firm-banking-history/README.md) | [firm-banking-history.md](firm-banking-history.md) | ✅ Implemented (parity verified 2026-06-05; XLSX export) |
+| 13 | Zalo OA | — (summary only) | [zalo-oa.md](zalo-oa.md) | 🟡 Backend implemented (client + service + controller + scheduler + 15 unit tests; no frontend API module; not wired to any business event) |
 
 > **"Transaction History (ERP)" — not bank transactions.** This Settings screen (folder `transaction-history/`,
 > backend slug/route `erp-transaction-history`) is the read-only audit ledger of **files exchanged between WeCMS
