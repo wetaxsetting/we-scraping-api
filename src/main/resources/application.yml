@@ -81,7 +81,6 @@
 #   wecms.internal-transfer.routing.{shinhan 970424, woori 970457, vcb 970436}
 #   wecms.internal-transfer.cutoff.refresh-interval-ms (300000)
 #   wecms.nxisas.{timeout-seconds 60, session-idle-seconds 300}
-#   wecms.oat.seed-decrypt.enabled (false)
 # They are listed, commented out, in every .env.*.example so they are at least
 # discoverable. Setting one there does nothing until a ${VAR} line is added here
 # first — and adding one brings it under the rule above.
