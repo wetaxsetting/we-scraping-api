@@ -98,21 +98,81 @@ public record ScrapingResultIntakeRequest(
                  message = "{validation.own_account_transfer.bank_tx_id}")
         String bankTxId,
 
-        /** {@code "00000000"} = engine success; vendor error code
-         *  otherwise. */
-        @NotBlank @Size(max = 20)              String trnsStts,
+        /**
+         * Engine {@code Output.ErrorCode}, verbatim. {@code "00000000"} =
+         * success; the bank/engine code otherwise.
+         *
+         * <p><b>Optional — legacy parity.</b> Legacy declares
+         * {@code TRNS_STTS} as a plain 20-char input
+         * ({@code WSVC.trns_0002_001_c001.xml}) and
+         * {@code trns_0002_001_c001_act.jsp#valiateInput} never requires it;
+         * {@code NapasRemitTrnsHstr.copyFrom} stores whatever arrives, and the
+         * browser composer initialises the field to {@code ""}
+         * ({@code trns_0001_007.ts:2140}). A {@code @NotBlank} here would 400
+         * a payload legacy accepts — and this endpoint records a transfer the
+         * bank has ALREADY executed, so a rejection destroys the only record
+         * of it. Blank/absent is treated as a non-success status downstream.
+         *
+         * <p>Never {@code "99999999"}: that value is the Transfer-History
+         * "Failed" <i>filter</i> sentinel ({@code trns_0003_001_view.jsp:158})
+         * and is never stored as a transfer result.
+         */
+        @Size(max = 20)                        String trnsStts,
 
         @Size(max = 255)                       String trnsMsg,
 
         @DecimalMin("0")                       BigDecimal fee,
 
-        /** {@code A}=applicant, {@code B}=beneficiary, {@code S}=split.
-         *  Maps from the wire {@code Sender pays} / {@code Recipient pays}
-         *  radio (legacy {@code TRNS_FEE_TYPE} {@code 1}/{@code 2}). */
+        /**
+         * Fee bearer as the UI models it: {@code A}=applicant (sender pays),
+         * {@code B}=beneficiary (recipient pays), {@code S}=split.
+         *
+         * <p><b>Converted at the DB boundary.</b> Legacy persists the radio's
+         * own value — {@code "1"} sender / {@code "2"} recipient
+         * ({@code trns_0001_007_view.jsp:177-183} →
+         * {@code trns_0001_007.ts:596-600} → {@code :2182}) — and
+         * {@code FeeDfrSbjType} declares exactly those two codes. The wire
+         * keeps {@code A}/{@code B} so no API contract changes;
+         * {@code OwnAccountTransferConstants#toLegacyFeeDfrSbj} maps to
+         * {@code 1}/{@code 2} on the way into {@code FEE_DFR_SBJ}.
+         */
         @Pattern(regexp = "A|B|S")             String feeDfrSbj,
 
         @Size(max = 500)                       String rmrk,
         @Size(max = 500)                       String rmrk2,
+
+        /* ---------------------------------------------------------------
+         *  POST-TRANSFER ENGINE ECHO — recorded, never re-validated.
+         *
+         *  Legacy overwrites OUT_ACCT_NO / IN_ACCT_NO / CCY_CD from
+         *  {@code Output.Result.transfer[0]} on success
+         *  ({@code trns_0001_007.ts:2157-2158, 2163}) and performs NO
+         *  ownership or currency re-check on the result
+         *  ({@code trns_0002_001_c001_act.jsp:27-56} validates required-ness,
+         *  TransType, CcyCd, positive amount and FeeDfrSbjType only — it never
+         *  reads ACCT_MSTR).
+         *
+         *  This refactor DOES re-validate ownership, so the two roles are kept
+         *  on separate fields. The {@code sourceAcctNo} / {@code targetAcctNo}
+         *  / {@code ccyCd} above are the PRE-transfer identity the user chose
+         *  and are validated. The three fields below are the POST-transfer
+         *  record: persisted verbatim, never used to look anything up, and
+         *  deliberately constrained by length alone — a bank-normalized
+         *  account number must never be able to reject an intake for a
+         *  transfer the bank already executed.
+         *
+         *  Null / blank ⇒ the composed values are persisted, matching
+         *  legacy's failure branch ({@code :2167-2170}).
+         * ------------------------------------------------------------- */
+
+        /** Legacy {@code OUT_ACCT_NO} ← {@code Result.transfer[0].acctNum}. */
+        @Size(max = 100)                       String engineOutAcctNo,
+
+        /** Legacy {@code IN_ACCT_NO} ← {@code Result.transfer[0].remitAcctNum}. */
+        @Size(max = 100)                       String engineInAcctNo,
+
+        /** Legacy {@code CCY_CD} ← {@code Result.transfer[0].currency}. */
+        @Size(max = 3)                         String engineCcyCd,
 
         /** Audit-only metadata. Stored verbatim in
          *  {@code AUDIT_LOGS_INFM}; never used as a security signal

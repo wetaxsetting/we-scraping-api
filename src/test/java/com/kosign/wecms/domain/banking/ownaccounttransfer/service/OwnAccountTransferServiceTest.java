@@ -7,6 +7,7 @@ import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.banking.entity.AcctMstr;
 import com.kosign.wecms.domain.banking.entity.NapasBankInfo;
+import com.kosign.wecms.domain.banking.entity.NapasRemitTrnsHstr;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.OwnAccountTransferAuditActions;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.OwnAccountTransferConstants;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.request.BalanceRefreshRequest;
@@ -468,17 +469,73 @@ class OwnAccountTransferServiceTest {
      *  recordScrapingResult
      * ================================================================= */
 
+    /** Legacy parity — an engine-reported amount that differs from the
+     *  composed amount is LOGGED, never rejected, and the row is written
+     *  with the BANK's figure.
+     *
+     *  <p>Legacy has no requested-vs-actual comparison at all: the composer
+     *  sends one {@code TRSC_AMT} (the bank's {@code remitAmt} on success,
+     *  the entered amount on failure — {@code trns_0001_007.ts:2158, 2169})
+     *  and {@code trns_0002_001_c001_act.jsp} validates only that it is
+     *  positive. Rejecting here would discard the only record of a transfer
+     *  the bank may already have executed. */
     @Test
-    void scraping_amountMismatch_throws() {
+    void scraping_amountMismatch_persistsLegacyParity() {
         setUpAdmin();
+        var src = acct(SHINHAN, "0001", new BigDecimal("100"), new BigDecimal("90"));
+        var tgt = acct(SHINHAN, "0002", new BigDecimal("50"),  new BigDecimal("50"));
+        when(acctMstrRepo.findByBizKeyAndBankCdAndAcctNo(TENANT, SHINHAN, "0001"))
+                .thenReturn(java.util.Optional.of(src));
+        when(acctMstrRepo.findByBizKeyAndBankCdAndAcctNo(TENANT, SHINHAN, "0002"))
+                .thenReturn(java.util.Optional.of(tgt));
+        when(legacyFunctions.nextNapasRemitSeqNo(TENANT)).thenReturn("501");
+        when(napasRemitTrnsHstrRepo.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        var bad = req("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        var drift = req("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
                 "SAME_BANK", SHINHAN, "0001", SHINHAN, null, "0002",
-                "1000", "1001", "BANKTX001", "00000000");
+                "1000", "1001", "", "00000000");
 
-        assertThatThrownBy(() -> service.recordScrapingResult(bad))
-                .isInstanceOf(BusinessException.class)
-                .extracting("code").isEqualTo("WBE_OAT_AMOUNT_MISMATCH");
+        var resp = service.recordScrapingResult(drift);
+
+        // Recorded, not rejected — and the bank's figure is what lands.
+        assertThat(resp.status()).isEqualTo("success");
+        assertThat(resp.seqNo()).isEqualTo("501");
+        var saved = ArgumentCaptor.forClass(NapasRemitTrnsHstr.class);
+        verify(napasRemitTrnsHstrRepo).saveAndFlush(saved.capture());
+        assertThat(saved.getValue().getTrscAmt()).isEqualByComparingTo(new BigDecimal("1001"));
+        verifyAuditAppended(OwnAccountTransferAuditActions.SCRAPING_RESULT_OK);
+    }
+
+    /** Legacy parity — a blank {@code trns_stts} is accepted and stored.
+     *  Legacy's {@code WSVC.trns_0002_001_c001.xml} does not require the
+     *  field, {@code valiateInput} never checks it, and the composer
+     *  initialises it to {@code ""} ({@code trns_0001_007.ts:2140}). Blank
+     *  is a non-success status, so the row is audited as a reject outcome
+     *  while still being persisted. */
+    @Test
+    void scraping_blankTrnsStts_persistsAsFailure() {
+        setUpAdmin();
+        var src = acct(SHINHAN, "0001", new BigDecimal("100"), new BigDecimal("90"));
+        var tgt = acct(SHINHAN, "0002", new BigDecimal("50"),  new BigDecimal("50"));
+        when(acctMstrRepo.findByBizKeyAndBankCdAndAcctNo(TENANT, SHINHAN, "0001"))
+                .thenReturn(java.util.Optional.of(src));
+        when(acctMstrRepo.findByBizKeyAndBankCdAndAcctNo(TENANT, SHINHAN, "0002"))
+                .thenReturn(java.util.Optional.of(tgt));
+        when(legacyFunctions.nextNapasRemitSeqNo(TENANT)).thenReturn("502");
+        when(napasRemitTrnsHstrRepo.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        var blank = req("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb1",
+                "SAME_BANK", SHINHAN, "0001", SHINHAN, null, "0002",
+                "1000", "1000", "", "");
+
+        var resp = service.recordScrapingResult(blank);
+
+        assertThat(resp.status()).isEqualTo("failed");
+        var saved = ArgumentCaptor.forClass(NapasRemitTrnsHstr.class);
+        verify(napasRemitTrnsHstrRepo).saveAndFlush(saved.capture());
+        // Stored verbatim — never the "99999999" filter sentinel.
+        assertThat(saved.getValue().getTrnsStts()).isEmpty();
+        verifyAuditAppended(OwnAccountTransferAuditActions.SCRAPING_RESULT_REJECT);
     }
 
     @Test
@@ -489,7 +546,9 @@ class OwnAccountTransferServiceTest {
                 "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
                 "SAME_BANK", SHINHAN, "0001", SHINHAN, null, "0002", null,
                 "USD", "1000", "1000", "BANKTX001", "00000000", null,
-                null, null, null, null, null, null);
+                null, null, null, null,
+                /*engineOutAcctNo*/ null, /*engineInAcctNo*/ null, /*engineCcyCd*/ null,
+                null, null);
 
         assertThatThrownBy(() -> service.recordScrapingResult(bad))
                 .isInstanceOf(BusinessException.class)
@@ -590,6 +649,110 @@ class OwnAccountTransferServiceTest {
         verify(napasRemitTrnsHstrRepo, never()).saveAndFlush(any());
     }
 
+    /* =================================================================
+     *  Legacy-parity sweep 2026-08-18 — FEE_DFR_SBJ + engine echo
+     *  docs/bugs/internal-transfer-legacy-parity-sweep-2026-08-18.md
+     * ================================================================= */
+
+    /** Legacy persists the radio's own value: {@code "1"} sender pays
+     *  ({@code trns_0001_007_view.jsp:177}, {@code .ts:600}, {@code :2182};
+     *  {@code FeeDfrSbjType.SENDER_PAYS("1")}). The wire keeps {@code A}. */
+    @Test
+    void scraping_feeBearerA_persistsLegacySenderPaysCode() {
+        setUpAdmin();
+        var saved = stubIntakeAndCapture("601");
+
+        service.recordScrapingResult(reqWithEcho(
+                "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0001", "00000000", "A",
+                null, null, null));
+
+        verify(napasRemitTrnsHstrRepo).saveAndFlush(saved.capture());
+        assertThat(saved.getValue().getFeeDfrSbj()).isEqualTo("1");
+    }
+
+    /** {@code "2"} recipient pays ({@code view.jsp:181},
+     *  {@code FeeDfrSbjType.RECEIPIENT_PAYS("2")}). */
+    @Test
+    void scraping_feeBearerB_persistsLegacyRecipientPaysCode() {
+        setUpAdmin();
+        var saved = stubIntakeAndCapture("602");
+
+        service.recordScrapingResult(reqWithEcho(
+                "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0002", "00000000", "B",
+                null, null, null));
+
+        verify(napasRemitTrnsHstrRepo).saveAndFlush(saved.capture());
+        assertThat(saved.getValue().getFeeDfrSbj()).isEqualTo("2");
+    }
+
+    /** The A/B→1/2 conversion is a pure boundary mapping: unknown values pass
+     *  through, so a caller already sending the legacy code is idempotent and
+     *  the unused {@code S} is never silently rewritten. */
+    @Test
+    void feeDfrSbjMapping_isIdempotentAndPassesUnknownsThrough() {
+        assertThat(OwnAccountTransferConstants.toLegacyFeeDfrSbj("A")).isEqualTo("1");
+        assertThat(OwnAccountTransferConstants.toLegacyFeeDfrSbj("B")).isEqualTo("2");
+        assertThat(OwnAccountTransferConstants.toLegacyFeeDfrSbj("1")).isEqualTo("1");
+        assertThat(OwnAccountTransferConstants.toLegacyFeeDfrSbj("2")).isEqualTo("2");
+        assertThat(OwnAccountTransferConstants.toLegacyFeeDfrSbj("S")).isEqualTo("S");
+        assertThat(OwnAccountTransferConstants.toLegacyFeeDfrSbj(null)).isNull();
+    }
+
+    /** Legacy overwrites OUT_ACCT_NO / IN_ACCT_NO / CCY_CD from
+     *  {@code Result.transfer[0]} on success
+     *  ({@code trns_0001_007.ts:2157-2158, 2163}). */
+    @Test
+    void scraping_engineEcho_persistsBankReturnedAccountsAndCurrency() {
+        setUpAdmin();
+        var saved = stubIntakeAndCapture("603");
+
+        service.recordScrapingResult(reqWithEcho(
+                "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0003", "00000000", "A",
+                "DDA200543518", "DDA200612649", "VND"));
+
+        verify(napasRemitTrnsHstrRepo).saveAndFlush(saved.capture());
+        // Bank-normalized DDA form recorded verbatim …
+        assertThat(saved.getValue().getOutAcctNo()).isEqualTo("DDA200543518");
+        assertThat(saved.getValue().getInAcctNo()).isEqualTo("DDA200612649");
+        assertThat(saved.getValue().getCcyCd()).isEqualTo("VND");
+        // … while the ownership lookups still used the COMPOSED keys, so a
+        // bank-normalized number can never reject an executed transfer.
+        verify(acctMstrRepo).findByBizKeyAndBankCdAndAcctNo(TENANT, SHINHAN, "0001");
+        verify(acctMstrRepo).findByBizKeyAndBankCdAndAcctNo(TENANT, SHINHAN, "0002");
+    }
+
+    /** Absent / blank echo ⇒ the composed values persist — legacy's failure
+     *  branch ({@code trns_0001_007.ts:2167-2170}). */
+    @Test
+    void scraping_engineEchoAbsent_persistsComposedValues() {
+        setUpAdmin();
+        var saved = stubIntakeAndCapture("604");
+
+        service.recordScrapingResult(reqWithEcho(
+                "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0004", "8000FFFF", "B",
+                null, "   ", ""));
+
+        verify(napasRemitTrnsHstrRepo).saveAndFlush(saved.capture());
+        assertThat(saved.getValue().getOutAcctNo()).isEqualTo("0001");
+        assertThat(saved.getValue().getInAcctNo()).isEqualTo("0002");
+        assertThat(saved.getValue().getCcyCd()).isEqualTo("VND");
+    }
+
+    /** A non-VND currency the bank echoed is RECORDED, not rejected — the CCY
+     *  guard runs on the pre-transfer {@code ccy_cd} only. */
+    @Test
+    void scraping_engineEchoNonVndCurrency_isRecordedNotRejected() {
+        setUpAdmin();
+        var saved = stubIntakeAndCapture("605");
+
+        service.recordScrapingResult(reqWithEcho(
+                "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0005", "00000000", "A",
+                "0001", "0002", "USD"));
+
+        verify(napasRemitTrnsHstrRepo).saveAndFlush(saved.capture());
+        assertThat(saved.getValue().getCcyCd()).isEqualTo("USD");
+    }
+
     /** Compact factory for scraping-result request fixtures. */
     private static com.kosign.wecms.domain.banking.ownaccounttransfer.dto.request.ScrapingResultIntakeRequest
             req(String idem, String transferType,
@@ -603,7 +766,39 @@ class OwnAccountTransferServiceTest {
                 tgtBankCd, tgtNapasBankCd, tgtAcctNo, null,
                 "VND", requestedAmt, actualAmt,
                 bankTxId, trnsStts, null,
-                null, null, null, null, null, null);
+                null, null, null, null,
+                /*engineOutAcctNo*/ null, /*engineInAcctNo*/ null, /*engineCcyCd*/ null,
+                null, null);
+    }
+
+    /** Variant that also sets {@code feeDfrSbj} and the three post-transfer
+     *  engine-echo fields — used by the legacy-parity sweep tests. */
+    private static com.kosign.wecms.domain.banking.ownaccounttransfer.dto.request.ScrapingResultIntakeRequest
+            reqWithEcho(String idem, String trnsStts, String feeDfrSbj,
+                        String engineOutAcctNo, String engineInAcctNo, String engineCcyCd) {
+        return new com.kosign.wecms.domain.banking.ownaccounttransfer.dto.request.ScrapingResultIntakeRequest(
+                idem, "SAME_BANK",
+                SHINHAN, "0001",
+                SHINHAN, null, "0002", null,
+                "VND", "1000", "1000",
+                "", trnsStts, null,
+                /*fee*/ null, feeDfrSbj, /*rmrk*/ null, /*rmrk2*/ null,
+                engineOutAcctNo, engineInAcctNo, engineCcyCd,
+                null, null);
+    }
+
+    /** Stub the two ownership lookups + the seq allocator so an intake reaches
+     *  the INSERT, and capture the persisted row. */
+    private ArgumentCaptor<NapasRemitTrnsHstr> stubIntakeAndCapture(String seqNo) {
+        var src = acct(SHINHAN, "0001", new BigDecimal("100"), new BigDecimal("90"));
+        var tgt = acct(SHINHAN, "0002", new BigDecimal("50"),  new BigDecimal("50"));
+        when(acctMstrRepo.findByBizKeyAndBankCdAndAcctNo(TENANT, SHINHAN, "0001"))
+                .thenReturn(java.util.Optional.of(src));
+        when(acctMstrRepo.findByBizKeyAndBankCdAndAcctNo(TENANT, SHINHAN, "0002"))
+                .thenReturn(java.util.Optional.of(tgt));
+        when(legacyFunctions.nextNapasRemitSeqNo(TENANT)).thenReturn(seqNo);
+        when(napasRemitTrnsHstrRepo.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
+        return ArgumentCaptor.forClass(NapasRemitTrnsHstr.class);
     }
 
     /* =================================================================

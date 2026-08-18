@@ -189,7 +189,6 @@ public class OwnAccountTransferController {
      * {@code WBE_OAT_TARGET_NAPAS_REQUIRED},
      * {@code WBE_OAT_TARGET_BANK_REQUIRED},
      * {@code WBE_OAT_SAME_BANK_MISMATCH},
-     * {@code WBE_OAT_AMOUNT_MISMATCH},
      * {@code WBE_OAT_SOURCE_NOT_FOUND},
      * {@code WBE_OAT_SOURCE_FORBIDDEN},
      * {@code WBE_OAT_TARGET_NAPAS_UNKNOWN},

@@ -525,9 +525,10 @@ public class OwnAccountTransferService {
      *   <li><b>Transfer-type shape</b> — {@code SAME_BANK} requires
      *       {@code targetBankCd}; {@code NAPAS} requires
      *       {@code targetNapasBankCd}.</li>
-     *   <li><b>Amount tolerance</b> — exact match for VND
-     *       ({@code requestedAmt == actualAmt}). VND has no
-     *       fractional unit; any drift is engine error.</li>
+     *   <li><b>Amount drift</b> — {@code requestedAmt} vs
+     *       {@code actualAmt} is <b>logged, never rejected</b>. Legacy has
+     *       no such comparison and always records the bank-reported amount;
+     *       rejecting would discard the record of an executed transfer.</li>
      *   <li><b>Source ownership</b> — row must exist for the tenant,
      *       be {@code ACTV_YN='Y'}, be VND; non-admin USERs must hold
      *       a {@code W} grant.</li>
@@ -576,11 +577,23 @@ public class OwnAccountTransferService {
             }
         }
 
-        // -- 3. Amount tolerance (VND: exact match) ------------------
+        // -- 3. Amount drift — LOGGED, never rejected (legacy parity) --
+        // Legacy has no "requested vs actual" concept at all: the composer
+        // sends a single TRSC_AMT — the bank's `Result.transfer[0].remitAmt`
+        // on success, the entered amount on failure (trns_0001_007.ts:2158,
+        // 2169) — and trns_0002_001_c001_act.jsp validates only that it is a
+        // positive number (ValidationHelper.validateAmountOnlyPositive). It
+        // cannot reject on a mismatch because it has nothing to compare
+        // against; it records whatever the bank reported.
+        //
+        // Rejecting here would discard the ONLY record of a transfer the bank
+        // may already have executed, so the divergence is logged and the row
+        // is still written with the engine-reported amount. (legacy-parity fix
+        // 2026-08-18 — see docs/bugs/internal-transfer-intake-legacy-parity-2026-08-18.md)
         if (!Objects.equals(req.requestedAmt(), req.actualAmt())) {
-            log.warn("oat scraping-result amount-mismatch bizKey={} idem={} requested={} actual={}",
+            log.warn("oat scraping-result amount-drift (recorded, not rejected) "
+                            + "bizKey={} idem={} requested={} actual={}",
                     bizKey, req.idempotencyKey(), req.requestedAmt(), req.actualAmt());
-            rejectAndAudit(req, "WBE_OAT_AMOUNT_MISMATCH");
         }
 
         // -- 4. Source ownership re-validation -----------------------
@@ -706,18 +719,25 @@ public class OwnAccountTransferService {
         final NapasRemitTrnsHstr row = new NapasRemitTrnsHstr();
         row.setBizKey(bizKey);
         row.setOutBankCode(req.sourceBankCd());
-        row.setOutAcctNo(req.sourceAcctNo());
+        // Account numbers + currency: the BANK-echoed value wins when the
+        // engine reported one, else the composed value — legacy
+        // trns_0001_007.ts:2157/2163/2158 (success) vs :2167/2168/2170
+        // (failure). These are RECORD-only; the ownership re-validation above
+        // ran on the composed keys, never on these, so a bank-normalized
+        // account number can never reject an already-executed transfer.
+        row.setOutAcctNo(firstNonBlank(req.engineOutAcctNo(), req.sourceAcctNo()));
         row.setTransType(OwnAccountTransferConstants.TRANSFER_TYPE_SAME_BANK.equals(req.transferType())
                 ? OwnAccountTransferConstants.NRTH_TRANS_TYPE_SAME_BANK
                 : OwnAccountTransferConstants.NRTH_TRANS_TYPE_NAPAS);
         row.setInBankCode(resolvedTargetBankCd);
         row.setInNapasBankCode(req.targetNapasBankCd());
-        row.setInAcctNo(req.targetAcctNo());
+        row.setInAcctNo(firstNonBlank(req.engineInAcctNo(), req.targetAcctNo()));
         row.setOwacNm(req.targetOwacNm());
-        row.setCcyCd(req.ccyCd());
+        row.setCcyCd(firstNonBlank(req.engineCcyCd(), req.ccyCd()));
         row.setTrscAmt(new BigDecimal(req.actualAmt()));
         row.setFee(req.fee());
-        row.setFeeDfrSbj(req.feeDfrSbj());
+        // A/B (wire) → 1/2 (legacy column) — see toLegacyFeeDfrSbj.
+        row.setFeeDfrSbj(OwnAccountTransferConstants.toLegacyFeeDfrSbj(req.feeDfrSbj()));
         row.setRmrk(req.rmrk());
         row.setRmrk2(req.rmrk2());
         row.setTrnsStts(req.trnsStts());
@@ -746,6 +766,16 @@ public class OwnAccountTransferService {
         }
         // Unreachable — loop returns or rethrows.
         throw new IllegalStateException("oat seq_no allocator exhausted unexpectedly");
+    }
+
+    /** First non-blank of the two, else {@code null}. Used to prefer a
+     *  bank-echoed result field over the composed request value while
+     *  treating {@code null} and {@code ""} identically (legacy's
+     *  {@code common.app.null2void} inputs make blank and absent the same
+     *  thing on the wire). */
+    private static String firstNonBlank(String preferred, String fallback) {
+        if (preferred != null && !preferred.isBlank()) return preferred;
+        return fallback;
     }
 
     /** Write a reject audit row, then throw the business exception.

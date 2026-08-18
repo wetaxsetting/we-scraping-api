@@ -176,7 +176,7 @@ The only exemptions are the short list in §10.
    legacy, inspect the DB read-only — and **write the findings into the same record as they are found**
    (§2a). The chat summarizes the record; it never replaces it.
 9. **Only after the Markdown record exists — and only when implementation is authorized (§17)** —
-   modify application code. A request to *check · investigate · review · audit · analyze · design*
+   modify application code. A request whose intent is only to investigate — analyse, verify, diagnose, review feasibility (§19, not by wording)
    stops here: document the findings and **wait for a human approval decision**. When DB impact exists,
    the migration file or manual `.sql` artifact is prepared and reviewed as part of the change, and its
    **execution is a separate operational step** (§14f).
@@ -274,6 +274,8 @@ this thin:
 
 **Date:** YYYY-MM-DD
 **Type:** AUDIT / INVESTIGATION
+**Current Work Classification:** AUDIT
+**Finding Classification:** Pending investigation
 **Investigation Status:** IN PROGRESS
 **Approval Status:** PENDING
 **Implementation Status:** NOT STARTED
@@ -393,7 +395,10 @@ broken · behaviour differs from an accepted requirement · a defect causes wron
 parity behaviour is incorrect and the task is to fix it. Use **ISSUE** when the work is needed but is
 not clearly a product defect · operational / configuration behaviour needs correcting · an unresolved
 implementation concern is being addressed · a tracked behaviour/problem does not fit BUG cleanly.
-**If classification is unclear, prefer ISSUE.** Never create duplicate BUG + ISSUE records for the
+**If BUG-vs-ISSUE is unclear for work already known to need implementation, prefer ISSUE — but if the
+nature of the problem itself is unclear, the answer is AUDIT, not ISSUE (§19e).** Classification is
+semantic: intent + verified nature, never the words the user used (**§19**). Never create duplicate
+BUG + ISSUE records for the
 same implementation task.
 
 **A large feature is still a feature.** Do **not** open a bug or issue record just because feature
@@ -506,6 +511,7 @@ Create this **before** modifying code:
 
 **Date:** YYYY-MM-DD
 **Type:** BUG FIX | ISSUE | PARITY FIX
+**Current Work Classification:** AUDIT | BUG | ISSUE | FEATURE   <!-- semantic, never keyword — §19 -->
 **Status:** IN PROGRESS
 **Repository:** wecms-api
 **Issue:** <ticket/work ID if available>
@@ -926,7 +932,8 @@ immediately. Claude must first:
    same record** (§2a),
 6. **then** begin application-code modification — **but only when the request actually carries
    implementation intent.** The verbs listed above (*fix · implement · change · resolve · add*) do; a
-   request only to **check · investigate · review · audit · analyze · design** does **not**. For those,
+   request whose intent is only to **investigate, analyse, verify, diagnose, or review** does **not** —
+   judged semantically, never by the words used (§19). For those,
    step 6 is replaced by *stop and present the findings for human approval* — **§17**.
 
 Claude must **not** ask *"Do you want me to document this?"* for a clearly meaningful behaviour
@@ -945,7 +952,7 @@ shared branch, tagging, and any deployment or environment promotion are **manual
 current conversation, for one specific Git operation (§16c).
 
 **And Claude must not treat an investigation as its own authorization.** When the request was to
-*check · investigate · review · audit · analyze · design*, the work ends at the documented findings and
+only to investigate — analyse, verify, diagnose, review (§19, by intent not wording) — the work ends at the documented findings and
 a **human decides** whether implementation proceeds — **§17**. Finding the root cause is not permission
 to fix it, and *"OK"* / *"thanks"* / *"looks good"* is not an approval (§17e).
 
@@ -1897,9 +1904,15 @@ Implementation Status: NOT STARTED
 
 #### 17c · Reading intent — three request classes
 
-The request itself decides how far the work may go. Classify it before starting.
+The request itself decides how far the work may go. Classify it before starting — **semantically**: by
+what the user has actually authorized, never by the words they used (**§19**).
 
-| | Request looks like | Authorizes | Ends at |
+> **The quoted phrases below are ILLUSTRATIVE EXAMPLES — NOT KEYWORD-MATCHING RULES.** A message that
+> contains none of them still classifies; a message that contains one may still classify differently.
+> Ask *what has the user authorized me to do?*, not *which phrase appeared?* This holds in every
+> language the team writes in (§19f).
+
+| | Typical phrasing (illustrative) | Authorizes | Ends at |
 |---|---|---|---|
 | **A · CHECK / INVESTIGATE ONLY** | *"Can you check this?"* · *"Please investigate."* · *"Why does this happen?"* · *"Find the cause."* · *"Review this issue."* · *"Audit this."* · *"Analyze this problem."* · *"Can you check the error?"* | documentation · read-only source inspection · Git/history inspection · inspecting and (where safe) running existing tests · read-only DB/schema inspection where permitted · root-cause analysis · parity comparison · a **recommended** implementation · risk and test recommendations | **STOP for human approval** |
 | **B · INVESTIGATE AND FIX** | *"Please investigate and fix this error."* | everything in A, **plus implementation** — the request already carries approval | `READY FOR MANUAL COMMIT` (§16) |
@@ -2450,6 +2463,205 @@ what actually ran is not an acceptable report.
 **Not retroactive.** This applies to **new and in-flight work**. Do **not** mass-create test-result
 files for historical bugs and features. If an in-flight implementation clearly needs one, report it as a
 **TEST RESULT MIGRATION CANDIDATE** rather than back-filling evidence nobody observed.
+
+### 19 · Task classification is SEMANTIC — intent and verified nature, never keywords (MANDATORY)
+
+**Added 2026-08-18. Canonical definition for `wecms-api`.** The frontend counterpart is
+`wecms-web/CLAUDE.md` §18 *(separate repository)*. `.claude/skills/wecms-api-docs/**` restates it —
+**if any of those disagrees with this section, this section wins.**
+
+This section decides **what kind of task this is**. It does not restate §1–§18: placement (§4), the
+docs-first precondition (§2a), the approval gate (§17), and the quality gate (§15) are unchanged and
+still apply.
+
+> ## INTENT + VERIFIED NATURE > WORD CHOICE
+>
+> **Never classify a request by matching words.** The user's vocabulary is not the classification.
+
+#### 19a · The forbidden shortcut
+
+```
+✗  contains "check"    → AUDIT
+✗  contains "bug"      → BUG
+✗  contains "issue"    → ISSUE
+✗  contains "feature"  → FEATURE
+```
+
+**All four are wrong.** A message saying *"there's a bug in the transfer screen, can you look?"*
+authorizes an **AUDIT**, not a BUG fix. A message saying *"the SIT box is still serving the old WAR"*
+is an **ISSUE**, though it contains none of those words. A ticket titled *"Feature: fix wrong balance"*
+is a **BUG**.
+
+Every phrase quoted anywhere in this governance — including §17c's request-class table — is an
+**ILLUSTRATIVE EXAMPLE, NOT A KEYWORD-MATCHING RULE.**
+
+#### 19b · Two classifications, one request
+
+A request carries **two** separate questions. Answer them separately.
+
+| | Question | Decided by | When |
+|---|---|---|---|
+| **Current Work Classification** | *What am I authorized to do right now?* | the user's **intent** | before any detailed work (§2a) |
+| **Finding Classification** | *What is this problem actually?* | the **verified evidence** | after the investigation |
+
+They are frequently different, and that is correct:
+
+```
+Current Work Classification:  AUDIT
+Finding Classification:       BUG                                    ← a real code defect
+Finding Classification:       ISSUE — stale SIT deployment artifact  ← not a code defect
+Finding Classification:       NO DEFECT — expected behaviour
+Finding Classification:       UNRESOLVED
+```
+
+**This is the point of the rule.** Forcing a request into `BUG` or `ISSUE` before evidence exists is
+guessing, and it usually guesses wrong — the observed symptom rarely names its own cause.
+
+#### 19c · The four canonical classifications
+
+**`AUDIT` · `BUG` · `ISSUE` · `FEATURE`** — these four, and no others. Do not invent a fifth primary
+type; the only additional categories are those existing repository governance already defines.
+
+**AUDIT — the work being performed now.** Investigation · analysis · verification · root-cause
+determination · parity checking · technical review · feasibility review · confirmation · diagnosis —
+**where implementation has not clearly been authorized.** AUDIT describes *what you are doing*, not
+what is wrong. Its finding may turn out to be a BUG, an ISSUE, a FEATURE requirement, `NO DEFECT`, an
+environment/deployment condition, or anything else the evidence supports.
+
+**BUG — an existing behaviour is defective.** Implemented functionality behaves incorrectly ·
+behaviour violates an accepted or current requirement · behaviour regressed from previously correct
+behaviour · refactor behaviour incorrectly differs from approved legacy/parity behaviour · a code
+defect produces a wrong user or system outcome. **Verify the behaviour before assigning BUG** — never
+assign it because the user said "bug".
+
+**ISSUE — meaningful technical work that is not a product behaviour defect.** Environment or
+configuration mismatch · deployment problem · stale artifact · operational problem · data condition ·
+compatibility problem · infrastructure concern · technical debt requiring action · build/package
+problem · other non-product implementation concern. **ISSUE is not a generic fallback** — use it only
+when the evidence shows BUG and FEATURE both fit worse.
+
+**FEATURE — intentional new or changed product behaviour.** New functionality · new user capability ·
+new business behaviour · intentional enhancement · intentional modification of existing behaviour ·
+new integration capability · an approved new workflow. **FEATURE does not mean "anything that changes
+code"** — a defect fix stays BUG, a deployment concern stays ISSUE.
+
+#### 19d · Decision order
+
+**STEP 1 — determine intent.** *Has the user authorized implementation?*
+
+```
+NO   →  the current work is AUDIT.  Create the audit record, investigate, stop for approval (§17).
+YES  →  continue to Step 2 to classify the implementation itself.
+```
+
+**STEP 2 — determine verified nature.**
+
+```
+Is the currently expected / implemented behaviour defective?              YES → BUG
+   ↓ no
+Is this primarily a technical / environment / deployment / data /
+operational problem rather than a product defect?                         YES → ISSUE
+   ↓ no
+Does the request intentionally add or change product / business behaviour? YES → FEATURE
+   ↓ still unclear
+                                                        →  AUDIT — investigate first.
+```
+
+#### 19e · When it is unclear, audit — do not fall back to ISSUE
+
+**If the classification is not clear from the evidence, do not guess: classify the current work as
+AUDIT and find out.**
+
+> *Corrected 2026-08-18.* §4 previously said **"If classification is unclear, prefer ISSUE."** That was
+> written to break BUG/ISSUE ties for work already known to need implementation, and it still serves
+> that narrow purpose — but read as a general rule it turned `ISSUE` into a dumping ground for
+> anything not yet understood. **The general rule is now AUDIT.** Prefer ISSUE only when implementation
+> is already authorized, the nature is genuinely understood, and the sole remaining question is
+> BUG-vs-ISSUE.
+
+#### 19f · Language independence
+
+Classification must produce the **same result regardless of language** — English, Korean, Vietnamese,
+Khmer, or the mixed-language messages the team actually writes. **Do not encode governance around
+English trigger words.** Every example in this file is English because the file is English; the
+semantics are what bind.
+
+The team spans Cambodia, Vietnam and Korea, and a Korean *"확인해 주세요"*, a Vietnamese *"kiểm tra giúp
+mình"* and an English *"please take a look"* are the same request and get the same classification.
+
+#### 19g · Short and incomplete requests
+
+A screenshot · an error message · one sentence · a ticket title · a chat message is often all you get.
+
+**Infer only what the evidence supports.** If implementation authorization is unclear — which, for a
+bare screenshot, it almost always is — **start with an AUDIT record.** That is safe: it commits to
+nothing but investigating, and §17 keeps implementation behind a human decision anyway.
+
+**Do not stall on classification questions the repository can answer by starting an audit.** Asking
+*"is this a bug or an issue?"* before any evidence exists wastes the user's turn — open the audit,
+investigate, and let the finding answer it. Ask only when the *authorization* is genuinely ambiguous
+and getting it wrong would change what you do.
+
+#### 19h · Record metadata
+
+Where it adds clarity, records carry:
+
+```markdown
+**Current Work Classification:** AUDIT | BUG | ISSUE | FEATURE
+**Finding Classification:** BUG | ISSUE | FEATURE | NO DEFECT | UNRESOLVED
+```
+
+`Finding Classification` belongs on **audit/investigation records**; a record opened directly as a BUG
+or FEATURE usually needs only the first line, and often neither — the folder already says it. **Do not
+add metadata that carries no information** (§15x); use the existing canonical fields (`**Type:**`,
+`**Status:**`, the three dimensions in §17k) wherever they already say it.
+
+#### 19i · When an audit's finding turns into implementation
+
+The §17i chain, now with the classification made explicit — **the audit is never converted or
+deleted**:
+
+| Finding | After human approval (§17) |
+|---|---|
+| **BUG** | create `docs/bugs/descriptive-name-YYYY-MM-DD.md`, linking the audit as evidence |
+| **ISSUE** | create `docs/issues/descriptive-name-YYYY-MM-DD.md`, linking the audit as evidence |
+| **FEATURE** | continue through the governed feature structure `docs/features/<domain>/<feature>/`, keeping the audit/design evidence where it is |
+| **NO DEFECT** | nothing to implement — record the conclusion and close the audit |
+
+#### 19j · Classification never overrides the approval gate
+
+**`Finding Classification: BUG` does not authorize fixing it.** The chain is unchanged (§17):
+
+```
+AUDIT → finding → update the documentation → human review
+      → APPROVE / DENY / NEEDS MORE INVESTIGATION → only APPROVED work proceeds
+```
+
+And **§2a is unchanged**: `NO DOC FILE → NO DETAILED INVESTIGATION → NO IMPLEMENTATION`. Classification
+is performed on **orientation-level evidence only** — enough to name the task and place its record —
+then the record is created, and only then does the investigation begin. Classifying is not an excuse to
+investigate first.
+
+#### 19k · If the evidence contradicts the classification, change the classification
+
+A record's classification is a **finding, not a commitment**. If an investigation opened as a BUG turns
+out to be a stale artifact, **say so and re-classify** — honestly, in the same record, with the
+evidence. Forcing `BUG` to remain because that is how the record was opened is the same failure as
+reporting an unrun test as `PASS` (§15h).
+
+#### 19l · Worked examples — ILLUSTRATIVE, NOT KEYWORD RULES
+
+| The request | Current Work | Why | Finding |
+|---|---|---|---|
+| *"When I press Transfer it gives an error. Can you help me check it?"* | **AUDIT** | Existing behaviour looks wrong, but only investigation was authorized | unknown until investigated — could be **BUG** (real defect) or **ISSUE** (e.g. a stale deployment artifact) |
+| *"The Transfer button gives an error. Please fix it."* | implementation **is** authorized | Orientation evidence decides the record: clearly defective behaviour → **BUG** | confirm during investigation; re-classify honestly if it proves not to be a code defect (§19k) |
+| *"Please review whether we should add bulk approval."* | **AUDIT** (feature analysis) | Analysis requested; no implementation authorized | **FEATURE** requirement, if the analysis recommends it |
+| *"Implement bulk approval per the approved specification."* | **FEATURE** | New product capability, explicitly authorized | n/a |
+| *"SIT is still running the old WAR even though the source is fixed."* | **ISSUE** | A deployment/artifact condition, not a product-code defect | ISSUE — even though the word "bug" never appears, and the word "fixed" does |
+
+The Internal Transfer row is the canonical case: **do not decide the finding from the screenshot.** The
+same symptom is a BUG if the code is wrong and an ISSUE if the code is right and the deployed artifact
+is stale — and only the investigation, recorded in the audit, can tell them apart.
 
 ## Project Overview
 
