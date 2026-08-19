@@ -206,9 +206,7 @@ public class OwnAccountTransferService {
             final GrantFlags grants = userGrants.getOrDefault(key, GrantFlags.EMPTY);
             if (!isAdmin && !grants.hasAny()) continue;
             final boolean canTransfer = isAdmin || grants.hasW();
-            final BankCertInfo cert = a.getBankCertSeq() == null
-                    ? null
-                    : certBySeq.get(BigDecimal.valueOf(a.getBankCertSeq()));
+            final BankCertInfo cert = resolveCertForAccount(a, certBySeq);
             projected.add(toSourceRow(a, canTransfer, cert));
             if (a.getBal()     != null) totBal    = totBal.add(a.getBal());
             if (a.getRealAmt() != null) totAviBal = totAviBal.add(a.getRealAmt());
@@ -910,6 +908,42 @@ public class OwnAccountTransferService {
             }
         }
         return bySeq;
+    }
+
+    /**
+     * Resolve the credential an account is registered against — with a
+     * {@code BANK_CD} equality guard.
+     *
+     * <p>{@code BANK_CERT_INFO}'s PK is {@code (BIZ_KEY, SEQ_NO)}: the seq is
+     * tenant-global, shared by every bank the tenant has credentials for.
+     * Neither legacy's IDO {@code BANK_CERT_INFO_R006} nor
+     * {@link #loadBankCerts} filters {@code BANK_CD}, so a stale
+     * {@code ACCT_MSTR.BANK_CERT_SEQ} can resolve a DIFFERENT bank's login ID
+     * and password. Projecting those onto this account would make the browser
+     * engine attempt a login at bank A with bank B's credentials — a
+     * guaranteed authentication failure that feeds the bank's 3-strike
+     * lockout.
+     *
+     * <p>A cross-bank hit is therefore treated as "no credential": the row
+     * projects null cert fields and the frontend gate disables Transfer with
+     * the register-credentials message, exactly as an unlinked account does.
+     *
+     * <p>Deliberate divergence from legacy (approved 2026-08-19) — legacy has
+     * no such guard. See
+     * {@code docs/bugs/bank-credential-delete-leaves-dangling-acct-linkage-2026-08-19.md}.
+     */
+    private BankCertInfo resolveCertForAccount(AcctMstr a, Map<BigDecimal, BankCertInfo> certBySeq) {
+        if (a.getBankCertSeq() == null) return null;
+        final BankCertInfo cert = certBySeq.get(BigDecimal.valueOf(a.getBankCertSeq()));
+        if (cert == null) return null;
+        if (cert.getBankCd() != null
+                && a.getBankCd() != null
+                && !cert.getBankCd().equals(a.getBankCd())) {
+            log.warn("oat cert bank mismatch — acct {}/{} points at BANK_CERT_SEQ={} owned by bank {}; treating as no-cert",
+                    a.getBankCd(), a.getAcctNo(), a.getBankCertSeq(), cert.getBankCd());
+            return null;
+        }
+        return cert;
     }
 
     /** Run {@link BankCertCryptoService#decrypt(String)} but swallow

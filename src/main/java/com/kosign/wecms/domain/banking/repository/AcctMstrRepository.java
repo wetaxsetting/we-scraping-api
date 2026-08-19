@@ -16,6 +16,45 @@ import java.util.Optional;
 
 public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> {
 
+    /**
+     * Clear the credential linkage owned by one {@code BANK_CERT_INFO} row.
+     *
+     * <p>Called when a bank credential is deleted (Settings &gt; Login
+     * Credentials). The accounts themselves are KEPT — they live in Bank
+     * Account Management — only their pointer is dropped, so
+     * {@code BANK_CERT_SEQ IS NULL} honestly means "not registered against a
+     * credential" instead of pointing at a row that no longer exists.
+     *
+     * <p>Scoped by {@code BIZ_KEY + BANK_CERT_SEQ}, which is exact:
+     * {@code BANK_CERT_INFO}'s PK is {@code (BIZ_KEY, SEQ_NO)}, so one seq
+     * identifies one credential inside a tenant regardless of bank.
+     *
+     * <p><b>Deliberate divergence from legacy</b> — legacy
+     * ({@code comm_0218_001_d001_act.jsp}) deletes the credential row only and
+     * leaves the pointer dangling. Approved 2026-08-19; rationale, coexistence
+     * impact and the wrong-bank hazard it closes are in
+     * {@code docs/bugs/bank-credential-delete-leaves-dangling-acct-linkage-2026-08-19.md}.
+     *
+     * <p>Bulk JPQL: bypasses entity callbacks, so {@code MOD_ID} / {@code MOD_DTM}
+     * are stamped explicitly (same yyyyMMddHHmmss UTC convention as
+     * {@code AccountRegistrationService}).
+     *
+     * @return number of accounts unlinked (0 when the credential owned none)
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+           update AcctMstr a
+              set a.bankCertSeq = null,
+                  a.modId       = :userId,
+                  a.modDtm      = :nowDtm
+            where a.bizKey      = :bizKey
+              and a.bankCertSeq = :bankCertSeq
+           """)
+    int clearBankCertSeq(@Param("bizKey")      String bizKey,
+                         @Param("bankCertSeq") Long   bankCertSeq,
+                         @Param("userId")      String userId,
+                         @Param("nowDtm")      String nowDtm);
+
     /** All active accounts for a tenant, sorted by bank then account number. */
     List<AcctMstr> findByBizKeyAndActvYnOrderByBankCdAscAcctNoAsc(String bizKey, String actvYn);
 

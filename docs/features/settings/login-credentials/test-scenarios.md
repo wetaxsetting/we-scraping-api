@@ -68,10 +68,24 @@ SIT/UAT scenarios + coverage map. Frontend scenarios:
 
 | # | Scenario | Expected |
 |---|---|---|
-| D1 | Delete bank credential | 200; `BANK_CERT_INFO` row removed; `ACCT_MSTR` rows **preserved**; audit (DELETE) `REF_NO=BANK_CERT_INFO` |
-| D2 | Delete GDT credential | 200; `GDT_CERT_INFO` row removed; audit `REF_NO=GDT_CERT_INFO` |
-| D3 | Delete unknown / cross-tenant `seqNo` | `WBE2090` |
+| D1 | Delete bank credential | 200; `BANK_CERT_INFO` row removed; `ACCT_MSTR` **rows preserved** but their `BANK_CERT_SEQ` set to `NULL` (see D1b); audit (DELETE) `REF_NO=BANK_CERT_INFO` |
+| D1b | Delete a bank credential that owns accounts, then re-query those accounts | every `ACCT_MSTR` row that pointed at the deleted `SEQ_NO` now has `BANK_CERT_SEQ IS NULL` (+ `MOD_ID`/`MOD_DTM` stamped). On Banking > Own Account Transfer those rows render with **Transfer disabled** and the register-credentials tooltip. Rows belonging to other credentials / other tenants are untouched |
+| D1c | Re-register the same bank credential, then re-pick the accounts in the Account Picker | a **new** `SEQ_NO` is minted and `BANK_CERT_SEQ` is rewritten to it on the existing rows — `AccountRegistrationService:164` (update branch) / `:195` (insert branch), legacy `fnsh_0101_001_c001_act.jsp:321` / `:257`. `ACTV_YN` returns to `'Y'`; `REG_ID` / `REG_DTM` are preserved. Transfer re-enables. Guarded by `AccountRegistrationServiceCredentialRelinkTest` (5 cases) |
+| D1d | Re-register with **zero** accounts ticked | `WBE_BANK_ACCOUNT_REGISTER_EMPTY` — and **no `BANK_CERT_INFO` row is created**. This is what makes D1b safe: a credential cannot exist without at least one linked account, so "re-registered but nothing re-linked" is unreachable from the UI |
+| D1e | Account already present in `ACCT_MSTR` appears in the Select Bank Accounts list | the picker does **not** hide or disable already-registered accounts — every scraped account is offered and tickable, which is what allows an existing row to be re-pointed |
+| D2 | Delete GDT credential | 200; `GDT_CERT_INFO` row removed; `ACCT_MSTR` **completely untouched** (GDT owns no account linkage); audit `REF_NO=GDT_CERT_INFO` |
+| D3 | Delete unknown / cross-tenant `seqNo` | `WBE2090`; nothing deleted **and no account unlinked** |
 | D4 | Delete unknown `type` | `WBE2092` |
+
+> **D1b / D1c behaviour changed 2026-08-19** — before that date the delete left `BANK_CERT_SEQ`
+> pointing at the removed row, which surfaced as *"Bank login credentials were deleted. Please register
+> Login Credentials again."* on Own Account Transfer **while the credential was visibly present** in the
+> list (re-registering mints a new seq and does not re-link). This is a deliberate divergence from
+> legacy `comm_0218_001_d001_act.jsp`, which leaves the pointer dangling. Rationale, coexistence impact,
+> and approval: [../../../bugs/bank-credential-delete-leaves-dangling-acct-linkage-2026-08-19.md](../../../bugs/bank-credential-delete-leaves-dangling-acct-linkage-2026-08-19.md).
+>
+> **The fix is forward-looking.** Rows that were already dangling before it shipped are cured by D1c,
+> not by the deploy.
 
 ### Reveal
 
@@ -114,14 +128,19 @@ SIT/UAT scenarios + coverage map. Frontend scenarios:
 
 ## 2. Coverage notes
 
-- **No dedicated `LoginCredentialsServiceTest` / `LoginCredentialsControllerTest` on disk** in this
+- **`LoginCredentialsServiceTest` now exists** (12 cases) and covers the GDT create/update branch, the
+  hard delete, the audit dual-read, the GDT engine config, and — since 2026-08-19 — the two
+  linkage-clear cases behind D1b / D2 (`delete(bank)` clears `ACCT_MSTR.BANK_CERT_SEQ`;
+  `delete(gdt)` never touches it). Evidence:
+  [../../../testing/results/bank-credential-delete-dangling-linkage-test-result-2026-08-19.md](../../../testing/results/bank-credential-delete-dangling-linkage-test-result-2026-08-19.md).
+  **No `LoginCredentialsControllerTest` on disk** in this
   pass — the slice leans on the banking-tree tests for its reused collaborators:
   - `BankCertCryptoService` round-trip + legacy-compat decrypt (banking `bankcredentials` tests).
   - `BankScrapingService` verify outcomes (banking `nxisas` tests).
   - `AccountRegistrationService` upsert + `ACCT_AUTH_INFO` fan-out (banking tests).
-  Add `LoginCredentialsServiceTest` covering the bank/GDT branch split, dedup find-or-create, the
-  `WBE2091` guards (reveal + update), GDT one-per-company, and the audit fan-out — and a
-  `@WebMvcTest` controller test asserting the lowercase snake_case wire shape + `{type}` normalization.
+  **Still to add:** service coverage for dedup find-or-create, the `WBE2091` guards (reveal + update),
+  and GDT one-per-company; plus a `@WebMvcTest` controller test asserting the lowercase snake_case wire
+  shape + `{type}` normalization.
 - **Cert-crypto cross-system check (X3)** can only be confirmed against a shared JEX DB — run the
   refactor `encrypt`, then `SELECT public.decrypt(cert_info_detl_con)` on the same row (read-only MCP)
   and compare. Cannot be exercised headless against the legacy DB function from a unit test.
