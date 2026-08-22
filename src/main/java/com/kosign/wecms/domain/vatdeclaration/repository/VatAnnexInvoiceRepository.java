@@ -84,6 +84,62 @@ public interface VatAnnexInvoiceRepository extends Repository<VatDeclaration, Lo
      */
     String RATE_ORDER = "(dense_rank() over (order by " + RATE_SEQ + "))::int";
 
+    /** {@link #RATE_SEQ} over the per-(invoice,rate) subquery alias {@code p.rate}. */
+    String RATE_SEQ_P = """
+            (case p.rate
+                  when 'KKKNT' then 1
+                  when '0%'    then 2
+                  when '5%'    then 3
+                  when '8%'    then 4
+                  when '10%'   then 5
+                  when 'KCT'   then 6
+                  else 99 end)
+            """;
+
+    /**
+     * The period's invoice lines folded to <b>one row per (invoice, VAT rate)</b>
+     * — the shared base for {@link #findRows} and {@link #groupTotals}. Base
+     * ({@code sply}), the per-line floor VAT ({@code floor_vat}) and the 8%
+     * reduction come from {@code BUSA_DOC_DETL}; the counterparty tax code is
+     * resolved via the {@code trco_infm} join in {@link #FROM_WHERE}. The real
+     * output VAT is grafted on by the callers (they LEFT JOIN {@link #INV_TAX}),
+     * never summed here — folding first, then joining 1:1, is what keeps the VAT
+     * from being multiplied by the invoice's product-line count.
+     */
+    String PER_INV_RATE = "  select m.doc_id, m.doc_type,"
+            + "         coalesce(m.disp_doc_id, m.doc_id)          as inv_no,"
+            + "         m.einv_invoicesymbol                       as inv_symbol,"
+            + "         m.issu_dt, m.hand_doc_id, m.vat_decl_proc_yn, m.vat_decl_sid,"
+            + "         d.einv_taxrate                             as rate,"
+            + "         case when nullif(t.trco_tax_id, '') is not null then t.trco_tax_id"
+            + "              when m.trco_tax_id is not null and m.trco_tax_id <> m.issu_tax_id then m.trco_tax_id"
+            + "              else null end                         as trco_tax_code,"
+            + "         m.trco_cmnm                                as trco_nm,"
+            + "         string_agg(distinct coalesce(d.einv_productname, d.item_nm), ', ') as prod_nm,"
+            + "         coalesce(sum(coalesce(d.sply_amt, 0)), 0)  as sply,"
+            + "         coalesce(sum(floor(coalesce(d.sply_amt, 0) * " + RATE_PCT + " / 100)), 0) as floor_vat,"
+            + "         coalesce(sum(case when d.einv_taxrate = '8%'"
+            + "                           then floor(coalesce(d.sply_amt, 0) * 2 / 100) else 0 end), 0) as reduced"
+            + FROM_WHERE
+            + "  group by m.doc_id, m.doc_type, m.disp_doc_id, m.einv_invoicesymbol, m.issu_dt,"
+            + "           m.hand_doc_id, m.vat_decl_proc_yn, m.vat_decl_sid, d.einv_taxrate,"
+            + "           t.trco_tax_id, m.trco_tax_id, m.issu_tax_id, m.trco_cmnm";
+
+    /**
+     * Real output VAT per {@code (doc_id, rate)} from {@code EINV_TAX_DETL} — the
+     * VAT actually issued on the invoice, which the Sales e-Invoice list sums
+     * (header {@code TAX_AMT_SUM}). Callers LEFT JOIN this 1:1 onto
+     * {@link #PER_INV_RATE} and use it for OUTPUT (sales) rows instead of the
+     * {@code floor(SPLY_AMT × rate%)} recompute, which drifts by a few đồng of
+     * rounding. Verified on DEV Q1/2026: 8%+10% sums to 57,656,821 = the
+     * e-invoice total (floor gave 57,656,833). Purchase VAT keeps {@code floor_vat}.
+     */
+    String INV_TAX = "  select e.doc_id, e.einv_taxrate as rate,"
+            + "         coalesce(sum(coalesce(e.tax_amt, 0)), 0) as tax"
+            + "    from einv_tax_detl e"
+            + "   where e.biz_key = :bizKey"
+            + "   group by e.doc_id, e.einv_taxrate";
+
     /**
      * One row per <b>(invoice, VAT rate)</b> — the product lines of an invoice
      * that share a rate are folded into a single annex line (To-Be 2026-08-22:
@@ -95,40 +151,34 @@ public interface VatAnnexInvoiceRepository extends Repository<VatDeclaration, Lo
      * the footer formula). {@code prodNm} — not shown on the 01-1/GTGT grid —
      * carries the distinct product names of the folded lines for the export.
      */
-    @Query(value = "select m.doc_id                                as srcDocId,"
-            + "        case when m.doc_type = 'I' then 'O' else 'I' end as ioDv,"
-            + "        coalesce(m.disp_doc_id, m.doc_id)          as invNo,"
-            + "        m.einv_invoicesymbol                       as invSymbol,"
-            + "        m.issu_dt                                  as invDt,"
-            // Tax Code = MST doi tac (nguoi mua voi HD ban ra). Uu tien MST cua
-            // contact (trco_infm qua trco_key — dung ca cho du lieu cu), fallback
-            // sang master; khong bao gio hien MST cua chinh minh (= issu_tax_id,
-            // gia tri sai list-scrape stamp cho HD ban ra) -> de trong.
-            + "        case when nullif(t.trco_tax_id, '') is not null then t.trco_tax_id"
-            + "             when m.trco_tax_id is not null and m.trco_tax_id <> m.issu_tax_id then m.trco_tax_id"
-            + "             else null end                         as trcoTaxCode,"
-            + "        m.trco_cmnm                                as trcoNm,"
-            + "        string_agg(distinct coalesce(d.einv_productname, d.item_nm), ', ') as prodNm,"
-            + "        coalesce(sum(coalesce(d.sply_amt, 0)), 0)  as splyAmt,"
-            + "        d.einv_taxrate                             as vatRate,"
-            + "        coalesce(sum(floor(coalesce(d.sply_amt, 0) * " + RATE_PCT + " / 100)), 0)  as vatAmt,"
-            + "        coalesce(sum(case when d.einv_taxrate = '8%'"
-            + "             then floor(coalesce(d.sply_amt, 0) * 2 / 100) else 0 end), 0) as reducedAmt,"
-            + "        m.vat_decl_proc_yn                         as vatDeclProcYn,"
-            + "        m.vat_decl_sid                             as vatDeclSid,"
-            + "        " + RATE_ORDER + "                         as vatRateOrder"
-            + FROM_WHERE
-            + " group by m.doc_id, m.doc_type, m.disp_doc_id, m.einv_invoicesymbol, m.issu_dt,"
-            + "          t.trco_tax_id, m.trco_tax_id, m.issu_tax_id, m.trco_cmnm, m.hand_doc_id,"
-            + "          d.einv_taxrate, m.vat_decl_proc_yn, m.vat_decl_sid"
+    @Query(value = "select p.doc_id                               as srcDocId,"
+            + "        case when p.doc_type = 'I' then 'O' else 'I' end as ioDv,"
+            + "        p.inv_no                                   as invNo,"
+            + "        p.inv_symbol                               as invSymbol,"
+            + "        p.issu_dt                                  as invDt,"
+            + "        p.trco_tax_code                            as trcoTaxCode,"
+            + "        p.trco_nm                                  as trcoNm,"
+            + "        p.prod_nm                                  as prodNm,"
+            + "        p.sply                                     as splyAmt,"
+            + "        p.rate                                     as vatRate,"
+            // VAT = real issued VAT (EINV_TAX_DETL) for OUTPUT/sales; per-line
+            // floor for input/purchase. Sales floor drifts by a few đồng of
+            // rounding vs the invoice's actual VAT — see INV_TAX.
+            + "        case when p.doc_type = 'I' then coalesce(it.tax, 0) else p.floor_vat end as vatAmt,"
+            + "        p.reduced                                  as reducedAmt,"
+            + "        p.vat_decl_proc_yn                         as vatDeclProcYn,"
+            + "        p.vat_decl_sid                             as vatDeclSid,"
+            + "        (dense_rank() over (order by " + RATE_SEQ_P + "))::int as vatRateOrder"
+            + "   from ( " + PER_INV_RATE + " ) p"
+            + "   left join ( " + INV_TAX + " ) it on it.doc_id = p.doc_id and it.rate = p.rate"
             // Order by invoice NUMBER numerically, not lexically: doc_id sorts
             // '...-1','...-10','...-2' as strings. hand_doc_id is the bare invoice
             // no ('1','2','10'); cast to bigint when numeric (nulls last for any
             // non-numeric hand number), doc_id as the final stable tiebreaker.
-            + " order by " + RATE_SEQ + ", m.issu_dt,"
-            + "          (case when m.hand_doc_id ~ '^[0-9]+$' then m.hand_doc_id::bigint else null end) nulls last,"
-            + "          m.doc_id"
-            + " offset :offset limit :size",
+            + "  order by " + RATE_SEQ_P + ", p.issu_dt,"
+            + "          (case when p.hand_doc_id ~ '^[0-9]+$' then p.hand_doc_id::bigint else null end) nulls last,"
+            + "          p.doc_id"
+            + "  offset :offset limit :size",
             nativeQuery = true)
     List<AnnexInvoiceProjection> findRows(@Param("bizKey") String bizKey,
                                           @Param("fromDt") String fromDt,
@@ -187,15 +237,15 @@ public interface VatAnnexInvoiceRepository extends Repository<VatDeclaration, Lo
      * {@link #findRows} emits for that rate (rows are folded per invoice+rate),
      * so it doubles as the paging {@code total_count}.
      */
-    @Query(value = "select d.einv_taxrate                                       as groupCd,"
-            + "        count(distinct m.doc_id)                                 as rowCount,"
-            + "        coalesce(sum(coalesce(d.sply_amt, 0)), 0)                as totalSplyAmt,"
-            + "        coalesce(sum(floor(coalesce(d.sply_amt, 0) * " + RATE_PCT + " / 100)), 0) as totalVatAmt,"
-            + "        coalesce(sum(case when d.einv_taxrate = '8%'"
-            + "                          then floor(coalesce(d.sply_amt, 0) * 2 / 100) else 0 end), 0) as totalReducedAmt"
-            + FROM_WHERE
-            + " group by d.einv_taxrate"
-            + " order by " + RATE_SEQ,
+    @Query(value = "select p.rate                                             as groupCd,"
+            + "        count(*)                                                 as rowCount,"
+            + "        coalesce(sum(p.sply), 0)                                 as totalSplyAmt,"
+            + "        coalesce(sum(case when p.doc_type = 'I' then coalesce(it.tax, 0) else p.floor_vat end), 0) as totalVatAmt,"
+            + "        coalesce(sum(p.reduced), 0)                              as totalReducedAmt"
+            + "   from ( " + PER_INV_RATE + " ) p"
+            + "   left join ( " + INV_TAX + " ) it on it.doc_id = p.doc_id and it.rate = p.rate"
+            + "  group by p.rate"
+            + "  order by " + RATE_SEQ_P,
             nativeQuery = true)
     List<AnnexTaxGroupProjection> groupTotals(@Param("bizKey") String bizKey,
                                               @Param("fromDt") String fromDt,
