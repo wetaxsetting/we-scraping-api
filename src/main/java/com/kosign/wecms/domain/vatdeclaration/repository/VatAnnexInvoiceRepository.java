@@ -119,9 +119,15 @@ public interface VatAnnexInvoiceRepository extends Repository<VatDeclaration, Lo
             + "        " + RATE_ORDER + "                         as vatRateOrder"
             + FROM_WHERE
             + " group by m.doc_id, m.doc_type, m.disp_doc_id, m.einv_invoicesymbol, m.issu_dt,"
-            + "          t.trco_tax_id, m.trco_tax_id, m.issu_tax_id, m.trco_cmnm, d.einv_taxrate,"
-            + "          m.vat_decl_proc_yn, m.vat_decl_sid"
-            + " order by " + RATE_SEQ + ", m.issu_dt, m.doc_id"
+            + "          t.trco_tax_id, m.trco_tax_id, m.issu_tax_id, m.trco_cmnm, m.hand_doc_id,"
+            + "          d.einv_taxrate, m.vat_decl_proc_yn, m.vat_decl_sid"
+            // Order by invoice NUMBER numerically, not lexically: doc_id sorts
+            // '...-1','...-10','...-2' as strings. hand_doc_id is the bare invoice
+            // no ('1','2','10'); cast to bigint when numeric (nulls last for any
+            // non-numeric hand number), doc_id as the final stable tiebreaker.
+            + " order by " + RATE_SEQ + ", m.issu_dt,"
+            + "          (case when m.hand_doc_id ~ '^[0-9]+$' then m.hand_doc_id::bigint else null end) nulls last,"
+            + "          m.doc_id"
             + " offset :offset limit :size",
             nativeQuery = true)
     List<AnnexInvoiceProjection> findRows(@Param("bizKey") String bizKey,
@@ -233,4 +239,37 @@ public interface VatAnnexInvoiceRepository extends Repository<VatDeclaration, Lo
                                               @Param("toDt") String toDt,
                                               @Param("docTypes") Collection<String> docTypes,
                                               @Param("excludedStatuses") Collection<String> excludedStatuses);
+
+    /**
+     * The period's <b>real output (sales) VAT</b> per rate — {@code SUM(EINV_TAX_DETL.TAX_AMT)}
+     * grouped by {@code EINV_TAXRATE}, output invoices only.
+     *
+     * <p>Used to pin {@code [31]} / {@code [33]} to the VAT actually issued on the
+     * invoices instead of recomputing {@code floor(SPLY_AMT × rate% / 100)} per
+     * line — the per-line floor drifts by a few đồng of rounding, so the
+     * declaration disagreed with the Sales e-Invoice list (which sums the header
+     * {@code TAX_AMT_SUM}). Verified on DEV Q1/2026: {@code EINV_TAX_DETL.TAX_AMT}
+     * for 8%+10% sums to 57,656,821 = the e-invoice total, whereas the floor
+     * recompute gave 57,656,833. Base cells ({@code [30]}/{@code [32]}) still come
+     * from {@code BUSA_DOC_DETL.SPLY_AMT} (they already reconcile with {@code [34]}
+     * and the e-invoice pre-tax total). Sales only — purchase VAT {@code [24]}
+     * keeps its {@link #syncBuckets} source. Same period + excluded-status
+     * predicate as {@code syncBuckets}.
+     */
+    @Query(value = "select 'I'                                        as docType,"
+            + "        e.einv_taxrate                                 as taxRate,"
+            + "        cast(0 as numeric)                             as amt,"
+            + "        coalesce(sum(coalesce(e.tax_amt, 0)), 0)       as taxAmt"
+            + "   from busa_doc_mstr m"
+            + "   join einv_tax_detl e on e.biz_key = m.biz_key and e.doc_id = m.doc_id"
+            + "  where m.biz_key = :bizKey"
+            + "    and m.issu_dt between :fromDt and :toDt"
+            + "    and m.doc_type = 'I'"
+            + "    and coalesce(m.einv_invoicestatus, '') not in (:excludedStatuses)"
+            + "  group by e.einv_taxrate",
+            nativeQuery = true)
+    List<VatSyncBucketProjection> salesVatByRate(@Param("bizKey") String bizKey,
+                                                 @Param("fromDt") String fromDt,
+                                                 @Param("toDt") String toDt,
+                                                 @Param("excludedStatuses") Collection<String> excludedStatuses);
 }

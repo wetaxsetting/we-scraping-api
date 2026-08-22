@@ -672,8 +672,10 @@ public class VatDeclarationService {
             }
             switch (b.getTaxRate() == null ? "" : b.getTaxRate().trim()) {
                 case "0%"        -> ct29 = ct29.add(amt);
-                case "5%"        -> { ct30 = ct30.add(amt); ct31 = ct31.add(tax); }
-                case "8%", "10%" -> { ct32 = ct32.add(amt); ct33 = ct33.add(tax); }
+                // Base only here — sales VAT [31]/[33] is pinned to the real
+                // invoice VAT below (not this floor(base×rate) recompute).
+                case "5%"        -> ct30 = ct30.add(amt);
+                case "8%", "10%" -> ct32 = ct32.add(amt);
                 case "KCT"       -> ct26 = ct26.add(amt);     // [26] HHDV khong chiu thue GTGT (TT80 01/GTGT)
                 case "KKKNT"     -> ct32a = ct32a.add(amt);   // [32a] HHDV khong phai ke khai, tinh nop thue GTGT (TT80 01/GTGT)
                 default          -> unmapped.merge(
@@ -702,6 +704,24 @@ public class VatDeclarationService {
                     .map(e -> e.getKey() + " (" + str(e.getValue()) + ")")
                     .collect(java.util.stream.Collectors.joining(", "));
             throw new BusinessException("WBE_VAT_DECL_UNKNOWN_TAX_RATE", detail);
+        }
+
+        // [31]/[33] — pin to the REAL output VAT (EINV_TAX_DETL.TAX_AMT), not the
+        // floor(base×rate) recompute. The Sales e-Invoice list sums the invoice's
+        // stored VAT (TAX_AMT_SUM); the per-line floor drifts by a few đồng of
+        // rounding, so the declaration disagreed with the invoices (UAT 2026-08-22:
+        // [33] = 57,656,833 vs Sales e-Invoice = 57,656,821 for Q1/2026). Base
+        // cells [30]/[32] stay from BUSA_DOC_DETL — they already reconcile with
+        // [34] and the e-invoice pre-tax total. Sales only: purchase [24] keeps
+        // its syncBuckets source (purchase EINV_TAX_DETL does not reconcile).
+        for (VatSyncBucketProjection b : annexInvoiceRepo.salesVatByRate(
+                decl.getBizKey(), from, to, EXCLUDED_INVOICE_STATUSES)) {
+            BigDecimal tax = nz(b.getTaxAmt());
+            switch (b.getTaxRate() == null ? "" : b.getTaxRate().trim()) {
+                case "5%"        -> ct31 = ct31.add(tax);
+                case "8%", "10%" -> ct33 = ct33.add(tax);
+                default          -> { /* 0% / KCT / KKKNT carry no output VAT */ }
+            }
         }
 
         // Round to whole đồng HERE — this is the one place a figure crosses from

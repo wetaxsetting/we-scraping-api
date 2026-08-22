@@ -241,6 +241,17 @@ Aggregation predicate (translating the prototype's `ctuktthue <> 'N'` / `kkkthue
   closed 2026-07-29; the `KCT→[26]` / `KKKNT→[32a]` code was realigned to that closed decision on
   2026-08-22 after it had drifted). Mapping:
 
+> **Base and output-VAT come from different tables (fixed 2026-08-22).** The **base** cells
+> (`[23]`/`[26]`/`[29]`/`[30]`/`[32]`/`[32a]`) sum `BUSA_DOC_DETL.SPLY_AMT` (reconciles with `[34]`
+> and the e-invoice pre-tax total). The **output-VAT** cells `[31]`/`[33]` are **pinned to the real
+> issued VAT** — `SUM(EINV_TAX_DETL.TAX_AMT)` per rate for sales (`VatAnnexInvoiceRepository.salesVatByRate`)
+> — **not** `floor(SPLY_AMT × rate% / 100)` recomputed per line. The per-line floor drifts by a few
+> đồng of rounding, so `[33]` disagreed with the Sales e-Invoice list, which sums the header
+> `TAX_AMT_SUM` (UAT Q1/2026: `[33]` = 57,656,833 vs invoices 57,656,821). Verified on DEV:
+> `SUM(EINV_TAX_DETL.TAX_AMT)` for 8%+10% sales = 57,656,821 = the e-invoice total. **Purchase VAT
+> `[24]`** keeps the `syncBuckets` source (purchase `EINV_TAX_DETL` does not reconcile with the
+> header there — out of scope for this fix).
+
 | `EINV_TAXRATE` bucket | Output (DOC_TYPE `'I'`) | Input (DOC_TYPE `'B'`) |
 |---|---|---|
 | KCT — không chịu thuế GTGT | `CT26` += AMT | — |
@@ -301,7 +312,7 @@ only, H omits Add-on per V243 precedent).
 | 6 | DELETE | `/{decl_id}` | Delete declaration | `Draft` only; blocked if a later period exists (**OQ-VAT-6**) |
 | 7 | PUT | `/{decl_id}/lock` | Lock (Draft→Confirmed) | Guard: preceding period `'C'` or first period → else `WBE_VAT_DECL_PREV_NOT_LOCKED` |
 | 8 | DELETE | `/{decl_id}/lock` | Unlock (Confirmed→Draft) | Guard: subsequent period absent or `'D'` → else `WBE_VAT_DECL_NEXT_LOCKED`. Paired PUT/DELETE-on-sub-resource idiom (like `.../confirm`, REST conventions §6) |
-| 9 | GET | `/{decl_id}/annex/invoices` | Annex invoice modal (BKBR/BKMV) | **One row per (invoice, VAT rate)** — an invoice's product lines that share a rate are folded into a single line; an invoice with two rates appears once per rate section (fixed 2026-08-22; was one row per product line). Per-rate section subtotals + grand total returned alongside; `total_count` = distinct-invoice count. Query: `search`, `io_dv`, `page`, `size` |
+| 9 | GET | `/{decl_id}/annex/invoices` | Annex invoice modal (BKBR/BKMV) | **One row per (invoice, VAT rate)** — an invoice's product lines that share a rate are folded into a single line; an invoice with two rates appears once per rate section (fixed 2026-08-22; was one row per product line). Per-rate section subtotals + grand total returned alongside; `total_count` = distinct-invoice count. **Row order**: rate section → issue date → invoice number **numeric** (`HAND_DOC_ID::bigint`, not the lexical `DOC_ID` that ordered 1·10·2·3). "Tax Code" is the counterparty (buyer) tax, resolved via `TRCO_INFM` join (see §3.4). Query: `search`, `io_dv`, `page`, `size` |
 | 10 | POST | `/{decl_id}/annex/rows` | Add manual annex row | `HAND_REG_YN='Y'`; `Draft` only |
 | 11 | DELETE | `/{decl_id}/annex/rows/{annex_seq_no}` | Delete annex row | `Draft` only |
 | 12 | GET | `/{decl_id}/export/xml` | HTKK XML download | Binary (`ResponseEntity<Resource>`), RFC 5987 filename. Available regardless of status? MVP: **Confirmed only** (**OQ-VAT-7**) |
@@ -398,3 +409,19 @@ only, H omits Add-on per V243 precedent).
 - Sibling feature docs (source-table owners): [sales-e-invoices/](../sales-e-invoices/README.md) · [expenses-e-invoices/](../expenses-e-invoices/README.md)
 - REST conventions / envelope / error funnel: `wecms-api/CLAUDE.md` §"REST API Design Conventions"
 - Open questions: [vat-declaration-follow-up.md](../../../planning/open-questions/vat-declaration-follow-up.md)
+
+---
+
+## 10. UAT fixes — 2026-08-22
+
+Five UAT findings on **New VAT Declaration → Next** were fixed together (all verified against DEV Q1/2026 data). Code: `VatAnnexInvoiceRepository` + `VatDeclarationService.aggregateInvoicesInto` + the two e-invoice scrape services; docs: this file §3.4 / §5 / §6, [interface-specification.md §2.9](interface-specification.md), and the [data dictionary](../../../references/database/addon/vat-declaration-db.md).
+
+| # | Finding (As-Is → To-Be) | Fix | Where |
+|---|---|---|---|
+| 1 | BKBR listed **one row per product line** (an invoice repeated many times) → one row per invoice **per VAT rate** | `findRows` `GROUP BY (doc_id, einv_taxrate)`, amounts summed; `groupTotals.rowCount = count(distinct doc_id)` so paging/`total_count` match | §3.4, §5 #9, spec §2.9 |
+| 2 | "Tax Code" showed the **own-company** MST for every buyer → the **buyer's** MST | Annex resolves the tax from the linked `TRCO_INFM` contact (`LEFT JOIN … trco_key`), fallback master only when ≠ `ISSU_TAX_ID`, else blank — fixes existing data (~90%; orphans blank). Write-path also fixed: detail scrape stamps `TRCO_TAX_ID`, list scrape stops stamping own tax for sales | §3.4 |
+| 3 | `[26]`/`[32a]` swapped → `[26] = KCT` (không chịu thuế), `[32a] = KKKNT` (không phải kê khai) per TT80 | Swapped the `aggregateInvoicesInto` rate switch back to the OQ-VAT-4 closed decision | §3.4, §6.6 |
+| 4 | `[33]` ≠ Sales e-Invoice tax (57,656,833 vs 57,656,821) → equal | `[31]`/`[33]` pinned to real issued VAT `SUM(EINV_TAX_DETL.TAX_AMT)` (`salesVatByRate`), not `floor(base×rate)` per line. Base cells unchanged. Purchase `[24]` unchanged (out of scope) | §3.4 |
+| 5 | Row order `1·10·2·3` (lexical) → numeric `1·2·3…10` | ORDER BY invoice number as `HAND_DOC_ID::bigint` (nulls last), `DOC_ID` tiebreaker | spec §2.9 |
+
+**Data note:** fixes #3 and #4 compute at **create/sync**, so declarations saved before the change need a **Sync** to refresh `[26]`/`[32a]`/`[33]`. Fix #2 for the ~10% orphan-`trco_key` sales invoices needs a **detail re-scrape** to recover the buyer MST. Tests: `VatDeclarationLifecycleTest` (incl. new `salesVatPinnedToRealInvoiceVat`) green.

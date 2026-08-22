@@ -276,6 +276,7 @@ Cả 2 chạy trong **một `@Transactional` + optimistic guard** để 2 user k
 }
 ```
 
+- **Thứ tự:** theo section thuế suất (KKKNT/0%/5%/8%/10%/KCT/khác) → ngày lập → **số hóa đơn dạng số** (`hand_doc_id` ép kiểu số, không phải chuỗi `doc_id` để tránh 1·10·2·3). Fixed 2026-08-22.
 - `total_count` = số **hóa đơn** (distinct `doc_id`) trên toàn bộ tập lọc = tổng số dòng gộp; phân trang theo dòng gộp.
 - `tax_groups` = footer subtotal theo từng thuế suất (thứ tự cố định KKKNT / 0% / 5% / 8% / 10% / KCT, khác cuối); `grand_total.group_cd = "TOTAL"`. Section subtotals + rows luôn reconcile tới đồng (VAT = Σ floor mỗi dòng).
 
