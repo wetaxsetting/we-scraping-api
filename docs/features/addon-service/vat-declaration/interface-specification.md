@@ -233,6 +233,8 @@ Cả 2 chạy trong **một `@Transactional` + optimistic guard** để 2 user k
 
 **Tax Code (`trco_tax_code`):** MST **người mua** (hóa đơn bán ra) / người bán (hóa đơn mua vào) — tương ứng `trco_nm`. Lấy từ contact `TRCO_INFM` qua `trco_key` (JOIN — đúng cả dữ liệu cũ), fallback `BUSA_DOC_MSTR.TRCO_TAX_ID` chỉ khi khác `ISSU_TAX_ID`; **không hiển thị MST của chính mình** → để trống nếu không truy được (HĐ orphan không có contact). Xem README §3.4.
 
+**VAT (`vat_amt`) — cập nhật 2026-08-22:** với **hóa đơn bán ra**, `vat_amt` = **VAT thật đã phát hành** = `SUM(EINV_TAX_DETL.TAX_AMT)` theo (hóa đơn, thuế suất) — KHÔNG phải `floor(sply × rate%)` tính lại từng dòng. Lý do: floor từng dòng lệch vài đồng làm tròn so với VAT thật của hóa đơn, khiến "Total Output (Sales)" ≠ số thuế trên Sales e-Invoice (verified Q1/2026: floor 57.656.833 vs e-Invoice 57.656.821). `tax_groups` subtotal + `grand_total` cũng cộng từ VAT thật này nên khớp e-Invoice tới đồng. Hóa đơn **mua vào** giữ `floor(sply × rate%)`. Base (`sply_amt`) vẫn từ `BUSA_DOC_DETL`.
+
 **Response `data` — `AnnexInvoiceListResponse` (flat rows + section footer):**
 
 ```json
