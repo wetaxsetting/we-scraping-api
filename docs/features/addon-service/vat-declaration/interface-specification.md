@@ -6,7 +6,7 @@
 | **Base path** | `/api/v1/addon/vat-declarations` |
 | **Feature spec** | [README.md](README.md) · **Data dictionary**: [vat-declaration-db.md](../../../references/database/addon/vat-declaration-db.md) |
 | **Open questions** | [vat-declaration-follow-up.md](../../../planning/open-questions/vat-declaration-follow-up.md) |
-| **Cập nhật** | 2026-07-13 |
+| **Cập nhật** | 2026-08-22 |
 
 ## 0. Quy ước chung (áp dụng cho mọi endpoint)
 
@@ -32,7 +32,7 @@
 | 6 | **Dashboard** — Xóa tờ khai | DELETE | `/{decl_id}` | chỉ `Draft` |
 | 7 | **Dashboard/Main** — Khóa số liệu (Draft → Confirmed) | PUT | `/{decl_id}/lock` | chỉ `Draft`, kỳ K-1 đã khóa |
 | 8 | **Dashboard** — Mở khóa (Confirmed → Draft) | DELETE | `/{decl_id}/lock` | chỉ `Confirmed`, kỳ K+1 chưa khóa |
-| 9 | **Invoice List** — Modal hóa đơn giảm 8% (nhóm theo tên hàng, search, phân trang) | GET | `/{decl_id}/annex/invoices` | — |
+| 9 | **Invoice List** — Modal hóa đơn phụ lục BKBR/BKMV (1 dòng/hóa đơn/thuế suất, search, phân trang) | GET | `/{decl_id}/annex/invoices` | — |
 | 10 | **VAT Reduction** — Thêm dòng phụ lục nhập tay | POST | `/{decl_id}/annex/rows` | chỉ `Draft` |
 | 11 | **VAT Reduction** — Xóa dòng phụ lục | DELETE | `/{decl_id}/annex/rows/{annex_seq_no}` | chỉ `Draft` |
 | 12 | **Main** — Kết xuất XML (chuẩn HTKK 01/GTGT TT80) | GET | `/{decl_id}/export/xml` | `Confirmed` (OQ-VAT-7) |
@@ -216,45 +216,59 @@ Cả 2 chạy trong **một `@Transactional` + optimistic guard** để 2 user k
 
 ---
 
-### 2.9 `GET /{decl_id}/annex/invoices` — Modal hóa đơn phụ lục (accordion)
+### 2.9 `GET /{decl_id}/annex/invoices` — Modal hóa đơn phụ lục (BKBR/BKMV)
 
-**Query params:** `search` (tên hàng / số HĐ, partial match) · `io_dv` (`I`/`O`) · `page` / `size` (default 20 — "Hiển thị 20 dòng trên mỗi trang").
+**Query params:** `search` (tên hàng / số HĐ, partial match) · `io_dv` (`I`/`O`) · `page` / `size` (default 20 — "Hiển thị 20 dòng trên mỗi trang") · `annex_type` (`BKBR` / `BKMV` / `REDUCE8`).
 
-**Response `data` — `AnnexInvoiceListResponse`:**
+**Grain (cập nhật 2026-08-22):** **mỗi hóa đơn 1 dòng cho mỗi loại thuế suất** — các dòng sản phẩm cùng thuế suất trong một hóa đơn được gộp lại (`sply_amt` / `vat_amt` / `reduced_amt` = tổng các dòng con). Một hóa đơn có 2 thuế suất xuất hiện 2 dòng, mỗi dòng ở section thuế suất tương ứng. (Trước đây: 1 dòng cho mỗi dòng sản phẩm; accordion nhóm theo `prod_nm` đã bỏ — client tự nhóm theo `prod_nm` nếu cần.)
+
+**Tax Code (`trco_tax_code`):** MST **người mua** (hóa đơn bán ra) / người bán (hóa đơn mua vào) — tương ứng `trco_nm`. Lấy từ contact `TRCO_INFM` qua `trco_key` (JOIN — đúng cả dữ liệu cũ), fallback `BUSA_DOC_MSTR.TRCO_TAX_ID` chỉ khi khác `ISSU_TAX_ID`; **không hiển thị MST của chính mình** → để trống nếu không truy được (HĐ orphan không có contact). Xem README §3.4.
+
+**Response `data` — `AnnexInvoiceListResponse` (flat rows + section footer):**
 
 ```json
 {
   "status": { "error": false, "code": "WBI0000", "message": "Success" },
   "data": {
-    "groups": [
+    "rows": [
       {
-        "prod_nm": "Dịch vụ phần mềm kế toán",
-        "row_count": 3,
-        "total_sply_amt": "45000000",
-        "total_reduced_amt": "900000",
-        "rows": [
-          {
-            "annex_seq_no": 1,
-            "inv_no": "00000123",
-            "inv_symbol": "1C26TLM",
-            "inv_dt": "20260415",
-            "sply_amt": "15000000",
-            "vat_rate": "8",
-            "vat_amt": "1200000",
-            "reduced_amt": "300000",
-            "hand_reg_yn": "N",
-            "src_doc_id": "I-2026-000123"
-          }
-        ]
+        "id": null,
+        "annex_type": "BKBR",
+        "io_dv": "O",
+        "src_doc_id": "I-2026-000123",
+        "inv_no": "1C26TWV-91",
+        "inv_symbol": "1C26TWV",
+        "inv_dt": "20260302",
+        "trco_tax_code": "0106713191",
+        "trco_nm": "CÔNG TY TNHH FI GROUP",
+        "prod_nm": "Dịch vụ A, Dịch vụ B",
+        "sply_amt": "23148148",
+        "vat_rate": "8%",
+        "vat_amt": "1851851",
+        "reduced_amt": "462962",
+        "alloc_ratio": null,
+        "hand_reg_yn": "N",
+        "vat_decl_proc_yn": "N",
+        "vat_decl_sid": null,
+        "vat_rate_order": 1
       }
     ],
     "total_count": 42,
-    "grand_total_reduced_amt": "11000000"
+    "total_pages": 3,
+    "page_number": 0,
+    "page_size": 20,
+    "tax_groups": [
+      { "group_cd": "8%", "tax_rate_label": "8%", "row_count": 12,
+        "total_sply_amt": "45528914", "total_reduced_amt": "910578", "total_vat_amt": "3642312" }
+    ],
+    "grand_total": { "group_cd": "TOTAL", "tax_rate_label": null, "row_count": 42,
+        "total_sply_amt": "8409366257", "total_reduced_amt": "11000000", "total_vat_amt": "3663554" }
   }
 }
 ```
 
-Nhóm theo `prod_nm` (khóa accordion `WEB_VAT_INV_002`); phân trang theo **dòng**, group render phía client.
+- `total_count` = số **hóa đơn** (distinct `doc_id`) trên toàn bộ tập lọc = tổng số dòng gộp; phân trang theo dòng gộp.
+- `tax_groups` = footer subtotal theo từng thuế suất (thứ tự cố định KKKNT / 0% / 5% / 8% / 10% / KCT, khác cuối); `grand_total.group_cd = "TOTAL"`. Section subtotals + rows luôn reconcile tới đồng (VAT = Σ floor mỗi dòng).
 
 ---
 
@@ -320,8 +334,8 @@ Server gán `annex_seq_no` (MAX+1), set `HAND_REG_YN='Y'`, `SRC_DOC_ID=null`. DE
 | `VatDeclarationDetail` | Response 2.2/2.3/2.4/2.5/2.7/2.8 |
 | `VatIndicatorSet` | Khối `indicators` lồng trong Detail |
 | `AnnexSummary` | Khối `annex_summary` |
-| `AnnexInvoiceGroup` / `AnnexRow` | Modal 2.9 |
-| `AnnexInvoiceListResponse` | `{ groups, total_count, grand_total_reduced_amt }` |
+| `AnnexRow` / `AnnexTaxGroup` | Modal 2.9 (1 dòng/hóa đơn/thuế suất; `AnnexTaxGroup` = subtotal theo thuế suất + dòng TOTAL) |
+| `AnnexInvoiceListResponse` | `{ rows, total_count, total_pages, page_number, page_size, tax_groups, grand_total }` |
 | `AnnexRowCreateRequest` | Body 2.10 |
 
 ## 4. Error codes mới (thêm vào `messages.properties` trước khi throw)

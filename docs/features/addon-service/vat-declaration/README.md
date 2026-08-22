@@ -195,7 +195,29 @@ CREATE INDEX IF NOT EXISTS ix_vat_decl_annex_biz_decl_prod ON VAT_DECL_ANNEX_DET
 | Prototype said | Real WeCMS table | Columns used |
 |---|---|---|
 | `tbl_sale_mst` / `tbl_pur_mst` | [`BUSA_DOC_MSTR`](../../../references/database/erd/addon-service-erd.md) | `BIZ_KEY`, `DOC_ID`, `DOC_TYPE` (`'I'` sales / `'B'` expense — same mapping as `EInvoiceService.resolveDocType`), `ISSU_DT` (`YYYYMMDD` — period filter), `SPLY_AMT_SUM`, `TAX_AMT_SUM`, `TOTL_AMT`, `EINV_INVOICESTATUS` (active-status filter), `EINV_INVOICESYMBOL`, `DISP_DOC_ID`, `TRCO_TAX_ID`, `TRCO_CMNM` |
-| `tbl_sale_vat` / `tbl_pur_vat` | `EINV_TAX_DETL` | `BIZ_KEY`, `DOC_ID`, `DISP_ORD`, `EINV_TAXRATE` (string), `AMT` (tax-exclusive), `TAX_AMT` |
+| `tbl_sale_vat` / `tbl_pur_vat` | **`BUSA_DOC_DETL`** (product lines) | `BIZ_KEY`, `DOC_ID`, `DISP_ORD`, `EINV_TAXRATE` (string), `SPLY_AMT` (tax-exclusive base), `EINV_PRODUCTNAME` / `ITEM_NM`. VAT is **computed** `floor(SPLY_AMT × rate% / 100)` — the detail row stores no VAT amount. |
+
+> **Base/VAT source is `BUSA_DOC_DETL`, not `EINV_TAX_DETL` (fixed 2026-08-06).** Verified on
+> DEV: `EINV_TAX_DETL.AMT` is `0` for every **output (sales)** invoice — only purchase rows carry a
+> base there — so the earlier `EINV_TAX_DETL` source left the sales base cells (`[26]`/`[30]`/`[32]`/…)
+> at 0 even when the annex clearly listed the invoices. Both the sync buckets and the annex read
+> `SPLY_AMT` from `BUSA_DOC_DETL` (see `VatAnnexInvoiceRepository.syncBuckets` / `groupTotals` /
+> `findRows`), so the declaration reconciles to the đồng with BKBR/BKMV.
+>
+> **"Tax Code" = counterparty tax code (fixed 2026-08-22).** On the BKBR/BKMV annex the "Tax Code"
+> column is the **buyer's** tax id for a sale (seller's for a bill), matching the `TRCO_CMNM` customer
+> name in the same row. `BUSA_DOC_MSTR.TRCO_TAX_ID` on its own is **unreliable**: the e-invoice list
+> scrape stamps the own-company tax there for sales (verified on DEV — 1025 sales invoices all carried
+> `TRCO_TAX_ID = ISSU_TAX_ID = 1201496252`). So the annex resolves the tax code from the linked TRCO
+> contact instead — `findRows` `LEFT JOIN trco_infm t ON (biz_key, trco_key)` and takes
+> `t.trco_tax_id` first (the registrar stored the real buyer/seller tax there via `buyerTaxCode` /
+> `sellerTaxCode`), falling back to `m.trco_tax_id` **only when it differs from `ISSU_TAX_ID`**, else
+> blank — the own tax is never shown as the counterparty. This fixes existing data with no re-scrape
+> (~90% of sales invoices have a contact; verified). Two supporting write-path fixes keep the master
+> consistent going forward: the **detail** scrape now stamps `TRCO_TAX_ID` from the counterparty tax
+> (mirror of `ISSU_TAX_ID`), and the **list** scrape no longer stamps the own tax there for sales.
+> The remaining ~10% are orphan `trco_key`s (no contact row) — their buyer tax is unrecoverable
+> without a detail re-scrape and shows blank. |
 | previous period's `[43]` | `VAT_DECL_INDC_DETL` (row of period K-1, `STTS='C'`) | `CT43` |
 | company header | `BUSI_INFM` | `CMPN_NM`, tax code (snapshot at create) |
 
@@ -205,14 +227,15 @@ Aggregation predicate (translating the prototype's `ctuktthue <> 'N'` / `kkkthue
   value is a **Vietnamese phrase** (verified always-Vietnamese on JEX DEV — see the e-invoice
   IR-4 note in `wecms-api/CLAUDE.md`). The exact include/exclude phrase set for tax-declaration
   purposes is **OQ-VAT-3** (PO must confirm which of the 7 statuses count toward the declaration).
-- **Rate distribution**: `EINV_TAX_DETL.EINV_TAXRATE` (string) → indicator bucket. The exact
-  stored rate-string vocabulary (`"10%"`? `"8%"`? `"KCT"`? `"5"`?) must be inventoried from DEV
-  data before coding — **OQ-VAT-4**. Target mapping:
+- **Rate distribution**: `BUSA_DOC_DETL.EINV_TAXRATE` (string) → indicator bucket. Vocabulary
+  confirmed from DEV: `'0%'` · `'5%'` · `'8%'` · `'10%'` · `'KCT'` · `'KKKNT'` (**OQ-VAT-4**,
+  closed 2026-07-29; the `KCT→[26]` / `KKKNT→[32a]` code was realigned to that closed decision on
+  2026-08-22 after it had drifted). Mapping:
 
 | `EINV_TAXRATE` bucket | Output (DOC_TYPE `'I'`) | Input (DOC_TYPE `'B'`) |
 |---|---|---|
-| not-subject KKKNT (không kê khai nộp thuế) | `CT26` += AMT | — |
-| not-tax-calculated KCT (không chịu thuế) | `CT32A` += AMT | — |
+| KCT — không chịu thuế GTGT | `CT26` += AMT | — |
+| KKKNT — không phải kê khai, tính nộp thuế GTGT | `CT32A` += AMT | — |
 | 0% | `CT29` += AMT | — |
 | 5% | `CT30` += AMT, `CT31` += TAX_AMT | — |
 | 10% | `CT32` += AMT, `CT33` += TAX_AMT | — |
@@ -269,7 +292,7 @@ only, H omits Add-on per V243 precedent).
 | 6 | DELETE | `/{decl_id}` | Delete declaration | `Draft` only; blocked if a later period exists (**OQ-VAT-6**) |
 | 7 | PUT | `/{decl_id}/lock` | Lock (Draft→Confirmed) | Guard: preceding period `'C'` or first period → else `WBE_VAT_DECL_PREV_NOT_LOCKED` |
 | 8 | DELETE | `/{decl_id}/lock` | Unlock (Confirmed→Draft) | Guard: subsequent period absent or `'D'` → else `WBE_VAT_DECL_NEXT_LOCKED`. Paired PUT/DELETE-on-sub-resource idiom (like `.../confirm`, REST conventions §6) |
-| 9 | GET | `/{decl_id}/annex/invoices` | Annex invoice modal | Grouped by `PROD_NM` (accordion); query: `search`, `io_dv`, `page`, `size` |
+| 9 | GET | `/{decl_id}/annex/invoices` | Annex invoice modal (BKBR/BKMV) | **One row per (invoice, VAT rate)** — an invoice's product lines that share a rate are folded into a single line; an invoice with two rates appears once per rate section (fixed 2026-08-22; was one row per product line). Per-rate section subtotals + grand total returned alongside; `total_count` = distinct-invoice count. Query: `search`, `io_dv`, `page`, `size` |
 | 10 | POST | `/{decl_id}/annex/rows` | Add manual annex row | `HAND_REG_YN='Y'`; `Draft` only |
 | 11 | DELETE | `/{decl_id}/annex/rows/{annex_seq_no}` | Delete annex row | `Draft` only |
 | 12 | GET | `/{decl_id}/export/xml` | HTKK XML download | Binary (`ResponseEntity<Resource>`), RFC 5987 filename. Available regardless of status? MVP: **Confirmed only** (**OQ-VAT-7**) |
@@ -316,7 +339,18 @@ only, H omits Add-on per V243 precedent).
    the server recomputes every derived indicator before persisting. The XML export serializes
    only persisted server-side values. Frontend mirrors the same formulas for UX only.
 5. **Validation** (doc 3 §3): signing date `YYYYMMDD` required at lock time; signatory ≤ 100
-   chars; all indicators ≥ 0; agent tax code 10 or 13 digits when present.
+   chars; agent tax code 10 or 13 digits when present. (Note: the 13 revenue / purchase source
+   cells may be **negative** — adjustment/credit invoices — so the non-negative guard applies
+   only to the derived payable/credit cells, per `feat(vat): cho phep chi tieu am`.)
+6. **Non-taxable sales split — `[26]` vs `[32a]`** (TT80 Mẫu 01/GTGT, aligned 2026-08-22): a
+   sales line whose rate string is **`KCT`** ("không chịu thuế GTGT") aggregates into **`[26]`**;
+   **`KKKNT`** ("không phải kê khai, tính nộp thuế GTGT") aggregates into **`[32a]`**. This is the
+   final direction (it reverses an earlier prototype-`aggFor` reading). ⚠️ Naming wart: the entity
+   accessors are `setSalesAmtNondecl` (→ `CT26`, now holds **KCT**) and `setSalesAmtNontax`
+   (→ `CT32A`, now holds **KKKNT**) — the field names read backwards relative to the data, but the
+   cell binding `[26]↔CT26` / `[32a]↔CT32A` is correct; the names were left unchanged to avoid a
+   wide rename. The mapping applies at **create/sync**, so declarations saved before the change need
+   a **Sync** to refresh `[26]`/`[32a]`.
 
 ---
 

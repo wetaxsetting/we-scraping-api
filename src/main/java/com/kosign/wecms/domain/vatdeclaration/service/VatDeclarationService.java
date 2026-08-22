@@ -615,8 +615,9 @@ public class VatDeclarationService {
      *
      * <ul>
      *   <li>purchases (DOC_TYPE 'B'): [23] += base, [24] += VAT (all rates)</li>
-     *   <li>sales 0% → [29]; 5% → [30]/[31]; 8%+10% → [32]/[33]; KKKNT → [26];
-     *       KCT → [32a] (mapping per the PO prototype {@code aggFor}, OQ-VAT-4)</li>
+     *   <li>sales 0% → [29]; 5% → [30]/[31]; 8%+10% → [32]/[33]; KCT → [26];
+     *       KKKNT → [32a] (per TT80 01/GTGT: [26] = không chịu thuế, [32a] =
+     *       không phải kê khai tính nộp thuế, OQ-VAT-4)</li>
      * </ul>
      *
      * <p>Only the 9 invoice-source cells are overwritten; carry-forward [22] and
@@ -673,8 +674,8 @@ public class VatDeclarationService {
                 case "0%"        -> ct29 = ct29.add(amt);
                 case "5%"        -> { ct30 = ct30.add(amt); ct31 = ct31.add(tax); }
                 case "8%", "10%" -> { ct32 = ct32.add(amt); ct33 = ct33.add(tax); }
-                case "KKKNT"     -> ct26 = ct26.add(amt);     // [26] not-subject sales (per PO prototype aggFor)
-                case "KCT"       -> ct32a = ct32a.add(amt);   // [32a] not-tax-calculated sales (per PO prototype aggFor)
+                case "KCT"       -> ct26 = ct26.add(amt);     // [26] HHDV khong chiu thue GTGT (TT80 01/GTGT)
+                case "KKKNT"     -> ct32a = ct32a.add(amt);   // [32a] HHDV khong phai ke khai, tinh nop thue GTGT (TT80 01/GTGT)
                 default          -> unmapped.merge(
                         b.getTaxRate() == null ? "(null)"
                                 : b.getTaxRate().isBlank() ? "(rỗng)" : b.getTaxRate(),
