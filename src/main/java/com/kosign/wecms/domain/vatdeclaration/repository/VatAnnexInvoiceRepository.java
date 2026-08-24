@@ -42,6 +42,7 @@ public interface VatAnnexInvoiceRepository extends Repository<VatDeclaration, Lo
               and m.issu_dt between :fromDt and :toDt
               and m.doc_type in (:docTypes)
               and coalesce(m.einv_invoicestatus, '') not in (:excludedStatuses)
+              and m.einv_numericsymbol = '1'
               and (cast(:rate   as text) is null or d.einv_taxrate = cast(:rate as text))
               and (cast(:search as text) is null
                    or lower(coalesce(d.einv_productname, d.item_nm, '')) like lower(concat('%', cast(:search as text), '%'))
@@ -119,11 +120,64 @@ public interface VatAnnexInvoiceRepository extends Repository<VatDeclaration, Lo
             + "         coalesce(sum(coalesce(d.sply_amt, 0)), 0)  as sply,"
             + "         coalesce(sum(floor(coalesce(d.sply_amt, 0) * " + RATE_PCT + " / 100)), 0) as floor_vat,"
             + "         coalesce(sum(case when d.einv_taxrate = '8%'"
-            + "                           then floor(coalesce(d.sply_amt, 0) * 2 / 100) else 0 end), 0) as reduced"
+            + "                           then floor(coalesce(d.sply_amt, 0) * 2 / 100) else 0 end), 0) as reduced,"
+            + "         'D' as src"
             + FROM_WHERE
             + "  group by m.doc_id, m.doc_type, m.disp_doc_id, m.einv_invoicesymbol, m.issu_dt,"
             + "           m.hand_doc_id, m.vat_decl_proc_yn, m.vat_decl_sid, d.einv_taxrate,"
             + "           t.trco_tax_id, m.trco_tax_id, m.issu_tax_id, m.trco_cmnm";
+
+    /**
+     * Effective VAT-rate bucket for a <b>header-only</b> invoice (no
+     * {@code BUSA_DOC_DETL}, no {@code EINV_TAX_DETL} — only the master header
+     * exists, e.g. a scrape that captured the header but no line items). The rate
+     * is <b>derived</b> from {@code round(TAX_AMT_SUM / SPLY_AMT_SUM × 100)} and
+     * snapped to the nearest legal bucket; no base or zero VAT → {@code KCT}.
+     * This is an approximation (a header-only invoice could in principle span
+     * several rates) accepted by the PO 2026-08-22 so the invoice still appears
+     * on BKBR/BKMV and contributes to [23]/[24] instead of vanishing.
+     */
+    String HDR_RATE = "(case when coalesce(m.tax_amt_sum, 0) = 0 or coalesce(m.sply_amt_sum, 0) = 0 then 'KCT'"
+            + "            when round(m.tax_amt_sum / m.sply_amt_sum * 100) < 3 then '0%'"
+            + "            when round(m.tax_amt_sum / m.sply_amt_sum * 100) < 7 then '5%'"
+            + "            when round(m.tax_amt_sum / m.sply_amt_sum * 100) < 9 then '8%'"
+            + "            else '10%' end)";
+
+    /**
+     * Header-only fallback branch — one row per invoice that has <b>no</b>
+     * {@code BUSA_DOC_DETL} line at all, built from the {@code BUSA_DOC_MSTR}
+     * header ({@code SPLY_AMT_SUM} / {@code TAX_AMT_SUM}) with the rate derived by
+     * {@link #HDR_RATE}. UNION-ALL'd with {@link #PER_INV_RATE} (mutually
+     * exclusive via the {@code NOT EXISTS busa_doc_detl} guard) so these invoices
+     * still list on the annex and feed the indicators. {@code src = 'H'} tells the
+     * callers to take the header VAT verbatim (never the {@link #INV_TAX} join).
+     * Column list matches {@link #PER_INV_RATE} exactly for the UNION.
+     */
+    String PER_INV_RATE_HDR = "  select m.doc_id, m.doc_type,"
+            + "         coalesce(m.disp_doc_id, m.doc_id)          as inv_no,"
+            + "         m.einv_invoicesymbol                       as inv_symbol,"
+            + "         m.issu_dt, m.hand_doc_id, m.vat_decl_proc_yn, m.vat_decl_sid,"
+            + "         " + HDR_RATE + "                           as rate,"
+            + "         case when nullif(t.trco_tax_id, '') is not null then t.trco_tax_id"
+            + "              when m.trco_tax_id is not null and m.trco_tax_id <> m.issu_tax_id then m.trco_tax_id"
+            + "              else null end                         as trco_tax_code,"
+            + "         m.trco_cmnm                                as trco_nm,"
+            + "         null                                       as prod_nm,"
+            + "         coalesce(m.sply_amt_sum, 0)                as sply,"
+            + "         floor(coalesce(m.tax_amt_sum, 0))          as floor_vat,"
+            + "         case when " + HDR_RATE + " = '8%' then floor(coalesce(m.sply_amt_sum, 0) * 2 / 100) else 0 end as reduced,"
+            + "         'H' as src"
+            + "    from busa_doc_mstr m"
+            + "    left join trco_infm t on t.biz_key = m.biz_key and t.trco_key = m.trco_key"
+            + "   where m.biz_key = :bizKey"
+            + "     and m.issu_dt between :fromDt and :toDt"
+            + "     and m.doc_type in (:docTypes)"
+            + "     and coalesce(m.einv_invoicestatus, '') not in (:excludedStatuses)"
+            + "     and m.einv_numericsymbol = '1'"
+            + "     and not exists (select 1 from busa_doc_detl d where d.biz_key = m.biz_key and d.doc_id = m.doc_id)"
+            + "     and (cast(:rate as text) is null or " + HDR_RATE + " = cast(:rate as text))"
+            + "     and (cast(:search as text) is null"
+            + "          or lower(coalesce(m.disp_doc_id, m.doc_id)) like lower(concat('%', cast(:search as text), '%')))";
 
     /**
      * Real output VAT per {@code (doc_id, rate)} from {@code EINV_TAX_DETL} — the
@@ -164,12 +218,14 @@ public interface VatAnnexInvoiceRepository extends Repository<VatDeclaration, Lo
             // VAT = real issued VAT (EINV_TAX_DETL) for OUTPUT/sales; per-line
             // floor for input/purchase. Sales floor drifts by a few đồng of
             // rounding vs the invoice's actual VAT — see INV_TAX.
-            + "        case when p.doc_type = 'I' then coalesce(it.tax, 0) else p.floor_vat end as vatAmt,"
+            + "        case when p.src = 'H' then p.floor_vat"
+            + "             when p.doc_type = 'I' then coalesce(it.tax, 0)"
+            + "             else p.floor_vat end                  as vatAmt,"
             + "        p.reduced                                  as reducedAmt,"
             + "        p.vat_decl_proc_yn                         as vatDeclProcYn,"
             + "        p.vat_decl_sid                             as vatDeclSid,"
             + "        (dense_rank() over (order by " + RATE_SEQ_P + "))::int as vatRateOrder"
-            + "   from ( " + PER_INV_RATE + " ) p"
+            + "   from ( " + PER_INV_RATE + " union all " + PER_INV_RATE_HDR + " ) p"
             + "   left join ( " + INV_TAX + " ) it on it.doc_id = p.doc_id and it.rate = p.rate"
             // Order by invoice NUMBER numerically, not lexically: doc_id sorts
             // '...-1','...-10','...-2' as strings. hand_doc_id is the bare invoice
@@ -206,6 +262,7 @@ public interface VatAnnexInvoiceRepository extends Repository<VatDeclaration, Lo
                and issu_dt between :fromDt and :toDt
                and doc_type in (:docTypes)
                and coalesce(einv_invoicestatus, '') not in (:excludedStatuses)
+               and einv_numericsymbol = '1'
                and (vat_decl_sid is null or vat_decl_sid = :sid)
             """, nativeQuery = true)
     int markProcessed(@Param("bizKey") String bizKey,
@@ -240,9 +297,11 @@ public interface VatAnnexInvoiceRepository extends Repository<VatDeclaration, Lo
     @Query(value = "select p.rate                                             as groupCd,"
             + "        count(*)                                                 as rowCount,"
             + "        coalesce(sum(p.sply), 0)                                 as totalSplyAmt,"
-            + "        coalesce(sum(case when p.doc_type = 'I' then coalesce(it.tax, 0) else p.floor_vat end), 0) as totalVatAmt,"
+            + "        coalesce(sum(case when p.src = 'H' then p.floor_vat"
+            + "                          when p.doc_type = 'I' then coalesce(it.tax, 0)"
+            + "                          else p.floor_vat end), 0)             as totalVatAmt,"
             + "        coalesce(sum(p.reduced), 0)                              as totalReducedAmt"
-            + "   from ( " + PER_INV_RATE + " ) p"
+            + "   from ( " + PER_INV_RATE + " union all " + PER_INV_RATE_HDR + " ) p"
             + "   left join ( " + INV_TAX + " ) it on it.doc_id = p.doc_id and it.rate = p.rate"
             + "  group by p.rate"
             + "  order by " + RATE_SEQ_P,
@@ -272,17 +331,34 @@ public interface VatAnnexInvoiceRepository extends Repository<VatDeclaration, Lo
      * Same period + excluded-status predicate as the annex list. Consumed by
      * {@code VatDeclarationService.sync} / {@code create}.
      */
-    @Query(value = "select m.doc_type                            as docType,"
-            + "        d.einv_taxrate                            as taxRate,"
-            + "        coalesce(sum(coalesce(d.sply_amt, 0)), 0) as amt,"
-            + "        coalesce(sum(floor(coalesce(d.sply_amt, 0) * " + RATE_PCT + " / 100)), 0) as taxAmt"
-            + "   from busa_doc_mstr m"
-            + "   join busa_doc_detl d on d.biz_key = m.biz_key and d.doc_id = m.doc_id"
-            + "  where m.biz_key = :bizKey"
-            + "    and m.issu_dt between :fromDt and :toDt"
-            + "    and m.doc_type in (:docTypes)"
-            + "    and coalesce(m.einv_invoicestatus, '') not in (:excludedStatuses)"
-            + "  group by m.doc_type, d.einv_taxrate",
+    @Query(value = "select u.doc_type                            as docType,"
+            + "        u.rate                                    as taxRate,"
+            + "        coalesce(sum(u.amt), 0)                   as amt,"
+            + "        coalesce(sum(u.tax), 0)                   as taxAmt"
+            + "   from ("
+            // detail branch — one row per BUSA_DOC_DETL line
+            + "     select m.doc_type, d.einv_taxrate as rate,"
+            + "            coalesce(d.sply_amt, 0) as amt,"
+            + "            floor(coalesce(d.sply_amt, 0) * " + RATE_PCT + " / 100) as tax"
+            + "       from busa_doc_mstr m"
+            + "       join busa_doc_detl d on d.biz_key = m.biz_key and d.doc_id = m.doc_id"
+            + "      where m.biz_key = :bizKey and m.issu_dt between :fromDt and :toDt"
+            + "        and m.doc_type in (:docTypes)"
+            + "        and coalesce(m.einv_invoicestatus, '') not in (:excludedStatuses)"
+            + "        and m.einv_numericsymbol = '1'"
+            + "     union all"
+            // header-only branch — one row per invoice with no detail line (see HDR_RATE)
+            + "     select m.doc_type, " + HDR_RATE + " as rate,"
+            + "            coalesce(m.sply_amt_sum, 0) as amt,"
+            + "            floor(coalesce(m.tax_amt_sum, 0)) as tax"
+            + "       from busa_doc_mstr m"
+            + "      where m.biz_key = :bizKey and m.issu_dt between :fromDt and :toDt"
+            + "        and m.doc_type in (:docTypes)"
+            + "        and coalesce(m.einv_invoicestatus, '') not in (:excludedStatuses)"
+            + "        and m.einv_numericsymbol = '1'"
+            + "        and not exists (select 1 from busa_doc_detl d where d.biz_key = m.biz_key and d.doc_id = m.doc_id)"
+            + "   ) u"
+            + "  group by u.doc_type, u.rate",
             nativeQuery = true)
     List<VatSyncBucketProjection> syncBuckets(@Param("bizKey") String bizKey,
                                               @Param("fromDt") String fromDt,
@@ -307,16 +383,30 @@ public interface VatAnnexInvoiceRepository extends Repository<VatDeclaration, Lo
      * predicate as {@code syncBuckets}.
      */
     @Query(value = "select 'I'                                        as docType,"
-            + "        e.einv_taxrate                                 as taxRate,"
+            + "        u.rate                                         as taxRate,"
             + "        cast(0 as numeric)                             as amt,"
-            + "        coalesce(sum(coalesce(e.tax_amt, 0)), 0)       as taxAmt"
-            + "   from busa_doc_mstr m"
-            + "   join einv_tax_detl e on e.biz_key = m.biz_key and e.doc_id = m.doc_id"
-            + "  where m.biz_key = :bizKey"
-            + "    and m.issu_dt between :fromDt and :toDt"
-            + "    and m.doc_type = 'I'"
-            + "    and coalesce(m.einv_invoicestatus, '') not in (:excludedStatuses)"
-            + "  group by e.einv_taxrate",
+            + "        coalesce(sum(u.tax), 0)                        as taxAmt"
+            + "   from ("
+            // real per-rate VAT from EINV_TAX_DETL (invoices with tax detail)
+            + "     select e.einv_taxrate as rate, coalesce(e.tax_amt, 0) as tax"
+            + "       from busa_doc_mstr m"
+            + "       join einv_tax_detl e on e.biz_key = m.biz_key and e.doc_id = m.doc_id"
+            + "      where m.biz_key = :bizKey and m.issu_dt between :fromDt and :toDt"
+            + "        and m.doc_type = 'I'"
+            + "        and coalesce(m.einv_invoicestatus, '') not in (:excludedStatuses)"
+            + "        and m.einv_numericsymbol = '1'"
+            + "     union all"
+            // header-only sales fallback — no detail AND no einv_tax_detl (avoid double)
+            + "     select " + HDR_RATE + " as rate, floor(coalesce(m.tax_amt_sum, 0)) as tax"
+            + "       from busa_doc_mstr m"
+            + "      where m.biz_key = :bizKey and m.issu_dt between :fromDt and :toDt"
+            + "        and m.doc_type = 'I'"
+            + "        and coalesce(m.einv_invoicestatus, '') not in (:excludedStatuses)"
+            + "        and m.einv_numericsymbol = '1'"
+            + "        and not exists (select 1 from busa_doc_detl d where d.biz_key = m.biz_key and d.doc_id = m.doc_id)"
+            + "        and not exists (select 1 from einv_tax_detl e where e.biz_key = m.biz_key and e.doc_id = m.doc_id)"
+            + "   ) u"
+            + "  group by u.rate",
             nativeQuery = true)
     List<VatSyncBucketProjection> salesVatByRate(@Param("bizKey") String bizKey,
                                                  @Param("fromDt") String fromDt,
