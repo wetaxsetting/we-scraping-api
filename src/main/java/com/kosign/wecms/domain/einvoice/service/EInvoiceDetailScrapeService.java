@@ -193,6 +193,16 @@ public class EInvoiceDetailScrapeService {
             // own=seller→sellerTaxCode). Guarded so a blank never wipes it.
             String ownTaxId = isSales ? row.sellerTaxCode() : row.buyerTaxCode();
             setIf(ownTaxId, v -> master.setIssuTaxId(clip(v, 40)));
+            // Counterparty tax id (TRCO_TAX_ID) is the mirror of the issuer tax
+            // above: buyer for a Sale, seller (supplier) for a Bill — the same
+            // rule the auto-registrar already uses to key the TRCO contact
+            // (EInvoiceTrcoAutoRegistrar:127). The phase-1 list scrape stamps the
+            // OWN tax here for Sales (we are the seller), so the BKBR/BKMV annex
+            // "Tax Code" column showed our own tax for every counterparty until
+            // the detail overwrote it with the real buyer/seller tax. Guarded so
+            // a blank detail value never wipes an existing id.
+            String trcoTaxId = isSales ? row.buyerTaxCode() : row.sellerTaxCode();
+            setIf(trcoTaxId, v -> master.setTrcoTaxId(clip(v, 40)));
 
             // EINV_* scalar fields (verbatim from the detail payload).
             setIf(row.invoiceTitle(),      v -> master.setEinvTitle(clip(v, 300)));
