@@ -98,6 +98,13 @@ public class EInvoiceDetailScrapeService {
     private static final DateTimeFormatter DATE_8 =
             DateTimeFormatter.ofPattern("yyyyMMdd");
 
+    /* Legacy wabooks.enums.CcyCd values relevant to BUSA_DOC_MSTR.chk07. */
+    private static final String CCY_VND = "VND";
+    private static final String CCY_USD = "USD";
+    private static final String CCY_ETC = "998";    // CcyCd.ETC  — "Others"
+    private static final String CCY_NONE = "999";   // CcyCd.NONE — "No Currency"
+    private static final BigDecimal THOUSAND = BigDecimal.valueOf(1000);
+
     private final BusaDocMstrRepository masterRepo;
     private final BusaDocDetlRepository detlRepo;
     private final EinvFeeDetlRepository feeRepo;
@@ -145,7 +152,7 @@ public class EInvoiceDetailScrapeService {
             // counterparty (TRCO_CMNM) is the other party. The EINV_*
             // bank / citizen fields are stored verbatim (not type-swapped),
             // matching legacy.
-            String ccy = normalizeCcy(row.currencyCd());
+            String ccy = resolveMasterCcy(row);
             if (ccy != null) master.setTrcoTrscCcyCd(ccy);
 
             String counterpartyName = isSales ? row.buyerName() : row.sellerName();
@@ -363,6 +370,87 @@ public class EInvoiceDetailScrapeService {
             e.setModId(userId);
             e.setModDtm(regDtm);
             taxRepo.save(e);
+        }
+    }
+
+    /**
+     * Resolve {@code BUSA_DOC_MSTR.TRCO_TRSC_CCY_CD} the way legacy does.
+     *
+     * <p>Legacy clamps the engine currency <em>before</em> any write
+     * ({@code nxisas_einvoice_c002_act.jsp:239-260}) and then stores it via
+     * {@code trcoInfm.taxInfo} — default {@code VND}, overridden only when the
+     * clamped value is not {@code CcyCd.NONE} ({@code :605-611} /
+     * {@code :414-419}):
+     *
+     * <ul>
+     *   <li><b>K e-Invoice</b> ({@code einv_testResults == "1"} OR
+     *       {@code invoiceSymbol} starts with {@code K}): blank → {@code VND}
+     *       when {@code totalAmt} carries no thousands separator and is
+     *       {@code >= 1000}, else {@code 999}; non-blank and neither
+     *       {@code USD} nor {@code VND} → {@code 999}.</li>
+     *   <li><b>POS e-Invoice</b> ({@code einv_testResults == "2"}): blank →
+     *       {@code VND}, otherwise untouched.</li>
+     *   <li><b>C e-Invoice</b> (anything else): untouched.</li>
+     * </ul>
+     *
+     * <p>{@code 999} therefore never reaches the master — it collapses back to
+     * the {@code VND} default, which is why the legacy column only ever holds
+     * {@code VND} / {@code USD} / {@code null}.
+     *
+     * <p>One deliberate deviation: a residual code the
+     * {@code busa_doc_mstr_chk07} constraint cannot store
+     * ({@code VND}/{@code USD}/{@code 999}/{@code 998} only) is clamped to
+     * {@code 998} ({@code CcyCd.ETC}, "Others") with a WARN rather than
+     * failing the whole batch — legacy leaves it raw on the C branch and dies
+     * on the same constraint.
+     *
+     * @return the value to stamp, or {@code null} to leave the phase-1 value
+     */
+    static String resolveMasterCcy(ScrapedEInvoiceDetailRow row) {
+        return resolveMasterCcy(row.currencyCd(), row.einvTestResults(),
+                row.invoiceSymbol(), row.totalAmt(), row.numericSymbol());
+    }
+
+    /** Shared with the phase-1 list upsert ({@link EInvoiceScrapeService}),
+     *  whose row DTO carries the same four discriminators. */
+    static String resolveMasterCcy(String currencyCd, String einvTestResults,
+                                   String invoiceSymbol, String totalAmt,
+                                   String numericSymbol) {
+        final String testResults = trim(einvTestResults);
+        final String symbol = trim(invoiceSymbol);
+        String ccy = normalizeCcy(currencyCd);
+
+        if ("1".equals(testResults) || symbol.toUpperCase().startsWith("K")) {
+            // K e-Invoice (legacy :245-255).
+            if (ccy == null) {
+                ccy = looksLikeWholeVnd(totalAmt) ? CCY_VND : CCY_NONE;
+            } else if (!CCY_USD.equals(ccy) && !CCY_VND.equals(ccy)) {
+                ccy = CCY_NONE;
+            }
+        } else if ("2".equals(testResults)) {
+            // POS e-Invoice (legacy :256-261).
+            if (ccy == null) ccy = CCY_VND;
+        }
+
+        if (ccy == null) return null;                   // leave the phase-1 value
+        if (CCY_NONE.equals(ccy)) return CCY_VND;       // legacy VND default wins
+        if (CCY_VND.equals(ccy) || CCY_USD.equals(ccy) || CCY_ETC.equals(ccy)) return ccy;
+
+        log.warn("e-invoice detail scrape: currency '{}' is not storable on "
+                        + "BUSA_DOC_MSTR (chk07) for invoice {}{} — storing '{}'",
+                ccy, trim(numericSymbol), symbol, CCY_ETC);
+        return CCY_ETC;
+    }
+
+    /** Legacy blank-currency heuristic for K e-Invoices ({@code :246-252}):
+     *  no thousands separator AND {@code >= 1000} reads as whole VND. */
+    private static boolean looksLikeWholeVnd(String totalAmt) {
+        String v = trim(totalAmt);
+        if (v.isEmpty() || v.contains(",")) return false;
+        try {
+            return new BigDecimal(v).compareTo(THOUSAND) >= 0;
+        } catch (NumberFormatException ex) {
+            return false;
         }
     }
 

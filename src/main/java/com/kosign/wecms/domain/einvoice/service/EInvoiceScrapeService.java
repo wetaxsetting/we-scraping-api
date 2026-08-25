@@ -214,7 +214,16 @@ public class EInvoiceScrapeService {
             e.setTrcoKey(existing != null && existing.getTrcoKey() != null ? existing.getTrcoKey() : "");
             e.setTrcoTaxId(w.sellerTax().isEmpty() ? e.getTrcoTaxId() : w.sellerTax());
             e.setTrcoCmnm(blankToExisting(row.trcoCmnm(), e.getTrcoCmnm()));
-            e.setTrcoTrscCcyCd(blankToExisting(row.currencyCd(), e.getTrcoTrscCcyCd()));
+            // Clamp to the legacy CcyCd set before writing — BUSA_DOC_MSTR.chk07
+            // only accepts VND / USD / 999 / 998, and a K e-Invoice legitimately
+            // reports a foreign currency (e.g. KRW) that legacy folds to VND.
+            // Legacy c001 writes no currency at all; the clamp keeps the phase-1
+            // convenience write without the constraint violation.
+            e.setTrcoTrscCcyCd(blankToExisting(
+                    EInvoiceDetailScrapeService.resolveMasterCcy(
+                            row.currencyCd(), row.einvTestResults(),
+                            row.invoiceSymbol(), row.totalAmt(), row.numericSymbol()),
+                    e.getTrcoTrscCcyCd()));
             e.setIssuDt(trim(row.invoiceDate()));
             e.setTotlAmt(parseAmount(row.totalAmt()));
             e.setSplyAmtSum(parseAmount(row.totalAmtWithoutTax()));
