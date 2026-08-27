@@ -8,7 +8,7 @@
 **Approval Status:** APPROVED — Sonny, 2026-08-27 ("Please fix it to correct.")
 **Implementation Status:** COMPLETE
 **Test Status:** PASS
-**Status:** READY FOR MANUAL COMMIT
+**Status:** DEPLOYED TO SIT — behaviour NOT yet exercised
 **Repository:** wecms-api
 
 > **Process note (honest record).** The user's message carried explicit implementation intent
@@ -211,3 +211,42 @@ deployed.
    of the confusion the user is most likely to hit next.
 4. **SIT verification not run.** Needs a deploy plus a Vietcom account bound to each of the two
    credentials to exercise the two-login path end to end.
+
+## Deployment + post-deploy status (2026-08-27)
+
+Committed `354959a`, merged `bb14eaa`, pushed to `sit` under explicit human authorization
+(Sonny, 2026-08-27 — a one-off approval for this deployment; §16c).
+
+**The fix is deployed but its behaviour has NOT been exercised.** No Bank Transaction Sync has run
+on the new build, so the per-credential resolution has never actually chosen a credential in
+anger. `Test Status: PASS` refers to the unit suite only — do not read it as SIT verification.
+
+To close it: run a sync on a Vietcom account and read the `bank-sync` log. The new code emits the
+resolved credential, and the ambiguous-fallback path logs a distinct warning
+(`account …/… has no BANK_CERT_SEQ — falling back to the bank-level credential lookup`), so the log
+line alone distinguishes the bound path from the fallback.
+
+### Related: the Vietcom accounts were re-bound to DigiBiz the same day
+
+The paired frontend record
+([own-account-transfer-vietcom-corporate-transfer-guard-2026-08-27.md](../../../wecms-web/docs/issues/own-account-transfer-vietcom-corporate-transfer-guard-2026-08-27.md))
+shows both Vietcom accounts moved from the iB@nking credential (`seq 2`) to DigiBiz (`seq 1`).
+
+That **changes what a sync on this tenant proves**. Before the re-bind, the bug's signature was
+visible (accounts bound to `seq 2`, bank-level lookup returning `seq 1`). Now both the bound value
+and the lowest-`SEQ_NO` value are `seq 1`, so **old and new code would pick the same credential for
+these accounts** — a passing Vietcom sync no longer discriminates between them.
+
+⚠️ **Do not treat a green Vietcom sync as proof this fix works.** A discriminating test needs a
+tenant with two credentials at one bank where the account is bound to the **higher** `SEQ_NO` — the
+condition the unit test `boundAccount_usesItsOwnCredential_notTheLowestSeqAtTheBank` pins
+synthetically. On live data that condition no longer exists here.
+
+### Unexplained observation, carried forward
+
+A pre-deploy SIT screenshot showed `Last Refresh: Success · 4hr ago` on an account still bound to
+iB@nking (`seq 2`), under the **old** bank-level build — which would have used the DigiBiz login.
+That is not what this record's analysis predicts. Candidates, none verified: a stale status from an
+older run; a different refresh path; or DigiBiz genuinely reaching those accounts (which the later
+re-bind makes plausible). **Not evidence for or against the fix** — recorded so it is not
+rediscovered as a surprise.

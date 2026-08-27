@@ -21,7 +21,7 @@ SIT / UAT verification: **NOT RUN** — deployment is manual and has not happene
 
 ## Code / Build Under Test
 
-Branch: current working tree · Commit: **NOT COMMITTED** at time of writing · Build: local
+Branch: sit · Commit: 354959a (merged bb14eaa, pushed to sit 2026-08-27) · Build: local
 `./gradlew compileJava` + `./gradlew test`.
 
 ## Automated Tests
