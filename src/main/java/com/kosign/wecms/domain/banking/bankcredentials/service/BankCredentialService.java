@@ -129,19 +129,30 @@ public class BankCredentialService {
         return toDecrypted(entity);
     }
 
-    /** Bank-level variant of {@link #loadForScraping(BigDecimal)} for the
-     *  Bank Transaction Sync orchestrator. The sync flow picks accounts
-     *  by {@code (bank_cd, acct_no)} (the Account Inquiry table's
-     *  natural key) — multiple accounts at one bank share the same
-     *  registered credential row, so resolving by {@code BANK_CD} is
-     *  enough. Throws {@code WBE2050} when no credential is registered
-     *  for the bank (matches the by-seq variant; frontend prompts the
-     *  user to register via Settings > Login Credentials first).
+    /** Bank-level <b>fallback</b> for accounts that carry no
+     *  {@code ACCT_MSTR.BANK_CERT_SEQ} binding at all — an account unlinked by
+     *  a credential delete, or a pre-refactor row.
      *
-     *  <p>Returns the lowest {@code SEQ_NO}'s credential when multiple
-     *  exist — deterministic, mirrors legacy behaviour (the JEX picker
-     *  surfaces the most recent registration but the sync helper
-     *  picks the first match it finds in {@code BANK_CERT_INFO}).
+     *  <p>🔴 <b>Not a substitute for {@link #loadForScraping(BigDecimal)}.</b>
+     *  An earlier revision of this javadoc claimed "multiple accounts at one
+     *  bank share the same registered credential row, so resolving by
+     *  {@code BANK_CD} is enough". That is <b>false</b>: a tenant can register
+     *  several credentials at one bank — different sub-types (Vietcom
+     *  {@code 11704004} carries {@code NXISAS_GB_SEQ_NO} 0 = "VCB iB@nking"
+     *  and 1 = "VCB DigiBiz") and/or different bank-side user levels
+     *  (preparer vs approver logins, separate rows because the legacy
+     *  find-or-create key includes {@code CERT_INFO_CON} —
+     *  {@code fnsh_0101_001_c001_act.jsp:168}). Their IDs and passwords are
+     *  not interchangeable, and legacy resolves per account through
+     *  {@code BANK_CERT_SEQ} ({@code nxisas_tranList_osmc.js:265-279}).
+     *  Callers that have an {@code AcctMstr} MUST use the by-seq variant.
+     *
+     *  <p>Returns the lowest {@code SEQ_NO}'s credential when several exist —
+     *  deterministic, but an arbitrary pick among genuinely different logins,
+     *  which is why callers log when they land here. Throws {@code WBE2050}
+     *  when no credential is registered for the bank (matches the by-seq
+     *  variant; the frontend prompts the user to register via
+     *  Settings &gt; Login Credentials first).
      */
     @Transactional(readOnly = true)
     public DecryptedCredential loadForScrapingByBank(String bankCd) {

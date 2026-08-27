@@ -250,12 +250,14 @@ public class BankTransactionSyncService {
             throw new BusinessException("WBE2096");
         }
 
-        // Order the queue so accounts of the same bank/login group are
-        // contiguous (login-once-per-bank; nxisas_api.js:2428).
+        // Order the queue so accounts of the same login group are contiguous
+        // (login-once-per-CREDENTIAL; legacy nxisas_tranList_osmc.js:265 groups
+        // the real-time inquiry by BANK_CERT_SEQ, not by BANK_CD).
         java.util.LinkedHashMap<String, List<TransactionsSyncRequest.AccountKey>> grouped =
                 new java.util.LinkedHashMap<>();
         for (TransactionsSyncRequest.AccountKey key : filtered) {
-            grouped.computeIfAbsent(loginGroupKey(key), k -> new ArrayList<>()).add(key);
+            AcctMstr acct = byKey.get(key.bankCd() + " " + key.acctNo());
+            grouped.computeIfAbsent(loginGroupKey(acct), k -> new ArrayList<>()).add(key);
         }
         Deque<TransactionsSyncRequest.AccountKey> queue = new ArrayDeque<>(filtered.size());
         for (List<TransactionsSyncRequest.AccountKey> group : grouped.values()) {
@@ -521,8 +523,8 @@ public class BankTransactionSyncService {
                             session.getBizKey(), key.bankCd(), key.acctNo())
                     .orElseThrow(() -> new BusinessException("WBE_BANK_ACCOUNT_NOT_FOUND"));
 
-            // Login-once-per-bank reuse (nxisas_api.js:2428).
-            if (loginGroupKey(key).equals(session.getActiveLoginGroupKey()) && hasLiveContinuation(session)) {
+            // Login-once-per-credential reuse (nxisas_tranList_osmc.js:265).
+            if (loginGroupKey(acct).equals(session.getActiveLoginGroupKey()) && hasLiveContinuation(session)) {
                 NxisasApiLog.event(tid(session), NxisasApiLog.FLOW_BANK_SYNC, "SESSION_REUSE",
                         "bankCd", key.bankCd(), "acctNo", NxisasMask.acct(key.acctNo()));
                 if (!processAccountAsync(session, acct)) return; // stopped (cancel / fail)
@@ -530,8 +532,8 @@ public class BankTransactionSyncService {
                 continue;
             }
 
-            // New bank/login group → LOGIN.
-            DecryptedCredential cred = credentialService.loadForScrapingByBank(acct.getBankCd());
+            // New login group → LOGIN with THIS account's own credential.
+            DecryptedCredential cred = resolveCredentialForAccount(acct);
             session.setLoginId(cred.username());
             Integer subTypeSeqNo = cred.nxisasGbSeqNo() == null ? null : cred.nxisasGbSeqNo().intValue();
             NxisasBankConfig.Entry cfg = bankConfig.find(acct.getBankCd(), subTypeSeqNo)
@@ -657,7 +659,7 @@ public class BankTransactionSyncService {
         }
 
         TransactionsSyncRequest.AccountKey head = session.getAccountsQueue().peekFirst();
-        if (head != null) session.setActiveLoginGroupKey(loginGroupKey(head));
+        if (head != null) session.setActiveLoginGroupKey(loginGroupKey(session, head));
         NxisasApiLog.event(tid(session), NxisasApiLog.FLOW_BANK_SYNC, "LOGIN_SUCCESS",
                 "stage", stage, "sasSessionId", NxisasMask.token(session.getSasSessionID()));
         return LoginOutcome.CLEAN;
@@ -1033,8 +1035,88 @@ public class BankTransactionSyncService {
         return session;
     }
 
-    private static String loginGroupKey(TransactionsSyncRequest.AccountKey key) {
-        return key.bankCd();
+    /**
+     * Login-group key — {@code BANK_CD} + the account's own
+     * {@code ACCT_MSTR.BANK_CERT_SEQ}.
+     *
+     * <p><b>Why the cert seq is part of the key.</b> A tenant can register
+     * several credentials at one bank: different sub-types (Vietcom
+     * {@code 11704004} has {@code NXISAS_GB_SEQ_NO} 0 = "VCB iB@nking" and
+     * 1 = "VCB DigiBiz", per {@code BANK_INFM_DETL.BANK_DETL_INFO_CD='25'})
+     * and/or different bank-side user levels (preparer vs approver logins,
+     * which legacy stores as separate {@code BANK_CERT_INFO} rows because the
+     * find-or-create key includes {@code CERT_INFO_CON} —
+     * {@code fnsh_0101_001_c001_act.jsp:168}). Their login IDs and passwords
+     * are <b>not</b> interchangeable.
+     *
+     * <p>Legacy groups the Account Inquiry real-time inquiry by
+     * {@code BANK_CERT_SEQ} — one engine login per <i>credential</i>, not per
+     * bank ({@code nxisas_tranList_osmc.js:265-279}). Keying by bank alone
+     * merged two credentials into one login group, so accounts bound to the
+     * second credential were scraped with the first one's ID and password.
+     */
+    private static String loginGroupKey(String bankCd, Long bankCertSeq) {
+        return bankCd + "#" + (bankCertSeq == null ? "" : bankCertSeq);
+    }
+
+    private static String loginGroupKey(AcctMstr acct) {
+        return loginGroupKey(acct.getBankCd(), acct.getBankCertSeq());
+    }
+
+    /** {@link #loginGroupKey(AcctMstr)} for a wire {@code AccountKey}, which
+     *  carries only {@code (BANK_CD, ACCT_NO)} — the binding is read back from
+     *  {@code ACCT_MSTR}. An account that vanished mid-sync degrades to the
+     *  unbound key rather than throwing on the login-success path. */
+    private String loginGroupKey(NxisasScrapeSession session,
+                                 TransactionsSyncRequest.AccountKey key) {
+        return acctRepo.findByBizKeyAndBankCdAndAcctNo(
+                        session.getBizKey(), key.bankCd(), key.acctNo())
+                .map(BankTransactionSyncService::loginGroupKey)
+                .orElseGet(() -> loginGroupKey(key.bankCd(), null));
+    }
+
+    /**
+     * Resolve the credential this account is actually registered under —
+     * {@code ACCT_MSTR.BANK_CERT_SEQ → BANK_CERT_INFO.SEQ_NO}, the same pointer
+     * legacy reads via {@code _v2nxisas.getCertInfo(bank_cert_seq)} and that
+     * {@code fnsh_0101_001_c001_act.jsp:257,321} stamps at Add-and-Save.
+     *
+     * <p>Falls back to the bank-level lookup only when the account carries no
+     * binding at all ({@code BANK_CERT_SEQ} null — an account unlinked by a
+     * credential delete, or a pre-refactor row). That fallback is a guess when
+     * the bank has more than one credential, so it is logged.
+     *
+     * <p>A binding that points at another bank's credential is refused rather
+     * than followed: sending bank A's login to bank B is a guaranteed auth
+     * failure that feeds the bank's 3-strike lockout. Same stance as
+     * {@code OwnAccountTransferService.resolveCertForAccount}.
+     */
+    private DecryptedCredential resolveCredentialForAccount(AcctMstr acct) {
+        final Long seq = acct.getBankCertSeq();
+        if (seq == null) {
+            log.warn("bank-sync :: account {}/{} has no BANK_CERT_SEQ — falling back to the "
+                            + "bank-level credential lookup (ambiguous when the bank has more "
+                            + "than one registered login; re-register the account via "
+                            + "Settings > Login Credentials to bind it)",
+                    acct.getBankCd(), NxisasMask.acct(acct.getAcctNo()));
+            return credentialService.loadForScrapingByBank(acct.getBankCd());
+        }
+        DecryptedCredential cred = credentialService.loadForScraping(BigDecimal.valueOf(seq));
+        if (cred == null) {
+            // loadForScraping normally throws WBE2050 itself; this covers a dangling
+            // BANK_CERT_SEQ surfacing as a null projection rather than an exception.
+            log.warn("bank-sync :: account {}/{} points at BANK_CERT_SEQ={} which resolved to no "
+                            + "credential — refusing to guess one",
+                    acct.getBankCd(), NxisasMask.acct(acct.getAcctNo()), seq);
+            throw new BusinessException("WBE2050");
+        }
+        if (cred.bankCd() != null && !cred.bankCd().equals(acct.getBankCd())) {
+            log.warn("bank-sync :: account {}/{} points at BANK_CERT_SEQ={} owned by bank {} — "
+                            + "refusing to scrape with another bank's credential",
+                    acct.getBankCd(), NxisasMask.acct(acct.getAcctNo()), seq, cred.bankCd());
+            throw new BusinessException("WBE2050");
+        }
+        return cred;
     }
 
     private static String perAccountStartDt(AcctMstr acct) {
