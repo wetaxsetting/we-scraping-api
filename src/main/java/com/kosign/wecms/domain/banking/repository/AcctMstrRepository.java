@@ -699,4 +699,52 @@ public interface AcctMstrRepository extends JpaRepository<AcctMstr, AcctMstrId> 
             @Param("newRealAmt")   BigDecimal newRealAmt,
             @Param("newCorcBfBal") BigDecimal newCorcBfBal,
             @Param("newUpdDtm")    String newUpdDtm);
+
+    /**
+     * Persist the bank-account password(s) the user typed into the Own
+     * Account Transfer composer, after the bank accepted them.
+     *
+     * <p><b>Both parameters are already ciphertext</b> — the service
+     * encrypts with {@link com.kosign.wecms.domain.banking.bankcredentials.service.BankCertCryptoService}
+     * before calling, which produces output byte-identical to the legacy
+     * JEX DB function {@code public.encrypt(txt)}. The live JEX system
+     * reads these same columns back with {@code decrypt()}
+     * ({@code IDO.ACCT_MSTR_R015:115-116}), so coexistence is preserved.
+     * Never pass plaintext here.
+     *
+     * <p><b>{@code COALESCE} is deliberate and mirrors legacy.</b>
+     * {@code IDO.ACCT_MSTR_U001:55-56} is
+     * {@code ACCT_PWD = coalesce(encrypt(:ACCT_PWD), ACCT_PWD)} — a null
+     * parameter leaves the stored value untouched rather than wiping it.
+     * That matters because the two passwords are independent: a bank that
+     * needs only the account password must not blank an existing
+     * {@code TRNS_PWD}.
+     *
+     * <p><b>Why a native UPDATE and not entity setters.</b> These two
+     * columns are intentionally <i>not</i> mapped on {@link com.kosign.wecms.domain.banking.entity.AcctMstr}.
+     * {@code AccountRegistrationService} calls {@code save(existing)} on
+     * loaded rows, so a mapped field would let an unrelated write path
+     * round-trip (or null) the ciphertext. Keeping them unmapped makes
+     * this method the only writer in the refactor.
+     *
+     * <p>Returns the affected row count — always 0 or 1, since the PK is
+     * the full {@code (BIZ_KEY, BANK_CD, ACCT_NO)} tuple.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = """
+            UPDATE ACCT_MSTR
+               SET ACCT_PWD = COALESCE(:acctPwdEnc, ACCT_PWD),
+                   TRNS_PWD = COALESCE(:trnsPwdEnc, TRNS_PWD),
+                   MOD_ID   = :modId,
+                   MOD_DTM  = :nowDtm
+             WHERE BIZ_KEY = :bizKey AND BANK_CD = :bankCd AND ACCT_NO = :acctNo
+            """, nativeQuery = true)
+    int applyTransferPasswords(
+            @Param("bizKey")     String bizKey,
+            @Param("bankCd")     String bankCd,
+            @Param("acctNo")     String acctNo,
+            @Param("acctPwdEnc") String acctPwdEnc,
+            @Param("trnsPwdEnc") String trnsPwdEnc,
+            @Param("modId")      String modId,
+            @Param("nowDtm")     String nowDtm);
 }

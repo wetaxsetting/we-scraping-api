@@ -70,6 +70,9 @@ class OwnAccountTransferServiceTest {
     @Mock private com.kosign.wecms.domain.banking.repository.NapasRemitTrnsHstrRepository napasRemitTrnsHstrRepo;
     @Mock private AuditLogService              auditLog;
     @Mock private com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
+    /** Only exercised by the bank-account-password tests; every other
+     *  intake sends null passwords and short-circuits before encryption. */
+    @Mock private com.kosign.wecms.domain.banking.bankcredentials.service.BankCertCryptoService bankCertCrypto;
 
     @InjectMocks
     private OwnAccountTransferService service;
@@ -548,7 +551,8 @@ class OwnAccountTransferServiceTest {
                 "USD", "1000", "1000", "BANKTX001", "00000000", null,
                 null, null, null, null,
                 /*engineOutAcctNo*/ null, /*engineInAcctNo*/ null, /*engineCcyCd*/ null,
-                null, null);
+                null, null,
+                /*acctPwd*/ null, /*trnsPwd*/ null);
 
         assertThatThrownBy(() -> service.recordScrapingResult(bad))
                 .isInstanceOf(BusinessException.class)
@@ -768,7 +772,8 @@ class OwnAccountTransferServiceTest {
                 bankTxId, trnsStts, null,
                 null, null, null, null,
                 /*engineOutAcctNo*/ null, /*engineInAcctNo*/ null, /*engineCcyCd*/ null,
-                null, null);
+                null, null,
+                /*acctPwd*/ null, /*trnsPwd*/ null);
     }
 
     /** Variant that also sets {@code feeDfrSbj} and the three post-transfer
@@ -784,11 +789,146 @@ class OwnAccountTransferServiceTest {
                 "", trnsStts, null,
                 /*fee*/ null, feeDfrSbj, /*rmrk*/ null, /*rmrk2*/ null,
                 engineOutAcctNo, engineInAcctNo, engineCcyCd,
-                null, null);
+                null, null,
+                /*acctPwd*/ null, /*trnsPwd*/ null);
     }
 
     /** Stub the two ownership lookups + the seq allocator so an intake reaches
      *  the INSERT, and capture the persisted row. */
+    /* =================================================================
+     *  Bank-account password persistence (Model A, 2026-08-26)
+     *
+     *  Regression cover for engine error 80002420 ("an account password
+     *  was not entered"). The composer now collects the password on every
+     *  transfer and sends it here; the service stores it to
+     *  ACCT_MSTR.ACCT_PWD so the LIVE JEX system — which takes the value
+     *  straight from that column and never shows a field
+     *  (trns_0001_007.ts:675-682 → :1943) — keeps working on the same
+     *  account.
+     *
+     *  Success-only is the load-bearing rule: because JEX consumes the
+     *  column silently, storing a password the bank rejected would send
+     *  that wrong value from the legacy screen with no chance to correct
+     *  it, walking the bank's lockout ladder
+     *  (80002421 → 80002422 → 80002423).
+     * ================================================================= */
+
+    @Test
+    void scraping_success_persistsEncryptedAccountPassword() {
+        setUpAdmin();
+        stubIntakeAndCapture("701");
+        when(bankCertCrypto.encrypt("s3cret")).thenReturn("ENC(s3cret)");
+
+        service.recordScrapingResult(reqWithPasswords(
+                "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0701", "00000000", "s3cret", null));
+
+        // Ciphertext, never plaintext — and via the legacy-compatible
+        // cipher so live JEX's decrypt() can still read it.
+        verify(bankCertCrypto).encrypt("s3cret");
+        verify(acctMstrRepo).applyTransferPasswords(
+                eq(TENANT), eq(SHINHAN), eq("0001"),
+                eq("ENC(s3cret)"), isNull(), anyString(), anyString());
+    }
+
+    @Test
+    void scraping_success_persistsBothPasswordsWhenBothSent() {
+        setUpAdmin();
+        stubIntakeAndCapture("702");
+        when(bankCertCrypto.encrypt("acctpw")).thenReturn("ENC(acctpw)");
+        when(bankCertCrypto.encrypt("trnspw")).thenReturn("ENC(trnspw)");
+
+        service.recordScrapingResult(reqWithPasswords(
+                "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0702", "00000000", "acctpw", "trnspw"));
+
+        verify(acctMstrRepo).applyTransferPasswords(
+                eq(TENANT), eq(SHINHAN), eq("0001"),
+                eq("ENC(acctpw)"), eq("ENC(trnspw)"), anyString(), anyString());
+    }
+
+    /** The bank rejected the transfer — the password may well be the
+     *  reason. Storing it would poison the legacy screen's silent path. */
+    @Test
+    void scraping_engineFailure_doesNotPersistPassword() {
+        setUpAdmin();
+        stubIntakeAndCapture("703");
+
+        service.recordScrapingResult(reqWithPasswords(
+                "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0703", "80002421", "wrongpw", null));
+
+        verify(bankCertCrypto, never()).encrypt(anyString());
+        verify(acctMstrRepo, never()).applyTransferPasswords(
+                anyString(), anyString(), anyString(),
+                any(), any(), anyString(), anyString());
+    }
+
+    /** Vietcom / Vietin send no password at all — nothing to write, and
+     *  the repository must not be touched (its COALESCE would be a no-op
+     *  but the round-trip is still wasted work). */
+    @Test
+    void scraping_passwordlessBank_doesNotTouchAcctMstr() {
+        setUpAdmin();
+        stubIntakeAndCapture("704");
+
+        service.recordScrapingResult(reqWithPasswords(
+                "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0704", "00000000", null, null));
+
+        verify(acctMstrRepo, never()).applyTransferPasswords(
+                anyString(), anyString(), anyString(),
+                any(), any(), anyString(), anyString());
+    }
+
+    /** A blank string is "not supplied", not "clear the stored value" —
+     *  it must normalise to null so the repository's COALESCE leaves the
+     *  existing ciphertext alone. */
+    @Test
+    void scraping_blankPassword_isTreatedAsAbsent() {
+        setUpAdmin();
+        stubIntakeAndCapture("705");
+
+        service.recordScrapingResult(reqWithPasswords(
+                "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0705", "00000000", "   ", null));
+
+        verify(bankCertCrypto, never()).encrypt(anyString());
+        verify(acctMstrRepo, never()).applyTransferPasswords(
+                anyString(), anyString(), anyString(),
+                any(), any(), anyString(), anyString());
+    }
+
+    /** The transfer already executed at the bank. A failed convenience
+     *  write must never discard the only record of real money moving. */
+    @Test
+    void scraping_passwordWriteFailure_doesNotFailTheIntake() {
+        setUpAdmin();
+        var saved = stubIntakeAndCapture("706");
+        when(bankCertCrypto.encrypt("s3cret")).thenReturn("ENC(s3cret)");
+        when(acctMstrRepo.applyTransferPasswords(
+                anyString(), anyString(), anyString(),
+                any(), any(), anyString(), anyString()))
+                .thenThrow(new RuntimeException("db down"));
+
+        service.recordScrapingResult(reqWithPasswords(
+                "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0706", "00000000", "s3cret", null));
+
+        // The history row is still written and the call still returns.
+        verify(napasRemitTrnsHstrRepo).saveAndFlush(saved.capture());
+        assertThat(saved.getValue().getTrnsStts()).isEqualTo("00000000");
+    }
+
+    /** Same-bank Shinhan intake carrying the two password fields. */
+    private static com.kosign.wecms.domain.banking.ownaccounttransfer.dto.request.ScrapingResultIntakeRequest
+            reqWithPasswords(String idem, String trnsStts, String acctPwd, String trnsPwd) {
+        return new com.kosign.wecms.domain.banking.ownaccounttransfer.dto.request.ScrapingResultIntakeRequest(
+                idem, "SAME_BANK",
+                SHINHAN, "0001",
+                SHINHAN, null, "0002", null,
+                "VND", "1000", "1000",
+                "", trnsStts, null,
+                /*fee*/ null, /*feeDfrSbj*/ null, /*rmrk*/ null, /*rmrk2*/ null,
+                /*engineOutAcctNo*/ null, /*engineInAcctNo*/ null, /*engineCcyCd*/ null,
+                null, null,
+                acctPwd, trnsPwd);
+    }
+
     private ArgumentCaptor<NapasRemitTrnsHstr> stubIntakeAndCapture(String seqNo) {
         var src = acct(SHINHAN, "0001", new BigDecimal("100"), new BigDecimal("90"));
         var tgt = acct(SHINHAN, "0002", new BigDecimal("50"),  new BigDecimal("50"));

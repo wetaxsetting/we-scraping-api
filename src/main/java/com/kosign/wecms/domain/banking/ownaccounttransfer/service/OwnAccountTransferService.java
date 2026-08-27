@@ -654,6 +654,22 @@ public class OwnAccountTransferService {
 
         final boolean engineSuccess = OwnAccountTransferConstants.ENGINE_SUCCESS_STTS
                 .equals(req.trnsStts());
+
+        // -- 6b. Persist the bank-account password(s) on success -------
+        // Model A (PO-approved 2026-08-26): the user types the password
+        // every transfer; the refactor NEVER reads it back. The write
+        // exists solely so the live JEX system keeps working on the same
+        // account — legacy takes ACCT_PWD straight from the row and sends
+        // it without ever showing a field (trns_0001_007.ts:675-682 →
+        // :1943). Because JEX consumes it silently, storing a value the
+        // bank rejected would send that wrong password from the legacy
+        // screen with no chance to correct it, and repeated failures walk
+        // the bank's lockout ladder (80002421 → 80002422 → 80002423).
+        // Hence: success only.
+        if (engineSuccess) {
+            persistTransferPasswords(req, bizKey, userId);
+        }
+
         appendAudit(engineSuccess
                         ? OwnAccountTransferAuditActions.SCRAPING_RESULT_OK
                         : OwnAccountTransferAuditActions.SCRAPING_RESULT_REJECT,
@@ -702,6 +718,65 @@ public class OwnAccountTransferService {
                         OwnAccountTransferConstants.AUTH_TYPE_WITHDRAW).stream()
                 .anyMatch(a -> userId.equals(a.getUserId())
                         && OwnAccountTransferConstants.USE_YN_ACTIVE.equals(a.getUseYn()));
+    }
+
+    /**
+     * Encrypt and store whichever bank-account password(s) the composer
+     * sent, after the bank accepted the transfer.
+     *
+     * <p>Encryption goes through {@link BankCertCryptoService}, whose
+     * output is byte-identical to the legacy JEX DB function
+     * {@code public.encrypt(txt)} (AES-256-CBC, zero IV, key =
+     * {@code sha256('wabooksvn')}, base64). This is what makes the write
+     * readable by live JEX; an AES-GCM value here would be undecryptable
+     * on the legacy side and would silently break IBK / KEB Hana
+     * transfers there after cutover.
+     *
+     * <p>Blank values are normalised to {@code null} so the repository's
+     * {@code COALESCE} leaves the corresponding column untouched — a
+     * bank that needs only the account password must not blank an
+     * existing {@code TRNS_PWD}.
+     *
+     * <p><b>Best-effort by design.</b> The transfer has already executed
+     * at the bank when this runs; failing the intake because a
+     * convenience write did not land would discard the only record of a
+     * real money movement. A miss is logged and swallowed. Nothing is
+     * logged that could reveal the password itself.
+     */
+    private void persistTransferPasswords(
+            ScrapingResultIntakeRequest req, String bizKey, String userId) {
+
+        final String acctPwdEnc = encryptOrNull(req.acctPwd());
+        final String trnsPwdEnc = encryptOrNull(req.trnsPwd());
+        if (acctPwdEnc == null && trnsPwdEnc == null) {
+            return;                       // password-less bank — nothing to store
+        }
+
+        try {
+            final int updated = acctMstrRepo.applyTransferPasswords(
+                    bizKey, req.sourceBankCd(), req.sourceAcctNo(),
+                    acctPwdEnc, trnsPwdEnc, userId, utcNow14());
+            if (updated == 0) {
+                log.warn("oat password persist matched no acct_mstr row "
+                                + "bizKey={} bankCd={} acctNo={}",
+                        bizKey, req.sourceBankCd(), req.sourceAcctNo());
+            } else {
+                log.info("oat password persisted bizKey={} bankCd={} acctNo={} acct={} trns={}",
+                        bizKey, req.sourceBankCd(), req.sourceAcctNo(),
+                        acctPwdEnc != null, trnsPwdEnc != null);
+            }
+        } catch (RuntimeException e) {
+            // Never fail an already-executed transfer over this.
+            log.error("oat password persist failed bizKey={} bankCd={} acctNo={}",
+                    bizKey, req.sourceBankCd(), req.sourceAcctNo(), e);
+        }
+    }
+
+    /** Legacy-format ciphertext for a non-blank value, else {@code null}
+     *  (which the repository's {@code COALESCE} reads as "leave as is"). */
+    private String encryptOrNull(String plaintext) {
+        if (plaintext == null || plaintext.isBlank()) return null;
+        return bankCertCrypto.encrypt(plaintext);
     }
 
     /** Insert the post-scrape row into {@code NAPAS_REMIT_TRNS_HSTR}.

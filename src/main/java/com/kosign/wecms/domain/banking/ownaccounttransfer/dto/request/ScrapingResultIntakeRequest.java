@@ -178,6 +178,40 @@ public record ScrapingResultIntakeRequest(
          *  {@code AUDIT_LOGS_INFM}; never used as a security signal
          *  (OQ-B). */
         @Size(max = 50)                        String engineVendor,
-        @Size(max = 50)                        String engineVersion
+        @Size(max = 50)                        String engineVersion,
+
+        /* -------------------------------------------------------------
+         *  Bank-account passwords (Model A — typed every transfer)
+         *
+         *  The composer collects these per-bank (IBK / Shinhan / Woori
+         *  need {@code acctPwd}; only KEB Hana needs {@code trnsPwd} —
+         *  see {@code bank-profiles.ts}) and sends them straight to the
+         *  local NXiSAS engine as {@code Input.acctNumPWD} /
+         *  {@code Input.transPWD}. They ride along here so that, on a
+         *  transfer the bank ACCEPTED, the service can persist them to
+         *  {@code ACCT_MSTR.ACCT_PWD} / {@code TRNS_PWD} — the same
+         *  columns live JEX reads with {@code decrypt()} when it runs
+         *  the equivalent legacy screen ({@code trns_0001_007.ts:675-682}).
+         *
+         *  PLAINTEXT on the wire. Unavoidable: the engine is a
+         *  browser-resident process and the bank IB site needs cleartext,
+         *  exactly as legacy does. Same constraint and same exposure
+         *  envelope as {@code SourceAccountRow.certInfoDetlCon}.
+         *
+         *  NEVER logged, never echoed in a response, never audited.
+         *  Nullable: banks that need no password send neither, and the
+         *  {@code COALESCE} in
+         *  {@code AcctMstrRepository.applyTransferPasswords} leaves the
+         *  stored column untouched for whichever one is absent.
+         * ------------------------------------------------------------- */
+
+        /** Account password (legacy {@code ACCT_NUM_PWD}). Persisted to
+         *  {@code ACCT_MSTR.ACCT_PWD} only on engine success. */
+        @Size(max = 100)                       String acctPwd,
+
+        /** Transfer password (legacy {@code TRNS_PWD}). Persisted to
+         *  {@code ACCT_MSTR.TRNS_PWD} only on engine success. KEB Hana
+         *  is the only bank that sends one. */
+        @Size(max = 100)                       String trnsPwd
 
 ) { }
