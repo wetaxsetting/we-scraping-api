@@ -128,6 +128,7 @@ Implemented as described in § Implementation below.
 Two new endpoints, one new request header, one new error code, no breaking change to any existing
 contract. Full contract:
 [references/api-spec/payment/mobile-receipt-api.md](../../../references/api-spec/payment/mobile-receipt-api.md).
+Consumer-facing how-to for the client team: [client-integration-guide.md](client-integration-guide.md).
 
 `ReceiptDetailResponse` was left untouched — the ownership/editability data the app needs rides on the
 list rows, so no existing web response shape changed.

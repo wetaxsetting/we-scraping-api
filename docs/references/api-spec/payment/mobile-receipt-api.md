@@ -5,6 +5,7 @@
 **Refactor screen ID:** `card-transactions` (the receipt endpoints hang off that resource; no new screen slug)
 **Legacy counterpart:** the mobile gateway services `WABOOKS_MREC_R006` / `R009` / `C002` / `C003` / `C004` / `D001`
 **Feature record:** [../../../features/payment/mobile-receipt-channel/mobile-receipt-channel-2026-09-03.md](../../../features/payment/mobile-receipt-channel/mobile-receipt-channel-2026-09-03.md)
+**Client how-to (auth, examples, error handling):** [../../../features/payment/mobile-receipt-channel/client-integration-guide.md](../../../features/payment/mobile-receipt-channel/client-integration-guide.md)
 **Field-level legacy spec:** [../../migration/mobile-app/receipt.md](../../migration/mobile-app/receipt.md)
 **Status:** Implemented — list · detail · create-with-channel · update. Photo staging (pre-`DOC_ID` upload) is **not** implemented; it needs a table-scope decision (see §5).
 
