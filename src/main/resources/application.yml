@@ -25,7 +25,7 @@
 #   EVERY ${VAR} IN THIS FILE MUST BE SET IN THE .env FOR THE ACTIVE PROFILE.
 #
 # The authoritative checklist is the matching .env.*.example — it lists every
-# variable that profile needs, with the value the yml used to default to. If a
+# variable that profile needs (keys only, values blank). If a
 # variable is not in the example, no yml reads it.
 #
 # Why no defaults: a default is a value hidden where nobody looks. With one, a
@@ -93,15 +93,15 @@
 # back on). An EMPTY value or an invalid expression throws at scheduler
 # INITIALISATION, not at fire time, so the app fails to start. Never blank a cron
 # to turn a job off; set it to "-". This file has four cron lines of its own (the
-# operation-status batch and the three haengsung sync jobs) and the same rule
-# governs the dispatch crons in each profile file.
+# operation-status batch, the three haengsung sync jobs, zalo) plus the dispatch
+# crons below, all under the same rule.
 #
 # Cron placeholders stay quoted — cron: "${VAR}" — so YAML cannot mis-parse the
 # value that arrives. The quoting was left exactly as it was by the bare-placeholder
 # migration; do not add or remove any.
 #
-# Two lines in the PROFILE files are the odd ones out — result-check.cron and
-# recovery.cron are unquoted in all four profiles. Both parse the same way (a
+# Two lines are the odd ones out — result-check.cron and recovery.cron in the
+# dispatch block are unquoted. Both parse the same way (a
 # plain scalar starting with '$' and containing no colon-space is legal YAML), so
 # this is a latent inconsistency, not a live bug. Do not "fix" it without testing
 # every profile.
@@ -140,31 +140,31 @@
 # Only their template survives: .env.local.example (committed). So a fresh clone
 # has NO application-local.yml at all.
 #
-# THIS FILE DECLARES NO spring.datasource. All four profile files do; the base
-# does not. So on a fresh clone the first run resolves no database at all and
-# fails with
-#   "Failed to configure a DataSource: 'url' attribute is not specified"
-# and NOT with the "Could not resolve placeholder" error the rule above would lead
-# you to expect. Both mean "configuration is missing", but only the second one
-# names the variable — do not read a DataSource error as "my .env is fine".
+# Without application-local.yml the app still has every key (they all live in
+# this file) but loses the local log levels and the .env.local import. Without
+# .env.local the first unresolved ${VAR} aborts startup.
 #
 # To get a working local profile you need TWO files, not one:
 #   1. src/main/resources/application-local.yml — obtain it from a team member or
 #      docs/INFRASTRUCTURE_ACCESS.md; it is not generated and has no template.
 #   2. .env.local — copy .env.local.example and fill in the secrets.
-# The local profile's own contract (its 28 required variables, and the fact that
-# it is the one profile that defaults callback protection to DISABLED) is
-# documented in the committed .env.local.example, so it stays readable even
-# without the gitignored yml.
+# The local profile's own contract (the fact that it is the one profile that
+# sets callback protection to DISABLED) is documented in the committed
+# .env.local.example, so it stays readable even without the gitignored yml.
 #
 # -----------------------------------------------------------------------------
 # HOW THIS PROFILE DIFFERS
 # -----------------------------------------------------------------------------
-# Base, not an environment. Holds the settings shared by all four profiles
-# (JPA, messages, server port, actuator, jwt/cors/crypto, coocon/osmc,
-# exchange-rate + operation-status batches, haengsung). uat and prod do NOT
-# re-declare the jwt / cors / crypto / exchange-rate / operation-status blocks,
-# so those two profiles inherit them from HERE — edit with that in mind.
+# Base, not an environment. Since 2026-09-29 it declares EVERY shared key exactly
+# once: datasource, JPA, messages, server, actuator, jwt/cors/crypto, the whole
+# dispatch block, storage roots, batches, coocon/osmc, zalo, haengsung. All 76
+# ${VAR} placeholders live here, so all four profiles need the same 76 variables.
+#
+# The profile files declare ONLY the same 10 per-environment knobs
+# (spring.config.import, show-sql, format_sql, server.error.include-message and
+# six log levels). Never re-declare a key from this file in a profile file —
+# that duplication is how the profiles drifted apart before. A new shared key goes
+# HERE; a new per-environment knob goes into all four profile files or none.
 # =============================================================================
 
 # =============================================================================
@@ -178,6 +178,13 @@ spring:
     import: optional:file:./.env[.properties]
   profiles:
     active: local
+
+  # Database connection.
+  datasource:
+    url: ${WECMS_DB_URL}
+    username: ${WECMS_DB_USERNAME}
+    password: ${WECMS_DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
 
   # JPA and Hibernate behavior.
   jpa:
@@ -212,10 +219,10 @@ spring:
 # =============================================================================
 server:
   port: 8080
-  # Error response handling.
+  # Error response handling. include-message is set per profile.
   error:
-    include-message: always
     include-stacktrace: never
+    include-binding-errors: never
 
 # =============================================================================
 # Actuator / management (D-3)
@@ -284,6 +291,235 @@ wecms:
   crypto:
     legacy-cert-seed: ${WECMS_CRYPTO_LEGACY_CERT_SEED}
 
+  # Firm-banking dispatch through EFS and VAN Center.
+  #
+  # ---------------------------------------------------------------------------
+  # TURNING EVERY FLAG BELOW OFF DOES NOT MAKE THE SYSTEM INERT.
+  # ---------------------------------------------------------------------------
+  # The flags gate DISPATCH, not row creation. Saving a payment writes its
+  # TB_PAY_TARGET / TB_PAY_FILE_MST row with PROC_STAT='9' (WAIT) at request
+  # time, unconditionally — the five *DispatchExecutor classes set
+  # PROC_STAT_PENDING = "9" with no flag consulted. Only the after-commit
+  # registrars (RealtimeDispatchRegistrar, DispatchAutoReceiveRegistrar) read a
+  # flag, and all they decide is whether THIS application hands the row onward.
+  #
+  # The row still exists, still says "ready to send". On a SHARED JEX database
+  # the legacy batch (FILE_DEPOSIT_TRANSFER_BATCH1, schedule */1 * * * *) polls
+  # for exactly PROC_STAT='9' and WILL PICK IT UP AND SEND IT — within 60
+  # seconds. "All our flags are off" is NOT the same statement as "no money
+  # moves". Before relying on the flags for safety, establish whether this
+  # environment's DB is the legacy JEX batch DB.
+  #
+  # "-" IS SPRING'S NEVER-FIRE MARKER, and the only safe way to disable a cron.
+  # An EMPTY value or an invalid expression throws at scheduler initialisation,
+  # not at fire time — the app fails to start. Never blank a cron to turn a job
+  # off; set it to "-".
+  #
+  # DB PRECONDITION — TB_BATCH_SCHEDULE_INFO / _DTL must be seeded. With no INFO
+  # row OperatingHoursService returns NO_CRITERIA and both BulkReceptionService
+  # and RealtimeDispatchService FAIL the row: 100% of transfers fail before any
+  # gateway call. Seeded and verified on DEV/SIT (3 INFO + 12 DTL); NOT yet
+  # seeded on UAT/PROD. Do not seed from here — the seed is a manual DBA script
+  # and, on a shared DB, editing a window is a LEGACY incident. Gate B of
+  # docs/deployment/wecms-batch-activation-runbook.md §5.0 owns the procedure.
+  # ---------------------------------------------------------------------------
+  dispatch:
+    auto-receive: ${WECMS_DISPATCH_AUTO_RECEIVE}
+    realtime-dispatch: ${WECMS_DISPATCH_REALTIME_DISPATCH}
+    recipient-inquiry: ${WECMS_DISPATCH_RECIPIENT_INQUIRY}
+    # Result-check polling. MUST stay OFF while legacy PROCESSING_RESULT_CHECK_BATCH
+    # is active against the same DB — both drive TB_FIRM_TRAN/TB_PAY_TARGET PROC_STAT
+    # and ShedLock cannot coordinate with the legacy runtime.
+    result-check:
+      # Master gate, OFF by policy — same double-gate shape as recovery.enabled and
+      # stuck-monitor.enabled. BOTH this flag and the cron must be set for the sweep to run.
+      # This flag ALSO silences StrandedRecoveryService. That sweep covers four
+      # strand classes and delegates the fourth (aged TB_FIRM_TRAN 202/'6') into
+      # ResultCheckService.runOnce(). With result-check.enabled=false the
+      # delegation is skipped even when recovery.enabled=true — recovery then
+      # runs a PARTIAL pass (pay-target + pay-file legs only) and says so at
+      # WARN. Do not read "recovery is on" as "all four classes are covered".
+      enabled: ${WECMS_DISPATCH_RESULT_CHECK_ENABLED}
+      # Unquoted here (and in all four profiles) while every other cron placeholder
+      # is quoted — see the header. Do not change the quoting.
+      cron: ${WECMS_DISPATCH_RESULT_CHECK_CRON}
+      # H-2: candidate rows per pass. Bounds memory and the number of sequential EFS 203
+      # round-trips one pass makes (and so how long it holds its ShedLock). Non-positive
+      # falls back to 100 rather than aborting the scheduler.
+      #
+      # COUPLED TO ResultCheckJob's lockAtMostFor — do not change one alone.
+      # Processing is strictly sequential and the worst case per row is ~26 s
+      # (3 s connect + 20 s read + 3000 ms Woori pacing). At the current 100 that
+      # is 100 x 26 s = 43.3 min of worst-case work, held under a PT60M lock
+      # ceiling (~38% headroom). Raising batch-size without raising the ceiling
+      # lets a still-running pass lose its lock so a second node starts a
+      # concurrent pass on the same live payment rows — the exact thing the lock
+      # exists to prevent. Recompute as
+      #   batchSize x (connectTimeoutMs + readTimeoutMs + worstPaceMs) + headroom
+      # and update ResultCheckLockCeilingTest, which asserts the relationship
+      # rather than the literal number.
+      batch-size: ${WECMS_DISPATCH_RESULT_CHECK_BATCH_SIZE}
+    # R-1 stranded-record recovery safety net (Item 4).
+    # DISABLED by policy — keep OFF until legacy-JEX coexistence is resolved (see StrandedRecoveryService).
+    recovery:
+      enabled: ${WECMS_DISPATCH_RECOVERY_ENABLED}
+      cron: ${WECMS_DISPATCH_RECOVERY_CRON}
+      grace-minutes: ${WECMS_DISPATCH_RECOVERY_GRACE_MINUTES}
+    # Read-only stuck-pay-file monitor (C-14 / batch-1 follow-up). SIT and UAT enable it in
+    # their .env; local and prod keep it off (false + "-").
+    #
+    # It performs NO writes — no PROC_STAT change, no re-drive, no dispatch. The "OFF by default like
+    # every other scheduler" stance it used to share with recovery.enabled was inherited from a
+    # MUTATING sweep and does not apply: the reason recovery must stay off is legacy-JEX coexistence
+    # on a shared DB, and a read-only sweep cannot cause that harm.
+    #
+    # After the batch-1 fail-closed fix this is the ONLY detection for two states that resolve
+    # exclusively by human action, because neither has an automatic retry and neither is safe to
+    # re-drive blindly:
+    #   * BULK_EXECUTION_UNCONFIRMED  — a 00302 was issued and never confirmed (transient 00302
+    #                                   failure: the marker committed, nothing re-drives it). The bank
+    #                                   MAY already have executed the batch.
+    #   * BULK_EXECUTION_NOT_ISSUED   — the afterCommit residual: the JVM died between the commit and
+    #                                   the post-commit hook, so no 00302 was ever sent.
+    # Leaving this off means both states are invisible until someone queries TB_FIRM_FILE_MST by hand.
+    # Procedure for each: docs/deployment/bulk-file-reconciliation-procedure.md.
+    #
+    # Alerting is governed by the alert: block below. Even with it off the sweep still logs
+    # (grep "feature=stuck-pay-file-monitor").
+    #
+    # THE RULE, stated plainly: read-only is WHY this is the one scheduler
+    # allowed to be enabled by committed config. It is
+    # @Transactional(readOnly = true) with no PROC_STAT write, no re-drive and no
+    # dispatch. Every OTHER scheduler stays off in committed config because it
+    # mutates rows the live JEX batch also drives on a shared DB, and ShedLock
+    # does NOT coordinate with the legacy runtime — coexistence is settled by
+    # disabling one side, never by the lock.
+    #
+    # THE EXCEPTION: local and prod keep it OFF (false + "-"). Local because
+    # there is nothing to observe on a laptop; prod because enabling it there is a
+    # separate, approval-gated config change — see application-prod.yml's header. If you add a new gate
+    # to this block, give it a .env line and an example entry too: absence is not the mechanism.
+    stuck-monitor:
+      enabled: ${WECMS_DISPATCH_STUCK_MONITOR_ENABLED}
+      # Every 5 minutes. The threshold is 15 min, so a stuck file is reported within ~20 min of
+      # becoming stuck; one aggregated alert per sweep, de-duplicated by fingerprint.
+      cron: "${WECMS_DISPATCH_STUCK_MONITOR_CRON}"
+      # Cap on the second (firm-file) sweep, so monitoring cannot become an unbounded scan.
+      firm-file-batch-size: ${WECMS_DISPATCH_STUCK_MONITOR_FIRM_FILE_BATCH_SIZE}
+      # FIX H — how far back the firm-file sweep looks, on PROC_DTTM. Replaces the old
+      # "TRAN_DT = today" scope, under which a file stranded at 23:59 disappeared at 00:00 and was
+      # never reported again. 7 days so a Friday-night strand is still reported on Monday.
+      retention-days: ${WECMS_DISPATCH_STUCK_MONITOR_RETENTION_DAYS}
+    # Dispatch failure alerts — ops Slack channel WECMSBATCH via the VAN gateway (WGVN_MSG_SEND_001).
+    #
+    # Enabled in SIT's .env (FIX I, 2026-07-30); off elsewhere. Previously false, which made every ops alert in the
+    # dispatch package a no-op — including StuckPayFileMonitorService's, the ONLY detection for the
+    # two manual-reconciliation states the stuck-monitor block above exists to surface. Enabling the
+    # monitor while leaving this off meant the detection reached a log file and nobody else.
+    #
+    # >>> THIS FLAG ALONE DOES NOT DELIVER. The full chain is:
+    #       1. wecms.dispatch.alert.enabled=true      <- this line
+    #       2. wecms.dispatch.efs.enabled=true + base-url  <- BELOW, still false (B1)
+    #       3. TB_VAN_API_INFO.API_KEY row for the alert's VAN_ORG_CD (B2)
+    #     With (2) unset, OpsAlertService builds the envelope and calls MockEfsApiClient, which
+    #     THROWS; the service swallows it and logs "ops-alert send failed vanOrgCd=… — swallowed".
+    #     So until EFS is enabled this flag converts silence into a visible WARN per alert — which is
+    #     the point: a missing alert channel should be loud, not invisible. It becomes real delivery
+    #     the moment (2) and (3) are in place, with no further config change.
+    #
+    # Safe to enable ahead of EFS: notify() is @Async on a dedicated executor, wraps its whole body
+    # in try/catch and never propagates, so a failing alert cannot affect a dispatch (legacy parity).
+    #
+    # SCOPE: this one flag gates EVERY ops alert in the dispatch package. It is a
+    # single master gate inside OpsAlertService — false makes notify() return
+    # before an envelope is even built, and all 11 producers route through it
+    # (BulkReception, BulkExecution/ReceptionResult, RealtimeDispatch,
+    # ResultCheck, DepositorInquiry, OperatingHours, FixedLengthCodec,
+    # StuckPayFileMonitor, ...). With it false every alert in the subsystem is a
+    # log line and nothing else.
+    alert:
+      enabled: ${WECMS_DISPATCH_ALERT_ENABLED}
+      # Legacy ENV_MODE marker (T=DEV / U=UAT / R=PROD) + WAS_NO, shown in the alert's ServerGB label.
+      # Unset falls back to the active Spring profile, so the label is never blank.
+      env-mode: ${WECMS_DISPATCH_ALERT_ENV_MODE}
+      was-no: ${WECMS_DISPATCH_ALERT_WAS_NO}
+      # FIX K — gateway channel-mapping id. Legacy passes this as a PARAMETER (all 10 call sites
+      # happen to send WECMSBATCH), so the protocol accepts any channel the VAN gateway has
+      # registered. Defaulted to the legacy value: nothing changes until someone sets it. SIT is the
+      # right place to trial a separate channel — but confirm the value with the VAN Center first, or
+      # the gateway most likely drops the message silently (fire-and-forget; only a non-0000 RC logs).
+      # A blank value falls back to WECMSBATCH.
+      #
+      # >>> DO NOT change this away from WECMSBATCH until the VAN Center has
+      # >>> confirmed that a second channel is actually REGISTERED. An
+      # >>> unregistered grpID most likely means the gateway drops the message
+      # >>> silently — and because this path is fire-and-forget, the only trace
+      # >>> would be a non-0000 RC in the log. You would lose alerts and see
+      # >>> nothing fail. WGVN_MSG_SEND_001 is not specified in any vendor
+      # >>> document in this workspace, so the registered channel set cannot be
+      # >>> answered from the code — it is a VAN-side question.
+      grp-id: ${WECMS_DISPATCH_ALERT_GRP_ID}
+    # VAN callback access control.
+    callback:
+      # H-1 — FAIL CLOSED. ENFORCE means an empty or non-matching allow-list rejects with 403.
+      # Previously an empty list disabled the filter entirely, so a forgotten variable silently
+      # accepted callbacks from anywhere while appearing protected. Overriding to DISABLED in a
+      # deployed environment is a security decision and is logged as a WARN on every startup.
+      protection: ${WECMS_CALLBACK_PROTECTION}
+      # X-Forwarded-For is honoured ONLY when the immediate peer is listed in trusted-proxies.
+      # An empty trusted-proxies list therefore ignores the header entirely — a forged header
+      # cannot influence the decision. Name the reverse proxy here if TLS terminates upstream.
+      trust-forwarded-for: ${WECMS_CALLBACK_TRUST_FORWARDED_FOR}
+      trusted-proxies: ${WECMS_CALLBACK_TRUSTED_PROXIES}
+      # Literal IPs and/or CIDR blocks, comma-separated. A malformed entry ABORTS STARTUP.
+      # Bare, like every placeholder now: an unset variable must fail fast here, not boot unprotected.
+      allowed-ips: ${WECMS_CALLBACK_ALLOWED_IPS}
+    # EFS API connection.
+    #
+    # enabled=false SELECTS MockEfsApiClient, WHOSE send() THROWS. It is not a
+    # quiet no-op client — @ConditionalOnProperty(havingValue="false",
+    # matchIfMissing=true) makes it the default bean and every call raises
+    # UnsupportedOperationException, so a live EFS request can never leave by
+    # accident.
+    #
+    # Consequence: with EFS off, alerting and dispatch both fail LOUDLY rather
+    # than going out. That is why alert.enabled=true above is safe to set ahead
+    # of EFS — it converts silence into a visible WARN per alert instead of
+    # delivering anything. The per-VAN API key is deliberately NOT config: it
+    # lives in TB_VAN_API_INFO and VanApiKeyService throws when the row is
+    # missing, so crypto can never run on a money-moving path with an absent key.
+    # Do not add a WECMS_EFS_API_KEY variable.
+    #
+    # The two timeouts are hardcoded, not variables — they feed the lock-ceiling
+    # arithmetic on result-check.batch-size above.
+    #
+    # read-timeout-ms: 60000 clears the vendor's own SLA. REST API guide v1.2.6
+    # §3.2 전문 응답시간 sets a normative 30-second limit ("감시시간" / "한계 시간")
+    # for the full request->response round trip. The former 20000 came from the §6
+    # Java sample, which §6's 주의 banner marks as illustrative and non-binding —
+    # it sat BELOW the vendor limit, so a 202 answered at 25s (inside the SLA) was
+    # aborted by us, becoming an indeterminate transfer that §5.4 then requires a
+    # 203 to resolve and forbids resending. 60s matches legacy ConnectionUtil.
+    efs:
+      enabled: ${WECMS_EFS_ENABLED}
+      base-url: ${WECMS_EFS_BASE_URL}
+      connect-timeout-ms: 3000
+      read-timeout-ms: 60000
+    # SFTP file transfer.
+    sftp:
+      enabled: ${WECMS_SFTP_ENABLED}
+      host: ${WECMS_SFTP_HOST}
+      port: ${WECMS_SFTP_PORT}
+      username: ${WECMS_SFTP_USERNAME}
+      private-key-path: ${WECMS_SFTP_KEY_PATH}
+      password: ${WECMS_SFTP_PASSWORD}
+      connect-timeout-ms: 60000
+      local-upload-path: ${WECMS_SFTP_LOCAL_UPLOAD}
+      remote-upload-path: ${WECMS_SFTP_REMOTE_UPLOAD}
+      local-download-path: ${WECMS_SFTP_LOCAL_DOWNLOAD}
+      remote-download-path: ${WECMS_SFTP_REMOTE_DOWNLOAD}
+      remote-move-path: ${WECMS_SFTP_REMOTE_MOVE}
+
   # File storage roots per upload module.
   overseas-payment:
     storage-root: ${WECMS_OVERSEAS_PAYMENT_STORAGE_ROOT}
@@ -317,7 +553,7 @@ wecms:
     batch:
       enabled: ${WECMS_OPERATION_STATUS_BATCH_ENABLED}
       # Single cron: seed then refresh run as ONE locked, ordered unit (see
-      # OperationStatusBatchScheduler). Never-fire in the shipped .env — the real legacy
+      # OperationStatusBatchScheduler). Never-fire by policy — the real legacy
       # instant is UNRESOLVED (OQ-3: legacy DEV fired 15:00:01 UTC = 22:00 ICT =
       # 00:00 Asia/Seoul; the old placeholder assumed 00:00 ICT). Do not guess:
       # set WECMS_OPERATION_STATUS_BATCH_CRON only after the legacy batch owner or
@@ -338,7 +574,7 @@ wecms:
     unique-key: ${WECMS_OSMC_UNIQUE_KEY}
   # Zalo Official Account messaging (Settings > Zalo OA).
   #
-  # enabled=false (the shipped .env value) keeps MockZaloApiClient as the active
+  # enabled=false (the policy value) keeps MockZaloApiClient as the active
   # client, so no token exchange and no message can leave the process. That matters
   # more than for a bank gateway: every Zalo template message is BILLED against the
   # tenant's ZBS wallet (210-400 VND) and lands on a real customer's phone, so an
@@ -404,5 +640,7 @@ haengsung:
 logging:
   pattern:
     level: "%5p [traceId=%X{traceId:--}]"
+  # Per-environment levels (root, com.kosign.wecms, SQL/JDBC) are set in each profile.
   level:
     org.hibernate: info
+    org.springframework.security: WARN
