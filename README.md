@@ -690,3 +690,7 @@ Workspace-level workflow: [`docs/workflow.md`](docs/workflow.md).
 license is granted or implied. WeCMS is a commercial product of **Webcash Global**; all rights
 reserved. Use, copying, and distribution are governed by your agreement with the company — direct
 any licensing question to the project owner rather than assuming permission.
+
+---
+
+_CI check: UAT pipeline re-run after the pipeline-script update (2026-09-30)._
