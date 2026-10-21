@@ -32,6 +32,10 @@ Per-feature migration mapping: which JEX WSVC/IDO maps to which Spring controlle
 - `service-mapping.md` — cross-feature index of WSVC → REST mappings
 - [`wecms-batch-migration.md`](wecms-batch-migration.md) — **moved** → the firm-banking dispatch batch is now a feature doc set at [features/wecms-batch/](../../features/wecms-batch/README.md); legacy mapping lives in [legacy-jex-mapping.md](../../features/wecms-batch/legacy-jex-mapping.md)
 
+## Sub-folders
+
+- [`mobile-app/`](mobile-app/README.md) — **added 2026-09-03.** The legacy **WeCMS mobile** gateway (`WABOOKS_MREC_*`, 76 services) mapped onto `wecms-api`, field by field, from the API workbook handed over with the iOS / Android source. Reference only — no mobile endpoint is implemented in this repository. Index + transport contract + coverage: [mobile-app/README.md](mobile-app/README.md); the field-level spec is split by domain (`auth` · `master-data` · `receipt` · `notification-push` · `bulletin-board`).
+
 ## Reference
 
 JEX is **read-only reference** for all mappings. Read `WECMS DEV/.../wsvc/<svc>.xml`, `ido/<ido>.xml`, `_act.jsp`, entity, DAO. Never copy JEX patterns — translate to clean Spring Boot.
