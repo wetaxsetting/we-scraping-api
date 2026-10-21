@@ -141,11 +141,19 @@ mismatch with `WBE2091` — same outcome the legacy WHERE-clause `decrypt(cert_i
 produced (zero rows affected). The frontend also re-verifies the new password against Coocon
 (`verify-update`) before firing the PUT — both guards must pass.
 
-### 3.6 Delete — no account cascade
+### 3.6 Delete — account rows preserved, credential pointer cleared
 
-Delete removes only the `BANK_CERT_INFO` / `GDT_CERT_INFO` row. Linked `ACCT_MSTR` rows are
-**preserved** (a credential and its accounts are independent concepts); `AccountService` surfaces those
-accounts as "disconnected" until a credential is re-registered.
+Delete removes the `BANK_CERT_INFO` / `GDT_CERT_INFO` row. Linked `ACCT_MSTR` **rows are preserved** (a
+credential and its accounts are independent concepts) — but their `BANK_CERT_SEQ` **is set to `NULL`**
+in the same transaction, so the pointer never dangles. `AccountService` surfaces those accounts as
+"disconnected" until a credential is re-registered, and re-picking them in the Account Picker rewrites
+`BANK_CERT_SEQ` to the new seq.
+
+The GDT branch does not touch `ACCT_MSTR` at all — `GDT_CERT_INFO` owns no account linkage.
+
+Deliberate divergence from legacy `comm_0218_001_d001_act.jsp` (which leaves the pointer dangling),
+approved 2026-08-19:
+[../../../bugs/bank-credential-delete-leaves-dangling-acct-linkage-2026-08-19.md](../../../bugs/bank-credential-delete-leaves-dangling-acct-linkage-2026-08-19.md).
 
 ### 3.7 Reveal re-auth
 

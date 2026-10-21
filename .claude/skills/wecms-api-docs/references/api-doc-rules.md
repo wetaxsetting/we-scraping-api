@@ -184,6 +184,34 @@ QUALITY GATE COMPLETE  →  READY FOR MANUAL COMMIT  →  HUMAN Git / deployment
   and **SIT / UAT / PROD deployment stays manual regardless**.
 - This binds every team — **Cambodia · Vietnam · Korea · future contributors** — and every tool.
 
+## Classifying the task — semantic, never keyword-based
+
+**Added 2026-08-18.** Authoritative rule: `wecms-api/CLAUDE.md` §19. Conventions for writing the
+classification into a record:
+
+> **INTENT + VERIFIED NATURE > WORD CHOICE.** Never route on the words *"bug"*, *"check"*, *"issue"* or
+> *"feature"*. The same request written in English, Korean, Vietnamese or Khmer classifies identically.
+
+- **Four canonical classifications only:** `AUDIT` · `BUG` · `ISSUE` · `FEATURE`. Do not invent a fifth.
+- **Record two questions separately.** `**Current Work Classification:**` is what the user authorized
+  *now* — usually `AUDIT` when implementation has not been authorized. `**Finding Classification:**` is
+  what the evidence proved — `BUG` · `ISSUE` · `FEATURE` · `NO DEFECT` · `UNRESOLVED`. They are often
+  different, and that is correct: an audit of a broken button may find a code defect (BUG) or a stale
+  deployment artifact (ISSUE).
+- **Do not write a Finding Classification before the evidence exists.** `Pending investigation` is the
+  honest value, exactly as for `## Root Cause`.
+- **`AUDIT` describes the work, not the fault.** A record in `docs/audits/` is not "an audit-type
+  problem"; it is an investigation whose finding is still open.
+- **When the nature is unclear, the answer is `AUDIT`, not `ISSUE`.** ISSUE is not a fallback bucket —
+  it means a genuine non-product-defect concern (environment, deployment, stale artifact, data,
+  operational, build, compatibility, technical debt).
+- **Re-classify honestly when evidence contradicts the opening assumption**, in the same record, with
+  the evidence — never force the original label to stand.
+- **Classification never grants authorization.** `Finding Classification: BUG` does not permit fixing
+  it; the approval gate (`wecms-api/CLAUDE.md` §17) is unchanged.
+- **Keep the metadata thin.** Add these fields only where they carry information the folder and
+  `**Type:**` do not already convey.
+
 ## Naming
 
 - **Dated implementation / change records** use `descriptive-name-YYYY-MM-DD.md` — lowercase
