@@ -11,7 +11,7 @@ Maintains the **refactor backend** documentation tree at `wecms-api/docs/`. This
 
 Trigger when the task involves any of:
 - **Writing the dated implementation record that docs-first requires — before the detailed investigation, and therefore before any application code change** (see the GATE and "Docs-first implementation records" below) — bug fix, issue, feature, **audit / investigation**, functional-behaviour / business-rule / API change, legacy-JEX parity resolution, functional refactor, SIT/UAT/PROD behaviour fix, or an integration change with observable effect.
-- **Any request to check · investigate · review · audit · analyze a defect or behaviour** — the record comes first, then the investigation (`wecms-api/CLAUDE.md` §2a).
+- **Any request whose intent is to investigate, analyse, verify, diagnose, or review a defect or behaviour** — judged **semantically, never by the words used** (`wecms-api/CLAUDE.md` §19) — the record comes first, then the investigation (`wecms-api/CLAUDE.md` §2a).
 - Creating or editing a backend feature spec (`wecms-api/docs/features/...`).
 - Writing or updating a REST API contract / endpoint doc.
 - Adding or revising database references, table mappings, or ERDs.
@@ -86,6 +86,7 @@ Quick reference:
   | **AUDIT** (audit · parity review · verification · investigation · legacy comparison · migration verification · architecture review · historical validation · cross-feature analysis) | `docs/audits/<category>/` |
 
   Dated bug/issue records never go inside `docs/features/`. `docs/architecture/`, `docs/deployment/`, `docs/security/`, `docs/planning/open-questions/`, `docs/references/database/`, `docs/references/api-spec/` remain **permanent reference** homes — a bug/issue touching them still records in `docs/bugs/` / `docs/issues/` and updates the permanent doc afterwards.
+- **Classification is SEMANTIC — intent + verified nature, never keywords** (`wecms-api/CLAUDE.md` §19). Never route on the words "bug" / "check" / "issue" / "feature"; the same request in Korean, Vietnamese or Khmer classifies identically. Two separate questions: **Current Work Classification** (what the user authorized — usually `AUDIT` when implementation is not authorized) and **Finding Classification** (what the evidence proves — `BUG` / `ISSUE` / `FEATURE` / `NO DEFECT` / `UNRESOLVED`). When the nature of the problem is unclear, the answer is **AUDIT**, not ISSUE. The definitions below are **meanings, not triggers**:
 - **BUG vs ISSUE:** BUG = implemented behaviour is incorrect · something that worked is broken · behaviour differs from an accepted requirement · a defect causes wrong behaviour · parity behaviour is wrong and the task is to fix it. ISSUE = needed work that is not clearly a product defect · operational/configuration correction · an unresolved implementation concern · a tracked problem that does not fit BUG cleanly. **When unclear, prefer ISSUE.** Never create duplicate BUG + ISSUE records for one task.
 - **An audit is never converted into an implementation record.** If an audit leads to a fix, the audit stays in `docs/audits/` and a **separate** record is created in `docs/bugs/` / `docs/issues/`.
 - **A large feature is still a feature** — do not open a bug/issue record just because feature work is big.

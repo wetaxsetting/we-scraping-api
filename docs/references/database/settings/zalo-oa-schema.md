@@ -3,6 +3,7 @@
 **Flyway migration:** `V254__zalo_oa_integration.sql`
 **Java package:** `com.kosign.wecms.domain.setting.zalooa`
 **Feature doc (service layer, endpoints, vendor contract):** [../../../features/settings/zalo-oa.md](../../../features/settings/zalo-oa.md)
+**Setup console Zalo (app + template):** [../../../features/settings/zalo-oa-app-setup.md](../../../features/settings/zalo-oa-app-setup.md)
 **Frontend types:** [wecms-web/components/settings/zalo-oa/types.ts](../../../../../wecms-web/components/settings/zalo-oa/types.ts)
 **Status:** schema + entity layer landed; DDL **applied to the shared dev DB `172.168.5.172/wecmsdevdb` on 2026-08-17** and verified (see §9). Service layer (client / token / send / controller / scheduler) landed the same day — see the feature doc.
 
