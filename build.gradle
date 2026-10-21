@@ -130,8 +130,8 @@ tasks.named('bootRun') {
         doFirst {
             throw new GradleException(
                 "wecms-api/.env.local is missing. The yml files carry no defaults since 2026-07-30, " +
-                "so the app cannot start without it. Copy .env.local.example to .env.local and set " +
-                "WECMS_DB_PASSWORD. See docs/deployment/config-bare-placeholder-migration.md.")
+                "so the app cannot start without it. Copy .env.local.example to .env.local and fill in " +
+                "every value (the template is keys only). See docs/deployment/config-bare-placeholder-migration.md.")
         }
     }
 }
