@@ -48,7 +48,7 @@ Engine NXiSAS chạy trên browser; Spring đứng sau scrape, chỉ lưu kết 
 | POST `/nxisas/decrypt` & `/encrypt` | Pass-through (SEED-CBC không bundle) | — | — |
 | POST `/nxisas/logging` (204) | Ghi audit terminal job | — | NXSIAS_MODULE_TRAN_LOG_HIS |
 
-**`scraping-result` validate (thứ tự):** idempotency (`WBE_OAT_IDEMPOTENCY_CONFLICT`) → CCY VND → shape NAPAS/SAME_BANK → amount tolerance (`WBE_OAT_AMOUNT_MISMATCH`) → ownership nguồn (W-grant) → shape+ownership đích → INSERT (seq MAX+1, retry 1 lần).
+**`scraping-result` validate (thứ tự):** idempotency (`WBE_OAT_IDEMPOTENCY_CONFLICT`) → CCY VND → shape NAPAS/SAME_BANK → amount drift (**chỉ ghi log, KHÔNG reject** — parity legacy, 2026-08-18; `WBE_OAT_AMOUNT_MISMATCH` không còn phát sinh) → ownership nguồn (W-grant) → shape+ownership đích → INSERT (seq MAX+1, retry 1 lần). `trns_stts` là **optional** (`@Size(max=20)`, không `@NotBlank`) — legacy `WSVC.trns_0002_001_c001.xml` không bắt buộc và composer khởi tạo `""`. Xem `docs/bugs/internal-transfer-intake-legacy-parity-2026-08-18.md`.
 
 ## 4. Smart Organizer — hai controller riêng
 

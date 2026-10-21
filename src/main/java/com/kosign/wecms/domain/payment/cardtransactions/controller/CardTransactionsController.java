@@ -30,12 +30,14 @@ import com.kosign.wecms.domain.payment.cardtransactions.dto.LinkExpensesResponse
 import com.kosign.wecms.domain.payment.cardtransactions.dto.LinkableEInvoiceListResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.LinkableReceiptListResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.NextDocNoResponse;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.OwnReceiptListResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.RequestApprovalRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.RequestApprovalResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.SyncCardTransactionsRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.SyncCardTransactionsResponse;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.UpdateCardActiveRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.UpdateCardInfoRequest;
+import com.kosign.wecms.domain.payment.cardtransactions.dto.UpdateReceiptRequest;
 import com.kosign.wecms.domain.payment.cardtransactions.dto.UpdateReportingAccountRequest;
 import com.kosign.wecms.domain.payment.approvalbox.dto.EditApprovalRequest;
 import com.kosign.wecms.domain.payment.approvalbox.service.ApprovalEditService;
@@ -56,6 +58,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -120,6 +123,13 @@ public class CardTransactionsController {
 
     /** Audit-log slug for Corporate Card edits. */
     private static final String AUDIT_WSVC_ID_CARD = "card-transactions";
+
+    /** Which client captured the request — {@code PC} (web, the default when
+     *  the header is absent) or {@code MOB} (mobile). Stamped onto
+     *  {@code BUSA_DOC_MSTR.REG_CHNL} on receipt create so the mobile receipt
+     *  channel keeps the provenance legacy {@code WABOOKS_MREC_C003} recorded.
+     *  Provenance only: it never widens or narrows what a caller may do. */
+    private static final String CLIENT_CHANNEL_HEADER = "X-Client-Channel";
 
     private final CardTransactionsService     service;
     private final CardTransactionSyncService  syncService;
@@ -725,8 +735,58 @@ public class CardTransactionsController {
      */
     @PostMapping("/receipts")
     public ApiResponse<CreateReceiptResponse> createReceipt(
-            @Valid @RequestBody CreateReceiptRequest req) {
-        return ApiResponse.ok(service.createReceipt(req));
+            @Valid @RequestBody CreateReceiptRequest req,
+            @RequestHeader(value = CLIENT_CHANNEL_HEADER, required = false)
+            @Pattern(regexp = "^(PC|MOB)$") String clientChannel) {
+        return ApiResponse.ok(service.createReceipt(req, clientChannel));
+    }
+
+    /**
+     * The caller's own hand-registered receipts. Refactor counterpart of
+     * legacy {@code WABOOKS_MREC_R006} (mobile receipt list) — the entry point
+     * for the rebuilt mobile client's receipt tab. Scoped to the signed-in
+     * user; already-linked receipts stay in the list, each row carrying
+     * {@code appr_seq_no} + {@code editable} so the client knows whether to
+     * offer its Edit action.
+     *
+     * <p>{@code reg_chnl} is an optional provenance filter ({@code MOB} /
+     * {@code PC}). Omit it — the default — and the list spans both channels, so
+     * a receipt keyed on the web still shows up in the app. Pass {@code MOB}
+     * for exact legacy {@code R006} parity.
+     *
+     * <p>Feature record:
+     * {@code docs/features/payment/mobile-receipt-channel/}.
+     */
+    @GetMapping("/receipts")
+    public ApiResponse<OwnReceiptListResponse> listOwnReceipts(
+            @RequestParam("from_date") @Pattern(regexp = "^[0-9]{8}$") String fromDt,
+            @RequestParam("to_date")   @Pattern(regexp = "^[0-9]{8}$") String toDt,
+            @RequestParam(value = "search",   required = false) String search,
+            @RequestParam(value = "reg_chnl", required = false)
+            @Pattern(regexp = "^(PC|MOB)$") String regChnl,
+            @RequestParam(value = "page", required = false, defaultValue = "0")  int page,
+            @RequestParam(value = "size", required = false, defaultValue = "50") int size) {
+        return ApiResponse.ok(service.listOwnReceipts(fromDt, toDt, search, regChnl, page, size));
+    }
+
+    /**
+     * Update one of the caller's hand-registered receipts. Refactor
+     * counterpart of legacy {@code WABOOKS_MREC_C004}; the web client never
+     * had an update path, so this endpoint is new rather than a port of an
+     * existing screen action.
+     *
+     * <p>Full replace of the user-owned fields. Returns
+     * {@code WBE_NOT_FOUND} when the document is missing or in another
+     * tenant, and {@code WBE_RECEIPT_NOT_EDITABLE} when it is not the
+     * caller's manually-entered receipt or is already attached to an expense
+     * approval.
+     */
+    @PutMapping("/receipts/{doc_id}")
+    public ApiResponse<Void> updateReceipt(
+            @PathVariable("doc_id") @NotBlank @Size(max = 50) String docId,
+            @Valid @RequestBody UpdateReceiptRequest req) {
+        service.updateReceipt(docId, req);
+        return ApiResponse.ok(null);
     }
 
     /**

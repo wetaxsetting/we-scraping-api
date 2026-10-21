@@ -162,15 +162,34 @@ GET /api/v1/login-credentials/gdt/engine-config
 DELETE /api/v1/login-credentials/{type}/{seqNo}     type ∈ {bank, gdt}
   → service.delete(type, seqNo)  @Transactional
       normalizeType(type) → BANK | GDT (else WBE2092)
-      bank: bankRepo.findByBizKeyAndSeqNo (or WBE2090) → delete → audit (REF_NO=BANK_CERT_INFO)
+      bank: bankRepo.findByBizKeyAndSeqNo (or WBE2090) → delete
+              → acctMstrRepo.clearBankCertSeq(bizKey, seqNo, userId, nowDtm14())   ← same tx
+              → audit (REF_NO=BANK_CERT_INFO)
       gdt:  gdtRepo.findByBizKeyAndSeqNo (or WBE2090) → delete → audit (REF_NO=GDT_CERT_INFO)
+              (no ACCT_MSTR touch — GDT owns no account linkage)
   → 200, data: null
 ```
 
-**Accounts are NOT cascade-deleted.** A credential and the accounts it once authenticated are
-independent — removing the credential means "I can no longer log into the bank online", not "delete my
-accounts". `AccountService` then surfaces those accounts as "disconnected" (per-bank `certConnYn`
-derivation) until the user re-registers a credential.
+**Account rows are NOT cascade-deleted — but the pointer IS cleared.** The two are different things,
+and conflating them is what caused the 2026-08-19 bug:
+
+- **Rows: preserved.** A credential and the accounts it once authenticated are independent — removing
+  the credential means "I can no longer log into the bank online", not "delete my accounts".
+  `AccountService` surfaces those accounts as "disconnected" (per-bank `certConnYn` derivation) until a
+  credential is re-registered.
+- **Pointer: nulled.** Every `ACCT_MSTR` row whose `BANK_CERT_SEQ` referenced the deleted credential is
+  set to `NULL` (with `MOD_ID` / `MOD_DTM` stamped), in the same transaction. Otherwise the pointer
+  dangles forever: re-registering the credential mints a **new** `SEQ_NO` and does not re-link, so Own
+  Account Transfer resolved no cert and disabled Transfer with *"Bank login credentials were deleted.
+  Please register Login Credentials again."* — while the credential was visibly present in the list.
+  A dangling seq is also a wrong-bank hazard, since `SEQ_NO` is tenant-global.
+
+`NULL` therefore honestly means "not registered against a credential", and re-picking the accounts in
+the Account Picker re-links them (`AccountRegistrationService`). This is a **deliberate divergence from
+legacy** `comm_0218_001_d001_act.jsp`, which leaves the pointer dangling — approved 2026-08-19, see
+[../../../bugs/bank-credential-delete-leaves-dangling-acct-linkage-2026-08-19.md](../../../bugs/bank-credential-delete-leaves-dangling-acct-linkage-2026-08-19.md)
+(including the live-JEX-DB coexistence note). The fix is forward-looking: rows already dangling before
+it shipped are cured by re-running the Account Picker, not by the deploy.
 
 ## 7. Reveal
 

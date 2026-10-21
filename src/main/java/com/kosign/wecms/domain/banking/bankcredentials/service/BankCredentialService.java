@@ -9,6 +9,7 @@ import com.kosign.wecms.domain.banking.bankcredentials.dto.BankCredentialUpdateR
 import com.kosign.wecms.domain.banking.bankcredentials.entity.BankCertInfo;
 import com.kosign.wecms.domain.banking.bankcredentials.repository.BankCertInfoRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -19,6 +20,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class BankCredentialService {
 
@@ -28,6 +30,7 @@ public class BankCredentialService {
     private static final String CERT_INFO_DV_BANK = "1";
 
     private final BankCertInfoRepository repository;
+    private final com.kosign.wecms.domain.banking.repository.AcctMstrRepository acctMstrRepository;
     private final BankCertCryptoService crypto;
     private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
 
@@ -73,9 +76,46 @@ public class BankCredentialService {
         return toRow(repository.save(entity));
     }
 
+    /**
+     * Delete one bank credential AND drop the account linkage it owned.
+     *
+     * <p>Legacy ({@code comm_0218_001_d001_act.jsp}) deletes the
+     * {@code BANK_CERT_INFO} row only, leaving every
+     * {@code ACCT_MSTR.BANK_CERT_SEQ} that referenced it pointing at a row
+     * that no longer exists. That dangling pointer is what surfaced as
+     * "Bank login credentials were deleted" on Own Account Transfer with the
+     * credential visibly present in the table (re-registering allocates a NEW
+     * seq; the accounts kept the old one). It is also a wrong-bank hazard:
+     * {@code SEQ_NO} is tenant-global, so a stale pointer can collide with a
+     * different bank's future credential.
+     *
+     * <p>The accounts themselves are <b>kept</b> — they belong to Bank Account
+     * Management, not to the credential. Only the pointer is cleared, so
+     * {@code NULL} means "not registered against a credential" and
+     * re-registering through the Account Picker re-links them
+     * ({@link com.kosign.wecms.domain.banking.service.AccountRegistrationService}).
+     *
+     * <p>Approved divergence from legacy (2026-08-19) — see
+     * {@code docs/bugs/bank-credential-delete-leaves-dangling-acct-linkage-2026-08-19.md},
+     * including the live-JEX-DB coexistence note.
+     */
     @Transactional
     public void delete(BigDecimal seqNo) {
-        repository.delete(loadOrThrow(seqNo));
+        final BankCertInfo entity = loadOrThrow(seqNo);   // tenant-checked
+        final String bizKey = entity.getBizKey();
+        repository.delete(entity);
+
+        // Same transaction: the credential and its linkage go together, so a
+        // failure here cannot leave the pointer behind.
+        final int unlinked = acctMstrRepository.clearBankCertSeq(
+                bizKey,
+                entity.getSeqNo().longValueExact(),
+                TenantContext.currentUserId(),
+                nowDtm14());
+        if (unlinked > 0) {
+            log.info("bank credential seq={} deleted — unlinked {} account(s) (BANK_CERT_SEQ → NULL)",
+                    entity.getSeqNo(), unlinked);
+        }
     }
 
     /** Internal accessor for the scraping flow — returns the plaintext
@@ -89,19 +129,30 @@ public class BankCredentialService {
         return toDecrypted(entity);
     }
 
-    /** Bank-level variant of {@link #loadForScraping(BigDecimal)} for the
-     *  Bank Transaction Sync orchestrator. The sync flow picks accounts
-     *  by {@code (bank_cd, acct_no)} (the Account Inquiry table's
-     *  natural key) — multiple accounts at one bank share the same
-     *  registered credential row, so resolving by {@code BANK_CD} is
-     *  enough. Throws {@code WBE2050} when no credential is registered
-     *  for the bank (matches the by-seq variant; frontend prompts the
-     *  user to register via Settings > Login Credentials first).
+    /** Bank-level <b>fallback</b> for accounts that carry no
+     *  {@code ACCT_MSTR.BANK_CERT_SEQ} binding at all — an account unlinked by
+     *  a credential delete, or a pre-refactor row.
      *
-     *  <p>Returns the lowest {@code SEQ_NO}'s credential when multiple
-     *  exist — deterministic, mirrors legacy behaviour (the JEX picker
-     *  surfaces the most recent registration but the sync helper
-     *  picks the first match it finds in {@code BANK_CERT_INFO}).
+     *  <p>🔴 <b>Not a substitute for {@link #loadForScraping(BigDecimal)}.</b>
+     *  An earlier revision of this javadoc claimed "multiple accounts at one
+     *  bank share the same registered credential row, so resolving by
+     *  {@code BANK_CD} is enough". That is <b>false</b>: a tenant can register
+     *  several credentials at one bank — different sub-types (Vietcom
+     *  {@code 11704004} carries {@code NXISAS_GB_SEQ_NO} 0 = "VCB iB@nking"
+     *  and 1 = "VCB DigiBiz") and/or different bank-side user levels
+     *  (preparer vs approver logins, separate rows because the legacy
+     *  find-or-create key includes {@code CERT_INFO_CON} —
+     *  {@code fnsh_0101_001_c001_act.jsp:168}). Their IDs and passwords are
+     *  not interchangeable, and legacy resolves per account through
+     *  {@code BANK_CERT_SEQ} ({@code nxisas_tranList_osmc.js:265-279}).
+     *  Callers that have an {@code AcctMstr} MUST use the by-seq variant.
+     *
+     *  <p>Returns the lowest {@code SEQ_NO}'s credential when several exist —
+     *  deterministic, but an arbitrary pick among genuinely different logins,
+     *  which is why callers log when they land here. Throws {@code WBE2050}
+     *  when no credential is registered for the bank (matches the by-seq
+     *  variant; the frontend prompts the user to register via
+     *  Settings &gt; Login Credentials first).
      */
     @Transactional(readOnly = true)
     public DecryptedCredential loadForScrapingByBank(String bankCd) {
