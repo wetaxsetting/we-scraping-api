@@ -23,7 +23,7 @@ Dùng được. we-scraping-api và we-scraping-web là bản sao WeCMS, đúng 
 
 ## Đã triển khai (02/11/2026)
 
-API P1 đã viết trong `we-invoice/we-scraping-api`, module `domain/weinvoice`: 40 endpoint `/api/v1/weinvoice` + 2 endpoint Partner API, 84 unit test qua, chưa commit. Hợp đồng chi tiết: `docs/features/addon-service/weinvoice/interface-specification.md` (trong repo đó). Khác so với bản đề xuất dưới đây:
+API P1 đã viết trong `we-invoice/we-scraping-api`, module `domain/weinvoice`: 40 endpoint `/api/v1/weinvoice` + 2 endpoint Partner API, 84 unit test qua. Chưa commit, chưa lên SIT: 05/11 đã chuyển sang nhánh `f1_v1_weinvoice_api` tách từ `origin/sit`, chờ commit tay. Hợp đồng chi tiết: `docs/features/addon-service/weinvoice/interface-specification.md` (trong repo đó). Khác so với bản đề xuất dưới đây:
 
 | Điểm                   | Đề xuất ban đầu                            | Đã làm                                                                                                                                       |
 | ---------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -36,7 +36,7 @@ API P1 đã viết trong `we-invoice/we-scraping-api`, module `domain/weinvoice`
 
 Còn thiếu để chạy được: DBA chạy 3 script (`db/weinvoice/V1__winv_schema.sql`, script cấp quyền, script seed 144 NCC); và engine cần một worker đọc bảng `weinvoice.winv_engn_rqst`. Chưa có worker này thì mọi việc nhờ engine (đăng nhập thử, đồng bộ, lấy XML/PDF, nhập tệp) đều nằm ở `queued`.
 
-## Kiến trúc đề xuất
+## Kiến trúc đã làm
 
 ```mermaid
 flowchart TB
@@ -44,13 +44,13 @@ flowchart TB
     ncc["Cổng tra cứu NCC<br/>PDF gốc"] --> engine
     mail["Hộp mail<br/>XML, PDF, link tra cứu"] --> engine
     engine["Engine Python · repo we-scraping (đang chạy)<br/>sync-lists 3 lần/ngày · worker xml · worker pdf · mail 30 phút · đọc yêu cầu từ BE"]
-    subgraph pg["PostgreSQL · 1 instance"]
-        se["Schema engine<br/>invoices · invoice_xml · invoice_details<br/>invoice_pdf · tasks · email_* · job_runs<br/>engine ghi, BE chỉ đọc"]
-        sw["Schema WeInvoice (mới)<br/>engine_requests · tenant–MST · tài khoản CQT<br/>tags · invoice_files · sync_coverage<br/>BE ghi, engine đọc yêu cầu"]
+    subgraph pg["PostgreSQL của engine (không phải DB WeCMS)"]
+        se["Schema engine (giữ chỗ cũ)<br/>invoices · invoice_xml · invoice_details<br/>invoice_pdf · tasks · email_* · job_runs<br/>engine ghi, BE chỉ đọc"]
+        sw["Schema weinvoice (mới, 11 bảng winv_*)<br/>winv_engn_rqst · tenant–MST · winv_cmpn_infm<br/>tags · tệp · winv_sync_cvrg<br/>BE ghi, engine đọc yêu cầu"]
     end
     engine -->|"ghi"| se
     sw -->|"đọc yêu cầu"| engine
-    be["WeInvoice BE<br/>Spring Boot · we-scraping-api<br/>/api/v1/weinvoice · JWT, tenant BIZ_KEY"]
+    be["WeInvoice BE<br/>Spring Boot · we-scraping-api<br/>/api/v1/weinvoice · JWT, tenant BIZ_KEY<br/>pool riêng WECMS_WEINVOICE_DB_URL"]
     be -->|"đọc"| se
     be -->|"ghi, gửi yêu cầu"| sw
     wecmsbe["WeCMS BE<br/>wecms-api đang chạy<br/>ghi busa_doc_mstr bằng intake có sẵn"] -->|"Partner API"| be
@@ -58,7 +58,7 @@ flowchart TB
     wecmsfe["WeCMS FE<br/>màn hoá đơn giữ nguyên<br/>nút Update đổi nguồn dữ liệu"] -->|"nút Update"| wecmsbe
 ```
 
-Engine giữ nguyên việc lấy dữ liệu, chỉ chuyển bảng sang một schema riêng. WeInvoice BE đọc bảng engine, ghi bảng mới của mình và bảng yêu cầu; WeCMS gọi Partner API thay cho engine Coocon trong trình duyệt.
+Engine giữ nguyên việc lấy dữ liệu và bảng của nó. Bảng WeInvoice nằm trong cùng DB với engine, ở schema `weinvoice`. BE mở kết nối riêng tới DB này và không đụng DB WeCMS (DB đó dùng chung với JEX). WeInvoice BE đọc bảng engine, ghi bảng của mình và bảng yêu cầu. WeCMS gọi Partner API thay cho engine Coocon chạy trong trình duyệt.
 
 ## DB còn thiếu cho Partner API (nút Update của WeCMS)
 
@@ -148,8 +148,7 @@ Mỗi màn của spec có một nhóm API; màn 19 (lộ trình) không cần AP
 
 | Method | Đường dẫn                                    | Việc                                                                                                                                                                               | Engine |
 | ------ | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| GET    | `/dashboard?company_mst=&year=`              | 4 KPI (bỏ HĐ huỷ và bị thay thế, tiền quy VND), 12 tháng bán/mua, tình trạng dữ liệu (có mã thiếu XML, không mã chưa XML, chưa PDF, tháng chưa đủ got/total), lần đồng bộ gần nhất |        |
-| GET    | `/dashboard/top-partners?company_mst=&year=` | Top 5 đối tác mua vào theo tổng tiền (P2)                                                                                                                                          |        |
+| GET    | `/dashboard?company_mst=&year=`              | 4 KPI (bỏ HĐ huỷ và bị thay thế, tiền quy VND), 12 tháng bán/mua, tình trạng dữ liệu (có mã thiếu XML, không mã chưa XML, chưa PDF, tháng chưa đủ got/total), lần đồng bộ gần nhất, top 5 đối tác mua vào theo tổng tiền (không có endpoint `/dashboard/top-partners` riêng) |        |
 
 Nút Đồng bộ ở màn này, màn 04 và màn 06 đều gọi `POST /sync-runs` (màn 10).
 
@@ -162,8 +161,7 @@ Nút Đồng bộ ở màn này, màn 04 và màn 06 đều gọi `POST /sync-ru
 | GET    | `/invoices/ids`               | Mọi id khớp bộ lọc, cho "chọn tất cả"                                                                                                                                                                                                                                                     |        |
 | POST   | `/invoices/fetch-missing-xml` | Body `ids` → đưa task xml lên đầu hàng đợi; trả `queued`, `skipped_no_code`                                                                                                                                                                                                               | Có     |
 | POST   | `/invoices/export/excel`      | Body bộ lọc hoặc `ids` → tệp .xlsx. FE hỏi "Lấy XML còn thiếu" trước khi `kpis.missing_xml` > 0 (quy tắc 3.6)                                                                                                                                                                             |        |
-| POST   | `/invoices/export/zip`        | Body `ids`, `mode` (flat, by_month, by_partner, by_month_partner, per_invoice), `include` (xml, pdf, rendered, summary) → `request_id`                                                                                                                                                    |        |
-| GET    | `/exports/{request_id}/file`  | Tải tệp ZIP đã đóng gói                                                                                                                                                                                                                                                                   |        |
+| POST   | `/invoices/export/zip`        | Body `ids`, `mode` (flat, by_month, by_partner, by_month_partner, per_invoice), `include` (xml, pdf, rendered, summary) → trả thẳng tệp ZIP (`Content-Disposition`), không qua `request_id` / `GET /exports/{id}/file`                                                                   |        |
 | PUT    | `/invoices/tags`              | Body `ids`, `tag_id`, `on` → gắn hoặc bỏ tag hàng loạt (P2)                                                                                                                                                                                                                               |        |
 
 ### 05 Chi tiết hoá đơn
@@ -275,13 +273,13 @@ Phía WeCMS chỉ thêm 1 endpoint BE (vd `POST /api/v1/addon/einvoices/sync`) g
 
 ## Việc cần chốt
 
-8 quyết định này chặn việc chia task BE, nên chốt trước. Người quyết ghi trong ngoặc.
+8 quyết định chặn việc chia task BE. Dev đã chốt 3 cái khi viết code (02/11); 5 cái còn lại chờ PO.
 
 - [ ] **Ranh giới sản phẩm:** WeInvoice tách riêng từ bản sao WeCMS, hay thêm module vào WeCMS (PO).
-- [ ] **BE nhờ engine làm việc:** bảng `engine_requests` mà worker đọc (đề xuất), hay HTTP nội bộ (Dev).
-- [ ] **Tệp gốc:** BE đọc thẳng thư mục `output/` của engine (cùng máy hoặc ổ dùng chung), hay engine đẩy tệp lên kho tệp chung (Dev). Tải XML, PDF và đóng gói ZIP đều cần.
-- [ ] **Mật khẩu Cục Thuế:** dùng `GDT_CERT_INFO` của WeCMS hay bảng mới; Java và Python phải giải mã cùng một cách (Dev).
+- [x] **BE nhờ engine làm việc:** bảng yêu cầu `weinvoice.winv_engn_rqst`, worker engine đọc (Dev). Worker phía engine chưa viết.
+- [ ] **Tệp gốc:** BE đọc thẳng thư mục `output/` của engine (cùng máy hoặc ổ dùng chung), hay engine đẩy tệp lên kho tệp chung (Dev). Tải XML, PDF và đóng gói ZIP đều cần. Code hiện đọc `WECMS_WEINVOICE_ENGINE_OUTPUT_DIR`, nên cần cùng máy hoặc ổ dùng chung.
+- [x] **Mật khẩu Cục Thuế:** bảng mới `winv_cmpn_infm`, AES-256-GCM, khoá `WECMS_WEINVOICE_SECRET_KEY`; engine giải mã bằng `AESGCM` với cùng khoá (Dev).
 - [ ] **Form Thêm MST:** thêm ô tên đăng nhập Cục Thuế, vì tài khoản có thể khác MST (PO).
-- [ ] **Partner API:** cách xác thực máy–máy; WeCMS xử lý HĐ ngoại tệ ngoài VND, USD thế nào với CHECK của `BUSA_DOC_MSTR` (PO, team WeCMS).
+- [ ] **Partner API:** WeCMS xử lý HĐ ngoại tệ ngoài VND, USD thế nào với CHECK của `BUSA_DOC_MSTR` (PO, team WeCMS). Phần xác thực máy–máy đã chốt: header `X-Api-Key`, danh sách khoá trong `WECMS_WEINVOICE_PARTNER_API_KEYS` (Dev).
 - [ ] **Quy tắc 3.4:** bật hay không 13 adapter đang tự đọc captcha ảnh ở cổng NCC (PO).
 - [ ] **Xoá MST:** giữ hay xoá HĐ đã lấy của MST đó (PO).

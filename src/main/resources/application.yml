@@ -598,6 +598,37 @@ wecms:
     # inherit, and the right hour is a per-deployment choice. Blank throws at
     # scheduler INITIALISATION, so the value must be a valid cron or "-".
     token-refresh-cron: "${WECMS_ZALO_TOKEN_REFRESH_CRON}"
+  # WeInvoice — the e-invoice product built on the we-scraping engine
+  # (docs/features/addon-service/weinvoice/).
+  #
+  # db.* points at the WeInvoice database: the PostgreSQL database the engine writes,
+  # holding the engine tables (engine-schema, read only) and the WeInvoice winv_* tables
+  # (app-schema). It is NOT the WeCMS database, and it is deliberately not a Spring
+  # DataSource bean — see WeInvoiceDb for why.
+  #
+  # enabled blank or false opens no connection and every WeInvoice / Partner
+  # endpoint answers WBE3000. Like haengsung.oracle, every line must still resolve:
+  # keep all 14 WECMS_WEINVOICE_* keys in the host .env (blank is fine while disabled).
+  #
+  # secret-key: base64 of 32 random bytes; encrypts the GDT passwords the engine logs in
+  # with, so the engine must be given the same value. partner-api-keys: comma-separated
+  # keys WeCMS sends as X-Api-Key on /api/partner/v1/**; empty = every partner call refused.
+  weinvoice:
+    enabled: ${WECMS_WEINVOICE_ENABLED}
+    db:
+      url: ${WECMS_WEINVOICE_DB_URL}
+      username: ${WECMS_WEINVOICE_DB_USERNAME}
+      password: ${WECMS_WEINVOICE_DB_PASSWORD}
+      max-pool-size: ${WECMS_WEINVOICE_DB_MAX_POOL_SIZE}
+    engine-schema: ${WECMS_WEINVOICE_ENGINE_SCHEMA}
+    app-schema: ${WECMS_WEINVOICE_APP_SCHEMA}
+    engine-output-dir: ${WECMS_WEINVOICE_ENGINE_OUTPUT_DIR}
+    storage-root: ${WECMS_WEINVOICE_STORAGE_ROOT}
+    secret-key: ${WECMS_WEINVOICE_SECRET_KEY}
+    partner-api-keys: ${WECMS_WEINVOICE_PARTNER_API_KEYS}
+    mail-domain: ${WECMS_WEINVOICE_MAIL_DOMAIN}
+    max-companies: ${WECMS_WEINVOICE_MAX_COMPANIES}
+    test-data-enabled: ${WECMS_WEINVOICE_TEST_DATA_ENABLED}
 
 # =============================================================================
 # Haengsung ERP integration
