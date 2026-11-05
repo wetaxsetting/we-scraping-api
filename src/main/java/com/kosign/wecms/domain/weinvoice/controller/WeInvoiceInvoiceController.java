@@ -44,7 +44,7 @@ import java.util.Map;
  * WeInvoice screens 04 (purchase / sales list) and 05 (invoice detail).
  *
  * <p>Every call names the working MST ({@code company_mst}, or the invoice id, whose MST is
- * checked); the tenant comes from the JWT. Filters are snake_case query parameters; list values
+ * checked); the owner is the JWT user. Filters are snake_case query parameters; list values
  * ({@code statuses}, {@code tag_ids}, {@code exclude_tax_ids}) accept repeated parameters or a
  * comma-separated value. Errors follow the house envelope ({@code WBE30xx} for WeInvoice rules).
  * Binary answers (Excel, ZIP, a file) are written straight to the response.

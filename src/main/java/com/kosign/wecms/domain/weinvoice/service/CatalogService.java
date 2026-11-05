@@ -41,44 +41,44 @@ public class CatalogService {
         if (state != null && !LINK_STATES.contains(state)) {
             throw new IllegalArgumentException("link_status: must be ok, check or missing");
         }
-        return providers.list(guard.tenantMsts(), keyword, state).stream().map(this::toItem).toList();
+        return providers.list(guard.ownedMsts(), keyword, state).stream().map(this::toItem).toList();
     }
 
     public List<TagItem> tags() {
-        return tags.list(guard.bizKey()).stream().map(CatalogService::toItem).toList();
+        return tags.list(guard.ownerId()).stream().map(CatalogService::toItem).toList();
     }
 
     public TagItem createTag(TagRequest req) {
-        String bizKey = guard.bizKey();
+        String ownerId = guard.ownerId();
         String name = req.name() == null ? "" : req.name().trim();
         if (name.isEmpty()) {
             throw new IllegalArgumentException("name: is required");
         }
-        if (tags.nameTaken(bizKey, name, null)) {
+        if (tags.nameTaken(ownerId, name, null)) {
             throw new BusinessException("WBE3014");
         }
-        long id = tags.insert(bizKey, name, req.color(), guard.userId());
-        return tags.find(bizKey, id).map(CatalogService::toItem).orElseThrow();
+        long id = tags.insert(ownerId, name, req.color(), guard.userId());
+        return tags.find(ownerId, id).map(CatalogService::toItem).orElseThrow();
     }
 
     public TagItem updateTag(String tagId, TagRequest req) {
-        String bizKey = guard.bizKey();
+        String ownerId = guard.ownerId();
         long id = WeInvoiceIds.parse(tagId, "id");
-        tags.find(bizKey, id).orElseThrow(() -> new BusinessException("WBE3013"));
+        tags.find(ownerId, id).orElseThrow(() -> new BusinessException("WBE3013"));
         String name = req.name() == null ? null : req.name().trim();
         if (name != null && name.isEmpty()) {
             throw new IllegalArgumentException("name: must not be blank");
         }
-        if (name != null && tags.nameTaken(bizKey, name, id)) {
+        if (name != null && tags.nameTaken(ownerId, name, id)) {
             throw new BusinessException("WBE3014");
         }
-        tags.update(bizKey, id, name, req.color(), guard.userId());
-        return tags.find(bizKey, id).map(CatalogService::toItem).orElseThrow();
+        tags.update(ownerId, id, name, req.color(), guard.userId());
+        return tags.find(ownerId, id).map(CatalogService::toItem).orElseThrow();
     }
 
     public void deleteTag(String tagId) {
         long id = WeInvoiceIds.parse(tagId, "id");
-        if (tags.delete(guard.bizKey(), id) == 0) {
+        if (tags.delete(guard.ownerId(), id) == 0) {
             throw new BusinessException("WBE3013");
         }
     }

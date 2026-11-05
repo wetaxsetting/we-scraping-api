@@ -46,11 +46,11 @@ public class InvoiceQueryRepository {
             + """
                        (x.invoice_id IS NOT NULL OR EXISTS (
                             SELECT 1 FROM {app}.winv_invc_file uf
-                             WHERE uf.biz_key = :bizKey AND uf.invc_id = i.id
+                             WHERE uf.owner_id = :ownerId AND uf.invc_id = i.id
                                AND uf.file_kind = 'XML' AND uf.del_yn = 'N')) AS has_xml,
                        (p.invoice_id IS NOT NULL OR EXISTS (
                             SELECT 1 FROM {app}.winv_invc_file uf
-                             WHERE uf.biz_key = :bizKey AND uf.invc_id = i.id
+                             WHERE uf.owner_id = :ownerId AND uf.invc_id = i.id
                                AND uf.file_kind = 'PDF' AND uf.del_yn = 'N')) AS has_pdf,
                        NULLIF(COALESCE(NULLIF(x.mst_tcgp, ''), i.list_raw->>'msttcgp'), '') AS prvd_mst,
                        COALESCE(NULLIF(x.parsed->>'ma_cqt', ''), NULLIF(i.list_raw->>'mhdon', '')) AS cqt_code,
@@ -103,10 +103,10 @@ public class InvoiceQueryRepository {
                 SELECT c.*, pv.prvd_nm, pv.prvd_mst AS pv_mst, COALESCE(lc.lkup_cd, lc.lkup_url) AS manual_code,
                        (SELECT string_agg(t.tag_seq::text, ',' ORDER BY t.tag_seq)
                           FROM {app}.winv_invc_tag t
-                         WHERE t.biz_key = :bizKey AND t.invc_id = c.id) AS tag_ids
+                         WHERE t.owner_id = :ownerId AND t.invc_id = c.id) AS tag_ids
                   FROM conv c
                   LEFT JOIN {app}.winv_prvd_infm pv ON pv.prvd_mst = split_part(c.prvd_mst, '-', 1)
-                  LEFT JOIN {app}.winv_lkup_cd lc ON lc.biz_key = :bizKey AND lc.invc_id = c.id
+                  LEFT JOIN {app}.winv_lkup_cd lc ON lc.owner_id = :ownerId AND lc.invc_id = c.id
                 """ + where + " ORDER BY " + order + " LIMIT :limit OFFSET :offset");
         return db.jdbc().query(sql, p, ROW_MAPPER);
     }
@@ -157,8 +157,8 @@ public class InvoiceQueryRepository {
      * Ids among {@code ids} that are coded (symbol C…), have no XML yet and are not cancelled —
      * the invoices "fetch missing XML" can still get from GDT.
      */
-    public List<Long> fetchableXmlIds(String bizKey, String mst, List<Long> ids) {
-        InvoiceCriteria c = new InvoiceCriteria(bizKey, mst, null, null, null, null, "missing", null,
+    public List<Long> fetchableXmlIds(String ownerId, String mst, List<Long> ids) {
+        InvoiceCriteria c = new InvoiceCriteria(ownerId, mst, null, null, null, null, "missing", null,
                 List.of(), null, List.of(), null, List.of(), ids, null, false);
         MapSqlParameterSource p = new MapSqlParameterSource();
         String sql = db.sql(cte(c, p) + " SELECT c.id FROM conv c " + filterWhere(c, p)
@@ -235,7 +235,7 @@ public class InvoiceQueryRepository {
     /** {@code WITH base …, conv …} for the criteria's MST, direction, period and ids. */
     static String cte(InvoiceCriteria c, MapSqlParameterSource p) {
         StringBuilder w = new StringBuilder(" WHERE i.company_mst = :mst");
-        p.addValue("mst", c.mst()).addValue("bizKey", c.bizKey());
+        p.addValue("mst", c.mst()).addValue("ownerId", c.ownerId());
         if (c.engineDirection() != null) {
             w.append(" AND i.direction = :dir");
             p.addValue("dir", c.engineDirection());
@@ -280,7 +280,7 @@ public class InvoiceQueryRepository {
         }
         if (c.tagIds() != null && !c.tagIds().isEmpty()) {
             w.append(" AND EXISTS (SELECT 1 FROM {app}.winv_invc_tag t")
-                    .append(" WHERE t.biz_key = :bizKey AND t.invc_id = c.id AND t.tag_seq IN (:tagIds))");
+                    .append(" WHERE t.owner_id = :ownerId AND t.invc_id = c.id AND t.tag_seq IN (:tagIds))");
             p.addValue("tagIds", c.tagIds());
         }
         if (c.provider() != null && !c.provider().isBlank()) {

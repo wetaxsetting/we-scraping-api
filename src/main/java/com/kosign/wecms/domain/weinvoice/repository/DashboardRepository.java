@@ -24,9 +24,9 @@ public class DashboardRepository {
     }
 
     /** Per month and direction: count, total and VAT. */
-    public List<MonthRow> monthly(String bizKey, String mst, LocalDate from, LocalDate to) {
+    public List<MonthRow> monthly(String ownerId, String mst, LocalDate from, LocalDate to) {
         MapSqlParameterSource p = new MapSqlParameterSource();
-        String sql = db.sql(InvoiceQueryRepository.cte(period(bizKey, mst, from, to), p) + """
+        String sql = db.sql(InvoiceQueryRepository.cte(period(ownerId, mst, from, to), p) + """
                 SELECT to_char(c.ngay_lap, 'YYYY-MM') AS ym, c.direction, count(*) AS n,
                        COALESCE(sum(c.tong_tien * c.vnd_rate), 0) AS total,
                        COALESCE(sum(c.tien_thue * c.vnd_rate), 0) AS tax
@@ -41,9 +41,9 @@ public class DashboardRepository {
     }
 
     /** "Data status" box: coded without XML, without code and without XML, without PDF. */
-    public DataStatusRow dataStatus(String bizKey, String mst, LocalDate from, LocalDate to) {
+    public DataStatusRow dataStatus(String ownerId, String mst, LocalDate from, LocalDate to) {
         MapSqlParameterSource p = new MapSqlParameterSource();
-        String sql = db.sql(InvoiceQueryRepository.cte(period(bizKey, mst, from, to), p) + """
+        String sql = db.sql(InvoiceQueryRepository.cte(period(ownerId, mst, from, to), p) + """
                 SELECT count(*) FILTER (WHERE NOT c.has_xml AND upper(left(c.khhdon, 1)) <> 'K') AS missing_xml,
                        count(*) FILTER (WHERE NOT c.has_xml AND upper(left(c.khhdon, 1)) = 'K') AS no_code_no_xml,
                        count(*) FILTER (WHERE NOT c.has_pdf) AS missing_pdf
@@ -55,9 +55,9 @@ public class DashboardRepository {
     }
 
     /** Top purchase partners by total (P2 in the Function List; cheap enough to ship now). */
-    public List<PartnerRow> topSuppliers(String bizKey, String mst, LocalDate from, LocalDate to, int limit) {
+    public List<PartnerRow> topSuppliers(String ownerId, String mst, LocalDate from, LocalDate to, int limit) {
         MapSqlParameterSource p = new MapSqlParameterSource();
-        String sql = db.sql(InvoiceQueryRepository.cte(period(bizKey, mst, from, to), p) + """
+        String sql = db.sql(InvoiceQueryRepository.cte(period(ownerId, mst, from, to), p) + """
                 SELECT c.ptnr_mst, max(c.ptnr_nm) AS ptnr_nm, count(*) AS n, COALESCE(sum(c.tong_tien * c.vnd_rate), 0) AS total
                   FROM conv c
                  WHERE c.direction = 'mua' AND c.tthai_eff NOT IN (4, 6)
@@ -84,8 +84,8 @@ public class DashboardRepository {
                 .stream().findFirst();
     }
 
-    private static InvoiceCriteria period(String bizKey, String mst, LocalDate from, LocalDate to) {
-        return new InvoiceCriteria(bizKey, mst, null, from, to, null, null, null, List.of(), null, List.of(),
+    private static InvoiceCriteria period(String ownerId, String mst, LocalDate from, LocalDate to) {
+        return new InvoiceCriteria(ownerId, mst, null, from, to, null, null, null, List.of(), null, List.of(),
                 null, List.of(), List.of(), null, false);
     }
 

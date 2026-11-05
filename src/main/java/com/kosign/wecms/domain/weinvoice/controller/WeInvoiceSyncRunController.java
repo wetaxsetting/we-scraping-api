@@ -49,7 +49,7 @@ public class WeInvoiceSyncRunController {
         return ApiResponse.ok(syncRuns.cancel(runId));
     }
 
-    /** History of the tenant (or of one MST): requested runs and the engine's scheduled runs. */
+    /** History of the user (or of one MST): requested runs and the engine's scheduled runs. */
     @GetMapping
     public ApiResponse<WeInvoicePage<SyncRunItem>> history(
             @RequestParam(value = "company_mst", required = false) String companyMst,

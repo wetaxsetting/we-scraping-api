@@ -38,31 +38,31 @@ public class InvoiceFileRepository {
         this.db = db;
     }
 
-    public List<FileRow> listActive(String bizKey, long invoiceId) {
-        return db.jdbc().query(db.sql(SELECT + " WHERE biz_key = :bizKey AND invc_id = :id AND del_yn = 'N' ORDER BY file_seq"),
-                new MapSqlParameterSource("bizKey", bizKey).addValue("id", invoiceId), MAPPER);
+    public List<FileRow> listActive(String ownerId, long invoiceId) {
+        return db.jdbc().query(db.sql(SELECT + " WHERE owner_id = :ownerId AND invc_id = :id AND del_yn = 'N' ORDER BY file_seq"),
+                new MapSqlParameterSource("ownerId", ownerId).addValue("id", invoiceId), MAPPER);
     }
 
-    public Optional<FileRow> find(String bizKey, long invoiceId, long fileSeq) {
+    public Optional<FileRow> find(String ownerId, long invoiceId, long fileSeq) {
         return db.jdbc().query(db.sql(SELECT + """
-                         WHERE biz_key = :bizKey AND invc_id = :id AND file_seq = :seq AND del_yn = 'N'
+                         WHERE owner_id = :ownerId AND invc_id = :id AND file_seq = :seq AND del_yn = 'N'
                         """),
-                        new MapSqlParameterSource("bizKey", bizKey).addValue("id", invoiceId).addValue("seq", fileSeq), MAPPER)
+                        new MapSqlParameterSource("ownerId", ownerId).addValue("id", invoiceId).addValue("seq", fileSeq), MAPPER)
                 .stream().findFirst();
     }
 
-    public long insert(String bizKey, String mst, long invoiceId, String kind, String name, long size,
+    public long insert(String ownerId, String mst, long invoiceId, String kind, String name, long size,
                        String storPath, String sha256, boolean confirmed, String userId) {
         String dtm = WeInvoiceTime.nowDtm();
         Long seq = db.jdbc().queryForObject(db.sql("""
                 INSERT INTO {app}.winv_invc_file
-                       (file_seq, biz_key, cmpn_mst, invc_id, file_kind, file_orgn, file_nm, file_size, stor_path,
+                       (file_seq, owner_id, cmpn_mst, invc_id, file_kind, file_orgn, file_nm, file_size, stor_path,
                         file_sha256, cnfm_yn, del_yn, reg_id, reg_dtm, mod_id, mod_dtm)
-                VALUES (nextval('{app}.sq_winv_file_seq'), :bizKey, :mst, :id, :kind, 'UPLOAD', :name, :size, :path,
+                VALUES (nextval('{app}.sq_winv_file_seq'), :ownerId, :mst, :id, :kind, 'UPLOAD', :name, :size, :path,
                         :sha, :cnfm, 'N', :userId, :dtm, :userId, :dtm)
                 RETURNING file_seq
                 """), new MapSqlParameterSource()
-                .addValue("bizKey", bizKey)
+                .addValue("ownerId", ownerId)
                 .addValue("mst", mst)
                 .addValue("id", invoiceId)
                 .addValue("kind", kind)
@@ -77,24 +77,24 @@ public class InvoiceFileRepository {
     }
 
     /** Soft-deletes uploaded files of a kind (a replaced PDF stays on disk for audit). */
-    public int retireKind(String bizKey, long invoiceId, String kind, String userId) {
+    public int retireKind(String ownerId, long invoiceId, String kind, String userId) {
         return db.jdbc().update(db.sql("""
                 UPDATE {app}.winv_invc_file SET del_yn = 'Y', mod_id = :userId, mod_dtm = :dtm
-                 WHERE biz_key = :bizKey AND invc_id = :id AND file_kind = :kind AND del_yn = 'N'
+                 WHERE owner_id = :ownerId AND invc_id = :id AND file_kind = :kind AND del_yn = 'N'
                 """), new MapSqlParameterSource()
-                .addValue("bizKey", bizKey)
+                .addValue("ownerId", ownerId)
                 .addValue("id", invoiceId)
                 .addValue("kind", kind)
                 .addValue("userId", userId)
                 .addValue("dtm", WeInvoiceTime.nowDtm()));
     }
 
-    public int softDelete(String bizKey, long invoiceId, long fileSeq, String userId) {
+    public int softDelete(String ownerId, long invoiceId, long fileSeq, String userId) {
         return db.jdbc().update(db.sql("""
                 UPDATE {app}.winv_invc_file SET del_yn = 'Y', mod_id = :userId, mod_dtm = :dtm
-                 WHERE biz_key = :bizKey AND invc_id = :id AND file_seq = :seq AND del_yn = 'N'
+                 WHERE owner_id = :ownerId AND invc_id = :id AND file_seq = :seq AND del_yn = 'N'
                 """), new MapSqlParameterSource()
-                .addValue("bizKey", bizKey)
+                .addValue("ownerId", ownerId)
                 .addValue("id", invoiceId)
                 .addValue("seq", fileSeq)
                 .addValue("userId", userId)

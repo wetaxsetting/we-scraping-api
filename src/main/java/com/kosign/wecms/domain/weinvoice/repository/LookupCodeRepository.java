@@ -15,18 +15,18 @@ public class LookupCodeRepository {
         this.db = db;
     }
 
-    public void upsert(String bizKey, long invoiceId, String mst, String code, String companyCode, String url,
+    public void upsert(String ownerId, long invoiceId, String mst, String code, String companyCode, String url,
                        String userId) {
         String dtm = WeInvoiceTime.nowDtm();
         db.jdbc().update(db.sql("""
                 INSERT INTO {app}.winv_lkup_cd
-                       (biz_key, invc_id, cmpn_mst, lkup_cd, cmpn_cd, lkup_url, reg_id, reg_dtm, mod_id, mod_dtm)
-                VALUES (:bizKey, :id, :mst, :code, :cmpnCd, :url, :userId, :dtm, :userId, :dtm)
-                ON CONFLICT (biz_key, invc_id) DO UPDATE
+                       (owner_id, invc_id, cmpn_mst, lkup_cd, cmpn_cd, lkup_url, reg_id, reg_dtm, mod_id, mod_dtm)
+                VALUES (:ownerId, :id, :mst, :code, :cmpnCd, :url, :userId, :dtm, :userId, :dtm)
+                ON CONFLICT (owner_id, invc_id) DO UPDATE
                    SET lkup_cd = EXCLUDED.lkup_cd, cmpn_cd = EXCLUDED.cmpn_cd, lkup_url = EXCLUDED.lkup_url,
                        mod_id = EXCLUDED.mod_id, mod_dtm = EXCLUDED.mod_dtm
                 """), new MapSqlParameterSource()
-                .addValue("bizKey", bizKey)
+                .addValue("ownerId", ownerId)
                 .addValue("id", invoiceId)
                 .addValue("mst", mst)
                 .addValue("code", code)

@@ -29,10 +29,10 @@
 CREATE SCHEMA IF NOT EXISTS weinvoice;
 
 -- ---------------------------------------------------------------------------
--- WINV_CMPN_INFM — tax codes (MST) a tenant manages, with its GDT account
+-- WINV_CMPN_INFM — tax codes (MST) a user account manages, with its GDT account
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS weinvoice.winv_cmpn_infm (
-	biz_key       varchar(20)   NOT NULL,
+	owner_id      varchar(100)   NOT NULL,
 	cmpn_mst      varchar(14)   NOT NULL,
 	cmpn_nm       varchar(500)  NULL,
 	lbl_nm        varchar(100)  NULL,
@@ -47,17 +47,17 @@ CREATE TABLE IF NOT EXISTS weinvoice.winv_cmpn_infm (
 	reg_dtm       varchar(14)   NOT NULL,
 	mod_id        varchar(100)  NULL,
 	mod_dtm       varchar(14)   NULL,
-	CONSTRAINT winv_cmpn_infm_pk    PRIMARY KEY (biz_key, cmpn_mst),
+	CONSTRAINT winv_cmpn_infm_pk    PRIMARY KEY (owner_id, cmpn_mst),
 	CONSTRAINT winv_cmpn_infm_chk01 CHECK ((conn_stts = ANY (ARRAY['PENDING', 'CONNECTED', 'ERROR', 'EXPIRED', 'NEED_PASSWORD']))),
 	CONSTRAINT winv_cmpn_infm_chk02 CHECK ((dflt_yn = ANY (ARRAY['Y'::bpchar, 'N'::bpchar]))),
 	CONSTRAINT winv_cmpn_infm_chk03 CHECK ((del_yn = ANY (ARRAY['Y'::bpchar, 'N'::bpchar])))
 );
 
-COMMENT ON TABLE  weinvoice.winv_cmpn_infm IS 'Tax code (MST) managed by a WeCMS tenant in WeInvoice, with the GDT account the engine logs in with.';
+COMMENT ON TABLE  weinvoice.winv_cmpn_infm IS 'Tax code (MST) managed by a WeInvoice user account (WeCMS USER_ID), with the GDT account the engine logs in with.';
 COMMENT ON COLUMN weinvoice.winv_cmpn_infm.gdt_user_id IS 'GDT login. May differ from the MST (sub-account form 1201496252-U002).';
 COMMENT ON COLUMN weinvoice.winv_cmpn_infm.gdt_pw_enc  IS 'GDT password: "v1:" + base64(iv(12) || AES-256-GCM ciphertext+tag) under WECMS_WEINVOICE_SECRET_KEY. Never returned by the API.';
 COMMENT ON COLUMN weinvoice.winv_cmpn_infm.conn_stts   IS 'PENDING = waiting for the engine login test; CONNECTED; ERROR = login failed; EXPIRED = password no longer accepted; NEED_PASSWORD = added from an upload, no password yet.';
-COMMENT ON COLUMN weinvoice.winv_cmpn_infm.del_yn      IS 'Y = removed by the tenant (soft delete). Invoices already collected stay in the engine tables.';
+COMMENT ON COLUMN weinvoice.winv_cmpn_infm.del_yn      IS 'Y = removed by the owner (soft delete). Invoices already collected stay in the engine tables.';
 
 CREATE INDEX IF NOT EXISTS winv_cmpn_infm_ix01
 	ON weinvoice.winv_cmpn_infm (cmpn_mst)
@@ -71,7 +71,7 @@ CREATE SEQUENCE IF NOT EXISTS weinvoice.sq_winv_rqst_seq
 
 CREATE TABLE IF NOT EXISTS weinvoice.winv_engn_rqst (
 	rqst_seq    numeric(18)   NOT NULL,
-	biz_key     varchar(20)   NOT NULL,
+	owner_id    varchar(100)   NOT NULL,
 	cmpn_mst    varchar(14)   NULL,
 	rqst_type   varchar(20)   NOT NULL,
 	trgr_cd     varchar(20)   NOT NULL DEFAULT 'MANUAL',
@@ -109,17 +109,17 @@ CREATE INDEX IF NOT EXISTS winv_engn_rqst_ix01
 	WHERE rqst_stts IN ('QUEUED', 'RUNNING');
 
 CREATE INDEX IF NOT EXISTS winv_engn_rqst_ix02
-	ON weinvoice.winv_engn_rqst (biz_key, rqst_type, cmpn_mst, rqst_seq DESC);
+	ON weinvoice.winv_engn_rqst (owner_id, rqst_type, cmpn_mst, rqst_seq DESC);
 
 -- ---------------------------------------------------------------------------
--- WINV_TAG_INFM / WINV_INVC_TAG — tenant tags and their invoices
+-- WINV_TAG_INFM / WINV_INVC_TAG — a user's tags and their invoices
 -- ---------------------------------------------------------------------------
 CREATE SEQUENCE IF NOT EXISTS weinvoice.sq_winv_tag_seq
 	INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START 1 CACHE 1 NO CYCLE;
 
 CREATE TABLE IF NOT EXISTS weinvoice.winv_tag_infm (
 	tag_seq  numeric(18)  NOT NULL,
-	biz_key  varchar(20)  NOT NULL,
+	owner_id varchar(100)  NOT NULL,
 	tag_nm   varchar(50)  NOT NULL,
 	colr_cd  varchar(20)  NULL,
 	reg_id   varchar(100) NOT NULL,
@@ -127,25 +127,25 @@ CREATE TABLE IF NOT EXISTS weinvoice.winv_tag_infm (
 	mod_id   varchar(100) NULL,
 	mod_dtm  varchar(14)  NULL,
 	CONSTRAINT winv_tag_infm_pk   PRIMARY KEY (tag_seq),
-	CONSTRAINT winv_tag_infm_uk01 UNIQUE (biz_key, tag_nm)
+	CONSTRAINT winv_tag_infm_uk01 UNIQUE (owner_id, tag_nm)
 );
 
-COMMENT ON TABLE weinvoice.winv_tag_infm IS 'Invoice tag defined by a tenant (name + colour).';
+COMMENT ON TABLE weinvoice.winv_tag_infm IS 'Invoice tag defined by a user (name + colour).';
 
 CREATE TABLE IF NOT EXISTS weinvoice.winv_invc_tag (
-	biz_key  varchar(20)  NOT NULL,
+	owner_id varchar(100)  NOT NULL,
 	tag_seq  numeric(18)  NOT NULL,
 	invc_id  bigint       NOT NULL,
 	reg_id   varchar(100) NOT NULL,
 	reg_dtm  varchar(14)  NOT NULL,
-	CONSTRAINT winv_invc_tag_pk   PRIMARY KEY (biz_key, tag_seq, invc_id),
+	CONSTRAINT winv_invc_tag_pk   PRIMARY KEY (owner_id, tag_seq, invc_id),
 	CONSTRAINT winv_invc_tag_fk01 FOREIGN KEY (tag_seq) REFERENCES weinvoice.winv_tag_infm(tag_seq) ON DELETE CASCADE
 );
 
 COMMENT ON TABLE  weinvoice.winv_invc_tag IS 'Tag assigned to an invoice. invc_id = engine invoices.id (no FK: other schema, engine-owned).';
 
 CREATE INDEX IF NOT EXISTS winv_invc_tag_ix01
-	ON weinvoice.winv_invc_tag (biz_key, invc_id);
+	ON weinvoice.winv_invc_tag (owner_id, invc_id);
 
 -- ---------------------------------------------------------------------------
 -- WINV_INVC_FILE — files a user attached to an invoice
@@ -155,7 +155,7 @@ CREATE SEQUENCE IF NOT EXISTS weinvoice.sq_winv_file_seq
 
 CREATE TABLE IF NOT EXISTS weinvoice.winv_invc_file (
 	file_seq     numeric(18)  NOT NULL,
-	biz_key      varchar(20)  NOT NULL,
+	owner_id     varchar(100)  NOT NULL,
 	cmpn_mst     varchar(14)  NOT NULL,
 	invc_id      bigint       NOT NULL,
 	file_kind    varchar(20)  NOT NULL,
@@ -182,14 +182,14 @@ COMMENT ON COLUMN weinvoice.winv_invc_file.stor_path IS 'Path relative to WECMS_
 COMMENT ON COLUMN weinvoice.winv_invc_file.cnfm_yn   IS 'Y = attached although the backend could not prove the PDF belongs to the invoice ("Vẫn đính kèm").';
 
 CREATE INDEX IF NOT EXISTS winv_invc_file_ix01
-	ON weinvoice.winv_invc_file (biz_key, invc_id)
+	ON weinvoice.winv_invc_file (owner_id, invc_id)
 	WHERE del_yn = 'N';
 
 -- ---------------------------------------------------------------------------
 -- WINV_LKUP_CD — lookup code typed by a user (UI Spec 3.4 "!" pill)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS weinvoice.winv_lkup_cd (
-	biz_key   varchar(20)   NOT NULL,
+	owner_id  varchar(100)   NOT NULL,
 	invc_id   bigint        NOT NULL,
 	cmpn_mst  varchar(14)   NOT NULL,
 	lkup_cd   varchar(200)  NULL,
@@ -199,7 +199,7 @@ CREATE TABLE IF NOT EXISTS weinvoice.winv_lkup_cd (
 	reg_dtm   varchar(14)   NOT NULL,
 	mod_id    varchar(100)  NULL,
 	mod_dtm   varchar(14)   NULL,
-	CONSTRAINT winv_lkup_cd_pk    PRIMARY KEY (biz_key, invc_id),
+	CONSTRAINT winv_lkup_cd_pk    PRIMARY KEY (owner_id, invc_id),
 	CONSTRAINT winv_lkup_cd_chk01 CHECK ((lkup_cd IS NOT NULL OR lkup_url IS NOT NULL))
 );
 
@@ -215,7 +215,7 @@ CREATE SEQUENCE IF NOT EXISTS weinvoice.sq_winv_upld_seq
 
 CREATE TABLE IF NOT EXISTS weinvoice.winv_upld_infm (
 	upld_seq  numeric(18)  NOT NULL,
-	biz_key   varchar(20)  NOT NULL,
+	owner_id  varchar(100)  NOT NULL,
 	cmpn_mst  varchar(14)  NOT NULL,
 	rqst_seq  numeric(18)  NULL,
 	file_cnt  integer      NOT NULL DEFAULT 0,
@@ -282,8 +282,7 @@ COMMENT ON COLUMN weinvoice.winv_prvd_infm.vrfy_note IS 'Note from the catalogue
 -- WINV_USER_PREF — per-user WeInvoice preferences
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS weinvoice.winv_user_pref (
-	biz_key        varchar(20)  NOT NULL,
-	user_id        varchar(100) NOT NULL,
+	owner_id       varchar(100)  NOT NULL,
 	lang_cd        varchar(3)   NULL,
 	dflt_cmpn_mst  varchar(14)  NULL,
 	shct_data      jsonb        NULL,
@@ -291,10 +290,10 @@ CREATE TABLE IF NOT EXISTS weinvoice.winv_user_pref (
 	reg_dtm        varchar(14)  NOT NULL,
 	mod_id         varchar(100) NULL,
 	mod_dtm        varchar(14)  NULL,
-	CONSTRAINT winv_user_pref_pk PRIMARY KEY (biz_key, user_id)
+	CONSTRAINT winv_user_pref_pk PRIMARY KEY (owner_id)
 );
 
-COMMENT ON TABLE weinvoice.winv_user_pref IS 'WeInvoice UI language, default working MST and keyboard shortcuts of one user in one tenant.';
+COMMENT ON TABLE weinvoice.winv_user_pref IS 'WeInvoice UI language, default working MST and keyboard shortcuts of one user.';
 
 -- ---------------------------------------------------------------------------
 -- WINV_SYNC_CVRG — how complete the GDT list is per MST / list type / month

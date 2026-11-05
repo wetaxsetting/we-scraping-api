@@ -258,14 +258,26 @@ already took (engine request table, `winv_cmpn_infm` + AES-GCM, `X-Api-Key`) are
 
 | Environment | Required | Executor | Status | Executed Date | Verification |
 |---|---|---|---|---|---|
-| LOCAL (WeInvoice / engine DB) | Yes, before enabling WeInvoice | DBA OR DEV TEAM — environment dependent | NOT STARTED | - | - |
+| LOCAL (WeInvoice / engine DB) | Yes, before enabling WeInvoice | DEV TEAM (run by the AI assistant on the developer's explicit approval, 2026-11-05) | COMPLETE | 2026-11-05 | see note below |
 | SIT | Yes | DBA OR DEV TEAM | NOT STARTED | - | - |
 | UAT | Yes | DBA TEAM | NOT STARTED | - | - |
 | PROD | Yes | DBA TEAM | NOT STARTED | - | - |
 
 Order per environment: `V1__winv_schema.sql` → `grant-weinvoice-schema-access-2026-11-02.sql` (skip when
 backend and engine share one owning role) → `seed-weinvoice-provider-catalog-2026-11-02.sql`. Each
-script carries its own pre / post checks. Nothing was executed against any database in this task.
+script carries its own pre / post checks. Nothing was executed against any database in the 2026-11-02 task.
+
+**LOCAL execution, 2026-11-05.** Target: the engine PostgreSQL that the developer's `we-scraping` job
+writes (remote host from the engine `.env` `DATABASE_URL`; the same role owns both schemas, so the
+grant script was skipped). Pre-check: role may `CREATE` in the database, schema `weinvoice` absent,
+`public.invoices` 16 481 rows (5 MSTs). Applied, one transaction each: `V1__winv_schema.sql`, then
+`seed-weinvoice-provider-catalog-2026-11-02.sql`. Post-check: 11 tables in `weinvoice`,
+`winv_prvd_infm` 144 rows, `public.invoices` still 16 481. One data row added by hand so the developer
+can browse existing data: `winv_cmpn_infm` (`VN_VNM0004_000001` — the only WeCMS tenant whose
+`BUSI_INFM.TAX_ID` is 1201496252, read from `wecmsdevdb` — MST `1201496252`, `conn_stts=NEED_PASSWORD`,
+`dflt_yn=Y`, `reg_id=local-setup`). SIT / UAT / PROD untouched.
+Later the same day ownership moved from tenant to user ([issue record](../../../issues/weinvoice-company-ownership-by-user-2026-11-05.md)):
+the local `weinvoice` schema was dropped and recreated (`owner_id`), the `biz_key` mapping row with it.
 
 ## Verification
 

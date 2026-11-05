@@ -26,7 +26,7 @@ public class InvoiceDetailRepository {
         this.db = db;
     }
 
-    public Optional<DetailRow> find(String bizKey, long id) {
+    public Optional<DetailRow> find(String ownerId, long id) {
         return db.jdbc().query(db.sql("""
                         SELECT i.id, i.company_mst, i.direction, i.sub_type, i.nbmst, i.nbten, i.nmmst, i.nmten,
                                i.khmshdon, i.khhdon, i.shdon, i.ngay_lap, i.tien_chua_thue, i.tien_thue, i.tong_tien,
@@ -43,10 +43,10 @@ public class InvoiceDetailRepository {
                           LEFT JOIN {eng}.invoice_pdf p ON p.invoice_id = i.id
                           LEFT JOIN {app}.winv_prvd_infm pv
                                  ON pv.prvd_mst = split_part(COALESCE(NULLIF(x.mst_tcgp, ''), i.list_raw->>'msttcgp'), '-', 1)
-                          LEFT JOIN {app}.winv_lkup_cd lc ON lc.biz_key = :bizKey AND lc.invc_id = i.id
+                          LEFT JOIN {app}.winv_lkup_cd lc ON lc.owner_id = :ownerId AND lc.invc_id = i.id
                          WHERE i.id = :id
                         """),
-                new MapSqlParameterSource("id", id).addValue("bizKey", bizKey),
+                new MapSqlParameterSource("id", id).addValue("ownerId", ownerId),
                 (rs, n) -> new DetailRow(
                         rs.getLong("id"),
                         rs.getString("company_mst"),
@@ -142,17 +142,17 @@ public class InvoiceDetailRepository {
     }
 
     /** Files of the selected invoices of one MST for the ZIP export; an upload is listed next to the engine copy. */
-    public List<ExportFileRow> exportFiles(String bizKey, String mst, List<Long> ids) {
+    public List<ExportFileRow> exportFiles(String ownerId, String mst, List<Long> ids) {
         if (ids.isEmpty()) return List.of();
         return db.jdbc().query(db.sql("""
                         SELECT i.id, i.khmshdon, i.khhdon, i.shdon, i.ngay_lap,
                                CASE WHEN i.direction = 'ban' THEN i.nmmst ELSE i.nbmst END AS ptnr_mst,
                                x.xml_path, p.pdf_path,
                                (SELECT f.stor_path FROM {app}.winv_invc_file f
-                                 WHERE f.biz_key = :bizKey AND f.invc_id = i.id AND f.file_kind = 'XML' AND f.del_yn = 'N'
+                                 WHERE f.owner_id = :ownerId AND f.invc_id = i.id AND f.file_kind = 'XML' AND f.del_yn = 'N'
                                  ORDER BY f.file_seq DESC LIMIT 1) AS up_xml,
                                (SELECT f.stor_path FROM {app}.winv_invc_file f
-                                 WHERE f.biz_key = :bizKey AND f.invc_id = i.id AND f.file_kind = 'PDF' AND f.del_yn = 'N'
+                                 WHERE f.owner_id = :ownerId AND f.invc_id = i.id AND f.file_kind = 'PDF' AND f.del_yn = 'N'
                                  ORDER BY f.file_seq DESC LIMIT 1) AS up_pdf
                           FROM {eng}.invoices i
                           LEFT JOIN {eng}.invoice_xml x ON x.invoice_id = i.id
@@ -160,7 +160,7 @@ public class InvoiceDetailRepository {
                          WHERE i.company_mst = :mst AND i.id IN (:ids)
                          ORDER BY i.ngay_lap, i.id
                         """),
-                new MapSqlParameterSource("bizKey", bizKey).addValue("mst", mst).addValue("ids", ids),
+                new MapSqlParameterSource("ownerId", ownerId).addValue("mst", mst).addValue("ids", ids),
                 (rs, n) -> new ExportFileRow(
                         rs.getLong("id"),
                         rs.getInt("khmshdon"),

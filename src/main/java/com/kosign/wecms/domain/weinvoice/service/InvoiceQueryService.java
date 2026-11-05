@@ -72,7 +72,7 @@ public class InvoiceQueryService {
     public InvoiceFacets facets(InvoiceFilter filter) {
         InvoiceCriteria c = criteria(filter);
         // Facets describe the period, not the current selection: keep MST, direction and dates only.
-        return invoices.facets(new InvoiceCriteria(c.bizKey(), c.mst(), c.engineDirection(), c.from(), c.to(), null, null,
+        return invoices.facets(new InvoiceCriteria(c.ownerId(), c.mst(), c.engineDirection(), c.from(), c.to(), null, null,
                 null, List.of(), null, List.of(), null, List.of(), List.of(), null, false));
     }
 
@@ -86,7 +86,7 @@ public class InvoiceQueryService {
         return ids.stream().map(String::valueOf).toList();
     }
 
-    /** Validates the filter against the tenant and turns it into typed criteria. */
+    /** Validates the filter against the user and turns it into typed criteria. */
     public InvoiceCriteria criteria(InvoiceFilter f) {
         CompanyRow company = guard.requireCompany(f.companyMst());
         String dir = f.direction() == null || f.direction().isBlank() || "both".equalsIgnoreCase(f.direction())
@@ -114,7 +114,7 @@ public class InvoiceQueryService {
         List<Long> ids = f.ids() == null ? List.of() : WeInvoiceIds.parseAll(f.ids(), "ids");
         InvoiceSortField sort = InvoiceSortField.parse(f.sortField());
         boolean desc = !"asc".equalsIgnoreCase(f.sortDirection());
-        return new InvoiceCriteria(guard.bizKey(), company.mst(), dir, from, to, blank(f.keyword()) ? null : f.keyword(),
+        return new InvoiceCriteria(guard.ownerId(), company.mst(), dir, from, to, blank(f.keyword()) ? null : f.keyword(),
                 xml, pdf, tthais, kind, tagIds, provider, exclude, ids, sort, desc);
     }
 
@@ -123,8 +123,8 @@ public class InvoiceQueryService {
     public InvoiceDetail detail(String invoiceId) {
         long id = WeInvoiceIds.parse(invoiceId, "id");
         guard.requireInvoice(id);
-        String bizKey = guard.bizKey();
-        DetailRow d = details.find(bizKey, id).orElseThrow(() -> new BusinessException("WBE3005"));
+        String ownerId = guard.ownerId();
+        DetailRow d = details.find(ownerId, id).orElseThrow(() -> new BusinessException("WBE3005"));
         JsonNode parsed = json.tree(d.parsedJson());
         JsonNode raw = json.tree(d.listRawJson());
         JsonNode tc = parsed.path("thong_tin_chung");
@@ -199,7 +199,7 @@ public class InvoiceQueryService {
                         WeInvoiceJson.text(parsed.path("ky_so"), "nguoi_mua"),
                         WeInvoiceJson.text(parsed.path("ky_so"), "cqt")),
                 files.list(d),
-                tags.tagIdsOf(bizKey, id),
+                tags.tagIdsOf(ownerId, id),
                 task(taskRows, "xml"),
                 task(taskRows, "pdf"),
                 warnings(parsed),

@@ -5,9 +5,9 @@ import java.util.List;
 
 /**
  * Validated, typed form of {@link com.kosign.wecms.domain.weinvoice.dto.InvoiceFilter}.
- * Built by the service after the tenant / MST checks; the repository trusts it.
+ * Built by the service after the owner / MST checks; the repository trusts it.
  *
- * @param bizKey          tenant (scopes tags, uploads and manual lookup codes)
+ * @param ownerId          owner user id (scopes tags, uploads and manual lookup codes)
  * @param mst             working MST ({@code invoices.company_mst})
  * @param engineDirection {@code mua} / {@code ban}, {@code null} = both
  * @param from            issue date from, {@code null} = open
@@ -25,7 +25,7 @@ import java.util.List;
  * @param sortDesc        descending when {@code sort} is set
  */
 public record InvoiceCriteria(
-        String bizKey,
+        String ownerId,
         String mst,
         String engineDirection,
         LocalDate from,

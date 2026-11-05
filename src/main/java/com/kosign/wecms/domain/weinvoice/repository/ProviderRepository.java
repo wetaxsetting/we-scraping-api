@@ -8,7 +8,7 @@ import java.util.List;
 
 /**
  * {@code winv_prvd_infm} — the provider catalogue (screen 16), with how many invoices of the
- * tenant's MSTs each provider issued and whether the engine has an adapter for it
+ * user's MSTs each provider issued and whether the engine has an adapter for it
  * ({@code einvoice_providers.source_id}).
  */
 @Repository
@@ -21,7 +21,7 @@ public class ProviderRepository {
     }
 
     /**
-     * @param msts      tenant MSTs whose invoices are counted (empty = count nothing)
+     * @param msts      the user's MSTs whose invoices are counted (empty = count nothing)
      * @param keyword   name / MST / URL fragment or {@code null}
      * @param linkState {@code ok} (lookup link, no review note), {@code check} (review note),
      *                  {@code missing} (no lookup link) or {@code null}

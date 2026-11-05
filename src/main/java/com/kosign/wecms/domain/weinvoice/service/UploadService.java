@@ -71,14 +71,14 @@ public class UploadService {
                 throw new BusinessException("WBE3025", f.getOriginalFilename());
             }
         }
-        String bizKey = guard.bizKey();
+        String ownerId = guard.ownerId();
         // Files first (outside the transaction): a failed DB write leaves orphan files, never rows without files.
         List<StoredFiles.Saved> saved = new ArrayList<>(list.size());
         for (MultipartFile f : list) {
-            saved.add(storage.save(bizKey, "uploads", f.getOriginalFilename(), bytes(f)));
+            saved.add(storage.save(ownerId, "uploads", f.getOriginalFilename(), bytes(f)));
         }
         Long uploadId = db.tx().execute(s -> {
-            long id = uploads.insertBatch(bizKey, company.mst(), list.size(), guard.userId());
+            long id = uploads.insertBatch(ownerId, company.mst(), list.size(), guard.userId());
             for (int i = 0; i < list.size(); i++) {
                 StoredFiles.Saved sv = saved.get(i);
                 uploads.insertFile(id, i + 1, name(list.get(i)), sv.size(), sv.relativePath(), sv.sha256());
@@ -92,7 +92,7 @@ public class UploadService {
 
     public UploadResponse get(String uploadId) {
         long id = WeInvoiceIds.parse(uploadId, "upload_id");
-        BatchRow b = uploads.findBatch(guard.bizKey(), id).orElseThrow(() -> new BusinessException("WBE3015"));
+        BatchRow b = uploads.findBatch(guard.ownerId(), id).orElseThrow(() -> new BusinessException("WBE3015"));
         List<UploadResponse.FileItem> files = uploads.files(id).stream().map(UploadService::toItem).toList();
         return new UploadResponse(String.valueOf(b.id()), b.mst(), b.requestId() == null ? null : String.valueOf(b.requestId()),
                 EngineRequestService.lower(b.requestStatus()), b.requestError(), b.createdAt(), files);
@@ -104,7 +104,7 @@ public class UploadService {
      */
     public RequestAccepted adopt(String uploadId, AdoptRequest req) {
         long id = WeInvoiceIds.parse(uploadId, "upload_id");
-        uploads.findBatch(guard.bizKey(), id).orElseThrow(() -> new BusinessException("WBE3015"));
+        uploads.findBatch(guard.ownerId(), id).orElseThrow(() -> new BusinessException("WBE3015"));
         String mst = WeInvoiceIds.requireTaxId(req.companyMst());
         List<Integer> fileNos = uploads.files(id).stream()
                 .filter(f -> "FOREIGN".equals(f.outcome()) && (mst.equals(f.buyerTaxId()) || mst.equals(f.sellerTaxId())))
@@ -123,7 +123,7 @@ public class UploadService {
 
     public void delete(String uploadId) {
         long id = WeInvoiceIds.parse(uploadId, "upload_id");
-        if (uploads.softDelete(guard.bizKey(), id, guard.userId()) == 0) {
+        if (uploads.softDelete(guard.ownerId(), id, guard.userId()) == 0) {
             throw new BusinessException("WBE3015");
         }
     }

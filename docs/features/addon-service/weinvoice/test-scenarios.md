@@ -10,9 +10,9 @@ under `src/test/java/com/kosign/wecms/domain/weinvoice/`; "DB" = needs the WeInv
 | # | Scenario | Expected | Level |
 |---|---|---|---|
 | T1 | Call with a malformed `company_mst` | `WBE3001`, no database call | Unit |
-| T2 | `company_mst` not connected to the tenant, or soft-deleted | `WBE3002` | Unit |
-| T3 | Invoice id of another tenant's MST | `WBE3005` (not "forbidden") | DB |
-| T4 | Non-admin adds / changes / removes a connection | HTTP 403, `WBE1003` | DB |
+| T2 | `company_mst` not connected to the signed-in user, or soft-deleted | `WBE3002` | Unit |
+| T3 | Invoice id of an MST the user does not manage | `WBE3005` (not "forbidden") | DB |
+| T4 | Two users of the same WeCMS company: each sees and manages only their own tax codes; any signed-in user (no admin role) adds / changes / removes their own | separate lists; `WBE3002` for the other user's MST | Unit |
 | T5 | `WECMS_WEINVOICE_ENABLED=false`, any endpoint | `WBE3000`; no connection attempted | Unit |
 | T6 | Every `WECMS_WEINVOICE_*` key present but blank (host `.env` copied from the keys-only template) | Application binds; module off (`enabled=false`, `test_data_enabled=false`, quota 5); no connection; `WBE3000` | Unit |
 

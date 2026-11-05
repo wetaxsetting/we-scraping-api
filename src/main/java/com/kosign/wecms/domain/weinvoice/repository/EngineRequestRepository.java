@@ -18,7 +18,7 @@ import java.util.Optional;
 public class EngineRequestRepository {
 
     private static final String SELECT = """
-            SELECT rqst_seq, biz_key, cmpn_mst, rqst_type, trgr_cd, rqst_prmt::text AS prmt,
+            SELECT rqst_seq, owner_id, cmpn_mst, rqst_type, trgr_cd, rqst_prmt::text AS prmt,
                    rqst_stts, step_cd, prgs_data::text AS prgs, rslt_data::text AS rslt, err_msg,
                    cncl_yn, job_run_id, strt_dtm, end_dtm, reg_id, reg_dtm
               FROM {app}.winv_engn_rqst
@@ -26,7 +26,7 @@ public class EngineRequestRepository {
 
     private static final RowMapper<RequestRow> MAPPER = (rs, n) -> new RequestRow(
             rs.getLong("rqst_seq"),
-            rs.getString("biz_key"),
+            rs.getString("owner_id"),
             rs.getString("cmpn_mst"),
             rs.getString("rqst_type"),
             rs.getString("trgr_cd"),
@@ -50,17 +50,17 @@ public class EngineRequestRepository {
     }
 
     /** Queues a request and returns its id. {@code paramsJson} is a JSON object. */
-    public long insert(String bizKey, String mst, String type, String trigger, String paramsJson, String userId) {
+    public long insert(String ownerId, String mst, String type, String trigger, String paramsJson, String userId) {
         String dtm = WeInvoiceTime.nowDtm();
         Long id = db.jdbc().queryForObject(db.sql("""
                 INSERT INTO {app}.winv_engn_rqst
-                       (rqst_seq, biz_key, cmpn_mst, rqst_type, trgr_cd, rqst_prmt, rqst_stts,
+                       (rqst_seq, owner_id, cmpn_mst, rqst_type, trgr_cd, rqst_prmt, rqst_stts,
                         cncl_yn, reg_id, reg_dtm, mod_id, mod_dtm)
-                VALUES (nextval('{app}.sq_winv_rqst_seq'), :bizKey, :mst, :type, :trigger, CAST(:prmt AS jsonb), 'QUEUED',
+                VALUES (nextval('{app}.sq_winv_rqst_seq'), :ownerId, :mst, :type, :trigger, CAST(:prmt AS jsonb), 'QUEUED',
                         'N', :userId, :dtm, :userId, :dtm)
                 RETURNING rqst_seq
                 """), new MapSqlParameterSource()
-                .addValue("bizKey", bizKey)
+                .addValue("ownerId", ownerId)
                 .addValue("mst", mst)
                 .addValue("type", type)
                 .addValue("trigger", trigger)
@@ -70,30 +70,30 @@ public class EngineRequestRepository {
         return id == null ? 0L : id;
     }
 
-    public Optional<RequestRow> find(String bizKey, long id) {
-        return db.jdbc().query(db.sql(SELECT + " WHERE biz_key = :bizKey AND rqst_seq = :id"),
-                        new MapSqlParameterSource("bizKey", bizKey).addValue("id", id), MAPPER)
+    public Optional<RequestRow> find(String ownerId, long id) {
+        return db.jdbc().query(db.sql(SELECT + " WHERE owner_id = :ownerId AND rqst_seq = :id"),
+                        new MapSqlParameterSource("ownerId", ownerId).addValue("id", id), MAPPER)
                 .stream().findFirst();
     }
 
     /** Most recent request of a type for one MST (e.g. the login test behind a connection status). */
-    public Optional<RequestRow> latest(String bizKey, String mst, String type) {
+    public Optional<RequestRow> latest(String ownerId, String mst, String type) {
         return db.jdbc().query(db.sql(SELECT + """
-                         WHERE biz_key = :bizKey AND cmpn_mst = :mst AND rqst_type = :type
+                         WHERE owner_id = :ownerId AND cmpn_mst = :mst AND rqst_type = :type
                          ORDER BY rqst_seq DESC LIMIT 1
                         """),
-                        new MapSqlParameterSource("bizKey", bizKey).addValue("mst", mst).addValue("type", type), MAPPER)
+                        new MapSqlParameterSource("ownerId", ownerId).addValue("mst", mst).addValue("type", type), MAPPER)
                 .stream().findFirst();
     }
 
     /** Open (queued / running) requests of a type for one MST — used to avoid stacking duplicates. */
-    public List<RequestRow> open(String bizKey, String mst, String type) {
+    public List<RequestRow> open(String ownerId, String mst, String type) {
         return db.jdbc().query(db.sql(SELECT + """
-                         WHERE biz_key = :bizKey AND cmpn_mst = :mst AND rqst_type = :type
+                         WHERE owner_id = :ownerId AND cmpn_mst = :mst AND rqst_type = :type
                            AND rqst_stts IN ('QUEUED', 'RUNNING')
                          ORDER BY rqst_seq
                         """),
-                new MapSqlParameterSource("bizKey", bizKey).addValue("mst", mst).addValue("type", type), MAPPER);
+                new MapSqlParameterSource("ownerId", ownerId).addValue("mst", mst).addValue("type", type), MAPPER);
     }
 
     /**
@@ -102,7 +102,7 @@ public class EngineRequestRepository {
      *
      * @return number of rows changed — 0 when the request is already finished
      */
-    public int cancel(String bizKey, long id, String userId) {
+    public int cancel(String ownerId, long id, String userId) {
         String dtm = WeInvoiceTime.nowDtm();
         return db.jdbc().update(db.sql("""
                 UPDATE {app}.winv_engn_rqst
@@ -110,9 +110,9 @@ public class EngineRequestRepository {
                        rqst_stts = CASE WHEN rqst_stts = 'QUEUED' THEN 'CANCELLED' ELSE rqst_stts END,
                        end_dtm   = CASE WHEN rqst_stts = 'QUEUED' THEN :dtm ELSE end_dtm END,
                        mod_id = :userId, mod_dtm = :dtm
-                 WHERE biz_key = :bizKey AND rqst_seq = :id AND rqst_stts IN ('QUEUED', 'RUNNING')
+                 WHERE owner_id = :ownerId AND rqst_seq = :id AND rqst_stts IN ('QUEUED', 'RUNNING')
                 """), new MapSqlParameterSource()
-                .addValue("bizKey", bizKey)
+                .addValue("ownerId", ownerId)
                 .addValue("id", id)
                 .addValue("userId", userId)
                 .addValue("dtm", dtm));
@@ -121,7 +121,7 @@ public class EngineRequestRepository {
     /** One request row; JSON columns are raw text. */
     public record RequestRow(
             long id,
-            String bizKey,
+            String ownerId,
             String mst,
             String type,
             String trigger,

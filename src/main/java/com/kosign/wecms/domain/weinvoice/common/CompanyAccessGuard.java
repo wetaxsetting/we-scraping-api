@@ -12,10 +12,10 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 /**
- * Tenant scope of WeInvoice (UI Spec 02 §3.1).
+ * Ownership scope of WeInvoice (UI Spec 02 §3.1).
  *
- * <p>The tenant is the JWT {@code BIZ_KEY}; the request never carries it. Engine rows have
- * no tenant column — they belong to a tax code — so access is granted through the tenant's
+ * <p>The owner is the signed-in user (JWT user id); the request never carries it. Engine rows have
+ * no owner column — they belong to a tax code — so access is granted through the user's
  * active rows in {@code winv_cmpn_infm}: a working MST must be one of them, and an invoice is
  * visible when its {@code company_mst} is one of them. A foreign invoice answers "not found"
  * rather than "forbidden", so ids cannot be probed.
@@ -31,12 +31,17 @@ public class CompanyAccessGuard {
         this.companies = companies;
     }
 
-    public String bizKey() {
-        String bizKey = TenantContext.currentBizKey();
-        if (bizKey == null || bizKey.isBlank()) {
-            throw new AccessDeniedException("No tenant bound to the request");
+    /**
+     * Owner of every WeInvoice row: the signed-in WeCMS user ({@code USER_INFM.USER_ID}), not the
+     * WeCMS tenant. One account manages its own tax codes, possibly of several companies (UI Spec 02,
+     * "Một tài khoản quản lý nhiều MST"); linking tax codes to a WeCMS BIZ_KEY is WeCMS's concern.
+     */
+    public String ownerId() {
+        String ownerId = TenantContext.currentUserId();
+        if (ownerId == null || ownerId.isBlank()) {
+            throw new AccessDeniedException("No user bound to the request");
         }
-        return bizKey;
+        return ownerId;
     }
 
     public String userId() {
@@ -44,25 +49,25 @@ public class CompanyAccessGuard {
         return userId == null ? "SYSTEM" : userId;
     }
 
-    /** The tenant's active connection for {@code mst}; {@code WBE3001} malformed, {@code WBE3002} not managed. */
+    /** The user's active connection for {@code mst}; {@code WBE3001} malformed, {@code WBE3002} not managed. */
     public CompanyRow requireCompany(String mst) {
         String taxId = WeInvoiceIds.requireTaxId(mst);
-        return companies.find(bizKey(), taxId)
+        return companies.find(ownerId(), taxId)
                 .filter(c -> !c.deleted())
                 .orElseThrow(() -> new BusinessException("WBE3002", taxId));
     }
 
-    /** Active tax codes of the tenant (may be empty). */
-    public List<String> tenantMsts() {
-        return companies.activeMsts(bizKey());
+    /** Active tax codes of the user (may be empty). */
+    public List<String> ownedMsts() {
+        return companies.activeMsts(ownerId());
     }
 
     /**
-     * Resolves an invoice the tenant may see.
+     * Resolves an invoice the user may see.
      *
      * @return the invoice's {@code company_mst}
      * @throws BusinessException {@code WBE3005} when the id does not exist or belongs to a tax
-     *                           code the tenant does not manage
+     *                           code the user does not manage
      */
     public InvoiceRef requireInvoice(long invoiceId) {
         List<InvoiceRef> rows = db.jdbc().query(db.sql("""
@@ -70,9 +75,9 @@ public class CompanyAccessGuard {
                           FROM {eng}.invoices i
                          WHERE i.id = :id
                            AND EXISTS (SELECT 1 FROM {app}.winv_cmpn_infm c
-                                        WHERE c.biz_key = :bizKey AND c.cmpn_mst = i.company_mst AND c.del_yn = 'N')
+                                        WHERE c.owner_id = :ownerId AND c.cmpn_mst = i.company_mst AND c.del_yn = 'N')
                         """),
-                new MapSqlParameterSource("id", invoiceId).addValue("bizKey", bizKey()),
+                new MapSqlParameterSource("id", invoiceId).addValue("ownerId", ownerId()),
                 (rs, n) -> new InvoiceRef(
                         rs.getLong("id"),
                         rs.getString("company_mst"),
@@ -87,16 +92,16 @@ public class CompanyAccessGuard {
         return rows.get(0);
     }
 
-    /** Keeps only the ids of invoices the tenant may see. */
+    /** Keeps only the ids of invoices the user may see. */
     public List<Long> visibleInvoiceIds(List<Long> ids) {
         if (ids == null || ids.isEmpty()) return List.of();
         return db.jdbc().queryForList(db.sql("""
                         SELECT i.id FROM {eng}.invoices i
                          WHERE i.id IN (:ids)
                            AND EXISTS (SELECT 1 FROM {app}.winv_cmpn_infm c
-                                        WHERE c.biz_key = :bizKey AND c.cmpn_mst = i.company_mst AND c.del_yn = 'N')
+                                        WHERE c.owner_id = :ownerId AND c.cmpn_mst = i.company_mst AND c.del_yn = 'N')
                         """),
-                new MapSqlParameterSource("ids", ids).addValue("bizKey", bizKey()), Long.class);
+                new MapSqlParameterSource("ids", ids).addValue("ownerId", ownerId()), Long.class);
     }
 
     /** Identity of an engine invoice: owner MST + the GDT key (seller MST, template, symbol, number). */

@@ -101,7 +101,7 @@ public class InvoiceExportService {
 
     public void zip(ExportZipRequest req, HttpServletResponse response) {
         CompanyRow company = guard.requireCompany(req.companyMst());
-        String bizKey = guard.bizKey();
+        String ownerId = guard.ownerId();
         List<Long> ids = WeInvoiceIds.parseAll(req.ids(), "ids");
         String mode = req.mode() == null || req.mode().isBlank() ? "flat" : req.mode().trim().toLowerCase(Locale.ROOT);
         if (!List.of("flat", "by_month", "by_partner", "by_month_partner", "per_invoice").contains(mode)) {
@@ -111,13 +111,13 @@ public class InvoiceExportService {
         (req.include() == null || req.include().isEmpty() ? List.of("xml", "pdf") : req.include())
                 .forEach(i -> include.add(i.trim().toLowerCase(Locale.ROOT)));
 
-        List<ExportFileRow> files = details.exportFiles(bizKey, company.mst(), ids);
+        List<ExportFileRow> files = details.exportFiles(ownerId, company.mst(), ids);
         if (files.isEmpty()) {
             throw new BusinessException("WBE3005");
         }
         byte[] summary = null;
         if (include.contains("summary")) {
-            InvoiceCriteria c = new InvoiceCriteria(bizKey, company.mst(), null, null, null, null, null, null, List.of(),
+            InvoiceCriteria c = new InvoiceCriteria(ownerId, company.mst(), null, null, null, null, null, null, List.of(),
                     null, List.of(), null, List.of(), ids, null, false);
             ByteArrayOutputStream buf = new ByteArrayOutputStream();
             try {

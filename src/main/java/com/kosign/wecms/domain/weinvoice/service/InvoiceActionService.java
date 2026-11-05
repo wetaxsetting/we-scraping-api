@@ -61,10 +61,10 @@ public class InvoiceActionService {
      */
     public FetchXmlResult fetchMissingXml(IdsRequest req) {
         CompanyRow company = guard.requireCompany(req.companyMst());
-        String bizKey = guard.bizKey();
+        String ownerId = guard.ownerId();
         List<Long> ids = WeInvoiceIds.parseAll(req.ids(), "ids");
-        List<Long> fetchable = invoices.fetchableXmlIds(bizKey, company.mst(), ids);
-        long noCode = invoices.kpis(new InvoiceCriteria(bizKey, company.mst(), null, null, null, null, "missing", null,
+        List<Long> fetchable = invoices.fetchableXmlIds(ownerId, company.mst(), ids);
+        long noCode = invoices.kpis(new InvoiceCriteria(ownerId, company.mst(), null, null, null, null, "missing", null,
                 List.of(), "no_code", List.of(), null, List.of(), ids, null, false)).count();
         int other = (int) Math.max(0, ids.size() - fetchable.size() - noCode);
         if (fetchable.isEmpty()) {
@@ -105,7 +105,7 @@ public class InvoiceActionService {
         String finalCode = code;
         String finalUrl = url;
         Long requestId = db.tx().execute(s -> {
-            lookupCodes.upsert(guard.bizKey(), id, ref.companyMst(), finalCode, companyCode, finalUrl, guard.userId());
+            lookupCodes.upsert(guard.ownerId(), id, ref.companyMst(), finalCode, companyCode, finalUrl, guard.userId());
             Map<String, Object> params = new HashMap<>();
             params.put("invoice_ids", List.of(id));
             if (finalCode != null) params.put("lookup_code", finalCode);
@@ -116,16 +116,16 @@ public class InvoiceActionService {
         return new RequestAccepted(String.valueOf(requestId), String.valueOf(id));
     }
 
-    /** Adds or removes one tag on the invoices the tenant may see; returns how many were targeted. */
+    /** Adds or removes one tag on the invoices the user may see; returns how many were targeted. */
     public int assignTag(TagAssignRequest req) {
-        String bizKey = guard.bizKey();
+        String ownerId = guard.ownerId();
         long tagId = WeInvoiceIds.parse(req.tagId(), "tag_id");
-        tags.find(bizKey, tagId).orElseThrow(() -> new BusinessException("WBE3013"));
+        tags.find(ownerId, tagId).orElseThrow(() -> new BusinessException("WBE3013"));
         List<Long> visible = guard.visibleInvoiceIds(WeInvoiceIds.parseAll(req.ids(), "ids"));
         if (Boolean.TRUE.equals(req.on())) {
-            tags.assign(bizKey, tagId, visible, guard.userId());
+            tags.assign(ownerId, tagId, visible, guard.userId());
         } else {
-            tags.unassign(bizKey, tagId, visible);
+            tags.unassign(ownerId, tagId, visible);
         }
         return visible.size();
     }

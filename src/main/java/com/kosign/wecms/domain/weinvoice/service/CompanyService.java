@@ -22,7 +22,7 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * Screen 06 — the tax codes a tenant manages and their GDT account.
+ * Screen 06 — the tax codes a user manages and their GDT account.
  *
  * <p>Adding an MST or changing its password stores the password encrypted
  * ({@link WeInvoiceSecretCipher}), sets the connection {@code PENDING} and queues a
@@ -55,22 +55,22 @@ public class CompanyService {
     }
 
     public CompanyListResponse list() {
-        List<CompanyItem> items = companies.listActive(guard.bizKey()).stream().map(CompanyService::toItem).toList();
+        List<CompanyItem> items = companies.listActive(guard.ownerId()).stream().map(CompanyService::toItem).toList();
         return new CompanyListResponse(items, new CompanyListResponse.Quota(items.size(), props.maxCompanies()));
     }
 
     public RequestAccepted create(CompanyCreateRequest req) {
-        String bizKey = guard.bizKey();
+        String ownerId = guard.ownerId();
         String mst = WeInvoiceIds.requireTaxId(req.companyMst());
-        Optional<CompanyRow> existing = companies.find(bizKey, mst);
+        Optional<CompanyRow> existing = companies.find(ownerId, mst);
         if (existing.isPresent() && !existing.get().deleted()) {
             throw new BusinessException("WBE3003", mst);
         }
-        requireQuota(bizKey);
+        requireQuota(ownerId);
         String username = blankToNull(req.gdtUsername());
         String encrypted = cipher.encrypt(req.password());
         Long requestId = db.tx().execute(s -> {
-            companies.upsert(bizKey, mst, blankToNull(req.label()), username == null ? mst : username, encrypted,
+            companies.upsert(ownerId, mst, blankToNull(req.label()), username == null ? mst : username, encrypted,
                     PENDING, guard.userId());
             return requests.queue(mst, EngineRequestService.LOGIN_TEST, "MANUAL", Map.of());
         });
@@ -82,48 +82,48 @@ public class CompanyService {
      * "Thêm MST … và nhập"). Already managed → no change.
      */
     public void addPending(String mst) {
-        String bizKey = guard.bizKey();
-        Optional<CompanyRow> existing = companies.find(bizKey, mst);
+        String ownerId = guard.ownerId();
+        Optional<CompanyRow> existing = companies.find(ownerId, mst);
         if (existing.isPresent() && !existing.get().deleted()) return;
-        requireQuota(bizKey);
-        companies.upsert(bizKey, mst, null, mst, null, NEED_PASSWORD, guard.userId());
+        requireQuota(ownerId);
+        companies.upsert(ownerId, mst, null, mst, null, NEED_PASSWORD, guard.userId());
     }
 
     public RequestAccepted changePassword(String mst, CompanyPasswordRequest req) {
-        String bizKey = guard.bizKey();
+        String ownerId = guard.ownerId();
         CompanyRow row = guard.requireCompany(mst);
         String encrypted = cipher.encrypt(req.password());
         Long requestId = db.tx().execute(s -> {
-            companies.updatePassword(bizKey, row.mst(), blankToNull(req.gdtUsername()), encrypted, guard.userId());
+            companies.updatePassword(ownerId, row.mst(), blankToNull(req.gdtUsername()), encrypted, guard.userId());
             return requests.queue(row.mst(), EngineRequestService.LOGIN_TEST, "MANUAL", Map.of());
         });
         return new RequestAccepted(String.valueOf(requestId), row.mst());
     }
 
     public CompanyItem patch(String mst, CompanyPatchRequest req) {
-        String bizKey = guard.bizKey();
+        String ownerId = guard.ownerId();
         CompanyRow row = guard.requireCompany(mst);
         if (req.label() != null) {
-            companies.updateLabel(bizKey, row.mst(), blankToNull(req.label()), guard.userId());
+            companies.updateLabel(ownerId, row.mst(), blankToNull(req.label()), guard.userId());
         }
         if (Boolean.TRUE.equals(req.defaultCompany())) {
-            companies.setDefault(bizKey, row.mst(), guard.userId());
+            companies.setDefault(ownerId, row.mst(), guard.userId());
         }
-        return companies.find(bizKey, row.mst()).map(CompanyService::toItem).orElseThrow();
+        return companies.find(ownerId, row.mst()).map(CompanyService::toItem).orElseThrow();
     }
 
     /**
-     * Removes the MST from the tenant (soft delete, password erased). Invoices already
+     * Removes the MST from the user's list (soft delete, password erased). Invoices already
      * collected stay in the engine tables — deleting them is a PO decision still open, and
      * the backend never writes engine tables.
      */
     public void delete(String mst) {
         CompanyRow row = guard.requireCompany(mst);
-        companies.softDelete(guard.bizKey(), row.mst(), guard.userId());
+        companies.softDelete(guard.ownerId(), row.mst(), guard.userId());
     }
 
-    private void requireQuota(String bizKey) {
-        if (companies.activeMsts(bizKey).size() >= props.maxCompanies()) {
+    private void requireQuota(String ownerId) {
+        if (companies.activeMsts(ownerId).size() >= props.maxCompanies()) {
             throw new BusinessException("WBE3004", props.maxCompanies());
         }
     }

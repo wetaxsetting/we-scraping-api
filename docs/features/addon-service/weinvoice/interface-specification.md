@@ -8,11 +8,11 @@ Coocon engine. Source: `domain/weinvoice/**`. Why it is built this way:
 
 | Topic | Rule |
 |---|---|
-| Base path | `/api/v1/weinvoice` (JWT, tenant = `BIZ_KEY` of the token). Partner API: `/api/partner/v1` (header `X-Api-Key`, no JWT). |
+| Base path | `/api/v1/weinvoice` (JWT; owner = the token's user id — WeInvoice rows are per user, not per WeCMS `BIZ_KEY`). Partner API: `/api/partner/v1` (header `X-Api-Key`, no JWT). |
 | Envelope | House envelope `{ status: { error, code, message }, data }`. Business errors are HTTP 200 with `status.error = true` and a `WBE30xx` code; read `status.error`, not the HTTP code. Binary answers (Excel, ZIP, a file) are the raw body with `Content-Disposition`. |
 | Field names | snake_case on the wire (global Jackson strategy). |
 | Ids | Strings (`"77"`), as in the UI Spec `lib/types.ts`. Sync-run ids are `R<n>` (requested run) or `J<n>` (engine-scheduled run). Upload files are `u<n>`; the engine copies of an invoice's files are `xml` / `pdf`. |
-| Working MST | Every screen call names it (`company_mst`) or reaches it through an invoice id. It must be an active connection of the tenant, else `WBE3002` (`WBE3001` when malformed). Invoices of other MSTs answer `WBE3005`. |
+| Working MST | Every screen call names it (`company_mst`) or reaches it through an invoice id. It must be an active connection of the signed-in user, else `WBE3002` (`WBE3001` when malformed). Invoices of other MSTs answer `WBE3005`. |
 | Dates | `yyyy-MM-dd`, months `yyyy-MM`, instants ISO-8601 UTC (`2026-11-02T08:00:00Z`). Partner API: `yyyyMMdd`. |
 | Paging | `page` zero-based (negative → 0), `size` default 50, max 200 (Partner API: default 100, max 500). Page responses: `{ rows, total_count, page, size }`. |
 | Engine work | Endpoints that need the engine answer `{ request_id, subject }` at once; poll `GET /requests/{request_id}`. Requests stay `queued` until the engine worker (we-scraping repo) picks them up. |
@@ -150,10 +150,10 @@ key → HTTP 401, `WBE3019`.
 |---|---|
 | WBE3000 | WeInvoice disabled on the server |
 | WBE3001 | Tax code malformed (10 or 10-3 digits) |
-| WBE3002 | Tax code not managed by the tenant (Partner API: not known to the engine) |
+| WBE3002 | Tax code not managed by the signed-in user (Partner API: not known to the engine) |
 | WBE3003 | Tax code already connected |
 | WBE3004 | Tenant quota of tax codes reached |
-| WBE3005 | Invoice not found (or not visible to the tenant) |
+| WBE3005 | Invoice not found (or not visible to the signed-in user) |
 | WBE3006 | File not found |
 | WBE3007 | Engine file (GDT, provider, mail) cannot be deleted |
 | WBE3008 | Not a PDF |

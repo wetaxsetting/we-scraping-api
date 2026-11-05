@@ -46,11 +46,11 @@ flowchart TB
     engine["Engine Python · repo we-scraping (đang chạy)<br/>sync-lists 3 lần/ngày · worker xml · worker pdf · mail 30 phút · đọc yêu cầu từ BE"]
     subgraph pg["PostgreSQL của engine (không phải DB WeCMS)"]
         se["Schema engine (giữ chỗ cũ)<br/>invoices · invoice_xml · invoice_details<br/>invoice_pdf · tasks · email_* · job_runs<br/>engine ghi, BE chỉ đọc"]
-        sw["Schema weinvoice (mới, 11 bảng winv_*)<br/>winv_engn_rqst · tenant–MST · winv_cmpn_infm<br/>tags · tệp · winv_sync_cvrg<br/>BE ghi, engine đọc yêu cầu"]
+        sw["Schema weinvoice (mới, 11 bảng winv_*)<br/>winv_engn_rqst · user–MST · winv_cmpn_infm<br/>tags · tệp · winv_sync_cvrg<br/>BE ghi, engine đọc yêu cầu"]
     end
     engine -->|"ghi"| se
     sw -->|"đọc yêu cầu"| engine
-    be["WeInvoice BE<br/>Spring Boot · we-scraping-api<br/>/api/v1/weinvoice · JWT, tenant BIZ_KEY<br/>pool riêng WECMS_WEINVOICE_DB_URL"]
+    be["WeInvoice BE<br/>Spring Boot · we-scraping-api<br/>/api/v1/weinvoice · JWT, chủ sở hữu = USER_ID<br/>pool riêng WECMS_WEINVOICE_DB_URL"]
     be -->|"đọc"| se
     be -->|"ghi, gửi yêu cầu"| sw
     wecmsbe["WeCMS BE<br/>wecms-api đang chạy<br/>ghi busa_doc_mstr bằng intake có sẵn"] -->|"Partner API"| be
@@ -90,11 +90,11 @@ HĐ chưa có XML (553 HĐ không mã đo ngày 02/11) chỉ gửi được ph�
 
 ## DB còn thiếu cho các màn WeInvoice và xử lý phía BE
 
-Có 16 chỗ thiếu cho P1. 4 chỗ đầu chặn cả kiến trúc, nên làm trước: nối tenant với MST, tài khoản Cục Thuế, bảng yêu cầu BE → engine, và tiền quy đổi VND. Tên bảng dưới đây là đề xuất, Dev đặt lại theo quy ước wecms-api.
+Có 16 chỗ thiếu cho P1. 4 chỗ đầu chặn cả kiến trúc, nên làm trước: nối tài khoản người dùng với MST, tài khoản Cục Thuế, bảng yêu cầu BE → engine, và tiền quy đổi VND. Tên bảng dưới đây là đề xuất, Dev đặt lại theo quy ước wecms-api.
 
 | Thiếu                                                                                                                       | Dùng cho                                                         | Đề xuất                                                                                                                 | Ưu tiên           |
 | --------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ----------------- |
-| Nối tenant `BIZ_KEY` với MST. Một tài khoản quản lý tối đa 5 MST; engine chỉ có `companies`                                 | Mọi API lọc theo MST làm việc, màn 02, 06                        | Bảng tenant–MST: nhãn, trạng thái kết nối, MST mặc định                                                                 | P1                |
+| ~~Nối tenant `BIZ_KEY` với MST~~ → **MST thuộc tài khoản người dùng** (sửa 05/11). Một tài khoản quản lý tối đa 5 MST, có thể của nhiều công ty; engine chỉ có `companies` | Mọi API lọc theo MST làm việc, màn 02, 06 | `winv_cmpn_infm` khoá theo `owner_id` = `USER_ID` đăng nhập. Nối MST với `BIZ_KEY` của WeCMS là việc phía WeCMS (Partner API tra theo `tax_id`) | P1 |
 | Tài khoản Cục Thuế trong DB. Mật khẩu đang ở `.env`, tên đăng nhập có thể khác MST (`1201496252-U002`)                      | Màn 06, Partner API                                              | Dùng `GDT_CERT_INFO` của WeCMS hoặc bảng mới, mã hoá; engine đọc được                                                   | P1                |
 | Yêu cầu từ BE tới engine                                                                                                    | Màn 05, 06, 08, 09, 10                                           | `engine_requests`: loại (sync, fetch_xml, fetch_pdf, login_test, mail_scan, import), tham số, trạng thái, bước, kết quả | P1                |
 | Tiền quy đổi VND. `tong_tien` theo đơn vị tiền của HĐ, `don_vi_tt`, `ty_gia` chỉ trong JSONB                                | KPI màn 03, 04, tờ khai: cộng thẳng 11 HĐ USD và 3 HĐ KRW là sai | Cột `currency`, `exchange_rate` và 3 cột tiền quy VND                                                                   | P1                |
@@ -124,7 +124,7 @@ Theo quy ước sẵn có của wecms-api (README, mục API Conventions), thêm
 - **Đường dẫn:** `/api/v1/weinvoice/...` cho app WeInvoice, tránh trùng `/api/v1/addon/einvoices` của WeCMS khi chung codebase. Partner API riêng ở `/api/partner/v1/...`, xác thực máy–máy. Bảng dưới viết tắt `/api/v1/weinvoice` thành `/`.
 - **Phản hồi:** `{ status: { error, code, message }, data }`; xem `status.error`, không xem HTTP code. Tệp tải về trả thẳng kèm `Content-Disposition`. Mã lỗi `WBExxxx` theo `Accept-Language` (VI, EN, KO).
 - **Tên trường:** snake_case trên dây; `page` (từ 0) + `size`; `sort_field` + `sort_direction` qua enum whitelist. Endpoint cũ của WeCMS còn `sortField` camelCase, endpoint mới dùng snake_case.
-- **Tenant và MST làm việc:** tenant lấy từ JWT, không nhận từ request. MST làm việc gửi bằng `company_mst` ở từng request; BE kiểm MST thuộc tenant và người dùng có quyền.
+- **Chủ sở hữu và MST làm việc:** chủ sở hữu là người dùng đăng nhập (`USER_ID` trong JWT), không phải tenant `BIZ_KEY`, và không nhận từ request. Mỗi người dùng tự quản lý danh sách MST của mình (có thể của nhiều công ty), không cần quyền admin WeCMS. MST làm việc gửi bằng `company_mst` ở từng request; BE kiểm MST thuộc người dùng đó. (Sửa 05/11; trước đó gắn theo `BIZ_KEY`.)
 - **Ngày:** `yyyy-MM-dd` cho API WeInvoice (giống spec); `yyyyMMdd` cho Partner API (giống intake WeCMS).
 - **Việc engine làm** (đồng bộ, lấy XML, lấy PDF, đăng nhập thử, quét mail, đọc tệp tải lên): API trả `request_id` ngay, FE hỏi lại `GET /requests/{request_id}`. Cột "Engine" ở bảng dưới đánh dấu các API này.
 
@@ -231,7 +231,7 @@ Màn 15 không cần API riêng: FE đọc XML bằng `lib/xml.ts` có sẵn tro
 
 | Method | Đường dẫn                   | Việc                                                                         | Engine |
 | ------ | --------------------------- | ---------------------------------------------------------------------------- | ------ |
-| GET    | `/providers`                | 144 NCC, lọc theo từ khoá và tình trạng link, kèm số HĐ đang dùng của tenant |        |
+| GET    | `/providers`                | 144 NCC, lọc theo từ khoá và tình trạng link, kèm số HĐ đang dùng của người dùng |        |
 | GET    | `/tags`                     | Tag + số HĐ dùng                                                             |        |
 | POST   | `/tags`                     | Tạo tag                                                                      |        |
 | PATCH  | `/tags/{id}`                | Đổi tên, đổi màu                                                             |        |

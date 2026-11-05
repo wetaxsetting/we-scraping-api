@@ -71,11 +71,11 @@ public class InvoiceFileService {
     public List<InvoiceFileItem> list(String invoiceId) {
         long id = WeInvoiceIds.parse(invoiceId, "id");
         guard.requireInvoice(id);
-        DetailRow d = details.find(guard.bizKey(), id).orElseThrow(() -> new BusinessException("WBE3005"));
+        DetailRow d = details.find(guard.ownerId(), id).orElseThrow(() -> new BusinessException("WBE3005"));
         return list(d);
     }
 
-    /** Files of an invoice already loaded by the caller (tenant check done). */
+    /** Files of an invoice already loaded by the caller (ownership check done). */
     List<InvoiceFileItem> list(DetailRow d) {
         List<InvoiceFileItem> out = new ArrayList<>();
         String base = "/api/v1/weinvoice/invoices/" + d.id() + "/files/";
@@ -88,7 +88,7 @@ public class InvoiceFileService {
             out.add(new InvoiceFileItem("pdf", "pdf", StoredFiles.baseName(d.pdfPath()), storage.engineFileSize(d.pdfPath()),
                     fromMail ? "email" : "vendor", d.pdfFetchedAt(), false, base + "pdf"));
         }
-        for (FileRow f : files.listActive(guard.bizKey(), d.id())) {
+        for (FileRow f : files.listActive(guard.ownerId(), d.id())) {
             out.add(toItem(f, base));
         }
         return out;
@@ -97,17 +97,17 @@ public class InvoiceFileService {
     public ResponseEntity<Resource> download(String invoiceId, String fileId) {
         long id = WeInvoiceIds.parse(invoiceId, "id");
         guard.requireInvoice(id);
-        String bizKey = guard.bizKey();
+        String ownerId = guard.ownerId();
         Path path;
         String name;
         if ("xml".equals(fileId) || "pdf".equals(fileId)) {
-            DetailRow d = details.find(bizKey, id).orElseThrow(() -> new BusinessException("WBE3005"));
+            DetailRow d = details.find(ownerId, id).orElseThrow(() -> new BusinessException("WBE3005"));
             String rel = "xml".equals(fileId) ? d.xmlPath() : d.pdfPath();
             if (rel == null) throw new BusinessException("WBE3006");
             path = storage.engineFile(rel);
             name = StoredFiles.baseName(rel);
         } else {
-            FileRow f = files.find(bizKey, id, uploadSeq(fileId)).orElseThrow(() -> new BusinessException("WBE3006"));
+            FileRow f = files.find(ownerId, id, uploadSeq(fileId)).orElseThrow(() -> new BusinessException("WBE3006"));
             path = storage.storedFile(f.storPath());
             name = f.name();
         }
@@ -125,7 +125,7 @@ public class InvoiceFileService {
     public FileUploadResult upload(String invoiceId, String kind, MultipartFile file, List<String> confirm) {
         long id = WeInvoiceIds.parse(invoiceId, "id");
         InvoiceRef ref = guard.requireInvoice(id);
-        String bizKey = guard.bizKey();
+        String ownerId = guard.ownerId();
         String k = kind == null ? "" : kind.trim().toLowerCase(Locale.ROOT);
         if (!Set.of("xml", "pdf", "attachment").contains(k)) {
             throw new IllegalArgumentException("kind: must be xml, pdf or attachment");
@@ -133,8 +133,8 @@ public class InvoiceFileService {
         byte[] bytes = bytesOf(file);
         Set<String> confirms = new HashSet<>();
         if (confirm != null) confirm.forEach(c -> confirms.add(c.trim().toLowerCase(Locale.ROOT)));
-        DetailRow d = details.find(bizKey, id).orElseThrow(() -> new BusinessException("WBE3005"));
-        List<FileRow> uploaded = files.listActive(bizKey, id);
+        DetailRow d = details.find(ownerId, id).orElseThrow(() -> new BusinessException("WBE3005"));
+        List<FileRow> uploaded = files.listActive(ownerId, id);
         String base = "/api/v1/weinvoice/invoices/" + id + "/files/";
 
         return switch (k) {
@@ -151,12 +151,12 @@ public class InvoiceFileService {
                 if (!reasons.isEmpty()) {
                     yield new FileUploadResult("needs_confirm", reasons, null, null);
                 }
-                StoredFiles.Saved saved = storage.save(bizKey, "invoices", file.getOriginalFilename(), bytes);
+                StoredFiles.Saved saved = storage.save(ownerId, "invoices", file.getOriginalFilename(), bytes);
                 FileRow row = db.tx().execute(s -> {
-                    files.retireKind(bizKey, id, "PDF", guard.userId());
-                    long seq = files.insert(bizKey, ref.companyMst(), id, "PDF", nameOf(file, "invoice.pdf"),
+                    files.retireKind(ownerId, id, "PDF", guard.userId());
+                    long seq = files.insert(ownerId, ref.companyMst(), id, "PDF", nameOf(file, "invoice.pdf"),
                             saved.size(), saved.relativePath(), saved.sha256(), !matched, guard.userId());
-                    return files.find(bizKey, id, seq).orElseThrow();
+                    return files.find(ownerId, id, seq).orElseThrow();
                 });
                 yield new FileUploadResult("ok", List.of(), toItem(row, base), null);
             }
@@ -170,23 +170,23 @@ public class InvoiceFileService {
                 if (!keyOk && !confirms.contains("attach_anyway")) {
                     yield new FileUploadResult("needs_confirm", List.of("xml_key_mismatch"), null, null);
                 }
-                StoredFiles.Saved saved = storage.save(bizKey, "invoices", file.getOriginalFilename(), bytes);
+                StoredFiles.Saved saved = storage.save(ownerId, "invoices", file.getOriginalFilename(), bytes);
                 Stored stored = db.tx().execute(s -> {
-                    long seq = files.insert(bizKey, ref.companyMst(), id, "XML", nameOf(file, "invoice.xml"),
+                    long seq = files.insert(ownerId, ref.companyMst(), id, "XML", nameOf(file, "invoice.xml"),
                             saved.size(), saved.relativePath(), saved.sha256(), !keyOk, guard.userId());
                     // Only an XML that is this invoice's goes to the engine to fill invoice_xml / details.
                     Long rq = keyOk ? requests.queue(ref.companyMst(), EngineRequestService.IMPORT, "MANUAL",
                             Map.of("invoice_id", id, "file_id", seq)) : null;
-                    return new Stored(files.find(bizKey, id, seq).orElseThrow(), rq);
+                    return new Stored(files.find(ownerId, id, seq).orElseThrow(), rq);
                 });
                 yield new FileUploadResult("ok", List.of(), toItem(stored.row(), base),
                         stored.requestId() == null ? null : String.valueOf(stored.requestId()));
             }
             default -> {
-                StoredFiles.Saved saved = storage.save(bizKey, "invoices", file.getOriginalFilename(), bytes);
-                long seq = files.insert(bizKey, ref.companyMst(), id, "ATTACHMENT", nameOf(file, "attachment"),
+                StoredFiles.Saved saved = storage.save(ownerId, "invoices", file.getOriginalFilename(), bytes);
+                long seq = files.insert(ownerId, ref.companyMst(), id, "ATTACHMENT", nameOf(file, "attachment"),
                         saved.size(), saved.relativePath(), saved.sha256(), false, guard.userId());
-                yield new FileUploadResult("ok", List.of(), toItem(files.find(bizKey, id, seq).orElseThrow(), base), null);
+                yield new FileUploadResult("ok", List.of(), toItem(files.find(ownerId, id, seq).orElseThrow(), base), null);
             }
         };
     }
@@ -198,7 +198,7 @@ public class InvoiceFileService {
         if ("xml".equals(fileId) || "pdf".equals(fileId)) {
             throw new BusinessException("WBE3007");
         }
-        if (files.softDelete(guard.bizKey(), id, uploadSeq(fileId), guard.userId()) == 0) {
+        if (files.softDelete(guard.ownerId(), id, uploadSeq(fileId), guard.userId()) == 0) {
             throw new BusinessException("WBE3006");
         }
     }

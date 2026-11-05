@@ -105,7 +105,7 @@ public class SyncRunService {
     }
 
     public SyncRunProgress progress(String runId) {
-        RequestRow row = requestRows.find(guard.bizKey(), requestId(runId))
+        RequestRow row = requestRows.find(guard.ownerId(), requestId(runId))
                 .filter(r -> EngineRequestService.SYNC.equals(r.type()))
                 .orElseThrow(() -> new BusinessException("WBE3011"));
         Map<String, Object> p = json.map(row.progressJson());
@@ -118,7 +118,7 @@ public class SyncRunService {
 
     public EngineRequestResponse cancel(String runId) {
         long id = requestId(runId);
-        requestRows.find(guard.bizKey(), id)
+        requestRows.find(guard.ownerId(), id)
                 .filter(r -> EngineRequestService.SYNC.equals(r.type()))
                 .orElseThrow(() -> new BusinessException("WBE3011"));
         return requests.cancel(id);
@@ -126,7 +126,7 @@ public class SyncRunService {
 
     public WeInvoicePage<SyncRunItem> history(String companyMst, String status, int page, int size) {
         List<String> msts = companyMst == null || companyMst.isBlank()
-                ? guard.tenantMsts() : List.of(guard.requireCompany(companyMst).mst());
+                ? guard.ownedMsts() : List.of(guard.requireCompany(companyMst).mst());
         List<String> raw = List.of();
         if (status != null && !status.isBlank()) {
             raw = STATUS_FILTER.get(status.trim().toLowerCase(Locale.ROOT));
@@ -137,9 +137,9 @@ public class SyncRunService {
         int p = WeInvoicePaging.page(page);
         int s = WeInvoicePaging.size(size);
         Map<String, String> names = names();
-        List<SyncRunItem> rows = history.history(guard.bizKey(), msts, raw, p, s).stream()
+        List<SyncRunItem> rows = history.history(guard.ownerId(), msts, raw, p, s).stream()
                 .map(h -> toItem(h, names)).toList();
-        return new WeInvoicePage<>(rows, history.count(guard.bizKey(), msts, raw), p, s);
+        return new WeInvoicePage<>(rows, history.count(guard.ownerId(), msts, raw), p, s);
     }
 
     private SyncRunItem toItem(HistoryRow h, Map<String, String> names) {
@@ -192,7 +192,7 @@ public class SyncRunService {
 
     private Map<String, String> names() {
         Map<String, String> out = new HashMap<>();
-        for (CompanyRow c : companies.listActive(guard.bizKey())) {
+        for (CompanyRow c : companies.listActive(guard.ownerId())) {
             out.put(c.mst(), c.companyName());
         }
         return out;

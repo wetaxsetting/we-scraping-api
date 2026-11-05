@@ -38,25 +38,25 @@ public class EngineRequestService {
         this.json = json;
     }
 
-    /** Queues a request for the current tenant and returns its id. */
+    /** Queues a request for the current user and returns its id. */
     public long queue(String mst, String type, String trigger, Map<String, Object> params) {
-        return requests.insert(guard.bizKey(), mst, type, trigger, json.write(params == null ? Map.of() : params),
+        return requests.insert(guard.ownerId(), mst, type, trigger, json.write(params == null ? Map.of() : params),
                 guard.userId());
     }
 
     public EngineRequestResponse get(String requestId) {
         long id = WeInvoiceIds.parse(requestId, "request_id");
-        return toResponse(requests.find(guard.bizKey(), id).orElseThrow(() -> new BusinessException("WBE3011")));
+        return toResponse(requests.find(guard.ownerId(), id).orElseThrow(() -> new BusinessException("WBE3011")));
     }
 
     /** Cancels a queued request or flags a running one; {@code WBE3012} once it has finished. */
     public EngineRequestResponse cancel(long id) {
-        String bizKey = guard.bizKey();
-        RequestRow row = requests.find(bizKey, id).orElseThrow(() -> new BusinessException("WBE3011"));
-        if (requests.cancel(bizKey, id, guard.userId()) == 0) {
+        String ownerId = guard.ownerId();
+        RequestRow row = requests.find(ownerId, id).orElseThrow(() -> new BusinessException("WBE3011"));
+        if (requests.cancel(ownerId, id, guard.userId()) == 0) {
             throw new BusinessException("WBE3012");
         }
-        return toResponse(requests.find(bizKey, id).orElse(row));
+        return toResponse(requests.find(ownerId, id).orElse(row));
     }
 
     public EngineRequestResponse toResponse(RequestRow r) {

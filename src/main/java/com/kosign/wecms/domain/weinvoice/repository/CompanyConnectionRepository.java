@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * {@code winv_cmpn_infm} — tax codes a tenant manages, joined with the engine's company /
+ * {@code winv_cmpn_infm} — tax codes a user manages, joined with the engine's company /
  * partner name and last run. The password column is written here but never selected: the
  * row only says whether one is stored.
  */
@@ -18,7 +18,7 @@ import java.util.Optional;
 public class CompanyConnectionRepository {
 
     private static final String SELECT = """
-            SELECT c.biz_key, c.cmpn_mst,
+            SELECT c.owner_id, c.cmpn_mst,
                    COALESCE(NULLIF(c.cmpn_nm, ''), ec.name, pt.name) AS cmpn_nm,
                    c.lbl_nm, c.gdt_user_id, (c.gdt_pw_enc IS NOT NULL) AS has_pw,
                    c.conn_stts, c.conn_msg, c.conn_chk_dtm, c.dflt_yn, c.del_yn, c.reg_dtm,
@@ -30,7 +30,7 @@ public class CompanyConnectionRepository {
             """;
 
     private static final RowMapper<CompanyRow> MAPPER = (rs, n) -> new CompanyRow(
-            rs.getString("biz_key"),
+            rs.getString("owner_id"),
             rs.getString("cmpn_mst"),
             rs.getString("cmpn_nm"),
             rs.getString("lbl_nm"),
@@ -50,43 +50,43 @@ public class CompanyConnectionRepository {
 
     public CompanyConnectionRepository(WeInvoiceDb db) {
         this.db = db;
-        this.listSql = db.sql(SELECT + " WHERE c.biz_key = :bizKey AND c.del_yn = 'N' ORDER BY c.dflt_yn DESC, c.reg_dtm, c.cmpn_mst");
-        this.findSql = db.sql(SELECT + " WHERE c.biz_key = :bizKey AND c.cmpn_mst = :mst");
+        this.listSql = db.sql(SELECT + " WHERE c.owner_id = :ownerId AND c.del_yn = 'N' ORDER BY c.dflt_yn DESC, c.reg_dtm, c.cmpn_mst");
+        this.findSql = db.sql(SELECT + " WHERE c.owner_id = :ownerId AND c.cmpn_mst = :mst");
     }
 
-    public List<CompanyRow> listActive(String bizKey) {
-        return db.jdbc().query(listSql, new MapSqlParameterSource("bizKey", bizKey), MAPPER);
+    public List<CompanyRow> listActive(String ownerId) {
+        return db.jdbc().query(listSql, new MapSqlParameterSource("ownerId", ownerId), MAPPER);
     }
 
-    /** Row of the tenant for this MST, soft-deleted rows included. */
-    public Optional<CompanyRow> find(String bizKey, String mst) {
-        return db.jdbc().query(findSql, new MapSqlParameterSource("bizKey", bizKey).addValue("mst", mst), MAPPER)
+    /** Row of the user for this MST, soft-deleted rows included. */
+    public Optional<CompanyRow> find(String ownerId, String mst) {
+        return db.jdbc().query(findSql, new MapSqlParameterSource("ownerId", ownerId).addValue("mst", mst), MAPPER)
                 .stream().findFirst();
     }
 
-    /** Active MSTs of the tenant — the scope of every engine query. */
-    public List<String> activeMsts(String bizKey) {
+    /** Active MSTs of the user — the scope of every engine query. */
+    public List<String> activeMsts(String ownerId) {
         return db.jdbc().queryForList(
-                db.sql("SELECT cmpn_mst FROM {app}.winv_cmpn_infm WHERE biz_key = :bizKey AND del_yn = 'N'"),
-                new MapSqlParameterSource("bizKey", bizKey), String.class);
+                db.sql("SELECT cmpn_mst FROM {app}.winv_cmpn_infm WHERE owner_id = :ownerId AND del_yn = 'N'"),
+                new MapSqlParameterSource("ownerId", ownerId), String.class);
     }
 
     /** Inserts a new connection, or revives a soft-deleted one, as {@code status} with a fresh password. */
-    public void upsert(String bizKey, String mst, String label, String gdtUserId, String passwordEnc,
+    public void upsert(String ownerId, String mst, String label, String gdtUserId, String passwordEnc,
                        String status, String userId) {
         String dtm = WeInvoiceTime.nowDtm();
         db.jdbc().update(db.sql("""
                 INSERT INTO {app}.winv_cmpn_infm
-                       (biz_key, cmpn_mst, lbl_nm, gdt_user_id, gdt_pw_enc, conn_stts, conn_msg, conn_chk_dtm,
+                       (owner_id, cmpn_mst, lbl_nm, gdt_user_id, gdt_pw_enc, conn_stts, conn_msg, conn_chk_dtm,
                         dflt_yn, del_yn, reg_id, reg_dtm, mod_id, mod_dtm)
-                VALUES (:bizKey, :mst, :label, :userIdGdt, :pw, :status, NULL, NULL, 'N', 'N', :userId, :dtm, :userId, :dtm)
-                ON CONFLICT (biz_key, cmpn_mst) DO UPDATE
+                VALUES (:ownerId, :mst, :label, :userIdGdt, :pw, :status, NULL, NULL, 'N', 'N', :userId, :dtm, :userId, :dtm)
+                ON CONFLICT (owner_id, cmpn_mst) DO UPDATE
                    SET lbl_nm = EXCLUDED.lbl_nm, gdt_user_id = EXCLUDED.gdt_user_id,
                        gdt_pw_enc = EXCLUDED.gdt_pw_enc, conn_stts = EXCLUDED.conn_stts,
                        conn_msg = NULL, conn_chk_dtm = NULL, dflt_yn = 'N', del_yn = 'N',
                        mod_id = EXCLUDED.mod_id, mod_dtm = EXCLUDED.mod_dtm
                 """), new MapSqlParameterSource()
-                .addValue("bizKey", bizKey)
+                .addValue("ownerId", ownerId)
                 .addValue("mst", mst)
                 .addValue("label", label)
                 .addValue("userIdGdt", gdtUserId)
@@ -96,15 +96,15 @@ public class CompanyConnectionRepository {
                 .addValue("dtm", dtm));
     }
 
-    public int updatePassword(String bizKey, String mst, String gdtUserId, String passwordEnc, String userId) {
+    public int updatePassword(String ownerId, String mst, String gdtUserId, String passwordEnc, String userId) {
         return db.jdbc().update(db.sql("""
                 UPDATE {app}.winv_cmpn_infm
                    SET gdt_pw_enc = :pw, gdt_user_id = COALESCE(:userIdGdt, gdt_user_id),
                        conn_stts = 'PENDING', conn_msg = NULL, conn_chk_dtm = NULL,
                        mod_id = :userId, mod_dtm = :dtm
-                 WHERE biz_key = :bizKey AND cmpn_mst = :mst AND del_yn = 'N'
+                 WHERE owner_id = :ownerId AND cmpn_mst = :mst AND del_yn = 'N'
                 """), new MapSqlParameterSource()
-                .addValue("bizKey", bizKey)
+                .addValue("ownerId", ownerId)
                 .addValue("mst", mst)
                 .addValue("userIdGdt", gdtUserId)
                 .addValue("pw", passwordEnc)
@@ -112,39 +112,39 @@ public class CompanyConnectionRepository {
                 .addValue("dtm", WeInvoiceTime.nowDtm()));
     }
 
-    public int updateLabel(String bizKey, String mst, String label, String userId) {
+    public int updateLabel(String ownerId, String mst, String label, String userId) {
         return db.jdbc().update(db.sql("""
                 UPDATE {app}.winv_cmpn_infm SET lbl_nm = :label, mod_id = :userId, mod_dtm = :dtm
-                 WHERE biz_key = :bizKey AND cmpn_mst = :mst AND del_yn = 'N'
+                 WHERE owner_id = :ownerId AND cmpn_mst = :mst AND del_yn = 'N'
                 """), new MapSqlParameterSource()
-                .addValue("bizKey", bizKey)
+                .addValue("ownerId", ownerId)
                 .addValue("mst", mst)
                 .addValue("label", label)
                 .addValue("userId", userId)
                 .addValue("dtm", WeInvoiceTime.nowDtm()));
     }
 
-    /** Makes {@code mst} the tenant default; clears the flag on the others. */
-    public void setDefault(String bizKey, String mst, String userId) {
+    /** Makes {@code mst} the user's stored default; clears the flag on the others. */
+    public void setDefault(String ownerId, String mst, String userId) {
         db.jdbc().update(db.sql("""
                 UPDATE {app}.winv_cmpn_infm
                    SET dflt_yn = CASE WHEN cmpn_mst = :mst THEN 'Y' ELSE 'N' END, mod_id = :userId, mod_dtm = :dtm
-                 WHERE biz_key = :bizKey AND del_yn = 'N'
+                 WHERE owner_id = :ownerId AND del_yn = 'N'
                 """), new MapSqlParameterSource()
-                .addValue("bizKey", bizKey)
+                .addValue("ownerId", ownerId)
                 .addValue("mst", mst)
                 .addValue("userId", userId)
                 .addValue("dtm", WeInvoiceTime.nowDtm()));
     }
 
     /** Soft delete; the stored password is erased at the same time. */
-    public int softDelete(String bizKey, String mst, String userId) {
+    public int softDelete(String ownerId, String mst, String userId) {
         return db.jdbc().update(db.sql("""
                 UPDATE {app}.winv_cmpn_infm
                    SET del_yn = 'Y', dflt_yn = 'N', gdt_pw_enc = NULL, mod_id = :userId, mod_dtm = :dtm
-                 WHERE biz_key = :bizKey AND cmpn_mst = :mst AND del_yn = 'N'
+                 WHERE owner_id = :ownerId AND cmpn_mst = :mst AND del_yn = 'N'
                 """), new MapSqlParameterSource()
-                .addValue("bizKey", bizKey)
+                .addValue("ownerId", ownerId)
                 .addValue("mst", mst)
                 .addValue("userId", userId)
                 .addValue("dtm", WeInvoiceTime.nowDtm()));
@@ -152,7 +152,7 @@ public class CompanyConnectionRepository {
 
     /** One managed tax code. {@code status} is the stored code ({@code PENDING}, {@code CONNECTED}, …). */
     public record CompanyRow(
-            String bizKey,
+            String ownerId,
             String mst,
             String companyName,
             String label,

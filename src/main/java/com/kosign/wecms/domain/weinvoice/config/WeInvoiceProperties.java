@@ -54,7 +54,7 @@ public record WeInvoiceProperties(
         /** Domain of the per-MST receiving address {@code hd-<mst>@<domain>}. Blank = not offered. */
         String mailDomain,
 
-        /** Maximum number of tax codes one tenant may manage (UI Spec 3.1, prototype value 5). */
+        /** Maximum number of tax codes one user account may manage (UI Spec 3.1, prototype value 5). */
         Integer maxCompanies,
 
         /** Enables {@code POST /test-data/load} (acceptance data set, dev / SIT only). */

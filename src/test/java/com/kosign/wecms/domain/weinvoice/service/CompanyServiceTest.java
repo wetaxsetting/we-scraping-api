@@ -48,7 +48,7 @@ class CompanyServiceTest {
         TransactionTemplate tx = mock(TransactionTemplate.class);
         when(tx.execute(any())).thenAnswer(inv -> ((TransactionCallback<Object>) inv.getArgument(0)).doInTransaction(null));
         when(db.tx()).thenReturn(tx);
-        when(guard.bizKey()).thenReturn(BIZ);
+        when(guard.ownerId()).thenReturn(BIZ);
         when(guard.userId()).thenReturn("admin1");
         when(cipher.encrypt(anyString())).thenAnswer(inv -> "v1:enc(" + inv.getArgument(0).hashCode() + ")");
         service = new CompanyService(companies, guard, cipher, requests, db, WeInvoiceTestProps.enabled("", 2));

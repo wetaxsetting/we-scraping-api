@@ -52,7 +52,7 @@ class InvoiceActionServiceTest {
         TransactionTemplate tx = mock(TransactionTemplate.class);
         when(tx.execute(any())).thenAnswer(inv -> ((TransactionCallback<Object>) inv.getArgument(0)).doInTransaction(null));
         when(db.tx()).thenReturn(tx);
-        when(guard.bizKey()).thenReturn("B");
+        when(guard.ownerId()).thenReturn("B");
         when(guard.userId()).thenReturn("u1");
         when(guard.requireInvoice(5L)).thenReturn(new InvoiceRef(5L, "1201496252", "mua", "0101360697", 1, "C26TAB", 9L));
         when(requests.queue(eq("1201496252"), eq(EngineRequestService.FETCH_PDF), eq("MANUAL"), any())).thenReturn(88L);

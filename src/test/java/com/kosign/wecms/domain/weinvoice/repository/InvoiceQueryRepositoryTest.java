@@ -30,7 +30,7 @@ class InvoiceQueryRepositoryTest {
         assertThat(sql).contains("WHERE i.company_mst = :mst", "AND i.direction = :dir", "i.ngay_lap >= :from",
                 "i.ngay_lap <= :to", "{eng}.invoices", "{app}.winv_invc_file");
         assertThat(p.getValue("mst")).isEqualTo("1201496252");
-        assertThat(p.getValue("bizKey")).isEqualTo("BIZ");
+        assertThat(p.getValue("ownerId")).isEqualTo("BIZ");
         assertThat(p.getValue("dir")).isEqualTo("mua");
     }
 

@@ -69,7 +69,7 @@ public class EmailService {
 
     public EmailMessageDetail message(String id) {
         long emailId = WeInvoiceIds.parse(id, "id");
-        List<String> msts = guard.tenantMsts();
+        List<String> msts = guard.ownedMsts();
         if (msts.isEmpty()) {
             throw new BusinessException("WBE3011");
         }

@@ -56,7 +56,7 @@ class InvoiceFileServiceTest {
         TransactionTemplate tx = mock(TransactionTemplate.class);
         when(tx.execute(any())).thenAnswer(inv -> ((TransactionCallback<Object>) inv.getArgument(0)).doInTransaction(null));
         when(db.tx()).thenReturn(tx);
-        when(guard.bizKey()).thenReturn(BIZ);
+        when(guard.ownerId()).thenReturn(BIZ);
         when(guard.userId()).thenReturn("u1");
         when(guard.requireInvoice(ID)).thenReturn(new InvoiceRef(ID, "1201496252", "mua", "0101243150", 1, "C26TAA", 123L));
         when(storage.save(eq(BIZ), eq("invoices"), any(), any())).thenReturn(new StoredFiles.Saved("b/invoices/x.pdf", 15, "ab"));

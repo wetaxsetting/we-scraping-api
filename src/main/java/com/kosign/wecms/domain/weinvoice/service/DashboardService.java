@@ -35,7 +35,7 @@ public class DashboardService {
         if (y < 2000 || y > 2100) {
             throw new IllegalArgumentException("year: out of range");
         }
-        String bizKey = guard.bizKey();
+        String ownerId = guard.ownerId();
         String mst = company.mst();
         LocalDate from = LocalDate.of(y, 1, 1);
         LocalDate to = LocalDate.of(y, 12, 31);
@@ -46,7 +46,7 @@ public class DashboardService {
         long[] purchaseCount = new long[12];
         BigDecimal outVat = BigDecimal.ZERO;
         BigDecimal inVat = BigDecimal.ZERO;
-        for (DashboardRepository.MonthRow m : dashboard.monthly(bizKey, mst, from, to)) {
+        for (DashboardRepository.MonthRow m : dashboard.monthly(ownerId, mst, from, to)) {
             int idx = Integer.parseInt(m.month().substring(5)) - 1;
             if ("ban".equals(m.engineDirection())) {
                 sales[idx] = sales[idx].add(m.total());
@@ -74,11 +74,11 @@ public class DashboardService {
         DashboardResponse.Kpis kpis = new DashboardResponse.Kpis(sc + pc, sc, pc, st, pt, outVat, inVat,
                 outVat.subtract(inVat));
 
-        DashboardRepository.DataStatusRow ds = dashboard.dataStatus(bizKey, mst, from, to);
+        DashboardRepository.DataStatusRow ds = dashboard.dataStatus(ownerId, mst, from, to);
         DashboardResponse.DataStatus dataStatus = new DashboardResponse.DataStatus(ds.missingXml(), ds.noCodeNoXml(),
                 ds.missingPdf(), invoices.incompletePeriods(mst, null, y + "01", y + "12"));
 
-        List<DashboardResponse.TopPartner> top = dashboard.topSuppliers(bizKey, mst, from, to, TOP_SUPPLIERS).stream()
+        List<DashboardResponse.TopPartner> top = dashboard.topSuppliers(ownerId, mst, from, to, TOP_SUPPLIERS).stream()
                 .map(p -> new DashboardResponse.TopPartner(p.taxId(), p.name(), p.count(), p.total()))
                 .toList();
         DashboardResponse.LastSync last = dashboard.lastRun(mst)

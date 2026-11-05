@@ -8,8 +8,8 @@ import org.springframework.stereotype.Repository;
 import java.util.List;
 
 /**
- * Sync history (screen 10): the tenant's {@code SYNC} requests plus the engine's own
- * scheduled list runs ({@code job_run_companies}) for the tenant's MSTs. An engine run that
+ * Sync history (screen 10): the user's {@code SYNC} requests plus the engine's own
+ * scheduled list runs ({@code job_run_companies}) for the user's MSTs. An engine run that
  * served a request ({@code winv_engn_rqst.job_run_id}) is shown once, as the request.
  */
 @Repository
@@ -23,7 +23,7 @@ public class SyncRunRepository {
                        (to_timestamp(COALESCE(r.strt_dtm, r.reg_dtm), 'YYYYMMDDHH24MISS')::timestamp AT TIME ZONE 'UTC') AS sort_at,
                        NULL::timestamptz AS started_at, NULL::timestamptz AS finished_at
                   FROM {app}.winv_engn_rqst r
-                 WHERE r.biz_key = :bizKey AND r.rqst_type = 'SYNC' AND r.cmpn_mst IN (:msts)
+                 WHERE r.owner_id = :ownerId AND r.rqst_type = 'SYNC' AND r.cmpn_mst IN (:msts)
                 UNION ALL
                 SELECT NULL, j.run_id, j.company_mst, 'SCHEDULE', NULL, COALESCE(j.status, '_running_'), j.stats::text,
                        NULL, NULL, NULL, NULL, j.started_at, j.started_at, j.finished_at
@@ -44,8 +44,8 @@ public class SyncRunRepository {
     /**
      * @param rawStatuses stored status values to keep ({@code DONE}, {@code ok}, …); empty = all
      */
-    public List<HistoryRow> history(String bizKey, List<String> msts, List<String> rawStatuses, int page, int size) {
-        MapSqlParameterSource p = params(bizKey, msts);
+    public List<HistoryRow> history(String ownerId, List<String> msts, List<String> rawStatuses, int page, int size) {
+        MapSqlParameterSource p = params(ownerId, msts);
         String where = where(rawStatuses, p);
         p.addValue("limit", size).addValue("offset", (long) page * size);
         return db.jdbc().query(db.sql(HISTORY + where + " ORDER BY h.sort_at DESC NULLS LAST LIMIT :limit OFFSET :offset"),
@@ -66,15 +66,15 @@ public class SyncRunRepository {
                         WeInvoiceTime.iso(rs, "finished_at")));
     }
 
-    public long count(String bizKey, List<String> msts, List<String> rawStatuses) {
-        MapSqlParameterSource p = params(bizKey, msts);
+    public long count(String ownerId, List<String> msts, List<String> rawStatuses) {
+        MapSqlParameterSource p = params(ownerId, msts);
         Long n = db.jdbc().queryForObject(db.sql("SELECT count(*) FROM (" + HISTORY + where(rawStatuses, p) + ") c"),
                 p, Long.class);
         return n == null ? 0L : n;
     }
 
-    private static MapSqlParameterSource params(String bizKey, List<String> msts) {
-        return new MapSqlParameterSource("bizKey", bizKey).addValue("msts", msts.isEmpty() ? List.of("") : msts);
+    private static MapSqlParameterSource params(String ownerId, List<String> msts) {
+        return new MapSqlParameterSource("ownerId", ownerId).addValue("msts", msts.isEmpty() ? List.of("") : msts);
     }
 
     private static String where(List<String> rawStatuses, MapSqlParameterSource p) {

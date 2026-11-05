@@ -25,7 +25,7 @@ import java.util.regex.Pattern;
  *   <li><b>Engine output</b> ({@code WECMS_WEINVOICE_ENGINE_OUTPUT_DIR}) — XML, PDF and mail
  *       files the engine saved; the engine tables store paths relative to it. Read only.</li>
  *   <li><b>WeInvoice storage</b> ({@code WECMS_WEINVOICE_STORAGE_ROOT}) — uploads. Written
- *       as {@code <biz_key>/<area>/<yyyy>/<MM>/<uuid>.<ext>}; the engine reads uploads from the
+ *       as {@code <owner_id>/<area>/<yyyy>/<MM>/<uuid>.<ext>}; the engine reads uploads from the
  *       same root, so both processes must see the same directory.</li>
  * </ul>
  * Every resolved path goes through {@link SecureFileDownload#assertWithinRoot}, so a
@@ -66,12 +66,12 @@ public class StoredFiles {
     }
 
     /** Saves bytes under the storage root and returns where and what was written. */
-    public Saved save(String bizKey, String area, String originalName, byte[] bytes) {
+    public Saved save(String ownerId, String area, String originalName, byte[] bytes) {
         if (storageRoot == null) {
             throw new BusinessException("WBE3000");
         }
         LocalDate today = LocalDate.now();
-        String relative = String.join("/", safeSegment(bizKey), area,
+        String relative = String.join("/", safeSegment(ownerId), area,
                 String.valueOf(today.getYear()), String.format("%02d", today.getMonthValue()),
                 UUID.randomUUID() + extensionOf(originalName));
         Path target = resolve(storageRoot, relative);

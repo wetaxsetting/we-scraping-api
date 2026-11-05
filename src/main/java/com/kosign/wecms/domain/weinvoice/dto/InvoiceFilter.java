@@ -7,7 +7,7 @@ import java.util.List;
  * {@code filter} part of the export bodies; every field is optional except
  * {@code company_mst}.
  *
- * @param companyMst    working MST (must be managed by the tenant)
+ * @param companyMst    working MST (must be managed by the user)
  * @param direction     {@code purchase} / {@code sales}; blank = both
  * @param from          issue date from, {@code yyyy-MM-dd} (inclusive)
  * @param to            issue date to, {@code yyyy-MM-dd} (inclusive)

@@ -37,10 +37,10 @@ public class MeService {
     }
 
     public MeResponse me() {
-        String bizKey = guard.bizKey();
+        String ownerId = guard.ownerId();
         String userId = guard.userId();
-        List<CompanyItem> items = companies.listActive(bizKey).stream().map(CompanyService::toItem).toList();
-        PrefRow pref = preferences.find(bizKey, userId).orElse(new PrefRow(null, null, null));
+        List<CompanyItem> items = companies.listActive(ownerId).stream().map(CompanyService::toItem).toList();
+        PrefRow pref = preferences.find(ownerId).orElse(new PrefRow(null, null, null));
         String working = pickWorking(items, pref.defaultMst());
         LangCd login = TenantContext.currentLangCd();
         String lang = pref.langCd() != null ? pref.langCd() : (login == null ? "vi" : login.name().toLowerCase(Locale.ROOT));
@@ -54,14 +54,14 @@ public class MeService {
         if (req.defaultCompanyMst() != null && !req.defaultCompanyMst().isBlank()) {
             defaultMst = guard.requireCompany(req.defaultCompanyMst()).mst();
         }
-        preferences.upsert(guard.bizKey(), guard.userId(),
+        preferences.upsert(guard.ownerId(),
                 req.langCd() == null ? null : req.langCd().toLowerCase(Locale.ROOT),
                 defaultMst,
                 req.shortcuts() == null ? null : json.write(req.shortcuts()));
         return me();
     }
 
-    /** User default if still managed, else the tenant default, else the first MST. */
+    /** Preference default if still managed, else the MST flagged default, else the first MST. */
     static String pickWorking(List<CompanyItem> items, String userDefault) {
         if (userDefault != null && items.stream().anyMatch(c -> c.taxId().equals(userDefault))) return userDefault;
         return items.stream().filter(CompanyItem::defaultCompany).map(CompanyItem::taxId).findFirst()

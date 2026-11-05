@@ -16,7 +16,7 @@ original PDF from the provider portals, invoices received by mail, and manual up
 is done by the **we-scraping engine** (Python, separate repository), which writes its own PostgreSQL
 tables. This backend:
 
-- serves those tables to the WeInvoice screens (`/api/v1/weinvoice/**`, JWT, tenant = `BIZ_KEY`);
+- serves those tables to the WeInvoice screens (`/api/v1/weinvoice/**`, JWT; rows owned by the signed-in user's `USER_ID`, not the WeCMS `BIZ_KEY`);
 - keeps the WeInvoice data the engine does not own — managed tax codes and their GDT account, tags,
   uploaded files, manual lookup codes, user preferences, the provider catalogue;
 - asks the engine for work through a request table instead of calling it;
@@ -58,7 +58,7 @@ PostgreSQL — WeInvoice database (= engine database)        PostgreSQL — WeCM
 | `WECMS_WEINVOICE_SECRET_KEY` | Base64 of 32 bytes — AES-256-GCM key of the stored GDT passwords; the engine needs the same value |
 | `WECMS_WEINVOICE_PARTNER_API_KEYS` | Comma-separated keys accepted from WeCMS; empty = Partner API closed |
 | `WECMS_WEINVOICE_MAIL_DOMAIN` | Domain of the per-MST receiving address `hd-<mst>@<domain>` |
-| `WECMS_WEINVOICE_MAX_COMPANIES` | Tax codes per tenant (prototype: 5) |
+| `WECMS_WEINVOICE_MAX_COMPANIES` | Tax codes per user account (prototype: 5) |
 | `WECMS_WEINVOICE_TEST_DATA_ENABLED` | Enables `POST /test-data/load` (dev / SIT) |
 
 All five `.env.*.example` templates carry the block. A local `.env.local` written before 2026-11-02
@@ -88,9 +88,12 @@ GDT password format: `"v1:" + base64(iv[12] ‖ ciphertext ‖ tag[16])`, AES-25
 
 ## Access
 
-- Every WeInvoice endpoint requires a WeCMS JWT. Reads are open to any user of the tenant; adding,
-  changing and removing GDT connections is admin-only until the P2 permission model (UI Spec 3.10).
-- A working MST must be an active connection of the tenant; invoices of other MSTs read as not found.
+- Every WeInvoice endpoint requires a WeCMS JWT. Every WeInvoice row is owned by the signed-in user
+  (`owner_id` = `USER_INFM.USER_ID`, UI Spec 02 "one account manages several MSTs"): each user adds,
+  changes and removes their own tax codes, with no WeCMS admin gate. Sub-accounts and the 8-permission
+  model are P2 (UI Spec 3.10). Linking tax codes to a WeCMS `BIZ_KEY` is WeCMS's concern (Partner API,
+  by `tax_id`). Changed 2026-11-05: [issue record](../../../issues/weinvoice-company-ownership-by-user-2026-11-05.md).
+- A working MST must be an active connection of the signed-in user; invoices of other MSTs read as not found.
 - Partner API: `X-Api-Key` against `WECMS_WEINVOICE_PARTNER_API_KEYS`, constant-time compare, fails
   closed.
 

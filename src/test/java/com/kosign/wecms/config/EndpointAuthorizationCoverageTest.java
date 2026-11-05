@@ -104,9 +104,9 @@ class EndpointAuthorizationCoverageTest {
             "BulkReceptionResultController", // /payment/dispatch/callbacks/bulk-reception-result — 01301 EFS→WeCMS callback
             "BulkExecutionResultController", // /payment/dispatch/callbacks/bulk-execution-result — 01302 EFS→WeCMS callback
             // --- WeInvoice (2026-11-02): own product, its screens are not in the WeCMS menu universe, so no
-            //     permission_cd exists. Every call is scoped by CompanyAccessGuard (tenant + working MST), and
-            //     GDT-connection writes are hasRole('ADMIN'). The 8-permission model of UI Spec 3.10 is P2;
-            //     gate these when it lands. Record: docs/features/addon-service/weinvoice/ ---
+            //     permission_cd exists. Every call is scoped by CompanyAccessGuard (signed-in user's own tax
+            //     codes + working MST); each user manages their own MSTs, no admin gate. The 8-permission model
+            //     of UI Spec 3.10 is P2; gate these when it lands. Record: docs/features/addon-service/weinvoice/ ---
             "WeInvoiceAppController",        // /weinvoice/me, /requests, /dashboard
             "WeInvoiceInvoiceController",    // /weinvoice/invoices/**
             "WeInvoiceCompanyController",    // /weinvoice/companies/**

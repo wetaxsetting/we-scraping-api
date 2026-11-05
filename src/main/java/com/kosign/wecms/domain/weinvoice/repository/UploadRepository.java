@@ -22,15 +22,15 @@ public class UploadRepository {
         this.db = db;
     }
 
-    public long insertBatch(String bizKey, String mst, int fileCount, String userId) {
+    public long insertBatch(String ownerId, String mst, int fileCount, String userId) {
         String dtm = WeInvoiceTime.nowDtm();
         Long id = db.jdbc().queryForObject(db.sql("""
                 INSERT INTO {app}.winv_upld_infm
-                       (upld_seq, biz_key, cmpn_mst, rqst_seq, file_cnt, del_yn, reg_id, reg_dtm, mod_id, mod_dtm)
-                VALUES (nextval('{app}.sq_winv_upld_seq'), :bizKey, :mst, NULL, :cnt, 'N', :userId, :dtm, :userId, :dtm)
+                       (upld_seq, owner_id, cmpn_mst, rqst_seq, file_cnt, del_yn, reg_id, reg_dtm, mod_id, mod_dtm)
+                VALUES (nextval('{app}.sq_winv_upld_seq'), :ownerId, :mst, NULL, :cnt, 'N', :userId, :dtm, :userId, :dtm)
                 RETURNING upld_seq
                 """), new MapSqlParameterSource()
-                .addValue("bizKey", bizKey)
+                .addValue("ownerId", ownerId)
                 .addValue("mst", mst)
                 .addValue("cnt", fileCount)
                 .addValue("userId", userId)
@@ -56,15 +56,15 @@ public class UploadRepository {
                 new MapSqlParameterSource("id", uploadId).addValue("rq", requestId));
     }
 
-    public Optional<BatchRow> findBatch(String bizKey, long uploadId) {
+    public Optional<BatchRow> findBatch(String ownerId, long uploadId) {
         return db.jdbc().query(db.sql("""
                         SELECT u.upld_seq, u.cmpn_mst, u.rqst_seq, u.file_cnt, u.reg_dtm,
                                r.rqst_stts, r.err_msg
                           FROM {app}.winv_upld_infm u
                           LEFT JOIN {app}.winv_engn_rqst r ON r.rqst_seq = u.rqst_seq
-                         WHERE u.biz_key = :bizKey AND u.upld_seq = :id AND u.del_yn = 'N'
+                         WHERE u.owner_id = :ownerId AND u.upld_seq = :id AND u.del_yn = 'N'
                         """),
-                        new MapSqlParameterSource("bizKey", bizKey).addValue("id", uploadId),
+                        new MapSqlParameterSource("ownerId", ownerId).addValue("id", uploadId),
                         (rs, n) -> new BatchRow(
                                 rs.getLong("upld_seq"),
                                 rs.getString("cmpn_mst"),
@@ -102,12 +102,12 @@ public class UploadRepository {
                         rs.getBoolean("has_pdf")));
     }
 
-    public int softDelete(String bizKey, long uploadId, String userId) {
+    public int softDelete(String ownerId, long uploadId, String userId) {
         return db.jdbc().update(db.sql("""
                 UPDATE {app}.winv_upld_infm SET del_yn = 'Y', mod_id = :userId, mod_dtm = :dtm
-                 WHERE biz_key = :bizKey AND upld_seq = :id AND del_yn = 'N'
+                 WHERE owner_id = :ownerId AND upld_seq = :id AND del_yn = 'N'
                 """), new MapSqlParameterSource()
-                .addValue("bizKey", bizKey)
+                .addValue("ownerId", ownerId)
                 .addValue("id", uploadId)
                 .addValue("userId", userId)
                 .addValue("dtm", WeInvoiceTime.nowDtm()));
