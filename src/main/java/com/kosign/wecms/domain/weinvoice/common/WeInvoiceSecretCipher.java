@@ -1,6 +1,7 @@
 package com.kosign.wecms.domain.weinvoice.common;
 
 import com.kosign.wecms.domain.weinvoice.config.WeInvoiceProperties;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import javax.crypto.Cipher;
@@ -36,6 +37,9 @@ public class WeInvoiceSecretCipher {
     private final SecureRandom random = new SecureRandom();
     private final SecretKeySpec key;
 
+    // @Autowired: this class has a second (test) constructor, and without the marker Spring looks for a
+    // no-arg one and the application does not start.
+    @Autowired
     public WeInvoiceSecretCipher(WeInvoiceProperties props) {
         // Validated by WeInvoiceProperties when enabled; when disabled the cipher is never used.
         this.key = props.enabled() ? new SecretKeySpec(Base64.getDecoder().decode(props.secretKey().trim()), "AES") : null;
