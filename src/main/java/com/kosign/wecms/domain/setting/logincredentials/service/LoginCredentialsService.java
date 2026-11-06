@@ -42,6 +42,7 @@ import com.kosign.wecms.domain.setting.logincredentials.dto.RevealResponse;
 import com.kosign.wecms.domain.setting.logincredentials.entity.GdtCertInfo;
 import com.kosign.wecms.domain.setting.logincredentials.repository.GdtCertInfoRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -79,6 +80,7 @@ import java.util.TreeMap;
  * workspace identifier-naming rule.
  */
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class LoginCredentialsService {
 
@@ -249,6 +251,25 @@ public class LoginCredentialsService {
             // `certConnYn` derivation in `AccountService` now correctly
             // surfaces those rows as "disconnected" with the tooltip
             // until the user re-registers a credential.
+            //
+            // What IS cleared is the POINTER: every ACCT_MSTR row whose
+            // BANK_CERT_SEQ referenced this credential is set to NULL, in
+            // this same transaction. Leaving it dangling is what produced
+            // "Bank login credentials were deleted. Please register Login
+            // Credentials again." on Own Account Transfer while the
+            // credential was visibly present in the table — re-registering
+            // mints a NEW seq, and the accounts kept pointing at the old
+            // one. It is also a wrong-bank hazard: SEQ_NO is tenant-global,
+            // so a stale pointer can collide with another bank's future
+            // credential. Approved divergence from legacy (2026-08-19) —
+            // see docs/bugs/bank-credential-delete-leaves-dangling-acct-linkage-2026-08-19.md.
+            final int unlinked = acctMstrRepo.clearBankCertSeq(
+                    bizKey, row.getSeqNo().longValueExact(),
+                    TenantContext.currentUserId(), nowDtm14());
+            if (unlinked > 0) {
+                log.info("login-credentials bank seq={} deleted — unlinked {} account(s) (BANK_CERT_SEQ → NULL)",
+                        seqNo, unlinked);
+            }
             appendAudit(REF_NO_BANK, seqNo.toPlainString());
         } else {
             GdtCertInfo row = gdtRepo.findByBizKeyAndSeqNo(bizKey, seqNo)

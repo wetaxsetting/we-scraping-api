@@ -250,6 +250,71 @@ public interface BusaDocMstrRepository extends JpaRepository<BusaDocMstr, BusaDo
             Pageable pageable);
 
     /**
+     * The caller's own hand-registered receipts — backs
+     * {@code GET /api/v1/payment/card-transactions/receipts} (mobile
+     * receipt channel). Refactor counterpart of legacy
+     * {@code WABOOKS_MREC_R006}.
+     *
+     * <p>Differences from {@link #findLinkableReceipts} on purpose: this
+     * query is scoped to one {@code USER_ID} (the app only ever shows the
+     * signed-in user's own captures), and it does <b>not</b> exclude rows
+     * that are already linked to a payment — the app has to keep showing a
+     * receipt after it has been attached to an approval, with its link
+     * state visible. {@code APPR_SEQ_NO} rides along on the entity so the
+     * service can derive the editable flag.
+     *
+     * <p>Two legacy branches are deliberately absent: the
+     * {@code ADV_PAYM_TRNS_HSTR} UNION (imprest ledger — out of refactor
+     * scope) and the {@code MREC_PIC_STORE} "photo captured, not yet keyed"
+     * group (that table is legacy-but-inactive; wiring it needs a scope
+     * decision). Both are recorded in
+     * {@code docs/features/payment/mobile-receipt-channel/}.
+     *
+     * @param regChnl {@code 'MOB'} / {@code 'PC'} to restrict to one
+     *                registration channel, or {@code null} for every channel
+     */
+    @Query(value = """
+            SELECT m.* FROM BUSA_DOC_MSTR m
+             WHERE m.BIZ_KEY      = :bizKey
+               AND m.USER_ID      = :userId
+               AND m.DOC_TYPE     = 'E'
+               AND m.HAND_REG_YN  = 'Y'
+               AND COALESCE(m.PROV_STTS, '') NOT IN ('EE', 'VD')
+               AND COALESCE(m.USE_DT, m.ISSU_DT) BETWEEN :fromDt AND :toDt
+               AND (:regChnl IS NULL OR m.REG_CHNL = :regChnl)
+               AND (:keywordPattern IS NULL
+                    OR LOWER(COALESCE(m.TRCO_CMNM,   '')) LIKE :keywordPattern ESCAPE '!'
+                    OR LOWER(COALESCE(m.TRCO_CMENM,  '')) LIKE :keywordPattern ESCAPE '!'
+                    OR LOWER(COALESCE(m.DISP_DOC_ID, '')) LIKE :keywordPattern ESCAPE '!'
+                    OR LOWER(COALESCE(m.CONT,        '')) LIKE :keywordPattern ESCAPE '!')
+             ORDER BY COALESCE(m.USE_DT, m.ISSU_DT) DESC, m.DOC_ID DESC
+            """,
+            countQuery = """
+                    SELECT COUNT(*) FROM BUSA_DOC_MSTR m
+                     WHERE m.BIZ_KEY      = :bizKey
+                       AND m.USER_ID      = :userId
+                       AND m.DOC_TYPE     = 'E'
+                       AND m.HAND_REG_YN  = 'Y'
+                       AND COALESCE(m.PROV_STTS, '') NOT IN ('EE', 'VD')
+                       AND COALESCE(m.USE_DT, m.ISSU_DT) BETWEEN :fromDt AND :toDt
+                       AND (:regChnl IS NULL OR m.REG_CHNL = :regChnl)
+                       AND (:keywordPattern IS NULL
+                            OR LOWER(COALESCE(m.TRCO_CMNM,   '')) LIKE :keywordPattern ESCAPE '!'
+                            OR LOWER(COALESCE(m.TRCO_CMENM,  '')) LIKE :keywordPattern ESCAPE '!'
+                            OR LOWER(COALESCE(m.DISP_DOC_ID, '')) LIKE :keywordPattern ESCAPE '!'
+                            OR LOWER(COALESCE(m.CONT,        '')) LIKE :keywordPattern ESCAPE '!')
+                    """,
+            nativeQuery = true)
+    Page<BusaDocMstr> findOwnReceipts(
+            @Param("bizKey")         String bizKey,
+            @Param("userId")         String userId,
+            @Param("fromDt")         String fromDt,
+            @Param("toDt")           String toDt,
+            @Param("regChnl")        String regChnl,
+            @Param("keywordPattern") String keywordPattern,
+            Pageable pageable);
+
+    /**
      * Fetch the linkable docs for an in-progress link write. Used by
      * the link create path to validate every requested {@code doc_id}
      * (a) exists, (b) belongs to the caller's tenant, (c) is still

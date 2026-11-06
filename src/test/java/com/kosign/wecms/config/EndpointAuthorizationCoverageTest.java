@@ -102,7 +102,19 @@ class EndpointAuthorizationCoverageTest {
             "SyncHistoryController",         // /banking/sync-history — new feature, no cd
             // --- inbound EFS machine-to-machine callbacks (no menu permission_cd; gated by IP-whitelist, TODO(B7)) ---
             "BulkReceptionResultController", // /payment/dispatch/callbacks/bulk-reception-result — 01301 EFS→WeCMS callback
-            "BulkExecutionResultController"  // /payment/dispatch/callbacks/bulk-execution-result — 01302 EFS→WeCMS callback
+            "BulkExecutionResultController", // /payment/dispatch/callbacks/bulk-execution-result — 01302 EFS→WeCMS callback
+            // --- WeInvoice (2026-11-02): own product, its screens are not in the WeCMS menu universe, so no
+            //     permission_cd exists. Every call is scoped by CompanyAccessGuard (signed-in user's own tax
+            //     codes + working MST); each user manages their own MSTs, no admin gate. The 8-permission model
+            //     of UI Spec 3.10 is P2; gate these when it lands. Record: docs/features/addon-service/weinvoice/ ---
+            "WeInvoiceAppController",        // /weinvoice/me, /requests, /dashboard
+            "WeInvoiceInvoiceController",    // /weinvoice/invoices/**
+            "WeInvoiceCompanyController",    // /weinvoice/companies/**
+            "WeInvoiceSyncRunController",    // /weinvoice/sync-runs/**
+            "WeInvoiceMailUploadController", // /weinvoice/email/**, /uploads/**, /test-data/load
+            "WeInvoiceCatalogController",    // /weinvoice/providers, /tags
+            // --- WeInvoice Partner API: WeCMS server → WeInvoice, no user / JWT; gated by PartnerApiKeyFilter (X-Api-Key) ---
+            "PartnerEInvoiceController"      // /api/partner/v1/einvoices/**
     );
 
     @Test

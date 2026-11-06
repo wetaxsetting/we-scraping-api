@@ -189,7 +189,6 @@ public class OwnAccountTransferController {
      * {@code WBE_OAT_TARGET_NAPAS_REQUIRED},
      * {@code WBE_OAT_TARGET_BANK_REQUIRED},
      * {@code WBE_OAT_SAME_BANK_MISMATCH},
-     * {@code WBE_OAT_AMOUNT_MISMATCH},
      * {@code WBE_OAT_SOURCE_NOT_FOUND},
      * {@code WBE_OAT_SOURCE_FORBIDDEN},
      * {@code WBE_OAT_TARGET_NAPAS_UNKNOWN},
@@ -238,10 +237,17 @@ public class OwnAccountTransferController {
     }
 
     /**
-     * Refactor port of legacy {@code nxisas_decrypt}. Decrypts the engine
-     * {@code Output.Result} via the Coocon {@code ISASSeedCBC} cipher when
-     * {@code wecms.oat.seed-decrypt.enabled} is on (B1); otherwise returns
-     * {@code NXISAS_DATA} unchanged. See {@link OatNxisasService#decrypt}.
+     * Refactor port of legacy {@code nxisas_decrypt}. Decrypts every engine
+     * {@code Output.Result} in the posted job array via the Coocon
+     * {@code ISASSeedCBC} cipher. Runs unconditionally, matching legacy — see
+     * {@link OatNxisasService#decrypt} for why the former
+     * {@code wecms.oat.seed-decrypt.enabled} gate was removed (2026-08-18).
+     *
+     * <p>Wire contract is lowercase snake_case ({@code nxisas_data} /
+     * {@code nxisas_uid} / {@code nxisas_action}); the vendor bundle's own
+     * {@code nxisas_decrypt} call never reaches this endpoint — the JEX adapter
+     * short-circuits it client-side — so the sole caller is the refactor's own
+     * {@code decryptNxisasResult}.
      */
     @PostMapping("/nxisas/decrypt")
     public ApiResponse<NxisasDecryptResponse> nxisasDecrypt(
@@ -251,8 +257,8 @@ public class OwnAccountTransferController {
 
     /**
      * Refactor port of legacy {@code nxisas_encrypt} — inverse of
-     * {@code /nxisas/decrypt}, used by the 2nd-factor re-send path. Same
-     * {@code wecms.oat.seed-decrypt.enabled} gate.
+     * {@code /nxisas/decrypt}, used by the 2nd-factor re-send path. Also
+     * unconditional.
      */
     @PostMapping("/nxisas/encrypt")
     public ApiResponse<NxisasDecryptResponse> nxisasEncrypt(
