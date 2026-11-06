@@ -37,7 +37,7 @@ class WeInvoicePropertiesTest {
     void enabledRejectsInjectableSchemaName() {
         assertThatThrownBy(() -> new WeInvoiceProperties(true,
                 new WeInvoiceProperties.Db("jdbc:postgresql://h/db", "u", "p", 1),
-                "public; DROP TABLE x", "weinvoice", "out", "store", WeInvoiceTestProps.KEY_B64, "", "", 5, false))
+                "public; DROP TABLE x", "weinvoice", "out", "store", WeInvoiceTestProps.KEY_B64, "", "", 5, false, null))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("engine-schema")
                 .hasMessageNotContaining("DROP");
@@ -47,12 +47,12 @@ class WeInvoicePropertiesTest {
     void enabledRejectsUnresolvedPlaceholderAndShortKey() {
         assertThatThrownBy(() -> new WeInvoiceProperties(true,
                 new WeInvoiceProperties.Db("${WECMS_WEINVOICE_DB_URL}", "u", "p", 1),
-                "public", "weinvoice", "out", "store", WeInvoiceTestProps.KEY_B64, "", "", 5, false))
+                "public", "weinvoice", "out", "store", WeInvoiceTestProps.KEY_B64, "", "", 5, false, null))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("db.url");
         assertThatThrownBy(() -> new WeInvoiceProperties(true,
                 new WeInvoiceProperties.Db("jdbc:postgresql://h/db", "u", "p", 1),
-                "public", "weinvoice", "out", "store", "c2hvcnQ=", "", "", 5, false))
+                "public", "weinvoice", "out", "store", "c2hvcnQ=", "", "", 5, false, null))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("32 bytes");
     }
@@ -75,7 +75,7 @@ class WeInvoicePropertiesTest {
         Map<String, String> blank = new HashMap<>();
         for (String key : List.of("enabled", "db.url", "db.username", "db.password", "db.max-pool-size",
                 "engine-schema", "app-schema", "engine-output-dir", "storage-root", "secret-key",
-                "partner-api-keys", "mail-domain", "max-companies", "test-data-enabled")) {
+                "partner-api-keys", "mail-domain", "max-companies", "test-data-enabled", "scraping.url", "scraping.api-key")) {
             blank.put("wecms.weinvoice." + key, "");
         }
         WeInvoiceProperties p = new Binder(new MapConfigurationPropertySource(blank))
@@ -93,7 +93,7 @@ class WeInvoicePropertiesTest {
 
     @Test
     void maxCompaniesDefaultsToFive() {
-        WeInvoiceProperties p = new WeInvoiceProperties(false, null, null, null, null, null, null, null, null, null, false);
+        WeInvoiceProperties p = new WeInvoiceProperties(false, null, null, null, null, null, null, null, null, null, false, null);
         assertThat(p.maxCompanies()).isEqualTo(5);
     }
 }

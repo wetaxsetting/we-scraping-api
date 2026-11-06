@@ -6,7 +6,6 @@ import com.kosign.wecms.domain.weinvoice.dto.CompanyItem;
 import com.kosign.wecms.domain.weinvoice.dto.CompanyListResponse;
 import com.kosign.wecms.domain.weinvoice.dto.CompanyPasswordRequest;
 import com.kosign.wecms.domain.weinvoice.dto.CompanyPatchRequest;
-import com.kosign.wecms.domain.weinvoice.dto.RequestAccepted;
 import com.kosign.wecms.domain.weinvoice.service.CompanyService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -41,14 +40,14 @@ public class WeInvoiceCompanyController {
         return ApiResponse.ok(companies.list());
     }
 
-    /** Stores the account as {@code pending} and queues the engine login test. */
+    /** Logs in to the GDT portal through the engine first; saves the account only when accepted (WBE3027 / WBE3028 otherwise). */
     @PostMapping
-    public ApiResponse<RequestAccepted> create(@Valid @RequestBody CompanyCreateRequest request) {
+    public ApiResponse<CompanyItem> create(@Valid @RequestBody CompanyCreateRequest request) {
         return ApiResponse.ok(companies.create(request));
     }
 
     @PutMapping("/{mst}/password")
-    public ApiResponse<RequestAccepted> password(@PathVariable("mst") String mst,
+    public ApiResponse<CompanyItem> password(@PathVariable("mst") String mst,
                                                  @Valid @RequestBody CompanyPasswordRequest request) {
         return ApiResponse.ok(companies.changePassword(mst, request));
     }

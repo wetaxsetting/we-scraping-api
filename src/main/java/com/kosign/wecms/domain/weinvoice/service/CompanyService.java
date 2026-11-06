@@ -4,53 +4,49 @@ import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.domain.weinvoice.common.CompanyAccessGuard;
 import com.kosign.wecms.domain.weinvoice.common.WeInvoiceIds;
 import com.kosign.wecms.domain.weinvoice.common.WeInvoiceSecretCipher;
-import com.kosign.wecms.domain.weinvoice.config.WeInvoiceDb;
 import com.kosign.wecms.domain.weinvoice.config.WeInvoiceProperties;
 import com.kosign.wecms.domain.weinvoice.dto.CompanyCreateRequest;
 import com.kosign.wecms.domain.weinvoice.dto.CompanyItem;
 import com.kosign.wecms.domain.weinvoice.dto.CompanyListResponse;
 import com.kosign.wecms.domain.weinvoice.dto.CompanyPasswordRequest;
 import com.kosign.wecms.domain.weinvoice.dto.CompanyPatchRequest;
-import com.kosign.wecms.domain.weinvoice.dto.RequestAccepted;
 import com.kosign.wecms.domain.weinvoice.repository.CompanyConnectionRepository;
 import com.kosign.wecms.domain.weinvoice.repository.CompanyConnectionRepository.CompanyRow;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Optional;
 
 /**
  * Screen 06 — the tax codes a user manages and their GDT account.
  *
- * <p>Adding an MST or changing its password stores the password encrypted
- * ({@link WeInvoiceSecretCipher}), sets the connection {@code PENDING} and queues a
- * {@code LOGIN_TEST} request: the engine solves the GDT captcha, logs in, and writes
- * {@code CONNECTED} or {@code ERROR} back. The UI Spec's "only save when the login works" is
- * therefore "saved as pending, confirmed by the engine"; a failed test leaves the row in
- * {@code ERROR} for the user to fix or remove.
+ * <p>Adding an MST or changing its password first logs in to the GDT portal through the scraping
+ * engine ({@link ScrapingClient#loginTest}: captcha solved by the engine's model, retried on a wrong
+ * captcha). Only an accepted account is stored — encrypted ({@link WeInvoiceSecretCipher}),
+ * {@code CONNECTED} — and the call answers with the saved connection, so the screen never waits on
+ * a queue (UI Spec "đúng thì mới lưu"). A rejected account answers {@code WBE3027} with the portal's
+ * message; when the account cannot be checked (captcha, network, engine down) {@code WBE3028}.
+ * Nothing is written in either case; a password change keeps the old password.
  */
 @Service
 public class CompanyService {
 
-    static final String PENDING = "PENDING";
+    static final String CONNECTED = "CONNECTED";
     static final String NEED_PASSWORD = "NEED_PASSWORD";
 
     private final CompanyConnectionRepository companies;
     private final CompanyAccessGuard guard;
     private final WeInvoiceSecretCipher cipher;
-    private final EngineRequestService requests;
-    private final WeInvoiceDb db;
+    private final ScrapingClient scraping;
     private final WeInvoiceProperties props;
 
     public CompanyService(CompanyConnectionRepository companies, CompanyAccessGuard guard, WeInvoiceSecretCipher cipher,
-                          EngineRequestService requests, WeInvoiceDb db, WeInvoiceProperties props) {
+                          ScrapingClient scraping, WeInvoiceProperties props) {
         this.companies = companies;
         this.guard = guard;
         this.cipher = cipher;
-        this.requests = requests;
-        this.db = db;
+        this.scraping = scraping;
         this.props = props;
     }
 
@@ -59,7 +55,7 @@ public class CompanyService {
         return new CompanyListResponse(items, new CompanyListResponse.Quota(items.size(), props.maxCompanies()));
     }
 
-    public RequestAccepted create(CompanyCreateRequest req) {
+    public CompanyItem create(CompanyCreateRequest req) {
         String ownerId = guard.ownerId();
         String mst = WeInvoiceIds.requireTaxId(req.companyMst());
         Optional<CompanyRow> existing = companies.find(ownerId, mst);
@@ -67,14 +63,11 @@ public class CompanyService {
             throw new BusinessException("WBE3003", mst);
         }
         requireQuota(ownerId);
-        String username = blankToNull(req.gdtUsername());
-        String encrypted = cipher.encrypt(req.password());
-        Long requestId = db.tx().execute(s -> {
-            companies.upsert(ownerId, mst, blankToNull(req.label()), username == null ? mst : username, encrypted,
-                    PENDING, guard.userId());
-            return requests.queue(mst, EngineRequestService.LOGIN_TEST, "MANUAL", Map.of());
-        });
-        return new RequestAccepted(String.valueOf(requestId), mst);
+        String username = Optional.ofNullable(blankToNull(req.gdtUsername())).orElse(mst);
+        requireAccepted(mst, scraping.loginTest(mst, username, req.password()));
+        companies.upsert(ownerId, mst, blankToNull(req.label()), username, cipher.encrypt(req.password()),
+                CONNECTED, guard.userId());
+        return companies.find(ownerId, mst).map(CompanyService::toItem).orElseThrow();
     }
 
     /**
@@ -89,15 +82,26 @@ public class CompanyService {
         companies.upsert(ownerId, mst, null, mst, null, NEED_PASSWORD, guard.userId());
     }
 
-    public RequestAccepted changePassword(String mst, CompanyPasswordRequest req) {
+    public CompanyItem changePassword(String mst, CompanyPasswordRequest req) {
         String ownerId = guard.ownerId();
         CompanyRow row = guard.requireCompany(mst);
-        String encrypted = cipher.encrypt(req.password());
-        Long requestId = db.tx().execute(s -> {
-            companies.updatePassword(ownerId, row.mst(), blankToNull(req.gdtUsername()), encrypted, guard.userId());
-            return requests.queue(row.mst(), EngineRequestService.LOGIN_TEST, "MANUAL", Map.of());
-        });
-        return new RequestAccepted(String.valueOf(requestId), row.mst());
+        String newUsername = blankToNull(req.gdtUsername());
+        String username = Optional.ofNullable(newUsername)
+                .or(() -> Optional.ofNullable(blankToNull(row.gdtUserId())))
+                .orElse(row.mst());
+        requireAccepted(row.mst(), scraping.loginTest(row.mst(), username, req.password()));
+        companies.updatePassword(ownerId, row.mst(), newUsername, cipher.encrypt(req.password()), guard.userId());
+        return companies.find(ownerId, row.mst()).map(CompanyService::toItem).orElseThrow();
+    }
+
+    /** {@code WBE3027} when GDT rejected the account, {@code WBE3028} when it could not be checked. */
+    private static void requireAccepted(String mst, ScrapingClient.LoginResult result) {
+        switch (result.outcome()) {
+            case OK -> {
+            }
+            case REJECTED -> throw new BusinessException("WBE3027", mst, result.message());
+            case UNAVAILABLE -> throw new BusinessException("WBE3028", mst, result.message());
+        }
     }
 
     public CompanyItem patch(String mst, CompanyPatchRequest req) {

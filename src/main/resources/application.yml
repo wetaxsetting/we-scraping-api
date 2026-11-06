@@ -629,6 +629,11 @@ wecms:
     mail-domain: ${WECMS_WEINVOICE_MAIL_DOMAIN}
     max-companies: ${WECMS_WEINVOICE_MAX_COMPANIES}
     test-data-enabled: ${WECMS_WEINVOICE_TEST_DATA_ENABLED}
+    # Engine internal API (we-scraping web/internal_api.py): verifies a GDT account (captcha + login)
+    # before a tax code is saved. Internal network only — the GDT password travels in the request.
+    scraping:
+      url: ${WECMS_WEINVOICE_SCRAPING_URL}
+      api-key: ${WECMS_WEINVOICE_SCRAPING_API_KEY}
 
 # =============================================================================
 # Haengsung ERP integration

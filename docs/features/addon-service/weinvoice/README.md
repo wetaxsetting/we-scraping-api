@@ -76,7 +76,7 @@ The backend inserts rows with `rqst_stts = 'QUEUED'`. An engine worker:
 
 | `rqst_type` | `rqst_prmt` | Engine work |
 |---|---|---|
-| `LOGIN_TEST` | `{}` | Read `gdt_user_id` + `gdt_pw_enc` of `winv_cmpn_infm`, log in to GDT, write `conn_stts` (`CONNECTED` / `ERROR`), `conn_msg`, `conn_chk_dtm`, `cmpn_nm`; register the MST in `companies` |
+| ~~`LOGIN_TEST`~~ | — | **Not used since 2026-11-06.** The account is verified synchronously: the backend calls the engine's internal API `POST /internal/gdt/login-test` (we-scraping `web/internal_api.py`, header `X-Api-Key`, settings `WECMS_WEINVOICE_SCRAPING_URL` / `_API_KEY`) and stores the row `CONNECTED` only when GDT accepts it. The engine reads `CONNECTED` rows of `winv_cmpn_infm` (decrypting `gdt_pw_enc` with `WEINVOICE_SECRET_KEY` = this backend's `WECMS_WEINVOICE_SECRET_KEY`) and registers them in its `companies` table before each sync (`weinvoice_bridge.py`). [Issue record](../../../issues/weinvoice-gdt-login-test-synchronous-2026-11-06.md) |
 | `SYNC` | `{direction, from_month, to_month}` | List + XML for the period; progress `{month, listed, xml_done, xml_total}`, steps `login · captcha · list · xml · done`; result `{new, updated, xml}`; write `winv_sync_cvrg` per month and list type |
 | `FETCH_XML` | `{invoice_ids}` | Move those invoices' xml tasks to the front of the queue |
 | `FETCH_PDF` | `{invoice_ids, lookup_code?, lookup_url?, company_code?}` | Run the provider adapter now (steps `open · submit · download · done`) |

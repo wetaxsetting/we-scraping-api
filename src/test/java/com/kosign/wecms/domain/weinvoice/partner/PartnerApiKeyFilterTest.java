@@ -82,7 +82,7 @@ class PartnerApiKeyFilterTest {
 
     @Test
     void disabledWeInvoiceRefusesEvenAValidKey() throws Exception {
-        WeInvoiceProperties disabled = new WeInvoiceProperties(false, null, null, null, null, null, null, "k1", null, 5, false);
+        WeInvoiceProperties disabled = new WeInvoiceProperties(false, null, null, null, null, null, null, "k1", null, 5, false, null);
         MockFilterChain chain = new MockFilterChain();
         MockHttpServletResponse res = run(disabled, "/api/partner/v1/einvoices", "k1", chain);
         assertThat(chain.getRequest()).isNull();

@@ -16,10 +16,11 @@ public final class WeInvoiceTestProps {
         return new WeInvoiceProperties(true,
                 new WeInvoiceProperties.Db("jdbc:postgresql://localhost:5432/weinvoice", "u", "p", 1),
                 "public", "weinvoice", "build/tmp/engine-out", "build/tmp/weinvoice-store", KEY_B64,
-                partnerKeys, "invoice.example.vn", maxCompanies, false);
+                partnerKeys, "invoice.example.vn", maxCompanies, false,
+                new WeInvoiceProperties.Scraping("http://127.0.0.1:1", "scrape-key"));
     }
 
     public static WeInvoiceProperties disabled() {
-        return new WeInvoiceProperties(false, null, "${X}", "${Y}", "", "", "", "", "", 5, false);
+        return new WeInvoiceProperties(false, null, "${X}", "${Y}", "", "", "", "", "", 5, false, null);
     }
 }

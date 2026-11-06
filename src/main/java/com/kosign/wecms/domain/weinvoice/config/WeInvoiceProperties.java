@@ -58,7 +58,13 @@ public record WeInvoiceProperties(
         Integer maxCompanies,
 
         /** Enables {@code POST /test-data/load} (acceptance data set, dev / SIT only). */
-        Boolean testDataEnabled
+        Boolean testDataEnabled,
+
+        /**
+         * The scraping engine's internal API (we-scraping {@code web/internal_api.py}): used to verify a
+         * GDT account (captcha + login) before a tax code is saved. Blank = connections cannot be added.
+         */
+        Scraping scraping
 ) {
 
     private static final Pattern SCHEMA = Pattern.compile("[A-Za-z_][A-Za-z0-9_]{0,62}");
@@ -69,6 +75,9 @@ public record WeInvoiceProperties(
         // which a primitive rejects at startup. Blank = off.
         enabled = Boolean.TRUE.equals(enabled);
         testDataEnabled = Boolean.TRUE.equals(testDataEnabled);
+        if (scraping == null) {
+            scraping = new Scraping(null, null);
+        }
         if (maxCompanies == null || maxCompanies <= 0) {
             maxCompanies = DEFAULT_MAX_COMPANIES;
         }
@@ -127,6 +136,27 @@ public record WeInvoiceProperties(
     }
 
     /** Connection settings of the WeInvoice database. */
+    /**
+     * @param url    base URL of the engine's internal API, e.g. {@code http://127.0.0.1:8090}
+     * @param apiKey shared key sent as {@code X-Api-Key} (engine side: {@code SCRAPING_INTERNAL_API_KEY})
+     */
+    public record Scraping(String url, String apiKey) {
+
+        /** True when both values are set (a {@code ${...}} placeholder counts as unset). */
+        public boolean configured() {
+            return set(url) && set(apiKey);
+        }
+
+        private static boolean set(String v) {
+            return v != null && !v.isBlank() && !v.startsWith("${");
+        }
+
+        @Override
+        public String toString() {
+            return "Scraping[url=" + url + ", apiKey=" + (set(apiKey) ? "***" : "<unset>") + "]";
+        }
+    }
+
     public record Db(String url, String username, String password, Integer maxPoolSize) {
 
         private static final int DEFAULT_MAX_POOL_SIZE = 5;

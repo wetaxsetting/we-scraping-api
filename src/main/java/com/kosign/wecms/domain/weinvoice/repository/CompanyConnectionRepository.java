@@ -79,11 +79,13 @@ public class CompanyConnectionRepository {
                 INSERT INTO {app}.winv_cmpn_infm
                        (owner_id, cmpn_mst, lbl_nm, gdt_user_id, gdt_pw_enc, conn_stts, conn_msg, conn_chk_dtm,
                         dflt_yn, del_yn, reg_id, reg_dtm, mod_id, mod_dtm)
-                VALUES (:ownerId, :mst, :label, :userIdGdt, :pw, :status, NULL, NULL, 'N', 'N', :userId, :dtm, :userId, :dtm)
+                VALUES (:ownerId, :mst, :label, :userIdGdt, :pw, :status, NULL,
+                        CASE WHEN CAST(:status AS varchar) = 'CONNECTED' THEN :dtm END,
+                        'N', 'N', :userId, :dtm, :userId, :dtm)
                 ON CONFLICT (owner_id, cmpn_mst) DO UPDATE
                    SET lbl_nm = EXCLUDED.lbl_nm, gdt_user_id = EXCLUDED.gdt_user_id,
                        gdt_pw_enc = EXCLUDED.gdt_pw_enc, conn_stts = EXCLUDED.conn_stts,
-                       conn_msg = NULL, conn_chk_dtm = NULL, dflt_yn = 'N', del_yn = 'N',
+                       conn_msg = NULL, conn_chk_dtm = EXCLUDED.conn_chk_dtm, dflt_yn = 'N', del_yn = 'N',
                        mod_id = EXCLUDED.mod_id, mod_dtm = EXCLUDED.mod_dtm
                 """), new MapSqlParameterSource()
                 .addValue("ownerId", ownerId)
@@ -96,11 +98,12 @@ public class CompanyConnectionRepository {
                 .addValue("dtm", dtm));
     }
 
+    /** Stores a password the GDT portal has just accepted (verified by the engine before this call). */
     public int updatePassword(String ownerId, String mst, String gdtUserId, String passwordEnc, String userId) {
         return db.jdbc().update(db.sql("""
                 UPDATE {app}.winv_cmpn_infm
                    SET gdt_pw_enc = :pw, gdt_user_id = COALESCE(:userIdGdt, gdt_user_id),
-                       conn_stts = 'PENDING', conn_msg = NULL, conn_chk_dtm = NULL,
+                       conn_stts = 'CONNECTED', conn_msg = NULL, conn_chk_dtm = :dtm,
                        mod_id = :userId, mod_dtm = :dtm
                  WHERE owner_id = :ownerId AND cmpn_mst = :mst AND del_yn = 'N'
                 """), new MapSqlParameterSource()
