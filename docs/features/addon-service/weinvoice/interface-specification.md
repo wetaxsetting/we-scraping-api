@@ -84,10 +84,10 @@ record already has an XML → `duplicate`.
 | Method | Path | Request | `data` |
 |---|---|---|---|
 | GET | `/companies` | — | `{ companies[CompanyItem], quota{used, max} }` |
-| POST | `/companies` *(admin)* | `{ company_mst, gdt_username?, password, label? }` | `{ request_id, subject }` — engine login test queued |
-| PUT | `/companies/{mst}/password` *(admin)* | `{ password, gdt_username? }` | `{ request_id, subject }` |
-| PATCH | `/companies/{mst}` *(admin)* | `{ label?, default_company? }` | `CompanyItem` |
-| DELETE | `/companies/{mst}` *(admin)* | — | `null` |
+| POST | `/companies` | `{ company_mst, gdt_username?, password, label? }` | `CompanyItem` (`connected`) — GDT login verified first through the scraping engine (synchronous, ~3–10 s, ≤ 90 s); nothing stored on `WBE3027` / `WBE3028` |
+| PUT | `/companies/{mst}/password` | `{ password, gdt_username? }` | `CompanyItem` — same verification; the old password stays on `WBE3027` / `WBE3028` |
+| PATCH | `/companies/{mst}` | `{ label?, default_company? }` | `CompanyItem` |
+| DELETE | `/companies/{mst}` | — | `null` |
 
 **`CompanyItem`** — `tax_id, company_name, username, label, status (pending · connected · error ·
 expired · need_password), status_message, has_password, default_company, last_sync_at, created_at`.
@@ -175,6 +175,8 @@ key → HTTP 401, `WBE3019`.
 | WBE3024 | MST has no GDT password yet |
 | WBE3025 | Upload file type not supported |
 | WBE3026 | No upload file belongs to the MST being adopted |
+| WBE3027 | The GDT portal rejected the account (`{0}` MST, `{1}` the portal's message) — nothing saved |
+| WBE3028 | The GDT account could not be checked now (captcha, network, scraping engine down / not configured) — nothing saved |
 
 House codes still apply: `WBE_VALIDATION` (bad / missing parameter), `WBE_DB` (database fault),
 `WBE1003` (access denied — e.g. a non-admin changing connections), `WBE1401` (session expired).

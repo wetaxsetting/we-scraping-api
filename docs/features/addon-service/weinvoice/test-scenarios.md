@@ -20,10 +20,12 @@ under `src/test/java/com/kosign/wecms/domain/weinvoice/`; "DB" = needs the WeInv
 
 | # | Scenario | Expected | Level |
 |---|---|---|---|
-| C1 | Add MST with password | row `PENDING`, password stored as `v1:…`, `LOGIN_TEST` queued, `request_id` returned | Unit |
+| C1 | Add MST with a password GDT accepts | engine login-test first; row `CONNECTED`, password stored as `v1:…`, `CompanyItem` returned in the same call | Unit + live engine |
+| C1b | Add MST with a password GDT rejects | `WBE3027` with the portal's message; nothing stored | Unit + live engine (fake account) |
+| C1c | Engine down / not configured / timeout | `WBE3028`; nothing stored; the screen stops waiting | Unit |
 | C2 | Add an MST already connected | `WBE3003` | Unit |
 | C3 | Add when the quota is reached | `WBE3004` | Unit |
-| C4 | Re-add a removed MST | row revived, new password, `PENDING` | Unit |
+| C4 | Re-add a removed MST | verified again, row revived, new password, `CONNECTED` | Unit |
 | C5 | Any response, any log line | never contains the password or its ciphertext | Unit |
 
 ## Invoices (screens 04, 05)
