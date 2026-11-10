@@ -2,7 +2,7 @@
 
 **Date:** 2026-11-09
 **Type:** TEST RESULT
-**Status:** PARTIAL
+**Status:** PASS (engine live run 2026-11-10); screens end to end NOT RUN
 **Repository:** wecms-api (checked out as `we-scraping-api`); engine side in the we-scraping repository
 **Related Record:** [../../issues/weinvoice-engine-request-worker-2026-11-09.md](../../issues/weinvoice-engine-request-worker-2026-11-09.md)
 
@@ -41,21 +41,35 @@ CANCELLED (checkpoint) / FAILED (business error, GDT login error, unexpected exc
 
 ## Database Verification
 
-Read-only on the engine DB: `invoice_details_nguon_check` is still `('xml','xml_email','pdf')`;
+Before the live run (read-only, 2026-11-09): `invoice_details_nguon_check` was still `('xml','xml_email','pdf')`;
 `weinvoice.winv_engn_rqst` holds 3 `LOGIN_TEST` rows `QUEUED`; no upload batches.
+
+### Live Run (LOCAL engine DB, 2026-11-10)
+
+`python -X utf8 web/invoice_job.py init-db` → `invoice_details_nguon_check` now accepts `xml_upload`.
+Requests written exactly as the backend writes them (upload batch #1 of `lamine@gmail.com`, MST 1201496252,
+3 files copied under `WEINVOICE_STORAGE_ROOT`), then `python -X utf8 web/weinvoice_worker.py --once`:
+
+| # | Request | Result |
+|---|---|---|
+| 4 | `IMPORT {upload_id: 1}` | DONE `{new 1, merged 1, duplicate 1}` in 1 s: XML of invoice 167736 → `DUPLICATE`; mail XML K26TCA-211612 (not in DB) → `NEW` invoice 275201 (`mua-khma`, `list_raw.nguon = upload`, details `xml_upload`, tasks xml/pdf done); its PDF → `MERGED` (`source_id = upload`); `rslt_*` incl. partner name and total written |
+| 5 | `FETCH_PDF` invoice 167736 (has PDF) | DONE `{pdf: exists, source_id: email}` |
+| 6 | `FETCH_PDF` invoice 7689 (Viettel) | FAILED, `err_msg` = portal answer "Hóa đơn không tồn tại trên hệ thống" (same as the job's earlier attempts) |
+| 7 | `SYNC {purchase, 2026-10}` | DONE in 14 s (cached GDT token, MTT list captcha solved): listed 80, new 2 (both K26TTT, `summary_only`), `winv_sync_cvrg` mua 30/30, mua-khma 37/38, mua-mtt 13/13, all `cmpl_yn = Y` |
+
+The 3 obsolete `LOGIN_TEST` rows stayed `QUEUED` (not claimed). No placeholder company was needed (MST already in `companies`).
 
 ## Not Tested
 
-- Live worker run against the database: SYNC / FETCH_XML (GDT login with the real account), FETCH_PDF
-  (provider portal), IMPORT / TEST_DATA (write invoices) — waits for the developer's go-ahead.
-- Engine `init-db` (CHECK widening) — not applied.
+- `FETCH_XML`, `TEST_DATA` (TestData folder is empty), cancel of a running request, a successful provider download
+  through `FETCH_PDF`, an upload-only MST (placeholder company).
 - Screens end to end (backend + web + worker running together).
 
 ## Final Result
 
-PARTIAL — offline / unit tests pass on engine, backend and web; live run pending.
+PASS — offline / unit tests pass; engine live run 2026-11-10: IMPORT, FETCH_PDF (exists / failure), SYNC as expected. Screens end to end not run.
 
 ## Recommendation
 
-READY FOR MANUAL COMMIT after the developer's live check (apply `init-db`, run `web/weinvoice_worker.py`,
-upload one XML + one PDF on screen 09, run one sync).
+READY FOR SIT — code pushed. Remaining: run `web/weinvoice_worker.py` as a service where the engine
+serves SIT (after `init-db` there) and check screens 06 / 09 / 10 end to end.

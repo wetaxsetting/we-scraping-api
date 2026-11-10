@@ -3,8 +3,8 @@
 **Date:** 2026-11-09
 **Type:** ISSUE
 **Current Work Classification:** ISSUE
-**Status:** PARTIAL (code + offline tests done; live engine run on the database not run yet)
-**Investigation Status:** COMPLETE ([web audit of the gaps](../../../we-scraping-web/docs/issues/weinvoice-p1-api-wiring-gaps-2026-11-09.md), backend sibling repo) · **Approval Status:** NOT REQUIRED (developer: "Viết worker") · **Implementation Status:** COMPLETE · **Test Status:** PASS (unit); live run NOT RUN
+**Status:** READY FOR SIT (code pushed; engine live run PASS 2026-11-10; screens end to end not run)
+**Investigation Status:** COMPLETE ([web audit of the gaps](../../../we-scraping-web/docs/issues/weinvoice-p1-api-wiring-gaps-2026-11-09.md), backend sibling repo) · **Approval Status:** NOT REQUIRED (developer: "Viết worker") · **Implementation Status:** COMPLETE · **Test Status:** PASS (unit + engine live run)
 **Repository:** wecms-api (checked out as `we-scraping-api`); engine side in the we-scraping repository
 
 ## Problem
@@ -106,8 +106,9 @@ test data) get a result once the worker runs.
 
 - Environment: LOCAL — engine DB read-only check: CHECK `invoice_details_nguon_check` still the old one
   (`xml`, `xml_email`, `pdf`); queue holds only 3 old `LOGIN_TEST` rows (ignored by the worker).
-- Live worker run (SYNC with GDT, IMPORT / TEST_DATA writing invoices): NOT RUN — needs the developer's
-  go-ahead (writes the real engine DB; SYNC logs in to GDT with the real account).
+- Live worker run 2026-11-10 (developer approved): `init-db` applied; IMPORT (DUPLICATE / NEW / MERGED),
+  FETCH_PDF (exists, portal failure message), SYNC 2026-10 purchase (80 listed, 2 new, coverage 3 rows `Y`) — PASS,
+  details in the test-result record. FETCH_XML / TEST_DATA / cancel not exercised live.
 
 ## Test Evidence
 
@@ -117,14 +118,14 @@ test data) get a result once the worker runs.
 
 ```
 Code: COMPLETE (engine worker + backend origin + web) · Tests: PASS (offline / unit)
-Engine schema change (nguon CHECK): prepared in db/schema.sql, NOT applied (init-db)
-Live run: PENDING (developer) · Commit / push: PENDING (developer)
+Engine schema change (nguon CHECK): applied on the LOCAL engine DB 2026-11-10 (init-db)
+Live run: PASS (LOCAL) · Pushed: engine main ca8b862, api sit 4a522a2, web scraping-data e04d912 (developer request)
 ```
 
 ## Known Limitations / Follow-up
 
-- Apply the engine CHECK (`python -X utf8 web/invoice_job.py init-db`) before the first IMPORT, otherwise
-  saving an uploaded XML fails (`invoice_details_nguon_check`).
+- Any other engine DB (SIT host): run `python -X utf8 web/invoice_job.py init-db` before the first IMPORT,
+  otherwise saving an uploaded XML fails (`invoice_details_nguon_check`).
 - The worker must run as a service next to the queue workers (`python -X utf8 web/weinvoice_worker.py`);
   a scheduled-task entry is not added yet.
 - `FETCH_XML` / `SYNC` log in to GDT with the stored account; repeated wrong passwords lock the GDT account.
