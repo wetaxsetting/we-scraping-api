@@ -114,4 +114,18 @@ class InvoiceCodesTest {
         assertThat(InvoiceCodes.direction("mua")).isEqualTo("purchase");
         assertThatThrownBy(() -> InvoiceCodes.engineDirection("both")).isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    void originOfUploadedRecordsAndFiles() {
+        assertThat(InvoiceCodes.recordOrigin(null)).isEqualTo("gdt");
+        assertThat(InvoiceCodes.recordOrigin("upload")).isEqualTo("upload");
+        assertThat(InvoiceCodes.recordOrigin("test_data")).isEqualTo("upload");
+        assertThat(InvoiceCodes.xmlOrigin("xml")).isEqualTo("gdt");
+        assertThat(InvoiceCodes.xmlOrigin("xml_email")).isEqualTo("email");
+        assertThat(InvoiceCodes.xmlOrigin("xml_upload")).isEqualTo("upload");
+        assertThat(InvoiceCodes.pdfOrigin("email:bkav")).isEqualTo("email");
+        assertThat(InvoiceCodes.pdfOrigin("upload")).isEqualTo("upload");
+        assertThat(InvoiceCodes.pdfOrigin("misa_meinvoice")).isEqualTo("vendor");
+        assertThat(InvoiceCodes.pdfOrigin(null)).isEqualTo("vendor");
+    }
 }

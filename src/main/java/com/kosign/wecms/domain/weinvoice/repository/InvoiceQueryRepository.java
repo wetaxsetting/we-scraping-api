@@ -40,7 +40,7 @@ public class InvoiceQueryRepository {
     private static final String BASE_SELECT = """
                 SELECT i.id, i.company_mst, i.direction, i.sub_type, i.nbmst, i.nbten, i.nmmst, i.nmten,
                        i.khmshdon, i.khhdon, i.shdon, i.ngay_lap, i.tien_chua_thue, i.tien_thue, i.tong_tien,
-                       i.first_seen_at, x.ma_tra_cuu, x.lookup_url,
+                       i.first_seen_at, x.ma_tra_cuu, x.lookup_url, i.list_raw->>'nguon' AS rec_src,
             """
             + "           " + InvoiceCodes.SQL_TTHAI_EFF + " AS tthai_eff,\n"
             + """
@@ -343,7 +343,7 @@ public class InvoiceQueryRepository {
                 rs.getBoolean("has_pdf"),
                 providerMst != null && known && !hasCode,
                 tagIds == null ? List.of() : Arrays.asList(tagIds.split(",")),
-                "gdt",
+                InvoiceCodes.recordOrigin(rs.getString("rec_src")),
                 WeInvoiceTime.iso(rs, "first_seen_at"));
     };
 

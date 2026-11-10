@@ -3,6 +3,7 @@ package com.kosign.wecms.domain.weinvoice.service;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.common.file.SecureFileDownload;
 import com.kosign.wecms.domain.weinvoice.common.CompanyAccessGuard;
+import com.kosign.wecms.domain.weinvoice.common.InvoiceCodes;
 import com.kosign.wecms.domain.weinvoice.common.CompanyAccessGuard.InvoiceRef;
 import com.kosign.wecms.domain.weinvoice.common.StoredFiles;
 import com.kosign.wecms.domain.weinvoice.common.WeInvoiceIds;
@@ -81,12 +82,11 @@ public class InvoiceFileService {
         String base = "/api/v1/weinvoice/invoices/" + d.id() + "/files/";
         if (d.xmlPath() != null) {
             out.add(new InvoiceFileItem("xml", "xml", StoredFiles.baseName(d.xmlPath()), storage.engineFileSize(d.xmlPath()),
-                    "xml_email".equals(d.detailSource()) ? "email" : "gdt", d.xmlFetchedAt(), false, base + "xml"));
+                    InvoiceCodes.xmlOrigin(d.detailSource()), d.xmlFetchedAt(), false, base + "xml"));
         }
         if (d.pdfPath() != null) {
-            boolean fromMail = d.pdfSource() != null && d.pdfSource().startsWith("email");
             out.add(new InvoiceFileItem("pdf", "pdf", StoredFiles.baseName(d.pdfPath()), storage.engineFileSize(d.pdfPath()),
-                    fromMail ? "email" : "vendor", d.pdfFetchedAt(), false, base + "pdf"));
+                    InvoiceCodes.pdfOrigin(d.pdfSource()), d.pdfFetchedAt(), false, base + "pdf"));
         }
         for (FileRow f : files.listActive(guard.ownerId(), d.id())) {
             out.add(toItem(f, base));

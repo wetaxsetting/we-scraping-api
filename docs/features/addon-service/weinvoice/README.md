@@ -66,7 +66,8 @@ must get these lines too, or startup fails on the unresolved booleans.
 
 ## Engine contract (`weinvoice.winv_engn_rqst`)
 
-The backend inserts rows with `rqst_stts = 'QUEUED'`. An engine worker:
+The backend inserts rows with `rqst_stts = 'QUEUED'`. The engine worker (we-scraping
+`web/weinvoice_worker.py`, since 2026-11-09 — [issue record](../../../issues/weinvoice-engine-request-worker-2026-11-09.md)):
 
 1. claims the oldest queued row (`FOR UPDATE SKIP LOCKED`), sets `RUNNING` and `strt_dtm`;
 2. reports `step_cd` and `prgs_data` while it works, and stops at its next checkpoint when
@@ -77,11 +78,11 @@ The backend inserts rows with `rqst_stts = 'QUEUED'`. An engine worker:
 | `rqst_type` | `rqst_prmt` | Engine work |
 |---|---|---|
 | ~~`LOGIN_TEST`~~ | — | **Not used since 2026-11-06.** The account is verified synchronously: the backend calls the engine's internal API `POST /internal/gdt/login-test` (we-scraping `web/internal_api.py`, header `X-Api-Key`, settings `WECMS_WEINVOICE_SCRAPING_URL` / `_API_KEY`) and stores the row `CONNECTED` only when GDT accepts it. The engine reads `CONNECTED` rows of `winv_cmpn_infm` (decrypting `gdt_pw_enc` with `WEINVOICE_SECRET_KEY` = this backend's `WECMS_WEINVOICE_SECRET_KEY`) and registers them in its `companies` table before each sync (`weinvoice_bridge.py`). [Issue record](../../../issues/weinvoice-gdt-login-test-synchronous-2026-11-06.md) |
-| `SYNC` | `{direction, from_month, to_month}` | List + XML for the period; progress `{month, listed, xml_done, xml_total}`, steps `login · captcha · list · xml · done`; result `{new, updated, xml}`; write `winv_sync_cvrg` per month and list type |
-| `FETCH_XML` | `{invoice_ids}` | Move those invoices' xml tasks to the front of the queue |
-| `FETCH_PDF` | `{invoice_ids, lookup_code?, lookup_url?, company_code?}` | Run the provider adapter now (steps `open · submit · download · done`) |
-| `IMPORT` | `{upload_id[, file_nos, company_mst]}` or `{invoice_id, file_id}` | Parse the stored files, apply the dedupe rules (UI Spec 3.2), write `rslt_*` of `winv_upld_file` |
-| `TEST_DATA` | `{}` | Load the acceptance TestData folder |
+| `SYNC` | `{direction, from_month, to_month}` | List + XML per month (future months skipped, current month up to today, ≤ 24 months); progress `{month, listed, xml_done, xml_total}`, steps `login · list · xml · done`; result `{new, updated, xml, listed, xml_failed, sync_errors, months}`; `winv_sync_cvrg` per month and list type (`gdt_cnt` = rows GDT listed, `got_cnt` = invoices stored, `cmpl_yn` = listed without error and `got_cnt ≥ gdt_cnt`); `PARTIAL` on list / XML errors |
+| `FETCH_XML` | `{invoice_ids}` | Download those invoices' XML now (skips invoices with XML and `summary_only` ones); result `{requested, xml, failed, already, summary_only, not_found}` |
+| `FETCH_PDF` | `{invoice_ids, lookup_code?, lookup_url?, company_code?}` | Run the provider adapter now (steps `open · submit · download · done`); the code / link from the request, else `winv_lkup_cd`, overrides the XML guesses; result `{pdf: saved \| exists, source_id}`; failure = the adapter's message |
+| `IMPORT` | `{upload_id[, file_nos, company_mst]}` or `{invoice_id, file_id}` | Parse the stored files (XML, ZIP, PDF; engine reads them under `WEINVOICE_STORAGE_ROOT` = `WECMS_WEINVOICE_STORAGE_ROOT`), apply the dedupe rules (UI Spec 3.2), write `rslt_*` of `winv_upld_file`; a record created from an upload has origin `upload` |
+| `TEST_DATA` | `{}` | Load the acceptance TestData folder (`XML/`, `PDF/`, `ma_tra_cuu.csv`; engine `WEINVOICE_TEST_DATA_DIR`); result = the prototype report (`folder, xml_total, created, merged, duplicate, errors[], new_tax_ids[], codes_applied, codes_unmatched[], pdf_attached, pdf_unmatched[]`) |
 
 GDT password format: `"v1:" + base64(iv[12] ‖ ciphertext ‖ tag[16])`, AES-256-GCM, key = base64-decoded
 `WECMS_WEINVOICE_SECRET_KEY` (Python: `AESGCM(key).decrypt(raw[:12], raw[12:], None)`).

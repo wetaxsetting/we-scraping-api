@@ -203,7 +203,7 @@ public class InvoiceQueryService {
                 task(taskRows, "xml"),
                 task(taskRows, "pdf"),
                 warnings(parsed),
-                "gdt",
+                InvoiceCodes.recordOrigin(WeInvoiceJson.text(raw, "nguon")),
                 d.firstSeenAt());
     }
 

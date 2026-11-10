@@ -92,6 +92,33 @@ public final class InvoiceCodes {
         };
     }
 
+    /**
+     * Where the invoice record came from: {@code upload} when the engine created it from a file a
+     * user uploaded ({@code list_raw.nguon} = {@code upload} / {@code test_data}, engine
+     * {@code web/weinvoice_worker.py}), otherwise {@code gdt} (the GDT list).
+     */
+    public static String recordOrigin(String listRawSource) {
+        return isUploadSource(listRawSource) ? "upload" : "gdt";
+    }
+
+    /** Engine XML file origin from {@code invoice_details.nguon}. */
+    public static String xmlOrigin(String detailSource) {
+        if ("xml_email".equals(detailSource)) return "email";
+        if ("xml_upload".equals(detailSource)) return "upload";
+        return "gdt";
+    }
+
+    /** Engine PDF file origin from {@code invoice_pdf.source_id} ({@code email…}, upload, else provider). */
+    public static String pdfOrigin(String pdfSource) {
+        if (pdfSource != null && pdfSource.startsWith("email")) return "email";
+        if (isUploadSource(pdfSource)) return "upload";
+        return "vendor";
+    }
+
+    private static boolean isUploadSource(String s) {
+        return "upload".equals(s) || "test_data".equals(s);
+    }
+
     /** Engine {@code direction} → {@code purchase} / {@code sales}. */
     public static String direction(String engineDirection) {
         return "ban".equals(engineDirection) ? "sales" : "purchase";
