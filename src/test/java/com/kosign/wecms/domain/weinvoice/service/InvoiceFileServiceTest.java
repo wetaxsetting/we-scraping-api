@@ -70,7 +70,59 @@ class InvoiceFileServiceTest {
         return new DetailRow(ID, "1201496252", "mua", "mua", "0101243150", "Seller", "1201496252", "Buyer", 1, "C26TAA",
                 123L, "2026-10-01", null, null, null, 1, "{}", null, "{\"ma_cqt\":\"00ABCDEF\"}", "0101243150", null, null,
                 xmlPath, null, pdfPath, pdfPath == null ? null : "misa_meinvoice", null, "xml", "0101243150", "MISA",
-                null, null, null, null);
+                null, null, null, null, null);
+    }
+
+    private static DetailRow withGdtPdf(DetailRow d, String gdtPdfPath) {
+        return new DetailRow(d.id(), d.companyMst(), d.direction(), d.subType(), d.sellerTaxId(), d.sellerName(),
+                d.buyerTaxId(), d.buyerName(), d.templateNo(), d.symbol(), d.number(), d.issueDate(), d.preTax(), d.tax(),
+                d.total(), d.tthai(), d.listRawJson(), d.firstSeenAt(), d.parsedJson(), d.xmlProviderMst(),
+                d.xmlLookupCode(), d.xmlLookupUrl(), d.xmlPath(), "2026-11-02T08:00:00Z", d.pdfPath(), d.pdfSource(),
+                d.pdfFetchedAt(), d.detailSource(), d.catalogueMst(), d.providerName(), d.providerLookupUrl(),
+                d.manualCode(), d.manualCompanyCode(), d.manualUrl(), gdtPdfPath);
+    }
+
+    private static final String GDT_PDF_PATH = "pdf_gdt/1201496252/2026/10/0101243150/1_C26TAA_123.pdf";
+
+    @Test
+    void gdtCopyIsListedWhileThereIsNoProviderOriginal() {
+        when(details.find(BIZ, ID)).thenReturn(Optional.of(withGdtPdf(detail("xml/a.xml", null), GDT_PDF_PATH)));
+        when(files.listActive(BIZ, ID)).thenReturn(List.of());
+        var items = service.list("77");
+        assertThat(items).extracting(i -> i.id() + ":" + i.kind() + ":" + i.origin())
+                .containsExactly("xml:xml:gdt", "pdf-gdt:pdf_gdt:gdt");
+        assertThat(items.get(1).deletable()).isFalse();
+        assertThat(items.get(1).url()).endsWith("/invoices/77/files/pdf-gdt");
+    }
+
+    @Test
+    void providerOriginalReplacesTheGdtCopy() {
+        when(details.find(BIZ, ID)).thenReturn(Optional.of(withGdtPdf(detail("xml/a.xml", "pdf/a.pdf"), GDT_PDF_PATH)));
+        when(files.listActive(BIZ, ID)).thenReturn(List.of());
+        assertThat(service.list("77")).extracting(i -> i.kind()).containsExactly("xml", "pdf");
+    }
+
+    @Test
+    void uploadedPdfAlsoReplacesTheGdtCopy() {
+        when(details.find(BIZ, ID)).thenReturn(Optional.of(withGdtPdf(detail("xml/a.xml", null), GDT_PDF_PATH)));
+        when(files.listActive(BIZ, ID)).thenReturn(List.of(
+                new FileRow(9L, ID, "PDF", "UPLOAD", "f.pdf", 15, "b/invoices/x.pdf", "ab", false, "u1", "2026-11-02T00:00:00Z")));
+        assertThat(service.list("77")).extracting(i -> i.kind()).containsExactly("xml", "pdf");
+    }
+
+    @Test
+    void gdtCopyDownloadsFromTheEngineOutput(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tmp) throws Exception {
+        java.nio.file.Path f = java.nio.file.Files.write(tmp.resolve("g.pdf"), PDF);
+        when(details.find(BIZ, ID)).thenReturn(Optional.of(withGdtPdf(detail("xml/a.xml", null), GDT_PDF_PATH)));
+        when(storage.engineFile(GDT_PDF_PATH)).thenReturn(f);
+        var res = service.download("77", "pdf-gdt");
+        assertThat(res.getStatusCode().is2xxSuccessful()).isTrue();
+        verify(storage).engineFile(GDT_PDF_PATH);
+    }
+
+    @Test
+    void gdtCopyCannotBeDeleted() {
+        assertThatThrownBy(() -> service.delete("77", "pdf-gdt")).isInstanceOf(BusinessException.class).hasMessage("WBE3007");
     }
 
     @Test

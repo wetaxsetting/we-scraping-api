@@ -32,7 +32,7 @@ public class InvoiceDetailRepository {
                                i.khmshdon, i.khhdon, i.shdon, i.ngay_lap, i.tien_chua_thue, i.tien_thue, i.tong_tien,
                                i.tthai, i.list_raw::text AS list_raw, i.first_seen_at,
                                x.parsed::text AS parsed, x.mst_tcgp, x.ma_tra_cuu, x.lookup_url, x.xml_path,
-                               x.fetched_at AS xml_fetched_at,
+                               x.fetched_at AS xml_fetched_at, x.gdt_pdf_path,
                                p.pdf_path, p.source_id AS pdf_source, p.fetched_at AS pdf_fetched_at,
                                (SELECT d.nguon FROM {eng}.invoice_details d
                                  WHERE d.invoice_id = i.id ORDER BY d.line_no LIMIT 1) AS detail_source,
@@ -81,7 +81,8 @@ public class InvoiceDetailRepository {
                         rs.getString("prvd_lkup_url"),
                         rs.getString("lkup_cd"),
                         rs.getString("cmpn_cd"),
-                        rs.getString("manual_url")))
+                        rs.getString("manual_url"),
+                        rs.getString("gdt_pdf_path")))
                 .stream().findFirst();
     }
 
@@ -272,7 +273,9 @@ public class InvoiceDetailRepository {
             String providerLookupUrl,
             String manualCode,
             String manualCompanyCode,
-            String manualUrl) {
+            String manualUrl,
+            /* PDF the engine printed from the GDT view page in the export-xml ZIP; stand-in until an NCC original exists. */
+            String gdtPdfPath) {
     }
 
     public record ItemRow(

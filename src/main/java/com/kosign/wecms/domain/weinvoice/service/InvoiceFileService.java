@@ -48,6 +48,9 @@ import java.util.Set;
 @Service
 public class InvoiceFileService {
 
+    /** File id of the GDT copy of the invoice PDF (engine {@code invoice_xml.gdt_pdf_path}). */
+    static final String GDT_PDF = "pdf-gdt";
+
     private static final String UPLOAD_PREFIX = "u";
 
     private final CompanyAccessGuard guard;
@@ -88,8 +91,16 @@ public class InvoiceFileService {
             out.add(new InvoiceFileItem("pdf", "pdf", StoredFiles.baseName(d.pdfPath()), storage.engineFileSize(d.pdfPath()),
                     InvoiceCodes.pdfOrigin(d.pdfSource()), d.pdfFetchedAt(), false, base + "pdf"));
         }
-        for (FileRow f : files.listActive(guard.ownerId(), d.id())) {
+        List<FileRow> uploaded = files.listActive(guard.ownerId(), d.id());
+        for (FileRow f : uploaded) {
             out.add(toItem(f, base));
+        }
+        // GDT copy (printed from the GDT view page in the export-xml ZIP): a stand-in shown only while there is
+        // no provider original — engine PDF or uploaded PDF. Kind pdf_gdt so it never counts as "has PDF".
+        boolean hasOriginal = d.pdfPath() != null || uploaded.stream().anyMatch(f -> "PDF".equals(f.kind()));
+        if (!hasOriginal && d.gdtPdfPath() != null) {
+            out.add(new InvoiceFileItem(GDT_PDF, "pdf_gdt", StoredFiles.baseName(d.gdtPdfPath()),
+                    storage.engineFileSize(d.gdtPdfPath()), "gdt", d.xmlFetchedAt(), false, base + GDT_PDF));
         }
         return out;
     }
@@ -100,9 +111,9 @@ public class InvoiceFileService {
         String ownerId = guard.ownerId();
         Path path;
         String name;
-        if ("xml".equals(fileId) || "pdf".equals(fileId)) {
+        if ("xml".equals(fileId) || "pdf".equals(fileId) || GDT_PDF.equals(fileId)) {
             DetailRow d = details.find(ownerId, id).orElseThrow(() -> new BusinessException("WBE3005"));
-            String rel = "xml".equals(fileId) ? d.xmlPath() : d.pdfPath();
+            String rel = "xml".equals(fileId) ? d.xmlPath() : "pdf".equals(fileId) ? d.pdfPath() : d.gdtPdfPath();
             if (rel == null) throw new BusinessException("WBE3006");
             path = storage.engineFile(rel);
             name = StoredFiles.baseName(rel);
@@ -195,7 +206,7 @@ public class InvoiceFileService {
     public void delete(String invoiceId, String fileId) {
         long id = WeInvoiceIds.parse(invoiceId, "id");
         guard.requireInvoice(id);
-        if ("xml".equals(fileId) || "pdf".equals(fileId)) {
+        if ("xml".equals(fileId) || "pdf".equals(fileId) || GDT_PDF.equals(fileId)) {
             throw new BusinessException("WBE3007");
         }
         if (files.softDelete(guard.ownerId(), id, uploadSeq(fileId), guard.userId()) == 0) {
