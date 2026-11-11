@@ -52,7 +52,9 @@ replaced invoices.
 **`InvoiceRow`** — `id, direction, issue_date, template_no, symbol, number, seller_tax_id,
 seller_name, buyer_tax_id, buyer_name, partner_tax_id, partner_name, currency, exchange_rate,
 pre_tax, tax, total, total_vnd, status, kind, cqt_code, provider, provider_tax_id, provider_known,
-has_xml, has_pdf, needs_lookup_code, tag_ids[], source, synced_at`.
+has_xml, has_pdf, needs_lookup_code, lookup_code, lookup_code_company, lookup_url, tag_ids[], source, synced_at`.
+`lookup_*` (2026-11-11): as the detail's `lookup` — a hand-typed code / link wins over the XML's; `lookup_url` is the
+invoice's own link only (no provider fallback).
 
 **`kpis`** — `count` (every match), `pre_tax, tax, total` (VND, cancelled and replaced left out),
 `missing_xml` (coded invoices without XML — offer "fetch missing XML" before Excel, UI Spec 3.6),

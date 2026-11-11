@@ -101,6 +101,7 @@ public class InvoiceQueryRepository {
         p.addValue("limit", size).addValue("offset", (long) page * size);
         String sql = db.sql(cte + """
                 SELECT c.*, pv.prvd_nm, pv.prvd_mst AS pv_mst, COALESCE(lc.lkup_cd, lc.lkup_url) AS manual_code,
+                       lc.lkup_cd AS manual_cd, lc.cmpn_cd AS manual_cmpn_cd, lc.lkup_url AS manual_url,
                        (SELECT string_agg(t.tag_seq::text, ',' ORDER BY t.tag_seq)
                           FROM {app}.winv_invc_tag t
                          WHERE t.owner_id = :ownerId AND t.invc_id = c.id) AS tag_ids
@@ -305,7 +306,7 @@ public class InvoiceQueryRepository {
         return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
     }
 
-    private static final RowMapper<InvoiceRow> ROW_MAPPER = (rs, n) -> {
+    static final RowMapper<InvoiceRow> ROW_MAPPER = (rs, n) -> {
         String symbol = rs.getString("khhdon");
         BigDecimal total = rs.getBigDecimal("tong_tien");
         BigDecimal vndRate = rs.getBigDecimal("vnd_rate");
@@ -313,6 +314,10 @@ public class InvoiceQueryRepository {
         boolean known = rs.getString("pv_mst") != null;
         boolean hasCode = rs.getString("manual_code") != null
                 || notBlank(rs.getString("ma_tra_cuu")) || notBlank(rs.getString("lookup_url"));
+        // Same resolution as the detail's lookup block: a hand-typed code / link wins over the XML's.
+        boolean manual = rs.getString("manual_code") != null;
+        String lookupCode = manual ? rs.getString("manual_cd") : blankToNull(rs.getString("ma_tra_cuu"));
+        String lookupUrl = manual ? rs.getString("manual_url") : blankToNull(rs.getString("lookup_url"));
         String tagIds = rs.getString("tag_ids");
         return new InvoiceRow(
                 String.valueOf(rs.getLong("id")),
@@ -342,10 +347,17 @@ public class InvoiceQueryRepository {
                 rs.getBoolean("has_xml"),
                 rs.getBoolean("has_pdf"),
                 providerMst != null && known && !hasCode,
+                lookupCode,
+                manual ? rs.getString("manual_cmpn_cd") : null,
+                lookupUrl,
                 tagIds == null ? List.of() : Arrays.asList(tagIds.split(",")),
                 InvoiceCodes.recordOrigin(rs.getString("rec_src")),
                 WeInvoiceTime.iso(rs, "first_seen_at"));
     };
+
+    private static String blankToNull(String s) {
+        return notBlank(s) ? s : null;
+    }
 
     private static boolean notBlank(String s) {
         return s != null && !s.isBlank();

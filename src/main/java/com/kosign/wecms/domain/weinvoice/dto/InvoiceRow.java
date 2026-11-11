@@ -36,6 +36,10 @@ public record InvoiceRow(
         boolean hasXml,
         boolean hasPdf,
         boolean needsLookupCode,
+        /* Lookup code / link for the provider portal, as in the detail's lookup block: typed by hand wins over the XML. */
+        String lookupCode,
+        String lookupCodeCompany,
+        String lookupUrl,
         List<String> tagIds,
         String source,
         String syncedAt) {
