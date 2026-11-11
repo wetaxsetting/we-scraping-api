@@ -89,11 +89,15 @@ public class InvoiceFileService {
     List<InvoiceFileItem> list(DetailRow d) {
         List<InvoiceFileItem> out = new ArrayList<>();
         String base = "/api/v1/weinvoice/invoices/" + d.id() + "/files/";
-        if (d.xmlPath() != null) {
+        List<FileRow> uploaded = files.listActive(guard.ownerId(), d.id());
+        // One XML slot too: an XML uploaded because the engine XML is not on this server takes its place.
+        FileRow uploadedXml = uploaded.stream().filter(f -> "XML".equals(f.kind())).reduce((a, b) -> b).orElse(null);
+        if (uploadedXml != null) {
+            out.add(toItem(uploadedXml, base));
+        } else if (d.xmlPath() != null) {
             out.add(new InvoiceFileItem("xml", "xml", StoredFiles.baseName(d.xmlPath()), storage.engineFileSize(d.xmlPath()),
                     InvoiceCodes.xmlOrigin(d.detailSource()), d.xmlFetchedAt(), false, base + "xml"));
         }
-        List<FileRow> uploaded = files.listActive(guard.ownerId(), d.id());
         FileRow uploadedPdf = uploaded.stream().filter(f -> "PDF".equals(f.kind())).reduce((a, b) -> b).orElse(null);
         Long enginePdfSize = d.pdfPath() != null ? storage.engineFileSize(d.pdfPath()) : null;
         if (uploadedPdf != null) {
@@ -103,7 +107,7 @@ public class InvoiceFileService {
                     InvoiceCodes.pdfOrigin(d.pdfSource()), d.pdfFetchedAt(), false, base + "pdf"));
         }
         for (FileRow f : uploaded) {
-            if (f != uploadedPdf && !"PDF".equals(f.kind())) out.add(toItem(f, base));
+            if (!"PDF".equals(f.kind()) && !"XML".equals(f.kind())) out.add(toItem(f, base));
         }
         // GDT copy (printed from the GDT view page in the export-xml ZIP): a stand-in while there is no readable
         // original — no uploaded PDF, and no engine PDF or its file is not on this server. Kind pdf_gdt so it never
@@ -186,7 +190,10 @@ public class InvoiceFileService {
             }
             case "xml" -> {
                 XmlKeyReader.XmlKey key = XmlKeyReader.read(bytes);
-                boolean hasXml = d.xmlPath() != null || uploaded.stream().anyMatch(f -> "XML".equals(f.kind()));
+                // The engine XML counts only when its file is on this server: one fetched by another machine's
+                // engine ("not available yet") can be replaced by an upload.
+                boolean engineXmlHere = d.xmlPath() != null && storage.engineFileSize(d.xmlPath()) != null;
+                boolean hasXml = engineXmlHere || uploaded.stream().anyMatch(f -> "XML".equals(f.kind()));
                 if (hasXml) {
                     yield new FileUploadResult("duplicate", List.of(), null, null);
                 }
@@ -200,8 +207,9 @@ public class InvoiceFileService {
                 Stored stored = db.tx().execute(s -> {
                     long seq = files.insert(ownerId, ref.companyMst(), id, "XML", xmlName,
                             saved.size(), saved.relativePath(), saved.sha256(), !keyOk, guard.userId());
-                    // Only an XML that is this invoice's goes to the engine to fill invoice_xml / details.
-                    Long rq = keyOk ? requests.queue(ref.companyMst(), EngineRequestService.IMPORT, "MANUAL",
+                    // Only an XML that is this invoice's goes to the engine to fill invoice_xml / details — and only
+                    // when the record has none yet (a stand-in for a missing engine file is not re-parsed).
+                    Long rq = keyOk && d.xmlPath() == null ? requests.queue(ref.companyMst(), EngineRequestService.IMPORT, "MANUAL",
                             Map.of("invoice_id", id, "file_id", seq)) : null;
                     return new Stored(files.find(ownerId, id, seq).orElseThrow(), rq);
                 });

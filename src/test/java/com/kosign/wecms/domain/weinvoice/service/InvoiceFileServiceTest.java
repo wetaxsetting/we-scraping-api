@@ -133,11 +133,26 @@ class InvoiceFileServiceTest {
     }
 
     @Test
-    void uploadedXmlStaysListedNextToThePdf() {
-        when(details.find(BIZ, ID)).thenReturn(Optional.of(detail(null, "pdf/a.pdf")));
+    void uploadedXmlTakesTheXmlSlot() {
+        when(details.find(BIZ, ID)).thenReturn(Optional.of(detail("xml/a.xml", "pdf/a.pdf")));
         when(files.listActive(BIZ, ID)).thenReturn(List.of(
                 new FileRow(8L, ID, "XML", "UPLOAD", "1_C26TAA_123.xml", 15, "b/x.xml", "ab", false, "u1", "2026-11-11T00:00:00Z")));
-        assertThat(service.list("77")).extracting(i -> i.id()).containsExactly("pdf", "u8");
+        assertThat(service.list("77")).extracting(i -> i.id()).containsExactly("u8", "pdf");
+    }
+
+    @Test
+    void xmlCanBeUploadedWhenTheEngineXmlIsNotOnThisServerAndIsNotReparsed() {
+        when(details.find(BIZ, ID)).thenReturn(Optional.of(detail("xml/a.xml", null)));
+        when(files.listActive(BIZ, ID)).thenReturn(List.of());
+        when(storage.engineFileSize("xml/a.xml")).thenReturn(null);
+        MockMultipartFile f = new MockMultipartFile("file", "a.xml", "text/xml",
+                XmlKeyReaderTest.XML.getBytes(StandardCharsets.UTF_8));
+        FileUploadResult r = service.upload("77", "xml", f, null);
+        assertThat(r.status()).isEqualTo("ok");
+        assertThat(r.requestId()).isNull();
+        verify(requests, never()).queue(any(), any(), any(), any());
+        verify(files).insert(eq(BIZ), eq("1201496252"), eq(ID), eq("XML"), eq("1_C26TAA_123.xml"), anyLong(), any(), any(),
+                eq(false), eq("u1"));
     }
 
     @Test
@@ -231,6 +246,7 @@ class InvoiceFileServiceTest {
     void xmlOnARecordThatHasOneIsDuplicate() {
         when(details.find(BIZ, ID)).thenReturn(Optional.of(detail("xml/a.xml", null)));
         when(files.listActive(BIZ, ID)).thenReturn(List.of());
+        when(storage.engineFileSize("xml/a.xml")).thenReturn(2048L);   // engine XML is on this server
         MockMultipartFile f = new MockMultipartFile("file", "a.xml", "text/xml",
                 XmlKeyReaderTest.XML.getBytes(StandardCharsets.UTF_8));
         assertThat(service.upload("77", "xml", f, null).status()).isEqualTo("duplicate");

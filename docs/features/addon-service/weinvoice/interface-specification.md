@@ -84,7 +84,8 @@ number) nor the text of the first pages (number + seller MST, CQT code, lookup c
 belongs to the invoice → `needs_confirm` `pdf_not_matched` (resend with `confirm=attach_anyway`);
 an existing PDF → `pdf_exists` (`confirm=replace`). An XML whose key differs from the invoice →
 `xml_key_mismatch`; a matching XML is handed to the engine (`request_id`) to fill the record. The
-record already has an XML → `duplicate`.
+record already has an XML → `duplicate` — unless the engine XML file is not on this server (`size: null`): then the
+upload is accepted, takes the XML slot and is not re-parsed (the record already has its data).
 
 ## GDT connections (screen 06)
 

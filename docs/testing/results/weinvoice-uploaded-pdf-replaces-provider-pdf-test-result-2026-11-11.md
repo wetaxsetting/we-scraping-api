@@ -26,6 +26,7 @@ Branch: `sit` · Commit: NOT COMMITTED
 | `JAVA_HOME=…/eclipse_adoptium-21… ./gradlew test --offline --tests "com.kosign.wecms.domain.weinvoice.*"` | PASS | 110 tests, 0 failures, 0 errors (15 classes) |
 | `InvoiceFileServiceTest` | PASS | 19 tests (3 new: uploaded PDF replaces provider PDF · provider PDF missing → `size null` + GDT copy listed · uploaded XML stays listed next to the PDF; 2 updated: stored name `1_C26TAA_123.pdf`, layout by invoice date) |
 | `StoredFilesInvoiceLayoutTest` (new) | PASS | 2 tests: path `<owner>/invoices/<MST>/2026/11/<seller>/1_C26TWE_4.pdf`; second upload → `_2`, first file kept |
+| Addendum (XML upload when the engine XML is not on this server): same command | PASS | 111 tests, 0 failures; `InvoiceFileServiceTest` 20 |
 
 ## Regression Tests
 

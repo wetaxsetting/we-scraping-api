@@ -97,3 +97,25 @@ NONE — no schema or data change. New uploads only get a different relative pat
   copied over or the engine runs on one machine only (operations).
 - The GDT copy is only rendered where the export ZIP is; for 1C26TWE-4 the ZIP is on the laptop.
 - Uploads made before this change keep their uuid file names on disk.
+
+## Addendum (2026-11-11): XML upload when the engine XML is not on this server
+
+**Request (developer, 2026-11-11):** "đc làm luôn" — allow uploading an XML in the invoice detail when the record's
+XML is not on this server (same file split as the PDF).
+
+**Current behavior:** `upload("xml")` answers `duplicate` whenever `invoice_xml` has a row or an XML was uploaded,
+even when the engine XML file is not on this server's disk (shown as "chưa có").
+
+**Planned:** an engine XML counts as present only when its file is on this server. Missing → the upload is accepted
+(key must match, or `attach_anyway`), shown in the **XML slot** in place of the engine XML, and **not** handed to the
+engine (the record is already parsed). With no engine XML row at all the matching XML is still handed to the engine
+(`IMPORT`) as before. Engine XML on disk, or an uploaded XML already active → `duplicate` as before.
+
+**Implementation:** `upload("xml")` — `engineXmlHere = xmlPath != null && engineFileSize(xmlPath) != null`; `duplicate`
+only when `engineXmlHere` or an uploaded XML is active; `IMPORT` queued only when `keyOk && xmlPath == null`.
+`list()` — one XML slot: the latest uploaded XML replaces the engine XML item.
+
+**Verification:** `./gradlew test --offline --tests "com.kosign.wecms.domain.weinvoice.*"` — PASS, 111 tests
+(`InvoiceFileServiceTest` 20: new `xmlCanBeUploadedWhenTheEngineXmlIsNotOnThisServerAndIsNotReparsed`,
+`uploadedXmlTakesTheXmlSlot`; `xmlOnARecordThatHasOneIsDuplicate` now pins the engine file as present). Web needs no
+change (an `ok` upload without `request_id` already reloads the record). Manual on .13: NOT RUN.
