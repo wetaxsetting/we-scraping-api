@@ -84,6 +84,42 @@ public class StoredFiles {
         return new Saved(relative, bytes.length, sha256(bytes));
     }
 
+    /**
+     * Saves an invoice's own XML / PDF in the engine's layout:
+     * {@code <owner_id>/invoices/<company MST>/<yyyy>/<MM>/<seller MST>/<fileName>} (invoice date). A file
+     * already there (an earlier upload of the same invoice) is kept: the new one gets {@code _2}, {@code _3} …
+     */
+    public Saved saveInvoiceFile(String ownerId, String companyMst, String issueDate, String sellerMst,
+                                 String fileName, byte[] bytes) {
+        if (storageRoot == null) {
+            throw new BusinessException("WBE3000");
+        }
+        String yyyy = String.valueOf(LocalDate.now().getYear());
+        String mm = String.format("%02d", LocalDate.now().getMonthValue());
+        if (issueDate != null && issueDate.matches("\\d{4}-\\d{2}.*")) {
+            yyyy = issueDate.substring(0, 4);
+            mm = issueDate.substring(5, 7);
+        }
+        String dir = String.join("/", safeSegment(ownerId), "invoices", safeSegment(companyMst), yyyy, mm,
+                safeSegment(sellerMst));
+        String ext = extensionOf(fileName);
+        String stem = safeSegment(ext.isEmpty() ? fileName : fileName.substring(0, fileName.length() - ext.length()));
+        for (int n = 1; n < 1000; n++) {
+            String relative = dir + "/" + stem + (n == 1 ? "" : "_" + n) + ext;
+            Path target = resolve(storageRoot, relative);
+            try {
+                Files.createDirectories(target.getParent());
+                Files.write(target, bytes, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+                return new Saved(relative, bytes.length, sha256(bytes));
+            } catch (java.nio.file.FileAlreadyExistsException e) {
+                // next suffix
+            } catch (IOException e) {
+                throw new UncheckedIOException("Failed to store uploaded file", e);
+            }
+        }
+        throw new IllegalStateException("Too many uploads of " + stem);
+    }
+
     public static String sha256(byte[] bytes) {
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));

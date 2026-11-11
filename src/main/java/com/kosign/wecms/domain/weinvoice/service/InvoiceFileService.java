@@ -79,7 +79,13 @@ public class InvoiceFileService {
         return list(d);
     }
 
-    /** Files of an invoice already loaded by the caller (ownership check done). */
+    /**
+     * Files of an invoice already loaded by the caller (ownership check done).
+     *
+     * <p>One PDF slot: an uploaded PDF (the user chose "replace") wins over the provider PDF the engine stored.
+     * An engine file the DB points at but this server's disk does not have keeps {@code size = null} (the web
+     * shows it as "not available yet"). The GDT copy stands in while there is no readable original.
+     */
     List<InvoiceFileItem> list(DetailRow d) {
         List<InvoiceFileItem> out = new ArrayList<>();
         String base = "/api/v1/weinvoice/invoices/" + d.id() + "/files/";
@@ -87,17 +93,22 @@ public class InvoiceFileService {
             out.add(new InvoiceFileItem("xml", "xml", StoredFiles.baseName(d.xmlPath()), storage.engineFileSize(d.xmlPath()),
                     InvoiceCodes.xmlOrigin(d.detailSource()), d.xmlFetchedAt(), false, base + "xml"));
         }
-        if (d.pdfPath() != null) {
-            out.add(new InvoiceFileItem("pdf", "pdf", StoredFiles.baseName(d.pdfPath()), storage.engineFileSize(d.pdfPath()),
+        List<FileRow> uploaded = files.listActive(guard.ownerId(), d.id());
+        FileRow uploadedPdf = uploaded.stream().filter(f -> "PDF".equals(f.kind())).reduce((a, b) -> b).orElse(null);
+        Long enginePdfSize = d.pdfPath() != null ? storage.engineFileSize(d.pdfPath()) : null;
+        if (uploadedPdf != null) {
+            out.add(toItem(uploadedPdf, base));
+        } else if (d.pdfPath() != null) {
+            out.add(new InvoiceFileItem("pdf", "pdf", StoredFiles.baseName(d.pdfPath()), enginePdfSize,
                     InvoiceCodes.pdfOrigin(d.pdfSource()), d.pdfFetchedAt(), false, base + "pdf"));
         }
-        List<FileRow> uploaded = files.listActive(guard.ownerId(), d.id());
         for (FileRow f : uploaded) {
-            out.add(toItem(f, base));
+            if (f != uploadedPdf && !"PDF".equals(f.kind())) out.add(toItem(f, base));
         }
-        // GDT copy (printed from the GDT view page in the export-xml ZIP): a stand-in shown only while there is
-        // no provider original — engine PDF or uploaded PDF. Kind pdf_gdt so it never counts as "has PDF".
-        boolean hasOriginal = d.pdfPath() != null || uploaded.stream().anyMatch(f -> "PDF".equals(f.kind()));
+        // GDT copy (printed from the GDT view page in the export-xml ZIP): a stand-in while there is no readable
+        // original — no uploaded PDF, and no engine PDF or its file is not on this server. Kind pdf_gdt so it never
+        // counts as "has PDF".
+        boolean hasOriginal = uploadedPdf != null || enginePdfSize != null;
         if (!hasOriginal && d.gdtPdfPath() != null) {
             out.add(new InvoiceFileItem(GDT_PDF, "pdf_gdt", StoredFiles.baseName(d.gdtPdfPath()),
                     storage.engineFileSize(d.gdtPdfPath()), "gdt", d.xmlFetchedAt(), false, base + GDT_PDF));
@@ -162,10 +173,12 @@ public class InvoiceFileService {
                 if (!reasons.isEmpty()) {
                     yield new FileUploadResult("needs_confirm", reasons, null, null);
                 }
-                StoredFiles.Saved saved = storage.save(ownerId, "invoices", file.getOriginalFilename(), bytes);
+                String pdfName = standardName(ref, ".pdf");
+                StoredFiles.Saved saved = storage.saveInvoiceFile(ownerId, ref.companyMst(), d.issueDate(),
+                        ref.sellerTaxId(), pdfName, bytes);
                 FileRow row = db.tx().execute(s -> {
                     files.retireKind(ownerId, id, "PDF", guard.userId());
-                    long seq = files.insert(ownerId, ref.companyMst(), id, "PDF", nameOf(file, "invoice.pdf"),
+                    long seq = files.insert(ownerId, ref.companyMst(), id, "PDF", pdfName,
                             saved.size(), saved.relativePath(), saved.sha256(), !matched, guard.userId());
                     return files.find(ownerId, id, seq).orElseThrow();
                 });
@@ -181,9 +194,11 @@ public class InvoiceFileService {
                 if (!keyOk && !confirms.contains("attach_anyway")) {
                     yield new FileUploadResult("needs_confirm", List.of("xml_key_mismatch"), null, null);
                 }
-                StoredFiles.Saved saved = storage.save(ownerId, "invoices", file.getOriginalFilename(), bytes);
+                String xmlName = standardName(ref, ".xml");
+                StoredFiles.Saved saved = storage.saveInvoiceFile(ownerId, ref.companyMst(), d.issueDate(),
+                        ref.sellerTaxId(), xmlName, bytes);
                 Stored stored = db.tx().execute(s -> {
-                    long seq = files.insert(ownerId, ref.companyMst(), id, "XML", nameOf(file, "invoice.xml"),
+                    long seq = files.insert(ownerId, ref.companyMst(), id, "XML", xmlName,
                             saved.size(), saved.relativePath(), saved.sha256(), !keyOk, guard.userId());
                     // Only an XML that is this invoice's goes to the engine to fill invoice_xml / details.
                     Long rq = keyOk ? requests.queue(ref.companyMst(), EngineRequestService.IMPORT, "MANUAL",
@@ -215,6 +230,11 @@ public class InvoiceFileService {
     }
 
     private record Stored(FileRow row, Long requestId) {
+    }
+
+    /** {@code <mẫu>_<ký hiệu>_<số><ext>} — the engine's file name for an invoice (e.g. {@code 1_C26TWE_4.pdf}). */
+    static String standardName(InvoiceRef ref, String ext) {
+        return ref.templateNo() + "_" + ref.symbol() + "_" + ref.number() + ext;
     }
 
     private static InvoiceFileItem toItem(FileRow f, String base) {

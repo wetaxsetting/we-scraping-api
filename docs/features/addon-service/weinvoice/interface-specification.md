@@ -69,8 +69,15 @@ xml_task, pdf_task {status, attempts, error_kind, error, next_run_at, updated_at
 `related.relation`: `replaces` · `adjusts` (this invoice names the other) · `replaced_by` ·
 `adjusted_by` (the other names this one).
 
-**`InvoiceFileItem`** — `id, kind (xml · pdf · attachment), name, size, origin (gdt · vendor · email ·
+**`InvoiceFileItem`** — `id, kind (xml · pdf · pdf_gdt · attachment), name, size, origin (gdt · vendor · email ·
 upload), added_at, deletable, url`.
+
+File list (2026-11-11): one PDF slot — an uploaded PDF replaces the provider PDF (`pdf`) in the list. `size: null`
+= the record points at an engine file this server's disk does not have (fetched by another machine): the item
+stays listed, the web shows "chưa có", downloading it answers `WBE3010`. `pdf_gdt` (id `pdf-gdt`, GDT copy) is
+listed while there is no readable original: no uploaded PDF and no provider PDF file on this server. Uploaded
+invoice XML / PDF are named `<mẫu>_<ký hiệu>_<số>.xml|pdf` and stored as
+`<owner>/invoices/<company MST>/<yyyy>/<MM>/<seller MST>/<name>` (invoice date; `_2`, `_3` … for later uploads).
 
 Upload rules (UI Spec 3.5): a PDF must start with `%PDF-`; when neither the file name (symbol +
 number) nor the text of the first pages (number + seller MST, CQT code, lookup code) proves it

@@ -60,6 +60,8 @@ class InvoiceFileServiceTest {
         when(guard.userId()).thenReturn("u1");
         when(guard.requireInvoice(ID)).thenReturn(new InvoiceRef(ID, "1201496252", "mua", "0101243150", 1, "C26TAA", 123L));
         when(storage.save(eq(BIZ), eq("invoices"), any(), any())).thenReturn(new StoredFiles.Saved("b/invoices/x.pdf", 15, "ab"));
+        when(storage.saveInvoiceFile(eq(BIZ), any(), any(), any(), any(), any()))
+                .thenReturn(new StoredFiles.Saved("b/invoices/1201496252/2026/10/0101243150/1_C26TAA_123.pdf", 15, "ab"));
         when(files.insert(any(), any(), anyLong(), any(), any(), anyLong(), any(), any(), anyBoolean(), any())).thenReturn(9L);
         when(files.find(BIZ, ID, 9L)).thenReturn(Optional.of(
                 new FileRow(9L, ID, "PDF", "UPLOAD", "f.pdf", 15, "b/invoices/x.pdf", "ab", false, "u1", "2026-11-02T00:00:00Z")));
@@ -111,6 +113,34 @@ class InvoiceFileServiceTest {
     }
 
     @Test
+    void uploadedPdfReplacesTheProviderPdfInTheList() {
+        when(details.find(BIZ, ID)).thenReturn(Optional.of(withGdtPdf(detail("xml/a.xml", "pdf/a.pdf"), GDT_PDF_PATH)));
+        when(files.listActive(BIZ, ID)).thenReturn(List.of(
+                new FileRow(9L, ID, "PDF", "UPLOAD", "1_C26TAA_123.pdf", 15, "b/x.pdf", "ab", false, "u1", "2026-11-11T00:00:00Z")));
+        assertThat(service.list("77")).extracting(i -> i.id() + ":" + i.origin())
+                .containsExactly("xml:gdt", "u9:upload");
+    }
+
+    @Test
+    void providerPdfMissingOnThisServerKeepsNullSizeAndTheGdtCopyStandsIn() {
+        when(details.find(BIZ, ID)).thenReturn(Optional.of(withGdtPdf(detail("xml/a.xml", "pdf/a.pdf"), GDT_PDF_PATH)));
+        when(files.listActive(BIZ, ID)).thenReturn(List.of());
+        when(storage.engineFileSize("pdf/a.pdf")).thenReturn(null);
+        when(storage.engineFileSize(GDT_PDF_PATH)).thenReturn(4096L);
+        var items = service.list("77");
+        assertThat(items).extracting(i -> i.id()).containsExactly("xml", "pdf", "pdf-gdt");
+        assertThat(items.get(1).size()).isNull();
+    }
+
+    @Test
+    void uploadedXmlStaysListedNextToThePdf() {
+        when(details.find(BIZ, ID)).thenReturn(Optional.of(detail(null, "pdf/a.pdf")));
+        when(files.listActive(BIZ, ID)).thenReturn(List.of(
+                new FileRow(8L, ID, "XML", "UPLOAD", "1_C26TAA_123.xml", 15, "b/x.xml", "ab", false, "u1", "2026-11-11T00:00:00Z")));
+        assertThat(service.list("77")).extracting(i -> i.id()).containsExactly("pdf", "u8");
+    }
+
+    @Test
     void gdtCopyDownloadsFromTheEngineOutput(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tmp) throws Exception {
         java.nio.file.Path f = java.nio.file.Files.write(tmp.resolve("g.pdf"), PDF);
         when(details.find(BIZ, ID)).thenReturn(Optional.of(withGdtPdf(detail("xml/a.xml", null), GDT_PDF_PATH)));
@@ -142,7 +172,7 @@ class InvoiceFileServiceTest {
         assertThat(r.status()).isEqualTo("ok");
         assertThat(r.file().id()).isEqualTo("u9");
         assertThat(r.file().deletable()).isTrue();
-        verify(files).insert(eq(BIZ), eq("1201496252"), eq(ID), eq("PDF"), eq("1C26TAA_123.pdf"), anyLong(), any(), any(),
+        verify(files).insert(eq(BIZ), eq("1201496252"), eq(ID), eq("PDF"), eq("1_C26TAA_123.pdf"), anyLong(), any(), any(),
                 eq(false), eq("u1"));
     }
 
@@ -154,7 +184,7 @@ class InvoiceFileServiceTest {
         FileUploadResult r = service.upload("77", "pdf", f, null);
         assertThat(r.status()).isEqualTo("needs_confirm");
         assertThat(r.reasons()).containsExactly("pdf_exists", "pdf_not_matched");
-        verify(storage, never()).save(any(), any(), any(), any());
+        verify(storage, never()).saveInvoiceFile(any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -165,8 +195,11 @@ class InvoiceFileServiceTest {
         FileUploadResult r = service.upload("77", "pdf", f, List.of("replace", "ATTACH_ANYWAY"));
         assertThat(r.status()).isEqualTo("ok");
         verify(files).retireKind(BIZ, ID, "PDF", "u1");
-        verify(files).insert(eq(BIZ), eq("1201496252"), eq(ID), eq("PDF"), eq("scan.pdf"), anyLong(), any(), any(),
+        verify(files).insert(eq(BIZ), eq("1201496252"), eq(ID), eq("PDF"), eq("1_C26TAA_123.pdf"), anyLong(), any(), any(),
                 eq(true), eq("u1"));
+        // stored in the engine's layout by invoice date, not under the upload's own name
+        verify(storage).saveInvoiceFile(eq(BIZ), eq("1201496252"), eq("2026-10-01"), eq("0101243150"),
+                eq("1_C26TAA_123.pdf"), any());
     }
 
     @Test
@@ -201,7 +234,7 @@ class InvoiceFileServiceTest {
         MockMultipartFile f = new MockMultipartFile("file", "a.xml", "text/xml",
                 XmlKeyReaderTest.XML.getBytes(StandardCharsets.UTF_8));
         assertThat(service.upload("77", "xml", f, null).status()).isEqualTo("duplicate");
-        verify(storage, never()).save(any(), any(), any(), any());
+        verify(storage, never()).saveInvoiceFile(any(), any(), any(), any(), any(), any());
     }
 
     @Test
