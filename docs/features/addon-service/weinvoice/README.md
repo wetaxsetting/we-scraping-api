@@ -53,7 +53,7 @@ PostgreSQL — WeInvoice database (= engine database)        PostgreSQL — WeCM
 |---|---|
 | `WECMS_WEINVOICE_ENABLED` | Master switch; `false` → no pool, every endpoint answers `WBE3000` |
 | `WECMS_WEINVOICE_DB_URL` / `_USERNAME` / `_PASSWORD` / `_MAX_POOL_SIZE` | WeInvoice database |
-| `WECMS_WEINVOICE_ENGINE_SCHEMA` / `_APP_SCHEMA` | Engine tables (e.g. `public`) / WeInvoice tables (`weinvoice`) |
+| `WECMS_WEINVOICE_ENGINE_SCHEMA` / `_APP_SCHEMA` | Engine tables (`public` until the 2026-11-12 move, then `weinvoice` — [record](../../../issues/weinvoice-engine-tables-into-weinvoice-schema-2026-11-12.md)) / WeInvoice tables (`weinvoice`) |
 | `WECMS_WEINVOICE_ENGINE_OUTPUT_DIR` / `_STORAGE_ROOT` | Engine files / upload root |
 | `WECMS_WEINVOICE_SECRET_KEY` | Base64 of 32 bytes — AES-256-GCM key of the stored GDT passwords; the engine needs the same value |
 | `WECMS_WEINVOICE_PARTNER_API_KEYS` | Comma-separated keys accepted from WeCMS; empty = Partner API closed |
