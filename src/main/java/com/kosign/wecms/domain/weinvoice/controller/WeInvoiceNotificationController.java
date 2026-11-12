@@ -5,7 +5,7 @@ import com.kosign.wecms.domain.weinvoice.dto.NotificationListResponse;
 import com.kosign.wecms.domain.weinvoice.dto.NotificationReadAllRequest;
 import com.kosign.wecms.domain.weinvoice.dto.NotificationReadRequest;
 import com.kosign.wecms.domain.weinvoice.dto.UnreadCountResponse;
-import com.kosign.wecms.domain.weinvoice.service.NotificationService;
+import com.kosign.wecms.domain.weinvoice.service.WeInvoiceNotificationService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -28,7 +28,7 @@ import org.springframework.web.bind.annotation.RestController;
 @Validated
 public class WeInvoiceNotificationController {
 
-    private final NotificationService notifications;
+    private final WeInvoiceNotificationService notifications;
 
     /** {@code filter} mst (default; needs {@code company_mst}) · all · action; {@code size} default 20, max 100. */
     @GetMapping

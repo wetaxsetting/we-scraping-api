@@ -91,8 +91,8 @@ API (2026-11-12). Files (under `src/main/java/com/kosign/wecms/domain/weinvoice/
 | File | Role |
 |---|---|
 | `controller/WeInvoiceNotificationController.java` | 4 endpoints; the two writes return `ResponseEntity.noContent()` |
-| `service/NotificationService.java` | filters + ownership, read state, item shape, sort (newest first, then id), paging (20 / max 100) |
-| `repository/NotificationRepository.java` | one aggregation statement (`bucketSql`), read rows, `markRead` / `markAll` (+ prune), `to_regclass` check of V2 |
+| `service/WeInvoiceNotificationService.java` | filters + ownership, read state, item shape, sort (newest first, then id), paging (20 / max 100) |
+| `repository/WeInvoiceNotificationRepository.java` | one aggregation statement (`bucketSql`), read rows, `markRead` / `markAll` (+ prune), `to_regclass` check of V2 |
 | `common/NotificationKey.java` | id format, strict parse of client ids, markers, `mua`/`ban` → `purchase`/`sales`, type → `action` |
 | `common/NotificationReadState.java` | the read rule (own id, or `at` ≤ the newer of the two markers) |
 | `dto/NotificationItem`, `NotificationListResponse`, `UnreadCountResponse`, `NotificationReadRequest`, `NotificationReadAllRequest` | wire records |
@@ -196,3 +196,8 @@ Overall: READY FOR DBA / READY FOR MANUAL COMMIT (API). Web half: separate repos
   or mailbox in error for that owner).
 - Re-run after the web fix: backend weinvoice package + `EndpointAuthorizationCoverageTest` 190 tests, 0 failures; web
   `vitest components lib/api/weinvoice` 174 passed, `tsc` 0 source errors, eslint clean.
+
+
+**Startup fix (2026-11-12, after `eeea5d6`):** the service clashed with the payment module's `notificationService` bean and
+the app did not start → classes renamed `WeInvoiceNotificationService` / `WeInvoiceNotificationRepository`, guard test
+`ComponentBeanNameUniquenessTest` — [bug record](../../../bugs/weinvoice-notification-service-bean-name-conflict-fix-2026-11-12.md).

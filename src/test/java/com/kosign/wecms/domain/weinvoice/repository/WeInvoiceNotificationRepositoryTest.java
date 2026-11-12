@@ -3,8 +3,8 @@ package com.kosign.wecms.domain.weinvoice.repository;
 import com.kosign.wecms.domain.weinvoice.WeInvoiceTestProps;
 import com.kosign.wecms.domain.weinvoice.common.NotificationKey.Type;
 import com.kosign.wecms.domain.weinvoice.config.WeInvoiceDb;
-import com.kosign.wecms.domain.weinvoice.repository.NotificationRepository.BucketRow;
-import com.kosign.wecms.domain.weinvoice.repository.NotificationRepository.Scope;
+import com.kosign.wecms.domain.weinvoice.repository.WeInvoiceNotificationRepository.BucketRow;
+import com.kosign.wecms.domain.weinvoice.repository.WeInvoiceNotificationRepository.Scope;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -38,23 +38,23 @@ import static org.mockito.Mockito.when;
  * scoped to the owner's active tax codes, leaves out what the user did (uploads, test data), and the mailbox
  * part is only present when V2 is installed.
  */
-class NotificationRepositoryTest {
+class WeInvoiceNotificationRepositoryTest {
 
     private final WeInvoiceDb db = mock(WeInvoiceDb.class);
     private final NamedParameterJdbcTemplate jdbc = mock(NamedParameterJdbcTemplate.class);
     private final AtomicLong now = new AtomicLong(1_000_000L);
-    private NotificationRepository repo;
+    private WeInvoiceNotificationRepository repo;
 
     @BeforeEach
     void setUp() {
         when(db.jdbc()).thenReturn(jdbc);
         when(db.sql(anyString())).thenAnswer(inv -> inv.getArgument(0));
-        repo = new NotificationRepository(db, now::get);
+        repo = new WeInvoiceNotificationRepository(db, now::get);
     }
 
     @Test
     void allTypesAggregatePerHourInUtcAndScopeToTheOwnersActiveTaxCodes() {
-        String sql = NotificationRepository.bucketSql(false, Scope.ALL_TYPES, false, true);
+        String sql = WeInvoiceNotificationRepository.bucketSql(false, Scope.ALL_TYPES, false, true);
         assertThat(sql).contains(
                 "FROM {app}.winv_cmpn_infm c",
                 "WHERE c.owner_id = :ownerId AND c.del_yn = 'N'",
@@ -77,7 +77,7 @@ class NotificationRepositoryTest {
 
     @Test
     void uploadsAndTestDataAreNotNotified() {
-        String sql = NotificationRepository.bucketSql(false, Scope.ALL_TYPES, false, false);
+        String sql = WeInvoiceNotificationRepository.bucketSql(false, Scope.ALL_TYPES, false, false);
         assertThat(sql).contains(
                 "COALESCE(i.list_raw ->> 'nguon', '') NOT IN ('upload', 'test_data')",
                 "COALESCE(p.source_id, '') NOT IN ('upload', 'test_data')",
@@ -86,7 +86,7 @@ class NotificationRepositoryTest {
 
     @Test
     void errorsComeFromTheConnectionTablesOfTheOwner() {
-        String sql = NotificationRepository.bucketSql(false, Scope.ACTION_ONLY, false, true);
+        String sql = WeInvoiceNotificationRepository.bucketSql(false, Scope.ACTION_ONLY, false, true);
         assertThat(sql).contains(
                 "'GDT_LOGIN_ERROR'", "o.conn_stts IN ('ERROR', 'EXPIRED')",
                 "COALESCE(c.conn_chk_dtm, c.mod_dtm, c.reg_dtm) AS err_dtm",
@@ -99,14 +99,14 @@ class NotificationRepositoryTest {
 
     @Test
     void oneMstFilterBindsTheMstAndLeavesOutMailboxesWithoutTaxCode() {
-        String sql = NotificationRepository.bucketSql(true, Scope.ALL_TYPES, false, true);
+        String sql = WeInvoiceNotificationRepository.bucketSql(true, Scope.ALL_TYPES, false, true);
         assertThat(sql).contains("AND c.cmpn_mst = :mst", "m.cmpn_mst IN (SELECT o.mst FROM own o))")
                 .doesNotContain("OR m.cmpn_mst IS NULL");
     }
 
     @Test
     void unreadPathStartsAfterTheReadAllMarkerAndSkipsMonthLists() {
-        String sql = NotificationRepository.bucketSql(false, Scope.ALL_TYPES, true, true);
+        String sql = WeInvoiceNotificationRepository.bucketSql(false, Scope.ALL_TYPES, true, true);
         assertThat(sql).contains(
                 "GREATEST(now() - interval '30 days'",
                 "r.ntfc_key IN ('*', '*|' || c.cmpn_mst)",
@@ -123,7 +123,7 @@ class NotificationRepositoryTest {
         for (Scope scope : Scope.values()) {
             for (boolean oneMst : new boolean[]{false, true}) {
                 for (boolean unreadOnly : new boolean[]{false, true}) {
-                    String sql = NotificationRepository.bucketSql(oneMst, scope, unreadOnly, true);
+                    String sql = WeInvoiceNotificationRepository.bucketSql(oneMst, scope, unreadOnly, true);
                     String body = sql.substring(sql.indexOf("\n)\n") + 3);
                     String firstBranch = body.split("UNION ALL", -1)[0];
                     String selectList = firstBranch.substring(0, firstBranch.indexOf("FROM own o"));
@@ -139,7 +139,7 @@ class NotificationRepositoryTest {
     @Test
     void placeholdersResolveToTheConfiguredSchemas() {
         WeInvoiceDb real = new WeInvoiceDb(WeInvoiceTestProps.disabled());
-        String sql = real.sql(NotificationRepository.bucketSql(false, Scope.ALL_TYPES, true, true));
+        String sql = real.sql(WeInvoiceNotificationRepository.bucketSql(false, Scope.ALL_TYPES, true, true));
         assertThat(sql).doesNotContain("{eng}", "{app}")
                 .contains("public.invoices", "weinvoice.winv_cmpn_infm", "weinvoice.winv_ntfc_read", "weinvoice.winv_mlbx_infm");
     }
@@ -157,9 +157,9 @@ class NotificationRepositoryTest {
         assertThat(sql.getAllValues()).allSatisfy(s -> assertThat(s).doesNotContain("winv_mlbx_infm"));
         verify(jdbc, times(1)).queryForObject(anyString(), any(MapSqlParameterSource.class), eq(Boolean.class));
 
-        now.addAndGet(NotificationRepository.MAILBOX_RECHECK_MS);
+        now.addAndGet(WeInvoiceNotificationRepository.MAILBOX_RECHECK_MS);
         repo.buckets("owner", null, Scope.ALL_TYPES, true);   // re-checked: still missing
-        now.addAndGet(NotificationRepository.MAILBOX_RECHECK_MS);
+        now.addAndGet(WeInvoiceNotificationRepository.MAILBOX_RECHECK_MS);
         repo.buckets("owner", null, Scope.ALL_TYPES, true);   // re-checked: now installed
         repo.buckets("owner", null, Scope.ALL_TYPES, true);   // installed is remembered
         verify(jdbc, times(3)).queryForObject(anyString(), any(MapSqlParameterSource.class), eq(Boolean.class));
@@ -192,7 +192,7 @@ class NotificationRepositoryTest {
 
         repo.markRead("owner", List.of("NEW_INVOICES|1201496252|purchase|2026111208"));
         assertThat(batchSql.getValue()).contains("ON CONFLICT (owner_id, ntfc_key) DO NOTHING");
-        assertThat(sql.getAllValues().get(2)).isEqualTo(NotificationRepository.PRUNE_SQL);
+        assertThat(sql.getAllValues().get(2)).isEqualTo(WeInvoiceNotificationRepository.PRUNE_SQL);
 
         repo.markRead("owner", List.of());   // nothing to store → no database call
         verify(tx, times(2)).executeWithoutResult(any());
@@ -212,7 +212,7 @@ class NotificationRepositoryTest {
         when(rs.getString("bucket")).thenReturn("2026111208");
         when(rs.getLong("cnt")).thenReturn(12L);
 
-        BucketRow row = NotificationRepository.MAPPER.mapRow(rs, 0);
+        BucketRow row = WeInvoiceNotificationRepository.MAPPER.mapRow(rs, 0);
         assertThat(row.atDtm()).isEqualTo("20261112083005");
         assertThat(row.months()).containsExactly("2026-11", "2026-10", "2026-09");
         assertThat(row.type()).isEqualTo(Type.NEW_INVOICES);
@@ -227,7 +227,7 @@ class NotificationRepositoryTest {
         when(rs.getString("bucket")).thenReturn("20261112083015.7");
         when(rs.getLong("mailbox_id")).thenReturn(7L);
 
-        BucketRow row = NotificationRepository.MAPPER.mapRow(rs, 0);
+        BucketRow row = WeInvoiceNotificationRepository.MAPPER.mapRow(rs, 0);
         assertThat(row.atDtm()).isEqualTo("20261112083015");
         assertThat(row.months()).isNull();
         assertThat(row.key().id()).isEqualTo("MAILBOX_ERROR|-|-|20261112083015.7");

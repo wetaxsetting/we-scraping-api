@@ -8,9 +8,9 @@ import com.kosign.wecms.domain.weinvoice.dto.NotificationItem;
 import com.kosign.wecms.domain.weinvoice.dto.NotificationListResponse;
 import com.kosign.wecms.domain.weinvoice.repository.CompanyConnectionRepository;
 import com.kosign.wecms.domain.weinvoice.repository.CompanyConnectionRepository.CompanyRow;
-import com.kosign.wecms.domain.weinvoice.repository.NotificationRepository;
-import com.kosign.wecms.domain.weinvoice.repository.NotificationRepository.BucketRow;
-import com.kosign.wecms.domain.weinvoice.repository.NotificationRepository.Scope;
+import com.kosign.wecms.domain.weinvoice.repository.WeInvoiceNotificationRepository;
+import com.kosign.wecms.domain.weinvoice.repository.WeInvoiceNotificationRepository.BucketRow;
+import com.kosign.wecms.domain.weinvoice.repository.WeInvoiceNotificationRepository.Scope;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -35,16 +35,16 @@ import static org.mockito.Mockito.when;
  * Bell service (record weinvoice-notifications-2026-11-12.md): filters, ownership, read state, item shape,
  * paging, and what is stored on "read" / "read all".
  */
-class NotificationServiceTest {
+class WeInvoiceNotificationServiceTest {
 
     private static final String OWNER = "lamine@gmail.com";
     private static final String MST = "1201496252";
     private static final String MST2 = "0108515678-001";
 
-    private final NotificationRepository repo = mock(NotificationRepository.class);
+    private final WeInvoiceNotificationRepository repo = mock(WeInvoiceNotificationRepository.class);
     private final CompanyConnectionRepository companies = mock(CompanyConnectionRepository.class);
     private final CompanyAccessGuard guard = mock(CompanyAccessGuard.class);
-    private final NotificationService service = new NotificationService(repo, companies, guard);
+    private final WeInvoiceNotificationService service = new WeInvoiceNotificationService(repo, companies, guard);
 
     @BeforeEach
     void setUp() {

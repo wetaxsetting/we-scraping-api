@@ -9,7 +9,7 @@
 ## Scope
 
 Backend half of the header bell: `/api/v1/weinvoice/notifications` (list, unread count, read, read all),
-`NotificationService`, `NotificationRepository` (aggregation SQL, read-state writes, V2 detection),
+`WeInvoiceNotificationService`, `WeInvoiceNotificationRepository` (aggregation SQL, read-state writes, V2 detection),
 `NotificationKey`, `NotificationReadState`, code `WBE3037`, `V3__winv_notification_read.sql` and the optional
 manual script `add-notification-time-indexes-2026-11-12.sql`.
 
@@ -29,15 +29,15 @@ Branch: `sit` + working tree · Commit: NOT COMMITTED.
 | `./gradlew test --offline --tests "com.kosign.wecms.domain.weinvoice.*" --tests "com.kosign.wecms.config.EndpointAuthorizationCoverageTest"` | PASS | 190 tests, 0 failures, 0 errors, 0 skipped (25 classes) |
 | — new `NotificationKeyTest` | PASS | 5 |
 | — new `NotificationReadStateTest` | PASS | 5 |
-| — new `NotificationRepositoryTest` | PASS | 11 |
-| — new `NotificationServiceTest` | PASS | 10 |
+| — new `WeInvoiceNotificationRepositoryTest` | PASS | 11 |
+| — new `WeInvoiceNotificationServiceTest` | PASS | 10 |
 | — new `WeInvoiceNotificationControllerTest` | PASS | 6 |
 | — `EndpointAuthorizationCoverageTest` (allow-list + `WeInvoiceNotificationController`) | PASS | 2 |
-| — `WeInvoiceBeanConstructionTest` | PASS | 2 — **failed on the first run** (`NotificationRepository` had two constructors, none `@Autowired`: the app would not have started); fixed by marking the public constructor `@Autowired`, then green |
+| — `WeInvoiceBeanConstructionTest` | PASS | 2 — **failed on the first run** (`WeInvoiceNotificationRepository` had two constructors, none `@Autowired`: the app would not have started); fixed by marking the public constructor `@Autowired`, then green |
 
 ## Regression Tests
 
-`firstBranchOfEveryVariantNamesEveryMappedColumn` (`NotificationRepositoryTest`) pins a defect found in the diff
+`firstBranchOfEveryVariantNamesEveryMappedColumn` (`WeInvoiceNotificationRepositoryTest`) pins a defect found in the diff
 self-audit after the first green run (no test caught it): with `filter=action` the first `UNION ALL` branch was the GDT one, without column aliases, so the
 by-name mapper would have failed on a real database. All 8 SQL variants are now checked for the 13 mapped names.
 

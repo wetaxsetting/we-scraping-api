@@ -10,9 +10,9 @@ import com.kosign.wecms.domain.weinvoice.dto.NotificationListResponse;
 import com.kosign.wecms.domain.weinvoice.dto.UnreadCountResponse;
 import com.kosign.wecms.domain.weinvoice.repository.CompanyConnectionRepository;
 import com.kosign.wecms.domain.weinvoice.repository.CompanyConnectionRepository.CompanyRow;
-import com.kosign.wecms.domain.weinvoice.repository.NotificationRepository;
-import com.kosign.wecms.domain.weinvoice.repository.NotificationRepository.BucketRow;
-import com.kosign.wecms.domain.weinvoice.repository.NotificationRepository.Scope;
+import com.kosign.wecms.domain.weinvoice.repository.WeInvoiceNotificationRepository;
+import com.kosign.wecms.domain.weinvoice.repository.WeInvoiceNotificationRepository.BucketRow;
+import com.kosign.wecms.domain.weinvoice.repository.WeInvoiceNotificationRepository.Scope;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -28,12 +28,12 @@ import java.util.Set;
 /**
  * Header bell (record docs/features/addon-service/weinvoice/weinvoice-notifications-2026-11-12.md).
  *
- * <p>Notifications are aggregated on every call by {@link NotificationRepository}; this service applies the
+ * <p>Notifications are aggregated on every call by {@link WeInvoiceNotificationRepository}; this service applies the
  * read state ({@link NotificationReadState}), sorts newest first and pages. Everything is scoped to the
  * signed-in user's active tax codes ({@link CompanyAccessGuard}).
  */
 @Service
-public class NotificationService {
+public class WeInvoiceNotificationService {
 
     static final int DEFAULT_SIZE = 20;
     static final int MAX_SIZE = 100;
@@ -57,11 +57,11 @@ public class NotificationService {
         }
     }
 
-    private final NotificationRepository notifications;
+    private final WeInvoiceNotificationRepository notifications;
     private final CompanyConnectionRepository companies;
     private final CompanyAccessGuard guard;
 
-    public NotificationService(NotificationRepository notifications, CompanyConnectionRepository companies,
+    public WeInvoiceNotificationService(WeInvoiceNotificationRepository notifications, CompanyConnectionRepository companies,
                                CompanyAccessGuard guard) {
         this.notifications = notifications;
         this.companies = companies;

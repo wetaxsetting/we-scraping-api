@@ -31,7 +31,7 @@ import java.util.function.LongSupplier;
  * with {@code to_regclass} and the mailbox part is left out of the SQL until it does.
  */
 @Repository
-public class NotificationRepository {
+public class WeInvoiceNotificationRepository {
 
     /** Re-check a missing V2 table this often (a DBA may apply it without a restart). */
     static final long MAILBOX_RECHECK_MS = 5 * 60_000L;
@@ -106,11 +106,11 @@ public class NotificationRepository {
     private volatile long mailboxCheckedAt = Long.MIN_VALUE;
 
     @Autowired
-    public NotificationRepository(WeInvoiceDb db) {
+    public WeInvoiceNotificationRepository(WeInvoiceDb db) {
         this(db, System::currentTimeMillis);
     }
 
-    NotificationRepository(WeInvoiceDb db, LongSupplier clock) {
+    WeInvoiceNotificationRepository(WeInvoiceDb db, LongSupplier clock) {
         this.db = db;
         this.clock = clock;
     }

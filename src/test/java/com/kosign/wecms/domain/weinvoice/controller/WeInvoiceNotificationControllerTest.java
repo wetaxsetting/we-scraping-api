@@ -11,7 +11,7 @@ import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.weinvoice.dto.NotificationItem;
 import com.kosign.wecms.domain.weinvoice.dto.NotificationListResponse;
 import com.kosign.wecms.domain.weinvoice.dto.UnreadCountResponse;
-import com.kosign.wecms.domain.weinvoice.service.NotificationService;
+import com.kosign.wecms.domain.weinvoice.service.WeInvoiceNotificationService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -44,11 +44,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class WeInvoiceNotificationControllerTest {
 
     private MockMvc mvc;
-    private NotificationService service;
+    private WeInvoiceNotificationService service;
 
     @BeforeEach
     void setUp() {
-        service = mock(NotificationService.class);
+        service = mock(WeInvoiceNotificationService.class);
         ObjectMapper mapper = new ObjectMapper()
                 .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
                 .registerModule(new JavaTimeModule());
