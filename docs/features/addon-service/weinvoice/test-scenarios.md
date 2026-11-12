@@ -45,6 +45,25 @@ under `src/test/java/com/kosign/wecms/domain/weinvoice/`; "DB" = needs the WeInv
 | M11 | Microsoft callback success | refresh token stored encrypted, kind `MICROSOFT`, 302 `?ms=ok`; no code / token in the URL | Unit + live Microsoft (manual) |
 | M12 | Any response, any log line | never contains a password, app password, refresh token or its ciphertext | Unit |
 
+## Notifications (header bell, 2026-11-12)
+
+| # | Scenario | Expected | Level |
+|---|---|---|---|
+| N1 | List without `filter` and without `company_mst` | `WBE3037`; nothing queried | Unit |
+| N2 | `filter=mst` with an MST the user does not manage / unknown `filter` | `WBE3002` / HTTP 400 `WBE_VALIDATION`; nothing queried | Unit |
+| N3 | `filter=all` / `filter=action` | every active MST of the user; `action` only the two error types, engine tables not queried | Unit |
+| N4 | New invoices, XML and PDFs in one hour | one item per (type, MST, direction, UTC hour); `at` = latest event; `months` newest first, ≤ 3 | Unit (SQL contract) + DB |
+| N5 | Uploaded / test-data invoices and uploaded PDFs | no `NEW_INVOICES` / `XML_READY` for invoices created by an upload; PDFs with `source_id` `upload` / `test_data` not counted | Unit (SQL contract) + DB |
+| N6 | PDFs from mail and from the provider in the same hour | one `PDF_READY` with `from_email` + `from_provider` = `count` | Unit |
+| N7 | GDT password refused / mailbox login refused | `GDT_LOGIN_ERROR` / `MAILBOX_ERROR` with `action=true`, `status`, `message`; a later failure → new id, unread | Unit |
+| N8 | V2 (`winv_mlbx_infm`) not installed | no `MAILBOX_ERROR`, no SQL error; picked up within 5 min of installing | Unit |
+| N9 | "Read all" of one MST, then a new event in an already listed hour | items of that MST up to the marker read, other MSTs unchanged; the bucket with the new event unread again | Unit |
+| N10 | Item marked read by id, more events in the same hour | stays read | Unit |
+| N11 | `POST /read` with markers, malformed ids, another user's MST, > 100 ids | first three ignored (204); > 100 → `WBE_VALIDATION` | Unit |
+| N12 | `GET /unread-count` after "read all" | only events newer than the marker are scanned; same count as the list's read rule | Unit (+ DB for timing) |
+| N13 | Paging | newest first, stable order for equal times, `size` default 20, max 100 | Unit |
+| N14 | `POST /read`, `POST /read-all` | HTTP 204, no body | Unit |
+
 ## Invoices (screens 04, 05)
 
 | # | Scenario | Expected | Level |

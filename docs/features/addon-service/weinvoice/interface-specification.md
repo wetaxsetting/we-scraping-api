@@ -138,6 +138,41 @@ Callback `reason` codes: `not_configured` (Microsoft keys or WeInvoice off) · `
 `exchange` (code exchange refused) · `no_refresh_token` · `no_address` · `refused` (IMAP login refused) ·
 `missing_folders` · `unavailable` (engine down) · `error` (unexpected). The URL never carries a code, token or the state.
 
+## Notifications (header bell)
+
+Added 2026-11-12 — [feature record](weinvoice-notifications-2026-11-12.md). Nothing is stored per notification:
+every call aggregates the last 30 days for the user's active tax codes — one item per (type, MST, direction, UTC
+hour) for counts, one per failing connection for errors. Read state per user in `winv_ntfc_read` (V3).
+
+| Method | Path | Request | `data` |
+|---|---|---|---|
+| GET | `/notifications?company_mst=&filter=&page=&size=` | `filter` `mst` (default — `company_mst` required, `WBE3037` without it; `WBE3001` / `WBE3002` when not the user's) · `all` (every MST) · `action` (the two error types, every MST; `company_mst` ignored); other value → HTTP 400 `WBE_VALIDATION`. `size` default 20, max 100 | `{ items[NotificationItem], unread_count, total_count, page, size }` — newest first; `unread_count` / `total_count` over the whole filter |
+| GET | `/notifications/unread-count` | — | `{ unread_count }` — every MST of the user, all types (the bell polls it every 60 s) |
+| POST | `/notifications/read` | `{ ids[] }` (≤ 100, else `WBE_VALIDATION`) | **HTTP 204, no body.** Ids that are not exactly a notification id of one of the user's MSTs (or of a mailbox without MST) are ignored |
+| POST | `/notifications/read-all` | `{ company_mst? }` — body optional | **HTTP 204, no body.** Marker `*\|<mst>` (that MST, after the `WBE3001` / `WBE3002` check) or `*` (every MST) |
+
+**`NotificationItem`** — `id, type, company_mst, company_name, direction, count, from_provider, from_email, months[],
+mailbox_id, address, status, message, at, read, action`. Fields that do not apply to the type are `null`.
+
+| `type` | Source (engine tables only read) | Fields | `action` |
+|---|---|---|---|
+| `NEW_INVOICES` | `invoices.first_seen_at`; not `list_raw.nguon` `upload` / `test_data` | `direction`, `count`, `months[]` (issue months `yyyy-MM`, newest first, ≤ 3) | false |
+| `XML_READY` | `invoice_xml.fetched_at`; not for invoices created by an upload / test data | `direction`, `count` | false |
+| `PDF_READY` | `invoice_pdf.fetched_at`; `source_id` `upload` / `test_data` left out | `direction`, `count`, `from_email` (`email`, `email:*`), `from_provider` (the rest) | false |
+| `GDT_LOGIN_ERROR` | `winv_cmpn_infm` `conn_stts` `ERROR` / `EXPIRED`, time `conn_chk_dtm` | `status`, `message` | **true** |
+| `MAILBOX_ERROR` | `winv_mlbx_infm` `conn_stts` `ERROR` / `EXPIRED`, time `mod_dtm` else `reg_dtm`; none while V2 is not installed | `mailbox_id`, `address`, `status`, `message`; `company_mst` `null` for a mailbox serving every MST | **true** |
+
+`id` = `<TYPE>|<mst or ->|<purchase|sales or ->|<bucket>`: bucket = UTC hour `yyyyMMddHH` for counts, the error time
+`yyyyMMddHHmmss` for `GDT_LOGIN_ERROR`, and `yyyyMMddHHmmss.<mailbox id>` for `MAILBOX_ERROR` (keeps two mailboxes
+failing in the same second apart). A new failure has a new time, so a new id, and is unread again. `at` = latest
+event of the bucket (ISO UTC). `direction` `purchase` / `sales` for counts, `null` for errors. With `filter=mst`, a
+mailbox that serves every MST (`company_mst = null`) is not listed — it shows under `all` / `action`.
+
+Read rule: an item is read when its own id was marked read, or when `at` (whole seconds) is at or before the newer of
+the markers `*` and `*|<its mst>` (an item without MST: `*` only). A bucket that gets a new event after the marker
+turns unread again; one marked read by id stays read. Markers use the database clock. Per-id rows older than 31 days
+are pruned on every write (their buckets have left the 30-day window).
+
 ## Sync runs (screen 10)
 
 | Method | Path | Request | `data` |
@@ -230,6 +265,7 @@ key → HTTP 401, `WBE3019`.
 | WBE3034 | IMAP server required for a company mailbox |
 | WBE3035 | The address is already connected as another mailbox |
 | WBE3036 | Requested folders do not exist in the mailbox (`{1}` the list) — nothing saved |
+| WBE3037 | Notifications with `filter=mst` (the default) need `company_mst` |
 
 House codes still apply: `WBE_VALIDATION` (bad / missing parameter), `WBE_DB` (database fault),
 `WBE1003` (access denied — e.g. a non-admin changing connections), `WBE1401` (session expired).

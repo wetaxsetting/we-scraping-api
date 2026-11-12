@@ -41,7 +41,9 @@ PostgreSQL — WeInvoice database (= engine database)        PostgreSQL — WeCM
   as plain identifiers at startup.
 - Schema-of-record: [`src/main/resources/db/weinvoice/V1__winv_schema.sql`](../../../../src/main/resources/db/weinvoice/V1__winv_schema.sql)
   (11 tables, 4 sequences) + [`V2__winv_mailbox.sql`](../../../../src/main/resources/db/weinvoice/V2__winv_mailbox.sql)
-  (`winv_mlbx_infm`, 2026-11-12). Seed + grants:
+  (`winv_mlbx_infm`, 2026-11-12) + [`V3__winv_notification_read.sql`](../../../../src/main/resources/db/weinvoice/V3__winv_notification_read.sql)
+  (`winv_ntfc_read`, bell read state, 2026-11-12 — [record](weinvoice-notifications-2026-11-12.md); optional engine
+  indexes [`add-notification-time-indexes-2026-11-12.sql`](../../../sql/2026/add-notification-time-indexes-2026-11-12.sql)). Seed + grants:
   [`docs/sql/2026/seed-weinvoice-provider-catalog-2026-11-02.sql`](../../../sql/2026/seed-weinvoice-provider-catalog-2026-11-02.sql),
   [`docs/sql/2026/grant-weinvoice-schema-access-2026-11-02.sql`](../../../sql/2026/grant-weinvoice-schema-access-2026-11-02.sql).
 - Files: XML / PDF / mail files are read from `WECMS_WEINVOICE_ENGINE_OUTPUT_DIR` (paths in the engine
