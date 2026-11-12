@@ -27,8 +27,12 @@ class ScrapingClientTest {
     }
 
     private ScrapingClient clientAnswering(int status, String body) throws IOException {
+        return clientAnswering(ScrapingClient.LOGIN_TEST_PATH, status, body);
+    }
+
+    private ScrapingClient clientAnswering(String path, int status, String body) throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.createContext(ScrapingClient.LOGIN_TEST_PATH, ex -> {
+        server.createContext(path, ex -> {
             seenKey.set(ex.getRequestHeaders().getFirst("X-Api-Key"));
             seenBody.set(new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             byte[] out = body.getBytes(StandardCharsets.UTF_8);
@@ -44,7 +48,7 @@ class ScrapingClientTest {
         WeInvoiceProperties props = new WeInvoiceProperties(true,
                 new WeInvoiceProperties.Db("jdbc:postgresql://h/db", "u", "p", 1), "public", "weinvoice", "out", "store",
                 com.kosign.wecms.domain.weinvoice.WeInvoiceTestProps.KEY_B64, "", "", 5, false,
-                new WeInvoiceProperties.Scraping(url, key));
+                new WeInvoiceProperties.Scraping(url, key), null, null);
         return new ScrapingClient(props, new ObjectMapper());
     }
 
@@ -96,5 +100,59 @@ class ScrapingClientTest {
     @Test
     void settingsNeverPrintTheKey() {
         assertThat(new WeInvoiceProperties.Scraping("http://h", "super-secret").toString()).doesNotContain("super-secret");
+    }
+
+    // ---- POST /internal/mail/login-test (mailbox connections, 2026-11-12) ----
+
+    private static ScrapingClient.MailLogin imapLogin() {
+        return new ScrapingClient.MailLogin("PASSWORD", "mail.example.vn", 993, "SSL", "ke.toan@example.vn",
+                "Mail#Pw1", null, java.util.List.of("INBOX", "HDDT"));
+    }
+
+    @Test
+    void mailLoginSendsTheContractBody() throws IOException {
+        ScrapingClient c = clientAnswering(ScrapingClient.MAIL_LOGIN_TEST_PATH, 200,
+                "{\"ok\":true,\"message\":\"\",\"missing_folders\":[]}");
+        var r = c.mailLoginTest(imapLogin());
+        assertThat(r.outcome()).isEqualTo(Outcome.OK);
+        assertThat(r.missingFolders()).isEmpty();
+        assertThat(seenKey.get()).isEqualTo("k-123");
+        assertThat(seenBody.get()).contains("\"auth\":\"PASSWORD\"", "\"host\":\"mail.example.vn\"", "\"port\":993",
+                "\"tls_mode\":\"SSL\"", "\"login_id\":\"ke.toan@example.vn\"", "\"password\":\"Mail#Pw1\"",
+                "\"folders\":[\"INBOX\",\"HDDT\"]");
+        assertThat(seenBody.get()).doesNotContain("refresh_token");
+    }
+
+    @Test
+    void mailLoginWithRefreshTokenOmitsPassword() throws IOException {
+        ScrapingClient c = clientAnswering(ScrapingClient.MAIL_LOGIN_TEST_PATH, 200, "{\"ok\":true,\"message\":\"\"}");
+        c.mailLoginTest(new ScrapingClient.MailLogin("OAUTH_MS", "outlook.office365.com", 993, "SSL", "a@contoso.com",
+                null, "rt-1", java.util.List.of("INBOX")));
+        assertThat(seenBody.get()).contains("\"auth\":\"OAUTH_MS\"", "\"refresh_token\":\"rt-1\"").doesNotContain("password");
+    }
+
+    @Test
+    void mailLoginRefusedCarriesServerMessageAndMissingFolders() throws IOException {
+        ScrapingClient c = clientAnswering(ScrapingClient.MAIL_LOGIN_TEST_PATH, 200,
+                "{\"ok\":false,\"message\":\"[AUTHENTICATIONFAILED] Invalid credentials\",\"missing_folders\":[\"HDDT\"]}");
+        var r = c.mailLoginTest(imapLogin());
+        assertThat(r.outcome()).isEqualTo(Outcome.REJECTED);
+        assertThat(r.message()).isEqualTo("[AUTHENTICATIONFAILED] Invalid credentials");
+        assertThat(r.missingFolders()).containsExactly("HDDT");
+    }
+
+    @Test
+    void mailLoginEngineErrorOrDownIsUnavailable() throws IOException {
+        ScrapingClient c = clientAnswering(ScrapingClient.MAIL_LOGIN_TEST_PATH, 500, "boom");
+        assertThat(c.mailLoginTest(imapLogin()).outcome()).isEqualTo(Outcome.UNAVAILABLE);
+        assertThat(client("http://127.0.0.1:1", "k").mailLoginTest(imapLogin()).outcome()).isEqualTo(Outcome.UNAVAILABLE);
+        assertThat(client("", "").mailLoginTest(imapLogin()).outcome()).isEqualTo(Outcome.UNAVAILABLE);
+    }
+
+    @Test
+    void mailLoginNeverPrintsSecrets() {
+        assertThat(imapLogin().toString()).doesNotContain("Mail#Pw1");
+        assertThat(new ScrapingClient.MailLogin("OAUTH_MS", "h", 993, "SSL", "a@b.c", null, "rt-secret", null).toString())
+                .doesNotContain("rt-secret");
     }
 }

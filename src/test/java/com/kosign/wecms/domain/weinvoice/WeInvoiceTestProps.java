@@ -17,10 +17,12 @@ public final class WeInvoiceTestProps {
                 new WeInvoiceProperties.Db("jdbc:postgresql://localhost:5432/weinvoice", "u", "p", 1),
                 "public", "weinvoice", "build/tmp/engine-out", "build/tmp/weinvoice-store", KEY_B64,
                 partnerKeys, "invoice.example.vn", maxCompanies, false,
-                new WeInvoiceProperties.Scraping("http://127.0.0.1:1", "scrape-key"));
+                new WeInvoiceProperties.Scraping("http://127.0.0.1:1", "scrape-key"),
+                new WeInvoiceProperties.Microsoft("ms-client", "ms-secret", "https://api.example.vn/api/v1/weinvoice/mailboxes/microsoft/callback"),
+                "https://invoice.example.vn/");
     }
 
     public static WeInvoiceProperties disabled() {
-        return new WeInvoiceProperties(false, null, "${X}", "${Y}", "", "", "", "", "", 5, false, null);
+        return new WeInvoiceProperties(false, null, "${X}", "${Y}", "", "", "", "", "", 5, false, null, null, null);
     }
 }

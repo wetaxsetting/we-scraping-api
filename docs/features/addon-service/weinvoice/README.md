@@ -40,7 +40,8 @@ PostgreSQL — WeInvoice database (= engine database)        PostgreSQL — WeCM
 - SQL names tables `{eng}.…` / `{app}.…`; the schema names come from configuration and are validated
   as plain identifiers at startup.
 - Schema-of-record: [`src/main/resources/db/weinvoice/V1__winv_schema.sql`](../../../../src/main/resources/db/weinvoice/V1__winv_schema.sql)
-  (11 tables, 4 sequences). Seed + grants:
+  (11 tables, 4 sequences) + [`V2__winv_mailbox.sql`](../../../../src/main/resources/db/weinvoice/V2__winv_mailbox.sql)
+  (`winv_mlbx_infm`, 2026-11-12). Seed + grants:
   [`docs/sql/2026/seed-weinvoice-provider-catalog-2026-11-02.sql`](../../../sql/2026/seed-weinvoice-provider-catalog-2026-11-02.sql),
   [`docs/sql/2026/grant-weinvoice-schema-access-2026-11-02.sql`](../../../sql/2026/grant-weinvoice-schema-access-2026-11-02.sql).
 - Files: XML / PDF / mail files are read from `WECMS_WEINVOICE_ENGINE_OUTPUT_DIR` (paths in the engine
@@ -60,6 +61,9 @@ PostgreSQL — WeInvoice database (= engine database)        PostgreSQL — WeCM
 | `WECMS_WEINVOICE_MAIL_DOMAIN` | Domain of the per-MST receiving address `hd-<mst>@<domain>` |
 | `WECMS_WEINVOICE_MAX_COMPANIES` | Tax codes per user account (prototype: 5) |
 | `WECMS_WEINVOICE_TEST_DATA_ENABLED` | Enables `POST /test-data/load` (dev / SIT) |
+| `WECMS_WEINVOICE_MS_CLIENT_ID` / `_MS_CLIENT_SECRET` | **Optional** (2026-11-12). Azure app registration (multi-tenant, delegated `IMAP.AccessAsUser.All`) for the Microsoft mailbox sign-in; the engine needs the same values as `WEINVOICE_MS_CLIENT_ID` / `_SECRET`. Blank = Microsoft card disabled (`WBE3032`), startup unaffected |
+| `WECMS_WEINVOICE_MS_REDIRECT_URI` | **Optional.** `<api base>/api/v1/weinvoice/mailboxes/microsoft/callback`, registered on the app |
+| `WECMS_WEINVOICE_WEB_BASE_URL` | **Optional.** Public URL of the WeInvoice web app; the Microsoft callback redirects to `<it>/sources/mailbox` |
 
 All five `.env.*.example` templates carry the block. A local `.env.local` written before 2026-11-02
 must get these lines too, or startup fails on the unresolved booleans.
@@ -83,6 +87,7 @@ The backend inserts rows with `rqst_stts = 'QUEUED'`. The engine worker (we-scra
 | `FETCH_PDF` | `{invoice_ids, lookup_code?, lookup_url?, company_code?}` | Run the provider adapter now (steps `open · submit · download · done`); the code / link from the request, else `winv_lkup_cd`, overrides the XML guesses; result `{pdf: saved \| exists, source_id}`; failure = the adapter's message |
 | `IMPORT` | `{upload_id[, file_nos, company_mst]}` or `{invoice_id, file_id}` | Parse the stored files (XML, ZIP, PDF; engine reads them under `WEINVOICE_STORAGE_ROOT` = `WECMS_WEINVOICE_STORAGE_ROOT`), apply the dedupe rules (UI Spec 3.2), write `rslt_*` of `winv_upld_file`; a record created from an upload has origin `upload` |
 | `TEST_DATA` | `{}` | Load the acceptance TestData folder (`XML/`, `PDF/`, `ma_tra_cuu.csv`; engine `WEINVOICE_TEST_DATA_DIR`); result = the prototype report (`folder, xml_total, created, merged, duplicate, errors[], new_tax_ids[], codes_applied, codes_unmatched[], pdf_attached, pdf_unmatched[]`) |
+| `MAIL_SCAN` | `{mailbox_id}` | Since 2026-11-12 ([record](weinvoice-mailbox-connections-2026-11-12.md)). Scan one `winv_mlbx_infm` mailbox now (decrypt `secret_enc`, IMAP read-only per folder of `fldr_list`, mail ingest restricted to the mailbox's MSTs: `cmpn_mst`, or every active MST of the owner for `ALL`); write `last_scan_dtm` / `last_scan_cnt`; login refused → `conn_stts = ERROR` + `conn_msg`, Microsoft `invalid_grant` → `EXPIRED`. Requires the manual script [`add-mail-scan-request-type-2026-11-12.sql`](../../../sql/2026/add-mail-scan-request-type-2026-11-12.sql) (CHECK constraint) |
 
 GDT password format: `"v1:" + base64(iv[12] ‖ ciphertext ‖ tag[16])`, AES-256-GCM, key = base64-decoded
 `WECMS_WEINVOICE_SECRET_KEY` (Python: `AESGCM(key).decrypt(raw[:12], raw[12:], None)`).

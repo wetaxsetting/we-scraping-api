@@ -103,6 +103,41 @@ upload is accepted, takes the XML slot and is not re-parsed (the record already 
 expired · need_password), status_message, has_password, default_company, last_sync_at, created_at`.
 The password is never returned.
 
+## Mailbox connections (screen 08)
+
+Added 2026-11-12 — [feature record](weinvoice-mailbox-connections-2026-11-12.md). Codes travel upper case,
+exactly as stored and as sent (`kind`, `auth_type`, `tls_mode`, `company_scope`, `status`).
+
+| Method | Path | Request | `data` |
+|---|---|---|---|
+| GET | `/mailboxes` | — | `MailboxItem[]` (the user's active mailboxes, oldest first) |
+| POST | `/mailboxes` | `{ kind (GMAIL · IMAP), address, password, imap_host?, imap_port?, tls_mode?, login_id?, folders?[], company_scope?, company_mst? }` | `MailboxItem` (`CONNECTED`) — one login through the engine first (`POST /internal/mail/login-test`, synchronous, ≤ 90 s); nothing stored on `WBE3029` / `WBE3030` / `WBE3036`. The same address again (case-insensitive) updates its row |
+| PUT | `/mailboxes/{id}` | same body; `password` optional | `MailboxItem` — blank `password` keeps the stored secret and re-tests with it. `kind` must stay the mailbox's kind; a `MICROSOFT` mailbox only changes `folders` / `company_scope` / `company_mst` (re-tested with its refresh token) |
+| DELETE | `/mailboxes/{id}` | — | `null` — soft delete, secret erased |
+| POST | `/mailboxes/{id}/scan` | — | `{ request_id, subject: <mailbox id> }` — engine request `MAIL_SCAN {mailbox_id}`, trigger `MANUAL`; poll `GET /requests/{request_id}` |
+| GET | `/mailboxes/microsoft/authorize?company_scope=&company_mst=&folders=` | `folders` repeated or comma separated | `{ url }` — Microsoft sign-in URL (`common` endpoint, `response_type=code`, `response_mode=query`, `prompt=select_account`, scope `offline_access https://outlook.office.com/IMAP.AccessAsUser.All openid email`) with a signed 10-minute `state`; `WBE3032` when not configured |
+| GET | `/mailboxes/microsoft/callback?code=&state=` | **no JWT** (permitAll) | HTTP **302** to `<WECMS_WEINVOICE_WEB_BASE_URL>/sources/mailbox?ms=ok` or `?ms=error&reason=<code>` |
+
+Request rules: `address` must look like a mail address. **Gmail** — `password` is the app password, 16 letters
+once spaces are removed (`WBE3033`), host / port / TLS fixed to `imap.gmail.com:993 SSL`, `auth_type = APP_PASSWORD`.
+**IMAP** — `imap_host` required (`WBE3034`), `imap_port` default 993 (1–65535), `tls_mode` `SSL` (default) or
+`STARTTLS`, `login_id` default = `address`, `auth_type = PASSWORD`. **Microsoft** — host `outlook.office365.com:993 SSL`,
+`auth_type = OAUTH_MS`, address from the ID token (`email`, else `preferred_username`). `folders` — trimmed,
+de-duplicated, no `,`, ≤ 500 characters joined; empty = `["INBOX"]`. `company_scope` `ONE` (default) needs
+`company_mst` = one of the user's active tax codes (`WBE3001` / `WBE3002`); `ALL` stores no tax code.
+Changing the address of a mailbox to one already connected → `WBE3035`.
+
+**`MailboxItem`** — `id, kind (GMAIL · MICROSOFT · IMAP), address, auth_type (APP_PASSWORD · PASSWORD · OAUTH_MS),
+imap_host, imap_port, tls_mode (SSL · STARTTLS), login_id, folders[], company_scope (ONE · ALL), company_mst,
+status (CONNECTED · ERROR · EXPIRED), status_message, connected_at, last_scan_at, last_scan_invoices`.
+`connected_at` = when the address was first connected (row creation); `last_scan_at` / `last_scan_invoices` are
+written by the engine. No password, app password or token is ever returned.
+
+Callback `reason` codes: `not_configured` (Microsoft keys or WeInvoice off) · `denied` (user cancelled, or no
+`code`) · `state` (forged / altered / expired state) · `company` (the chosen tax code is no longer the user's) ·
+`exchange` (code exchange refused) · `no_refresh_token` · `no_address` · `refused` (IMAP login refused) ·
+`missing_folders` · `unavailable` (engine down) · `error` (unexpected). The URL never carries a code, token or the state.
+
 ## Sync runs (screen 10)
 
 | Method | Path | Request | `data` |
@@ -187,6 +222,14 @@ key → HTTP 401, `WBE3019`.
 | WBE3026 | No upload file belongs to the MST being adopted |
 | WBE3027 | The GDT portal rejected the account (`{0}` MST, `{1}` the portal's message) — nothing saved |
 | WBE3028 | The GDT account could not be checked now (captcha, network, scraping engine down / not configured) — nothing saved |
+| WBE3029 | The mail server refused the login (`{0}` address, `{1}` the server's message) — nothing saved |
+| WBE3030 | The mailbox could not be checked now (engine down / not configured, timeout) — nothing saved |
+| WBE3031 | Mailbox not found (or not the user's) |
+| WBE3032 | Microsoft sign-in is not configured on this server |
+| WBE3033 | Gmail password is not a 16-letter app password |
+| WBE3034 | IMAP server required for a company mailbox |
+| WBE3035 | The address is already connected as another mailbox |
+| WBE3036 | Requested folders do not exist in the mailbox (`{1}` the list) — nothing saved |
 
 House codes still apply: `WBE_VALIDATION` (bad / missing parameter), `WBE_DB` (database fault),
 `WBE1003` (access denied — e.g. a non-admin changing connections), `WBE1401` (session expired).

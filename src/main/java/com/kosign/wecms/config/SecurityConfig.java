@@ -8,11 +8,13 @@ import com.kosign.wecms.common.security.WecmsPasswordEncoder;
 import com.kosign.wecms.domain.payment.dispatch.callback.CallbackIpWhitelistFilter;
 import com.kosign.wecms.domain.payment.dispatch.callback.CallbackProperties;
 import com.kosign.wecms.domain.weinvoice.config.WeInvoiceProperties;
+import com.kosign.wecms.domain.weinvoice.controller.WeInvoiceMailboxController;
 import com.kosign.wecms.domain.weinvoice.partner.PartnerApiKeyFilter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -89,6 +91,10 @@ public class SecurityConfig {
                         // Authentication is the X-Api-Key check of PartnerApiKeyFilter (below),
                         // which fails closed when no key is configured.
                         .requestMatchers("/api/partner/v1/**").permitAll()
+                        // WeInvoice Microsoft mailbox sign-in: the browser returns from Microsoft without a
+                        // WeCMS JWT. Exact path + GET only; the owner is taken from the HMAC-signed,
+                        // 10-minute `state` (MailboxOAuthState), and the answer is always a 302 to the web app.
+                        .requestMatchers(HttpMethod.GET, WeInvoiceMailboxController.MICROSOFT_CALLBACK_PATH).permitAll()
                         .anyRequest().authenticated())
                 // Override default Http403ForbiddenEntryPoint so missing /
                 // expired JWTs surface as 401 (RFC 7235) — required by the

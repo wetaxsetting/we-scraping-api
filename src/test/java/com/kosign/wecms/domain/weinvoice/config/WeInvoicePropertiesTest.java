@@ -37,7 +37,7 @@ class WeInvoicePropertiesTest {
     void enabledRejectsInjectableSchemaName() {
         assertThatThrownBy(() -> new WeInvoiceProperties(true,
                 new WeInvoiceProperties.Db("jdbc:postgresql://h/db", "u", "p", 1),
-                "public; DROP TABLE x", "weinvoice", "out", "store", WeInvoiceTestProps.KEY_B64, "", "", 5, false, null))
+                "public; DROP TABLE x", "weinvoice", "out", "store", WeInvoiceTestProps.KEY_B64, "", "", 5, false, null, null, null))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("engine-schema")
                 .hasMessageNotContaining("DROP");
@@ -47,12 +47,12 @@ class WeInvoicePropertiesTest {
     void enabledRejectsUnresolvedPlaceholderAndShortKey() {
         assertThatThrownBy(() -> new WeInvoiceProperties(true,
                 new WeInvoiceProperties.Db("${WECMS_WEINVOICE_DB_URL}", "u", "p", 1),
-                "public", "weinvoice", "out", "store", WeInvoiceTestProps.KEY_B64, "", "", 5, false, null))
+                "public", "weinvoice", "out", "store", WeInvoiceTestProps.KEY_B64, "", "", 5, false, null, null, null))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("db.url");
         assertThatThrownBy(() -> new WeInvoiceProperties(true,
                 new WeInvoiceProperties.Db("jdbc:postgresql://h/db", "u", "p", 1),
-                "public", "weinvoice", "out", "store", "c2hvcnQ=", "", "", 5, false, null))
+                "public", "weinvoice", "out", "store", "c2hvcnQ=", "", "", 5, false, null, null, null))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("32 bytes");
     }
@@ -93,7 +93,31 @@ class WeInvoicePropertiesTest {
 
     @Test
     void maxCompaniesDefaultsToFive() {
-        WeInvoiceProperties p = new WeInvoiceProperties(false, null, null, null, null, null, null, null, null, null, false, null);
+        WeInvoiceProperties p = new WeInvoiceProperties(false, null, null, null, null, null, null, null, null, null, false, null, null, null);
         assertThat(p.maxCompanies()).isEqualTo(5);
+    }
+
+    /** Mailbox connections 2026-11-12: the Microsoft keys are optional — blank / missing never stops startup. */
+    @Test
+    void microsoftSignInIsOptionalAndUnresolvedPlaceholdersCountAsUnset() {
+        WeInvoiceProperties blank = new WeInvoiceProperties(true,
+                new WeInvoiceProperties.Db("jdbc:postgresql://h/db", "u", "p", 1),
+                "public", "weinvoice", "out", "store", WeInvoiceTestProps.KEY_B64, "", "", 5, false, null,
+                new WeInvoiceProperties.Microsoft("", "", ""), "");
+        assertThat(blank.microsoftSignInConfigured()).isFalse();
+        assertThat(blank.webBase()).isNull();
+
+        WeInvoiceProperties unresolved = new WeInvoiceProperties(true,
+                new WeInvoiceProperties.Db("jdbc:postgresql://h/db", "u", "p", 1),
+                "public", "weinvoice", "out", "store", WeInvoiceTestProps.KEY_B64, "", "", 5, false, null,
+                new WeInvoiceProperties.Microsoft("${WECMS_WEINVOICE_MS_CLIENT_ID}", "${WECMS_WEINVOICE_MS_CLIENT_SECRET}",
+                        "${WECMS_WEINVOICE_MS_REDIRECT_URI}"), "${WECMS_WEINVOICE_WEB_BASE_URL}");
+        assertThat(unresolved.microsoftSignInConfigured()).isFalse();
+        assertThat(unresolved.microsoft()).isNotNull();
+
+        WeInvoiceProperties full = WeInvoiceTestProps.enabled("", 5);
+        assertThat(full.microsoftSignInConfigured()).isTrue();
+        assertThat(full.webBase()).isEqualTo("https://invoice.example.vn");
+        assertThat(full.microsoft().toString()).doesNotContain("ms-secret");
     }
 }

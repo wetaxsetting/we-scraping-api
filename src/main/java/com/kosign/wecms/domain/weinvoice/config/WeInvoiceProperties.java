@@ -64,7 +64,20 @@ public record WeInvoiceProperties(
          * The scraping engine's internal API (we-scraping {@code web/internal_api.py}): used to verify a
          * GDT account (captcha + login) before a tax code is saved. Blank = connections cannot be added.
          */
-        Scraping scraping
+        Scraping scraping,
+
+        /**
+         * Microsoft (Outlook / Microsoft 365) sign-in for mailbox connections: delegated OAuth on the
+         * multi-tenant {@code common} endpoint. Optional — blank = the Microsoft card is disabled and
+         * {@code GET /mailboxes/microsoft/authorize} answers {@code WBE3032}; the application still starts.
+         */
+        Microsoft microsoft,
+
+        /**
+         * Public base URL of the WeInvoice web app (e.g. {@code https://invoice.example.vn}). The Microsoft
+         * callback redirects the browser back to {@code <web-base-url>/sources/mailbox}. Optional.
+         */
+        String webBaseUrl
 ) {
 
     private static final Pattern SCHEMA = Pattern.compile("[A-Za-z_][A-Za-z0-9_]{0,62}");
@@ -77,6 +90,9 @@ public record WeInvoiceProperties(
         testDataEnabled = Boolean.TRUE.equals(testDataEnabled);
         if (scraping == null) {
             scraping = new Scraping(null, null);
+        }
+        if (microsoft == null) {
+            microsoft = new Microsoft(null, null, null);
         }
         if (maxCompanies == null || maxCompanies <= 0) {
             maxCompanies = DEFAULT_MAX_COMPANIES;
@@ -105,6 +121,23 @@ public record WeInvoiceProperties(
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
                 .toList();
+    }
+
+    /** Microsoft sign-in can be offered: client id + secret + redirect URI + web base URL all set. */
+    public boolean microsoftSignInConfigured() {
+        return microsoft.configured() && isSet(webBaseUrl);
+    }
+
+    /** {@link #webBaseUrl} without trailing slash, or {@code null} when unset. */
+    public String webBase() {
+        if (!isSet(webBaseUrl)) return null;
+        String u = webBaseUrl.trim();
+        return u.endsWith("/") ? u.substring(0, u.length() - 1) : u;
+    }
+
+    /** A value counts as set when it is not blank and not an unresolved {@code ${VAR}} placeholder. */
+    static boolean isSet(String v) {
+        return v != null && !v.isBlank() && !v.startsWith("${");
     }
 
     private static void requireConfigured(String value, String name) {
@@ -154,6 +187,27 @@ public record WeInvoiceProperties(
         @Override
         public String toString() {
             return "Scraping[url=" + url + ", apiKey=" + (set(apiKey) ? "***" : "<unset>") + "]";
+        }
+    }
+
+    /**
+     * Azure app registration used for the delegated Microsoft sign-in (scope
+     * {@code offline_access https://outlook.office.com/IMAP.AccessAsUser.All openid email}).
+     * The engine refreshes tokens with the same client ({@code WEINVOICE_MS_CLIENT_ID / _SECRET}).
+     *
+     * @param redirectUri must equal a redirect URI registered on the app, pointing at
+     *                    {@code <api>/api/v1/weinvoice/mailboxes/microsoft/callback}
+     */
+    public record Microsoft(String clientId, String clientSecret, String redirectUri) {
+
+        public boolean configured() {
+            return isSet(clientId) && isSet(clientSecret) && isSet(redirectUri);
+        }
+
+        @Override
+        public String toString() {
+            return "Microsoft[clientId=" + clientId + ", clientSecret=" + (isSet(clientSecret) ? "***" : "<unset>")
+                    + ", redirectUri=" + redirectUri + "]";
         }
     }
 

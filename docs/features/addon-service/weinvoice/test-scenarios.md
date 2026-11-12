@@ -28,6 +28,23 @@ under `src/test/java/com/kosign/wecms/domain/weinvoice/`; "DB" = needs the WeInv
 | C4 | Re-add a removed MST | verified again, row revived, new password, `CONNECTED` | Unit |
 | C5 | Any response, any log line | never contains the password or its ciphertext | Unit |
 
+## Mailbox connections (screen 08, 2026-11-12)
+
+| # | Scenario | Expected | Level |
+|---|---|---|---|
+| M1 | Connect Gmail with an app password (spaces allowed) | spaces dropped; engine `mail/login-test` with `imap.gmail.com:993 SSL`; row `CONNECTED`, secret `v1:…`; `MailboxItem` in the same call | Unit + live engine |
+| M2 | Gmail with a normal password / wrong length | `WBE3033`; engine not called | Unit |
+| M3 | Company IMAP without host | `WBE3034`; engine not called; with host: port 993 / `SSL` by default | Unit |
+| M4 | `company_mst` not one of the user's MSTs, or missing for `ONE` | `WBE3002` / `WBE_VALIDATION`; engine not called | Unit |
+| M5 | Mail server refuses / engine down / folder missing | `WBE3029` (server text) / `WBE3030` / `WBE3036`; nothing stored | Unit + live engine |
+| M6 | Same address connected again | the existing row is updated (no duplicate) | DB (manual) |
+| M7 | Edit with blank password | stored secret decrypted for the re-test and kept | Unit |
+| M8 | Scan now | engine request `MAIL_SCAN {mailbox_id}`, `RequestAccepted` | Unit + live engine |
+| M9 | Microsoft authorize when not configured | `WBE3032` | Unit |
+| M10 | Microsoft callback: cancelled / forged or expired state / exchange refused / login refused | 302 `?ms=error&reason=denied · state · exchange · refused`; nothing stored | Unit |
+| M11 | Microsoft callback success | refresh token stored encrypted, kind `MICROSOFT`, 302 `?ms=ok`; no code / token in the URL | Unit + live Microsoft (manual) |
+| M12 | Any response, any log line | never contains a password, app password, refresh token or its ciphertext | Unit |
+
 ## Invoices (screens 04, 05)
 
 | # | Scenario | Expected | Level |

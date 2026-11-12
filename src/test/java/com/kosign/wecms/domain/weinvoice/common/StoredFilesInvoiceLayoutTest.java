@@ -20,7 +20,7 @@ class StoredFilesInvoiceLayoutTest {
         return new StoredFiles(new WeInvoiceProperties(true,
                 new WeInvoiceProperties.Db("jdbc:postgresql://h/db", "u", "p", 1),
                 "public", "weinvoice", root.resolve("out").toString(), root.resolve("store").toString(),
-                WeInvoiceTestProps.KEY_B64, "", "", 5, false, null));
+                WeInvoiceTestProps.KEY_B64, "", "", 5, false, null, null, null));
     }
 
     @Test

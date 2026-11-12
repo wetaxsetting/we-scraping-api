@@ -634,6 +634,14 @@ wecms:
     scraping:
       url: ${WECMS_WEINVOICE_SCRAPING_URL}
       api-key: ${WECMS_WEINVOICE_SCRAPING_API_KEY}
+    # Microsoft (Outlook / Microsoft 365) mailbox sign-in — delegated OAuth, multi-tenant `common` endpoint.
+    # OPTIONAL: all four may be empty (the Microsoft card is then disabled); a missing line binds as the
+    # literal ${VAR} text, which WeInvoiceProperties also treats as unset, so startup never depends on them.
+    microsoft:
+      client-id: ${WECMS_WEINVOICE_MS_CLIENT_ID}
+      client-secret: ${WECMS_WEINVOICE_MS_CLIENT_SECRET}
+      redirect-uri: ${WECMS_WEINVOICE_MS_REDIRECT_URI}
+    web-base-url: ${WECMS_WEINVOICE_WEB_BASE_URL}
 
 # =============================================================================
 # Haengsung ERP integration
