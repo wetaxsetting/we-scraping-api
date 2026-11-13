@@ -81,7 +81,7 @@ public class SecurityConfig {
                                 .maxAgeInSeconds(31_536_000)))
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/v1/auth/login", "/api/v1/auth/logout", "/actuator/health").permitAll()
+                        .requestMatchers("/api/v1/auth/login", "/api/v1/auth/logout", "/api/v1/auth/signup", "/actuator/health").permitAll()
                         // Inbound EFS callbacks (01301/01302): the gateway cannot present a
                         // WeCMS JWT — authentication is the per-VAN VV/EV crypto check inside
                         // the callback services, plus the optional source-IP allow-list

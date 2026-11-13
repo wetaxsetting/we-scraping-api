@@ -18,6 +18,19 @@ Coocon engine. Source: `domain/weinvoice/**`. Why it is built this way:
 | Engine work | Endpoints that need the engine answer `{ request_id, subject }` at once; poll `GET /requests/{request_id}`. Requests stay `queued` until the engine worker (we-scraping repo) picks them up. |
 | Feature switch | `WECMS_WEINVOICE_ENABLED=false` → every endpoint answers `WBE3000`. |
 
+## Sign-up and WeInvoice accounts
+
+`POST /api/v1/auth/signup` — public (no JWT), throttled to 5 per source IP per 10 minutes (`WBE_TOO_MANY_REQUESTS`).
+Body `{ email, user_nm, user_pw, clph_no?, cmpn_nm? }`. Creates a WeInvoice-owned account in `winv_user_infm`
+(never a WeCMS `USER_INFM` row) and signs it in: the answer is the `POST /api/v1/auth/login` response, with
+`biz_key = "WEINVOICE"`, `auth_gr_cd = "USER"`, no `prdt_type`. Errors: `WBE3038` email, `WBE3039` password (≥ 8, letters
++ digits), `WBE3040` email already registered (WeInvoice **or** WeCMS login id), `WBE3041` WeInvoice disabled.
+
+`POST /api/v1/auth/login` checks `winv_user_infm` first (case-insensitive id; same flag order and codes as WeCMS:
+`WBE1128` / `WBE1010` / `WBE1011` / `WBE1009`; 5 wrong passwords lock the account), then the WeCMS login unchanged.
+`GET /api/v1/auth/me` answers a `WEINVOICE` token from the same table. Why:
+[weinvoice-self-signup-2026-11-13.md](weinvoice-self-signup-2026-11-13.md).
+
 ## App and dashboard (screens 01–03)
 
 | Method | Path | Request | `data` |
@@ -266,6 +279,10 @@ key → HTTP 401, `WBE3019`.
 | WBE3035 | The address is already connected as another mailbox |
 | WBE3036 | Requested folders do not exist in the mailbox (`{1}` the list) — nothing saved |
 | WBE3037 | Notifications with `filter=mst` (the default) need `company_mst` |
+| WBE3038 | Sign-up: email malformed |
+| WBE3039 | Sign-up: password shorter than `{0}` or without both letters and digits |
+| WBE3040 | Sign-up: email `{0}` already registered (WeInvoice or WeCMS) |
+| WBE3041 | Sign-up: WeInvoice disabled on the server |
 
 House codes still apply: `WBE_VALIDATION` (bad / missing parameter), `WBE_DB` (database fault),
 `WBE1003` (access denied — e.g. a non-admin changing connections), `WBE1401` (session expired).

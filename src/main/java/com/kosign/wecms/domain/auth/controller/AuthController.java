@@ -9,6 +9,8 @@ import com.kosign.wecms.domain.auth.dto.LoginResponse;
 import com.kosign.wecms.domain.auth.dto.MeResponse;
 import com.kosign.wecms.domain.auth.service.AuthService;
 import com.kosign.wecms.domain.auth.service.ChangePasswordService;
+import com.kosign.wecms.domain.weinvoice.account.SignupRequest;
+import com.kosign.wecms.domain.weinvoice.account.WeInvoiceAccountService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -32,10 +34,14 @@ public class AuthController {
      *  Complements the per-account 5-failure lockout (LoginLockoutService). */
     private static final int LOGIN_MAX_PER_WINDOW = 10;
     private static final int LOGIN_WINDOW_SECONDS  = 60;
+    /** Sign-ups per source IP per window (account creation is cheaper to abuse than a login). */
+    private static final int SIGNUP_MAX_PER_WINDOW = 5;
+    private static final int SIGNUP_WINDOW_SECONDS = 600;
 
     private final AuthService authService;
     private final ChangePasswordService changePasswordService;
     private final RateLimiter rateLimiter;
+    private final WeInvoiceAccountService weInvoiceAccounts;
 
     @PostMapping("/login")
     public ApiResponse<LoginResponse> login(
@@ -50,6 +56,22 @@ public class AuthController {
         }
         String langCd = resolveLangCd(acceptLanguage);
         return ApiResponse.ok(authService.login(req, ip, langCd));
+    }
+
+    /**
+     * WeInvoice self sign-up (public). Creates a {@code winv_user_infm} account — never a WeCMS {@code USER_INFM}
+     * row — and signs it in: the response is the same as {@link #login}. Throttled per source IP.
+     * docs/features/addon-service/weinvoice/weinvoice-self-signup-2026-11-13.md
+     */
+    @PostMapping("/signup")
+    public ApiResponse<LoginResponse> signup(
+            @Valid @RequestBody SignupRequest req,
+            @RequestHeader(value = "Accept-Language", required = false) String acceptLanguage,
+            HttpServletRequest servletReq) {
+        if (!rateLimiter.tryAcquire("signup:" + clientIp(servletReq), SIGNUP_MAX_PER_WINDOW, SIGNUP_WINDOW_SECONDS)) {
+            throw new RateLimitExceededException("WBE_TOO_MANY_REQUESTS");
+        }
+        return ApiResponse.ok(weInvoiceAccounts.signup(req, resolveLangCd(acceptLanguage)));
     }
 
     /**
