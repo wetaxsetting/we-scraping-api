@@ -5,6 +5,7 @@
 **Schema reference:** [../../references/database/settings/zalo-oa-schema.md](../../references/database/settings/zalo-oa-schema.md)
 **Functional reference:** the WeBill365 VN production implementation, audited 2026-08-17 —
 `webill365-vn-api/docs/features/zalo-oa-integration.md`
+**Hướng dẫn setup console Zalo (tạo app + template):** [zalo-oa-app-setup.md](zalo-oa-app-setup.md)
 **Workspace research note:** [../../../../ZALO-INTEGRATION-SETUP.md](../../../../ZALO-INTEGRATION-SETUP.md)
 
 **Status: 🟡 Backend implemented (client + service + controller + scheduler + unit tests).**

@@ -1162,6 +1162,157 @@ public class CardTransactionsService {
                 result.getTotalElements(), rows);
     }
 
+    /**
+     * The caller's own hand-registered receipts — refactor counterpart of
+     * legacy {@code WABOOKS_MREC_R006} (mobile receipt list). Scoped to
+     * {@code (BIZ_KEY, USER_ID)}; already-linked receipts stay in the list
+     * (unlike {@link #listLinkableReceipts}) because the app keeps showing a
+     * receipt after it has been attached to an approval.
+     *
+     * @param regChnl optional registration-channel filter — {@code 'MOB'} /
+     *                {@code 'PC'}; null (the default) returns every channel so
+     *                a receipt keyed on the web is still visible in the app
+     * @see com.kosign.wecms.domain.einvoice.repository.BusaDocMstrRepository#findOwnReceipts
+     */
+    public com.kosign.wecms.domain.payment.cardtransactions.dto.OwnReceiptListResponse
+            listOwnReceipts(String fromDt, String toDt, String search, String regChnl,
+                            int page, int size) {
+
+        String bizKey = TenantContext.currentBizKey();
+        String userId = requireUserId();
+        String keywordPattern = (search == null || search.isBlank())
+                ? null
+                : "%" + escapeLike(search.trim().toLowerCase(Locale.ROOT)) + "%";
+        String channel = (regChnl == null || regChnl.isBlank())
+                ? null
+                : regChnl.trim().toUpperCase(Locale.ROOT);
+
+        Pageable pageable = PageRequest.of(
+                Math.max(0, page),
+                Math.min(Math.max(1, size), 200));
+
+        Page<BusaDocMstr> result = busaDocMstrRepo.findOwnReceipts(
+                bizKey, userId, fromDt, toDt, channel, keywordPattern, pageable);
+
+        Map<String, List<com.kosign.wecms.domain.payment.cardtransactions.dto.ReceiptFileRow>> filesByDoc =
+                filesByDoc(bizKey, result.getContent().stream().map(BusaDocMstr::getDocId).toList());
+        Map<String, String> purposeNames = purposeNamesByCode();
+
+        List<com.kosign.wecms.domain.payment.cardtransactions.dto.OwnReceiptRow> rows = result
+                .getContent()
+                .stream()
+                .map(m -> new com.kosign.wecms.domain.payment.cardtransactions.dto.OwnReceiptRow(
+                        m.getDocId(),
+                        (m.getDispDocId() != null && !m.getDispDocId().isBlank())
+                                ? m.getDispDocId()
+                                : m.getDocId(),
+                        receiptDate(m),
+                        (m.getTrcoCmnm() != null && !m.getTrcoCmnm().isBlank())
+                                ? m.getTrcoCmnm()
+                                : m.getTrcoCmenm(),
+                        m.getTrcoTaxId(),
+                        m.getTotlAmt(),
+                        m.getTrcoTrscCcyCd(),
+                        m.getBusaUsagCd(),
+                        purposeNames.get(m.getBusaUsagCd()),
+                        m.getCont(),
+                        m.getRegChnl(),
+                        m.getApprSeqNo(),
+                        filesByDoc.getOrDefault(m.getDocId(), List.of()).size(),
+                        isReceiptEditable(m)))
+                .toList();
+
+        return new com.kosign.wecms.domain.payment.cardtransactions.dto.OwnReceiptListResponse(
+                result.getTotalElements(), rows);
+    }
+
+    /**
+     * Update one hand-registered receipt — refactor counterpart of legacy
+     * {@code WABOOKS_MREC_C004}. The web never had an update path, so this is
+     * the first writer of an existing {@code BUSA_DOC_MSTR} receipt row.
+     *
+     * <p>Refusals, in the order checked: the document must exist in the
+     * caller's tenant ({@code WBE_NOT_FOUND}), must be the caller's own
+     * hand-registered receipt ({@code WBE_RECEIPT_NOT_EDITABLE}), and must not
+     * yet be attached to an expense approval ({@code WBE_RECEIPT_NOT_EDITABLE})
+     * — editing the amount of a receipt that a submitted approval already
+     * totals would silently desynchronise the approval.
+     *
+     * <p>Parity delta (deliberate): legacy {@code C004} also inserts a
+     * {@code BUSA_DOC_MSTR_HIS} snapshot row. This repository maps no
+     * {@code BUSA_DOC_MSTR_HIS} entity and its create path writes no history
+     * either, so this update stays consistent with create rather than
+     * introducing a half-covered history trail. Recorded as a follow-up in
+     * {@code docs/features/payment/mobile-receipt-channel/}.
+     */
+    @Transactional
+    public void updateReceipt(String docId,
+            com.kosign.wecms.domain.payment.cardtransactions.dto.UpdateReceiptRequest req) {
+
+        String bizKey = TenantContext.currentBizKey();
+        String userId = requireUserId();
+        String now    = nowDtm14();
+
+        var key = new com.kosign.wecms.domain.einvoice.entity.BusaDocMstrId(bizKey, docId);
+        BusaDocMstr m = busaDocMstrRepo.findById(key)
+                .orElseThrow(() -> new BusinessException("WBE_NOT_FOUND", "doc_id: " + docId));
+
+        if (!userId.equals(m.getUserId()) || !isReceiptEditable(m)) {
+            throw new BusinessException("WBE_RECEIPT_NOT_EDITABLE", "doc_id: " + docId);
+        }
+
+        String ccyCd = (req.ccyCd() == null || req.ccyCd().isBlank())
+                ? "VND"
+                : req.ccyCd().trim();
+        // Same manual-mode sentinel the create path fills in when the user
+        // free-typed the contact instead of picking one.
+        String trcoKey = (req.trcoKey() != null && !req.trcoKey().isBlank())
+                ? req.trcoKey().trim()
+                : "99999999999999999999";
+
+        m.setIssuDt(req.useDt());
+        m.setUseDt(req.useDt());
+        m.setTrcoKey(trcoKey);
+        m.setTrcoCmnm(req.contactName().trim());
+        m.setTrcoTaxId(req.taxId());
+        m.setIssuTaxId(req.taxId() != null ? req.taxId().trim() : "");
+        m.setTrcoTrscCcyCd(ccyCd);
+        m.setTotlAmt(req.amount());
+        m.setBusaUsagCd(req.purposeCd());
+        m.setCont(req.description());
+        m.setModId(userId);
+        m.setModDtm(now);
+        busaDocMstrRepo.save(m);
+
+        auditLogService.append(AuditLogContext.builder()
+                .wsvcId(WSVC_ID)
+                .refNo("BUSA_DOC_MSTR")
+                .refNo1(docId)
+                .activityKey(AUDIT_ACTIVITY_KEY)
+                .detailKey("audit.card_transactions.update_receipt.detail")
+                .build());
+
+        log.info("feature=card-transactions update-receipt bizKey={} docId={}", bizKey, docId);
+    }
+
+    /** Receipt date for display — {@code USE_DT} (user-picked) with
+     *  {@code ISSU_DT} as the fallback, trimmed to {@code YYYYMMDD}. */
+    private static String receiptDate(BusaDocMstr m) {
+        return (m.getUseDt() != null && m.getUseDt().length() >= 8)
+                ? m.getUseDt().substring(0, 8)
+                : m.getIssuDt();
+    }
+
+    /** Whether a receipt may still be edited: a hand-registered expense doc,
+     *  not Rejected / Voided, and not yet attached to an expense approval. */
+    private static boolean isReceiptEditable(BusaDocMstr m) {
+        return "E".equals(m.getDocType())
+                && "Y".equals(m.getHandRegYn())
+                && !"EE".equals(m.getProvStts())
+                && !"VD".equals(m.getProvStts())
+                && (m.getApprSeqNo() == null || m.getApprSeqNo().isBlank());
+    }
+
     /** Resolve group-6 (manual expense) purpose {@code USE_USAG_CD} → localized
      *  name in one query for the Receipt list. Reuses
      *  {@link UsagInfmRepository#findActiveByGrpCd} — the same lookup the New
@@ -1592,6 +1743,22 @@ public class CardTransactionsService {
     @Transactional
     public com.kosign.wecms.domain.payment.cardtransactions.dto.CreateReceiptResponse
             createReceipt(com.kosign.wecms.domain.payment.cardtransactions.dto.CreateReceiptRequest req) {
+        return createReceipt(req, BusaDocMstr.REG_CHNL_PC);
+    }
+
+    /**
+     * Create a receipt, recording which client captured it.
+     *
+     * @param regChnl {@link BusaDocMstr#REG_CHNL_MOBILE} when the caller is the
+     *                mobile client, {@link BusaDocMstr#REG_CHNL_PC} for the web.
+     *                Legacy {@code WABOOKS_MREC_C003} stamps {@code 'MOB'} the
+     *                same way; the value is provenance only and never changes
+     *                the business rules applied here.
+     */
+    @Transactional
+    public com.kosign.wecms.domain.payment.cardtransactions.dto.CreateReceiptResponse
+            createReceipt(com.kosign.wecms.domain.payment.cardtransactions.dto.CreateReceiptRequest req,
+                          String regChnl) {
 
         String bizKey = TenantContext.currentBizKey();
         String userId = requireUserId();
@@ -1645,6 +1812,9 @@ public class CardTransactionsService {
         m.setCont(req.description());
         m.setHandRegYn("Y");
         m.setProvStts("OP");
+        m.setRegChnl(BusaDocMstr.REG_CHNL_MOBILE.equals(regChnl)
+                ? BusaDocMstr.REG_CHNL_MOBILE
+                : BusaDocMstr.REG_CHNL_PC);
         m.setRegId(userId);
         m.setRegDtm(now);
         m.setModId(userId);

@@ -1,0 +1,110 @@
+# WeInvoice (backend)
+
+| | |
+|---|---|
+| JEX counterpart | none — refactor-native product (UI Spec v1.0, PO WeCMS, 30/10/2026) |
+| Refactor status | P1 API implemented 2026-11-02; database scripts not yet applied; engine worker for the request queue not yet built |
+| Code | `src/main/java/com/kosign/wecms/domain/weinvoice/` |
+| Contract | [interface-specification.md](interface-specification.md) |
+| Test scenarios | [test-scenarios.md](test-scenarios.md) |
+| Implementation record | [weinvoice-api-implementation-2026-11-02.md](weinvoice-api-implementation-2026-11-02.md) |
+
+## What it is
+
+WeInvoice gathers a customer's purchase and sales e-invoices: list and XML from the GDT portal, the
+original PDF from the provider portals, invoices received by mail, and manual uploads. The collecting
+is done by the **we-scraping engine** (Python, separate repository), which writes its own PostgreSQL
+tables. This backend:
+
+- serves those tables to the WeInvoice screens (`/api/v1/weinvoice/**`, JWT; rows owned by the signed-in user's `USER_ID`, not the WeCMS `BIZ_KEY`);
+- keeps the WeInvoice data the engine does not own — managed tax codes and their GDT account, tags,
+  uploaded files, manual lookup codes, user preferences, the provider catalogue;
+- asks the engine for work through a request table instead of calling it;
+- serves WeCMS's "Update" button through the Partner API (`/api/partner/v1/**`, `X-Api-Key`), in the
+  exact row shapes WeCMS already ingests from Coocon.
+
+## Data and connections
+
+```
+PostgreSQL — WeInvoice database (= engine database)        PostgreSQL — WeCMS database
+  <engine schema>  invoices, invoice_xml, invoice_pdf,       (spring.datasource, JPA)
+                   invoice_details, tasks, email_*, …        users, tenants, menus …
+                   ← engine writes · backend reads only
+  weinvoice        winv_* tables
+                   ← backend writes · engine reads requests, writes reports
+```
+
+- The WeInvoice connection is a private Hikari pool inside `WeInvoiceDb`, **not** a Spring
+  `DataSource` bean (a second bean would re-point the auto-configured JDBC templates, JPA transactions
+  and the health check). WeInvoice code uses `WeInvoiceDb.tx()`, never `@Transactional`.
+- SQL names tables `{eng}.…` / `{app}.…`; the schema names come from configuration and are validated
+  as plain identifiers at startup.
+- Schema-of-record: [`src/main/resources/db/weinvoice/V1__winv_schema.sql`](../../../../src/main/resources/db/weinvoice/V1__winv_schema.sql)
+  (11 tables, 4 sequences) + [`V2__winv_mailbox.sql`](../../../../src/main/resources/db/weinvoice/V2__winv_mailbox.sql)
+  (`winv_mlbx_infm`, 2026-11-12) + [`V3__winv_notification_read.sql`](../../../../src/main/resources/db/weinvoice/V3__winv_notification_read.sql)
+  (`winv_ntfc_read`, bell read state, 2026-11-12 — [record](weinvoice-notifications-2026-11-12.md); optional engine
+  indexes [`add-notification-time-indexes-2026-11-12.sql`](../../../sql/2026/add-notification-time-indexes-2026-11-12.sql)). Seed + grants:
+  [`docs/sql/2026/seed-weinvoice-provider-catalog-2026-11-02.sql`](../../../sql/2026/seed-weinvoice-provider-catalog-2026-11-02.sql),
+  [`docs/sql/2026/grant-weinvoice-schema-access-2026-11-02.sql`](../../../sql/2026/grant-weinvoice-schema-access-2026-11-02.sql).
+- Files: XML / PDF / mail files are read from `WECMS_WEINVOICE_ENGINE_OUTPUT_DIR` (paths in the engine
+  tables are relative to it); uploads are written under `WECMS_WEINVOICE_STORAGE_ROOT`, which the
+  engine must also see.
+
+## Configuration (`wecms.weinvoice.*`, all bare `${VAR}`)
+
+| Variable | Meaning |
+|---|---|
+| `WECMS_WEINVOICE_ENABLED` | Master switch; `false` → no pool, every endpoint answers `WBE3000` |
+| `WECMS_WEINVOICE_DB_URL` / `_USERNAME` / `_PASSWORD` / `_MAX_POOL_SIZE` | WeInvoice database |
+| `WECMS_WEINVOICE_ENGINE_SCHEMA` / `_APP_SCHEMA` | Engine tables (`public` until the 2026-11-12 move, then `weinvoice` — [record](../../../issues/weinvoice-engine-tables-into-weinvoice-schema-2026-11-12.md)) / WeInvoice tables (`weinvoice`) |
+| `WECMS_WEINVOICE_ENGINE_OUTPUT_DIR` / `_STORAGE_ROOT` | Engine files / upload root |
+| `WECMS_WEINVOICE_SECRET_KEY` | Base64 of 32 bytes — AES-256-GCM key of the stored GDT passwords; the engine needs the same value |
+| `WECMS_WEINVOICE_PARTNER_API_KEYS` | Comma-separated keys accepted from WeCMS; empty = Partner API closed |
+| `WECMS_WEINVOICE_MAIL_DOMAIN` | Domain of the per-MST receiving address `hd-<mst>@<domain>` |
+| `WECMS_WEINVOICE_MAX_COMPANIES` | Tax codes per user account (prototype: 5) |
+| `WECMS_WEINVOICE_TEST_DATA_ENABLED` | Enables `POST /test-data/load` (dev / SIT) |
+| `WECMS_WEINVOICE_MS_CLIENT_ID` / `_MS_CLIENT_SECRET` | **Optional** (2026-11-12). Azure app registration (multi-tenant, delegated `IMAP.AccessAsUser.All`) for the Microsoft mailbox sign-in; the engine needs the same values as `WEINVOICE_MS_CLIENT_ID` / `_SECRET`. Blank = Microsoft card disabled (`WBE3032`), startup unaffected |
+| `WECMS_WEINVOICE_MS_REDIRECT_URI` | **Optional.** `<api base>/api/v1/weinvoice/mailboxes/microsoft/callback`, registered on the app |
+| `WECMS_WEINVOICE_WEB_BASE_URL` | **Optional.** Public URL of the WeInvoice web app; the Microsoft callback redirects to `<it>/sources/mailbox` |
+
+All five `.env.*.example` templates carry the block. A local `.env.local` written before 2026-11-02
+must get these lines too, or startup fails on the unresolved booleans.
+
+## Engine contract (`weinvoice.winv_engn_rqst`)
+
+The backend inserts rows with `rqst_stts = 'QUEUED'`. The engine worker (we-scraping
+`web/weinvoice_worker.py`, since 2026-11-09 — [issue record](../../../issues/weinvoice-engine-request-worker-2026-11-09.md)):
+
+1. claims the oldest queued row (`FOR UPDATE SKIP LOCKED`), sets `RUNNING` and `strt_dtm`;
+2. reports `step_cd` and `prgs_data` while it works, and stops at its next checkpoint when
+   `cncl_yn = 'Y'` (status `CANCELLED`);
+3. ends with `DONE` / `PARTIAL` / `FAILED`, `rslt_data`, `err_msg`, `end_dtm`, and `job_run_id` when a
+   `job_runs` row served the request.
+
+| `rqst_type` | `rqst_prmt` | Engine work |
+|---|---|---|
+| ~~`LOGIN_TEST`~~ | — | **Not used since 2026-11-06.** The account is verified synchronously: the backend calls the engine's internal API `POST /internal/gdt/login-test` (we-scraping `web/internal_api.py`, header `X-Api-Key`, settings `WECMS_WEINVOICE_SCRAPING_URL` / `_API_KEY`) and stores the row `CONNECTED` only when GDT accepts it. The engine reads `CONNECTED` rows of `winv_cmpn_infm` (decrypting `gdt_pw_enc` with `WEINVOICE_SECRET_KEY` = this backend's `WECMS_WEINVOICE_SECRET_KEY`) and registers them in its `companies` table before each sync (`weinvoice_bridge.py`). [Issue record](../../../issues/weinvoice-gdt-login-test-synchronous-2026-11-06.md) |
+| `SYNC` | `{direction, from_month, to_month}` | List + XML per month (future months skipped, current month up to today, ≤ 24 months); progress `{month, listed, xml_done, xml_total}`, steps `login · list · xml · done`; result `{new, updated, xml, listed, xml_failed, sync_errors, months}`; `winv_sync_cvrg` per month and list type (`gdt_cnt` = rows GDT listed, `got_cnt` = invoices stored, `cmpl_yn` = listed without error and `got_cnt ≥ gdt_cnt`); `PARTIAL` on list / XML errors |
+| `FETCH_XML` | `{invoice_ids}` | Download those invoices' XML now (skips invoices with XML and `summary_only` ones); result `{requested, xml, failed, already, summary_only, not_found}` |
+| `FETCH_PDF` | `{invoice_ids, lookup_code?, lookup_url?, company_code?}` | Run the provider adapter now (steps `open · submit · download · done`); the code / link from the request, else `winv_lkup_cd`, overrides the XML guesses; result `{pdf: saved \| exists, source_id}`; failure = the adapter's message |
+| `IMPORT` | `{upload_id[, file_nos, company_mst]}` or `{invoice_id, file_id}` | Parse the stored files (XML, ZIP, PDF; engine reads them under `WEINVOICE_STORAGE_ROOT` = `WECMS_WEINVOICE_STORAGE_ROOT`), apply the dedupe rules (UI Spec 3.2), write `rslt_*` of `winv_upld_file`; a record created from an upload has origin `upload` |
+| `TEST_DATA` | `{}` | Load the acceptance TestData folder (`XML/`, `PDF/`, `ma_tra_cuu.csv`; engine `WEINVOICE_TEST_DATA_DIR`); result = the prototype report (`folder, xml_total, created, merged, duplicate, errors[], new_tax_ids[], codes_applied, codes_unmatched[], pdf_attached, pdf_unmatched[]`) |
+| `MAIL_SCAN` | `{mailbox_id}` | Since 2026-11-12 ([record](weinvoice-mailbox-connections-2026-11-12.md)). Scan one `winv_mlbx_infm` mailbox now (decrypt `secret_enc`, IMAP read-only per folder of `fldr_list`, mail ingest restricted to the mailbox's MSTs: `cmpn_mst`, or every active MST of the owner for `ALL`); write `last_scan_dtm` / `last_scan_cnt`; login refused → `conn_stts = ERROR` + `conn_msg`, Microsoft `invalid_grant` → `EXPIRED`. Requires the manual script [`add-mail-scan-request-type-2026-11-12.sql`](../../../sql/2026/add-mail-scan-request-type-2026-11-12.sql) (CHECK constraint) |
+
+GDT password format: `"v1:" + base64(iv[12] ‖ ciphertext ‖ tag[16])`, AES-256-GCM, key = base64-decoded
+`WECMS_WEINVOICE_SECRET_KEY` (Python: `AESGCM(key).decrypt(raw[:12], raw[12:], None)`).
+
+## Access
+
+- Every WeInvoice endpoint requires a WeCMS JWT. Every WeInvoice row is owned by the signed-in user
+  (`owner_id` = `USER_INFM.USER_ID`, UI Spec 02 "one account manages several MSTs"): each user adds,
+  changes and removes their own tax codes, with no WeCMS admin gate. Sub-accounts and the 8-permission
+  model are P2 (UI Spec 3.10). Linking tax codes to a WeCMS `BIZ_KEY` is WeCMS's concern (Partner API,
+  by `tax_id`). Changed 2026-11-05: [issue record](../../../issues/weinvoice-company-ownership-by-user-2026-11-05.md).
+- A working MST must be an active connection of the signed-in user; invoices of other MSTs read as not found.
+- Partner API: `X-Api-Key` against `WECMS_WEINVOICE_PARTNER_API_KEYS`, constant-time compare, fails
+  closed.
+
+## Known limitations
+
+See the implementation record, §"Known Limitations / Follow-up".

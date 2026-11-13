@@ -15,4 +15,7 @@ public interface UserInfmRepository extends JpaRepository<UserInfm, String> {
      * tenant must also be free in every other tenant.
      */
     boolean existsByUserId(String userId);
+
+    /** Sign-up guard: a WeInvoice account must not reuse a WeCMS login id in any letter case. */
+    boolean existsByUserIdIgnoreCase(String userId);
 }

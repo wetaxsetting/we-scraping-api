@@ -21,6 +21,33 @@ Frontend test plan: [wecms-web/docs/features/banking/internal-transfer-vnd/own-a
 | OAT-L6 | HAENGSUNG tenant (`PRDT_TYPE='H'`) | Only VietinBank `11704001`; matured/zero-balance savings excluded. |
 | OAT-L7 | Empty (no eligible accounts) | `list=[]`, `total_count=0`, totals zero. |
 
+### 1a. Per-row credential projection
+
+The five cert fields (`bank_cert_seq`, `cert_info_con`, `cert_info_detl_con`, `cert_info_detl_con2`,
+`nxisas_gb_seq_no`) are resolved **per row** from that row's own `ACCT_MSTR.BANK_CERT_SEQ` — matching
+legacy's per-row `_v2nxisas.getCertInfo(BANK_CERT_SEQ)`. A row that resolves no credential still
+renders; it is simply un-credentialed, and the frontend gate disables its Transfer button with the
+register-credentials tooltip.
+
+| ID | Scenario | Expected |
+|---|---|---|
+| SA-CERT-1 | Row whose `BANK_CERT_SEQ` resolves a credential **at the same bank** | All five cert fields project; `cert_info_detl_con` is the **strictly** decrypted password (a value that fails legacy-cipher decrypt projects `null`, never a raw blob). |
+| SA-CERT-2 | Row whose `BANK_CERT_SEQ` resolves a credential **at a different bank** | Treated as **no cert** — all five fields `null`, `bank_cert_seq` still echoed, row still listed. Server logs `WARN` naming both bank codes. The engine must never receive another bank's login. |
+| SA-CERT-3 | Row whose `BANK_CERT_SEQ` points at a **deleted** credential | All cert fields `null`. After the 2026-08-19 delete fix this state is only reachable for rows that were already dangling before the fix shipped — cure is Settings → Login Credentials → the bank → Select Bank Accounts (login-credentials D1c). |
+| SA-CERT-4 | Row with `BANK_CERT_SEQ IS NULL` (never linked) | All cert fields `null`; the credential table is not queried at all for the request. |
+| SA-CERT-5 | Partially-linked bank (one linked row + one unlinked row, same `BANK_CD`) | Only the linked row projects cert fields. The gate is **per account**, never per bank. |
+
+> **SA-CERT-2 is a deliberate divergence from legacy.** `SEQ_NO` is tenant-global (one sequence shared
+> by every bank), and neither legacy's IDO `BANK_CERT_INFO_R006` nor the refactor's `loadBankCerts`
+> filters `BANK_CD`. Without the guard a stale pointer could resolve another bank's login ID and
+> password, and the engine would attempt a login at bank A with bank B's credentials — a guaranteed
+> authentication failure, and each one feeds the bank's 3-strike lockout. Rationale and approval:
+> [../../../../bugs/bank-credential-delete-leaves-dangling-acct-linkage-2026-08-19.md](../../../../bugs/bank-credential-delete-leaves-dangling-acct-linkage-2026-08-19.md).
+
+Headless coverage for SA-CERT-1…4 is in `OwnAccountTransferServiceCertBankGuardTest`; SA-CERT-5 is
+covered on the frontend side (per-account gate). Evidence:
+[../../../../testing/results/bank-credential-delete-dangling-linkage-test-result-2026-08-19.md](../../../../testing/results/bank-credential-delete-dangling-linkage-test-result-2026-08-19.md).
+
 ## 2. Transfer creation (`/scraping-result`)
 
 | ID | Scenario | Expected |

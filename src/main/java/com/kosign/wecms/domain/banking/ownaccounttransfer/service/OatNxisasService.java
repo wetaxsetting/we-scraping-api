@@ -12,7 +12,6 @@ import com.kosign.wecms.domain.banking.nxisas.audit.NxsiasModuleTranLogHisReposi
 import com.kosign.wecms.domain.banking.nxisas.audit.entity.NxsiasModuleTranLogHis;
 import com.kosign.wecms.domain.banking.synchistory.entity.ExtTranCallHis;
 import com.kosign.wecms.domain.banking.synchistory.repository.ExtTranCallHisRepository;
-import com.kosign.wecms.domain.banking.ownaccounttransfer.config.OatSeedDecryptProperties;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.request.NxisasCertAcctListRequest;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.request.NxisasDecryptRequest;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.request.NxisasLoggingRequest;
@@ -76,7 +75,6 @@ public class OatNxisasService {
     private final ExtTranCallHisRepository         extTranRepo;
     private final ObjectMapper                     objectMapper;
     private final SeedCbcDecryptService            seedCbc;
-    private final OatSeedDecryptProperties         seedProps;
     private final com.kosign.wecms.common.legacy.LegacyFunctionRepository legacyFunctions;
 
     /* =================================================================
@@ -122,40 +120,49 @@ public class OatNxisasService {
      * ================================================================= */
 
     /**
-     * Refactor port of legacy {@code nxisas_decrypt}. Decrypts each engine
-     * {@code Output.Result} via the Coocon {@code ISASSeedCBC} cipher
-     * (B1, 2026-06-05 — Shinhan BALANCE proven encrypted), keyed by the
-     * session {@code NXISAS_UID}/{@code NXISAS_ACTION}, so the frontend
-     * sees the same parsed {@code Result.balance[]} / {@code Result.transfer[]}
-     * object legacy produced.
+     * Refactor port of legacy {@code nxisas_decrypt}
+     * ({@code WECMS DEV/WECMS/web/WEB-INF/action/jex/wabooks/nxisas/nxisas_decrypt_act.jsp}).
+     * Decrypts each engine {@code Output.Result} via the Coocon
+     * {@code ISASSeedCBC} cipher, keyed by the session
+     * {@code nxisas_uid}/{@code nxisas_action}, so the frontend sees the same
+     * plain {@code Result.balance[]} / {@code Result.transfer[]} object legacy
+     * produced.
      *
-     * <p>Gated by {@code wecms.oat.seed-decrypt.enabled} (default false).
-     * When the flag is OFF this returns {@code NXISAS_DATA} unchanged —
-     * the pre-B1 pass-through, i.e. no runtime behaviour change until the
-     * cipher path is verified per bank in a licensed environment.
+     * <p><b>Runs unconditionally</b>, matching legacy. The bundle's guard at
+     * {@code nxisas_v2.js:2353} fires whenever {@code nonDecrypt} is
+     * {@code undefined} — which it is on the Own Account Transfer screen — and
+     * the decrypt happens <em>before</em> the success/fail dispatch at
+     * {@code :2361} / {@code :2389}, so every consumer downstream reads a
+     * decrypted payload. The engine encrypts {@code Output.Result} on every
+     * response, including {@code ErrorCode "00000000"}.
+     *
+     * <p>Corrected 2026-08-18: this was previously gated by
+     * {@code wecms.oat.seed-decrypt.enabled} (default {@code false}, set in no
+     * profile or env file), so it returned its input unchanged and Update
+     * Balance failed with "Balance is required." while a successful transfer
+     * silently recorded composed values instead of the bank-echoed ones. The
+     * flag was built on the premise that "VND payloads mostly arrive
+     * plaintext"; the SIT capture disproves that for both Vietcom and Shinhan.
+     * The e-Invoice sibling ({@code EInvoiceScrapeDecryptService}) has decrypted
+     * unconditionally since 2026-07-14 — this now matches it.
      */
     public NxisasDecryptResponse decrypt(NxisasDecryptRequest req) {
         requireBizKey();
-        if (!seedProps.enabled()) {
-            return new NxisasDecryptResponse(req.NXISAS_DATA());        // pre-B1 pass-through
-        }
         return new NxisasDecryptResponse(
-                seedCbc.decryptNxisasData(req.NXISAS_DATA(), req.NXISAS_UID(), req.NXISAS_ACTION()));
+                seedCbc.decryptNxisasData(req.nxisasData(), req.nxisasUid(), req.nxisasAction()));
     }
 
     /**
      * Refactor port of legacy {@code nxisas_encrypt} — the inverse of
-     * {@link #decrypt}, used by the 2nd-factor (OTP / QnA) re-send path
-     * during a TRANSFER. Same {@code wecms.oat.seed-decrypt.enabled} gate;
-     * OFF returns {@code NXISAS_DATA} unchanged.
+     * {@link #decrypt}, used by the 2nd-factor (OTP / QnA) re-send path during
+     * a TRANSFER. Runs unconditionally for the same reason {@link #decrypt}
+     * does: an engine that encrypts its output also expects encrypted input on
+     * the re-send leg, so a pass-through here would corrupt the retry.
      */
     public NxisasDecryptResponse encrypt(NxisasDecryptRequest req) {
         requireBizKey();
-        if (!seedProps.enabled()) {
-            return new NxisasDecryptResponse(req.NXISAS_DATA());
-        }
         return new NxisasDecryptResponse(
-                seedCbc.encryptNxisasData(req.NXISAS_DATA(), req.NXISAS_UID(), req.NXISAS_ACTION()));
+                seedCbc.encryptNxisasData(req.nxisasData(), req.nxisasUid(), req.nxisasAction()));
     }
 
     /* =================================================================

@@ -27,15 +27,17 @@ import org.springframework.stereotype.Service;
  * the original ciphertext is kept; if the decrypted text is not JSON it
  * is left as a string node rather than crashing the whole array.
  *
- * <p>This service performs the cipher unconditionally. Feature-flag
- * gating is the caller's concern:
+ * <p>This service performs the cipher unconditionally, and both callers now
+ * invoke it unconditionally too:
  * <ul>
- *   <li>OAT ({@code OatNxisasService}) invokes it only when
- *       {@code wecms.oat.seed-decrypt.enabled} is on (VND payloads mostly
- *       arrive plaintext, so decryption is opt-in there).</li>
- *   <li>e-Invoice ({@code EInvoiceScrapeDecryptService}) invokes it
- *       unconditionally — the GDT engine always returns SEED-CBC
- *       ciphertext, so the two-phase scrape cannot proceed without it.</li>
+ *   <li>OAT ({@code OatNxisasService}) — unconditional since 2026-08-18. It
+ *       was previously gated by {@code wecms.oat.seed-decrypt.enabled} on the
+ *       premise that VND payloads mostly arrive plaintext; a SIT capture
+ *       disproved that for both Vietcom and Shinhan (the engine encrypts
+ *       {@code Output.Result} on every response), so the flag was removed.</li>
+ *   <li>e-Invoice ({@code EInvoiceScrapeDecryptService}) — unconditional since
+ *       2026-07-14; the GDT engine always returns SEED-CBC ciphertext, so the
+ *       two-phase scrape cannot proceed without it.</li>
  * </ul>
  *
  * <p>Promoted to {@code common/nxisas/} on 2026-07-14 when the e-Invoice

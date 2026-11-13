@@ -33,7 +33,17 @@ Browser (Next.js page + verbatim Coocon bundle)
    - Filters `ACCT_MSTR` to `CCY_CD='VND'`, `ACTV_YN='Y'`, `ACCT_TYPE_CD ∈ {03,05}`, bank ∈ tenant allow-list.
    - **Allow-list:** default product (`F`) = Shinhan/IBK/Vietcombank/VietinBank/Woori; HAENGSUNG (`H`) = VietinBank only, with the saving-maturity + `BAL>0` gate (legacy `trns_0001_001_r001_act.jsp:74-77`).
    - Non-admin users are intersected with their `ACCT_AUTH_INFO` `V`/`W` grants; each row gets a `canTransfer` flag (true only with a `W` grant or ADMIN).
-   - Batch-loads cert fields (BANK_CERT_INFO) to avoid N+1; computes totals (`tot_bal`, `tot_avi_bal`).
+   - Batch-loads cert fields (`BANK_CERT_INFO`) once per request to avoid N+1, then resolves each row's
+     credential from **that row's own** `ACCT_MSTR.BANK_CERT_SEQ` (`resolveCertForAccount`) — matching
+     legacy's per-row `_v2nxisas.getCertInfo(BANK_CERT_SEQ)`. Two cases project **null cert fields** and
+     leave the row otherwise intact: a seq with no matching credential (unlinked, or pointing at a
+     deleted one), and a credential whose `BANK_CD` differs from the account's. The latter is the
+     `BANK_CD` guard: `SEQ_NO` is tenant-global, so a stale pointer could otherwise resolve another
+     bank's login and the engine would attempt a login at bank A with bank B's credentials — a certain
+     auth failure feeding the bank's 3-strike lockout. Deliberate divergence from legacy (which has no
+     such guard), approved 2026-08-19; see
+     [../../../../bugs/bank-credential-delete-leaves-dangling-acct-linkage-2026-08-19.md](../../../../bugs/bank-credential-delete-leaves-dangling-acct-linkage-2026-08-19.md).
+   - Computes totals (`tot_bal`, `tot_avi_bal`).
    - Writes a `LIST_SOURCE_ACCOUNTS` audit row.
 3. Response → `SourceAccountListResponse { list[], total_count, tot_bal, tot_avi_bal, allowed_bank_cds[] }`.
 

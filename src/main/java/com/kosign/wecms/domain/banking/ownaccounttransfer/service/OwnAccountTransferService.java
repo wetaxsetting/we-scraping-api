@@ -206,9 +206,7 @@ public class OwnAccountTransferService {
             final GrantFlags grants = userGrants.getOrDefault(key, GrantFlags.EMPTY);
             if (!isAdmin && !grants.hasAny()) continue;
             final boolean canTransfer = isAdmin || grants.hasW();
-            final BankCertInfo cert = a.getBankCertSeq() == null
-                    ? null
-                    : certBySeq.get(BigDecimal.valueOf(a.getBankCertSeq()));
+            final BankCertInfo cert = resolveCertForAccount(a, certBySeq);
             projected.add(toSourceRow(a, canTransfer, cert));
             if (a.getBal()     != null) totBal    = totBal.add(a.getBal());
             if (a.getRealAmt() != null) totAviBal = totAviBal.add(a.getRealAmt());
@@ -525,9 +523,10 @@ public class OwnAccountTransferService {
      *   <li><b>Transfer-type shape</b> — {@code SAME_BANK} requires
      *       {@code targetBankCd}; {@code NAPAS} requires
      *       {@code targetNapasBankCd}.</li>
-     *   <li><b>Amount tolerance</b> — exact match for VND
-     *       ({@code requestedAmt == actualAmt}). VND has no
-     *       fractional unit; any drift is engine error.</li>
+     *   <li><b>Amount drift</b> — {@code requestedAmt} vs
+     *       {@code actualAmt} is <b>logged, never rejected</b>. Legacy has
+     *       no such comparison and always records the bank-reported amount;
+     *       rejecting would discard the record of an executed transfer.</li>
      *   <li><b>Source ownership</b> — row must exist for the tenant,
      *       be {@code ACTV_YN='Y'}, be VND; non-admin USERs must hold
      *       a {@code W} grant.</li>
@@ -576,11 +575,23 @@ public class OwnAccountTransferService {
             }
         }
 
-        // -- 3. Amount tolerance (VND: exact match) ------------------
+        // -- 3. Amount drift — LOGGED, never rejected (legacy parity) --
+        // Legacy has no "requested vs actual" concept at all: the composer
+        // sends a single TRSC_AMT — the bank's `Result.transfer[0].remitAmt`
+        // on success, the entered amount on failure (trns_0001_007.ts:2158,
+        // 2169) — and trns_0002_001_c001_act.jsp validates only that it is a
+        // positive number (ValidationHelper.validateAmountOnlyPositive). It
+        // cannot reject on a mismatch because it has nothing to compare
+        // against; it records whatever the bank reported.
+        //
+        // Rejecting here would discard the ONLY record of a transfer the bank
+        // may already have executed, so the divergence is logged and the row
+        // is still written with the engine-reported amount. (legacy-parity fix
+        // 2026-08-18 — see docs/bugs/internal-transfer-intake-legacy-parity-2026-08-18.md)
         if (!Objects.equals(req.requestedAmt(), req.actualAmt())) {
-            log.warn("oat scraping-result amount-mismatch bizKey={} idem={} requested={} actual={}",
+            log.warn("oat scraping-result amount-drift (recorded, not rejected) "
+                            + "bizKey={} idem={} requested={} actual={}",
                     bizKey, req.idempotencyKey(), req.requestedAmt(), req.actualAmt());
-            rejectAndAudit(req, "WBE_OAT_AMOUNT_MISMATCH");
         }
 
         // -- 4. Source ownership re-validation -----------------------
@@ -643,6 +654,22 @@ public class OwnAccountTransferService {
 
         final boolean engineSuccess = OwnAccountTransferConstants.ENGINE_SUCCESS_STTS
                 .equals(req.trnsStts());
+
+        // -- 6b. Persist the bank-account password(s) on success -------
+        // Model A (PO-approved 2026-08-26): the user types the password
+        // every transfer; the refactor NEVER reads it back. The write
+        // exists solely so the live JEX system keeps working on the same
+        // account — legacy takes ACCT_PWD straight from the row and sends
+        // it without ever showing a field (trns_0001_007.ts:675-682 →
+        // :1943). Because JEX consumes it silently, storing a value the
+        // bank rejected would send that wrong password from the legacy
+        // screen with no chance to correct it, and repeated failures walk
+        // the bank's lockout ladder (80002421 → 80002422 → 80002423).
+        // Hence: success only.
+        if (engineSuccess) {
+            persistTransferPasswords(req, bizKey, userId);
+        }
+
         appendAudit(engineSuccess
                         ? OwnAccountTransferAuditActions.SCRAPING_RESULT_OK
                         : OwnAccountTransferAuditActions.SCRAPING_RESULT_REJECT,
@@ -693,6 +720,65 @@ public class OwnAccountTransferService {
                         && OwnAccountTransferConstants.USE_YN_ACTIVE.equals(a.getUseYn()));
     }
 
+    /**
+     * Encrypt and store whichever bank-account password(s) the composer
+     * sent, after the bank accepted the transfer.
+     *
+     * <p>Encryption goes through {@link BankCertCryptoService}, whose
+     * output is byte-identical to the legacy JEX DB function
+     * {@code public.encrypt(txt)} (AES-256-CBC, zero IV, key =
+     * {@code sha256('wabooksvn')}, base64). This is what makes the write
+     * readable by live JEX; an AES-GCM value here would be undecryptable
+     * on the legacy side and would silently break IBK / KEB Hana
+     * transfers there after cutover.
+     *
+     * <p>Blank values are normalised to {@code null} so the repository's
+     * {@code COALESCE} leaves the corresponding column untouched — a
+     * bank that needs only the account password must not blank an
+     * existing {@code TRNS_PWD}.
+     *
+     * <p><b>Best-effort by design.</b> The transfer has already executed
+     * at the bank when this runs; failing the intake because a
+     * convenience write did not land would discard the only record of a
+     * real money movement. A miss is logged and swallowed. Nothing is
+     * logged that could reveal the password itself.
+     */
+    private void persistTransferPasswords(
+            ScrapingResultIntakeRequest req, String bizKey, String userId) {
+
+        final String acctPwdEnc = encryptOrNull(req.acctPwd());
+        final String trnsPwdEnc = encryptOrNull(req.trnsPwd());
+        if (acctPwdEnc == null && trnsPwdEnc == null) {
+            return;                       // password-less bank — nothing to store
+        }
+
+        try {
+            final int updated = acctMstrRepo.applyTransferPasswords(
+                    bizKey, req.sourceBankCd(), req.sourceAcctNo(),
+                    acctPwdEnc, trnsPwdEnc, userId, utcNow14());
+            if (updated == 0) {
+                log.warn("oat password persist matched no acct_mstr row "
+                                + "bizKey={} bankCd={} acctNo={}",
+                        bizKey, req.sourceBankCd(), req.sourceAcctNo());
+            } else {
+                log.info("oat password persisted bizKey={} bankCd={} acctNo={} acct={} trns={}",
+                        bizKey, req.sourceBankCd(), req.sourceAcctNo(),
+                        acctPwdEnc != null, trnsPwdEnc != null);
+            }
+        } catch (RuntimeException e) {
+            // Never fail an already-executed transfer over this.
+            log.error("oat password persist failed bizKey={} bankCd={} acctNo={}",
+                    bizKey, req.sourceBankCd(), req.sourceAcctNo(), e);
+        }
+    }
+
+    /** Legacy-format ciphertext for a non-blank value, else {@code null}
+     *  (which the repository's {@code COALESCE} reads as "leave as is"). */
+    private String encryptOrNull(String plaintext) {
+        if (plaintext == null || plaintext.isBlank()) return null;
+        return bankCertCrypto.encrypt(plaintext);
+    }
+
     /** Insert the post-scrape row into {@code NAPAS_REMIT_TRNS_HSTR}.
      *  Two-attempt seq_no allocator — the first uses
      *  {@code MAX(seq_no) + 1}; on PK race we retry once with a fresh
@@ -706,18 +792,25 @@ public class OwnAccountTransferService {
         final NapasRemitTrnsHstr row = new NapasRemitTrnsHstr();
         row.setBizKey(bizKey);
         row.setOutBankCode(req.sourceBankCd());
-        row.setOutAcctNo(req.sourceAcctNo());
+        // Account numbers + currency: the BANK-echoed value wins when the
+        // engine reported one, else the composed value — legacy
+        // trns_0001_007.ts:2157/2163/2158 (success) vs :2167/2168/2170
+        // (failure). These are RECORD-only; the ownership re-validation above
+        // ran on the composed keys, never on these, so a bank-normalized
+        // account number can never reject an already-executed transfer.
+        row.setOutAcctNo(firstNonBlank(req.engineOutAcctNo(), req.sourceAcctNo()));
         row.setTransType(OwnAccountTransferConstants.TRANSFER_TYPE_SAME_BANK.equals(req.transferType())
                 ? OwnAccountTransferConstants.NRTH_TRANS_TYPE_SAME_BANK
                 : OwnAccountTransferConstants.NRTH_TRANS_TYPE_NAPAS);
         row.setInBankCode(resolvedTargetBankCd);
         row.setInNapasBankCode(req.targetNapasBankCd());
-        row.setInAcctNo(req.targetAcctNo());
+        row.setInAcctNo(firstNonBlank(req.engineInAcctNo(), req.targetAcctNo()));
         row.setOwacNm(req.targetOwacNm());
-        row.setCcyCd(req.ccyCd());
+        row.setCcyCd(firstNonBlank(req.engineCcyCd(), req.ccyCd()));
         row.setTrscAmt(new BigDecimal(req.actualAmt()));
         row.setFee(req.fee());
-        row.setFeeDfrSbj(req.feeDfrSbj());
+        // A/B (wire) → 1/2 (legacy column) — see toLegacyFeeDfrSbj.
+        row.setFeeDfrSbj(OwnAccountTransferConstants.toLegacyFeeDfrSbj(req.feeDfrSbj()));
         row.setRmrk(req.rmrk());
         row.setRmrk2(req.rmrk2());
         row.setTrnsStts(req.trnsStts());
@@ -746,6 +839,16 @@ public class OwnAccountTransferService {
         }
         // Unreachable — loop returns or rethrows.
         throw new IllegalStateException("oat seq_no allocator exhausted unexpectedly");
+    }
+
+    /** First non-blank of the two, else {@code null}. Used to prefer a
+     *  bank-echoed result field over the composed request value while
+     *  treating {@code null} and {@code ""} identically (legacy's
+     *  {@code common.app.null2void} inputs make blank and absent the same
+     *  thing on the wire). */
+    private static String firstNonBlank(String preferred, String fallback) {
+        if (preferred != null && !preferred.isBlank()) return preferred;
+        return fallback;
     }
 
     /** Write a reject audit row, then throw the business exception.
@@ -880,6 +983,42 @@ public class OwnAccountTransferService {
             }
         }
         return bySeq;
+    }
+
+    /**
+     * Resolve the credential an account is registered against — with a
+     * {@code BANK_CD} equality guard.
+     *
+     * <p>{@code BANK_CERT_INFO}'s PK is {@code (BIZ_KEY, SEQ_NO)}: the seq is
+     * tenant-global, shared by every bank the tenant has credentials for.
+     * Neither legacy's IDO {@code BANK_CERT_INFO_R006} nor
+     * {@link #loadBankCerts} filters {@code BANK_CD}, so a stale
+     * {@code ACCT_MSTR.BANK_CERT_SEQ} can resolve a DIFFERENT bank's login ID
+     * and password. Projecting those onto this account would make the browser
+     * engine attempt a login at bank A with bank B's credentials — a
+     * guaranteed authentication failure that feeds the bank's 3-strike
+     * lockout.
+     *
+     * <p>A cross-bank hit is therefore treated as "no credential": the row
+     * projects null cert fields and the frontend gate disables Transfer with
+     * the register-credentials message, exactly as an unlinked account does.
+     *
+     * <p>Deliberate divergence from legacy (approved 2026-08-19) — legacy has
+     * no such guard. See
+     * {@code docs/bugs/bank-credential-delete-leaves-dangling-acct-linkage-2026-08-19.md}.
+     */
+    private BankCertInfo resolveCertForAccount(AcctMstr a, Map<BigDecimal, BankCertInfo> certBySeq) {
+        if (a.getBankCertSeq() == null) return null;
+        final BankCertInfo cert = certBySeq.get(BigDecimal.valueOf(a.getBankCertSeq()));
+        if (cert == null) return null;
+        if (cert.getBankCd() != null
+                && a.getBankCd() != null
+                && !cert.getBankCd().equals(a.getBankCd())) {
+            log.warn("oat cert bank mismatch — acct {}/{} points at BANK_CERT_SEQ={} owned by bank {}; treating as no-cert",
+                    a.getBankCd(), a.getAcctNo(), a.getBankCertSeq(), cert.getBankCd());
+            return null;
+        }
+        return cert;
     }
 
     /** Run {@link BankCertCryptoService#decrypt(String)} but swallow
