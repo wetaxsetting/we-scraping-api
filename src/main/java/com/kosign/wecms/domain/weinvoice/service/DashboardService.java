@@ -75,8 +75,10 @@ public class DashboardService {
                 outVat.subtract(inVat));
 
         DashboardRepository.DataStatusRow ds = dashboard.dataStatus(ownerId, mst, from, to);
-        DashboardResponse.DataStatus dataStatus = new DashboardResponse.DataStatus(ds.missingXml(), ds.noCodeNoXml(),
-                ds.missingPdf(), invoices.incompletePeriods(mst, null, y + "01", y + "12"));
+        DashboardResponse.DataStatus dataStatus = new DashboardResponse.DataStatus(
+                ds.missingXml(), ds.missingXmlPurchase(), ds.missingXmlSales(), ds.noCodeNoXml(),
+                ds.missingPdf(), ds.missingPdfPurchase(), ds.missingPdfSales(),
+                invoices.incompletePeriods(mst, null, y + "01", y + "12"));
 
         List<DashboardResponse.TopPartner> top = dashboard.topSuppliers(ownerId, mst, from, to, TOP_SUPPLIERS).stream()
                 .map(p -> new DashboardResponse.TopPartner(p.taxId(), p.name(), p.count(), p.total()))

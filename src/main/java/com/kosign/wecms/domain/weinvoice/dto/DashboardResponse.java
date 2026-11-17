@@ -26,12 +26,17 @@ public record DashboardResponse(
     }
 
     /**
-     * @param missingXml        coded invoices without XML
-     * @param noCodeNoXml       invoices without code still without XML
-     * @param missingPdf        invoices without original PDF
-     * @param incompletePeriods months whose GDT list is not complete
+     * @param missingXml         coded invoices without XML (both directions)
+     * @param missingXmlPurchase ... purchase only
+     * @param missingXmlSales    ... sales only
+     * @param noCodeNoXml        invoices without code still without XML
+     * @param missingPdf         invoices without original PDF (both directions)
+     * @param missingPdfPurchase ... purchase only
+     * @param missingPdfSales    ... sales only
+     * @param incompletePeriods  months whose GDT list is not complete
      */
-    public record DataStatus(long missingXml, long noCodeNoXml, long missingPdf,
+    public record DataStatus(long missingXml, long missingXmlPurchase, long missingXmlSales, long noCodeNoXml,
+                             long missingPdf, long missingPdfPurchase, long missingPdfSales,
                              List<IncompletePeriod> incompletePeriods) {
     }
 

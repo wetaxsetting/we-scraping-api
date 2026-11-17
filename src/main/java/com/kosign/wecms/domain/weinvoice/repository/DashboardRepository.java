@@ -40,18 +40,29 @@ public class DashboardRepository {
                 rs.getBigDecimal("total"), rs.getBigDecimal("tax")));
     }
 
-    /** "Data status" box: coded without XML, without code and without XML, without PDF. */
+    /**
+     * "Data status" box: coded without XML, without code and without XML, without PDF — the first and last also per
+     * direction, so each dashboard row opens the purchase or sales list holding exactly those invoices.
+     */
     public DataStatusRow dataStatus(String ownerId, String mst, LocalDate from, LocalDate to) {
         MapSqlParameterSource p = new MapSqlParameterSource();
         String sql = db.sql(InvoiceQueryRepository.cte(period(ownerId, mst, from, to), p) + """
-                SELECT count(*) FILTER (WHERE NOT c.has_xml AND upper(left(c.khhdon, 1)) <> 'K') AS missing_xml,
+                SELECT count(*) FILTER (WHERE x.coded_no_xml) AS missing_xml,
+                       count(*) FILTER (WHERE x.coded_no_xml AND c.direction = 'mua') AS missing_xml_purchase,
+                       count(*) FILTER (WHERE x.coded_no_xml AND c.direction = 'ban') AS missing_xml_sales,
                        count(*) FILTER (WHERE NOT c.has_xml AND upper(left(c.khhdon, 1)) = 'K') AS no_code_no_xml,
-                       count(*) FILTER (WHERE NOT c.has_pdf) AS missing_pdf
+                       count(*) FILTER (WHERE NOT c.has_pdf) AS missing_pdf,
+                       count(*) FILTER (WHERE NOT c.has_pdf AND c.direction = 'mua') AS missing_pdf_purchase,
+                       count(*) FILTER (WHERE NOT c.has_pdf AND c.direction = 'ban') AS missing_pdf_sales
                   FROM conv c
+                 CROSS JOIN LATERAL (
+                       SELECT NOT c.has_xml AND upper(left(c.khhdon, 1)) <> 'K' AS coded_no_xml) x
                  WHERE c.tthai_eff NOT IN (4, 6)
                 """);
         return db.jdbc().queryForObject(sql, p, (rs, n) -> new DataStatusRow(
-                rs.getLong("missing_xml"), rs.getLong("no_code_no_xml"), rs.getLong("missing_pdf")));
+                rs.getLong("missing_xml"), rs.getLong("missing_xml_purchase"), rs.getLong("missing_xml_sales"),
+                rs.getLong("no_code_no_xml"),
+                rs.getLong("missing_pdf"), rs.getLong("missing_pdf_purchase"), rs.getLong("missing_pdf_sales")));
     }
 
     /** Top purchase partners by total (P2 in the Function List; cheap enough to ship now). */
@@ -92,7 +103,8 @@ public class DashboardRepository {
     public record MonthRow(String month, String engineDirection, long count, BigDecimal total, BigDecimal tax) {
     }
 
-    public record DataStatusRow(long missingXml, long noCodeNoXml, long missingPdf) {
+    public record DataStatusRow(long missingXml, long missingXmlPurchase, long missingXmlSales, long noCodeNoXml,
+                                long missingPdf, long missingPdfPurchase, long missingPdfSales) {
     }
 
     public record PartnerRow(String taxId, String name, long count, BigDecimal total) {
