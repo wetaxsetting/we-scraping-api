@@ -119,6 +119,9 @@ class BankTransactionSyncServiceAsyncTest {
         when(acct.getAcctNo()).thenReturn(acctNo);
         when(acct.getCcyCd()).thenReturn("VND");
         when(acct.getHandRegYn()).thenReturn("N");
+        // Unbound account: Mockito would otherwise default a Long getter to 0L, which
+        // reads as a real BANK_CERT_SEQ and diverts to the by-seq credential lookup.
+        when(acct.getBankCertSeq()).thenReturn(null);
         when(acctRepo.findByBizKeyAndBankCdAndAcctNo(eq(BIZ_KEY), eq(bankCd), eq(acctNo)))
                 .thenReturn(Optional.of(acct));
         mockedAccts.add(acct);

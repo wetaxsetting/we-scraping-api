@@ -127,4 +127,55 @@ public final class OwnAccountTransferConstants {
      *  = ? AND TRNS_STLM_YN <> 'Y'}). Only not-yet-settled rows count
      *  as a duplicate. */
     public static final String NRTH_STLM_YN_YES = "Y";
+
+    /* =================================================================
+     *  FEE_DFR_SBJ — wire vocabulary vs legacy column vocabulary
+     * ================================================================= */
+
+    /** Wire value for "sender pays" (applicant bears the fee). */
+    public static final String FEE_BEARER_WIRE_SENDER    = "A";
+
+    /** Wire value for "recipient pays" (beneficiary bears the fee). */
+    public static final String FEE_BEARER_WIRE_RECIPIENT = "B";
+
+    /** {@code NAPAS_REMIT_TRNS_HSTR.FEE_DFR_SBJ} value legacy stores for
+     *  "sender pays" — {@code FeeDfrSbjType.SENDER_PAYS("1")}. */
+    public static final String FEE_DFR_SBJ_SENDER_PAYS    = "1";
+
+    /** {@code NAPAS_REMIT_TRNS_HSTR.FEE_DFR_SBJ} value legacy stores for
+     *  "recipient pays" — {@code FeeDfrSbjType.RECEIPIENT_PAYS("2")}. */
+    public static final String FEE_DFR_SBJ_RECIPIENT_PAYS = "2";
+
+    /**
+     * Translate the wire fee-bearer letter to the value legacy persists.
+     *
+     * <p>Legacy carries ONE value end-to-end: the radio's own
+     * {@code value="1"} / {@code value="2"}
+     * ({@code trns_0001_007_view.jsp:177-183}), read into
+     * {@code trns_fee_val} ({@code trns_0001_007.ts:596-600}), sent to the
+     * engine as {@code feePaymentType} ({@code :2086}) AND written to the
+     * column as {@code FEE_DFR_SBJ} ({@code :2182}).
+     * {@code wabooks/enums/FeeDfrSbjType} declares exactly those two codes,
+     * and {@code ValidationHelper.validateFeeDfrSbjType} rejects anything else
+     * with {@code WBE0001}. No legacy reader expects {@code A}/{@code B}.
+     *
+     * <p>The refactor's UI models the choice as {@code A}/{@code B} and the
+     * frontend already maps {@code A}→{@code "1"} / {@code B}→{@code "2"} for
+     * the engine payload ({@code bank-profiles.ts}); only the persisted column
+     * had drifted. Converting here — at the DB boundary — restores parity
+     * without touching the wire contract.
+     *
+     * <p>Anything that is not a known wire letter passes through unchanged, so
+     * a caller that already sends the legacy {@code 1}/{@code 2} is idempotent
+     * and the unused {@code S} (split — no legacy counterpart) is not silently
+     * rewritten into a valid-looking code.
+     *
+     * @param wireValue the DTO's {@code fee_dfr_sbj}; may be {@code null}
+     * @return the legacy column value, or the input unchanged / {@code null}
+     */
+    public static String toLegacyFeeDfrSbj(String wireValue) {
+        if (FEE_BEARER_WIRE_SENDER.equals(wireValue))    return FEE_DFR_SBJ_SENDER_PAYS;
+        if (FEE_BEARER_WIRE_RECIPIENT.equals(wireValue)) return FEE_DFR_SBJ_RECIPIENT_PAYS;
+        return wireValue;
+    }
 }

@@ -236,7 +236,7 @@ comm -23 \
 ```
 
 The second list deliberately unions **both** sources — see §5. Expected total on the
-yml side: **72 variables**.
+yml side: **76 variables**.
 
 Also confirm no value is itself an unexpanded placeholder (a sign of a half-edited
 file):
@@ -426,25 +426,23 @@ here. The line must be present **and** carry a real path.
 
 ## 7b. UAT and PROD have NO `.env` in this repository
 
-Only `.env.uat.example` and `.env.prod.example` exist. **They are templates carrying
-placeholder credentials — nobody should copy one up as the real file.** There is no
-committed `.env.uat` or `.env.prod` and there never should be (`.gitignore:42`).
+Only `.env.uat.example` and `.env.prod.example` exist. **Since 2026-09-29 every
+`.env*.example` is a keys-only template: every value is blank** (enforced by
+`SchedulerConfigurationContractTest.exampleValuesAreBlank`). There is no committed `.env.uat`
+or `.env.prod` and there never should be (`.gitignore:42`).
 
-Copying an example up verbatim produces one of two outcomes, both bad: the app starts
-with a `<uat-db-host>` string as its JDBC URL and fails at connection time, or — for a
-String property bound through `@ConfigurationProperties` — it accepts the placeholder
-silently and misbehaves later (see §4).
+Copying an example up unfilled does not start: an empty boolean/int fails to bind and an
+empty cron throws at scheduler init. Every value below must be set on the host.
 
 ### Must be replaced with real values on the host
 
-Everything in this list is either empty or a `<placeholder>` in the template. **20
-variables per profile**, identical sets for UAT and PROD except the CORS origin:
+Secrets and host-specific values, identical sets for UAT and PROD except the CORS origin:
 
 | Group | Variables |
 |---|---|
 | Database | `WECMS_DB_URL` · `WECMS_DB_USERNAME` · `WECMS_DB_PASSWORD` |
 | Auth | `WECMS_JWT_SECRET` — generate per environment, `openssl rand -hex 64`; never reuse across environments |
-| CORS | **PROD only:** `WECMS_CORS_ALLOWED_ORIGINS` (`https://<prod-frontend-origin>`). UAT already carries the real `https://test2.wecms.vn` |
+| CORS | `WECMS_CORS_ALLOWED_ORIGINS` — UAT `https://test2.wecms.vn`; PROD `https://<prod-frontend-origin>` (TBD) |
 | Coocon | `WECMS_COOCON_API_KEY` · `WECMS_COOCON_SMART_API_KEY` · `WECMS_COOCON_UNIQUE_KEY` |
 | OSMC | `WECMS_OSMC_API_KEY` · `WECMS_OSMC_UNIQUE_KEY` |
 | EFS / VAN | `WECMS_EFS_BASE_URL` — **NEEDS CONFIRMATION for both UAT and PROD**; no value is recorded anywhere in this repo |
@@ -453,19 +451,19 @@ variables per profile**, identical sets for UAT and PROD except the CORS origin:
 | HAENGSUNG Oracle | `HAENGSUNG_ORACLE_URL` · `HAENGSUNG_ORACLE_USERNAME` · `HAENGSUNG_ORACLE_PASSWORD` — **required even with `HAENGSUNG_ORACLE_ENABLED=false`**; the yml lines are bare, so resolution happens regardless of the flag |
 | Alert label | `WECMS_DISPATCH_ALERT_WAS_NO` (UAT) — the server/instance number. **Empty is a valid value**; keep the line, the label just omits the number |
 
-`WECMS_CALLBACK_TRUSTED_PROXIES` is also empty in both templates — **that is the
-correct value.** Empty means `X-Forwarded-For` is ignored entirely, so a forged header
+`WECMS_CALLBACK_TRUSTED_PROXIES` should stay **empty — that is the correct value.** Empty means `X-Forwarded-For` is ignored entirely, so a forged header
 cannot influence the allow-list. Set it only if TLS terminates upstream of the app.
 
-### Can be taken from the example as-is
+### Recommended values for everything else (in the templates until 2026-09-29)
 
-Everything else: the two Coocon/OSMC **URLs** (already the real
-`sgw.webcashvietnam.com` production endpoints in both templates), all 10
+Everything else: the two Coocon/OSMC **URLs** (the
+`sgw.webcashvietnam.com` production endpoints), all 10
 `WECMS_*_STORAGE_ROOT` paths (`/DATA/src-wecms/wecms-backend/upload-files`), the SFTP
 `REMOTE_*` directory names and `PORT=3300`, `WECMS_CRYPTO_LEGACY_CERT_SEED=wabooksvn`
 (a cross-system constant that must match legacy, not a per-env secret), every feature
-flag, and every cron. Those values were carried over from the yml defaults the
-migration removed, so copying them reproduces prior behaviour exactly.
+flag (mutating jobs `false`, crons `-`), and the legacy-parity crons. These are the values
+the yml defaulted to before the 2026-07-30 migration, so setting them reproduces prior
+behaviour exactly.
 
 **Neither file has been verified against a real host.** Nobody working from this
 repository can see `.env.uat` or `.env.prod`, and live evidence has already

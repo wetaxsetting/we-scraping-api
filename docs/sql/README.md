@@ -177,6 +177,11 @@ archive was migrated as a whole; the workspace documentation rules otherwise kee
 material apart. **Read each script's `-- Target environments:` header before doing anything with it**,
 and raise a split with the PO if this folder should be scoped to refactor-only material.
 
+Since 2026-11-02 the `*-weinvoice-*` scripts target a third database: the **WeInvoice database** (the
+we-scraping engine's PostgreSQL, reached through `WECMS_WEINVOICE_DB_URL`), never the WeCMS database.
+Its schema-of-record is `src/main/resources/db/weinvoice/`, not `db/migration/` — see
+[`../features/addon-service/weinvoice/README.md`](../features/addon-service/weinvoice/README.md).
+
 ## Root-level scripts normalized — 2026-08-17
 
 The folder's two original scripts were the last files sitting directly under `docs/sql/`. They were

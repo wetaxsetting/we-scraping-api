@@ -37,7 +37,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
@@ -210,6 +212,46 @@ class LoginCredentialsServiceTest {
 
         verify(bankRepo).delete(row);
         verify(auditLogService).append(any(AuditLogContext.class));
+    }
+
+    @Test
+    @DisplayName("delete(bank): clears ACCT_MSTR.BANK_CERT_SEQ for the deleted seq (no dangling pointer)")
+    void delete_bank_clearsAccountLinkage() {
+        // Regression guard for the 2026-08-19 fix. Before it, deleting a credential left every
+        // linked account pointing at the removed SEQ_NO, so Own Account Transfer disabled Transfer
+        // with "Bank login credentials were deleted…" even though the credential had been
+        // re-registered (re-registering mints a NEW seq; the accounts kept the old one).
+        // Full record: docs/bugs/bank-credential-delete-leaves-dangling-acct-linkage-2026-08-19.md
+        BankCertInfo row = new BankCertInfo();
+        row.setBizKey(BIZ);
+        row.setSeqNo(new BigDecimal("5"));
+        row.setBankCd("11704088");
+        when(bankRepo.findByBizKeyAndSeqNo(BIZ, new BigDecimal("5")))
+                .thenReturn(Optional.of(row));
+        when(acctMstrRepo.clearBankCertSeq(anyString(), anyLong(), anyString(), anyString()))
+                .thenReturn(4);
+
+        service.delete("bank", new BigDecimal("5"));
+
+        // The seq crosses as a long — ACCT_MSTR.BANK_CERT_SEQ maps to Long while
+        // BANK_CERT_INFO.SEQ_NO maps to BigDecimal; a scale mismatch would match nothing.
+        verify(acctMstrRepo).clearBankCertSeq(eq(BIZ), eq(5L), eq(USER), argThat(
+                s -> s != null && s.length() == 14 && s.chars().allMatch(Character::isDigit)));
+    }
+
+    @Test
+    @DisplayName("delete(gdt): never touches ACCT_MSTR — GDT credentials own no account linkage")
+    void delete_gdt_leavesAccountLinkageAlone() {
+        GdtCertInfo row = new GdtCertInfo();
+        row.setBizKey(BIZ);
+        row.setSeqNo(new BigDecimal("7"));
+        when(gdtRepo.findByBizKeyAndSeqNo(BIZ, new BigDecimal("7")))
+                .thenReturn(Optional.of(row));
+
+        service.delete("gdt", new BigDecimal("7"));
+
+        verify(gdtRepo).delete(row);
+        verify(acctMstrRepo, never()).clearBankCertSeq(anyString(), anyLong(), anyString(), anyString());
     }
 
     /* ------------------ GDT scraping credential (silent) ------------------- */

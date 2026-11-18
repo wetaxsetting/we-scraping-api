@@ -212,9 +212,26 @@ public class EInvoiceScrapeService {
             e.setDispDocId(w.base());
             e.setIssuTaxId(w.issuTaxId() != null ? w.issuTaxId() : "");
             e.setTrcoKey(existing != null && existing.getTrcoKey() != null ? existing.getTrcoKey() : "");
-            e.setTrcoTaxId(w.sellerTax().isEmpty() ? e.getTrcoTaxId() : w.sellerTax());
+            // TRCO_TAX_ID is the counterparty's tax id. For an EXPENSE the scraped
+            // sellerTax IS the counterparty (supplier), so stamp it. For a SALES
+            // row the scraped sellerTax is our OWN tax (we are the seller) —
+            // stamping it would mislabel the buyer on the BKBR annex, so leave
+            // TRCO_TAX_ID for the detail scrape to fill with the real buyer tax
+            // (EInvoiceDetailScrapeService). Blank never overwrites an existing id.
+            if (!isSales && !w.sellerTax().isEmpty()) {
+                e.setTrcoTaxId(w.sellerTax());
+            }
             e.setTrcoCmnm(blankToExisting(row.trcoCmnm(), e.getTrcoCmnm()));
-            e.setTrcoTrscCcyCd(blankToExisting(row.currencyCd(), e.getTrcoTrscCcyCd()));
+            // Clamp to the legacy CcyCd set before writing — BUSA_DOC_MSTR.chk07
+            // only accepts VND / USD / 999 / 998, and a K e-Invoice legitimately
+            // reports a foreign currency (e.g. KRW) that legacy folds to VND.
+            // Legacy c001 writes no currency at all; the clamp keeps the phase-1
+            // convenience write without the constraint violation.
+            e.setTrcoTrscCcyCd(blankToExisting(
+                    EInvoiceDetailScrapeService.resolveMasterCcy(
+                            row.currencyCd(), row.einvTestResults(),
+                            row.invoiceSymbol(), row.totalAmt(), row.numericSymbol()),
+                    e.getTrcoTrscCcyCd()));
             e.setIssuDt(trim(row.invoiceDate()));
             e.setTotlAmt(parseAmount(row.totalAmt()));
             e.setSplyAmtSum(parseAmount(row.totalAmtWithoutTax()));

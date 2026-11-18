@@ -15,6 +15,7 @@ import com.kosign.wecms.domain.auth.repository.BusiAdmnInfmRepository;
 import com.kosign.wecms.domain.auth.repository.BusiInfmRepository;
 import com.kosign.wecms.domain.auth.repository.UserBusiConnInfmRepository;
 import com.kosign.wecms.domain.auth.repository.UserInfmRepository;
+import com.kosign.wecms.domain.weinvoice.account.WeInvoiceAccountService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -48,6 +49,7 @@ class AuthServiceTest {
     @Mock AdminLoginHistoryService adminHistory;
     @Mock MenuAuthorizationService menuAuthService;
     @Mock LoginLockoutService loginLockout;
+    @Mock WeInvoiceAccountService weInvoiceAccounts;
 
     AuthService authService;
 
@@ -71,7 +73,8 @@ class AuthServiceTest {
                 userRepo, userBusiRepo, busiRepo, busiAdmnRepo,
                 passwordEncoder, tokenProvider, history, adminHistory, menuAuthService,
                 new com.kosign.wecms.common.security.TokenRevocationService(),
-                loginLockout);
+                loginLockout,
+                weInvoiceAccounts);
 
         user = new UserInfm();
         user.setUserId(ID);
@@ -543,5 +546,53 @@ class AuthServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting("code")
                 .isEqualTo(expectedCode);
+    }
+
+    // ---------------------------------------------------------------
+    // WeInvoice-owned accounts (winv_user_infm) — checked before WeCMS.
+    // docs/features/addon-service/weinvoice/weinvoice-self-signup-2026-11-13.md
+    // ---------------------------------------------------------------
+
+    @Test
+    void weInvoiceAccount_isAuthenticatedFirst_andWeCmsTablesAreNeverRead() {
+        LoginResponse winv = LoginResponse.authenticated("jwt-winv", "Bearer", 3600L, ID, "Test User",
+                WeInvoiceAccountService.BIZ_KEY, LANG, "", TenantContext.AUTH_GR_USER, null, null);
+        when(weInvoiceAccounts.login(ID, PW, LANG)).thenReturn(Optional.of(winv));
+
+        LoginResponse res = authService.login(new LoginRequest(ID, PW, null), IP, LANG);
+
+        assertThat(res.accessToken()).isEqualTo("jwt-winv");
+        verify(userRepo, never()).findById(anyString());
+        verify(history, never()).record(anyString(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void notAWeInvoiceAccount_fallsThroughToWeCmsLogin() {
+        when(weInvoiceAccounts.login(ID, PW, LANG)).thenReturn(Optional.empty());
+        when(userRepo.findById(ID)).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches(PW, HASH)).thenReturn(true);
+        when(userBusiRepo.findAllByUserIdAndDelYn(ID, "N")).thenReturn(List.of(linkA));
+        when(busiRepo.findById(BIZ_A)).thenReturn(Optional.of(company(BIZ_A, "WeCMS R&D Tenant", "F")));
+        when(busiAdmnRepo.findByBizKeyAndUserId(BIZ_A, ID)).thenReturn(Optional.empty());
+        when(tokenProvider.issue(ID, "Test User", BIZ_A, LANG, TenantContext.AUTH_GR_USER, "F")).thenReturn("jwt-f");
+        when(tokenProvider.expiresInSeconds()).thenReturn(3600L);
+
+        assertThat(authService.login(new LoginRequest(ID, PW, null), IP, LANG).bizKey()).isEqualTo(BIZ_A);
+    }
+
+    @Test
+    void me_withWeInvoiceToken_isAnsweredByTheWeInvoiceAccount() {
+        TenantContext.set(ID, "Test User", WeInvoiceAccountService.BIZ_KEY,
+                com.kosign.wecms.common.enums.LangCd.VI, TenantContext.AUTH_GR_USER, null);
+        try {
+            MeResponse winv = new MeResponse(ID, "Test User", WeInvoiceAccountService.BIZ_KEY, "VI", "",
+                    TenantContext.AUTH_GR_USER, null, null, true, List.of());
+            when(weInvoiceAccounts.me(any())).thenReturn(winv);
+
+            assertThat(authService.me()).isSameAs(winv);
+            verify(userRepo, never()).findById(anyString());
+        } finally {
+            TenantContext.clear();
+        }
     }
 }

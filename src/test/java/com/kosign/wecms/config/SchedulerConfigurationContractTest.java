@@ -6,7 +6,6 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.boot.env.YamlPropertySourceLoader;
 import org.springframework.core.env.PropertySource;
 import org.springframework.core.io.ClassPathResource;
-import org.springframework.scheduling.support.CronExpression;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -16,11 +15,12 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
 
 /**
  * Deployment-safety contract for every scheduler-related property, asserted against the real
@@ -38,36 +38,28 @@ import static org.assertj.core.api.Assertions.assertThatCode;
  * <p><b>What changed.</b> The 2026-07-30 bare-placeholder migration removed every inline default from
  * all five config files (169 placeholders). Values live in {@code .env} only; the YAML declares shape.
  *
- * <p><b>Why F-6's cost argument no longer applies.</b> F-6 objected that inline defaults were needed
- * because otherwise "a deploy depends on ~12 variables being present just to start with everything
- * switched off". After the migration a SIT deploy depends on <b>72</b> variables being present, so the
- * twelve scheduler ones add nothing to that burden — the burden is now the whole configuration, and it
- * is met by copying the profile's {@code .env.*.example}. The original cost/benefit is void.
+ * <p><b>Why F-6's safety intent is preserved.</b> F-6 protected one guarantee: a forgotten variable
+ * must never silently enable a money-moving job. Under bare placeholders the app refuses to start until
+ * somebody states the value, so a forgotten variable is a failed start, never a hidden default.
  *
- * <p><b>Why F-6's safety intent is preserved, and strengthened.</b> F-6 protected one guarantee: a
- * forgotten variable must never silently enable a money-moving job. Under inline defaults that was
- * enforced by the default being inert — but the same mechanism made a <i>misspelled</i> variable name
- * indistinguishable from "deliberately not configured": the app booted on the hidden value and ops
- * believed the {@code .env} was in force. Under bare placeholders the app refuses to start until
- * somebody states the value. The guarantee holds; enforcement moves from the YAML to a complete
- * {@code .env}, and this class is what makes that enforceable in CI.
+ * <h2>Keys-only templates (2026-09-29)</h2>
+ * The {@code .env*.example} files carry <b>keys only, every value blank</b> — no environment data
+ * (hosts, URLs, paths, flags) is committed. The earlier rules that checked committed <i>values</i>
+ * (mutating flags committed {@code false}, mutating crons committed {@code -}, committed crons parse,
+ * stuck-monitor gates agree) were retired with them: there is no committed value left to check. Those
+ * values are now an operational responsibility of each host's real {@code .env}, and the per-key
+ * comments in the templates say which value is safe.
  *
  * <h2>The contract now asserted, per profile</h2>
  * <ol>
  *   <li><b>Bare in YAML</b> — every scheduler flag/cron is {@code ${VAR}} with no {@code :default}.
- *       This is the inverse of the old assertion, and it is what fails the build if someone
- *       reintroduces an inline default on a scheduler property.</li>
+ *       This fails the build if someone reintroduces an inline default on a scheduler property.</li>
  *   <li><b>Present in the example</b> — the variable has a line in the matching
- *       {@code .env.*.example}. The old test could not check this side at all: it verified the YAML
- *       was safe when the {@code .env} was <i>absent</i>, a state that is no longer reachable.</li>
- *   <li><b>Inert where it matters</b> — the committed value for a mutating scheduler is the inert one
- *       ({@code false} for a flag, {@code -} for a cron), so "no scheduler may be enabled by committed
- *       configuration" is now enforced on the {@code .env} side.</li>
- *   <li><b>Valid where it fires</b> — any cron committed as something other than {@code -} parses as a
- *       Spring cron expression.</li>
- *   <li><b>Completeness</b> — bare in YAML <i>and</i> present in the example. Neither alone passes:
- *       a bare placeholder with no example line is a variable nobody knows to set, and an example line
- *       with no YAML placeholder is a value nothing reads.</li>
+ *       {@code .env.*.example}.</li>
+ *   <li><b>Completeness</b> — the example's key set equals the set of variables the profile's YAML
+ *       reads, exactly. A bare placeholder with no example line is a variable nobody knows to set, and
+ *       an example line with no YAML placeholder is a value nothing reads.</li>
+ *   <li><b>Keys only</b> — every value in every {@code .env*.example} is blank.</li>
  * </ol>
  *
  * <p>Still a configuration test, not a context test: no database, no ShedLock table, no secrets, so it
@@ -80,7 +72,10 @@ class SchedulerConfigurationContractTest {
     /** A bare placeholder: {@code ${VAR}}, optionally quoted, with no {@code :default} part. */
     private static final Pattern BARE_PLACEHOLDER = Pattern.compile("^\"?\\$\\{([A-Z][A-Z0-9_]*)}\"?$");
 
-    /** Every mutating scheduler's enable flag. Committed value must be {@code false}. */
+    /** Any placeholder variable name inside a yaml value. */
+    private static final Pattern ANY_PLACEHOLDER = Pattern.compile("\\$\\{([A-Z][A-Z0-9_]*)");
+
+    /** Every mutating scheduler's enable flag. */
     private static final List<String> MUTATING_ENABLE_FLAGS = List.of(
             "wecms.exchange-rate.batch.enabled",
             "wecms.operation-status.batch.enabled",
@@ -89,11 +84,15 @@ class SchedulerConfigurationContractTest {
             "haengsung.exchange-rate-sync.enabled",
             "haengsung.card-account-sync.enabled");
 
-    /** Mutating-job crons. Committed value must be the never-fire marker. */
-    private static final List<String> MUTATING_CRONS = List.of(
+    /** Every scheduler cron. */
+    private static final List<String> SCHEDULER_CRONS = List.of(
             "wecms.operation-status.batch.cron",
             "wecms.dispatch.result-check.cron",
-            "wecms.dispatch.recovery.cron");
+            "wecms.dispatch.recovery.cron",
+            "wecms.dispatch.stuck-monitor.cron",
+            "haengsung.scheduled-payment-import.cron",
+            "haengsung.exchange-rate-sync.cron",
+            "haengsung.card-account-sync.cron");
 
     /**
      * Bound on every startup by plain {@code @ConfigurationProperties} beans regardless of their
@@ -105,35 +104,50 @@ class SchedulerConfigurationContractTest {
             "wecms.dispatch.sftp.port",
             "wecms.dispatch.sftp.username");
 
-    /** The read-only stuck-pay-file monitor — the documented exception to rule 3. See below. */
+    /** The read-only stuck-pay-file monitor's enable flag. */
     private static final String STUCK_ENABLED = "wecms.dispatch.stuck-monitor.enabled";
-    private static final String STUCK_CRON = "wecms.dispatch.stuck-monitor.cron";
 
     // ------------------------------------------------------------------ helpers
 
     /** Raw, UNRESOLVED yaml values for a profile: profile file wins over the base, mirroring Boot. */
     private static Map<String, String> rawYaml(String profile) throws IOException {
-        Map<String, String> merged = new HashMap<>();
-        for (String file : List.of("application.yml", "application-" + profile + ".yml")) {
-            ClassPathResource resource = new ClassPathResource(file);
-            assertThat(resource.exists()).as("%s must exist", file).isTrue();
-            for (PropertySource<?> ps : LOADER.load(file, resource)) {
-                if (ps instanceof org.springframework.core.env.EnumerablePropertySource<?> eps) {
-                    for (String name : eps.getPropertyNames()) {
-                        Object v = eps.getProperty(name);
-                        if (v != null) {
-                            merged.put(name, String.valueOf(v));
-                        }
+        Map<String, String> merged = new HashMap<>(yamlFile("application.yml"));
+        merged.putAll(yamlFile("application-" + profile + ".yml"));
+        return merged;
+    }
+
+    /** Raw, UNRESOLVED yaml values of one file. */
+    private static Map<String, String> yamlFile(String file) throws IOException {
+        Map<String, String> out = new HashMap<>();
+        ClassPathResource resource = new ClassPathResource(file);
+        assertThat(resource.exists()).as("%s must exist", file).isTrue();
+        for (PropertySource<?> ps : LOADER.load(file, resource)) {
+            if (ps instanceof org.springframework.core.env.EnumerablePropertySource<?> eps) {
+                for (String name : eps.getPropertyNames()) {
+                    Object v = eps.getProperty(name);
+                    if (v != null) {
+                        out.put(name, String.valueOf(v));
                     }
                 }
             }
         }
-        return merged;
+        return out;
     }
 
-    /** Key/value pairs committed in a profile's {@code .env.*.example}. */
-    private static Map<String, String> envExample(String profile) throws IOException {
-        Path p = Path.of(".env." + profile + ".example");
+    /** Every placeholder variable named in a set of yaml values. */
+    private static Set<String> placeholders(Iterable<String> values) {
+        Set<String> read = new TreeSet<>();
+        for (String raw : values) {
+            Matcher m = ANY_PLACEHOLDER.matcher(raw);
+            while (m.find()) {
+                read.add(m.group(1));
+            }
+        }
+        return read;
+    }
+
+    /** Key/value pairs committed in a template file. */
+    private static Map<String, String> envFile(Path p) throws IOException {
         assertThat(Files.exists(p)).as("%s must exist — it is the deploy checklist", p).isTrue();
         Map<String, String> out = new HashMap<>();
         for (String line : Files.readAllLines(p, StandardCharsets.UTF_8)) {
@@ -147,13 +161,15 @@ class SchedulerConfigurationContractTest {
         return out;
     }
 
-    /**
-     * Rules 1, 2 and 5 for one property: bare in yaml, and its variable present in the example.
-     * Returns the committed value so the caller can assert rules 3 and 4 on it.
-     */
-    private static String assertBareAndSupplied(String profile, String key,
-                                                Map<String, String> yaml,
-                                                Map<String, String> example) {
+    /** Key/value pairs committed in a profile's {@code .env.*.example}. */
+    private static Map<String, String> envExample(String profile) throws IOException {
+        return envFile(Path.of(".env." + profile + ".example"));
+    }
+
+    /** Rules 1 and 2 for one property: bare in yaml, and its variable present in the example. */
+    private static void assertBareAndSupplied(String profile, String key,
+                                              Map<String, String> yaml,
+                                              Map<String, String> example) {
         String raw = yaml.get(key);
         assertThat(raw)
                 .as("%s must be declared in profile %s", key, profile)
@@ -164,8 +180,8 @@ class SchedulerConfigurationContractTest {
                 .as("%s in profile %s must be a BARE ${VAR} with no inline default, but is: %s%n"
                         + "Inline defaults were removed on 2026-07-30 — a default here is a value "
                         + "hidden where nobody looks, and makes a misspelled variable name "
-                        + "indistinguishable from 'not configured'. Put the value in "
-                        + ".env.%s.example instead.", key, profile, raw, profile)
+                        + "indistinguishable from 'not configured'. Set the value in the host .env.",
+                        key, profile, raw)
                 .isTrue();
 
         String var = m.group(1);
@@ -174,128 +190,30 @@ class SchedulerConfigurationContractTest {
                         + "with no example entry is a variable nobody knows to set, and startup fails "
                         + "on it.", key, var, profile, var)
                 .containsKey(var);
-        return example.get(var);
     }
 
     // ------------------------------------------------------------------ the contract
 
-    @DisplayName("mutating scheduler flags: bare in yaml, supplied by the example, committed false")
+    @DisplayName("scheduler flags and crons: bare in yaml, key present in the example")
     @ParameterizedTest(name = "profile={0}")
     @ValueSource(strings = {"local", "sit", "uat", "prod"})
-    void mutatingEnableFlagsAreBareAndCommittedInert(String profile) throws IOException {
+    void schedulerPropertiesAreBareAndListed(String profile) throws IOException {
         Map<String, String> yaml = rawYaml(profile);
         Map<String, String> example = envExample(profile);
 
-        for (String key : MUTATING_ENABLE_FLAGS) {
-            String committed = assertBareAndSupplied(profile, key, yaml, example);
-            assertThat(committed)
-                    .as("%s is committed as '%s' in .env.%s.example — no mutating scheduler may be "
-                            + "enabled by committed configuration", key, committed, profile)
-                    .isEqualTo("false");
-        }
-    }
-
-    @DisplayName("mutating-job crons: bare in yaml, supplied by the example, committed never-fire")
-    @ParameterizedTest(name = "profile={0}")
-    @ValueSource(strings = {"local", "sit", "uat", "prod"})
-    void mutatingCronsAreBareAndCommittedNeverFire(String profile) throws IOException {
-        Map<String, String> yaml = rawYaml(profile);
-        Map<String, String> example = envExample(profile);
-
-        for (String key : MUTATING_CRONS) {
-            if (!yaml.containsKey(key)) {
-                continue; // not every profile declares every cron; uat/prod inherit some from base
+        List<String> keys = new ArrayList<>(MUTATING_ENABLE_FLAGS);
+        keys.add(STUCK_ENABLED);
+        for (String key : SCHEDULER_CRONS) {
+            if (yaml.containsKey(key)) {
+                keys.add(key); // not every profile declares every cron; uat/prod inherit some from base
             }
-            String committed = assertBareAndSupplied(profile, key, yaml, example);
-            assertThat(committed)
-                    .as("%s is committed as '%s' in .env.%s.example — must be \"-\" (Spring's "
-                            + "never-fire marker). An empty value throws at scheduler init.",
-                            key, committed, profile)
-                    .isEqualTo("-");
+        }
+        for (String key : keys) {
+            assertBareAndSupplied(profile, key, yaml, example);
         }
     }
 
-    /**
-     * The stuck-pay-file monitor is the one scheduler whose committed value may be ON.
-     *
-     * <p>It is exempt from the "committed inert" rule because it is <b>read-only</b>:
-     * {@code StuckPayFileMonitorService} is {@code @Transactional(readOnly = true)}, performs no
-     * writes, does not touch {@code PROC_STAT}, and never re-drives dispatch. The rule exists to stop
-     * committed configuration from mutating payment state, which this sweep cannot do. It is the only
-     * detection for {@code BULK_EXECUTION_UNCONFIRMED} and {@code BULK_EXECUTION_NOT_ISSUED} — two
-     * states with no automatic retry that resolve solely by operator action
-     * ({@code docs/deployment/bulk-file-reconciliation-procedure.md}).
-     *
-     * <p>What is asserted instead is that <b>both gates agree</b>. An enabled flag with a never-fire
-     * cron is a silent no-op — monitoring that looks configured and reports nothing — and that is the
-     * failure mode most likely to go unnoticed. Rules 1, 2, 4 and 5 apply unchanged.
-     *
-     * <p>The committed values currently differ across profiles ({@code sit} ships it ON; {@code local},
-     * {@code uat} and {@code prod} ship it OFF), which is why this asserts agreement rather than a
-     * per-profile literal. Whether UAT should run it is an open operational question, not a contract
-     * violation — see {@code docs/deployment/config-bare-placeholder-migration.md} §5.
-     */
-    @DisplayName("stuck-pay-file monitor: bare, supplied, and both gates agree")
-    @ParameterizedTest(name = "profile={0}")
-    @ValueSource(strings = {"local", "sit", "uat", "prod"})
-    void stuckMonitorGatesAgree(String profile) throws IOException {
-        Map<String, String> yaml = rawYaml(profile);
-        Map<String, String> example = envExample(profile);
-
-        String enabled = assertBareAndSupplied(profile, STUCK_ENABLED, yaml, example);
-        String cron = assertBareAndSupplied(profile, STUCK_CRON, yaml, example);
-
-        assertThat(enabled)
-                .as("%s must be committed as true or false in .env.%s.example", STUCK_ENABLED, profile)
-                .isIn("true", "false");
-
-        if ("true".equals(enabled)) {
-            assertThat(cron)
-                    .as("stuck-monitor is ON in %s but its cron is the never-fire marker — that is a "
-                            + "silent no-op: monitoring that looks configured and reports nothing",
-                            profile)
-                    .isNotEqualTo("-");
-        } else {
-            assertThat(cron)
-                    .as("stuck-monitor is OFF in %s, so its cron must be \"-\" — a real cron with the "
-                            + "flag off is misleading configuration", profile)
-                    .isEqualTo("-");
-        }
-    }
-
-    @DisplayName("every committed cron that is not \"-\" is a valid Spring cron expression")
-    @ParameterizedTest(name = "profile={0}")
-    @ValueSource(strings = {"local", "sit", "uat", "prod"})
-    void committedCronsParse(String profile) throws IOException {
-        Map<String, String> yaml = rawYaml(profile);
-        Map<String, String> example = envExample(profile);
-
-        List<String> cronKeys = new ArrayList<>(MUTATING_CRONS);
-        cronKeys.add(STUCK_CRON);
-        cronKeys.add("haengsung.scheduled-payment-import.cron");
-        cronKeys.add("haengsung.exchange-rate-sync.cron");
-        cronKeys.add("haengsung.card-account-sync.cron");
-
-        for (String key : cronKeys) {
-            String raw = yaml.get(key);
-            if (raw == null) {
-                continue;
-            }
-            Matcher m = BARE_PLACEHOLDER.matcher(raw.strip());
-            assertThat(m.matches()).as("%s must be bare in profile %s", key, profile).isTrue();
-            String committed = example.get(m.group(1));
-            if (committed == null || "-".equals(committed) || committed.isBlank()) {
-                continue; // "-" is never-fire; blank is caught by the inert-value tests above
-            }
-            assertThatCode(() -> CronExpression.parse(committed))
-                    .as("%s is committed as '%s' in .env.%s.example, which is not a valid Spring cron "
-                            + "expression — this throws at scheduler initialisation and the "
-                            + "application fails to start", key, committed, profile)
-                    .doesNotThrowAnyException();
-        }
-    }
-
-    @DisplayName("unconditionally-bound dispatch endpoints: bare in yaml, supplied by the example")
+    @DisplayName("unconditionally-bound dispatch endpoints: bare in yaml, key present in the example")
     @ParameterizedTest(name = "profile={0}")
     @ValueSource(strings = {"local", "sit", "uat", "prod"})
     void unconditionallyBoundDispatchPropertiesAreSupplied(String profile) throws IOException {
@@ -306,10 +224,73 @@ class SchedulerConfigurationContractTest {
         // on every startup even when their feature flags are false. Note the binding is LENIENT: an
         // unresolvable placeholder on a String field binds the literal "${VAR}" with no error at all,
         // and only a typed field (sftp.port is an int) fails loudly. That asymmetry is exactly why the
-        // example must carry every one of these.
+        // example must list every one of these.
         for (String key : UNCONDITIONALLY_BOUND) {
             assertBareAndSupplied(profile, key, yaml, example);
         }
+    }
+
+    @DisplayName("example key set equals the variables the profile yaml reads")
+    @ParameterizedTest(name = "profile={0}")
+    @ValueSource(strings = {"local", "sit", "uat", "prod"})
+    void exampleKeysMatchYamlExactly(String profile) throws IOException {
+        assertThat(new TreeSet<>(envExample(profile).keySet()))
+                .as(".env.%s.example must list exactly the variables application.yml + "
+                        + "application-%s.yml read — no missing key, no dead key", profile, profile)
+                .isEqualTo(placeholders(rawYaml(profile).values()));
+    }
+
+    @DisplayName(".env.example key set equals the variables application.yml reads")
+    @org.junit.jupiter.api.Test
+    void baseExampleKeysMatchBaseYamlExactly() throws IOException {
+        assertThat(new TreeSet<>(envFile(Path.of(".env.example")).keySet()))
+                .as(".env.example must list exactly the variables application.yml reads")
+                .isEqualTo(placeholders(yamlFile("application.yml").values()));
+    }
+
+    /**
+     * Layout rule (2026-09-29): application.yml declares every shared key exactly once; each profile
+     * file declares only per-environment knobs, and all four declare the SAME knobs. A profile key that
+     * repeats a base key is the duplication that let the profiles drift apart (prod and local once
+     * lacked four dispatch keys sit/uat had).
+     */
+    @DisplayName("profile files declare the same knobs and never re-declare a base key")
+    @org.junit.jupiter.api.Test
+    void profileFilesDeclareSameKnobsOnly() throws IOException {
+        Set<String> base = yamlFile("application.yml").keySet();
+        Set<String> expected = null;
+        for (String profile : List.of("local", "sit", "uat", "prod")) {
+            Set<String> knobs = new TreeSet<>(yamlFile("application-" + profile + ".yml").keySet());
+            Set<String> repeated = new TreeSet<>(knobs);
+            repeated.retainAll(base);
+            repeated.remove("spring.config.import"); // each profile imports its own .env on top of base
+            assertThat(repeated)
+                    .as("application-%s.yml re-declares keys already in application.yml", profile)
+                    .isEmpty();
+            if (expected == null) {
+                expected = knobs;
+            }
+            assertThat(knobs)
+                    .as("application-%s.yml must declare the same knobs as application-local.yml", profile)
+                    .isEqualTo(expected);
+        }
+    }
+
+    @DisplayName("every .env*.example carries keys only — all values blank")
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {".env.example", ".env.local.example", ".env.sit.example",
+            ".env.uat.example", ".env.prod.example"})
+    void exampleValuesAreBlank(String file) throws IOException {
+        Map<String, String> nonBlank = new HashMap<>();
+        envFile(Path.of(file)).forEach((k, v) -> {
+            if (!v.isBlank()) {
+                nonBlank.put(k, v);
+            }
+        });
+        assertThat(nonBlank)
+                .as("%s is a keys-only template — environment values belong in the host .env, "
+                        + "never in a committed file", file)
+                .isEmpty();
     }
 
     @DisplayName("the retired seed-cron / refresh-cron keys are gone")

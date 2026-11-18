@@ -357,6 +357,29 @@ public class BusaDocMstr {
     @Column(name = "DOC_TITLE", length = 300)
     private String docTitle;
 
+    /** Registration channel — {@code 'PC'} for the web client, {@code 'MOB'}
+     *  for the mobile client. Column is {@code varchar(3) NOT NULL DEFAULT 'PC'}
+     *  (V23); mapped 2026-09-03 so the mobile receipt channel can stamp its own
+     *  provenance instead of silently inheriting the DB default. Legacy
+     *  {@code WABOOKS_MREC_C003} writes {@code 'MOB'} here and its list service
+     *  {@code WABOOKS_MREC_R006} filters on it — see
+     *  {@code docs/references/migration/mobile-app/receipt.md}.
+     *
+     *  <p>Initialised to {@code 'PC'} in Java on purpose: the column is
+     *  NOT NULL and, before this field was mapped, every insert relied on the
+     *  DB default. Now that Hibernate lists the column in its INSERT, an
+     *  unset field would send NULL and break existing writers (GDT ingest,
+     *  web receipt create). Writers that are not the web client override it.
+     */
+    @Column(name = "REG_CHNL", length = 3, nullable = false)
+    private String regChnl = REG_CHNL_PC;
+
+    /** Registration channel — web client. */
+    public static final String REG_CHNL_PC = "PC";
+
+    /** Registration channel — mobile client. */
+    public static final String REG_CHNL_MOBILE = "MOB";
+
     @Column(name = "REG_ID", length = 100, nullable = false)
     private String regId;
 
