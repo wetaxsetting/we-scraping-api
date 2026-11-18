@@ -74,12 +74,14 @@ public class WeInvoiceInvoiceController {
             @RequestParam(value = "tag_ids", required = false) List<String> tagIds,
             @RequestParam(value = "provider", required = false) String provider,
             @RequestParam(value = "exclude_tax_ids", required = false) List<String> excludeTaxIds,
+            @RequestParam(value = "ids", required = false) List<String> ids,
             @RequestParam(value = "sort_field", required = false) String sortField,
             @RequestParam(value = "sort_direction", required = false) String sortDirection,
             @RequestParam(value = "page", required = false, defaultValue = "0") int page,
             @RequestParam(value = "size", required = false, defaultValue = "0") int size) {
+        // `ids`: just these invoices (the upload screen shows the references of what it imported)
         InvoiceFilter filter = new InvoiceFilter(companyMst, direction, from, to, keyword, xml, pdf, statuses, kind,
-                tagIds, provider, excludeTaxIds, null, sortField, sortDirection);
+                tagIds, provider, excludeTaxIds, ids, sortField, sortDirection);
         return ApiResponse.ok(queries.list(filter, page, size));
     }
 

@@ -14,9 +14,12 @@ import org.springframework.stereotype.Repository;
 import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Read side of the invoice list (screens 03, 04) over the engine tables.
@@ -79,6 +82,18 @@ public class InvoiceQueryRepository {
             )
             """;
 
+    /**
+     * Over alias {@code c}: the provider is in the catalogue but the invoice carries no lookup code / link and the user
+     * typed none — same rule as {@code InvoiceRow.needsLookupCode} ("!" pill, provider filter "needs a code").
+     */
+    static final String NEEDS_CODE = """
+            (c.prvd_mst IS NOT NULL
+               AND EXISTS (SELECT 1 FROM {app}.winv_prvd_infm pv3 WHERE pv3.prvd_mst = split_part(c.prvd_mst, '-', 1))
+               AND NULLIF(btrim(c.ma_tra_cuu), '') IS NULL AND NULLIF(btrim(c.lookup_url), '') IS NULL
+               AND NOT EXISTS (SELECT 1 FROM {app}.winv_lkup_cd lc3
+                                WHERE lc3.owner_id = :ownerId AND lc3.invc_id = c.id
+                                  AND COALESCE(lc3.lkup_cd, lc3.lkup_url) IS NOT NULL))""";
+
     /** Engine list types per direction (used for the coverage banner). */
     private static final List<String> PURCHASE_TYPES = List.of("mua", "mua-khma", "mua-mtt");
     private static final List<String> SALES_TYPES = List.of("ban", "ban-khma", "ban-mtt");
@@ -120,9 +135,12 @@ public class InvoiceQueryRepository {
                        COALESCE(sum(c.tien_chua_thue * c.vnd_rate) FILTER (WHERE c.tthai_eff NOT IN (4, 6)), 0) AS pre_tax,
                        COALESCE(sum(c.tien_thue * c.vnd_rate) FILTER (WHERE c.tthai_eff NOT IN (4, 6)), 0) AS tax,
                        COALESCE(sum(c.tong_tien * c.vnd_rate) FILTER (WHERE c.tthai_eff NOT IN (4, 6)), 0) AS total,
-                       count(*) FILTER (WHERE NOT c.has_xml AND upper(left(c.khhdon, 1)) <> 'K') AS missing_xml,
-                       count(*) FILTER (WHERE NOT c.has_xml AND upper(left(c.khhdon, 1)) = 'K') AS no_code_missing_xml,
-                       count(*) FILTER (WHERE NOT c.has_pdf) AS missing_pdf,
+                       count(*) FILTER (WHERE NOT c.has_xml AND c.tthai_eff NOT IN (4, 6)
+                                          AND upper(left(c.khhdon, 1)) <> 'K') AS missing_xml,
+                       count(*) FILTER (WHERE NOT c.has_xml AND c.tthai_eff NOT IN (4, 6)
+                                          AND upper(left(c.khhdon, 1)) = 'K') AS no_code_missing_xml,
+                       count(*) FILTER (WHERE NOT c.has_xml AND c.tthai_eff NOT IN (4, 6)) AS missing_xml_all,
+                       count(*) FILTER (WHERE NOT c.has_pdf AND c.tthai_eff NOT IN (4, 6)) AS missing_pdf,
                        count(*) FILTER (WHERE c.direction = 'ban') AS sales_count,
                        count(*) FILTER (WHERE c.direction = 'mua') AS purchase_count,
                        COALESCE(sum(c.tong_tien * c.vnd_rate)
@@ -142,7 +160,32 @@ public class InvoiceQueryRepository {
                 rs.getLong("sales_count"),
                 rs.getLong("purchase_count"),
                 rs.getBigDecimal("sales_total"),
-                rs.getBigDecimal("purchase_total")));
+                rs.getBigDecimal("purchase_total"),
+                rs.getLong("missing_xml_all"),
+                0,
+                0));
+    }
+
+    /**
+     * Invoices of the MST in the period per engine direction ({@code ban} / {@code mua}), cancelled and replaced left
+     * out — the "Cả kỳ" line of the list card, independent of the list's direction and filters.
+     */
+    public Map<String, Long> periodCounts(String mst, LocalDate from, LocalDate to) {
+        MapSqlParameterSource p = new MapSqlParameterSource("mst", mst);
+        StringBuilder w = new StringBuilder("WHERE i.company_mst = :mst");
+        if (from != null) {
+            w.append(" AND i.ngay_lap >= :from");
+            p.addValue("from", from);
+        }
+        if (to != null) {
+            w.append(" AND i.ngay_lap <= :to");
+            p.addValue("to", to);
+        }
+        Map<String, Long> out = new HashMap<>();
+        db.jdbc().query(db.sql("SELECT i.direction, count(*) AS n FROM {eng}.invoices i " + w
+                + " AND " + InvoiceCodes.SQL_TTHAI_EFF + " NOT IN (4, 6) GROUP BY i.direction"), p,
+                rs -> { out.put(rs.getString("direction"), rs.getLong("n")); });
+        return out;
     }
 
     /** Every matching id, newest first, at most {@code limit}. */
@@ -185,10 +228,23 @@ public class InvoiceQueryRepository {
                             ELSE 'normal' END,
                        NULL, NULL, count(*)
                   FROM conv c GROUP BY 2
+                UNION ALL
+                SELECT 'needs_code', 'needs_code', NULL, NULL, count(*) FROM conv c WHERE """ + NEEDS_CODE + """
+
+                UNION ALL
+                SELECT * FROM (
+                    SELECT 'partner', c.ptnr_mst, max(c.ptnr_nm), NULL::boolean, count(*) AS n
+                      FROM conv c WHERE c.ptnr_mst IS NOT NULL
+                     GROUP BY c.ptnr_mst
+                     ORDER BY n DESC, c.ptnr_mst
+                     LIMIT :partnerLimit) pt
                 """);
+        p.addValue("partnerLimit", MAX_PARTNERS);
         List<InvoiceFacets.ProviderCount> providers = new ArrayList<>();
         List<InvoiceFacets.KeyCount> statuses = new ArrayList<>();
         List<InvoiceFacets.KeyCount> kinds = new ArrayList<>();
+        List<InvoiceFacets.PartnerCount> partners = new ArrayList<>();
+        long[] needsCode = {0};
         db.jdbc().query(sql, p, rs -> {
             String facet = rs.getString("facet");
             String key = rs.getString("k");
@@ -198,12 +254,18 @@ public class InvoiceQueryRepository {
                         key, rs.getString("label"), rs.getBoolean("known"), n));
                 case "status" -> statuses.add(new InvoiceFacets.KeyCount(
                         InvoiceCodes.status(Integer.parseInt(key)), n));
+                case "needs_code" -> needsCode[0] = n;
+                case "partner" -> partners.add(new InvoiceFacets.PartnerCount(key, rs.getString("label"), n));
                 default -> kinds.add(new InvoiceFacets.KeyCount(key, n));
             }
         });
         providers.sort((a, b) -> Long.compare(b.count(), a.count()));
-        return new InvoiceFacets(providers, statuses, kinds);
+        partners.sort((a, b) -> a.name() == null ? 1 : b.name() == null ? -1 : a.name().compareToIgnoreCase(b.name()));
+        return new InvoiceFacets(providers, statuses, kinds, partners, needsCode[0]);
     }
+
+    /** Partners listed by {@link #facets} ("Loại trừ MST"), the most frequent first. */
+    public static final int MAX_PARTNERS = 500;
 
     /**
      * Months of the period whose GDT list is not complete, from {@code winv_sync_cvrg} (written
@@ -266,8 +328,14 @@ public class InvoiceQueryRepository {
         }
         if ("has".equals(c.xml())) w.append(" AND c.has_xml");
         if ("missing".equals(c.xml())) w.append(" AND NOT c.has_xml");
+        // List card / "HĐ thiếu XML" chip (every invoice without XML) and the dashboard's coded rows; replaced and
+        // cancelled left out, like the KPIs (docs/issues/weinvoice-invoice-list-server-paging-2026-11-18.md).
+        if ("missing_all".equals(c.xml())) w.append(" AND NOT c.has_xml AND c.tthai_eff NOT IN (4, 6)");
+        if ("missing_coded".equals(c.xml())) {
+            w.append(" AND NOT c.has_xml AND c.tthai_eff NOT IN (4, 6) AND upper(left(c.khhdon, 1)) <> 'K'");
+        }
         if ("has".equals(c.pdf())) w.append(" AND c.has_pdf");
-        if ("missing".equals(c.pdf())) w.append(" AND NOT c.has_pdf");
+        if ("missing".equals(c.pdf())) w.append(" AND NOT c.has_pdf AND c.tthai_eff NOT IN (4, 6)");
         if (c.tthais() != null && !c.tthais().isEmpty()) {
             w.append(" AND c.tthai_eff IN (:tthais)");
             p.addValue("tthais", c.tthais());
@@ -287,6 +355,7 @@ public class InvoiceQueryRepository {
         if (c.provider() != null && !c.provider().isBlank()) {
             switch (c.provider()) {
                 case "no_code" -> w.append(" AND c.prvd_mst IS NULL");
+                case "needs_code" -> w.append(" AND ").append(NEEDS_CODE);
                 case "unknown" -> w.append(" AND c.prvd_mst IS NOT NULL AND NOT EXISTS (SELECT 1 FROM {app}.winv_prvd_infm pv2")
                         .append(" WHERE pv2.prvd_mst = split_part(c.prvd_mst, '-', 1))");
                 default -> {

@@ -47,8 +47,8 @@ replaced invoices.
 
 | Method | Path | Request | `data` |
 |---|---|---|---|
-| GET | `/invoices` | `company_mst`, `direction` (purchase · sales · blank = both), `from`, `to`, `keyword`, `xml` / `pdf` (has · missing), `statuses` (original · replacement · replaced · adjustment · adjusted · cancelled; repeat or comma list), `kind` (normal · cash_register · no_code), `tag_ids`, `provider` (provider MST · `no_code` · `unknown`), `exclude_tax_ids`, `sort_field` (issue_date · number · partner · pre_tax · tax · total), `sort_direction`, `page`, `size` | `rows[InvoiceRow]`, `total_count`, `page`, `size`, `kpis`, `incomplete_periods[{month, got, total}]` |
-| GET | `/invoices/facets` | `company_mst`, `direction`, `from`, `to` | `providers[{key, name, known, count}]`, `statuses[{key, count}]`, `kinds[{key, count}]` |
+| GET | `/invoices` | `company_mst`, `direction` (purchase · sales · blank = both), `from`, `to`, `keyword`, `xml` (has · missing · `missing_all` · `missing_coded`), `pdf` (has · missing), `statuses` (original · replacement · replaced · adjustment · adjusted · cancelled; repeat or comma list), `kind` (normal · cash_register · no_code), `tag_ids`, `provider` (provider MST · `no_code` · `unknown` · `needs_code`), `exclude_tax_ids`, `ids` (just these invoices), `sort_field` (issue_date · number · partner · pre_tax · tax · total), `sort_direction`, `page`, `size` | `rows[InvoiceRow]`, `total_count`, `page`, `size`, `kpis`, `incomplete_periods[{month, got, total}]` |
+| GET | `/invoices/facets` | `company_mst`, `direction`, `from`, `to` | `providers[{key, name, known, count}]`, `statuses[{key, count}]`, `kinds[{key, count}]`, `needs_code`, `partners[{tax_id, name, count}]` (500 most frequent, by name) |
 | GET | `/invoices/ids` | same filters as `/invoices` | `["77", …]` — `WBE3017` above 20 000 |
 | POST | `/invoices/fetch-missing-xml` | `{ company_mst, ids[] }` | `{ queued, skipped_no_code, skipped_other, request_id }` |
 | POST | `/invoices/export/excel` | body = the `/invoices` filter (snake_case JSON; `ids` exports a selection) | XLSX — `WBE3021` above 50 000 rows |
@@ -71,7 +71,14 @@ invoice's own link only (no provider fallback).
 
 **`kpis`** — `count` (every match), `pre_tax, tax, total` (VND, cancelled and replaced left out),
 `missing_xml` (coded invoices without XML — offer "fetch missing XML" before Excel, UI Spec 3.6),
-`no_code_missing_xml`, `missing_pdf`, `sales_count, purchase_count, sales_total, purchase_total`.
+`no_code_missing_xml`, `missing_xml_all` (both — the list card), `missing_pdf`, `sales_count, purchase_count, sales_total,
+purchase_total`, `period_sales_count, period_purchase_count` (MST + period, both directions, whatever the other filters).
+The missing counts leave cancelled and replaced invoices out.
+
+**Filter rules (2026-11-18, server-paged list — `docs/issues/weinvoice-invoice-list-server-paging-2026-11-18.md`):**
+`xml=missing_all` = no XML, not replaced / cancelled (list card, "HĐ thiếu XML"); `xml=missing_coded` = the same and symbol not
+`K…` (dashboard's coded rows); `xml=missing` = any invoice without XML. `pdf=missing` leaves replaced / cancelled out.
+`provider=needs_code` = catalogue provider, no lookup code / link in the XML, none typed by the user (row flag `needs_lookup_code`).
 
 **`InvoiceDetail`** — the row fields plus `company_mst, invoice_title, seller{tax_id, name, address,
 phone, email, bank_account, bank_name, citizen_id}, buyer{…}, discount, total_in_words,

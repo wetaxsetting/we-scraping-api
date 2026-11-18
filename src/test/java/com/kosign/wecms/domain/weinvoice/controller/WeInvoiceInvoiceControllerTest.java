@@ -73,7 +73,7 @@ class WeInvoiceInvoiceControllerTest {
     @Test
     void listBindsSnakeCaseParamsAndAnswersInTheEnvelope() throws Exception {
         InvoiceKpis kpis = new InvoiceKpis(0, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, 3, 1, 2, 0, 0,
-                BigDecimal.ZERO, BigDecimal.ZERO);
+                BigDecimal.ZERO, BigDecimal.ZERO, 4, 5, 6);
         when(queries.list(any(), anyInt(), anyInt())).thenReturn(new InvoiceListResponse(List.of(), 0, 0, 50, kpis, List.of()));
 
         mvc.perform(get("/api/v1/weinvoice/invoices")
@@ -81,11 +81,15 @@ class WeInvoiceInvoiceControllerTest {
                         .param("direction", "purchase")
                         .param("statuses", "original,cancelled")
                         .param("tag_ids", "1", "2")
+                        .param("ids", "7,9")
                         .param("sort_field", "issue_date"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status.error", is(false)))
                 .andExpect(jsonPath("$.data.total_count", is(0)))
                 .andExpect(jsonPath("$.data.kpis.missing_xml", is(3)))
+                .andExpect(jsonPath("$.data.kpis.missing_xml_all", is(4)))
+                .andExpect(jsonPath("$.data.kpis.period_sales_count", is(5)))
+                .andExpect(jsonPath("$.data.kpis.period_purchase_count", is(6)))
                 .andExpect(jsonPath("$.data.incomplete_periods").isArray());
 
         ArgumentCaptor<InvoiceFilter> filter = ArgumentCaptor.forClass(InvoiceFilter.class);
@@ -94,6 +98,7 @@ class WeInvoiceInvoiceControllerTest {
         assertThat(filter.getValue().statuses()).containsExactly("original", "cancelled");
         assertThat(filter.getValue().tagIds()).containsExactly("1", "2");
         assertThat(filter.getValue().sortField()).isEqualTo("issue_date");
+        assertThat(filter.getValue().ids()).containsExactly("7", "9");
     }
 
     @Test

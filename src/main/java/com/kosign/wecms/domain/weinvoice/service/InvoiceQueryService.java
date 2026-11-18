@@ -30,6 +30,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 
 /** Screens 04 and 05 — invoice list, filters, "select all", and the invoice detail. */
@@ -59,7 +60,8 @@ public class InvoiceQueryService {
         InvoiceCriteria c = criteria(filter);
         int p = WeInvoicePaging.page(page);
         int s = WeInvoicePaging.size(size);
-        InvoiceKpis kpis = invoices.kpis(c);
+        Map<String, Long> period = invoices.periodCounts(c.mst(), c.from(), c.to());
+        InvoiceKpis kpis = invoices.kpis(c).withPeriodCounts(period.getOrDefault("ban", 0L), period.getOrDefault("mua", 0L));
         return new InvoiceListResponse(
                 invoices.list(c, p, s),
                 kpis.count(),
@@ -96,7 +98,7 @@ public class InvoiceQueryService {
         if (from != null && to != null && from.isAfter(to)) {
             throw new BusinessException("WBE3016");
         }
-        String xml = fileFilter(f.xml(), "xml");
+        String xml = xmlFilter(f.xml());
         String pdf = fileFilter(f.pdf(), "pdf");
         List<Integer> tthais = f.statuses() == null ? List.of()
                 : f.statuses().stream().filter(s -> !blank(s)).map(InvoiceCodes::tthai).distinct().toList();
@@ -106,8 +108,8 @@ public class InvoiceQueryService {
         }
         List<Long> tagIds = f.tagIds() == null ? List.of() : WeInvoiceIds.parseAll(f.tagIds(), "tag_ids");
         String provider = blank(f.provider()) ? null : f.provider().trim();
-        if (provider != null && !provider.equals("no_code") && !provider.equals("unknown") && !WeInvoiceIds.isTaxId(provider)) {
-            throw new IllegalArgumentException("provider: must be a provider MST, no_code or unknown");
+        if (provider != null && !List.of("no_code", "unknown", "needs_code").contains(provider) && !WeInvoiceIds.isTaxId(provider)) {
+            throw new IllegalArgumentException("provider: must be a provider MST, no_code, unknown or needs_code");
         }
         List<String> exclude = f.excludeTaxIds() == null ? List.of()
                 : f.excludeTaxIds().stream().filter(s -> !blank(s)).map(String::trim).toList();
@@ -318,6 +320,22 @@ public class InvoiceQueryService {
                 .map(r -> new InvoiceDetail.TaskState(r.status(), r.attempts(), r.errorKind(), r.lastError(),
                         r.nextRunAt(), r.updatedAt()))
                 .orElse(null);
+    }
+
+    /**
+     * {@code has} / {@code missing} (any invoice without XML), or the list's {@code missing_all} (card / "HĐ thiếu XML":
+     * every invoice without XML, replaced and cancelled left out) and {@code missing_coded} (dashboard's coded rows).
+     */
+    private static String xmlFilter(String v) {
+        if (!blank(v)) {
+            String s = v.trim().toLowerCase(Locale.ROOT);
+            if (s.equals("missing_all") || s.equals("missing_coded")) return s;
+        }
+        try {
+            return fileFilter(v, "xml");
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("xml: must be all, has, missing, missing_all or missing_coded");
+        }
     }
 
     private static String fileFilter(String v, String field) {

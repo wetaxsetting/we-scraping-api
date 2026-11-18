@@ -12,12 +12,14 @@ import java.util.List;
  * @param from          issue date from, {@code yyyy-MM-dd} (inclusive)
  * @param to            issue date to, {@code yyyy-MM-dd} (inclusive)
  * @param keyword       partner name / MST, symbol, number or CQT code
- * @param xml           {@code has} / {@code missing}
- * @param pdf           {@code has} / {@code missing}
+ * @param xml           {@code has} / {@code missing}; list modes {@code missing_all} (every invoice without XML, replaced /
+ *                      cancelled left out) and {@code missing_coded} (+ symbol not {@code K})
+ * @param pdf           {@code has} / {@code missing} (replaced / cancelled left out)
  * @param statuses      UI Spec statuses ({@code original}, {@code replacement}, …); empty = all
  * @param kind          {@code normal} / {@code cash_register} / {@code no_code}
  * @param tagIds        invoices carrying any of these tags
- * @param provider      provider MST, {@code no_code} (no MSTTCGP known) or {@code unknown} (not in the catalogue)
+ * @param provider      provider MST, {@code no_code} (no MSTTCGP known), {@code unknown} (not in the catalogue)
+ *                      or {@code needs_code} (catalogue provider, lookup code still missing)
  * @param excludeTaxIds partner MSTs to leave out
  * @param ids           restrict to these invoice ids (exports of a selection)
  * @param sortField     {@code issue_date}, {@code number}, {@code partner}, {@code pre_tax}, {@code tax}, {@code total}
