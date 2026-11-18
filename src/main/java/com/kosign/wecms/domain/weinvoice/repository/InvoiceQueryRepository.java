@@ -1,6 +1,7 @@
 package com.kosign.wecms.domain.weinvoice.repository;
 
 import com.kosign.wecms.domain.weinvoice.common.InvoiceCodes;
+import com.kosign.wecms.domain.weinvoice.common.ProviderLookup;
 import com.kosign.wecms.domain.weinvoice.common.WeInvoiceTime;
 import com.kosign.wecms.domain.weinvoice.config.WeInvoiceDb;
 import com.kosign.wecms.domain.weinvoice.dto.IncompletePeriod;
@@ -83,11 +84,14 @@ public class InvoiceQueryRepository {
             """;
 
     /**
-     * Over alias {@code c}: the provider is in the catalogue but the invoice carries no lookup code / link and the user
-     * typed none — same rule as {@code InvoiceRow.needsLookupCode} ("!" pill, provider filter "needs a code").
+     * Over alias {@code c}: {@link ProviderLookup#needsCode} in SQL — the provider is in the catalogue and needs a code,
+     * the invoice carries no lookup code / link, the user typed none and no original PDF is stored yet
+     * ("!" pill, provider filter "needs a code").
      */
     static final String NEEDS_CODE = """
-            (c.prvd_mst IS NOT NULL
+            (c.prvd_mst IS NOT NULL AND NOT c.has_pdf
+               AND split_part(c.prvd_mst, '-', 1) NOT IN (""" + ProviderLookup.WITHOUT_CODE_SQL + """
+            )
                AND EXISTS (SELECT 1 FROM {app}.winv_prvd_infm pv3 WHERE pv3.prvd_mst = split_part(c.prvd_mst, '-', 1))
                AND NULLIF(btrim(c.ma_tra_cuu), '') IS NULL AND NULLIF(btrim(c.lookup_url), '') IS NULL
                AND NOT EXISTS (SELECT 1 FROM {app}.winv_lkup_cd lc3
@@ -415,7 +419,7 @@ public class InvoiceQueryRepository {
                 known,
                 rs.getBoolean("has_xml"),
                 rs.getBoolean("has_pdf"),
-                providerMst != null && known && !hasCode,
+                ProviderLookup.needsCode(providerMst, known, hasCode, rs.getBoolean("has_pdf")),
                 lookupCode,
                 manual ? rs.getString("manual_cmpn_cd") : null,
                 lookupUrl,

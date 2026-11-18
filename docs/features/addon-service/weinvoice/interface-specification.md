@@ -78,7 +78,10 @@ The missing counts leave cancelled and replaced invoices out.
 **Filter rules (2026-11-18, server-paged list — `docs/issues/weinvoice-invoice-list-server-paging-2026-11-18.md`):**
 `xml=missing_all` = no XML, not replaced / cancelled (list card, "HĐ thiếu XML"); `xml=missing_coded` = the same and symbol not
 `K…` (dashboard's coded rows); `xml=missing` = any invoice without XML. `pdf=missing` leaves replaced / cancelled out.
-`provider=needs_code` = catalogue provider, no lookup code / link in the XML, none typed by the user (row flag `needs_lookup_code`).
+`provider=needs_code` = catalogue provider that needs a code, no lookup code / link in the XML, none typed by the user, no
+original PDF yet (row flag `needs_lookup_code`, detail `lookup.needs_code`, facet `needs_code` — same rule,
+`ProviderLookup.needsCode`). Providers looked up without a code never carry it: BKAV, Vĩnh Hy, Minh Khang (DLHDon/@Id),
+My Software, VININVOICE (MCCQT), Mắt Bão (number) — 2026-11-18.
 
 **`InvoiceDetail`** — the row fields plus `company_mst, invoice_title, seller{tax_id, name, address,
 phone, email, bank_account, bank_name, citizen_id}, buyer{…}, discount, total_in_words,

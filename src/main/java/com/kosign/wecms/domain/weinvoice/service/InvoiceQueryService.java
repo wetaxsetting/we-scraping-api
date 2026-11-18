@@ -4,12 +4,14 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.kosign.wecms.common.exception.BusinessException;
 import com.kosign.wecms.domain.weinvoice.common.CompanyAccessGuard;
 import com.kosign.wecms.domain.weinvoice.common.InvoiceCodes;
+import com.kosign.wecms.domain.weinvoice.common.ProviderLookup;
 import com.kosign.wecms.domain.weinvoice.common.WeInvoiceIds;
 import com.kosign.wecms.domain.weinvoice.common.WeInvoiceJson;
 import com.kosign.wecms.domain.weinvoice.common.WeInvoicePaging;
 import com.kosign.wecms.domain.weinvoice.common.WeInvoiceTime;
 import com.kosign.wecms.domain.weinvoice.dto.InvoiceDetail;
 import com.kosign.wecms.domain.weinvoice.dto.InvoiceFacets;
+import com.kosign.wecms.domain.weinvoice.dto.InvoiceFileItem;
 import com.kosign.wecms.domain.weinvoice.dto.InvoiceFilter;
 import com.kosign.wecms.domain.weinvoice.dto.InvoiceKpis;
 import com.kosign.wecms.domain.weinvoice.dto.InvoiceListResponse;
@@ -140,6 +142,7 @@ public class InvoiceQueryService {
         BigDecimal vndRate = "VND".equals(currency) || rate == null || rate.signum() <= 0 ? BigDecimal.ONE : rate;
         int tthai = InvoiceCodes.effectiveTthai(d.tthai(), WeInvoiceJson.text(raw, "_tthai_text"));
 
+        List<InvoiceFileItem> fileList = files.list(d);
         InvoiceDetail.Party seller = new InvoiceDetail.Party(
                 d.sellerTaxId(),
                 WeInvoiceJson.firstNonBlank(WeInvoiceJson.text(sellerNode, "ten"), d.sellerName()),
@@ -192,7 +195,7 @@ public class InvoiceQueryService {
                 d.providerName(),
                 providerMst,
                 known,
-                lookup(d, providerMst, known),
+                lookup(d, providerMst, known, fileList.stream().anyMatch(f -> "pdf".equals(f.kind()))),
                 items(id, parsed),
                 taxes(pay),
                 fees(pay),
@@ -200,7 +203,7 @@ public class InvoiceQueryService {
                         WeInvoiceJson.text(parsed.path("ky_so"), "nguoi_ban"),
                         WeInvoiceJson.text(parsed.path("ky_so"), "nguoi_mua"),
                         WeInvoiceJson.text(parsed.path("ky_so"), "cqt")),
-                files.list(d),
+                fileList,
                 tags.tagIdsOf(ownerId, id),
                 task(taskRows, "xml"),
                 task(taskRows, "pdf"),
@@ -259,12 +262,12 @@ public class InvoiceQueryService {
         return null;
     }
 
-    private static InvoiceDetail.Lookup lookup(DetailRow d, String providerMst, boolean known) {
+    private static InvoiceDetail.Lookup lookup(DetailRow d, String providerMst, boolean known, boolean hasPdf) {
         boolean manual = d.manualCode() != null || d.manualUrl() != null;
         String code = manual ? d.manualCode() : d.xmlLookupCode();
         String ownUrl = manual ? d.manualUrl() : d.xmlLookupUrl();
         String url = ownUrl != null ? ownUrl : d.providerLookupUrl();
-        boolean needsCode = providerMst != null && known && code == null && ownUrl == null;
+        boolean needsCode = ProviderLookup.needsCode(providerMst, known, code != null || ownUrl != null, hasPdf);
         return new InvoiceDetail.Lookup(code, manual ? d.manualCompanyCode() : null, url, ownUrl != null, manual, needsCode);
     }
 

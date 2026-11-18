@@ -21,6 +21,7 @@ class InvoiceRowLookupMappingTest {
         when(rs.getInt("khmshdon")).thenReturn(1);
         when(rs.getLong("shdon")).thenReturn(4L);
         when(rs.getInt("tthai_eff")).thenReturn(1);
+        when(rs.getBoolean("has_pdf")).thenReturn("Y".equals(cols.get("has_pdf")));
         return InvoiceQueryRepository.ROW_MAPPER.mapRow(rs, 0);
     }
 
@@ -43,8 +44,16 @@ class InvoiceRowLookupMappingTest {
 
     @Test
     void knownProviderWithoutAnyCodeNeedsOne() throws Exception {
-        InvoiceRow r = map(Map.of("prvd_mst", "0101360697", "pv_mst", "0101360697", "ma_tra_cuu", " "));
+        InvoiceRow r = map(Map.of("prvd_mst", "0104128565", "pv_mst", "0104128565", "ma_tra_cuu", " "));   // FPT
         assertThat(r.needsLookupCode()).isTrue();
         assertThat(r.lookupCode()).isNull();
+    }
+
+    // docs/issues/weinvoice-needs-lookup-code-by-provider-2026-11-18.md
+    @Test
+    void noFlagOnceThePdfIsStoredOrWhenTheProviderLooksUpWithoutACode() throws Exception {
+        assertThat(map(Map.of("prvd_mst", "0104128565", "pv_mst", "0104128565", "has_pdf", "Y")).needsLookupCode()).isFalse();
+        // BKAV looks invoices up by DLHDon/@Id
+        assertThat(map(Map.of("prvd_mst", "0101360697", "pv_mst", "0101360697")).needsLookupCode()).isFalse();
     }
 }
