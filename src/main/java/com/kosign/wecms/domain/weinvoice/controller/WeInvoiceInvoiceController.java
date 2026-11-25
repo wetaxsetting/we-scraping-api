@@ -11,6 +11,9 @@ import com.kosign.wecms.domain.weinvoice.dto.InvoiceFileItem;
 import com.kosign.wecms.domain.weinvoice.dto.InvoiceFilter;
 import com.kosign.wecms.domain.weinvoice.dto.InvoiceListResponse;
 import com.kosign.wecms.domain.weinvoice.dto.LookupCodeRequest;
+import com.kosign.wecms.domain.weinvoice.dto.PdfJobRequest;
+import com.kosign.wecms.domain.weinvoice.dto.PdfJobStatus;
+import com.kosign.wecms.domain.weinvoice.service.PdfPackJobService;
 import com.kosign.wecms.domain.weinvoice.dto.RequestAccepted;
 import com.kosign.wecms.domain.weinvoice.dto.TagAssignRequest;
 import com.kosign.wecms.domain.weinvoice.service.InvoiceActionService;
@@ -59,6 +62,7 @@ public class WeInvoiceInvoiceController {
     private final InvoiceFileService files;
     private final InvoiceActionService actions;
     private final InvoiceExportService exports;
+    private final PdfPackJobService pdfJobs;
 
     @GetMapping("/invoices")
     public ApiResponse<InvoiceListResponse> list(
@@ -131,6 +135,45 @@ public class WeInvoiceInvoiceController {
     @PostMapping("/invoices/export/zip")
     public void exportZip(@Valid @RequestBody ExportZipRequest request, HttpServletResponse response) {
         exports.zip(request, response);
+    }
+
+    /** "Bảng kê gốc (CQT)" (UI Spec v1.1 §3.12): ZIP of monthly workbooks in the GDT layout; body = the list filter. */
+    @PostMapping("/invoices/export/cqt-list")
+    public void exportCqtList(@RequestBody InvoiceFilter filter, HttpServletResponse response) {
+        exports.cqtList(filter, response);
+    }
+
+    /** Starts a bulk PDF job (UI Spec v1.1 §3.12) — processed on the server, one ZIP at the end. */
+    @PostMapping("/invoices/export/pdf-jobs")
+    public ApiResponse<PdfJobStatus> startPdfJob(@Valid @RequestBody PdfJobRequest request) {
+        return ApiResponse.ok(pdfJobs.start(request));
+    }
+
+    @GetMapping("/invoices/export/pdf-jobs/{jobId}")
+    public ApiResponse<PdfJobStatus> pdfJob(@PathVariable("jobId") String jobId) {
+        return ApiResponse.ok(pdfJobs.status(jobId));
+    }
+
+    @PostMapping("/invoices/export/pdf-jobs/{jobId}/cancel")
+    public ApiResponse<PdfJobStatus> cancelPdfJob(@PathVariable("jobId") String jobId) {
+        return ApiResponse.ok(pdfJobs.cancel(jobId));
+    }
+
+    /** Retries the failed invoices — all, or one {@code reason} group — then packs the full ZIP again. */
+    @PostMapping("/invoices/export/pdf-jobs/{jobId}/retry")
+    public ApiResponse<PdfJobStatus> retryPdfJob(@PathVariable("jobId") String jobId,
+                                                 @RequestBody(required = false) Map<String, String> body) {
+        return ApiResponse.ok(pdfJobs.retry(jobId, body == null ? null : body.get("reason")));
+    }
+
+    @GetMapping("/invoices/export/pdf-jobs/{jobId}/file")
+    public void pdfJobFile(@PathVariable("jobId") String jobId, HttpServletResponse response) {
+        pdfJobs.writeFile(jobId, response);
+    }
+
+    @GetMapping("/invoices/export/pdf-jobs/{jobId}/failed-excel")
+    public void pdfJobFailedExcel(@PathVariable("jobId") String jobId, HttpServletResponse response) {
+        pdfJobs.writeFailedExcel(jobId, response);
     }
 
     /** Adds or removes one tag on many invoices; returns how many invoices were targeted. */

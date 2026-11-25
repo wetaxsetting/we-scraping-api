@@ -54,7 +54,8 @@ class WeInvoiceInvoiceControllerTest {
         when(messages.resolve(any(String.class))).thenReturn("msg");
         when(messages.resolve(any(String.class), any(Object[].class))).thenReturn("msg");
         WeInvoiceInvoiceController controller = new WeInvoiceInvoiceController(queries, mock(InvoiceFileService.class),
-                mock(InvoiceActionService.class), mock(InvoiceExportService.class));
+                mock(InvoiceActionService.class), mock(InvoiceExportService.class),
+                mock(com.kosign.wecms.domain.weinvoice.service.PdfPackJobService.class));
         MethodValidationPostProcessor processor = new MethodValidationPostProcessor();
         processor.afterPropertiesSet();
         Object proxied = processor.postProcessAfterInitialization(controller, "weInvoiceInvoiceController");

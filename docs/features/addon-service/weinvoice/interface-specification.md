@@ -51,8 +51,15 @@ replaced invoices.
 | GET | `/invoices/facets` | `company_mst`, `direction`, `from`, `to` | `providers[{key, name, known, count}]`, `statuses[{key, count}]`, `kinds[{key, count}]`, `needs_code`, `partners[{tax_id, name, count}]` (500 most frequent, by name) |
 | GET | `/invoices/ids` | same filters as `/invoices` | `["77", …]` — `WBE3017` above 20 000 |
 | POST | `/invoices/fetch-missing-xml` | `{ company_mst, ids[] }` | `{ queued, skipped_no_code, skipped_other, request_id }` |
-| POST | `/invoices/export/excel` | body = the `/invoices` filter (snake_case JSON; `ids` exports a selection) | XLSX — `WBE3021` above 50 000 rows |
-| POST | `/invoices/export/zip` | `{ company_mst, ids[] (≤ 2000), mode, include[] }` — `mode` ∈ flat · by_month · by_partner · by_month_partner · per_invoice; `include` ⊆ xml · pdf · summary (`rendered` skipped) | ZIP, streamed |
+| POST | `/invoices/export/excel` | body = the `/invoices` filter (snake_case JSON, list values as arrays; `ids` = the ticked rows, absent = whole filtered list — UI Spec v1.1 §3.6) | XLSX — UI Spec v1.1 §3.11: sheets Tổng hợp · Chi tiết bán ra · Chi tiết mua vào (XML lines), row 1 note, auto-filter, dates / `#,##0`; `WBE3021` above 50 000 invoices |
+| POST | `/invoices/export/zip` | `{ company_mst, ids[] (≤ 20 000; absent = every invoice under `filter`), filter (the `/invoices` filter), mode, include[] }` — `mode` ∈ flat · by_month · by_partner · by_month_partner · per_invoice; `include` ⊆ xml · pdf · summary (`rendered` skipped) | ZIP, streamed |
+| POST | `/invoices/export/cqt-list` | body = the `/invoices` filter (+ `ids`) | ZIP `bang-ke-goc-CQT_<dd-mm-yyyy>_<dd-mm-yyyy>[__THIEU].zip` — one workbook per month `bang-ke-goc-CQT_<yyyy-mm>[__THIEU].xlsx` in the GDT portal export layout, one sheet per list type (có mã / không mã / máy tính tiền × mua / bán; cash-register sheets have the GDT 17-column layout), rows rebuilt from `invoices.list_raw`; `__THIEU` = month not complete in `winv_sync_cvrg`; + `doc_truoc.txt`. Uploads / test data left out. `WBE3005` nothing to list, `WBE3017` above 20 000 |
+| POST | `/invoices/export/pdf-jobs` | `{ company_mst, ids[] (absent = whole filtered list), filter, mode }` — `mode` ∈ merge · flat · rendered · pdf_xml · by_company · by_month | `PdfJobStatus` (below) — the job runs on the server (UI Spec v1.1 §3.12) |
+| GET | `/invoices/export/pdf-jobs/{job_id}` | — | `PdfJobStatus` — poll every 2 s; `WBE3042` unknown / expired (2 h after finishing) / another owner |
+| POST | `/invoices/export/pdf-jobs/{job_id}/cancel` | — | `PdfJobStatus` (open engine requests of the job are cancelled) |
+| POST | `/invoices/export/pdf-jobs/{job_id}/retry` | `{ reason? }` — one failure group, blank = all failed | `PdfJobStatus` — re-asks the engine for the failed invoices, packs the full ZIP again; `WBE3043` while running |
+| GET | `/invoices/export/pdf-jobs/{job_id}/file` | — | the ZIP (`file_name`); `WBE3044` not packed yet |
+| GET | `/invoices/export/pdf-jobs/{job_id}/failed-excel` | — | XLSX `<zip base>_HD-THAT-BAI.xlsx` (sheet "HĐ thất bại": date, symbol, number, partner, provider, lookup code / link, reason) |
 | PUT | `/invoices/tags` | `{ ids[], tag_id, on }` | `{ count }` |
 | GET | `/invoices/{id}` | — | `InvoiceDetail` (below) |
 | GET | `/invoices/{id}/files` | — | `[InvoiceFileItem]` |
@@ -111,6 +118,14 @@ an existing PDF → `pdf_exists` (`confirm=replace`). An XML whose key differs f
 `xml_key_mismatch`; a matching XML is handed to the engine (`request_id`) to fill the record. The
 record already has an XML → `duplicate` — unless the engine XML file is not on this server (`size: null`): then the
 upload is accepted, takes the XML slot and is not re-parsed (the record already has its data).
+
+### `PdfJobStatus` (UI Spec v1.1 §3.12)
+
+`{ job_id, mode, state (running · done · cancelled · failed), step (xml · pdf · pack · done), xml_done, xml_total, total, done, fallback, failed, loading, items[≤500]{id, partner, partner_tax_id, symbol, number, issue_date, phase (xml · queued · loading · done · fallback · failed), source, reason}, failed_groups[{reason, count, items}], fallback_groups[{reason, count, items}], file_name, file_ready, error }`.
+
+- Step 1 queues one `FETCH_XML` request for coded invoices without XML (not for `rendered`) and follows `progress.xml_done` (≤ 30 min). Step 2 takes every original PDF on this server (upload wins over the engine copy) and classifies the rest from the engine `pdf` task: fallback reasons `no_code_invoice` (no code / `summary_only`) · `no_lookup_code` (`no_code`, provider says not found) · `not_connected` (`no_portal`, dead) · `no_provider` (`no_source`) → packed as a rendered copy (the engine GDT print `gdt_pdf_path` when present, else a server template without QR); a provider that may still answer is asked now with `FETCH_PDF` (one request per invoice, ≤ 20 per run, ≤ 15 min); the rest fail with `gateway` · `pending` (over the limit) · `not_on_server` (DB has the PDF, this server does not) · `xml_missing` and are not packed.
+- ZIP layout: `flat` / `rendered` / `pdf_xml` under a root folder named like the ZIP; `by_company` partner folders; `by_month` `yyyy-mm/mua_vao|ban_ra/`; `merge` one PDF in issue-date order. No original → `_ban_the_hien_khong_co_pdf_goc/` + `doc_truoc.txt`, XML in `_thay_bang_xml/yyyy-mm/` (`merge`: XML only; `pdf_xml`: rendered copy in `PDF/`).
+- Jobs live in memory of the API instance (lost on restart; 2 h after finishing).
 
 ## GDT connections (screen 06)
 
@@ -293,6 +308,9 @@ key → HTTP 401, `WBE3019`.
 | WBE3039 | Sign-up: password shorter than `{0}` or without both letters and digits |
 | WBE3040 | Sign-up: email `{0}` already registered (WeInvoice or WeCMS) |
 | WBE3041 | Sign-up: WeInvoice disabled on the server |
+| WBE3042 | Bulk PDF job not found / expired / not the user's |
+| WBE3043 | Bulk PDF job still running (retry refused) |
+| WBE3044 | Bulk PDF ZIP not packed yet |
 
 House codes still apply: `WBE_VALIDATION` (bad / missing parameter), `WBE_DB` (database fault),
 `WBE1003` (access denied — e.g. a non-admin changing connections), `WBE1401` (session expired).
