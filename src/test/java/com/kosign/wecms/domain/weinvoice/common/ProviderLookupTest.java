@@ -32,7 +32,7 @@ class ProviderLookupTest {
     @Test
     void theFilterAndFacetSqlApplyTheSameRule() {
         String sql = InvoiceQueryRepositoryTestAccess.needsCodeSql();
-        assertThat(sql).contains("NOT c.has_pdf", "split_part(c.prvd_mst, '-', 1) NOT IN (", "'0101360697'", "'0302712571'",
+        assertThat(sql).contains("NOT c.has_pdf", "split_part(c.prvd_mst_xml, '-', 1) NOT IN (", "'0101360697'", "'0302712571'",
                 "NULLIF(btrim(c.ma_tra_cuu), '') IS NULL", "{app}.winv_lkup_cd lc3");
         assertThat(ProviderLookup.WITHOUT_CODE_SQL).doesNotContain(";").matches("('[0-9]{10}'(, )?)+");
         // the provider filter uses it

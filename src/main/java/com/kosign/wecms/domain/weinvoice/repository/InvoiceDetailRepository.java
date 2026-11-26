@@ -1,5 +1,6 @@
 package com.kosign.wecms.domain.weinvoice.repository;
 
+import com.kosign.wecms.domain.weinvoice.common.ProviderSql;
 import com.kosign.wecms.domain.weinvoice.common.WeInvoiceTime;
 import com.kosign.wecms.domain.weinvoice.config.WeInvoiceDb;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
@@ -36,13 +37,14 @@ public class InvoiceDetailRepository {
                                p.pdf_path, p.source_id AS pdf_source, p.fetched_at AS pdf_fetched_at,
                                (SELECT d.nguon FROM {eng}.invoice_details d
                                  WHERE d.invoice_id = i.id ORDER BY d.line_no LIMIT 1) AS detail_source,
-                               pv.prvd_mst AS pv_mst, pv.prvd_nm, pv.lkup_url AS prvd_lkup_url,
+                               pv.prvd_mst AS pv_mst, pv.prvd_nm, pv.lkup_url AS prvd_lkup_url, pe.prvd_eff,
                                lc.lkup_cd, lc.cmpn_cd, lc.lkup_url AS manual_url
                           FROM {eng}.invoices i
                           LEFT JOIN {eng}.invoice_xml x ON x.invoice_id = i.id
                           LEFT JOIN {eng}.invoice_pdf p ON p.invoice_id = i.id
-                          LEFT JOIN {app}.winv_prvd_infm pv
-                                 ON pv.prvd_mst = split_part(COALESCE(NULLIF(x.mst_tcgp, ''), i.list_raw->>'msttcgp'), '-', 1)
+                        """ + "                 CROSS JOIN LATERAL (SELECT " + ProviderSql.effective(ProviderSql.SELLER_USUAL_ONE)
+                        + " AS prvd_eff) pe\n" + """
+                          LEFT JOIN {app}.winv_prvd_infm pv ON pv.prvd_mst = split_part(pe.prvd_eff, '-', 1)
                           LEFT JOIN {app}.winv_lkup_cd lc ON lc.owner_id = :ownerId AND lc.invc_id = i.id
                          WHERE i.id = :id
                         """),
@@ -82,7 +84,8 @@ public class InvoiceDetailRepository {
                         rs.getString("lkup_cd"),
                         rs.getString("cmpn_cd"),
                         rs.getString("manual_url"),
-                        rs.getString("gdt_pdf_path")))
+                        rs.getString("gdt_pdf_path"),
+                        rs.getString("prvd_eff")))
                 .stream().findFirst();
     }
 
@@ -275,7 +278,9 @@ public class InvoiceDetailRepository {
             String manualCompanyCode,
             String manualUrl,
             /* PDF the engine printed from the GDT view page in the export-xml ZIP; stand-in until an NCC original exists. */
-            String gdtPdfPath) {
+            String gdtPdfPath,
+            /* Provider written on the invoice, else inferred (TTKhac, PDF adapter, seller's usual provider) — ProviderSql. */
+            String effectiveProviderMst) {
     }
 
     public record ItemRow(

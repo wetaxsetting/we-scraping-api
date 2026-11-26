@@ -61,7 +61,7 @@ class InvoiceListServerPagingTest {
     void needsCodeProviderFilterMatchesTheRowFlag() {
         MapSqlParameterSource p = new MapSqlParameterSource();
         String where = InvoiceQueryRepository.filterWhere(criteria(null, null, "needs_code"), p);
-        assertThat(where).contains("c.prvd_mst IS NOT NULL", "{app}.winv_prvd_infm pv3",
+        assertThat(where).contains("c.prvd_mst_xml IS NOT NULL", "{app}.winv_prvd_infm pv3",
                 "NULLIF(btrim(c.ma_tra_cuu), '') IS NULL", "NULLIF(btrim(c.lookup_url), '') IS NULL",
                 "{app}.winv_lkup_cd lc3", "lc3.owner_id = :ownerId");
         assertThat(where).doesNotContain(":prvd");

@@ -163,7 +163,10 @@ public class InvoiceQueryService {
                 WeInvoiceJson.firstNonBlank(WeInvoiceJson.text(buyerNode, "cccd"), WeInvoiceJson.text(raw, "nmcccd")));
 
         InvoiceDetail.Related related = related(d, tc, raw, tthai);
-        String providerMst = WeInvoiceJson.firstNonBlank(d.xmlProviderMst(), WeInvoiceJson.text(raw, "msttcgp"));
+        // Provider written on the invoice — the only one "needs a lookup code" trusts.
+        String providerOnInvoice = WeInvoiceJson.firstNonBlank(d.xmlProviderMst(), WeInvoiceJson.text(raw, "msttcgp"));
+        // Shown provider: written on the invoice, else inferred (cash-register XML has no MSTTCGP) — ProviderSql.
+        String providerMst = WeInvoiceJson.firstNonBlank(providerOnInvoice, d.effectiveProviderMst());
         boolean known = d.catalogueMst() != null;
 
         List<TaskRow> taskRows = details.tasks(id);
@@ -195,7 +198,8 @@ public class InvoiceQueryService {
                 d.providerName(),
                 providerMst,
                 known,
-                lookup(d, providerMst, known, fileList.stream().anyMatch(f -> "pdf".equals(f.kind()))),
+                lookup(d, providerOnInvoice, providerOnInvoice != null && known,
+                        fileList.stream().anyMatch(f -> "pdf".equals(f.kind()))),
                 items(id, parsed),
                 taxes(pay),
                 fees(pay),

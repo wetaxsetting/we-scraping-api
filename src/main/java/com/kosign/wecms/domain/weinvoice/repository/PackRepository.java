@@ -1,6 +1,7 @@
 package com.kosign.wecms.domain.weinvoice.repository;
 
 import com.kosign.wecms.domain.weinvoice.common.InvoiceCodes;
+import com.kosign.wecms.domain.weinvoice.common.ProviderSql;
 import com.kosign.wecms.domain.weinvoice.common.WeInvoiceTime;
 import com.kosign.wecms.domain.weinvoice.config.WeInvoiceDb;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
@@ -39,7 +40,7 @@ public class PackRepository {
 
     private List<PackRow> packChunk(String ownerId, String mst, List<Long> ids) {
         if (ids.isEmpty()) return List.of();
-        return db.jdbc().query(db.sql("""
+        return db.jdbc().query(db.sql("WITH " + ProviderSql.SELLER_USUAL_CTE + "\n" + """
                         SELECT i.id, i.direction, i.sub_type, i.ngay_lap, i.khmshdon, i.khhdon, i.shdon,
                                i.nbmst, i.nbten, i.nmmst, i.nmten, i.tien_chua_thue, i.tien_thue, i.tong_tien,
                         """ + "       " + InvoiceCodes.SQL_TTHAI_EFF + " AS tthai_eff,\n" + """
@@ -48,7 +49,7 @@ public class PackRepository {
                                COALESCE(NULLIF(x.parsed->'nguoi_mua'->>'dia_chi', ''), i.list_raw->>'nmdchi') AS nm_addr,
                                COALESCE(NULLIF(x.parsed->'thong_tin_chung'->>'don_vi_tt', ''), i.list_raw->>'dvtte') AS ccy,
                                x.xml_path, x.gdt_pdf_path, p.pdf_path, p.source_id AS pdf_src,
-                               NULLIF(COALESCE(NULLIF(x.mst_tcgp, ''), i.list_raw->>'msttcgp'), '') AS prvd_mst,
+                               pe.prvd_mst,
                                pv.prvd_nm,
                                COALESCE(lc.lkup_cd, NULLIF(x.ma_tra_cuu, '')) AS lkup_cd,
                                COALESCE(lc.lkup_url, NULLIF(x.lookup_url, '')) AS lkup_url,
@@ -65,8 +66,9 @@ public class PackRepository {
                           LEFT JOIN {eng}.invoice_pdf p ON p.invoice_id = i.id
                           LEFT JOIN {eng}.tasks tp ON tp.invoice_id = i.id AND tp.task_type = 'pdf'
                           LEFT JOIN {eng}.tasks tx ON tx.invoice_id = i.id AND tx.task_type = 'xml'
-                          LEFT JOIN {app}.winv_prvd_infm pv
-                                 ON pv.prvd_mst = split_part(NULLIF(COALESCE(NULLIF(x.mst_tcgp, ''), i.list_raw->>'msttcgp'), ''), '-', 1)
+                        """ + "  " + ProviderSql.SELLER_USUAL_JOIN + "\n"
+                        + "  CROSS JOIN LATERAL (SELECT " + ProviderSql.effective("sprv.m") + " AS prvd_mst) pe\n" + """
+                          LEFT JOIN {app}.winv_prvd_infm pv ON pv.prvd_mst = split_part(pe.prvd_mst, '-', 1)
                           LEFT JOIN {app}.winv_lkup_cd lc ON lc.owner_id = :ownerId AND lc.invc_id = i.id
                          WHERE i.company_mst = :mst AND i.id IN (:ids)
                         """),

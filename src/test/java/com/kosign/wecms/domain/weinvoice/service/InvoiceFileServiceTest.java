@@ -72,7 +72,7 @@ class InvoiceFileServiceTest {
         return new DetailRow(ID, "1201496252", "mua", "mua", "0101243150", "Seller", "1201496252", "Buyer", 1, "C26TAA",
                 123L, "2026-10-01", null, null, null, 1, "{}", null, "{\"ma_cqt\":\"00ABCDEF\"}", "0101243150", null, null,
                 xmlPath, null, pdfPath, pdfPath == null ? null : "misa_meinvoice", null, "xml", "0101243150", "MISA",
-                null, null, null, null, null);
+                null, null, null, null, null, "0101243150");
     }
 
     private static DetailRow withGdtPdf(DetailRow d, String gdtPdfPath) {
@@ -81,7 +81,7 @@ class InvoiceFileServiceTest {
                 d.total(), d.tthai(), d.listRawJson(), d.firstSeenAt(), d.parsedJson(), d.xmlProviderMst(),
                 d.xmlLookupCode(), d.xmlLookupUrl(), d.xmlPath(), "2026-11-02T08:00:00Z", d.pdfPath(), d.pdfSource(),
                 d.pdfFetchedAt(), d.detailSource(), d.catalogueMst(), d.providerName(), d.providerLookupUrl(),
-                d.manualCode(), d.manualCompanyCode(), d.manualUrl(), gdtPdfPath);
+                d.manualCode(), d.manualCompanyCode(), d.manualUrl(), gdtPdfPath, d.effectiveProviderMst());
     }
 
     private static final String GDT_PDF_PATH = "pdf_gdt/1201496252/2026/10/0101243150/1_C26TAA_123.pdf";

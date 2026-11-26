@@ -90,6 +90,12 @@ original PDF yet (row flag `needs_lookup_code`, detail `lookup.needs_code`, face
 `ProviderLookup.needsCode`). Providers looked up without a code never carry it: BKAV, Vĩnh Hy, Minh Khang (DLHDon/@Id),
 My Software, VININVOICE (MCCQT), Mắt Bão (number) — 2026-11-18.
 
+**Provider ("Phát hành qua", 2026-11-26 — `docs/bugs/weinvoice-provider-empty-for-cash-register-invoices-fix-2026-11-26.md`):**
+`provider*` (row, detail, facet `providers[]`, `provider=` filter, PDF pack) = XML `<MSTTCGP>` / GDT list `msttcgp`, else
+TTKhac `MSTTCGP`, else the provider of the engine adapter that fetched the original PDF, else the seller's most frequent
+provider. Cash-register invoices carry none of the first. `needs_lookup_code` / `provider=needs_code` only use the provider
+written on the invoice.
+
 **`InvoiceDetail`** — the row fields plus `company_mst, invoice_title, seller{tax_id, name, address,
 phone, email, bank_account, bank_name, citizen_id}, buyer{…}, discount, total_in_words,
 payment_method, related_id, related{relation, id, template_no, symbol, number, issue_date, reason},

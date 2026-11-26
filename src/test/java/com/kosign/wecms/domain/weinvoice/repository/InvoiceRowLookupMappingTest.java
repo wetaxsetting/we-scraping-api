@@ -16,7 +16,11 @@ class InvoiceRowLookupMappingTest {
 
     private static InvoiceRow map(Map<String, String> cols) throws Exception {
         ResultSet rs = mock(ResultSet.class);
-        when(rs.getString(anyString())).thenAnswer(inv -> cols.get(inv.<String>getArgument(0)));
+        // prvd_mst_xml (provider written on the invoice) defaults to prvd_mst unless the test gives it
+        when(rs.getString(anyString())).thenAnswer(inv -> {
+            String k = inv.getArgument(0);
+            return "prvd_mst_xml".equals(k) && !cols.containsKey(k) ? cols.get("prvd_mst") : cols.get(k);
+        });
         when(rs.getString("khhdon")).thenReturn("C26TWE");
         when(rs.getInt("khmshdon")).thenReturn(1);
         when(rs.getLong("shdon")).thenReturn(4L);
@@ -55,5 +59,16 @@ class InvoiceRowLookupMappingTest {
         assertThat(map(Map.of("prvd_mst", "0104128565", "pv_mst", "0104128565", "has_pdf", "Y")).needsLookupCode()).isFalse();
         // BKAV looks invoices up by DLHDon/@Id
         assertThat(map(Map.of("prvd_mst", "0101360697", "pv_mst", "0101360697")).needsLookupCode()).isFalse();
+    }
+
+    // docs/bugs/weinvoice-provider-empty-for-cash-register-invoices-fix-2026-11-26.md
+    @Test
+    void inferredProviderIsShownButNeverAsksForACode() throws Exception {
+        // cash-register invoice: no MSTTCGP on it, provider inferred (FPT, a provider that needs a code)
+        InvoiceRow r = map(new java.util.HashMap<>(Map.of("prvd_mst", "0104128565", "pv_mst", "0104128565",
+                "prvd_nm", "FPT")) {{ put("prvd_mst_xml", null); }});
+        assertThat(r.providerTaxId()).isEqualTo("0104128565");
+        assertThat(r.provider()).isEqualTo("FPT");
+        assertThat(r.needsLookupCode()).isFalse();
     }
 }

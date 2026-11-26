@@ -74,6 +74,7 @@ under `src/test/java/com/kosign/wecms/domain/weinvoice/`; "DB" = needs the WeInv
 | I4 | Provider added to the catalogue | old invoices show the new name (read-time join) | DB |
 | I5 | Coded invoice without XML in a selection, "fetch missing XML" | queued; invoices `K…` counted in `skipped_no_code` | DB |
 | I6 | Replacement invoice | `related.relation = replaces`, `related_id` set when the original is stored | DB |
+| I7 | Cash-register invoice (no `<MSTTCGP>`), PDF fetched by an adapter / seller with other invoices | provider = adapter's provider, else seller's usual one; `needs_lookup_code` not raised (2026-11-26) | Unit + DB |
 
 ## Files (UI Spec 3.5)
 

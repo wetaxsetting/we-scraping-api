@@ -2,6 +2,7 @@ package com.kosign.wecms.domain.weinvoice.repository;
 
 import com.kosign.wecms.domain.weinvoice.common.InvoiceCodes;
 import com.kosign.wecms.domain.weinvoice.common.ProviderLookup;
+import com.kosign.wecms.domain.weinvoice.common.ProviderSql;
 import com.kosign.wecms.domain.weinvoice.common.WeInvoiceTime;
 import com.kosign.wecms.domain.weinvoice.config.WeInvoiceDb;
 import com.kosign.wecms.domain.weinvoice.dto.IncompletePeriod;
@@ -29,7 +30,8 @@ import java.util.Map;
  * <ul>
  *   <li>{@code base} — the invoices of one MST with what the UI needs derived in one place:
  *       effective status ({@link InvoiceCodes#SQL_TTHAI_EFF}), XML / PDF presence (engine file
- *       or a WeInvoice upload), provider MST ({@code MSTTCGP} from the XML, else the GDT list),
+ *       or a WeInvoice upload), provider MST ({@link ProviderSql}: written on the invoice, else inferred;
+ *       {@code prvd_mst_xml} = written on the invoice only, for "needs a code"),
  *       CQT code, currency ({@code DVTTe}, {@code VNĐ} → {@code VND}), exchange rate
  *       ({@code TGia}) and the partner seen from the working MST.</li>
  *   <li>{@code conv} — adds {@code vnd_rate}: 1 for VND, else the invoice rate (1 when the
@@ -56,7 +58,10 @@ public class InvoiceQueryRepository {
                             SELECT 1 FROM {app}.winv_invc_file uf
                              WHERE uf.owner_id = :ownerId AND uf.invc_id = i.id
                                AND uf.file_kind = 'PDF' AND uf.del_yn = 'N')) AS has_pdf,
-                       NULLIF(COALESCE(NULLIF(x.mst_tcgp, ''), i.list_raw->>'msttcgp'), '') AS prvd_mst,
+            """
+            + "                       " + ProviderSql.effective("sprv.m") + " AS prvd_mst,\n"
+            + "                       " + ProviderSql.XML_PROVIDER + " AS prvd_mst_xml,\n"
+            + """
                        COALESCE(NULLIF(x.parsed->>'ma_cqt', ''), NULLIF(i.list_raw->>'mhdon', '')) AS cqt_code,
                        CASE WHEN cc.raw_ccy IN ('', 'VND', 'VNĐ', 'Đ') THEN 'VND' ELSE cc.raw_ccy END AS ccy,
                        rr.raw_rate,
@@ -65,6 +70,9 @@ public class InvoiceQueryRepository {
                   FROM {eng}.invoices i
                   LEFT JOIN {eng}.invoice_xml x ON x.invoice_id = i.id
                   LEFT JOIN {eng}.invoice_pdf p ON p.invoice_id = i.id
+            """
+            + "                  " + ProviderSql.SELLER_USUAL_JOIN + "\n"
+            + """
                  CROSS JOIN LATERAL (
                        SELECT upper(btrim(COALESCE(NULLIF(x.parsed->'thong_tin_chung'->>'don_vi_tt', ''),
                                                    i.list_raw->>'dvtte', ''))) AS raw_ccy) cc
@@ -89,10 +97,10 @@ public class InvoiceQueryRepository {
      * ("!" pill, provider filter "needs a code").
      */
     static final String NEEDS_CODE = """
-            (c.prvd_mst IS NOT NULL AND NOT c.has_pdf
-               AND split_part(c.prvd_mst, '-', 1) NOT IN (""" + ProviderLookup.WITHOUT_CODE_SQL + """
+            (c.prvd_mst_xml IS NOT NULL AND NOT c.has_pdf
+               AND split_part(c.prvd_mst_xml, '-', 1) NOT IN (""" + ProviderLookup.WITHOUT_CODE_SQL + """
             )
-               AND EXISTS (SELECT 1 FROM {app}.winv_prvd_infm pv3 WHERE pv3.prvd_mst = split_part(c.prvd_mst, '-', 1))
+               AND EXISTS (SELECT 1 FROM {app}.winv_prvd_infm pv3 WHERE pv3.prvd_mst = split_part(c.prvd_mst_xml, '-', 1))
                AND NULLIF(btrim(c.ma_tra_cuu), '') IS NULL AND NULLIF(btrim(c.lookup_url), '') IS NULL
                AND NOT EXISTS (SELECT 1 FROM {app}.winv_lkup_cd lc3
                                 WHERE lc3.owner_id = :ownerId AND lc3.invc_id = c.id
@@ -319,7 +327,7 @@ public class InvoiceQueryRepository {
             w.append(" AND i.id IN (:ids)");
             p.addValue("ids", c.ids());
         }
-        return "WITH base AS (\n" + BASE_SELECT + w + "\n" + CONV;
+        return "WITH " + ProviderSql.SELLER_USUAL_CTE + ", base AS (\n" + BASE_SELECT + w + "\n" + CONV;
     }
 
     /** {@code WHERE} over alias {@code c} (the {@code conv} CTE) for the list filters. */
@@ -385,6 +393,8 @@ public class InvoiceQueryRepository {
         BigDecimal vndRate = rs.getBigDecimal("vnd_rate");
         String providerMst = rs.getString("prvd_mst");
         boolean known = rs.getString("pv_mst") != null;
+        // "!" needs-a-code only for a provider written on the invoice; an inferred one is a display hint.
+        String providerOnInvoice = rs.getString("prvd_mst_xml");
         boolean hasCode = rs.getString("manual_code") != null
                 || notBlank(rs.getString("ma_tra_cuu")) || notBlank(rs.getString("lookup_url"));
         // Same resolution as the detail's lookup block: a hand-typed code / link wins over the XML's.
@@ -419,7 +429,8 @@ public class InvoiceQueryRepository {
                 known,
                 rs.getBoolean("has_xml"),
                 rs.getBoolean("has_pdf"),
-                ProviderLookup.needsCode(providerMst, known, hasCode, rs.getBoolean("has_pdf")),
+                ProviderLookup.needsCode(providerOnInvoice, providerOnInvoice != null && known, hasCode,
+                        rs.getBoolean("has_pdf")),
                 lookupCode,
                 manual ? rs.getString("manual_cmpn_cd") : null,
                 lookupUrl,
