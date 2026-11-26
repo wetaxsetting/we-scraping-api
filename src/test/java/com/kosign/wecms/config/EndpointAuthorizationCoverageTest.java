@@ -115,6 +115,7 @@ class EndpointAuthorizationCoverageTest {
             "WeInvoiceCatalogController",    // /weinvoice/providers, /tags
             "WeInvoiceMailboxController",    // /weinvoice/mailboxes/** (2026-11-12; /microsoft/callback is permitAll, owner from signed state)
             "WeInvoiceNotificationController", // /weinvoice/notifications/** (2026-11-12; owner = JWT user, read state per user)
+            "WeInvoiceVatDeclarationController", // /weinvoice/companies/{mst}/vat-declarations/** (2026-11-25; MST via CompanyAccessGuard)
             // --- WeInvoice Partner API: WeCMS server → WeInvoice, no user / JWT; gated by PartnerApiKeyFilter (X-Api-Key) ---
             "PartnerEInvoiceController"      // /api/partner/v1/einvoices/**
     );

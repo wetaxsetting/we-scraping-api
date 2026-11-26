@@ -122,10 +122,22 @@ public class VatDeclarationService {
     private final VatXmlExporter xmlExporter;
     private final VatPdfExporter pdfExporter;
     private final VatReportExcelExporter reportExcelExporter;
+    /**
+     * Engine invoices of a WeInvoice book ({@code EngineVatInvoiceSource}). Only consulted for a declaration whose
+     * key is a WeInvoice key ({@link VatScope#isWeInvoiceKey}); WeCMS declarations keep {@link #wecmsInvoices}.
+     */
+    private final VatInvoiceSource engineInvoices;
+    /** WeCMS e-invoice tables — the original source, unchanged. */
+    private final VatInvoiceSource wecmsInvoices = new WecmsInvoices();
 
     @Transactional(readOnly = true)
     public VatDeclarationListResponse list(Integer year, String status, int page, int size) {
-        String bizKey = TenantContext.currentBizKey();
+        return list(wecms(), year, status, page, size);
+    }
+
+    @Transactional(readOnly = true)
+    public VatDeclarationListResponse list(VatScope scope, Integer year, String status, int page, int size) {
+        String bizKey = scope.key();
         int pageSize = size <= 0 ? DEFAULT_PAGE_SIZE : Math.min(size, MAX_PAGE_SIZE);
         Page<VatDeclaration> result = declRepo.search(
                 bizKey, year, normalizeStatusFilter(status),
@@ -145,13 +157,23 @@ public class VatDeclarationService {
 
     @Transactional(readOnly = true)
     public VatDeclarationDetail detail(Long sid) {
-        VatDeclaration decl = load(sid);
+        return detail(wecms(), sid);
+    }
+
+    @Transactional(readOnly = true)
+    public VatDeclarationDetail detail(VatScope scope, Long sid) {
+        VatDeclaration decl = load(scope, sid);
         return toDetail(decl, loadIndicator(decl));
     }
 
     @Transactional
     public VatDeclarationDetail create(VatDeclarationCreateRequest req) {
-        String bizKey = TenantContext.currentBizKey();
+        return create(wecms(), req);
+    }
+
+    @Transactional
+    public VatDeclarationDetail create(VatScope scope, VatDeclarationCreateRequest req) {
+        String bizKey = scope.key();
         String periodType = toDbPeriodType(req.periodType());
         validatePeriodValue(req.periodType(), req.periodValue());
         // "Business Industry *" is required on the PO create form (Dictionary
@@ -194,8 +216,19 @@ public class VatDeclarationService {
             carryOver = nz(loadIndicator(previous).getCreditNext());
         }
 
-        BusiInfm company = busiInfmRepo.findById(bizKey)
-                .orElseThrow(() -> new BusinessException("WBE_VAT_DECL_NOT_FOUND"));
+        // Taxpayer snapshot: WeCMS reads BUSI_INFM; a WeInvoice book carries the MST and the name the user's
+        // winv_cmpn_infm row holds (there is no BUSI_INFM row for it).
+        String tpName;
+        String tpTaxCode;
+        if (scope.taxId() != null) {
+            tpName = defaultIfBlank(scope.companyName(), scope.taxId());
+            tpTaxCode = scope.taxId();
+        } else {
+            BusiInfm company = busiInfmRepo.findById(bizKey)
+                    .orElseThrow(() -> new BusinessException("WBE_VAT_DECL_NOT_FOUND"));
+            tpName = company.getCmpnNm();
+            tpTaxCode = defaultIfBlank(company.getTaxId(), "");
+        }
 
         VatDeclaration decl = VatDeclaration.builder()
                 .bizKey(bizKey)
@@ -210,8 +243,8 @@ public class VatDeclarationService {
                 .period(periodLabel(req.periodType(), req.periodValue(), req.declYear()))
                 .supplNo(0)
                 .declType("C")
-                .tpName(company.getCmpnNm())
-                .tpTaxCode(defaultIfBlank(company.getTaxId(), ""))
+                .tpName(tpName)
+                .tpTaxCode(tpTaxCode)
                 .tpProv("")
                 .periodKind(req.periodType())
                 .fromDt(range[0])
@@ -246,7 +279,12 @@ public class VatDeclarationService {
 
     @Transactional
     public VatDeclarationDetail update(Long sid, VatDeclarationUpdateRequest req) {
-        VatDeclaration decl = load(sid);
+        return update(wecms(), sid, req);
+    }
+
+    @Transactional
+    public VatDeclarationDetail update(VatScope scope, Long sid, VatDeclarationUpdateRequest req) {
+        VatDeclaration decl = load(scope, sid);
         assertDraft(decl);
         VatDeclarationIndicator ind = loadIndicator(decl);
 
@@ -338,7 +376,12 @@ public class VatDeclarationService {
      */
     @Transactional
     public void delete(Long sid) {
-        VatDeclaration decl = load(sid);
+        delete(wecms(), sid);
+    }
+
+    @Transactional
+    public void delete(VatScope scope, Long sid) {
+        VatDeclaration decl = load(scope, sid);
         assertDraft(decl);
         if (declRepo.existsLaterPeriod(decl.getBizKey(), decl.getPeriodType(),
                 decl.getPeriodYear(), decl.getPeriodValue())) {
@@ -348,7 +391,7 @@ public class VatDeclarationService {
         }
         // Defensive: a Draft row should hold no invoice stamps (lock sets them,
         // unlock clears them), but never leave markers pointing at a dead row.
-        annexInvoiceRepo.clearProcessed(decl.getBizKey(), decl.getSid());
+        invoices(decl).clearProcessed(decl);
         indicatorRepo.findByDeclaration_SidAndDeclaration_BizKeyAndDelYn(
                 decl.getSid(), decl.getBizKey(), "N").ifPresent(i -> {
             i.setDelYn("Y");
@@ -360,7 +403,12 @@ public class VatDeclarationService {
 
     @Transactional
     public VatDeclarationDetail lock(Long sid) {
-        VatDeclaration decl = load(sid);
+        return lock(wecms(), sid);
+    }
+
+    @Transactional
+    public VatDeclarationDetail lock(VatScope scope, Long sid) {
+        VatDeclaration decl = load(scope, sid);
         if (STATUS_LOCKED.equals(decl.getStatus())) {
             return toDetail(decl, loadIndicator(decl));   // idempotent toggle
         }
@@ -390,10 +438,8 @@ public class VatDeclarationService {
      * whether it feeds BKBR (output) or BKMV (input).
      */
     private void stampInvoicesProcessed(VatDeclaration decl) {
-        annexInvoiceRepo.markProcessed(decl.getBizKey(),
-                decl.getFromDt().format(YYYYMMDD), decl.getToDt().format(YYYYMMDD),
-                List.of(DOC_TYPE_SALES, DOC_TYPE_PURCHASE),
-                EXCLUDED_INVOICE_STATUSES, decl.getSid());
+        invoices(decl).markProcessed(decl, List.of(DOC_TYPE_SALES, DOC_TYPE_PURCHASE),
+                EXCLUDED_INVOICE_STATUSES);
     }
 
     /**
@@ -586,7 +632,12 @@ public class VatDeclarationService {
 
     @Transactional
     public VatDeclarationDetail unlock(Long sid) {
-        VatDeclaration decl = load(sid);
+        return unlock(wecms(), sid);
+    }
+
+    @Transactional
+    public VatDeclarationDetail unlock(VatScope scope, Long sid) {
+        VatDeclaration decl = load(scope, sid);
         if (!STATUS_LOCKED.equals(decl.getStatus())) {
             return toDetail(decl, loadIndicator(decl));
         }
@@ -602,7 +653,7 @@ public class VatDeclarationService {
         decl.setModId(TenantContext.currentUserId());
         // Re-opening releases the invoices it had claimed, so they are free to
         // be counted again by whichever declaration finally closes them.
-        annexInvoiceRepo.clearProcessed(decl.getBizKey(), decl.getSid());
+        invoices(decl).clearProcessed(decl);
         return toDetail(decl, loadIndicator(decl));
     }
 
@@ -628,7 +679,12 @@ public class VatDeclarationService {
      */
     @Transactional
     public VatDeclarationDetail sync(Long sid) {
-        VatDeclaration decl = load(sid);
+        return sync(wecms(), sid);
+    }
+
+    @Transactional
+    public VatDeclarationDetail sync(VatScope scope, Long sid) {
+        VatDeclaration decl = load(scope, sid);
         assertDraft(decl);
         VatDeclarationIndicator ind = loadIndicator(decl);
         aggregateInvoicesInto(decl, ind);
@@ -648,8 +704,7 @@ public class VatDeclarationService {
      * fill so a freshly-created draft already carries the period's figures).
      */
     private void aggregateInvoicesInto(VatDeclaration decl, VatDeclarationIndicator ind) {
-        String from = decl.getFromDt().format(YYYYMMDD);
-        String to = decl.getToDt().format(YYYYMMDD);
+        VatInvoiceSource source = invoices(decl);
 
         BigDecimal ct23 = BigDecimal.ZERO, ct24 = BigDecimal.ZERO, ct26 = BigDecimal.ZERO,
                 ct29 = BigDecimal.ZERO, ct30 = BigDecimal.ZERO, ct31 = BigDecimal.ZERO,
@@ -660,9 +715,8 @@ public class VatDeclarationService {
         // once — fixing invoice data one error per round trip is miserable.
         Map<String, BigDecimal> unmapped = new LinkedHashMap<>();
 
-        for (VatSyncBucketProjection b : annexInvoiceRepo.syncBuckets(
-                decl.getBizKey(), from, to, List.of(DOC_TYPE_SALES, DOC_TYPE_PURCHASE),
-                EXCLUDED_INVOICE_STATUSES)) {
+        for (VatSyncBucketProjection b : source.syncBuckets(
+                decl, List.of(DOC_TYPE_SALES, DOC_TYPE_PURCHASE), EXCLUDED_INVOICE_STATUSES)) {
             BigDecimal amt = nz(b.getAmt());
             BigDecimal tax = nz(b.getTaxAmt());
             if (DOC_TYPE_PURCHASE.equals(b.getDocType())) {
@@ -714,8 +768,7 @@ public class VatDeclarationService {
         // cells [30]/[32] stay from BUSA_DOC_DETL — they already reconcile with
         // [34] and the e-invoice pre-tax total. Sales only: purchase [24] keeps
         // its syncBuckets source (purchase EINV_TAX_DETL does not reconcile).
-        for (VatSyncBucketProjection b : annexInvoiceRepo.salesVatByRate(
-                decl.getBizKey(), from, to, EXCLUDED_INVOICE_STATUSES)) {
+        for (VatSyncBucketProjection b : source.salesVatByRate(decl, EXCLUDED_INVOICE_STATUSES)) {
             BigDecimal tax = nz(b.getTaxAmt());
             switch (b.getTaxRate() == null ? "" : b.getTaxRate().trim()) {
                 case "5%"        -> ct31 = ct31.add(tax);
@@ -784,7 +837,13 @@ public class VatDeclarationService {
     @Transactional(readOnly = true)
     public AnnexInvoiceListResponse listAnnexInvoices(Long sid, String annexType, String search,
                                                       String ioDv, int page, int size) {
-        VatDeclaration decl = load(sid);
+        return listAnnexInvoices(wecms(), sid, annexType, search, ioDv, page, size);
+    }
+
+    @Transactional(readOnly = true)
+    public AnnexInvoiceListResponse listAnnexInvoices(VatScope scope, Long sid, String annexType, String search,
+                                                      String ioDv, int page, int size) {
+        VatDeclaration decl = load(scope, sid);
         String type = resolveAnnexType(annexType);
         int pageNumber = Math.max(page, 0);
         int pageSize = size <= 0 ? DEFAULT_PAGE_SIZE : Math.min(size, MAX_PAGE_SIZE);
@@ -797,14 +856,13 @@ public class VatDeclarationService {
         }
         String rate = AnnexType.REDUCE8.code().equals(type) ? RATE_8_PCT : null;
         String q = search == null || search.isBlank() ? null : search.trim();
-        String from = decl.getFromDt().format(YYYYMMDD);
-        String to = decl.getToDt().format(YYYYMMDD);
+        VatInvoiceSource source = invoices(decl);
 
         // One GROUP BY einv_taxrate pass yields every section subtotal AND the
         // paging total (Σ row_count) AND the reduction — no separate count /
         // sum-reduced query.
-        List<AnnexTaxGroupProjection> raw = annexInvoiceRepo.groupTotals(
-                decl.getBizKey(), from, to, docTypes, rate, q, EXCLUDED_INVOICE_STATUSES);
+        List<AnnexTaxGroupProjection> raw = source.groupTotals(
+                decl, docTypes, rate, q, EXCLUDED_INVOICE_STATUSES);
         List<AnnexTaxGroup> taxGroups = new ArrayList<>(raw.size());
         BigDecimal gSply = BigDecimal.ZERO, gRed = BigDecimal.ZERO, gVat = BigDecimal.ZERO;
         long total = 0;
@@ -816,8 +874,7 @@ public class VatDeclarationService {
         AnnexTaxGroup grand = grandTotal(total, gSply, gRed, gVat);
 
         List<AnnexRow> rows = offset >= total ? List.of()
-                : annexInvoiceRepo.findRows(decl.getBizKey(), from, to, docTypes, rate, q,
-                        EXCLUDED_INVOICE_STATUSES, offset, pageSize)
+                : source.findRows(decl, docTypes, rate, q, EXCLUDED_INVOICE_STATUSES, offset, pageSize)
                 .stream().map(a -> toAnnexRow(a, type)).toList();
 
         int totalPages = (int) ((total + pageSize - 1) / pageSize);
@@ -838,7 +895,12 @@ public class VatDeclarationService {
      */
     @Transactional(readOnly = true)
     public List<AnnexRow> annexRowsForExport(Long sid, String annexType, String search, String ioDv) {
-        VatDeclaration decl = load(sid);
+        return annexRowsForExport(wecms(), sid, annexType, search, ioDv);
+    }
+
+    @Transactional(readOnly = true)
+    public List<AnnexRow> annexRowsForExport(VatScope scope, Long sid, String annexType, String search, String ioDv) {
+        VatDeclaration decl = load(scope, sid);
         String type = resolveAnnexType(annexType);
         List<String> docTypes = docTypesFor(type, ioDv);
         if (docTypes.isEmpty()) {
@@ -846,10 +908,8 @@ public class VatDeclarationService {
         }
         String rate = AnnexType.REDUCE8.code().equals(type) ? RATE_8_PCT : null;
         String q = search == null || search.isBlank() ? null : search.trim();
-        String from = decl.getFromDt().format(YYYYMMDD);
-        String to = decl.getToDt().format(YYYYMMDD);
-        return annexInvoiceRepo.findRows(decl.getBizKey(), from, to, docTypes, rate, q,
-                        EXCLUDED_INVOICE_STATUSES, 0L, ExcelExportService.MAX_ROWS)
+        return invoices(decl).findRows(decl, docTypes, rate, q, EXCLUDED_INVOICE_STATUSES,
+                        0L, ExcelExportService.MAX_ROWS)
                 .stream().map(a -> toAnnexRow(a, type)).toList();
     }
 
@@ -859,7 +919,12 @@ public class VatDeclarationService {
      */
     @Transactional(readOnly = true)
     public VatExportFile exportXml(Long sid) {
-        VatDeclaration decl = load(sid);
+        return exportXml(wecms(), sid);
+    }
+
+    @Transactional(readOnly = true)
+    public VatExportFile exportXml(VatScope scope, Long sid) {
+        VatDeclaration decl = load(scope, sid);
         assertLocked(decl);
         return xmlExporter.build(decl, loadIndicator(decl));
     }
@@ -870,7 +935,12 @@ public class VatDeclarationService {
      */
     @Transactional(readOnly = true)
     public VatExportFile exportPdf(Long sid) {
-        VatDeclaration decl = load(sid);
+        return exportPdf(wecms(), sid);
+    }
+
+    @Transactional(readOnly = true)
+    public VatExportFile exportPdf(VatScope scope, Long sid) {
+        VatDeclaration decl = load(scope, sid);
         assertLocked(decl);
         return pdfExporter.build(decl, loadIndicator(decl));
     }
@@ -882,7 +952,12 @@ public class VatDeclarationService {
      */
     @Transactional(readOnly = true)
     public VatExportFile exportReportExcel(Long sid) {
-        VatDeclaration decl = load(sid);
+        return exportReportExcel(wecms(), sid);
+    }
+
+    @Transactional(readOnly = true)
+    public VatExportFile exportReportExcel(VatScope scope, Long sid) {
+        VatDeclaration decl = load(scope, sid);
         assertLocked(decl);
         return reportExcelExporter.build(decl, loadIndicator(decl), TenantContext.currentLangCd());
     }
@@ -952,9 +1027,71 @@ public class VatDeclarationService {
 
     // ---------------------------------------------------------------- helpers
 
-    private VatDeclaration load(Long sid) {
-        return declRepo.findBySidAndBizKeyAndDelYn(sid, TenantContext.currentBizKey(), "N")
+    private VatDeclaration load(VatScope scope, Long sid) {
+        return declRepo.findBySidAndBizKeyAndDelYn(sid, scope.key(), "N")
                 .orElseThrow(() -> new BusinessException("WBE_VAT_DECL_NOT_FOUND"));
+    }
+
+    /** The signed-in WeCMS tenant — scope of the original {@code /api/v1/addon/vat-declarations} endpoints. */
+    private static VatScope wecms() {
+        return VatScope.wecms(TenantContext.currentBizKey());
+    }
+
+    /** Invoice source of a declaration: engine tables for a WeInvoice book, WeCMS e-invoice tables otherwise. */
+    private VatInvoiceSource invoices(VatDeclaration decl) {
+        if (!VatScope.isWeInvoiceKey(decl.getBizKey())) {
+            return wecmsInvoices;
+        }
+        if (engineInvoices == null) {
+            throw new BusinessException("WBE3000");
+        }
+        return engineInvoices;
+    }
+
+    /** The WeCMS e-invoice tables ({@link VatAnnexInvoiceRepository}), period passed as {@code yyyyMMdd}. */
+    private final class WecmsInvoices implements VatInvoiceSource {
+
+        @Override
+        public List<VatSyncBucketProjection> syncBuckets(VatDeclaration d, List<String> docTypes,
+                                                         List<String> excluded) {
+            return annexInvoiceRepo.syncBuckets(d.getBizKey(), from(d), to(d), docTypes, excluded);
+        }
+
+        @Override
+        public List<VatSyncBucketProjection> salesVatByRate(VatDeclaration d, List<String> excluded) {
+            return annexInvoiceRepo.salesVatByRate(d.getBizKey(), from(d), to(d), excluded);
+        }
+
+        @Override
+        public List<AnnexTaxGroupProjection> groupTotals(VatDeclaration d, List<String> docTypes, String rate,
+                                                         String search, List<String> excluded) {
+            return annexInvoiceRepo.groupTotals(d.getBizKey(), from(d), to(d), docTypes, rate, search, excluded);
+        }
+
+        @Override
+        public List<AnnexInvoiceProjection> findRows(VatDeclaration d, List<String> docTypes, String rate,
+                                                     String search, List<String> excluded, long offset, int size) {
+            return annexInvoiceRepo.findRows(d.getBizKey(), from(d), to(d), docTypes, rate, search, excluded,
+                    offset, size);
+        }
+
+        @Override
+        public void markProcessed(VatDeclaration d, List<String> docTypes, List<String> excluded) {
+            annexInvoiceRepo.markProcessed(d.getBizKey(), from(d), to(d), docTypes, excluded, d.getSid());
+        }
+
+        @Override
+        public void clearProcessed(VatDeclaration d) {
+            annexInvoiceRepo.clearProcessed(d.getBizKey(), d.getSid());
+        }
+
+        private String from(VatDeclaration d) {
+            return d.getFromDt().format(YYYYMMDD);
+        }
+
+        private String to(VatDeclaration d) {
+            return d.getToDt().format(YYYYMMDD);
+        }
     }
 
     private VatDeclarationIndicator loadIndicator(VatDeclaration decl) {

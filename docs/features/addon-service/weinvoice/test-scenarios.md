@@ -110,3 +110,15 @@ under `src/test/java/com/kosign/wecms/domain/weinvoice/`; "DB" = needs the WeInv
 | P3 | Row of an Excel-imported cancelled invoice without code | `invoice_status` "Hóa đơn đã bị hủy", `check_result` "Cục thuế đã nhận không mã", `einv_test_results` "1", `currency_cd` "VND" | Unit |
 | P4 | Detail row with a 2 100-character address | clipped to 2 000; whole row passes Bean Validation of the WeCMS record | Unit |
 | P5 | WeCMS posts the rows to its own `scrape-results` | accepted, no row skipped for its check-result phrase | DB (WeCMS) |
+
+## VAT declaration (2026-11-25)
+
+| # | Scenario | Expected | Level |
+|---|---|---|---|
+| V1 | Create M10/2026 for an owned MST | row keyed `WI:` + 17 hex of (user, MST); `tp_tax_code` = MST, `tp_name` = company name; [26]/[29]–[33]/[32a] and [23]/[24] filled from the engine invoices | Unit + DB |
+| V2 | Same MST, another user | separate book; the first user's `sid` answers `WBE_VAT_DECL_NOT_FOUND` | Unit |
+| V3 | MST not managed by the user | `WBE3002` | Unit (guard) |
+| V4 | Lock / unlock a book declaration | engine rows untouched; annex rows report processed = locked | Unit |
+| V5 | Period with a USD invoice | amounts × `ty_gia` (VND) | DB |
+| V6 | Sales invoice with an unmapped rate (`KHAC:x%`, blank) | sync refused `WBE_VAT_DECL_UNKNOWN_TAX_RATE` naming the rate | DB |
+| V7 | Old `/api/v1/addon/vat-declarations` (WeCMS tenant) | unchanged, WeCMS e-invoice tables | Unit (lifecycle test) |

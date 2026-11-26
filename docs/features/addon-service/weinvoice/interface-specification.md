@@ -249,6 +249,30 @@ an unmatched XML names the MST as buyer or seller.
 | PATCH | `/tags/{id}` | `{ name?, color? }` | tag |
 | DELETE | `/tags/{id}` | — | `null` |
 
+## VAT declaration (Thuế › Kê khai thuế GTGT, 2026-11-25)
+
+Record: [weinvoice-vat-declaration-engine-invoices-2026-11-25.md](weinvoice-vat-declaration-engine-invoices-2026-11-25.md).
+The WeCMS VAT declaration module (`domain/vatdeclaration`, form 01/GTGT TT80) — same request / response DTOs and
+business rules as `/api/v1/addon/vat-declarations` — on one book per (signed-in user, MST); invoices are the MST's
+engine invoices. `{mst}` must be an active tax code of the user (`WBE3001` / `WBE3002`). Errors are the module's
+`WBE_VAT_DECL_*` codes.
+
+| Method | Path | Request | `data` |
+|---|---|---|---|
+| GET | `/companies/{mst}/vat-declarations` | `year?`, `status?` (DRAFT · LOCKED), `page`, `size` | `{ rows[VatDeclarationRow], total_count }` |
+| POST | `/companies/{mst}/vat-declarations` | `{ period_type M·Q, period_value, decl_year, bsns_line_cd, bsns_line_nm?, … }` | `VatDeclarationDetail` (figures pre-filled from invoices) |
+| GET | `/companies/{mst}/vat-declarations/{sid}` | — | `VatDeclarationDetail` |
+| PUT | `/companies/{mst}/vat-declarations/{sid}` | cells sent are overridden (`ct21`…`ct42b`), header [06]–[11] | `VatDeclarationDetail` |
+| DELETE | `/companies/{mst}/vat-declarations/{sid}` | — (draft; refused while a later period exists) | `null` |
+| POST | `/companies/{mst}/vat-declarations/{sid}/sync` | — (draft) | `VatDeclarationDetail` |
+| PUT / DELETE | `/companies/{mst}/vat-declarations/{sid}/lock` | — | `VatDeclarationDetail` |
+| GET | `/companies/{mst}/vat-declarations/{sid}/annex/invoices` | `annex_type` BKBR · BKMV · REDUCE8, `search?`, `io_dv?`, `page`, `size` | `AnnexInvoiceListResponse` |
+| GET | `/companies/{mst}/vat-declarations/{sid}/export/xml` · `/pdf` · `/report-excel` | — (locked) | binary file |
+
+Invoice rules: period on `ngay_lap`; `ban` = output, `mua` = input; replaced (4) / cancelled (6) excluded; per
+(invoice, rate) from the XML per-rate summary, else XML lines, else header with derived rate; × exchange rate when
+not VND. Engine rows are never written (no lock marker). The annex Excel export of the WeCMS module is not exposed.
+
 ## Partner API (WeCMS)
 
 | Method | Path | Request | `data` |
