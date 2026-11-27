@@ -72,7 +72,15 @@ replaced invoices.
 **`InvoiceRow`** — `id, direction, issue_date, template_no, symbol, number, seller_tax_id,
 seller_name, buyer_tax_id, buyer_name, partner_tax_id, partner_name, currency, exchange_rate,
 pre_tax, tax, total, total_vnd, status, kind, cqt_code, provider, provider_tax_id, provider_known,
-has_xml, has_pdf, needs_lookup_code, lookup_code, lookup_code_company, lookup_url, tag_ids[], source, synced_at`.
+has_xml, has_pdf, needs_lookup_code, lookup_code, lookup_code_company, lookup_url, tag_ids[], source, synced_at,
+fee, trade_discount, po_number, due_date, due_text, items[], item_count, vat_rates[], related`.
+UI Spec v1.2 (2026-11-27, `weinvoice-invoice-screen-v1-2-2026-11-27.md`): `fee` = Σ fees / charges outside VAT (XML `DSLPhi`,
+else GDT `tgtphi`), `trade_discount` (`TTCKTMai`), `po_number` / `due_text` = TTKhac as written (`InvoiceExtraSql` key
+lists), `due_date` = ISO only when `due_text` is a date, `items` = first 3 item names, `item_count`, `vat_rates` (labels as
+written), `related` = `{relation: replaces|adjusts|null, original: Ref|null, referenced_by: [Ref]}` with
+`Ref {id (null = original not stored), relation, template_no, symbol, number, issue_date, total}` (TCHDon 1 / 2 only).
+Amounts stay in the invoice currency. `keyword` also matches item names and partner names without accents (regex built
+from the keyword) and the PO number.
 `lookup_*` (2026-11-11): as the detail's `lookup` — a hand-typed code / link wins over the XML's; `lookup_url` is the
 invoice's own link only (no provider fallback).
 
@@ -80,7 +88,8 @@ invoice's own link only (no provider fallback).
 `missing_xml` (coded invoices without XML — offer "fetch missing XML" before Excel, UI Spec 3.6),
 `no_code_missing_xml`, `missing_xml_all` (both — the list card), `missing_pdf`, `sales_count, purchase_count, sales_total,
 purchase_total`, `period_sales_count, period_purchase_count` (MST + period, both directions, whatever the other filters).
-The missing counts leave cancelled and replaced invoices out.
+The missing counts leave cancelled and replaced invoices out. v1.2: `fee` (VND), `by_currency[{currency, count, pre_tax,
+tax, fee, total, total_vnd}]` — the totals bar, one row per invoice currency, VND first.
 
 **Filter rules (2026-11-18, server-paged list — `docs/issues/weinvoice-invoice-list-server-paging-2026-11-18.md`):**
 `xml=missing_all` = no XML, not replaced / cancelled (list card, "HĐ thiếu XML"); `xml=missing_coded` = the same and symbol not
@@ -106,6 +115,8 @@ xml_task, pdf_task {status, attempts, error_kind, error, next_run_at, updated_at
 `vat_rate`: 0 / 5 / 8 / 10, −1 = KCT, −2 = KKKNT, other percentages as their number.
 `related.relation`: `replaces` · `adjusts` (this invoice names the other) · `replaced_by` ·
 `adjusted_by` (the other names this one).
+v1.2: `fee`, `po_number`, `due_date`, `due_text`, `referenced_by[Ref]` (every invoice replacing / adjusting this one) and
+`effective_total` = `total` + Σ adjustment totals (null without adjustments).
 
 **`InvoiceFileItem`** — `id, kind (xml · pdf · pdf_gdt · attachment), name, size, origin (gdt · vendor · email ·
 upload), added_at, deletable, url`.

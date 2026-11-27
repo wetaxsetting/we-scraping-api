@@ -1,6 +1,7 @@
 package com.kosign.wecms.domain.weinvoice.repository;
 
 import com.kosign.wecms.domain.weinvoice.common.InvoiceCodes;
+import com.kosign.wecms.domain.weinvoice.common.InvoiceExtraSql;
 import com.kosign.wecms.domain.weinvoice.common.ProviderSql;
 import com.kosign.wecms.domain.weinvoice.common.WeInvoiceTime;
 import com.kosign.wecms.domain.weinvoice.config.WeInvoiceDb;
@@ -120,8 +121,12 @@ public class PackRepository {
             out.addAll(db.jdbc().query(db.sql("""
                             SELECT i.id, i.direction, i.sub_type, i.ngay_lap, i.khmshdon, i.khhdon, i.shdon,
                                    i.nbmst, i.nbten, i.nmmst, i.nmten, i.tien_chua_thue, i.tien_thue, i.tong_tien,
-                                   i.tthai, i.list_raw::text AS list_raw
+                                   i.tthai, i.list_raw::text AS list_raw,
+                            """ + "       " + InvoiceExtraSql.TRADE_DISCOUNT + " AS trade_discount, " + InvoiceExtraSql.FEE
+                            + " AS fee" + """
+
                               FROM {eng}.invoices i
+                              LEFT JOIN {eng}.invoice_xml x ON x.invoice_id = i.id
                              WHERE i.company_mst = :mst AND i.id IN (:ids)
                                AND COALESCE(i.list_raw->>'nguon', '') NOT IN ('upload', 'test_data')
                             """),
@@ -142,7 +147,9 @@ public class PackRepository {
                             rs.getBigDecimal("tien_thue"),
                             rs.getBigDecimal("tong_tien"),
                             Rows.intOrNull(rs, "tthai"),
-                            rs.getString("list_raw"))));
+                            rs.getString("list_raw"),
+                            rs.getBigDecimal("trade_discount"),
+                            rs.getBigDecimal("fee"))));
         }
         return out;
     }
@@ -220,6 +227,9 @@ public class PackRepository {
             BigDecimal tax,
             BigDecimal total,
             Integer tthai,
-            String listRawJson) {
+            String listRawJson,
+            /* UI Spec v1.2 §3.11: from the XML (TTCKTMai, Σ DSLPhi), else the GDT list. */
+            BigDecimal tradeDiscount,
+            BigDecimal fee) {
     }
 }

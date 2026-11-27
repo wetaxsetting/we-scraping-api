@@ -1,6 +1,7 @@
 package com.kosign.wecms.domain.weinvoice.dto;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 /**
  * Totals of the filtered list. {@code count} counts every matching invoice; amounts are in
@@ -11,6 +12,8 @@ import java.math.BigDecimal;
  * waiting for mail / provider / upload; {@code missing_xml_all} = both (the list card).
  * {@code period_sales_count} / {@code period_purchase_count}: the MST's invoices of the period in
  * each direction, whatever the other filters (the card's "Cả kỳ" line).
+ * {@code by_currency} (UI Spec v1.2 §3.13): the totals bar — one row per invoice currency (invoice count and amounts in
+ * that currency, cancelled / replaced left out of the amounts like above, plus the VND conversion).
  */
 public record InvoiceKpis(
         long count,
@@ -26,11 +29,24 @@ public record InvoiceKpis(
         BigDecimal purchaseTotal,
         long missingXmlAll,
         long periodSalesCount,
-        long periodPurchaseCount) {
+        long periodPurchaseCount,
+        BigDecimal fee,
+        List<CurrencyTotal> byCurrency) {
 
     /** Same totals with the period counts of both directions. */
     public InvoiceKpis withPeriodCounts(long sales, long purchase) {
         return new InvoiceKpis(count, preTax, tax, total, missingXml, noCodeMissingXml, missingPdf, salesCount,
-                purchaseCount, salesTotal, purchaseTotal, missingXmlAll, sales, purchase);
+                purchaseCount, salesTotal, purchaseTotal, missingXmlAll, sales, purchase, fee, byCurrency);
+    }
+
+    /** Same totals with the per-currency rows of the totals bar. */
+    public InvoiceKpis withByCurrency(List<CurrencyTotal> rows) {
+        return new InvoiceKpis(count, preTax, tax, total, missingXml, noCodeMissingXml, missingPdf, salesCount,
+                purchaseCount, salesTotal, purchaseTotal, missingXmlAll, periodSalesCount, periodPurchaseCount, fee, rows);
+    }
+
+    /** One currency of the totals bar: amounts in that currency, {@code total_vnd} converted. */
+    public record CurrencyTotal(String currency, long count, BigDecimal preTax, BigDecimal tax, BigDecimal fee,
+                                BigDecimal total, BigDecimal totalVnd) {
     }
 }

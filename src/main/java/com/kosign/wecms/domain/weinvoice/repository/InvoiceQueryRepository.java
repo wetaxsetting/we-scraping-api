@@ -1,6 +1,7 @@
 package com.kosign.wecms.domain.weinvoice.repository;
 
 import com.kosign.wecms.domain.weinvoice.common.InvoiceCodes;
+import com.kosign.wecms.domain.weinvoice.common.InvoiceExtraSql;
 import com.kosign.wecms.domain.weinvoice.common.ProviderLookup;
 import com.kosign.wecms.domain.weinvoice.common.ProviderSql;
 import com.kosign.wecms.domain.weinvoice.common.WeInvoiceTime;
@@ -66,7 +67,8 @@ public class InvoiceQueryRepository {
                        CASE WHEN cc.raw_ccy IN ('', 'VND', 'VNĐ', 'Đ') THEN 'VND' ELSE cc.raw_ccy END AS ccy,
                        rr.raw_rate,
                        CASE WHEN i.direction = 'ban' THEN i.nmmst ELSE i.nbmst END AS ptnr_mst,
-                       CASE WHEN i.direction = 'ban' THEN i.nmten ELSE i.nbten END AS ptnr_nm
+                       CASE WHEN i.direction = 'ban' THEN i.nmten ELSE i.nbten END AS ptnr_nm,
+                       fe.fee, fe.trade_discount, fe.po_no, fe.due_raw
                   FROM {eng}.invoices i
                   LEFT JOIN {eng}.invoice_xml x ON x.invoice_id = i.id
                   LEFT JOIN {eng}.invoice_pdf p ON p.invoice_id = i.id
@@ -82,7 +84,9 @@ public class InvoiceQueryRepository {
                                      THEN (x.parsed->'thong_tin_chung'->>'ty_gia')::numeric END,
                                 CASE WHEN i.list_raw->>'tgia' ~ '^[0-9]+(\\.[0-9]+)?$'
                                      THEN (i.list_raw->>'tgia')::numeric END) AS raw_rate) rr
-            """;
+            """
+            + "     CROSS JOIN LATERAL (SELECT " + InvoiceExtraSql.FEE + " AS fee, " + InvoiceExtraSql.TRADE_DISCOUNT
+            + " AS trade_discount, " + InvoiceExtraSql.PO + " AS po_no, " + InvoiceExtraSql.DUE + " AS due_raw) fe\n";
 
     private static final String CONV = """
             ), conv AS (
@@ -147,6 +151,7 @@ public class InvoiceQueryRepository {
                        COALESCE(sum(c.tien_chua_thue * c.vnd_rate) FILTER (WHERE c.tthai_eff NOT IN (4, 6)), 0) AS pre_tax,
                        COALESCE(sum(c.tien_thue * c.vnd_rate) FILTER (WHERE c.tthai_eff NOT IN (4, 6)), 0) AS tax,
                        COALESCE(sum(c.tong_tien * c.vnd_rate) FILTER (WHERE c.tthai_eff NOT IN (4, 6)), 0) AS total,
+                       COALESCE(sum(c.fee * c.vnd_rate) FILTER (WHERE c.tthai_eff NOT IN (4, 6)), 0) AS fee,
                        count(*) FILTER (WHERE NOT c.has_xml AND c.tthai_eff NOT IN (4, 6)
                                           AND upper(left(c.khhdon, 1)) <> 'K') AS missing_xml,
                        count(*) FILTER (WHERE NOT c.has_xml AND c.tthai_eff NOT IN (4, 6)
@@ -175,7 +180,34 @@ public class InvoiceQueryRepository {
                 rs.getBigDecimal("purchase_total"),
                 rs.getLong("missing_xml_all"),
                 0,
-                0));
+                0,
+                rs.getBigDecimal("fee"),
+                List.of()));
+    }
+
+    /**
+     * Totals bar (UI Spec v1.2 §3.13): one row per invoice currency of the filtered set, amounts in that currency
+     * (cancelled / replaced left out, like the KPIs), VND first then by code.
+     */
+    public List<InvoiceKpis.CurrencyTotal> currencyTotals(InvoiceCriteria c) {
+        MapSqlParameterSource p = new MapSqlParameterSource();
+        String sql = db.sql(cte(c, p) + """
+                SELECT c.ccy, count(*) AS cnt,
+                       COALESCE(sum(c.tien_chua_thue) FILTER (WHERE c.tthai_eff NOT IN (4, 6)), 0) AS pre_tax,
+                       COALESCE(sum(c.tien_thue) FILTER (WHERE c.tthai_eff NOT IN (4, 6)), 0) AS tax,
+                       COALESCE(sum(c.fee) FILTER (WHERE c.tthai_eff NOT IN (4, 6)), 0) AS fee,
+                       COALESCE(sum(c.tong_tien) FILTER (WHERE c.tthai_eff NOT IN (4, 6)), 0) AS total,
+                       COALESCE(sum(c.tong_tien * c.vnd_rate) FILTER (WHERE c.tthai_eff NOT IN (4, 6)), 0) AS total_vnd
+                  FROM conv c
+                """ + filterWhere(c, p) + " GROUP BY c.ccy ORDER BY (c.ccy = 'VND') DESC, c.ccy");
+        return db.jdbc().query(sql, p, (rs, n) -> new InvoiceKpis.CurrencyTotal(
+                rs.getString("ccy"),
+                rs.getLong("cnt"),
+                rs.getBigDecimal("pre_tax"),
+                rs.getBigDecimal("tax"),
+                rs.getBigDecimal("fee"),
+                rs.getBigDecimal("total"),
+                rs.getBigDecimal("total_vnd")));
     }
 
     /**
@@ -197,6 +229,115 @@ public class InvoiceQueryRepository {
         db.jdbc().query(db.sql("SELECT i.direction, count(*) AS n FROM {eng}.invoices i " + w
                 + " AND " + InvoiceCodes.SQL_TTHAI_EFF + " NOT IN (4, 6) GROUP BY i.direction"), p,
                 rs -> { out.put(rs.getString("direction"), rs.getLong("n")); });
+        return out;
+    }
+
+    /** Per-page extras of the list rows (UI Spec v1.2 §B5–B7, §3.15). */
+    public record PageExtras(List<String> items, int itemCount, List<String> vatRates, InvoiceRow.Related related) {
+    }
+
+    /**
+     * Item preview + count and tax rates ({@code invoice_details}), and related invoices both ways ({@code TTHDLQuan}
+     * with TCHDon 1 = replacement / 2 = adjustment) for the rows of one page — a second query on the page ids so the
+     * list itself stays one scan.
+     */
+    public Map<Long, PageExtras> pageExtras(String mst, List<Long> ids) {
+        Map<Long, PageExtras> out = new HashMap<>();
+        if (ids.isEmpty()) return out;
+        MapSqlParameterSource p = new MapSqlParameterSource("ids", ids).addValue("mst", mst);
+        Map<Long, List<String>> items = new HashMap<>();
+        Map<Long, Integer> counts = new HashMap<>();
+        Map<Long, List<String>> rates = new HashMap<>();
+        db.jdbc().query(db.sql("""
+                SELECT d.invoice_id,
+                       count(*) FILTER (WHERE NULLIF(btrim(d.ten_hhdv), '') IS NOT NULL) AS n,
+                       array_agg(d.ten_hhdv ORDER BY d.line_no)
+                          FILTER (WHERE NULLIF(btrim(d.ten_hhdv), '') IS NOT NULL) AS preview,
+                       array_agg(DISTINCT d.thue_suat) FILTER (WHERE NULLIF(btrim(d.thue_suat), '') IS NOT NULL) AS rates
+                  FROM {eng}.invoice_details d
+                 WHERE d.invoice_id IN (:ids)
+                 GROUP BY d.invoice_id
+                """), p, rs -> {
+            long id = rs.getLong("invoice_id");
+            List<String> names = strings(rs.getArray("preview"));   // a ":n" array slice would read as a named parameter
+            items.put(id, names.subList(0, Math.min(names.size(), InvoiceRow.ITEM_PREVIEW)));
+            counts.put(id, rs.getInt("n"));
+            rates.put(id, strings(rs.getArray("rates")));
+        });
+
+        Map<Long, InvoiceRow.Ref> originals = new HashMap<>();
+        Map<Long, String> relations = new HashMap<>();
+        db.jdbc().query(db.sql("""
+                SELECT i.id, lq.tchd, lq.tpl, lq.sym, lq.no, lq.dt, o.id AS oid
+                  FROM {eng}.invoices i
+                  JOIN {eng}.invoice_xml x ON x.invoice_id = i.id
+                 CROSS JOIN LATERAL (SELECT x.parsed->'thong_tin_chung'->'hoa_don_lien_quan' AS j) jj
+                 CROSS JOIN LATERAL (SELECT jj.j->>'tinh_chat' AS tchd, REF_TPL AS tpl, REF_SYM AS sym, REF_NO AS no,
+                                            NULLIF(jj.j->>'ngay_lap', '') AS dt) lq
+                  LEFT JOIN LATERAL (SELECT o.id FROM {eng}.invoices o
+                                      WHERE o.company_mst = i.company_mst AND o.nbmst = i.nbmst
+                                        AND upper(o.khhdon) = lq.sym AND o.shdon = lq.no
+                                        AND (lq.tpl IS NULL OR o.khmshdon = lq.tpl) AND o.id <> i.id
+                                      ORDER BY o.id LIMIT 1) o ON true
+                 WHERE i.id IN (:ids) AND jsonb_typeof(jj.j) = 'object'
+                   AND lq.tchd IN ('1', '2') AND NULLIF(lq.sym, '') IS NOT NULL AND lq.no IS NOT NULL
+                """.replace("REF_TPL", InvoiceExtraSql.refTemplate("jj.j"))
+                .replace("REF_SYM", InvoiceExtraSql.refSymbol("jj.j"))
+                .replace("REF_NO", InvoiceExtraSql.refNumber("jj.j"))), p, rs -> {
+            long id = rs.getLong("id");
+            long oid = rs.getLong("oid");
+            String originalId = rs.wasNull() ? null : String.valueOf(oid);   // null = original not stored yet
+            relations.put(id, "2".equals(rs.getString("tchd")) ? "adjusts" : "replaces");
+            BigDecimal tpl = rs.getBigDecimal("tpl");
+            BigDecimal no = rs.getBigDecimal("no");
+            originals.put(id, new InvoiceRow.Ref(originalId, null, tpl == null ? null : tpl.toBigInteger().toString(),
+                    rs.getString("sym"), no == null ? null : no.toBigInteger().toString(), rs.getString("dt"), null));
+        });
+
+        Map<Long, List<InvoiceRow.Ref>> referencedBy = new HashMap<>();
+        db.jdbc().query(db.sql("""
+                WITH tgt AS (
+                    SELECT t.id, t.nbmst, t.khmshdon, upper(t.khhdon) AS sym, t.shdon
+                      FROM {eng}.invoices t WHERE t.id IN (:ids))
+                SELECT tgt.id AS target_id, r.id, r.khmshdon, r.khhdon, r.shdon, r.ngay_lap, r.tong_tien, rq.tchd
+                  FROM {eng}.invoices r
+                  JOIN {eng}.invoice_xml rx ON rx.invoice_id = r.id
+                 CROSS JOIN LATERAL (SELECT rx.parsed->'thong_tin_chung'->'hoa_don_lien_quan' AS j) jj
+                 CROSS JOIN LATERAL (SELECT jj.j->>'tinh_chat' AS tchd, REF_TPL AS tpl, REF_SYM AS sym, REF_NO AS no) rq
+                  JOIN tgt ON tgt.nbmst = r.nbmst AND tgt.sym = rq.sym AND tgt.shdon = rq.no
+                          AND (rq.tpl IS NULL OR rq.tpl = tgt.khmshdon) AND r.id <> tgt.id
+                 WHERE r.company_mst = :mst
+                   AND jsonb_typeof(jj.j) = 'object' AND rq.tchd IN ('1', '2')
+                 ORDER BY r.ngay_lap, r.id
+                """.replace("REF_TPL", InvoiceExtraSql.refTemplate("jj.j"))
+                .replace("REF_SYM", InvoiceExtraSql.refSymbol("jj.j"))
+                .replace("REF_NO", InvoiceExtraSql.refNumber("jj.j"))), p, rs -> {
+            referencedBy.computeIfAbsent(rs.getLong("target_id"), k -> new ArrayList<>()).add(new InvoiceRow.Ref(
+                    String.valueOf(rs.getLong("id")),
+                    "2".equals(rs.getString("tchd")) ? "adjusts" : "replaces",
+                    String.valueOf(rs.getInt("khmshdon")),
+                    rs.getString("khhdon"),
+                    String.valueOf(rs.getLong("shdon")),
+                    WeInvoiceTime.date(rs, "ngay_lap"),
+                    rs.getBigDecimal("tong_tien")));
+        });
+
+        for (Long id : ids) {
+            InvoiceRow.Ref original = originals.get(id);
+            List<InvoiceRow.Ref> by = referencedBy.getOrDefault(id, List.of());
+            InvoiceRow.Related related = original == null && by.isEmpty()
+                    ? null : new InvoiceRow.Related(relations.get(id), original, by);
+            out.put(id, new PageExtras(items.getOrDefault(id, List.of()), counts.getOrDefault(id, 0),
+                    rates.getOrDefault(id, List.of()), related));
+        }
+        return out;
+    }
+
+    private static List<String> strings(java.sql.Array a) throws SQLException {
+        if (a == null) return List.of();
+        Object[] values = (Object[]) a.getArray();
+        List<String> out = new ArrayList<>(values.length);
+        for (Object v : values) if (v != null) out.add(v.toString());
         return out;
     }
 
@@ -334,9 +475,14 @@ public class InvoiceQueryRepository {
     static String filterWhere(InvoiceCriteria c, MapSqlParameterSource p) {
         StringBuilder w = new StringBuilder(" WHERE 1 = 1");
         if (c.keyword() != null && !c.keyword().isBlank()) {
+            // UI Spec v1.2 §3.3: partner names without accents, item names (without accents) and the PO number too.
             w.append(" AND (c.nbten ILIKE :kw OR c.nmten ILIKE :kw OR c.nbmst ILIKE :kw OR c.nmmst ILIKE :kw")
-                    .append(" OR c.khhdon ILIKE :kw OR CAST(c.shdon AS text) ILIKE :kw OR c.cqt_code ILIKE :kw)");
+                    .append(" OR c.khhdon ILIKE :kw OR CAST(c.shdon AS text) ILIKE :kw OR c.cqt_code ILIKE :kw")
+                    .append(" OR c.po_no ILIKE :kw")
+                    .append(" OR c.nbten ~ :kwre OR c.nmten ~ :kwre")
+                    .append(" OR EXISTS (SELECT 1 FROM {eng}.invoice_details kd WHERE kd.invoice_id = c.id AND kd.ten_hhdv ~ :kwre))");
             p.addValue("kw", "%" + escapeLike(c.keyword().trim()) + "%");
+            p.addValue("kwre", InvoiceExtraSql.searchPattern(c.keyword()));
         }
         if ("has".equals(c.xml())) w.append(" AND c.has_xml");
         if ("missing".equals(c.xml())) w.append(" AND NOT c.has_xml");
@@ -436,7 +582,16 @@ public class InvoiceQueryRepository {
                 lookupUrl,
                 tagIds == null ? List.of() : Arrays.asList(tagIds.split(",")),
                 InvoiceCodes.recordOrigin(rs.getString("rec_src")),
-                WeInvoiceTime.iso(rs, "first_seen_at"));
+                WeInvoiceTime.iso(rs, "first_seen_at"),
+                rs.getBigDecimal("fee"),
+                rs.getBigDecimal("trade_discount"),
+                rs.getString("po_no"),
+                InvoiceCodes.dueDate(rs.getString("due_raw")),
+                rs.getString("due_raw"),
+                List.of(),
+                0,
+                List.of(),
+                null);
     };
 
     private static String blankToNull(String s) {

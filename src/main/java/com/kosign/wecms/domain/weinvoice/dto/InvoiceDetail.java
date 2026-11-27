@@ -7,6 +7,10 @@ import java.util.List;
  * Screen 05 — every field of the UI Spec {@code Invoice} plus what the detail panes show
  * (tax per rate, fees, signing times, task state). Values come from the XML when the engine
  * has it, otherwise from the GDT list row.
+ *
+ * <p>UI Spec v1.2 (2026-11-27): {@code fee} (Σ fees, not taxed — pre-tax + tax + fee = total), {@code po_number},
+ * {@code due_date} / {@code due_text}, {@code referenced_by} (every invoice replacing / adjusting this one, §3.15) and
+ * {@code effective_total} = this total + Σ adjustment totals (only when adjustments exist).
  */
 public record InvoiceDetail(
         String id,
@@ -47,7 +51,13 @@ public record InvoiceDetail(
         TaskState pdfTask,
         List<String> warnings,
         String source,
-        String syncedAt) {
+        String syncedAt,
+        BigDecimal fee,
+        String poNumber,
+        String dueDate,
+        String dueText,
+        List<InvoiceRow.Ref> referencedBy,
+        BigDecimal effectiveTotal) {
 
     public record Party(String taxId, String name, String address, String phone, String email,
                         String bankAccount, String bankName, String citizenId) {

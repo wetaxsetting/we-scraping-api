@@ -1,5 +1,6 @@
 package com.kosign.wecms.domain.weinvoice.repository;
 
+import com.kosign.wecms.domain.weinvoice.common.InvoiceExtraSql;
 import com.kosign.wecms.domain.weinvoice.common.ProviderSql;
 import com.kosign.wecms.domain.weinvoice.common.WeInvoiceTime;
 import com.kosign.wecms.domain.weinvoice.config.WeInvoiceDb;
@@ -38,7 +39,8 @@ public class InvoiceDetailRepository {
                                (SELECT d.nguon FROM {eng}.invoice_details d
                                  WHERE d.invoice_id = i.id ORDER BY d.line_no LIMIT 1) AS detail_source,
                                pv.prvd_mst AS pv_mst, pv.prvd_nm, pv.lkup_url AS prvd_lkup_url, pe.prvd_eff,
-                               lc.lkup_cd, lc.cmpn_cd, lc.lkup_url AS manual_url
+                               lc.lkup_cd, lc.cmpn_cd, lc.lkup_url AS manual_url,
+                        """ + "       " + InvoiceExtraSql.PO + " AS po_no, " + InvoiceExtraSql.DUE + " AS due_raw\n" + """
                           FROM {eng}.invoices i
                           LEFT JOIN {eng}.invoice_xml x ON x.invoice_id = i.id
                           LEFT JOIN {eng}.invoice_pdf p ON p.invoice_id = i.id
@@ -85,7 +87,9 @@ public class InvoiceDetailRepository {
                         rs.getString("cmpn_cd"),
                         rs.getString("manual_url"),
                         rs.getString("gdt_pdf_path"),
-                        rs.getString("prvd_eff")))
+                        rs.getString("prvd_eff"),
+                        rs.getString("po_no"),
+                        rs.getString("due_raw")))
                 .stream().findFirst();
     }
 
@@ -280,7 +284,10 @@ public class InvoiceDetailRepository {
             /* PDF the engine printed from the GDT view page in the export-xml ZIP; stand-in until an NCC original exists. */
             String gdtPdfPath,
             /* Provider written on the invoice, else inferred (TTKhac, PDF adapter, seller's usual provider) — ProviderSql. */
-            String effectiveProviderMst) {
+            String effectiveProviderMst,
+            /* UI Spec v1.2: PO number and payment due date as written in TTKhac (InvoiceExtraSql). */
+            String poNumber,
+            String dueText) {
     }
 
     public record ItemRow(

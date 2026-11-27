@@ -74,7 +74,7 @@ class WeInvoiceInvoiceControllerTest {
     @Test
     void listBindsSnakeCaseParamsAndAnswersInTheEnvelope() throws Exception {
         InvoiceKpis kpis = new InvoiceKpis(0, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, 3, 1, 2, 0, 0,
-                BigDecimal.ZERO, BigDecimal.ZERO, 4, 5, 6);
+                BigDecimal.ZERO, BigDecimal.ZERO, 4, 5, 6, BigDecimal.ZERO, List.of());
         when(queries.list(any(), anyInt(), anyInt())).thenReturn(new InvoiceListResponse(List.of(), 0, 0, 50, kpis, List.of()));
 
         mvc.perform(get("/api/v1/weinvoice/invoices")

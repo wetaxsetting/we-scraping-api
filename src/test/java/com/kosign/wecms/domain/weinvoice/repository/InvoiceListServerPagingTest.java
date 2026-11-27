@@ -113,7 +113,7 @@ class InvoiceListServerPagingTest {
                 true, "CONNECTED", null, null, true, false, null, null));
         when(guard.ownerId()).thenReturn("u@x");
         when(repo.kpis(any())).thenReturn(new InvoiceKpis(3, BigDecimal.ONE, BigDecimal.ONE, BigDecimal.ONE, 1, 1, 1,
-                0, 3, BigDecimal.ZERO, BigDecimal.ONE, 2, 0, 0));
+                0, 3, BigDecimal.ZERO, BigDecimal.ONE, 2, 0, 0, BigDecimal.ZERO, List.of()));
         when(repo.periodCounts(eq("1201496252"), any(), any())).thenReturn(Map.of("ban", 246L, "mua", 846L));
         when(repo.list(any(), anyInt(), anyInt())).thenReturn(List.of());
         when(repo.incompletePeriods(anyString(), any(), any(), any())).thenReturn(List.of());

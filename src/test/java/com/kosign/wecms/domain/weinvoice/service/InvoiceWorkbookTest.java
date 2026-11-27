@@ -35,13 +35,18 @@ class InvoiceWorkbookTest {
 
             org.apache.poi.xssf.usermodel.XSSFSheet sum = wb.getSheetAt(0);
             assertThat(sum.getRow(0).getCell(0).getStringCellValue()).startsWith("⚠️ Ghi chú");
-            assertThat(sum.getMergedRegion(0).getLastColumn()).isEqualTo(19);
+            assertThat(sum.getMergedRegion(0).getLastColumn()).isEqualTo(24);
             assertThat(sum.getRow(1).getCell(0).getStringCellValue()).isEqualTo("STT");
             Cell date = sum.getRow(2).getCell(1);
             assertThat(DateUtil.isCellDateFormatted(date)).isTrue();
             assertThat(date.getLocalDateTimeCellValue().toLocalDate()).isEqualTo(LocalDate.of(2026, 10, 5));
             assertThat(sum.getRow(2).getCell(12).getCellStyle().getDataFormatString()).isEqualTo("#,##0");
-            assertThat(sum.getRow(2).getCell(16).getStringCellValue()).isEqualTo("(không mã)");
+            assertThat(sum.getRow(1).getCell(10).getStringCellValue()).isEqualTo("Loại tiền");
+            assertThat(sum.getRow(1).getCell(16).getStringCellValue()).isEqualTo("Tổng quy đổi (VND)");
+            assertThat(sum.getRow(1).getCell(24).getStringCellValue()).isEqualTo("Số PO");
+            assertThat(sum.getRow(2).getCell(10).getStringCellValue()).isEqualTo("VND");
+            assertThat(sum.getRow(2).getCell(20).getStringCellValue()).isEqualTo("(không mã)");
+            assertThat(InvoiceWorkbook.SUMMARY_HEADER).noneMatch(h -> h.contains("₫"));
             assertThat(sum.getCTWorksheet().isSetAutoFilter()).isTrue();
 
             Sheet sales = wb.getSheetAt(1);
@@ -72,11 +77,11 @@ class InvoiceWorkbookTest {
         String mtt = "{\"nbmst\":\"0300000002\",\"nbdchi\":\"HN\",\"tthai\":1,\"ttxly\":8}";
         List<CqtRow> rows = List.of(
                 new CqtRow(1, "mua", "mua", "2026-10-05", 1, "C26TAA", 7, "0300000001", "A", "0101234567", "B",
-                        BigDecimal.TEN, BigDecimal.ONE, BigDecimal.valueOf(11), null, raw),
+                        BigDecimal.TEN, BigDecimal.ONE, BigDecimal.valueOf(11), null, raw, null, null),
                 new CqtRow(2, "mua", null, "2026-10-06", 1, "C26MAA", 8, "0300000002", "C", "0101234567", "B",
-                        BigDecimal.TEN, BigDecimal.ONE, BigDecimal.valueOf(11), 1, mtt),
+                        BigDecimal.TEN, BigDecimal.ONE, BigDecimal.valueOf(11), 1, mtt, null, null),
                 new CqtRow(3, "mua", "mua", "2026-11-01", 1, "C26TAA", 9, "0300000001", "A", "0101234567", "B",
-                        BigDecimal.TEN, BigDecimal.ONE, BigDecimal.valueOf(11), 1, null));
+                        BigDecimal.TEN, BigDecimal.ONE, BigDecimal.valueOf(11), 1, null, null, null));
         var months = CqtListWorkbook.byMonth(rows);
         assertThat(months).containsOnlyKeys("2026-10", "2026-11");
         assertThat(months.get("2026-10")).containsOnlyKeys("mua", "mua-mtt");
@@ -111,6 +116,28 @@ class InvoiceWorkbookTest {
         assertThat(InvoiceExportService.cqtReadme(5, List.of())).doesNotContain("__THIEU");
     }
 
+    @org.junit.jupiter.api.Test
+    void excel_v12_feeLineForeignCurrencyAndPo() throws Exception {
+        InvoiceRow usd = new InvoiceRow("7", "purchase", "2026-10-05", "1", "C26TAA", "7", "0300000001", "Người bán",
+                "0101234567", "Người mua", "0300000001", "Người bán", "USD", new BigDecimal("25750"),
+                new BigDecimal("100.50"), new BigDecimal("10.05"), new BigDecimal("115.55"), new BigDecimal("2975412.5"),
+                "original", "normal", "00AB", "MISA", "0101243150", true, true, false, false, null, null, null, List.of(),
+                "gdt", null, new BigDecimal("5.00"), null, "PO-119963", null, null, List.of(), 0, List.of(), null);
+        Map<Long, List<ItemRow>> items = Map.of(7L, List.of(item(1, 1, "Hàng A", "100.50", "10")));
+        try (XSSFWorkbook wb = read(InvoiceWorkbook.invoiceSheets(List.of(usd), items))) {
+            org.apache.poi.xssf.usermodel.XSSFSheet sum = wb.getSheetAt(0);
+            assertThat(sum.getRow(2).getCell(10).getStringCellValue()).isEqualTo("USD");
+            assertThat(sum.getRow(2).getCell(11).getNumericCellValue()).isEqualTo(25750d);
+            assertThat(sum.getRow(2).getCell(12).getCellStyle().getDataFormatString()).isEqualTo("#,##0.00");
+            assertThat(sum.getRow(2).getCell(14).getNumericCellValue()).isEqualTo(5d);
+            assertThat(sum.getRow(2).getCell(24).getStringCellValue()).isEqualTo("PO-119963");
+            Sheet purchase = wb.getSheetAt(1);
+            assertThat(purchase.getRow(3).getCell(8).getStringCellValue()).isEqualTo(InvoiceWorkbook.FEE_LINE);
+            assertThat(purchase.getRow(3).getCell(14).getNumericCellValue()).isZero();
+            assertThat(purchase.getRow(3).getCell(15).getNumericCellValue()).isEqualTo(5d);
+        }
+    }
+
     private static XSSFWorkbook read(List<InvoiceWorkbook.SheetData> sheets) throws Exception {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         InvoiceWorkbook.write(out, sheets);
@@ -121,7 +148,7 @@ class InvoiceWorkbookTest {
         return new InvoiceRow(id, direction, "2026-10-05", "1", symbol, "123", "0300000001", "Người bán", "0101234567",
                 "Người mua", "0300000001", "Người bán", "VND", BigDecimal.ONE, new BigDecimal("100000"),
                 new BigDecimal("10000"), new BigDecimal("110000"), new BigDecimal("110000"), "original", "normal", null,
-                "MISA", "0101243150", true, true, false, false, "ABC", null, null, List.of(), "gdt", null);
+                "MISA", "0101243150", true, true, false, false, "ABC", null, null, List.of(), "gdt", null, null, null, null, null, null, List.of(), 0, List.of(), null);
     }
 
     private static ItemRow item(int no, Integer kind, String name, String amount, String rate) {

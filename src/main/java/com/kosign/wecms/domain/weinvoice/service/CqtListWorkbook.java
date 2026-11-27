@@ -259,8 +259,9 @@ public final class CqtListWorkbook {
         v.put("nmcccd", text(raw, "nmcccd", null));
         v.put("tgtcthue", number(raw, "tgtcthue", r.preTax()));
         v.put("tgtthue", number(raw, "tgtthue", r.tax()));
-        v.put("ttcktmai", number(raw, "ttcktmai", null));
-        v.put("tgtphi", number(raw, "tgtphi", null));
+        // UI Spec v1.2 B13: real trade discount / fee totals from the XML (the Excel list leaves them 0 / blank).
+        v.put("ttcktmai", r.tradeDiscount() != null ? r.tradeDiscount() : number(raw, "ttcktmai", null));
+        v.put("tgtphi", r.fee() != null ? r.fee() : number(raw, "tgtphi", null));
         v.put("tgtttbso", number(raw, "tgtttbso", r.total()));
         v.put("dvtte", text(raw, "dvtte", null));
         Object rate = number(raw, "tgia", null);

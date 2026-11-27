@@ -15,6 +15,7 @@ import com.kosign.wecms.domain.weinvoice.dto.InvoiceFileItem;
 import com.kosign.wecms.domain.weinvoice.dto.InvoiceFilter;
 import com.kosign.wecms.domain.weinvoice.dto.InvoiceKpis;
 import com.kosign.wecms.domain.weinvoice.dto.InvoiceListResponse;
+import com.kosign.wecms.domain.weinvoice.dto.InvoiceRow;
 import com.kosign.wecms.domain.weinvoice.repository.CompanyConnectionRepository.CompanyRow;
 import com.kosign.wecms.domain.weinvoice.repository.InvoiceCriteria;
 import com.kosign.wecms.domain.weinvoice.repository.InvoiceDetailRepository;
@@ -63,9 +64,17 @@ public class InvoiceQueryService {
         int p = WeInvoicePaging.page(page);
         int s = WeInvoicePaging.size(size);
         Map<String, Long> period = invoices.periodCounts(c.mst(), c.from(), c.to());
-        InvoiceKpis kpis = invoices.kpis(c).withPeriodCounts(period.getOrDefault("ban", 0L), period.getOrDefault("mua", 0L));
+        InvoiceKpis kpis = invoices.kpis(c).withPeriodCounts(period.getOrDefault("ban", 0L), period.getOrDefault("mua", 0L))
+                .withByCurrency(invoices.currencyTotals(c));
+        List<InvoiceRow> rows = invoices.list(c, p, s);
+        Map<Long, InvoiceQueryRepository.PageExtras> extras =
+                invoices.pageExtras(c.mst(), rows.stream().map(r -> Long.parseLong(r.id())).toList());
+        rows = rows.stream().map(r -> {
+            InvoiceQueryRepository.PageExtras e = extras.get(Long.parseLong(r.id()));
+            return e == null ? r : r.withExtras(e.items(), e.itemCount(), e.vatRates(), e.related());
+        }).toList();
         return new InvoiceListResponse(
-                invoices.list(c, p, s),
+                rows,
                 kpis.count(),
                 p,
                 s,
@@ -163,6 +172,9 @@ public class InvoiceQueryService {
                 WeInvoiceJson.firstNonBlank(WeInvoiceJson.text(buyerNode, "cccd"), WeInvoiceJson.text(raw, "nmcccd")));
 
         InvoiceDetail.Related related = related(d, tc, raw, tthai);
+        InvoiceQueryRepository.PageExtras extras = invoices.pageExtras(d.companyMst(), List.of(id)).get(id);
+        List<InvoiceRow.Ref> referencedBy = extras == null || extras.related() == null
+                ? List.of() : extras.related().referencedBy();
         // Provider written on the invoice — the only one "needs a lookup code" trusts.
         String providerOnInvoice = WeInvoiceJson.firstNonBlank(d.xmlProviderMst(), WeInvoiceJson.text(raw, "msttcgp"));
         // Shown provider: written on the invoice, else inferred (cash-register XML has no MSTTCGP) — ProviderSql.
@@ -213,7 +225,32 @@ public class InvoiceQueryService {
                 task(taskRows, "pdf"),
                 warnings(parsed),
                 InvoiceCodes.recordOrigin(WeInvoiceJson.text(raw, "nguon")),
-                d.firstSeenAt());
+                d.firstSeenAt(),
+                fee(pay, raw),
+                d.poNumber(),
+                InvoiceCodes.dueDate(d.dueText()),
+                d.dueText(),
+                referencedBy,
+                effectiveTotal(d.total(), referencedBy));
+    }
+
+    /** Σ XML fees ({@code DSLPhi}), else the GDT list {@code tgtphi}; null when neither has one (UI Spec v1.2 §3.14). */
+    static BigDecimal fee(JsonNode pay, JsonNode raw) {
+        BigDecimal sum = null;
+        for (JsonNode f : pay.path("phi")) {
+            BigDecimal v = WeInvoiceJson.decimal(f, "tien");
+            if (v != null) sum = sum == null ? v : sum.add(v);
+        }
+        return sum != null ? sum : WeInvoiceJson.decimal(raw, "tgtphi");
+    }
+
+    /** Original + Σ adjustments (UI Spec v1.2 §3.15 "Giá trị còn hiệu lực"); null when nothing adjusts this invoice. */
+    static BigDecimal effectiveTotal(BigDecimal total, List<InvoiceRow.Ref> referencedBy) {
+        List<InvoiceRow.Ref> adjustments = referencedBy.stream().filter(r -> "adjusts".equals(r.relation())).toList();
+        if (total == null || adjustments.isEmpty()) return null;
+        BigDecimal sum = total;
+        for (InvoiceRow.Ref r : adjustments) if (r.total() != null) sum = sum.add(r.total());
+        return sum;
     }
 
     /**

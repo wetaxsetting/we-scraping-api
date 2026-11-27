@@ -27,7 +27,12 @@ import java.util.Set;
  * (§3.12). Texts are the spec's Vietnamese (the spec defines the file in Vietnamese, as the prototype does).
  *
  * <p>Every sheet: row 1 = merged disclaimer note, row 2 = header with auto-filter, data from row 3; dates are real
- * dates {@code dd/mm/yyyy}, money {@code #,##0}. Streaming workbook — a large period does not sit in memory.
+ * dates {@code dd/mm/yyyy}, money {@code #,##0} ({@code #,##0.00} when the amount has decimals, e.g. USD). Streaming
+ * workbook — a large period does not sit in memory.
+ *
+ * <p>UI Spec v1.2 §3.11 / §3.13 (2026-11-27): amounts stay in the invoice currency, so the money headers carry no "(₫)"
+ * and the sheets add Loại tiền, Tỷ giá, Phí / lệ phí, Tổng quy đổi (VND) and Số PO; a detail sheet adds one fee line
+ * (no VAT) per invoice that has fees.
  */
 public final class InvoiceWorkbook {
 
@@ -40,11 +45,14 @@ public final class InvoiceWorkbook {
     static final int MAX_SHEET_ROWS = 1_048_576 - 3;
 
     static final List<String> SUMMARY_HEADER = List.of("STT", "Ngày lập", "Hướng", "Ký hiệu mẫu", "Ký hiệu HĐ", "Số HĐ",
-            "MST người bán", "Tên người bán", "MST người mua", "Tên người mua", "Trước VAT (₫)", "VAT (₫)",
-            "Tổng tiền (₫)", "Mã tra cứu", "Ghi chú", "Trạng thái", "Mã CQT", "XML", "PDF", "Phát hành qua");
-    private static final int[] SUMMARY_WIDTHS = {6, 12, 9, 8, 10, 11, 16, 44, 16, 44, 15, 13, 15, 30, 14, 13, 36, 7, 7, 14};
+            "MST người bán", "Tên người bán", "MST người mua", "Tên người mua", "Loại tiền", "Tỷ giá", "Trước VAT", "VAT",
+            "Phí / lệ phí", "Tổng tiền", "Tổng quy đổi (VND)", "Mã tra cứu", "Ghi chú", "Trạng thái", "Mã CQT", "XML", "PDF",
+            "Phát hành qua", "Số PO");
+    private static final int[] SUMMARY_WIDTHS = {6, 12, 9, 8, 10, 11, 16, 44, 16, 44, 9, 10, 15, 13, 13, 15, 17, 30, 14,
+            13, 36, 7, 7, 14, 18};
 
-    private static final int[] DETAIL_WIDTHS = {6, 12, 8, 10, 11, 16, 44, 8, 50, 8, 10, 14, 18, 10, 16, 16, 30};
+    private static final int[] DETAIL_WIDTHS = {6, 12, 8, 10, 11, 16, 44, 8, 50, 8, 10, 14, 18, 10, 16, 16, 30, 9};
+    public static final String FEE_LINE = "Phí / lệ phí (không chịu thuế)";
 
     private static final Map<String, String> STATUS_VI = Map.of(
             "original", "Hoá đơn gốc", "replacement", "Thay thế", "replaced", "Bị thay thế",
@@ -84,9 +92,13 @@ public final class InvoiceWorkbook {
             row.add(r.sellerName());
             row.add(r.buyerTaxId());
             row.add(r.buyerName());
+            row.add(blankToEmpty(r.currency()));
+            row.add("VND".equals(r.currency()) ? null : r.exchangeRate());
             row.add(r.preTax());
             row.add(r.tax());
+            row.add(r.fee());
             row.add(r.total());
+            row.add(r.totalVnd());
             row.add(blankToEmpty(r.lookupCode()));
             row.add("");
             row.add(STATUS_VI.getOrDefault(r.status(), r.status()));
@@ -94,9 +106,10 @@ public final class InvoiceWorkbook {
             row.add(r.hasXml() ? "Có" : "Thiếu");
             row.add(r.hasPdf() ? "Có" : "Thiếu");
             row.add(r.provider() != null ? r.provider() : blankToEmpty(r.providerTaxId()));
+            row.add(blankToEmpty(r.poNumber()));
             data.add(row);
         }
-        return new SheetData("Tổng hợp", NOTE_SUMMARY, SUMMARY_HEADER, data, SUMMARY_WIDTHS, Set.of(10, 11, 12));
+        return new SheetData("Tổng hợp", NOTE_SUMMARY, SUMMARY_HEADER, data, SUMMARY_WIDTHS, Set.of(12, 13, 14, 15, 16));
     }
 
     /** One row per XML line of the invoices of one direction ({@code sales} / {@code purchase}). */
@@ -104,8 +117,8 @@ public final class InvoiceWorkbook {
         boolean sales = "sales".equals(direction);
         String who = sales ? "người mua" : "người bán";
         List<String> header = List.of("STT", "Ngày HĐ", "Ký hiệu mẫu", "Ký hiệu HĐ", "Số HĐ", "MST " + who, "Tên " + who,
-                "STT dòng", "Tên hàng hoá / dịch vụ", "ĐVT", "Số lượng", "Đơn giá", "Thành tiền chưa thuế (₫)", "Thuế suất",
-                "Tiền thuế GTGT (₫)", "Tổng tiền (₫)", "Mã tra cứu");
+                "STT dòng", "Tên hàng hoá / dịch vụ", "ĐVT", "Số lượng", "Đơn giá", "Thành tiền chưa thuế", "Thuế suất",
+                "Tiền thuế GTGT", "Tổng tiền", "Mã tra cứu", "Loại tiền");
         List<List<Object>> data = new ArrayList<>();
         int stt = 0;
         for (InvoiceRow r : rows) {
@@ -127,6 +140,7 @@ public final class InvoiceWorkbook {
                 row.add(r.tax());
                 row.add(r.total());
                 row.add(blankToEmpty(r.lookupCode()));
+                row.add(blankToEmpty(r.currency()));
                 data.add(row);
                 continue;
             }
@@ -150,6 +164,25 @@ public final class InvoiceWorkbook {
                 row.add(tax);
                 row.add(total);
                 row.add(blankToEmpty(r.lookupCode()));
+                row.add(blankToEmpty(r.currency()));
+                data.add(row);
+            }
+            if (r.fee() != null && r.fee().signum() != 0) {
+                // Fees / charges are outside VAT (UI Spec v1.2 §3.14): own line, no rate, tax 0.
+                List<Object> row = new ArrayList<>(18);
+                row.add(++stt);
+                row.addAll(head);
+                row.add(++lineNo);
+                row.add(FEE_LINE);
+                row.add("");
+                row.add(null);
+                row.add(null);
+                row.add(r.fee());
+                row.add("");
+                row.add(BigDecimal.ZERO);
+                row.add(r.fee());
+                row.add(blankToEmpty(r.lookupCode()));
+                row.add(blankToEmpty(r.currency()));
                 data.add(row);
             }
         }
@@ -264,7 +297,7 @@ public final class InvoiceWorkbook {
             cell.setCellStyle(st.date);
         } else if (v instanceof BigDecimal b) {
             cell.setCellValue(b.doubleValue());
-            if (money) cell.setCellStyle(st.money);
+            if (money) cell.setCellStyle(b.stripTrailingZeros().scale() > 0 ? st.moneyDecimal : st.money);
         } else if (v instanceof Number num) {
             cell.setCellValue(num.doubleValue());
             if (money) cell.setCellStyle(st.money);
@@ -278,6 +311,7 @@ public final class InvoiceWorkbook {
         final CellStyle header;
         final CellStyle date;
         final CellStyle money;
+        final CellStyle moneyDecimal;
 
         Styles(Workbook wb) {
             Font bold = wb.createFont();
@@ -297,6 +331,8 @@ public final class InvoiceWorkbook {
             date.setDataFormat(wb.createDataFormat().getFormat("dd/mm/yyyy"));
             money = wb.createCellStyle();
             money.setDataFormat(wb.createDataFormat().getFormat("#,##0"));
+            moneyDecimal = wb.createCellStyle();
+            moneyDecimal.setDataFormat(wb.createDataFormat().getFormat("#,##0.00"));
         }
     }
 

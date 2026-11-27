@@ -197,4 +197,36 @@ public final class InvoiceCodes {
             default -> "";
         };
     }
+
+    private static final Pattern ISO_DATE = Pattern.compile("^(\\d{4})-(\\d{1,2})-(\\d{1,2})");
+    private static final Pattern VN_DATE = Pattern.compile("(\\d{1,2})[/.-](\\d{1,2})[/.-](\\d{4})");
+
+    /**
+     * Payment due date written in TTKhac (UI Spec v1.2 "Hạn thanh toán") as ISO {@code yyyy-MM-dd}, or null when the
+     * value is not a date (e.g. "30DAYS", "trong vòng 8 ngày" — shown as written, not checked for overdue).
+     */
+    public static String dueDate(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        String v = raw.trim();
+        Matcher m = ISO_DATE.matcher(v);
+        int y;
+        int mo;
+        int d;
+        if (m.find()) {
+            y = Integer.parseInt(m.group(1));
+            mo = Integer.parseInt(m.group(2));
+            d = Integer.parseInt(m.group(3));
+        } else {
+            m = VN_DATE.matcher(v);
+            if (!m.find()) return null;
+            d = Integer.parseInt(m.group(1));
+            mo = Integer.parseInt(m.group(2));
+            y = Integer.parseInt(m.group(3));
+        }
+        try {
+            return java.time.LocalDate.of(y, mo, d).toString();
+        } catch (java.time.DateTimeException e) {
+            return null;
+        }
+    }
 }
