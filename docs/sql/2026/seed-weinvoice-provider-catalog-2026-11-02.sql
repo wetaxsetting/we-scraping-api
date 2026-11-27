@@ -20,6 +20,8 @@
 --   docs/WeInvoice_UI_Spec_v1.0/weinvoice-web/lib/providers.ts (PROVIDERS, stt 1-144;
 --   139-144 added 2026-11-02: THACO, VETC thu phi, FPT Retail, Genuwin, Paris Baguette,
 --   The Gioi Di Dong). Generated, not hand-typed: 144 rows, 144 distinct MSTs.
+-- 2026-11-27: Tax24 (0102454468) row corrected to the public verify page — see
+--   update-tax24-lookup-url-2026-11-27.sql for environments already seeded.
 
 -- 1. PRE-CHECK
 -- Expected: 0 on the first run, 144 on a re-run (more if providers were added by hand since).
@@ -52,7 +54,7 @@ VALUES
     ('0200638946', 18, 'oinvoice.vn', 'Công ty Cổ phần công nghệ số và in đồ họa', 'https://oinvoice.vn', 'https://oinvoice.vn/tracuu/', NULL, NULL, NULL, 'Y', 'SEED_PROVIDER_20261102', '20261102000000', 'SEED_PROVIDER_20261102', '20261102000000'),
     ('0312303803', 19, 'wininvoice.vn', 'Công ty TNHH Win Tech Solution', 'https://wininvoice.vn', 'https://tracuu.wininvoice.vn/', NULL, NULL, 'Dùng chung link tra cứu với: Công ty Cổ phần Công nghệ Trường Minh Thịnh', 'Y', 'SEED_PROVIDER_20261102', '20261102000000', 'SEED_PROVIDER_20261102', '20261102000000'),
     ('0100109106', 20, 'Viettel', 'Tập đoàn Công nghiệp - Viễn thông quân đội', 'https://viettel.vn/s-invoice', 'https://vinvoice.viettel.vn/utilities/invoice-search', NULL, NULL, NULL, 'Y', 'SEED_PROVIDER_20261102', '20261102000000', 'SEED_PROVIDER_20261102', '20261102000000'),
-    ('0102454468', 21, 'Tax24', 'Công ty Cổ phần Công nghệ thông tin Đông Nam Á', 'https://tax24.com.vn/thuedientu/san-pham-dich-vu/hoa-don-dien-tu.', 'https://tax24.com.vn/thuedientu/san-pham-dich-vu/hoa-don-dien-tu', 'https://tax24.com.vn/einvoice/servlet/ImageServlet', NULL, NULL, 'Y', 'SEED_PROVIDER_20261102', '20261102000000', 'SEED_PROVIDER_20261102', '20261102000000'),
+    ('0102454468', 21, 'Tax24', 'Công ty Cổ phần Công nghệ thông tin Đông Nam Á', 'https://tax24.com.vn/thuedientu/trang-chu', 'https://tax24.com.vn/thuedientu/xac-minh-hoa-don', 'https://tax24.com.vn/thuedientu/servlet/ImageServlet', NULL, NULL, 'Y', 'SEED_PROVIDER_20261102', '20261102000000', 'SEED_PROVIDER_20261102', '20261102000000'),
     ('0105937449', 22, 'NewInvoice', 'Công ty Cổ phần hóa đơn điện tử New-Invoice', 'https://newinvoice.com.vn', 'https://newinvoice.com.vn/tra-cuu/', NULL, NULL, NULL, 'Y', 'SEED_PROVIDER_20261102', '20261102000000', 'SEED_PROVIDER_20261102', '20261102000000'),
     ('0108516079', 23, '3asoft.vn', 'Công ty Cổ phần Giải pháp phần mềm 3A', 'http://3asoft.vn', 'http://hddt.3asoft.vn/', NULL, NULL, NULL, 'Y', 'SEED_PROVIDER_20261102', '20261102000000', 'SEED_PROVIDER_20261102', '20261102000000'),
     ('0100686209', 24, 'MobiFone', 'Tổng công ty Viễn thông Mobifone', 'https://itc.mobifone.vn/giai_phap/mobifone-invoice', 'http://tracuuhoadon.mobifoneinvoice.vn/', NULL, NULL, NULL, 'Y', 'SEED_PROVIDER_20261102', '20261102000000', 'SEED_PROVIDER_20261102', '20261102000000'),
