@@ -1,0 +1,52 @@
+package com.kosign.wecms.domain.weinvoice.dto;
+
+import java.math.BigDecimal;
+import java.util.List;
+
+/**
+ * Totals of the filtered list. {@code count} counts every matching invoice; amounts are in
+ * VND and leave out cancelled and replaced invoices (UI Spec 3.3 / 3.9).
+ * The missing counts leave cancelled and replaced invoices out too:
+ * {@code missing_xml} = coded invoices (symbol C…) without XML — the ones "fetch missing XML"
+ * can still get from GDT (UI Spec 3.6); {@code no_code_missing_xml} = invoices without code
+ * waiting for mail / provider / upload; {@code missing_xml_all} = both (the list card).
+ * {@code period_sales_count} / {@code period_purchase_count}: the MST's invoices of the period in
+ * each direction, whatever the other filters (the card's "Cả kỳ" line).
+ * {@code by_currency} (UI Spec v1.2 §3.13): the totals bar — one row per invoice currency (invoice count and amounts in
+ * that currency, cancelled / replaced left out of the amounts like above, plus the VND conversion).
+ */
+public record InvoiceKpis(
+        long count,
+        BigDecimal preTax,
+        BigDecimal tax,
+        BigDecimal total,
+        long missingXml,
+        long noCodeMissingXml,
+        long missingPdf,
+        long salesCount,
+        long purchaseCount,
+        BigDecimal salesTotal,
+        BigDecimal purchaseTotal,
+        long missingXmlAll,
+        long periodSalesCount,
+        long periodPurchaseCount,
+        BigDecimal fee,
+        List<CurrencyTotal> byCurrency) {
+
+    /** Same totals with the period counts of both directions. */
+    public InvoiceKpis withPeriodCounts(long sales, long purchase) {
+        return new InvoiceKpis(count, preTax, tax, total, missingXml, noCodeMissingXml, missingPdf, salesCount,
+                purchaseCount, salesTotal, purchaseTotal, missingXmlAll, sales, purchase, fee, byCurrency);
+    }
+
+    /** Same totals with the per-currency rows of the totals bar. */
+    public InvoiceKpis withByCurrency(List<CurrencyTotal> rows) {
+        return new InvoiceKpis(count, preTax, tax, total, missingXml, noCodeMissingXml, missingPdf, salesCount,
+                purchaseCount, salesTotal, purchaseTotal, missingXmlAll, periodSalesCount, periodPurchaseCount, fee, rows);
+    }
+
+    /** One currency of the totals bar: amounts in that currency, {@code total_vnd} converted. */
+    public record CurrencyTotal(String currency, long count, BigDecimal preTax, BigDecimal tax, BigDecimal fee,
+                                BigDecimal total, BigDecimal totalVnd) {
+    }
+}

@@ -8,7 +8,6 @@ import com.kosign.wecms.common.tenant.TenantContext;
 import com.kosign.wecms.domain.banking.bankcredentials.repository.BankCertInfoRepository;
 import com.kosign.wecms.domain.banking.bankcredentials.service.BankCertCryptoService;
 import com.kosign.wecms.domain.banking.nxisas.audit.NxsiasModuleTranLogHisRepository;
-import com.kosign.wecms.domain.banking.ownaccounttransfer.config.OatSeedDecryptProperties;
 import com.kosign.wecms.domain.banking.ownaccounttransfer.dto.request.NxisasLoggingRequest;
 import com.kosign.wecms.domain.banking.synchistory.entity.ExtTranCallHis;
 import com.kosign.wecms.domain.banking.synchistory.repository.ExtTranCallHisRepository;
@@ -56,7 +55,6 @@ class OatNxisasServiceExtTranLogTest {
                 extTranRepo,
                 mapper,
                 seedCbc,
-                new OatSeedDecryptProperties(false),
                 legacyFunctions);
         TenantContext.set("tester", "VN_VNM0004_000001", LangCd.EN);
     }

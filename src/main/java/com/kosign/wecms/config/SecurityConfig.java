@@ -1,14 +1,20 @@
 package com.kosign.wecms.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.kosign.wecms.common.i18n.MessageResolver;
 import com.kosign.wecms.common.security.JwtAuthenticationEntryPoint;
 import com.kosign.wecms.common.security.JwtAuthenticationFilter;
 import com.kosign.wecms.common.security.WecmsPasswordEncoder;
 import com.kosign.wecms.domain.payment.dispatch.callback.CallbackIpWhitelistFilter;
 import com.kosign.wecms.domain.payment.dispatch.callback.CallbackProperties;
+import com.kosign.wecms.domain.weinvoice.config.WeInvoiceProperties;
+import com.kosign.wecms.domain.weinvoice.controller.WeInvoiceMailboxController;
+import com.kosign.wecms.domain.weinvoice.partner.PartnerApiKeyFilter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -30,6 +36,9 @@ public class SecurityConfig {
     private final JwtAuthenticationFilter jwtFilter;
     private final JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint;
     private final CallbackProperties callbackProperties;
+    private final WeInvoiceProperties weInvoiceProperties;
+    private final ObjectMapper objectMapper;
+    private final MessageResolver messageResolver;
 
     @Bean
     public PasswordEncoder passwordEncoder() {
@@ -72,12 +81,20 @@ public class SecurityConfig {
                                 .maxAgeInSeconds(31_536_000)))
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/v1/auth/login", "/api/v1/auth/logout", "/actuator/health").permitAll()
+                        .requestMatchers("/api/v1/auth/login", "/api/v1/auth/logout", "/api/v1/auth/signup", "/actuator/health").permitAll()
                         // Inbound EFS callbacks (01301/01302): the gateway cannot present a
                         // WeCMS JWT — authentication is the per-VAN VV/EV crypto check inside
                         // the callback services, plus the optional source-IP allow-list
                         // enforced by CallbackIpWhitelistFilter (below). See CallbackProperties.
                         .requestMatchers("/api/v1/payment/dispatch/callbacks/**").permitAll()
+                        // WeInvoice Partner API, called server-to-server by WeCMS: no WeCMS JWT.
+                        // Authentication is the X-Api-Key check of PartnerApiKeyFilter (below),
+                        // which fails closed when no key is configured.
+                        .requestMatchers("/api/partner/v1/**").permitAll()
+                        // WeInvoice Microsoft mailbox sign-in: the browser returns from Microsoft without a
+                        // WeCMS JWT. Exact path + GET only; the owner is taken from the HMAC-signed,
+                        // 10-minute `state` (MailboxOAuthState), and the answer is always a 302 to the web app.
+                        .requestMatchers(HttpMethod.GET, WeInvoiceMailboxController.MICROSOFT_CALLBACK_PATH).permitAll()
                         .anyRequest().authenticated())
                 // Override default Http403ForbiddenEntryPoint so missing /
                 // expired JWTs surface as 401 (RFC 7235) — required by the
@@ -89,8 +106,10 @@ public class SecurityConfig {
                 // Spring-Security-registered filter); a custom filter class has no
                 // registered order and cannot be used as a position anchor. Insertion
                 // order at the same offset is preserved, so adding the callback filter
-                // first keeps the chain order: callback → jwt → UsernamePassword.
+                // first keeps the chain order: callback → partner-key → jwt → UsernamePassword.
                 .addFilterBefore(new CallbackIpWhitelistFilter(callbackProperties), UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(new PartnerApiKeyFilter(weInvoiceProperties, objectMapper, messageResolver),
+                        UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
                 .build();
     }

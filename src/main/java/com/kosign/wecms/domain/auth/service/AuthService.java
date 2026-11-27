@@ -20,6 +20,7 @@ import com.kosign.wecms.domain.auth.repository.BusiAdmnInfmRepository;
 import com.kosign.wecms.domain.auth.repository.BusiInfmRepository;
 import com.kosign.wecms.domain.auth.repository.UserBusiConnInfmRepository;
 import com.kosign.wecms.domain.auth.repository.UserInfmRepository;
+import com.kosign.wecms.domain.weinvoice.account.WeInvoiceAccountService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -31,6 +32,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -114,11 +116,19 @@ public class AuthService {
     private final MenuAuthorizationService menuAuthService;
     private final TokenRevocationService tokenRevocation;
     private final LoginLockoutService loginLockout;
+    private final WeInvoiceAccountService weInvoiceAccounts;
 
     @Transactional
     public LoginResponse login(LoginRequest req, String ipAddr, String langCd) {
         final String userId          = req.userId();
         final String requestedBizKey = req.bizKey();   // null on first call
+
+        // WeInvoice-owned accounts (winv_user_infm) are checked first; an id that is not one falls through to the
+        // WeCMS login below unchanged (docs/features/addon-service/weinvoice/weinvoice-self-signup-2026-11-13.md).
+        Optional<LoginResponse> weInvoice = weInvoiceAccounts.login(userId, req.userPw(), langCd);
+        if (weInvoice.isPresent()) {
+            return weInvoice.get();
+        }
 
         UserInfm user = userRepo.findById(userId).orElse(null);
         if (user == null) {
@@ -280,6 +290,9 @@ public class AuthService {
         }
         final String userId = Objects.requireNonNull(principal.userId());
         final String bizKey = Objects.requireNonNull(principal.bizKey());
+        if (WeInvoiceAccountService.isWeInvoiceToken(bizKey)) {
+            return weInvoiceAccounts.me(principal);
+        }
 
         UserInfm user = userRepo.findById(userId).orElse(null);
         if (user == null || user.isDeleted() || !user.isActive() || user.isLocked()) {
@@ -378,7 +391,9 @@ public class AuthService {
             // Legacy parity (logn_0002_001_r001_act.jsp:47-53): audit the logout
             // before invalidating the credential. userId is the token subject.
             String userId = claims.getSubject();
-            if (userId != null) {
+            // A WeInvoice account has no USER_INFM row: no WeCMS login-history row for it.
+            boolean weInvoice = WeInvoiceAccountService.isWeInvoiceToken(claims.get("bizKey", String.class));
+            if (userId != null && !weInvoice) {
                 history.record(userId, ipAddr, UserLoginHis.RSLT_LOGOUT, null);
             }
             // F-03: invalidate the credential server-side (≈ legacy session.invalidate()).

@@ -95,6 +95,9 @@ class BankTransactionSyncServiceVpProfileTest {
         when(acct.getAcctNo()).thenReturn(ACCT_NO);
         when(acct.getCcyCd()).thenReturn("VND");
         when(acct.getHandRegYn()).thenReturn("N");
+        // Unbound account: Mockito would otherwise default a Long getter to 0L, which
+        // reads as a real BANK_CERT_SEQ and diverts to the by-seq credential lookup.
+        when(acct.getBankCertSeq()).thenReturn(null);
         when(acctRepo.findAllById(any())).thenReturn(List.of(acct));
         when(acctRepo.findByBizKeyAndBankCdAndAcctNo(anyString(), anyString(), anyString()))
                 .thenReturn(Optional.of(acct));
@@ -169,6 +172,9 @@ class BankTransactionSyncServiceVpProfileTest {
         when(acct.getAcctNo()).thenReturn(ACCT_NO);
         when(acct.getCcyCd()).thenReturn("VND");
         when(acct.getHandRegYn()).thenReturn("N");
+        // Unbound account: Mockito would otherwise default a Long getter to 0L, which
+        // reads as a real BANK_CERT_SEQ and diverts to the by-seq credential lookup.
+        when(acct.getBankCertSeq()).thenReturn(null);
         when(acctRepo.findAllById(any())).thenReturn(List.of(acct));
         when(acctRepo.findByBizKeyAndBankCdAndAcctNo(anyString(), anyString(), anyString()))
                 .thenReturn(Optional.of(acct));

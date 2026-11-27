@@ -18,7 +18,7 @@ if exist "C:\Program Files\Eclipse Adoptium\jdk-21.0.11.10-hotspot" (
 REM --- 2. Require .env.local — it is the ONLY source of configuration ---
 REM  Since the 2026-07-30 config migration every placeholder in the yml files is a bare
 REM  ${VAR} with no default (docs/deployment/config-bare-placeholder-migration.md), so all
-REM  68 variables come from .env.local. It is loaded by the bootRun task in build.gradle,
+REM  76 variables come from .env.local. It is loaded by the bootRun task in build.gradle,
 REM  NOT here: cmd cannot hold an empty environment variable (`set "VAR="` deletes it) and
 REM  several variables are legitimately empty. Gradle's ProcessBuilder env map can.
 set "ENV_FILE=%~dp0.env.local"
@@ -26,7 +26,7 @@ if not exist "%ENV_FILE%" (
     echo.
     echo [FAIL] %ENV_FILE% not found.
     echo        The yml files carry no defaults — the app cannot start without it.
-    echo        Copy .env.local.example to .env.local, then set WECMS_DB_PASSWORD.
+    echo        Copy .env.local.example to .env.local, then fill in every value (keys only).
     exit /b 1
 )
 

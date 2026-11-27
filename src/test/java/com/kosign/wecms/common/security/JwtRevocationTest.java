@@ -13,6 +13,7 @@ import com.kosign.wecms.domain.auth.service.MenuAuthorizationService;
 import com.kosign.wecms.domain.auth.entity.UserLoginHis;
 import com.kosign.wecms.common.tenant.TenantContext;
 import org.junit.jupiter.api.AfterEach;
+import com.kosign.wecms.domain.weinvoice.account.WeInvoiceAccountService;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -123,7 +124,8 @@ class JwtRevocationTest {
                 mock(PasswordEncoder.class), provider, history,
                 mock(AdminLoginHistoryService.class),
                 mock(MenuAuthorizationService.class), revocation,
-                mock(LoginLockoutService.class));
+                mock(LoginLockoutService.class),
+                mock(WeInvoiceAccountService.class));
 
         String token = issue("u1");
         assertThat(runFilter(token)).isNotNull();                 // logged in
